@@ -226,6 +226,55 @@ TEST(HighCIntegerWidths, ArithmeticWrapsBeforeWideningWithoutSignedOverflow) {
                     true);
 }
 
+TEST(HighCIntegerWidths, NegationWrapsAndNestedNegativeConstantsCompile) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  auto Literal = [](const llvm::APInt &Value) {
+    const auto Wide = Value.zextOrTrunc(128);
+    return "(((__uint128_t)UINT64_C(" +
+           std::to_string(Wide.lshr(64).getZExtValue()) +
+           ") << 64) | UINT64_C(" +
+           std::to_string(Wide.trunc(64).getZExtValue()) + "))";
+  };
+  for (uint16_t Width : {1, 2, 4, 8, 16}) {
+    const unsigned Bits = Width * 8;
+    const auto Max = llvm::APInt::getAllOnes(Bits);
+    const llvm::APInt Values[] = {llvm::APInt(Bits, 0), llvm::APInt(Bits, 1),
+                                  Max.lshr(1), Max.lshr(1) + 1, Max};
+    for (bool Signed : {false, true}) {
+      const auto Type = NdType::makeInt(Width, Signed);
+      HighFunc Func;
+      Func.Name = "neg" + std::to_string(Bits) + (Signed ? "s" : "u");
+      Func.ReturnType = Type;
+      Func.Params = {{"arg0", Type}};
+      auto Value = HighExpr::makeUnary(NdOp::INT_NEG2, parameter(0, Type));
+      Value->Type = Type;
+      returnValue(Func, Value);
+      for (const auto &Input : Values) {
+        const auto Expected = (-Input).zextOrTrunc(128);
+        const auto Argument = "__builtin_bit_cast(" + typeToC(Type) + ", (" +
+                              typeToC(NdType::makeInt(Width, false)) + ")" +
+                              Literal(Input) + ")";
+        Checks += "    if ((__uint128_t)(" +
+                  typeToC(NdType::makeInt(Width, false)) + ")" + Func.Name +
+                  "(" + Argument + ") != " + Literal(Expected) +
+                  ") ++failures;\n";
+      }
+      Functions.push_back(std::move(Func));
+    }
+  }
+  HighFunc Constant;
+  Constant.Name = "neg_constant";
+  Constant.ReturnType = NdType::makeInt(8);
+  returnValue(
+      Constant,
+      HighExpr::makeUnary(NdOp::INT_NEG2, HighExpr::makeConst(UINT64_MAX, 8)));
+  Functions.push_back(std::move(Constant));
+  Checks += "    if (neg_constant() != 1) ++failures;\n";
+  compileAndExecute(emitFunctions(Functions) + executionHarness(Checks), false,
+                    true);
+}
+
 TEST(HighCIntegerWidths, ExtensionsFollowOpcodeAndSourceWidthAtRuntime) {
   struct Sample {
     uint16_t Width;

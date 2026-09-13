@@ -1,6 +1,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/ir/SourceABI.h"
+#include "neverd/libc/LibCObjC.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -92,7 +93,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeBlockIsa ||
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
-      Hint.CallKind == Kind::RuntimeAssociationKey) {
+      Hint.CallKind == Kind::RuntimeAssociationKey ||
+      Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
         !Signature.ReturnType ||
         Signature.ReturnType->Kind != NdTypeKind::Ptr ||
@@ -112,6 +114,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (Name != "_NSConcreteStackBlock" && Name != "_NSConcreteGlobalBlock")
         return bad("unknown concrete block class");
       Value = Name.str();
+    } else if (Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
+      if (!Hint.TargetAddress)
+        return bad("profile counters have no storage identity");
+      Value = "neverd_profile_counters_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeAssociationKey) {
       if (!Hint.TargetAddress)
         return bad("association key has no source identity");
@@ -283,6 +290,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
           Hint.CallKind == Kind::ObjCSuper2 ? "(struct objc_super *)" : "(id)";
     else if (Message && I == 1)
       Call += "(SEL)";
+    else if (I == 0 && Hint.CallKind == Kind::ObjCRuntimeCall &&
+             libc::objcHasObjectStorageArgument(Hint.TargetName))
+      Call += "(id *)";
     Call += *Value;
   }
   Call += ")";

@@ -202,6 +202,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       Audits.emplace(Audit.Entry, &Audit);
 
     std::map<va_t, ObjCSourceBindingResult> Projections;
+    const ObjCProfileStorage ProfileStorage(S->Img);
     std::map<va_t, ObjCBlockSourceBindingResult> BlockProjections;
     std::map<va_t, std::string> ProjectionReasons;
     std::set<va_t> Closed;
@@ -210,7 +211,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         continue;
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
-      auto Binding = bindObjCSourceReferences(BlockBinding.Function, S->Img);
+      auto Binding = bindObjCSourceReferences(BlockBinding.Function, S->Img,
+                                              &ProfileStorage);
       Binding.Dependencies.insert(BlockBinding.Dependencies.begin(),
                                   BlockBinding.Dependencies.end());
       std::string Reason = BlockBinding.Limitation.empty()
@@ -222,7 +224,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
             Binding.Function, *Func->SourceTypeHint,
             Audit == Audits.end() ? nullptr : Audit->second,
             [&](const HighExpr &Expression) {
-              return objcSourceCallBound(Expression, S->Img, Functions) ||
+              return objcSourceCallBound(Expression, S->Img, Functions,
+                                         &ProfileStorage) ||
                      objcBlockSourceCallBound(Expression, BlockSource,
                                               BlockPlan, Functions);
             });
@@ -343,15 +346,21 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       const std::string BlockHelpers = renderObjCBlockSourceHelpers(
           BlockPlan, BlockDescriptors, SharedBlockFunctions);
       std::set<va_t> AssociationKeys;
+      std::set<va_t> ProfileSections;
       for (va_t Entry : Included) {
         const auto &Keys = Projections.at(Entry).AssociationKeys;
         AssociationKeys.insert(Keys.begin(), Keys.end());
+        const auto &Sections = Projections.at(Entry).ProfileCounterSections;
+        ProfileSections.insert(Sections.begin(), Sections.end());
       }
       std::set<std::string> SharedIdentityFunctions;
       const std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
           AssociationKeys, SharedIdentityFunctions);
+      std::set<std::string> SharedStorageFunctions;
+      const std::string StorageHelpers =
+          ProfileStorage.render(ProfileSections, SharedStorageFunctions);
       const bool Emitted = Emitter.emit(Unit, SourceOS, COptions);
-      SourceOS << BlockHelpers << IdentityHelpers;
+      SourceOS << BlockHelpers << IdentityHelpers << StorageHelpers;
       if (!Emitted) {
         Row["status"] = "unrecovered";
         Row["reason"] = "method C source projection failed";
@@ -388,6 +397,10 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         for (const auto &Name : SharedIdentityFunctions)
           IdentityFunctions.push_back(Name);
         Row["shared_identity_functions"] = std::move(IdentityFunctions);
+        llvm::json::Array StorageFunctions;
+        for (const auto &Name : SharedStorageFunctions)
+          StorageFunctions.push_back(Name);
+        Row["shared_storage_functions"] = std::move(StorageFunctions);
         ++Recovered;
       }
       Methods.push_back(std::move(Row));
@@ -402,6 +415,13 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     Limitations.push_back(
         "Unresolved native dependencies and exception-dependent method bodies "
         "remain individually unrecovered.");
+    Limitations.push_back(
+        "Numeric profiling counters retain their captured initial bytes and "
+        "updates in shared rebuilt storage. Link one definition of each "
+        "shared_storage_functions helper across the participating sources. "
+        "This storage is independent of the original image and its profiling "
+        "runtime; ordered, escaping, or unresolved image-data accesses remain "
+        "unrecovered.");
     Limitations.push_back(
         "Static associated-object keys use shared rebuilt identities. Link "
         "one definition of each shared_identity_functions helper across the "

@@ -1,7 +1,15 @@
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+
 #include "llvm/Support/Endian.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
+
+#include <filesystem>
+#include <fstream>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -209,6 +217,238 @@ TEST(ObjCSourceBindings,
     EXPECT_FALSE(Result.Limitation.empty());
     EXPECT_TRUE(Result.AssociationKeys.empty());
   }
+}
+
+namespace {
+struct ProfileFixture : Fixture {
+  ProfileFixture() {
+    Image.ObjCSourceReferences.clear();
+    Image.Segments[0].Name = "__DATA";
+    Image.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Sections[0].Name = "__llvm_prf_cnts";
+    Image.Sections[0].SegmentName = "__DATA";
+    Image.Sections[0].Flags = Image.Segments[0].Flags;
+    for (size_t I = 0; I < 0x100; ++I)
+      Image.Segments[0].Data[I] = uint8_t(I * 37 + 9);
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, ProfileCountersKeepOverlappingStorageAndAccessWidths) {
+  ProfileFixture F;
+  const ObjCProfileStorage Storage(F.Image);
+  for (uint16_t Width : {1, 2, 4, 8, 16}) {
+    auto Address = HighExpr::makeConst(0x1007, 8);
+    F.Function.Body[0].RetVal =
+        HighExpr::makeLoad(Address, NdType::makeInt(Width, false));
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image, &Storage);
+    EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    EXPECT_EQ(Result.ProfileCounterSections, std::set<va_t>{0x1000});
+    const auto Load = Result.Function.Body[0].RetVal;
+    EXPECT_EQ(Load->Kind, ExprKind::Load);
+    EXPECT_EQ(Load->Type->Size, Width);
+    const auto BoundAddress = Load->Operands[0];
+    ASSERT_EQ(BoundAddress->Kind, ExprKind::BinOp);
+    EXPECT_EQ(BoundAddress->Operands[1]->ConstVal, 7U);
+    EXPECT_TRUE(
+        objcSourceCallBound(*BoundAddress->Operands[0], F.Image, {}, &Storage));
+    EXPECT_EQ(Address->ConstVal, 0x1007U);
+    // A shared node used outside a memory access still has no source binding.
+    F.Function.Body[0].RetVal =
+        HighExpr::makeBinop(NdOp::INT_ADD, F.Function.Body[0].RetVal, Address);
+    EXPECT_FALSE(bindObjCSourceReferences(F.Function, F.Image, &Storage)
+                     .Limitation.empty());
+  }
+  EXPECT_EQ(Storage.sectionFor(0x10f0, 16), 0x1000U);
+  EXPECT_FALSE(Storage.sectionFor(0x10f1, 16));
+  EXPECT_FALSE(Storage.sectionFor(UINT64_MAX - 7, 16));
+  EXPECT_FALSE(Storage.sectionFor(0x1000, 0));
+  std::set<std::string> Names;
+  const auto Source = Storage.render({0x1000}, Names);
+  EXPECT_EQ(Names,
+            std::set<std::string>{"neverd_profile_counters_1000_address"});
+  EXPECT_NE(Source.find("[0] = 9"), std::string::npos);
+  EXPECT_NE(Source.find("counters[256]"), std::string::npos);
+}
+
+TEST(ObjCSourceBindings, ProfileCountersRejectUnprovedStorageAndEffects) {
+  for (unsigned Case = 0; Case < 18; ++Case) {
+    SCOPED_TRACE(Case);
+    ProfileFixture F;
+    switch (Case) {
+    case 0:
+      F.Image.Sections[0].Name = "__llvm_prf_data";
+      break;
+    case 1:
+      F.Image.Sections[0].FileSz--;
+      break;
+    case 2:
+      F.Image.Segments[0].Data.resize(8);
+      break;
+    case 3:
+      F.Image.Sections[0].Flags = SegmentFlags::Readable;
+      break;
+    case 4:
+      F.Image.MachOChainedFixupsAmbiguous = true;
+      break;
+    case 5:
+      F.Image.DataPtrRelocSlots.insert(0x1040);
+      break;
+    case 6:
+      F.Image.MachOResolvedChainedPointerSlots.insert(0x1040);
+      break;
+    case 7:
+      F.Image.DyldBindSlots[0x1040] = {};
+      break;
+    case 8:
+      F.Image.BaseRelocations.push_back({0xff9, 0});
+      break;
+    case 9:
+      F.Image.Sections.push_back(F.Image.Sections[0]);
+      break;
+    case 10:
+      F.Image.Segments.push_back(F.Image.Segments[0]);
+      break;
+    case 11:
+      F.Image.IsRelocatable = true;
+      break;
+    case 12:
+      F.Image.Arch = Arch::ARM;
+      break;
+    case 13:
+      F.Function.Body[0].RetVal->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 14:
+      F.Function.Body[0].RetVal->Type = NdType::makePtr(NdType::makeVoid());
+      break;
+    case 15:
+      F.Function.Body[0].RetVal->Operands[0] = HighExpr::makeConst(0x10f9, 8);
+      break;
+    case 16:
+      F.Function.Body[0].RetVal->Type = NdType::makeFloat(16);
+      break;
+    case 17:
+      F.Image.Segments[0].FileSz = 16;
+      break;
+    }
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_FALSE(Result.Limitation.empty());
+    EXPECT_TRUE(Result.ProfileCounterSections.empty());
+  }
+}
+
+TEST(ObjCSourceBindings, ProfileCountersExecuteAcrossTranslationUnits) {
+  ProfileFixture F;
+  const ObjCProfileStorage Storage(F.Image);
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-profile-storage",
+                                                    Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code Error;
+      std::filesystem::remove_all(Work, Error);
+    }
+  } Cleanup{Work};
+  std::vector<std::string> Sources;
+  std::set<va_t> Used;
+  for (bool Store : {false, true}) {
+    for (uint16_t Width : {1, 2, 4, 8, 16}) {
+      const auto Type = NdType::makeInt(Width, false);
+      HighFunc Function;
+      Function.Name =
+          std::string(Store ? "put" : "get") + std::to_string(Width);
+      Function.Entry = 0x2000 + Sources.size() * 16;
+      Function.ReturnType = Store ? NdType::makeVoid() : Type;
+      const auto Address = HighExpr::makeConst(0x1007, 8);
+      if (Store) {
+        Function.Params.push_back({"arg0", Type});
+        MedVar Value;
+        Value.Kind = MedVar::Param;
+        Value.Id = 0;
+        Value.Size = Width;
+        Value.TheArch = Arch::X64;
+        HighStmt Statement;
+        Statement.Kind = StmtKind::Store;
+        Statement.StoreAddr = Address;
+        Statement.StoreVal = HighExpr::makeVar(Value, Type);
+        Function.Body.push_back(Statement);
+      }
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      if (!Store)
+        Return.RetVal = HighExpr::makeLoad(Address, Type);
+      Function.Body.push_back(Return);
+      auto Bound = bindObjCSourceReferences(Function, F.Image, &Storage);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      Used.insert(Bound.ProfileCounterSections.begin(),
+                  Bound.ProfileCounterSections.end());
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      const auto Path = (Work / (Function.Name + ".c")).string();
+      std::ofstream(Path) << Source;
+      Sources.push_back(Path);
+    }
+  }
+  std::set<std::string> Helpers;
+  std::string Harness = "#include <stdint.h>\n#include <string.h>\n" +
+                        Storage.render(Used, Helpers);
+  for (uint16_t Width : {1, 2, 4, 8, 16}) {
+    const auto Type = Width == 16 ? "unsigned __int128"
+                                  : "uint" + std::to_string(Width * 8) + "_t";
+    Harness += "extern " + Type + " get" + std::to_string(Width) + "(void);\n";
+    Harness += "extern void put" + std::to_string(Width) + "(" + Type + ");\n";
+  }
+  Harness += R"(
+int main(void) {
+  unsigned char expected[256];
+  unsigned char *data = (unsigned char *)neverd_profile_counters_1000_address();
+  for (unsigned i = 0; i != 256; ++i) expected[i] = (unsigned char)(i * 37 + 9);
+  if (memcmp(data, expected, sizeof expected)) return 1;
+  for (unsigned round = 0; round != 64; ++round) {
+    unsigned __int128 value = ((unsigned __int128)(UINT64_MAX - round) << 64) | round;
+    put16(value); memcpy(expected + 7, &value, 16);
+    if (get16() != value || memcmp(data, expected, sizeof expected)) return 2;
+    uint64_t a = UINT64_MAX - round; put8(a); memcpy(expected + 7, &a, 8);
+    if (get8() != a || memcmp(data, expected, sizeof expected)) return 3;
+    uint32_t b = UINT32_MAX - round; put4(b); memcpy(expected + 7, &b, 4);
+    if (get4() != b || memcmp(data, expected, sizeof expected)) return 4;
+    uint16_t c = UINT16_MAX - round; put2(c); memcpy(expected + 7, &c, 2);
+    if (get2() != c || memcmp(data, expected, sizeof expected)) return 5;
+    uint8_t d = (uint8_t)round; put1(d); memcpy(expected + 7, &d, 1);
+    if (get1() != d || memcmp(data, expected, sizeof expected)) return 6;
+    memcpy(&value, expected + 7, 16);
+    if (get16() != value) return 7;
+  }
+  return 0;
+}
+)";
+  const auto HarnessPath = (Work / "harness.c").string();
+  std::ofstream(HarnessPath) << Harness;
+  Sources.push_back(HarnessPath);
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  const auto Executable = (Work / "test.exe").string();
+  const auto ErrorPath = (Work / "stderr").string();
+  std::vector<std::string> Arguments{
+      Compiler,  "-std=c11", "-O3",     "-fstrict-aliasing",
+      "-Werror", "-o",       Executable};
+  Arguments.insert(Arguments.end(), Sources.begin(), Sources.end());
+  std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt,
+                                                      std::nullopt, ErrorPath};
+  std::string Error;
+  const auto Status = llvm::sys::ExecuteAndWait(Compiler, Refs, std::nullopt,
+                                                Redirects, 60, 0, &Error);
+  auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+  ASSERT_EQ(Status, 0) << Error << (Errors ? (*Errors)->getBuffer().str() : "");
+  EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                      Redirects, 30, 0, &Error),
+            0)
+      << Error;
 }
 
 TEST(ObjCSourceBindings, ExplicitABIPositionDriftIsDetected) {

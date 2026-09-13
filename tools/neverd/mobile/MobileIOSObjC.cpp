@@ -890,6 +890,19 @@ Rendered render(const Object &native, const Object &runtime,
               std::regex("neverd_objc_association_key_[0-9a-f]+_address")))
         throw Error("invalid shared identity function inventory");
     }
+  if (native.get("shared_storage_functions") &&
+      !native.getArray("shared_storage_functions"))
+    throw Error("invalid shared storage function inventory");
+  if (auto *shared = native.getArray("shared_storage_functions"))
+    for (const auto &v : *shared) {
+      const auto s = v.getAsString();
+      if (!s || !sharednames.insert(s->str()).second ||
+          !defined.count(s->str()) || s == name ||
+          !std::regex_match(
+              s->str(),
+              std::regex("neverd_profile_counters_[0-9a-f]+_address")))
+        throw Error("invalid shared storage function inventory");
+    }
   std::map<std::string, std::string> rename;
   for (const auto &f : defs)
     if (!sharednames.count(f.name))
@@ -1397,10 +1410,10 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
                  "Coverage applies only to the discovered runtime method "
                  "inventory; an empty inventory does not prove that no methods "
                  "exist.",
-                 "Verified identical Block and association-key storage "
-                 "helpers share identity across methods. Association keys "
-                 "belong to the rebuilt sources, not an already loaded "
-                 "original image. External dependencies may require manual "
-                 "linking."}}}};
+                 "Verified identical Block, association-key and numeric "
+                 "profiling-counter storage helpers share identity across "
+                 "methods. Rebuilt keys and counters are independent of the "
+                 "original image and profiling runtime. External dependencies "
+                 "may require manual linking."}}}};
 }
 } // namespace neverd::mobile::ios

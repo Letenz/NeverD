@@ -1714,52 +1714,67 @@ TEST(MobileIOSNative,
                    "recovered_method_count"),
             0);
   native.erase("shared_identity_functions");
+  native["shared_storage_functions"] = "invalid array";
+  EXPECT_EQ(number(objcSources(batch, metadata, 8, budget).coverage,
+                   "recovered_method_count"),
+            0);
+  native.erase("shared_storage_functions");
   batch["pointer_size"] = 4;
   EXPECT_THROW(objcSources(batch, metadata, 8, budget), Error);
 }
 
 TEST(MobileIOSNative,
      SharedAssociationKeysPreserveOneDefinitionAndRejectConflicts) {
-  const std::string Helper = "neverd_objc_association_key_1031_address";
-  const std::string Definition = "uintptr_t " + Helper +
-                                 "(void) {\n  static unsigned char key;\n"
-                                 "  return (uintptr_t)&key;\n}\n";
-  auto [batch, metadata] = objcFixture("return (int64_t)" + Helper + "();");
-  auto *Methods = batch.getArray("methods");
-  auto &First = *Methods->front().getAsObject();
-  First["source"] = "extern uintptr_t " + Helper + "(void);\n" +
-                    str(First, "source") + Definition;
-  First["shared_identity_functions"] = Array{Helper};
-  Object Second(First);
-  Second["selector"] = "sum:with:";
-  Second["implementation"] = "0x2000";
-  Second["function_name"] = "neverd_objc_imp_2000";
-  auto Source = str(Second, "source");
-  const auto Name = Source.find("neverd_objc_imp_1000");
-  ASSERT_NE(Name, std::string::npos);
-  Source.replace(Name, std::string("neverd_objc_imp_1000").size(),
-                 "neverd_objc_imp_2000");
-  Second["source"] = Source;
-  Methods->push_back(std::move(Second));
-  auto &Class = *metadata.getArray("classes")->front().getAsObject();
-  auto *RuntimeMethods = Class.getArray("methods");
-  Object Runtime(*RuntimeMethods->front().getAsObject());
-  Runtime["selector"] = "sum:with:";
-  Runtime["implementation"] = "0x2000";
-  RuntimeMethods->push_back(std::move(Runtime));
-  Budget Budget;
-  const auto Result = objcSources(batch, metadata, 8, Budget);
-  ASSERT_EQ(number(Result.coverage, "recovered_method_count"), 2);
-  const auto Position = Result.source.find(Definition);
-  ASSERT_NE(Position, std::string::npos);
-  EXPECT_EQ(Result.source.find(Definition, Position + 1), std::string::npos);
+  for (bool Counters : {false, true}) {
+    SCOPED_TRACE(Counters);
+    const std::string Helper = Counters
+                                   ? "neverd_profile_counters_1000_address"
+                                   : "neverd_objc_association_key_1031_address";
+    const std::string Declaration =
+        Counters ? "static unsigned char key[32] = { [3] = 9 };"
+                 : "static unsigned char key;";
+    const std::string Definition = "uintptr_t " + Helper + "(void) {\n  " +
+                                   Declaration +
+                                   "\n"
+                                   "  return (uintptr_t)&key;\n}\n";
+    auto [batch, metadata] = objcFixture("return (int64_t)" + Helper + "();");
+    auto *Methods = batch.getArray("methods");
+    auto &First = *Methods->front().getAsObject();
+    First["source"] = "extern uintptr_t " + Helper + "(void);\n" +
+                      str(First, "source") + Definition;
+    First[Counters ? "shared_storage_functions" : "shared_identity_functions"] =
+        Array{Helper};
+    Object Second(First);
+    Second["selector"] = "sum:with:";
+    Second["implementation"] = "0x2000";
+    Second["function_name"] = "neverd_objc_imp_2000";
+    auto Source = str(Second, "source");
+    const auto Name = Source.find("neverd_objc_imp_1000");
+    ASSERT_NE(Name, std::string::npos);
+    Source.replace(Name, std::string("neverd_objc_imp_1000").size(),
+                   "neverd_objc_imp_2000");
+    Second["source"] = Source;
+    Methods->push_back(std::move(Second));
+    auto &Class = *metadata.getArray("classes")->front().getAsObject();
+    auto *RuntimeMethods = Class.getArray("methods");
+    Object Runtime(*RuntimeMethods->front().getAsObject());
+    Runtime["selector"] = "sum:with:";
+    Runtime["implementation"] = "0x2000";
+    RuntimeMethods->push_back(std::move(Runtime));
+    Budget Budget;
+    const auto Result = objcSources(batch, metadata, 8, Budget);
+    ASSERT_EQ(number(Result.coverage, "recovered_method_count"), 2);
+    const auto Position = Result.source.find(Definition);
+    ASSERT_NE(Position, std::string::npos);
+    EXPECT_EQ(Result.source.find(Definition, Position + 1), std::string::npos);
 
-  Source.replace(Source.find("static unsigned char key;"),
-                 std::string("static unsigned char key;").size(),
-                 "static unsigned char key = 1;");
-  (*Methods->back().getAsObject())["source"] = Source;
-  const auto Conflict = objcSources(batch, metadata, 8, Budget);
-  EXPECT_EQ(number(Conflict.coverage, "recovered_method_count"), 0);
+    Source.replace(Source.find(Declaration), Declaration.size(),
+                   Counters ? "static unsigned char key[32] = { [3] = 8 };"
+                            : "static unsigned char key = 1;");
+    (*Methods->back().getAsObject())["source"] = Source;
+    const auto Conflict = objcSources(batch, metadata, 8, Budget);
+    EXPECT_EQ(number(Conflict.coverage, "recovered_method_count"), 0);
+  }
 }
 
 TEST(MobileIOSNative, MetadataOnlyAppUsesAppRelativeArtifactWithoutTools) {

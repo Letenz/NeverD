@@ -386,6 +386,40 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, RuntimeWeakCallsUsePublicObjectStorageTypes) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Storage = NdType::makePtr(Pointer);
+  auto Store = native("objc_storeWeak", Pointer, {Storage, Pointer});
+  Store.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  auto Load = native("objc_loadWeak", Pointer, {Storage});
+  Load.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  const std::vector<HighFunc> Functions{
+      returning(
+          "weak_store",
+          call(Store, Pointer, {parameter(0, Storage), parameter(1, Pointer)}),
+          {Storage, Pointer}),
+      returning("weak_load", call(Load, Pointer, {parameter(0, Storage)}),
+                {Storage})};
+  const auto Source = emit(Functions);
+  EXPECT_NE(Source.find("#include <objc/runtime.h>"), std::string::npos);
+  EXPECT_EQ(Source.find("extern void* objc_storeWeak"), std::string::npos);
+  EXPECT_EQ(Source.find("extern void* objc_loadWeak"), std::string::npos);
+  compileAndRun(R"(
+#include <stdint.h>
+typedef struct objc_object *id;
+id objc_storeWeak(id *location, id object) { *location = object; return object; }
+id objc_loadWeak(id *location) { return *location; }
+)" + emit(Functions, false) +
+                R"(
+int main(void) {
+  id slot = 0;
+  id value = (id)(uintptr_t)1234;
+  if (weak_store((void **)&slot, value) != value || weak_load((void **)&slot) != value) return 1;
+  return weak_store((void **)&slot, 0) != 0 || weak_load((void **)&slot) != 0;
+}
+)");
+}
+
 TEST(HighCSourceCalls, RuntimeReferencesUseEscapedNamesAndNoOriginalAddresses) {
   auto U64 = NdType::makeInt(8, false);
   auto Pointer = NdType::makePtr(NdType::makeVoid());

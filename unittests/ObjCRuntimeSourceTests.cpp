@@ -40,7 +40,8 @@ void run(const std::vector<std::string> &Arguments,
   ASSERT_EQ(Status, 0) << Error << '\n' << read(Err);
 }
 
-void verifyRuntime(bool Chained, bool Associations = false) {
+void verifyRuntime(bool Chained, bool Associations = false,
+                   bool Profiled = false) {
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
@@ -68,6 +69,9 @@ void verifyRuntime(bool Chained, bool Associations = false) {
                                    "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
+  if (Profiled)
+    Compile.push_back("-fprofile-instr-generate=" +
+                      (Work / "counters.profraw").string());
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "compile-original"));
 
   std::unique_ptr<void, decltype(&neverd_session_destroy)> Session(
@@ -100,6 +104,7 @@ void verifyRuntime(bool Chained, bool Associations = false) {
                         "Class cls = objc_getClass(\"NDARCBox\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
+  std::set<std::string> StorageNames;
   for (const auto &Value : *Methods) {
     const auto *Method = Value.getAsObject();
     ASSERT_NE(Method, nullptr);
@@ -110,22 +115,26 @@ void verifyRuntime(bool Chained, bool Associations = false) {
     ASSERT_TRUE(Selector && Name && Source);
     ASSERT_EQ(Remaining.erase(Selector->str()), 1U);
     std::string MethodSource = Source->str();
-    if (const auto *Helpers = Method->getArray("shared_identity_functions")) {
-      for (const auto &Value : *Helpers) {
-        const auto Helper = Value.getAsString();
-        ASSERT_TRUE(Helper);
-        const auto Begin =
-            MethodSource.find("\nuintptr_t " + Helper->str() + "(void) {\n");
-        ASSERT_NE(Begin, std::string::npos);
-        const auto End = MethodSource.find("\n}", Begin);
-        ASSERT_NE(End, std::string::npos);
-        const auto Definition = MethodSource.substr(Begin, End + 2 - Begin);
-        const auto [It, Added] =
-            IdentityHelpers.emplace(Helper->str(), Definition);
-        EXPECT_EQ(It->second, Definition);
-        MethodSource.erase(Begin, End + 2 - Begin);
+    for (const char *Inventory :
+         {"shared_identity_functions", "shared_storage_functions"})
+      if (const auto *Helpers = Method->getArray(Inventory)) {
+        for (const auto &Value : *Helpers) {
+          const auto Helper = Value.getAsString();
+          ASSERT_TRUE(Helper);
+          if (llvm::StringRef(Inventory) == "shared_storage_functions")
+            StorageNames.insert(Helper->str());
+          const auto Begin =
+              MethodSource.find("\nuintptr_t " + Helper->str() + "(void) {\n");
+          ASSERT_NE(Begin, std::string::npos);
+          const auto End = MethodSource.find("\n}", Begin);
+          ASSERT_NE(End, std::string::npos);
+          const auto Definition = MethodSource.substr(Begin, End + 2 - Begin);
+          const auto [It, Added] =
+              IdentityHelpers.emplace(Helper->str(), Definition);
+          EXPECT_EQ(It->second, Definition);
+          MethodSource.erase(Begin, End + 2 - Begin);
+        }
       }
-    }
     const auto Path =
         Work / ("recovered-" + std::to_string(Sources.size()) + ".c");
     ASSERT_NO_FATAL_FAILURE(write(Path, MethodSource));
@@ -138,7 +147,9 @@ void verifyRuntime(bool Chained, bool Associations = false) {
                Selector->str() + "\"))));\n";
   }
   ASSERT_TRUE(Remaining.empty());
-  EXPECT_EQ(IdentityHelpers.size(), Associations ? 2U : 0U);
+  EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);
+  EXPECT_EQ(IdentityHelpers.size(),
+            (Associations ? 2U : 0U) + StorageNames.size());
   if (!IdentityHelpers.empty()) {
     std::string Shared = "#include <stdint.h>\n";
     for (const auto &[Name, Definition] : IdentityHelpers)
@@ -197,6 +208,17 @@ TEST(ObjCRuntimeSource, RecompiledAssociatedObjectsPreserveLifetimeAndPolicy) {
   for (bool Chained : {false, true}) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
     ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, true));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledProfiledMethodsKeepSharedCounterStorage) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, true, true));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";

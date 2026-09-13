@@ -81,8 +81,16 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::INT_NOT:
   case NdOp::INT_NEGATE:
     return "~" + exprStr(*E.Operands[0], 99);
-  case NdOp::INT_NEG2:
-    return "-" + exprStr(*E.Operands[0], 99);
+  case NdOp::INT_NEG2: {
+    // Reuse the integer subtraction rule for -x, including signed-minimum
+    // wrapping and narrow promotions. Concatenating '-' with a negative
+    // constant would also accidentally spell C's decrement token.
+    auto Negation = HighExpr::makeBinop(
+        NdOp::INT_SUB, HighExpr::makeConst(0, E.Type ? E.Type->Size : 8),
+        E.Operands[0]);
+    Negation->Type = E.Type;
+    return renderBinOp(*Negation, ParentPrec);
+  }
   case NdOp::BOOL_NOT:
     return "!" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_ZEXT: {

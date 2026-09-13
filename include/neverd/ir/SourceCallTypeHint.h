@@ -28,7 +28,10 @@ struct SourceCallTypeHint {
     /// A static key consumed only by associated-object runtime operations.
     /// TargetAddress identifies the original key; rebuilt methods share one
     /// opaque storage identity. This does not bind readable image contents.
-    RuntimeAssociationKey
+    RuntimeAssociationKey,
+    /// Base of a rebuilt numeric profiling-counter section. The SDK proves
+    /// storage extents and permits only bounded, unordered memory accesses.
+    RuntimeProfileCounterStorage
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;
