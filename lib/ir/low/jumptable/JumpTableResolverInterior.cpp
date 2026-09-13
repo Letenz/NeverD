@@ -99,14 +99,8 @@ void CFGBuilder::establishCurrentFuncRange(const BinaryImage &Img,
       Exception->CodeRange.Begin == CurrentFuncEntry)
     ConsiderAuthoritativeEnd(Exception->CodeRange.End);
 
-  for (const auto &[Begin, RangeEnd] : Img.KnownCodeRanges)
-    if (Begin == CurrentFuncEntry)
-      ConsiderAuthoritativeEnd(RangeEnd);
-
-  for (const Symbol &Sym : Img.Symbols)
-    if (Sym.IsFunc && Sym.Addr == CurrentFuncEntry && Sym.Size != 0 &&
-        Sym.Size <= InvalidVA - Sym.Addr)
-      ConsiderAuthoritativeEnd(Sym.Addr + Sym.Size);
+  ConsiderAuthoritativeEnd(
+      Img.getFunctionMetadataEnd(CurrentFuncEntry, ExecutableCodeOwners));
 
   // Even without sized metadata, the next independently detected entry is a
   // hard upper boundary.  It does not prove an unbounded last function.

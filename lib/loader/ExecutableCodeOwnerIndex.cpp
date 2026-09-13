@@ -47,6 +47,18 @@ bool contains(const std::vector<std::pair<va_t, va_t>> &Ranges, va_t Addr) {
   return It != Ranges.begin() && Addr < std::prev(It)->second;
 }
 
+template <typename Visitor>
+void visitFunctionMetadataRanges(const BinaryImage &Image, Visitor Visit) {
+  // InvalidVA means there is no finite ownership end, even if a sized symbol
+  // reaches that address without overflowing.
+  for (const auto &[Start, End] : Image.KnownCodeRanges)
+    if (End > Start && End != InvalidVA)
+      Visit(Start, End);
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && Sym.Size != 0 && Sym.Size < InvalidVA - Sym.Addr)
+      Visit(Sym.Addr, Sym.Addr + Sym.Size);
+}
+
 } // namespace
 
 ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
@@ -73,6 +85,35 @@ ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
   sortUnique(FunctionStarts);
   mergeRanges(ImportRanges);
   mergeRanges(CodeRanges);
+  visitFunctionMetadataRanges(Image, [&](va_t Start, va_t End) {
+    FunctionMetadataEnds.emplace_back(Start, End);
+  });
+  std::sort(FunctionMetadataEnds.begin(), FunctionMetadataEnds.end());
+  FunctionMetadataEnds.erase(
+      std::unique(FunctionMetadataEnds.begin(), FunctionMetadataEnds.end(),
+                  [](const auto &A, const auto &B) { return A.first == B.first; }),
+      FunctionMetadataEnds.end());
+}
+
+va_t ExecutableCodeOwnerIndex::getFunctionMetadataEnd(va_t Entry) const {
+  const auto It = std::lower_bound(
+      FunctionMetadataEnds.begin(), FunctionMetadataEnds.end(), Entry,
+      [](const auto &Range, va_t Address) { return Range.first < Address; });
+  if (It == FunctionMetadataEnds.end() || It->first != Entry)
+    return InvalidVA;
+  return It->second;
+}
+
+va_t BinaryImage::getFunctionMetadataEnd(
+    va_t Entry, const ExecutableCodeOwnerIndex *Index) const {
+  if (Index && Index->Image == this)
+    return Index->getFunctionMetadataEnd(Entry);
+  va_t End = InvalidVA;
+  visitFunctionMetadataRanges(*this, [&](va_t Start, va_t Candidate) {
+    if (Start == Entry)
+      End = std::min(End, Candidate);
+  });
+  return End;
 }
 
 bool ExecutableCodeOwnerIndex::isImportStubAt(va_t Addr) const {

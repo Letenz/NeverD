@@ -1275,6 +1275,14 @@ struct BinaryImage {
   bool hasExecutableCodeOwnerAt(va_t Addr,
                                 const ExecutableCodeOwnerIndex *Index) const;
 
+  /// Smallest finite end from a known range or sized function symbol whose
+  /// raw start is exactly Entry. This does not include containing ranges,
+  /// unwind metadata or the next detected function. InvalidVA means no end.
+  /// Null or a different image's index uses live metadata; a matching index
+  /// must belong to the current unchanged image operation.
+  va_t getFunctionMetadataEnd(
+      va_t Entry, const ExecutableCodeOwnerIndex *Index = nullptr) const;
+
   /// True when p Addr is an authenticated callable entry, rather than merely
   /// an address inside executable code. Untyped COFF exports are deliberately
   /// excluded; they require decode/unwind evidence before a patcher may place

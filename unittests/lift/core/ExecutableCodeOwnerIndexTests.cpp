@@ -2,10 +2,14 @@
 
 #include "gtest/gtest.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 
+#include <algorithm>
 #include <initializer_list>
+#include <set>
 
 using namespace neverd;
 
@@ -217,4 +221,173 @@ TEST(ExecutableCodeOwnerIndex, KeepsMappingPrecedenceAndLiveEntryEvidence) {
     EXPECT_FALSE(Image.hasExecutableCodeOwnerAt(0x401, &Index));
     expectSame(Image, Index);
   }
+}
+
+TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool Thumb : {false, true}) {
+      BinaryImage Image = makeMetadataImage(Format, Thumb);
+      Image.KnownCodeRanges = {
+          {0x100, 0x140}, {0x100, 0x120}, {0x110, 0x150},
+          {0x140, 0x180}, {0x180, 0x180}, {0x190, 0x188},
+          {0x200, InvalidVA}, {0x300, 0x340}, {0x300, 0x310},
+          {0x401, 0x411}, {0, 0x10}, {InvalidVA - 8, InvalidVA}};
+      Image.Symbols = {Symbol::makeFunc(0, 4),
+                       Symbol::makeFunc(0x100, 0x18),
+                       Symbol::makeFunc(0x200, 0x20),
+                       Symbol::makeFunc(0x220),
+                       Symbol::makeFunc(0x230, InvalidVA),
+                       Symbol::makeFunc(0x240, InvalidVA - 0x240),
+                       Symbol::makeFunc(0x300, 0x20),
+                       Symbol::makeFunc(0x401, 4),
+                       Symbol::makeFunc(InvalidVA - 16, 8),
+                       Symbol::makeFunc(InvalidVA, 1)};
+      Symbol Data;
+      Data.Addr = 0x500;
+      Data.Size = 4;
+      Image.Symbols.push_back(Data);
+      const std::pair<va_t, va_t> Expected[] = {
+          {0, 4}, {1, InvalidVA}, {0x100, 0x118}, {0x108, InvalidVA},
+          {0x110, 0x150}, {0x140, 0x180}, {0x180, InvalidVA},
+          {0x190, InvalidVA}, {0x200, 0x220}, {0x220, InvalidVA},
+          {0x230, InvalidVA}, {0x240, InvalidVA}, {0x300, 0x310},
+          {0x400, InvalidVA}, {0x401, 0x405}, {0x402, InvalidVA},
+          {0x500, InvalidVA}, {InvalidVA - 16, InvalidVA - 8},
+          {InvalidVA - 8, InvalidVA}, {InvalidVA, InvalidVA}};
+      for (unsigned Order = 0; Order < 2; ++Order) {
+        {
+          const ExecutableCodeOwnerIndex Index(Image);
+          for (const auto &[Entry, End] : Expected) {
+            EXPECT_EQ(Image.getFunctionMetadataEnd(Entry), End) << Entry;
+            EXPECT_EQ(Image.getFunctionMetadataEnd(Entry, &Index), End)
+                << Entry;
+          }
+        }
+        std::reverse(Image.KnownCodeRanges.begin(), Image.KnownCodeRanges.end());
+        std::reverse(Image.Symbols.begin(), Image.Symbols.end());
+      }
+    }
+}
+
+TEST(ExecutableCodeOwnerIndex, FunctionEndScopeObservesEditsAndImageMismatch) {
+  BinaryImage Image = makeMetadataImage();
+  Image.KnownCodeRanges = {{0x100, 0x140}};
+  Image.Symbols = {Symbol::makeFunc(0x200, 0x20)};
+  {
+    const ExecutableCodeOwnerIndex Index(Image);
+    EXPECT_EQ(Image.getFunctionMetadataEnd(0x100, &Index), 0x140u);
+    EXPECT_EQ(Image.getFunctionMetadataEnd(0x200, &Index), 0x220u);
+    EXPECT_EQ(Image.getFunctionMetadataEnd(0x300, &Index), InvalidVA);
+    BinaryImage Other = Image;
+    Other.KnownCodeRanges = {{0x100, 0x110}, {0x300, 0x340}};
+    Other.Symbols.clear();
+    EXPECT_EQ(Other.getFunctionMetadataEnd(0x100, &Index), 0x110u);
+    EXPECT_EQ(Other.getFunctionMetadataEnd(0x200, &Index), InvalidVA);
+    EXPECT_EQ(Other.getFunctionMetadataEnd(0x300, &Index), 0x340u);
+  }
+  Image.KnownCodeRanges = {{0x300, 0x310}};
+  Image.Symbols = {Symbol::makeFunc(0x100, 8)};
+  const ExecutableCodeOwnerIndex Updated(Image);
+  EXPECT_EQ(Image.getFunctionMetadataEnd(0x100, &Updated), 0x108u);
+  EXPECT_EQ(Image.getFunctionMetadataEnd(0x200, &Updated), InvalidVA);
+  EXPECT_EQ(Image.getFunctionMetadataEnd(0x300, &Updated), 0x310u);
+}
+
+TEST(ExecutableCodeOwnerIndex, IndexedFunctionEndsPreserveNativeInteriorRoots) {
+  enum class Bound { Metadata, Exception, NextEntry, NextOnly, Containing, None };
+  constexpr va_t Entry = 0x1000;
+  for (Arch TargetArch : {Arch::AArch64, Arch::X64})
+    for (Bound Kind : {Bound::Metadata, Bound::Exception, Bound::NextEntry,
+                       Bound::NextOnly, Bound::Containing, Bound::None}) {
+      SCOPED_TRACE(static_cast<int>(TargetArch));
+      SCOPED_TRACE(static_cast<int>(Kind));
+      BinaryImage Image;
+      Image.Format = BinaryFormat::MachO;
+      Image.Arch = TargetArch;
+      Image.Bits = Bitness::Bits64;
+      Image.Entry = Entry;
+      Segment Text;
+      Text.VA = Entry;
+      Text.Size = Text.FileSz = 0x40;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      Text.Data.resize(Text.Size);
+      for (size_t Offset = 0; Offset < Text.Size; Offset += 0x10) {
+        if (TargetArch == Arch::AArch64) {
+          Text.Data[Offset] = 0xc0;
+          Text.Data[Offset + 1] = 0x03;
+          Text.Data[Offset + 2] = 0x5f;
+          Text.Data[Offset + 3] = 0xd6; // ret
+        } else {
+          Text.Data[Offset] = 0xc3; // ret
+        }
+      }
+      Image.Segments.push_back(std::move(Text));
+      Segment Data;
+      Data.VA = 0x8000;
+      Data.Size = Data.FileSz = 3 * sizeof(uint64_t);
+      Data.Flags = SegmentFlags::Readable;
+      Data.Data.resize(Data.Size);
+      for (size_t I = 0; I < 3; ++I) {
+        const va_t Target = Entry + (I + 1) * 0x10;
+        for (unsigned Byte = 0; Byte < sizeof(uint64_t); ++Byte)
+          Data.Data[I * sizeof(uint64_t) + Byte] =
+              static_cast<uint8_t>(Target >> (8 * Byte));
+        Image.CodePtrRelocSlots.insert(Data.VA + I * sizeof(uint64_t));
+      }
+      Image.Segments.push_back(std::move(Data));
+      Image.KnownCodeRanges = {{Entry, Entry + 0x40},
+                               {Entry + 0x10, Entry + 0x40}};
+      Image.Symbols = {Symbol::makeFunc(Entry, 0x30)};
+      std::set<va_t> Entries{Entry};
+      std::set<va_t> Expected{Entry, Entry + 0x10, Entry + 0x20};
+      if (Kind == Bound::Exception || Kind == Bound::Containing) {
+        ExceptionFunction Metadata;
+        Metadata.Kind = RuntimeFunctionKind::Primary;
+        Metadata.CodeRange = {
+            Kind == Bound::Exception ? Entry : Entry - 0x10, Entry + 0x20};
+        Image.ExceptionMetadata.Functions.push_back(Metadata);
+        if (Kind == Bound::Exception)
+          Expected.erase(Entry + 0x20);
+      }
+      if (Kind == Bound::NextEntry) {
+        Entries.insert(Entry + 0x20);
+        Expected.erase(Entry + 0x20);
+      }
+      if (Kind == Bound::NextOnly || Kind == Bound::None) {
+        Image.KnownCodeRanges = {{Entry, InvalidVA}};
+        Image.Symbols = {Symbol::makeFunc(Entry, InvalidVA - Entry)};
+        if (Kind == Bound::NextOnly)
+          Entries.insert(Entry + 0x30);
+        else
+          Expected = {Entry};
+      }
+
+      const ExecutableCodeOwnerIndex Index(Image);
+      BinaryImage Other = Image;
+      Other.KnownCodeRanges = {{Entry, Entry + 0x10}};
+      Other.Symbols.clear();
+      const ExecutableCodeOwnerIndex ForeignIndex(Other);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(TargetArch));
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      std::set<va_t> LiveRoots;
+      for (const ExecutableCodeOwnerIndex *Owners :
+           {static_cast<const ExecutableCodeOwnerIndex *>(nullptr), &Index,
+            &ForeignIndex}) {
+        Builder.setExecutableCodeOwnerIndex(Owners);
+        const LowFunc Func = Builder.build(Image, Dec, Entry);
+        std::set<va_t> Starts;
+        for (const auto &Block : Func.Blocks)
+          Starts.insert(Block.StartAddr);
+        EXPECT_EQ(Starts, Expected);
+        EXPECT_EQ(Func.DecodedInstructionCount, Expected.size());
+        EXPECT_EQ(Func.LiftedInstructionCount, Expected.size());
+        if (!Owners)
+          LiveRoots = Func.ModuleAnalysisRoots;
+        else
+          EXPECT_EQ(Func.ModuleAnalysisRoots, LiveRoots);
+      }
+    }
 }

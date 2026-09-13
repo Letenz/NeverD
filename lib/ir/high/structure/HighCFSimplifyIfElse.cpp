@@ -47,8 +47,7 @@ class ContinuationFolder {
 
   static bool plainValue(const ExprPtr &E) {
     return E && (E->Kind == ExprKind::Var || E->Kind == ExprKind::Const) &&
-           E->Operands.empty() &&
-           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->Operands.empty() && E->MemoryOrdering == NdMemoryOrdering::None &&
            E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
   }
 
@@ -75,8 +74,8 @@ class ContinuationFolder {
     // address. Entering either executes exactly the same assignment prefix.
     // No other occurrence, later body entry or conditional loop is equivalent.
     if (S.Kind != StmtKind::While || S.LoopHeaderAddr != Target ||
-        !plainValue(S.Cond) ||
-        S.Cond->Kind != ExprKind::Const || !S.Cond->ConstVal)
+        !plainValue(S.Cond) || S.Cond->Kind != ExprKind::Const ||
+        !S.Cond->ConstVal)
       return false;
     size_t PrefixOwners = 1;
     for (const auto &Inner : S.Body) {
@@ -89,8 +88,7 @@ class ContinuationFolder {
       ++PrefixOwners;
     }
     auto It = Owners.find(Target);
-    return PrefixOwners > 1 && It != Owners.end() &&
-           It->second == PrefixOwners;
+    return PrefixOwners > 1 && It != Owners.end() && It->second == PrefixOwners;
   }
 
   bool ownsReturn(const HighStmt &Owner, const HighStmt &Return) const {
@@ -114,13 +112,12 @@ class ContinuationFolder {
     }
     if (!Block || Block->Preds.size() != 1 || !Block->Succs.empty() ||
         Block->Id < 0 || static_cast<size_t>(Block->Id) >= Med->Blocks.size() ||
-        &Med->Blocks[Block->Id] != Block ||
-        Targets.count(Block->StartAddr) ||
+        &Med->Blocks[Block->Id] != Block || Targets.count(Block->StartAddr) ||
         (FunctionEntry && (Block->StartAddr == FunctionEntry ||
                            Block->Ops.front().Addr == FunctionEntry)) ||
-        (Med->Entry && (Block->StartAddr == Med->Entry ||
-                        Block->Ops.front().Addr == Med->Entry ||
-                        Return.Addr == Med->Entry)))
+        (Med->Entry &&
+         (Block->StartAddr == Med->Entry ||
+          Block->Ops.front().Addr == Med->Entry || Return.Addr == Med->Entry)))
       return false;
     for (const auto &Op : Block->Ops)
       if (Targets.count(Op.Addr) ||
@@ -213,8 +210,7 @@ public:
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Addr && S.Addr != InvalidVA)
         ++Owners[S.Addr];
-      if (S.Kind == StmtKind::Goto && S.GotoTarget &&
-          S.GotoTarget != InvalidVA)
+      if (S.Kind == StmtKind::Goto && S.GotoTarget && S.GotoTarget != InvalidVA)
         Targets.insert(S.GotoTarget);
       HasEH |= S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
                S.Kind == StmtKind::ItaniumTry || !S.EHClauseBodies.empty() ||
@@ -222,11 +218,11 @@ public:
     });
     if (Med)
       for (const auto &Block : Med->Blocks) {
-        HasEH |= !Block.ExceptionalPreds.empty() ||
-                 !Block.ExceptionalSuccs.empty();
-        const va_t Start = Block.StartAddr
-                               ? Block.StartAddr
-                               : (Block.Ops.empty() ? 0 : Block.Ops.front().Addr);
+        HasEH |=
+            !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty();
+        const va_t Start =
+            Block.StartAddr ? Block.StartAddr
+                            : (Block.Ops.empty() ? 0 : Block.Ops.front().Addr);
         if (Start && Start != InvalidVA)
           NativeEntries.insert(Start);
       }

@@ -655,7 +655,7 @@ std::pair<HighFunc, MedFunc> branchWithScalarContinuation(bool SharedHeader) {
   auto Add = [](va_t Address, int Dst, int Src, uint64_t Increment) {
     auto S = assign(Address, Dst, 0);
     S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(Src),
-                              HighExpr::makeConst(Increment, 8));
+                                HighExpr::makeConst(Increment, 8));
     return S;
   };
   HighStmt VectorLoop;
@@ -664,16 +664,16 @@ std::pair<HighFunc, MedFunc> branchWithScalarContinuation(bool SharedHeader) {
   VectorLoop.Cond = HighExpr::makeConst(1, 1);
   VectorLoop.Body = {Add(0x1044, 1, 1, 10), Break};
   auto Early = conditional(0x1050, 0x1120);
-  Early.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                 HighExpr::makeConst(2, 8));
+  Early.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
   Early.Body = {assign(0x1054, 4, 111), jump(0, 0x1120)};
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
   Inner.Addr = 0x1004;
   Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
-                                 HighExpr::makeConst(1, 8));
-  Inner.Body = {assign(0x1020, 1, 100), VectorLoop, Early,
-                assign(0x1058, 2, 0), jump(0, 0x1100)};
+                                   HighExpr::makeConst(1, 8));
+  Inner.Body = {assign(0x1020, 1, 100), VectorLoop, Early, assign(0x1058, 2, 0),
+                jump(0, 0x1100)};
   Inner.ElseBody = {assign(0x1008, 1, 10), assign(0x100C, 2, 0),
                     jump(0x1010, 0x1100)};
   Inner.Body[3].IsPhiCopy = true;
@@ -682,16 +682,16 @@ std::pair<HighFunc, MedFunc> branchWithScalarContinuation(bool SharedHeader) {
   HighStmt Outer;
   Outer.Kind = StmtKind::IfElse;
   Outer.Addr = 0x1000;
-  Outer.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                 HighExpr::makeConst(0, 8));
+  Outer.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
   Outer.ElseBody = {Inner};
   HighStmt ScalarLoop;
   ScalarLoop.Kind = StmtKind::While;
   ScalarLoop.Addr = ScalarLoop.LoopHeaderAddr = 0x1100;
   ScalarLoop.Cond = HighExpr::makeConst(1, 1);
   auto Exit = conditional(0x1114, 0);
-  Exit.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(2),
-                                HighExpr::makeConst(2, 8));
+  Exit.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(2), HighExpr::makeConst(2, 8));
   Exit.Body = {Break};
   ScalarLoop.Body = {Add(SharedHeader ? 0x1100 : 0x1104, 3, 1, 0),
                      Add(SharedHeader ? 0x1100 : 0x1108, 1, 3, 1),
@@ -700,8 +700,9 @@ std::pair<HighFunc, MedFunc> branchWithScalarContinuation(bool SharedHeader) {
   Label.Kind = StmtKind::Block;
   Label.Addr = 0x1120;
   HighFunc F;
-  F.Body = {Outer, result(0x1080, HighExpr::makeConst(7, 8)), ScalarLoop,
-            Add(0x111C, 4, 1, 0), Label, result(0x1124, local(4))};
+  F.Body = {Outer,      result(0x1080, HighExpr::makeConst(7, 8)),
+            ScalarLoop, Add(0x111C, 4, 1, 0),
+            Label,      result(0x1124, local(4))};
 
   MedFunc Med;
   Med.Blocks.resize(3);
@@ -767,19 +768,18 @@ TEST(HighControlFlowSemantics, ContinuationFoldingPreservesExternalEntries) {
     EXPECT_EQ(execute(F, 2), 111u);
     size_t Entries = 0;
     walkStmts(F.Body, [&](const HighStmt &S) {
-      Entries += S.Addr == Entry &&
-                 (Entry == 0x1010 ? S.Kind == StmtKind::Goto
-                                  : S.Kind == StmtKind::Return);
+      Entries +=
+          S.Addr == Entry && (Entry == 0x1010 ? S.Kind == StmtKind::Goto
+                                              : S.Kind == StmtKind::Return);
     });
     if (Entry == 0x1010)
       EXPECT_EQ(Entries, 1u);
     else {
       // The native block entry may already have been erased by DCE.
-      EXPECT_TRUE(std::any_of(F.Body.begin(), F.Body.end(),
-                              [](const HighStmt &S) {
-                                return S.Kind == StmtKind::Return &&
-                                       S.Addr == 0x1080;
-                              }));
+      EXPECT_TRUE(
+          std::any_of(F.Body.begin(), F.Body.end(), [](const HighStmt &S) {
+            return S.Kind == StmtKind::Return && S.Addr == 0x1080;
+          }));
       EXPECT_EQ(execute(F, 99), 7u);
     }
   }
@@ -834,8 +834,10 @@ TEST(HighControlFlowSemantics, ContinuationFoldingRequiresNativeReturnOwner) {
     EXPECT_EQ(F.Body[1].Kind, StmtKind::Return) << Mutation;
     EXPECT_EQ(F.Body[1].Addr, 0x1080u) << Mutation;
     for (uint64_t Input : {0, 1, 2, 3})
-      EXPECT_EQ(execute(F, Input), Input == 0 ? 7u : Input == 1 ? 12u
-                                        : Input == 2 ? 111u : 112u);
+      EXPECT_EQ(execute(F, Input), Input == 0   ? 7u
+                                   : Input == 1 ? 12u
+                                   : Input == 2 ? 111u
+                                                : 112u);
   }
   auto [F, Med] = branchWithScalarContinuation(false);
   F.Entry = 0x1080;
@@ -850,8 +852,8 @@ TEST(HighControlFlowSemantics, ReturnContinuationRejectsEffectsAndAmbiguity) {
     if (Mutation == 0)
       F.Body[4].Body = {assign(0x1120, 4, 42)};
     else if (Mutation == 1)
-      F.Body.back().RetVal = HighExpr::makeLoad(
-          HighExpr::makeConst(0x8000, 8), NdType::makeInt(8));
+      F.Body.back().RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x8000, 8),
+                                                NdType::makeInt(8));
     else if (Mutation == 2)
       F.Body.push_back(assign(0x1120, 4, 42));
     else if (Mutation == 3)

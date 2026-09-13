@@ -29,12 +29,16 @@ private:
 
   bool isImportStubAt(va_t Addr) const;
   bool hasKnownOrTypedOwnerAt(va_t Addr) const;
+  va_t getFunctionMetadataEnd(va_t Entry) const;
 
   const BinaryImage *Image;
   std::vector<va_t> ImportStubs;
   std::vector<std::pair<va_t, va_t>> ImportRanges;
   std::vector<va_t> FunctionStarts;
   std::vector<std::pair<va_t, va_t>> CodeRanges;
+  // Exact raw entries and their smallest finite end, without normalization
+  // or merging overlapping functions into one owner.
+  std::vector<std::pair<va_t, va_t>> FunctionMetadataEnds;
 };
 
 } // namespace neverd
