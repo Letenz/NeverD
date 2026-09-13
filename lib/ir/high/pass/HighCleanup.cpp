@@ -24,6 +24,56 @@
 
 namespace neverd {
 
+void coalesceBranchEntryStatements(HighFunc &Func) {
+  std::set<va_t> Targets;
+  walkStmts(Func.Body, [&](const HighStmt &Statement) {
+    if (Statement.Kind == StmtKind::Goto && Statement.GotoTarget &&
+        Statement.GotoTarget != InvalidVA)
+      Targets.insert(Statement.GotoTarget);
+  });
+  if (Targets.empty())
+    return;
+  std::function<void(std::vector<HighStmt> &)> Group = [&](auto &Body) {
+    for (auto &Statement : Body) {
+      Group(Statement.Body);
+      Group(Statement.ElseBody);
+      for (auto &Case : Statement.Cases)
+        Group(Case.Body);
+      Group(Statement.DefaultBody);
+      for (auto &Clause : Statement.EHClauseBodies)
+        Group(Clause);
+    }
+    std::vector<HighStmt> Result;
+    Result.reserve(Body.size());
+    for (size_t I = 0; I < Body.size();) {
+      size_t End = I + 1;
+      const va_t Address = Body[I].Addr;
+      if (Targets.count(Address))
+        while (End < Body.size() && Body[End].Addr == Address)
+          ++End;
+      if (End == I + 1) {
+        Result.push_back(std::move(Body[I++]));
+        continue;
+      }
+      // A native instruction and its edge copies share one source entry.
+      // Group only adjacent statements in this scope, after all structuring
+      // has consumed their original addresses. Entering the label executes
+      // the complete sequence in order; separated duplicates stay ambiguous.
+      HighStmt Entry;
+      Entry.Kind = StmtKind::Block;
+      Entry.Addr = Address;
+      Entry.Body.reserve(End - I);
+      for (; I < End; ++I) {
+        Body[I].Addr = 0;
+        Entry.Body.push_back(std::move(Body[I]));
+      }
+      Result.push_back(std::move(Entry));
+    }
+    Body = std::move(Result);
+  };
+  Group(Func.Body);
+}
+
 //===----------------------------------------------------------------------===//
 // Stack canary stripping
 //===----------------------------------------------------------------------===//

@@ -41,6 +41,8 @@
 
 namespace neverd {
 
+void coalesceBranchEntryStatements(HighFunc &Func);
+
 namespace {
 
 // Temporary, opt-in observation of the actual source-recovery conversion.
@@ -598,6 +600,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   Trace.high(Func, "after-dce");
   foldStructuredContinuations(Func, &Med);
   structureExceptionRegions(Func, Med);
+  coalesceBranchEntryStatements(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 

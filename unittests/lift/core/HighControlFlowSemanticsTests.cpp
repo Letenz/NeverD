@@ -150,6 +150,11 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
         (void)Value(S.CallExpr);
       if (S.Kind == StmtKind::Assign)
         Values[varKey(S.Dst->Var)] = Value(S.Val);
+      if (S.Kind == StmtKind::Block) {
+        auto R = Run(S.Body);
+        if (R.Return || R.Target || R.Break || R.Continue)
+          return R;
+      }
       if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) {
         auto R = Run(Value(S.Cond) ? S.Body : S.ElseBody);
         if (R.Return || R.Target || R.Break || R.Continue)
@@ -955,6 +960,34 @@ TEST(HighControlFlowSemantics, ParallelPhiCyclesRunOnlyOnTheirTakenEdge) {
         EXPECT_EQ(execute(F, Count), Count % 2 ? 102u : 201u);
       }
     }
+}
+
+TEST(HighControlFlowSemantics, ConditionalLatchPreservesExitPhiAndBypass) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Med = loopFunction(Architecture, false, false);
+    auto Condition = machineValue(10, Architecture);
+    Condition.Size = 1;
+    auto Output = machineValue(11, Architecture);
+    auto &Entry = Med.Blocks[0];
+    Entry.Succs = {1, 2};
+    Entry.Ops = {operation(NdOp::INT_EQUAL, 0x1000, Condition,
+                           {Med.Params[0], MedVar::makeConst(0, 8)}),
+                 operation(NdOp::COND_BR, 0x1004, {},
+                           {MedVar::makeConst(0x1200, 8), Condition})};
+    auto &Exit = Med.Blocks[2];
+    Exit.Preds = {0, 1};
+    Exit.Phis = {
+        {Output,
+         {{0, MedVar::makeConst(99, 8)}, {1, machineValue(4, Architecture)}}}};
+    Exit.Ops[0].Inputs[0] = Output;
+    auto Function = MedToHighConverter().convert(Med, Architecture);
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      if (Statement.Kind == StmtKind::Goto)
+        EXPECT_NE(Statement.GotoTarget, 0U);
+    });
+    for (unsigned Count = 0; Count != 9; ++Count)
+      EXPECT_EQ(execute(Function, Count), Count ? 2 * Count + 1 : 99);
+  }
 }
 
 TEST(HighControlFlowSemantics, LoopExpressionKeepsItsPrePhiSnapshot) {

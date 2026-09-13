@@ -11,6 +11,10 @@
 
 using namespace neverd;
 
+namespace neverd {
+void coalesceBranchEntryStatements(HighFunc &Func);
+}
+
 namespace {
 ExprPtr parameter(unsigned Id, TypeRef Type) {
   MedVar V;
@@ -113,6 +117,83 @@ void compileAndRun(const std::string &Source) {
   const int Ran = llvm::sys::ExecuteAndWait(
       BinaryPath, {BinaryPath}, std::nullopt, Redirects, 30, 0, &Error);
   ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
+}
+
+TEST(HighCSourceCalls, SharedNativeEntryExecutesCallAndPhiExactlyOnce) {
+  const auto Integer = NdType::makeInt(4);
+  MedVar Variable;
+  Variable.Kind = MedVar::Temp;
+  Variable.Id = 10;
+  Variable.Size = 4;
+  const auto Local = HighExpr::makeVar(Variable, Integer);
+  auto Function = returning("entry_group", Local, {Integer});
+  auto Return = Function.Body.back();
+  Return.Addr = 0x1300;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x1220;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Addr = 0x1200;
+  Branch.Cond = parameter(0, Integer);
+  Branch.Body = {Jump};
+  HighStmt Initial;
+  Initial.Kind = StmtKind::Assign;
+  Initial.Addr = 0x1204;
+  Initial.Dst = Local;
+  Initial.Val = HighExpr::makeConst(7, 4);
+  HighStmt Skip = Jump;
+  Skip.GotoTarget = Return.Addr;
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.Addr = 0x1220;
+  Call.CallExpr = call(native("observe_entry", NdType::makeVoid(), {Integer}),
+                       NdType::makeVoid(), {HighExpr::makeConst(5, 4)});
+  HighStmt Phi = Initial;
+  Phi.Addr = Call.Addr;
+  Phi.Val = HighExpr::makeConst(42, 4);
+  Phi.IsPhiCopy = true;
+  Function.Body = {Branch, Initial, Skip, Call, Phi, Return};
+  coalesceBranchEntryStatements(Function);
+  compileAndRun(emit({Function}) + R"(
+static int calls;
+void observe_entry(int32_t value) { calls = calls * 10 + value; }
+int main(void) {
+    if (entry_group(0) != 7 || calls != 0) return 1;
+    if (entry_group(1) != 42 || calls != 5) return 2;
+    if (entry_group(0) != 7 || calls != 5) return 3;
+    return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, NoncontiguousOrNestedEntriesRemainAmbiguous) {
+  for (bool Nested : {false, true}) {
+    auto Function = returning("ambiguous_entry", HighExpr::makeConst(1, 4));
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = 0x1220;
+    HighStmt First;
+    First.Kind = StmtKind::Block;
+    First.Addr = 0x1220;
+    HighStmt Second = First;
+    Second.IsPhiCopy = true;
+    HighStmt Separator;
+    Separator.Kind = StmtKind::Block;
+    Separator.Addr = 0x1230;
+    if (Nested) {
+      Separator.Body.push_back(Second);
+      Function.Body = {Jump, First, Separator, Function.Body.back()};
+    } else {
+      Function.Body = {Jump, First, Separator, Second, Function.Body.back()};
+    }
+    coalesceBranchEntryStatements(Function);
+    unsigned Entries = 0;
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      Entries += Statement.Addr == 0x1220;
+    });
+    EXPECT_EQ(Entries, 2U);
+  }
 }
 
 TEST(HighCSourceCalls,
