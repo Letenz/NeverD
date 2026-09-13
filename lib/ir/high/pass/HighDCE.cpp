@@ -148,9 +148,47 @@ static bool isSelfAssign(const HighStmt &S) {
   return VK(S.Dst->Var) == VK(S.Val->Var);
 }
 
+static std::unordered_set<va_t>
+referencedStatementEntries(const std::vector<HighStmt> &Stmts) {
+  std::unordered_set<va_t> Entries;
+  walkStmts(Stmts, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Entries.insert(S.GotoTarget);
+  });
+  return Entries;
+}
+
 static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
-                                 const VarKeySet &Refs) {
+                                 const VarKeySet &Refs,
+                                 const std::unordered_set<va_t> &Entries) {
   bool Changed = false;
+  if (!Entries.empty()) {
+    for (size_t I = 0; I < Stmts.size();) {
+      const size_t First = I++;
+      const va_t Entry = Stmts[First].Addr;
+      while (I < Stmts.size() && Stmts[I].Addr == Entry)
+        ++I;
+      if (!Entries.count(Entry))
+        continue;
+      bool AllDead = true;
+      for (size_t J = First; J < I; ++J)
+        AllDead &= isSelfAssign(Stmts[J]) || isDeadAssign(Stmts[J], Refs);
+      if (!AllDead)
+        continue;
+      // A dead value does not make its branch entry dead. Keep that exact
+      // position as an empty statement block while discarding the expression.
+      // Several consecutive assignments can come from one instruction: keep
+      // only one entry, and let any surviving statement own its original label.
+      // Nops are removed by a later pass; an empty block also emits a valid
+      // statement when the label is the last entry in its containing body.
+      auto &S = Stmts[First];
+      S = HighStmt{};
+      S.Kind = StmtKind::Block;
+      S.Addr = Entry;
+      Changed = true;
+    }
+  }
   Stmts.erase(std::remove_if(Stmts.begin(), Stmts.end(),
                              [&](const HighStmt &S) {
                                if (isSelfAssign(S)) {
@@ -165,14 +203,15 @@ static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
                              }),
               Stmts.end());
   for (auto &S : Stmts) {
-    if (!S.Body.empty() && eliminateDeadAssigns(S.Body, Refs))
+    if (!S.Body.empty() && eliminateDeadAssigns(S.Body, Refs, Entries))
       Changed = true;
-    if (!S.ElseBody.empty() && eliminateDeadAssigns(S.ElseBody, Refs))
+    if (!S.ElseBody.empty() && eliminateDeadAssigns(S.ElseBody, Refs, Entries))
       Changed = true;
     for (auto &C : S.Cases)
-      if (eliminateDeadAssigns(C.Body, Refs))
+      if (eliminateDeadAssigns(C.Body, Refs, Entries))
         Changed = true;
-    if (!S.DefaultBody.empty() && eliminateDeadAssigns(S.DefaultBody, Refs))
+    if (!S.DefaultBody.empty() &&
+        eliminateDeadAssigns(S.DefaultBody, Refs, Entries))
       Changed = true;
   }
   return Changed;
@@ -182,79 +221,57 @@ static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
 // Phase 0: Remove unreachable code after terminators
 //===----------------------------------------------------------------------===//
 
-void removeUnreachableCode(std::vector<HighStmt> &Stmts) {
+static bool removeUnreachableCode(std::vector<HighStmt> &Stmts,
+                                  const std::unordered_set<va_t> &Entries) {
+  bool HasEntries = false;
+  bool FallsThrough = true;
+  size_t Kept = 0;
   for (size_t I = 0; I < Stmts.size(); ++I) {
-    bool IsTerminator = (Stmts[I].Kind == StmtKind::Return ||
-                         Stmts[I].Kind == StmtKind::Break ||
-                         Stmts[I].Kind == StmtKind::Continue);
+    auto &S = Stmts[I];
+    bool HasEntry = Entries.count(S.Addr) != 0;
+    HasEntry |= removeUnreachableCode(S.Body, Entries);
+    HasEntry |= removeUnreachableCode(S.ElseBody, Entries);
+    for (auto &C : S.Cases)
+      HasEntry |= removeUnreachableCode(C.Body, Entries);
+    HasEntry |= removeUnreachableCode(S.DefaultBody, Entries);
+    // Exception bodies retain their existing cleanup policy, but an entry
+    // inside one still makes the containing statement reachable.
+    for (const auto &Clause : S.EHClauseBodies)
+      walkStmts(Clause, [&](const HighStmt &Nested) {
+        HasEntry |= Entries.count(Nested.Addr) != 0;
+      });
+    HasEntries |= HasEntry;
 
-    if (!IsTerminator)
-      IsTerminator = switchAlwaysReturns(Stmts[I]);
-
-    if (IsTerminator && I + 1 < Stmts.size()) {
-      Stmts.erase(Stmts.begin() + static_cast<long>(I + 1), Stmts.end());
-      break;
-    }
-
-    if (!Stmts[I].Body.empty())
-      removeUnreachableCode(Stmts[I].Body);
-    if (!Stmts[I].ElseBody.empty())
-      removeUnreachableCode(Stmts[I].ElseBody);
-    for (auto &C : Stmts[I].Cases)
-      if (!C.Body.empty())
-        removeUnreachableCode(C.Body);
-    if (!Stmts[I].DefaultBody.empty())
-      removeUnreachableCode(Stmts[I].DefaultBody);
+    // A terminator ends fallthrough, not incoming branches. Resume at the
+    // next referenced entry, including an entry nested in a statement tree.
+    if (!FallsThrough && !HasEntry)
+      continue;
+    FallsThrough = S.Kind != StmtKind::Return && S.Kind != StmtKind::Break &&
+                   S.Kind != StmtKind::Continue && !switchAlwaysReturns(S);
+    if (Kept != I)
+      Stmts[Kept] = std::move(S);
+    ++Kept;
   }
+  Stmts.resize(Kept);
+  return HasEntries;
+}
+
+void removeUnreachableCode(std::vector<HighStmt> &Stmts) {
+  const auto Entries = referencedStatementEntries(Stmts);
+  removeUnreachableCode(Stmts, Entries);
 }
 
 //===----------------------------------------------------------------------===//
 // Pre-DCE: Quick dead assignment elimination pass
 //===----------------------------------------------------------------------===//
 
-static void preDCE(std::vector<HighStmt> &Stmts) {
-  std::function<bool(std::vector<HighStmt> &, const VarKeySet &)> PreElim;
-  PreElim = [&](std::vector<HighStmt> &Body, const VarKeySet &Refs) -> bool {
-    bool Changed = false;
-    Body.erase(std::remove_if(Body.begin(), Body.end(),
-                              [&](const HighStmt &S) {
-                                if (S.Kind == StmtKind::Assign && S.Dst &&
-                                    S.Val && S.Dst->Kind == ExprKind::Var &&
-                                    S.Val->Kind != ExprKind::Call &&
-                                    !S.Val->hasOrderedMemoryAccess() &&
-                                    Refs.count(VK(S.Dst->Var)) == 0) {
-                                  Changed = true;
-                                  return true;
-                                }
-                                if (S.Kind == StmtKind::Assign && S.Dst &&
-                                    S.Val && S.Dst->Kind == ExprKind::Var &&
-                                    S.Val->Kind == ExprKind::Var &&
-                                    VK(S.Dst->Var) == VK(S.Val->Var)) {
-                                  Changed = true;
-                                  return true;
-                                }
-                                return false;
-                              }),
-               Body.end());
-    for (auto &S : Body) {
-      if (!S.Body.empty() && PreElim(S.Body, Refs))
-        Changed = true;
-      if (!S.ElseBody.empty() && PreElim(S.ElseBody, Refs))
-        Changed = true;
-      for (auto &C : S.Cases)
-        if (PreElim(C.Body, Refs))
-          Changed = true;
-      if (!S.DefaultBody.empty() && PreElim(S.DefaultBody, Refs))
-        Changed = true;
-    }
-    return Changed;
-  };
-
+static void preDCE(std::vector<HighStmt> &Stmts,
+                   const std::unordered_set<va_t> &Entries) {
   size_t Before = Stmts.size();
   for (int PreIter = 0; PreIter < 8; ++PreIter) {
     VarKeySet Refs;
     collectStmtRefs(Stmts, Refs);
-    if (!PreElim(Stmts, Refs))
+    if (!eliminateDeadAssigns(Stmts, Refs, Entries))
       break;
   }
   if (Stmts.size() < Before)
@@ -338,7 +355,8 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts) {
 // Phase 13: Iterative liveness-based DCE with expression inlining
 //===----------------------------------------------------------------------===//
 
-static void iterativeDCE(HighFunc &Func) {
+static void iterativeDCE(HighFunc &Func,
+                         const std::unordered_set<va_t> &Entries) {
   for (int Outer = 0; Outer < 6; ++Outer) {
     LLVM_DEBUG(llvm::dbgs() << "      dce iter " << Outer << "/6 (" << Func.Name
                             << ", " << Func.Body.size() << " stmts)\n");
@@ -346,7 +364,7 @@ static void iterativeDCE(HighFunc &Func) {
     for (int Iter = 0; Iter < 10; ++Iter) {
       VarKeySet Refs;
       collectStmtRefs(Func.Body, Refs);
-      if (!eliminateDeadAssigns(Func.Body, Refs))
+      if (!eliminateDeadAssigns(Func.Body, Refs, Entries))
         break;
       DCEChanged = true;
     }
@@ -389,12 +407,13 @@ static void iterativeDCE(HighFunc &Func) {
 void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   ExprRecurseDepth = 0;
   breakStmtCycles(Func.Body);
+  const auto Entries = referencedStatementEntries(Func.Body);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 0: unreachable (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
-  removeUnreachableCode(Func.Body);
+  removeUnreachableCode(Func.Body, Entries);
 
-  preDCE(Func.Body);
+  preDCE(Func.Body, Entries);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 1: alias (" << Func.Name << ", "
                           << Func.Body.size() << " stmts)\n");
@@ -449,7 +468,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 13: iterative DCE (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
-  iterativeDCE(Func);
+  iterativeDCE(Func, Entries);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 14: var rename (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");

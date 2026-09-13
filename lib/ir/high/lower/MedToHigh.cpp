@@ -50,7 +50,7 @@ class HighConversionTrace {
   Arch Architecture;
   unsigned Invocation = 0;
   bool Enabled = false;
-  static constexpr size_t MaxBytes = 32768;
+  static constexpr size_t MaxBytes = 98304;
   static constexpr unsigned MaxRecords = 4096;
 
   static void variable(llvm::raw_ostream &OS, const MedVar &V) {
@@ -87,8 +87,9 @@ class HighConversionTrace {
       llvm::SmallString<4096> Buffer;
       llvm::raw_svector_ostream OS(Buffer);
       OS << "[neverd-high-trace] begin invocation=" << Invocation
-         << " phase=" << Phase << " arch=" << static_cast<unsigned>(Architecture)
-         << " entry=0x" << llvm::utohexstr(Med.Entry) << " function=";
+         << " phase=" << Phase
+         << " arch=" << static_cast<unsigned>(Architecture) << " entry=0x"
+         << llvm::utohexstr(Med.Entry) << " function=";
       OS.write_escaped(Med.Name);
       OS << '\n';
       unsigned Records = 0;
@@ -129,7 +130,7 @@ public:
         std::string_view(Selected) == std::string_view(Med.Name)) {
       static std::atomic<unsigned> Count{0};
       Invocation = Count.fetch_add(1, std::memory_order_relaxed);
-      Enabled = Invocation < 4;
+      Enabled = Invocation < 1;
     }
     errno = SavedErrno;
   }

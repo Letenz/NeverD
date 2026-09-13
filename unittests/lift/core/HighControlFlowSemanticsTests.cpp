@@ -873,6 +873,86 @@ TEST(HighControlFlowSemantics, SwitchCleanupPreservesContinuationPaths) {
   }
 }
 
+TEST(HighControlFlowSemantics,
+     UnreachableCleanupPreservesIncomingTailBranches) {
+  HighFunc F;
+  auto First = conditional(0x1000, 0x1100);
+  First.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                  HighExpr::makeConst(1, 8));
+  auto Second = conditional(0x1004, 0x1200);
+  Second.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                   HighExpr::makeConst(2, 8));
+  F.Body = {First, Second, result(0x1008, HighExpr::makeConst(7, 8)),
+            assign(0x1010, 1, 99), assign(0x1100, 1, 11),
+            result(0x1104, local(1)), assign(0x1110, 1, 99),
+            assign(0x1200, 1, 22), result(0x1204, local(1)),
+            assign(0x1210, 1, 99)};
+  for (uint64_t Input : {0, 1, 2})
+    ASSERT_EQ(execute(F, Input), Input == 0 ? 7u : Input * 11);
+  removeUnreachableCode(F.Body);
+  expectUniqueGotoTargets(F);
+  for (uint64_t Input : {0, 1, 2})
+    EXPECT_EQ(execute(F, Input), Input == 0 ? 7u : Input * 11);
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    EXPECT_NE(S.Addr, 0x1010u);
+    EXPECT_NE(S.Addr, 0x1110u);
+    EXPECT_NE(S.Addr, 0x1210u);
+  });
+}
+
+TEST(HighControlFlowSemantics, UnreachableCleanupKeepsNestedIncomingEntries) {
+  for (unsigned Edge = 0; Edge < 5; ++Edge) {
+    SCOPED_TRACE(Edge);
+    HighStmt Container;
+    Container.Kind = StmtKind::IfElse;
+    Container.Addr = 0x1100;
+    Container.Cond = local(0);
+    std::vector<HighStmt> Tail{
+        result(0x1100, HighExpr::makeConst(1, 8)),
+        assign(0x1104, 1, 99), result(0x1108, local(1))};
+    switch (Edge) {
+    case 0:
+      Container.Body = Tail;
+      break;
+    case 1:
+      Container.ElseBody = Tail;
+      break;
+    case 2:
+      Container.Kind = StmtKind::Switch;
+      Container.SwitchExpr = local(0);
+      Container.Cases.emplace_back();
+      Container.Cases.back().Body = Tail;
+      break;
+    case 3:
+      Container.Kind = StmtKind::Switch;
+      Container.SwitchExpr = local(0);
+      Container.DefaultBody = Tail;
+      break;
+    case 4:
+      Container.Kind = StmtKind::CxxTry;
+      Container.EHClauses.emplace_back();
+      Container.EHClauses.back().Kind = HighEHClauseKind::CxxCatch;
+      Container.EHClauseBodies.push_back(Tail);
+      break;
+    }
+    HighFunc F;
+    F.Body = {conditional(0x1000, 0x1104),
+              result(0x1004, HighExpr::makeConst(7, 8)), Container};
+    removeUnreachableCode(F.Body);
+    expectUniqueGotoTargets(F);
+    bool FoundValue = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      if (S.Addr == 0x1104) {
+        ASSERT_EQ(S.Kind, StmtKind::Assign);
+        ASSERT_TRUE(S.Val);
+        EXPECT_EQ(S.Val->ConstVal, 99u);
+        FoundValue = true;
+      }
+    });
+    EXPECT_TRUE(FoundValue);
+  }
+}
+
 TEST(HighControlFlowSemantics, ArgumentValueDoesNotMakeFrameStoreDead) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
