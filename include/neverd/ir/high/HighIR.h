@@ -436,6 +436,10 @@ struct HighFunc {
   unsigned UnstructuredExceptionRegions = 0;
 };
 
+/// The entry register represented by the source projection's private frame.
+bool isSyntheticEntryStackPointer(const MedVar &Value, const HighFunc &Function,
+                                  Arch Architecture);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_HIGH_HIGHIR_H

@@ -237,6 +237,18 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   } else if (Canonical == "objc_copyWeak" || Canonical == "objc_moveWeak") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"destination", Slot}, {"source", Slot}};
+  } else if (Canonical == "objc_getAssociatedObject") {
+    Signature.ReturnType = Object;
+    Signature.Parameters = {{"object", Object}, {"key", Object}};
+  } else if (Canonical == "objc_setAssociatedObject") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"object", Object},
+                            {"key", Object},
+                            {"value", Object},
+                            {"policy", NdType::makeInt(8, false)}};
+  } else if (Canonical == "objc_removeAssociatedObjects") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"object", Object}};
   } else if (Canonical == "objc_setProperty_atomic" ||
              Canonical == "objc_setProperty_nonatomic" ||
              Canonical == "objc_setProperty_atomic_copy" ||

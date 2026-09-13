@@ -10,10 +10,19 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 namespace neverd {
+
+bool isSyntheticEntryStackPointer(const MedVar &Value, const HighFunc &Function,
+                                  Arch Architecture) {
+  return (Function.FrameSize > 0 || Function.FrameHeadroom > 0) &&
+         Value.Kind == MedVar::Reg && Value.RenameTag < 0 &&
+         Value.SSAVer == 0 &&
+         Value.RegOff == getTargetRegInfo(Architecture).StackPointer;
+}
 
 //===----------------------------------------------------------------------===//
 // intrinsic helpers

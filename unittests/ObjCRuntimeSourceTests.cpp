@@ -39,7 +39,7 @@ void run(const std::vector<std::string> &Arguments,
   ASSERT_EQ(Status, 0) << Error << '\n' << read(Err);
 }
 
-void verifyRuntime(bool Chained) {
+void verifyRuntime(bool Chained, bool Associations = false) {
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
@@ -49,13 +49,14 @@ void verifyRuntime(bool Chained) {
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
+  const char *Fixture = Associations ? "ObjCAssociations.m" : "ObjCARC.m";
+  const char *Harness =
+      Associations ? "ObjCAssociationsHarness.m" : "ObjCARCHarness.m";
   const auto Original = (Work / "original.dylib").string();
   const std::string Compiler = NEVERD_TEST_CLANG;
   std::vector<std::string> Compile{
-      Compiler,      "-O2",
-      "-g0",         "-fobjc-arc",
-      "-dynamiclib", "-framework",
-      "Foundation",  (Fixtures / "ObjCARC.m").string(),
+      Compiler,      "-O2",        "-g0",        "-fobjc-arc",
+      "-dynamiclib", "-framework", "Foundation", (Fixtures / Fixture).string(),
       "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
@@ -74,10 +75,13 @@ void verifyRuntime(bool Chained) {
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), 7U);
+  ASSERT_EQ(Methods->size(), Associations ? 3U : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
+  if (Associations)
+    Remaining = {"objectForKey:", "storeObject:forKey:policy:",
+                 "clearAssociatedObjects"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"NDARCBox\");\n";
@@ -113,7 +117,7 @@ void verifyRuntime(bool Chained) {
              "-framework",
              "Foundation",
              "-I" + Work.string(),
-             (Fixtures / "ObjCARCHarness.m").string(),
+             (Fixtures / Harness).string(),
              Original,
              "-o",
              Baseline};
@@ -126,9 +130,11 @@ void verifyRuntime(bool Chained) {
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
-  EXPECT_EQ(
-      read(Work / "recovered.out"),
-      "strong=pass\nweak=pass\ncopy=pass\ndestructor=pass\ndestroyed=3\n");
+  EXPECT_EQ(read(Work / "recovered.out"),
+            Associations ? "associations=pass\nretain=pass\ncopy=pass\nclear="
+                           "pass\ndestroyed=1\n"
+                         : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
+                           "pass\ndestroyed=3\n");
 }
 #endif
 
@@ -137,6 +143,17 @@ TEST(ObjCRuntimeSource, RecompiledARCMethodsPreserveActualObjectLifetimes) {
   for (bool Chained : {false, true}) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
     ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledAssociatedObjectsPreserveLifetimeAndPolicy) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, true));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";

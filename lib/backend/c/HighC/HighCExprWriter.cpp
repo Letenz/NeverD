@@ -22,9 +22,7 @@ namespace neverd {
 
 std::string HighCWriter::varName(const MedVar &V) {
   if (CurrentFunc &&
-      (CurrentFunc->FrameSize > 0 || CurrentFunc->FrameHeadroom > 0) &&
-      V.Kind == MedVar::Reg && V.RenameTag < 0 && V.SSAVer == 0 &&
-      V.RegOff == getTargetRegInfo(Opts.TheArch).StackPointer)
+      isSyntheticEntryStackPointer(V, *CurrentFunc, Opts.TheArch))
     return "frame_base";
   if (V.RenameTag >= 0)
     return "v" + std::to_string(V.RenameTag);

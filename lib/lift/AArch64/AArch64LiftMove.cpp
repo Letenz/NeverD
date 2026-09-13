@@ -55,8 +55,7 @@ bool liftMove(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     NdVar Src = L.operandRead(S, ARM64.operands[1]);
     NdVar Dst = L.operandWrite(ARM64.operands[0]);
     if (ARM64.operands[0].type == AARCH64_OP_REG &&
-        ARM64.operands[1].type == AARCH64_OP_IMM &&
-        Dst.Size == a64reg::ZSize) {
+        ARM64.operands[1].type == AARCH64_OP_IMM && Dst.Size == a64reg::ZSize) {
       uint16_t ElemSize = 0;
       switch (ARM64.operands[0].vas) {
       case AARCH64LAYOUT_VL_B:

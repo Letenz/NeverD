@@ -194,6 +194,40 @@ TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   }
 }
 
+TEST(ObjCCallHints, AssociatedObjectImportsPreserveKeyValueAndPolicyCarriers) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (const auto &[Name, Count] :
+         {std::pair{"objc_getAssociatedObject", 2U},
+          std::pair{"objc_setAssociatedObject", 4U},
+          std::pair{"objc_removeAssociatedObjects", 1U}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      ASSERT_EQ(Call.Args.size(), Count);
+      const auto &Hint = Call.SourceCallHint->Signature;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      for (size_t I = 0; I < Count; ++I) {
+        EXPECT_EQ(Call.Args[I].RegOff, TRI.IntParamRegs[I]);
+        EXPECT_EQ(Call.Args[I].Size, 8U);
+        EXPECT_EQ(Hint.Parameters[I].Type->Kind,
+                  I == 3 ? NdTypeKind::Int : NdTypeKind::Ptr);
+      }
+      if (Count == 4)
+        EXPECT_FALSE(Hint.Parameters[3].Type->IsSigned);
+      EXPECT_EQ(Hint.ReturnType->Kind,
+                Count == 2 ? NdTypeKind::Ptr : NdTypeKind::Void);
+      const auto &Op = Med.Blocks[Call.BlockId].Ops[Call.OpIdx];
+      EXPECT_EQ(Op.Output.Size, Count == 2 ? 8U : 0U);
+      Image.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+    }
+  }
+}
+
 TEST(ObjCCallHints, RegisterSpecificRuntimeCallsReadTheNamedRegister) {
   for (unsigned Register : {0, 1, 8, 15, 19, 20, 28}) {
     for (llvm::StringRef Operation : {"retain", "release"}) {

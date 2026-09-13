@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCLocale.h"
 #include "neverd/libc/LibCMath.h"
 #include "neverd/libc/LibCNlTypes.h"
+#include "neverd/libc/LibCObjC.h"
 #include "neverd/libc/LibCPoll.h"
 #include "neverd/libc/LibCPthread.h"
 #include "neverd/libc/LibCRegex.h"
@@ -116,6 +117,7 @@ struct Registry {
     registerFunctions(All, ToHeader, kFcntlFunctions, kFcntlHeader);
     registerFunctions(All, ToHeader, kLinkFunctions, kLinkHeader);
     registerFunctions(All, ToHeader, kNlTypesFunctions, kNlTypesHeader);
+    registerFunctions(All, ToHeader, kObjCFunctions, kObjCHeader);
     registerFunctions(All, ToHeader, kPollFunctions, kPollHeader);
     registerFunctions(All, ToHeader, kPthreadFunctions, kPthreadHeader);
     registerFunctions(All, ToHeader, kRegexFunctions, kRegexHeader);

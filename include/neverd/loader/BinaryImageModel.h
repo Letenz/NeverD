@@ -1285,8 +1285,9 @@ struct BinaryImage {
   /// unwind metadata or the next detected function. InvalidVA means no end.
   /// Null or a different image's index uses live metadata; a matching index
   /// must belong to the current unchanged image operation.
-  va_t getFunctionMetadataEnd(
-      va_t Entry, const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  va_t
+  getFunctionMetadataEnd(va_t Entry,
+                         const ExecutableCodeOwnerIndex *Index = nullptr) const;
 
   /// True when p Addr is an authenticated callable entry, rather than merely
   /// an address inside executable code. Untyped COFF exports are deliberately

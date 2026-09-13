@@ -16,13 +16,124 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <functional>
 #include <unordered_set>
 
 namespace neverd {
+
+void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
+  if (Func.FrameSize <= 0 || Architecture == Arch::Unknown ||
+      Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
+    return;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (TRI.PointerSize != 4 && TRI.PointerSize != 8)
+    return;
+  size_t Budget = 100000;
+  std::function<std::optional<int64_t>(const ExprPtr &, unsigned)> Offset;
+  Offset = [&](const ExprPtr &E, unsigned Depth) -> std::optional<int64_t> {
+    if (!E || !E->Type || E->Type->Size != TRI.PointerSize ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default || Depth > 32 ||
+        !Budget)
+      return std::nullopt;
+    --Budget;
+    if (E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize &&
+        isSyntheticEntryStackPointer(E->Var, Func, Architecture))
+      return 0;
+    if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+        !E->Operands[1] || E->Operands[1]->Kind != ExprKind::Const ||
+        !E->Operands[1]->Type ||
+        E->Operands[1]->Type->Size != TRI.PointerSize ||
+        (TRI.PointerSize == 4 && E->Operands[1]->ConstVal > UINT32_MAX) ||
+        (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
+      return std::nullopt;
+    const auto Base = Offset(E->Operands[0], Depth + 1);
+    if (!Base)
+      return std::nullopt;
+    const int64_t Delta = TRI.PointerSize == 4
+                              ? int64_t(int32_t(E->Operands[1]->ConstVal))
+                              : int64_t(E->Operands[1]->ConstVal);
+    int64_t Result;
+    if (E->Op == NdOp::INT_ADD ? llvm::AddOverflow(*Base, Delta, Result)
+                               : llvm::SubOverflow(*Base, Delta, Result))
+      return std::nullopt;
+    if (TRI.PointerSize == 4 && Result != int64_t(int32_t(Result)))
+      return std::nullopt;
+    return Result;
+  };
+
+  // No frame read or escape is permitted anywhere in the function. This
+  // includes arguments, stored pointers, returns and aliases. Ordinary calls
+  // cannot observe newly allocated private source storage without its address.
+  // Unknown address shapes and effects retain every store conservatively.
+  std::vector<HighStmt *> Candidates;
+  std::unordered_set<const HighExpr *> Seen;
+  bool Observed = false;
+  walkStmts(Func.Body, [&](HighStmt &S) {
+    if (Observed || !Budget)
+      return;
+    --Budget;
+    bool Candidate = false;
+    if (S.Kind == StmtKind::Store && S.StoreVal && S.StoreVal->Type &&
+        S.StoreVal->Type->Size && S.Body.empty() && S.ElseBody.empty() &&
+        S.Cases.empty() && S.DefaultBody.empty() && S.EHClauseBodies.empty() &&
+        (S.StoreVal->Kind == ExprKind::Var ||
+         S.StoreVal->Kind == ExprKind::Const) &&
+        S.MemoryOrdering == NdMemoryOrdering::None &&
+        S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      const auto At = Offset(S.StoreAddr, 0);
+      Candidate = At && *At >= -Func.FrameSize && *At < 0 &&
+                  uint64_t(S.StoreVal->Type->Size) <= uint64_t(-*At);
+      if (Candidate)
+        Candidates.push_back(&S);
+    }
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      if (Candidate && &Root == &S.StoreAddr)
+        return;
+      std::vector<const HighExpr *> Pending{Root.get()};
+      while (!Pending.empty() && !Observed && Budget) {
+        const auto *E = Pending.back();
+        Pending.pop_back();
+        if (!E || !Seen.insert(E).second)
+          continue;
+        --Budget;
+        if (E->IntrinsicId != Intrinsic::None)
+          Observed = true;
+        if (E->Kind == ExprKind::Call) {
+          std::string Error;
+          if (!E->SourceCallHint ||
+              !validateSourceABI(E->SourceCallHint->Signature, Error) ||
+              E->Operands.size() !=
+                  E->SourceCallHint->Signature.Parameters.size())
+            Observed = true;
+        }
+        if (E->Kind == ExprKind::Var && (E->Var.Kind == MedVar::Stack ||
+                                         (E->Var.Kind == MedVar::Reg &&
+                                          (E->Var.RegOff == TRI.StackPointer ||
+                                           E->Var.RegOff == TRI.FramePointer))))
+          Observed = true;
+        for (const auto &Operand : E->Operands)
+          Pending.push_back(Operand.get());
+      }
+    });
+  });
+  if (Observed || !Budget)
+    return;
+  for (auto *S : Candidates) {
+    // Preserve a possible branch destination at the eliminated write.
+    const va_t Address = S->Addr;
+    *S = HighStmt{};
+    S->Kind = StmtKind::Block;
+    S->Addr = Address;
+  }
+}
 
 //===----------------------------------------------------------------------===//
 // Consecutive dead store elimination

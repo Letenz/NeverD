@@ -60,6 +60,7 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts);
 //===----------------------------------------------------------------------===//
 
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts);
+void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 
 //===----------------------------------------------------------------------===//
 // Expression simplification  (defined in HighExprSimplify.cpp)

@@ -232,8 +232,7 @@ bool Decoder::decodePrefixedX86Fence(const uint8_t *Bytes, size_t Len,
 bool Decoder::decodeUnprefixedX86MpxRegisterNop(const uint8_t *Bytes,
                                                 size_t Len, va_t Addr) {
   if (!X86 || !Bytes || !InsnBuf || Len < 3 || Bytes[0] != 0x0f ||
-      (Bytes[1] != 0x1a && Bytes[1] != 0x1b) ||
-      (Bytes[2] & 0xc0) != 0xc0)
+      (Bytes[1] != 0x1a && Bytes[1] != 0x1b) || (Bytes[2] & 0xc0) != 0xc0)
     return false;
 
   // cs_malloc owns the detail allocation.  Preserve its pointer while
@@ -332,8 +331,7 @@ void Decoder::fixupDecodedInsn(cs_insn *I) const {
 }
 
 void Decoder::fixupDecodedInsnId(cs_insn *I) const {
-  if (!X86 || !I ||
-      (I->id != X86_INS_BNDLDX && I->id != X86_INS_BNDSTX))
+  if (!X86 || !I || (I->id != X86_INS_BNDLDX && I->id != X86_INS_BNDSTX))
     return;
 
   // The x86 compatibility profile treats no-mandatory-prefix 0F 1A/1B as the
