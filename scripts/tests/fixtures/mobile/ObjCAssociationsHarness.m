@@ -8,6 +8,10 @@
              forKey:(const void *)key
              policy:(NSUInteger)policy;
 - (void)clearAssociatedObjects;
+- (id)objectForStaticKey;
+- (void)storeObjectForStaticKey:(id)object;
+- (id)objectForInteriorKey;
+- (void)storeObjectForInteriorKey:(id)object;
 @end
 
 static int Destroyed;
@@ -47,13 +51,19 @@ int main(void) {
   [Text appendString:@"-changed"];
   if (![[Box objectForKey:&CopyKey] isEqualToString:@"snapshot"])
     return 3;
+  [Box storeObjectForStaticKey:@"first"];
+  [Box storeObjectForInteriorKey:@"second"];
+  if (![[Box objectForStaticKey] isEqualToString:@"first"] ||
+      ![[Box objectForInteriorKey] isEqualToString:@"second"])
+    return 5;
   [ReadPool drain];
   [Box clearAssociatedObjects];
   if (Destroyed != 1 || [Box objectForKey:&ObjectKey] != nil ||
-      [Box objectForKey:&CopyKey] != nil)
+      [Box objectForKey:&CopyKey] != nil || [Box objectForStaticKey] != nil ||
+      [Box objectForInteriorKey] != nil)
     return 4;
   [Box release];
   [Pool drain];
-  puts("associations=pass\nretain=pass\ncopy=pass\nclear=pass\ndestroyed=1");
+  puts("associations=pass\nretain=pass\ncopy=pass\nstatic-keys=pass\nclear=pass\ndestroyed=1");
   return 0;
 }

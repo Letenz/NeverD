@@ -7,6 +7,8 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 #include <optional>
 
 namespace neverd::sdk {
@@ -16,9 +18,51 @@ struct ObjCSourceBindingResult {
   std::string Limitation;
   std::set<va_t> Dependencies;
   std::set<std::string> InstanceLayoutClasses;
+  std::set<va_t> AssociationKeys;
 };
 
 namespace objc_binding_detail {
+
+inline std::optional<SourceCallTypeHint>
+associationKeyHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
+      !Address)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  if (!Section || !Segment || !Section->isReadable() || Section->isWritable() ||
+      !Segment->isReadable() || Segment->isWritable() ||
+      (Section->Type & llvm::MachO::SECTION_TYPE) !=
+          llvm::MachO::S_CSTRING_LITERALS ||
+      !Image.readVA(Address, 1))
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeAssociationKey;
+  Hint.TargetAddress = Address;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
+    return std::nullopt;
+  return Hint;
+}
+
+inline bool isAssociationKeyConsumer(const HighExpr &Expression,
+                                     const BinaryImage &Image) {
+  if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
+      Expression.IntrinsicId != Intrinsic::None ||
+      Expression.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Expression.MemoryOrdering != NdMemoryOrdering::None)
+    return false;
+  const auto &Hint = *Expression.SourceCallHint;
+  if (Hint.CallKind != SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+      (Hint.TargetName != "objc_getAssociatedObject" &&
+       Hint.TargetName != "objc_setAssociatedObject") ||
+      Expression.Operands.size() != Hint.Signature.Parameters.size())
+    return false;
+  const auto Expected = objcRuntimeSourceCallHint(Image, Hint.TargetAddress);
+  return Expected && Expected->TargetName == Hint.TargetName &&
+         objc_projection_detail::sameHint(Expected->Signature, Hint.Signature);
+}
 
 struct ClassObjectIdentity {
   SourceCallTypeHint::Kind Kind;
@@ -115,7 +159,7 @@ inline bool isRuntimeReference(SourceCallTypeHint::Kind Kind) {
 inline ObjCSourceBindingResult
 bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image) {
   using namespace objc_binding_detail;
-  ObjCSourceBindingResult Result{Function, {}, {}, {}};
+  ObjCSourceBindingResult Result{Function, {}, {}, {}, {}};
   const auto ClassObjects = classObjectIdentities(Image);
   std::map<const HighExpr *, ExprPtr> Copies;
   size_t Budget = 1000000;
@@ -183,6 +227,26 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image) {
       Result.Dependencies.insert(Expression->SourceCallHint->TargetAddress);
     for (size_t Index = 0; Index < Expression->Operands.size(); ++Index) {
       auto &Operand = Expression->Operands[Index];
+      // The associated-object API compares key identities and never reads
+      // their bytes. Rebuild only this authenticated argument occurrence;
+      // ordinary loads, returned addresses, and unrelated calls must retain
+      // the unresolved image-data diagnostic. Equal original addresses share
+      // one helper across methods, including addresses inside a string.
+      if (Index == 1 && Operand &&
+          isAssociationKeyConsumer(*Expression, Image)) {
+        const auto Address = constantAddress(*Operand);
+        auto Hint =
+            Address ? associationKeyHint(Image, *Address) : std::nullopt;
+        if (Hint) {
+          auto Key = HighExpr::makeCall({}, 0, {});
+          Key->Type = Operand->Type;
+          Key->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Result.AssociationKeys.insert(*Address);
+          Operand = std::move(Key);
+          continue;
+        }
+      }
       // A direct class-object address is already the receiver value. This is
       // distinct from the address of a classref slot, which requires a LOAD.
       // Keep this contextual rewrite out of Copies: the same Const node may
@@ -262,6 +326,12 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeAssociationKey) {
+    const auto Expected = associationKeyHint(Image, Binding.TargetAddress);
+    return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
+           Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
   if (isRuntimeReference(Binding.CallKind)) {
     auto Found = Image.ObjCSourceReferences.find(Binding.TargetAddress);
     if (Expression.Operands.empty() &&
@@ -299,6 +369,22 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   return (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage ||
           Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) &&
          Hint.Parameters.size() >= 2 && !Binding.Selector.empty();
+}
+
+inline std::string
+renderObjCAssociationKeyHelpers(const std::set<va_t> &Keys,
+                                std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  for (va_t Key : Keys) {
+    const std::string Name = "neverd_objc_association_key_" +
+                             llvm::utohexstr(Key, true) + "_address";
+    SharedFunctions.insert(Name);
+    Source += "\nuintptr_t " + Name +
+              "(void) {\n"
+              "  static unsigned char key;\n"
+              "  return (uintptr_t)&key;\n}\n";
+  }
+  return Source;
 }
 
 } // namespace neverd::sdk

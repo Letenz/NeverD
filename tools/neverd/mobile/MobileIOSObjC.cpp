@@ -877,6 +877,19 @@ Rendered render(const Object &native, const Object &runtime,
                                    "literal)_[0-9a-f]+_address)")))
         throw Error("invalid shared Block function inventory");
     }
+  if (native.get("shared_identity_functions") &&
+      !native.getArray("shared_identity_functions"))
+    throw Error("invalid shared identity function inventory");
+  if (auto *shared = native.getArray("shared_identity_functions"))
+    for (const auto &v : *shared) {
+      const auto s = v.getAsString();
+      if (!s || !sharednames.insert(s->str()).second ||
+          !defined.count(s->str()) || s == name ||
+          !std::regex_match(
+              s->str(),
+              std::regex("neverd_objc_association_key_[0-9a-f]+_address")))
+        throw Error("invalid shared identity function inventory");
+    }
   std::map<std::string, std::string> rename;
   for (const auto &f : defs)
     if (!sharednames.count(f.name))
@@ -1295,7 +1308,7 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
     }
   };
   conflicts(external, "conflicting external declarations across methods");
-  conflicts(shared, "conflicting shared Block function definitions");
+  conflicts(shared, "conflicting shared storage function definitions");
   auto shells = closeClassDefinitions(
       inv, declarations, str(metadata, "status") == "recovered", errors,
       class_dependencies, coverage, budget);
@@ -1384,8 +1397,10 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
                  "Coverage applies only to the discovered runtime method "
                  "inventory; an empty inventory does not prove that no methods "
                  "exist.",
-                 "Verified identical Block storage helpers share object "
-                 "identity across methods. External dependencies may require "
-                 "manual linking."}}}};
+                 "Verified identical Block and association-key storage "
+                 "helpers share identity across methods. Association keys "
+                 "belong to the rebuilt sources, not an already loaded "
+                 "original image. External dependencies may require manual "
+                 "linking."}}}};
 }
 } // namespace neverd::mobile::ios

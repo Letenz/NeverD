@@ -520,11 +520,17 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               Name == "_NSConcreteGlobalBlock")
             SourceBlockIsaNames.insert(Name.str());
         } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeAssociationKey) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_objc_association_key_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeBlockDescriptor ||
                    Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeBlockLiteral) {
           if (Hint.TargetAddress)
-            SourceBlockAddressHelpers.insert(
+            SourceObjectAddressHelpers.insert(
                 "neverd_block_" +
                 std::string(
                     Hint.CallKind ==
@@ -651,7 +657,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     OS << "extern void objc_msgSendSuper2(void);\n";
   for (const auto &Name : SourceBlockIsaNames)
     OS << "extern void *" << Name << "[];\n";
-  for (const auto &Name : SourceBlockAddressHelpers)
+  for (const auto &Name : SourceObjectAddressHelpers)
     OS << "extern uintptr_t " << Name << "(void);\n";
 
   // A source-bound native helper can appear after its caller in the emitted

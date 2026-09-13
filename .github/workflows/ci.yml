@@ -508,6 +508,12 @@ jobs:
                    "NeverDLiftTests"),
                   ("JTE_ARM32.InlineStateDomainKeepsConditionalResetAndExitPredicates",
                    "NeverDLiftTests"),
+                  ("ObjCSourceBindings.StaticAssociationKeysKeepExactContextAndIdentity",
+                   "NeverDLiftTests"),
+                  ("ObjCSourceBindings.StaticAssociationKeysRejectUnprovedConsumersAndStorage",
+                   "NeverDLiftTests"),
+                  ("MobileIOSNative.SharedAssociationKeysPreserveOneDefinitionAndRejectConflicts",
+                   "NeverDMobileTests"),
                   ("JTE_ARM32.InlineStateDomainRejectsUnrelatedPredicateAndZeroBackedge",
                    "NeverDLiftTests"),
                   ("JTE_AArch64.CompactIndexRejectsWGuardForUnmodifiedXValue",
@@ -608,10 +614,16 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 180,
-              ("macOS", "macos-patch"): 178,
-              ("Windows", "windows-focused"): 176,
+              ("Linux", "linux-semantic"): 183,
+              ("macOS", "macos-patch"): 183,
+              ("Windows", "windows-focused"): 179,
           }[(runner_os, os.environ["TEST_PROFILE"])]
+          if runner_os == "macOS":
+              expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
+                  for name in (
+                      "ObjCRuntimeSource.RecompiledARCMethodsPreserveActualObjectLifetimes",
+                      "ObjCRuntimeSource.RecompiledAssociatedObjectsPreserveLifetimeAndPolicy",
+                  ))
           if runner_os in ("Linux", "macOS"):
               expected += (TestRecord(
                   "SessionCAPITest.NativePhaseTraceClosedStderrPreservesActualLoadContract",
@@ -658,6 +670,7 @@ jobs:
               "NeverDLanguageEHTests", "NeverDLibCTests", "NeverDLiftTests",
               "NeverDMetadataJSONTests",
               "NeverDMobileTests", "NeverDSessionCAPITests",
+              "NeverDObjCRuntimeSourceTests",
               "NeverDPipelineOutcomeTests",
           )
           owner_regex = "^(" + "|".join(re.escape(owner) for owner in owners) + ")$"

@@ -24,7 +24,11 @@ struct SourceCallTypeHint {
     RuntimeBlockLiteral,
     /// Imported runtime routine with a known scalar ABI. TargetAddress is
     /// the import pointer slot, not a native source definition.
-    ObjCRuntimeCall
+    ObjCRuntimeCall,
+    /// A static key consumed only by associated-object runtime operations.
+    /// TargetAddress identifies the original key; rebuilt methods share one
+    /// opaque storage identity. This does not bind readable image contents.
+    RuntimeAssociationKey
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;

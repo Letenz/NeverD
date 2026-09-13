@@ -91,7 +91,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   if (Hint.CallKind == Kind::NativeAddress ||
       Hint.CallKind == Kind::RuntimeBlockIsa ||
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
-      Hint.CallKind == Kind::RuntimeBlockLiteral) {
+      Hint.CallKind == Kind::RuntimeBlockLiteral ||
+      Hint.CallKind == Kind::RuntimeAssociationKey) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
         !Signature.ReturnType ||
         Signature.ReturnType->Kind != NdTypeKind::Ptr ||
@@ -111,6 +112,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (Name != "_NSConcreteStackBlock" && Name != "_NSConcreteGlobalBlock")
         return bad("unknown concrete block class");
       Value = Name.str();
+    } else if (Hint.CallKind == Kind::RuntimeAssociationKey) {
+      if (!Hint.TargetAddress)
+        return bad("association key has no source identity");
+      Value = "neverd_objc_association_key_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else {
       if (!Hint.TargetAddress)
         return bad("block source address has no runtime identity");

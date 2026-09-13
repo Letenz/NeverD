@@ -131,6 +131,86 @@ TEST(ObjCSourceBindings, RuntimeCallsRevalidateImportedSignatureAndRegister) {
   EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
 }
 
+TEST(ObjCSourceBindings, StaticAssociationKeysKeepExactContextAndIdentity) {
+  Fixture F;
+  F.Image.Sections[0].Type = llvm::MachO::S_CSTRING_LITERALS;
+  F.Image.ImportPtrSlots[0x1020] = "_objc_getAssociatedObject";
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, 0x1020);
+  ASSERT_TRUE(Hint);
+  auto Key = HighExpr::makeConst(0x1031, 8);
+  auto Call = HighExpr::makeCall("objc_getAssociatedObject", 0x1020,
+                                 {HighExpr::makeConst(0, 8), Key});
+  Call->Type = NdType::makePtr(NdType::makeVoid());
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  F.Function.Body[0].RetVal = Call;
+  for (va_t Address : {0x1031, 0x1032, 0x1031}) {
+    Key->ConstVal = Address;
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+    EXPECT_EQ(Result.AssociationKeys, std::set<va_t>{Address});
+    const auto Bound = Result.Function.Body[0].RetVal->Operands[1];
+    ASSERT_TRUE(Bound->SourceCallHint);
+    EXPECT_EQ(Bound->SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::RuntimeAssociationKey);
+    EXPECT_EQ(Bound->SourceCallHint->TargetAddress, Address);
+    EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+    EXPECT_EQ(Key->Kind, ExprKind::Const);
+  }
+  // Reusing the same expression as an ordinary address must not reuse the
+  // contextual key substitution through the projection's clone cache.
+  F.Function.Body[0].RetVal = HighExpr::makeBinop(NdOp::INT_ADD, Call, Key);
+  const auto Mixed = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_FALSE(Mixed.Limitation.empty());
+  EXPECT_EQ(Mixed.Function.Body[0].RetVal->Operands[1]->Kind, ExprKind::Const);
+
+  F.Image.Arch = Arch::X64;
+  const auto X64Hint = objcRuntimeSourceCallHint(F.Image, 0x1020);
+  ASSERT_TRUE(X64Hint);
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*X64Hint);
+  F.Function.Body[0].RetVal = Call;
+  const auto X64 = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_TRUE(X64.Limitation.empty()) << X64.Limitation;
+  const auto X64Key = X64.Function.Body[0].RetVal->Operands[1];
+  ASSERT_TRUE(X64Key->SourceCallHint);
+  EXPECT_EQ(X64Key->SourceCallHint->Signature.Architecture, Arch::X64);
+  EXPECT_TRUE(objcSourceCallBound(*X64Key, F.Image, {}));
+}
+
+TEST(ObjCSourceBindings,
+     StaticAssociationKeysRejectUnprovedConsumersAndStorage) {
+  Fixture F;
+  F.Image.Sections[0].Type = llvm::MachO::S_CSTRING_LITERALS;
+  F.Image.ImportPtrSlots[0x1020] = "_objc_getAssociatedObject";
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, 0x1020);
+  ASSERT_TRUE(Hint);
+  auto Call = HighExpr::makeCall(
+      "objc_getAssociatedObject", 0x1020,
+      {HighExpr::makeConst(0, 8), HighExpr::makeConst(0x1031, 8)});
+  Call->Type = NdType::makePtr(NdType::makeVoid());
+  F.Function.Body[0].RetVal = Call;
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    SCOPED_TRACE(Case);
+    F.Image.Sections[0].Type = llvm::MachO::S_CSTRING_LITERALS;
+    F.Image.Segments[0].Flags = SegmentFlags::Readable;
+    auto Changed = *Hint;
+    if (Case == 0)
+      Changed.TargetName = "objc_setAssociatedObject";
+    else if (Case == 1)
+      Changed.Signature.Parameters[1].Location.RegisterOffset += 8;
+    else if (Case == 2)
+      F.Image.Sections[0].Type = 0;
+    else if (Case == 3)
+      F.Image.Segments[0].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+    else
+      Call->Operands[1] = HighExpr::makeConst(0x1031, 4);
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Changed);
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_FALSE(Result.Limitation.empty());
+    EXPECT_TRUE(Result.AssociationKeys.empty());
+  }
+}
+
 TEST(ObjCSourceBindings, ExplicitABIPositionDriftIsDetected) {
   SourceFunctionTypeHint Hint;
   Hint.ReturnType = NdType::makeInt(8);

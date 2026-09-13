@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <set>
 
@@ -54,10 +55,17 @@ void verifyRuntime(bool Chained, bool Associations = false) {
       Associations ? "ObjCAssociationsHarness.m" : "ObjCARCHarness.m";
   const auto Original = (Work / "original.dylib").string();
   const std::string Compiler = NEVERD_TEST_CLANG;
-  std::vector<std::string> Compile{
-      Compiler,      "-O2",        "-g0",        "-fobjc-arc",
-      "-dynamiclib", "-framework", "Foundation", (Fixtures / Fixture).string(),
-      "-o",          Original};
+#if defined(__aarch64__) || defined(__arm64__)
+  const std::string HostArch = "arm64";
+#else
+  const std::string HostArch = "x86_64";
+#endif
+  std::vector<std::string> Compile{Compiler,      "-arch",
+                                   HostArch,      "-O2",
+                                   "-g0",         "-fobjc-arc",
+                                   "-dynamiclib", "-framework",
+                                   "Foundation",  (Fixtures / Fixture).string(),
+                                   "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "compile-original"));
@@ -75,17 +83,23 @@ void verifyRuntime(bool Chained, bool Associations = false) {
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), Associations ? 3U : 7U);
+  ASSERT_EQ(Methods->size(), 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
   if (Associations)
-    Remaining = {"objectForKey:", "storeObject:forKey:policy:",
-                 "clearAssociatedObjects"};
+    Remaining = {"objectForKey:",
+                 "storeObject:forKey:policy:",
+                 "clearAssociatedObjects",
+                 "objectForStaticKey",
+                 "storeObjectForStaticKey:",
+                 "objectForInteriorKey",
+                 "storeObjectForInteriorKey:"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"NDARCBox\");\n";
   std::vector<std::string> Sources;
+  std::map<std::string, std::string> IdentityHelpers;
   for (const auto &Value : *Methods) {
     const auto *Method = Value.getAsObject();
     ASSERT_NE(Method, nullptr);
@@ -95,9 +109,26 @@ void verifyRuntime(bool Chained, bool Associations = false) {
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
     ASSERT_EQ(Remaining.erase(Selector->str()), 1U);
+    std::string MethodSource = Source->str();
+    if (const auto *Helpers = Method->getArray("shared_identity_functions")) {
+      for (const auto &Value : *Helpers) {
+        const auto Helper = Value.getAsString();
+        ASSERT_TRUE(Helper);
+        const auto Begin =
+            MethodSource.find("\nuintptr_t " + Helper->str() + "(void) {\n");
+        ASSERT_NE(Begin, std::string::npos);
+        const auto End = MethodSource.find("\n}", Begin);
+        ASSERT_NE(End, std::string::npos);
+        const auto Definition = MethodSource.substr(Begin, End + 2 - Begin);
+        const auto [It, Added] =
+            IdentityHelpers.emplace(Helper->str(), Definition);
+        EXPECT_EQ(It->second, Definition);
+        MethodSource.erase(Begin, End + 2 - Begin);
+      }
+    }
     const auto Path =
         Work / ("recovered-" + std::to_string(Sources.size()) + ".c");
-    ASSERT_NO_FATAL_FAILURE(write(Path, Source->str()));
+    ASSERT_NO_FATAL_FAILURE(write(Path, MethodSource));
     Sources.push_back(Path.string());
     Declarations += "extern void " + Name->str() + "(void);\n";
     Install += "class_replaceMethod(cls, sel_registerName(\"" +
@@ -107,10 +138,21 @@ void verifyRuntime(bool Chained, bool Associations = false) {
                Selector->str() + "\"))));\n";
   }
   ASSERT_TRUE(Remaining.empty());
+  EXPECT_EQ(IdentityHelpers.size(), Associations ? 2U : 0U);
+  if (!IdentityHelpers.empty()) {
+    std::string Shared = "#include <stdint.h>\n";
+    for (const auto &[Name, Definition] : IdentityHelpers)
+      Shared += Definition + "\n";
+    const auto Path = Work / "shared-identities.c";
+    ASSERT_NO_FATAL_FAILURE(write(Path, Shared));
+    Sources.push_back(Path.string());
+  }
   ASSERT_NO_FATAL_FAILURE(
       write(Work / "replacements.h", Declarations + Install + "}\n"));
   const auto Baseline = (Work / "baseline").string();
   Compile = {Compiler,
+             "-arch",
+             HostArch,
              "-O2",
              "-fno-objc-arc",
              "-fblocks",
@@ -131,7 +173,8 @@ void verifyRuntime(bool Chained, bool Associations = false) {
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
   EXPECT_EQ(read(Work / "recovered.out"),
-            Associations ? "associations=pass\nretain=pass\ncopy=pass\nclear="
+            Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
+                           "keys=pass\nclear="
                            "pass\ndestroyed=1\n"
                          : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
                            "pass\ndestroyed=3\n");

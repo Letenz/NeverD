@@ -342,8 +342,16 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       std::set<std::string> SharedBlockFunctions;
       const std::string BlockHelpers = renderObjCBlockSourceHelpers(
           BlockPlan, BlockDescriptors, SharedBlockFunctions);
+      std::set<va_t> AssociationKeys;
+      for (va_t Entry : Included) {
+        const auto &Keys = Projections.at(Entry).AssociationKeys;
+        AssociationKeys.insert(Keys.begin(), Keys.end());
+      }
+      std::set<std::string> SharedIdentityFunctions;
+      const std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
+          AssociationKeys, SharedIdentityFunctions);
       const bool Emitted = Emitter.emit(Unit, SourceOS, COptions);
-      SourceOS << BlockHelpers;
+      SourceOS << BlockHelpers << IdentityHelpers;
       if (!Emitted) {
         Row["status"] = "unrecovered";
         Row["reason"] = "method C source projection failed";
@@ -376,6 +384,10 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         for (const auto &Name : SharedBlockFunctions)
           SharedFunctions.push_back(Name);
         Row["shared_block_functions"] = std::move(SharedFunctions);
+        llvm::json::Array IdentityFunctions;
+        for (const auto &Name : SharedIdentityFunctions)
+          IdentityFunctions.push_back(Name);
+        Row["shared_identity_functions"] = std::move(IdentityFunctions);
         ++Recovered;
       }
       Methods.push_back(std::move(Row));
@@ -390,6 +402,11 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     Limitations.push_back(
         "Unresolved native dependencies and exception-dependent method bodies "
         "remain individually unrecovered.");
+    Limitations.push_back(
+        "Static associated-object keys use shared rebuilt identities. Link "
+        "one definition of each shared_identity_functions helper across the "
+        "participating method sources; the identities do not refer to storage "
+        "in an already loaded original image.");
     llvm::json::Object Report{
         {"schema_version", 1},
         {"status", "success"},
