@@ -190,6 +190,52 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     }
 
     insertPhiCopies(Func, CurBlock, BlkIdx, BlkBodyStart, PhiCopies);
+    // The MedIR CFG may thread an empty branch block out of the false edge.
+    // Its successor then need not be the next block in source order. Preserve
+    // that transfer after the false-edge PHI copies, using the explicit taken
+    // target to identify the other edge rather than relying on Succs order.
+    if (!CurBlock.Ops.empty() && CurBlock.Succs.size() == 2) {
+      const auto &Terminator = CurBlock.Ops.back();
+      if (Terminator.Opcode == NdOp::COND_BR && Terminator.NumInputs >= 2 &&
+          Terminator.Inputs[0].isConst()) {
+        int Taken = -1, Other = -1;
+        bool Complete = true;
+        for (int Successor : CurBlock.Succs) {
+          if (Successor < 0 ||
+              Successor >= static_cast<int>(Med.Blocks.size()) ||
+              Med.Blocks[Successor].Id != Successor) {
+            Complete = false;
+            break;
+          }
+          const auto &Target = Med.Blocks[Successor];
+          const va_t Address =
+              Target.StartAddr
+                  ? Target.StartAddr
+                  : (Target.Ops.empty() ? 0 : Target.Ops.front().Addr);
+          if (Address == Terminator.Inputs[0].ConstVal) {
+            Complete &= Taken == -1;
+            Taken = Successor;
+          } else {
+            Complete &= Other == -1;
+            Other = Successor;
+          }
+        }
+        int Next = BlkIdx + 1;
+        while (Next < static_cast<int>(Med.Blocks.size()) &&
+               JtConsumedBlocks.count(Next))
+          ++Next;
+        if (Complete && Taken >= 0 && Other >= 0 && Other != Next) {
+          const auto &Target = Med.Blocks[Other];
+          HighStmt Transfer;
+          Transfer.Kind = StmtKind::Goto;
+          Transfer.GotoTarget =
+              Target.StartAddr
+                  ? Target.StartAddr
+                  : (Target.Ops.empty() ? 0 : Target.Ops.front().Addr);
+          Func.Body.push_back(std::move(Transfer));
+        }
+      }
+    }
     const va_t Entry =
         CurBlock.StartAddr
             ? CurBlock.StartAddr

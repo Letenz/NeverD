@@ -196,6 +196,92 @@ TEST(HighCSourceCalls, NoncontiguousOrNestedEntriesRemainAmbiguous) {
   }
 }
 
+TEST(HighCSourceCalls, ConditionalEntryEvaluatesBeforeItsTakenEdgeCopies) {
+  for (bool ExplicitElse : {false, true}) {
+    const auto Integer = NdType::makeInt(4);
+    MedVar Variable;
+    Variable.Kind = MedVar::Temp;
+    Variable.Id = 10;
+    Variable.Size = 4;
+    auto Local = HighExpr::makeVar(Variable, Integer);
+    auto Function = returning("branch_phi_entry", Local, {Integer});
+    auto Return = Function.Body.back();
+    Return.Addr = 0x1300;
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = 0x1200;
+    HighStmt Exit = Jump;
+    Exit.GotoTarget = Return.Addr;
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.IsPhiCopy = true;
+    Copy.Addr = Jump.GotoTarget;
+    Copy.Dst = Local;
+    Copy.Val = HighExpr::makeConst(11, 4);
+    HighStmt Branch;
+    Branch.Kind = ExplicitElse ? StmtKind::IfElse : StmtKind::If;
+    Branch.Addr = Jump.GotoTarget;
+    Branch.Cond = parameter(0, Integer);
+    Branch.Body = {Copy, Exit};
+    Copy.Val = HighExpr::makeConst(23, 4);
+    Function.Body = {Jump};
+    if (ExplicitElse) {
+      Branch.ElseBody = {Copy, Exit};
+      Function.Body.push_back(Branch);
+    } else {
+      Function.Body.push_back(Branch);
+      Function.Body.push_back(Copy);
+    }
+    Function.Body.push_back(Return);
+    coalesceBranchEntryStatements(Function);
+    compileAndRun(emit({Function}) + R"(
+int main(void) {
+    if (branch_phi_entry(0) != 23) return 1;
+    if (branch_phi_entry(1) != 11) return 2;
+    if (branch_phi_entry(-1) != 11) return 3;
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, ConditionalEntryDoesNotHideOtherNestedInstructions) {
+  for (bool LaterCopy : {false, true}) {
+    auto Function = returning("ambiguous_branch", HighExpr::makeConst(1, 4));
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = 0x1200;
+    HighStmt Branch;
+    Branch.Kind = StmtKind::If;
+    Branch.Addr = Jump.GotoTarget;
+    Branch.Cond = HighExpr::makeConst(1, 1);
+    HighStmt Inner;
+    Inner.Kind = StmtKind::Assign;
+    Inner.Addr = Branch.Addr;
+    Inner.IsPhiCopy = LaterCopy;
+    MedVar Local;
+    Local.Kind = MedVar::Temp;
+    Local.Id = 10;
+    Local.Size = 4;
+    Inner.Dst = HighExpr::makeVar(Local, NdType::makeInt(4));
+    Inner.Val = HighExpr::makeConst(23, 4);
+    if (LaterCopy) {
+      HighStmt Separator;
+      Separator.Kind = StmtKind::Block;
+      Separator.Addr = 0x1210;
+      Branch.Body.push_back(Separator);
+    }
+    Branch.Body.push_back(Inner);
+    Function.Body = {Jump, Branch, Function.Body.back()};
+    coalesceBranchEntryStatements(Function);
+    unsigned Entries = 0;
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      Entries += Statement.Addr == Branch.Addr;
+    });
+    EXPECT_EQ(Entries, 2U);
+  }
+}
+
 TEST(HighCSourceCalls,
      NativeForwardPrototypesPreserveFloatingArgumentAndResultBits) {
   std::vector<HighFunc> Functions;

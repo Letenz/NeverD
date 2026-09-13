@@ -35,6 +35,28 @@ void coalesceBranchEntryStatements(HighFunc &Func) {
     return;
   std::function<void(std::vector<HighStmt> &)> Group = [&](auto &Body) {
     for (auto &Statement : Body) {
+      if ((Statement.Kind == StmtKind::If ||
+           Statement.Kind == StmtKind::IfElse) &&
+          Statement.Cond && Targets.count(Statement.Addr)) {
+        // Edge copies carry their predecessor branch's instruction address,
+        // but entry at that address must first evaluate the branch. They are
+        // not independent native labels inside the chosen arm. Only clear
+        // the direct prefix belonging to this exact conditional; a later or
+        // non-PHI occurrence remains a distinct, possibly ambiguous entry.
+        auto ClearEdgeEntries = [&](auto &Arm) {
+          for (auto &Copy : Arm) {
+            if (Copy.Kind != StmtKind::Assign || !Copy.IsPhiCopy ||
+                Copy.Addr != Statement.Addr || !Copy.Dst || !Copy.Val ||
+                Copy.Dst->Kind != ExprKind::Var || !Copy.Body.empty() ||
+                !Copy.ElseBody.empty() || !Copy.Cases.empty() ||
+                !Copy.DefaultBody.empty() || !Copy.EHClauseBodies.empty())
+              break;
+            Copy.Addr = 0;
+          }
+        };
+        ClearEdgeEntries(Statement.Body);
+        ClearEdgeEntries(Statement.ElseBody);
+      }
       Group(Statement.Body);
       Group(Statement.ElseBody);
       for (auto &Case : Statement.Cases)

@@ -112,6 +112,8 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
         return A - B;
       case NdOp::INT_MULT:
         return A * B;
+      case NdOp::INT_AND:
+        return A & B;
       case NdOp::INT_EQUAL:
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
@@ -959,6 +961,72 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
     O.addInput(Input);
   return O;
 }
+
+TEST(HighControlFlowSemantics, ConditionalFalseEdgeKeepsNonlexicalSuccessor) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "nonlexical_false_edge";
+    Med.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    Med.Params = {Input};
+    auto First = machineValue(1, Architecture);
+    auto Second = machineValue(2, Architecture);
+    auto Zero = machineValue(3, Architecture);
+    auto Bits = machineValue(4, Architecture);
+    auto Join = machineValue(5, Architecture);
+    auto Updated = machineValue(6, Architecture);
+    auto Result = machineValue(7, Architecture);
+    auto Return = machineValue(8, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+    auto C = [](uint64_t Value) { return MedVar::makeConst(Value, 8); };
+    Med.Blocks.resize(5);
+    for (int I = 0; I < 5; ++I) {
+      Med.Blocks[I].Id = I;
+      Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      Med.Blocks[I].EndAddr = Med.Blocks[I].StartAddr + 0x20;
+    }
+    Med.Blocks[0].Succs = {1, 2};
+    Med.Blocks[0].Ops = {
+        operation(NdOp::INT_AND, 0x1000, First, {Input, C(2)}),
+        operation(NdOp::INT_AND, 0x1004, Second, {Input, C(1)}),
+        operation(NdOp::COND_BR, 0x1008, {}, {C(0x1200), First})};
+    Med.Blocks[1].Preds = {0};
+    Med.Blocks[1].Succs = {4, 3};
+    Med.Blocks[1].Ops = {
+        operation(NdOp::COPY, 0x1100, Zero, {C(0)}),
+        operation(NdOp::COND_BR, 0x1104, {}, {C(0x1300), Second})};
+    Med.Blocks[2].Preds = {0};
+    Med.Blocks[2].Succs = {4, 3};
+    Med.Blocks[2].Ops = {
+        operation(NdOp::COPY, 0x1200, Bits, {C(2048)}),
+        operation(NdOp::COND_BR, 0x1204, {}, {C(0x1300), Second})};
+    Med.Blocks[3].Preds = {1, 2};
+    Med.Blocks[3].Succs = {4};
+    Med.Blocks[3].Phis = {{Join, {{1, Zero}, {2, Bits}}}};
+    Med.Blocks[3].Ops = {
+        operation(NdOp::INT_ADD, 0x1300, Updated, {Join, C(0x80000)})};
+    Med.Blocks[4].Preds = {1, 2, 3};
+    Med.Blocks[4].Phis = {{Result, {{1, Zero}, {2, Bits}, {3, Updated}}}};
+    Med.Blocks[4].Ops = {operation(NdOp::COPY, 0x1400, Return, {Result}),
+                         operation(NdOp::RETURN, 0x1404, {}, {Return})};
+    for (bool ReverseSuccessors : {false, true}) {
+      auto Variant = Med;
+      if (ReverseSuccessors)
+        for (auto &Block : Variant.Blocks)
+          std::reverse(Block.Succs.begin(), Block.Succs.end());
+      const auto Function = MedToHighConverter().convert(Variant, Architecture);
+      for (uint64_t Value = 0; Value < 16; ++Value)
+        EXPECT_EQ(execute(Function, Value),
+                  (Value & 2 ? 2048u : 0u) + (Value & 1 ? 0x80000u : 0u))
+            << "reverse successors=" << ReverseSuccessors << " input=" << Value;
+    }
+  }
+}
+
 MedFunc loopFunction(Arch Architecture, bool Swap, bool ReversePhis) {
   MedFunc F;
   F.Entry = 0x1000;
