@@ -18,17 +18,242 @@
 
 #include "HighCFSimplifyDetail.h"
 
+#include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+
+namespace {
+
+// These facts cover the entire function, including entries from a different
+// statement list. Rewrites only remove addresses and references, so retaining
+// the original sets during the traversal is conservative.
+class ContinuationFolder {
+  const MedFunc *Med;
+  va_t FunctionEntry = 0;
+  std::set<va_t> Targets;
+  std::set<va_t> NativeEntries;
+  std::unordered_map<va_t, size_t> Owners;
+  std::map<va_t, ExprPtr> SimpleReturns;
+
+  static bool plainValue(const ExprPtr &E) {
+    return E && (E->Kind == ExprKind::Var || E->Kind == ExprKind::Const) &&
+           E->Operands.empty() &&
+           E->MemoryOrdering == NdMemoryOrdering::None &&
+           E->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  }
+
+  bool removableTransfer(const HighStmt &S) const {
+    return S.Kind == StmtKind::Goto && S.GotoTarget &&
+           S.GotoTarget != InvalidVA && !Targets.count(S.Addr) &&
+           (!S.Addr || S.Addr != FunctionEntry) &&
+           (!Med || !S.Addr || S.Addr != Med->Entry) &&
+           !NativeEntries.count(S.Addr);
+  }
+
+  bool uniqueAddress(va_t Address) const {
+    auto It = Owners.find(Address);
+    return Address && Address != InvalidVA && It != Owners.end() &&
+           It->second == 1;
+  }
+
+  bool exactContinuation(const HighStmt &S, va_t Target) const {
+    if (!Target || Target == InvalidVA || S.Addr != Target)
+      return false;
+    if (uniqueAddress(Target))
+      return true;
+    // A recovered while(true) and its first native instruction can share an
+    // address. Entering either executes exactly the same assignment prefix.
+    // No other occurrence, later body entry or conditional loop is equivalent.
+    if (S.Kind != StmtKind::While || S.LoopHeaderAddr != Target ||
+        !plainValue(S.Cond) ||
+        S.Cond->Kind != ExprKind::Const || !S.Cond->ConstVal)
+      return false;
+    size_t PrefixOwners = 1;
+    for (const auto &Inner : S.Body) {
+      if (Inner.Addr != Target)
+        break;
+      if (Inner.Kind != StmtKind::Assign || !Inner.Body.empty() ||
+          !Inner.ElseBody.empty() || !Inner.Cases.empty() ||
+          !Inner.DefaultBody.empty() || !Inner.EHClauseBodies.empty())
+        return false;
+      ++PrefixOwners;
+    }
+    auto It = Owners.find(Target);
+    return PrefixOwners > 1 && It != Owners.end() &&
+           It->second == PrefixOwners;
+  }
+
+  bool ownsReturn(const HighStmt &Owner, const HighStmt &Return) const {
+    if (Return.Kind != StmtKind::Return || !uniqueAddress(Return.Addr) ||
+        Return.Addr == FunctionEntry || Targets.count(Return.Addr))
+      return false;
+    if (!Med)
+      return true;
+
+    // DCE can erase the native block's entry assignments. Check the original
+    // block, not just the surviving return, for another incoming edge.
+    const MedBlock *Block = nullptr;
+    for (const auto &Candidate : Med->Blocks) {
+      if (Candidate.Ops.empty() ||
+          Candidate.Ops.back().Opcode != NdOp::RETURN ||
+          Candidate.Ops.back().Addr != Return.Addr)
+        continue;
+      if (Block)
+        return false;
+      Block = &Candidate;
+    }
+    if (!Block || Block->Preds.size() != 1 || !Block->Succs.empty() ||
+        Block->Id < 0 || static_cast<size_t>(Block->Id) >= Med->Blocks.size() ||
+        &Med->Blocks[Block->Id] != Block ||
+        Targets.count(Block->StartAddr) ||
+        (FunctionEntry && (Block->StartAddr == FunctionEntry ||
+                           Block->Ops.front().Addr == FunctionEntry)) ||
+        (Med->Entry && (Block->StartAddr == Med->Entry ||
+                        Block->Ops.front().Addr == Med->Entry ||
+                        Return.Addr == Med->Entry)))
+      return false;
+    for (const auto &Op : Block->Ops)
+      if (Targets.count(Op.Addr) ||
+          (FunctionEntry && Op.Addr == FunctionEntry) ||
+          (Med->Entry && Op.Addr == Med->Entry))
+        return false;
+    const int PredId = Block->Preds.front();
+    if (PredId < 0 || static_cast<size_t>(PredId) >= Med->Blocks.size())
+      return false;
+    const auto &Pred = Med->Blocks[PredId];
+    return Pred.Id == PredId && !Pred.Ops.empty() &&
+           Pred.Ops.back().Opcode == NdOp::COND_BR &&
+           Pred.Ops.back().Addr == Owner.Addr && uniqueAddress(Owner.Addr) &&
+           std::find(Pred.Succs.begin(), Pred.Succs.end(), Block->Id) !=
+               Pred.Succs.end();
+  }
+
+  void fold(std::vector<HighStmt> &Body, unsigned Depth) {
+    if (Depth > 64)
+      return;
+    for (size_t I = 0; I < Body.size(); ++I) {
+      auto &S = Body[I];
+      fold(S.Body, Depth + 1);
+      fold(S.ElseBody, Depth + 1);
+      for (auto &Case : S.Cases)
+        fold(Case.Body, Depth + 1);
+      fold(S.DefaultBody, Depth + 1);
+
+      if (S.Kind == StmtKind::Goto) {
+        auto It = SimpleReturns.find(S.GotoTarget);
+        if (It != SimpleReturns.end()) {
+          HighStmt Return;
+          Return.Kind = StmtKind::Return;
+          Return.Addr = S.Addr;
+          Return.RetVal = It->second;
+          S = std::move(Return);
+        }
+        continue;
+      }
+      if (S.Kind != StmtKind::IfElse || !S.Cond)
+        continue;
+
+      if (!S.Body.empty() && !S.ElseBody.empty() &&
+          removableTransfer(S.Body.back()) &&
+          removableTransfer(S.ElseBody.back()) &&
+          S.Body.back().GotoTarget == S.ElseBody.back().GotoTarget) {
+        HighStmt Transfer;
+        Transfer.Kind = StmtKind::Goto;
+        Transfer.GotoTarget = S.Body.back().GotoTarget;
+        S.Body.pop_back();
+        S.ElseBody.pop_back();
+        // Hoist one transfer without moving or duplicating its destination.
+        Body.insert(Body.begin() + I + 1, std::move(Transfer));
+        continue; // The insertion may invalidate S.
+      }
+
+      if (I + 2 >= Body.size() || !ownsReturn(S, Body[I + 1]))
+        continue;
+      auto *Taken = &S.Body;
+      auto *Fallthrough = &S.ElseBody;
+      if (S.Body.empty())
+        std::swap(Taken, Fallthrough);
+      if (Taken->empty() || !Fallthrough->empty() ||
+          !removableTransfer(Taken->back()) ||
+          !exactContinuation(Body[I + 2], Taken->back().GotoTarget))
+        continue;
+      // if (c) { ...; goto tail; } return r; tail:
+      // becomes if (c) { ...; } else { return r; } tail:
+      // The condition is evaluated once and the shared tail stays in place.
+      Taken->pop_back();
+      Fallthrough->push_back(std::move(Body[I + 1]));
+      Body.erase(Body.begin() + I + 1);
+    }
+  }
+
+public:
+  explicit ContinuationFolder(const MedFunc *Med) : Med(Med) {}
+
+  void run(HighFunc &Func) {
+    FunctionEntry = Func.Entry;
+    auto HasLanguageEH = [](const auto &Metadata) {
+      return Metadata && (Metadata->hasLanguageTable() ||
+                          Metadata->Personality != ExceptionPersonality::None ||
+                          Metadata->PersonalityVA || Metadata->HandlerDataVA);
+    };
+    if (HasLanguageEH(Func.ExceptionMetadata) ||
+        (Med && HasLanguageEH(Med->ExceptionMetadata)))
+      return;
+    bool HasEH = false;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Addr && S.Addr != InvalidVA)
+        ++Owners[S.Addr];
+      if (S.Kind == StmtKind::Goto && S.GotoTarget &&
+          S.GotoTarget != InvalidVA)
+        Targets.insert(S.GotoTarget);
+      HasEH |= S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+               S.Kind == StmtKind::ItaniumTry || !S.EHClauseBodies.empty() ||
+               !S.EHClauses.empty();
+    });
+    if (Med)
+      for (const auto &Block : Med->Blocks) {
+        HasEH |= !Block.ExceptionalPreds.empty() ||
+                 !Block.ExceptionalSuccs.empty();
+        const va_t Start = Block.StartAddr
+                               ? Block.StartAddr
+                               : (Block.Ops.empty() ? 0 : Block.Ops.front().Addr);
+        if (Start && Start != InvalidVA)
+          NativeEntries.insert(Start);
+      }
+    if (HasEH)
+      return;
+
+    // A dead entry assignment may leave an empty label immediately before a
+    // return. Only a root-level, exact, unique label and a scalar value can be
+    // forwarded: no statement, load, call or cleanup is skipped or duplicated.
+    for (size_t I = 0; I + 1 < Func.Body.size(); ++I) {
+      const auto &Label = Func.Body[I];
+      const auto &Return = Func.Body[I + 1];
+      if (Label.Kind == StmtKind::Block && Label.Body.empty() &&
+          Label.ElseBody.empty() && Label.Cases.empty() &&
+          Label.DefaultBody.empty() && uniqueAddress(Label.Addr) &&
+          Return.Kind == StmtKind::Return && plainValue(Return.RetVal))
+        SimpleReturns.emplace(Label.Addr, Return.RetVal);
+    }
+    fold(Func.Body, 0);
+  }
+};
+
+} // namespace
+
+void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med) {
+  ContinuationFolder(Med).run(Func);
+}
 
 //===----------------------------------------------------------------------===//
 // structureIfElse helpers

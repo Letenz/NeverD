@@ -47,6 +47,10 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med);
 /// subexpressions.
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 
+/// Fold shared branch continuations after dead assignments have been removed.
+/// Preserve external entries and require exact fallthrough destinations.
+void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
+
 class MedToHighConverter {
 public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);

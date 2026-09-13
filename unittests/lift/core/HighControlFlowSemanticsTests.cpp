@@ -649,6 +649,224 @@ TEST(HighControlFlowSemantics, ExternalFalsePrefixEntryRemainsReachable) {
   }));
 }
 
+std::pair<HighFunc, MedFunc> branchWithScalarContinuation(bool SharedHeader) {
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  auto Add = [](va_t Address, int Dst, int Src, uint64_t Increment) {
+    auto S = assign(Address, Dst, 0);
+    S.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(Src),
+                              HighExpr::makeConst(Increment, 8));
+    return S;
+  };
+  HighStmt VectorLoop;
+  VectorLoop.Kind = StmtKind::While;
+  VectorLoop.Addr = VectorLoop.LoopHeaderAddr = 0x1040;
+  VectorLoop.Cond = HighExpr::makeConst(1, 1);
+  VectorLoop.Body = {Add(0x1044, 1, 1, 10), Break};
+  auto Early = conditional(0x1050, 0x1120);
+  Early.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                 HighExpr::makeConst(2, 8));
+  Early.Body = {assign(0x1054, 4, 111), jump(0, 0x1120)};
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1004;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                 HighExpr::makeConst(1, 8));
+  Inner.Body = {assign(0x1020, 1, 100), VectorLoop, Early,
+                assign(0x1058, 2, 0), jump(0, 0x1100)};
+  Inner.ElseBody = {assign(0x1008, 1, 10), assign(0x100C, 2, 0),
+                    jump(0x1010, 0x1100)};
+  Inner.Body[3].IsPhiCopy = true;
+  Inner.ElseBody[0].IsPhiCopy = true;
+  Inner.ElseBody[1].IsPhiCopy = true;
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Addr = 0x1000;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                 HighExpr::makeConst(0, 8));
+  Outer.ElseBody = {Inner};
+  HighStmt ScalarLoop;
+  ScalarLoop.Kind = StmtKind::While;
+  ScalarLoop.Addr = ScalarLoop.LoopHeaderAddr = 0x1100;
+  ScalarLoop.Cond = HighExpr::makeConst(1, 1);
+  auto Exit = conditional(0x1114, 0);
+  Exit.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(2),
+                                HighExpr::makeConst(2, 8));
+  Exit.Body = {Break};
+  ScalarLoop.Body = {Add(SharedHeader ? 0x1100 : 0x1104, 3, 1, 0),
+                     Add(SharedHeader ? 0x1100 : 0x1108, 1, 3, 1),
+                     Add(0x1110, 2, 2, 1), Exit};
+  HighStmt Label;
+  Label.Kind = StmtKind::Block;
+  Label.Addr = 0x1120;
+  HighFunc F;
+  F.Body = {Outer, result(0x1080, HighExpr::makeConst(7, 8)), ScalarLoop,
+            Add(0x111C, 4, 1, 0), Label, result(0x1124, local(4))};
+
+  MedFunc Med;
+  Med.Blocks.resize(3);
+  for (int I = 0; I < 3; ++I)
+    Med.Blocks[I].Id = I;
+  MedOp Branch;
+  Branch.Opcode = NdOp::COND_BR;
+  Branch.Addr = 0x1000;
+  Med.Blocks[0].StartAddr = 0x0FFC;
+  Med.Blocks[0].Ops = {Branch};
+  Med.Blocks[0].Succs = {1, 2};
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1080;
+  Med.Blocks[1].StartAddr = 0x1070;
+  Med.Blocks[1].Ops = {Return};
+  Med.Blocks[1].Preds = {0};
+  Med.Blocks[2].StartAddr = 0x1004;
+  return {std::move(F), std::move(Med)};
+}
+
+TEST(HighControlFlowSemantics, NestedContinuationsPreserveBothLoopsAndReturns) {
+  for (bool SharedHeader : {false, true}) {
+    for (bool ReverseArms : {false, true}) {
+      auto [F, Med] = branchWithScalarContinuation(SharedHeader);
+      if (ReverseArms) {
+        std::swap(F.Body[0].Body, F.Body[0].ElseBody);
+        F.Body[0].Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, F.Body[0].Cond);
+      }
+      const uint64_t Expected[] = {7, 12, 111, 112, 112};
+      for (uint64_t Input = 0; Input < 5; ++Input)
+        ASSERT_EQ(execute(F, Input), Expected[Input]);
+      const size_t Before = statementCount(F);
+      foldStructuredContinuations(F, &Med);
+      for (uint64_t Input = 0; Input < 5; ++Input)
+        EXPECT_EQ(execute(F, Input), Expected[Input]);
+      size_t Loops = 0, Gotos = 0, PhiCopies = 0;
+      walkStmts(F.Body, [&](const HighStmt &S) {
+        Loops += S.Kind == StmtKind::While;
+        Gotos += S.Kind == StmtKind::Goto;
+        PhiCopies += S.IsPhiCopy;
+      });
+      EXPECT_EQ(Loops, 2u);
+      EXPECT_EQ(Gotos, 0u);
+      EXPECT_EQ(PhiCopies, 3u);
+      EXPECT_LE(statementCount(F), Before);
+      expectUniqueGotoTargets(F);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, ContinuationFoldingPreservesExternalEntries) {
+  for (va_t Entry : {0x1010, 0x1080, 0x1070}) {
+    auto [F, Med] = branchWithScalarContinuation(false);
+    HighStmt Dispatch;
+    Dispatch.Kind = StmtKind::Switch;
+    Dispatch.SwitchExpr = local(0);
+    Dispatch.Cases.push_back({99, {jump(0, Entry)}});
+    F.Body.insert(F.Body.begin(), Dispatch);
+    foldStructuredContinuations(F, &Med);
+    EXPECT_EQ(execute(F, 0), 7u);
+    EXPECT_EQ(execute(F, 1), 12u);
+    EXPECT_EQ(execute(F, 2), 111u);
+    size_t Entries = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Entries += S.Addr == Entry &&
+                 (Entry == 0x1010 ? S.Kind == StmtKind::Goto
+                                  : S.Kind == StmtKind::Return);
+    });
+    if (Entry == 0x1010)
+      EXPECT_EQ(Entries, 1u);
+    else {
+      // The native block entry may already have been erased by DCE.
+      EXPECT_TRUE(std::any_of(F.Body.begin(), F.Body.end(),
+                              [](const HighStmt &S) {
+                                return S.Kind == StmtKind::Return &&
+                                       S.Addr == 0x1080;
+                              }));
+      EXPECT_EQ(execute(F, 99), 7u);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, ContinuationFoldingRequiresExactLoopEntry) {
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    auto [F, Med] = branchWithScalarContinuation(true);
+    auto &Loop = F.Body[2];
+    if (Mutation == 0)
+      Loop.Cond = local(0);
+    else if (Mutation == 1)
+      Loop.Body.insert(Loop.Body.begin(), assign(0x1104, 5, 42));
+    else if (Mutation == 2)
+      Loop.Body.push_back(assign(0x1100, 5, 42));
+    else if (Mutation == 3)
+      F.Body.push_back(assign(0x1100, 5, 42));
+    else
+      Loop.LoopHeaderAddr = 0x1104;
+    foldStructuredContinuations(F, &Med);
+    size_t Gotos = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Gotos += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1100;
+    });
+    EXPECT_EQ(Gotos, 1u) << Mutation;
+    EXPECT_EQ(F.Body[1].Kind, StmtKind::Return) << Mutation;
+  }
+}
+
+TEST(HighControlFlowSemantics, ContinuationFoldingRequiresNativeReturnOwner) {
+  for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+    auto [F, Med] = branchWithScalarContinuation(false);
+    if (Mutation == 0)
+      Med.Blocks[1].Preds.push_back(2);
+    else if (Mutation == 1)
+      Med.Blocks[0].Succs = {2};
+    else if (Mutation == 2)
+      Med.Blocks[0].Id = 2;
+    else if (Mutation == 3)
+      Med.Blocks[0].Ops.clear();
+    else if (Mutation == 4)
+      Med.Blocks[0].Ops.back().Addr = 0x1004;
+    else if (Mutation == 5)
+      Med.Blocks[1].ExceptionalPreds.push_back({});
+    else if (Mutation == 6)
+      F.Entry = 0x1080;
+    else if (Mutation == 7)
+      Med.Entry = 0x1070;
+    else
+      Med.Entry = 0x1080;
+    foldStructuredContinuations(F, &Med);
+    EXPECT_EQ(F.Body[1].Kind, StmtKind::Return) << Mutation;
+    EXPECT_EQ(F.Body[1].Addr, 0x1080u) << Mutation;
+    for (uint64_t Input : {0, 1, 2, 3})
+      EXPECT_EQ(execute(F, Input), Input == 0 ? 7u : Input == 1 ? 12u
+                                        : Input == 2 ? 111u : 112u);
+  }
+  auto [F, Med] = branchWithScalarContinuation(false);
+  F.Entry = 0x1080;
+  foldStructuredContinuations(F);
+  EXPECT_EQ(F.Body[1].Kind, StmtKind::Return);
+  EXPECT_EQ(F.Body[1].Addr, 0x1080u);
+}
+
+TEST(HighControlFlowSemantics, ReturnContinuationRejectsEffectsAndAmbiguity) {
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    auto [F, Med] = branchWithScalarContinuation(false);
+    if (Mutation == 0)
+      F.Body[4].Body = {assign(0x1120, 4, 42)};
+    else if (Mutation == 1)
+      F.Body.back().RetVal = HighExpr::makeLoad(
+          HighExpr::makeConst(0x8000, 8), NdType::makeInt(8));
+    else if (Mutation == 2)
+      F.Body.push_back(assign(0x1120, 4, 42));
+    else if (Mutation == 3)
+      F.Body.back().RetVal->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else
+      F.Body.insert(F.Body.begin() + 5, assign(0x1122, 4, 42));
+    foldStructuredContinuations(F, &Med);
+    size_t Gotos = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Gotos += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1120;
+    });
+    EXPECT_EQ(Gotos, 1u) << Mutation;
+  }
+}
+
 MedVar machineValue(int Id, Arch Architecture) {
   MedVar V;
   V.Kind = MedVar::Temp;
@@ -877,15 +1095,20 @@ TEST(HighControlFlowSemantics,
      UnreachableCleanupPreservesIncomingTailBranches) {
   HighFunc F;
   auto First = conditional(0x1000, 0x1100);
-  First.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                  HighExpr::makeConst(1, 8));
+  First.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
   auto Second = conditional(0x1004, 0x1200);
-  Second.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                   HighExpr::makeConst(2, 8));
-  F.Body = {First, Second, result(0x1008, HighExpr::makeConst(7, 8)),
-            assign(0x1010, 1, 99), assign(0x1100, 1, 11),
-            result(0x1104, local(1)), assign(0x1110, 1, 99),
-            assign(0x1200, 1, 22), result(0x1204, local(1)),
+  Second.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(2, 8));
+  F.Body = {First,
+            Second,
+            result(0x1008, HighExpr::makeConst(7, 8)),
+            assign(0x1010, 1, 99),
+            assign(0x1100, 1, 11),
+            result(0x1104, local(1)),
+            assign(0x1110, 1, 99),
+            assign(0x1200, 1, 22),
+            result(0x1204, local(1)),
             assign(0x1210, 1, 99)};
   for (uint64_t Input : {0, 1, 2})
     ASSERT_EQ(execute(F, Input), Input == 0 ? 7u : Input * 11);
@@ -907,9 +1130,8 @@ TEST(HighControlFlowSemantics, UnreachableCleanupKeepsNestedIncomingEntries) {
     Container.Kind = StmtKind::IfElse;
     Container.Addr = 0x1100;
     Container.Cond = local(0);
-    std::vector<HighStmt> Tail{
-        result(0x1100, HighExpr::makeConst(1, 8)),
-        assign(0x1104, 1, 99), result(0x1108, local(1))};
+    std::vector<HighStmt> Tail{result(0x1100, HighExpr::makeConst(1, 8)),
+                               assign(0x1104, 1, 99), result(0x1108, local(1))};
     switch (Edge) {
     case 0:
       Container.Body = Tail;

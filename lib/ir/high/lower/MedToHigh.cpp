@@ -596,6 +596,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   Trace.high(Func, "before-dce");
   eliminateDeadStmts(Func);
   Trace.high(Func, "after-dce");
+  foldStructuredContinuations(Func, &Med);
   structureExceptionRegions(Func, Med);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
