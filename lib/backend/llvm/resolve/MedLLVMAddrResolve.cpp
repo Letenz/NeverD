@@ -1706,7 +1706,9 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
               std::set<Key> Seen) -> FrameDomainReachSummary {
     if (Depth > 128 || RemainingFrameDomainReachNodes-- <= 0)
       return {.Unknown = true};
-    if (Start.isConst())
+    // Emission replaces this exact certified GOTPC value with scalar zero;
+    // its architectural call/pop LOAD is not a frame-memory recurrence.
+    if (Start.isConst() || valueIsAuthenticatedModelZero(Start))
       return {.HasIndependentAlternative = true};
     if (!Seen.insert(keyOf(Start)).second)
       return {};
@@ -2412,14 +2414,14 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
           }
           return SawAnchoredSource;
         }
-        // A pointer-width exact slot has a stronger contract than frame-domain
-        // purity: its reaching-store fixed point must cover the LOAD on every
-        // path. A narrow reload cannot carry a complete native pointer, so an
-        // incomplete exact-slot proof may continue into the same-root audit
-        // below. That audit still checks every possibly aliasing write and
-        // rejects address provenance, escapes, atomics, and unknown owners.
+        // A pointer-width reload needs all-path initialization as well as
+        // domain purity. An exact entry STORE can establish initialization
+        // even when later indexed writes prevent a unique reaching-source
+        // set. Still audit every possibly aliasing write below; this does not
+        // permit pointer recovery to reuse the entry value after a clobber.
         if (PointerSize == 0 || Def->Output.Size == 0 ||
-            Def->Output.Size >= PointerSize)
+            (Def->Output.Size >= PointerSize &&
+             !frameReloadIsEntryInitialized(*Def)))
           return stableOffsetFailure("incomplete-frame-reload", Start, Depth);
       }
 

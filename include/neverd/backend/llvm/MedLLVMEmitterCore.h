@@ -720,6 +720,11 @@ private:
   bool collectFrameReloadSourcesUncached(const MedOp &Load,
                                          std::vector<MedVar> &Sources) const;
 
+  /// Prove a full-width entry STORE precedes this exact LOAD on every path.
+  /// This proves initialization only; intervening writes still require a
+  /// separate scalar-domain audit and never establish exact reload sources.
+  bool frameReloadIsEntryInitialized(const MedOp &Load) const;
+
   /// Prove that two frame-derived byte ranges cannot overlap for any runtime
   /// value admitted by their scalar address DAGs.  Both addresses are reduced
   /// to the entry SP/FP coordinate system; masked values and exactly guarded

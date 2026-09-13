@@ -12420,6 +12420,10 @@ TEST(LLVMDataPointerInvariantBoundary,
     CyclicOnly,
     FragmentCycle,
     PointerWidth,
+    InitializedPointerWidth,
+    LatePointerInitializer,
+    PartialPointerInitializer,
+    PointerOverwrite,
     AddressFragment,
     MissingWrite,
     EscapedFrame,
@@ -12454,9 +12458,16 @@ TEST(LLVMDataPointerInvariantBoundary,
     SP.RegOff = TRI.StackPointer;
     MedVar ExactSlot = makeVar(MedVar::Temp, 1, PointerSize);
     MedVar DynamicSlot = makeVar(MedVar::Temp, 2, PointerSize);
+    const bool EntryInitializationCase =
+        Case == Scenario::InitializedPointerWidth ||
+        Case == Scenario::LatePointerInitializer ||
+        Case == Scenario::PartialPointerInitializer ||
+        Case == Scenario::PointerOverwrite;
     MedVar Reloaded =
         makeVar(MedVar::Temp, 3,
-                Case == Scenario::PointerWidth ? PointerSize : uint16_t{1});
+                Case == Scenario::PointerWidth || EntryInitializationCase
+                    ? PointerSize
+                    : uint16_t{1});
     MedVar Selected = makeVar(MedVar::Temp, 4, 1);
 
     MedBlock Block;
@@ -12478,11 +12489,22 @@ TEST(LLVMDataPointerInvariantBoundary,
     FormDynamicSlot.addInput(Index);
     Block.Ops.push_back(std::move(FormDynamicSlot));
 
+    MedOp Initialize;
+    Initialize.Opcode = NdOp::STORE;
+    Initialize.addInput(ExactSlot);
+    Initialize.addInput(MedVar::makeConst(
+        0, Case == Scenario::PartialPointerInitializer ? 1 : PointerSize,
+        ConstantAddressProvenance::Scalar));
+    if (EntryInitializationCase && Case != Scenario::LatePointerInitializer)
+      Block.Ops.push_back(Initialize);
+    const size_t ReloadIndex = Block.Ops.size();
     MedOp Reload;
     Reload.Opcode = NdOp::LOAD;
     Reload.Output = Reloaded;
     Reload.addInput(ExactSlot);
     Block.Ops.push_back(std::move(Reload));
+    if (Case == Scenario::LatePointerInitializer)
+      Block.Ops.push_back(Initialize);
 
     MedVar StoredValue = Byte;
     if (Case == Scenario::CyclicOnly) {
@@ -12504,6 +12526,9 @@ TEST(LLVMDataPointerInvariantBoundary,
     } else if (Case == Scenario::AddressFragment) {
       StoredValue = MedVar::makeConst(
           TextVA, 1, ConstantAddressProvenance::AddressFragment);
+    } else if (Case == Scenario::PointerOverwrite) {
+      StoredValue = MedVar::makeConst(TextVA, PointerSize,
+                                      ConstantAddressProvenance::Address);
     }
 
     if (Case != Scenario::MissingWrite) {
@@ -12511,7 +12536,10 @@ TEST(LLVMDataPointerInvariantBoundary,
       Store.Opcode = NdOp::STORE;
       Store.addInput(DynamicSlot);
       Store.addInput(StoredValue);
-      Block.Ops.push_back(std::move(Store));
+      if (EntryInitializationCase)
+        Block.Ops.insert(Block.Ops.begin() + ReloadIndex, std::move(Store));
+      else
+        Block.Ops.push_back(std::move(Store));
     }
 
     if (Case == Scenario::EscapedFrame) {
@@ -12540,10 +12568,13 @@ TEST(LLVMDataPointerInvariantBoundary,
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
     for (Arch TargetArch : {Arch::AArch64, Arch::X64})
-      for (Scenario Case : {Scenario::ScalarByte, Scenario::ScalarCycle,
-                            Scenario::CyclicOnly, Scenario::FragmentCycle,
-                            Scenario::PointerWidth, Scenario::AddressFragment,
-                            Scenario::MissingWrite, Scenario::EscapedFrame}) {
+      for (Scenario Case :
+           {Scenario::ScalarByte, Scenario::ScalarCycle, Scenario::CyclicOnly,
+            Scenario::FragmentCycle, Scenario::PointerWidth,
+            Scenario::InitializedPointerWidth, Scenario::LatePointerInitializer,
+            Scenario::PartialPointerInitializer, Scenario::PointerOverwrite,
+            Scenario::AddressFragment, Scenario::MissingWrite,
+            Scenario::EscapedFrame}) {
         SCOPED_TRACE(formatTraceName(Format));
         SCOPED_TRACE(TargetArch == Arch::AArch64 ? "arm64" : "x86_64");
         SCOPED_TRACE(static_cast<int>(Case));
@@ -12561,11 +12592,98 @@ TEST(LLVMDataPointerInvariantBoundary,
         std::vector<MedVar> Sources;
         EXPECT_FALSE(MedLLVMProvenanceTestPeer::collectFrameReloadSources(
             Emitter, Func, TargetArch, *Reload, Sources));
-        EXPECT_EQ(
-            MedLLVMProvenanceTestPeer::stableOffset(Emitter, Reload->Output,
-                                                    nullptr),
-            Case == Scenario::ScalarByte || Case == Scenario::ScalarCycle);
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::stableOffset(
+                      Emitter, Reload->Output, nullptr),
+                  Case == Scenario::ScalarByte ||
+                      Case == Scenario::ScalarCycle ||
+                      Case == Scenario::InitializedPointerWidth);
       }
+}
+
+TEST(LLVMDataPointerInvariantBoundary,
+     CertifiedGOTZeroAnchorsInitializedFrameDomain) {
+  enum class Witness { Exact, Missing, WrongSSA, WrongWidth };
+  for (Witness Case : {Witness::Exact, Witness::Missing, Witness::WrongSSA,
+                       Witness::WrongWidth}) {
+    SCOPED_TRACE(static_cast<int>(Case));
+    BinaryImage Image =
+        makeSpilledConstTableImage(Arch::X86, BinaryFormat::ELF);
+    MedFunc Func;
+    Func.Entry = CallerVA;
+    Func.Name = "got_zero_frame_domain";
+    Func.ReturnType = NdType::makeVoid();
+    Func.FrameSize = 16;
+    auto temp = [](int Id) {
+      MedVar Value;
+      Value.Kind = MedVar::Temp;
+      Value.TheArch = Arch::X86;
+      Value.Id = Id;
+      Value.SSAVer = 1;
+      Value.Size = 4;
+      return Value;
+    };
+    MedVar Index = temp(0);
+    Index.Kind = MedVar::Param;
+    Index.SSAVer = 0;
+    Func.Params = {Index};
+    MedVar SP = temp(100);
+    SP.Kind = MedVar::Reg;
+    SP.SSAVer = 0;
+    SP.RegOff = getTargetRegInfo(Arch::X86).StackPointer;
+    const MedVar PCSlot = temp(1), RawPC = temp(2), GOT = temp(3);
+    const MedVar Slot = temp(4), Dynamic = temp(5), Reloaded = temp(6);
+    Func.Blocks.resize(2);
+    for (int I = 0; I < 2; ++I) {
+      Func.Blocks[I].Id = I;
+      Func.Blocks[I].StartAddr = CallerVA + I * 0x40;
+      Func.Blocks[I].EndAddr = CallerVA + (I + 1) * 0x40;
+      Func.Blocks[I].Succs = {1};
+    }
+    Func.Blocks[1].Preds = {0, 1};
+    auto constant = [](uint64_t Value) {
+      return MedVar::makeConst(Value, 4, ConstantAddressProvenance::Scalar);
+    };
+    auto append = [&](int Block, NdOp Opcode, MedVar Output,
+                      std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Addr = Func.Blocks[Block].StartAddr + Func.Blocks[Block].Ops.size();
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Func.Blocks[Block].Ops.push_back(std::move(Op));
+    };
+    append(0, NdOp::INT_ADD, PCSlot, {SP, constant(uint32_t(-12))});
+    append(0, NdOp::LOAD, RawPC, {PCSlot});
+    append(0, NdOp::INT_ADD, GOT, {RawPC, constant(0)});
+    append(0, NdOp::INT_ADD, Slot, {SP, constant(uint32_t(-8))});
+    append(0, NdOp::INT_ADD, Dynamic, {Slot, Index});
+    append(0, NdOp::STORE, {}, {Slot, GOT});
+    append(0, NdOp::BRANCH, {}, {constant(Func.Blocks[1].StartAddr)});
+    append(1, NdOp::LOAD, Reloaded, {Slot});
+    append(1, NdOp::STORE, {}, {Dynamic, Reloaded});
+    append(1, NdOp::BRANCH, {}, {constant(Func.Blocks[1].StartAddr)});
+    if (Case != Witness::Missing) {
+      MedVar Value = GOT;
+      if (Case == Witness::WrongSSA)
+        ++Value.SSAVer;
+      if (Case == Witness::WrongWidth)
+        Value.Size = 8;
+      Func.ScalarAddressModels.push_back(
+          {RelocatedInstructionScalarModelOccurrence::ModelKind::
+               I386ELFGOTBaseZero,
+           Value});
+    }
+    MedLLVMEmitter Emitter;
+    MedLLVMProvenanceTestPeer::prepareFreshAnalysis(
+        Emitter, Func, Image, Arch::X86, BinaryFormat::ELF);
+    std::vector<MedVar> Sources;
+    EXPECT_FALSE(MedLLVMProvenanceTestPeer::collectFrameReloadSources(
+        Emitter, Func, Arch::X86, Func.Blocks[1].Ops[0], Sources));
+    EXPECT_EQ(
+        MedLLVMProvenanceTestPeer::stableOffset(Emitter, Reloaded, nullptr),
+        Case == Witness::Exact);
+  }
 }
 
 TEST(LLVMDataPointerInvariantBoundary,

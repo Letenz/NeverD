@@ -1191,6 +1191,45 @@ bool MedLLVMEmitter::collectFrameReloadSources(
   return Published->second.Proven;
 }
 
+bool MedLLVMEmitter::frameReloadIsEntryInitialized(const MedOp &Load) const {
+  if (!CurMedFunc || CurMedFunc->ExceptionMetadata ||
+      Load.Opcode != NdOp::LOAD || Load.NumInputs != 1 ||
+      Load.Output.Size == 0 ||
+      Load.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Slot = canonicalFrameSlotKey(Load.Inputs[0]);
+  if (!Slot)
+    return false;
+  const MedBlock *Entry = nullptr;
+  bool Member = false;
+  for (const auto &Block : CurMedFunc->Blocks) {
+    if (!Block.ExceptionalSuccs.empty() || !Block.ExceptionalPreds.empty())
+      return false;
+    if (Block.StartAddr == CurMedFunc->Entry) {
+      if (Entry)
+        return false;
+      Entry = &Block;
+    }
+    for (const auto &Op : Block.Ops)
+      Member |= &Op == &Load;
+  }
+  if (!Entry || !Member)
+    return false;
+  for (const auto &Op : Entry->Ops) {
+    if (&Op == &Load || Op.Opcode == NdOp::COND_BR ||
+        Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::INDIR_BR ||
+        Op.Opcode == NdOp::RETURN)
+      break;
+    if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        Op.MemoryOrdering == NdMemoryOrdering::None &&
+        Op.Inputs[1].Size == Load.Output.Size &&
+        canonicalFrameSlotKey(Op.Inputs[0]) == Slot)
+      return true;
+  }
+  return false;
+}
+
 bool MedLLVMEmitter::collectFrameReloadSourcesUncached(
     const MedOp &Load, std::vector<MedVar> &Sources) const {
   Sources.clear();
