@@ -917,6 +917,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCCallHintTests.cpp
   core/HighCSourceCallTests.cpp
+  sdk/ObjCBlockSourceTests.cpp
   sdk/ObjCSourceBindingTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   LINK_COMPONENTS
@@ -929,6 +930,20 @@ target_include_directories(NeverDObjCSourceCallTests PRIVATE
 )
 target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
+# Exercise shared source control-flow and SSA invariants independently of the
+# aggregate lift inventory when fixing mobile source reconstruction.
+add_neverd_unittest(NeverDHighControlFlowTests
+  core/HighControlFlowSemanticsTests.cpp
+  core/HighSSADefinitionTests.cpp
+  core/HighFrameTemporaryTests.cpp
+  LINK_COMPONENTS
+  BackendC
+)
+target_include_directories(NeverDHighControlFlowTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
 )
 
 # Keeps ARM64 Mach-O object relocation arithmetic and pair validation focused

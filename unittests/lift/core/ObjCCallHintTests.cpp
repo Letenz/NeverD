@@ -255,6 +255,62 @@ TEST(ObjCCallHints, RuntimeIndirectCallUsesTheLoadedImportSlot) {
   EXPECT_TRUE(buildObjCSourceCallHints(Image, Low).empty());
 }
 
+TEST(ObjCCallHints, InlinedColdArgumentsKeepTheirBranchEntryAndRuntimeCall) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    auto Image = runtimeImage("_objc_release", Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto First = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Second = NdVar::reg(TRI.IntParamRegs[1], 8);
+    const auto Result = NdVar::reg(TRI.IntReturnReg, 8);
+    LowFunc Low;
+    Low.Entry = 0x1200;
+    Low.Name = "cold_release";
+    Low.Blocks.resize(3);
+    auto &Entry = Low.Blocks[0];
+    Entry.Id = 0;
+    Entry.StartAddr = 0x1200;
+    Entry.EndAddr = 0x1204;
+    Entry.Succs = {1, 2};
+    Entry.Ops = {
+        operation(NdOp::COND_BR, {}, {NdVar::cst(0x1220, 8), First}, 0x1200)};
+    auto &Join = Low.Blocks[1];
+    Join.Id = 1;
+    Join.StartAddr = 0x1204;
+    Join.EndAddr = 0x120c;
+    Join.Preds = {0, 2};
+    Join.Ops = {operation(NdOp::COPY, Result, {NdVar::cst(42, 8)}, 0x1204),
+                operation(NdOp::RETURN, {}, {Result}, 0x1208)};
+    auto &Cold = Low.Blocks[2];
+    Cold.Id = 2;
+    Cold.StartAddr = 0x1220;
+    Cold.EndAddr = 0x122c;
+    Cold.Preds = {0};
+    Cold.Succs = {1};
+    Cold.Ops = {operation(NdOp::COPY, First, {Second}, 0x1220),
+                operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1224),
+                operation(NdOp::BRANCH, {}, {NdVar::cst(0x1204, 8)}, 0x1228)};
+    const auto Med = convert(Image, Low);
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Image.Arch);
+    const auto *Call = sourceCall(High);
+    ASSERT_NE(Call, nullptr) << "The reachable release must survive DCE";
+    EXPECT_EQ(Call->SourceCallHint->TargetName, "objc_release");
+    std::set<va_t> Targets;
+    std::map<va_t, unsigned> Entries;
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      if (Statement.Kind == StmtKind::Goto)
+        Targets.insert(Statement.GotoTarget);
+      if (Statement.Addr)
+        ++Entries[Statement.Addr];
+    });
+    for (va_t Target : Targets)
+      EXPECT_EQ(Entries[Target], 1U)
+          << "Missing or duplicated source branch entry";
+  }
+}
+
 TEST(ObjCCallHints, RuntimeVoidAndWeakSignaturesDoNotInventResults) {
   auto Image = runtimeImage("_objc_storeStrong");
   const auto Hints = buildObjCSourceCallHints(Image, caller());

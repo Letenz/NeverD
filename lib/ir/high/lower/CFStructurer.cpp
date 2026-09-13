@@ -18,6 +18,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
+#include <algorithm>
 #include <functional>
 #include <set>
 
@@ -143,6 +144,8 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
         if (Arg.Id >= 0)
           PhiArgVars.insert(varKey(Arg));
 
+  std::vector<std::pair<size_t, va_t>> MissingEntries;
+
   for (int BlkIdx = 0; BlkIdx < static_cast<int>(Med.Blocks.size()); ++BlkIdx) {
     if (JtConsumedBlocks.count(BlkIdx))
       continue;
@@ -187,6 +190,31 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     }
 
     insertPhiCopies(Func, CurBlock, BlkIdx, BlkBodyStart, PhiCopies);
+    const va_t Entry =
+        CurBlock.StartAddr
+            ? CurBlock.StartAddr
+            : (CurBlock.Ops.empty() ? 0 : CurBlock.Ops.front().Addr);
+    if (Entry && Entry != InvalidVA &&
+        std::none_of(Func.Body.begin() + BlkBodyStart, Func.Body.end(),
+                     [Entry](const HighStmt &S) { return S.Addr == Entry; }))
+      MissingEntries.emplace_back(BlkBodyStart, Entry);
+  }
+
+  std::set<va_t> BranchEntries;
+  walkStmts(Func.Body, [&](const HighStmt &Statement) {
+    if (Statement.Kind == StmtKind::Goto)
+      BranchEntries.insert(Statement.GotoTarget);
+  });
+  for (auto It = MissingEntries.rbegin(); It != MissingEntries.rend(); ++It) {
+    if (!BranchEntries.count(It->second))
+      continue;
+    // Inlining a block's initial argument copies must not erase its branch
+    // entry. An empty block carries that exact label through DCE and emission,
+    // even when the surviving call lies after a return in physical layout.
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = It->second;
+    Func.Body.insert(Func.Body.begin() + It->first, std::move(Label));
   }
 }
 

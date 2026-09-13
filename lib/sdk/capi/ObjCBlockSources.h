@@ -330,6 +330,9 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
         throw Invalid("block consumer requires unsupported control-flow proof");
       switch (S.Kind) {
       case StmtKind::Nop:
+      case StmtKind::Block:
+        // The check above excludes nested bodies. An empty source entry label
+        // has no effect on the straight-line context escape proof.
         break;
       case StmtKind::Assign:
         State.assign(S);

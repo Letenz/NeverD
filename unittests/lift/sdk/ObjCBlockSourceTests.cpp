@@ -207,6 +207,29 @@ TEST(ObjCBlockSources,
   EXPECT_EQ(Shared.size(), 3U);
   EXPECT_EQ(F.caller().Body.back().RetVal->Operands[0]->Kind, ExprKind::Const);
 }
+TEST(ObjCBlockSources, EmptyEntryLabelsPreserveTheStraightLineEscapeProof) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SourceFixture F(false);
+    auto &Invoke = F.Result.HighFuncs[0];
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = Invoke.Entry;
+    if (Mutation == 1)
+      Label.Body.push_back(ret(parameter(0, Invoke.Params[0].Type)));
+    if (Mutation == 2) {
+      Label.Kind = StmtKind::Goto;
+      Label.GotoTarget = Invoke.Entry;
+    }
+    Invoke.Body.insert(Invoke.Body.begin(), Label);
+    if (Mutation == 3)
+      Invoke.Body.back().RetVal = parameter(0, Invoke.Params[0].Type);
+    auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    const auto Bound =
+        bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
+    EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0)
+        << Mutation << ": " << Bound.Limitation;
+  }
+}
 TEST(ObjCBlockSources,
      ScalarStackCapturePreservesRawWritesAndUnwrittenPadding) {
   SourceFixture F(true);
