@@ -1888,7 +1888,10 @@ private:
       std::optional<va_t> *ExactFiniteRelativeSingletonTarget = nullptr,
       bool *ExactFiniteRelativeClosureUnknown = nullptr,
       bool RetainProvisionalRelativeEdges = false,
-      bool AllowInlineZeroCapacityBoundedReplay = false) const;
+      bool AllowInlineZeroCapacityBoundedReplay = false,
+      // A mapped inline ceiling is exclusively a finite-domain search bound.
+      // It does not authenticate table storage or indirect-branch identity.
+      uint32_t InlineRelativeReadableCapacity = 0) const;
   void detectNormalization(const InsnRecord &Rec, JumpTableInfo &Info);
   void detectStride(const InsnRecord &Rec, JumpTableInfo &Info);
   uint32_t pullBackBound(uint32_t RawBound, const JumpTableInfo &Info) const;

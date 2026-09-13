@@ -758,7 +758,8 @@ uint32_t CFGBuilder::inferBoundsFromMask(
     std::optional<va_t> *ExactFiniteRelativeSingletonTarget,
     bool *ExactFiniteRelativeClosureUnknown,
     bool RetainProvisionalRelativeEdges,
-    bool AllowInlineZeroCapacityBoundedReplay) const {
+    bool AllowInlineZeroCapacityBoundedReplay,
+    uint32_t InlineRelativeReadableCapacity) const {
   if (IncompleteIndexDomain)
     *IncompleteIndexDomain = false;
   if (SemanticIndexDomainAmbiguous)
@@ -960,9 +961,12 @@ uint32_t CFGBuilder::inferBoundsFromMask(
   // coordinate-to-target map only; it never supplies selector authority.
   bool FixedPointGateIncomplete = false;
   std::optional<uint64_t> FixedPointAddressScale;
+  const uint32_t ReadableCapacity = Info.PhysicalCapacity != 0
+                                        ? Info.PhysicalCapacity
+                                        : InlineRelativeReadableCapacity;
   if (AllowFixedPointBootstrap && !CandidateTargetsOverride &&
-      !ReachableInstructions && CurrentImg && Info.PhysicalCapacity >= 2 &&
-      Info.PhysicalCapacity <= limits::kMaxJumpTableEntries && [&] {
+      !ReachableInstructions && CurrentImg && ReadableCapacity >= 2 &&
+      ReadableCapacity <= limits::kMaxJumpTableEntries && [&] {
         const uint64_t PhysicalStride =
             Info.EntryStride != 0 ? Info.EntryStride : Info.EntrySize;
         std::optional<uint64_t> AddressScale;
@@ -1013,7 +1017,7 @@ uint32_t CFGBuilder::inferBoundsFromMask(
     Physical.TargetBase = Info.TargetBase;
     Physical.HasTargetBase = Info.HasTargetBase;
     Physical.EntryScale = Info.EntryScale;
-    // PhysicalCapacity is a readable/storage ceiling, not necessarily the
+    // ReadableCapacity is a readable/storage ceiling, not necessarily the
     // exact table length: an adjacent object or the first non-code entry may
     // terminate the candidate earlier.  Find the largest completely decodable
     // prefix without ever treating that prefix as selector authority.  Exact
@@ -1022,7 +1026,7 @@ uint32_t CFGBuilder::inferBoundsFromMask(
     std::vector<va_t> PhysicalTargets;
     std::vector<uint32_t> PhysicalSlots;
     uint32_t Lower = limits::kMinJumpTableEntries;
-    uint32_t Upper = Info.PhysicalCapacity;
+    uint32_t Upper = ReadableCapacity;
     size_t SearchPasses = 0;
     for (uint32_t Width = Upper - Lower + 1; Width != 0; Width >>= 1)
       ++SearchPasses;

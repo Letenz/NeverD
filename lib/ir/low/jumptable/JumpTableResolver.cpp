@@ -2640,6 +2640,40 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     Proposal.ProofRank = ActiveJumpTableCandidateProofRank;
     ProvisionalRelativeEdgeTemplate = std::move(Proposal);
   }
+  // An inline relative table has no relocation run, but an authoritative
+  // function range and its immutable mapped owner still bound every possible
+  // table read. This is only a readable ceiling for the finite-state solver:
+  // exact LOAD/address/target proofs above authorize the layout, and the
+  // empty-edge seed plus every subsequent case must prove its own selectors.
+  // Do not turn this envelope into physical storage ownership or a domain.
+  uint32_t InlineRelativeReadableCapacity = 0;
+  if (CandidateProposalStageActive && ProvisionalRelativeEdgeTemplate &&
+      !ProvisionalRelativeEdgeTemplate->AuthenticatesPhysicalStorage &&
+      Info.IsRelative && !Info.RelocAbsolute && Info.PhysicalCapacity == 0 &&
+      AuthoritativeCurrentFuncRange && Info.HasBaseAddr &&
+      Info.EntrySize != 0 && PhysicalEntryStride >= Info.EntrySize &&
+      Info.BaseAddr > AuthoritativeCurrentFuncRange->first &&
+      Info.BaseAddr < AuthoritativeCurrentFuncRange->second) {
+    if (!consumeCandidateProducts(
+            {{Img.Segments.size(), 12}, {Img.Sections.size(), 20}, {1, 24}}))
+      return {};
+    const Segment *Segment = Img.getSegmentFor(Info.BaseAddr);
+    const Section *Section = Img.getSectionFor(Info.BaseAddr);
+    const std::optional<va_t> OwnerEnd =
+        Img.mappedObjectOwnerEnd(Info.BaseAddr);
+    if (Segment && Segment->isReadable() && !Segment->isWritable() &&
+        (!Section || (Section->isReadable() && !Section->isWritable())) &&
+        Img.isCodeAddress(Info.BaseAddr) && OwnerEnd) {
+      const va_t End =
+          std::min(*OwnerEnd, AuthoritativeCurrentFuncRange->second);
+      if (End > Info.BaseAddr && End - Info.BaseAddr >= Info.EntrySize) {
+        const uint64_t Slots =
+            1 + (End - Info.BaseAddr - Info.EntrySize) / PhysicalEntryStride;
+        if (Slots <= limits::kMaxJumpTableEntries)
+          InlineRelativeReadableCapacity = static_cast<uint32_t>(Slots);
+      }
+    }
+  }
   // A complete dense runtime range published by a distinct sibling in the
   // preceding immutable stage may close this candidate's exact singleton
   // domain.  It is deliberately separate from physical ownership: matching it
@@ -3500,7 +3534,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
                 ExactFiniteRelativeClosureUnknown,
                 /*RetainProvisionalRelativeEdges=*/
                 CandidateProposalStageActive &&
-                    ProvisionalRelativeEdgeTemplate.has_value());
+                    ProvisionalRelativeEdgeTemplate.has_value(),
+                /*AllowInlineZeroCapacityBoundedReplay=*/false,
+                InlineRelativeReadableCapacity);
   const std::optional<bool> MaskGraphGrowth = SuspendForPendingGraphGrowth(
       /*RetainNoGrowthProposal=*/
       !ExactFiniteRelativeSingletonTargetValue.has_value());
@@ -4266,7 +4302,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
           /*ExactFiniteRelativeSingletonTarget=*/nullptr,
           /*ExactFiniteRelativeClosureUnknown=*/nullptr,
           /*RetainProvisionalRelativeEdges=*/false,
-          CurrentCandidateHasPriorProvisionalRelativeEdge);
+          CurrentCandidateHasPriorProvisionalRelativeEdge,
+          InlineRelativeReadableCapacity);
       const std::optional<size_t> MaskComparisonWork =
           detail::maskDomainComparisonWork(
               Coordinates.size(), Info.AuthenticatedMaskCoordinates.size(),

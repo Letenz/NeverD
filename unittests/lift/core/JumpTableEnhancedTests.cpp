@@ -8159,6 +8159,45 @@ TEST_F(JTE_AArch64, WorldClassSignedNegativeLabels) {
 
 class JTE_ARM32 : public NeverDLiftTest {};
 
+TEST_F(JTE_ARM32, InlineStateDomainKeepsConditionalResetAndExitPredicates) {
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_inline_state_domain_arm.o");
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  const auto *Entry = Image.findSymbol("arm_inline_state_domain");
+  ASSERT_NE(Entry, nullptr);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const auto Low = Builder.build(Image, Decoder, Entry->Addr, Entry->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  EXPECT_EQ(Low.JumpTables.front().Targets.size(), 2u);
+  EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+  EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+}
+
+TEST_F(JTE_ARM32, InlineStateDomainRejectsUnrelatedPredicateAndZeroBackedge) {
+  auto ImageOrErr = neverd::loadBinary(fs::path(TEST_OBJ_DIR) /
+                                       "test_inline_state_domain_arm.o");
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  for (const char *Name : {"arm_inline_state_other_condition",
+                           "arm_inline_state_wrong_sentinel"}) {
+    SCOPED_TRACE(Name);
+    const auto *Entry = Image.findSymbol(Name);
+    ASSERT_NE(Entry, nullptr);
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    const auto Low = Builder.build(Image, Decoder, Entry->Addr, Entry->Name);
+    EXPECT_TRUE(Low.JumpTables.empty());
+    EXPECT_TRUE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_BR));
+    EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+  }
+}
+
 static fs::path jteARMObj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_enhanced_arm.o";
 }
