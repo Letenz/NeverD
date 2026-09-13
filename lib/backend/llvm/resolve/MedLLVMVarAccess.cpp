@@ -627,9 +627,8 @@ llvm::Value *MedLLVMEmitter::getPhiIncomingValue(const MedVar &V,
   // storing the selected value in the source PHI's alloca.  Re-proving the
   // complete source merge here incorrectly treats a harmless architectural
   // register state such as PHI(&function, call_result) as one observable code
-  // identity.  Actual sinks (store/return/call target) still run their own
-  // strict proof on the merged value and therefore keep mixed identities
-  // fail-closed.
+  // identity. Actual sinks still run the role-aware proof: retaining a dynamic
+  // observable value does not establish that every arm is a callable entry.
   if (!V.isConst() && lookupPhi(V))
     return getVar(V, Builder);
   if (codeIdentityOccurrenceMayRelocate(V))

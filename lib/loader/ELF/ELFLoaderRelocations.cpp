@@ -41,12 +41,13 @@ namespace detail {
 
 namespace {
 
-struct I386RelocationWriterFootprint {
+struct ObjectRelocationWriterFootprint {
   int64_t OffsetBias = 0;
   size_t Width = 4;
+  bool Exact = true;
 };
 
-I386RelocationWriterFootprint i386RelocationWriterFootprint(uint32_t Type) {
+ObjectRelocationWriterFootprint i386RelocationWriterFootprint(uint32_t Type) {
   using namespace llvm::ELF;
   switch (Type) {
   case R_386_NONE:
@@ -61,11 +62,57 @@ I386RelocationWriterFootprint i386RelocationWriterFootprint(uint32_t Type) {
     // The relocation record identifies the first word of the two-word TLS
     // descriptor, but the linker's value write lands in the second word.
     return {4, 4};
+  case R_386_32:
+  case R_386_PC32:
+  case R_386_GOT32:
+  case R_386_PLT32:
+  case R_386_GLOB_DAT:
+  case R_386_JUMP_SLOT:
+  case R_386_RELATIVE:
+  case R_386_GOTOFF:
+  case R_386_GOTPC:
+  case R_386_32PLT:
+  case R_386_GOT32X:
+    return {0, 4};
   default:
     // Unknown/legacy i386 records conservatively claim one full word.  This
     // may suppress exact provenance but can never manufacture it.
-    return {0, 4};
+    return {0, 4, false};
   }
+}
+
+ObjectRelocationWriterFootprint objectRelocationWriterFootprint(Arch Target,
+                                                                uint32_t Type) {
+  using namespace llvm::ELF;
+  if (Target == Arch::X86)
+    return i386RelocationWriterFootprint(Type);
+  if (Target == Arch::AArch64) {
+    switch (Type) {
+    case R_AARCH64_NONE:
+      return {0, 0};
+    case R_AARCH64_ABS64:
+    case R_AARCH64_PREL64:
+      return {0, 8};
+    case R_AARCH64_ABS16:
+    case R_AARCH64_PREL16:
+      return {0, 2};
+    case R_AARCH64_ABS32:
+    case R_AARCH64_PREL32:
+    case R_AARCH64_CALL26:
+    case R_AARCH64_JUMP26:
+    case R_AARCH64_ADR_PREL_PG_HI21:
+    case R_AARCH64_ADD_ABS_LO12_NC:
+    case R_AARCH64_LDST64_ABS_LO12_NC:
+    case R_AARCH64_LDST128_ABS_LO12_NC:
+    case R_AARCH64_LDST32_ABS_LO12_NC:
+    case R_AARCH64_LDST16_ABS_LO12_NC:
+    case R_AARCH64_LDST8_ABS_LO12_NC:
+      return {0, 4};
+    default:
+      return {0, 4, false};
+    }
+  }
+  return {0, 4, false};
 }
 
 std::optional<va_t> addSignedOffsetBias(va_t Offset, int64_t Bias) {
@@ -393,21 +440,39 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
   // one relocation's write-back into the next changes the expression and can
   // manufacture an exact GOTPC/GOTOFF occurrence.  Never publish provenance
   // for a multiply-owned field: this loader does not model the linker's
-  // composition rules for such inputs.
-  if constexpr (!ELFT::Is64Bits) {
-    if (Img.Arch == Arch::X86) {
+  // composition rules for such inputs. The same scan certifies the complete
+  // write footprint for supported ELF object architectures. An unknown writer
+  // disables that certificate, so absence cannot be mistaken for scalar proof.
+  if (Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64) {
+    if (IsRelocatable || Img.Arch == Arch::X86) {
+      Img.ObjectRelocationWriteBytes.reset();
+      if (IsRelocatable)
+        Img.ObjectRelocationWriteBytes.emplace();
       for (const Elf_Shdr &RelocSH : Sections) {
+        if (RelocSH.sh_type == SHT_ANDROID_REL ||
+            RelocSH.sh_type == SHT_ANDROID_RELA ||
+            RelocSH.sh_type == SHT_RELR ||
+            RelocSH.sh_type == SHT_ANDROID_RELR ||
+            RelocSH.sh_type == SHT_AARCH64_AUTH_RELR)
+          Img.ObjectRelocationWriteBytes.reset();
         const bool PreIsRela = RelocSH.sh_type == SHT_RELA;
         if (!PreIsRela && RelocSH.sh_type != SHT_REL)
           continue;
         const size_t MinEntrySize =
             PreIsRela ? sizeof(Elf_Rela) : sizeof(Elf_Rel);
         if (RelocSH.sh_entsize < MinEntrySize ||
-            !rangeInBounds(RelocSH.sh_offset, RelocSH.sh_size, Size))
+            RelocSH.sh_size % RelocSH.sh_entsize != 0 ||
+            !rangeInBounds(RelocSH.sh_offset, RelocSH.sh_size, Size)) {
+          Img.ObjectRelocationWriteBytes.reset();
           continue;
+        }
 
         const Elf_Shdr *PreApplySH = getShdr<ELFT>(Sections, RelocSH.sh_info);
-        if (!PreApplySH || !(PreApplySH->sh_flags & SHF_ALLOC))
+        if (!PreApplySH) {
+          Img.ObjectRelocationWriteBytes.reset();
+          continue;
+        }
+        if (!(PreApplySH->sh_flags & SHF_ALLOC))
           continue;
         const va_t PreApplyVA = sectionVA<ELFT>(IsRelocatable, SecBase,
                                                 *PreApplySH, RelocSH.sh_info);
@@ -417,8 +482,10 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             PreApplySeg = &Seg;
             break;
           }
-        if (!PreApplySeg)
+        if (!PreApplySeg) {
+          Img.ObjectRelocationWriteBytes.reset();
           continue;
+        }
 
         const size_t PreCount =
             static_cast<size_t>(RelocSH.sh_size / RelocSH.sh_entsize);
@@ -442,27 +509,38 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
             FieldOffset = R.r_offset;
             Type = R.getType(false);
           }
-          const I386RelocationWriterFootprint Footprint =
-              i386RelocationWriterFootprint(Type);
+          const ObjectRelocationWriterFootprint Footprint =
+              objectRelocationWriterFootprint(Img.Arch, Type);
+          if (!Footprint.Exact)
+            Img.ObjectRelocationWriteBytes.reset();
+          if (Footprint.Width == 0)
+            continue;
           const std::optional<va_t> WriterOffset =
               addSignedOffsetBias(FieldOffset, Footprint.OffsetBias);
-          if (Footprint.Width == 0 || !WriterOffset ||
+          if (!WriterOffset ||
               !rangeInBounds(*WriterOffset, Footprint.Width,
                              PreApplySeg->Data.size()) ||
-              *WriterOffset > InvalidVA - PreApplyVA)
+              *WriterOffset > InvalidVA - PreApplyVA) {
+            Img.ObjectRelocationWriteBytes.reset();
             continue;
+          }
 
           const va_t FieldVA = PreApplyVA + *WriterOffset;
           for (size_t Byte = 0; Byte < Footprint.Width; ++Byte) {
-            if (Byte > InvalidVA - FieldVA)
+            if (Byte > InvalidVA - FieldVA) {
+              Img.ObjectRelocationWriteBytes.reset();
               break;
-            ++I386RelocationByteWriterCounts[FieldVA + Byte];
+            }
+            if (Img.Arch == Arch::X86)
+              ++I386RelocationByteWriterCounts[FieldVA + Byte];
+            if (Img.ObjectRelocationWriteBytes)
+              Img.ObjectRelocationWriteBytes->insert(FieldVA + Byte);
           }
-          if (Type == R_386_GOTPC)
+          if (Img.Arch == Arch::X86 && Type == R_386_GOTPC)
             I386GOTPCWriterStarts.insert(FieldVA);
-          if (Type == R_386_GOTOFF)
+          if (Img.Arch == Arch::X86 && Type == R_386_GOTOFF)
             I386GOTOFFWriterStarts.insert(FieldVA);
-          if (Footprint.Width == 4) {
+          if (Img.Arch == Arch::X86 && Footprint.Width == 4) {
             auto [It, Inserted] = I386RelocationFields.try_emplace(FieldVA);
             if (Inserted)
               std::memcpy(&It->second.OriginalAddend,

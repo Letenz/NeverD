@@ -10876,6 +10876,94 @@ TEST(MachOLLVMDataPointerBoundary,
 }
 
 TEST(MachOLLVMDataPointerBoundary,
+     PreservesFrameReloadAcrossNegativeIndexAdvancingToZero) {
+  // The loop writes SP + 140 + {-48, -44, ..., -4} at i386 width. It
+  // cannot clobber SP + 24, even though unsigned interval arithmetic sees
+  // a wrap at the excluded zero value. Mutations must not borrow that proof.
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    MedFunc Func;
+    Func.Name = "negative_index_frame_write";
+    Func.Entry = 0x3000;
+    Func.FrameSize = 160;
+    auto var = [](int Id, uint16_t Size = 4) {
+      MedVar V;
+      V.Kind = MedVar::Temp;
+      V.Id = Id;
+      V.SSAVer = 1;
+      V.Size = Size;
+      return V;
+    };
+    auto scalar = [](uint32_t Value) {
+      return MedVar::makeConst(Value, 4, ConstantAddressProvenance::Scalar);
+    };
+    auto append = [](MedBlock &Block, NdOp Opcode, MedVar Output,
+                     std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const MedVar &Input : Inputs)
+        Op.addInput(Input);
+      Block.Ops.push_back(std::move(Op));
+    };
+    Func.Blocks.resize(3);
+    for (int I = 0; I != 3; ++I) {
+      Func.Blocks[I].Id = I;
+      Func.Blocks[I].StartAddr = Func.Entry + I * 0x40;
+      Func.Blocks[I].EndAddr = Func.Entry + (I + 1) * 0x40;
+    }
+    MedBlock &Entry = Func.Blocks[0];
+    MedBlock &Loop = Func.Blocks[1];
+    MedBlock &Exit = Func.Blocks[2];
+    Entry.Succs = {1};
+    Loop.Preds = {0, 1};
+    Loop.Succs = {1, 2};
+    Exit.Preds = {1};
+    MedVar SP = var(100);
+    SP.Kind = MedVar::Reg;
+    SP.TheArch = Arch::X86;
+    SP.RegOff = getTargetRegInfo(Arch::X86).StackPointer;
+    SP.SSAVer = 0;
+    const MedVar Slot = var(1), Base = var(2), Index = var(3);
+    const MedVar Next = var(4), Address = var(5), Condition = var(6, 1);
+    const MedVar Reload = var(7);
+    append(Entry, NdOp::COPY, SP, {SP});
+    append(Entry, NdOp::INT_ADD, Slot, {SP, scalar(Variant == 1 ? 93 : 24)});
+    append(Entry, NdOp::INT_ADD, Base, {SP, scalar(140)});
+    append(Entry, NdOp::STORE, {}, {Slot, scalar(42)});
+    append(Entry, NdOp::BRANCH, {}, {scalar(Loop.StartAddr)});
+    PhiNode Phi;
+    Phi.Output = Index;
+    Phi.Args = {{0, scalar(Variant == 5 ? uint32_t(-4) : uint32_t(-48))},
+                {1, Next}};
+    Loop.Phis.push_back(std::move(Phi));
+    append(Loop, NdOp::INT_ADD, Address, {Base, Index});
+    append(Loop, NdOp::STORE, {}, {Address, scalar(9)});
+    append(Loop, NdOp::INT_ADD, Next, {Index, scalar(Variant == 2 ? 5 : 4)});
+    append(Loop, NdOp::INT_NOTEQUAL, Condition,
+           {Variant == 3 ? Index : Next, scalar(Variant == 4 ? 8 : 0)});
+    append(Loop, NdOp::COND_BR, {}, {scalar(Loop.StartAddr), Condition});
+    append(Exit, NdOp::LOAD, Reload, {Slot});
+    append(Exit, NdOp::RETURN, {}, {Reload});
+    MedLLVMEmitter Emitter;
+    std::vector<MedVar> Sources;
+    const bool Complete = MedLLVMProvenanceTestPeer::collectFrameReloadSources(
+        Emitter, Func, Arch::X86, Exit.Ops.front(), Sources);
+    EXPECT_EQ(Complete, Variant == 0 || Variant == 5);
+    MedLLVMEmitter AliasEmitter;
+    EXPECT_EQ(MedLLVMProvenanceTestPeer::frameAccessesProvenDisjoint(
+                  AliasEmitter, Func, Arch::X86, Address, 4, Slot, 4),
+              Variant == 0 || Variant == 5);
+    if (Complete) {
+      ASSERT_EQ(Sources.size(), 1u);
+      EXPECT_EQ(Sources.front(), scalar(42));
+    } else {
+      EXPECT_TRUE(Sources.empty());
+    }
+  }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
      DistinguishesSameAddressFrameReloadOccurrences) {
   MedFunc Func = makeSpilledConstTableLookup(Arch::X64);
   std::vector<MedOp> &Ops = Func.Blocks.front().Ops;
@@ -17249,7 +17337,7 @@ MedFunc makeSelfRecurrentExactAddressPhiIndirectCaller(Arch TargetArch) {
   return Func;
 }
 
-enum class ExactAddressMergeKind { Phi, Select };
+enum class ExactAddressMergeKind { Phi, Select, MaskedSelect };
 
 MedFunc makeMergedExactAddressIndirectCaller(ExactAddressMergeKind Kind,
                                              va_t FirstTarget,
@@ -17300,7 +17388,7 @@ MedFunc makeMergedExactAddressIndirectCaller(ExactAddressMergeKind Kind,
     Block.Ops.push_back(std::move(Return));
   };
 
-  if (Kind == ExactAddressMergeKind::Select) {
+  if (Kind != ExactAddressMergeKind::Phi) {
     MedBlock Block;
     Block.Id = 0;
     Block.StartAddr = CallerVA;
@@ -17313,6 +17401,27 @@ MedFunc makeMergedExactAddressIndirectCaller(ExactAddressMergeKind Kind,
     Select.addInput(exactAddress(FirstTarget));
     Select.addInput(exactAddress(SecondTarget));
     Block.Ops.push_back(std::move(Select));
+    if (Kind == ExactAddressMergeKind::MaskedSelect) {
+      Block.Ops.clear();
+      auto append = [&](NdOp Opcode, MedVar Output,
+                        std::initializer_list<MedVar> Inputs) {
+        MedOp Op;
+        Op.Opcode = Opcode;
+        Op.Output = Output;
+        for (const MedVar &Input : Inputs)
+          Op.addInput(Input);
+        Block.Ops.push_back(std::move(Op));
+      };
+      MedVar Boolean = temp(20);
+      Boolean.Size = 1;
+      append(NdOp::INT_NOTEQUAL, Boolean, {Condition, MedVar::makeConst(0, 1)});
+      append(NdOp::INT_ZEXT, temp(21), {Boolean});
+      append(NdOp::INT_NEG2, temp(22), {temp(21)});
+      append(NdOp::INT_NOT, temp(23), {temp(22)});
+      append(NdOp::INT_AND, temp(24), {exactAddress(FirstTarget), temp(22)});
+      append(NdOp::INT_AND, temp(25), {exactAddress(SecondTarget), temp(23)});
+      append(NdOp::INT_OR, Merged, {temp(24), temp(25)});
+    }
     addCallAndReturn(Block, CallerVA + 4);
     Func.Blocks.push_back(std::move(Block));
     return Func;
@@ -19265,12 +19374,13 @@ TEST(LLVMCodePointerInvariantBoundary,
 }
 
 TEST(LLVMCodePointerInvariantBoundary,
-     RejectsDistinctExactAddressPhiAndSelectAtIndirectCallUse) {
+     PreservesDistinctFunctionEntriesAcrossIndirectCallValueMerges) {
   constexpr va_t OtherCodeVA = CodeVA + 0x40;
   for (BinaryFormat Format :
        {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
     for (ExactAddressMergeKind Kind :
-         {ExactAddressMergeKind::Phi, ExactAddressMergeKind::Select}) {
+         {ExactAddressMergeKind::Phi, ExactAddressMergeKind::Select,
+          ExactAddressMergeKind::MaskedSelect}) {
       SCOPED_TRACE(formatTraceName(Format));
       SCOPED_TRACE(Kind == ExactAddressMergeKind::Phi ? "phi" : "select");
       BinaryImage Image = makeSpilledConstTableImage(Arch::AArch64, Format);
@@ -19284,16 +19394,148 @@ TEST(LLVMCodePointerInvariantBoundary,
       MedFunc SecondCallee =
           makeReturnFunction("second_exact_address_callee", OtherCodeVA);
       llvm::LLVMContext Context;
-      testing::internal::CaptureStderr();
       auto Module =
           MedLLVMEmitter().emit({Caller, FirstCallee, SecondCallee}, Context,
                                 "distinct-exact-address-indirect-call",
                                 Arch::AArch64, {}, &Image, Format);
-      std::string Diagnostic = testing::internal::GetCapturedStderr();
+      ASSERT_NE(Module, nullptr);
+      expectValidModule(*Module);
+      llvm::Function *EmittedCaller = Module->getFunction(Caller.Name);
+      ASSERT_NE(EmittedCaller, nullptr);
+      auto Calls = callsIn(*EmittedCaller);
+      ASSERT_EQ(Calls.size(), 1u);
+      for (const MedFunc *Callee : {&FirstCallee, &SecondCallee}) {
+        std::set<const llvm::Value *> SeenTargets;
+        EXPECT_TRUE(valueReferencesTarget(Calls.front()->getCalledOperand(),
+                                          Module->getFunction(Callee->Name),
+                                          SeenTargets));
+        std::set<const llvm::Value *> SeenIntegers;
+        EXPECT_FALSE(valueReferencesInteger(Calls.front()->getCalledOperand(),
+                                            Callee->Entry, SeenIntegers));
+      }
+    }
+}
+
+TEST(LLVMCodePointerInvariantBoundary,
+     RejectsUnprovenMaskedFunctionAlternatives) {
+  constexpr va_t OtherCodeVA = CodeVA + 0x40;
+  for (BinaryFormat Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (unsigned Variant = 0; Variant != 6; ++Variant) {
+      SCOPED_TRACE(formatTraceName(Format));
+      SCOPED_TRACE(Variant);
+      BinaryImage Image = makeSpilledConstTableImage(Arch::AArch64, Format);
+      MedFunc Caller = makeMergedExactAddressIndirectCaller(
+          ExactAddressMergeKind::MaskedSelect, CodeVA, OtherCodeVA);
+      auto &Ops = Caller.Blocks.front().Ops;
+      ASSERT_EQ(Ops.size(), 9u);
+      if (Variant == 0) {
+        // A byte parameter has 256 values; only the comparison is boolean.
+        Ops[1].Inputs[0] = Caller.Params.front();
+      } else if (Variant == 1) {
+        // A 32-bit mask cannot select every bit of a 64-bit function pointer.
+        Ops[1].Output.Size = 4;
+        Ops[2].Inputs[0].Size = Ops[2].Output.Size = 4;
+        Ops[3].Inputs[0].Size = Ops[3].Output.Size = 4;
+        Ops[4].Inputs[1].Size = Ops[5].Inputs[1].Size = 4;
+      } else if (Variant == 2) {
+        Ops[3].Opcode = NdOp::COPY; // Two identical masks, no selection.
+      } else if (Variant == 3) {
+        Ops[5].Inputs[0].ConstVal += 4; // Interior address is not callable.
+      } else if (Variant == 4) {
+        Ops[5].Inputs[0].Provenance = ConstantAddressProvenance::Scalar;
+      }
+      MedFunc First = makeReturnFunction("first_masked_callee", CodeVA);
+      MedFunc Second = makeReturnFunction("second_masked_callee", OtherCodeVA);
+      std::vector<MedFunc> Functions{Caller, First};
+      if (Variant != 5)
+        Functions.push_back(Second);
+      llvm::LLVMContext Context;
+      testing::internal::CaptureStderr();
+      auto Module = MedLLVMEmitter().emit(Functions, Context,
+                                          "unproven-function-selection",
+                                          Arch::AArch64, {}, &Image, Format);
+      const std::string Diagnostic = testing::internal::GetCapturedStderr();
       EXPECT_EQ(Module, nullptr);
-      EXPECT_NE(Diagnostic.find("no unique lifted function entry"),
+      EXPECT_NE(Diagnostic.find("refusing stale-address fallback"),
                 std::string::npos)
           << Diagnostic;
+    }
+}
+
+TEST(LLVMCodePointerInvariantBoundary,
+     PreservesRuntimeReturnWordAcrossCodeValueMergeWithoutMakingItCallable) {
+  constexpr va_t RuntimeVA = CodeVA + 0x80;
+  for (BinaryFormat Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (bool AsCall : {false, true}) {
+      SCOPED_TRACE(formatTraceName(Format));
+      SCOPED_TRACE(AsCall);
+      constexpr Arch TargetArch = Arch::X86;
+      BinaryImage Image = makeSpilledConstTableImage(TargetArch, Format);
+      Image.Bits = Bitness::Bits32;
+      MedFunc Caller =
+          AsCall
+              ? makeMergedExactAddressIndirectCaller(
+                    ExactAddressMergeKind::Select, CodeVA, CodeVA, TargetArch)
+              : makeMergedExactAddressReturn(ExactAddressMergeKind::Select,
+                                             TargetArch, CodeVA, CodeVA);
+      MedVar Result;
+      Result.Kind = MedVar::Temp;
+      Result.Id = 30;
+      Result.SSAVer = 1;
+      Result.Size = 8;
+      MedVar HighWord = Result;
+      HighWord.Id = 31;
+      HighWord.Size = 4;
+      replaceSecondMergedAddressArm(Caller, ExactAddressMergeKind::Select,
+                                    HighWord);
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Output = Result;
+      Call.addInput(MedVar::makeConst(RuntimeVA, 4,
+                                      ConstantAddressProvenance::CodeAddress));
+      MedOp Extract;
+      Extract.Opcode = NdOp::SUBBYTES;
+      Extract.Output = HighWord;
+      Extract.addInput(Result);
+      Extract.addInput(
+          MedVar::makeConst(4, 4, ConstantAddressProvenance::Scalar));
+      auto &Ops = Caller.Blocks.front().Ops;
+      Ops.insert(Ops.begin(), {Call, Extract});
+      MedFunc Callee = makeReturnFunction("merged_function_identity", CodeVA);
+      MedFunc Runtime = makeReturnFunction("runtime_word_producer", RuntimeVA);
+      Runtime.ReturnType = NdType::makeInt(8);
+      llvm::LLVMContext Context;
+      testing::internal::CaptureStderr();
+      auto Module = MedLLVMEmitter().emit({Caller, Callee, Runtime}, Context,
+                                          "runtime-code-value-merge",
+                                          TargetArch, {}, &Image, Format);
+      const std::string Diagnostic = testing::internal::GetCapturedStderr();
+      if (AsCall) {
+        EXPECT_EQ(Module, nullptr);
+        EXPECT_NE(Diagnostic.find("no unique lifted function entry"),
+                  std::string::npos)
+            << Diagnostic;
+        continue;
+      }
+      ASSERT_NE(Module, nullptr) << Diagnostic;
+      expectValidModule(*Module);
+      auto *Emitted = Module->getFunction(Caller.Name);
+      ASSERT_NE(Emitted, nullptr);
+      bool SawSelection = false;
+      for (const auto &Block : *Emitted)
+        for (const auto &Instruction : Block)
+          if (const auto *Select =
+                  llvm::dyn_cast<llvm::SelectInst>(&Instruction)) {
+            std::set<const llvm::Value *> SeenCode, SeenRuntime;
+            SawSelection |=
+                valueReferencesTarget(Select, Module->getFunction(Callee.Name),
+                                      SeenCode) &&
+                valueReferencesTarget(Select, Module->getFunction(Runtime.Name),
+                                      SeenRuntime);
+          }
+      EXPECT_TRUE(SawSelection);
     }
 }
 

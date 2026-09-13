@@ -317,6 +317,11 @@ struct BinaryImage {
   /// negative certificate prevents the final numeric displacement from being
   /// mistaken for a uniquely owned table address.
   std::set<va_t> AmbiguousI386GOTOFFFields;
+  /// Complete mapped write footprint of a supported ELF ET_REL inventory.
+  /// Absence means the inventory or a writer width could not be certified.
+  /// Only a field disjoint from this complete set can be classified as an
+  /// unrelocated numeric immediate; target-VA coincidence supplies no role.
+  std::optional<std::set<va_t>> ObjectRelocationWriteBytes;
   /// Virtual addresses that a relocation resolves to inside a WRITABLE data
   /// segment (.data/.bss), filled by the loader as it applies relocations.  The
   /// writable counterpart of RelocDataAddrs: it proves a constant is a genuine

@@ -24,7 +24,8 @@ class AArch64Lifter {
 public:
   explicit AArch64Lifter(Arch TargetArch);
 
-  void lift(const cs_insn *Insn, std::vector<LowOp> &Ops);
+  void lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
+            bool ScalarWideImmediate = false);
 
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
@@ -53,6 +54,11 @@ public:
   static va_t decodeBranchLinkTarget(uint32_t Word, va_t Addr);
 
   struct LiftState : LiftStateBase {
+    bool ScalarWideImmediate = false;
+    NdVar wideImmediate(uint64_t Value, uint16_t Size) const {
+      return ScalarWideImmediate ? NdVar::scalar(Value, Size)
+                                 : NdVar::cst(Value, Size);
+    }
     using LiftStateBase::LiftStateBase;
 
     void

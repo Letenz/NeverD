@@ -410,8 +410,21 @@ bool MedLLVMEmitter::frameAccessesProvenDisjoint(const MedVar &A,
       auto Bound =
           recurrenceEdgeExcludes(Positive->PredId, *Owner, Positive->Value);
       const uint64_t Step = static_cast<uint64_t>(Positive->Step);
-      if (!Bound || *Bound > *Mask || Initial->Min >= *Bound || Step == 0 ||
-          Step > *Bound - Initial->Min || ((*Bound - Initial->Min) % Step) != 0)
+      if (!Bound || *Bound > *Mask || Step == 0)
+        return finish(std::nullopt);
+      // A negative byte index often advances to zero at machine width:
+      // -48, -44, ..., -4; the zero result takes the exit edge. Its unsigned
+      // interval ends immediately below the modulus, without a wrapped value
+      // reaching this PHI. Prove that the step hits zero exactly; otherwise
+      // the recurrence may wrap past the guard and visit arbitrary slots.
+      if (*Bound == 0 && Initial->Min != 0) {
+        const uint64_t Distance = (*Mask - Initial->Min) + 1;
+        if (Step > Distance || Distance % Step != 0)
+          return finish(std::nullopt);
+        return finish(UnsignedRange{Initial->Min, *Mask - (Step - 1)});
+      }
+      if (Initial->Min >= *Bound || Step > *Bound - Initial->Min ||
+          ((*Bound - Initial->Min) % Step) != 0)
         return finish(std::nullopt);
       return finish(UnsignedRange{Initial->Min, *Bound - Step});
     }

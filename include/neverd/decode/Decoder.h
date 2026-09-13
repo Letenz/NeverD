@@ -89,11 +89,14 @@ struct RelocatedAddressOperand {
 /// encoded instruction.  These records never confer address provenance; the
 /// x86 lifter binds the exact immediate/displacement field to a LowOp input so
 /// a later CFG proof can consume its identity without matching by numeric
-/// value.
+/// value. An unrelocated-immediate record instead certifies disjointness from
+/// the loader's complete object relocation write footprint.
 struct RelocatedScalarOperand {
   enum class Kind : uint8_t {
     I386ELFGOTPC,
     I386ELFAmbiguousGOTOFF,
+    I386ELFUnrelocatedImmediate,
+    AArch64ELFUnrelocatedWideMove,
   };
 
   va_t FieldVA = InvalidVA;

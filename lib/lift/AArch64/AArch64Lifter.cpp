@@ -182,7 +182,7 @@ NdVar AArch64Lifter::operandRead(LiftState &S, const cs_aarch64_op &Op) {
     if (Op.shift.type == AARCH64_SFT_LSL && Op.shift.value != 0)
       Val <<= Op.shift.value;
     uint16_t Sz = (Val <= UINT32_MAX) ? 4 : 8;
-    return NdVar::cst(Val, Sz);
+    return S.wideImmediate(Val, Sz);
   }
   case AARCH64_OP_MEM: {
     NdVar EA = S.makeTemp(8);
@@ -304,13 +304,15 @@ NdVar AArch64Lifter::operandWrite(const cs_aarch64_op &Op) {
 // Main dispatch
 // ===----------------------------------------------------------------------===//
 
-void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops) {
+void AArch64Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
+                         bool ScalarWideImmediate) {
   auto *Detail = Insn->detail;
   if (!Detail)
     return;
 
   auto &ARM64 = Detail->aarch64;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
+  S.ScalarWideImmediate = ScalarWideImmediate;
 
   bool Handled = liftCore(S, Insn, ARM64) || liftCoreNEON(S, Insn, ARM64) ||
                  liftControl(S, Insn, ARM64) || liftMem(S, Insn, ARM64) ||

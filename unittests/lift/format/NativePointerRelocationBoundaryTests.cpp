@@ -7,6 +7,8 @@
 #include "NeverDLiftFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -15,15 +17,18 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -424,6 +429,168 @@ target:
   EXPECT_NE(Body.find("ptrtoint (ptr @target to i64)"), std::string_view::npos)
       << Body;
   EXPECT_EQ(Body.find("@__nd_codeptr_"), std::string_view::npos) << Body;
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       ObjectUnrelocatedImmediateKeepsScalarRoleDespiteMappedValue) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "object fixtures require Clang's GNU-style driver";
+  for (Arch TargetArch : {Arch::X86, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    const bool IsA64 = TargetArch == Arch::AArch64;
+    const char *Triple =
+        IsA64 ? "aarch64-unknown-linux-gnu" : "i386-unknown-linux-gnu";
+    const fs::path Source = tmpFile("i386_immediate_roles.s");
+    const fs::path Object = tmpFile("i386_immediate_roles.o");
+    {
+      std::ofstream OS(Source);
+      ASSERT_TRUE(OS);
+      OS << R"(
+.text
+.globl returns_scalar
+.type returns_scalar,@function
+returns_scalar:
+)";
+      OS << (IsA64 ? "  mov w0, #119\n" : "  mov $119, %eax\n");
+      OS << R"(
+  ret
+.size returns_scalar, .-returns_scalar
+.globl returns_address
+.type returns_address,@function
+returns_address:
+)";
+      OS << (IsA64 ? "  adrp x0, storage\n  add x0, x0, :lo12:storage\n"
+                   : "  mov $storage, %eax\n");
+      OS << R"(
+  ret
+.size returns_address, .-returns_address
+.section .rodata,"a",@progbits
+.globl storage
+.type storage,@object
+storage:
+  .space 256
+.size storage, .-storage
+)";
+    }
+    RunResult Compile =
+        exec(NEVERD_TEST_CLANG,
+             {"-target", Triple, "-c", Source.string(), "-o", Object.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    auto Loaded = loadBinary(Object);
+    ASSERT_TRUE(static_cast<bool>(Loaded))
+        << llvm::toString(Loaded.takeError());
+    const BinaryImage &Original = *Loaded;
+    ASSERT_TRUE(Original.ObjectRelocationWriteBytes);
+    ASSERT_NE(Original.getSegmentFor(119), nullptr);
+
+    for (unsigned Variant = 0; Variant != (IsA64 ? 3u : 4u); ++Variant) {
+      SCOPED_TRACE(Variant);
+      BinaryImage Image = Original;
+      const char *Name = Variant == 3 ? "returns_address" : "returns_scalar";
+      const auto Symbol = std::find_if(
+          Image.Symbols.begin(), Image.Symbols.end(),
+          [&](const neverd::Symbol &S) { return S.Name == Name && S.IsFunc; });
+      ASSERT_NE(Symbol, Image.Symbols.end());
+      if (Variant == 1)
+        Image.ObjectRelocationWriteBytes.reset();
+      if (Variant == 2)
+        Image.ObjectRelocationWriteBytes->insert(Symbol->Addr + 2);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(TargetArch));
+      LowFunc Function = CFGBuilder().build(Image, Dec, Symbol->Addr, Name);
+      ASSERT_FALSE(Function.Blocks.empty());
+      bool SawImmediate = false;
+      for (const auto &Block : Function.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Addr == Symbol->Addr && Op.Opcode == NdOp::COPY &&
+              Op.NumInputs == 1 && Op.Inputs[0].isConst()) {
+            SawImmediate = true;
+            EXPECT_EQ(Op.Inputs[0].Provenance,
+                      Variant == 0   ? ConstantAddressProvenance::Scalar
+                      : Variant == 3 ? ConstantAddressProvenance::DataAddress
+                                     : ConstantAddressProvenance::Unknown);
+          }
+      EXPECT_TRUE(SawImmediate);
+    }
+    RunResult LLVM = liftToLLVMIRUnopt(Object);
+    ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
+    const std::string_view ScalarBody =
+        functionBody(LLVM.out, "returns_scalar");
+    ASSERT_FALSE(ScalarBody.empty());
+    EXPECT_NE(ScalarBody.find("119"), std::string_view::npos) << ScalarBody;
+    EXPECT_EQ(ScalarBody.find("ptrtoint (ptr @"), std::string_view::npos)
+        << ScalarBody;
+    EXPECT_TRUE(std::regex_search(std::string(ScalarBody),
+                                  std::regex(R"(ret i(32|64) 119\b)")))
+        << ScalarBody;
+
+    // Packed relocation sections are not decoded on the ET_REL route. Their
+    // presence must prevent a complete write certificate, even if ordinary
+    // REL/RELA sections are absent after replacing this section's type.
+    std::ifstream Input(Object, std::ios::binary);
+    ASSERT_TRUE(Input);
+    const std::vector<uint8_t> OriginalBytes(
+        (std::istreambuf_iterator<char>(Input)),
+        std::istreambuf_iterator<char>());
+    for (uint32_t PackedType :
+         {llvm::ELF::SHT_RELR, llvm::ELF::SHT_ANDROID_REL,
+          llvm::ELF::SHT_ANDROID_RELA, llvm::ELF::SHT_ANDROID_RELR,
+          llvm::ELF::SHT_AARCH64_AUTH_RELR}) {
+      SCOPED_TRACE(PackedType);
+      auto Bytes = OriginalBytes;
+      auto ReplaceSectionType = [&]<typename ELFT>() {
+        using Ehdr = typename ELFT::Ehdr;
+        using Shdr = typename ELFT::Shdr;
+        ASSERT_GE(Bytes.size(), sizeof(Ehdr));
+        const auto Header = readLE<Ehdr>(Bytes.data());
+        bool Replaced = false;
+        for (size_t I = 0; I < Header.e_shnum; ++I) {
+          const size_t Offset = Header.e_shoff + I * Header.e_shentsize;
+          ASSERT_TRUE(rangeInBounds(Offset, sizeof(Shdr), Bytes.size()));
+          auto Section = readLE<Shdr>(Bytes.data() + Offset);
+          if (Section.sh_type != llvm::ELF::SHT_REL &&
+              Section.sh_type != llvm::ELF::SHT_RELA)
+            continue;
+          Section.sh_type = PackedType;
+          writeLE(Bytes.data() + Offset, Section);
+          Replaced = true;
+        }
+        ASSERT_TRUE(Replaced);
+      };
+      if (IsA64)
+        ReplaceSectionType.template operator()<llvm::object::ELF64LE>();
+      else
+        ReplaceSectionType.template operator()<llvm::object::ELF32LE>();
+      ASSERT_FALSE(HasFatalFailure());
+      const auto PackedObject = tmpFile("packed_immediate_roles.o");
+      {
+        std::ofstream Output(PackedObject, std::ios::binary);
+        Output.write(reinterpret_cast<const char *>(Bytes.data()),
+                     static_cast<std::streamsize>(Bytes.size()));
+        ASSERT_TRUE(Output);
+      }
+      auto Packed = loadBinary(PackedObject);
+      ASSERT_TRUE(static_cast<bool>(Packed))
+          << llvm::toString(Packed.takeError());
+      EXPECT_FALSE(Packed->ObjectRelocationWriteBytes);
+    }
+
+    // An unsupported writer prevents a negative relocation certificate, even
+    // when its encoded value happens to equal a mapped data address.
+    {
+      std::ofstream OS(Source, std::ios::app);
+      ASSERT_TRUE(OS);
+      OS << (IsA64 ? ".reloc returns_scalar, R_AARCH64_MOVW_UABS_G0, storage\n"
+                   : ".reloc returns_scalar+1, R_386_TLS_TPOFF, storage\n");
+    }
+    Compile = exec(NEVERD_TEST_CLANG, {"-target", Triple, "-c", Source.string(),
+                                       "-o", Object.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    auto Unsupported = loadBinary(Object);
+    ASSERT_TRUE(static_cast<bool>(Unsupported))
+        << llvm::toString(Unsupported.takeError());
+    EXPECT_FALSE(Unsupported->ObjectRelocationWriteBytes);
+  }
 }
 
 TEST_F(NativePointerRelocationBoundary,

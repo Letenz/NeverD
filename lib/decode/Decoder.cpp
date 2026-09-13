@@ -272,7 +272,20 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
   if (X86) {
     X86->lift(Insn.Raw, Ops, Relocs, ScalarRelocs);
   } else if (AArch64) {
-    AArch64->lift(Insn.Raw, Ops);
+    bool ScalarWideImmediate = false;
+    if (Insn.Raw && Insn.Raw->size == 4) {
+      uint32_t Word = 0;
+      for (unsigned Byte = 0; Byte != 4; ++Byte)
+        Word |= uint32_t(Insn.Raw->bytes[Byte]) << (Byte * 8);
+      if ((Word & 0x1f800000u) == 0x12800000u)
+        for (const RelocatedScalarOperand &Scalar : ScalarRelocs)
+          ScalarWideImmediate |=
+              Scalar.Semantics ==
+                  RelocatedScalarOperand::Kind::AArch64ELFUnrelocatedWideMove &&
+              Scalar.FieldVA == Insn.Raw->address && Scalar.Width == 4 &&
+              Scalar.EncodedValue == Word;
+    }
+    AArch64->lift(Insn.Raw, Ops, ScalarWideImmediate);
   } else if (ARM) {
     ARM->lift(Insn.Raw, Ops);
   } else {

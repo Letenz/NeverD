@@ -530,6 +530,24 @@ void X86Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
     }
   }
 
+  for (const RelocatedScalarOperand &Scalar : ScalarRelocs) {
+    if (Scalar.Semantics !=
+            RelocatedScalarOperand::Kind::I386ELFUnrelocatedImmediate ||
+        TargetArch != Arch::X86 || !ImmediateOperand ||
+        (Insn->id != X86_INS_MOV && Insn->id != X86_INS_MOVABS &&
+         Insn->id != X86_INS_PUSH) ||
+        Scalar.Width == 0 || Scalar.Width > 4 ||
+        Scalar.Width != X86.encoding.imm_size ||
+        Scalar.FieldVA != Insn->address + X86.encoding.imm_offset ||
+        S.RelocatedImmediate || ConflictingImmediateOwners)
+      continue;
+    const uint64_t Mask = (uint64_t{1} << (Scalar.Width * 8)) - 1;
+    if ((static_cast<uint64_t>(ImmediateOperand->imm) & Mask) ==
+        (Scalar.EncodedValue & Mask))
+      S.RelocatedImmediate = NdVar::scalar(
+          static_cast<uint64_t>(ImmediateOperand->imm), ImmediateOperand->size);
+  }
+
   // Bind i386 GOTPC only to the exact encoded immediate of `addl imm32,reg`.
   // A memory-form ADD may contain both a displacement and an equal immediate;
   // instruction membership plus numeric equality is therefore insufficient.

@@ -1705,6 +1705,10 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     bool SawLiftedCodeIdentity = false;
     bool SawStrongCodeProvenance = false;
     bool SawUnsafeCodeDependency = false;
+    // A dynamic target need not have one identity, but every value arm must
+    // still denote an emitted function entry without pointer arithmetic.
+    bool AllFunctionEntries = false;
+    bool SawRuntimeValue = false;
   };
   auto mergeProof = [](CodeProof A, const CodeProof &B) {
     A.SawCode |= B.SawCode;
@@ -1722,6 +1726,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     A.SawLiftedCodeIdentity |= B.SawLiftedCodeIdentity;
     A.SawStrongCodeProvenance |= B.SawStrongCodeProvenance;
     A.SawUnsafeCodeDependency |= B.SawUnsafeCodeDependency;
+    A.AllFunctionEntries &= B.AllFunctionEntries;
+    A.SawRuntimeValue |= B.SawRuntimeValue;
     if (A.CommonTarget && B.CommonTarget && *A.CommonTarget != *B.CommonTarget)
       A.SawConflict = true;
     else if (!A.CommonTarget)
@@ -1765,18 +1771,20 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     // dependency arm was produced by an operation that materializes its code
     // leaves.  The merged value is therefore relocation-aware but no longer a
     // single identity that may be replaced with its initializer.
-    // Multiple exact identities are admitted only for blockaddresses owned by
-    // one LLVM function. Function-entry alternatives and cross-owner labels
-    // remain ambiguous here and must use an explicit higher-level contract.
+    // Function-entry alternatives retain their runtime selection. Interior
+    // labels may merge only within one LLVM function, and are never callable.
     const bool SameOwnerBlockAlternatives =
         Result.SawConflict && Result.SawBlockIdentity &&
         !Result.SawNonBlockIdentity && Result.CommonBlockOwner &&
         !Result.SawOwnerConflict;
-    const bool ConflictIsMaterializable =
-        !Result.SawConflict || SameOwnerBlockAlternatives;
+    const bool ConflictIsMaterializable = !Result.SawConflict ||
+                                          SameOwnerBlockAlternatives ||
+                                          Result.AllFunctionEntries;
     if (Result.SawCode &&
         (Result.SawCodeDependency || Result.SawNull ||
-         SameOwnerBlockAlternatives) &&
+         SameOwnerBlockAlternatives ||
+         (Result.SawConflict && Result.AllFunctionEntries) ||
+         (Result.SawRuntimeValue && !Result.SawUnresolved)) &&
         !Result.SawNonCode && ConflictIsMaterializable &&
         !Result.SawOwnerConflict && !Result.SawUnmaterializableCodeIdentity &&
         !Result.SawUnsafeCodeDependency) {
@@ -1854,7 +1862,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
             .SawLiftedCodeIdentity = HasLiftedCodeIdentity,
             .SawStrongCodeProvenance =
                 isCodeAddressProvenance(Current.Provenance) ||
-                HasLoaderCodeProvenance || HasAuthenticatedFunctionEntry};
+                HasLoaderCodeProvenance || HasAuthenticatedFunctionEntry,
+            .AllFunctionEntries = HasFunctionIdentity};
   };
 
   struct CodeProofResult {
@@ -1969,7 +1978,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     };
 
     if (const PhiNode *Phi = lookupPhi(Current)) {
-      CodeProof Combined;
+      CodeProof Combined{.AllFunctionEntries = true};
       bool SawArm = false;
       bool Complete = true;
       for (const auto &[Pred, Arg] : Phi->Args) {
@@ -1979,6 +1988,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
         if (phiIncomingIsRecurrent(*Phi, Pred, Arg)) {
           if (!isPureIdentityRecurrence(*Phi, Arg)) {
             Combined.SawCodeDependency = true;
+            Combined.AllFunctionEntries = false;
             SawArm = true;
           }
           continue;
@@ -1988,8 +1998,10 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
         Complete &= Arm.Complete;
         SawArm = true;
       }
-      if (!SawArm)
+      if (!SawArm) {
         Combined.SawUnresolved = true;
+        Combined.AllFunctionEntries = false;
+      }
       return Finish({finishValueMerge(std::move(Combined)), Complete});
     }
 
@@ -2002,7 +2014,8 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
                                    .SawExplicit = true,
                                    .SawFunctionIdentity = true,
                                    .SawLiftedCodeIdentity = true,
-                                   .SawStrongCodeProvenance = true}));
+                                   .SawStrongCodeProvenance = true,
+                                   .AllFunctionEntries = true}));
     if (std::optional<MedVar> Forwarded = pointerPreservingInput(*Def)) {
       // Low-to-Med publishes entry-state registers as COPY R,R. This is a
       // runtime input boundary, not an incomplete SSA recurrence. Treat the
@@ -2013,11 +2026,18 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
         return Finish(completeProof({.SawUnresolved = true}));
       return Finish(proveCodeValue(*Forwarded, IncludeLayoutCodeOwners));
     }
-    if (Def->Opcode == NdOp::SELECT && Def->NumInputs >= 3) {
+    MedVar Condition, TrueValue, FalseValue;
+    const bool MaskedSelect =
+        isMaskedSelectOr(*Def, Condition, TrueValue, FalseValue);
+    if (selectPreservesPointerValues(*Def) || MaskedSelect) {
+      if (!MaskedSelect) {
+        TrueValue = Def->Inputs[1];
+        FalseValue = Def->Inputs[2];
+      }
       CodeProofResult TrueArm =
-          proveCodeValue(Def->Inputs[1], IncludeLayoutCodeOwners);
+          proveCodeValue(TrueValue, IncludeLayoutCodeOwners);
       CodeProofResult FalseArm =
-          proveCodeValue(Def->Inputs[2], IncludeLayoutCodeOwners);
+          proveCodeValue(FalseValue, IncludeLayoutCodeOwners);
       CodeProof Combined = mergeProof(std::move(TrueArm.Proof), FalseArm.Proof);
       return Finish({finishValueMerge(std::move(Combined)),
                      TrueArm.Complete && FalseArm.Complete});
@@ -2031,7 +2051,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
       std::vector<MedVar> Sources;
       if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
         return Finish(completeProof({.SawUnresolved = true}));
-      CodeProof Combined;
+      CodeProof Combined{.AllFunctionEntries = true};
       bool Complete = true;
       for (const MedVar &Source : Sources) {
         CodeProofResult SourceResult =
@@ -2039,7 +2059,7 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
         Combined = mergeProof(std::move(Combined), SourceResult.Proof);
         Complete &= SourceResult.Complete;
       }
-      return Finish({std::move(Combined), Complete});
+      return Finish({finishValueMerge(std::move(Combined)), Complete});
     }
 
     // Calls and atomic old-value results do not inherit provenance from their
@@ -2051,13 +2071,30 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     case NdOp::ATOMIC_XCHG:
     case NdOp::ATOMIC_ADD:
     case NdOp::ATOMIC_CMPXCHG:
-      return Finish(completeProof({.SawUnresolved = true}));
+      return Finish(completeProof({.SawRuntimeValue = true}));
     case NdOp::INTRINSIC:
       if (atomicIntrinsicAddressInput(*Def))
-        return Finish(completeProof({.SawUnresolved = true}));
+        return Finish(completeProof({.SawRuntimeValue = true}));
       break;
     default:
       break;
+    }
+
+    // An ABI can expose a call result in several physical registers (EDX:EAX
+    // on i386). Extracting its high word is a runtime value, not an unresolved
+    // image address. A value merge must retain that arm alongside a relocated
+    // function pointer; it must not collapse the merge to the known function.
+    if (Def->Opcode == NdOp::SUBBYTES && Def->NumInputs >= 2 &&
+        Def->Inputs[1].isConst() &&
+        !isAddressProvenance(Def->Inputs[1].Provenance) &&
+        Def->Output.Size != 0 && Def->Output.Size <= Def->Inputs[0].Size &&
+        Def->Inputs[1].ConstVal <= Def->Inputs[0].Size - Def->Output.Size) {
+      CodeProofResult Input =
+          proveCodeValue(Def->Inputs[0], IncludeLayoutCodeOwners);
+      if (Input.Proof.SawRuntimeValue && !Input.Proof.SawCode &&
+          !Input.Proof.SawCodeDependency && !Input.Proof.SawUnresolved &&
+          !Input.Proof.SawNonCode)
+        return Finish(std::move(Input));
     }
 
     CodeProof Combined;
@@ -2125,6 +2162,12 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
           RequireCodeRole ? "icall.target" : "code.value");
   }
 
+  if (Proof.AllFunctionEntries && Proof.SawFunctionIdentity &&
+      !Proof.SawUnresolved && !Proof.SawNonCode && !Proof.SawNull &&
+      !Proof.SawConflict && !Proof.SawOwnerConflict &&
+      !Proof.SawUnmaterializableCodeIdentity && !Proof.SawUnsafeCodeDependency)
+    return getVar(V, Builder);
+
   if (!Proof.SawCode && !Proof.SawOwnerConflict &&
       !Proof.SawUnmaterializableCodeIdentity &&
       !Proof.SawUnsafeCodeDependency &&
@@ -2156,7 +2199,9 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
          {"saw_function_identity", Proof.SawFunctionIdentity},
          {"saw_lifted_code_identity", Proof.SawLiftedCodeIdentity},
          {"saw_strong_code_provenance", Proof.SawStrongCodeProvenance},
-         {"saw_unsafe_code_dependency", Proof.SawUnsafeCodeDependency}});
+         {"saw_unsafe_code_dependency", Proof.SawUnsafeCodeDependency},
+         {"all_function_entries", Proof.AllFunctionEntries},
+         {"saw_runtime_value", Proof.SawRuntimeValue}});
     syncError() << "med_llvm_emitter: relocatable code-address value "
                 << V.display() << " in " << CurMedFunc->Name
                 << " has no unique lifted "

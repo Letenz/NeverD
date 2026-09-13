@@ -121,7 +121,7 @@ bool liftMove(AArch64Lifter &L, AArch64Lifter::LiftState &S,
         Shift = ARM64.operands[1].shift.value;
       Val = Imm16 << Shift;
     }
-    S.emit(NdOp::COPY, Dst, {NdVar::cst(Val, Sz)});
+    S.emit(NdOp::COPY, Dst, {S.wideImmediate(Val, Sz)});
     break;
   }
   case AARCH64_INS_MOVN: {
@@ -143,7 +143,7 @@ bool liftMove(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     }
     if (Sz == 4)
       Val &= 0xFFFFFFFF;
-    S.emit(NdOp::COPY, Dst, {NdVar::cst(Val, Sz)});
+    S.emit(NdOp::COPY, Dst, {S.wideImmediate(Val, Sz)});
     break;
   }
   case AARCH64_INS_MOVK: {
@@ -161,11 +161,11 @@ bool liftMove(AArch64Lifter &L, AArch64Lifter::LiftState &S,
       Mask &= 0xFFFFFFFF;
     NdVar Cleared = S.makeTemp(Sz);
     S.emit(NdOp::INT_AND, Cleared,
-           {NdVar::reg(Dst.Offset, Sz), NdVar::cst(Mask, Sz)});
+           {NdVar::reg(Dst.Offset, Sz), S.wideImmediate(Mask, Sz)});
     uint64_t Inserted = Imm16 << Shift;
     if (Sz == 4)
       Inserted &= 0xFFFFFFFF;
-    S.emit(NdOp::INT_OR, Dst, {Cleared, NdVar::cst(Inserted, Sz)});
+    S.emit(NdOp::INT_OR, Dst, {Cleared, S.wideImmediate(Inserted, Sz)});
     break;
   }
 
