@@ -790,6 +790,73 @@ TEST(HighControlFlowSemantics, ContinuationFoldingPreservesExternalEntries) {
   }
 }
 
+TEST(HighControlFlowSemantics, ContinuationFoldingKeepsDeadReturnEntryLabels) {
+  for (bool SharedHeader : {false, true}) {
+    for (bool ReverseArms : {false, true}) {
+      auto [F, Med] = branchWithScalarContinuation(SharedHeader);
+      HighStmt Label;
+      Label.Kind = StmtKind::Block;
+      Label.Addr = Med.Blocks[1].StartAddr;
+      F.Body.insert(F.Body.begin() + 1, Label);
+      if (ReverseArms) {
+        std::swap(F.Body[0].Body, F.Body[0].ElseBody);
+        F.Body[0].Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, F.Body[0].Cond);
+      }
+      const uint64_t Expected[] = {7, 12, 111, 112, 112};
+      for (uint64_t Input = 0; Input < 5; ++Input)
+        ASSERT_EQ(execute(F, Input), Expected[Input]);
+      foldStructuredContinuations(F, &Med);
+      for (uint64_t Input = 0; Input < 5; ++Input)
+        EXPECT_EQ(execute(F, Input), Expected[Input]);
+      size_t Gotos = 0, Labels = 0;
+      walkStmts(F.Body, [&](const HighStmt &S) {
+        Gotos += S.Kind == StmtKind::Goto;
+        Labels += S.Kind == StmtKind::Block && S.Addr == Label.Addr;
+      });
+      EXPECT_EQ(Gotos, 0u);
+      EXPECT_EQ(Labels, 1u);
+      expectUniqueGotoTargets(F);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, ReturnEntryLabelsRequireExclusiveNativeOwner) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    auto [F, Med] = branchWithScalarContinuation(false);
+    HighStmt Label;
+    Label.Kind = StmtKind::Block;
+    Label.Addr = Med.Blocks[1].StartAddr;
+    if (Mutation == 0)
+      F.Entry = Label.Addr;
+    else if (Mutation == 1)
+      Med.Entry = Label.Addr;
+    else if (Mutation == 2)
+      Label.Addr = 0x1074; // Not an operation or entry in the return block.
+    else if (Mutation == 3)
+      Label.Body = {assign(0x1074, 5, 42)};
+    else if (Mutation == 4)
+      Label.ElseBody = {assign(0x1074, 5, 42)};
+    else if (Mutation == 5)
+      F.Body.push_back(Label); // A duplicate is not an exclusive label.
+    else {
+      HighStmt Dispatch;
+      Dispatch.Kind = StmtKind::Switch;
+      Dispatch.SwitchExpr = local(0);
+      Dispatch.Cases.push_back({99, {jump(0, Label.Addr)}});
+      F.Body.push_back(Dispatch);
+    }
+    F.Body.insert(F.Body.begin() + 1, Label);
+    foldStructuredContinuations(F, &Med);
+    size_t Gotos = 0;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      Gotos += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1100;
+    });
+    EXPECT_EQ(Gotos, 1u) << Mutation;
+    EXPECT_EQ(F.Body[1].Addr, Label.Addr) << Mutation;
+    EXPECT_EQ(F.Body[2].Kind, StmtKind::Return) << Mutation;
+  }
+}
+
 TEST(HighControlFlowSemantics, ContinuationFoldingRequiresExactLoopEntry) {
   for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
     auto [F, Med] = branchWithScalarContinuation(true);

@@ -91,10 +91,21 @@ class ContinuationFolder {
     return PrefixOwners > 1 && It != Owners.end() && It->second == PrefixOwners;
   }
 
-  bool ownsReturn(const HighStmt &Owner, const HighStmt &Return) const {
+  bool ownsReturn(const HighStmt &Owner, const HighStmt &Return,
+                  const std::vector<HighStmt> &Body, size_t Prefix,
+                  size_t ReturnIndex) const {
     if (Return.Kind != StmtKind::Return || !uniqueAddress(Return.Addr) ||
         Return.Addr == FunctionEntry || Targets.count(Return.Addr))
       return false;
+    for (size_t I = Prefix; I < ReturnIndex; ++I) {
+      const auto &Label = Body[I];
+      if (Label.Kind != StmtKind::Block || !Label.Body.empty() ||
+          !Label.ElseBody.empty() || !Label.Cases.empty() ||
+          !Label.DefaultBody.empty() || !Label.EHClauseBodies.empty() ||
+          !uniqueAddress(Label.Addr) || Label.Addr == FunctionEntry ||
+          Targets.count(Label.Addr))
+        return false;
+    }
     if (!Med)
       return true;
 
@@ -124,6 +135,17 @@ class ContinuationFolder {
           (FunctionEntry && Op.Addr == FunctionEntry) ||
           (Med->Entry && Op.Addr == Med->Entry))
         return false;
+    // DCE deliberately retains empty entry labels. They can move with the
+    // return only when they belong to this same single-predecessor block;
+    // adjacency alone cannot authorize moving a different native entry.
+    for (size_t I = Prefix; I < ReturnIndex; ++I) {
+      const va_t Address = Body[I].Addr;
+      if (Address == Med->Entry ||
+          (Address != Block->StartAddr &&
+           std::none_of(Block->Ops.begin(), Block->Ops.end(),
+                        [&](const MedOp &Op) { return Op.Addr == Address; })))
+        return false;
+    }
     const int PredId = Block->Preds.front();
     if (PredId < 0 || static_cast<size_t>(PredId) >= Med->Blocks.size())
       return false;
@@ -174,7 +196,13 @@ class ContinuationFolder {
         continue; // The insertion may invalidate S.
       }
 
-      if (I + 2 >= Body.size() || !ownsReturn(S, Body[I + 1]))
+      size_t ReturnIndex = I + 1;
+      while (ReturnIndex < Body.size() &&
+             Body[ReturnIndex].Kind == StmtKind::Block &&
+             Body[ReturnIndex].Body.empty())
+        ++ReturnIndex;
+      if (ReturnIndex + 1 >= Body.size() ||
+          !ownsReturn(S, Body[ReturnIndex], Body, I + 1, ReturnIndex))
         continue;
       auto *Taken = &S.Body;
       auto *Fallthrough = &S.ElseBody;
@@ -182,14 +210,15 @@ class ContinuationFolder {
         std::swap(Taken, Fallthrough);
       if (Taken->empty() || !Fallthrough->empty() ||
           !removableTransfer(Taken->back()) ||
-          !exactContinuation(Body[I + 2], Taken->back().GotoTarget))
+          !exactContinuation(Body[ReturnIndex + 1], Taken->back().GotoTarget))
         continue;
       // if (c) { ...; goto tail; } return r; tail:
       // becomes if (c) { ...; } else { return r; } tail:
       // The condition is evaluated once and the shared tail stays in place.
       Taken->pop_back();
-      Fallthrough->push_back(std::move(Body[I + 1]));
-      Body.erase(Body.begin() + I + 1);
+      for (size_t J = I + 1; J <= ReturnIndex; ++J)
+        Fallthrough->push_back(std::move(Body[J]));
+      Body.erase(Body.begin() + I + 1, Body.begin() + ReturnIndex + 1);
     }
   }
 
