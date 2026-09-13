@@ -9,6 +9,37 @@ protected:
                 "-march=armv8.2-a+sve", "-std=gnu11"});
     EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << Source;
   }
+
+  void expectVectorLengthResults(const std::string &Functions,
+                                 const std::string &Checks) {
+    if (!hasCrossTargetClang())
+      GTEST_SKIP() << "SVE HighC execution requires Clang";
+    // Execute unchanged function bodies on the host with the architectural
+    // count intrinsics supplied by a fixture. Cover every legal SVE vector
+    // length; exact spelling of the generated integer casts is immaterial.
+    const auto Source = tmpFile("sve_length_runtime.c");
+    std::ofstream Out(Source);
+    Out << "#include <stdint.h>\n"
+           "static uint64_t vector_bytes;\n"
+           "static uint64_t svcntb(void) { return vector_bytes; }\n"
+           "static uint64_t svcntw(void) { return vector_bytes / 4; }\n"
+        << Functions
+        << "\nint main(void) {\n"
+           "  for (vector_bytes = 16; vector_bytes <= 256; vector_bytes += 16) "
+           "{\n"
+        << Checks << "\n  }\n  return 0;\n}\n";
+    Out.close();
+    ASSERT_TRUE(Out.good());
+    const auto Executable = tmpFile("sve_length_runtime.exe");
+    const auto Compile =
+        exec(NEVERD_TEST_CLANG,
+             {"-std=gnu11", "-O2", "-fsanitize=signed-integer-overflow",
+              "-fsanitize-trap=signed-integer-overflow", Source.string(), "-o",
+              Executable.string()});
+    ASSERT_EQ(Compile.exitCode, 0) << Compile.err;
+    const auto Run = exec(Executable.string(), {});
+    EXPECT_EQ(Run.exitCode, 0) << Run.err << "\n" << Functions;
+  }
 };
 
 static fs::path sveLengthObj() {
@@ -74,16 +105,13 @@ TEST_F(AArch64_SVELength, AddvlScalesSignedImmediateByRuntimeVectorLength) {
 
   auto Positive = sveLengthFunctionIR(r.out, "test_sve_addvl_two");
   ASSERT_FALSE(Positive.empty()) << r.out;
-  EXPECT_NE(Positive.find("@llvm.aarch64.sve.cntb(i32 31)"),
-            std::string::npos)
+  EXPECT_NE(Positive.find("@llvm.aarch64.sve.cntb(i32 31)"), std::string::npos)
       << Positive;
-  EXPECT_NE(Positive.find("shl i64 %svcnt, 1"), std::string::npos)
-      << Positive;
+  EXPECT_NE(Positive.find("shl i64 %svcnt, 1"), std::string::npos) << Positive;
 
   auto Negative = sveLengthFunctionIR(r.out, "test_sve_addvl_negative");
   ASSERT_FALSE(Negative.empty()) << r.out;
-  EXPECT_NE(Negative.find("@llvm.aarch64.sve.cntb(i32 31)"),
-            std::string::npos)
+  EXPECT_NE(Negative.find("@llvm.aarch64.sve.cntb(i32 31)"), std::string::npos)
       << Negative;
   EXPECT_NE(Negative.find("-3"), std::string::npos) << Negative;
 }
@@ -120,12 +148,16 @@ TEST_F(AArch64_SVELength, HighCHonorsEncodedMultiplierAndCompiles) {
   auto Inc = sveLengthFunctionC(source, "test_sve_incb_mul2");
   ASSERT_FALSE(Inc.empty()) << source;
   EXPECT_NE(Inc.find("svcntb()"), std::string::npos) << Inc;
-  EXPECT_NE(Inc.find("* 2"), std::string::npos) << Inc;
 
   auto Dec = sveLengthFunctionC(source, "test_sve_decw_mul4");
   ASSERT_FALSE(Dec.empty()) << source;
   EXPECT_NE(Dec.find("svcntw()"), std::string::npos) << Dec;
-  EXPECT_NE(Dec.find("* 4"), std::string::npos) << Dec;
+
+  expectVectorLengthResults(
+      Inc + "\n" + Dec,
+      "if ((uint64_t)test_sve_incb_mul2() != 10 + 2 * vector_bytes) return 1;\n"
+      "if ((uint64_t)test_sve_decw_mul4() != 100 - 4 * (vector_bytes / 4)) "
+      "return 2;");
 
   expectPairedClangSyntax(cFile, source);
 }
@@ -144,12 +176,16 @@ TEST_F(AArch64_SVELength, HighCAddvlUsesRuntimeVectorLengthAndCompiles) {
   auto Positive = sveLengthFunctionC(source, "test_sve_addvl_two");
   ASSERT_FALSE(Positive.empty()) << source;
   EXPECT_NE(Positive.find("svcntb()"), std::string::npos) << Positive;
-  EXPECT_NE(Positive.find("* 2"), std::string::npos) << Positive;
 
   auto Negative = sveLengthFunctionC(source, "test_sve_addvl_negative");
   ASSERT_FALSE(Negative.empty()) << source;
   EXPECT_NE(Negative.find("svcntb()"), std::string::npos) << Negative;
-  EXPECT_NE(Negative.find("-3"), std::string::npos) << Negative;
+
+  expectVectorLengthResults(
+      Positive + "\n" + Negative,
+      "if ((uint64_t)test_sve_addvl_two() != 10 + 2 * vector_bytes) return 1;\n"
+      "if ((uint64_t)test_sve_addvl_negative() != 100 - 3 * vector_bytes) "
+      "return 2;");
 
   expectPairedClangSyntax(cFile, source);
 }
