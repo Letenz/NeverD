@@ -159,7 +159,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return Result ? *Result : bad("incompatible runtime result carrier");
   }
   if (Hint.CallKind != Kind::Native && Hint.CallKind != Kind::ObjCMessage &&
-      Hint.CallKind != Kind::ObjCSuper2 && Hint.CallKind != Kind::BlockInvoke)
+      Hint.CallKind != Kind::ObjCSuper2 && Hint.CallKind != Kind::BlockInvoke &&
+      Hint.CallKind != Kind::ObjCRuntimeCall)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
       E.Operands.size() != Signature.Parameters.size())
@@ -208,7 +209,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     // expression once and supplies its hidden receiver itself.
     Name = "((" + Prototype + ")(" + *Receiver + "))";
   } else if (!Message) {
-    const auto *Definition = sourceCallDefinition(Hint, Name);
+    const bool Runtime = Hint.CallKind == Kind::ObjCRuntimeCall;
+    if (Runtime)
+      Name = Hint.TargetName;
+    const auto *Definition =
+        Runtime ? nullptr : sourceCallDefinition(Hint, Name);
     if (Hint.TargetAddress && !Definition && DefinedFuncs.count(Name))
       return bad("native target address disagrees with the source definition");
     if (Definition)

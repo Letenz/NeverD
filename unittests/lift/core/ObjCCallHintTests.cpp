@@ -1,3 +1,4 @@
+#include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -143,6 +144,148 @@ TEST(ObjCCallHints, RecognizesStrippedSelectorStubFromInstructionsAndSlots) {
   EXPECT_EQ(Hint.SelectorReferenceAddress, 0x2100U);
   ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
   EXPECT_EQ(Hint.Signature.Parameters[2].Location.RegisterOffset, 16U);
+}
+
+namespace {
+BinaryImage runtimeImage(llvm::StringRef Name,
+                         Arch Architecture = Arch::AArch64) {
+  auto Image = image(Architecture);
+  Image.ImportPtrSlots[0x2180] = Name.str();
+  auto *Bytes = Image.Segments[0].Data.data() + 0x100;
+  if (Architecture == Arch::AArch64) {
+    const uint32_t Stub[] = {0xb0000010, 0xf940c210, 0xd61f0200};
+    for (size_t I = 0; I < 3; ++I)
+      llvm::support::endian::write32le(Bytes + I * 4, Stub[I]);
+  } else {
+    Bytes[0] = 0xff;
+    Bytes[1] = 0x25;
+    llvm::support::endian::write32le(Bytes + 2, 0x2180 - 0x1106);
+  }
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image =
+        runtimeImage("_objc_retainAutoreleasedReturnValue", Architecture);
+    auto Low = caller(Architecture);
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    EXPECT_EQ(Call.SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::ObjCRuntimeCall);
+    EXPECT_EQ(Call.SourceCallHint->TargetAddress, 0x2180U);
+    EXPECT_EQ(Call.TargetName, "objc_retainAutoreleasedReturnValue");
+    ASSERT_EQ(Call.Args.size(), 1U);
+    EXPECT_EQ(Call.Args[0].RegOff,
+              getTargetRegInfo(Architecture).IntParamRegs.front());
+    EXPECT_EQ(Call.Args[0].Size, 8U);
+    const auto &Op = Med.Blocks[Call.BlockId].Ops[Call.OpIdx];
+    EXPECT_EQ(Op.Output.RegOff, getTargetRegInfo(Architecture).IntReturnReg);
+    EXPECT_EQ(Op.Output.Size, 8U);
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Architecture);
+    const auto *Expression = sourceCall(High);
+    ASSERT_NE(Expression, nullptr);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  }
+}
+
+TEST(ObjCCallHints, RegisterSpecificRuntimeCallsReadTheNamedRegister) {
+  for (unsigned Register : {0, 1, 8, 15, 19, 20, 28}) {
+    for (llvm::StringRef Operation : {"retain", "release"}) {
+      const auto Name =
+          "_objc_" + Operation.str() + "_x" + std::to_string(Register);
+      auto Image = runtimeImage(Name);
+      const auto Med = convert(Image, caller());
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      ASSERT_EQ(Call.Args.size(), 1U);
+      EXPECT_EQ(Call.Args[0].RegOff, Register * 8U);
+      EXPECT_EQ(Call.TargetName, "objc_" + Operation.str());
+      const auto &Op = Med.Blocks[Call.BlockId].Ops[Call.OpIdx];
+      EXPECT_EQ(Op.Output.Size, Operation == "retain" ? 8 : 0);
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeBindingsRequireExactImportedIdentityAndABI) {
+  for (llvm::StringRef Name :
+       {"_objc_retain_x16", "_objc_retain_x18", "_objc_retain_x29",
+        "_objc_retain_x01", "_objc_release_x20_extra", "_objc_retainFake"}) {
+    auto Image = runtimeImage(Name);
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty())
+        << Name.str();
+  }
+  auto Image = runtimeImage("_objc_retain_x19", Arch::X64);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller(Arch::X64)).empty());
+  Image = runtimeImage("_objc_retain");
+  Image.ConflictingImportStorageSlots.insert(0x2180);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  Image.ConflictingImportStorageSlots.clear();
+  Image.ImportPtrSlots.clear();
+  Symbol Symbol;
+  Symbol.Name = "_objc_retain";
+  Symbol.Addr = 0x1100;
+  Symbol.IsFunc = true;
+  Image.Symbols.push_back(Symbol);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+}
+
+TEST(ObjCCallHints, RuntimeIndirectCallUsesTheLoadedImportSlot) {
+  auto Image = runtimeImage("_objc_retain_x19");
+  auto Low = caller();
+  auto &Ops = Low.Blocks[0].Ops;
+  Ops[0].Opcode = NdOp::INDIR_CALL;
+  Ops[0].Inputs[0] = NdVar::reg(16 * 8, 8);
+  Ops.insert(Ops.begin(), operation(NdOp::LOAD, NdVar::reg(16 * 8, 8),
+                                    {NdVar::cst(0x2180, 8)}, 0x11fc));
+  const auto Hints = buildObjCSourceCallHints(Image, Low);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.begin()->second.TargetAddress, 0x2180U);
+  EXPECT_EQ(
+      Hints.begin()->second.Signature.Parameters[0].Location.RegisterOffset,
+      19 * 8U);
+  Ops.insert(Ops.begin() + 1, operation(NdOp::COPY, NdVar::reg(16 * 8, 4),
+                                        {NdVar::cst(0, 4)}, 0x11fe));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Low).empty());
+}
+
+TEST(ObjCCallHints, RuntimeVoidAndWeakSignaturesDoNotInventResults) {
+  auto Image = runtimeImage("_objc_storeStrong");
+  const auto Hints = buildObjCSourceCallHints(Image, caller());
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Signature = Hints.begin()->second.Signature;
+  EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Signature.Parameters.size(), 2U);
+  EXPECT_EQ(Signature.Parameters[0].Type->Pointee->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Signature.Parameters[1].Type->Pointee->Kind, NdTypeKind::Void);
+  Image.ImportPtrSlots[0x2180] = "_objc_autoreleasePoolPush";
+  const auto Pool = buildObjCSourceCallHints(Image, caller());
+  ASSERT_EQ(Pool.size(), 1U);
+  EXPECT_TRUE(Pool.begin()->second.Signature.Parameters.empty());
+  EXPECT_EQ(Pool.begin()->second.Signature.ReturnType->Kind, NdTypeKind::Ptr);
+}
+
+TEST(ObjCCallHints, PropertyRuntimeKeepsValueBeforeSignedOffset) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_setProperty_nonatomic_copy", Architecture);
+    const auto Hints = buildObjCSourceCallHints(Image, caller(Architecture));
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Signature = Hints.begin()->second.Signature;
+    ASSERT_EQ(Signature.Parameters.size(), 4U);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[3].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[3].Type->Size, 8U);
+    EXPECT_TRUE(Signature.Parameters[3].Type->IsSigned);
+    EXPECT_EQ(Signature.Parameters[3].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[3]);
+  }
 }
 
 TEST(ObjCCallHints, RejectsAmbiguousAndUnsupportedSelectorSignatures) {

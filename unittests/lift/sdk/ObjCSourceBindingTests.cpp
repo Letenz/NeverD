@@ -107,6 +107,30 @@ TEST(ObjCSourceBindings, ForgedRuntimeIdentityCannotReuseAnotherSlot) {
   EXPECT_FALSE(objcSourceCallBound(*Expression, F.Image, {}));
 }
 
+TEST(ObjCSourceBindings, RuntimeCallsRevalidateImportedSignatureAndRegister) {
+  Fixture F;
+  F.Image.ImportPtrSlots[0x1020] = "_objc_retain_x19";
+  const auto Original = objcRuntimeSourceCallHint(F.Image, 0x1020);
+  ASSERT_TRUE(Original);
+  auto Call = HighExpr::makeCall("objc_retain", 0x1020,
+                                 {HighExpr::makeConst(0x5678, 8)});
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Original);
+  EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+  HighFunc Function;
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Return;
+  Statement.RetVal = Call;
+  Function.Body.push_back(Statement);
+  EXPECT_TRUE(bindObjCSourceReferences(Function, F.Image).Dependencies.empty());
+  auto Changed = *Original;
+  Changed.Signature.Parameters[0].Location.RegisterOffset = 0;
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Changed);
+  EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Original);
+  F.Image.ImportPtrSlots[0x1020] = "_objc_release_x19";
+  EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+}
+
 TEST(ObjCSourceBindings, ExplicitABIPositionDriftIsDetected) {
   SourceFunctionTypeHint Hint;
   Hint.ReturnType = NdType::makeInt(8);

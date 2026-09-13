@@ -5,6 +5,7 @@
 #include "ObjCSourceProjection.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCCallHints.h"
 
 #include <optional>
 
@@ -284,6 +285,16 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     return Found != Functions.end() && Found->second->SourceTypeHint &&
            objc_projection_detail::sameHint(Hint,
                                             *Found->second->SourceTypeHint);
+  }
+  if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall) {
+    const auto Expected =
+        objcRuntimeSourceCallHint(Image, Binding.TargetAddress);
+    // HighIR retains the original veneer spelling in CallTarget. The source
+    // emitter uses the canonical operation carried by this runtime binding.
+    return Expected && Binding.TargetName == Expected->TargetName &&
+           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+           !Binding.SelectorReferenceAddress &&
+           objc_projection_detail::sameHint(Hint, Expected->Signature);
   }
   return (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage ||
           Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) &&

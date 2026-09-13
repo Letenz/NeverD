@@ -912,6 +912,25 @@ target_include_directories(NeverDLiftTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+# Run source call ABI, binding, and emitted-code checks without rebuilding the
+# complete fixture inventory during mobile decompiler development.
+add_neverd_unittest(NeverDObjCSourceCallTests
+  core/ObjCCallHintTests.cpp
+  core/HighCSourceCallTests.cpp
+  sdk/ObjCSourceBindingTests.cpp
+  sdk/ObjCSourceProjectionTests.cpp
+  LINK_COMPONENTS
+  BackendC
+  Pipeline
+)
+target_include_directories(NeverDObjCSourceCallTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+)
+
 # Keeps ARM64 Mach-O object relocation arithmetic and pair validation focused
 # without relinking the aggregate lift suite during local iterations.
 add_neverd_unittest(NeverDMachOARM64RelocationTests

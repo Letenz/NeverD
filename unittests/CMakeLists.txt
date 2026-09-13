@@ -79,6 +79,15 @@ target_include_directories(NeverDSessionLLVMTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
 if(TARGET neverd_shared)
+  add_neverd_unittest(NeverDObjCRuntimeSourceTests
+    ObjCRuntimeSourceTests.cpp
+    LINK_LIBS neverd_shared LLVMSupport
+  )
+  target_include_directories(NeverDObjCRuntimeSourceTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDObjCRuntimeSourceTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+    NEVERD_MOBILE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/scripts/tests/fixtures/mobile")
   add_neverd_unittest(NeverDSessionCAPITests
     SessionCAPITests.cpp
     LINK_LIBS neverd_shared

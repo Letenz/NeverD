@@ -185,6 +185,40 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, RuntimeImportsCompileAndPreserveObjectAndVoidEffects) {
+  auto U64 = NdType::makeInt(8, false);
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Retain = native("objc_retain", Pointer, {Pointer});
+  Retain.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Retain.TargetAddress = 0xdeadbeef;
+  auto Release = native("objc_release", NdType::makeVoid(), {Pointer});
+  Release.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Release.TargetAddress = 0xdeadbef7;
+  auto Function = returning("retain_and_release",
+                            call(Retain, U64, {parameter(0, U64)}), {U64});
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Call;
+  Statement.CallExpr = call(Release, NdType::makeVoid(), {parameter(0, U64)});
+  Function.Body.insert(Function.Body.begin(), Statement);
+  const auto Source = emit({Function});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("DEADBEEF"), std::string::npos);
+  EXPECT_NE(Source.find("void* objc_retain(void*);"), std::string::npos);
+  EXPECT_NE(Source.find("void objc_release(void*);"), std::string::npos);
+  compileAndRun(Source + R"(
+static void *last_released;
+static int retained, released;
+void *objc_retain(void *object) { ++retained; return object; }
+void objc_release(void *object) { ++released; last_released = object; }
+int main(void) {
+  const uintptr_t values[] = {0, 0x12345678, UINT64_C(0xfedcba9876543210)};
+  for (unsigned i = 0; i < 3; ++i)
+    if (retain_and_release(values[i]) != values[i] ||
+        (uintptr_t)last_released != values[i]) return 1;
+  return retained != 3 || released != 3;
+})");
+}
+
 TEST(HighCSourceCalls, RuntimeReferencesUseEscapedNamesAndNoOriginalAddresses) {
   auto U64 = NdType::makeInt(8, false);
   auto Pointer = NdType::makePtr(NdType::makeVoid());

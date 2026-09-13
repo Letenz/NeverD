@@ -483,11 +483,16 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
     if (Ex.Kind == ExprKind::Call) {
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
-        if (Hint.CallKind == SourceCallTypeHint::Kind::Native) {
-          llvm::StringRef Name =
-              !Ex.CallTarget.empty() ? Ex.CallTarget : Hint.TargetName;
-          if (const auto *Definition = sourceCallDefinition(Hint, Name))
-            Name = Definition->Name;
+        if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
+            Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall) {
+          const bool Runtime =
+              Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall;
+          llvm::StringRef Name = Runtime || Ex.CallTarget.empty()
+                                     ? Hint.TargetName
+                                     : Ex.CallTarget;
+          if (!Runtime)
+            if (const auto *Definition = sourceCallDefinition(Hint, Name))
+              Name = Definition->Name;
           Name.consume_front("_");
           if (!Name.empty()) {
             Targets.insert(Name.str());

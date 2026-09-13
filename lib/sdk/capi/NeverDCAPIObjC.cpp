@@ -260,6 +260,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         Diagnostics.push_back(jsonSafeText(Diagnostic));
       Row["diagnostics"] = std::move(Diagnostics);
       std::string Reason;
+      const HighExpr *UnboundCall = nullptr;
       const HighFunc *Func = nullptr;
       if (auto It = Functions.find(Method.Implementation);
           It != Functions.end())
@@ -278,7 +279,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
               return objcSourceCallBound(Expression, S->Img, Functions) ||
                      objcBlockSourceCallBound(Expression, BlockSource,
                                               BlockPlan, Functions);
-            });
+            },
+            &UnboundCall);
         if (Reason.empty()) {
           if (auto Projection = ProjectionReasons.find(Method.Implementation);
               Projection != ProjectionReasons.end())
@@ -290,6 +292,21 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       if (!Reason.empty()) {
         Row["status"] = "unrecovered";
         Row["reason"] = std::move(Reason);
+        if (UnboundCall) {
+          llvm::json::Object Call{
+              {"target_name", jsonSafeText(UnboundCall->CallTarget)},
+              {"target_address", addressText(UnboundCall->CallAddr)},
+              {"indirect", UnboundCall->IsIndirectCall},
+              {"recovered_arguments",
+               static_cast<int64_t>(UnboundCall->Operands.size())}};
+          if (UnboundCall->SourceCallHint) {
+            const auto &Binding = *UnboundCall->SourceCallHint;
+            Call["binding_name"] = jsonSafeText(Binding.TargetName);
+            Call["expected_arguments"] =
+                static_cast<int64_t>(Binding.Signature.Parameters.size());
+          }
+          Row["unbound_call"] = std::move(Call);
+        }
         Methods.push_back(std::move(Row));
         continue;
       }

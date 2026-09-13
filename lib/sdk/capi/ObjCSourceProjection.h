@@ -110,8 +110,11 @@ inline bool isPlainUnwind(const ExceptionFunction &Metadata) {
 inline std::string sourceBodyLimitation(
     const HighFunc &Func, const SourceFunctionTypeHint &Hint,
     const PipelineFunctionAudit *Audit,
-    const std::function<bool(const HighExpr &)> &CallAllowed = {}) {
+    const std::function<bool(const HighExpr &)> &CallAllowed = {},
+    const HighExpr **UnboundCall = nullptr) {
   using namespace objc_projection_detail;
+  if (UnboundCall)
+    *UnboundCall = nullptr;
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
       !sameType(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||
@@ -211,8 +214,11 @@ inline std::string sourceBodyLimitation(
         (Expression->IntrinsicId == Intrinsic::None ||
          !intrinsicCName(Expression->IntrinsicId) ||
          Expression->IsIndirectCall ||
-         Expression->MemoryAddressSpace != NdMemoryAddressSpace::Default))
+         Expression->MemoryAddressSpace != NdMemoryAddressSpace::Default)) {
+      if (UnboundCall)
+        *UnboundCall = Expression;
       return "method calls a native or dynamic target without a source binding";
+    }
     if (Expression->Kind == ExprKind::Var ||
         Expression->Kind == ExprKind::Phi) {
       const MedVar &Variable = Expression->Var;
@@ -268,10 +274,13 @@ inline std::string sourceBodyLimitation(
 inline std::string objcSourceBodyLimitation(
     const HighFunc &Func, const SourceFunctionTypeHint &Hint,
     const PipelineFunctionAudit *Audit,
-    const std::function<bool(const HighExpr &)> &CallAllowed = {}) {
+    const std::function<bool(const HighExpr &)> &CallAllowed = {},
+    const HighExpr **UnboundCall = nullptr) {
+  if (UnboundCall)
+    *UnboundCall = nullptr;
   if (Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime)
     return "Objective-C method has a different source declaration origin";
-  return sourceBodyLimitation(Func, Hint, Audit, CallAllowed);
+  return sourceBodyLimitation(Func, Hint, Audit, CallAllowed, UnboundCall);
 }
 
 /// HighC currently returns success even when it emits a diagnostic placeholder.

@@ -3,6 +3,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/object/SectionNames.h"
 
@@ -53,16 +54,18 @@ selectorSignature(const BinaryImage &Image, llvm::StringRef Name) {
   return Result;
 }
 
-std::string runtimeName(llvm::StringRef Name) {
-  Name.consume_front("_");
-  return Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ? Name.str()
-                                                                : std::string();
-}
-
 std::string importAt(const BinaryImage &Image, va_t Slot) {
+  if (Image.ConflictingImportStorageSlots.count(Slot))
+    return {};
   auto It = Image.ImportPtrSlots.find(Slot);
-  return It == Image.ImportPtrSlots.end() ? std::string()
-                                          : runtimeName(It->second);
+  if (It == Image.ImportPtrSlots.end())
+    return {};
+  llvm::StringRef Name(It->second);
+  Name.consume_front("_");
+  if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
+      objcRuntimeSourceCallHint(Image, Slot))
+    return Name.str();
+  return {};
 }
 
 const uint8_t *code(const BinaryImage &Image, va_t Address, size_t Size) {
@@ -103,6 +106,7 @@ struct Dispatch {
   std::string Name;
   std::string Selector;
   va_t SelectorSlot = 0;
+  va_t ImportSlot = 0;
 };
 
 std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
@@ -113,7 +117,8 @@ std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
     auto Slot = addSigned(Address + 6,
                           int32_t(llvm::support::endian::read32le(Bytes + 2)));
     const auto Name = Slot ? importAt(Image, *Slot) : std::string();
-    return Name.empty() ? std::nullopt : std::optional<Dispatch>({Name, {}, 0});
+    return Name.empty() ? std::nullopt
+                        : std::optional<Dispatch>({Name, {}, 0, *Slot});
   }
   if (Image.Arch != Arch::AArch64)
     return std::nullopt;
@@ -147,6 +152,11 @@ std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
   if (!Slot || Word(2) != 0xd61f0200u) // BR x16
     return std::nullopt;
   Result.Name = importAt(Image, *Slot);
+  Result.ImportSlot = *Slot;
+  // A selector-loading veneer only has a proven ABI for message dispatch.
+  if (Result.SelectorSlot && Result.Name != "objc_msgSend" &&
+      Result.Name != "objc_msgSendSuper2")
+    return std::nullopt;
   return Result.Name.empty() ? std::nullopt
                              : std::optional<Dispatch>(std::move(Result));
 }
@@ -160,6 +170,93 @@ struct Value {
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
 } // namespace
+
+std::optional<SourceCallTypeHint>
+objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      Image.ConflictingImportStorageSlots.count(ImportSlot))
+    return std::nullopt;
+  const auto Import = Image.ImportPtrSlots.find(ImportSlot);
+  if (Import == Image.ImportPtrSlots.end())
+    return std::nullopt;
+  llvm::StringRef Name(Import->second);
+  Name.consume_front("_");
+  std::optional<unsigned> ArgumentRegister;
+  llvm::StringRef Canonical = Name;
+  for (llvm::StringRef Operation : {"objc_retain", "objc_release"}) {
+    if (!Name.starts_with((Operation + "_x").str()))
+      continue;
+    const auto Suffix = Name.drop_front(Operation.size() + 2);
+    unsigned Register;
+    if (Image.Arch != Arch::AArch64 || Suffix.getAsInteger(10, Register) ||
+        Suffix != std::to_string(Register) ||
+        !(Register <= 15 || (Register >= 19 && Register <= 28)))
+      return std::nullopt;
+    Canonical = Operation;
+    ArgumentRegister = Register;
+  }
+  SourceCallTypeHint Result;
+  Result.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Result.TargetAddress = ImportSlot;
+  Result.TargetName = Canonical.str();
+  auto &Signature = Result.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCRuntime;
+  const auto Object = NdType::makePtr(NdType::makeVoid());
+  const auto Slot = NdType::makePtr(Object);
+  if (Canonical == "objc_retain" || Canonical == "objc_autorelease" ||
+      Canonical == "objc_autoreleaseReturnValue" ||
+      Canonical == "objc_retainAutorelease" ||
+      Canonical == "objc_retainAutoreleaseReturnValue" ||
+      Canonical == "objc_retainAutoreleasedReturnValue" ||
+      Canonical == "objc_unsafeClaimAutoreleasedReturnValue" ||
+      Canonical == "objc_retainBlock" || Canonical == "objc_alloc" ||
+      Canonical == "objc_allocWithZone" || Canonical == "objc_alloc_init" ||
+      Canonical == "objc_opt_new" || Canonical == "objc_opt_self" ||
+      Canonical == "objc_opt_class") {
+    Signature.ReturnType = Object;
+    Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_release" ||
+             Canonical == "objc_autoreleasePoolPop") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_autoreleasePoolPush") {
+    Signature.ReturnType = Object;
+  } else if (Canonical == "objc_storeStrong" || Canonical == "objc_storeWeak" ||
+             Canonical == "objc_initWeak") {
+    Signature.ReturnType =
+        Canonical == "objc_storeStrong" ? NdType::makeVoid() : Object;
+    Signature.Parameters = {{"slot", Slot}, {"object", Object}};
+  } else if (Canonical == "objc_loadWeak" ||
+             Canonical == "objc_loadWeakRetained" ||
+             Canonical == "objc_destroyWeak") {
+    Signature.ReturnType =
+        Canonical == "objc_destroyWeak" ? NdType::makeVoid() : Object;
+    Signature.Parameters = {{"slot", Slot}};
+  } else if (Canonical == "objc_copyWeak" || Canonical == "objc_moveWeak") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"destination", Slot}, {"source", Slot}};
+  } else if (Canonical == "objc_setProperty_atomic" ||
+             Canonical == "objc_setProperty_nonatomic" ||
+             Canonical == "objc_setProperty_atomic_copy" ||
+             Canonical == "objc_setProperty_nonatomic_copy") {
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"object", Object},
+                            {"selector", Object},
+                            {"value", Object},
+                            {"offset", NdType::makeInt(8)}};
+  } else {
+    return std::nullopt;
+  }
+  std::string Diagnostic;
+  if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
+    return std::nullopt;
+  if (ArgumentRegister)
+    Signature.Parameters[0].Location.RegisterOffset =
+        a64reg::X0 + *ArgumentRegister * 8;
+  return Result;
+}
 
 bool objcSelectorStubOverwritesCommand(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -204,17 +301,24 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         std::optional<Dispatch> Target;
         auto V = Op.NumInputs ? Read(Op.Inputs[0]) : std::nullopt;
         if (V && V->TheKind == Value::Kind::Import)
-          Target = Dispatch{V->Name, {}, 0};
+          Target = Dispatch{V->Name, {}, 0, V->Number};
         else if (V && V->TheKind == Value::Kind::Number) {
           if (Op.Opcode == NdOp::INDIR_CALL &&
               Op.Inputs[0].Space == VnodeSpace::CONST) {
             auto Name = importAt(Image, V->Number);
             if (!Name.empty())
-              Target = Dispatch{Name, {}, 0};
+              Target = Dispatch{Name, {}, 0, V->Number};
           } else if (Op.Opcode == NdOp::CALL) {
             Target = veneer(Image, V->Number);
           }
         }
+        if (Target)
+          if (auto Runtime =
+                  objcRuntimeSourceCallHint(Image, Target->ImportSlot)) {
+            Result.emplace(Op.Addr, std::move(*Runtime));
+            Values.clear();
+            continue;
+          }
         if (Target && Target->Selector.empty()) {
           NdVar Selector;
           Selector.Space = VnodeSpace::REG;
@@ -267,7 +371,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
               Ref->second.Size == 8)
             Out = Value{Value::Kind::Selector, 0, Ref->second.Name};
           else if (auto Name = importAt(Image, Address->Number); !Name.empty())
-            Out = Value{Value::Kind::Import, 0, std::move(Name)};
+            Out = Value{Value::Kind::Import, Address->Number, std::move(Name)};
         }
       }
       if (!Op.Output.Size)

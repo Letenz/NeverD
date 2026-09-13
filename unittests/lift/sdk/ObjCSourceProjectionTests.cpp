@@ -134,6 +134,28 @@ TEST(ObjCSourceProjection, RequiresEveryInstructionAndCompleteMatchingAudit) {
   }
 }
 
+TEST(ObjCSourceProjection, UnboundCallDiagnosticIdentifiesAndClearsTheFailure) {
+  Projection P;
+  auto Call = HighExpr::makeCall("external", 0x2000, {});
+  P.Func.Body[0].RetVal = Call;
+  const HighExpr *Failure = nullptr;
+  EXPECT_FALSE(
+      objcSourceBodyLimitation(P.Func, P.Hint, &P.Audit, {}, &Failure).empty());
+  EXPECT_EQ(Failure, Call.get());
+  EXPECT_TRUE(objcSourceBodyLimitation(
+                  P.Func, P.Hint, &P.Audit,
+                  [](const HighExpr &) { return true; }, &Failure)
+                  .empty());
+  EXPECT_EQ(Failure, nullptr);
+  Failure = Call.get();
+  auto WrongOrigin = P.Hint;
+  WrongOrigin.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  EXPECT_FALSE(
+      objcSourceBodyLimitation(P.Func, WrongOrigin, &P.Audit, {}, &Failure)
+          .empty());
+  EXPECT_EQ(Failure, nullptr);
+}
+
 TEST(ObjCSourceProjection, RejectsUnresolvedBodiesCallsAndExceptionState) {
   using Mutation = std::function<void(Projection &)>;
   const std::vector<std::pair<const char *, Mutation>> Mutations = {
