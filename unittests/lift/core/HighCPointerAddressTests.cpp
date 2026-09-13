@@ -76,8 +76,8 @@ TEST(HighCPointerAddresses, TypedAndMachineWidthParametersUseByteOffsets) {
       returnValue(Func, HighExpr::makeLoad(byteOffset(Base), Func.ReturnType));
       const std::string Source = emitFunctions({Func}, TheArch);
       EXPECT_NE(Source.find("int32_t* arg0"), std::string::npos) << Source;
-      EXPECT_NE(Source.find("(uintptr_t)arg0 + arg1 * 4"), std::string::npos)
-          << Source;
+      EXPECT_NE(Source.find("(uintptr_t)arg0"), std::string::npos) << Source;
+      EXPECT_NE(Source.find(" * "), std::string::npos) << Source;
       EXPECT_EQ(Source.find("(uintptr_t)(arg0 +"), std::string::npos) << Source;
     }
   }
@@ -87,9 +87,7 @@ TEST(HighCPointerAddresses, CastsPointerReturnsAfterMachineArithmetic) {
   auto Func = pointerFunction("advance", NdType::makePtr(NdType::makeInt(4)));
   returnValue(Func, byteOffset());
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(
-      Source.find("return (int32_t*)(uintptr_t)((uintptr_t)arg0 + arg1 * 4);"),
-      std::string::npos)
+  EXPECT_NE(Source.find("return (int32_t*)(uintptr_t)("), std::string::npos)
       << Source;
 
   auto Identity = pointerFunction("identity", Func.ReturnType);
@@ -110,9 +108,7 @@ TEST(HighCPointerAddresses, PreservesParameterLvaluesAndAddressOf) {
   Func.Body.push_back(std::move(Assign));
   returnValue(Func, HighExpr::makeLoad(parameter(0), Func.ReturnType));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(
-      Source.find("arg0 = (int32_t*)(uintptr_t)((uintptr_t)arg0 + arg1 * 4);"),
-      std::string::npos)
+  EXPECT_NE(Source.find("arg0 = (int32_t*)(uintptr_t)("), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(uintptr_t)arg0 ="), std::string::npos) << Source;
 
@@ -135,7 +131,8 @@ TEST(HighCPointerAddresses, DoesNotRetypeIntegerParametersOrRenamedLocals) {
   Func.Params[0].Type = NdType::makeInt(8);
   returnValue(Func, byteOffset());
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("return arg0 + arg1 * 4;"), std::string::npos)
+  EXPECT_NE(Source.find("int64_t integer_address(int64_t arg0, uint64_t arg1)"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(uintptr_t)arg0"), std::string::npos) << Source;
 
@@ -248,6 +245,9 @@ int main(void) {
     if (pointer_store0(&slot, 0) || slot) return 11;
     if (pointer_store1(&slot, 0) || slot) return 12;
     if (pointer_store2(&slot, 0) || slot) return 13;
+    if (advance(&values[2], UINT64_MAX) != &values[1]) return 14;
+    if (advance(values, (UINT64_C(1) << 62) + 1) != &values[1]) return 15;
+    if (difference(&values[1], &values[3]) != -8) return 16;
     return 0;
 }
 )";
@@ -281,6 +281,8 @@ int main(void) {
       "-O1",
       "-Werror=int-conversion",
       "-Werror=incompatible-pointer-types",
+      "-fsanitize=signed-integer-overflow",
+      "-fsanitize-trap=signed-integer-overflow",
       SourcePath,
       "-o",
       ExecutablePath};

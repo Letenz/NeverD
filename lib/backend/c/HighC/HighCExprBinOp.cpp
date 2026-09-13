@@ -80,6 +80,41 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
                               exprStr(*E.Operands[1]), E.MemoryOrdering,
                               E.MemoryAddressSpace);
 
+  if ((E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB ||
+       E.Op == NdOp::INT_MULT) &&
+      E.Type && E.Type->Kind == NdTypeKind::Int) {
+    const uint16_t Size = E.Type->Size;
+    const auto IntegerWidth = [](uint16_t Width) {
+      return Width == 1 || Width == 2 || Width == 4 || Width == 8 ||
+             Width == 16;
+    };
+    if (IntegerWidth(Size) && E.Operands[0]->Type && E.Operands[1]->Type &&
+        E.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        E.Operands[1]->Type->Kind == NdTypeKind::Int &&
+        IntegerWidth(E.Operands[0]->Type->Size) &&
+        IntegerWidth(E.Operands[1]->Type->Size)) {
+      const auto Unsigned = typeToC(NdType::makeInt(Size, false));
+      // Machine arithmetic wraps at its result width. C's signed overflow
+      // and integer promotions do not: even uint16_t multiplication can
+      // overflow promoted int. Compute in an unsigned carrier, truncate,
+      // then restore the signed interpretation without a numeric conversion.
+      const auto Carrier = typeToC(NdType::makeInt(Size < 4 ? 4 : Size, false));
+      auto Operand = [&](const ExprPtr &Value) {
+        const auto Bits = typeToC(NdType::makeInt(Value->Type->Size, false));
+        return (Carrier == Bits ? "" : "(" + Carrier + ")") + "(" + Bits +
+               ")(" + exprStr(*Value) + ")";
+      };
+      const char *Symbol = E.Op == NdOp::INT_ADD   ? " + "
+                           : E.Op == NdOp::INT_SUB ? " - "
+                                                   : " * ";
+      const auto Value = "(" + Unsigned + ")(" + Operand(E.Operands[0]) +
+                         Symbol + Operand(E.Operands[1]) + ")";
+      return E.Type->IsSigned
+                 ? "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")"
+                 : "(" + Value + ")";
+    }
+  }
+
   // FJCVTZS exactness compares the original double bit pattern with the
   // signed i32 result converted back to double.  High-C otherwise represents
   // register values as integers, so preserve the bit-cast on the FP operand

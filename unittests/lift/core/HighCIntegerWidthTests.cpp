@@ -79,7 +79,8 @@ void appendCheck(std::string &Checks, const std::string &Name,
             "));\n";
 }
 
-void compileAndExecute(const std::string &Source, bool CheckShiftUB) {
+void compileAndExecute(const std::string &Source, bool CheckShiftUB,
+                       bool CheckArithmeticUB = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -111,6 +112,10 @@ void compileAndExecute(const std::string &Source, bool CheckShiftUB) {
     Arguments.push_back("-fsanitize=shift");
     Arguments.push_back("-fsanitize-trap=shift");
   }
+  if (CheckArithmeticUB) {
+    Arguments.push_back("-fsanitize=signed-integer-overflow");
+    Arguments.push_back("-fsanitize-trap=signed-integer-overflow");
+  }
   Arguments.append({SourcePath, "-o", ExecutablePath});
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
@@ -130,6 +135,95 @@ void compileAndExecute(const std::string &Source, bool CheckShiftUB) {
                           << (RunErrors ? (*RunErrors)->getBuffer().str() : "")
                           << "\n"
                           << Source;
+}
+
+TEST(HighCIntegerWidths, ArithmeticWrapsBeforeWideningWithoutSignedOverflow) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    const unsigned Bits = Width * 8;
+    const uint64_t Max = UINT64_MAX >> (64 - Bits);
+    const uint64_t Values[] = {0, 1, Max >> 1, (Max >> 1) + 1, Max - 1, Max};
+    for (bool Signed : {false, true})
+      for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB, NdOp::INT_MULT}) {
+        const auto Type = NdType::makeInt(Width, Signed);
+        HighFunc Func;
+        Func.Name = "wrap" + std::to_string(Bits) + (Signed ? "_s" : "_u") +
+                    std::to_string(static_cast<int>(Op));
+        Func.ReturnType = NdType::makeInt(8, false);
+        Func.Params = {{"arg0", Type}, {"arg1", Type}};
+        auto Value =
+            HighExpr::makeBinop(Op, parameter(0, Type), parameter(1, Type));
+        Value->Type = Type;
+        // Widening after the expression must observe its already wrapped
+        // result, including signed reinterpretation at the narrow width.
+        auto Widened = std::make_shared<HighExpr>();
+        Widened->Kind = ExprKind::Cast;
+        Widened->Type = Widened->CastTo = Func.ReturnType;
+        Widened->Operands = {Value};
+        returnValue(Func, Widened);
+        for (uint64_t Left : Values)
+          for (uint64_t Right : Values) {
+            const llvm::APInt A(Bits, Left), B(Bits, Right);
+            const llvm::APInt Result = Op == NdOp::INT_ADD   ? A + B
+                                       : Op == NdOp::INT_SUB ? A - B
+                                                             : A * B;
+            const auto Expected = std::to_string(
+                (Signed ? Result.sextOrTrunc(64) : Result.zextOrTrunc(64))
+                    .getZExtValue());
+            appendCheck(Checks, Func.Name,
+                        argument(Type, std::to_string(Left).c_str()) + ", " +
+                            argument(Type, std::to_string(Right).c_str()),
+                        Expected.c_str());
+          }
+        Functions.push_back(std::move(Func));
+      }
+  }
+  const auto WideMax = llvm::APInt::getAllOnes(128);
+  const llvm::APInt WideValues[] = {llvm::APInt(128, 0), llvm::APInt(128, 1),
+                                    WideMax.lshr(1),     WideMax.lshr(1) + 1,
+                                    WideMax - 1,         WideMax};
+  auto WideLiteral = [](const llvm::APInt &Value) {
+    return "(((__uint128_t)UINT64_C(" +
+           std::to_string(Value.lshr(64).getZExtValue()) +
+           ") << 64) | UINT64_C(" +
+           std::to_string(Value.trunc(64).getZExtValue()) + "))";
+  };
+  for (bool Signed : {false, true})
+    for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB, NdOp::INT_MULT}) {
+      const auto Type = NdType::makeInt(16, Signed);
+      HighFunc Func;
+      Func.Name = std::string("wrap128_") + (Signed ? "s" : "u") +
+                  std::to_string(static_cast<int>(Op));
+      Func.ReturnType = Type;
+      Func.Params = {{"arg0", Type}, {"arg1", Type}};
+      auto Value =
+          HighExpr::makeBinop(Op, parameter(0, Type), parameter(1, Type));
+      Value->Type = Type;
+      returnValue(Func, Value);
+      for (const auto &Left : WideValues)
+        for (const auto &Right : WideValues) {
+          const llvm::APInt Result = Op == NdOp::INT_ADD   ? Left + Right
+                                     : Op == NdOp::INT_SUB ? Left - Right
+                                                           : Left * Right;
+          auto WideArgument = [&](const llvm::APInt &Bits) {
+            return Signed ? "__builtin_bit_cast(__int128_t, " +
+                                WideLiteral(Bits) + ")"
+                          : WideLiteral(Bits);
+          };
+          Checks += "    { __uint128_t actual = (__uint128_t)" + Func.Name +
+                    "(" + WideArgument(Left) + ", " + WideArgument(Right) +
+                    "); check_value(\"" + Func.Name +
+                    " low\", (uint64_t)actual, UINT64_C(" +
+                    std::to_string(Result.trunc(64).getZExtValue()) +
+                    ")); check_value(\"" + Func.Name +
+                    " high\", (uint64_t)(actual >> 64), UINT64_C(" +
+                    std::to_string(Result.lshr(64).getZExtValue()) + ")); }\n";
+        }
+      Functions.push_back(std::move(Func));
+    }
+  compileAndExecute(emitFunctions(Functions) + executionHarness(Checks), false,
+                    true);
 }
 
 TEST(HighCIntegerWidths, ExtensionsFollowOpcodeAndSourceWidthAtRuntime) {
