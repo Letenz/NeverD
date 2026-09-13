@@ -1,6 +1,6 @@
 ---
 name: llvm-optimization
-description: Expertise in LLVM optimization passes, performance tuning, and code transformation techniques. Use this skill when implementing custom optimizations, analyzing pass behavior, improving generated code quality, or understanding LLVM's optimization pipeline.
+description: Implement or analyze LLVM optimization passes, pipelines, and generated-code quality. Use for IR transformation and pass behavior, not general application performance tuning.
 ---
 
 # LLVM Optimization Skill

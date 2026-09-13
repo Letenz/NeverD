@@ -3,9 +3,6 @@ name: qt-ui-design
 description: >-
   Design or audit UI for Qt/QML, Qt projects, web, or embedded MPU or MCU targets. Use when creating screens, layouts, navigation, or auditing UX.
 license: LicenseRef-Qt-Commercial OR BSD-3-Clause
-compatibility: >-
-  Designed for Claude Code, GitHub Copilot, and similar agents.
-disable-model-invocation: false
 metadata:
   author: qt-ai-skills
   version: "1.0"

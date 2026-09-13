@@ -1,6 +1,6 @@
 ---
 name: reverse-engineering-tools
-description: Guide for reverse engineering protected games and anti-cheat components across user mode, kernel mode, and hypervisor-aware environments. Use this skill when analyzing drivers, IOCTL protocols, callback registration, injected-code artifacts, integrity checks, protected binaries, or debugging security-sensitive game components.
+description: Select and use reverse-engineering workflows for protected game or anti-cheat binaries. Use for disassembly, decompilation, debugging, memory artifacts, anti-analysis, and tool choice; use narrower skills for lifting or kernel internals.
 ---
 
 # Reverse Engineering Tools & Techniques

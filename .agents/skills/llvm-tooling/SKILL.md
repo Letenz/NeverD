@@ -1,6 +1,6 @@
 ---
 name: llvm-tooling
-description: Expertise in LLVM tooling development including Clang plugins, LLDB debugger extensions, Clangd/LSP, and LibTooling. Use this skill when building source code analysis tools, refactoring tools, debugger extensions, or IDE integrations.
+description: Build Clang plugins, LibTooling tools, LLDB extensions, or clangd/LSP integrations. Use for developer tooling around LLVM, not compiler pipeline implementation.
 ---
 
 # LLVM Tooling Skill

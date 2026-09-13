@@ -1,6 +1,6 @@
 ---
 name: awesome-game-security-overview
-description: Guide for understanding and contributing to the awesome-game-security curated resource list. Use this skill when adding new resources, organizing categories, mapping topics across anti-cheat, Windows kernel, DMA, reverse engineering, and game-engine research, or maintaining README.md format consistency.
+description: Maintain the awesome-game-security resource index. Use when adding or reclassifying links, organizing categories, or checking README format; use topic skills for security research itself.
 ---
 
 # Awesome Game Security - Project Overview

@@ -1,6 +1,6 @@
 ---
 name: llvm-learning
-description: Comprehensive learning resources and tutorials for LLVM, Clang, and compiler development. Use this skill when helping users learn LLVM internals, find educational resources, or understand compiler concepts.
+description: Teach LLVM, Clang, and compiler concepts or assemble a learning path. Use for explanations and educational resources, not implementation work covered by a specialized LLVM skill.
 ---
 
 # LLVM Learning Skill

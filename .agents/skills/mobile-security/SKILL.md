@@ -1,6 +1,6 @@
 ---
 name: mobile-security
-description: Guide for Android and iOS game security, reversing, and anti-cheat-adjacent platform research. Use this skill when working with APK or IPA analysis, IL2CPP mobile titles, Frida, Zygisk or Magisk, jailbreak or root detection bypass, Android kernel modules, emulator detection, or mobile anti-cheat systems.
+description: Analyze Android or iOS game security and platform protections. Use for APK/IPA, mobile IL2CPP, Frida, root or jailbreak, emulator, mobile kernel, or mobile anti-cheat research.
 ---
 
 # Mobile Game Security

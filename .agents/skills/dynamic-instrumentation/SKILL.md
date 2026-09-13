@@ -1,6 +1,6 @@
 ---
 name: dynamic-instrumentation
-description: Expertise in LLVM-based dynamic binary instrumentation, runtime tracing, and program monitoring. Use this skill when implementing runtime analysis tools, code coverage systems, profilers, or dynamic security monitors.
+description: Build dynamic instrumentation, runtime tracing, coverage, profiling, or monitoring with LLVM-related tooling. Use static-analysis when execution is not part of the analysis.
 ---
 
 # Dynamic Instrumentation Skill

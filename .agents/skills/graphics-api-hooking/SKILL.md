@@ -1,6 +1,6 @@
 ---
 name: graphics-api-hooking
-description: Guide for graphics API interception, overlay rendering, and render-pipeline analysis across DirectX, OpenGL, and Vulkan. Use this skill when working with Present or SwapBuffers hooks, DXGI swap chains, shader or draw-call interception, screenshot-sensitive overlays, or graphics debugging in game security research.
+description: Analyze graphics API interception, overlays, and render pipelines across DirectX, OpenGL, and Vulkan. Use for swap-chain, Present, SwapBuffers, shader, draw-call, or capture interactions.
 ---
 
 # Graphics API Hooking & Rendering

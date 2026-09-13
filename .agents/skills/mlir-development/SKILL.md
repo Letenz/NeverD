@@ -1,6 +1,6 @@
 ---
 name: mlir-development
-description: Expertise in MLIR (Multi-Level Intermediate Representation) and CIR (Clang IR) development for domain-specific compilation and high-level optimizations. Use this skill when building ML compilers, domain-specific languages, or working with multi-level compilation pipelines.
+description: Build MLIR or CIR dialects, conversions, passes, and multi-level compiler pipelines. Use when MLIR/CIR is the implementation substrate, including ML and domain-specific compilers.
 ---
 
 # MLIR Development Skill

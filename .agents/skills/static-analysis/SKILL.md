@@ -1,6 +1,6 @@
 ---
 name: static-analysis
-description: Expertise in LLVM-based static analysis including dataflow analysis, pointer analysis, taint tracking, and program verification. Use this skill when implementing security scanners, bug finders, code quality tools, or performing program analysis research.
+description: Implement LLVM-based dataflow, pointer, taint, dependency, or verification analyses. Use for static program-analysis algorithms and tools, not runtime instrumentation.
 ---
 
 # Static Analysis Skill

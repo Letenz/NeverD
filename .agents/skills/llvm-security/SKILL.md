@@ -1,6 +1,6 @@
 ---
 name: llvm-security
-description: Expertise in LLVM security features including sanitizers, hardening techniques, exploit mitigations, and secure compilation. Use this skill when implementing security-focused compiler features, analyzing vulnerabilities, or hardening applications.
+description: Apply or develop LLVM sanitizers, compiler hardening, and exploit mitigations. Use when secure compilation is central, not for general vulnerability analysis unrelated to the toolchain.
 ---
 
 # LLVM Security Skill

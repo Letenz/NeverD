@@ -1,6 +1,6 @@
 ---
 name: compiler-development
-description: Expertise in compiler development using LLVM infrastructure including frontend design, IR generation, optimization passes, and code generation. Use this skill when building custom programming languages, implementing DSL compilers, or working on compiler internals.
+description: Build compiler frontends, IR generation, optimization pipelines, or code generation with LLVM. Use for language and DSL compiler work; use narrower LLVM skills for isolated tooling or analysis tasks.
 ---
 
 # Compiler Development Skill
