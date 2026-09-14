@@ -33,6 +33,8 @@ struct ObjCBlockDescriptor {
   std::vector<uint8_t> LayoutBytes;
   std::vector<ObjCBlockCaptureRange> Captures;
   std::optional<SourceFunctionTypeHint> InvokeTypeHint;
+  std::optional<SourceFunctionTypeHint> CopyTypeHint;
+  std::optional<SourceFunctionTypeHint> DisposeTypeHint;
   std::vector<std::string> Limitations;
 };
 

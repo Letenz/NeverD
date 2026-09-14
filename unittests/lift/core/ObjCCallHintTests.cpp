@@ -279,6 +279,39 @@ TEST(ObjCCallHints, FrameworkABIIsArchitectureSpecificAndRevalidated) {
   }
 }
 
+TEST(ObjCCallHints, BoundCallsPreserveOnlyABIProvenRuntimeReferenceRegisters) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2180] = "_objc_retain";
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Register =
+          Mutation == 1 ? TRI.IntParamRegs.front() : TRI.CalleeSaveRegs.front();
+      LowFunc F;
+      F.Entry = 0x1200;
+      LowBlock B;
+      B.StartAddr = 0x1200;
+      B.Ops = {
+          operation(NdOp::LOAD, NdVar::reg(Register, 8),
+                    {NdVar::cst(0x2180, 8)}, 0x1200),
+          operation(NdOp::INDIR_CALL, {}, {NdVar::reg(Register, 8)}, 0x1204)};
+      if (Mutation == 2)
+        B.Ops.push_back(operation(NdOp::COPY, NdVar::reg(Register, 4),
+                                  {NdVar::cst(0, 4)}, 0x1208));
+      if (Mutation == 3)
+        B.Ops.push_back(
+            operation(NdOp::CALL, {}, {NdVar::cst(0x1900, 8)}, 0x1208));
+      B.Ops.push_back(
+          operation(NdOp::INDIR_CALL, {}, {NdVar::reg(Register, 8)}, 0x120c));
+      F.Blocks.push_back(std::move(B));
+      const auto Hints = buildObjCSourceCallHints(Image, F);
+      EXPECT_TRUE(Hints.count(0x1204));
+      EXPECT_EQ(Hints.count(0x120c), Mutation == 0)
+          << static_cast<int>(Architecture) << ':' << Mutation;
+    }
+  }
+}
+
 namespace {
 BinaryImage runtimeImage(llvm::StringRef Name,
                          Arch Architecture = Arch::AArch64) {

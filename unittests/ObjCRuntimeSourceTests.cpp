@@ -50,12 +50,14 @@ enum class RuntimeFixture {
   DiagnosticReports,
   Protocols,
   NativePointers,
-  Foundation
+  Foundation,
+  BlockLifetimes
 };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
+  const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
       FixtureKind == RuntimeFixture::DiagnosticReports;
@@ -76,7 +78,8 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = Foundation          ? "ObjCFoundationCalls.m"
+  const char *Fixture = BlockLifetimes      ? "ObjCBlockLifetimes.m"
+                        : Foundation        ? "ObjCFoundationCalls.m"
                         : Protocols         ? "ObjCProtocols.m"
                         : DiagnosticReports ? "ObjCDiagnosticReports.m"
                         : SwiftStrings      ? "ObjCSwiftString.m"
@@ -85,7 +88,8 @@ void verifyRuntime(bool Chained,
                         : SwiftCalls        ? "ObjCSwiftRuntime.m"
                         : Associations      ? "ObjCAssociations.m"
                                             : "ObjCARC.m";
-  const char *Harness = Foundation          ? "ObjCFoundationCallsHarness.m"
+  const char *Harness = BlockLifetimes      ? "ObjCBlockLifetimesHarness.m"
+                        : Foundation        ? "ObjCFoundationCallsHarness.m"
                         : Protocols         ? "ObjCProtocolsHarness.m"
                         : DiagnosticReports ? "ObjCDiagnosticReportsHarness.m"
                         : SwiftStrings      ? "ObjCSwiftStringHarness.m"
@@ -136,7 +140,8 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), Protocols           ? 6U
+  ASSERT_EQ(Methods->size(), BlockLifetimes      ? 2U
+                             : Protocols         ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
                              : SwiftCalls        ? 9U
@@ -213,10 +218,13 @@ void verifyRuntime(bool Chained,
                  "numberValue:",
                  "put:forKey:in:",
                  "makeDictionary:keys:count:"};
+  if (BlockLifetimes)
+    Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(Foundation          ? "NDFoundationCalls"
+                        std::string(BlockLifetimes      ? "NDBlockFactory"
+                                    : Foundation        ? "NDFoundationCalls"
                                     : Protocols         ? "NDProtocolCalls"
                                     : DiagnosticReports ? "NDDiagnosticReports"
                                     : SwiftStrings      ? "NDSwiftString"
@@ -360,10 +368,12 @@ void verifyRuntime(bool Chained,
   }
   EXPECT_EQ(
       read(Work / "recovered.out"),
-      Foundation  ? "framework-iterations=2048\narray-dictionaries=17\nnil-"
-                    "dispatch=pass\n"
-      : Protocols ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
-                    "integer-bits=4096\nguard-check=pass\n"
+      BlockLifetimes
+          ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
+      : Foundation ? "framework-iterations=2048\narray-dictionaries=17\nnil-"
+                     "dispatch=pass\n"
+      : Protocols  ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
+                     "integer-bits=4096\nguard-check=pass\n"
       : DiagnosticReports
           ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
       : SwiftStrings    ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
@@ -624,5 +634,18 @@ TEST(ObjCRuntimeSource, RecompiledSwiftStoredPropertiesUseRuntimeIvarOffsets) {
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::BlockLifetimes));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }

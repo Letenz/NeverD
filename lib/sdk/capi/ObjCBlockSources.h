@@ -4,6 +4,7 @@
 #include "ObjCSourceBindings.h"
 
 #include "neverd/loader/ObjC/ObjCBlocks.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
@@ -24,11 +25,13 @@ struct ObjCStackBlockSource {
   ObjCBlockDescriptor Descriptor;
   std::set<uint64_t> InitializedCaptures;
   std::map<const HighExpr *, ObjCBlockAddressBinding> References;
+  std::map<const HighExpr *, uint64_t> HeaderConstants;
 };
 struct ObjCBlockSourcePlan {
   std::map<va_t, ObjCBlockLiteral> Globals;
   std::map<va_t, ObjCBlockDescriptor> Descriptors;
   std::map<va_t, SourceFunctionTypeHint> InvokeHints;
+  std::map<va_t, SourceFunctionTypeHint> HelperHints;
   std::map<va_t, std::vector<ObjCStackBlockSource>> StackBlocks;
   std::map<va_t, std::string> Rejections;
 };
@@ -56,7 +59,15 @@ struct Invalid : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 struct Value {
-  enum Kind { Scalar, Number, Frame, Context, Invoke, Isa } K = Scalar;
+  enum Kind {
+    Scalar,
+    Number,
+    ImageBits,
+    Frame,
+    Context,
+    Invoke,
+    Isa
+  } K = Scalar;
   int64_t Offset = 0;
   uint64_t Bits = 0;
   std::string Name;
@@ -86,19 +97,25 @@ inline bool frameRange(const HighFunc &F, int64_t Offset, unsigned Bytes) {
          Bytes <= static_cast<int64_t>(F.FrameHeadroom) - Offset;
 }
 inline bool validDescriptor(const ObjCBlockDescriptor &D) {
-  if (!D.InvokeTypeHint || !D.Limitations.empty() || D.CopyHelper ||
-      D.DisposeHelper || D.LiteralSize < 32 || D.LiteralSize > (1u << 20))
+  if (!D.InvokeTypeHint || !D.Limitations.empty() || D.LiteralSize < 32 ||
+      D.LiteralSize > (1u << 20) ||
+      bool(D.CopyHelper) != bool(D.DisposeHelper) ||
+      (D.CopyHelper && (!D.CopyTypeHint || !D.DisposeTypeHint)))
     return false;
-  return std::all_of(D.Captures.begin(), D.Captures.end(), [](const auto &R) {
-    return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes;
+  return std::all_of(D.Captures.begin(), D.Captures.end(), [&](const auto &R) {
+    return R.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes ||
+           (R.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
+            D.CopyHelper);
   });
 }
 inline bool sameDescriptor(const ObjCBlockDescriptor &A,
                            const ObjCBlockDescriptor &B) {
   return A.LiteralSize == B.LiteralSize && A.Signature == B.Signature &&
+         A.CopyHelper == B.CopyHelper && A.DisposeHelper == B.DisposeHelper &&
          A.LayoutValue == B.LayoutValue && A.LayoutBytes == B.LayoutBytes &&
-         ((A.Flags ^ B.Flags) & (UINT32_C(1) << 31)) == 0 && A.InvokeTypeHint &&
-         B.InvokeTypeHint &&
+         ((A.Flags ^ B.Flags) & ~((UINT32_C(1) << 23) | (UINT32_C(1) << 28))) ==
+             0 &&
+         A.InvokeTypeHint && B.InvokeTypeHint &&
          objc_projection_detail::sameHint(*A.InvokeTypeHint, *B.InvokeTypeHint);
 }
 
@@ -125,9 +142,12 @@ public:
   Values(ObjCBlockSourceContext &&, const HighFunc &,
          std::optional<size_t> = std::nullopt) = delete;
   Value eval(const ExprPtr &E, unsigned Depth = 0) {
-    if (!E || Depth > 128 || !E->Type || !EvaluationBudget--)
+    if (!E || Depth > 128 || !EvaluationBudget-- ||
+        (!E->Type && E->Kind != ExprKind::Call))
       throw Invalid("block source has an incomplete or excessive expression");
-    const unsigned Bytes = E->Type->Size;
+    // Effect-only calls have no value type; their operands and call boundary
+    // still participate in the ownership/escape proof.
+    const unsigned Bytes = E->Type ? E->Type->Size : 0;
     if (E->Kind == ExprKind::Const && scalarWidth(Bytes))
       return {Value::Number, 0, E->ConstVal & mask(Bytes), {}, E.get()};
     if (E->Kind == ExprKind::Var) {
@@ -221,6 +241,11 @@ public:
           if (!Name.empty())
             return {Value::Isa, 0, Address.Bits, std::move(Name), E.get()};
         }
+      }
+      if (Address.K == Value::Number && scalarWidth(Bytes)) {
+        // Defer byte reading until a scalar header field consumes this load.
+        // Loaded bits never supply an invoke/descriptor address identity.
+        return {Value::ImageBits, 0, Address.Bits, {}, E.get()};
       }
     }
     for (const auto &V : Inputs)
@@ -378,7 +403,8 @@ inline bool publish(ObjCBlockSourcePlan &Plan,
     return false;
   auto D = Plan.Descriptors.find(Descriptor.Address);
   auto H = Plan.InvokeHints.find(Invoke);
-  if ((D != Plan.Descriptors.end() && !sameDescriptor(D->second, Descriptor)) ||
+  if (Plan.HelperHints.count(Invoke) ||
+      (D != Plan.Descriptors.end() && !sameDescriptor(D->second, Descriptor)) ||
       (H != Plan.InvokeHints.end() &&
        !objc_projection_detail::sameHint(H->second,
                                          *Descriptor.InvokeTypeHint))) {
@@ -389,6 +415,21 @@ inline bool publish(ObjCBlockSourcePlan &Plan,
   }
   Plan.Descriptors.emplace(Descriptor.Address, Descriptor);
   Plan.InvokeHints.emplace(Invoke, *Descriptor.InvokeTypeHint);
+  for (const auto &[Entry, Hint] :
+       {std::pair{Descriptor.CopyHelper, &Descriptor.CopyTypeHint},
+        std::pair{Descriptor.DisposeHelper, &Descriptor.DisposeTypeHint}}) {
+    if (!Entry)
+      continue;
+    auto [Existing, Added] = Plan.HelperHints.emplace(Entry, **Hint);
+    if ((!Added &&
+         !objc_projection_detail::sameHint(Existing->second, **Hint)) ||
+        Plan.InvokeHints.count(Entry) || Plan.Rejections.count(Entry)) {
+      Plan.Rejections[Entry] =
+          "block helper has conflicting descriptor ABI evidence";
+      Plan.HelperHints.erase(Entry);
+      return false;
+    }
+  }
   return true;
 }
 
@@ -403,6 +444,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
   };
   std::map<int64_t, Byte> Memory;
   std::map<int64_t, ObjCStackBlockSource> Blocks;
+  std::map<const HighExpr *, uint64_t> PooledHeaderValues;
   bool SawIsa = false;
   try {
     Values State(Source, Function);
@@ -423,10 +465,28 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       uint64_t Bits = 0;
       for (unsigned I = 0; I < Bytes; ++I) {
         auto B = Memory.find(Address + I);
-        if (B == Memory.end() || B->second.V.K != Value::Number)
+        if (B == Memory.end() || (B->second.V.K != Value::Number &&
+                                  B->second.V.K != Value::ImageBits))
           throw Invalid(
               "block flags and reserved bytes are not completely initialized");
-        Bits |= ((B->second.V.Bits >> (B->second.Index * 8)) & 255) << (I * 8);
+        uint64_t ValueBits = B->second.V.Bits;
+        if (B->second.V.K == Value::ImageBits) {
+          auto Found = PooledHeaderValues.find(B->second.V.Producer);
+          if (Found == PooledHeaderValues.end()) {
+            auto Data =
+                readImmutableImageBytes(Image, ValueBits, B->second.Width);
+            if (!Data)
+              throw Invalid(
+                  "block header load has no immutable scalar byte binding");
+            ValueBits = 0;
+            for (unsigned J = 0; J < B->second.Width; ++J)
+              ValueBits |= uint64_t((*Data)[J]) << (8 * J);
+            Found = PooledHeaderValues.emplace(B->second.V.Producer, ValueBits)
+                        .first;
+          }
+          ValueBits = Found->second;
+        }
+        Bits |= ((ValueBits >> (B->second.Index * 8)) & 255) << (I * 8);
       }
       return Bits;
     };
@@ -455,6 +515,12 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       Result.FrameOffset = Base;
       Result.InvokeEntry = Invoke.Bits;
       Result.Descriptor = *D;
+      for (unsigned I = 0; I < 8; ++I) {
+        const auto &V = Memory.at(Base + 8 + I).V;
+        if (V.K == Value::ImageBits)
+          Result.HeaderConstants.emplace(V.Producer,
+                                         PooledHeaderValues.at(V.Producer));
+      }
       for (uint64_t Offset = 32; Offset < D->LiteralSize; ++Offset) {
         auto B = Memory.find(Base + static_cast<int64_t>(Offset));
         if (B == Memory.end())
@@ -464,6 +530,14 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           throw Invalid("block capture retains an unproven context or private "
                         "frame address");
         Result.InitializedCaptures.insert(Offset);
+      }
+      for (const auto &Capture : D->Captures) {
+        if (Capture.StorageKind == ObjCBlockCaptureRange::Kind::NonObjectBytes)
+          continue;
+        for (uint64_t I = 0; I < Capture.Size; ++I)
+          if (!Result.InitializedCaptures.count(Capture.Offset + I))
+            throw Invalid(
+                "block ownership field is not completely initialized");
       }
       Result.References.emplace(
           Isa.Producer, ObjCBlockAddressBinding{CallKind::RuntimeBlockIsa,
@@ -488,10 +562,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         std::set<std::pair<va_t, size_t>> Active;
         const bool Direct =
             Binding && Binding->CallKind == CallKind::BlockInvoke && I == 0;
-        if (!Direct && (!Binding || Binding->CallKind != CallKind::Native ||
-                        E.IsIndirectCall ||
-                        !noEscape(Source, Functions, Binding->TargetAddress, I,
-                                  nullptr, Active, Error)))
+        // The copy runtime preserves the stack literal and creates owned heap
+        // storage through the recovered helpers. A typed pointer parameter
+        // alone does not prove this behavior for an arbitrary consumer.
+        const bool Runtime = Binding &&
+                             Binding->CallKind == CallKind::ObjCRuntimeCall &&
+                             Binding->TargetName == "objc_retainBlock" &&
+                             I == 0 && objcSourceCallBound(E, Image, Functions);
+        if (!Direct && !Runtime &&
+            (!Binding || Binding->CallKind != CallKind::Native ||
+             E.IsIndirectCall ||
+             !noEscape(Source, Functions, Binding->TargetAddress, I, nullptr,
+                       Active, Error)))
           throw Invalid(
               "stack block flows to an unproven synchronous consumer: " +
               Error);
@@ -515,6 +597,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
                       "initialization proof");
       switch (S.Kind) {
       case StmtKind::Nop:
+      case StmtKind::Block:
         break;
       case StmtKind::Assign:
         State.assign(S);
@@ -611,24 +694,33 @@ discoverObjCBlockSources(const BinaryImage &Image,
 inline size_t applyObjCBlockInvokeHints(const ObjCBlockSourcePlan &Plan,
                                         PipelineOptions &Options) {
   size_t Changed = 0;
-  for (const auto &[Entry, Hint] : Plan.InvokeHints) {
-    auto Existing = Options.SourceTypeHints.find(Entry);
-    if (Existing != Options.SourceTypeHints.end()) {
-      if (objc_projection_detail::sameHint(Existing->second, Hint))
+  auto Apply = [&](const auto &Hints) {
+    for (const auto &[Entry, Hint] : Hints) {
+      if (Plan.Rejections.count(Entry))
         continue;
-      if (Existing->second.Origin !=
-          SourceFunctionTypeHint::OriginKind::NativeAnalysis)
-        continue;
-      Existing->second = Hint;
-    } else
-      Options.SourceTypeHints.emplace(Entry, Hint);
-    ++Changed;
-  }
+      auto Existing = Options.SourceTypeHints.find(Entry);
+      if (Existing != Options.SourceTypeHints.end()) {
+        if (objc_projection_detail::sameHint(Existing->second, Hint))
+          continue;
+        if (Existing->second.Origin !=
+            SourceFunctionTypeHint::OriginKind::NativeAnalysis)
+          continue;
+        Existing->second = Hint;
+      } else
+        Options.SourceTypeHints.emplace(Entry, Hint);
+      ++Changed;
+    }
+  };
+  Apply(Plan.InvokeHints);
+  Apply(Plan.HelperHints);
   return Changed;
 }
 
 inline std::string objcBlockInvokeName(va_t Entry) {
   return "neverd_block_invoke_" + llvm::utohexstr(Entry, true);
+}
+inline std::string objcBlockOwnershipHelperName(va_t Entry) {
+  return "neverd_block_helper_" + llvm::utohexstr(Entry, true);
 }
 inline std::string objcBlockHelperName(bool Literal, va_t Address) {
   return std::string(Literal ? "neverd_block_literal_"
@@ -650,6 +742,26 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
         Rejected != Plan.Rejections.end())
       throw Invalid(Rejected->second);
     std::map<const HighExpr *, ObjCBlockAddressBinding> References;
+    std::map<const HighExpr *, uint64_t> HeaderConstants;
+    auto RequireOwnership = [&](va_t Entry, size_t Parameter,
+                                const std::set<uint64_t> &Initialized) {
+      if (!Entry)
+        return;
+      auto Found = Functions.find(Entry);
+      auto Hint = Plan.HelperHints.find(Entry);
+      if (Plan.Rejections.count(Entry) || Found == Functions.end() ||
+          Hint == Plan.HelperHints.end() || !Found->second->SourceTypeHint ||
+          !objc_projection_detail::sameHint(*Found->second->SourceTypeHint,
+                                            Hint->second))
+        throw Invalid(
+            "block ownership helper has no descriptor-bound native function");
+      std::string Reason;
+      std::set<std::pair<va_t, size_t>> Active;
+      if (!noEscape(Source, Functions, Entry, Parameter, &Initialized, Active,
+                    Reason))
+        throw Invalid("block ownership helper capture proof failed: " + Reason);
+      Result.Dependencies.insert(Entry);
+    };
     auto RequireInvoke = [&](va_t Entry, const ObjCBlockDescriptor &Descriptor,
                              const std::set<uint64_t> &Initialized) {
       auto Found = Functions.find(Entry);
@@ -682,6 +794,9 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
         if (Global.Descriptor.Address != Descriptor.Address)
           continue;
         RequireInvoke(Global.InvokeEntry, Global.Descriptor, {});
+        RequireOwnership(Global.Descriptor.CopyHelper, 0, {});
+        RequireOwnership(Global.Descriptor.CopyHelper, 1, {});
+        RequireOwnership(Global.Descriptor.DisposeHelper, 0, {});
         Result.Literals.insert(Address);
       }
     };
@@ -690,7 +805,15 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       for (const auto &Block : Stack->second) {
         RequireInvoke(Block.InvokeEntry, Block.Descriptor,
                       Block.InitializedCaptures);
+        RequireOwnership(Block.Descriptor.CopyHelper, 0,
+                         Block.InitializedCaptures);
+        RequireOwnership(Block.Descriptor.CopyHelper, 1,
+                         Block.InitializedCaptures);
+        RequireOwnership(Block.Descriptor.DisposeHelper, 0,
+                         Block.InitializedCaptures);
         RequireDescriptor(Block.Descriptor);
+        HeaderConstants.insert(Block.HeaderConstants.begin(),
+                               Block.HeaderConstants.end());
         for (const auto &[Expression, Binding] : Block.References) {
           auto [Existing, Added] = References.emplace(Expression, Binding);
           if (!Added && (Existing->second.Kind != Binding.Kind ||
@@ -713,6 +836,15 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
         return Existing->second;
       auto Expression = std::make_shared<HighExpr>(*Original);
       Copies.emplace(Original.get(), Expression);
+      if (auto Bits = HeaderConstants.find(Original.get());
+          Bits != HeaderConstants.end()) {
+        if (!Original->Type || Original->Type->Kind != NdTypeKind::Int)
+          throw Invalid(
+              "block header constant has an unsupported scalar representation");
+        *Expression = *HighExpr::makeConst(Bits->second, Original->Type->Size);
+        Expression->Type = Original->Type;
+        return Expression;
+      }
       std::optional<ObjCBlockAddressBinding> Address;
       if (auto Found = References.find(Original.get());
           Found != References.end())
@@ -766,8 +898,11 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       }
     };
     Walk(Result.Function.Body, 0);
-    if (Plan.InvokeHints.count(Function.Entry)) {
-      Result.Function.Name = objcBlockInvokeName(Function.Entry);
+    if (Plan.InvokeHints.count(Function.Entry) ||
+        Plan.HelperHints.count(Function.Entry)) {
+      Result.Function.Name = Plan.InvokeHints.count(Function.Entry)
+                                 ? objcBlockInvokeName(Function.Entry)
+                                 : objcBlockOwnershipHelperName(Function.Entry);
       Result.Function.DebugName.clear();
       Result.Function.SourceFile.clear();
     }
@@ -879,8 +1014,10 @@ renderObjCBlockSourceHelpers(const ObjCBlockSourcePlan &Plan,
     OS << "\nuintptr_t " << Name << "(void) {\n"
        << "  _Static_assert(sizeof(void *) == 8, \"Block source requires "
           "64-bit pointers\");\n"
-       << "  struct neverd_block_descriptor { uint64_t reserved, size; const "
-          "char *signature;";
+       << "  struct neverd_block_descriptor { uint64_t reserved, size;";
+    if (D.CopyHelper)
+      OS << " void (*copy)(void *, void *); void (*dispose)(void *);";
+    OS << " const char *signature;";
     if (Layout)
       OS << " uintptr_t layout;";
     OS << " };\n  struct neverd_block_literal { void *isa; uint32_t flags, "
@@ -900,7 +1037,15 @@ renderObjCBlockSourceHelpers(const ObjCBlockSourcePlan &Plan,
       OS << "0};\n";
     }
     OS << "  static const struct neverd_block_storage storage = { {0, "
-       << D.LiteralSize << ", " << String(D.Signature);
+       << D.LiteralSize;
+    if (D.CopyHelper) {
+      const auto CopyName = objcBlockOwnershipHelperName(D.CopyHelper);
+      const auto DisposeName = objcBlockOwnershipHelperName(D.DisposeHelper);
+      SharedFunctions.insert(CopyName);
+      SharedFunctions.insert(DisposeName);
+      OS << ", &" << CopyName << ", &" << DisposeName;
+    }
+    OS << ", " << String(D.Signature);
     if (Layout) {
       OS << ", ";
       if (!D.LayoutBytes.empty())
@@ -925,7 +1070,7 @@ renderObjCBlockSourceHelpers(const ObjCBlockSourcePlan &Plan,
       const auto LiteralName = objcBlockHelperName(true, Globals[I]->Address);
       SharedFunctions.insert(LiteralName);
       OS << "uintptr_t " << LiteralName << "(void) { return " << Name << "() + "
-         << (Layout ? 32 : 24) + I * 32 << "; }\n";
+         << (Layout ? 32 : 24) + (D.CopyHelper ? 16 : 0) + I * 32 << "; }\n";
     }
   }
   return Source;

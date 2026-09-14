@@ -264,6 +264,16 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       return It == Values.end() ? std::nullopt
                                 : std::optional<Value>(It->second);
     };
+    auto Clobber = [&](bool KnownABI) {
+      for (auto It = Values.begin(); It != Values.end();) {
+        const auto &[Space, Offset, Size] = It->first;
+        if (!KnownABI || Space != VnodeSpace::REG ||
+            !TRI.isCallPreserved(Offset, Size))
+          It = Values.erase(It);
+        else
+          ++It;
+      }
+    };
     for (const auto &Op : Block.Ops) {
       if (Op.Addr != PreviousAddress) {
         for (auto It = Values.begin(); It != Values.end();)
@@ -298,7 +308,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Runtime = swiftStringSourceCallHint(Image, Target->ImportSlot);
           if (Runtime) {
             Result.emplace(Op.Addr, std::move(*Runtime));
-            Values.clear();
+            Clobber(true);
             continue;
           }
         }
@@ -327,9 +337,9 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Result.emplace(Op.Addr, std::move(Hint));
           }
         }
-        // A call may overwrite any runtime reference. Requiring a fresh local
-        // definition is conservative even for values kept in callee-saved regs.
-        Values.clear();
+        // Only a bound Darwin ABI establishes which physical views survive.
+        // Unknown calls may use another convention and invalidate every fact.
+        Clobber(Result.count(Op.Addr) != 0);
         continue;
       }
       std::optional<Value> Out;

@@ -202,8 +202,22 @@ readObjCBlockDescriptor(const BinaryImage &Image, va_t Address, uint32_t Flags,
     Result.CopyHelper = *Copy;
     Result.DisposeHelper = *Dispose;
     Cursor += 16;
-    Result.Limitations.push_back(
-        "block copy/dispose helper bodies require recovery");
+    // Descriptor fields establish the runtime helper ABIs, not their bodies.
+    // Source projection must recover both dependencies before publishing them.
+    SourceFunctionTypeHint Helper;
+    Helper.Origin = SourceFunctionTypeHint::OriginKind::BlockRuntime;
+    Helper.ReturnType = NdType::makeVoid();
+    Helper.Parameters.push_back(
+        {"block_object", NdType::makePtr(NdType::makeVoid())});
+    std::string Error;
+    if (!assignDarwinScalarSourceABI(Helper, Image.Arch, Error))
+      return Reject("block dispose helper ABI is unsupported");
+    Result.DisposeTypeHint = Helper;
+    Helper.Parameters.push_back(
+        {"source_block", NdType::makePtr(NdType::makeVoid())});
+    if (!assignDarwinScalarSourceABI(Helper, Image.Arch, Error))
+      return Reject("block copy helper ABI is unsupported");
+    Result.CopyTypeHint = std::move(Helper);
   }
   if (Flags & HasCtor)
     Result.Limitations.push_back(

@@ -101,7 +101,8 @@ HighStmt ret(ExprPtr Value) {
 struct SourceFixture : BlockFixture {
   PipelineResult Result;
   static constexpr va_t Caller = 0x1200, Consumer = 0x1300, StackIsa = 0x2500;
-  SourceFixture(bool Stack) {
+  SourceFixture(bool Stack, Arch Architecture = Arch::AArch64) {
+    Image.Arch = Architecture;
     if (Stack) {
       Image.ImportPtrSlots.erase(Literal);
       Image.ImportPtrSlots[StackIsa] = "__NSConcreteStackBlock";
@@ -182,6 +183,59 @@ struct SourceFixture : BlockFixture {
     for (auto &Function : Result.HighFuncs)
       F.emplace(Function.Entry, &Function);
     return F;
+  }
+};
+struct OwnedSourceFixture : SourceFixture {
+  static constexpr va_t Copy = 0x1400, Dispose = 0x1410, Flags = 0x2600,
+                        CopyImport = 0x2700, RetainImport = 0x2710,
+                        ReleaseImport = 0x2720;
+  OwnedSourceFixture(Arch Architecture) : SourceFixture(true, Architecture) {
+    put64(Descriptor + 16, Copy);
+    put64(Descriptor + 24, Dispose);
+    put64(Descriptor + 32, Signature);
+    put64(Descriptor + 40, 0x100);
+    put64(Flags, 0xc2000000);
+    caller().Body[1].StoreVal =
+        HighExpr::makeLoad(HighExpr::makeConst(Flags, 8), NdType::makeInt(8));
+    caller().Body[4].StoreVal =
+        parameter(0, NdType::makePtr(NdType::makeVoid()));
+    Image.ImportPtrSlots[CopyImport] = "_objc_retainBlock";
+    Image.ImportPtrSlots[RetainImport] = "_objc_retain";
+    Image.ImportPtrSlots[ReleaseImport] = "_objc_release";
+    auto CopyCall =
+        HighExpr::makeCall("objc_retainBlock", 0, {frame(Image, -48)});
+    CopyCall->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+        *objcRuntimeSourceCallHint(Image, CopyImport));
+    CopyCall->Type = CopyCall->SourceCallHint->Signature.ReturnType;
+    caller().Body.back().RetVal = CopyCall;
+    std::string Error;
+    auto D = readObjCBlockDescriptor(Image, Descriptor, 0xc2000000, Error);
+    EXPECT_TRUE(D) << Error;
+    for (bool IsCopy : {true, false}) {
+      HighFunc H;
+      H.Entry = IsCopy ? Copy : Dispose;
+      H.Name = "helper_" + std::to_string(H.Entry);
+      H.SourceTypeHint = IsCopy ? D->CopyTypeHint : D->DisposeTypeHint;
+      H.ReturnType = H.SourceTypeHint->ReturnType;
+      for (const auto &P : H.SourceTypeHint->Parameters)
+        H.Params.push_back({P.Name, P.Type});
+      auto Field = HighExpr::makeLoad(
+          HighExpr::makeBinop(NdOp::INT_ADD,
+                              parameter(IsCopy ? 1 : 0, H.Params[0].Type),
+                              HighExpr::makeConst(32, 8)),
+          H.Params[0].Type);
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.CallExpr = HighExpr::makeCall(
+          IsCopy ? "objc_retain" : "objc_release", 0, {Field});
+      Effect.CallExpr->SourceCallHint =
+          std::make_shared<SourceCallTypeHint>(*objcRuntimeSourceCallHint(
+              Image, IsCopy ? RetainImport : ReleaseImport));
+      // A discarded call result does not require an expression value type.
+      Effect.CallExpr->Type.reset();
+      H.Body = {Effect, ret(nullptr)};
+      Result.HighFuncs.push_back(std::move(H));
+    }
   }
 };
 } // namespace
@@ -330,6 +384,102 @@ TEST(ObjCBlockSources, SourceHintsRerunOnlyForNewOrNativeAnalysisBindings) {
   O.SourceTypeHints[F.Invoke].Origin =
       SourceFunctionTypeHint::OriginKind::ObjCRuntime;
   EXPECT_EQ(applyObjCBlockInvokeHints(Plan, O), 0U);
+}
+
+TEST(ObjCBlockSources,
+     EscapingStrongCaptureRequiresBothRecoveredOwnershipHelpers) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      OwnedSourceFixture F(Architecture);
+      if (Mutation == 1)
+        F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 4);
+      if (Mutation == 2)
+        F.Result.HighFuncs.back().SourceTypeHint.reset();
+      if (Mutation == 3)
+        F.Result.HighFuncs.back()
+            .Body[0]
+            .CallExpr->Operands[0]
+            ->Operands[0]
+            ->Operands[1] = HighExpr::makeConst(40, 8);
+      if (Mutation == 4)
+        F.Image.ImportPtrSlots[F.CopyImport] = "_unknown_consumer";
+      if (Mutation == 5)
+        F.caller().Body.back().RetVal = frame(F.Image, -48);
+      if (Mutation == 6)
+        F.Result.HighFuncs.erase(F.Result.HighFuncs.begin() + 3);
+      if (Mutation == 7) {
+        F.Image.ImportPtrSlots[F.CopyImport] = "_objc_retain";
+        F.caller().Body.back().RetVal->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(
+                *objcRuntimeSourceCallHint(F.Image, F.CopyImport));
+      }
+      auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                       Plan, F.functions());
+      const bool Accepted =
+          !Plan.StackBlocks.empty() && Bound.Limitation.empty();
+      EXPECT_EQ(Accepted, Mutation == 0)
+          << static_cast<int>(Architecture) << ": " << Mutation << ": "
+          << Bound.Limitation;
+      if (Mutation)
+        continue;
+      EXPECT_EQ(Bound.Dependencies,
+                (std::set<va_t>{F.Invoke, F.Copy, F.Dispose}));
+      EXPECT_EQ(Bound.Function.Body[1].StoreVal->Kind, ExprKind::Const);
+      EXPECT_EQ(Bound.Function.Body[1].StoreVal->ConstVal, 0xc2000000U);
+      EXPECT_EQ(F.caller().Body[1].StoreVal->Kind, ExprKind::Load);
+      PipelineOptions Options;
+      EXPECT_EQ(applyObjCBlockInvokeHints(Plan, Options), 3U);
+      EXPECT_EQ(applyObjCBlockInvokeHints(Plan, Options), 0U);
+      std::set<std::string> Shared;
+      auto Text = renderObjCBlockSourceHelpers(Plan, Bound.Descriptors, Shared);
+      EXPECT_NE(Text.find("void (*copy)(void *, void *)"), std::string::npos);
+      EXPECT_NE(Text.find("&neverd_block_helper_1400"), std::string::npos);
+      EXPECT_NE(Text.find("&neverd_block_helper_1410"), std::string::npos);
+      EXPECT_EQ(Shared.size(), 3U);
+    }
+  }
+}
+
+TEST(ObjCBlockSources,
+     PooledHeaderBitsRequireImmutableUnambiguousScalarStorage) {
+  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+    OwnedSourceFixture F(Arch::AArch64);
+    if (Mutation == 1)
+      F.Image.Sections[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+    if (Mutation == 2)
+      F.Image.Segments[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+    if (Mutation == 3)
+      F.Image.DataPtrRelocSlots.insert(F.Flags);
+    if (Mutation == 4)
+      F.Image.Sections.push_back(F.Image.Sections[1]);
+    if (Mutation == 5) {
+      F.put64(F.Flags, F.Invoke);
+      F.caller().Body[2].StoreVal = F.caller().Body[1].StoreVal;
+      F.caller().Body[1].StoreVal = HighExpr::makeConst(0xc2000000, 8);
+    }
+    auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_EQ(!Plan.StackBlocks.empty(), Mutation == 0) << Mutation;
+  }
+}
+
+TEST(ObjCBlockSources, DescriptorOwnershipAndFunctionRolesCannotConflict) {
+  OwnedSourceFixture F(Arch::AArch64);
+  auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks[F.Caller].size(), 1U);
+  auto D = Plan.StackBlocks[F.Caller][0].Descriptor;
+  D.CopyHelper = F.Dispose;
+  EXPECT_FALSE(objc_block_source_detail::publish(Plan, D, F.Invoke));
+  EXPECT_FALSE(
+      bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions())
+          .Limitation.empty());
+  OwnedSourceFixture G(Arch::X64);
+  auto P = discoverObjCBlockSources(G.Image, G.Result);
+  EXPECT_FALSE(objc_block_source_detail::publish(
+      P, P.StackBlocks[G.Caller][0].Descriptor, G.Copy));
+  EXPECT_TRUE(P.Rejections.count(G.Copy));
 }
 
 TEST(ObjCBlockSources,

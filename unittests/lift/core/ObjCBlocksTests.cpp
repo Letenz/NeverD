@@ -238,7 +238,14 @@ TEST(ObjCBlocks, CopyDisposeFieldsChangeSignaturePositionAndKeepDependencies) {
             ObjCBlockCaptureRange::Kind::Byref);
   EXPECT_EQ(Block->Descriptor.Captures[2].StorageKind,
             ObjCBlockCaptureRange::Kind::Weak);
-  EXPECT_FALSE(Block->Descriptor.Limitations.empty());
+  EXPECT_TRUE(Block->Descriptor.Limitations.empty());
+  ASSERT_TRUE(Block->Descriptor.CopyTypeHint);
+  ASSERT_TRUE(Block->Descriptor.DisposeTypeHint);
+  EXPECT_EQ(Block->Descriptor.CopyTypeHint->Parameters.size(), 2U);
+  EXPECT_EQ(Block->Descriptor.DisposeTypeHint->Parameters.size(), 1U);
+  EXPECT_EQ(Block->Descriptor.CopyTypeHint->ReturnType->Kind, NdTypeKind::Void);
+  EXPECT_EQ(Block->Descriptor.DisposeTypeHint->ReturnType->Kind,
+            NdTypeKind::Void);
 }
 
 TEST(ObjCBlocks, ExtendedOwnershipBytecodeIsBoundedAndReportsUnknownOpcodes) {
