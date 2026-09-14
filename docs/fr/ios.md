@@ -99,6 +99,8 @@ Les images Darwin liées en 64 bits qui importent Foundation système consultent
 
 Les appels C à paramètres fixes utilisent aussi les déclarations extraites par le compilateur et les exports et réexports du SDK. La bibliothèque dyld exacte, le symbole et l’ABI scalaire doivent correspondre ; les imports faibles, fournisseurs inconnus et prototypes non pris en charge restent non liés. Le C généré emploie des identifiants distincts liés aux symboles originaux. Les appels ordinaires de synchronisation sans tables de gestion des exceptions conservent leurs appels réels et effets mémoire.
 
+Les liaisons de données externes exigent des déclarations SDK communes sans TLS et des preuves exactes des exports de bibliothèque. Le C généré référence le stockage réel du symbole et conserve les accès mémoire suivants, notamment la distinction entre un pointeur global et sa cible. Les imports faibles, identités contradictoires et stockages non pris en charge restent non liés. Les déclarations de données ne prouvent ni la construction ni la propriété des blocs.
+
 La reconstruction du runtime est limitée : propriétés et protocoles complets, annotations de propriété mémoire originales, agrégats arbitraires, arguments variadiques, corps dépendant d’exceptions et dispositions Block/captures non modélisées ne sont pas promis. L’encodage décrit les paramètres fixes et ne prouve pas l’absence de points de suspension dans l’original. Les pointeurs chaînés sont utilisés uniquement lorsque le chargeur a résolu leurs emplacements ; les formats non résolus conservent leurs diagnostics.
 
 ## Sources Swift et stockage

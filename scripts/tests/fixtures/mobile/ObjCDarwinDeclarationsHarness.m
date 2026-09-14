@@ -16,6 +16,13 @@
 - (uint64_t)time:(uint64_t)when delta:(int64_t)delta;
 - (int)lastError;
 - (double)remainder:(double)value divisor:(double)divisor;
+- (NSString *)defaultMode;
+- (const void *)modeStorage;
+- (NSString *)descriptionKey;
+- (void *)mainQueue;
+- (const void *)timerType;
+- (float)defaultPriority;
+- (double)foundationVersion;
 @end
 #ifdef NEVERD_RECOVERED_ARC
 #include "replacements.h"
@@ -64,6 +71,14 @@ int main(void) {
       errno = i & 127;
       if ([driver lastError] != (int)(i & 127))
         return 5;
+      if ([driver defaultMode] != NSDefaultRunLoopMode ||
+          [driver modeStorage] != &NSDefaultRunLoopMode ||
+          [driver descriptionKey] != NSLocalizedDescriptionKey ||
+          [driver mainQueue] != (void *)dispatch_get_main_queue() ||
+          [driver timerType] != DISPATCH_SOURCE_TYPE_TIMER ||
+          [driver defaultPriority] != NSURLSessionTaskPriorityDefault ||
+          [driver foundationVersion] != NSFoundationVersionNumber)
+        return 10;
       double value = -12.25 * i;
       if ([driver remainder:value divisor:3.125] != fmod(value, 3.125))
         return 6;

@@ -1904,3 +1904,101 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
     }
   }
 }
+
+TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Module] :
+         {std::pair{"NSDefaultRunLoopMode", "/System/Library/Frameworks/"
+                                            "Foundation.framework/Foundation"},
+          std::pair{"_dispatch_main_q", "/usr/lib/libSystem.B.dylib"},
+          std::pair{"_dispatch_source_type_timer",
+                    "/usr/lib/system/libdispatch.dylib"}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Module, false};
+      HighFunc Function;
+      Function.Name = "data_address";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      for (bool Dereference : {false, true}) {
+        auto Input = Function;
+        if (Dereference)
+          Input.Body.front().RetVal =
+              HighExpr::makeLoad(Return.RetVal, NdType::makeInt(8));
+        auto Bound = sdk::bindObjCSourceReferences(Input, Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        const auto *Address = sourceCall(Bound.Function);
+        ASSERT_NE(Address, nullptr);
+        EXPECT_EQ(Address->SourceCallHint->TargetName, Name);
+        EXPECT_EQ(Address->SourceCallHint->Signature.Origin,
+                  SourceFunctionTypeHint::OriginKind::DarwinSDK);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+        const auto &Value = Bound.Function.Body.front().RetVal;
+        EXPECT_EQ(Value->Kind, Dereference ? ExprKind::Load : ExprKind::Call);
+        if (Dereference)
+          EXPECT_EQ(Value->Operands.front().get(), Address);
+        EXPECT_EQ(Return.RetVal->Kind, ExprKind::Load);
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+        EXPECT_NE(Source.find("extern unsigned char neverd_darwin_data_" +
+                              std::string(Name) + "[] __asm__(\"_" + Name +
+                              "\");"),
+                  std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("0x2180"), std::string::npos);
+        auto Changed = Image;
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/impostor.dylib";
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      auto Image = runtimeImage("_NSDefaultRunLoopMode", Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_NSDefaultRunLoopMode", 0,
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation",
+          false};
+      if (Mutation == 1)
+        Image.DyldBindSlots.clear();
+      if (Mutation == 2)
+        Image.DyldBindSlots[0x2180].Module.clear();
+      if (Mutation == 3)
+        Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      if (Mutation == 4)
+        Image.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 5)
+        Image.DyldBindSlots[0x2180].Addend = 4;
+      if (Mutation == 6)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      if (Mutation == 7)
+        Image.IsRelocatable = true;
+      if (Mutation == 8)
+        Image.Format = BinaryFormat::ELF;
+      if (Mutation == 9)
+        Image.ImportPtrSlots[0x2180] = "_different";
+      EXPECT_EQ(bool(darwinRuntimeGlobalAddressHint(Image, 0x2180)),
+                Mutation == 0)
+          << Mutation;
+    }
+    for (const char *Name :
+         {"NSStringFromClass", "NSDefaultRunLoopMode_suffix"}) {
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_" + std::string(Name), 0,
+          "/System/Library/Frameworks/Foundation.framework/Foundation", false};
+      EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180)) << Name;
+    }
+  }
+}

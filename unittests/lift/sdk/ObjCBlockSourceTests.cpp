@@ -329,8 +329,18 @@ TEST(ObjCBlockSources,
     if (Mutation == 4)
       F.caller().Body[1].StoreVal =
           HighExpr::makeConst(UINT64_C(1) << 32 | 0xc0000000, 8);
+    F.Image.DyldBindSlots[F.StackIsa] = {F.Image.ImportPtrSlots[F.StackIsa], 0,
+                                         "/usr/lib/libSystem.B.dylib", false};
+    ASSERT_TRUE(darwinRuntimeGlobalAddressHint(F.Image, F.StackIsa));
     auto Plan = discoverObjCBlockSources(F.Image, F.Result);
     EXPECT_TRUE(Plan.StackBlocks.empty()) << Mutation;
+    const auto Block =
+        bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
+    const auto Bound = bindObjCSourceReferences(Block.Function, F.Image);
+    // A public ISA storage address does not prove the block construction,
+    // descriptor, native invoke, or consumer's ownership contract.
+    EXPECT_FALSE(Block.Limitation.empty() && Bound.Limitation.empty())
+        << Mutation;
   }
 }
 TEST(ObjCBlockSources,

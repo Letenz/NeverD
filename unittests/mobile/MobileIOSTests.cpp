@@ -1281,6 +1281,39 @@ TEST(MobileIOSNative, RecoveredSuperclassBodyIsReusedWithoutInventingAShell) {
             std::string::npos);
 }
 
+TEST(MobileIOSNative,
+     ExternalDataDeclarationsPreserveArrayAndLinkerIdentities) {
+  for (unsigned mutation = 0; mutation < 5; ++mutation) {
+    auto [batch, metadata] = objcFixture("return arg0 + arg1;", true);
+    auto &native = *batch.getArray("methods")->front().getAsObject();
+    const std::string first =
+        "extern unsigned char data_a[] __asm__(\"_system_a\");\n";
+    std::string second =
+        "extern unsigned char data_b[] __asm__(\"_system_b\");\n";
+    if (mutation == 1)
+      second = first;
+    if (mutation == 2)
+      second = "extern unsigned char data_a[] __asm__(\"_system_b\");\n";
+    if (mutation == 3)
+      second = "extern unsigned char data_a[8] __asm__(\"_system_a\");\n";
+    if (mutation == 4)
+      second = "extern unsigned char data_b[] = {1};\n";
+    native["source"] = first + second +
+                       "extern long guard[8];\nextern void *block_class[];\n" +
+                       str(native, "source");
+    Budget budget;
+    auto result = objcSources(batch, metadata, 8, budget);
+    EXPECT_EQ(number(result.coverage, "recovered_method_count"),
+              mutation < 2 ? 1 : 0)
+        << mutation;
+    if (mutation < 2) {
+      EXPECT_NE(result.source.find(first), std::string::npos);
+      EXPECT_NE(result.source.find(second), std::string::npos);
+      EXPECT_NE(result.source.find("extern long guard[8];"), std::string::npos);
+    }
+  }
+}
+
 TEST(MobileIOSNative, ConflictingSuperclassBodiesInvalidateTheirDescendants) {
   auto [batch, metadata] = objcFixture("return arg0 + arg1;", true);
   auto &child = *metadata.getArray("classes")->front().getAsObject();

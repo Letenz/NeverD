@@ -99,6 +99,8 @@ Le immagini Darwin collegate a 64 bit che importano Foundation di sistema consul
 
 Le chiamate C con parametri fissi usano anche dichiarazioni estratte dal compilatore e informazioni di esportazione e riesportazione dell’SDK. Devono corrispondere la libreria dyld esatta, il simbolo e l’ABI scalare; importazioni deboli, fornitori sconosciuti e prototipi non supportati restano non associati. Il C generato usa identificatori distinti collegati ai simboli originali. Le normali chiamate di sincronizzazione senza tabelle di eccezione conservano chiamate reali ed effetti sulla memoria.
 
+Le associazioni dei dati esterni richiedono dichiarazioni SDK comuni senza TLS e prove esatte delle esportazioni della libreria. Il C generato fa riferimento alla memoria reale del simbolo e conserva gli accessi successivi, inclusa la distinzione tra un puntatore globale e il suo oggetto. Importazioni deboli, identità contrastanti e memorie non supportate restano non associate. Le dichiarazioni dei dati non dimostrano la costruzione o la proprietà dei blocchi.
+
 È una ricostruzione limitata del runtime: proprietà e protocolli completi, annotazioni originali di ownership, aggregati arbitrari, code variadiche, corpi dipendenti dalle eccezioni e layout Block/catture non modellati non sono garantiti. La codifica descrive gli argomenti fissi e non prova l’assenza di puntini di sospensione nella dichiarazione originale. I puntatori concatenati sono usati solo negli slot risolti dal loader; gli altri formati mantengono diagnostica.
 
 ## Sorgenti Swift e memoria

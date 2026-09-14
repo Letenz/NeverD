@@ -15,6 +15,13 @@
 - (uint64_t)time:(uint64_t)when delta:(int64_t)delta;
 - (int)lastError;
 - (double)remainder:(double)value divisor:(double)divisor;
+- (NSString *)defaultMode;
+- (const void *)modeStorage;
+- (NSString *)descriptionKey;
+- (void *)mainQueue;
+- (const void *)timerType;
+- (float)defaultPriority;
+- (double)foundationVersion;
 @end
 @implementation NDDarwinDeclarations
 - (NSString *)nameOfClass:(Class)value {
@@ -53,5 +60,26 @@
 }
 - (double)remainder:(double)value divisor:(double)divisor {
   return fmod(value, divisor);
+}
+- (NSString *)defaultMode {
+  return NSDefaultRunLoopMode;
+}
+- (const void *)modeStorage {
+  return &NSDefaultRunLoopMode;
+}
+- (NSString *)descriptionKey {
+  return NSLocalizedDescriptionKey;
+}
+- (void *)mainQueue {
+  return (__bridge void *)dispatch_get_main_queue();
+}
+- (const void *)timerType {
+  return DISPATCH_SOURCE_TYPE_TIMER;
+}
+- (float)defaultPriority {
+  return NSURLSessionTaskPriorityDefault;
+}
+- (double)foundationVersion {
+  return NSFoundationVersionNumber;
 }
 @end

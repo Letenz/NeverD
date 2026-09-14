@@ -146,6 +146,7 @@ public:
   std::set<const HighFunc *> SourceAddressDefinitions;
   std::map<std::string, const SourceFunctionTypeHint *> SourceNativeSignatures;
   std::map<std::string, std::string> SourceRuntimeLinkNames;
+  std::map<std::string, std::string> SourceRuntimeDataIdentifiers;
   std::map<std::string, bool> SourceCallTermination;
   std::set<std::string> ConflictingSourceNativeSignatures;
   std::map<std::string, unsigned> MemoryTypes;

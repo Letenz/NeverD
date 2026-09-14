@@ -148,6 +148,7 @@ jobs:
             scripts.tests.test_eh_signature_generation \
             scripts.tests.test_generate_objc_declarations \
             scripts.tests.test_generate_darwin_declarations \
+            scripts.tests.test_generate_darwin_data_declarations \
             -v
           "$PYTHON" -m unittest discover \
             -s pluginsdk/python/tests -v
@@ -490,6 +491,12 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.DescriptorABIConflictAndUnrecoveredInvokeCannotAcquireSourceStatus",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MobileIOSNative.ExternalDataDeclarationsPreserveArrayAndLinkerIdentities",
+                   "NeverDMobileTests"),
+                  ("ObjCCallHints.SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.SDKDataBindingsRequireExactExportsAndDataDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SDKCDeclarationsPreservePointerIntegerAndFloatCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SDKCDeclarationsRequireExactExportsAndFixedPrototypes",
@@ -784,9 +791,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 278,
-              ("macOS", "macos-patch"): 290,
-              ("Windows", "windows-focused"): 274,
+              ("Linux", "linux-semantic"): 270,
+              ("macOS", "macos-patch"): 282,
+              ("Windows", "windows-focused"): 266,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

@@ -6,5 +6,8 @@
 namespace neverd {
 std::optional<SourceCallTypeHint>
 darwinDeclaredSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
+std::optional<SourceCallTypeHint>
+darwinDeclaredSourceGlobalAddressHint(const BinaryImage &Image,
+                                      va_t ImportSlot);
 } // namespace neverd
 #endif

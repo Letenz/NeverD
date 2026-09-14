@@ -497,7 +497,15 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
             NeedsDarwinLocks = true;
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
-          NeedsDarwinStackGuard |= Hint.TargetName == "__stack_chk_guard";
+          if (Hint.Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::DarwinSDK) {
+            if (!SourceRuntimeDataIdentifiers.count(Hint.TargetName))
+              SourceRuntimeDataIdentifiers.emplace(
+                  Hint.TargetName,
+                  GlobalIdentifierAllocator.allocate(
+                      "neverd_darwin_data_" + Hint.TargetName, "nd_data"));
+          } else
+            NeedsDarwinStackGuard |= Hint.TargetName == "__stack_chk_guard";
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::SwiftStringBridge) {
           NeedsSwiftStringBridge = true;
@@ -722,6 +730,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     collectCallTargets(F.Body, CallTargets);
   }
 
+  for (const auto &[Name, Identifier] : SourceRuntimeDataIdentifiers) {
+    OS << "extern unsigned char " << Identifier << "[] __asm__(\"";
+    OS.write_escaped("_" + Name);
+    OS << "\");\n";
+  }
   if (NeedsObjCSuper2)
     OS << "extern void objc_msgSendSuper2(void);\n";
   if (NeedsSwiftStringBridge)

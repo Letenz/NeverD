@@ -110,9 +110,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         return bad("native address has no recovered definition");
       Value = "&" + functionIdentifier(*Definition);
     } else if (Hint.CallKind == Kind::DarwinRuntimeGlobalAddress) {
-      if (Hint.TargetName != "__stack_chk_guard")
+      if (Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK) {
+        auto It = SourceRuntimeDataIdentifiers.find(Hint.TargetName);
+        if (It == SourceRuntimeDataIdentifiers.end())
+          return bad("unknown runtime data identity");
+        Value = It->second;
+      } else if (Hint.TargetName == "__stack_chk_guard")
+        Value = "__stack_chk_guard";
+      else
         return bad("unknown runtime data identity");
-      Value = "__stack_chk_guard";
     } else if (Hint.CallKind == Kind::RuntimeBlockIsa) {
       llvm::StringRef Name(Hint.TargetName);
       if (Name.starts_with("__"))

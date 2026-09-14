@@ -1,7 +1,9 @@
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,22 @@ STYLE_WORKFLOW = ROOT / ".github" / "workflows" / "llvm-style.yml"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_mobile_focused_inventory_executes_on_every_runner(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        step = self.workflow_step_containing(source, "focused contract has missing")
+        script = step.split("<<'PY'\n", 1)[1]
+        # Exercise the actual declarative inventory and its identity checks.
+        # Stop before the first filesystem mutation or CTest invocation.
+        inventory = textwrap.dedent(script.split('          evidence = Path(', 1)[0])
+        for runner, profile in (("Linux", "linux-semantic"),
+                                ("macOS", "macos-patch"),
+                                ("Windows", "windows-focused")):
+            with self.subTest(runner=runner), patch.dict(
+                    "os.environ", {"RUNNER_OS": runner, "TEST_PROFILE": profile}):
+                scope = {}
+                exec(compile(inventory, str(WORKFLOW), "exec"), scope)
+                self.assertEqual(len(scope["expected"]), scope["expected_count"])
+
     def test_med_ir_exports_source_abi_and_objc_dependencies(self):
         with tempfile.TemporaryDirectory(prefix="neverd-med-ir-link-") as directory:
             root = Path(directory)

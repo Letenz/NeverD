@@ -22,6 +22,15 @@ constexpr Declaration Declarations[] = {
 #include "DarwinSourceDeclarations.inc"
 };
 
+struct DataDeclaration {
+  const char *Name;
+  const char *AArch64Modules;
+  const char *X64Modules;
+};
+constexpr DataDeclaration DataDeclarations[] = {
+#include "DarwinSourceDataDeclarations.inc"
+};
+
 llvm::StringRef canonicalModule(llvm::StringRef Module) {
   // These frameworks use unversioned install names on iOS. All other names
   // retain their exact identity, including private/user framework paths.
@@ -98,6 +107,39 @@ darwinDeclaredSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Result.TargetAddress = ImportSlot;
   Result.TargetName = Import->str();
   Result.Signature = *Found->second;
+  return Result;
+}
+
+std::optional<SourceCallTypeHint>
+darwinDeclaredSourceGlobalAddressHint(const BinaryImage &Image,
+                                      va_t ImportSlot) {
+  auto Import = darwinRuntimeImport(Image, ImportSlot);
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (!Import || !Import->consume_front("_") ||
+      Bind == Image.DyldBindSlots.end())
+    return std::nullopt;
+  const auto D = std::lower_bound(
+      std::begin(DataDeclarations), std::end(DataDeclarations), *Import,
+      [](const DataDeclaration &D, llvm::StringRef Name) {
+        return D.Name < Name;
+      });
+  if (D == std::end(DataDeclarations) || D->Name != *Import ||
+      !exportsFrom(Image.Arch == Arch::AArch64 ? D->AArch64Modules
+                                               : D->X64Modules,
+                   Bind->second.Module))
+    return std::nullopt;
+  // Only non-TLS external storage with a declaration common to both platform
+  // profiles is eligible. Bind the address; subsequent loads and stores still
+  // access the real runtime object, without assuming its value or layout.
+  SourceCallTypeHint Result;
+  Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress;
+  Result.TargetAddress = ImportSlot;
+  Result.TargetName = Import->str();
+  Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Diagnostic;
+  if (!assignDarwinScalarSourceABI(Result.Signature, Image.Arch, Diagnostic))
+    return std::nullopt;
   return Result;
 }
 } // namespace neverd

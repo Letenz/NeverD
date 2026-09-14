@@ -969,20 +969,38 @@ Rendered render(const Object &native, const Object &runtime,
       throw Error("unrecognized trailing C source");
     if (end > i) {
       std::string symbol, spelling;
+      // A trailing linker spelling decorates the preceding declarator. It is
+      // not the identity used to merge declarations from different methods.
+      size_t declaratorEnd = end;
+      if (end - i >= 4 && t[end - 4].text == "__asm__" &&
+          t[end - 3].text == "(" && t[end - 2].kind == 1 &&
+          t[end - 2].text.starts_with('"') && t[end - 1].text == ")")
+        declaratorEnd -= 4;
       size_t opening = i;
-      while (opening < end && t[opening].text != "(")
+      while (opening < declaratorEnd && t[opening].text != "(")
         ++opening;
-      if (opening > i && opening < end && t[end - 1].text == ")")
+      if (opening > i && opening < declaratorEnd &&
+          t[declaratorEnd - 1].text == ")")
         symbol = t[opening - 1].text;
-      else if (t[i].text == "extern" && safe(t[end - 1].text))
-        symbol = t[end - 1].text;
-      else if (end - i == 6 && t[i].text == "extern" &&
-               t[i + 1].text == "void" && t[i + 2].text == "*" &&
-               (t[i + 3].text == "_NSConcreteStackBlock" ||
-                t[i + 3].text == "_NSConcreteGlobalBlock") &&
-               t[i + 4].text == "[" && t[i + 5].text == "]")
-        symbol = t[i + 3].text;
-      else
+      else if (t[i].text == "extern" && safe(t[declaratorEnd - 1].text))
+        symbol = t[declaratorEnd - 1].text;
+      else if (t[i].text == "extern" && t[declaratorEnd - 1].text == "]") {
+        const auto array = match[declaratorEnd - 1];
+        if (array <= i + 1 || !safe(t[array - 1].text))
+          throw Error("unsupported external array declaration");
+        for (size_t j = i + 1; j < array - 1; ++j)
+          if (t[j].kind || (!identifier(t[j].text) && t[j].text != "*"))
+            throw Error("unsupported external array element type");
+        // Only an unspecified extent or one integer literal is emitted for
+        // external storage. Initializers and compound declarators stay out.
+        if (declaratorEnd - array != 2 &&
+            !(declaratorEnd - array == 3 && !t[array + 1].kind &&
+              !t[array + 1].text.empty() &&
+              std::all_of(t[array + 1].text.begin(), t[array + 1].text.end(),
+                          [](unsigned char c) { return std::isdigit(c); })))
+          throw Error("unsupported external array extent");
+        symbol = t[array - 1].text;
+      } else
         throw Error("unsupported non-function C support declaration");
       if (!safe(symbol))
         throw Error("unsupported external declaration");

@@ -66,7 +66,7 @@ std::optional<SourceCallTypeHint>
 darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import || *Import != "___stack_chk_guard")
-    return std::nullopt;
+    return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
   // Darwin exports long __stack_chk_guard[8]. Bind its address and preserve
   // every native memory access; a guard is not a constant or private storage.
   // https://github.com/apple-oss-distributions/Libc/blob/main/sys/OpenBSD/stack_protector.c

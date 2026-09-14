@@ -153,7 +153,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 10U
+  ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 17U
                              : BlockLifetimes    ? (ManualBlocks ? 5U : 4U)
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
@@ -242,7 +242,14 @@ void verifyRuntime(bool Chained,
                  "compare:with:",
                  "time:delta:",
                  "lastError",
-                 "remainder:divisor:"};
+                 "remainder:divisor:",
+                 "defaultMode",
+                 "modeStorage",
+                 "descriptionKey",
+                 "mainQueue",
+                 "timerType",
+                 "defaultPriority",
+                 "foundationVersion"};
   if (BlockLifetimes)
     Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:",
                  "duplicateBlock:", "releaseBlock:"};
