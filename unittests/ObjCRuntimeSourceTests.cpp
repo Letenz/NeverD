@@ -57,6 +57,7 @@ enum class RuntimeFixture {
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
+  SystemData,
   Graphics,
   DarwinDeclarations
 };
@@ -70,6 +71,10 @@ void verifyRuntime(bool Chained,
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
+  const bool SystemData = FixtureKind == RuntimeFixture::SystemData;
+  const std::vector<std::string> SystemDataFrameworks{
+      "-framework", "CoreData", "-framework", "CoreGraphics",
+      "-framework", "ImageIO",  "-framework", "CoreSpotlight"};
   const bool Graphics = FixtureKind == RuntimeFixture::Graphics;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
@@ -97,6 +102,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants   ? "ObjCScalarConstants.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStrings.m"
                         : StoredStrings     ? "ObjCStoredStrings.m"
+                        : SystemData        ? "ObjCSystemData.m"
                         : Graphics          ? "ObjCGraphicsCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
@@ -113,6 +119,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
                         : StoredStrings     ? "ObjCStoredStringsHarness.m"
+                        : SystemData        ? "ObjCSystemDataHarness.m"
                         : Graphics          ? "ObjCGraphicsCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
@@ -144,6 +151,9 @@ void verifyRuntime(bool Chained,
     *Flag = "-fno-objc-arc";
     Compile.push_back("-DNEVERD_MANUAL_BLOCKS");
   }
+  if (SystemData)
+    Compile.insert(Compile.end(), SystemDataFrameworks.begin(),
+                   SystemDataFrameworks.end());
   if (CoreData)
     Compile.insert(Compile.end(), {"-framework", "CoreData"});
   if (Graphics)
@@ -203,6 +213,7 @@ void verifyRuntime(bool Chained,
                              : ScalarConstants   ? 6U
                              : SwiftLiterals     ? 3U
                              : StoredStrings     ? 4U
+                             : SystemData        ? 9U
                              : Graphics          ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
@@ -299,6 +310,12 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Remaining = {"widthOfImage:", "heightOfImage:",     "retainImage:",
                  "alphaOfColor:", "componentsInColor:", "imageCountInSource:"};
+  if (SystemData)
+    Remaining = {"emptyArray",       "emptyArrayAlias",
+                 "emptyDictionary",  "trueObject",
+                 "falseObject",      "contextSaveName",
+                 "gifDictionaryKey", "searchableItemIdentifier",
+                 "colorSpaceName"};
   if (StoredStrings)
     Remaining = {"arrayWithValue:", "dictionaryWithValue:", "writeLiteralTo:",
                  "literal"};
@@ -338,6 +355,7 @@ void verifyRuntime(bool Chained,
                                     : ScalarConstants  ? "NDScalarConstants"
                                     : SwiftLiterals    ? "NDSwiftLiteralStrings"
                                     : StoredStrings    ? "NDStoredStrings"
+                                    : SystemData       ? "NDSystemData"
                                     : Graphics         ? "NDGraphicsCalls"
                                     : BlockLifetimes   ? "NDBlockFactory"
                                     : Foundation       ? "NDFoundationCalls"
@@ -485,6 +503,9 @@ void verifyRuntime(bool Chained,
              Baseline};
   if (ManualBlocks)
     Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
+  if (SystemData)
+    Compile.insert(Compile.end() - 2, SystemDataFrameworks.begin(),
+                   SystemDataFrameworks.end());
   if (CoreData)
     Compile.insert(Compile.end() - 2, {"-framework", "CoreData"});
   if (Graphics)
@@ -553,6 +574,8 @@ void verifyRuntime(bool Chained,
           ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
       : SwiftLiterals ? "swift-literals=3072\nutf8=pass\nlifetime="
                         "pass\nidentical-objects=0\n"
+      : SystemData    ? "system-data=9216\nsingletons=pass\nframework-identity="
+                        "pass\nlifetime=pass\n"
       : StoredStrings
           ? "stored-strings=4096\nobject-identity=pass\nlifetime=pass\n"
       : Graphics ? "graphics-queries=6144\nimage-identity=pass\npng-count=1\n"
@@ -915,5 +938,16 @@ TEST(ObjCRuntimeSource, RecompiledStoredStringsPreserveCollectionsAndIdentity) {
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledSystemDataPreservesRuntimeSingletonIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::SystemData));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and public data frameworks";
 #endif
 }

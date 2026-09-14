@@ -1,9 +1,51 @@
 import unittest
 from types import SimpleNamespace
-from scripts.generate_darwin_data_declarations import DataDeclarations, render
+from scripts.generate_darwin_data_declarations import (
+    DataDeclarations, LITERAL_PROBES, literal_storage_declarations, render)
 
 
 class DarwinDataDeclarationTests(unittest.TestCase):
+    @staticmethod
+    def literal_ir():
+        return "\n".join(
+            f"@storage_{index} = external global ptr #0\n"
+            f"define nonnull ptr @{probe}() local_unnamed_addr #1 {{\n"
+            f"entry:\n  ret ptr @storage_{index}\n}}"
+            for index, probe in enumerate(LITERAL_PROBES))
+
+    def test_compiler_literal_identities_still_require_platform_and_export_agreement(self):
+        profile = literal_storage_declarations(self.literal_ir())
+        self.assertEqual(profile, {f"storage_{i}": {"data"} for i in range(4)})
+        negative = {**profile, "storage_1": {""}}
+        missing = {name: kind for name, kind in profile.items() if name != "storage_2"}
+        output, count = render([profile, negative, profile, missing],
+                               [{"storage_0": {"A"}, "storage_1": {"A"},
+                                 "storage_2": {"A"}}] * 2, "test", "test")
+        self.assertEqual(count, 3)
+        self.assertIn('{"storage_0", "A", "A"}', output)
+        self.assertIn('{"storage_1", "", "A"}', output)
+        self.assertIn('{"storage_2", "A", ""}', output)
+        self.assertNotIn('"storage_3"', output)
+
+    def test_literal_facts_reject_non_data_returns_and_ambiguous_ir(self):
+        ir = self.literal_ir()
+        for before, after in (
+                ("external global ptr", "external thread_local global ptr"),
+                ("external global ptr", "external global i32"),
+                ("external global ptr", "extern_weak global ptr"),
+                ("external global ptr", "global ptr null"),
+                ("ret ptr @storage_0", "ret ptr @undeclared"),
+                ("ret ptr @storage_0", "ret ptr null"),
+                ("ret ptr @storage_0", "%v = load ptr, ptr @storage_0\n  ret ptr %v"),
+                ("ret ptr @storage_0", "%v = call ptr @callee()\n  ret ptr %v"),
+                ("ret ptr @storage_0", "ret i64 ptrtoint (ptr @storage_0 to i64)"),
+                ("@neverd_literal_array()", "@unrelated()")):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                literal_storage_declarations(ir.replace(before, after, 1))
+        for duplicate in (ir, "\n@storage_0 = external global ptr #0"):
+            with self.assertRaises(ValueError):
+                literal_storage_declarations(ir + "\n" + duplicate)
+
     def test_only_external_non_tls_variables_supply_storage_addresses(self):
         clang = DataDeclarations.__new__(DataDeclarations)
         clang.string = lambda value: value

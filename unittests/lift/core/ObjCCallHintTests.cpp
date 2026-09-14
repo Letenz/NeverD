@@ -2081,6 +2081,42 @@ TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
   }
 }
 
+TEST(ObjCCallHints, FrameworkAndCompilerDataKeepExactExportIdentities) {
+  const std::pair<const char *, const char *> Declarations[] = {
+      {"__NSArray0__struct", "CoreFoundation"},
+      {"__NSDictionary0__struct", "CoreFoundation"},
+      {"__kCFBooleanTrue", "CoreFoundation"},
+      {"__kCFBooleanFalse", "CoreFoundation"},
+      {"NSManagedObjectContextDidSaveNotification", "CoreData"},
+      {"kCGImagePropertyGIFDictionary", "ImageIO"},
+      {"CSSearchableItemActivityIdentifier", "CoreSpotlight"},
+      {"kCGColorSpaceSRGB", "CoreGraphics"}};
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (auto [Name, Framework] : Declarations) {
+      SCOPED_TRACE(Name);
+      for (bool Versioned : {false, true}) {
+        const auto Symbol = "_" + std::string(Name);
+        auto Image = runtimeImage(Symbol, Architecture);
+        Image.DyldBindSlots[0x2180] = {
+            Symbol, 0,
+            "/System/Library/Frameworks/" + std::string(Framework) +
+                ".framework/" + (Versioned ? "Versions/A/" : "") + Framework,
+            false};
+        const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+        ASSERT_TRUE(Binding);
+        EXPECT_EQ(Binding->TargetName, Name);
+        EXPECT_EQ(Binding->CallKind,
+                  SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress);
+        Image.DyldBindSlots[0x2180].Module += ".impostor";
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180));
+        Image.DyldBindSlots[0x2180].Module =
+            "/System/Library/Frameworks/UIKit.framework/UIKit";
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180));
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
