@@ -1,8 +1,10 @@
 #import <Foundation/Foundation.h>
+#include <limits.h>
 #import <objc/runtime.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -20,6 +22,19 @@
 #include "replacements.h"
 #endif
 
+// Observe the actual instruction fault without invoking the host's crash
+// reporter. Default signal termination may stall while a report is processed,
+// even with core files disabled. The pipe receipt distinguishes a real signal
+// from a method that simply exits with the same status. Both operations in
+// the handler are async-signal-safe.
+static volatile sig_atomic_t trapSignalFD = -1;
+static void observedTrap(int signal) {
+  const unsigned char receipt = (unsigned char)signal;
+  if (write(trapSignalFD, &receipt, 1) != 1)
+    _exit(10);
+  _exit(128 + signal);
+}
+
 int main(int argc, char **argv) {
   struct rlimit core = {0, 0};
   if (setrlimit(RLIMIT_CORE, &core))
@@ -29,7 +44,17 @@ int main(int argc, char **argv) {
     installRecovered();
 #endif
     NDDiagnosticReports *object = [NDDiagnosticReports new];
-    if (argc == 2 && !strcmp(argv[1], "--trap")) {
+    if (argc == 3 && !strcmp(argv[1], "--trap")) {
+      char *end = NULL;
+      long fd = strtol(argv[2], &end, 10);
+      if (end == argv[2] || *end || fd < 0 || fd > INT_MAX)
+        return 9;
+      trapSignalFD = (int)fd;
+      struct sigaction action = {0};
+      action.sa_handler = observedTrap;
+      sigemptyset(&action.sa_mask);
+      if (sigaction(SIGTRAP, &action, NULL) || sigaction(SIGILL, &action, NULL))
+        return 9;
       [object terminal];
       return 3;
     }
@@ -37,21 +62,33 @@ int main(int argc, char **argv) {
         [object fatal] != 137 || [object fatalInFile] != 251)
       return 4;
     [object release];
+    int receiptPipe[2];
+    if (pipe(receiptPipe))
+      return 10;
+    char descriptor[32];
+    snprintf(descriptor, sizeof(descriptor), "%d", receiptPipe[1]);
     pid_t pid = fork();
     if (pid < 0)
       return 5;
     if (!pid) {
-      execl(argv[0], argv[0], "--trap", NULL);
+      close(receiptPipe[0]);
+      execl(argv[0], argv[0], "--trap", descriptor, NULL);
       _exit(6);
     }
+    close(receiptPipe[1]);
     int status;
-    if (waitpid(pid, &status, 0) != pid || !WIFSIGNALED(status))
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
       return 7;
+    unsigned char receipt = 0;
+    const ssize_t received = read(receiptPipe[0], &receipt, 1);
+    close(receiptPipe[0]);
 #if defined(__arm64__)
-    if (WTERMSIG(status) != SIGTRAP)
+    if (received != 1 || receipt != SIGTRAP ||
+        WEXITSTATUS(status) != 128 + SIGTRAP)
       return 8;
 #else
-    if (WTERMSIG(status) != SIGILL)
+    if (received != 1 || receipt != SIGILL ||
+        WEXITSTATUS(status) != 128 + SIGILL)
       return 8;
 #endif
     puts("diagnostic-runtime=pass\ncontents=pass\ntrap=pass");
