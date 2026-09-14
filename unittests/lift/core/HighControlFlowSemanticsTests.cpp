@@ -275,6 +275,64 @@ TEST(HighControlFlowSemantics, PhiAnnotationCannotDiscardObservableLoads) {
   EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
 }
 
+TEST(HighControlFlowSemantics, ConditionalDefaultKeepsItsExclusivePath) {
+  for (bool PhiCopies : {false, true})
+    for (uint64_t Lookup : {uint64_t{0}, uint64_t{9}}) {
+      HighFunc F;
+      auto Null = assign(0x1028, 3, 0);
+      Null.IsPhiCopy = PhiCopies;
+      auto Entry = conditional(0x1000, Null.Addr);
+      Entry.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
+                                       HighExpr::makeConst(0, 8));
+      auto Existing = conditional(0x1014, 0x102c);
+      Existing.Cond =
+          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(PhiCopies ? 1 : 3),
+                              HighExpr::makeConst(0, 8));
+      auto Copy = assign(0x1014, 3, 0);
+      Copy.Val = local(1);
+      Copy.IsPhiCopy = true;
+      if (PhiCopies)
+        Existing.Body.insert(Existing.Body.begin(), Copy);
+      F.Body = {Entry, assign(0x1010, PhiCopies ? 1 : 3, Lookup), Existing,
+                assign(0x1020, PhiCopies ? 2 : 3, 19)};
+      if (PhiCopies) {
+        auto Created = Copy;
+        Created.Addr = 0x1024;
+        Created.Val = local(2);
+        F.Body.push_back(Created);
+      }
+      F.Body.push_back(jump(0x1024, 0x102c));
+      F.Body.push_back(Null);
+      F.Body.push_back(result(0x102c, local(3)));
+      ASSERT_EQ(execute(F, 0), 0u);
+      ASSERT_EQ(execute(F, 1), Lookup ? 9u : 19u);
+      structureIfElse(F, 10);
+      EXPECT_EQ(execute(F, 0), 0u);
+      EXPECT_EQ(execute(F, 1), Lookup ? 9u : 19u);
+    }
+}
+
+TEST(HighControlFlowSemantics, SharedMergeDoesNotHideAnotherFalseArmEntry) {
+  HighFunc F;
+  auto Enter = conditional(0x1004, 0x1020);
+  Enter.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  auto Skip = conditional(0x1010, 0x1040);
+  Skip.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  auto Increment = assign(0x1020, 1, 0);
+  Increment.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
+  F.Body = {
+      assign(0x1000, 1, 5),    Enter, Skip, Increment, jump(0x1030, 0x1040),
+      result(0x1040, local(1))};
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{2}})
+    ASSERT_EQ(execute(F, Input), Input == 1 ? 5u : 6u);
+  structureIfElse(F, 10);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{2}})
+    EXPECT_EQ(execute(F, Input), Input == 1 ? 5u : 6u);
+}
+
 TEST(HighControlFlowSemantics, TargetReturnIsNotAnEarlyFallthroughReturn) {
   HighFunc F;
   auto Nested = conditional(0x1004, 0x1040);

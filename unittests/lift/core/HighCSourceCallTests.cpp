@@ -19,7 +19,8 @@ using namespace neverd;
 
 namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
-}
+void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
+} // namespace neverd
 
 namespace {
 ExprPtr parameter(unsigned Id, TypeRef Type) {
@@ -177,6 +178,66 @@ TEST(HighCSourceCalls, GuardedPhiCleanupKeepsTargetLabelsExecutable) {
 int main(void) {
     for (int condition = -256; condition <= 256; ++condition)
         if (guarded_value(condition) != (condition ? 42 : 7)) return 1;
+    return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, ConditionalDefaultPreservesResultsAndCallCounts) {
+  const auto Integer = NdType::makeInt(4);
+  MedVar Variable;
+  Variable.Kind = MedVar::Temp;
+  Variable.Id = 10;
+  Variable.Size = 4;
+  auto Value = HighExpr::makeVar(Variable);
+  auto Function = returning("find_or_create", Value, {Integer, Integer});
+  auto Return = Function.Body.back();
+  Return.Addr = 0x1040;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = Return.Addr;
+  HighStmt Entry;
+  Entry.Kind = StmtKind::If;
+  Entry.Addr = 0x1000;
+  Entry.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0, Integer),
+                                   HighExpr::makeConst(0, 4));
+  Entry.Body = {Jump};
+  Entry.Body[0].GotoTarget = 0x1030;
+  HighStmt Lookup;
+  Lookup.Kind = StmtKind::Assign;
+  Lookup.Addr = 0x1008;
+  Lookup.Dst = Value;
+  Lookup.Val = call(native("lookup_once", Integer, {Integer}), Integer,
+                    {parameter(1, Integer)});
+  HighStmt Found;
+  Found.Kind = StmtKind::If;
+  Found.Addr = 0x1010;
+  Found.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Value, HighExpr::makeConst(0, 4));
+  Found.Body = {Jump};
+  auto Create = Lookup;
+  Create.Addr = 0x1018;
+  Create.Val = call(native("create_once", Integer, {}), Integer);
+  auto Default = Lookup;
+  Default.Addr = 0x1030;
+  Default.Val = HighExpr::makeConst(0, 4);
+  Jump.Addr = 0x1020;
+  Function.Body = {Entry, Lookup, Found, Create, Jump, Default, Return};
+  structureIfElse(Function, 10);
+  compileAndRun(emit({Function}) + R"(
+static unsigned lookups, creations;
+int32_t lookup_once(int32_t value) { ++lookups; return value; }
+int32_t create_once(void) { ++creations; return 19; }
+int main(void) {
+    for (int key = -32; key <= 32; ++key) {
+        for (int value = -32; value <= 32; ++value) {
+            unsigned before_lookup = lookups, before_create = creations;
+            if (find_or_create(key, value) != (key ? (value ? value : 19) : 0))
+                return 1;
+            if (lookups - before_lookup != (key != 0)) return 2;
+            if (creations - before_create != (key != 0 && value == 0)) return 3;
+        }
+    }
     return 0;
 }
 )");

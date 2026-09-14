@@ -709,6 +709,12 @@ jobs:
                    "NeverDPipelineOutcomeTests"),
                   ("PipelineStageTrace.KeepsLiftBranchAndItsNativeDefinition",
                    "NeverDPipelineOutcomeTests"),
+                  ("HighControlFlowSemantics.ConditionalDefaultKeepsItsExclusivePath",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.SharedMergeDoesNotHideAnotherFalseArmEntry",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighCSourceCalls.ConditionalDefaultPreservesResultsAndCallCounts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighControlFlowSemantics.DeadGuardedPhiReadIsRemovedBeforeExecution",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.RewrittenGuardKeepsTheReachingPhiValue",
@@ -819,9 +825,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 284,
-              ("macOS", "macos-patch"): 296,
-              ("Windows", "windows-focused"): 280,
+              ("Linux", "linux-semantic"): 287,
+              ("macOS", "macos-patch"): 299,
+              ("Windows", "windows-focused"): 283,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

@@ -612,6 +612,15 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
 
       // Same-target fold: both branches goto the same address.
       if (IfTarget == Else.Target) {
+        if (!ownsRun(Func.Body, AM, {NextI, Else.GotoIdx + 1}, I, Med))
+          continue;
+        // Both arms reach this target, but it need not be their physical
+        // continuation: another branch can own statements between the common
+        // transfer and its target. Keep that transfer unless the next emitted
+        // statement is exactly the target; never fall through the intervening
+        // code merely because both arms agree where to jump.
+        const bool TargetFollows = Else.GotoIdx + 1 < Func.Body.size() &&
+                                   Func.Body[Else.GotoIdx + 1].Addr == IfTarget;
         if (TakenCopies.empty()) {
           Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
           Stmt.Body.clear();
@@ -625,7 +634,7 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
         }
         Func.Body.erase(Func.Body.begin() + static_cast<long>(NextI),
                         Func.Body.begin() +
-                            static_cast<long>(Else.GotoIdx + 1));
+                            static_cast<long>(Else.GotoIdx + TargetFollows));
         Changed = true;
         continue;
       }
