@@ -1,12 +1,91 @@
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
+#include <algorithm>
+
 namespace neverd {
+namespace {
+bool digits(llvm::StringRef Encoding, size_t &I, bool Required) {
+  const auto Begin = I;
+  while (I < Encoding.size() && Encoding[I] >= '0' && Encoding[I] <= '9')
+    ++I;
+  return I - Begin <= 10 && (!Required || I != Begin);
+}
+
+bool quoted(llvm::StringRef Encoding, size_t &I) {
+  if (I >= Encoding.size() || Encoding[I++] != '"')
+    return false;
+  while (I < Encoding.size()) {
+    const auto C = Encoding[I++];
+    if (C == '"')
+      return true;
+    if (C < 0x20 || C > 0x7e || C == '\\')
+      return false;
+  }
+  return false;
+}
+
+// Validate the syntax inside an opaque aggregate pointer. No field widths,
+// offsets or ownership are inferred from this traversal.
+bool skipPointeeType(llvm::StringRef Encoding, size_t &I, unsigned Depth) {
+  if (Depth > 16)
+    return false;
+  while (I < Encoding.size() &&
+         llvm::StringRef("rnNoORV").contains(Encoding[I]))
+    ++I;
+  if (I >= Encoding.size())
+    return false;
+  const char C = Encoding[I++];
+  if (llvm::StringRef("vcCsSiIlLqQBfdD#:*?").contains(C))
+    return true;
+  if (C == '^')
+    return skipPointeeType(Encoding, I, Depth + 1);
+  if (C == 'b')
+    return digits(Encoding, I, true);
+  if (C == 'j')
+    return I < Encoding.size() &&
+           llvm::StringRef("fdD").contains(Encoding[I++]);
+  if (C == '@') {
+    if (I < Encoding.size() && Encoding[I] == '?')
+      ++I;
+    else if (I < Encoding.size() && Encoding[I] == '"')
+      return quoted(Encoding, I);
+    return true;
+  }
+  if (C == '[') {
+    if (!digits(Encoding, I, true) || !skipPointeeType(Encoding, I, Depth + 1))
+      return false;
+    return I < Encoding.size() && Encoding[I++] == ']';
+  }
+  if (C != '{' && C != '(')
+    return false;
+  const char Close = C == '{' ? '}' : ')';
+  const auto Name = I;
+  while (I < Encoding.size() && Encoding[I] != '=' && Encoding[I] != Close) {
+    const char Byte = Encoding[I++];
+    if (Byte < 0x21 || Byte > 0x7e ||
+        llvm::StringRef("{}()[]\"\\").contains(Byte))
+      return false;
+  }
+  if (I == Name || I >= Encoding.size())
+    return false;
+  if (Encoding[I++] == Close)
+    return true; // An opaque named declaration has no field list.
+  while (I < Encoding.size() && Encoding[I] != Close) {
+    if (Encoding[I] == '"' && !quoted(Encoding, I))
+      return false;
+    if (!skipPointeeType(Encoding, I, Depth + 1))
+      return false;
+  }
+  return I < Encoding.size() && Encoding[I++] == Close;
+}
+} // namespace
+
 // Deliberately small source-projection grammar. It preserves scalar widths
 // and signedness, but does not invent aggregate or callable block/Swift ABI
 // rules.
 TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &I,
                             unsigned Depth) {
-  if (Depth > 16)
+  if (Depth > 16 || Encoding.size() > 4096)
     return nullptr;
   while (I < Encoding.size() &&
          llvm::StringRef("rnNoORV").contains(Encoding[I]))
@@ -54,19 +133,62 @@ TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &I,
       return NdType::makePtr(NdType::makeVoid());
     }
     if (I < Encoding.size() && Encoding[I] == '"') {
-      const auto End = Encoding.find('"', ++I);
-      if (End == llvm::StringRef::npos)
+      if (!quoted(Encoding, I))
         return nullptr;
-      I = End + 1;
     }
     return NdType::makePtr(NdType::makeVoid());
   case '^': {
+    auto Start = I;
+    while (Start < Encoding.size() &&
+           llvm::StringRef("rnNoORV").contains(Encoding[Start]))
+      ++Start;
+    if (Start < Encoding.size() &&
+        llvm::StringRef("{([").contains(Encoding[Start])) {
+      if (!skipPointeeType(Encoding, I, Depth + 1))
+        return nullptr;
+      return NdType::makePtr(NdType::makeVoid());
+    }
     auto Pointee = parseObjCScalarType(Encoding, I, Depth + 1);
     return Pointee ? NdType::makePtr(Pointee) : nullptr;
   }
   default:
     return nullptr;
   }
+}
+
+std::optional<SourceFunctionTypeHint>
+parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
+  if (Selector.empty() || Selector.size() > 4096 || Encoding.size() > 4096)
+    return std::nullopt;
+  size_t I = 0;
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = parseObjCScalarType(Encoding, I);
+  if (!Hint.ReturnType || !digits(Encoding, I, false))
+    return std::nullopt;
+  std::vector<char> Codes;
+  while (I < Encoding.size() && Hint.Parameters.size() < 64) {
+    auto Start = I;
+    while (Start < Encoding.size() &&
+           llvm::StringRef("rnNoORV").contains(Encoding[Start]))
+      ++Start;
+    Codes.push_back(Encoding.substr(Start).starts_with("@?") ? '?'
+                    : Start < Encoding.size()                ? Encoding[Start]
+                                                             : '\0');
+    auto Type = parseObjCScalarType(Encoding, I);
+    if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, false))
+      return std::nullopt;
+    const auto Index = Hint.Parameters.size();
+    Hint.Parameters.push_back({Index == 0   ? "objc_self"
+                               : Index == 1 ? "objc_cmd"
+                                            : "arg" + std::to_string(Index - 2),
+                               std::move(Type)});
+  }
+  const auto Arity = std::count(Selector.begin(), Selector.end(), ':');
+  if (I != Encoding.size() || Hint.Parameters.size() < 2 ||
+      (Codes[0] != '@' && Codes[0] != '#') || Codes[1] != ':' ||
+      Hint.Parameters.size() != static_cast<size_t>(Arity) + 2)
+    return std::nullopt;
+  return Hint;
 }
 
 } // namespace neverd

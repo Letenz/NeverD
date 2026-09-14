@@ -62,6 +62,9 @@ add_neverd_component_library(NeverDLoader
   MachO/MachORelocations.cpp
   ObjC/ObjCEH.cpp
   ObjC/ObjCMethods.cpp
+  ObjC/ObjCMethodLists.cpp
+  ObjC/ObjCProtocols.cpp
+  ObjC/ObjCMetadataJSON.cpp
   ObjC/ObjCStorage.cpp
   ObjC/ObjCConstantStrings.cpp
   ReadOnlyBytes.cpp

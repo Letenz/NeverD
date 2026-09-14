@@ -396,6 +396,26 @@ jobs:
                    "NeverDSessionCAPITests"),
                   ("SessionCAPITest.NativeMobileDebugFailureRetainsDecoderAndAllowsReplacement",
                    "NeverDSessionCAPITests"),
+                  ("ObjCProtocols.FullWidthIntegerResultsPreserveBitsAcrossSignedDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.DeclarationsBindCallsWithoutInventingImplementations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.AggregatePointersHaveOpaqueScalarCarriers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.X64CallsitesUseProtocolDeclarationsWithObservedSelectors",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.ListLayoutsAndMethodKindsPreserveBothDarwinABIs",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.InheritanceDeduplicatesAndReparseDiscardsStaleDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.ConflictingAndUnsupportedDeclarationsCannotSelectAPrototype",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.MalformedMetadataCannotSupplyHintsOrFunctionSeeds",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.ResolvedFixupsPreserveLocalDeclarationsAndExternalReferences",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCProtocols.OpaquePointeesRequireCompleteBoundedTypeSyntax",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SelectorStubCommandProofDoesNotRequireMethodSignature",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SelectorStubCommandProofRejectsUnverifiedCodeAndSlots",
@@ -714,13 +734,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 244,
-              ("macOS", "macos-patch"): 252,
-              ("Windows", "windows-focused"): 240,
+              ("Linux", "linux-semantic"): 254,
+              ("macOS", "macos-patch"): 263,
+              ("Windows", "windows-focused"): 250,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.RecompiledProtocolCallsPreserveEnumerationState",
                       "ObjCRuntimeSource.RecompiledARCMethodsPreserveActualObjectLifetimes",
                       "ObjCRuntimeSource.RecompiledAssociatedObjectsPreserveLifetimeAndPolicy",
                       "ObjCRuntimeSource.RecompiledProfiledMethodsKeepSharedCounterStorage",

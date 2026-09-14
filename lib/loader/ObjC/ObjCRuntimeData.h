@@ -56,6 +56,16 @@ public:
     return Value;
   }
 
+  /// An imported slot never denotes a local runtime record, even when its
+  /// file bytes happen to resemble a resolved address or a null pointer.
+  std::optional<va_t> localPointer(va_t VA) const {
+    if (Image.ImportStorageSlots.count(VA) || Image.DyldBindSlots.count(VA) ||
+        Image.ImportPtrSlots.count(VA) ||
+        Image.ConflictingImportStorageSlots.count(VA))
+      return std::nullopt;
+    return pointer(VA);
+  }
+
   std::optional<std::string> string(va_t VA, bool AllowEmpty = false) const {
     std::string Value;
     for (size_t Index = 0; Index < 4096 && VA <= InvalidVA - Index; ++Index) {

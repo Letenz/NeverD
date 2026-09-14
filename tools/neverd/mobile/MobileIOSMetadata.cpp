@@ -1,6 +1,7 @@
 #include "MobileIOSInternal.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
@@ -299,14 +300,7 @@ Selection thin(std::string_view bytes, Budget &budget) {
   s.bytes = std::string(bytes);
   return s;
 }
-Object methodMetadata(const ObjCMethod &m) {
-  return Object{{"selector", presentation(m.Selector)},
-                {"type_encoding", presentation(m.TypeEncoding)},
-                {"implementation", hex(m.Implementation)},
-                {"class_method", m.IsClassMethod},
-                {"category_name", presentation(m.CategoryName)},
-                {"category_address", hex(m.CategoryAddress)}};
-}
+
 } // namespace
 Selection selectSlice(std::string_view bytes, std::string_view architecture,
                       Budget &budget) {
@@ -459,57 +453,7 @@ Object buildTargetMetadata(const Selection &selection, Budget &budget) {
   return report;
 }
 Object objcMetadata(const BinaryImage &image) {
-  Array classes, categories, limitations;
-  std::map<uint64_t, size_t> category_indices;
-  std::map<uint64_t, Array> methods_by_class;
-  for (const auto &method : image.ObjCMethods)
-    methods_by_class[method.ClassAddress].push_back(methodMetadata(method));
-  for (const auto &c : image.ObjCClasses) {
-    Array methods = methods_by_class[c.Address], ivars;
-    for (const auto &i : c.Ivars)
-      ivars.push_back(Object{{"name", presentation(i.Name)},
-                             {"type_encoding", presentation(i.TypeEncoding)},
-                             {"offset", i.Offset},
-                             {"size", i.Size},
-                             {"alignment", i.Alignment}});
-    classes.push_back(
-        Object{{"name", presentation(c.Name)},
-               {"address", hex(c.Address)},
-               {"superclass_address", hex(c.SuperclassAddress)},
-               {"superclass", c.SuperclassName.empty()
-                                  ? Value(nullptr)
-                                  : Value(presentation(c.SuperclassName))},
-               {"root_class", c.RootClass},
-               {"instance_start", c.InstanceStart},
-               {"instance_size", c.InstanceSize},
-               {"ivar_status", presentation(c.IvarStatus)},
-               {"ivars", std::move(ivars)},
-               {"inheritance_status", presentation(c.InheritanceStatus)},
-               {"methods", std::move(methods)}});
-  }
-  for (const auto &m : image.ObjCMethods)
-    if (m.CategoryAddress && !m.CategoryName.empty()) {
-      auto [it, inserted] =
-          category_indices.emplace(m.CategoryAddress, categories.size());
-      if (inserted)
-        categories.push_back(Object{{"name", presentation(m.CategoryName)},
-                                    {"class_name", presentation(m.ClassName)},
-                                    {"address", hex(m.CategoryAddress)},
-                                    {"methods", Array{}}});
-      categories[it->second].getAsObject()->getArray("methods")->push_back(
-          methodMetadata(m));
-    }
-  limitations.push_back("Runtime metadata does not recover properties, "
-                        "protocols, or dynamically registered classes.");
-  for (const auto &d : image.ObjCMetadataDiagnostics)
-    limitations.push_back(presentation(d));
-  std::string status = !image.ObjCMetadataDiagnostics.empty() ? "partial"
-                       : classes.empty()                      ? "section-absent"
-                                                              : "recovered";
-  return Object{{"status", status},
-                {"classes", std::move(classes)},
-                {"categories", std::move(categories)},
-                {"limitations", std::move(limitations)}};
+  return objcMetadataJSON(image);
 }
 Object swiftMetadata(const BinaryImage &image, Budget &budget) {
   Array symbols, types;

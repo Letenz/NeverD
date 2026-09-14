@@ -239,6 +239,7 @@ struct BinaryImage {
   std::vector<Symbol> Symbols;
   std::vector<ObjCClass> ObjCClasses;
   std::vector<ObjCMethod> ObjCMethods;
+  std::vector<ObjCProtocol> ObjCProtocols;
   std::map<va_t, ObjCSourceReference> ObjCSourceReferences;
   std::vector<std::string> ObjCMetadataDiagnostics;
   /// Exact slots decoded by the supported chained-fixup reader. A raw nonzero

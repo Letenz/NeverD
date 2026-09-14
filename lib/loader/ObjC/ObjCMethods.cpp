@@ -1,5 +1,7 @@
 #include "neverd/loader/ObjC/ObjCMethods.h"
 
+#include "ObjCMethodLists.h"
+#include "ObjCProtocols.h"
 #include "ObjCRuntimeData.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -73,18 +75,6 @@ class RuntimeReader {
     return Value;
   }
 
-  std::optional<va_t> relative(va_t VA) {
-    auto Offset = u32(VA);
-    if (!Offset)
-      return std::nullopt;
-    const int64_t Signed = static_cast<int32_t>(*Offset);
-    if ((Signed < 0 && VA < static_cast<uint64_t>(-Signed)) ||
-        (Signed > 0 && VA > InvalidVA - static_cast<uint64_t>(Signed)))
-      return std::nullopt;
-    return Signed < 0 ? VA - static_cast<uint64_t>(-Signed)
-                      : VA + static_cast<uint64_t>(Signed);
-  }
-
   std::optional<std::string> string(va_t VA) {
     std::string Result;
     for (size_t I = 0; I < MaxString; ++I) {
@@ -121,54 +111,16 @@ class RuntimeReader {
     return Name ? string(*Name) : std::nullopt;
   }
 
-  static bool skipOffset(llvm::StringRef Encoding, size_t &I) {
-    const size_t Begin = I;
-    while (I < Encoding.size() && Encoding[I] >= '0' && Encoding[I] <= '9')
-      ++I;
-    // Offsets are retained as metadata rather than used as physical register
-    // assignments. Bound their textual size so malformed integers fail closed.
-    return I - Begin <= 10;
-  }
-
   void hint(ObjCMethod &Method) {
-    llvm::StringRef Encoding(Method.TypeEncoding);
-    size_t I = 0;
-    SourceFunctionTypeHint Hint;
-    Hint.ReturnType = parseObjCScalarType(Encoding, I);
-    bool Valid = Hint.ReturnType && skipOffset(Encoding, I);
-    std::vector<char> Codes;
-    while (Valid && I < Encoding.size() && Hint.Parameters.size() < 64) {
-      size_t Start = I;
-      while (Start < Encoding.size() &&
-             llvm::StringRef("rnNoORV").contains(Encoding[Start]))
-        ++Start;
-      Codes.push_back(Encoding.substr(Start).starts_with("@?") ? '?'
-                      : Start < Encoding.size()                ? Encoding[Start]
-                                                               : '\0');
-      auto T = parseObjCScalarType(Encoding, I);
-      if (!T || T->Kind == NdTypeKind::Void || !skipOffset(Encoding, I)) {
-        Valid = false;
-        break;
-      }
-      const size_t Index = Hint.Parameters.size();
-      Hint.Parameters.push_back({Index == 0 ? "objc_self"
-                                 : Index == 1
-                                     ? "objc_cmd"
-                                     : "arg" + std::to_string(Index - 2),
-                                 std::move(T)});
-    }
-    const size_t Arity =
-        std::count(Method.Selector.begin(), Method.Selector.end(), ':');
-    if (!Valid || I != Encoding.size() || Hint.Parameters.size() < 2 ||
-        (Codes[0] != '@' && Codes[0] != '#') || Codes[1] != ':' ||
-        Hint.Parameters.size() != Arity + 2) {
+    auto Hint = parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    if (!Hint) {
       Method.Status = "unsupported_encoding";
       Method.Diagnostics.push_back(
           "Unsupported or inconsistent Objective-C type encoding");
       return;
     }
     std::string ABIDiagnostic;
-    if (!assignDarwinObjCSourceABI(Hint, Img.Arch, ABIDiagnostic)) {
+    if (!assignDarwinObjCSourceABI(*Hint, Img.Arch, ABIDiagnostic)) {
       Method.Status = "unsupported_abi";
       Method.Diagnostics.push_back(std::move(ABIDiagnostic));
       return;
@@ -182,38 +134,21 @@ class RuntimeReader {
   void methodList(const ObjCClass &Class, va_t List, bool ClassMethod) {
     if (!List)
       return;
-    auto Flags = u32(List);
-    auto Count = List <= InvalidVA - 4 ? u32(List + 4) : std::nullopt;
-    if (!Flags || !Count) {
-      diagnostic("Truncated Objective-C method list");
+    std::string Diagnostic;
+    auto Records = objc::readMethodList(Img, List, Remaining, Diagnostic);
+    if (!Records) {
+      diagnostic(Diagnostic);
       return;
     }
-    const bool Small = (*Flags & 0x80000000U) != 0;
-    const bool DirectSelectors = (*Flags & 0x40000000U) != 0;
-    const uint32_t EntrySize = (*Flags & 0xffffU) & ~3U;
-    if (EntrySize < (Small ? 12U : 24U) || EntrySize > 4096 ||
-        *Count > Remaining ||
-        !bytes(List, 8ULL + uint64_t(*Count) * EntrySize)) {
-      diagnostic("Invalid or excessive Objective-C method list");
-      return;
-    }
-    Remaining -= *Count;
-    for (uint32_t N = 0; N < *Count; ++N) {
-      const va_t Entry = List + 8 + uint64_t(N) * EntrySize;
-      auto Selector = Small ? relative(Entry) : pointer(Entry);
-      if (Small && !DirectSelectors && Selector)
-        Selector = pointer(*Selector);
-      auto Types = Small ? relative(Entry + 4) : pointer(Entry + 8);
-      auto IMP = Small ? relative(Entry + 8) : pointer(Entry + 16);
+    for (auto &Record : *Records) {
+      const auto IMP = Record.Implementation;
       ObjCMethod Method;
-      Method.MetadataAddress = Entry;
+      Method.MetadataAddress = Record.Address;
       Method.ClassAddress = Class.Address;
       Method.ClassName = Class.Name;
       Method.IsClassMethod = ClassMethod;
-      if (Selector)
-        Method.Selector = string(*Selector).value_or("");
-      if (Types)
-        Method.TypeEncoding = string(*Types).value_or("");
+      Method.Selector = std::move(Record.Selector);
+      Method.TypeEncoding = std::move(Record.TypeEncoding);
       Method.Implementation = IMP.value_or(0);
       const size_t Align = Img.Arch == Arch::AArch64 ? 4 : 1;
       if (!IMP || !*IMP || *IMP % Align || !Img.isCodeAddress(*IMP) ||
@@ -441,6 +376,7 @@ bool sameHint(const ObjCMethod &A, const ObjCMethod &B) {
 void parseObjCMethods(BinaryImage &Img) {
   Img.ObjCClasses.clear();
   Img.ObjCMethods.clear();
+  Img.ObjCProtocols.clear();
   Img.ObjCMetadataDiagnostics.clear();
   if (!Img.isMachO())
     return;
@@ -457,6 +393,7 @@ void parseObjCMethods(BinaryImage &Img) {
     return;
   }
   RuntimeReader(Img).run();
+  objc::readProtocolDeclarations(Img);
   // Class and category lists do not establish a unique runtime override order
   // for colliding declarations. Keep every record and its category identity,
   // but never emit several candidate bodies as one selected method.

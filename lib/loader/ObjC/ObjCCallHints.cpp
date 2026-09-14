@@ -18,14 +18,26 @@
 namespace neverd {
 namespace {
 
-bool sameSignature(const SourceFunctionTypeHint &A,
-                   const SourceFunctionTypeHint &B) {
-  if (!equalSourceTypes(A.ReturnType, B.ReturnType) ||
-      A.Parameters.size() != B.Parameters.size())
+bool mergeSignature(SourceFunctionTypeHint &A,
+                    const SourceFunctionTypeHint &B) {
+  if (A.Parameters.size() != B.Parameters.size())
     return false;
   for (size_t I = 0; I < A.Parameters.size(); ++I)
     if (!equalSourceTypes(A.Parameters[I].Type, B.Parameters[I].Type))
       return false;
+  if (equalSourceTypes(A.ReturnType, B.ReturnType))
+    return true;
+  // A full-width integer result has no extension or interpretation at the
+  // Darwin call boundary. Signed and unsigned declarations describe the same
+  // 64 returned bits. Use an unsigned carrier for their consensus; signed
+  // comparisons and conversions remain explicit operations in the lifted IR.
+  // Smaller results, pointer identities and floating-point carriers cannot
+  // use this rule.
+  if (!A.ReturnType || !B.ReturnType || A.ReturnType->Kind != NdTypeKind::Int ||
+      B.ReturnType->Kind != NdTypeKind::Int || A.ReturnType->Size != 8 ||
+      B.ReturnType->Size != 8)
+    return false;
+  A.ReturnType = NdType::makeInt(8, false);
   return true;
 }
 
@@ -35,18 +47,27 @@ selectorSignature(const BinaryImage &Image, llvm::StringRef Name) {
   // The receiver's dynamic class is generally unknown. Every matching runtime
   // declaration must agree, including unsupported declarations; never select
   // whichever implementation happened to be visited first.
-  for (const auto &Method : Image.ObjCMethods) {
+  auto Include = [&](const auto &Method) {
     if (Method.Selector != Name)
-      continue;
+      return true;
     if (!Method.TypeHint)
-      return std::nullopt;
+      return false;
     std::string Diagnostic;
     auto Hint = *Method.TypeHint;
     if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic) ||
-        (Result && !sameSignature(*Result, Hint)))
+        (Result && !mergeSignature(*Result, Hint)))
+      return false;
+    if (!Result)
+      Result = std::move(Hint);
+    return true;
+  };
+  for (const auto &Method : Image.ObjCMethods)
+    if (!Include(Method))
       return std::nullopt;
-    Result = std::move(Hint);
-  }
+  for (const auto &Protocol : Image.ObjCProtocols)
+    for (const auto &Method : Protocol.Methods)
+      if (!Include(Method))
+        return std::nullopt;
   return Result;
 }
 

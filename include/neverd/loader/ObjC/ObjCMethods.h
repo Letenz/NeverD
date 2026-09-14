@@ -55,6 +55,25 @@ struct ObjCMethod {
   std::vector<std::string> Diagnostics;
 };
 
+/// A protocol describes a call contract, never an executable implementation.
+struct ObjCProtocolMethod {
+  va_t MetadataAddress = 0;
+  std::string Selector;
+  std::string TypeEncoding;
+  std::string Status;
+  bool IsClassMethod = false;
+  bool IsOptional = false;
+  std::optional<SourceFunctionTypeHint> TypeHint;
+};
+
+struct ObjCProtocol {
+  va_t Address = 0;
+  std::string Name;
+  std::string Status;
+  std::vector<va_t> AdoptedProtocols;
+  std::vector<ObjCProtocolMethod> Methods;
+};
+
 /// Read bounded Objective-C runtime records from the loader's resolved image.
 /// Unsupported/malformed metadata is diagnosed and never applied as a type
 /// hint. Valid executable IMPs become function discovery seeds. The operation

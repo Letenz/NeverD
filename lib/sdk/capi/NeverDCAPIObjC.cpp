@@ -15,6 +15,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -40,81 +41,6 @@ llvm::json::Object methodIdentity(const ObjCMethod &Method) {
       {"category_address", addressText(Method.CategoryAddress)},
       {"implementation", addressText(Method.Implementation)},
       {"type_encoding", jsonSafeText(Method.TypeEncoding)}};
-}
-
-llvm::json::Object metadataJSON(const BinaryImage &Image) {
-  llvm::json::Array Classes;
-  for (const ObjCClass &Class : Image.ObjCClasses) {
-    llvm::json::Array Methods;
-    for (const ObjCMethod &Method : Image.ObjCMethods) {
-      if (Method.ClassAddress != Class.Address)
-        continue;
-      Methods.push_back(llvm::json::Object{
-          {"selector", jsonSafeText(Method.Selector)},
-          {"type_encoding", jsonSafeText(Method.TypeEncoding)},
-          {"implementation", addressText(Method.Implementation)},
-          {"class_method", Method.IsClassMethod},
-          {"category_name", jsonSafeText(Method.CategoryName)},
-          {"category_address", addressText(Method.CategoryAddress)}});
-    }
-    llvm::json::Array Ivars;
-    for (const auto &Ivar : Class.Ivars)
-      Ivars.push_back(llvm::json::Object{
-          {"name", jsonSafeText(Ivar.Name)},
-          {"type_encoding", jsonSafeText(Ivar.TypeEncoding)},
-          {"offset", static_cast<int64_t>(Ivar.Offset)},
-          {"size", static_cast<int64_t>(Ivar.Size)},
-          {"alignment", static_cast<int64_t>(Ivar.Alignment)}});
-    Classes.push_back(llvm::json::Object{
-        {"name", jsonSafeText(Class.Name)},
-        {"address", addressText(Class.Address)},
-        {"superclass_address", addressText(Class.SuperclassAddress)},
-        {"superclass",
-         Class.SuperclassName.empty()
-             ? llvm::json::Value(nullptr)
-             : llvm::json::Value(jsonSafeText(Class.SuperclassName))},
-        {"root_class", Class.RootClass},
-        {"instance_start", static_cast<int64_t>(Class.InstanceStart)},
-        {"instance_size", static_cast<int64_t>(Class.InstanceSize)},
-        {"ivar_status", Class.IvarStatus},
-        {"ivars", std::move(Ivars)},
-        {"inheritance_status", jsonSafeText(Class.InheritanceStatus)},
-        {"methods", std::move(Methods)}});
-  }
-  llvm::json::Array Categories;
-  std::map<va_t, std::vector<const ObjCMethod *>> CategoryMethods;
-  for (const auto &Method : Image.ObjCMethods)
-    if (Method.CategoryAddress && !Method.CategoryName.empty())
-      CategoryMethods[Method.CategoryAddress].push_back(&Method);
-  for (const auto &[Address, Methods] : CategoryMethods) {
-    llvm::json::Array Members;
-    for (const auto *Method : Methods)
-      Members.push_back(llvm::json::Object{
-          {"selector", jsonSafeText(Method->Selector)},
-          {"type_encoding", jsonSafeText(Method->TypeEncoding)},
-          {"implementation", addressText(Method->Implementation)},
-          {"class_method", Method->IsClassMethod},
-          {"category_name", jsonSafeText(Method->CategoryName)},
-          {"category_address", addressText(Address)}});
-    Categories.push_back(llvm::json::Object{
-        {"name", jsonSafeText(Methods.front()->CategoryName)},
-        {"class_name", jsonSafeText(Methods.front()->ClassName)},
-        {"address", addressText(Address)},
-        {"methods", std::move(Members)}});
-  }
-  llvm::json::Array Limitations;
-  Limitations.push_back(
-      "Runtime metadata does not recover properties, protocols, or "
-      "dynamically registered classes.");
-  for (const std::string &Diagnostic : Image.ObjCMetadataDiagnostics)
-    Limitations.push_back(jsonSafeText(Diagnostic));
-  const char *Status = !Image.ObjCMetadataDiagnostics.empty() ? "partial"
-                       : Image.ObjCClasses.empty()            ? "section-absent"
-                                                              : "recovered";
-  return llvm::json::Object{{"status", Status},
-                            {"classes", std::move(Classes)},
-                            {"categories", std::move(Categories)},
-                            {"limitations", std::move(Limitations)}};
 }
 
 } // namespace
@@ -479,7 +405,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         {"native_function_count", static_cast<int64_t>(NativeFunctionCount)},
         {"native_dependency_graph",
          nativeSourceDependencyEvidenceJSON(NativeEvidence)},
-        {"objc_metadata", metadataJSON(S->Img)},
+        {"objc_metadata", objcMetadataJSON(S->Img)},
         {"method_count", static_cast<int64_t>(S->Img.ObjCMethods.size())},
         {"recovered_method_count", static_cast<int64_t>(Recovered)},
         {"methods", std::move(Methods)},
