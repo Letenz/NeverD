@@ -50,6 +50,8 @@ CLI 在 `tools/neverd` 解析命令、建立 `neverd_session_t`，並呼叫
 | HighIR | 用於可讀 C 的結構化運算式與控制流 | `include/neverd/ir/high`、`lib/ir/high`，由 `lib/backend/c/HighC` 發射 |
 | LLVM IR | 最佳化、LLVM 衍生 C、目標程式碼產生和二進位重寫輸入 | `lib/backend/llvm`，由 `lib/pipeline` 最佳化/編排 |
 
+常數在 LowIR、MedIR 和 HighIR 中保留每次出現時的純量/位址來源及位址歸屬。數值位元相同不會合併不同來源。HighIR 符號簡化將位址身分視為不透明輸入；原始碼繫結使用共用的數值運算元分類，並仍要求記憶體與指標使用完成重定位繫結。
+
 | 使用者路徑 | 表示路徑 | 出口 |
 |------------|----------|------|
 | Low/Med dump | Binary -> LowIR，可選 -> MedIR | 診斷文字 |

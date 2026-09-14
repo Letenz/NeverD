@@ -194,6 +194,51 @@ TEST(HighSymSimplify, LeavesAnOrdinaryExpressionAlone) {
   EXPECT_NE(Expr.find('+'), std::string::npos) << Expr;
 }
 
+TEST(HighSymSimplify, AddressConstantsRetainTheirOriginAcrossNumericRewrites) {
+  using P = ConstantAddressProvenance;
+  for (P Provenance :
+       {P::AddressFragment, P::Address, P::DataAddress, P::CodeAddress}) {
+    auto Address = HighExpr::makeConst(0x401234, 8, Provenance, 0x401000);
+    MedVar Input;
+    Input.Kind = MedVar::Param;
+    Input.Size = 8;
+    auto X = HighExpr::makeVar(Input);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    auto Sum = HighExpr::makeBinop(
+        NdOp::INT_ADD, HighExpr::makeBinop(NdOp::INT_XOR, Address, X),
+        HighExpr::makeBinop(NdOp::INT_MULT, HighExpr::makeConst(2, 8),
+                            HighExpr::makeBinop(NdOp::INT_AND, Address, X)));
+    Return.RetVal = HighExpr::makeBinop(NdOp::INT_SUB, Sum, X);
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    ASSERT_TRUE(Body[0].RetVal);
+    EXPECT_TRUE(Body[0].RetVal->structuralEq(*Address));
+    EXPECT_EQ(Body[0].RetVal->ConstProvenance, Provenance);
+    EXPECT_EQ(Body[0].RetVal->AddressOwnerVA, 0x401000U);
+
+    // Equal bits with a different meaning may not erase a relocatable input.
+    auto Scalar = HighExpr::makeConst(0x401234, 8, P::Scalar);
+    Return.RetVal = HighExpr::makeBinop(
+        NdOp::INT_SUB, HighExpr::makeBinop(NdOp::INT_ADD, Address, X),
+        HighExpr::makeBinop(NdOp::INT_ADD, Scalar, X));
+    Body = {Return};
+    simplifyExprSemantics(Body);
+    std::vector<ExprPtr> Pending{Body[0].RetVal};
+    bool RetainedAddress = false;
+    while (!Pending.empty()) {
+      auto E = Pending.back();
+      Pending.pop_back();
+      ASSERT_TRUE(E);
+      RetainedAddress |= E->Kind == ExprKind::Const &&
+                         E->ConstProvenance == Provenance &&
+                         E->AddressOwnerVA == 0x401000;
+      Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());
+    }
+    EXPECT_TRUE(RetainedAddress);
+  }
+}
+
 TEST(HighSymSimplify, KeepsWhatItCannotSeeInsideOf) {
   // A memory read contributes to the sum. It must survive as a snapshot at
   // its original statement while the surrounding arithmetic is simplified.

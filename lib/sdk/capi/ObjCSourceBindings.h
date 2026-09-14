@@ -182,7 +182,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     ProfileStorage = &*LocalStorage;
   }
   const auto ClassObjects = classObjectIdentities(Image);
-  std::map<const HighExpr *, ExprPtr> Copies;
+  using CopyKey = std::tuple<const HighExpr *, bool, bool>;
+  std::map<CopyKey, ExprPtr> Copies;
   size_t Budget = 1000000;
   auto Fail = [&](const char *Message) {
     if (Result.Limitation.empty())
@@ -217,8 +218,9 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     Result.ProfileCounterSections.insert(*Base);
     return true;
   };
-  std::function<ExprPtr(const ExprPtr &, unsigned)> Copy;
-  Copy = [&](const ExprPtr &Original, unsigned Depth) -> ExprPtr {
+  std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool)> Copy;
+  Copy = [&](const ExprPtr &Original, unsigned Depth, bool NumericOperand,
+             bool AddressContext) -> ExprPtr {
     if (!Original)
       return nullptr;
     if (Depth > 200 || !Budget) {
@@ -226,10 +228,12 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       return HighExpr::makeUndef(Original->Type ? Original->Type->Size : 8);
     }
     --Budget;
-    if (auto Found = Copies.find(Original.get()); Found != Copies.end())
+    AddressContext |= Original->Type && Original->Type->Kind == NdTypeKind::Ptr;
+    const CopyKey Key{Original.get(), NumericOperand, AddressContext};
+    if (auto Found = Copies.find(Key); Found != Copies.end())
       return Found->second;
     auto Expression = std::make_shared<HighExpr>(*Original);
-    Copies.emplace(Original.get(), Expression);
+    Copies.emplace(Key, Expression);
     if (Original->Kind == ExprKind::Load && Original->Type &&
         Original->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         Original->MemoryOrdering == NdMemoryOrdering::None &&
@@ -278,11 +282,15 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         BindMemoryAddress(
             Expression->Operands[0], Expression->Operands[1]->Type,
             Expression->MemoryOrdering, Expression->MemoryAddressSpace)) {
-      Expression->Operands[1] = Copy(Expression->Operands[1], Depth + 1);
+      Expression->Operands[1] =
+          Copy(Expression->Operands[1], Depth + 1, false, false);
       return Expression;
     }
     if (Expression->Kind == ExprKind::Const && Expression->ConstVal &&
-        Image.getSectionFor(Expression->ConstVal))
+        Image.getSectionFor(Expression->ConstVal) &&
+        !(NumericOperand && !AddressContext &&
+          Expression->ConstProvenance == ConstantAddressProvenance::Scalar &&
+          Expression->AddressOwnerVA == InvalidVA))
       Fail("method retains an image address without a relocatable source "
            "binding");
     if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
@@ -349,7 +357,24 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           }
         }
       }
-      Operand = Copy(Operand, Depth + 1);
+      // Numeric provenance is meaningful at an operand occurrence, not for
+      // every use of the shared node. An address consumer remains strict even
+      // when its arithmetic happens to contain encoded scalar immediates.
+      bool OperandAddress =
+          AddressContext ||
+          (Index == 0 && (Expression->Kind == ExprKind::Load ||
+                          Expression->Kind == ExprKind::Store));
+      if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint) {
+        const auto &Parameters =
+            Expression->SourceCallHint->Signature.Parameters;
+        if (Index < Parameters.size() && Parameters[Index].Type &&
+            Parameters[Index].Type->Kind == NdTypeKind::Ptr)
+          OperandAddress = true;
+      }
+      const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
+                            Expression->Kind == ExprKind::UnaryOp) &&
+                           isNumericConstantOperand(Expression->Op, Index);
+      Operand = Copy(Operand, Depth + 1, Numeric, OperandAddress);
     }
     return Expression;
   };
@@ -367,7 +392,11 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
                             Statement.MemoryAddressSpace);
       forEachExpr(Statement, [&](ExprPtr &Expression) {
         if (!BoundStore || Expression != Statement.StoreAddr)
-          Expression = Copy(Expression, 0);
+          Expression =
+              Copy(Expression, 0, false,
+                   Expression == Statement.StoreAddr ||
+                       (Expression == Statement.RetVal && Function.ReturnType &&
+                        Function.ReturnType->Kind == NdTypeKind::Ptr));
       });
       Walk(Statement.Body, Depth + 1);
       Walk(Statement.ElseBody, Depth + 1);

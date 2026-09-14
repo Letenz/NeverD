@@ -55,6 +55,8 @@ aber nicht die C-API.
 | HighIR | Strukturierte Ausdrücke und Kontrollfluss für lesbares C | `include/neverd/ir/high`, `lib/ir/high`, ausgegeben von `lib/backend/c/HighC` |
 | LLVM IR | Optimierung, LLVM-abgeleitetes C, Zielcodeerzeugung und Eingabe für Binärumschreiben | `lib/backend/llvm`, optimiert/koordiniert durch `lib/pipeline` |
 
+Konstanten behalten von LowIR über MedIR bis HighIR für jedes Vorkommen ihre Herkunft als Skalar oder Adresse sowie den Adresseigentümer. Gleiche Zahlenbits führen unterschiedliche Ursprünge nicht zusammen. Die symbolische Vereinfachung in HighIR behandelt Adressidentitäten als undurchsichtige Eingaben. Die Quellcodebindung nutzt die gemeinsame Klassifizierung numerischer Operanden und verlangt für Speicher- und Zeigerverwendungen weiterhin Relokationsbindungen.
+
 | Benutzerpfad | Darstellungspfad | Ausgabe |
 |--------------|-----------------|---------|
 | Low/Med-Dump | Binary -> LowIR, optional -> MedIR | Diagnosetext |

@@ -56,10 +56,14 @@ ExprPtr HighExpr::makeVar(MedVar V, TypeRef Ty) {
   return E;
 }
 
-ExprPtr HighExpr::makeConst(uint64_t Val, uint16_t Size) {
+ExprPtr HighExpr::makeConst(uint64_t Val, uint16_t Size,
+                            ConstantAddressProvenance Provenance,
+                            uint64_t AddressOwner) {
   auto E = std::make_shared<HighExpr>();
   E->Kind = ExprKind::Const;
   E->ConstVal = Val;
+  E->ConstProvenance = Provenance;
+  E->AddressOwnerVA = AddressOwner;
   E->Type = NdType::makeInt(Size, false);
   return E;
 }

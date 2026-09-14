@@ -289,7 +289,8 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
 
 ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   if (V.isConst()) {
-    return HighExpr::makeConst(V.ConstVal, V.Size);
+    return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
+                               V.AddressOwnerVA);
   }
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {

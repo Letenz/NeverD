@@ -50,6 +50,8 @@ CLI 在 `tools/neverd` 中解析命令，创建 `neverd_session_t`，并调用
 | HighIR | 用于可读 C 的结构化表达式与控制流 | `include/neverd/ir/high`、`lib/ir/high`，由 `lib/backend/c/HighC` 发射 |
 | LLVM IR | 优化、LLVM 派生 C、目标代码生成和二进制重写输入 | `lib/backend/llvm`，由 `lib/pipeline` 优化/编排 |
 
+常量在 LowIR、MedIR 和 HighIR 中保留每次出现时的标量/地址来源及地址归属。数值位相同不会合并不同来源。HighIR 符号简化将地址身份作为不透明输入；源码绑定使用共享的数值操作数分类，并仍要求内存和指针使用完成重定位绑定。
+
 | 用户路径 | 表示路径 | 出口 |
 |----------|----------|------|
 | Low/Med dump | Binary -> LowIR，可选 -> MedIR | 诊断文本 |

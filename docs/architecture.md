@@ -53,6 +53,12 @@ but it does not bypass the C API to drive the engine.
 | HighIR | Structured expressions and control flow for readable C | `include/neverd/ir/high`, `lib/ir/high`, emitted by `lib/backend/c/HighC` |
 | LLVM IR | Optimization, LLVM-derived C, target code generation, and binary rewrite input | `lib/backend/llvm`, optimized/orchestrated by `lib/pipeline` |
 
+Constant values carry occurrence-specific scalar/address provenance and address
+ownership from LowIR through MedIR into HighIR. Equal numeric bits do not merge
+different origins. HighIR symbolic simplification keeps address identities
+opaque; source binding uses the shared numeric-operand classification and still
+requires relocation bindings for memory and pointer consumers.
+
 | User route | Representation path | Exit |
 |------------|---------------------|------|
 | Low/Med dump | Binary -> LowIR, optionally -> MedIR | Diagnostic text |

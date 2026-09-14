@@ -90,6 +90,12 @@ uint32_t widthFromBytes(uint16_t Bytes) {
 /// rather than being taken for -1.
 std::optional<llvm::APInt> literalAt(const HighExpr &E, uint32_t Have,
                                      uint32_t Width) {
+  // Address identities cannot be round-tripped through an unannotated numeric
+  // symbolic literal. Keep them opaque, including fragments and owned values.
+  if ((E.ConstProvenance != ConstantAddressProvenance::Unknown &&
+       E.ConstProvenance != ConstantAddressProvenance::Scalar) ||
+      E.AddressOwnerVA != InvalidVA)
+    return std::nullopt;
   const uint32_t Held = Have == 0 || Have > 64 ? 64 : Have;
   if (Width <= Held)
     return llvm::APInt(Width, E.ConstVal, /*isSigned=*/false,

@@ -2,6 +2,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
@@ -69,6 +70,109 @@ TEST(ObjCSourceBindings, SlotAddressIsNotTheRuntimeValue) {
   EXPECT_EQ(Result.Function.Body[0].RetVal->Kind, ExprKind::Const);
   F.Function.Body[0].RetVal =
       HighExpr::makeLoad(HighExpr::makeConst(0x1014, 8), NdType::makeInt(4));
+  EXPECT_FALSE(
+      bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+}
+
+TEST(ObjCSourceBindings, NumericMasksKeepOccurrenceProvenanceThroughHighIR) {
+  using P = ConstantAddressProvenance;
+  MedFunc Med;
+  Med.Entry = 0x2000;
+  Med.Name = "constant_origin";
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = NdType::makeInt(8, false);
+  Hint.Parameters = {{"objc_self", NdType::makePtr(NdType::makeVoid())},
+                     {"objc_cmd", NdType::makePtr(NdType::makeVoid())}};
+  Med.SourceTypeHint = Hint;
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Med.Entry;
+  MedOp Set;
+  Set.Opcode = NdOp::COPY;
+  Set.Output.Kind = MedVar::Reg;
+  Set.Output.TheArch = Arch::AArch64;
+  Set.Output.Id = 1;
+  Set.Output.SSAVer = 1;
+  Set.Output.Size = 8;
+  Set.Output.RegOff = getTargetRegInfo(Arch::AArch64).IntReturnReg;
+  Set.addInput(MedVar::makeConst(0x1040, 8, P::DataAddress, 0x1000));
+  Block.Ops.push_back(Set);
+  MedOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  Block.Ops.push_back(Ret);
+  Med.Blocks.push_back(Block);
+  for (P Provenance : {P::Scalar, P::Unknown, P::AddressFragment, P::Address,
+                       P::DataAddress, P::CodeAddress}) {
+    const va_t Owner = Provenance == P::Scalar ? InvalidVA : 0x1000;
+    Med.Blocks[0].Ops[0].Inputs[0] =
+        MedVar::makeConst(0x1040, 8, Provenance, Owner);
+    const auto High = MedToHighConverter().convert(Med, Arch::AArch64);
+    ASSERT_FALSE(High.Body.empty());
+    const auto Value = High.Body.back().RetVal;
+    ASSERT_TRUE(Value);
+    ASSERT_EQ(Value->Kind, ExprKind::Const);
+    EXPECT_EQ(Value->ConstProvenance, Provenance);
+    EXPECT_EQ(Value->AddressOwnerVA, Owner);
+
+    Fixture F;
+    F.Function.ReturnType = NdType::makeInt(8, false);
+    MedVar Input;
+    Input.Kind = MedVar::Param;
+    Input.Size = 8;
+    F.Function.Body[0].RetVal =
+        HighExpr::makeBinop(NdOp::INT_OR, HighExpr::makeVar(Input), Value);
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_EQ(Bound.Limitation.empty(), Provenance == P::Scalar);
+    EXPECT_EQ(Bound.Function.Body[0].RetVal->Operands[1]->ConstVal, 0x1040U);
+  }
+}
+
+TEST(ObjCSourceBindings, ScalarMaskIdentityCannotAuthorizeAnAddressConsumer) {
+  using P = ConstantAddressProvenance;
+  Fixture F;
+  F.Function.ReturnType = NdType::makeInt(8, false);
+  const auto Scalar = HighExpr::makeConst(0x1040, 8, P::Scalar);
+  const auto Unknown = HighExpr::makeConst(0x1040, 8);
+  const auto Address = HighExpr::makeConst(0x1040, 8, P::DataAddress, 0x1000);
+  const auto OtherOwner =
+      HighExpr::makeConst(0x1040, 8, P::DataAddress, 0x1020);
+  EXPECT_FALSE(Scalar->structuralEq(*Unknown));
+  EXPECT_FALSE(Scalar->structuralEq(*Address));
+  EXPECT_FALSE(Address->structuralEq(*OtherOwner));
+  MedVar Input;
+  Input.Kind = MedVar::Param;
+  Input.Size = 8;
+  const auto Mask =
+      HighExpr::makeBinop(NdOp::INT_OR, HighExpr::makeVar(Input), Scalar);
+  F.Function.Body[0].RetVal = Mask;
+  ASSERT_TRUE(bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  // Reuse both nodes in a different context, including a pointer expression
+  // whose root is not a constant. Neither the DAG cache nor a scalar leaf can
+  // turn a memory address into a numeric-only use.
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = Mask;
+  Store.StoreVal = HighExpr::makeConst(7, 8);
+  for (bool AddressFirst : {false, true}) {
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Mask;
+    F.Function.Body = AddressFirst ? std::vector<HighStmt>{Store, Return}
+                                   : std::vector<HighStmt>{Return, Store};
+    EXPECT_FALSE(
+        bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  }
+  F.Function.Body.resize(1);
+  F.Function.Body[0].Kind = StmtKind::Return;
+  F.Function.Body[0].RetVal = HighExpr::makeLoad(Mask, NdType::makeInt(8));
+  EXPECT_FALSE(
+      bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  F.Function.Body[0].RetVal = Mask;
+  F.Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  EXPECT_FALSE(
+      bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  F.Function.ReturnType = NdType::makeInt(8, false);
+  Mask->Operands[1] = HighExpr::makeConst(0x1040, 8, P::Scalar, 0x1000);
   EXPECT_FALSE(
       bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
 }

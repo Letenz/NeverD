@@ -55,6 +55,8 @@ contourne pas l’API C pour piloter le moteur.
 | HighIR | Expressions et contrôle de flux structurés pour un C lisible | `include/neverd/ir/high`, `lib/ir/high`, émis par `lib/backend/c/HighC` |
 | LLVM IR | Optimisation, C dérivé de LLVM, génération de code cible et entrée de réécriture binaire | `lib/backend/llvm`, optimisé/orchestré par `lib/pipeline` |
 
+Les constantes conservent, de LowIR à MedIR puis HighIR, leur provenance scalaire ou adresse et le propriétaire de l’adresse pour chaque occurrence. Des bits identiques ne fusionnent pas des origines différentes. La simplification symbolique de HighIR traite les identités d’adresse comme des entrées opaques ; la liaison du code source utilise la classification commune des opérandes numériques et exige toujours une liaison de relocalisation pour les usages mémoire et pointeur.
+
 | Parcours utilisateur | Chemin des représentations | Sortie |
 |---------------------|----------------------------|--------|
 | Dump Low/Med | Binary -> LowIR, puis éventuellement -> MedIR | Texte de diagnostic |

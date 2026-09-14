@@ -174,7 +174,9 @@ bool HighExpr::structuralEq(const HighExpr &Other) const {
   case ExprKind::Var:
     return Var == Other.Var;
   case ExprKind::Const:
-    return ConstVal == Other.ConstVal;
+    return ConstVal == Other.ConstVal &&
+           ConstProvenance == Other.ConstProvenance &&
+           AddressOwnerVA == Other.AddressOwnerVA;
   case ExprKind::Undef:
     return true;
   case ExprKind::Call:

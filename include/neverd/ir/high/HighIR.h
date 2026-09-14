@@ -89,6 +89,11 @@ struct HighExpr {
 
   /// For Const
   uint64_t ConstVal = 0;
+  /// Preserve the exact MedIR occurrence: matching bits do not make a numeric
+  /// immediate an image address, or allow an address to become a scalar.
+  ConstantAddressProvenance ConstProvenance =
+      ConstantAddressProvenance::Unknown;
+  uint64_t AddressOwnerVA = InvalidVA;
 
   /// For BinOp / UnaryOp
   std::vector<std::shared_ptr<HighExpr>> Operands;
@@ -110,7 +115,10 @@ struct HighExpr {
   bool hasOrderedMemoryAccess() const;
 
   static std::shared_ptr<HighExpr> makeVar(MedVar V, TypeRef Ty = nullptr);
-  static std::shared_ptr<HighExpr> makeConst(uint64_t Val, uint16_t Size);
+  static std::shared_ptr<HighExpr> makeConst(
+      uint64_t Val, uint16_t Size,
+      ConstantAddressProvenance Provenance = ConstantAddressProvenance::Unknown,
+      uint64_t AddressOwner = InvalidVA);
   static std::shared_ptr<HighExpr> makeUndef(uint16_t Size);
   static std::shared_ptr<HighExpr> makeBitCast(std::shared_ptr<HighExpr> Value,
                                                TypeRef Type);

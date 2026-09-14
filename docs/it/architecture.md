@@ -55,6 +55,8 @@ il motore.
 | HighIR | Espressioni e controllo di flusso strutturati per C leggibile | `include/neverd/ir/high`, `lib/ir/high`, emesso da `lib/backend/c/HighC` |
 | LLVM IR | Ottimizzazione, C derivato da LLVM, generazione di codice target e input per riscrittura binaria | `lib/backend/llvm`, ottimizzato/orchestrato da `lib/pipeline` |
 
+Le costanti conservano, da LowIR a MedIR e HighIR, la provenienza scalare o di indirizzo e il proprietario dell’indirizzo per ogni occorrenza. Bit numerici uguali non uniscono origini diverse. La semplificazione simbolica di HighIR tratta le identità degli indirizzi come ingressi opachi; il binding del sorgente usa la classificazione condivisa degli operandi numerici e richiede ancora binding di rilocazione per gli usi di memoria e puntatori.
+
 | Percorso utente | Cammino delle rappresentazioni | Uscita |
 |-----------------|-----------------------------|--------|
 | Dump Low/Med | Binary -> LowIR, opzionalmente -> MedIR | Testo diagnostico |
