@@ -732,6 +732,16 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.StackFailureRetainsItsTerminalRuntimeCall",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCStorage.ImportedClassSlotsDoNotRequireAClassReferenceSection",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameworkDeclarationsSupplyAbsentScalarCallSignatures",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameworkDeclarationsKeepMissingAndConflictingEvidence",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameworkVariadicAndAggregateCallsRemainUnbound",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameworkABIIsArchitectureSpecificAndRevalidated",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.StackGuardAddressRequiresExactRuntimeIdentity",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.ConditionalEntryEvaluatesBeforeItsTakenEdgeCopies",
@@ -748,13 +758,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 261,
-              ("macOS", "macos-patch"): 270,
-              ("Windows", "windows-focused"): 257,
+              ("Linux", "linux-semantic"): 266,
+              ("macOS", "macos-patch"): 276,
+              ("Windows", "windows-focused"): 262,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",
                       "ObjCRuntimeSource.RecompiledProtocolCallsPreserveEnumerationState",
                       "ObjCRuntimeSource.RecompiledARCMethodsPreserveActualObjectLifetimes",
                       "ObjCRuntimeSource.RecompiledAssociatedObjectsPreserveLifetimeAndPolicy",

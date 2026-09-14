@@ -96,6 +96,61 @@ TEST(ObjCStorage, StableSwiftPreservesWideOffsetsAndAbsentFieldTypes) {
   }
 }
 
+TEST(ObjCStorage, ImportedClassSlotsDoNotRequireAClassReferenceSection) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Metaclass : {false, true}) {
+      for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+        StorageImage Fixture;
+        auto &Image = Fixture.Image;
+        Image.Arch = Architecture;
+        Image.ObjCClasses.clear();
+        Image.Sections.front().Name = "__got";
+        const std::string Name =
+            Metaclass ? "_OBJC_METACLASS_$_Example" : "_OBJC_CLASS_$_Example";
+        Image.ImportPtrSlots[0x1800] = Name;
+        Image.DyldBindSlots[0x1800] = {Name, 0};
+        if (Mutation == 1)
+          Image.DyldBindSlots[0x1800].WeakImport = true;
+        if (Mutation == 2)
+          Image.DyldBindSlots[0x1800].Addend = 8;
+        if (Mutation == 3)
+          Image.ConflictingImportStorageSlots.insert(0x1800);
+        if (Mutation == 4)
+          Image.ImportStorageSlots[0x1800] = {"_other", 0};
+        if (Mutation == 5)
+          Image.Sections.front().Flags =
+              Image.Sections.front().Flags | SegmentFlags::Executable;
+        if (Mutation == 6)
+          Image.Sections.front().FileSz = 0x804;
+        if (Mutation == 7)
+          Image.DyldBindSlots[0x1800].Name = "_different";
+        parseObjCStorage(Image);
+        const auto Found = Image.ObjCSourceReferences.find(0x1800);
+        if (Mutation) {
+          EXPECT_EQ(Found, Image.ObjCSourceReferences.end()) << Mutation;
+          continue;
+        }
+        ASSERT_NE(Found, Image.ObjCSourceReferences.end());
+        EXPECT_EQ(Found->second.Name, "Example");
+        EXPECT_EQ(Found->second.TheKind,
+                  Metaclass ? ObjCSourceReference::Kind::Metaclass
+                            : ObjCSourceReference::Kind::Class);
+        HighFunc Function;
+        HighStmt Return;
+        Return.Kind = StmtKind::Return;
+        Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x1800, 8),
+                                           NdType::makePtr(NdType::makeVoid()));
+        Function.Body.push_back(Return);
+        const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+        EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        ASSERT_TRUE(Bound.Function.Body[0].RetVal->SourceCallHint);
+        EXPECT_EQ(Bound.Function.Body[0].RetVal->SourceCallHint->TargetName,
+                  "Example");
+      }
+    }
+  }
+}
+
 TEST(ObjCStorage, Arm64ObjCOffsetsDoNotBorrowTheFollowingWord) {
   StorageImage Fixture;
   Fixture.pointer(0x1120, 0x1200);

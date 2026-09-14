@@ -95,6 +95,8 @@ Protokollmethoden werden aus aufgelösten lokalen Laufzeitdaten gelesen, einschl
 
 Bekannte Aufrufe von `objc_enumerationMutation` behalten das Objektargument und den anschließenden Ausführungspfad, da ein installierter Änderungshandler zurückkehren kann. Exakte Darwin-Importe von `__stack_chk_guard` binden die Identität des Laufzeitobjekts; Lesezugriffe, Vergleiche und Aufrufe von `__stack_chk_fail` bleiben im rekonstruierten Quelltext beobachtbar.
 
+Gelinkte 64-Bit-Darwin-Abbilder mit einem Import der Systembibliothek Foundation verwenden auch integrierte, vom Compiler extrahierte Framework-Deklarationen. Alle Laufzeit- und Framework-Deklarationen eines Selektors müssen übereinstimmen; variadische Signaturen, nicht unterstützte Aggregate und Abweichungen zwischen Plattformen bleiben ungebunden. Der Katalog liefert nur Aufruftypen, keine Empfängerklassen oder Funktionsrümpfe. Für die Nutzung von NeverD ist kein lokales Apple SDK erforderlich.
+
 Die Rekonstruktion von Laufzeitinformationen ist begrenzt: vollständige Properties, Protokolle, ursprüngliche Ownership-Annotationen, beliebige Aggregate, variadische Endargumente, ausnahmeabhängige Körper und nicht modellierte Block-/Capture-Layouts werden nicht versprochen. Laufzeitkodierungen beschreiben feste Argumente und können fehlende Auslassungspunkte im Original nicht beweisen. Chained Pointer werden nur für vom nativen Loader aufgelöste Slots verwendet; andere Formate behalten Diagnosen.
 
 ## Swift-Quelltext und Speicherlayout

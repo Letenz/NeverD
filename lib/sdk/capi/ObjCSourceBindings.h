@@ -10,6 +10,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 
@@ -644,6 +645,11 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.
     return Expected && runtimeBindingMatches(Binding, *Expected);
+  }
+  if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK) {
+    const auto Expected = objcSelectorSourceTypeHint(Image, Binding.Selector);
+    if (!Expected || !objc_projection_detail::sameHint(Hint, *Expected))
+      return false;
   }
   return (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage ||
           Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) &&

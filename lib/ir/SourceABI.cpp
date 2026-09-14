@@ -229,7 +229,8 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
 
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                std::string &Diagnostic) {
-  if (Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime ||
+  if ((Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime &&
+       Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK) ||
       Hint.Parameters.size() < 2)
     return fail(Diagnostic, "Unsupported Objective-C source ABI");
   return assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic);

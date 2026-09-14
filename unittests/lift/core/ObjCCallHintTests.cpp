@@ -9,6 +9,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/raw_ostream.h"
@@ -144,6 +145,138 @@ TEST(ObjCCallHints, RecognizesStrippedSelectorStubFromInstructionsAndSlots) {
   EXPECT_EQ(Hint.SelectorReferenceAddress, 0x2100U);
   ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
   EXPECT_EQ(Hint.Signature.Parameters[2].Location.RegisterOffset, 16U);
+}
+
+TEST(ObjCCallHints, FrameworkDeclarationsSupplyAbsentScalarCallSignatures) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  for (llvm::StringRef Selector : {"objectForKeyedSubscript:", "copy", "length",
+                                   "addObject:", "doubleValue"}) {
+    SCOPED_TRACE(Selector.str());
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector.str();
+    const auto Hints = buildObjCSourceCallHints(Image, caller());
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Hint = Hints.at(0x1200);
+    EXPECT_EQ(Hint.Selector, Selector);
+    EXPECT_EQ(Hint.Signature.Parameters.size(),
+              Selector.contains(':') ? 3U : 2U);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Hint.Signature, Diagnostic)) << Diagnostic;
+  }
+  Image.ObjCSourceReferences.at(0x2100).Name = "length";
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    auto Invalid = Image;
+    Invalid.DyldBindSlots[0x2180] = {"_objc_msgSend", 0};
+    if (Mutation == 0)
+      Invalid.DyldBindSlots[0x2180].Addend = 4;
+    if (Mutation == 1)
+      Invalid.DyldBindSlots[0x2180].WeakImport = true;
+    if (Mutation == 2)
+      Invalid.DyldBindSlots[0x2180].Name = "_other";
+    if (Mutation == 3)
+      Invalid.ImportStorageSlots[0x2180] = {"_objc_msgSend", 8};
+    EXPECT_TRUE(buildObjCSourceCallHints(Invalid, caller()).empty())
+        << Mutation;
+  }
+}
+
+TEST(ObjCCallHints, FrameworkDeclarationsKeepMissingAndConflictingEvidence) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "length";
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  Image.DynInfo.NeededLibs = {"/tmp/Foundation.framework/Foundation"};
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation"};
+  ASSERT_EQ(buildObjCSourceCallHints(Image, caller()).size(), 1U);
+  ObjCMethod Conflict;
+  Conflict.Selector = "length";
+  Conflict.TypeHint = signature(Image.Arch, 0); // SDK result is 64 bits.
+  Image.ObjCMethods.push_back(Conflict);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  Image.ObjCMethods.clear();
+  ObjCProtocol Protocol;
+  ObjCProtocolMethod Unsupported;
+  Unsupported.Selector = "length";
+  Protocol.Methods.push_back(Unsupported);
+  Image.ObjCProtocols.push_back(Protocol);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  // A declaration absent from the SDK's common platform scope cannot veto
+  // the independently observed contract of an application's own selector.
+  Image.ObjCProtocols.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "sharedInstance";
+  Conflict.Selector = "sharedInstance";
+  Image.ObjCMethods.push_back(Conflict);
+  EXPECT_EQ(buildObjCSourceCallHints(Image, caller()).size(), 1U);
+}
+
+TEST(ObjCCallHints, FrameworkVariadicAndAggregateCallsRemainUnbound) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  for (llvm::StringRef Selector :
+       {"stringWithFormat:", "rangeOfString:", "neverdUnknownSelector:"}) {
+    SCOPED_TRACE(Selector.str());
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector.str();
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  }
+  // Runtime encodings omit an ellipsis. A matching fixed prefix cannot
+  // override the compiler's explicit variadic declaration.
+  Image.ObjCSourceReferences.at(0x2100).Name = "stringWithFormat:";
+  ObjCMethod Prefix;
+  Prefix.Selector = "stringWithFormat:";
+  Prefix.TypeHint = signature(Image.Arch);
+  Image.ObjCMethods.push_back(Prefix);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+}
+
+TEST(ObjCCallHints, FrameworkABIIsArchitectureSpecificAndRevalidated) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    const auto Hint = objcSelectorSourceTypeHint(Image, "length");
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+    EXPECT_EQ(Hint->Architecture, Architecture);
+    ASSERT_EQ(Hint->ReturnType->Size, 8U);
+    EXPECT_FALSE(Hint->ReturnType->IsSigned);
+    const auto Boolean = objcSelectorSourceTypeHint(Image, "isEqualToString:");
+    if (Architecture == Arch::AArch64) {
+      ASSERT_TRUE(Boolean);
+      EXPECT_EQ(Boolean->ReturnType->Size, 1U);
+      EXPECT_FALSE(Boolean->ReturnType->IsSigned);
+      EXPECT_TRUE(Boolean->ReturnLocation.ExtendTo32Bits);
+    } else {
+      // macOS x86-64 uses signed char, while iOS uses bool. No platform
+      // identity is asserted by this catalog's common Darwin ABI facts.
+      EXPECT_FALSE(Boolean);
+    }
+    auto Call = HighExpr::makeCall("objc_msgSend", 0, {});
+    SourceCallTypeHint Binding;
+    Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Binding.TargetName = "objc_msgSend";
+    Binding.Selector = "length";
+    Binding.Signature = *Hint;
+    auto Evidence = std::make_shared<SourceCallTypeHint>(Binding);
+    Call->SourceCallHint = Evidence;
+    Call->Type = Hint->ReturnType;
+    for (const auto &Parameter : Hint->Parameters)
+      Call->Operands.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Evidence->Signature.ReturnType = NdType::makeInt(8);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    *Evidence = Binding;
+    Image.DynInfo.NeededLibs.clear();
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.Format = BinaryFormat::ELF;
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "length"));
+  }
 }
 
 namespace {

@@ -97,6 +97,8 @@ Protocol method declarations are read from resolved local runtime records, inclu
 
 Known `objc_enumerationMutation` calls preserve the object argument and the continuation because an installed mutation handler may return. Exact Darwin `__stack_chk_guard` imports bind the runtime object identity; guard loads, comparisons, and `__stack_chk_fail` calls remain observable in recovered source.
 
+Linked 64-bit Darwin images importing system Foundation also consult built-in compiler-derived framework declarations. Every runtime and framework declaration for a selector must agree; variadic, unsupported aggregate, or platform-inconsistent signatures stay unbound. The catalog supplies call types, not receiver classes or function bodies. Using NeverD does not require a local Apple SDK.
+
 This is a limited reconstruction of runtime information. Complete properties, protocols, original ownership annotations, arbitrary aggregates, variadic tails, exception-dependent bodies, and unmodelled Block/capture layouts are not promised. Runtime encoding describes fixed arguments and cannot prove that the original declaration had no variadic tail. Chained pointers are used only where the native loader resolved the relevant slots; unresolved formats retain diagnostics.
 
 ## Swift source and storage

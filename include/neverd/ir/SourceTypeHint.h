@@ -47,7 +47,10 @@ struct SourceFunctionTypeHint {
     BlockRuntime,
     SwiftRuntime,
     DarwinRuntime,
-    SwiftStringBridge
+    SwiftStringBridge,
+    /// A source call uses a compiler-derived framework declaration in
+    /// addition to any declarations present in the binary itself.
+    ObjCSDK
   };
   OriginKind Origin = OriginKind::ObjCRuntime;
   TypeRef ReturnType;

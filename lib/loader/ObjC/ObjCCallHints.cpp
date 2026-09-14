@@ -8,6 +8,7 @@
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/object/SectionNames.h"
@@ -20,66 +21,11 @@
 namespace neverd {
 namespace {
 
-bool mergeSignature(SourceFunctionTypeHint &A,
-                    const SourceFunctionTypeHint &B) {
-  if (A.Parameters.size() != B.Parameters.size())
-    return false;
-  for (size_t I = 0; I < A.Parameters.size(); ++I)
-    if (!equalSourceTypes(A.Parameters[I].Type, B.Parameters[I].Type))
-      return false;
-  if (equalSourceTypes(A.ReturnType, B.ReturnType))
-    return true;
-  // A full-width integer result has no extension or interpretation at the
-  // Darwin call boundary. Signed and unsigned declarations describe the same
-  // 64 returned bits. Use an unsigned carrier for their consensus; signed
-  // comparisons and conversions remain explicit operations in the lifted IR.
-  // Smaller results, pointer identities and floating-point carriers cannot
-  // use this rule.
-  if (!A.ReturnType || !B.ReturnType || A.ReturnType->Kind != NdTypeKind::Int ||
-      B.ReturnType->Kind != NdTypeKind::Int || A.ReturnType->Size != 8 ||
-      B.ReturnType->Size != 8)
-    return false;
-  A.ReturnType = NdType::makeInt(8, false);
-  return true;
-}
-
-std::optional<SourceFunctionTypeHint>
-selectorSignature(const BinaryImage &Image, llvm::StringRef Name) {
-  std::optional<SourceFunctionTypeHint> Result;
-  // The receiver's dynamic class is generally unknown. Every matching runtime
-  // declaration must agree, including unsupported declarations; never select
-  // whichever implementation happened to be visited first.
-  auto Include = [&](const auto &Method) {
-    if (Method.Selector != Name)
-      return true;
-    if (!Method.TypeHint)
-      return false;
-    std::string Diagnostic;
-    auto Hint = *Method.TypeHint;
-    if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic) ||
-        (Result && !mergeSignature(*Result, Hint)))
-      return false;
-    if (!Result)
-      Result = std::move(Hint);
-    return true;
-  };
-  for (const auto &Method : Image.ObjCMethods)
-    if (!Include(Method))
-      return std::nullopt;
-  for (const auto &Protocol : Image.ObjCProtocols)
-    for (const auto &Method : Protocol.Methods)
-      if (!Include(Method))
-        return std::nullopt;
-  return Result;
-}
-
 std::string importAt(const BinaryImage &Image, va_t Slot) {
-  if (Image.ConflictingImportStorageSlots.count(Slot))
+  const auto Import = darwinRuntimeImport(Image, Slot);
+  if (!Import)
     return {};
-  auto It = Image.ImportPtrSlots.find(Slot);
-  if (It == Image.ImportPtrSlots.end())
-    return {};
-  llvm::StringRef Name(It->second);
+  llvm::StringRef Name(*Import);
   Name.consume_front("_");
   if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
       objcRuntimeSourceCallHint(Image, Slot) ||
@@ -366,7 +312,8 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Target->Selector = Name->Name;
         }
         if (Target && !Target->Selector.empty()) {
-          if (auto Signature = selectorSignature(Image, Target->Selector)) {
+          if (auto Signature =
+                  objcSelectorSourceTypeHint(Image, Target->Selector)) {
             SourceCallTypeHint Hint;
             Hint.CallKind = Target->Name == "objc_msgSendSuper2"
                                 ? SourceCallTypeHint::Kind::ObjCSuper2

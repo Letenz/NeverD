@@ -1,3 +1,4 @@
+#include "../MachO/DarwinRuntimeImport.h"
 #include "ObjCRuntimeData.h"
 
 #include "neverd/loader/ObjC/ObjCMethods.h"
@@ -79,6 +80,22 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
   return true;
 }
 
+std::optional<ObjCSourceReference>
+importedClassReference(va_t Slot, llvm::StringRef Name) {
+  ObjCSourceReference Reference;
+  Reference.Address = Slot;
+  if (Name.consume_front("_OBJC_CLASS_$_"))
+    Reference.TheKind = ObjCSourceReference::Kind::Class;
+  else if (Name.consume_front("_OBJC_METACLASS_$_"))
+    Reference.TheKind = ObjCSourceReference::Kind::Metaclass;
+  else
+    return std::nullopt;
+  if (Name.empty())
+    return std::nullopt;
+  Reference.Name = Name.str();
+  return Reference;
+}
+
 std::optional<ObjCSourceReference> readReference(const BinaryImage &Image,
                                                  const objc::RuntimeData &Data,
                                                  const Section &Section,
@@ -97,17 +114,7 @@ std::optional<ObjCSourceReference> readReference(const BinaryImage &Image,
       Bound != Image.DyldBindSlots.end()) {
     if (Bound->second.Addend != 0)
       return std::nullopt;
-    llvm::StringRef Name(Bound->second.Name);
-    if (Name.consume_front("_OBJC_CLASS_$_"))
-      Reference.TheKind = ObjCSourceReference::Kind::Class;
-    else if (Name.consume_front("_OBJC_METACLASS_$_"))
-      Reference.TheKind = ObjCSourceReference::Kind::Metaclass;
-    else
-      return std::nullopt;
-    if (Name.empty())
-      return std::nullopt;
-    Reference.Name = Name.str();
-    return Reference;
+    return importedClassReference(Slot, Bound->second.Name);
   }
   auto Pointer = Data.pointer(Slot);
   auto RO = Pointer ? Data.classRO(*Pointer) : std::nullopt;
@@ -145,6 +152,26 @@ void parseObjCStorage(BinaryImage &Image) {
       diagnostic(Image, "Conflicting Objective-C source reference identities");
     }
   };
+  // Linkers can coalesce a class reference into an ordinary imported pointer
+  // slot. The exact import identifies the class; a section spelling does not.
+  for (const auto &[Slot, Name] : Image.ImportPtrSlots) {
+    auto Reference = importedClassReference(Slot, Name);
+    if (!Reference)
+      continue;
+    if (!Remaining) {
+      diagnostic(Image,
+                 "Objective-C imported references exceed the record limit");
+      break;
+    }
+    --Remaining;
+    const auto *Section = Image.getSectionFor(Slot);
+    const auto *Segment = Image.getSegmentFor(Slot);
+    if (Slot % 8 || !Section || !Segment || Section->isExecutable() ||
+        Segment->isExecutable() || !Data.bytes(Slot, 8) ||
+        !darwinRuntimeImport(Image, Slot))
+      continue;
+    Publish(std::move(*Reference));
+  }
   for (auto &Class : Image.ObjCClasses) {
     Class.Ivars.clear();
     Class.IvarStatus = "unresolved";

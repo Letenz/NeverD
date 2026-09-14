@@ -49,12 +49,14 @@ enum class RuntimeFixture {
   SwiftStrings,
   DiagnosticReports,
   Protocols,
-  NativePointers
+  NativePointers,
+  Foundation
 };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
+  const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
       FixtureKind == RuntimeFixture::DiagnosticReports;
   const bool SwiftStrings = FixtureKind == RuntimeFixture::SwiftStrings;
@@ -74,7 +76,8 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = Protocols           ? "ObjCProtocols.m"
+  const char *Fixture = Foundation          ? "ObjCFoundationCalls.m"
+                        : Protocols         ? "ObjCProtocols.m"
                         : DiagnosticReports ? "ObjCDiagnosticReports.m"
                         : SwiftStrings      ? "ObjCSwiftString.m"
                         : UnfairLocks       ? "ObjCUnfairLocks.m"
@@ -82,7 +85,8 @@ void verifyRuntime(bool Chained,
                         : SwiftCalls        ? "ObjCSwiftRuntime.m"
                         : Associations      ? "ObjCAssociations.m"
                                             : "ObjCARC.m";
-  const char *Harness = Protocols           ? "ObjCProtocolsHarness.m"
+  const char *Harness = Foundation          ? "ObjCFoundationCallsHarness.m"
+                        : Protocols         ? "ObjCProtocolsHarness.m"
                         : DiagnosticReports ? "ObjCDiagnosticReportsHarness.m"
                         : SwiftStrings      ? "ObjCSwiftStringHarness.m"
                         : UnfairLocks       ? "ObjCUnfairLocksHarness.m"
@@ -201,10 +205,19 @@ void verifyRuntime(bool Chained,
     }
     ASSERT_TRUE(Found);
   }
+  if (Foundation)
+    Remaining = {"lookup:key:",
+                 "lengthOf:",
+                 "copyObject:",
+                 "append:to:",
+                 "numberValue:",
+                 "put:forKey:in:",
+                 "makeDictionary:keys:count:"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(Protocols           ? "NDProtocolCalls"
+                        std::string(Foundation          ? "NDFoundationCalls"
+                                    : Protocols         ? "NDProtocolCalls"
                                     : DiagnosticReports ? "NDDiagnosticReports"
                                     : SwiftStrings      ? "NDSwiftString"
                                     : UnfairLocks       ? "NDUnfairLocks"
@@ -345,24 +358,26 @@ void verifyRuntime(bool Chained,
         read(Work / "recovered.err").find("Use of unimplemented initializer"),
         std::string::npos);
   }
-  EXPECT_EQ(read(Work / "recovered.out"),
-            Protocols ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
-                        "integer-bits=4096\nguard-check=pass\n"
-            : DiagnosticReports
-                ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
-            : SwiftStrings ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
-            : UnfairLocks  ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
-                             "concurrency=pass\n"
-            : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
-                                "pass\nlifetime=pass\n"
-            : SwiftCalls
-                ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
-            : Associations
-                ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
-                  "keys=pass\nclear="
-                  "pass\ndestroyed=1\n"
-                : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
-                  "pass\ndestroyed=3\n");
+  EXPECT_EQ(
+      read(Work / "recovered.out"),
+      Foundation  ? "framework-iterations=2048\narray-dictionaries=17\nnil-"
+                    "dispatch=pass\n"
+      : Protocols ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
+                    "integer-bits=4096\nguard-check=pass\n"
+      : DiagnosticReports
+          ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
+      : SwiftStrings    ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
+      : UnfairLocks     ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
+                          "concurrency=pass\n"
+      : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
+                          "pass\nlifetime=pass\n"
+      : SwiftCalls
+          ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
+      : Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
+                       "keys=pass\nclear="
+                       "pass\ndestroyed=1\n"
+                     : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
+                       "pass\ndestroyed=3\n");
 }
 #endif
 
@@ -461,6 +476,18 @@ TEST(ObjCRuntimeSource,
   GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
 #endif
 }
+TEST(ObjCRuntimeSource,
+     RecompiledFrameworkCallsPreserveValuesAndObjectIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "chained" : "classic");
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Foundation));
+  }
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
 TEST(ObjCRuntimeSource, RecompiledProtocolCallsPreserveEnumerationState) {
 #ifdef __APPLE__
   for (bool Chained : {false, true}) {

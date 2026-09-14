@@ -95,6 +95,8 @@ Las declaraciones de métodos de protocolo se leen de registros locales resuelto
 
 Las llamadas conocidas a `objc_enumerationMutation` conservan el argumento objeto y la continuación, porque un manejador de mutaciones instalado puede retornar. Las importaciones exactas de Darwin de `__stack_chk_guard` vinculan la identidad del objeto del entorno de ejecución; las lecturas, comparaciones y llamadas a `__stack_chk_fail` siguen siendo observables en el código recuperado.
 
+Las imágenes Darwin enlazadas de 64 bits que importan Foundation del sistema también consultan declaraciones integradas extraídas por el compilador. Todas las declaraciones del runtime y del framework para un selector deben ser compatibles; las firmas variádicas, los agregados no admitidos y las diferencias entre plataformas quedan sin enlazar. El catálogo aporta tipos de llamadas, sin determinar la clase del receptor ni generar cuerpos de funciones. Usar NeverD no requiere un SDK de Apple local.
+
 La reconstrucción del runtime es limitada. No se prometen propiedades y protocolos completos, anotaciones originales de propiedad, agregados arbitrarios, colas variádicas, cuerpos dependientes de excepciones ni disposiciones Block/capturas no modeladas. La codificación solo describe argumentos fijos y no demuestra que la declaración original careciera de puntos suspensivos. Los punteros encadenados se utilizan solo en posiciones resueltas por el cargador; los formatos no resueltos conservan diagnósticos.
 
 ## Fuentes Swift y almacenamiento
