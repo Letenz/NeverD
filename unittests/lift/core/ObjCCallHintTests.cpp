@@ -267,6 +267,123 @@ TEST(ObjCCallHints, SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets) {
 }
 
 TEST(ObjCCallHints,
+     SwiftStringBridgePreservesSwiftConventionAndScalarCarriers) {
+  const std::string Name =
+      "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    auto Image = runtimeImage(Name, Architecture);
+    const auto Med = convert(Image, caller(Architecture));
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    const auto &Hint = *Call.SourceCallHint;
+    EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::SwiftStringBridge);
+    EXPECT_EQ(Hint.Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::SwiftStringBridge);
+    EXPECT_EQ(Hint.TargetName, Name);
+    EXPECT_EQ(Hint.TargetAddress, 0x2180U);
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_EQ(Call.Args.size(), 2U);
+    for (unsigned I = 0; I < 2; ++I) {
+      EXPECT_EQ(Call.Args[I].RegOff,
+                getTargetRegInfo(Architecture).IntParamRegs[I]);
+      EXPECT_EQ(Call.Args[I].Size, 8U);
+      EXPECT_EQ(Hint.Signature.Parameters[I].Type->Kind,
+                I ? NdTypeKind::Ptr : NdTypeKind::Int);
+    }
+    EXPECT_FALSE(Hint.Signature.Parameters[0].Type->IsSigned);
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Architecture);
+    const auto *Expression = sourceCall(High);
+    ASSERT_NE(Expression, nullptr);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    std::string C;
+    llvm::raw_string_ostream OS(C);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(
+        C.find("extern void *neverd_swift_string_to_nsstring(uint64_t, void *) "
+               "__asm__(\"" +
+               Name + "\") __attribute__((swiftcall));"),
+        std::string::npos)
+        << C;
+    EXPECT_NE(C.find("neverd_swift_string_to_nsstring((uint64_t)"),
+              std::string::npos)
+        << C;
+    EXPECT_EQ(C.find("extern int _sSS"), std::string::npos) << C;
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Changed = *Expression;
+      auto Wrong = std::make_shared<SourceCallTypeHint>(Hint);
+      if (Mutation == 0)
+        Wrong->CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
+      else if (Mutation == 1)
+        Wrong->Signature.Origin =
+            SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+      else if (Mutation == 2)
+        Wrong->Signature.Parameters[0].Type =
+            NdType::makePtr(NdType::makeVoid());
+      else if (Mutation == 3)
+        Wrong->Signature.Parameters[1].Location.RegisterOffset =
+            getTargetRegInfo(Architecture).IntParamRegs[2];
+      else
+        Wrong->TargetName += "_suffix";
+      Changed.SourceCallHint = std::move(Wrong);
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {})) << Mutation;
+    }
+    Image.ConflictingImportStorageSlots.insert(0x2180);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  }
+}
+
+TEST(ObjCCallHints, SwiftStringBridgeRejectsOtherABIsAndUnprovenImports) {
+  const std::string Name =
+      "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &Other :
+         {Name.substr(1), Name + "_suffix",
+          std::string("_$sSS10FoundationE36_"
+                      "unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgF"),
+          std::string("_swift_retainDirect")}) {
+      const auto Image = runtimeImage(Other, Architecture);
+      EXPECT_TRUE(buildObjCSourceCallHints(Image, caller(Architecture)).empty())
+          << Other;
+    }
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      auto Image = runtimeImage(Name, Architecture);
+      if (Mutation == 0) {
+        Image.ImportPtrSlots.clear();
+        Image.Symbols.push_back({Name, 0x1100});
+      } else if (Mutation == 1)
+        Image.IsRelocatable = true;
+      else if (Mutation == 2)
+        Image.Format = BinaryFormat::ELF;
+      else if (Mutation == 3)
+        Image.Bits = Bitness::Bits32;
+      else if (Mutation == 4)
+        Image.Arch = Arch::ARM;
+      else if (Mutation == 5)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      else if (Mutation == 6 || Mutation == 7) {
+        auto &Binding = Image.ImportStorageSlots[0x2180];
+        Binding.Name = Mutation == 6 ? "_different" : Name;
+        Binding.Addend = Mutation == 7;
+      } else {
+        auto &Binding = Image.DyldBindSlots[0x2180];
+        Binding.Name = Mutation == 8 ? "_different" : Name;
+        Binding.Addend = Mutation == 9;
+        Binding.WeakImport = Mutation == 10;
+      }
+      EXPECT_TRUE(buildObjCSourceCallHints(Image, caller(Architecture)).empty())
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints,
      DarwinLocksKeepPointerAndBooleanCarriersWithSDKDeclarations) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const char *Name :

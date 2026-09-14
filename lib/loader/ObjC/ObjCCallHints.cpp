@@ -7,6 +7,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
+#include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/Support/Endian.h"
@@ -67,6 +68,7 @@ std::string importAt(const BinaryImage &Image, va_t Slot) {
   if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
       objcRuntimeSourceCallHint(Image, Slot) ||
       darwinRuntimeSourceCallHint(Image, Slot) ||
+      swiftStringSourceCallHint(Image, Slot) ||
       swiftRuntimeSourceCallHint(Image, Slot))
     return Name.str();
   return {};
@@ -334,6 +336,8 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Runtime = swiftRuntimeSourceCallHint(Image, Target->ImportSlot);
           if (!Runtime)
             Runtime = darwinRuntimeSourceCallHint(Image, Target->ImportSlot);
+          if (!Runtime)
+            Runtime = swiftStringSourceCallHint(Image, Target->ImportSlot);
           if (Runtime) {
             Result.emplace(Op.Addr, std::move(*Runtime));
             Values.clear();

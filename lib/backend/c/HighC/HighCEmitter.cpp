@@ -487,6 +487,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           // The SDK owns the exact public declarations, including bool and
           // opaque lock pointers. Do not synthesize incompatible prototypes.
           NeedsDarwinLocks = true;
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::SwiftStringBridge) {
+          NeedsSwiftStringBridge = true;
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
                    Hint.CallKind ==
@@ -676,6 +679,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 
   if (NeedsObjCSuper2)
     OS << "extern void objc_msgSendSuper2(void);\n";
+  if (NeedsSwiftStringBridge)
+    OS << "extern void *neverd_swift_string_to_nsstring(uint64_t, void *) "
+          "__asm__(\"_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\") "
+          "__attribute__((swiftcall));\n";
   for (const auto &Name : SourceBlockIsaNames)
     OS << "extern void *" << Name << "[];\n";
   for (const auto &Name : SourceObjectAddressHelpers)

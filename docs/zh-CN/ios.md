@@ -71,7 +71,9 @@ Fat 二进制的 `--arch=auto` 优先顺序是 arm64、arm、x86_64、i386。缺
 
 关联对象的读取、写入和清除调用保留对象、键、值及指针宽度的策略参数。生成的 C 使用公开的 Objective-C 运行时头文件；可执行回归测试对比原始方法的保留、复制和清除行为。
 
-Objective-C 导出还支持一组固定的、使用普通 C ABI 的 Swift 运行时导入：引用计数、原生及未知对象弱引用、对象元数据和访问检查的开始与结束。生成的 C 保留这些调用，链接时需要 Swift 运行时。专用寄存器入口、Swift 调用约定和任意 Swift 符号仍不支持；导入身份及标量载体必须精确匹配。
+Objective-C 导出还支持一组固定的、使用普通 C ABI 的 Swift 运行时导入：引用计数、原生及未知对象弱引用、对象元数据和访问检查的开始与结束。生成的 C 保留这些调用，链接时需要 Swift 运行时。专用寄存器入口、未知的 Swift 调用约定和任意 Swift 符号仍不支持；导入身份及标量载体必须精确匹配。
+
+另一个独立绑定支持 arm64 和 x86_64 上确切的 Darwin String → NSString 导入 `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF`，保留 String 的两个机器字、带所有权的对象返回值和 Clang `swiftcall`；链接需要 Swift Foundation 和 Swift Core。反向桥接及其他 Swift 签名仍不受支持。
 
 对于已确认的关联对象 key 参数，NeverD 可将只读 Mach-O C 字符串区域内的确定地址重建为共享的键标识。同一原始地址共用一个键，不同内部偏移保持不同身份。mobile 导出会自动合并辅助函数；C API 在 `shared_identity_functions` 中列出它们的名称，跨方法源码文件链接时，每个辅助函数只保留一个定义。这些键属于重新构建的代码，不指向已加载的原始映像；其他用途的未绑定映像地址仍会阻止完整恢复。
 

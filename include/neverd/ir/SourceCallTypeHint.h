@@ -38,7 +38,10 @@ struct SourceCallTypeHint {
     /// A verified Darwin constant-string object with one rebuilt identity.
     RuntimeConstantString,
     /// A fixed Darwin platform C ABI emitted against its public SDK header.
-    DarwinRuntimeCall
+    DarwinRuntimeCall,
+    /// The fixed String-to-NSString bridge, emitted with the Swift convention.
+    /// TargetAddress is its exact imported slot, not a local Swift function.
+    SwiftStringBridge
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;

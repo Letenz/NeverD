@@ -71,7 +71,9 @@ Known imported Objective-C runtime calls retain explicit argument and return bin
 
 Associated-object get/set/remove calls preserve the object, key, value, and pointer-sized policy arguments. Generated C uses the public Objective-C runtime header, and executable regression tests compare retention, copying, and removal with the original methods.
 
-Objective-C exports also bind a fixed set of ordinary C-ABI Swift runtime imports for retain/release, native and unknown-object weak references, object metadata, and begin/end access. Generated C preserves these calls and requires the Swift runtime when linked. Register-specialized entry points, Swift calling conventions and arbitrary Swift symbols remain unsupported; import identities and exact scalar carriers must agree.
+Objective-C exports also bind a fixed set of ordinary C-ABI Swift runtime imports for retain/release, native and unknown-object weak references, object metadata, and begin/end access. Generated C preserves these calls and requires the Swift runtime when linked. Register-specialized entry points, unrecognized Swift calling conventions and arbitrary Swift symbols remain unsupported; import identities and exact scalar carriers must agree.
+
+A separate binding supports the exact Darwin String → NSString import `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` on arm64 and x86_64. It preserves both String words, the owned object result, and Clang `swiftcall`; linking requires Swift Foundation and Swift Core. Reverse bridging and other Swift signatures remain unsupported.
 
 Static keys with exact addresses in read-only Mach-O C-string storage are rebuilt as shared opaque identities only at authenticated associated-object key arguments. Equal original addresses share a key; different interior addresses remain distinct. Mobile export merges these helpers automatically. The C API lists their names in `shared_identity_functions`; link one definition of each helper across the participating method units. These identities belong to rebuilt code, not an already loaded original image. Other uses of unbound image addresses remain recovery limitations.
 

@@ -72,6 +72,7 @@ add_neverd_component_library(NeverDLoader
   Swift/SwiftABI.cpp
   Swift/SwiftRuntimeSource.cpp
   Swift/SwiftRuntimeCalls.cpp
+  Swift/SwiftStringCalls.cpp
   Rust/RustEH.cpp
   discovery/FunctionDiscovery.cpp
   discovery/FunctionDiscoveryAArch64.cpp

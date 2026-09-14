@@ -45,12 +45,14 @@ enum class RuntimeFixture {
   Associations,
   SwiftCalls,
   ConstantStrings,
-  UnfairLocks
+  UnfairLocks,
+  SwiftStrings
 };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
+  const bool SwiftStrings = FixtureKind == RuntimeFixture::SwiftStrings;
   const bool Associations = FixtureKind == RuntimeFixture::Associations;
   const bool SwiftCalls = FixtureKind == RuntimeFixture::SwiftCalls;
   const bool ConstantStrings = FixtureKind == RuntimeFixture::ConstantStrings;
@@ -64,12 +66,14 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = UnfairLocks       ? "ObjCUnfairLocks.m"
+  const char *Fixture = SwiftStrings      ? "ObjCSwiftString.m"
+                        : UnfairLocks     ? "ObjCUnfairLocks.m"
                         : ConstantStrings ? "ObjCConstantStrings.m"
                         : SwiftCalls      ? "ObjCSwiftRuntime.m"
                         : Associations    ? "ObjCAssociations.m"
                                           : "ObjCARC.m";
-  const char *Harness = UnfairLocks       ? "ObjCUnfairLocksHarness.m"
+  const char *Harness = SwiftStrings      ? "ObjCSwiftStringHarness.m"
+                        : UnfairLocks     ? "ObjCUnfairLocksHarness.m"
                         : ConstantStrings ? "ObjCConstantStringsHarness.m"
                         : SwiftCalls      ? "ObjCSwiftRuntimeHarness.m"
                         : Associations    ? "ObjCAssociationsHarness.m"
@@ -89,9 +93,11 @@ void verifyRuntime(bool Chained,
                                    "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
-  if (SwiftCalls)
+  if (SwiftCalls || SwiftStrings)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
+  if (SwiftStrings)
+    Compile.push_back("-lswiftFoundation");
   if (Profiled)
     Compile.push_back("-fprofile-instr-generate=" +
                       (Work / "counters.profraw").string());
@@ -110,7 +116,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), SwiftCalls ? 9U : 7U);
+  ASSERT_EQ(Methods->size(), SwiftStrings ? 1U : SwiftCalls ? 9U : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
@@ -138,10 +144,13 @@ void verifyRuntime(bool Chained,
   if (UnfairLocks)
     Remaining = {"add:",   "value",       "tryAdd:",       "lock",
                  "unlock", "assertOwner", "assertNotOwner"};
+  if (SwiftStrings)
+    Remaining = {"bridgeWord:storage:"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(UnfairLocks       ? "NDUnfairLocks"
+                        std::string(SwiftStrings      ? "NDSwiftString"
+                                    : UnfairLocks     ? "NDUnfairLocks"
                                     : ConstantStrings ? "NDConstantStrings"
                                     : SwiftCalls      ? "NDSwiftRuntimeCalls"
                                                       : "NDARCBox") +
@@ -220,9 +229,18 @@ void verifyRuntime(bool Chained,
              Original,
              "-o",
              Baseline};
-  if (SwiftCalls)
+  if (SwiftCalls || SwiftStrings)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
+  if (SwiftStrings) {
+    const auto Words = (Work / "words.dylib").string();
+    ASSERT_NO_FATAL_FAILURE(
+        run({"/usr/bin/swiftc", "-O", "-target", HostArch + "-apple-macosx13.0",
+             "-emit-library",
+             (Fixtures / "ObjCSwiftStringWords.swift").string(), "-o", Words},
+            Work / "compile-swift-words"));
+    Compile.insert(Compile.end() - 2, {"-lswiftFoundation", Words});
+  }
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-baseline"));
   ASSERT_NO_FATAL_FAILURE(run({Baseline}, Work / "baseline"));
   const auto Recovered = (Work / "recovered").string();
@@ -233,8 +251,9 @@ void verifyRuntime(bool Chained,
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
   EXPECT_EQ(read(Work / "recovered.out"),
-            UnfairLocks ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
-                          "concurrency=pass\n"
+            SwiftStrings  ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
+            : UnfairLocks ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
+                            "concurrency=pass\n"
             : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
                                 "pass\nlifetime=pass\n"
             : SwiftCalls
@@ -317,6 +336,18 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and os_unfair_lock";
+#endif
+}
+TEST(ObjCRuntimeSource,
+     RecompiledSwiftStringBridgePreservesContentsAndLifetime) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SwiftStrings));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
 #endif
 }
 } // namespace

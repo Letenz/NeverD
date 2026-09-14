@@ -181,6 +181,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::ObjCSuper2 && Hint.CallKind != Kind::BlockInvoke &&
       Hint.CallKind != Kind::ObjCRuntimeCall &&
       Hint.CallKind != Kind::SwiftRuntimeCall &&
+      Hint.CallKind != Kind::SwiftStringBridge &&
       Hint.CallKind != Kind::DarwinRuntimeCall)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
@@ -232,9 +233,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   } else if (!Message) {
     const bool Runtime = Hint.CallKind == Kind::ObjCRuntimeCall ||
                          Hint.CallKind == Kind::SwiftRuntimeCall ||
+                         Hint.CallKind == Kind::SwiftStringBridge ||
                          Hint.CallKind == Kind::DarwinRuntimeCall;
     if (Runtime)
       Name = Hint.TargetName;
+    if (Hint.CallKind == Kind::SwiftStringBridge)
+      Name = "neverd_swift_string_to_nsstring";
     const auto *Definition =
         Runtime ? nullptr : sourceCallDefinition(Hint, Name);
     if (Hint.TargetAddress && !Definition && DefinedFuncs.count(Name))

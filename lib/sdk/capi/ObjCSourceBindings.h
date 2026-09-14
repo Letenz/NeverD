@@ -10,6 +10,7 @@
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
+#include "neverd/loader/Swift/SwiftStringCalls.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -503,12 +504,15 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   }
   if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
+      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
       Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
     const auto Expected =
         Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall
             ? objcRuntimeSourceCallHint(Image, Binding.TargetAddress)
         : Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall
             ? swiftRuntimeSourceCallHint(Image, Binding.TargetAddress)
+        : Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge
+            ? swiftStringSourceCallHint(Image, Binding.TargetAddress)
             : darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.

@@ -46,7 +46,8 @@ struct SourceFunctionTypeHint {
     NativeAnalysis,
     BlockRuntime,
     SwiftRuntime,
-    DarwinRuntime
+    DarwinRuntime,
+    SwiftStringBridge
   };
   OriginKind Origin = OriginKind::ObjCRuntime;
   TypeRef ReturnType;
