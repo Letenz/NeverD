@@ -642,6 +642,11 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
     uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
     uint16_t PushSz = Src.Size > 0 ? Src.Size : PtrSize;
     NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
+    if (Src.isReg() && Src.Offset == Rsp.Offset) {
+      NdVar Saved = S.makeTemp(PushSz);
+      S.emit(NdOp::COPY, Saved, {Src});
+      Src = Saved;
+    }
     S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(PushSz, PtrSize)});
     S.emit(NdOp::STORE, {}, {Rsp, Src});
     break;
@@ -662,14 +667,18 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
     S.emit(NdOp::INT_ADD, NextRsp, {Rsp, NdVar::scalar(PopSz, PtrSize)});
     S.emit(NdOp::COPY, Rsp, {NextRsp});
     const int PopCopySeq = S.Seq;
-    S.emit(NdOp::COPY, DstW, {Val});
+    if (X86.operands[0].type == X86_OP_MEM) {
+      S.storeToMem(X86.operands[0], Val);
+    } else {
+      S.emit(NdOp::COPY, DstW, {Val});
+    }
     // Record the exact ordinary POP producer for the CFG proof of an adjacent
     // `call $+5; pop reg` get-PC thunk.  Do not replace the loaded value with a
     // constant here: the POP can also be an independently reachable entry, in
     // which case it must retain the caller-provided stack value.  The CFG
     // builder grants GOTPC semantics only after proving the call is the sole
     // predecessor and that this LOAD/COPY consumes its exact stack push.
-    if (GetPcArmedThisInsn) {
+    if (GetPcArmedThisInsn && DstW.isReg()) {
       LastGetPcOccurrence = I386GetPcOccurrence{
           GetPcCallAddr, S.Addr, PopCopySeq, static_cast<uint32_t>(GetPcValue),
           NdOp::COPY,    DstW,   Val};
@@ -1499,6 +1508,10 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
   case X86_INS_POPFD:
   case X86_INS_POPFQ: {
     uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
+    uint16_t FlagSize = (InsnId == X86_INS_PUSHF || InsnId == X86_INS_POPF) ? 2
+                        : (InsnId == X86_INS_PUSHFD || InsnId == X86_INS_POPFD)
+                            ? 4
+                            : 8;
     NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
     bool Push = (InsnId == X86_INS_PUSHF || InsnId == X86_INS_PUSHFD ||
                  InsnId == X86_INS_PUSHFQ);
@@ -1510,31 +1523,31 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
         {x86reg::SF, 7}, {x86reg::DF, 10}, {x86reg::OF, 11}};
     if (Push) {
       // Assemble EFLAGS from the modelled flags (reserved bit 1 reads as 1).
-      NdVar Eflags = S.makeTemp(PtrSize);
-      S.emit(NdOp::COPY, Eflags, {NdVar::scalar(0x2, PtrSize)});
+      NdVar Eflags = S.makeTemp(FlagSize);
+      S.emit(NdOp::COPY, Eflags, {NdVar::scalar(0x2, FlagSize)});
       for (auto [Fl, Bit] : FlagBits) {
-        NdVar Z = S.makeTemp(PtrSize);
+        NdVar Z = S.makeTemp(FlagSize);
         S.emit(NdOp::INT_ZEXT, Z, {NdVar::reg(Fl, 1)});
-        NdVar Sh = S.makeTemp(PtrSize);
-        S.emit(NdOp::INT_LEFT, Sh, {Z, NdVar::scalar(Bit, PtrSize)});
-        NdVar Next = S.makeTemp(PtrSize);
+        NdVar Sh = S.makeTemp(FlagSize);
+        S.emit(NdOp::INT_LEFT, Sh, {Z, NdVar::scalar(Bit, FlagSize)});
+        NdVar Next = S.makeTemp(FlagSize);
         S.emit(NdOp::INT_OR, Next, {Eflags, Sh});
         Eflags = Next;
       }
-      S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
+      S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(FlagSize, PtrSize)});
       S.emit(NdOp::STORE, {}, {Rsp, Eflags});
     } else {
       // Load EFLAGS and scatter the modelled bits back into the flag registers.
-      NdVar Val = S.makeTemp(PtrSize);
+      NdVar Val = S.makeTemp(FlagSize);
       S.emit(NdOp::LOAD, Val, {Rsp});
-      S.emit(NdOp::INT_ADD, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
+      S.emit(NdOp::INT_ADD, Rsp, {Rsp, NdVar::scalar(FlagSize, PtrSize)});
       for (auto [Fl, Bit] : FlagBits) {
-        NdVar Sh = S.makeTemp(PtrSize);
-        S.emit(NdOp::INT_RIGHT, Sh, {Val, NdVar::scalar(Bit, PtrSize)});
-        NdVar Bitv = S.makeTemp(PtrSize);
-        S.emit(NdOp::INT_AND, Bitv, {Sh, NdVar::scalar(1, PtrSize)});
+        NdVar Sh = S.makeTemp(FlagSize);
+        S.emit(NdOp::INT_RIGHT, Sh, {Val, NdVar::scalar(Bit, FlagSize)});
+        NdVar Bitv = S.makeTemp(FlagSize);
+        S.emit(NdOp::INT_AND, Bitv, {Sh, NdVar::scalar(1, FlagSize)});
         S.emit(NdOp::INT_NOTEQUAL, NdVar::reg(Fl, 1),
-               {Bitv, NdVar::scalar(0, PtrSize)});
+               {Bitv, NdVar::scalar(0, FlagSize)});
       }
     }
     break;
