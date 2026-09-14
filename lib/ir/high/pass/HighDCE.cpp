@@ -97,47 +97,70 @@ static void breakStmtCycles(std::vector<HighStmt> &Stmts) {
 // Shared DCE utilities
 //===----------------------------------------------------------------------===//
 
-static void collectRefExpr(const ExprPtr &E, VarKeySet &Refs,
-                           std::unordered_set<const HighExpr *> &Seen) {
-  if (!E || !Seen.insert(E.get()).second)
-    return;
-  if (E->Kind == ExprKind::Var)
-    Refs.insert(VK(E->Var));
-  for (auto &Op : E->Operands)
-    collectRefExpr(Op, Refs, Seen);
+static void collectRefExpr(const ExprPtr &Root, VarKeySet &Refs) {
+  std::unordered_set<const HighExpr *> Seen;
+  std::vector<const HighExpr *> Work{Root.get()};
+  while (!Work.empty()) {
+    const auto *E = Work.back();
+    Work.pop_back();
+    if (!E || !Seen.insert(E).second)
+      continue;
+    if (E->Kind == ExprKind::Var)
+      Refs.insert(VK(E->Var));
+    for (const auto &Operand : E->Operands)
+      Work.push_back(Operand.get());
+  }
 }
 
-static void collectStmtRefs(const std::vector<HighStmt> &Stmts,
-                            VarKeySet &Refs) {
+static bool removableAssignment(const HighStmt &S) {
+  if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+      S.Dst->Kind != ExprKind::Var || !S.Body.empty() || !S.ElseBody.empty() ||
+      !S.Cases.empty() || !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
+    return false;
   std::unordered_set<const HighExpr *> Seen;
+  std::vector<const HighExpr *> Work{S.Val.get()};
+  while (!Work.empty()) {
+    const auto *E = Work.back();
+    Work.pop_back();
+    if (!E || !Seen.insert(E).second)
+      continue;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Store ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    for (const auto &Operand : E->Operands)
+      Work.push_back(Operand.get());
+  }
+  return true;
+}
+
+static void collectLiveRefs(const std::vector<HighStmt> &Stmts,
+                            VarKeySet &Live) {
+  VarKeyMap<VarKeySet> Dependencies;
   walkStmts(Stmts, [&](const HighStmt &S) {
-    if (S.Kind == StmtKind::Assign && S.Val)
-      collectRefExpr(S.Val, Refs, Seen);
-    if (S.Kind == StmtKind::Store) {
-      collectRefExpr(S.StoreAddr, Refs, Seen);
-      collectRefExpr(S.StoreVal, Refs, Seen);
+    if (removableAssignment(S)) {
+      // PHI edge copies may define the same local on several paths. Union all
+      // dependencies instead of selecting a traversal-dependent definition.
+      collectRefExpr(S.Val, Dependencies[VK(S.Dst->Var)]);
+    } else {
+      // Calls, memory effects and control-flow expressions are observable
+      // roots. A variable referenced only by other dead assignments is not.
+      forEachExpr(S, [&](const ExprPtr &E) { collectRefExpr(E, Live); });
     }
-    if (S.Cond)
-      collectRefExpr(S.Cond, Refs, Seen);
-    if (S.RetVal)
-      collectRefExpr(S.RetVal, Refs, Seen);
-    if (S.CallExpr)
-      collectRefExpr(S.CallExpr, Refs, Seen);
-    if (S.SwitchExpr)
-      collectRefExpr(S.SwitchExpr, Refs, Seen);
   });
+  std::vector<VarKey> Work(Live.begin(), Live.end());
+  for (size_t I = 0; I < Work.size(); ++I) {
+    const auto Found = Dependencies.find(Work[I]);
+    if (Found == Dependencies.end())
+      continue;
+    for (const auto &Input : Found->second)
+      if (Live.insert(Input).second)
+        Work.push_back(Input);
+  }
 }
 
 static bool isDeadAssign(const HighStmt &S, const VarKeySet &Refs) {
-  if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
-    return false;
-  if (S.Dst->Kind != ExprKind::Var)
-    return false;
-  if (S.Val->Kind == ExprKind::Call)
-    return false;
-  if (S.Val->hasOrderedMemoryAccess())
-    return false;
-  return Refs.count(VK(S.Dst->Var)) == 0;
+  return removableAssignment(S) && Refs.count(VK(S.Dst->Var)) == 0;
 }
 
 static bool isSelfAssign(const HighStmt &S) {
@@ -213,6 +236,9 @@ static bool eliminateDeadAssigns(std::vector<HighStmt> &Stmts,
     if (!S.DefaultBody.empty() &&
         eliminateDeadAssigns(S.DefaultBody, Refs, Entries))
       Changed = true;
+    for (auto &Clause : S.EHClauseBodies)
+      if (eliminateDeadAssigns(Clause, Refs, Entries))
+        Changed = true;
   }
   return Changed;
 }
@@ -270,13 +296,17 @@ static void preDCE(std::vector<HighStmt> &Stmts,
   size_t Before = Stmts.size();
   for (int PreIter = 0; PreIter < 8; ++PreIter) {
     VarKeySet Refs;
-    collectStmtRefs(Stmts, Refs);
+    collectLiveRefs(Stmts, Refs);
     if (!eliminateDeadAssigns(Stmts, Refs, Entries))
       break;
   }
   if (Stmts.size() < Before)
     LLVM_DEBUG(llvm::dbgs() << "    pre-dce: " << Before << " -> "
                             << Stmts.size() << " stmts\n");
+}
+
+void eliminateUnusedValues(std::vector<HighStmt> &Stmts) {
+  preDCE(Stmts, referencedStatementEntries(Stmts));
 }
 
 //===----------------------------------------------------------------------===//
@@ -363,7 +393,7 @@ static void iterativeDCE(HighFunc &Func,
     bool DCEChanged = false;
     for (int Iter = 0; Iter < 10; ++Iter) {
       VarKeySet Refs;
-      collectStmtRefs(Func.Body, Refs);
+      collectLiveRefs(Func.Body, Refs);
       if (!eliminateDeadAssigns(Func.Body, Refs, Entries))
         break;
       DCEChanged = true;

@@ -21,6 +21,7 @@ void removeUnreachableCode(std::vector<HighStmt> &);
 void eliminateRegAliasCopies(HighFunc &);
 void elimConsecutiveDeadStores(std::vector<HighStmt> &);
 void postRenameCleanup(std::vector<HighStmt> &);
+void eliminateUnusedValues(std::vector<HighStmt> &);
 } // namespace neverd
 using namespace neverd;
 
@@ -192,7 +193,8 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
     return {};
   };
   size_t Position = 0;
-  for (unsigned Steps = 0; Steps != 30 && Position < F.Body.size(); ++Steps) {
+  for (unsigned Steps = 0; Steps != 10000 && Position < F.Body.size();
+       ++Steps) {
     auto R = Run({F.Body[Position]});
     if (R.Return)
       return R.Return;
@@ -1569,6 +1571,70 @@ TEST(HighControlFlowSemantics, ArgumentValueDoesNotMakeFrameStoreDead) {
         }
       }
     }
+  }
+}
+
+TEST(HighControlFlowSemantics, DeadValueCyclesAndLongChainsKeepBranchEntries) {
+  HighFunc F;
+  F.Body = {jump(0x1000, 0x1010), assign(0x1010, 1, 7)};
+  for (unsigned I = 2; I <= 64; ++I) {
+    auto Copy = assign(0x1010 + I * 4, I, 0);
+    Copy.Val = local(I - 1);
+    F.Body.push_back(Copy);
+  }
+  F.Body.push_back(assign(0x1200, 65, 1));
+  F.Body.push_back(assign(0x1204, 66, 2));
+  auto A = assign(0x1208, 65, 0);
+  A.Val = local(66);
+  auto B = assign(0x120c, 66, 0);
+  B.Val = local(65);
+  F.Body.push_back(A);
+  F.Body.push_back(B);
+  F.Body.push_back(result(0x1300, HighExpr::makeConst(73, 8)));
+  EXPECT_EQ(execute(F, 0), 73U);
+  eliminateUnusedValues(F.Body);
+  EXPECT_EQ(execute(F, 0), 73U);
+  expectUniqueGotoTargets(F);
+  walkStmts(F.Body,
+            [&](const HighStmt &S) { EXPECT_NE(S.Kind, StmtKind::Assign); });
+}
+
+TEST(HighControlFlowSemantics, LiveValueCyclesAndNestedEffectsSurviveDCE) {
+  for (unsigned Sink = 0; Sink < 5; ++Sink) {
+    SCOPED_TRACE(Sink);
+    HighFunc F;
+    F.Body = {assign(0x1000, 1, 7), assign(0x1004, 2, 9)};
+    auto A = assign(0x1008, 1, 0);
+    A.Val = local(2);
+    auto B = assign(0x100c, 2, 0);
+    B.Val = local(1);
+    F.Body.push_back(A);
+    F.Body.push_back(B);
+    auto Root = result(0x1010, local(2));
+    if (Sink == 1) {
+      Root = conditional(0x1010, 0x1020);
+      Root.Cond = local(2);
+    } else if (Sink == 2) {
+      Root = assign(0x1010, 3, 0);
+      Root.Val = HighExpr::makeBinop(
+          NdOp::INT_ADD, HighExpr::makeCall("effect", 0x2000, {local(2)}),
+          HighExpr::makeConst(1, 8));
+    } else if (Sink == 3) {
+      Root = assign(0x1010, 3, 0);
+      Root.Val = HighExpr::makeLoad(local(2), NdType::makeInt(8),
+                                    NdMemoryOrdering::Acquire);
+    } else if (Sink == 4) {
+      Root.Kind = StmtKind::Store;
+      Root.RetVal.reset();
+      Root.StoreAddr = local(2);
+      Root.StoreVal = HighExpr::makeConst(1, 8);
+    }
+    F.Body.push_back(Root);
+    F.Body.push_back(result(0x1020, HighExpr::makeConst(73, 8)));
+    eliminateUnusedValues(F.Body);
+    EXPECT_EQ(F.Body.size(), 6U);
+    if (Sink == 1)
+      expectUniqueGotoTargets(F);
   }
 }
 
