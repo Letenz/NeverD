@@ -1812,6 +1812,56 @@ TEST(MobileIOSNative,
   }
 }
 
+TEST(MobileIOSNative, SharedBlockHelpersCompareTransitivePrivateDefinitions) {
+  for (const char *Kind : {"helper", "invoke"}) {
+    SCOPED_TRACE(Kind);
+    const std::string Helper = std::string("neverd_block_") + Kind + "_3000";
+    auto [batch, metadata] = objcFixture("return " + Helper + "(arg0);");
+    auto *Methods = batch.getArray("methods");
+    auto &First = *Methods->front().getAsObject();
+    First["source"] =
+        "static int64_t private_leaf(int64_t value) { return value + 7; }\n"
+        "static int64_t private_call(int64_t value) { return "
+        "private_leaf(value); }\n"
+        "int64_t " +
+        Helper + "(int64_t value) { return private_call(value); }\n" +
+        str(First, "source");
+    First["shared_block_functions"] = Array{Helper};
+    Object Second(First);
+    Second["selector"] = "sum:with:";
+    Second["implementation"] = "0x2000";
+    Second["function_name"] = "neverd_objc_imp_2000";
+    auto Source = str(Second, "source");
+    Source.replace(Source.find("neverd_objc_imp_1000"),
+                   std::string("neverd_objc_imp_1000").size(),
+                   "neverd_objc_imp_2000");
+    Second["source"] = Source;
+    Methods->push_back(std::move(Second));
+    auto *RuntimeMethods =
+        metadata.getArray("classes")->front().getAsObject()->getArray(
+            "methods");
+    Object Runtime(*RuntimeMethods->front().getAsObject());
+    Runtime["selector"] = "sum:with:";
+    Runtime["implementation"] = "0x2000";
+    RuntimeMethods->push_back(std::move(Runtime));
+    Budget Budget;
+    const auto Result = objcSources(batch, metadata, 8, Budget);
+    ASSERT_EQ(number(Result.coverage, "recovered_method_count"), 2);
+    const std::string Signature = "int64_t " + Helper + "(int64_t value) {";
+    const auto Position = Result.source.find(Signature);
+    ASSERT_NE(Position, std::string::npos);
+    EXPECT_EQ(Result.source.find(Signature, Position + 1), std::string::npos);
+    // The shared body remains identical; only its private callee's callee
+    // changes. Coalescing these units would silently select one behavior.
+    Source.replace(Source.find("value + 7"), std::string("value + 7").size(),
+                   "value + 9");
+    (*Methods->back().getAsObject())["source"] = Source;
+    EXPECT_EQ(number(objcSources(batch, metadata, 8, Budget).coverage,
+                     "recovered_method_count"),
+              0);
+  }
+}
+
 TEST(MobileIOSNative, MetadataOnlyAppUsesAppRelativeArtifactWithoutTools) {
   TemporaryDirectory directory;
   auto bundle = directory.path / pathFromUTF8("测试.app");

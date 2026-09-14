@@ -7,16 +7,15 @@ conflicting declarations. The ordinary declaration catalog keeps rejecting
 these selectors until a call proves its actual format and argument types.
 """
 import argparse
-import ctypes
 import json
 from pathlib import Path
 import re
 import tempfile
 
 try:
-    from .generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from .generate_objc_declarations import PrintingClang, TARGETS, catalog_rows
 except ImportError:
-    from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from generate_objc_declarations import PrintingClang, TARGETS, catalog_rows
 
 
 def format_contract(pretty, hidden_parameters=2):
@@ -34,15 +33,8 @@ def format_contract(pretty, hidden_parameters=2):
     return parameter - 1 + hidden_parameters, first_variadic - 1 + hidden_parameters
 
 
-class FormatDeclarations(Clang):
+class FormatDeclarations(PrintingClang):
     hidden_parameters = 2
-
-    def __init__(self, library):
-        super().__init__(library)
-        self.bind('clang_Cursor_getNumArguments', ctypes.c_int, CXCursor)
-        self.bind('clang_getCursorPrintingPolicy', ctypes.c_void_p, CXCursor)
-        self.bind('clang_PrintingPolicy_dispose', None, ctypes.c_void_p)
-        self.bind('clang_getCursorPrettyPrinted', CXString, CXCursor, ctypes.c_void_p)
 
     def declaration(self, cursor):
         ordinary = super().declaration(cursor)
@@ -51,13 +43,8 @@ class FormatDeclarations(Clang):
         selector, _ = ordinary
         if not self.clang_Cursor_isVariadic(cursor):
             return selector, ''
-        policy = self.clang_getCursorPrintingPolicy(cursor)
-        try:
-            # Print the parsed AST, with expanded attributes. No header macro
-            # text is interpreted as a compiler-validated format contract.
-            pretty = self.string(self.clang_getCursorPrettyPrinted(cursor, policy))
-        finally:
-            self.clang_PrintingPolicy_dispose(policy)
+        # The parsed AST expands attributes; header macro text is not proof.
+        pretty = self.pretty(cursor)
         contract = format_contract(pretty, self.hidden_parameters)
         encoding = self.string(self.clang_getDeclObjCTypeEncoding(cursor))
         if not contract or not encoding or contract[1] != self.clang_Cursor_getNumArguments(cursor) + self.hidden_parameters:

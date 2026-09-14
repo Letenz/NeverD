@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 
@@ -141,6 +142,56 @@ darwinDeclaredSourceGlobalAddressHint(const BinaryImage &Image,
   std::string Diagnostic;
   if (!assignDarwinScalarSourceABI(Result.Signature, Image.Arch, Diagnostic))
     return std::nullopt;
+  return Result;
+}
+
+std::optional<SourceFunctionTypeHint>
+darwinNonEscapingBlockSignature(const BinaryImage &Image, va_t ImportSlot,
+                                unsigned Parameter) {
+  const auto Call = darwinDeclaredSourceCallHint(Image, ImportSlot);
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (!Call || Bind == Image.DyldBindSlots.end() ||
+      Parameter >= Call->Signature.Parameters.size())
+    return std::nullopt;
+  static constexpr struct {
+    const char *Name;
+    const char *AArch64;
+    const char *X64;
+    unsigned Parameter;
+    const char *AArch64Callback;
+    const char *X64Callback;
+    const char *AArch64Modules;
+    const char *X64Modules;
+  } Declarations[] = {
+#include "DarwinBlockDeclarations.inc"
+  };
+  std::optional<SourceFunctionTypeHint> Result;
+  for (const auto &D : Declarations) {
+    if (D.Name != Call->TargetName || D.Parameter != Parameter)
+      continue;
+    if (Result || !exportsFrom(Image.Arch == Arch::AArch64 ? D.AArch64Modules
+                                                           : D.X64Modules,
+                               Bind->second.Module))
+      return std::nullopt;
+    const auto Parent = parseObjCFunctionEncoding(
+        Image.Arch == Arch::AArch64 ? D.AArch64 : D.X64);
+    std::string Error;
+    auto Callback = parseObjCBlockSignature(
+        Image.Arch == Arch::AArch64 ? D.AArch64Callback : D.X64Callback,
+        Image.Arch, Error);
+    if (!Parent || !Callback || Callback->Parameters.empty() ||
+        Callback->Parameters[0].Type->Kind != NdTypeKind::Ptr ||
+        Parent->Parameters.size() != Call->Signature.Parameters.size() ||
+        !equalSourceTypes(Parent->ReturnType, Call->Signature.ReturnType))
+      return std::nullopt;
+    for (size_t I = 0; I < Parent->Parameters.size(); ++I)
+      if (!equalSourceTypes(Parent->Parameters[I].Type,
+                            Call->Signature.Parameters[I].Type))
+        return std::nullopt;
+    if (Parent->Parameters[Parameter].Type->Kind != NdTypeKind::Ptr)
+      return std::nullopt;
+    Result = std::move(Callback);
+  }
   return Result;
 }
 

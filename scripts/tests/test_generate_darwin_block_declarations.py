@@ -1,0 +1,47 @@
+import json
+from types import SimpleNamespace
+import unittest
+
+from scripts.generate_darwin_block_declarations import BlockDeclarations, noescape_attribute, render
+
+
+class DarwinBlockDeclarationTests(unittest.TestCase):
+    def test_only_expanded_noescape_attributes_supply_lifetime_evidence(self):
+        self.assertTrue(noescape_attribute('void (^block)(void) __attribute__((noescape))'))
+        self.assertFalse(noescape_attribute('DISPATCH_NOESCAPE dispatch_block_t block'))
+        self.assertFalse(noescape_attribute('__attribute__((annotate("__attribute__((noescape))")))'))
+
+    def test_all_platforms_alternatives_and_exports_must_agree(self):
+        fact = json.dumps(['v16^v0@?8', [[1, 'v8@?0']]])
+        profiles = [{'consume': {fact}}] * 4
+        exports = [{'consume': {'/usr/lib/public.dylib'}}] * 2
+        self.assertIn('{"consume", "v16^v0@?8", "v16^v0@?8", 1, "v8@?0",', render(profiles, exports, 'test', 'test'))
+        for index in range(4):
+            for bad in ({}, {'consume': {fact, ''}}, {'consume': {json.dumps(['v16^v0@?8', [[0, 'v8@?0']]])}}):
+                changed = list(profiles)
+                changed[index] = bad
+                self.assertNotIn('{"consume",', render(changed, exports, 'test', 'test'))
+        self.assertNotIn('{"consume",', render(profiles, [{}, exports[0]], 'test', 'test'))
+
+    def test_callback_requires_a_fixed_c_block_prototype(self):
+        clang = object.__new__(BlockDeclarations)
+        function = SimpleNamespace(kind=111)
+        clang.clang_getCanonicalType = lambda value: value
+        clang.clang_getPointeeType = lambda value: function
+        clang.clang_getNumArgTypes = lambda value: 0
+        clang.clang_isFunctionTypeVariadic = lambda value: False
+        clang.clang_getFunctionTypeCallingConv = lambda value: 1
+        clang.clang_getResultType = lambda value: SimpleNamespace(kind=2)
+        clang.clang_Type_getSizeOf = lambda value: 0
+        block = SimpleNamespace(kind=102)
+        self.assertEqual(clang.callback(block), 'v8@?0')
+        self.assertIsNone(clang.callback(SimpleNamespace(kind=101)))
+        clang.clang_isFunctionTypeVariadic = lambda value: True
+        self.assertIsNone(clang.callback(block))
+        clang.clang_isFunctionTypeVariadic = lambda value: False
+        clang.clang_getFunctionTypeCallingConv = lambda value: 17
+        self.assertIsNone(clang.callback(block))
+
+
+if __name__ == '__main__':
+    unittest.main()

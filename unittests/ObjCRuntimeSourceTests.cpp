@@ -154,7 +154,7 @@ void verifyRuntime(bool Chained,
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
-                             : BlockLifetimes    ? (ManualBlocks ? 5U : 4U)
+                             : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
@@ -261,7 +261,8 @@ void verifyRuntime(bool Chained,
                  "responds:selector:"};
   if (BlockLifetimes)
     Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:",
-                 "duplicateBlock:", "releaseBlock:"};
+                 "duplicateBlock:", "releaseBlock:",
+                 "synchronouslyAppend:toArray:queue:"};
   if (ManualBlocks)
     Remaining.insert("holderForBlock:");
   std::string Declarations;
@@ -280,6 +281,8 @@ void verifyRuntime(bool Chained,
                         "\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
+  std::map<std::string, std::string> BlockHelpers;
+  unsigned RepeatedBlockHelpers = 0;
   std::string NativeHelper;
   std::set<std::string> StorageNames;
   for (const auto &Value : *Methods) {
@@ -292,6 +295,35 @@ void verifyRuntime(bool Chained,
     ASSERT_TRUE(Selector && Name && Source);
     ASSERT_EQ(Remaining.erase(Selector->str()), 1U);
     std::string MethodSource = Source->str();
+    // Each C API unit is independently compilable. Its inventory identifies
+    // functions whose address must be shared when units are linked together.
+    if (const auto *Helpers = Method->getArray("shared_block_functions"))
+      for (const auto &Value : *Helpers) {
+        const auto Helper = Value.getAsString();
+        ASSERT_TRUE(Helper);
+        auto Name = MethodSource.find(" " + Helper->str() + "(");
+        ASSERT_NE(Name, std::string::npos);
+        auto Begin = MethodSource.rfind('\n', Name);
+        ASSERT_NE(Begin, std::string::npos);
+        // Skip prototypes and select the emitted top-level definition.
+        while (MethodSource.find('{', Begin) > MethodSource.find(';', Begin)) {
+          Name = MethodSource.find(" " + Helper->str() + "(", Name + 1);
+          ASSERT_NE(Name, std::string::npos);
+          Begin = MethodSource.rfind('\n', Name);
+        }
+        const auto End = MethodSource.find("\n}", Begin);
+        ASSERT_NE(End, std::string::npos);
+        const auto Definition = MethodSource.substr(Begin, End + 2 - Begin);
+        const auto [It, Added] =
+            BlockHelpers.emplace(Helper->str(), Definition);
+        EXPECT_EQ(It->second, Definition);
+        if (!Added) {
+          ++RepeatedBlockHelpers;
+          MethodSource.replace(Begin, End + 2 - Begin,
+                               Definition.substr(0, Definition.find('{')) +
+                                   ";");
+        }
+      }
     if (NativePointers && (*Selector == "ascii" || *Selector == "unicode")) {
       EXPECT_NE(MethodSource.find("NDForwardPointer(void* native_arg0)"),
                 std::string::npos)
@@ -344,6 +376,8 @@ void verifyRuntime(bool Chained,
                Selector->str() + "\"))));\n";
   }
   ASSERT_TRUE(Remaining.empty());
+  if (BlockLifetimes)
+    EXPECT_GE(RepeatedBlockHelpers, 2U);
   EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);
   if (DiagnosticReports)
     EXPECT_FALSE(IdentityHelpers.empty());
@@ -438,6 +472,7 @@ void verifyRuntime(bool Chained,
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
             "conditional-invokes=1024\nconditional-construction=pass\n"
+            "synchronous-mutations=1024\n"
       : Foundation ? "variadic-formats=2276\nframework-iterations=2048\narray-"
                      "dictionaries=17\nnil-"
                      "dispatch=pass\n"

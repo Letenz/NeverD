@@ -13,6 +13,13 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// A compiler-declared block parameter whose references and copies cannot
+/// survive the imported call. Includes the complete fixed callback ABI; this
+/// is not a read-only memory contract and never describes function pointers.
+std::optional<SourceFunctionTypeHint>
+darwinNonEscapingBlockSignature(const BinaryImage &Image, va_t ImportSlot,
+                                unsigned Parameter);
+
 struct DarwinFormatDeclaration {
   SourceFunctionTypeHint Signature;
   std::string Name;

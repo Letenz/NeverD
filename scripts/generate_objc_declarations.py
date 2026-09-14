@@ -140,6 +140,24 @@ class Clang:
             self.clang_disposeIndex(index)
 
 
+class PrintingClang(Clang):
+    """Read compiler-expanded attributes from parsed declarations."""
+
+    def __init__(self, library):
+        super().__init__(library)
+        self.bind('clang_Cursor_getNumArguments', ctypes.c_int, CXCursor)
+        self.bind('clang_getCursorPrintingPolicy', ctypes.c_void_p, CXCursor)
+        self.bind('clang_PrintingPolicy_dispose', None, ctypes.c_void_p)
+        self.bind('clang_getCursorPrettyPrinted', CXString, CXCursor, ctypes.c_void_p)
+
+    def pretty(self, cursor):
+        policy = self.clang_getCursorPrintingPolicy(cursor)
+        try:
+            return self.string(self.clang_getCursorPrettyPrinted(cursor, policy))
+        finally:
+            self.clang_PrintingPolicy_dispose(policy)
+
+
 def common_encodings(first, second, selector):
     left, right = first.get(selector), second.get(selector)
     if not left or not right:

@@ -759,6 +759,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     };
     State.Call = [&](const HighExpr &E,
                      const std::vector<Value> &Arguments) -> Value {
+      std::map<int64_t, unsigned> InvalidatedBlocks;
       for (size_t I = 0; I < Arguments.size(); ++I) {
         if (Arguments[I].K != Value::Frame)
           continue;
@@ -778,7 +779,17 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
              (Binding->CallKind == CallKind::DarwinRuntimeCall &&
               Binding->TargetName == "_Block_copy")) &&
             objcSourceCallBound(E, Image, Functions);
-        if (!Direct && !Runtime &&
+        const auto NonEscaping =
+            Binding && Binding->CallKind == CallKind::DarwinRuntimeCall
+                ? darwinNonEscapingBlockSignature(Image, Binding->TargetAddress,
+                                                  I)
+                : std::nullopt;
+        const bool DeclaredConsumer =
+            NonEscaping && Block.Descriptor.InvokeTypeHint &&
+            objc_projection_detail::sameHint(*Block.Descriptor.InvokeTypeHint,
+                                             *NonEscaping) &&
+            objcSourceCallBound(E, Image, Functions);
+        if (!Direct && !Runtime && !DeclaredConsumer &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||
              !noEscape(Source, Functions, Binding->TargetAddress, I, nullptr,
@@ -786,6 +797,9 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
           throw Invalid(
               "stack block flows to an unproven synchronous consumer: " +
               Error);
+        if (DeclaredConsumer)
+          InvalidatedBlocks.emplace(Block.FrameOffset,
+                                    Block.Descriptor.LiteralSize);
         auto Previous = Blocks.find(Block.FrameOffset);
         if (Previous != Blocks.end() &&
             (Previous->second.InvokeEntry != Block.InvokeEntry ||
@@ -810,6 +824,13 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
               throw Invalid("block header expression has conflicting bytes");
           }
         }
+      }
+      // A lifetime attribute says nothing about writes. Later consumers need
+      // fresh construction evidence after an imported nonescaping call.
+      for (const auto &[Offset, Size] : InvalidatedBlocks) {
+        State.storeFrame(Value{Value::Frame, Offset}, Size, {});
+        Memory.erase(Memory.lower_bound(Offset),
+                     Memory.lower_bound(Offset + Size));
       }
       return {};
     };

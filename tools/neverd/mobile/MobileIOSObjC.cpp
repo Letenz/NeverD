@@ -749,6 +749,7 @@ struct Rendered {
   std::string method, support;
   std::map<std::string, std::string> externals;
   std::map<std::string, std::pair<std::string, std::string>> shared;
+  std::map<std::string, std::string> sharedDefinitions;
 };
 Rendered render(const Object &native, const Object &runtime,
                 const std::string &owner, unsigned ptr) {
@@ -873,8 +874,9 @@ Rendered render(const Object &native, const Object &runtime,
       if (!s || !sharednames.insert(s->str()).second ||
           !defined.count(s->str()) || s == name ||
           !std::regex_match(
-              s->str(), std::regex("neverd_block_(invoke_[0-9a-f]+|(descriptor|"
-                                   "literal)_[0-9a-f]+_address)")))
+              s->str(),
+              std::regex("neverd_block_((invoke|helper)_[0-9a-f]+|(descriptor|"
+                         "literal)_[0-9a-f]+_address)")))
         throw Error("invalid shared Block function inventory");
     }
   if (native.get("shared_identity_functions") &&
@@ -913,6 +915,40 @@ Rendered render(const Object &native, const Object &runtime,
       if (token.text == n)
         throw Error("generated support name collision");
   Rendered out;
+  // Compare shared definitions before assigning per-method private names.
+  // Include every reachable definition: an equal wrapper with a different
+  // private callee is a conflict, even when its own text is unchanged.
+  std::map<std::string, const Definition *> definitionsByName;
+  for (const auto &f : defs)
+    definitionsByName.emplace(f.name, &f);
+  size_t comparisonWork = 0;
+  for (const auto &name : sharednames) {
+    std::set<std::string> reachable;
+    std::vector<std::string> pending{name};
+    while (!pending.empty()) {
+      auto current = std::move(pending.back());
+      pending.pop_back();
+      if (!reachable.insert(current).second)
+        continue;
+      const auto &f = *definitionsByName.at(current);
+      for (size_t i = f.start; i <= f.bc; ++i) {
+        if (++comparisonWork > 1000000)
+          throw Error("shared function comparison exceeds work budget");
+        if (!t[i].kind && definitionsByName.count(t[i].text) &&
+            !reachable.count(t[i].text))
+          pending.push_back(t[i].text);
+      }
+    }
+    auto &definition = out.sharedDefinitions[name];
+    for (const auto &current : reachable) {
+      const auto &f = *definitionsByName.at(current);
+      for (size_t i = f.start; i <= f.bc; ++i) {
+        definition += std::to_string(t[i].kind) + ":" +
+                      std::to_string(t[i].text.size()) + ":";
+        definition += t[i].text;
+      }
+    }
+  }
   std::string support;
   size_t cursor = 0;
   for (const auto &f : defs)
@@ -1320,8 +1356,8 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
   for (const auto &c : candidates) {
     for (const auto &[name, spelling] : c.render.externals)
       external[name].push_back({c.row, spelling});
-    for (const auto &[name, def] : c.render.shared)
-      shared[name].push_back({c.row, def.first + "\n" + def.second});
+    for (const auto &[name, def] : c.render.sharedDefinitions)
+      shared[name].push_back({c.row, def});
   }
   auto conflicts = [&](const auto &all, const char *reason) {
     for (const auto &[name, uses] : all) {

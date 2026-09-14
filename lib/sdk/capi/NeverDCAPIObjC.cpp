@@ -290,6 +290,9 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       std::set<std::string> SharedBlockFunctions;
       const std::string BlockHelpers = renderObjCBlockSourceHelpers(
           BlockPlan, BlockDescriptors, SharedBlockFunctions);
+      for (va_t Entry : Included)
+        if (BlockPlan.InvokeHints.count(Entry))
+          SharedBlockFunctions.insert(objcBlockInvokeName(Entry));
       std::set<va_t> AssociationKeys;
       std::set<va_t> ProfileSections;
       std::set<va_t> ConstantStrings;

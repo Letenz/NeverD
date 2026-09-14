@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <dispatch/dispatch.h>
 #import <objc/runtime.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -9,6 +10,9 @@
                                      offset:(NSUInteger)offset;
 - (void *)duplicateBlock:(void *)block;
 - (void)releaseBlock:(void *)block;
+- (void)synchronouslyAppend:(id)value
+                    toArray:(NSMutableArray *)array
+                      queue:(dispatch_queue_t)queue;
 - (id (^)(void))holderForBlock:(NSUInteger (^)(void))block;
 @end
 static unsigned destroyed;
@@ -36,6 +40,7 @@ int main(void) {
   NDBlockFactory *driver = [NDBlockFactory new];
   if ([driver makeCounterForArray:nil other:nil offset:7] != nil)
     return 8;
+  dispatch_queue_t queue = dispatch_queue_create("neverd.source.blocks", NULL);
   for (unsigned i = 0; i < 1024; ++i) {
     NSUInteger (^saved)(void);
     NSUInteger (^combined)(void);
@@ -70,7 +75,7 @@ int main(void) {
     if (destroyed != i || duplicate() != 1)
       return 2;
     @autoreleasepool {
-      [observed addObject:@"retained"];
+      [driver synchronouslyAppend:@"retained" toArray:observed queue:queue];
     }
     const NSUInteger expected = ((i & 1) ? 2 : 4) + i;
     if (duplicate() != 2 || combined() != expected)
@@ -88,7 +93,9 @@ int main(void) {
       return 5;
   }
   [driver release];
+  dispatch_release(queue);
   puts("escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
-       "conditional-invokes=1024\nconditional-construction=pass");
+       "conditional-invokes=1024\nconditional-construction=pass\n"
+       "synchronous-mutations=1024");
   return 0;
 }
