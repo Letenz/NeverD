@@ -10,6 +10,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
@@ -62,6 +63,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
          Binding.TargetName == Expected.TargetName &&
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
+         !Binding.Format &&
          Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
          objc_projection_detail::sameHint(Binding.Signature,
                                           Expected.Signature);
@@ -565,6 +567,9 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     return false;
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
+  if (Binding.Format &&
+      Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage)
+    return false;
   std::string Reason;
   // Only catalogued runtime calls currently establish source noreturn
   // effects. A native function flag or a forged reference hint cannot.
@@ -647,6 +652,33 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.
     return Expected && runtimeBindingMatches(Binding, *Expected);
+  }
+  if (Binding.Format) {
+    const auto &Format = *Binding.Format;
+    const auto Expected = objcFormattedSourceCallHint(Image, Binding.Selector,
+                                                      Format.FormatAddress);
+    if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+        !Expected || !Expected->Format || Binding.DoesNotReturn ||
+        Format.FixedCount != Expected->Format->FixedCount ||
+        Format.FormatParameter != Expected->Format->FormatParameter ||
+        Format.FormatParameter >= Expression.Operands.size() ||
+        !objc_projection_detail::sameHint(Hint, Expected->Signature))
+      return false;
+    auto Argument = Expression.Operands[Format.FormatParameter];
+    unsigned Depth = 0;
+    while (Argument && Argument->Kind == ExprKind::Cast &&
+           Argument->Operands.size() == 1 && Argument->Type &&
+           Argument->Type->Size == 8 && Depth++ < 32)
+      Argument = Argument->Operands.front();
+    if (!Argument)
+      return false;
+    if (Argument->Kind == ExprKind::Call && Argument->SourceCallHint &&
+        Argument->SourceCallHint->CallKind ==
+            SourceCallTypeHint::Kind::RuntimeConstantString)
+      return Argument->Operands.empty() &&
+             Argument->SourceCallHint->TargetAddress == Format.FormatAddress &&
+             objcSourceCallBound(*Argument, Image, Functions);
+    return constantAddress(*Argument) == Format.FormatAddress;
   }
   if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK) {
     const auto Expected = objcSelectorSourceTypeHint(Image, Binding.Selector);

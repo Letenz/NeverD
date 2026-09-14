@@ -2,6 +2,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
@@ -873,3 +874,56 @@ TEST(HighCSourceCalls,
             std::string::npos);
 }
 } // namespace
+
+TEST(HighCSourceCalls, VariadicMessageCompilesAndPreservesPromotedArguments) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto I32 = NdType::makeInt(4);
+  auto I64 = NdType::makeInt(8);
+  auto Double = NdType::makeFloat(8);
+  auto Hint = native("objc_msgSend", I64,
+                     {Pointer, Pointer, Pointer, I32, Double, I64, Pointer});
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.Selector = "format:";
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+  Hint.Format = SourceCallTypeHint::FormatArguments{3, 2, 0x2000};
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinVariadicSourceABI(Hint.Signature, 3, Arch::X64, Error));
+  auto Expression =
+      call(Hint, I64,
+           {parameter(0, Pointer), parameter(1, Pointer), parameter(2, Pointer),
+            parameter(3, I32), parameter(4, Double), parameter(5, I64),
+            parameter(6, Pointer)});
+  const auto Source =
+      emit({returning("send_format", Expression,
+                      {Pointer, Pointer, Pointer, I32, Double, I64, Pointer})},
+           false);
+  EXPECT_NE(Source.find("(*)(id, SEL, void*, ...)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  compileAndRun(R"(
+#include <stdint.h>
+#include <stdarg.h>
+typedef void *id;
+typedef void *SEL;
+static int64_t implementation(id receiver, SEL selector, void *format, ...) {
+  va_list args; va_start(args,format);
+  int count=va_arg(args,int);
+  double value=va_arg(args,double);
+  int64_t wide=va_arg(args,int64_t);
+  void *object=va_arg(args,void*);
+  va_end(args);
+  if (receiver!=(void*)1 || selector!=(void*)2 || format!=(void*)3 || object!=(void*)4)
+    return -999;
+  return wide + count + (int64_t)(value*4);
+}
+static int64_t (*objc_msgSend)(id,SEL,void*,...)=implementation;
+)" + Source + R"(
+int main(void) {
+  for(int n=-32;n<=32;++n) for(int k=-32;k<=32;++k) {
+    int64_t wide=INT64_C(0x123456789abc), expected=wide+n+k;
+    if(send_format((void*)1,(void*)2,(void*)3,n,k/4.0,wide,(void*)4)!=expected) return 1;
+  }
+  return 0;
+})");
+}

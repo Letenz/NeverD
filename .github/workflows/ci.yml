@@ -147,6 +147,7 @@ jobs:
             scripts.tests.test_audit_evm_opcode_metadata \
             scripts.tests.test_eh_signature_generation \
             scripts.tests.test_generate_objc_declarations \
+            scripts.tests.test_generate_objc_format_declarations \
             scripts.tests.test_generate_darwin_declarations \
             scripts.tests.test_generate_darwin_data_declarations \
             -v
@@ -657,6 +658,18 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceProjection.EvidenceBudgetCannotTurnAnIncompleteGraphIntoSuccess",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.DarwinVariadicArgumentsKeepPromotionsAndStackBoundary",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("HighCSourceCalls.VariadicMessageCompilesAndPreservesPromotedArguments",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.FormatArgumentsRequireCompleteConsistentSlots",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.FormattedMessagesRevalidateFormatAndActualArguments",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.FormattedMessagesRespectEveryDeclarationAndImageProof",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.FormattedLowCallsReadDarwinStackArgumentsBeforeSSA",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsKeepBytesUnicodeAndObjectIdentity",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsRejectUnprovedRecordsAndContents",
@@ -831,9 +844,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 290,
-              ("macOS", "macos-patch"): 302,
-              ("Windows", "windows-focused"): 286,
+              ("Linux", "linux-semantic"): 296,
+              ("macOS", "macos-patch"): 308,
+              ("Windows", "windows-focused"): 292,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

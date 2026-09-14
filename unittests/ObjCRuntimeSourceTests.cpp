@@ -155,6 +155,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
                              : BlockLifetimes    ? (ManualBlocks ? 5U : 4U)
+                             : Foundation        ? 11U
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
@@ -231,7 +232,11 @@ void verifyRuntime(bool Chained,
                  "append:to:",
                  "numberValue:",
                  "put:forKey:in:",
-                 "makeDictionary:keys:count:"};
+                 "makeDictionary:keys:count:",
+                 "formatObject:number:fraction:",
+                 "formatPosition:fraction:",
+                 "formatEmpty",
+                 "formatWide:small:"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -343,6 +348,7 @@ void verifyRuntime(bool Chained,
   else
     EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
                                        : ConstantStrings ? 6U
+                                       : Foundation      ? 4U
                                                          : 0U) +
                                           StorageNames.size());
   if (!IdentityHelpers.empty()) {
@@ -412,7 +418,8 @@ void verifyRuntime(bool Chained,
                            "8192\nsynchronized-updates=8192\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
-      : Foundation ? "framework-iterations=2048\narray-dictionaries=17\nnil-"
+      : Foundation ? "variadic-formats=2276\nframework-iterations=2048\narray-"
+                     "dictionaries=17\nnil-"
                      "dispatch=pass\n"
       : Protocols  ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
                      "integer-bits=4096\nguard-check=pass\n"

@@ -8,6 +8,7 @@
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
@@ -267,8 +268,31 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return Result;
   const auto &TRI = getTargetRegInfo(Image.Arch);
-  for (const auto &Block : Function.Blocks) {
+  std::map<int, size_t> BlockIndices;
+  for (size_t I = 0; I < Function.Blocks.size(); ++I)
+    if (!BlockIndices.emplace(Function.Blocks[I].Id, I).second)
+      return {};
+  std::map<size_t, std::map<Key, Value>> Exits;
+  std::set<size_t> Active;
+  std::function<void(size_t, unsigned)> Analyze = [&](size_t Index,
+                                                      unsigned Depth) {
+    if (Exits.count(Index) || Depth > 128 || !Active.insert(Index).second)
+      return;
+    const auto &Block = Function.Blocks[Index];
     std::map<Key, Value> Values;
+    // A unique incoming edge preserves the predecessor's proven constants,
+    // including a tail jump into an inline import veneer. Joins, entry edges
+    // and cycles start unknown; this is not a speculative merge of registers.
+    if (Block.StartAddr != Function.Entry && Block.Preds.size() == 1 &&
+        Block.ExceptionalPreds.empty()) {
+      const auto Parent = BlockIndices.find(Block.Preds.front());
+      if (Parent != BlockIndices.end() &&
+          llvm::is_contained(Function.Blocks[Parent->second].Succs, Block.Id)) {
+        Analyze(Parent->second, Depth + 1);
+        if (auto Out = Exits.find(Parent->second); Out != Exits.end())
+          Values = Out->second;
+      }
+    }
     va_t PreviousAddress = InvalidVA;
     auto Read = [&](const NdVar &V) -> std::optional<Value> {
       if (V.Space == VnodeSpace::CONST)
@@ -348,6 +372,29 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Hint.Selector = Target->Selector;
             Hint.SelectorReferenceAddress = Target->SelectorSlot;
             Result.emplace(Op.Addr, std::move(Hint));
+          } else if (Target->Name == "objc_msgSend") {
+            const auto Declaration =
+                objcSelectorFormatDeclaration(Image, Target->Selector);
+            if (Declaration) {
+              const auto &Location =
+                  Declaration->Signature
+                      .Parameters[Declaration->FormatParameter]
+                      .Location;
+              auto Format =
+                  Location.Kind == SourceABICarrierKind::IntegerRegister
+                      ? Read(NdVar::reg(Location.RegisterOffset, 8))
+                      : std::nullopt;
+              auto Hint = Format && Format->TheKind == Value::Kind::Number
+                              ? objcFormattedSourceCallHint(
+                                    Image, Target->Selector, Format->Number)
+                              : std::nullopt;
+              if (Hint) {
+                Hint->TargetAddress =
+                    V && V->TheKind == Value::Kind::Number ? V->Number : 0;
+                Hint->SelectorReferenceAddress = Target->SelectorSlot;
+                Result.emplace(Op.Addr, std::move(*Hint));
+              }
+            }
           }
         }
         // Only a bound Darwin ABI establishes which physical views survive.
@@ -400,7 +447,11 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           Values.emplace(key(Op.Output), std::move(*Out));
       }
     }
-  }
+    Exits.emplace(Index, std::move(Values));
+    Active.erase(Index);
+  };
+  for (size_t I = 0; I < Function.Blocks.size(); ++I)
+    Analyze(I, 0);
   return Result;
 }
 } // namespace neverd

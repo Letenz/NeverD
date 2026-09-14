@@ -227,6 +227,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("block invocation has no complete source binding");
   const bool Message =
       Hint.CallKind == Kind::ObjCMessage || Hint.CallKind == Kind::ObjCSuper2;
+  if (Hint.Format &&
+      (Hint.CallKind != Kind::ObjCMessage || !Hint.Format->FormatAddress ||
+       Hint.Format->FixedCount < 3 ||
+       Hint.Format->FixedCount > Signature.Parameters.size() ||
+       Hint.Format->FormatParameter < 2 ||
+       Hint.Format->FormatParameter >= Hint.Format->FixedCount ||
+       Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK))
+    return bad("invalid variadic source declaration");
   if (Message && (Signature.Parameters.size() < 2 || Hint.Selector.empty() ||
                   Signature.Parameters[0].Type->Kind != NdTypeKind::Ptr ||
                   Signature.Parameters[1].Type->Kind != NdTypeKind::Ptr))
@@ -302,7 +310,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                         : functionIdentifier(Name);
   } else {
     std::string Prototype = "(*)(";
-    for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
+    const auto FixedCount =
+        Hint.Format ? Hint.Format->FixedCount : Signature.Parameters.size();
+    for (size_t I = 0; I < FixedCount; ++I) {
       if (I)
         Prototype += ", ";
       if (I == 0)
@@ -313,6 +323,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       else
         Prototype += typeToC(Signature.Parameters[I].Type);
     }
+    if (Hint.Format)
+      Prototype += ", ...";
     Prototype = declarationToC(Signature.ReturnType, Prototype + ")");
     Name = "((" + Prototype + ")" +
            (Hint.CallKind == Kind::ObjCSuper2 ? "objc_msgSendSuper2"

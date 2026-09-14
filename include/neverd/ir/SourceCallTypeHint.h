@@ -68,6 +68,16 @@ struct SourceCallTypeHint {
   /// reads at most that nonnegative count, never writes/retains the pointer,
   /// and does not observe its identity. These are call effects, not ABI types.
   std::vector<std::pair<unsigned, unsigned>> BorrowedByteInputs;
+  /// Proven actual arguments of an NSString format call. Signature contains
+  /// every supplied value at its physical location; only FixedCount values
+  /// belong in the emitted prototype. Revalidate the format object's identity
+  /// and compiler-derived declaration before publishing source.
+  struct FormatArguments {
+    unsigned FixedCount = 0;
+    unsigned FormatParameter = 0;
+    va_t FormatAddress = 0;
+  };
+  std::optional<FormatArguments> Format;
   /// Only RuntimeBorrowedBytes uses this exact byte extent at TargetAddress.
   uint32_t ByteCount = 0;
 };

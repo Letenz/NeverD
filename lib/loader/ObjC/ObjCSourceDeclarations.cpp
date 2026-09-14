@@ -84,8 +84,9 @@ const DeclarationIndex *frameworkDeclarations(const BinaryImage &Image) {
 }
 } // namespace
 
-std::optional<SourceFunctionTypeHint>
-objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector) {
+static std::optional<SourceFunctionTypeHint>
+selectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
+                       const SourceFunctionTypeHint *FormatSignature) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
@@ -117,13 +118,61 @@ objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector) {
   if (const auto *Declarations = frameworkDeclarations(Image)) {
     auto Found = Declarations->find(Selector.str());
     if (Found != Declarations->end()) {
-      if (!Found->second ||
-          (Result && !mergeSignature(*Result, *Found->second)))
+      const auto *Declared = Found->second ? &*Found->second : FormatSignature;
+      if (!Declared || (Result && !mergeSignature(*Result, *Declared)))
         return std::nullopt;
       if (!Result)
-        Result = Found->second;
+        Result = *Declared;
       Result->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
     }
+  }
+  return Result;
+}
+
+std::optional<SourceFunctionTypeHint>
+objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector) {
+  return selectorSourceTypeHint(Image, Selector, nullptr);
+}
+
+std::optional<ObjCFormatDeclaration>
+objcSelectorFormatDeclaration(const BinaryImage &Image,
+                              llvm::StringRef Selector) {
+  const auto *Framework = frameworkDeclarations(Image);
+  if (!Framework)
+    return std::nullopt;
+  const auto Ordinary = Framework->find(Selector.str());
+  if (Ordinary == Framework->end() || Ordinary->second)
+    return std::nullopt;
+  static constexpr struct {
+    const char *Selector;
+    const char *AArch64;
+    const char *X64;
+    unsigned FormatParameter;
+    unsigned FixedCount;
+  } Formats[] = {
+#include "ObjCFormatDeclarations.inc"
+  };
+  std::optional<ObjCFormatDeclaration> Result;
+  for (const auto &D : Formats) {
+    if (D.Selector != Selector)
+      continue;
+    // More than one declaration must never be resolved by visitation order.
+    if (Result)
+      return std::nullopt;
+    auto Signature = parseObjCMethodEncoding(
+        Selector, Image.Arch == Arch::AArch64 ? D.AArch64 : D.X64);
+    std::string Diagnostic;
+    if (!Signature || Signature->Parameters.size() != D.FixedCount ||
+        D.FormatParameter >= D.FixedCount ||
+        Signature->Parameters[D.FormatParameter].Type->Kind != NdTypeKind::Ptr)
+      return std::nullopt;
+    Signature->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+    if (!assignDarwinObjCSourceABI(*Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    Signature = selectorSourceTypeHint(Image, Selector, &*Signature);
+    if (!Signature)
+      return std::nullopt;
+    Result = ObjCFormatDeclaration{std::move(*Signature), D.FormatParameter};
   }
   return Result;
 }

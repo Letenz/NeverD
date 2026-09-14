@@ -12,6 +12,10 @@
 - (id)makeDictionary:(id __unsafe_unretained const *)objects
                 keys:(id<NSCopying> __unsafe_unretained const *)keys
                count:(NSUInteger)count;
+- (id)formatObject:(id)object number:(int)number fraction:(double)fraction;
+- (id)formatPosition:(int)width fraction:(double)fraction;
+- (id)formatEmpty;
+- (id)formatWide:(long long)value small:(unsigned char)small;
 @end
 
 @implementation NDFoundationCalls
@@ -39,5 +43,17 @@
                 keys:(id<NSCopying> __unsafe_unretained const *)keys
                count:(NSUInteger)count {
   return [NSDictionary dictionaryWithObjects:objects forKeys:keys count:count];
+}
+- (id)formatObject:(id)object number:(int)number fraction:(double)fraction {
+  return [NSString stringWithFormat:@"%@/%d/%.2f", object, number, fraction];
+}
+- (id)formatPosition:(int)width fraction:(double)fraction {
+  return [NSString stringWithFormat:@"%2$*1$.2f/%2$.2f", width, fraction];
+}
+- (id)formatEmpty {
+  return [NSString stringWithFormat:@"empty-%%-\u03a9"];
+}
+- (id)formatWide:(long long)value small:(unsigned char)small {
+  return [NSString stringWithFormat:@"%lld/%hhu", value, small];
 }
 @end

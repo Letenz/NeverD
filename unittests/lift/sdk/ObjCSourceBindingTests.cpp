@@ -3,6 +3,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/LowToMed.h"
 
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
@@ -919,4 +920,196 @@ TEST(ObjCSourceBindings,
               ExprKind::Const);
     EXPECT_FALSE(Result.Limitation.empty());
   }
+}
+
+TEST(ObjCSourceBindings, FormatArgumentsRequireCompleteConsistentSlots) {
+  auto Parse = [](llvm::StringRef Text) {
+    std::vector<uint16_t> Units(Text.begin(), Text.end());
+    return objcFormatArgumentTypes(Units);
+  };
+  auto Types = Parse("text %% %@ %d %hhu %lld %zu %*.*f %s %S %p");
+  ASSERT_TRUE(Types);
+  ASSERT_EQ(Types->size(), 11U);
+  EXPECT_EQ((*Types)[0]->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ((*Types)[1]->Size, 4U);
+  EXPECT_TRUE((*Types)[2]->IsSigned);
+  EXPECT_EQ((*Types)[3]->Size, 8U);
+  EXPECT_FALSE((*Types)[4]->IsSigned);
+  EXPECT_EQ((*Types)[5]->Size, 4U);
+  EXPECT_EQ((*Types)[6]->Size, 4U);
+  EXPECT_EQ((*Types)[7]->Kind, NdTypeKind::Float);
+  auto Positional = Parse("%3$*1$.*2$f / %3$f");
+  ASSERT_TRUE(Positional);
+  ASSERT_EQ(Positional->size(), 3U);
+  EXPECT_EQ((*Positional)[2]->Kind, NdTypeKind::Float);
+  EXPECT_TRUE(Parse("%1000000d"));
+  for (const char *Text :
+       {"%", "%q", "%n", "%Lf", "%ls", "%1$@ %1$d", "%2$@", "%0$d", "%65$d",
+        "%d %2$d", "%*2$d", "%1$d %d", "%99999999999999999999$d", "%.*"})
+    EXPECT_FALSE(Parse(Text)) << Text;
+  EXPECT_FALSE(objcFormatArgumentTypes(std::vector<uint16_t>{'%', 0x12d, 'd'}));
+  EXPECT_FALSE(
+      objcFormatArgumentTypes(std::vector<uint16_t>{'a', 0, '%', 'd'}));
+}
+
+namespace {
+ConstantStringFixture formatFixture(Arch Architecture) {
+  ConstantStringFixture F;
+  F.Image.Arch = Architecture;
+  F.Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  const std::string Format = "%@ %d %.2f";
+  std::copy(Format.begin(), Format.end(), F.Image.Segments[1].Data.begin());
+  F.Image.Segments[1].Data[Format.size()] = 0;
+  llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 24,
+                                   Format.size());
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, FormattedMessagesRevalidateFormatAndActualArguments) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = formatFixture(Architecture);
+    EXPECT_FALSE(objcSelectorSourceTypeHint(F.Image, "stringWithFormat:"));
+    auto Hint =
+        objcFormattedSourceCallHint(F.Image, "stringWithFormat:", 0x2000);
+    ASSERT_TRUE(Hint);
+    ASSERT_TRUE(Hint->Format);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 6U);
+    EXPECT_EQ(Hint->Format->FixedCount, 3U);
+    auto Call = HighExpr::makeCall("objc_msgSend", 0, {});
+    Call->Type = NdType::makePtr(NdType::makeVoid());
+    for (unsigned I = 0; I < 6; ++I)
+      Call->Operands.push_back(HighExpr::makeConst(I == 2 ? 0x2000 : 0, 8));
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      auto Bad = *Call;
+      auto Binding = std::make_shared<SourceCallTypeHint>(*Hint);
+      Bad.SourceCallHint = Binding;
+      if (Mutation == 0)
+        Binding->Format->FixedCount = 4;
+      if (Mutation == 1)
+        Binding->Format->FormatParameter = 1;
+      if (Mutation == 2)
+        Bad.Operands[2] = HighExpr::makeConst(0x2020, 8);
+      if (Mutation == 3)
+        Bad.Operands.pop_back();
+      if (Mutation == 4)
+        Binding->Signature.Parameters.back().Type = NdType::makeInt(8);
+      if (Mutation == 5)
+        Binding->CallKind = SourceCallTypeHint::Kind::Native;
+      EXPECT_FALSE(objcSourceCallBound(Bad, F.Image, {})) << Mutation;
+    }
+    F.Function.Body.front().RetVal = Call;
+    // A separately assigned format may be shared elsewhere; source binding
+    // must prove this argument occurrence against the original object.
+    auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_TRUE(
+        objcSourceCallBound(*Bound.Function.Body.front().RetVal, F.Image, {}));
+    F.Image.Segments[1].Data[1] = 'n';
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+  }
+}
+
+TEST(ObjCSourceBindings,
+     FormattedMessagesRespectEveryDeclarationAndImageProof) {
+  auto F = formatFixture(Arch::AArch64);
+  auto Declared = objcSelectorFormatDeclaration(F.Image, "stringWithFormat:");
+  ASSERT_TRUE(Declared);
+  ObjCMethod Method;
+  Method.Selector = "stringWithFormat:";
+  Method.TypeHint = Declared->Signature;
+  F.Image.ObjCMethods.push_back(Method);
+  EXPECT_TRUE(objcFormattedSourceCallHint(F.Image, Method.Selector, 0x2000));
+  F.Image.ObjCMethods.back().TypeHint->Parameters.back().Type =
+      NdType::makeInt(8);
+  EXPECT_FALSE(objcFormattedSourceCallHint(F.Image, Method.Selector, 0x2000));
+  F.Image.ObjCMethods.clear();
+  ObjCProtocol Protocol;
+  ObjCProtocolMethod PM;
+  PM.Selector = Method.Selector;
+  Protocol.Methods.push_back(PM);
+  F.Image.ObjCProtocols.push_back(Protocol);
+  EXPECT_FALSE(objcFormattedSourceCallHint(F.Image, Method.Selector, 0x2000));
+  F.Image.ObjCProtocols.clear();
+  F.Image.Segments[1].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  EXPECT_FALSE(objcFormattedSourceCallHint(F.Image, Method.Selector, 0x2000));
+  F = formatFixture(Arch::AArch64);
+  F.Image.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(objcFormattedSourceCallHint(F.Image, Method.Selector, 0x2000));
+}
+
+TEST(ObjCSourceBindings, FormattedLowCallsReadDarwinStackArgumentsBeforeSSA) {
+  auto F = formatFixture(Arch::AArch64);
+  auto &Image = F.Image;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  Image.ImportPtrSlots[0x3000] = "_objc_msgSend";
+  Image.ObjCSourceReferences.emplace(
+      0x3008, ObjCSourceReference{ObjCSourceReference::Kind::Selector,
+                                  0x3008,
+                                  8,
+                                  "stringWithFormat:",
+                                  {}});
+  LowFunc Function;
+  Function.Entry = 0x3000;
+  Function.Blocks.resize(1);
+  auto &Block = Function.Blocks.front();
+  Block.StartAddr = 0x3000;
+  auto Add = [&](NdOp Code, NdVar Out, std::initializer_list<NdVar> Args) {
+    LowOp Op;
+    Op.Opcode = Code;
+    Op.Output = Out;
+    Op.Addr = 0x3000 + Block.Ops.size() * 4;
+    for (const auto &Arg : Args)
+      Op.addInput(Arg);
+    Block.Ops.push_back(Op);
+  };
+  Add(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8), {NdVar::cst(0x3008, 8)});
+  Add(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[2], 8), {NdVar::cst(0x2000, 8)});
+  Add(NdOp::INDIR_CALL, {}, {NdVar::cst(0x3000, 8)});
+  Add(NdOp::RETURN, {}, {});
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  ASSERT_TRUE(Hints.begin()->second.Format);
+  LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  Converter.setSourceCallHintsEnabled(true);
+  auto Med = Converter.convert(Function, Image.Arch, BinaryFormat::MachO);
+  const MedOp *Call = nullptr;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.SourceCallHint)
+        Call = &Op;
+  ASSERT_NE(Call, nullptr);
+  ASSERT_EQ(Call->NumInputs, 7U);
+  for (unsigned I = 3; I < 6; ++I) {
+    EXPECT_EQ(Call->SourceCallHint->Signature.Parameters[I].Location.Kind,
+              SourceABICarrierKind::Stack);
+    EXPECT_EQ(
+        Call->SourceCallHint->Signature.Parameters[I].Location.EntryStackOffset,
+        (I - 3) * 8);
+  }
+  // Tail veneers live in another block. A single incoming edge carries the
+  // format fact, independent of block storage order; joins cannot borrow it.
+  LowFunc Split = Function;
+  Split.Blocks[0].Id = 0;
+  Split.Blocks[0].Ops.resize(2);
+  Split.Blocks[0].Succs = {1};
+  LowBlock Tail;
+  Tail.Id = 1;
+  Tail.StartAddr = 0x3010;
+  Tail.Preds = {0};
+  Tail.Ops = {Block.Ops[2], Block.Ops[3]};
+  Split.Blocks.push_back(Tail);
+  EXPECT_EQ(buildObjCSourceCallHints(Image, Split).size(), 1U);
+  std::reverse(Split.Blocks.begin(), Split.Blocks.end());
+  EXPECT_EQ(buildObjCSourceCallHints(Image, Split).size(), 1U);
+  Split.Blocks.front().Preds.push_back(2);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Split).empty());
+  // Losing the format register fact must not leave a guessed variadic call.
+  Block.Ops.insert(Block.Ops.begin() + 2, Block.Ops[1]);
+  Block.Ops[2].Inputs[0] = NdVar::reg(TRI.IntParamRegs[3], 8);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
 }

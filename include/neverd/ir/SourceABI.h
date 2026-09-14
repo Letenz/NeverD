@@ -19,6 +19,13 @@ bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right);
 bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
                                  Arch Architecture, std::string &Diagnostic);
 
+/// Assign a call's complete promoted scalar arguments, with a named prefix
+/// and an ellipsis. Darwin arm64 puts the unnamed values in eight-byte stack
+/// slots; x86_64 continues its independent integer and floating banks.
+bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
+                                   unsigned FixedCount, Arch Architecture,
+                                   std::string &Diagnostic);
+
 /// Assign Darwin's fixed scalar Objective-C ABI. Integer and FP registers are
 /// allocated independently; overflowing values use the entry-SP stack area.
 /// This is source projection metadata, never authenticated rewrite evidence.

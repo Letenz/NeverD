@@ -17,5 +17,17 @@ struct BinaryImage;
 /// permission to rewrite a method implementation.
 std::optional<SourceFunctionTypeHint>
 objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector);
+
+struct ObjCFormatDeclaration {
+  SourceFunctionTypeHint Signature;
+  unsigned FormatParameter = 0;
+};
+
+/// A compiler-declared NSString format contract, after agreement with every
+/// runtime and protocol declaration. Signature contains only the fixed prefix;
+/// callers must prove the format and assign all promoted variadic arguments.
+std::optional<ObjCFormatDeclaration>
+objcSelectorFormatDeclaration(const BinaryImage &Image,
+                              llvm::StringRef Selector);
 } // namespace neverd
 #endif

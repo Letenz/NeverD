@@ -16,6 +16,10 @@
 - (id)makeDictionary:(id __unsafe_unretained const *)objects
                 keys:(id<NSCopying> __unsafe_unretained const *)keys
                count:(NSUInteger)count;
+- (id)formatObject:(id)object number:(int)number fraction:(double)fraction;
+- (id)formatPosition:(int)width fraction:(double)fraction;
+- (id)formatEmpty;
+- (id)formatWide:(long long)value small:(unsigned char)small;
 @end
 
 #ifdef NEVERD_RECOVERED_ARC
@@ -77,6 +81,30 @@ int main(void) {
         if (result[keys[i]] != objects[i])
           return 8;
     }
+    for (int i = -32; i <= 32; ++i) {
+      for (int j = -8; j <= 8; ++j) {
+        id object = i & 1 ? @"object" : nil;
+        double fraction = j / 4.0;
+        NSString *expected =
+            [NSString stringWithFormat:@"%@/%d/%.2f", object, i, fraction];
+        if (![[calls formatObject:object number:i
+                         fraction:fraction] isEqualToString:expected])
+          return 9;
+        expected = [NSString stringWithFormat:@"%2$*1$.2f/%2$.2f", i, fraction];
+        if (![[calls formatPosition:i
+                           fraction:fraction] isEqualToString:expected])
+          return 10;
+      }
+      long long wide = 0x123456789abcll + i;
+      unsigned char small = (unsigned char)i;
+      NSString *expected =
+          [NSString stringWithFormat:@"%lld/%hhu", wide, small];
+      if (![[calls formatWide:wide small:small] isEqualToString:expected])
+        return 11;
+    }
+    if (![[calls formatEmpty] isEqualToString:@"empty-%-\u03a9"])
+      return 12;
+    puts("variadic-formats=2276");
     puts("framework-iterations=2048\narray-dictionaries=17\nnil-dispatch=pass");
   }
   return 0;

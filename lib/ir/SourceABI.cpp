@@ -236,4 +236,35 @@ bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
   return assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic);
 }
 
+bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
+                                   unsigned FixedCount, Arch Architecture,
+                                   std::string &Diagnostic) {
+  if (!FixedCount || FixedCount > Hint.Parameters.size())
+    return fail(Diagnostic, "Invalid variadic source prefix");
+  for (size_t I = FixedCount; I < Hint.Parameters.size(); ++I) {
+    const auto &T = Hint.Parameters[I].Type;
+    if (!scalarType(T) || (T->Kind == NdTypeKind::Int && T->Size < 4) ||
+        (T->Kind == NdTypeKind::Float && T->Size != 8))
+      return fail(Diagnostic, "Variadic source arguments must be promoted");
+  }
+  if (!assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic))
+    return false;
+  if (Architecture == Arch::AArch64) {
+    int64_t StackOffset = 0;
+    for (size_t I = 0; I < FixedCount; ++I) {
+      const auto &P = Hint.Parameters[I];
+      if (P.Location.Kind == SourceABICarrierKind::Stack)
+        StackOffset =
+            std::max(StackOffset, P.Location.EntryStackOffset + P.Type->Size);
+    }
+    StackOffset = (StackOffset + 7) & ~int64_t(7);
+    for (size_t I = FixedCount; I < Hint.Parameters.size(); ++I) {
+      auto &P = Hint.Parameters[I];
+      P.Location = {SourceABICarrierKind::Stack, 0, StackOffset, P.Type->Size};
+      StackOffset += 8;
+    }
+  }
+  return validateSourceABI(Hint, Diagnostic);
+}
+
 } // namespace neverd

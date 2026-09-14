@@ -944,3 +944,48 @@ int main(void) {
 }
 
 } // namespace
+
+TEST(SourceABI, DarwinVariadicArgumentsKeepPromotionsAndStackBoundary) {
+  using namespace neverd;
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeVoid();
+    Hint.Parameters = {{"format", NdType::makePtr(NdType::makeVoid())},
+                       {"integer", NdType::makeInt(4)},
+                       {"floating", NdType::makeFloat(8)},
+                       {"pointer", NdType::makePtr(NdType::makeVoid())}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinVariadicSourceABI(Hint, 1, Architecture, Error));
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Hint.Parameters[0].Location.RegisterOffset, TRI.IntParamRegs[0]);
+    if (Architecture == Arch::AArch64) {
+      for (unsigned I = 1; I < 4; ++I) {
+        EXPECT_EQ(Hint.Parameters[I].Location.Kind,
+                  SourceABICarrierKind::Stack);
+        EXPECT_EQ(Hint.Parameters[I].Location.EntryStackOffset, (I - 1) * 8);
+      }
+    } else {
+      EXPECT_EQ(Hint.Parameters[1].Location.RegisterOffset,
+                TRI.IntParamRegs[1]);
+      EXPECT_EQ(Hint.Parameters[2].Location.RegisterOffset, TRI.FPParamRegs[0]);
+      EXPECT_EQ(Hint.Parameters[3].Location.RegisterOffset,
+                TRI.IntParamRegs[2]);
+    }
+    for (const auto &Bad : {NdType::makeInt(1), NdType::makeInt(2),
+                            NdType::makeFloat(4), NdType::makeInt(16)}) {
+      Hint.Parameters.back().Type = Bad;
+      EXPECT_FALSE(assignDarwinVariadicSourceABI(Hint, 1, Architecture, Error));
+    }
+  }
+  SourceFunctionTypeHint Packed;
+  Packed.ReturnType = NdType::makeVoid();
+  Packed.Parameters.resize(11, {"value", NdType::makeInt(1, false)});
+  Packed.Parameters.back().Type = NdType::makeFloat(8);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinVariadicSourceABI(Packed, 10, Arch::AArch64, Error));
+  EXPECT_EQ(Packed.Parameters[8].Location.EntryStackOffset, 0);
+  EXPECT_EQ(Packed.Parameters[9].Location.EntryStackOffset, 1);
+  EXPECT_EQ(Packed.Parameters[10].Location.EntryStackOffset, 8);
+  EXPECT_FALSE(assignDarwinVariadicSourceABI(Packed, 0, Arch::AArch64, Error));
+  EXPECT_FALSE(assignDarwinVariadicSourceABI(Packed, 12, Arch::AArch64, Error));
+}
