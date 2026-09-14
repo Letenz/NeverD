@@ -50,6 +50,11 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                            bool IsReturn) {
     if (!scalarType(Type) || Location.ValueBytes != Type->Size)
       return false;
+    if (Location.ExtendTo32Bits &&
+        (!IsReturn || Hint.Architecture != Arch::AArch64 ||
+         Location.Kind != SourceABICarrierKind::IntegerRegister ||
+         Type->Kind != NdTypeKind::Int || Type->Size >= 4))
+      return false;
     if (Location.Kind == SourceABICarrierKind::Stack)
       return !IsReturn && Location.RegisterOffset == 0 &&
              Location.EntryStackOffset >=
@@ -70,7 +75,8 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
   };
   if (Hint.ReturnType->Kind == NdTypeKind::Void) {
     if (Hint.ReturnLocation.Kind != SourceABICarrierKind::None ||
-        Hint.ReturnLocation.ValueBytes != 0)
+        Hint.ReturnLocation.ValueBytes != 0 ||
+        Hint.ReturnLocation.ExtendTo32Bits)
       return fail(Diagnostic,
                   "Void source result has a physical value carrier");
   } else if (!ValidLocation(Hint.ReturnType, Hint.ReturnLocation, true)) {
@@ -144,6 +150,12 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
     Hint.ReturnLocation.RegisterOffset =
         Floating ? TRI.FPReturnReg : TRI.IntReturnReg;
     Hint.ReturnLocation.ValueBytes = Hint.ReturnType->Size;
+    // Clang's DarwinPCS classifies these results with ABIArgInfo::getExtend;
+    // AArch64's return convention promotes them to W0. Keep the source value
+    // width separate so a byte result is still emitted with its byte type.
+    Hint.ReturnLocation.ExtendTo32Bits =
+        Architecture == Arch::AArch64 &&
+        Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size < 4;
   }
   Hint.Architecture = Architecture;
   Hint.HasExplicitABI = true;

@@ -73,6 +73,8 @@ Objective-C 匯出也支援一組固定、使用一般 C ABI 的 Swift 執行階
 
 對於已確認的關聯物件 key 參數，NeverD 可將唯讀 Mach-O C 字串區域內的確定位址重建為共用的鍵識別。同一原始位址共用一個鍵，不同內部偏移保持不同身分。mobile 匯出會自動合併輔助函式；C API 在 `shared_identity_functions` 中列出名稱，跨方法原始碼檔案連結時，每個輔助函式只保留一個定義。這些鍵屬於重新建構的程式碼，不指向已載入的原始映像；其他用途的未繫結映像位址仍會阻止完整還原。
 
+經過驗證的 `os_unfair_lock_lock`, `os_unfair_lock_unlock`, `os_unfair_lock_trylock`, `os_unfair_lock_assert_owner`, `os_unfair_lock_assert_not_owner` 匯入透過 `<os/lock.h>` 呼叫真正的 Darwin 實作，保留鎖位址、所有權檢查與布林回傳值。未知變體仍不受支援。整數呼叫結果只保留宣告的 ABI 位元：Darwin arm64 依正負號屬性將 8/16 位元結果擴展至 32 位元，其餘暫存器位元保持未知。方法宣告的回傳寬度在分支合併前進入 SSA，避免未使用的高位元遮蔽有效的低位元組結果。
+
 當類別匯入、配置、字元儲存和修正資訊完整時，經過驗證的 Darwin `__cfstring` 記錄可重建為常數物件。保留 ASCII 位元組和 UTF-16 碼元，包括內嵌 NUL。相同的原始物件位址共用一個重建身分，不同記錄保持獨立。輔助函式列入 `shared_identity_functions`，連結時需要 Foundation。這不會允許對常數物件記錄進行未經驗證的原始記憶體存取。
 
 對於邊界明確且不含指標重定位的 `__DATA,__llvm_prf_cnts` 數值計數器節，NeverD 可重建跨方法共用的儲存空間，保留映像中的初始位元組、相互重疊的 1–16 位元組讀寫及更新。mobile 匯出會合併儲存輔助函式；使用 C API 時，跨原始碼檔案連結的每個 `shared_storage_functions` 輔助函式只能有一個定義。重建儲存獨立於原始映像及其效能分析執行環境；位址逸出、有序記憶體存取、不完整映射和指標重定位仍不受支援。

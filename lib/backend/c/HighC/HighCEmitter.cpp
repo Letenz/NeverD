@@ -483,9 +483,14 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
     if (Ex.Kind == ExprKind::Call) {
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
-        if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
-            Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
-            Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall) {
+        if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
+          // The SDK owns the exact public declarations, including bool and
+          // opaque lock pointers. Do not synthesize incompatible prototypes.
+          NeedsDarwinLocks = true;
+        } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
+                   Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+                   Hint.CallKind ==
+                       SourceCallTypeHint::Kind::SwiftRuntimeCall) {
           const bool Runtime =
               Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
               Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall;
@@ -631,6 +636,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("objc/message.h");
     Headers.insert("objc/runtime.h");
   }
+  if (NeedsDarwinLocks)
+    Headers.insert("os/lock.h");
 
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))

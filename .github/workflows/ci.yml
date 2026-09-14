@@ -404,6 +404,14 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.UnverifiedSelectorStubKeepsObservedCallerCommand",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.DarwinLocksKeepPointerAndBooleanCarriersWithSDKDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.DarwinLocksRejectUnprovenImportsAndNonzeroAddends",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.NarrowReturnExtensionRequiresAnExplicitDarwinArm64Carrier",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets",
@@ -644,9 +652,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 198,
-              ("macOS", "macos-patch"): 201,
-              ("Windows", "windows-focused"): 194,
+              ("Linux", "linux-semantic"): 202,
+              ("macOS", "macos-patch"): 206,
+              ("Windows", "windows-focused"): 198,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -656,6 +664,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledProfiledMethodsKeepSharedCounterStorage",
                       "ObjCRuntimeSource.RecompiledSwiftRuntimeCallsPreserveWeakObjectLifetimes",
                       "ObjCRuntimeSource.RecompiledConstantStringsPreserveContentsAndIdentity",
+                      "ObjCRuntimeSource.RecompiledUnfairLocksPreserveOwnershipAndConcurrentUpdates",
                   ))
           if runner_os in ("Linux", "macOS"):
               expected += (TestRecord(

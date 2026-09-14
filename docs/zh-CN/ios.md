@@ -75,6 +75,8 @@ Objective-C 导出还支持一组固定的、使用普通 C ABI 的 Swift 运行
 
 对于已确认的关联对象 key 参数，NeverD 可将只读 Mach-O C 字符串区域内的确定地址重建为共享的键标识。同一原始地址共用一个键，不同内部偏移保持不同身份。mobile 导出会自动合并辅助函数；C API 在 `shared_identity_functions` 中列出它们的名称，跨方法源码文件链接时，每个辅助函数只保留一个定义。这些键属于重新构建的代码，不指向已加载的原始映像；其他用途的未绑定映像地址仍会阻止完整恢复。
 
+经过验证的 `os_unfair_lock_lock`, `os_unfair_lock_unlock`, `os_unfair_lock_trylock`, `os_unfair_lock_assert_owner`, `os_unfair_lock_assert_not_owner` 导入通过 `<os/lock.h>` 调用真实的 Darwin 实现，保留锁地址、所有权检查和布尔返回值。未知变体仍不受支持。整数调用结果只保留声明的 ABI 位：Darwin arm64 按符号性将 8/16 位结果扩展到 32 位，其余寄存器位保持未知。方法声明的返回宽度在分支合并前进入 SSA，避免未使用的高位掩盖有效的低字节结果。
+
 当类导入、布局、字符存储和修正信息完整时，经过验证的 Darwin `__cfstring` 记录可重建为常量对象。保留 ASCII 字节和 UTF-16 码元，包括内嵌 NUL。相同的原始对象地址共享一个重建身份，不同记录保持独立。辅助函数列入 `shared_identity_functions`，链接时需要 Foundation。这不会允许对常量对象记录进行未经验证的原始内存访问。
 
 对于边界明确且不含指针重定位的 `__DATA,__llvm_prf_cnts` 数值计数器节，NeverD 可重建跨方法共享的存储，保留映像中的初始字节、相互重叠的 1–16 字节读写及更新。mobile 导出会合并存储辅助函数；使用 C API 时，跨源码文件链接的每个 `shared_storage_functions` 辅助函数只能有一个定义。重建存储独立于原始映像及其性能分析运行时；地址逃逸、有序内存访问、不完整映射和指针重定位仍不受支持。

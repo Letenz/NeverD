@@ -5,6 +5,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/object/SectionNames.h"
 
@@ -65,6 +66,7 @@ std::string importAt(const BinaryImage &Image, va_t Slot) {
   Name.consume_front("_");
   if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
       objcRuntimeSourceCallHint(Image, Slot) ||
+      darwinRuntimeSourceCallHint(Image, Slot) ||
       swiftRuntimeSourceCallHint(Image, Slot))
     return Name.str();
   return {};
@@ -330,6 +332,8 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           auto Runtime = objcRuntimeSourceCallHint(Image, Target->ImportSlot);
           if (!Runtime)
             Runtime = swiftRuntimeSourceCallHint(Image, Target->ImportSlot);
+          if (!Runtime)
+            Runtime = darwinRuntimeSourceCallHint(Image, Target->ImportSlot);
           if (Runtime) {
             Result.emplace(Op.Addr, std::move(*Runtime));
             Values.clear();

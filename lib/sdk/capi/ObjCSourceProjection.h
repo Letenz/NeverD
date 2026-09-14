@@ -54,7 +54,8 @@ inline bool sameLocation(const SourceABIValueLocation &Left,
   return Left.Kind == Right.Kind &&
          Left.RegisterOffset == Right.RegisterOffset &&
          Left.EntryStackOffset == Right.EntryStackOffset &&
-         Left.ValueBytes == Right.ValueBytes;
+         Left.ValueBytes == Right.ValueBytes &&
+         Left.ExtendTo32Bits == Right.ExtendTo32Bits;
 }
 
 inline bool sameHint(const SourceFunctionTypeHint &Left,

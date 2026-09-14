@@ -36,7 +36,9 @@ struct SourceCallTypeHint {
     /// Swift calling conventions and register-specialized entries are excluded.
     SwiftRuntimeCall,
     /// A verified Darwin constant-string object with one rebuilt identity.
-    RuntimeConstantString
+    RuntimeConstantString,
+    /// A fixed Darwin platform C ABI emitted against its public SDK header.
+    DarwinRuntimeCall
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;

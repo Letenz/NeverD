@@ -135,6 +135,7 @@ public:
   std::set<std::string> CIntrinsicNames;
   bool NeedsObjCRuntime = false;
   bool NeedsObjCSuper2 = false;
+  bool NeedsDarwinLocks = false;
   std::set<std::string> SourceObjectAddressHelpers;
   std::set<std::string> SourceBlockIsaNames;
   std::set<const HighFunc *> SourceAddressDefinitions;

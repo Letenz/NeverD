@@ -266,6 +266,107 @@ TEST(ObjCCallHints, SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets) {
   EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
 }
 
+TEST(ObjCCallHints,
+     DarwinLocksKeepPointerAndBooleanCarriersWithSDKDeclarations) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"os_unfair_lock_lock", "os_unfair_lock_unlock",
+          "os_unfair_lock_trylock", "os_unfair_lock_assert_owner",
+          "os_unfair_lock_assert_not_owner"}) {
+      SCOPED_TRACE(Name);
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+      EXPECT_EQ(Hint.TargetAddress, 0x2180U);
+      EXPECT_EQ(Hint.TargetName, Name);
+      EXPECT_EQ(Hint.Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinRuntime);
+      const bool TryLock = std::string(Name) == "os_unfair_lock_trylock";
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+                TryLock ? NdTypeKind::Int : NdTypeKind::Void);
+      ASSERT_EQ(Call.Args.size(), 1U);
+      EXPECT_EQ(Call.Args[0].RegOff,
+                getTargetRegInfo(Architecture).IntParamRegs.front());
+      EXPECT_EQ(Call.Args[0].Size, 8U);
+      EXPECT_EQ(Hint.Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      const auto &Op = Med.Blocks[Call.BlockId].Ops[Call.OpIdx];
+      EXPECT_EQ(Op.Output.Size, TryLock ? 1U : 0U);
+      EXPECT_EQ(Hint.Signature.ReturnLocation.ExtendTo32Bits,
+                TryLock && Architecture == Arch::AArch64);
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      std::string C;
+      llvm::raw_string_ostream OS(C);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+      EXPECT_NE(C.find("#include <os/lock.h>"), std::string::npos) << C;
+      EXPECT_NE(C.find(std::string(Name) + "("), std::string::npos) << C;
+      EXPECT_EQ(C.find("extern void os_unfair_lock"), std::string::npos) << C;
+      EXPECT_EQ(C.find("extern int os_unfair_lock"), std::string::npos) << C;
+      auto Changed = *Expression;
+      auto WrongHint = std::make_shared<SourceCallTypeHint>(Hint);
+      if (TryLock && Architecture == Arch::AArch64) {
+        WrongHint->Signature.ReturnLocation.ExtendTo32Bits = false;
+        Changed.SourceCallHint = WrongHint;
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {}));
+        WrongHint = std::make_shared<SourceCallTypeHint>(Hint);
+      }
+      WrongHint->TargetName = std::string(Name) + "_unproved";
+      Changed.SourceCallHint = std::move(WrongHint);
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {}));
+      Image.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, DarwinLocksRejectUnprovenImportsAndNonzeroAddends) {
+  for (const char *Name :
+       {"os_unfair_lock_lock", "_os_unfair_lock_lock_suffix",
+        "_os_unfair_lock_lock_with_options", "_os_unfair_lock_lock_with_flags",
+        "_OSSpinLockLock"}) {
+    auto Image = runtimeImage(Name);
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty()) << Name;
+  }
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    auto Image = runtimeImage("_os_unfair_lock_lock");
+    if (Mutation == 0) {
+      Image.ImportPtrSlots.clear();
+      Image.Symbols.push_back({"_os_unfair_lock_lock", 0x1100});
+    } else if (Mutation == 1)
+      Image.Segments[0].Data[0x108] ^= 1;
+    else if (Mutation == 2)
+      Image.IsRelocatable = true;
+    else if (Mutation == 3)
+      Image.Format = BinaryFormat::ELF;
+    else if (Mutation == 4)
+      Image.Bits = Bitness::Bits32;
+    else if (Mutation == 5)
+      Image.Arch = Arch::ARM;
+    else if (Mutation == 6 || Mutation == 7) {
+      auto &Binding = Image.ImportStorageSlots[0x2180];
+      Binding.Name = Mutation == 6 ? "_different" : "_os_unfair_lock_lock";
+      Binding.Addend = Mutation == 7;
+    } else {
+      auto &Binding = Image.DyldBindSlots[0x2180];
+      Binding.Name = "_os_unfair_lock_lock";
+      Binding.Addend = Mutation == 8;
+      Binding.WeakImport = Mutation == 9;
+    }
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty()) << Mutation;
+  }
+}
+
 TEST(ObjCCallHints, AssociatedObjectImportsPreserveKeyValueAndPolicyCarriers) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

@@ -180,7 +180,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   if (Hint.CallKind != Kind::Native && Hint.CallKind != Kind::ObjCMessage &&
       Hint.CallKind != Kind::ObjCSuper2 && Hint.CallKind != Kind::BlockInvoke &&
       Hint.CallKind != Kind::ObjCRuntimeCall &&
-      Hint.CallKind != Kind::SwiftRuntimeCall)
+      Hint.CallKind != Kind::SwiftRuntimeCall &&
+      Hint.CallKind != Kind::DarwinRuntimeCall)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
       E.Operands.size() != Signature.Parameters.size())
@@ -230,7 +231,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     Name = "((" + Prototype + ")(" + *Receiver + "))";
   } else if (!Message) {
     const bool Runtime = Hint.CallKind == Kind::ObjCRuntimeCall ||
-                         Hint.CallKind == Kind::SwiftRuntimeCall;
+                         Hint.CallKind == Kind::SwiftRuntimeCall ||
+                         Hint.CallKind == Kind::DarwinRuntimeCall;
     if (Runtime)
       Name = Hint.TargetName;
     const auto *Definition =

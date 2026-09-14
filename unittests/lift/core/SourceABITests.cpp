@@ -4,6 +4,8 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
@@ -112,6 +114,36 @@ TEST(SourceABI, RejectsConflictingCarriersAndUnmodelledTypes) {
   Bad.Parameters[1].Location = {SourceABICarrierKind::Stack, 0, 0, 8};
   EXPECT_FALSE(validateSourceABI(Bad, Error));
   EXPECT_NE(Error.find("Overlapping"), std::string::npos);
+}
+
+TEST(SourceABI, NarrowReturnExtensionRequiresAnExplicitDarwinArm64Carrier) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const uint16_t Bytes : {1, 2, 4, 8}) {
+      auto Hint = declaration(NdType::makeInt(Bytes));
+      std::string Error;
+      ASSERT_TRUE(assignDarwinObjCSourceABI(Hint, Architecture, Error));
+      EXPECT_EQ(Hint.ReturnLocation.ExtendTo32Bits,
+                Architecture == Arch::AArch64 && Bytes < 4);
+      Hint.ReturnLocation.ExtendTo32Bits = true;
+      EXPECT_EQ(validateSourceABI(Hint, Error),
+                Architecture == Arch::AArch64 && Bytes < 4);
+    }
+  }
+  auto Hint = declaration(NdType::makeInt(1));
+  std::string Error;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Error));
+  Hint.Parameters[0].Location.ExtendTo32Bits = true;
+  EXPECT_FALSE(validateSourceABI(Hint, Error));
+  Hint.Parameters[0].Location.ExtendTo32Bits = false;
+  Hint.ReturnType = NdType::makeFloat(4);
+  Hint.ReturnLocation = {SourceABICarrierKind::FloatingRegister,
+                         getTargetRegInfo(Arch::AArch64).FPReturnReg, 0, 4,
+                         true};
+  EXPECT_FALSE(validateSourceABI(Hint, Error));
+  Hint.ReturnType = NdType::makeVoid();
+  Hint.ReturnLocation = {};
+  Hint.ReturnLocation.ExtendTo32Bits = true;
+  EXPECT_FALSE(validateSourceABI(Hint, Error));
 }
 
 TEST(SourceABI, ExplicitSwiftReceiverCanUseDedicatedCalleeSavedRegister) {
@@ -400,6 +432,164 @@ void executeC(const std::string &Source) {
     EXPECT_EQ(Status, 0) << Error
                          << (Errors ? (*Errors)->getBuffer().str() : "") << '\n'
                          << Source;
+  }
+}
+
+TEST(SourceABI, NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto ReturnReg = getTargetRegInfo(Architecture).IntReturnReg;
+    const auto SavedReg =
+        Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX;
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (const uint16_t Bytes : {1, 2, 4}) {
+      for (const bool Signed : {false, true}) {
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(Signed);
+        const uint16_t KnownBytes = Architecture == Arch::AArch64 ? 4 : Bytes;
+        SourceFunctionTypeHint Callee;
+        Callee.ReturnType = NdType::makeInt(Bytes, Signed);
+        std::string Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+        std::map<va_t, SourceFunctionTypeHint> Hints{{0x1100, Callee}};
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        std::vector<HighFunc> Functions;
+        for (const uint16_t ReadBytes : {4, 8, 12, 16}) {
+          LowFunc Low;
+          Low.Entry = 0x1200;
+          Low.Name = "narrow_read_" + std::to_string(ReadBytes);
+          LowBlock Block;
+          Block.Id = 0;
+          Block.StartAddr = 0x1200;
+          Block.EndAddr = 0x1208;
+          LowOp Call;
+          Call.Addr = 0x1200;
+          Call.Opcode = NdOp::CALL;
+          Call.Output = NdVar::reg(ReturnReg, 8);
+          Call.addInput(NdVar::cst(0x1100, 8));
+          LowOp Return;
+          Return.Addr = 0x1204;
+          Return.Opcode = NdOp::RETURN;
+          Block.Ops = {Call};
+          if (ReadBytes == 8) {
+            // A full-register move preserves the known low word even though
+            // the call's upper word is not part of the declared result.
+            LowOp Copy;
+            Copy.Addr = 0x1204;
+            Copy.Opcode = NdOp::COPY;
+            Copy.Output = NdVar::reg(SavedReg, 8);
+            Copy.addInput(NdVar::reg(ReturnReg, 8));
+            Block.Ops.push_back(Copy);
+            Copy.Output = NdVar::reg(ReturnReg, 8);
+            Copy.NumInputs = 0;
+            Copy.addInput(NdVar::reg(SavedReg, 8));
+            Block.Ops.push_back(Copy);
+            Return.addInput(NdVar::reg(ReturnReg, KnownBytes));
+          } else {
+            Return.addInput(
+                NdVar::reg(ReturnReg, ReadBytes == 16 ? 8 : KnownBytes));
+          }
+          Block.Ops.push_back(Return);
+          Low.Blocks.push_back(Block);
+          if (ReadBytes == 12) {
+            // Merge a full saved register, then move it into the ABI result.
+            // The return's low lane must reach back through that copy and
+            // merge; its unused upper bits must not poison the source body.
+            Low.Blocks.clear();
+            Low.Blocks.resize(4);
+            for (int I = 0; I < 4; ++I) {
+              auto &B = Low.Blocks[I];
+              B.Id = I;
+              B.StartAddr = 0x1200 + I * 0x100;
+              B.EndAddr = B.StartAddr + 0x20;
+            }
+            LowOp Branch;
+            Branch.Opcode = NdOp::COND_BR;
+            Branch.Addr = 0x1204;
+            Branch.addInput(NdVar::cst(0x1400, 8));
+            Branch.addInput(NdVar::reg(ReturnReg, 1));
+            Low.Blocks[0].Ops = {Call, Branch};
+            Low.Blocks[0].Succs = {1, 2};
+            for (int I = 1; I <= 2; ++I) {
+              auto &B = Low.Blocks[I];
+              B.Preds = {0};
+              B.Succs = {3};
+              LowOp Copy;
+              Copy.Opcode = NdOp::COPY;
+              Copy.Addr = B.StartAddr;
+              Copy.Output = NdVar::reg(SavedReg, 8);
+              Copy.addInput(I == 1 ? NdVar::reg(ReturnReg, 8)
+                                   : NdVar::cst(1, 8));
+              LowOp Jump;
+              Jump.Opcode = NdOp::BRANCH;
+              Jump.Addr = B.StartAddr + 4;
+              Jump.addInput(NdVar::cst(0x1500, 8));
+              B.Ops = {Copy, Jump};
+            }
+            LowOp Copy;
+            Copy.Opcode = NdOp::COPY;
+            Copy.Addr = 0x1500;
+            Copy.Output = NdVar::reg(ReturnReg, 8);
+            Copy.addInput(NdVar::reg(SavedReg, 8));
+            Return.Addr = 0x1504;
+            Low.Blocks[3].Preds = {1, 2};
+            Low.Blocks[3].Ops = {Copy, Return};
+          }
+          SourceFunctionTypeHint Entry;
+          Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+          Entry.ReturnType =
+              NdType::makeInt(ReadBytes == 16 ? 8 : KnownBytes,
+                              Architecture == Arch::X64 && Signed);
+          ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+          Hints[Low.Entry] = Entry;
+          LowToMedConverter Converter;
+          Converter.setSourceCallHintsEnabled(true);
+          Converter.setSourceCalleeTypeHints(&Hints);
+          auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+          recoverCallAbi(Med, Architecture, {{0x1100, "narrow_result"}});
+          Med.SourceTypeHint = Entry;
+          inferMedTypes(Med, Architecture);
+          auto High = MedToHighConverter().convert(Med, Architecture);
+          if (ReadBytes == 16) {
+            std::string Unproven;
+            llvm::raw_string_ostream UnprovenOS(Unproven);
+            CEmitterOptions Options;
+            Options.TheArch = Architecture;
+            ASSERT_TRUE(HighCEmitter().emit({High}, UnprovenOS, Options));
+            EXPECT_NE(Unproven.find("caller-saved register clobbered"),
+                      std::string::npos)
+                << Unproven;
+          } else {
+            Functions.push_back(std::move(High));
+          }
+        }
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+        OS.flush();
+        EXPECT_EQ(Source.find("caller-saved register clobbered"),
+                  std::string::npos)
+            << Source;
+        const std::string Type = std::string(Signed ? "int" : "uint") +
+                                 std::to_string(Bytes * 8) + "_t";
+        Source += "\nstatic uint32_t input;\n" + Type +
+                  " sub_1100(void) { return (" + Type + ")input; }\n";
+        Source += "int main(void) {\n"
+                  "const uint32_t edges[] = {0x7fffffffU, 0x80000000U, "
+                  "0xfffffffeU, 0xffffffffU};\n"
+                  "for (unsigned round = 0; round != 65540; ++round) {\n"
+                  "input = round < 65536 ? round : edges[round - 65536];\n"
+                  "uint32_t expected = (uint32_t)(" +
+                  Type +
+                  ")input;\n"
+                  "if ((uint32_t)narrow_read_4() != expected) return 1;\n"
+                  "if ((uint32_t)narrow_read_8() != expected) return 2;\n"
+                  "if ((uint32_t)narrow_read_12() != "
+                  "((uint8_t)input ? 1U : expected)) return 3;\n"
+                  "}\nreturn 0;\n}\n";
+        ASSERT_NO_FATAL_FAILURE(executeC(Source));
+      }
+    }
   }
 }
 

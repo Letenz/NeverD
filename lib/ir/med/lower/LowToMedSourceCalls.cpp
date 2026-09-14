@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <set>
 
 namespace neverd {
 namespace {
@@ -45,12 +46,16 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     return;
   auto Hints = Image ? buildObjCSourceCallHints(*Image, Low)
                      : std::map<va_t, SourceCallTypeHint>();
-  if (Image) {
-    const SourceFunctionTypeHint *EntrySignature = nullptr;
-    if (SourceCalleeTypeHints)
-      if (auto It = SourceCalleeTypeHints->find(Low.Entry);
-          It != SourceCalleeTypeHints->end())
+  const SourceFunctionTypeHint *EntrySignature = nullptr;
+  if (SourceCalleeTypeHints)
+    if (auto It = SourceCalleeTypeHints->find(Low.Entry);
+        It != SourceCalleeTypeHints->end()) {
+      std::string Diagnostic;
+      if (It->second.Architecture == TargetArch &&
+          validateSourceABI(It->second, Diagnostic))
         EntrySignature = &It->second;
+    }
+  if (Image) {
     auto BlockHints = buildObjCBlockCallHints(*Image, Low, EntrySignature);
     Hints.insert(BlockHints.begin(), BlockHints.end());
   }
@@ -66,6 +71,17 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
   for (auto &Block : Func.Blocks) {
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
+      if (Op.Opcode == NdOp::RETURN && EntrySignature &&
+          EntrySignature->ReturnLocation.Kind ==
+              SourceABICarrierKind::IntegerRegister) {
+        // RET itself does not read X0/RAX. Publish the declared source lane
+        // before SSA so PHIs carry its low bytes without requiring unknown
+        // upper bits from a narrow call result.
+        const auto &Return = EntrySignature->ReturnLocation;
+        Op.NumInputs = 0;
+        Op.addInput(ndVarToMedVar(
+            NdVar::reg(Return.RegisterOffset, Return.ValueBytes)));
+      }
       if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
           Op.NumInputs != 1) {
         Ops.push_back(std::move(Op));
@@ -144,8 +160,124 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                       ? MedVar()
                       : ndVarToMedVar(NdVar::reg(Return.RegisterOffset,
                                                  Return.ValueBytes));
+      std::vector<MedOp> ReturnOps;
+      if (Return.Kind == SourceABICarrierKind::IntegerRegister &&
+          Return.ValueBytes < 8) {
+        // A scalar ABI result does not define the rest of its register. Keep
+        // those bits tied to this call's unknown clobber instead of either
+        // preserving the pre-call input or inventing an architectural write.
+        Op.Output = Temporary(Return.ValueBytes);
+        MedVar Value = Op.Output;
+        if (Return.ExtendTo32Bits) {
+          MedOp Extend;
+          Extend.Opcode =
+              Signature.ReturnType->IsSigned ? NdOp::INT_SEXT : NdOp::INT_ZEXT;
+          Extend.Addr = Op.Addr;
+          Extend.Output = Temporary(4);
+          Extend.addInput(Value);
+          Value = Extend.Output;
+          ReturnOps.push_back(std::move(Extend));
+        }
+        MedOp Upper;
+        Upper.Opcode = NdOp::SUBBYTES;
+        Upper.Addr = Op.Addr;
+        Upper.Output = Temporary(8 - Value.Size);
+        Upper.addInput(ndVarToMedVar(NdVar::reg(Return.RegisterOffset, 8)));
+        Upper.addInput(MedVar::makeConst(Value.Size, 4));
+        MedOp Merge;
+        Merge.Opcode = NdOp::CONCAT;
+        Merge.Addr = Op.Addr;
+        Merge.Output = ndVarToMedVar(NdVar::reg(Return.RegisterOffset, 8));
+        Merge.addInput(Upper.Output);
+        Merge.addInput(Value);
+        ReturnOps.push_back(std::move(Upper));
+        ReturnOps.push_back(std::move(Merge));
+      }
       Op.SourceCallHint =
           std::make_shared<const SourceCallTypeHint>(std::move(*Hint));
+      Ops.push_back(std::move(Op));
+      for (auto &ReturnOp : ReturnOps)
+        Ops.push_back(std::move(ReturnOp));
+    }
+    Block.Ops = std::move(Ops);
+  }
+
+  if (!EntrySignature ||
+      EntrySignature->ReturnLocation.Kind !=
+          SourceABICarrierKind::IntegerRegister ||
+      EntrySignature->ReturnLocation.ValueBytes >= 8)
+    return;
+  const auto Bytes = EntrySignature->ReturnLocation.ValueBytes;
+  std::set<uint64_t> ReturnRegisters{
+      EntrySignature->ReturnLocation.RegisterOffset};
+  auto WideCopy = [&](const MedOp &Op) {
+    return Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+           Op.Output.Kind == MedVar::Reg && Op.Inputs[0].Kind == MedVar::Reg &&
+           Op.Output.Size > Bytes &&
+           (Op.Output.Size == 2 || Op.Output.Size == 4 ||
+            Op.Output.Size == 8) &&
+           Op.Inputs[0].Size == Op.Output.Size &&
+           !TRI.isFrameOrLinkReg(Op.Output.RegOff) &&
+           !TRI.isStackPointer(Op.Output.RegOff) &&
+           !TRI.isVectorReg(Op.Output.RegOff) &&
+           !TRI.isFrameOrLinkReg(Op.Inputs[0].RegOff) &&
+           !TRI.isStackPointer(Op.Inputs[0].RegOff) &&
+           !TRI.isVectorReg(Op.Inputs[0].RegOff);
+  };
+  bool Changed = true;
+  while (Changed) {
+    Changed = false;
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (WideCopy(Op) && ReturnRegisters.count(Op.Output.RegOff))
+          Changed |= ReturnRegisters.insert(Op.Inputs[0].RegOff).second;
+  }
+  for (auto &Block : Func.Blocks) {
+    std::vector<MedOp> Ops;
+    for (auto Op : Block.Ops) {
+      if (WideCopy(Op) && ReturnRegisters.count(Op.Output.RegOff)) {
+        // A saved full register can carry a narrow result through several
+        // merges before the final return. Expose its low-lane dependency now
+        // so subregister normalization builds narrow PHIs along that path.
+        // CONCAT preserves every upper bit; it is not a narrow register write.
+        const auto Input = Op.Inputs[0];
+        MedOp Low;
+        Low.Opcode = NdOp::SUBBYTES;
+        Low.Addr = Op.Addr;
+        Low.Output = Temporary(Bytes);
+        Low.addInput(ndVarToMedVar(NdVar::reg(Input.RegOff, Bytes)));
+        Low.addInput(MedVar::makeConst(0, 4));
+        MedVar Value = Low.Output;
+        Ops.push_back(std::move(Low));
+        // Reassemble with ordinary 1/2/4/8-byte values. A seven-byte "high"
+        // would leak a nonexistent uint56_t into C when this register also
+        // carries a pointer along another path.
+        for (uint16_t Width = Bytes; Width < Input.Size; Width *= 2) {
+          MedOp Upper;
+          Upper.Opcode = NdOp::SUBBYTES;
+          Upper.Addr = Op.Addr;
+          Upper.Output = Temporary(Width);
+          Upper.addInput(Input);
+          Upper.addInput(MedVar::makeConst(Width, 4));
+          const bool Last = Width * 2 == Input.Size;
+          MedOp Piece;
+          Piece.Opcode = NdOp::CONCAT;
+          Piece.Addr = Op.Addr;
+          Piece.Output = Last ? Op.Output : Temporary(Width * 2);
+          Piece.addInput(Upper.Output);
+          Piece.addInput(Value);
+          Value = Piece.Output;
+          Ops.push_back(std::move(Upper));
+          if (Last) {
+            Op.Opcode = Piece.Opcode;
+            Op.NumInputs = 0;
+            Op.addInput(Piece.Inputs[0]);
+            Op.addInput(Piece.Inputs[1]);
+          } else {
+            Ops.push_back(std::move(Piece));
+          }
+        }
+      }
       Ops.push_back(std::move(Op));
     }
     Block.Ops = std::move(Ops);
