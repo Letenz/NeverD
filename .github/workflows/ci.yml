@@ -709,6 +709,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.NumericMasksKeepOccurrenceProvenanceThroughHighIR",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ImmutableScalarsPreserveWidthSignAndFloatingBits",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ImmutableScalarsRejectUnprovedStorageAndAddressUses",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ScalarMaskIdentityCannotAuthorizeAnAddressConsumer",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.StaticAssociationKeysKeepExactContextAndIdentity",
@@ -879,14 +883,15 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 312,
-              ("macOS", "macos-patch"): 325,
-              ("Windows", "windows-focused"): 308,
+              ("Linux", "linux-semantic"): 314,
+              ("macOS", "macos-patch"): 328,
+              ("Windows", "windows-focused"): 310,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
                       "ObjCRuntimeSource.RecompiledFrameworkFetchesPreserveContextObjects",
+                      "ObjCRuntimeSource.RecompiledImmutableScalarsPreserveFloatingBitPatterns",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",

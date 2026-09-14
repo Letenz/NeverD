@@ -375,6 +375,30 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           return Expression;
         }
       }
+      const auto &Type = Original->Type;
+      const bool Scalar = (Type->Kind == NdTypeKind::Int &&
+                           (Type->Size == 1 || Type->Size == 2 ||
+                            Type->Size == 4 || Type->Size == 8)) ||
+                          (Type->Kind == NdTypeKind::Float &&
+                           (Type->Size == 4 || Type->Size == 8));
+      if (Address && Scalar && !AddressContext && !MemoryAddress) {
+        if (const auto Bytes =
+                readImmutableImageBytes(Image, *Address, Type->Size)) {
+          uint64_t Bits = 0;
+          for (unsigned I = 0; I < Bytes->size(); ++I)
+            Bits |= uint64_t((*Bytes)[I]) << (I * 8);
+          // Reproduce a scalar value, never an original image pointer. The
+          // byte reader excludes mutable, overlapping and relocated storage;
+          // mapped values remain subject to ordinary address binding.
+          if (!Image.getSegmentFor(Bits)) {
+            auto Value = HighExpr::makeConst(Bits, Type->Size,
+                                             ConstantAddressProvenance::Scalar);
+            Value->Type = NdType::makeInt(Type->Size, false);
+            *Expression = *HighExpr::makeBitCast(Value, Type);
+            return Expression;
+          }
+        }
+      }
     }
     if (Expression->Kind == ExprKind::Load &&
         Expression->Operands.size() == 1 &&

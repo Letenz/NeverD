@@ -10,6 +10,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -46,6 +47,145 @@ struct Fixture {
   }
 };
 } // namespace
+
+TEST(ObjCSourceBindings, ImmutableScalarsPreserveWidthSignAndFloatingBits) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &Type :
+         {NdType::makeInt(1, false), NdType::makeInt(2, true),
+          NdType::makeInt(4, true), NdType::makeInt(8, false),
+          NdType::makeFloat(4), NdType::makeFloat(8)}) {
+      for (uint64_t Bits : std::array<uint64_t, 8>{
+               0, 7, 0x8000000000000000ULL, 0x41323456789abcdeULL,
+               0x7ff8000001234567ULL, 0x80000000, 0x7fc12345, UINT64_MAX}) {
+        SCOPED_TRACE(Type->str());
+        SCOPED_TRACE(Bits);
+        Fixture F;
+        F.Image.Arch = Architecture;
+        F.Image.ObjCSourceReferences.clear();
+        llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                         Bits);
+        F.Function.ReturnType = Type;
+        auto Load = HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8), Type);
+        F.Function.Body[0].RetVal = Load;
+        const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+        const auto Value = Result.Function.Body[0].RetVal;
+        ASSERT_EQ(Value->Kind, ExprKind::BitCast);
+        EXPECT_EQ(Value->Type->str(), Type->str());
+        ASSERT_EQ(Value->Operands.size(), 1U);
+        EXPECT_EQ(Value->Operands[0]->Kind, ExprKind::Const);
+        EXPECT_EQ(Value->Operands[0]->Type->Size, Type->Size);
+        EXPECT_EQ(Value->Operands[0]->ConstProvenance,
+                  ConstantAddressProvenance::Scalar);
+        const uint64_t Mask = Type->Size == 8
+                                  ? UINT64_MAX
+                                  : (uint64_t(1) << (Type->Size * 8)) - 1;
+        EXPECT_EQ(Value->Operands[0]->ConstVal, Bits & Mask);
+        EXPECT_EQ(Load->Kind, ExprKind::Load);
+        EXPECT_EQ(Load->Operands[0]->ConstVal, 0x1040U);
+      }
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, ImmutableScalarsRejectUnprovedStorageAndAddressUses) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Case = 0; Case < 22; ++Case) {
+      SCOPED_TRACE(Case);
+      Fixture F;
+      F.Image.Arch = Architecture;
+      F.Image.ObjCSourceReferences.clear();
+      const auto Type = NdType::makeInt(8, false);
+      F.Function.ReturnType = Type;
+      auto Load = HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8), Type);
+      F.Function.Body[0].RetVal = Load;
+      llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                       7);
+      switch (Case) {
+      case 0:
+        F.Image.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 1:
+        F.Image.Segments[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 2:
+        F.Image.Sections[0].FileSz = 0x47;
+        break;
+      case 3:
+        F.Image.Segments[0].Data.resize(0x47);
+        break;
+      case 4:
+        F.Image.Sections.push_back(F.Image.Sections[0]);
+        break;
+      case 5:
+        F.Image.Segments.push_back(F.Image.Segments[0]);
+        break;
+      case 6:
+        F.Image.Sections[0].Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+        F.Image.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Executable;
+        break;
+      case 7:
+        F.Image.BaseRelocations.push_back({0x1039, 0});
+        break;
+      case 8:
+        F.Image.MachOResolvedChainedPointerSlots.insert(0x1040);
+        break;
+      case 9:
+        F.Image.MachOChainedFixupsAmbiguous = true;
+        break;
+      case 10:
+        Load->Type = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 11:
+        Load->Type = NdType::makeFloat(16);
+        break;
+      case 12:
+        Load->Type = NdType::makeInt(16, false);
+        break;
+      case 13:
+        Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 14:
+        Load->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+        break;
+      case 15:
+        llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                         0x1040);
+        break;
+      case 16:
+        F.Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 17:
+        // A shared load may fold in a numeric occurrence, but that proof
+        // cannot authorize the same node as a memory address.
+        F.Function.Body[0].RetVal = HighExpr::makeBinop(
+            NdOp::INT_ADD, Load, HighExpr::makeLoad(Load, Type));
+        break;
+      case 18:
+        F.Image.IsRelocatable = true;
+        break;
+      case 19:
+        F.Image.Segments[0].FileSz = 0x47;
+        break;
+      case 20:
+        F.Image.DataPtrRelocSlots.insert(0x1047);
+        break;
+      case 21:
+        Load->Type = NdType::makeInt(3, false);
+        break;
+      }
+      const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Result.Limitation.empty());
+      EXPECT_EQ(Load->Kind, ExprKind::Load);
+      if (Case == 17)
+        EXPECT_EQ(Result.Function.Body[0].RetVal->Operands[0]->Kind,
+                  ExprKind::BitCast);
+    }
+  }
+}
 
 namespace {
 struct ConstantStringFixture {

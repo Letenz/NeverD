@@ -54,6 +54,7 @@ enum class RuntimeFixture {
   Foundation,
   BlockLifetimes,
   CoreData,
+  ScalarConstants,
   DarwinDeclarations
 };
 
@@ -63,6 +64,7 @@ void verifyRuntime(bool Chained,
   const bool DarwinDeclarations =
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
+  const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
@@ -86,6 +88,7 @@ void verifyRuntime(bool Chained,
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
   const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
                         : CoreData          ? "ObjCCoreDataCalls.m"
+                        : ScalarConstants   ? "ObjCScalarConstants.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
                         : Protocols         ? "ObjCProtocols.m"
@@ -98,6 +101,7 @@ void verifyRuntime(bool Chained,
                                             : "ObjCARC.m";
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
+                        : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
                         : Protocols         ? "ObjCProtocolsHarness.m"
@@ -161,6 +165,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
                              : CoreData          ? 3U
+                             : ScalarConstants   ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
                              : Protocols         ? 6U
@@ -250,6 +255,9 @@ void verifyRuntime(bool Chained,
     Remaining = {
         "fetchFromContext:request:error:", "countInContext:request:error:",
         "registeredObjectsInContext:"};
+  if (ScalarConstants)
+    Remaining = {"finiteDouble", "negativeZeroDouble", "payloadDouble",
+                 "finiteFloat",  "negativeZeroFloat",  "payloadFloat"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -281,6 +289,7 @@ void verifyRuntime(bool Chained,
                         "Class cls = objc_getClass(\"" +
                         std::string(DarwinDeclarations  ? "NDDarwinDeclarations"
                                     : CoreData          ? "NDCoreDataCalls"
+                                    : ScalarConstants   ? "NDScalarConstants"
                                     : BlockLifetimes    ? "NDBlockFactory"
                                     : Foundation        ? "NDFoundationCalls"
                                     : Protocols         ? "NDProtocolCalls"
@@ -486,6 +495,8 @@ void verifyRuntime(bool Chained,
       : CoreData
           ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
             "nil-context=pass\n"
+      : ScalarConstants
+          ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
             "conditional-invokes=1024\nconditional-construction=pass\n"
@@ -798,5 +809,17 @@ TEST(ObjCRuntimeSource, RecompiledFrameworkFetchesPreserveContextObjects) {
   }
 #else
   GTEST_SKIP() << "Requires macOS CoreData and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledImmutableScalarsPreserveFloatingBitPatterns) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ScalarConstants));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation";
 #endif
 }
