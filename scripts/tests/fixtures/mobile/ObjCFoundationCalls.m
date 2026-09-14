@@ -16,6 +16,8 @@
 - (id)formatPosition:(int)width fraction:(double)fraction;
 - (id)formatEmpty;
 - (id)formatWide:(long long)value small:(unsigned char)small;
+- (void)logObject:(id)object count:(int)count fraction:(double)fraction;
+- (void)logEmpty;
 @end
 
 @implementation NDFoundationCalls
@@ -55,5 +57,11 @@
 }
 - (id)formatWide:(long long)value small:(unsigned char)small {
   return [NSString stringWithFormat:@"%lld/%hhu", value, small];
+}
+- (void)logObject:(id)object count:(int)count fraction:(double)fraction {
+  NSLog(@"ND_FORMAT:%@/%d/%.2f", object, count, fraction);
+}
+- (void)logEmpty {
+  NSLog(@"ND_FORMAT:empty-%%");
 }
 @end

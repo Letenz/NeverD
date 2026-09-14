@@ -19,7 +19,7 @@ except ImportError:
     from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
 
 
-def format_contract(pretty):
+def format_contract(pretty, hidden_parameters=2):
     # Attribute string payloads are not declarations (for example annotate).
     pretty = re.sub(r'"(?:\\.|[^"\\])*"', '\"\"', pretty)
     contracts = re.findall(
@@ -30,13 +30,16 @@ def format_contract(pretty):
     if not 1 <= parameter < first_variadic <= 63:
         return None
     # Attribute positions count explicit arguments from one. The machine
-    # signature also carries self and _cmd before those arguments.
-    return parameter + 1, first_variadic + 1
+    # signature may carry hidden parameters before those arguments.
+    return parameter - 1 + hidden_parameters, first_variadic - 1 + hidden_parameters
 
 
 class FormatDeclarations(Clang):
+    hidden_parameters = 2
+
     def __init__(self, library):
         super().__init__(library)
+        self.bind('clang_Cursor_getNumArguments', ctypes.c_int, CXCursor)
         self.bind('clang_getCursorPrintingPolicy', ctypes.c_void_p, CXCursor)
         self.bind('clang_PrintingPolicy_dispose', None, ctypes.c_void_p)
         self.bind('clang_getCursorPrettyPrinted', CXString, CXCursor, ctypes.c_void_p)
@@ -55,11 +58,21 @@ class FormatDeclarations(Clang):
             pretty = self.string(self.clang_getCursorPrettyPrinted(cursor, policy))
         finally:
             self.clang_PrintingPolicy_dispose(policy)
-        contract = format_contract(pretty)
+        contract = format_contract(pretty, self.hidden_parameters)
         encoding = self.string(self.clang_getDeclObjCTypeEncoding(cursor))
-        if not contract or not encoding or contract[1] != selector.count(':') + 2:
+        if not contract or not encoding or contract[1] != self.clang_Cursor_getNumArguments(cursor) + self.hidden_parameters:
             return selector, ''
         return selector, json.dumps([encoding, *contract], separators=(',', ':'))
+
+
+def format_rows(profiles):
+    for selector, arm, intel in catalog_rows(profiles):
+        if not arm or not intel:
+            continue
+        a, b = json.loads(arm), json.loads(intel)
+        if a[1:] != b[1:]:
+            continue
+        yield selector, a[0], b[0], *a[1:]
 
 
 def render(profiles, version, compiler):
@@ -68,13 +81,8 @@ def render(profiles, version, compiler):
              f'// Compiler-derived Foundation format contracts: MacOSX SDK {version}.',
              f'// {compiler}', '// Target profiles: ' + ', '.join(TARGETS),
              '// No framework implementation is included.']
-    for selector, arm, intel in catalog_rows(profiles):
-        if not arm or not intel:
-            continue
-        a, b = json.loads(arm), json.loads(intel)
-        if a[1:] != b[1:]:
-            continue
-        lines.append('{' + ', '.join(map(json.dumps, [selector, a[0], b[0], *a[1:]])) + '},')
+    for row in format_rows(profiles):
+        lines.append('{' + ', '.join(map(json.dumps, row)) + '},')
     lines.append('// clang-format on')
     return '\n'.join(lines) + '\n'
 

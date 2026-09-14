@@ -20,6 +20,8 @@
 - (id)formatPosition:(int)width fraction:(double)fraction;
 - (id)formatEmpty;
 - (id)formatWide:(long long)value small:(unsigned char)small;
+- (void)logObject:(id)object count:(int)count fraction:(double)fraction;
+- (void)logEmpty;
 @end
 
 #ifdef NEVERD_RECOVERED_ARC
@@ -104,6 +106,11 @@ int main(void) {
     }
     if (![[calls formatEmpty] isEqualToString:@"empty-%-\u03a9"])
       return 12;
+    for (int i = 0; i < 3; ++i)
+      [calls logObject:i & 1 ? @"object" : nil
+                 count:i * 129 - 1
+              fraction:i / 4.0];
+    [calls logEmpty];
     puts("variadic-formats=2276");
     puts("framework-iterations=2048\narray-dictionaries=17\nnil-dispatch=pass");
   }

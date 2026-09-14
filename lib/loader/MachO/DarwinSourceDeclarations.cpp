@@ -5,6 +5,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
+#include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 
 #include <algorithm>
 #include <map>
@@ -141,5 +142,61 @@ darwinDeclaredSourceGlobalAddressHint(const BinaryImage &Image,
   if (!assignDarwinScalarSourceABI(Result.Signature, Image.Arch, Diagnostic))
     return std::nullopt;
   return Result;
+}
+
+std::optional<DarwinFormatDeclaration>
+darwinRuntimeFormatDeclaration(const BinaryImage &Image, va_t ImportSlot) {
+  const auto Import = darwinRuntimeImport(Image, ImportSlot);
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (!Import || !Import->starts_with("_") || Bind == Image.DyldBindSlots.end())
+    return std::nullopt;
+  static constexpr struct {
+    const char *Name;
+    const char *AArch64;
+    const char *X64;
+    unsigned FormatParameter;
+    unsigned FixedCount;
+    const char *AArch64Modules;
+    const char *X64Modules;
+  } Formats[] = {
+#include "DarwinFormatDeclarations.inc"
+  };
+  std::optional<DarwinFormatDeclaration> Result;
+  for (const auto &D : Formats) {
+    if (D.Name != Import->drop_front())
+      continue;
+    if (Result || !exportsFrom(Image.Arch == Arch::AArch64 ? D.AArch64Modules
+                                                           : D.X64Modules,
+                               Bind->second.Module))
+      return std::nullopt;
+    auto Signature = parseObjCFunctionEncoding(
+        Image.Arch == Arch::AArch64 ? D.AArch64 : D.X64);
+    std::string Error;
+    if (!Signature || Signature->Parameters.size() != D.FixedCount ||
+        D.FormatParameter >= D.FixedCount ||
+        Signature->Parameters[D.FormatParameter].Type->Kind != NdTypeKind::Ptr)
+      return std::nullopt;
+    Signature->Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    if (!assignDarwinScalarSourceABI(*Signature, Image.Arch, Error))
+      return std::nullopt;
+    Result = DarwinFormatDeclaration{std::move(*Signature), D.Name,
+                                     D.FormatParameter};
+  }
+  return Result;
+}
+
+std::optional<SourceCallTypeHint>
+darwinFormattedSourceCallHint(const BinaryImage &Image, va_t ImportSlot,
+                              va_t FormatAddress) {
+  auto Declaration = darwinRuntimeFormatDeclaration(Image, ImportSlot);
+  if (!Declaration)
+    return std::nullopt;
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Call.TargetAddress = ImportSlot;
+  Call.TargetName = Declaration->Name;
+  Call.Signature = std::move(Declaration->Signature);
+  return bindObjCFormatArguments(Image, std::move(Call),
+                                 Declaration->FormatParameter, FormatAddress);
 }
 } // namespace neverd

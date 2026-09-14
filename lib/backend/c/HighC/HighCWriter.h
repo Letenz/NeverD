@@ -144,7 +144,11 @@ public:
   std::set<std::string> SourceObjectAddressHelpers;
   std::set<std::string> SourceBlockIsaNames;
   std::set<const HighFunc *> SourceAddressDefinitions;
-  std::map<std::string, const SourceFunctionTypeHint *> SourceNativeSignatures;
+  struct SourceNativeDeclaration {
+    const SourceFunctionTypeHint *Signature;
+    std::optional<unsigned> VariadicFixedCount;
+  };
+  std::map<std::string, SourceNativeDeclaration> SourceNativeSignatures;
   std::map<std::string, std::string> SourceRuntimeLinkNames;
   std::map<std::string, std::string> SourceRuntimeDataIdentifiers;
   std::map<std::string, bool> SourceCallTermination;

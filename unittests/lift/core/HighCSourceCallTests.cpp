@@ -927,3 +927,53 @@ int main(void) {
   return 0;
 })");
 }
+
+TEST(HighCSourceCalls, VariadicCDeclarationsMergeOnlyTheirFixedPrefixes) {
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto I32 = NdType::makeInt(4);
+  const auto Double = NdType::makeFloat(8);
+  auto First = native("format_capture", I32, {Pointer, I32, Double});
+  First.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  First.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  First.Format = SourceCallTypeHint::FormatArguments{1, 0, 0x2000};
+  auto Second = First;
+  Second.Signature.Parameters.resize(1);
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinVariadicSourceABI(First.Signature, 1, Arch::X64, Error));
+  ASSERT_TRUE(
+      assignDarwinVariadicSourceABI(Second.Signature, 1, Arch::X64, Error));
+  auto With = returning(
+      "with_arguments",
+      call(First, I32,
+           {parameter(0, Pointer), parameter(1, I32), parameter(2, Double)}),
+      {Pointer, I32, Double});
+  auto Empty = returning("without_arguments",
+                         call(Second, I32, {parameter(0, Pointer)}), {Pointer});
+  const auto Source = emit({With, Empty});
+  EXPECT_NE(Source.find("neverd_darwin_format_capture(void*, ...)"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+#include <stdarg.h>
+int capture(void*,...) __asm__("_format_capture");
+int capture(void *format,...) {
+  if (!format) return 77;
+  va_list args; va_start(args,format);
+  int number=va_arg(args,int);double value=va_arg(args,double);va_end(args);
+  return number+(int)(value*4);
+}
+int main(void) {
+  if (without_arguments(0)!=77) return 1;
+  for(int i=-32;i<=32;++i)for(int j=-32;j<=32;++j)
+    if(with_arguments((void*)1,i,j/4.0)!=i+j) return 2;
+  return 0;
+})");
+  auto Wrong = Second;
+  Wrong.Format.reset();
+  auto Fixed =
+      returning("fixed", call(Wrong, I32, {parameter(0, Pointer)}), {Pointer});
+  EXPECT_NE(emit({With, Fixed}).find("conflicting native declarations"),
+            std::string::npos);
+}

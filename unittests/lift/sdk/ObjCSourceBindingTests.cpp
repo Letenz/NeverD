@@ -1113,3 +1113,63 @@ TEST(ObjCSourceBindings, FormattedLowCallsReadDarwinStackArgumentsBeforeSSA) {
   Block.Ops[2].Inputs[0] = NdVar::reg(TRI.IntParamRegs[3], 8);
   EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
 }
+
+TEST(ObjCSourceBindings, DarwinFormattedCallsRequireExactImportAndFormat) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto F = formatFixture(Architecture);
+    Segment Import;
+    Import.VA = Import.FileOff = 0x3000;
+    Import.Size = Import.FileSz = 8;
+    Import.Flags = SegmentFlags::Readable;
+    Import.Data.resize(8);
+    F.Image.Segments.push_back(Import);
+    Section Slot;
+    Slot.VA = Slot.FileOff = 0x3000;
+    Slot.Size = Slot.FileSz = 8;
+    Slot.Flags = SegmentFlags::Readable;
+    F.Image.Sections.push_back(Slot);
+    ASSERT_TRUE(F.Image.recordDyldBindSlot(
+        0x3000, "_NSLog", 0,
+        "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+    F.Image.ImportPtrSlots[0x3000] = "_NSLog";
+    ASSERT_TRUE(darwinRuntimeFormatDeclaration(F.Image, 0x3000));
+    ASSERT_TRUE(readObjCConstantString(F.Image, 0x2000));
+    auto Hint = darwinFormattedSourceCallHint(F.Image, 0x3000, 0x2000);
+    ASSERT_TRUE(Hint);
+    ASSERT_TRUE(Hint->Format);
+    EXPECT_EQ(Hint->Format->FixedCount, 1U);
+    EXPECT_EQ(Hint->Format->FormatParameter, 0U);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 4U);
+    auto Call = HighExpr::makeCall(
+        "_NSLog", 0x3000,
+        {HighExpr::makeConst(0x2000, 8), HighExpr::makeConst(0, 8),
+         HighExpr::makeConst(17, 4), HighExpr::makeConst(0, 8)});
+    Call->Type = NdType::makeVoid();
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Bad = std::make_shared<SourceCallTypeHint>(*Hint);
+      Call->SourceCallHint = Bad;
+      if (Mutation == 0)
+        Bad->TargetName = "NSLogv";
+      if (Mutation == 1)
+        Bad->TargetAddress = 0x3008;
+      if (Mutation == 2)
+        Bad->Format->FixedCount = 2;
+      if (Mutation == 3)
+        Bad->Format->FormatParameter = 1;
+      if (Mutation == 4)
+        Bad->Format.reset();
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {})) << Mutation;
+    }
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    Call->Operands[0] = HighExpr::makeConst(0x2020, 8);
+    EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+    F.Image.DyldBindSlots[0x3000].Module = "/tmp/private/Foundation";
+    EXPECT_FALSE(darwinFormattedSourceCallHint(F.Image, 0x3000, 0x2000));
+    F.Image.DyldBindSlots[0x3000].Module =
+        "/System/Library/Frameworks/Foundation.framework/Foundation";
+    F.Image.DyldBindSlots[0x3000].WeakImport = true;
+    EXPECT_FALSE(darwinFormattedSourceCallHint(F.Image, 0x3000, 0x2000));
+  }
+}

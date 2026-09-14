@@ -48,7 +48,10 @@ runtimeSourceCallHint(const BinaryImage &Image,
   case Kind::SwiftStringFromNSString:
     return swiftStringSourceCallHint(Image, Binding.TargetAddress);
   case Kind::DarwinRuntimeCall:
-    return darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+    return Binding.Format
+               ? darwinFormattedSourceCallHint(Image, Binding.TargetAddress,
+                                               Binding.Format->FormatAddress)
+               : darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
   case Kind::DarwinRuntimeGlobalAddress:
     return darwinRuntimeGlobalAddressHint(Image, Binding.TargetAddress);
   default:
@@ -63,7 +66,12 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
          Binding.TargetName == Expected.TargetName &&
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
-         !Binding.Format &&
+         bool(Binding.Format) == bool(Expected.Format) &&
+         (!Binding.Format ||
+          (Binding.Format->FixedCount == Expected.Format->FixedCount &&
+           Binding.Format->FormatParameter ==
+               Expected.Format->FormatParameter &&
+           Binding.Format->FormatAddress == Expected.Format->FormatAddress)) &&
          Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
          objc_projection_detail::sameHint(Binding.Signature,
                                           Expected.Signature);
@@ -568,7 +576,8 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
   if (Binding.Format &&
-      Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage)
+      Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage &&
+      Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
   std::string Reason;
   // Only catalogued runtime calls currently establish source noreturn
@@ -641,28 +650,21 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
            objc_projection_detail::sameHint(Hint,
                                             *Found->second->SourceTypeHint);
   }
-  if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
-      Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
-      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
-      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringFromNSString ||
-      Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall ||
-      Binding.CallKind ==
-          SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
-    const auto Expected = runtimeSourceCallHint(Image, Binding);
-    // HighIR retains the original veneer spelling in CallTarget. The source
-    // emitter uses the canonical operation carried by this runtime binding.
-    return Expected && runtimeBindingMatches(Binding, *Expected);
-  }
   if (Binding.Format) {
     const auto &Format = *Binding.Format;
-    const auto Expected = objcFormattedSourceCallHint(Image, Binding.Selector,
-                                                      Format.FormatAddress);
-    if (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
-        !Expected || !Expected->Format || Binding.DoesNotReturn ||
+    const bool Message =
+        Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage;
+    const auto Expected =
+        Message ? objcFormattedSourceCallHint(Image, Binding.Selector,
+                                              Format.FormatAddress)
+                : darwinFormattedSourceCallHint(Image, Binding.TargetAddress,
+                                                Format.FormatAddress);
+    if (!Expected || !Expected->Format || Binding.DoesNotReturn ||
         Format.FixedCount != Expected->Format->FixedCount ||
         Format.FormatParameter != Expected->Format->FormatParameter ||
         Format.FormatParameter >= Expression.Operands.size() ||
-        !objc_projection_detail::sameHint(Hint, Expected->Signature))
+        !objc_projection_detail::sameHint(Hint, Expected->Signature) ||
+        (!Message && !runtimeBindingMatches(Binding, *Expected)))
       return false;
     auto Argument = Expression.Operands[Format.FormatParameter];
     unsigned Depth = 0;
@@ -679,6 +681,18 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
              Argument->SourceCallHint->TargetAddress == Format.FormatAddress &&
              objcSourceCallBound(*Argument, Image, Functions);
     return constantAddress(*Argument) == Format.FormatAddress;
+  }
+  if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+      Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
+      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
+      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringFromNSString ||
+      Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+      Binding.CallKind ==
+          SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
+    const auto Expected = runtimeSourceCallHint(Image, Binding);
+    // HighIR retains the original veneer spelling in CallTarget. The source
+    // emitter uses the canonical operation carried by this runtime binding.
+    return Expected && runtimeBindingMatches(Binding, *Expected);
   }
   if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK) {
     const auto Expected = objcSelectorSourceTypeHint(Image, Binding.Selector);

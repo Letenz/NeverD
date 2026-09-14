@@ -227,14 +227,21 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     return bad("block invocation has no complete source binding");
   const bool Message =
       Hint.CallKind == Kind::ObjCMessage || Hint.CallKind == Kind::ObjCSuper2;
-  if (Hint.Format &&
-      (Hint.CallKind != Kind::ObjCMessage || !Hint.Format->FormatAddress ||
-       Hint.Format->FixedCount < 3 ||
-       Hint.Format->FixedCount > Signature.Parameters.size() ||
-       Hint.Format->FormatParameter < 2 ||
-       Hint.Format->FormatParameter >= Hint.Format->FixedCount ||
-       Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK))
-    return bad("invalid variadic source declaration");
+  if (Hint.Format) {
+    const auto &Format = *Hint.Format;
+    const bool DeclaredMessage =
+        Hint.CallKind == Kind::ObjCMessage &&
+        Signature.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK;
+    const bool DeclaredC =
+        Hint.CallKind == Kind::DarwinRuntimeCall &&
+        Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    if ((!DeclaredMessage && !DeclaredC) || !Format.FormatAddress ||
+        Format.FixedCount < (Message ? 3U : 1U) ||
+        Format.FixedCount > Signature.Parameters.size() ||
+        (Message && Format.FormatParameter < 2) ||
+        Format.FormatParameter >= Format.FixedCount)
+      return bad("invalid variadic source declaration");
+  }
   if (Message && (Signature.Parameters.size() < 2 || Hint.Selector.empty() ||
                   Signature.Parameters[0].Type->Kind != NdTypeKind::Ptr ||
                   Signature.Parameters[1].Type->Kind != NdTypeKind::Ptr))

@@ -128,23 +128,20 @@ objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format) {
 }
 
 std::optional<SourceCallTypeHint>
-objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
-                            va_t FormatAddress) {
-  auto Declaration = objcSelectorFormatDeclaration(Image, Selector);
+bindObjCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
+                        unsigned FormatParameter, va_t FormatAddress) {
   auto Format = readObjCConstantString(Image, FormatAddress);
   auto Arguments =
       Format ? objcFormatArgumentTypes(Format->Units) : std::nullopt;
-  if (!Declaration || !Arguments ||
-      Declaration->Signature.Parameters.size() + Arguments->size() > 64)
+  if (!Arguments || FormatParameter >= Result.Signature.Parameters.size() ||
+      !Result.Signature.Parameters[FormatParameter].Type ||
+      Result.Signature.Parameters[FormatParameter].Type->Kind !=
+          NdTypeKind::Ptr ||
+      Result.Signature.Parameters.size() + Arguments->size() > 64)
     return std::nullopt;
-  SourceCallTypeHint Result;
-  Result.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
-  Result.Selector = Selector.str();
-  Result.TargetName = "objc_msgSend";
-  Result.Signature = std::move(Declaration->Signature);
   const auto Fixed = unsigned(Result.Signature.Parameters.size());
-  Result.Format = SourceCallTypeHint::FormatArguments{
-      Fixed, Declaration->FormatParameter, FormatAddress};
+  Result.Format = SourceCallTypeHint::FormatArguments{Fixed, FormatParameter,
+                                                      FormatAddress};
   for (const auto &Type : *Arguments)
     Result.Signature.Parameters.push_back({"format_arg", Type});
   std::string Diagnostic;
@@ -152,5 +149,20 @@ objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
                                      Diagnostic))
     return std::nullopt;
   return Result;
+}
+
+std::optional<SourceCallTypeHint>
+objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
+                            va_t FormatAddress) {
+  auto Declaration = objcSelectorFormatDeclaration(Image, Selector);
+  if (!Declaration)
+    return std::nullopt;
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = Selector.str();
+  Call.TargetName = "objc_msgSend";
+  Call.Signature = std::move(Declaration->Signature);
+  return bindObjCFormatArguments(Image, std::move(Call),
+                                 Declaration->FormatParameter, FormatAddress);
 }
 } // namespace neverd

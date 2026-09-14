@@ -546,16 +546,26 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 ConflictingSourceNativeSignatures.insert(Name.str());
             }
             Targets.insert(Name.str());
+            const SourceNativeDeclaration Declaration{
+                &Hint.Signature, Hint.Format
+                                     ? std::optional(Hint.Format->FixedCount)
+                                     : std::nullopt};
             auto [It, Added] =
-                SourceNativeSignatures.emplace(Name.str(), &Hint.Signature);
-            auto TypeSpelling = [](const SourceFunctionTypeHint &Signature) {
+                SourceNativeSignatures.emplace(Name.str(), Declaration);
+            auto TypeSpelling = [](const SourceNativeDeclaration &D) {
+              const auto &Signature = *D.Signature;
               std::string Result = typeToC(Signature.ReturnType) + "(";
-              for (const auto &Parameter : Signature.Parameters)
-                Result += typeToC(Parameter.Type) + ",";
+              const auto Count =
+                  D.VariadicFixedCount.value_or(Signature.Parameters.size());
+              if (Count > Signature.Parameters.size())
+                return std::string{};
+              for (size_t I = 0; I < Count; ++I)
+                Result += typeToC(Signature.Parameters[I].Type) + ",";
+              if (D.VariadicFixedCount)
+                Result += "...";
               return Result + ")";
             };
-            if (!Added &&
-                TypeSpelling(*It->second) != TypeSpelling(Hint.Signature))
+            if (!Added && TypeSpelling(It->second) != TypeSpelling(Declaration))
               ConflictingSourceNativeSignatures.insert(Name.str());
           }
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::NativeAddress) {
@@ -754,7 +764,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // A source-bound native helper can appear after its caller in the emitted
   // module. Declare its actual recovered function signature before any body.
   std::set<const HighFunc *> Prototyped;
-  for (const auto &[Name, Signature] : SourceNativeSignatures) {
+  for (const auto &[Name, Declaration] : SourceNativeSignatures) {
+    const auto *Signature = Declaration.Signature;
     auto Definition = DefinedFuncs.find(Name);
     if (Definition == DefinedFuncs.end() ||
         !Prototyped.insert(Definition->second).second)
@@ -826,14 +837,21 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     auto SourceSignature = SourceNativeSignatures.find(Name);
     if (SourceSignature != SourceNativeSignatures.end() &&
         !ConflictingSourceNativeSignatures.count(Name)) {
-      const auto &Signature = *SourceSignature->second;
+      const auto &Declaration = SourceSignature->second;
+      const auto &Signature = *Declaration.Signature;
       std::string Declarator = Identifier + "(";
-      for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
+      const auto Count =
+          Declaration.VariadicFixedCount.value_or(Signature.Parameters.size());
+      if (Count > Signature.Parameters.size())
+        continue;
+      for (size_t I = 0; I < Count; ++I) {
         if (I)
           Declarator += ", ";
         Declarator += typeToC(Signature.Parameters[I].Type);
       }
-      if (Signature.Parameters.empty())
+      if (Declaration.VariadicFixedCount)
+        Declarator += ", ...";
+      else if (Signature.Parameters.empty())
         Declarator += "void";
       OS << "extern ";
       if (auto Effect = SourceCallTermination.find(Name);

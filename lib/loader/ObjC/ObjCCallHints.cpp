@@ -31,6 +31,7 @@ std::string importAt(const BinaryImage &Image, va_t Slot) {
   if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
       objcRuntimeSourceCallHint(Image, Slot) ||
       darwinRuntimeSourceCallHint(Image, Slot) ||
+      darwinRuntimeFormatDeclaration(Image, Slot) ||
       swiftStringSourceCallHint(Image, Slot) ||
       swiftRuntimeSourceCallHint(Image, Slot))
     return Name.str();
@@ -343,6 +344,23 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Runtime = darwinRuntimeSourceCallHint(Image, Target->ImportSlot);
           if (!Runtime)
             Runtime = swiftStringSourceCallHint(Image, Target->ImportSlot);
+          if (!Runtime) {
+            const auto Declaration =
+                darwinRuntimeFormatDeclaration(Image, Target->ImportSlot);
+            if (Declaration) {
+              const auto &Location =
+                  Declaration->Signature
+                      .Parameters[Declaration->FormatParameter]
+                      .Location;
+              const auto Format =
+                  Location.Kind == SourceABICarrierKind::IntegerRegister
+                      ? Read(NdVar::reg(Location.RegisterOffset, 8))
+                      : std::nullopt;
+              if (Format && Format->TheKind == Value::Kind::Number)
+                Runtime = darwinFormattedSourceCallHint(
+                    Image, Target->ImportSlot, Format->Number);
+            }
+          }
           if (Runtime) {
             Result.emplace(Op.Addr, std::move(*Runtime));
             Clobber(true);

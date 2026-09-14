@@ -155,7 +155,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
                              : BlockLifetimes    ? (ManualBlocks ? 5U : 4U)
-                             : Foundation        ? 11U
+                             : Foundation        ? 13U
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
@@ -236,7 +236,9 @@ void verifyRuntime(bool Chained,
                  "formatObject:number:fraction:",
                  "formatPosition:fraction:",
                  "formatEmpty",
-                 "formatWide:small:"};
+                 "formatWide:small:",
+                 "logObject:count:fraction:",
+                 "logEmpty"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -348,7 +350,7 @@ void verifyRuntime(bool Chained,
   else
     EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
                                        : ConstantStrings ? 6U
-                                       : Foundation      ? 4U
+                                       : Foundation      ? 6U
                                                          : 0U) +
                                           StorageNames.size());
   if (!IdentityHelpers.empty()) {
@@ -406,6 +408,23 @@ void verifyRuntime(bool Chained,
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
+  if (Foundation) {
+    auto Messages = [](const std::string &Text) {
+      std::vector<std::string> Result;
+      size_t Position = 0;
+      while ((Position = Text.find("ND_FORMAT:", Position)) !=
+             std::string::npos) {
+        const auto End = Text.find('\n', Position);
+        Result.push_back(Text.substr(Position, End - Position));
+        Position = End == std::string::npos ? Text.size() : End + 1;
+      }
+      return Result;
+    };
+    const auto BaselineMessages = Messages(read(Work / "baseline.err"));
+    const auto RecoveredMessages = Messages(read(Work / "recovered.err"));
+    ASSERT_EQ(BaselineMessages.size(), 4U);
+    EXPECT_EQ(RecoveredMessages, BaselineMessages);
+  }
   if (DiagnosticReports) {
     EXPECT_EQ(read(Work / "baseline.err"), read(Work / "recovered.err"));
     EXPECT_NE(
