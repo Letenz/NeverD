@@ -115,7 +115,7 @@ def render(profiles, exports, version, compiler):
         for (parameter, left), (_, right) in zip(a[1], b[1]):
             row = [name, a[0], b[0], parameter, left, right, *modules]
             lines.append('{' + ', '.join(map(json.dumps, row)) + '},')
-    lines.append('// clang-format on')
+    lines.append('    // clang-format on')
     return '\n'.join(lines) + '\n'
 
 

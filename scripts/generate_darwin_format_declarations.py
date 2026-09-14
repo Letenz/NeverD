@@ -41,7 +41,7 @@ def render(profiles, exports, version, compiler):
         if not all(modules):
             continue
         lines.append('{' + ', '.join(map(json.dumps, [*row, *modules])) + '},')
-    lines.append('// clang-format on')
+    lines.append('    // clang-format on')
     return '\n'.join(lines) + '\n'
 
 
