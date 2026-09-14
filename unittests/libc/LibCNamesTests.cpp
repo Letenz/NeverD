@@ -476,6 +476,8 @@ TEST(IsNoReturnTarget, NewIndexObservesChangedImageAndMismatchUsesLiveLookup) {
 }
 
 TEST(IsReturnsTwiceFunction, SetjmpFamily) {
+  EXPECT_TRUE(isReturnsTwiceFunction("vfork"));
+  EXPECT_TRUE(isReturnsTwiceFunction("_vfork"));
   EXPECT_TRUE(isReturnsTwiceFunction("setjmp"));
   EXPECT_TRUE(isReturnsTwiceFunction("sigsetjmp"));
   EXPECT_TRUE(isReturnsTwiceFunction("_setjmp"));

@@ -52,12 +52,15 @@ enum class RuntimeFixture {
   Protocols,
   NativePointers,
   Foundation,
-  BlockLifetimes
+  BlockLifetimes,
+  DarwinDeclarations
 };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false, bool ManualBlocks = false) {
+  const bool DarwinDeclarations =
+      FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
@@ -79,7 +82,8 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = BlockLifetimes      ? "ObjCBlockLifetimes.m"
+  const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
+                        : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
                         : Protocols         ? "ObjCProtocols.m"
                         : DiagnosticReports ? "ObjCDiagnosticReports.m"
@@ -89,7 +93,8 @@ void verifyRuntime(bool Chained,
                         : SwiftCalls        ? "ObjCSwiftRuntime.m"
                         : Associations      ? "ObjCAssociations.m"
                                             : "ObjCARC.m";
-  const char *Harness = BlockLifetimes      ? "ObjCBlockLifetimesHarness.m"
+  const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
+                        : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
                         : Protocols         ? "ObjCProtocolsHarness.m"
                         : DiagnosticReports ? "ObjCDiagnosticReportsHarness.m"
@@ -148,7 +153,8 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), BlockLifetimes      ? (ManualBlocks ? 5U : 4U)
+  ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 10U
+                             : BlockLifetimes    ? (ManualBlocks ? 5U : 4U)
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
@@ -226,6 +232,17 @@ void verifyRuntime(bool Chained,
                  "numberValue:",
                  "put:forKey:in:",
                  "makeDictionary:keys:count:"};
+  if (DarwinDeclarations)
+    Remaining = {"nameOfClass:",
+                 "classNamed:",
+                 "nameOfSelector:",
+                 "selectorNamed:",
+                 "incrementWithLock:counter:",
+                 "incrementWithObject:counter:",
+                 "compare:with:",
+                 "time:delta:",
+                 "lastError",
+                 "remainder:divisor:"};
   if (BlockLifetimes)
     Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:",
                  "duplicateBlock:", "releaseBlock:"};
@@ -234,7 +251,8 @@ void verifyRuntime(bool Chained,
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(BlockLifetimes      ? "NDBlockFactory"
+                        std::string(DarwinDeclarations  ? "NDDarwinDeclarations"
+                                    : BlockLifetimes    ? "NDBlockFactory"
                                     : Foundation        ? "NDFoundationCalls"
                                     : Protocols         ? "NDProtocolCalls"
                                     : DiagnosticReports ? "NDDiagnosticReports"
@@ -381,7 +399,9 @@ void verifyRuntime(bool Chained,
   }
   EXPECT_EQ(
       read(Work / "recovered.out"),
-      BlockLifetimes
+      DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
+                           "8192\nsynchronized-updates=8192\n"
+      : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
       : Foundation ? "framework-iterations=2048\narray-dictionaries=17\nnil-"
                      "dispatch=pass\n"
@@ -660,6 +680,19 @@ TEST(ObjCRuntimeSource,
       ASSERT_NO_FATAL_FAILURE(verifyRuntime(
           Chained, RuntimeFixture::BlockLifetimes, false, Manual));
     }
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::DarwinDeclarations));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";

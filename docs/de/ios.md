@@ -97,6 +97,8 @@ Bekannte Aufrufe von `objc_enumerationMutation` behalten das Objektargument und 
 
 Gelinkte 64-Bit-Darwin-Abbilder mit einem Import der Systembibliothek Foundation verwenden auch integrierte, vom Compiler extrahierte Framework-Deklarationen. Alle Laufzeit- und Framework-Deklarationen eines Selektors müssen übereinstimmen; variadische Signaturen, nicht unterstützte Aggregate und Abweichungen zwischen Plattformen bleiben ungebunden. Der Katalog liefert nur Aufruftypen, keine Empfängerklassen oder Funktionsrümpfe. Für die Nutzung von NeverD ist kein lokales Apple SDK erforderlich.
 
+C-Aufrufe mit festen Parametern verwenden zusätzlich compilerabgeleitete Deklarationen und SDK-Exportinformationen einschließlich Reexports. Die konkrete dyld-Bibliothek, das Symbol und die skalare ABI müssen übereinstimmen; schwache Imports, unbekannte Anbieter und nicht unterstützte Prototypen bleiben ungebunden. Generiertes C verwendet eigene Bezeichner mit den ursprünglichen Linkersymbolen. Gewöhnliche Synchronisationsaufrufe ohne sprachspezifische Ausnahmetabellen behalten ihre Aufrufe und Speicherwirkungen.
+
 Die Rekonstruktion von Laufzeitinformationen ist begrenzt: vollständige Properties, Protokolle, ursprüngliche Ownership-Annotationen, beliebige Aggregate, variadische Endargumente, ausnahmeabhängige Körper und nicht modellierte Block-/Capture-Layouts werden nicht versprochen. Laufzeitkodierungen beschreiben feste Argumente und können fehlende Auslassungspunkte im Original nicht beweisen. Chained Pointer werden nur für vom nativen Loader aufgelöste Slots verwendet; andere Formate behalten Diagnosen.
 
 ## Swift-Quelltext und Speicherlayout

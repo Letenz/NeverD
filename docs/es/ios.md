@@ -97,6 +97,8 @@ Las llamadas conocidas a `objc_enumerationMutation` conservan el argumento objet
 
 Las imágenes Darwin enlazadas de 64 bits que importan Foundation del sistema también consultan declaraciones integradas extraídas por el compilador. Todas las declaraciones del runtime y del framework para un selector deben ser compatibles; las firmas variádicas, los agregados no admitidos y las diferencias entre plataformas quedan sin enlazar. El catálogo aporta tipos de llamadas, sin determinar la clase del receptor ni generar cuerpos de funciones. Usar NeverD no requiere un SDK de Apple local.
 
+Las llamadas C con parámetros fijos también usan declaraciones extraídas por el compilador y datos de exportación y reexportación del SDK. Deben coincidir la biblioteca dyld exacta, el símbolo y la ABI escalar; las importaciones débiles, proveedores desconocidos y prototipos no admitidos quedan sin vincular. El C generado usa identificadores separados enlazados con los símbolos originales. Las llamadas de sincronización ordinarias sin tablas de excepciones conservan las llamadas reales y sus efectos en memoria.
+
 La reconstrucción del runtime es limitada. No se prometen propiedades y protocolos completos, anotaciones originales de propiedad, agregados arbitrarios, colas variádicas, cuerpos dependientes de excepciones ni disposiciones Block/capturas no modeladas. La codificación solo describe argumentos fijos y no demuestra que la declaración original careciera de puntos suspensivos. Los punteros encadenados se utilizan solo en posiciones resueltas por el cargador; los formatos no resueltos conservan diagnósticos.
 
 ## Fuentes Swift y almacenamiento

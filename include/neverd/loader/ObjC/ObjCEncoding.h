@@ -20,5 +20,11 @@ TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &Offset,
 /// Physical locations are assigned separately by the authoritative source ABI.
 std::optional<SourceFunctionTypeHint>
 parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding);
+
+/// Decode Clang's encoding of a fixed C function declaration. The caller
+/// must separately prove that the declaration is neither variadic nor an
+/// alternate calling convention; the encoding alone cannot establish those.
+std::optional<SourceFunctionTypeHint>
+parseObjCFunctionEncoding(llvm::StringRef Encoding);
 } // namespace neverd
 #endif

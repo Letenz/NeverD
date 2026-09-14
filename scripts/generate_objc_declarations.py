@@ -75,6 +75,17 @@ class Clang:
         finally:
             self.clang_disposeString(value)
 
+    def declaration(self, cursor):
+        # CXCursor_ObjCInstanceMethodDecl / ObjCClassMethodDecl.
+        # libclang includes synthesized property accessors here.
+        if cursor.kind not in (16, 17):
+            return None
+        selector = self.string(self.clang_getCursorSpelling(cursor))
+        encoding = self.string(self.clang_getDeclObjCTypeEncoding(cursor))
+        if self.clang_Cursor_isVariadic(cursor):
+            encoding = ""
+        return selector, encoding
+
     def extract(self, source, sdk, target):
         arguments = ["-x", "objective-c", "-fblocks", "-target", target,
                      "-isysroot", str(sdk)]
@@ -88,7 +99,7 @@ class Clang:
                 index, str(source).encode(), argv, len(argv), None, 0, 0
             )
             if not unit:
-                raise RuntimeError(f"cannot parse Foundation for {target}")
+                raise RuntimeError(f"cannot parse declarations for {target}")
             errors = []
             for number in range(self.clang_getNumDiagnostics(unit)):
                 diagnostic = self.clang_getDiagnostic(unit, number)
@@ -106,16 +117,10 @@ class Clang:
             @VISITOR
             def visit(cursor, parent, data):
                 try:
-                    # CXCursor_ObjCInstanceMethodDecl / ObjCClassMethodDecl.
-                    # libclang includes synthesized property accessors here.
-                    if cursor.kind in (16, 17):
-                        selector = self.string(
-                            self.clang_getCursorSpelling(cursor))
-                        encoding = self.string(
-                            self.clang_getDeclObjCTypeEncoding(cursor))
-                        if self.clang_Cursor_isVariadic(cursor):
-                            encoding = ""
-                        declarations.setdefault(selector, set()).add(encoding)
+                    declaration = self.declaration(cursor)
+                    if declaration is not None:
+                        name, encoding = declaration
+                        declarations.setdefault(name, set()).add(encoding)
                     return 2  # CXChildVisit_Recurse
                 except Exception as error:
                     failures.append(error)
@@ -127,7 +132,7 @@ class Clang:
             if failures:
                 raise failures[0]
             if not declarations:
-                raise RuntimeError(f"no Objective-C declarations for {target}")
+                raise RuntimeError(f"no source declarations for {target}")
             return declarations
         finally:
             if unit:

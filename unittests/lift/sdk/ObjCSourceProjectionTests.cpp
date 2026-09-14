@@ -968,3 +968,38 @@ TEST(ObjCSourceProjection, NativeDependencyGraphTracksMissingAndFinalEvidence) {
 }
 
 } // namespace
+
+TEST(ObjCSourceProjection,
+     OrdinarySynchronizationAnnotationsDoNotInventHandlers) {
+  for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+    Projection P;
+    auto &Metadata = P.Func.ExceptionMetadata.emplace();
+    Metadata.Encoding = ExceptionEncoding::CompactUnwind;
+    Metadata.Compact.emplace();
+    auto &ObjC = Metadata.ObjC.emplace();
+    ObjC.RuntimeCalls = {
+        {0x1000, 0x2000, "objc_sync_enter", ObjCRuntimeCallKind::SyncEnter},
+        {0x1004, 0x2004, "objc_sync_exit", ObjCRuntimeCallKind::SyncExit},
+        {0x1008, 0x2008, "objc_release", ObjCRuntimeCallKind::ARCCleanup}};
+    if (Mutation == 1)
+      ObjC.LandingPads.emplace_back();
+    if (Mutation == 2)
+      ObjC.UsesFragileSetjmp = true;
+    if (Mutation == 3)
+      ObjC.UsesMSVCTables = true;
+    if (Mutation == 4)
+      ObjC.Runtime = ObjCRuntimeKind::GNU;
+    if (Mutation == 5)
+      ObjC.RuntimeCalls[0].Kind = ObjCRuntimeCallKind::Throw;
+    if (Mutation == 6)
+      ObjC.RuntimeCalls[0].Kind = ObjCRuntimeCallKind::BeginCatch;
+    if (Mutation == 7)
+      ObjC.RuntimeCalls[0].Kind = ObjCRuntimeCallKind::EndCatch;
+    if (Mutation == 8)
+      Metadata.Compact->HasLSDA = true;
+    if (Mutation == 9)
+      Metadata.PersonalityVA = 0x2000;
+    EXPECT_EQ(P.limitation().empty(), Mutation == 0)
+        << Mutation << ':' << P.limitation();
+  }
+}

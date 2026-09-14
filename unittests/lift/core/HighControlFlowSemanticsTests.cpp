@@ -1790,3 +1790,61 @@ TEST(HighControlFlowSemantics, TypedViewsStillReferenceTheirVariable) {
     }
 }
 } // namespace
+
+TEST(HighControlFlowSemantics,
+     CalleeSavedComputedValuesRemainObservableMemoryWrites) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64, Arch::ARM, Arch::X86}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    ASSERT_FALSE(TRI.CalleeSaveRegs.empty());
+    for (bool Computed : {false, true})
+      for (uint64_t Register : TRI.CalleeSaveRegs) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Register);
+        MedFunc M;
+        M.Entry = 0x1000;
+        M.Name = "saved_register_is_not_a_dead_store";
+        M.FrameSize = 64;
+        M.ReturnType = NdType::makeInt(TRI.PointerSize, false);
+        auto Input = machineValue(0, Architecture);
+        Input.Kind = MedVar::Param;
+        Input.Size = TRI.PointerSize;
+        if (Computed)
+          M.Params = {Input};
+        auto Saved = machineValue(Computed ? 1 : 0, Architecture);
+        Saved.Kind = MedVar::Reg;
+        Saved.RegOff = Register;
+        Saved.SSAVer = Computed ? 1 : 0;
+        Saved.Size = TRI.PointerSize;
+        auto Loaded = machineValue(2, Architecture);
+        auto Sum = machineValue(3, Architecture);
+        Loaded.Size = Sum.Size = TRI.PointerSize;
+        Sum.Kind = MedVar::Reg;
+        Sum.RegOff = TRI.IntReturnReg;
+        Sum.SSAVer = 1;
+        auto C = [&](uint64_t V) {
+          return MedVar::makeConst(V, TRI.PointerSize);
+        };
+        M.Blocks.resize(1);
+        auto &B = M.Blocks.front();
+        B.Id = 0;
+        B.StartAddr = 0x1000;
+        B.EndAddr = 0x1014;
+        B.Ops = {operation(NdOp::INT_ADD, 0x1000, Saved, {Input, C(1)}),
+                 operation(NdOp::STORE, 0x1004, {}, {C(0x8000), Saved}),
+                 operation(NdOp::LOAD, 0x1008, Loaded, {C(0x8000)}),
+                 operation(NdOp::INT_ADD, 0x100c, Sum, {Loaded, Saved}),
+                 operation(NdOp::RETURN, 0x1010, {}, {Sum})};
+        if (!Computed)
+          B.Ops.erase(B.Ops.begin());
+        MedToHighConverter Converter;
+        const auto High = Converter.convert(M, Architecture);
+        size_t Stores = 0;
+        walkStmts(High.Body, [&](const HighStmt &S) {
+          Stores += S.Kind == StmtKind::Store;
+        });
+        EXPECT_EQ(Stores, 1U);
+        for (uint64_t Value : {0U, 1U, 17U, 65536U})
+          EXPECT_EQ(execute(High, Value), (Value + unsigned(Computed)) * 2);
+      }
+  }
+}

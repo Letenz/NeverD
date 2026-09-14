@@ -191,4 +191,23 @@ parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
   return Hint;
 }
 
+std::optional<SourceFunctionTypeHint>
+parseObjCFunctionEncoding(llvm::StringRef Encoding) {
+  if (Encoding.empty() || Encoding.size() > 4096)
+    return std::nullopt;
+  size_t I = 0;
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = parseObjCScalarType(Encoding, I);
+  if (!Hint.ReturnType || !digits(Encoding, I, true))
+    return std::nullopt;
+  while (I < Encoding.size() && Hint.Parameters.size() < 64) {
+    auto Type = parseObjCScalarType(Encoding, I);
+    if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, true))
+      return std::nullopt;
+    Hint.Parameters.push_back(
+        {"arg" + std::to_string(Hint.Parameters.size()), std::move(Type)});
+  }
+  return I == Encoding.size() ? std::optional(std::move(Hint)) : std::nullopt;
+}
+
 } // namespace neverd

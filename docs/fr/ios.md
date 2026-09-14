@@ -97,6 +97,8 @@ Les appels connus à `objc_enumerationMutation` conservent leur argument objet e
 
 Les images Darwin liées en 64 bits qui importent Foundation système consultent aussi les déclarations intégrées extraites par le compilateur. Toutes les déclarations du runtime et du framework pour un sélecteur doivent être compatibles ; les signatures variadiques, les agrégats non pris en charge et les divergences entre plateformes restent non liés. Le catalogue fournit uniquement les types des appels, sans déterminer la classe du récepteur ni produire un corps de fonction. Utiliser NeverD ne nécessite pas de SDK Apple local.
 
+Les appels C à paramètres fixes utilisent aussi les déclarations extraites par le compilateur et les exports et réexports du SDK. La bibliothèque dyld exacte, le symbole et l’ABI scalaire doivent correspondre ; les imports faibles, fournisseurs inconnus et prototypes non pris en charge restent non liés. Le C généré emploie des identifiants distincts liés aux symboles originaux. Les appels ordinaires de synchronisation sans tables de gestion des exceptions conservent leurs appels réels et effets mémoire.
+
 La reconstruction du runtime est limitée : propriétés et protocoles complets, annotations de propriété mémoire originales, agrégats arbitraires, arguments variadiques, corps dépendant d’exceptions et dispositions Block/captures non modélisées ne sont pas promis. L’encodage décrit les paramètres fixes et ne prouve pas l’absence de points de suspension dans l’original. Les pointeurs chaînés sont utilisés uniquement lorsque le chargeur a résolu leurs emplacements ; les formats non résolus conservent leurs diagnostics.
 
 ## Sources Swift et stockage

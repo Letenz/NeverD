@@ -68,8 +68,23 @@ inline bool isPlainUnwind(const ExceptionFunction &Metadata) {
       Metadata.Personality != ExceptionPersonality::None ||
       Metadata.PersonalityVA || !Metadata.PersonalityName.empty() ||
       Metadata.HandlerDataVA || Metadata.hasLanguageTable() ||
-      Metadata.GSCookie || Metadata.ARMEHABI || Metadata.Rust || Metadata.ObjC)
+      Metadata.GSCookie || Metadata.ARMEHABI || Metadata.Rust)
     return false;
+  if (Metadata.ObjC) {
+    const auto &ObjC = *Metadata.ObjC;
+    // A runtime synchronization call can occur in an ordinary C body without
+    // a landing pad or personality. Its call binding is checked separately;
+    // the presence of a language annotation alone does not imply a handler.
+    if (ObjC.Runtime != ObjCRuntimeKind::AppleNonFragile ||
+        ObjC.UsesFragileSetjmp || ObjC.UsesMSVCTables ||
+        !ObjC.LandingPads.empty() || ObjC.RuntimeCalls.empty())
+      return false;
+    for (const auto &Call : ObjC.RuntimeCalls)
+      if (Call.Kind != ObjCRuntimeCallKind::SyncEnter &&
+          Call.Kind != ObjCRuntimeCallKind::SyncExit &&
+          Call.Kind != ObjCRuntimeCallKind::ARCCleanup)
+        return false;
+  }
   if (Metadata.Encoding == ExceptionEncoding::CompactUnwind) {
     if (!Metadata.Compact)
       return false;

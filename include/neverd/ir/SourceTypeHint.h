@@ -50,7 +50,10 @@ struct SourceFunctionTypeHint {
     SwiftStringBridge,
     /// A source call uses a compiler-derived framework declaration in
     /// addition to any declarations present in the binary itself.
-    ObjCSDK
+    ObjCSDK,
+    /// A fixed C ABI from compiler-derived declarations and exact library
+    /// export evidence. The loader revalidates the actual import identity.
+    DarwinSDK
   };
   OriginKind Origin = OriginKind::ObjCRuntime;
   TypeRef ReturnType;

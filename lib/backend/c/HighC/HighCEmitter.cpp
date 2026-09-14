@@ -483,7 +483,12 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
     if (Ex.Kind == ExprKind::Call) {
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
-        if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
+        const bool DeclaredC =
+            Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+            Hint.Signature.Origin ==
+                SourceFunctionTypeHint::OriginKind::DarwinSDK;
+        if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+            !DeclaredC) {
           if (Hint.TargetName == "__stack_chk_fail")
             NeedsDarwinStackFailure = true;
           else if (llvm::StringRef(Hint.TargetName).starts_with("_Block_"))
@@ -502,13 +507,21 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
                    Hint.CallKind ==
-                       SourceCallTypeHint::Kind::SwiftRuntimeCall) {
+                       SourceCallTypeHint::Kind::SwiftRuntimeCall ||
+                   DeclaredC) {
           const bool Runtime =
               Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
-              Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall;
+              Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
+              DeclaredC;
+          // Scalar ABI declarations use private C identifiers and exact linker
+          // names, avoiding conflicting SDK typedefs or libc header prototypes.
+          const std::string DeclaredName =
+              DeclaredC ? "neverd_darwin_" + Hint.TargetName : "";
           llvm::StringRef Name = Runtime || Ex.CallTarget.empty()
                                      ? Hint.TargetName
                                      : Ex.CallTarget;
+          if (DeclaredC)
+            Name = DeclaredName;
           if (!Runtime)
             if (const auto *Definition = sourceCallDefinition(Hint, Name))
               Name = Definition->Name;

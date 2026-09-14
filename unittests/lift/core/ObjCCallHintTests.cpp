@@ -1748,3 +1748,111 @@ TEST(ObjCCallHints,
     EXPECT_EQ(Copy.Inputs[I + 1].ConstVal, I + 100);
 }
 } // namespace
+
+TEST(ObjCCallHints, SDKCDeclarationsPreservePointerIntegerAndFloatCarriers) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Module, Count, ResultKind, ResultBytes] :
+         {std::tuple{
+              "NSStringFromClass",
+              "/System/Library/Frameworks/Foundation.framework/Foundation", 1U,
+              NdTypeKind::Ptr, 8U},
+          std::tuple{"CFStringCompare",
+                     "/System/Library/Frameworks/CoreFoundation.framework/"
+                     "CoreFoundation",
+                     3U, NdTypeKind::Int, 8U},
+          std::tuple{"pthread_mutex_lock", "/usr/lib/libSystem.B.dylib", 1U,
+                     NdTypeKind::Int, 4U},
+          std::tuple{"dispatch_time", "/usr/lib/system/libdispatch.dylib", 2U,
+                     NdTypeKind::Int, 8U},
+          std::tuple{"fmod", "/usr/lib/libSystem.B.dylib", 2U,
+                     NdTypeKind::Float, 8U},
+          std::tuple{"__error", "/usr/lib/libSystem.B.dylib", 0U,
+                     NdTypeKind::Ptr, 8U}}) {
+      SCOPED_TRACE(Name);
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0, Module, false};
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+      const auto &Hint = *Med.CallInfos.front().SourceCallHint;
+      EXPECT_EQ(Hint.Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      EXPECT_EQ(Hint.TargetName, Name);
+      EXPECT_EQ(Hint.Signature.Parameters.size(), Count);
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind, ResultKind);
+      EXPECT_EQ(Hint.Signature.ReturnType->Size, ResultBytes);
+      if (ResultKind == NdTypeKind::Float) {
+        EXPECT_EQ(Hint.Signature.ReturnLocation.Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        for (const auto &Parameter : Hint.Signature.Parameters)
+          EXPECT_EQ(Parameter.Location.Kind,
+                    SourceABICarrierKind::FloatingRegister);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      std::string C;
+      llvm::raw_string_ostream OS(C);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+      EXPECT_NE(C.find("neverd_darwin_" + std::string(Name) + "("),
+                std::string::npos)
+          << C;
+      EXPECT_NE(C.find("__asm__(\"_" + std::string(Name) + "\")"),
+                std::string::npos)
+          << C;
+      EXPECT_EQ(C.find("#include <os/lock.h>"), std::string::npos) << C;
+      Image.DyldBindSlots[0x2180].Module = "/tmp/impostor.dylib";
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+      auto Image = runtimeImage("_NSStringFromClass", Architecture);
+      const std::string Module = "/System/Library/Frameworks/"
+                                 "Foundation.framework/Versions/C/Foundation";
+      Image.DyldBindSlots[0x2180] = {"_NSStringFromClass", 0, Module, false};
+      if (Mutation == 1)
+        Image.DyldBindSlots.clear();
+      if (Mutation == 2)
+        Image.DyldBindSlots[0x2180].Module.clear();
+      if (Mutation == 3)
+        Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      if (Mutation == 4)
+        Image.DyldBindSlots[0x2180].Module =
+            "/tmp/Foundation.framework/Foundation";
+      if (Mutation == 5)
+        Image.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 6)
+        Image.DyldBindSlots[0x2180].Addend = 4;
+      if (Mutation == 7)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_EQ(bool(darwinRuntimeSourceCallHint(Image, 0x2180)), Mutation == 0)
+          << Mutation;
+    }
+    // Exported names cannot turn a variadic prefix, a by-value aggregate or
+    // an unknown callback prototype into a complete scalar declaration.
+    for (const char *Name : {"NSLog", "CFStringCreateWithFormat", "sigsetjmp",
+                             "vfork", "dispatch_async_f"}) {
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_" + std::string(Name), 0,
+          std::string(Name) == "NSLog"
+              ? "/System/Library/Frameworks/Foundation.framework/Foundation"
+          : std::string(Name) == "CFStringCreateWithFormat"
+              ? "/System/Library/Frameworks/CoreFoundation.framework/"
+                "CoreFoundation"
+              : "/usr/lib/libSystem.B.dylib",
+          false};
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180)) << Name;
+    }
+  }
+}

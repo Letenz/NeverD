@@ -99,6 +99,8 @@ Known `objc_enumerationMutation` calls preserve the object argument and the cont
 
 Linked 64-bit Darwin images importing system Foundation also consult built-in compiler-derived framework declarations. Every runtime and framework declaration for a selector must agree; variadic, unsupported aggregate, or platform-inconsistent signatures stay unbound. The catalog supplies call types, not receiver classes or function bodies. Using NeverD does not require a local Apple SDK.
 
+Fixed C calls additionally use compiler-derived declarations and SDK export/reexport facts. Binding requires the exact dyld library, symbol and scalar ABI; weak imports, unknown providers and unsupported prototypes remain unbound. Generated C uses separate identifiers linked to the original symbols. Ordinary synchronization calls without language dispatch tables preserve their real calls and memory effects.
+
 This is a limited reconstruction of runtime information. Complete properties, protocols, original ownership annotations, arbitrary aggregates, variadic tails, exception-dependent bodies, and unmodelled Block/capture layouts are not promised. Runtime encoding describes fixed arguments and cannot prove that the original declaration had no variadic tail. Chained pointers are used only where the native loader resolved the relevant slots; unresolved formats retain diagnostics.
 
 ## Swift source and storage

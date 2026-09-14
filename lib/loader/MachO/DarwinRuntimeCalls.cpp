@@ -1,6 +1,7 @@
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 
 #include "DarwinRuntimeImport.h"
+#include "DarwinSourceDeclarations.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
@@ -34,7 +35,7 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
       Name != "os_unfair_lock_lock" && Name != "os_unfair_lock_unlock" &&
       Name != "os_unfair_lock_assert_owner" &&
       Name != "os_unfair_lock_assert_not_owner")
-    return std::nullopt;
+    return darwinDeclaredSourceCallHint(Image, ImportSlot);
   SourceCallTypeHint Result;
   Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
   Result.DoesNotReturn = StackFailure;

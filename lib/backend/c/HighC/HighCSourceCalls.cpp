@@ -259,6 +259,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Name = "neverd_swift_string_to_nsstring";
     else if (Hint.CallKind == Kind::SwiftStringFromNSString)
       Name = "neverd_nsstring_to_swift_string";
+    else if (Hint.CallKind == Kind::DarwinRuntimeCall &&
+             Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK)
+      Name = "neverd_darwin_" + Hint.TargetName;
     const auto *Definition =
         Runtime ? nullptr : sourceCallDefinition(Hint, Name);
     if (Hint.TargetAddress && !Definition && DefinedFuncs.count(Name))

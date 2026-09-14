@@ -16,6 +16,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HighFrameAddress.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
@@ -36,38 +38,6 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
   if (TRI.PointerSize != 4 && TRI.PointerSize != 8)
     return;
   size_t Budget = 100000;
-  std::function<std::optional<int64_t>(const ExprPtr &, unsigned)> Offset;
-  Offset = [&](const ExprPtr &E, unsigned Depth) -> std::optional<int64_t> {
-    if (!E || !E->Type || E->Type->Size != TRI.PointerSize ||
-        E->MemoryOrdering != NdMemoryOrdering::None ||
-        E->MemoryAddressSpace != NdMemoryAddressSpace::Default || Depth > 32 ||
-        !Budget)
-      return std::nullopt;
-    --Budget;
-    if (E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize &&
-        isSyntheticEntryStackPointer(E->Var, Func, Architecture))
-      return 0;
-    if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
-        !E->Operands[1] || E->Operands[1]->Kind != ExprKind::Const ||
-        !E->Operands[1]->Type ||
-        E->Operands[1]->Type->Size != TRI.PointerSize ||
-        (TRI.PointerSize == 4 && E->Operands[1]->ConstVal > UINT32_MAX) ||
-        (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
-      return std::nullopt;
-    const auto Base = Offset(E->Operands[0], Depth + 1);
-    if (!Base)
-      return std::nullopt;
-    const int64_t Delta = TRI.PointerSize == 4
-                              ? int64_t(int32_t(E->Operands[1]->ConstVal))
-                              : int64_t(E->Operands[1]->ConstVal);
-    int64_t Result;
-    if (E->Op == NdOp::INT_ADD ? llvm::AddOverflow(*Base, Delta, Result)
-                               : llvm::SubOverflow(*Base, Delta, Result))
-      return std::nullopt;
-    if (TRI.PointerSize == 4 && Result != int64_t(int32_t(Result)))
-      return std::nullopt;
-    return Result;
-  };
 
   // No frame read or escape is permitted anywhere in the function. This
   // includes arguments, stored pointers, returns and aliases. Ordinary calls
@@ -88,7 +58,8 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
          S.StoreVal->Kind == ExprKind::Const) &&
         S.MemoryOrdering == NdMemoryOrdering::None &&
         S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-      const auto At = Offset(S.StoreAddr, 0);
+      const auto At = high_detail::frameAddressOffset(S.StoreAddr, Func,
+                                                      Architecture, Budget);
       Candidate = At && *At >= -Func.FrameSize && *At < 0 &&
                   uint64_t(S.StoreVal->Type->Size) <= uint64_t(-*At);
       if (Candidate)

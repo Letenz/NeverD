@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HighFrameAddress.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 
@@ -112,6 +114,7 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
   auto IsLRReg = [&TRI](const MedVar &V) -> bool {
     return V.Kind == MedVar::Reg && TRI.isLinkRegister(V.RegOff);
   };
+  size_t FrameBudget = 100000;
   auto IsCalleeSaveStore = [&](const HighStmt &S) -> bool {
     if (S.Kind != StmtKind::Store || !S.StoreVal)
       return false;
@@ -121,7 +124,17 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       return false;
     if (S.StoreVal->Kind != ExprKind::Var)
       return false;
-    auto &V = S.StoreVal->Var;
+    const auto &V = S.StoreVal->Var;
+    // A register's ABI role does not make its computed values disposable.
+    // Only the unchanged entry value saved into this function's own frame is
+    // prologue storage; writes through arguments/globals remain observable.
+    if (V.SSAVer != 0 || V.RenameTag >= 0 || Func.FrameSize <= 0 || !V.Size)
+      return false;
+    const auto Offset = high_detail::frameAddressOffset(
+        forceInlineExpr(S.StoreAddr), Func, TargetArch, FrameBudget);
+    if (!Offset || *Offset < -Func.FrameSize || *Offset >= 0 ||
+        uint64_t(V.Size) > uint64_t(-*Offset))
+      return false;
     if (IsFPReg(V) || IsLRReg(V))
       return true;
     return V.Kind == MedVar::Reg && TRI.isCalleeSaveReg(V.RegOff);
@@ -182,18 +195,7 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       // block captures. Its origin does not make its definition a prologue.
       // The following liveness-based DCE removes unused address computations.
     }
-    if (S.Kind == StmtKind::Store && S.StoreVal && S.StoreAddr &&
-        S.StoreVal->Kind == ExprKind::Var) {
-      if (S.MemoryOrdering != NdMemoryOrdering::None ||
-          S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-        return false;
-      auto &V = S.StoreVal->Var;
-      if (IsFPReg(V) || IsLRReg(V))
-        return true;
-      if (V.Kind == MedVar::Reg && TRI.isCalleeSaveReg(V.RegOff))
-        return true;
-    }
-    return false;
+    return IsCalleeSaveStore(S);
   };
 
   auto IsEpilogueLoad = [&](const HighStmt &S) -> bool {

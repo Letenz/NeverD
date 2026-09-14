@@ -149,8 +149,8 @@ public:
   bool contains(const BinaryImage &Img, va_t Target) const;
 };
 
-/// True if Name is a setjmp-family function that may return more than once
-/// (setjmp / _setjmp / sigsetjmp): control re-enters the call site when a
+/// True if Name requires returns-twice register semantics
+/// (setjmp / _setjmp / sigsetjmp / vfork). For setjmp, control re-enters when a
 /// matching longjmp restores the saved context.  The emitter marks such a
 /// callee `returns_twice` so a value live across the call is reloaded after it
 /// instead of being stranded in a caller-saved register longjmp does not

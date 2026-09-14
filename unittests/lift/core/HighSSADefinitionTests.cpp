@@ -127,19 +127,25 @@ HighFunc privateFrameStore(Arch Architecture) {
 
 TEST(HighPrivateFrameStores, DiscardsUnreadPaddingAndPreservesBranchEntry) {
   for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
-    auto Function = privateFrameStore(Architecture);
-    elimUnreadPrivateFrameStores(Function, Architecture);
-    ASSERT_EQ(Function.Body.size(), 2U);
-    EXPECT_EQ(Function.Body[0].Kind, StmtKind::Block);
-    EXPECT_EQ(Function.Body[0].Addr, 0x1010U);
-    EXPECT_EQ(Function.Body[1].RetVal->ConstVal, 42U);
+    for (uint16_t ImmediateBytes : {1, 2, 4}) {
+      auto Function = privateFrameStore(Architecture);
+      auto &Address = Function.Body[0].StoreAddr;
+      Address->Operands[1] = HighExpr::makeConst(16, ImmediateBytes);
+      Address->Operands[0]->Operands[1] =
+          HighExpr::makeConst(8, ImmediateBytes);
+      elimUnreadPrivateFrameStores(Function, Architecture);
+      ASSERT_EQ(Function.Body.size(), 2U);
+      EXPECT_EQ(Function.Body[0].Kind, StmtKind::Block);
+      EXPECT_EQ(Function.Body[0].Addr, 0x1010U);
+      EXPECT_EQ(Function.Body[1].RetVal->ConstVal, 42U);
+    }
   }
 }
 
 TEST(HighPrivateFrameStores, KeepsReadsEscapesEffectsAndUnprovenRanges) {
   for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
-    for (unsigned Variant = 0; Variant != 12; ++Variant) {
+    for (unsigned Variant = 0; Variant != 14; ++Variant) {
       SCOPED_TRACE(Variant);
       auto Function = privateFrameStore(Architecture);
       auto &Store = Function.Body[0];
@@ -179,6 +185,10 @@ TEST(HighPrivateFrameStores, KeepsReadsEscapesEffectsAndUnprovenRanges) {
         Base->Var.SSAVer = 1;
       if (Variant == 11)
         Base->Var.RenameTag = 2;
+      if (Variant == 12)
+        Address->Operands[1] = HighExpr::makeConst(UINT64_C(1) << 40, 4);
+      if (Variant == 13)
+        Address->Operands[1] = HighExpr::makeConst(16, Size * 2);
       elimUnreadPrivateFrameStores(Function, Architecture);
       ASSERT_EQ(Function.Body[0].Kind, StmtKind::Store);
     }

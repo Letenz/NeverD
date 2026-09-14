@@ -146,6 +146,8 @@ jobs:
             scripts.tests.test_neverd_bench_harness \
             scripts.tests.test_audit_evm_opcode_metadata \
             scripts.tests.test_eh_signature_generation \
+            scripts.tests.test_generate_objc_declarations \
+            scripts.tests.test_generate_darwin_declarations \
             -v
           "$PYTHON" -m unittest discover \
             -s pluginsdk/python/tests -v
@@ -486,6 +488,12 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.DescriptorABIConflictAndUnrecoveredInvokeCannotAcquireSourceStatus",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.SDKCDeclarationsPreservePointerIntegerAndFloatCarriers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.SDKCDeclarationsRequireExactExportsAndFixedPrototypes",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceProjection.OrdinarySynchronizationAnnotationsDoNotInventHandlers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.BlockRuntimeKeepsExactCNamesPointerCarriersAndOwnershipFlags",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.RuntimeObjectAssignmentWritesOnlyInitializedStrongFields",
@@ -676,6 +684,8 @@ jobs:
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.MultiEntryCycleKeepsExplicitTransfers",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.CalleeSavedComputedValuesRemainObservableMemoryWrites",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.BranchStoresKeepTheirObservableContinuation",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.TargetReturnIsNotAnEarlyFallthroughReturn",
@@ -770,14 +780,15 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 272,
-              ("macOS", "macos-patch"): 283,
-              ("Windows", "windows-focused"): 268,
+              ("Linux", "linux-semantic"): 276,
+              ("macOS", "macos-patch"): 288,
+              ("Windows", "windows-focused"): 272,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
+                      "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",
                       "ObjCRuntimeSource.RecompiledProtocolCallsPreserveEnumerationState",
                       "ObjCRuntimeSource.RecompiledARCMethodsPreserveActualObjectLifetimes",
