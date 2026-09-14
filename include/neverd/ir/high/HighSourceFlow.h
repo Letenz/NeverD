@@ -40,6 +40,22 @@ struct HighSourceFlowReport {
   void add(HighSourceFlowIssue Issue, std::string Reason, va_t Address = 0,
            const HighExpr *Expression = nullptr, va_t RelatedAddress = 0);
 };
+/// A node evaluates Test, or the immediate effects of Statement. Structured
+/// bodies are separate nodes; a do-while test is a distinct node with no
+/// Statement. Node zero is the fallthrough exit. All pointers borrow Function.
+struct HighSourceFlowNode {
+  const HighStmt *Statement = nullptr;
+  ExprPtr Test;
+  std::vector<size_t> Successors;
+};
+struct HighSourceFlowGraph {
+  std::vector<HighSourceFlowNode> Nodes;
+  size_t Entry = 0;
+  HighSourceFlowReport Diagnostics;
+};
+/// Build the same bounded, guard-refined graph used by source validation.
+/// Incomplete diagnostics invalidate the graph, including unresolved gotos.
+HighSourceFlowGraph buildHighSourceFlowGraph(const HighFunc &Function);
 HighSourceFlowReport analyzeHighSourceFlow(const HighFunc &Function,
                                            bool NeedsReturn);
 /// Remove side-effect-free PHI copies whose values cannot be observed on any

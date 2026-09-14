@@ -3,6 +3,7 @@
 
 #include "ObjCSourceBindings.h"
 
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/ObjC/ObjCBlocks.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 
@@ -11,6 +12,7 @@
 
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 namespace neverd::sdk {
 
@@ -68,13 +70,18 @@ struct Value {
     Frame,
     Context,
     Invoke,
-    Isa
+    Isa,
+    UnprovenIdentity
   } K = Scalar;
   int64_t Offset = 0;
   uint64_t Bits = 0;
   std::string Name;
   const HighExpr *Producer = nullptr;
 };
+inline bool pointerIdentity(const Value &V) {
+  return V.K == Value::Frame || V.K == Value::Context || V.K == Value::Invoke ||
+         V.K == Value::Isa || V.K == Value::UnprovenIdentity;
+}
 inline bool scalarWidth(unsigned Bytes) {
   return Bytes == 1 || Bytes == 2 || Bytes == 4 || Bytes == 8;
 }
@@ -127,22 +134,90 @@ inline bool sameDescriptor(const ObjCBlockDescriptor &A,
 class Values {
   const BinaryImage &Image;
   const HighFunc &Function;
-  std::optional<size_t> ContextParameter;
   const ImportStorageSlotCollection &Imports;
   size_t EvaluationBudget = 1000000;
   std::set<int64_t> FrameIdentityBytes;
 
 public:
+  struct Facts {
+    std::map<Identity, Value> Locals;
+    std::map<std::pair<int64_t, unsigned>, Value> FrameValues;
+    std::set<int64_t> FrameIdentityBytes;
+    size_t size() const {
+      return Locals.size() + FrameValues.size() + FrameIdentityBytes.size();
+    }
+  };
   std::map<Identity, Value> Locals;
   std::map<std::pair<int64_t, unsigned>, Value> FrameValues;
   std::function<Value(const HighExpr &, const std::vector<Value> &)> Call;
   std::function<Value(const Value &, unsigned)> ContextRead;
   Values(const ObjCBlockSourceContext &Source, const HighFunc &F,
          std::optional<size_t> Context = std::nullopt)
-      : Image(Source.Image), Function(F), ContextParameter(Context),
-        Imports(Source.Imports) {}
+      : Image(Source.Image), Function(F), Imports(Source.Imports) {
+    if (Context) {
+      MedVar Parameter;
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = *Context;
+      Locals[objc_projection_detail::localIdentity(Parameter)] = {
+          Value::Context};
+    }
+  }
   Values(ObjCBlockSourceContext &&, const HighFunc &,
          std::optional<size_t> = std::nullopt) = delete;
+  Facts facts() const { return {Locals, FrameValues, FrameIdentityBytes}; }
+  void restore(const Facts &F) {
+    Locals = F.Locals;
+    FrameValues = F.FrameValues;
+    FrameIdentityBytes = F.FrameIdentityBytes;
+  }
+  /// Consumer proofs need address identity, not the producer expression used
+  /// to materialize a block header. Scalar disagreements become unknown;
+  /// possible pointer identities remain poisoned until completely overwritten.
+  static bool merge(Facts &Into, const Facts &From) {
+    bool Changed = false;
+    auto MergeValues = [&](auto &Dest, const auto &Source) {
+      std::set<typename std::decay_t<decltype(Dest)>::key_type> Keys;
+      for (const auto &[Key, V] : Dest)
+        Keys.insert(Key);
+      for (const auto &[Key, V] : Source)
+        Keys.insert(Key);
+      for (const auto &Key : Keys) {
+        const auto D = Dest.find(Key);
+        const auto S = Source.find(Key);
+        const Value A = D == Dest.end() ? Value{} : D->second;
+        const Value B = S == Source.end() ? Value{} : S->second;
+        if (A.K == B.K && A.Offset == B.Offset && A.Bits == B.Bits &&
+            A.Name == B.Name)
+          continue;
+        const Value Joined = pointerIdentity(A) || pointerIdentity(B)
+                                 ? Value{Value::UnprovenIdentity}
+                                 : Value{};
+        if (A.K == Joined.K && !A.Offset && !A.Bits && A.Name.empty())
+          continue;
+        Changed = true;
+        Dest[Key] = Joined;
+      }
+    };
+    MergeValues(Into.Locals, From.Locals);
+    MergeValues(Into.FrameValues, From.FrameValues);
+    const auto Before = Into.FrameIdentityBytes.size();
+    Into.FrameIdentityBytes.insert(From.FrameIdentityBytes.begin(),
+                                   From.FrameIdentityBytes.end());
+    for (auto &[Range, V] : Into.FrameValues) {
+      const auto Byte = Into.FrameIdentityBytes.lower_bound(Range.first);
+      if (!pointerIdentity(V) && Byte != Into.FrameIdentityBytes.end() &&
+          *Byte < Range.first + Range.second) {
+        V = {Value::UnprovenIdentity};
+        Changed = true;
+      }
+    }
+    return Changed || Before != Into.FrameIdentityBytes.size();
+  }
+  static Value established(Value V) {
+    if (V.K == Value::UnprovenIdentity)
+      throw Invalid("block address has inconsistent reaching identities");
+    return V;
+  }
   Value eval(const ExprPtr &E, unsigned Depth = 0) {
     if (!E || Depth > 128 || !EvaluationBudget-- ||
         (!E->Type && E->Kind != ExprKind::Call))
@@ -153,18 +228,18 @@ public:
     if (E->Kind == ExprKind::Const && scalarWidth(Bytes))
       return {Value::Number, 0, E->ConstVal & mask(Bytes), {}, E.get()};
     if (E->Kind == ExprKind::Var) {
+      const auto Found =
+          Locals.find(objc_projection_detail::localIdentity(E->Var));
+      if (Found != Locals.end())
+        return established(Found->second);
       if (E->Var.Kind == MedVar::Param && E->Var.RenameTag < 0)
-        return ContextParameter && E->Var.Id >= 0 &&
-                       static_cast<size_t>(E->Var.Id) == *ContextParameter
-                   ? Value{Value::Context, 0, 0, {}, E.get()}
-                   : Value{};
+        return {};
       if (E->Var.Kind == MedVar::Reg && E->Var.RenameTag < 0 &&
           E->Var.SSAVer == 0 &&
           E->Var.RegOff == getTargetRegInfo(Image.Arch).StackPointer &&
           Bytes == 8)
         return {Value::Frame, 0, 0, {}, E.get()};
-      auto Found = Locals.find(objc_projection_detail::localIdentity(E->Var));
-      return Found == Locals.end() ? Value{} : Found->second;
+      return {};
     }
     std::vector<Value> Inputs;
     for (const auto &Input : E->Operands)
@@ -226,7 +301,7 @@ public:
       if (Address.K == Value::Frame) {
         auto Found = FrameValues.find({Address.Offset, Bytes});
         if (Found != FrameValues.end())
-          return Found->second;
+          return established(Found->second);
         auto Identity = FrameIdentityBytes.lower_bound(Address.Offset);
         if (Identity != FrameIdentityBytes.end() &&
             *Identity < Address.Offset + Bytes)
@@ -367,23 +442,52 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
       }
       return {};
     };
-    if (F.Body.size() > 65536)
-      throw Invalid("block consumer exceeds its statement budget");
-    for (const auto &S : F.Body) {
-      if (!S.Body.empty() || !S.ElseBody.empty() || !S.DefaultBody.empty() ||
-          !S.Cases.empty() || !S.EHClauseBodies.empty())
-        throw Invalid("block consumer requires unsupported control-flow proof");
+    const auto Graph = buildHighSourceFlowGraph(F);
+    if (!Graph.Diagnostics.Complete || Graph.Nodes.empty())
+      throw Invalid("block consumer has incomplete source control flow");
+    constexpr size_t MaxWork = 1000000, MaxFacts = 262144;
+    size_t Work = 0, FactCount = 0;
+    std::vector<std::optional<Values::Facts>> Incoming(Graph.Nodes.size());
+    std::vector<bool> Queued(Graph.Nodes.size());
+    std::vector<size_t> Pending{Graph.Entry};
+    Incoming[Graph.Entry] = State.facts();
+    FactCount = Incoming[Graph.Entry]->size();
+    Queued[Graph.Entry] = true;
+    auto Spend = [&](size_t Count) {
+      if (Count > MaxWork - Work)
+        throw Invalid("block consumer exceeds its flow proof budget");
+      Work += Count;
+    };
+    auto Evaluate = [&](const HighSourceFlowNode &Node) {
+      if (Node.Test) {
+        (void)State.eval(Node.Test);
+        return;
+      }
+      if (!Node.Statement)
+        return;
+      const auto &S = *Node.Statement;
       switch (S.Kind) {
       case StmtKind::Nop:
       case StmtKind::Block:
-        // The check above excludes nested bodies. An empty source entry label
-        // has no effect on the straight-line context escape proof.
+      case StmtKind::If:
+      case StmtKind::IfElse:
+      case StmtKind::While:
+      case StmtKind::For:
+      case StmtKind::DoWhile:
+      case StmtKind::Switch:
+      case StmtKind::Goto:
+      case StmtKind::Break:
+      case StmtKind::Continue:
+        // The shared graph owns body, test, goto, and loop transfer order.
         break;
       case StmtKind::Assign:
         State.assign(S);
         break;
       case StmtKind::Call:
         (void)State.eval(S.CallExpr);
+        break;
+      case StmtKind::ExprStmt:
+        (void)State.eval(S.Val);
         break;
       case StmtKind::Store: {
         auto Address = State.eval(S.StoreAddr), V = State.eval(S.StoreVal);
@@ -407,6 +511,30 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
         break;
       default:
         throw Invalid("block consumer has unmodeled control flow");
+      }
+    };
+    while (!Pending.empty()) {
+      const auto Index = Pending.back();
+      Pending.pop_back();
+      Queued[Index] = false;
+      Spend(1 + Incoming[Index]->size());
+      State.restore(*Incoming[Index]);
+      Evaluate(Graph.Nodes[Index]);
+      const auto Output = State.facts();
+      for (auto Next : Graph.Nodes[Index].Successors) {
+        auto &Input = Incoming[Next];
+        const auto Before = Input ? Input->size() : 0;
+        Spend(1 + Before + Output.size());
+        const bool Changed = !Input || Values::merge(*Input, Output);
+        if (!Input)
+          Input = Output;
+        FactCount = FactCount - Before + Input->size();
+        if (FactCount > MaxFacts)
+          throw Invalid("block consumer exceeds its flow storage budget");
+        if (Changed && !Queued[Next]) {
+          Queued[Next] = true;
+          Pending.push_back(Next);
+        }
       }
     }
     return true;

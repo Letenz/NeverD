@@ -437,6 +437,7 @@ void verifyRuntime(bool Chained,
                            "8192\nsynchronized-updates=8192\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
+            "conditional-invokes=1024\n"
       : Foundation ? "variadic-formats=2276\nframework-iterations=2048\narray-"
                      "dictionaries=17\nnil-"
                      "dispatch=pass\n"

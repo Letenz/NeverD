@@ -54,6 +54,8 @@ sfugge restano sconosciute. Al limite si torna al grafo conservativo. Una copia 
 eliminata solo se il valore è inutilizzato in ogni contesto realizzabile. Chiamate, letture,
 scritture ed etichette mantengono il comportamento osservabile.
 
+Anche l’analisi di fuga dei consumatori di blocchi usa questo grafo. Un punto fisso limitato propaga identità dei puntatori e memoria privata dello stack tra rami e cicli. Le confluenze conservano possibili indirizzi di contesto; solo una sovrascrittura completa li elimina. Archi sconosciuti, eccezioni e budget di prova esauriti impediscono il collegamento.
+
 ## Rappresentazioni IR e percorsi
 
 | Rappresentazione | Scopo | Definizioni e trasformazioni principali |

@@ -54,6 +54,8 @@ dont l’adresse s’échappe restent inconnues. À la limite de partition, l’
 graphe conservateur. Une copie PHI ne disparaît que si sa valeur est morte dans tous les
 contextes réalisables. Appels, lectures, écritures et étiquettes conservent leur comportement.
 
+L’analyse d’échappement des consommateurs de blocs utilise aussi ce graphe. Un point fixe borné propage les identités de pointeurs et les emplacements privés de pile à travers les branches et les boucles. Les jonctions conservent les adresses de contexte possibles ; seul un écrasement complet les efface. Les arêtes inconnues, les exceptions et les budgets de preuve épuisés refusent la liaison.
+
 ## Représentations IR et parcours
 
 | Représentation | Rôle | Définitions et transformations principales |

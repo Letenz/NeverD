@@ -26,6 +26,8 @@
                                       other:(NSArray *)other
                                      offset:(NSUInteger)offset {
   NSUInteger (^block)(void) = ^{
+    if (offset & 1)
+      return array.count + offset;
     return array.count + other.count + offset;
   };
 #if __has_feature(objc_arc)

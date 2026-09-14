@@ -54,6 +54,8 @@ Adresse bleiben unbekannt. Bei Erreichen des Limits gilt wieder der konservative
 Eine PHI-Kopie entfällt nur, wenn ihr Wert in allen möglichen Kontexten unbenutzt bleibt.
 Aufrufe, Speicherzugriffe und Quellcodelabels behalten ihr beobachtbares Verhalten.
 
+Auch die Escape-Analyse von Block-Verbrauchern verwendet diesen Graphen. Eine begrenzte Fixpunktanalyse verfolgt Zeigeridentitäten und private Stapelspeicher über Verzweigungen und Schleifen. Zusammenführungen erhalten mögliche Kontextadressen; nur vollständiges Überschreiben entfernt sie. Unbekannte Kanten, Ausnahmefluss und erschöpfte Beweisbudgets verhindern die Bindung.
+
 ## IR-Darstellungen und Pfade
 
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |

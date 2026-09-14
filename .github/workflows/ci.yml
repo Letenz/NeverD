@@ -489,6 +489,18 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.ScalarStackCapturePreservesRawWritesAndUnwrittenPadding",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerProofUsesBranchesLoopsAndSwitchTransfers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerJoinsKeepPossibleContextIdentities",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerFrameJoinsCannotHidePartialPointerSpills",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerProofChecksTrailingTestsAndGotoEscapes",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerParameterAssignmentsReplaceEntryFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCBlockSources.ConsumerFlowBudgetCannotAuthorizeIncompleteProof",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.MissingHeaderByteWrongIsaFrameAndUnknownConsumerAreRejected",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCBlockSources.InvokeCannotReadPaddingOrEscapeThroughReturnStoreOrUnknownCall",
@@ -849,9 +861,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 298,
-              ("macOS", "macos-patch"): 310,
-              ("Windows", "windows-focused"): 294,
+              ("Linux", "linux-semantic"): 304,
+              ("macOS", "macos-patch"): 316,
+              ("Windows", "windows-focused"): 300,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

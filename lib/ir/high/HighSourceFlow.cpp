@@ -77,6 +77,7 @@ class SourceFlow {
     std::vector<size_t> Next, Previous, Uses, Writes;
     std::vector<std::optional<Predicate>> EdgeFacts;
     const HighStmt *Statement = nullptr;
+    ExprPtr Test;
     bool PhiCopy = false;
     std::optional<size_t> Definition;
     bool Returns = false;
@@ -253,6 +254,7 @@ class SourceFlow {
     return Predicate{local(Value->Var), Value->Type->Size, Nonzero};
   }
   void branch(size_t Index, const ExprPtr &Condition, size_t Yes, size_t No) {
+    Nodes[Index].Test = Condition;
     reads(Index, Condition);
     auto Known = truth(Condition);
     auto Fact = predicate(Condition);
@@ -372,6 +374,7 @@ class SourceFlow {
       if (!Statement.SwitchExpr)
         fail("method source switch has no recovered selector");
       reads(Index, Statement.SwitchExpr);
+      Nodes[Index].Test = Statement.SwitchExpr;
       std::map<uint64_t, size_t> Cases;
       for (const auto &Case : Statement.Cases) {
         spend();
@@ -601,7 +604,7 @@ class SourceFlow {
     }
   }
 
-  void analyze(bool NeedsReturn) {
+  std::optional<size_t> build() {
     node(); // Node zero is the emitted function's fallthrough exit.
     size_t Entry = block(Function.Body, 0, {}, 1);
     CurrentAddress = 0;
@@ -622,8 +625,15 @@ class SourceFlow {
     // Unknown edges invalidate reachability and must-defined conclusions.
     // The outer validator can still inventory independent expressions.
     if (MissingTarget)
+      return std::nullopt;
+    return refine(Entry);
+  }
+
+  void analyze(bool NeedsReturn) {
+    const auto Built = build();
+    if (!Built)
       return;
-    Entry = refine(Entry);
+    const size_t Entry = *Built;
     std::vector<bool> Reachable(Nodes.size());
     std::vector<size_t> Pending{Entry};
     Reachable[Entry] = true;
@@ -726,6 +736,21 @@ public:
              std::set<const HighStmt *> *DeadCopies = nullptr)
       : Function(Function), Diagnostics(Diagnostics), DeadCopies(DeadCopies) {}
 
+  void graph(HighSourceFlowGraph &Result) {
+    try {
+      const auto Entry = build();
+      if (!Entry)
+        return;
+      Result.Entry = *Entry;
+      Result.Nodes.reserve(Nodes.size());
+      for (auto &N : Nodes)
+        Result.Nodes.push_back({N.Statement, N.Test, std::move(N.Next)});
+    } catch (const Failure &Error) {
+      Diagnostics.Complete = false;
+      Diagnostics.add(Error.Issue, Error.Reason, Error.Address);
+    }
+  }
+
   void collect(bool NeedsReturn) {
     try {
       analyze(NeedsReturn);
@@ -737,6 +762,11 @@ public:
 };
 
 } // namespace
+HighSourceFlowGraph buildHighSourceFlowGraph(const HighFunc &Function) {
+  HighSourceFlowGraph Result;
+  SourceFlow(Function, Result.Diagnostics).graph(Result);
+  return Result;
+}
 HighSourceFlowReport analyzeHighSourceFlow(const HighFunc &Function,
                                            bool NeedsReturn) {
   HighSourceFlowReport Result;

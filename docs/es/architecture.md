@@ -54,6 +54,8 @@ cuya dirección escapa siguen desconocidas. Al alcanzar el límite se usa el gra
 Una copia PHI se elimina solo si su valor está muerto en todos los contextos viables.
 Las llamadas, lecturas, escrituras y etiquetas conservan su comportamiento observable.
 
+El análisis de escape de consumidores de bloques también usa este grafo. Un punto fijo acotado propaga identidades de punteros y almacenamiento privado de pila entre ramas y bucles. Las uniones conservan posibles direcciones de contexto; solo una sobrescritura completa las elimina. Las aristas desconocidas, las excepciones y los límites de prueba agotados rechazan el enlace.
+
 ## Representaciones IR y rutas
 
 | Representación | Propósito | Definiciones y transformaciones principales |

@@ -70,10 +70,11 @@ int main(void) {
     @autoreleasepool {
       [observed addObject:@"retained"];
     }
-    if (duplicate() != 2 || combined() != 4 + i)
+    const NSUInteger expected = ((i & 1) ? 2 : 4) + i;
+    if (duplicate() != 2 || combined() != expected)
       return 3;
     [driver releaseBlock:(void *)duplicate];
-    if (destroyed != i || combined() != 4 + i)
+    if (destroyed != i || combined() != expected)
       return 4;
     [driver releaseBlock:(void *)combined];
 #ifdef NEVERD_MANUAL_BLOCKS
@@ -85,6 +86,7 @@ int main(void) {
       return 5;
   }
   [driver release];
-  puts("escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass");
+  puts("escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
+       "conditional-invokes=1024");
   return 0;
 }

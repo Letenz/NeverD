@@ -277,7 +277,7 @@ TEST(ObjCBlockSources, EmptyEntryLabelsPreserveTheStraightLineEscapeProof) {
       Label.Body.push_back(ret(parameter(0, Invoke.Params[0].Type)));
     if (Mutation == 2) {
       Label.Kind = StmtKind::Goto;
-      Label.GotoTarget = Invoke.Entry;
+      Label.GotoTarget = Invoke.Entry + 1;
     }
     Invoke.Body.insert(Invoke.Body.begin(), Label);
     if (Mutation == 3)
@@ -287,6 +287,238 @@ TEST(ObjCBlockSources, EmptyEntryLabelsPreserveTheStraightLineEscapeProof) {
         bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
     EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0)
         << Mutation << ": " << Bound.Limitation;
+  }
+}
+
+TEST(ObjCBlockSources, ConsumerProofUsesBranchesLoopsAndSwitchTransfers) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Shape = 0; Shape != 6; ++Shape) {
+      SCOPED_TRACE(Shape);
+      SourceFixture F(true, Architecture);
+      auto &Use = F.Result.HighFuncs[1];
+      const auto Original = Use.Body.back();
+      HighStmt Control;
+      Control.Cond = parameter(1, Use.Params[1].Type);
+      Control.Kind = StmtKind::IfElse;
+      Control.Body = {Original};
+      Control.ElseBody = {ret(HighExpr::makeConst(17, 4))};
+      if (Shape == 1) {
+        Control.Kind = StmtKind::Switch;
+        Control.SwitchExpr = Control.Cond;
+        Control.Body.clear();
+        Control.ElseBody.clear();
+        Control.Cases.push_back({1, {Original}});
+        Control.DefaultBody = {ret(HighExpr::makeConst(29, 4))};
+      }
+      if (Shape >= 2 && Shape <= 4) {
+        Control.Kind = Shape == 2   ? StmtKind::While
+                       : Shape == 3 ? StmtKind::For
+                                    : StmtKind::DoWhile;
+        HighStmt Call, Transfer;
+        Call.Kind = StmtKind::Call;
+        Call.CallExpr = Original.RetVal;
+        Transfer.Kind = Shape == 3 ? StmtKind::Continue : StmtKind::Break;
+        Control.Body = {Call, Transfer};
+        Control.ElseBody.clear();
+      }
+      if (Shape == 5) {
+        Control.Kind = StmtKind::Goto;
+        Control.GotoTarget = Use.Entry + 16;
+        Control.Body.clear();
+        Control.ElseBody.clear();
+      }
+      auto Last = Original;
+      Last.Addr = Use.Entry + 16;
+      Use.Body = {Control, Last};
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      EXPECT_TRUE(bindObjCBlockSourceReferences(F.caller(), F.Image, Plan,
+                                                F.functions())
+                      .Limitation.empty());
+    }
+}
+
+TEST(ObjCBlockSources, ConsumerJoinsKeepPossibleContextIdentities) {
+  for (const bool Reverse : {false, true})
+    for (const auto Architecture : {Arch::AArch64, Arch::X64})
+      for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+        SCOPED_TRACE(Mutation);
+        SourceFixture F(true, Architecture);
+        auto &Use = F.Result.HighFuncs[1];
+        MedVar Alias;
+        Alias.Kind = MedVar::Temp;
+        Alias.Id = 17;
+        Alias.Size = 8;
+        const auto Local = HighExpr::makeVar(Alias, Use.Params[0].Type);
+        const auto Context = parameter(0, Use.Params[0].Type);
+        HighStmt Left, Right, Choose;
+        Left.Kind = Right.Kind = StmtKind::Assign;
+        Left.Dst = Right.Dst = Local;
+        Left.Val = Context;
+        Right.Val = Mutation == 0 ? Context : HighExpr::makeConst(0, 8);
+        if (Mutation == 2)
+          Right.Val = HighExpr::makeBinop(NdOp::INT_ADD, Context,
+                                          HighExpr::makeConst(8, 8));
+        Choose.Kind = StmtKind::IfElse;
+        Choose.Cond = parameter(1, Use.Params[1].Type);
+        Choose.Body = {Left};
+        Choose.ElseBody = {Right};
+        auto Call = HighExpr::makeCall(
+            {}, 0, {Local, parameter(1, Use.Params[1].Type)});
+        Call->Type = Use.ReturnType;
+        Call->SourceCallHint = Use.Body.back().RetVal->SourceCallHint;
+        if (Reverse)
+          std::swap(Choose.Body, Choose.ElseBody);
+        Use.Body = {Choose};
+        if (Mutation == 3)
+          Use.Body.push_back(Left); // A full overwrite kills the joined value.
+        if (Mutation == 4 || Mutation == 5) {
+          // The first visit is safe. A later back edge changes the identity.
+          Choose.Kind = StmtKind::While;
+          Choose.ElseBody.clear();
+          HighStmt Invoke;
+          Invoke.Kind = StmtKind::Call;
+          Invoke.CallExpr = Call;
+          Choose.Body = {Invoke, Right};
+          Use.Body = {Left, Choose};
+          if (Mutation == 5)
+            Use.Body.push_back(Left);
+        }
+        Use.Body.push_back(ret(Call));
+        const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+        const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                         Plan, F.functions());
+        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0 || Mutation == 3)
+            << Bound.Limitation;
+      }
+}
+
+TEST(ObjCBlockSources, ConsumerFrameJoinsCannotHidePartialPointerSpills) {
+  for (const bool Reverse : {false, true})
+    for (const auto Architecture : {Arch::AArch64, Arch::X64})
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        SCOPED_TRACE(Mutation);
+        SourceFixture F(true, Architecture);
+        auto &Use = F.Result.HighFuncs[1];
+        Use.FrameSize = 32;
+        const auto Context = parameter(0, Use.Params[0].Type);
+        HighStmt Choose;
+        Choose.Kind = StmtKind::IfElse;
+        Choose.Cond = parameter(1, Use.Params[1].Type);
+        Choose.Body = {store(frame(F.Image, -16), Context)};
+        Choose.ElseBody = {store(
+            frame(F.Image, -16),
+            Mutation == 0 ? Context
+                          : HighExpr::makeConst(0, Mutation == 1 ? 8 : 4))};
+        auto Result = Use.Body.back();
+        Result.RetVal =
+            HighExpr::makeLoad(frame(F.Image, -16), NdType::makeInt(4));
+        if (Mutation == 0) {
+          Result = Use.Body.back();
+          Result.RetVal->Operands[0] =
+              HighExpr::makeLoad(frame(F.Image, -16), Use.Params[0].Type);
+        }
+        if (Reverse)
+          std::swap(Choose.Body, Choose.ElseBody);
+        Use.Body = {Choose};
+        if (Mutation >= 3)
+          Use.Body.push_back(
+              store(frame(F.Image, -16),
+                    HighExpr::makeConst(0, Mutation == 3 ? 8 : 2)));
+        Use.Body.push_back(Result);
+        const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+        const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                         Plan, F.functions());
+        EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0 || Mutation == 3)
+            << Bound.Limitation;
+      }
+}
+
+TEST(ObjCBlockSources, ConsumerProofChecksTrailingTestsAndGotoEscapes) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    SourceFixture F(true);
+    auto &Use = F.Result.HighFuncs[1];
+    const auto Context = parameter(0, Use.Params[0].Type);
+    HighStmt Control;
+    Control.Kind = StmtKind::DoWhile;
+    Control.Cond = HighExpr::makeCall("unknown", 0, {Context});
+    Control.Cond->Type = NdType::makeInt(4);
+    if (Mutation == 1) {
+      Control.Kind = StmtKind::If;
+      Control.Cond = parameter(1, Use.Params[1].Type);
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Use.Entry + 16;
+      Control.Body = {Jump};
+      auto Escape = ret(Context);
+      Escape.Addr = Jump.GotoTarget;
+      Use.Body.push_back(Escape);
+    }
+    if (Mutation == 2) {
+      Control.Kind = StmtKind::Goto;
+      Control.GotoTarget = 0x9999;
+    }
+    if (Mutation == 3)
+      Control.Kind = StmtKind::ItaniumTry;
+    Use.Body.insert(Use.Body.begin(), Control);
+    const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_FALSE(
+        bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions())
+            .Limitation.empty());
+  }
+}
+
+TEST(ObjCBlockSources, ConsumerFlowBudgetCannotAuthorizeIncompleteProof) {
+  SourceFixture F(true);
+  auto &Use = F.Result.HighFuncs[1];
+  const auto Last = Use.Body.back();
+  Use.Body.clear();
+  for (unsigned I = 0; I != 2048; ++I) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = I;
+    V.Size = 4;
+    HighStmt Set;
+    Set.Kind = StmtKind::Assign;
+    Set.Dst = HighExpr::makeVar(V, NdType::makeInt(4));
+    Set.Val = parameter(1, Use.Params[1].Type);
+    Use.Body.push_back(Set);
+  }
+  Use.Body.push_back(Last);
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  const auto Bound =
+      bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
+  EXPECT_NE(Bound.Limitation.find("budget"), std::string::npos)
+      << Bound.Limitation;
+}
+
+TEST(ObjCBlockSources, ConsumerParameterAssignmentsReplaceEntryFacts) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SourceFixture F(true);
+    auto &Use = F.Result.HighFuncs[1];
+    Use.Params[1].Type = Use.Params[0].Type;
+    Use.ReturnType = Use.Params[0].Type;
+    Use.SourceTypeHint.reset();
+    const auto Context = parameter(0, Use.Params[0].Type);
+    const auto Other = parameter(1, Use.Params[0].Type);
+    HighStmt Set;
+    Set.Kind = StmtKind::Assign;
+    Set.Dst = Mutation == 0 ? Context : Other;
+    Set.Val = Mutation == 0 ? HighExpr::makeConst(0, 8) : Context;
+    Use.Body = {Set};
+    if (Mutation == 2) {
+      HighStmt Clear = Set;
+      Clear.Val = HighExpr::makeConst(0, 8);
+      Use.Body.push_back(Clear);
+    }
+    Use.Body.push_back(ret(Set.Dst));
+    std::set<std::pair<va_t, size_t>> Active;
+    std::string Reason;
+    const ObjCBlockSourceContext Source(F.Image);
+    EXPECT_EQ(objc_block_source_detail::noEscape(
+                  Source, F.functions(), Use.Entry, 0, nullptr, Active, Reason),
+              Mutation != 1)
+        << Mutation << ": " << Reason;
   }
 }
 TEST(ObjCBlockSources,

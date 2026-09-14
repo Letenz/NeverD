@@ -52,6 +52,8 @@ falls back to the conservative graph. A PHI copy is removed only when its scalar
 value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal.
 
+Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
+
 ## IR representations and routes
 
 | Representation | Purpose | Primary definitions and transformations |
