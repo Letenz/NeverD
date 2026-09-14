@@ -528,6 +528,16 @@ jobs:
                    "NeverDLiftTests"),
                   ("RuntimeMetadata.DyldBackwardULEBDeltasKeepFollowingBindingsAndBounds",
                    "NeverDLiftTests"),
+                  ("ObjCSourceProjection.InventoriesIndependentCallsAndTheirStatementAddresses",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceProjection.UnknownEdgesLeaveFlowIncompleteButStillInventoryCalls",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceProjection.InventoriesFallthroughAndEachUninitializedLocal",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceProjection.InvalidSignatureDoesNotHideIndependentBodyEvidence",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceProjection.EvidenceBudgetCannotTurnAnIncompleteGraphIntoSuccess",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsKeepBytesUnicodeAndObjectIdentity",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsRejectUnprovedRecordsAndContents",
@@ -656,9 +666,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 204,
-              ("macOS", "macos-patch"): 209,
-              ("Windows", "windows-focused"): 200,
+              ("Linux", "linux-semantic"): 214,
+              ("macOS", "macos-patch"): 219,
+              ("Windows", "windows-focused"): 210,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

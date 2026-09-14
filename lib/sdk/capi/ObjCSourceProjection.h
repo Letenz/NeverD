@@ -106,35 +106,40 @@ inline bool isPlainUnwind(const ExceptionFunction &Metadata) {
 
 } // namespace objc_projection_detail
 
-/// Empty means the projection has a complete supported source representation.
-/// This checks coverage and binding consistency, not semantic equivalence.
-inline std::string sourceBodyLimitation(
+inline void collectSourceBodyDiagnostics(
     const HighFunc &Func, const SourceFunctionTypeHint &Hint,
     const PipelineFunctionAudit *Audit,
-    const std::function<bool(const HighExpr &)> &CallAllowed = {},
-    const HighExpr **UnboundCall = nullptr) {
+    const std::function<bool(const HighExpr &)> &CallAllowed,
+    SourceProjectionDiagnostics &Diagnostics) {
   using namespace objc_projection_detail;
-  if (UnboundCall)
-    *UnboundCall = nullptr;
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
       !sameType(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||
       Hint.Parameters.size() > 64)
-    return "method source signature disagrees with its runtime type hint";
+    Diagnostics.add(
+        SourceProjectionIssue::Signature,
+        "method source signature disagrees with its runtime type hint");
+  if (Hint.Parameters.size() > 64)
+    Diagnostics.Complete = false;
   std::string ABILimitation;
   if (Hint.HasExplicitABI && !validateSourceABI(Hint, ABILimitation))
-    return ABILimitation;
+    Diagnostics.add(SourceProjectionIssue::ABI, ABILimitation);
   if (!Hint.HasExplicitABI &&
       (Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime ||
        Hint.Parameters.size() < 2 || Hint.Parameters.size() > 8))
-    return "method has no explicit source ABI binding";
-  for (size_t Index = 0; Index < Func.Params.size(); ++Index) {
+    Diagnostics.add(SourceProjectionIssue::ABI,
+                    "method has no explicit source ABI binding");
+  for (size_t Index = 0; Index < std::min({Func.Params.size(),
+                                           Hint.Parameters.size(), size_t{64}});
+       ++Index) {
     const auto &Parameter = Func.Params[Index];
     if (Parameter.Name != Hint.Parameters[Index].Name ||
         !sameType(Parameter.Type, Hint.Parameters[Index].Type) ||
         Parameter.Type->Kind == NdTypeKind::Void)
-      return "method source parameter binding disagrees with its runtime type "
-             "hint";
+      Diagnostics.add(
+          SourceProjectionIssue::ParameterBinding,
+          "method source parameter binding disagrees with its runtime type "
+          "hint");
   }
   if (!Audit || Audit->Entry != Func.Entry ||
       Audit->Disposition != PipelineFunctionDisposition::Accepted ||
@@ -143,40 +148,69 @@ inline std::string sourceBodyLimitation(
       Audit->DecodedInstructions != Audit->LiftedInstructions ||
       !Audit->DecodeFailures.empty() ||
       !Audit->UnsupportedInstructions.empty() || !Audit->TruncatedPaths.empty())
-    return "native method decoding, lifting, or IR verification is incomplete";
+    Diagnostics.add(
+        SourceProjectionIssue::Audit,
+        "native method decoding, lifting, or IR verification is incomplete");
   if (Func.Body.empty())
-    return "no function body was recovered";
+    Diagnostics.add(SourceProjectionIssue::Body,
+                    "no function body was recovered");
   if ((Func.ExceptionMetadata && !isPlainUnwind(*Func.ExceptionMetadata)) ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
-    return "exception-dependent method projection is not supported";
-  if (auto Limitation = SourceProjectionFlow(Func).limitation(
-          Hint.ReturnType->Kind != NdTypeKind::Void);
-      !Limitation.empty())
-    return Limitation;
+    Diagnostics.add(SourceProjectionIssue::Exception,
+                    "exception-dependent method projection is not supported");
+  if (Hint.ReturnType)
+    SourceProjectionFlow(Func, Diagnostics)
+        .collect(Hint.ReturnType->Kind != NdTypeKind::Void);
+  else
+    Diagnostics.Complete = false;
 
   // Iterate explicitly so malformed/deep HighIR cannot overflow this check's
   // own stack. HighC's expression renderer truncates beyond depth 200.
   std::vector<std::pair<const HighStmt *, unsigned>> Statements;
-  std::vector<std::pair<const HighExpr *, unsigned>> Expressions;
+  std::vector<std::tuple<const HighExpr *, unsigned, va_t>> Expressions;
+  size_t Budget = 1000000;
+  auto Spend = [&](size_t Count) {
+    if (Count > Budget) {
+      Diagnostics.Complete = false;
+      Diagnostics.add(SourceProjectionIssue::Budget,
+                      "method source inspection exceeds its work limit");
+      return false;
+    }
+    Budget -= Count;
+    return true;
+  };
   std::set<LocalIdentity> DefinedLocals;
   auto AddStatements = [&](const std::vector<HighStmt> &Body, unsigned Depth) {
+    if (!Spend(Body.size()))
+      return false;
     for (const auto &Statement : Body)
       Statements.emplace_back(&Statement, Depth);
+    return true;
   };
-  AddStatements(Func.Body, 1);
+  if (!AddStatements(Func.Body, 1))
+    return;
   while (!Statements.empty()) {
     const auto [Statement, Depth] = Statements.back();
     Statements.pop_back();
-    if (Depth > 200)
-      return "method control flow exceeds the source projection depth limit";
+    if (Depth > 200) {
+      Diagnostics.Complete = false;
+      Diagnostics.add(
+          SourceProjectionIssue::Budget,
+          "method control flow exceeds the source projection depth limit",
+          Statement->Addr);
+      continue;
+    }
     if (Statement->Kind == StmtKind::SEHTry ||
         Statement->Kind == StmtKind::CxxTry ||
         Statement->Kind == StmtKind::ItaniumTry)
-      return "exception-dependent method projection is not supported";
-    if (Statement->Kind == StmtKind::Return &&
+      Diagnostics.add(SourceProjectionIssue::Exception,
+                      "exception-dependent method projection is not supported");
+    if (Statement->Kind == StmtKind::Return && Hint.ReturnType &&
         Hint.ReturnType->Kind != NdTypeKind::Void) {
       if (!Statement->RetVal)
-        return "non-void method has a return without a recovered value";
+        Diagnostics.add(
+            SourceProjectionIssue::ControlFlow,
+            "non-void method has a return without a recovered value");
     }
     if (Statement->Kind == StmtKind::Assign && Statement->Dst &&
         Statement->Val &&
@@ -188,37 +222,56 @@ inline std::string sourceBodyLimitation(
       // incoming read. Address expressions on compound destinations still are.
       if (Expression &&
           !(Expression == Statement->Dst && Expression->Kind == ExprKind::Var))
-        Expressions.emplace_back(Expression.get(), 1);
+        Expressions.emplace_back(Expression.get(), 1, Statement->Addr);
     });
-    AddStatements(Statement->Body, Depth + 1);
-    AddStatements(Statement->ElseBody, Depth + 1);
+    if (!AddStatements(Statement->Body, Depth + 1) ||
+        !AddStatements(Statement->ElseBody, Depth + 1) ||
+        !Spend(Statement->Cases.size() + Statement->EHClauseBodies.size()))
+      return;
     for (const auto &Case : Statement->Cases)
-      AddStatements(Case.Body, Depth + 1);
-    AddStatements(Statement->DefaultBody, Depth + 1);
+      if (!AddStatements(Case.Body, Depth + 1))
+        return;
+    if (!AddStatements(Statement->DefaultBody, Depth + 1))
+      return;
     for (const auto &Clause : Statement->EHClauseBodies)
-      AddStatements(Clause, Depth + 1);
+      if (!AddStatements(Clause, Depth + 1))
+        return;
   }
-  std::map<const HighExpr *, unsigned> SeenDepth;
+  std::map<std::pair<const HighExpr *, va_t>, unsigned> SeenDepth;
   while (!Expressions.empty()) {
-    const auto [Expression, Depth] = Expressions.back();
+    const auto [Expression, Depth, Address] = Expressions.back();
     Expressions.pop_back();
-    if (Depth > 200)
-      return "method expression exceeds the source projection depth limit";
-    auto [Position, Inserted] = SeenDepth.emplace(Expression, Depth);
+    if (Depth > 200) {
+      Diagnostics.Complete = false;
+      Diagnostics.add(
+          SourceProjectionIssue::Budget,
+          "method expression exceeds the source projection depth limit",
+          Address);
+      continue;
+    }
+    const va_t IdentityAddress =
+        Diagnostics.Collection == SourceProjectionDiagnostics::Mode::All
+            ? Address
+            : 0;
+    auto [Position, Inserted] =
+        SeenDepth.emplace(std::make_pair(Expression, IdentityAddress), Depth);
     if (!Inserted && Position->second >= Depth)
       continue;
     Position->second = Depth;
     if (Expression->Kind == ExprKind::Undef)
-      return "method contains an unresolved value";
+      Diagnostics.add(SourceProjectionIssue::UnresolvedValue,
+                      "method contains an unresolved value", Address,
+                      Expression);
     if (Expression->Kind == ExprKind::Call &&
         !(CallAllowed && CallAllowed(*Expression)) &&
         (Expression->IntrinsicId == Intrinsic::None ||
          !intrinsicCName(Expression->IntrinsicId) ||
          Expression->IsIndirectCall ||
          Expression->MemoryAddressSpace != NdMemoryAddressSpace::Default)) {
-      if (UnboundCall)
-        *UnboundCall = Expression;
-      return "method calls a native or dynamic target without a source binding";
+      Diagnostics.add(
+          SourceProjectionIssue::CallBinding,
+          "method calls a native or dynamic target without a source binding",
+          Address, Expression);
     }
     if (Expression->Kind == ExprKind::Var ||
         Expression->Kind == ExprKind::Phi) {
@@ -230,46 +283,103 @@ inline std::string sourceBodyLimitation(
             (Hint.HasExplicitABI && Variable.TheArch != Hint.Architecture) ||
             (Variable.TheArch != Arch::X64 &&
              Variable.TheArch != Arch::AArch64))
-          return "method references an unbound source parameter";
-        if (Hint.HasExplicitABI) {
+          Diagnostics.add(SourceProjectionIssue::ParameterBinding,
+                          "method references an unbound source parameter",
+                          Address, Expression);
+        else if (Hint.HasExplicitABI) {
           const auto &Location = Hint.Parameters[Variable.Id].Location;
           if (Location.Kind == SourceABICarrierKind::Stack) {
             if (Variable.StackOff != Location.EntryStackOffset)
-              return "method source parameter occupies the wrong stack "
-                     "position";
+              Diagnostics.add(
+                  SourceProjectionIssue::ParameterBinding,
+                  "method source parameter occupies the wrong stack "
+                  "position",
+                  Address, Expression);
           } else if (Variable.RegOff != Location.RegisterOffset) {
-            return "method source parameter occupies the wrong register "
-                   "position";
+            Diagnostics.add(
+                SourceProjectionIssue::ParameterBinding,
+                "method source parameter occupies the wrong register "
+                "position",
+                Address, Expression);
           }
         } else {
           const auto &Registers =
               getTargetRegInfo(Variable.TheArch).IntParamRegs;
           if (static_cast<size_t>(Variable.Id) >= Registers.size() ||
               Registers[Variable.Id] != Variable.RegOff)
-            return "method source parameter occupies the wrong ABI position";
+            Diagnostics.add(
+                SourceProjectionIssue::ParameterBinding,
+                "method source parameter occupies the wrong ABI position",
+                Address, Expression);
         }
       } else if ((Variable.Kind == MedVar::Reg ||
                   Variable.Kind == MedVar::Flag) &&
                  Variable.SSAVer == 0 && Variable.RenameTag < 0) {
         if (!sourceFrameBase(Func, Variable) &&
             !DefinedLocals.count(localIdentity(Variable)))
-          return "method contains an unexplained incoming register value";
+          Diagnostics.add(
+              SourceProjectionIssue::IncomingValue,
+              "method contains an unexplained incoming register value", Address,
+              Expression);
       } else if (Variable.Kind == MedVar::EHException ||
                  Variable.Kind == MedVar::EHSelector) {
-        return "exception-dependent method projection is not supported";
+        Diagnostics.add(
+            SourceProjectionIssue::Exception,
+            "exception-dependent method projection is not supported", Address,
+            Expression);
       } else if (!DefinedLocals.count(localIdentity(Variable))) {
         // Keep checking even unreachable expressions that HighC still emits.
         // Reachable reads also passed the source CFG's must-defined analysis.
-        return "method reads a local value without a recovered definition";
+        Diagnostics.add(
+            SourceProjectionIssue::LocalDefinition,
+            "method reads a local value without a recovered definition",
+            Address, Expression);
       }
     }
+    if (!Spend(Expression->Operands.size()))
+      return;
     for (const auto &Operand : Expression->Operands) {
       if (!Operand)
-        return "method contains a missing expression operand";
-      Expressions.emplace_back(Operand.get(), Depth + 1);
+        Diagnostics.add(SourceProjectionIssue::MalformedExpression,
+                        "method contains a missing expression operand", Address,
+                        Expression);
+      else
+        Expressions.emplace_back(Operand.get(), Depth + 1, Address);
     }
   }
-  return {};
+}
+
+/// Empty diagnostics mean complete supported source representation, not a
+/// proof of equivalence. Unknown graph edges and exhausted budgets explicitly
+/// leave Complete false, while independent body checks can still contribute.
+inline SourceProjectionDiagnostics sourceBodyDiagnostics(
+    const HighFunc &Func, const SourceFunctionTypeHint &Hint,
+    const PipelineFunctionAudit *Audit,
+    const std::function<bool(const HighExpr &)> &CallAllowed = {},
+    SourceProjectionDiagnostics::Mode Collection =
+        SourceProjectionDiagnostics::Mode::All) {
+  SourceProjectionDiagnostics Diagnostics(Collection);
+  try {
+    collectSourceBodyDiagnostics(Func, Hint, Audit, CallAllowed, Diagnostics);
+  } catch (const SourceProjectionDiagnostics::Stop &) {
+  }
+  return Diagnostics;
+}
+
+inline std::string sourceBodyLimitation(
+    const HighFunc &Func, const SourceFunctionTypeHint &Hint,
+    const PipelineFunctionAudit *Audit,
+    const std::function<bool(const HighExpr &)> &CallAllowed = {},
+    const HighExpr **UnboundCall = nullptr) {
+  if (UnboundCall)
+    *UnboundCall = nullptr;
+  const auto Diagnostics =
+      sourceBodyDiagnostics(Func, Hint, Audit, CallAllowed,
+                            SourceProjectionDiagnostics::Mode::FirstFailure);
+  if (UnboundCall && !Diagnostics.Items.empty() &&
+      Diagnostics.Items.front().Issue == SourceProjectionIssue::CallBinding)
+    *UnboundCall = Diagnostics.Items.front().Expression;
+  return Diagnostics.limitation();
 }
 
 inline std::string objcSourceBodyLimitation(

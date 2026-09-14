@@ -7,6 +7,8 @@
 #ifndef NEVERD_SDK_CAPI_SOURCEPROJECTIONFLOW_H
 #define NEVERD_SDK_CAPI_SOURCEPROJECTIONFLOW_H
 
+#include "SourceProjectionDiagnostics.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -59,42 +61,56 @@ class SourceProjectionFlow {
   static constexpr size_t MaxStateWords = 8 * 1024 * 1024; // 64 MiB.
   struct Failure {
     std::string Reason;
+    SourceProjectionIssue Issue;
+    va_t Address;
   };
   struct Node {
     std::vector<size_t> Next, Previous, Uses;
     std::optional<size_t> Definition;
     bool Returns = false;
+    va_t Address = 0;
+    std::map<size_t, const HighExpr *> UseExpressions;
   };
   struct Control {
     size_t Break = NoNode, Continue = NoNode;
   };
 
   const HighFunc &Function;
+  SourceProjectionDiagnostics &Diagnostics;
+  va_t CurrentAddress = 0;
   std::vector<Node> Nodes;
   std::map<LocalIdentity, size_t> Locals;
   std::map<va_t, size_t> Labels;
   std::vector<std::pair<size_t, va_t>> Gotos;
   size_t Operations = 0, EdgeCount = 0, CaseCount = 0;
 
-  [[noreturn]] static void fail(const char *Reason) { throw Failure{Reason}; }
+  [[noreturn]] void
+  fail(const char *Reason,
+       SourceProjectionIssue Issue = SourceProjectionIssue::ControlFlow) {
+    throw Failure{Reason, Issue, CurrentAddress};
+  }
   void spend(size_t Count = 1) {
     if (Count > MaxOperations - Operations)
-      fail("method source-flow analysis exceeds its work limit");
+      fail("method source-flow analysis exceeds its work limit",
+           SourceProjectionIssue::Budget);
     Operations += Count;
   }
   size_t node() {
     spend();
     if (Nodes.size() == MaxNodes)
-      fail("method source-flow graph exceeds its node limit");
+      fail("method source-flow graph exceeds its node limit",
+           SourceProjectionIssue::Budget);
     Nodes.emplace_back();
     return Nodes.size() - 1;
   }
   void edge(size_t From, size_t To) {
+    CurrentAddress = Nodes[From].Address;
     spend();
     if (To == NoNode)
       fail("method has a break or continue outside its source control scope");
     if (EdgeCount == MaxEdges)
-      fail("method source-flow graph exceeds its edge limit");
+      fail("method source-flow graph exceeds its edge limit",
+           SourceProjectionIssue::Budget);
     ++EdgeCount;
     Nodes[From].Next.push_back(To);
     Nodes[To].Previous.push_back(From);
@@ -105,7 +121,8 @@ class SourceProjectionFlow {
     if (auto It = Locals.find(Identity); It != Locals.end())
       return It->second;
     if (Locals.size() == MaxLocals)
-      fail("method source-flow graph exceeds its local-value limit");
+      fail("method source-flow graph exceeds its local-value limit",
+           SourceProjectionIssue::Budget);
     return Locals.emplace(Identity, Locals.size()).first->second;
   }
   bool entryValue(const MedVar &Variable) const {
@@ -114,6 +131,7 @@ class SourceProjectionFlow {
            sourceFrameBase(Function, Variable);
   }
   void reads(size_t Index, const ExprPtr &Root) {
+    CurrentAddress = Nodes[Index].Address;
     if (!Root)
       return;
     std::vector<std::pair<const HighExpr *, unsigned>> Pending{{Root.get(), 1}};
@@ -123,19 +141,24 @@ class SourceProjectionFlow {
       auto [Expression, Depth] = Pending.back();
       Pending.pop_back();
       if (Depth > 200)
-        fail("method expression exceeds the source projection depth limit");
+        fail("method expression exceeds the source projection depth limit",
+             SourceProjectionIssue::Budget);
       auto [It, Fresh] = Seen.emplace(Expression, Depth);
       if (!Fresh && It->second >= Depth)
         continue;
       It->second = Depth;
       if ((Expression->Kind == ExprKind::Var ||
            Expression->Kind == ExprKind::Phi) &&
-          !entryValue(Expression->Var))
-        Nodes[Index].Uses.push_back(local(Expression->Var));
+          !entryValue(Expression->Var)) {
+        const size_t Local = local(Expression->Var);
+        Nodes[Index].Uses.push_back(Local);
+        Nodes[Index].UseExpressions.emplace(Local, Expression);
+      }
       spend(Expression->Operands.size());
       for (const auto &Operand : Expression->Operands) {
         if (!Operand)
-          fail("method contains a missing expression operand");
+          fail("method contains a missing expression operand",
+               SourceProjectionIssue::MalformedExpression);
         Pending.emplace_back(Operand.get(), Depth + 1);
       }
     }
@@ -174,14 +197,17 @@ class SourceProjectionFlow {
   size_t block(const std::vector<HighStmt> &Body, size_t Next, Control Scope,
                unsigned Depth) {
     if (Depth > 200)
-      fail("method control flow exceeds the source projection depth limit");
+      fail("method control flow exceeds the source projection depth limit",
+           SourceProjectionIssue::Budget);
     for (auto It = Body.rbegin(); It != Body.rend(); ++It)
       Next = statement(*It, Next, Scope, Depth);
     return Next;
   }
   size_t statement(const HighStmt &Statement, size_t Next, Control Scope,
                    unsigned Depth) {
+    CurrentAddress = Statement.Addr;
     const size_t Index = node();
+    Nodes[Index].Address = Statement.Addr;
     if (Statement.Addr && Statement.Addr != InvalidVA) {
       auto [It, Fresh] = Labels.emplace(Statement.Addr, Index);
       if (!Fresh)
@@ -254,6 +280,7 @@ class SourceProjectionFlow {
       // A goto to the do statement enters its body, whereas continue and the
       // normal back edge evaluate its trailing condition first.
       const size_t Test = node();
+      Nodes[Test].Address = Statement.Addr;
       const size_t Body = block(Statement.Body, Test, {Next, Test}, Depth + 1);
       edge(Index, Body);
       branch(Test, Statement.Cond, Body, Next);
@@ -267,7 +294,8 @@ class SourceProjectionFlow {
       for (const auto &Case : Statement.Cases) {
         spend();
         if (CaseCount == MaxSwitchCases)
-          fail("method source-flow graph exceeds its switch-case limit");
+          fail("method source-flow graph exceeds its switch-case limit",
+               SourceProjectionIssue::Budget);
         ++CaseCount;
         const size_t Body =
             block(Case.Body, Next, {Next, Scope.Continue}, Depth + 1);
@@ -298,23 +326,36 @@ class SourceProjectionFlow {
     case StmtKind::SEHTry:
     case StmtKind::CxxTry:
     case StmtKind::ItaniumTry:
-      fail("exception-dependent method projection is not supported");
+      fail("exception-dependent method projection is not supported",
+           SourceProjectionIssue::Exception);
     default:
       fail("method source contains an unsupported statement kind");
     }
     return Index;
   }
 
-  std::string analyze(bool NeedsReturn) {
+  void analyze(bool NeedsReturn) {
     node(); // Node zero is the emitted function's fallthrough exit.
     const size_t Entry = block(Function.Body, 0, {}, 1);
+    CurrentAddress = 0;
+    bool MissingTarget = false;
     for (const auto &[Index, Address] : Gotos) {
       auto Target = Labels.find(Address);
       if (!Address || Address == InvalidVA || Target == Labels.end() ||
-          Target->second == NoNode)
-        fail("method source goto has no unique emitted target");
-      edge(Index, Target->second);
+          Target->second == NoNode) {
+        MissingTarget = true;
+        Diagnostics.Complete = false;
+        Diagnostics.add(SourceProjectionIssue::ControlFlow,
+                        "method source goto has no unique emitted target",
+                        Nodes[Index].Address, nullptr, Address);
+      } else {
+        edge(Index, Target->second);
+      }
     }
+    // Unknown edges invalidate reachability and must-defined conclusions.
+    // The outer validator can still inventory independent expressions.
+    if (MissingTarget)
+      return;
     std::vector<bool> Reachable(Nodes.size());
     std::vector<size_t> Pending{Entry};
     Reachable[Entry] = true;
@@ -330,22 +371,30 @@ class SourceProjectionFlow {
       }
     }
     if (Reachable[0] && (NeedsReturn || Function.DoesNotReturn))
-      fail("method source has a reachable fallthrough exit without a return");
+      Diagnostics.add(
+          SourceProjectionIssue::ControlFlow,
+          "method source has a reachable fallthrough exit without a return");
     for (size_t Index : Pending)
       if (Function.DoesNotReturn && Nodes[Index].Returns)
-        fail("method source returns despite its noreturn declaration");
+        Diagnostics.add(
+            SourceProjectionIssue::ControlFlow,
+            "method source returns despite its noreturn declaration",
+            Nodes[Index].Address);
 
     // Must-defined is a greatest fixed point: entry starts empty, all other
     // states start at top, and predecessor intersections only remove facts.
     // No facts are imported from unreachable code or a skipped loop body.
     const size_t Words = (Locals.size() + 63) / 64;
+    CurrentAddress = 0;
     if (Words && Nodes.size() > MaxStateWords / Words)
-      fail("method source-flow analysis exceeds its state memory limit");
+      fail("method source-flow analysis exceeds its state memory limit",
+           SourceProjectionIssue::Budget);
     spend(Nodes.size() * Words);
     std::vector<uint64_t> States(Nodes.size() * Words, ~uint64_t{0});
     std::vector<uint64_t> Incoming(Words);
     std::vector<bool> Queued = Reachable;
     auto inputs = [&](size_t Index) {
+      CurrentAddress = Nodes[Index].Address;
       std::fill(Incoming.begin(), Incoming.end(),
                 Index == Entry ? 0 : ~uint64_t{0});
       for (size_t Predecessor : Nodes[Index].Previous) {
@@ -389,22 +438,26 @@ class SourceProjectionFlow {
       for (size_t Use : Nodes[Index].Uses) {
         spend();
         if (!(Incoming[Use / 64] & (uint64_t{1} << (Use % 64))))
-          fail("method reads a local value before it is defined on every "
-               "reaching source path");
+          Diagnostics.add(
+              SourceProjectionIssue::DefiniteAssignment,
+              "method reads a local value before it is defined on every "
+              "reaching source path",
+              Nodes[Index].Address, Nodes[Index].UseExpressions.at(Use));
       }
     }
-    return {};
   }
 
 public:
-  explicit SourceProjectionFlow(const HighFunc &Function)
-      : Function(Function) {}
+  SourceProjectionFlow(const HighFunc &Function,
+                       SourceProjectionDiagnostics &Diagnostics)
+      : Function(Function), Diagnostics(Diagnostics) {}
 
-  std::string limitation(bool NeedsReturn) {
+  void collect(bool NeedsReturn) {
     try {
-      return analyze(NeedsReturn);
+      analyze(NeedsReturn);
     } catch (const Failure &Error) {
-      return Error.Reason;
+      Diagnostics.Complete = false;
+      Diagnostics.add(Error.Issue, Error.Reason, Error.Address);
     }
   }
 };

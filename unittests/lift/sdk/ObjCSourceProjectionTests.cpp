@@ -156,6 +156,127 @@ TEST(ObjCSourceProjection, UnboundCallDiagnosticIdentifiesAndClearsTheFailure) {
   EXPECT_EQ(Failure, nullptr);
 }
 
+TEST(ObjCSourceProjection,
+     InventoriesIndependentCallsAndTheirStatementAddresses) {
+  Projection P;
+  auto SharedCall = HighExpr::makeCall("first", 0x2000, {});
+  HighStmt First;
+  First.Kind = StmtKind::ExprStmt;
+  First.Addr = 0x1000;
+  First.Val = SharedCall;
+  HighStmt Second = First;
+  Second.Addr = 0x1004;
+  P.Func.Body.insert(P.Func.Body.begin(), {First, Second});
+  P.Func.Body.back().Addr = 0x1008;
+  P.Func.Body.back().RetVal =
+      HighExpr::makeCall("last", 0x3000, {HighExpr::makeUndef(8)});
+
+  const auto Report = sourceBodyDiagnostics(P.Func, P.Hint, &P.Audit);
+  EXPECT_TRUE(Report.Complete);
+  std::set<va_t> Calls;
+  bool Unresolved = false;
+  for (const auto &Item : Report.Items) {
+    if (Item.Issue == SourceProjectionIssue::CallBinding) {
+      ASSERT_NE(Item.Expression, nullptr);
+      Calls.insert(Item.StatementAddress);
+    }
+    Unresolved |= Item.Issue == SourceProjectionIssue::UnresolvedValue;
+  }
+  EXPECT_EQ(Calls, (std::set<va_t>{0x1000, 0x1004, 0x1008}));
+  EXPECT_TRUE(Unresolved);
+  const HighExpr *FirstRejected = nullptr;
+  EXPECT_EQ(sourceBodyLimitation(P.Func, P.Hint, &P.Audit, {}, &FirstRejected),
+            Report.limitation());
+  EXPECT_EQ(FirstRejected, SharedCall.get());
+}
+
+TEST(ObjCSourceProjection,
+     UnknownEdgesLeaveFlowIncompleteButStillInventoryCalls) {
+  Projection P;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.Addr = 0x1004;
+  Jump.GotoTarget = 0x9000;
+  P.Func.Body.insert(P.Func.Body.begin(), Jump);
+  P.Func.Body.back().RetVal = HighExpr::makeCall("external", 0x2000, {});
+  const auto Report = sourceBodyDiagnostics(P.Func, P.Hint, &P.Audit);
+  EXPECT_FALSE(Report.Complete);
+  ASSERT_EQ(Report.Items.size(), 2u);
+  EXPECT_EQ(Report.Items[0].Issue, SourceProjectionIssue::ControlFlow);
+  EXPECT_EQ(Report.Items[0].StatementAddress, 0x1004u);
+  EXPECT_EQ(Report.Items[0].RelatedAddress, 0x9000u);
+  EXPECT_EQ(Report.Items[1].Issue, SourceProjectionIssue::CallBinding);
+  EXPECT_EQ(P.limitation(), Report.limitation());
+}
+
+TEST(ObjCSourceProjection, InventoriesFallthroughAndEachUninitializedLocal) {
+  Projection P;
+  MedVar Left;
+  Left.Kind = MedVar::Reg;
+  Left.Id = 11;
+  Left.SSAVer = 2;
+  MedVar Right = Left;
+  Right.Id = 12;
+  P.Func.Body[0].Kind = StmtKind::ExprStmt;
+  P.Func.Body[0].Addr = 0x1000;
+  P.Func.Body[0].RetVal.reset();
+  P.Func.Body[0].Val = HighExpr::makeBinop(
+      NdOp::INT_ADD, HighExpr::makeVar(Left), HighExpr::makeVar(Right));
+  const auto Report = sourceBodyDiagnostics(P.Func, P.Hint, &P.Audit);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_EQ(P.limitation(), Report.limitation());
+  std::set<int> MissingDefinitions;
+  for (const auto &Item : Report.Items)
+    if (Item.Issue == SourceProjectionIssue::DefiniteAssignment) {
+      ASSERT_NE(Item.Expression, nullptr);
+      EXPECT_EQ(Item.StatementAddress, 0x1000u);
+      MissingDefinitions.insert(Item.Expression->Var.Id);
+    }
+  EXPECT_EQ(MissingDefinitions, (std::set<int>{11, 12}));
+}
+
+TEST(ObjCSourceProjection, InvalidSignatureDoesNotHideIndependentBodyEvidence) {
+  Projection P;
+  P.Hint.ReturnType.reset();
+  P.Hint.Parameters[0].Type.reset();
+  MedVar InvalidParameter;
+  InvalidParameter.Kind = MedVar::Param;
+  InvalidParameter.Id = 999;
+  P.Func.Body[0].RetVal = HighExpr::makeCall(
+      "external", 0x2000, {HighExpr::makeVar(InvalidParameter)});
+  const auto Report = sourceBodyDiagnostics(P.Func, P.Hint, &P.Audit);
+  EXPECT_FALSE(Report.Complete);
+  std::set<SourceProjectionIssue> Issues;
+  for (const auto &Item : Report.Items)
+    Issues.insert(Item.Issue);
+  EXPECT_TRUE(Issues.count(SourceProjectionIssue::Signature));
+  EXPECT_TRUE(Issues.count(SourceProjectionIssue::CallBinding));
+  EXPECT_TRUE(Issues.count(SourceProjectionIssue::ParameterBinding));
+  EXPECT_EQ(P.limitation(), Report.limitation());
+}
+
+TEST(ObjCSourceProjection,
+     EvidenceBudgetCannotTurnAnIncompleteGraphIntoSuccess) {
+  Projection P;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x9000;
+  P.Func.Body.insert(P.Func.Body.begin(), Jump);
+  for (size_t Index = 0; Index < SourceProjectionDiagnostics::MaxDiagnostics;
+       ++Index) {
+    HighStmt Call;
+    Call.Kind = StmtKind::ExprStmt;
+    Call.Val = HighExpr::makeCall("external", 0x2000, {});
+    P.Func.Body.push_back(Call);
+  }
+  const auto Report = sourceBodyDiagnostics(P.Func, P.Hint, &P.Audit);
+  EXPECT_FALSE(Report.Complete);
+  ASSERT_EQ(Report.Items.size(),
+            SourceProjectionDiagnostics::MaxDiagnostics + 1);
+  EXPECT_EQ(Report.Items.back().Issue, SourceProjectionIssue::Budget);
+  EXPECT_EQ(P.limitation(), Report.limitation());
+}
+
 TEST(ObjCSourceProjection, RejectsUnresolvedBodiesCallsAndExceptionState) {
   using Mutation = std::function<void(Projection &)>;
   const std::vector<std::pair<const char *, Mutation>> Mutations = {
