@@ -226,7 +226,8 @@ TEST(RuntimeMetadata, DyldBindingsValidateStorageBeforeMutation) {
 TEST(RuntimeMetadata, DyldBackwardULEBDeltasKeepFollowingBindingsAndBounds) {
   using namespace llvm::MachO;
   for (bool BindAndAdvance : {false, true}) {
-    for (uint64_t Destination : {0x10ULL, 0x18ULL, 0x100ULL, UINT64_MAX}) {
+    for (uint64_t Destination :
+         {uint64_t(0x10), uint64_t(0x18), uint64_t(0x100), UINT64_MAX}) {
       SCOPED_TRACE(BindAndAdvance);
       SCOPED_TRACE(Destination);
       BinaryImage Image;

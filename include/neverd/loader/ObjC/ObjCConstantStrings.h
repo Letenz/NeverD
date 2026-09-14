@@ -7,7 +7,7 @@
 #include <vector>
 
 namespace neverd {
-class BinaryImage;
+struct BinaryImage;
 
 /// One proven Darwin constant-string object. Units exclude the terminator;
 /// UTF-16 code units are retained without a lossy Unicode conversion.
