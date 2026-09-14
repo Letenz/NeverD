@@ -748,8 +748,11 @@ TEST(ObjCRuntimeSource,
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
     for (bool Manual : {false, true}) {
       SCOPED_TRACE(Manual ? "manual reference counting" : "ARC");
-      ASSERT_NO_FATAL_FAILURE(verifyRuntime(
-          Chained, RuntimeFixture::BlockLifetimes, false, Manual));
+      for (bool Profiled : {false, true}) {
+        SCOPED_TRACE(Profiled ? "instrumented counters" : "uninstrumented");
+        ASSERT_NO_FATAL_FAILURE(verifyRuntime(
+            Chained, RuntimeFixture::BlockLifetimes, Profiled, Manual));
+      }
     }
   }
 #else

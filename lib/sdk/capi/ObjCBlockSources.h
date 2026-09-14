@@ -525,9 +525,25 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
             S.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
             !S.StoreVal || !S.StoreVal->Type)
           throw Invalid("block consumer has an unknown memory effect");
-        // All nonlocal writes are conservative failures: an unknown alias
-        // cannot be used as proof that the context remains private.
-        State.storeFrame(Address, S.StoreVal->Type->Size, V);
+        const auto Bytes = S.StoreVal->Type->Size;
+        if (Address.K == Value::Frame) {
+          State.storeFrame(Address, Bytes, V);
+          break;
+        }
+        // A complete image range is disjoint from the private frame/context.
+        // It can receive ordinary values, but never a private pointer. The
+        // source-data owner still has to validate and relocate the actual
+        // storage; this escape proof does not authorize arbitrary aliases.
+        if (Address.K != Value::Number || pointerIdentity(V) || !Bytes ||
+            Bytes - 1 > InvalidVA - Address.Bits ||
+            !Source.Image.isDataAddress(Address.Bits) ||
+            !Source.Image.isDataAddress(Address.Bits + Bytes - 1) ||
+            Source.Image.getSegmentFor(Address.Bits) !=
+                Source.Image.getSegmentFor(Address.Bits + Bytes - 1) ||
+            Source.Image.getSectionFor(Address.Bits) !=
+                Source.Image.getSectionFor(Address.Bits + Bytes - 1))
+          throw Invalid(
+              "block consumer store has no disjoint image provenance");
         break;
       }
       case StmtKind::Return:

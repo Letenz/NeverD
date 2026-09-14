@@ -679,6 +679,46 @@ TEST(ObjCBlockSources, ReusedConstructionBindsEveryHeaderProducer) {
     EXPECT_TRUE(Bound.Function.Body[Index].StoreVal->SourceCallHint) << Index;
 }
 
+TEST(ObjCBlockSources, ImageWritesKeepPrivateBlockAddressesConfined) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Architecture == Arch::AArch64 ? "arm64" : "x86_64");
+      SCOPED_TRACE(Mutation);
+      SourceFixture F(true, Architecture);
+      auto &Invoke = F.Result.HighFuncs[0];
+      ExprPtr Address = HighExpr::makeConst(0x2600, 8);
+      ExprPtr Value = HighExpr::makeConst(7, 8);
+      const auto Context = parameter(0, Invoke.Params[0].Type);
+      if (Mutation == 1)
+        Value = Context;
+      if (Mutation == 2)
+        Value = frame(F.Image, 0);
+      if (Mutation == 3)
+        Address = Context;
+      if (Mutation == 4)
+        Address = HighExpr::makeLoad(HighExpr::makeConst(0x2608, 8),
+                                     NdType::makeInt(8));
+      if (Mutation == 5)
+        Address = HighExpr::makeConst(0x5000 - 4, 8);
+      if (Mutation == 6)
+        Address = HighExpr::makeConst(0x1100, 8);
+      if (Mutation == 7)
+        Address = HighExpr::makeConst(UINT64_MAX - 3, 8);
+      Invoke.Body.insert(Invoke.Body.begin(), store(Address, Value));
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                       Plan, F.functions());
+      EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+      if (!Mutation) {
+        const auto Rebound =
+            bindObjCBlockSourceReferences(Invoke, F.Image, Plan, F.functions());
+        ASSERT_TRUE(Rebound.Limitation.empty()) << Rebound.Limitation;
+        EXPECT_EQ(Rebound.Function.Body.front().StoreAddr->ConstVal, 0x2600U);
+        EXPECT_EQ(Rebound.Function.Body.front().StoreVal->ConstVal, 7U);
+      }
+    }
+}
+
 TEST(ObjCBlockSources, DeclaredConsumerRequiresExactImportAndCallbackABI) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
