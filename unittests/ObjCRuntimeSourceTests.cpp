@@ -387,3 +387,118 @@ TEST(ObjCRuntimeSource, RecompiledDiagnosticsPreserveMessagesAndTerminalTrap) {
   GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
 #endif
 }
+
+namespace {
+#ifdef __APPLE__
+void verifySwiftStorage(bool Chained) {
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-swift-storage", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  const auto Cleanup = llvm::make_scope_exit([&] {
+    std::error_code Error;
+    std::filesystem::remove_all(Work, Error);
+  });
+  const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
+#if defined(__aarch64__) || defined(__arm64__)
+  const std::string HostArch = "arm64";
+#else
+  const std::string HostArch = "x86_64";
+#endif
+  const auto Original = (Work / "original.dylib").string();
+  std::vector<std::string> Compile{
+      "/usr/bin/swiftc",
+      "-O",
+      "-emit-library",
+      "-enable-library-evolution",
+      "-module-name",
+      "NDStorage",
+      "-target",
+      HostArch + "-apple-macosx13.0",
+      (Fixtures / "ObjCSwiftStorage.swift").string(),
+      "-o",
+      Original};
+  if (!Chained)
+    Compile.insert(Compile.end(), {"-Xlinker", "-no_fixup_chains"});
+  ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "compile-original"));
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Session(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_TRUE(Session);
+  ASSERT_TRUE(neverd_session_load(Session.get(), Original.c_str()));
+  std::unique_ptr<const char, decltype(&neverd_free_string)> Raw(
+      neverd_objc_methods_json(Session.get(), 0), neverd_free_string);
+  ASSERT_TRUE(Raw);
+  auto JSON = llvm::json::parse(Raw.get());
+  ASSERT_TRUE(bool(JSON));
+  const auto *Object = JSON->getAsObject();
+  ASSERT_NE(Object, nullptr);
+  const auto *Methods = Object->getArray("methods");
+  ASSERT_NE(Methods, nullptr);
+  std::set<std::string> Remaining{"value", "count"};
+  std::vector<std::string> Sources;
+  std::string Declarations,
+      Install = "static void installRecovered(void) {\n"
+                "Class cls = objc_getClass(\"NDSwiftStorage\");\n";
+  for (const auto &Value : *Methods) {
+    const auto *Method = Value.getAsObject();
+    ASSERT_NE(Method, nullptr);
+    const auto Selector = Method->getString("selector");
+    ASSERT_TRUE(Selector);
+    if (!Remaining.count(Selector->str()))
+      continue;
+    ASSERT_EQ(Method->getString("status"), "recovered") << Raw.get();
+    const auto Name = Method->getString("function_name");
+    const auto Source = Method->getString("source");
+    ASSERT_TRUE(Name && Source);
+    EXPECT_TRUE(Source->contains("ivar_getOffset"));
+    const auto Path = Work / (Selector->str() + ".c");
+    ASSERT_NO_FATAL_FAILURE(write(Path, Source->str()));
+    Sources.push_back(Path.string());
+    Declarations += "extern void " + Name->str() + "(void);\n";
+    Install += "class_replaceMethod(cls, sel_registerName(\"" +
+               Selector->str() + "\"), (IMP)" + Name->str() +
+               ", method_getTypeEncoding(class_getInstanceMethod(cls, "
+               "sel_registerName(\"" +
+               Selector->str() + "\"))));\n";
+    Remaining.erase(Selector->str());
+  }
+  ASSERT_TRUE(Remaining.empty());
+  ASSERT_NO_FATAL_FAILURE(
+      write(Work / "replacements.h", Declarations + Install + "}\n"));
+  Compile = {NEVERD_TEST_CLANG,
+             "-arch",
+             HostArch,
+             "-O2",
+             "-fno-objc-arc",
+             "-framework",
+             "Foundation",
+             "-I" + Work.string(),
+             (Fixtures / "ObjCSwiftStorageHarness.m").string(),
+             Original,
+             "-o",
+             (Work / "baseline").string()};
+  ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-baseline"));
+  ASSERT_NO_FATAL_FAILURE(run({Compile.back()}, Work / "baseline"));
+  Compile.back() = (Work / "recovered").string();
+  Compile.push_back("-DNEVERD_RECOVERED_STORAGE");
+  Compile.insert(Compile.end(), Sources.begin(), Sources.end());
+  ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
+  ASSERT_NO_FATAL_FAILURE(
+      run({(Work / "recovered").string()}, Work / "recovered"));
+  EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
+  EXPECT_EQ(read(Work / "recovered.out"),
+            "swift-storage=pass\ngetter-calls=2048\n");
+}
+#endif
+} // namespace
+
+TEST(ObjCRuntimeSource, RecompiledSwiftStoredPropertiesUseRuntimeIvarOffsets) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(verifySwiftStorage(Chained));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}

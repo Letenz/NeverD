@@ -56,14 +56,15 @@ public:
     return Value;
   }
 
-  std::optional<std::string> string(va_t VA) const {
+  std::optional<std::string> string(va_t VA, bool AllowEmpty = false) const {
     std::string Value;
     for (size_t Index = 0; Index < 4096 && VA <= InvalidVA - Index; ++Index) {
       const auto *Data = bytes(VA + Index, 1);
       if (!Data)
         return std::nullopt;
       if (!*Data)
-        return Value.empty() ? std::nullopt : std::optional(Value);
+        return Value.empty() && !AllowEmpty ? std::nullopt
+                                            : std::optional(Value);
       if (*Data < 0x20 || *Data > 0x7e)
         return std::nullopt;
       Value.push_back(static_cast<char>(*Data));

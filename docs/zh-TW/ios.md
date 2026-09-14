@@ -177,6 +177,8 @@ Swift 匯出使用正常 mobile 流程由內建簽名解析器產生的結構化
 
 批次 `native_dependency_graph` 從簽章受支援的方法出發，沿映像程式碼的直接呼叫遍歷最終 LowIR，保留呼叫者、區塊及指令位址、共用目標與循環；間接目標為 null。缺少所需 LowIR 函式或達到記錄上限時，`inventory_complete` 為 false；`targets_complete` 另要求所有記錄均有直接目標。不含未支援的方法根與未解析的間接目標，也不證明完整原生執行覆蓋或相依原始碼恢復。
 
+儲存欄位中繼資料區分已知位元組配置與未知語言型別。穩定 ABI 的 Swift 類別即使在 arm64 上也使用指標寬度的欄位偏移變數；未公開的欄位可能具有空的 Objective-C 型別編碼。NeverD 保留型別缺失的事實，同時驗證偏移、大小、對齊與重疊。還原的 C 函式主體透過執行時期 ivar 查詢取得偏移。欄位型別不可用時，仍不會產生需要虛構型別的類別宣告。
+
 只有匯入呼叫的已驗證契約限定了非負讀取長度，並排除寫入、保留指標及比較位址身分時，才重建不可變位元組緩衝區。保留原始位元組與長度，其他指標用途仍維持未解析。Swift 診斷報告使用其宣告的 C ABI 與準確連結符號，後續終止陷阱作為獨立操作保留。
 
 對已載入 Mach-O 的會話，`neverd_objc_methods_json(session, max_functions)` 和 `neverd_swift_methods_json(session, signatures_json, max_functions)` 返回相應報告。零表示所有發現的函式。成功返回的字串用 `neverd_free_string` 釋放；`NULL` 表示失敗，原因見會話錯誤。這些 API 不載入 IPA 或 `.app` 容器。

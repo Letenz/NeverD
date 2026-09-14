@@ -181,6 +181,8 @@ Swift 导出使用正常 mobile 流程由内置签名解析器生成的结构化
 
 批次中的 `native_dependency_graph` 从签名受支持的 Objective-C 方法出发，沿映像代码内的直接调用遍历最终 LowIR。它保留调用者、基本块和指令地址，包括共享被调函数和环；间接目标保持 null。缺少所需 LowIR 函数或达到调用记录上限时，`inventory_complete` 为 false；`targets_complete` 还要求所有已记录调用都有直接目标。范围不包含签名不受支持的方法根和未解析的间接目标，也不证明完整的原生执行覆盖或依赖源码恢复。
 
+存储字段元数据区分已知字节布局与未知语言类型。稳定 ABI 的 Swift 类即使在 arm64 上也使用指针宽度的字段偏移变量；未公开的字段可能具有空的 Objective-C 类型编码。NeverD 保留类型缺失这一事实，同时验证偏移、大小、对齐和重叠。恢复的 C 函数体通过运行时 ivar 查询获取偏移。字段类型不可用时，仍不会生成需要虚构类型的类声明。
+
 只有导入调用的已验证契约限定了非负读取长度，并排除写入、保存指针和比较地址身份时，才重建不可变字节缓冲区。保留原始字节与长度，其他指针用途仍保持未解析。Swift 诊断报告使用其声明的 C ABI 与准确链接符号，后续终止陷阱作为独立操作保留。
 
 对已加载 Mach-O 的会话，`neverd_objc_methods_json(session, max_functions)` 和 `neverd_swift_methods_json(session, signatures_json, max_functions)` 返回相应报告。零表示所有发现的函数。成功返回的字符串用 `neverd_free_string` 释放；`NULL` 表示失败，原因见会话错误。这些 API 不加载 IPA 或 `.app` 容器。

@@ -20,7 +20,7 @@ void diagnostic(BinaryImage &Image, llvm::StringRef Message) {
 }
 
 bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
-               uint64_t &Remaining) {
+               uint64_t &Remaining, uint16_t OffsetWidth, bool AllowEmptyType) {
   auto RO = Data.classRO(Class.Address);
   if (!RO)
     return false;
@@ -49,9 +49,16 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
     auto TypeSlot = Data.pointer(Record + 16);
     auto Align = Data.u32(Record + 24);
     auto Width = Data.u32(Record + 28);
-    auto Offset = OffsetSlot ? Data.u32(*OffsetSlot) : std::nullopt;
+    const auto *OffsetBytes = OffsetSlot && *OffsetSlot
+                                  ? Data.bytes(*OffsetSlot, OffsetWidth)
+                                  : nullptr;
+    std::optional<uint64_t> Offset;
+    if (OffsetBytes)
+      Offset = OffsetWidth == 8 ? llvm::support::endian::read64le(OffsetBytes)
+                                : llvm::support::endian::read32le(OffsetBytes);
     auto Name = NameSlot ? Data.string(*NameSlot) : std::nullopt;
-    auto Type = TypeSlot ? Data.string(*TypeSlot) : std::nullopt;
+    auto Type = TypeSlot && *TypeSlot ? Data.string(*TypeSlot, AllowEmptyType)
+                                      : std::nullopt;
     if (!Offset || !Name || !Type || !Align || !Width || !*Width ||
         !Names.insert(*Name).second || *Offset < *Start ||
         !rangeInBounds(*Offset, *Width, *Size) ||
@@ -65,8 +72,8 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
       if (*Offset < uint64_t(Other.Offset) + Other.Size &&
           Other.Offset < uint64_t(*Offset) + *Width)
         return false;
-    Ivars.push_back(
-        {*Name, *Type, Record, *OffsetSlot, *Offset, *Width, Alignment});
+    Ivars.push_back({*Name, *Type, Record, *OffsetSlot,
+                     static_cast<uint32_t>(*Offset), *Width, Alignment});
   }
   Class.Ivars = std::move(Ivars);
   return true;
@@ -141,23 +148,21 @@ void parseObjCStorage(BinaryImage &Image) {
   for (auto &Class : Image.ObjCClasses) {
     Class.Ivars.clear();
     Class.IvarStatus = "unresolved";
-    if (!readIvars(Class, Data, Remaining)) {
+    const auto ClassBits = Data.pointer(Class.Address + 32);
+    const bool SwiftStable = ClassBits && (*ClassBits & 3) == 2;
+    // Swift's stable class metadata uses pointer-sized field-offset globals,
+    // including on arm64. Its unexposed fields retain an empty type encoding;
+    // their byte layout is still explicit. Preserve that missing type fact.
+    // Ordinary arm64 Objective-C classes use 32-bit offset globals instead.
+    const uint16_t OffsetWidth = Image.Arch == Arch::X64 || SwiftStable ? 8 : 4;
+    if (!readIvars(Class, Data, Remaining, OffsetWidth, SwiftStable)) {
       diagnostic(Image, "Objective-C instance storage layout is incomplete");
       continue;
     }
     Class.IvarStatus = "recovered";
     for (const auto &Ivar : Class.Ivars) {
-      uint16_t Width = 4;
-      if (Image.Arch == Arch::X64) {
-        const auto *Bytes = Data.bytes(Ivar.OffsetAddress, 8);
-        if (!Bytes || llvm::support::endian::read64le(Bytes) != Ivar.Offset) {
-          diagnostic(Image, "Objective-C ivar offset carrier is unresolved");
-          continue;
-        }
-        Width = 8;
-      }
-      Publish({ObjCSourceReference::Kind::IvarOffset, Ivar.OffsetAddress, Width,
-               Ivar.Name, Class.Name});
+      Publish({ObjCSourceReference::Kind::IvarOffset, Ivar.OffsetAddress,
+               OffsetWidth, Ivar.Name, Class.Name});
     }
   }
   for (const auto &Section : Image.Sections) {

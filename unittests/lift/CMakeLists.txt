@@ -112,6 +112,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighSSADefinitionTests.cpp
   core/ObjCCallHintTests.cpp
   core/ObjCCategoryTests.cpp
+  core/ObjCStorageTests.cpp
   core/HighCSourceCallTests.cpp
   core/NativeSourceHintsTests.cpp
   core/ObjCBlocksTests.cpp
@@ -916,6 +917,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 # complete fixture inventory during mobile decompiler development.
 add_neverd_unittest(NeverDObjCSourceCallTests
   core/SourceABITests.cpp
+  core/ObjCStorageTests.cpp
   core/ObjCCallHintTests.cpp
   core/HighCSourceCallTests.cpp
   sdk/ObjCBlockSourceTests.cpp
