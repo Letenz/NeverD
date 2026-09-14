@@ -22,6 +22,8 @@
 - (const void *)timerType;
 - (float)defaultPriority;
 - (double)foundationVersion;
+- (BOOL)belongs:(id)object to:(Class)cls;
+- (BOOL)responds:(id)object selector:(SEL)selector;
 @end
 @implementation NDDarwinDeclarations
 - (NSString *)nameOfClass:(Class)value {
@@ -81,5 +83,11 @@
 }
 - (double)foundationVersion {
   return NSFoundationVersionNumber;
+}
+- (BOOL)belongs:(id)object to:(Class)cls {
+  return [object isKindOfClass:cls];
+}
+- (BOOL)responds:(id)object selector:(SEL)selector {
+  return [object respondsToSelector:selector];
 }
 @end

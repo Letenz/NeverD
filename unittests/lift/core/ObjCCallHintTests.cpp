@@ -2002,3 +2002,53 @@ TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
     }
   }
 }
+
+TEST(ObjCCallHints, OptimizedRuntimeQueriesRetainByteResultsAndExactImports) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"objc_opt_isKindOfClass", "objc_opt_respondsToSelector"}) {
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0,
+                                     "/usr/lib/libobjc.A.dylib", false};
+      auto Hint = objcRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->TargetName, Name);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 1U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      EXPECT_EQ(Hint->Signature.ReturnLocation.ValueBytes, 1U);
+      EXPECT_EQ(Hint->Signature.ReturnLocation.ExtendTo32Bits,
+                Architecture == Arch::AArch64);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+      for (const auto &Parameter : Hint->Signature.Parameters) {
+        EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Parameter.Location.ValueBytes, 8U);
+      }
+      auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+      EXPECT_EQ(Med.CallInfos.front().Args.size(), 2U);
+      for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DyldBindSlots[0x2180].Module = "/tmp/libobjc.A.dylib";
+        if (Mutation == 1)
+          Changed.DyldBindSlots.clear();
+        if (Mutation == 2)
+          Changed.DyldBindSlots[0x2180].WeakImport = true;
+        if (Mutation == 3)
+          Changed.DyldBindSlots[0x2180].Addend = 8;
+        if (Mutation == 4)
+          Changed.ConflictingImportStorageSlots.insert(0x2180);
+        if (Mutation == 5) {
+          Changed.ImportPtrSlots[0x2180] += "_suffix";
+          Changed.DyldBindSlots[0x2180].Name = Changed.ImportPtrSlots[0x2180];
+        }
+        if (Mutation == 6) {
+          Changed.ImportPtrSlots[0x2180] = Name;
+          Changed.DyldBindSlots[0x2180].Name = Name;
+        }
+        EXPECT_FALSE(objcRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+      }
+    }
+  }
+}

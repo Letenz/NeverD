@@ -145,7 +145,8 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (!Import)
     return std::nullopt;
   llvm::StringRef Name(*Import);
-  Name.consume_front("_");
+  if (!Name.consume_front("_"))
+    return std::nullopt;
   std::optional<unsigned> ArgumentRegister;
   llvm::StringRef Canonical = Name;
   for (llvm::StringRef Operation : {"objc_retain", "objc_release"}) {
@@ -186,6 +187,18 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Signature.Parameters = {{"object", Object}};
   } else if (Canonical == "objc_autoreleasePoolPush") {
     Signature.ReturnType = Object;
+  } else if (Canonical == "objc_opt_isKindOfClass" ||
+             Canonical == "objc_opt_respondsToSelector") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/libobjc.A.dylib")
+      return std::nullopt;
+    // These runtime queries return BOOL and preserve custom overrides.
+    // https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-internal.h
+    // Carry its byte unchanged. ARM64 BOOL is unsigned and extends to W0;
+    // x86_64 defines only AL, with signed/boolean conversions in the caller.
+    Signature.ReturnType = NdType::makeInt(1, false);
+    Signature.Parameters = {{"object", Object}, {"query", Object}};
   } else if (Canonical == "objc_storeStrong" || Canonical == "objc_storeWeak" ||
              Canonical == "objc_initWeak") {
     Signature.ReturnType =

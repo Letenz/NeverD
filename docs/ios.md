@@ -73,6 +73,8 @@ Fixed C callback types preserve their parameter and return signatures in source 
 
 Known imported Objective-C runtime calls retain explicit argument and return bindings: retain/release, autorelease, strong/weak storage, object allocation, and fixed-signature property setters. ARM64 register-specific retain/release entry points read the named register and emit the corresponding ordinary runtime call. Import identity and ABI must agree; an arbitrary similarly named function does not qualify. Recompiled ARC fixtures check strong-reference lifetimes, weak zeroing, property copying, and destruction against the original methods on macOS.
 
+The exact libobjc optimized class and selector queries retain their runtime calls, including nil handling and custom overrides. Their byte results preserve the caller’s native conversions; they are not replaced with a guessed class hierarchy test.
+
 Associated-object get/set/remove calls preserve the object, key, value, and pointer-sized policy arguments. Generated C uses the public Objective-C runtime header, and executable regression tests compare retention, copying, and removal with the original methods.
 
 Objective-C exports also bind a fixed set of ordinary C-ABI Swift runtime imports for retain/release, native and unknown-object weak references, object metadata, and begin/end access. Generated C preserves these calls and requires the Swift runtime when linked. Register-specialized entry points, unrecognized Swift calling conventions and arbitrary Swift symbols remain unsupported; import identities and exact scalar carriers must agree.

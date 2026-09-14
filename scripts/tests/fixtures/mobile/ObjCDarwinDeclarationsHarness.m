@@ -23,6 +23,18 @@
 - (const void *)timerType;
 - (float)defaultPriority;
 - (double)foundationVersion;
+- (BOOL)belongs:(id)object to:(Class)cls;
+- (BOOL)responds:(id)object selector:(SEL)selector;
+@end
+@interface NDQueryOverrides : NSObject
+@end
+@implementation NDQueryOverrides
+- (BOOL)isKindOfClass:(Class)cls {
+  return (BOOL)-37;
+}
+- (BOOL)respondsToSelector:(SEL)selector {
+  return (BOOL)-91;
+}
 @end
 #ifdef NEVERD_RECOVERED_ARC
 #include "replacements.h"
@@ -49,7 +61,18 @@ int main(void) {
 #endif
   @autoreleasepool {
     NDDarwinDeclarations *driver = [NDDarwinDeclarations new];
+    NDQueryOverrides *overrides = [NDQueryOverrides new];
+    id queries[] = { nil, driver, @[], @42, [NSObject class], overrides };
+    SEL selectors[] = { @selector(description), sel_registerName("nd_absent") };
+    Class classes[] = {[NSObject class], [NSArray class]};
     for (unsigned i = 0; i < 2048; ++i) {
+      for (unsigned j = 0; j < sizeof(queries) / sizeof(*queries); ++j)
+        for (unsigned k = 0; k < 2; ++k)
+          if ([driver belongs:queries[j] to:classes[k]] !=
+                  [queries[j] isKindOfClass:classes[k]] ||
+              [driver responds:queries[j] selector:selectors[k]] !=
+                  [queries[j] respondsToSelector:selectors[k]])
+            return 11;
       if (![[driver nameOfClass:[NSMutableArray class]]
               isEqualToString:@"NSMutableArray"] ||
           [driver classNamed:@"NSMutableArray"] != [NSMutableArray class] ||
@@ -94,6 +117,7 @@ int main(void) {
     if (worker.locked != 8192 || worker.synchronized != 8192)
       return 9;
     pthread_mutex_destroy(&worker.mutex);
+    [overrides release];
     [driver release];
   }
   puts("darwin-declarations=2048\nlocked-updates=8192\nsynchronized-updates="

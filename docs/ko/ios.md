@@ -73,6 +73,8 @@ Fat 바이너리에서 `--arch=auto`는 arm64, arm, x86_64, i386 순으로 우�
 
 알려진 Objective-C 런타임 가져오기 호출은 retain/release, 자동 해제, 강한 참조와 약한 참조 저장, 객체 할당, 고정 시그니처 속성 설정 함수의 인수와 반환값을 명시적으로 연결합니다. ARM64의 레지스터 전용 retain/release는 지정된 레지스터를 읽으며, 가져오기 대상과 ABI가 일치해야 합니다. 연관 객체의 조회·설정·제거는 객체, 키, 값, 포인터 너비의 정책 인수를 보존하고 생성된 C는 공개 런타임 헤더를 사용합니다. macOS 재컴파일 테스트는 객체 수명, 약한 참조 초기화, 복사 및 제거 동작을 원본 메서드와 비교합니다.
 
+libobjc의 최적화된 클래스 및 선택자 질의는 nil 처리와 사용자 정의 재정의를 포함한 실제 런타임 호출을 보존합니다. 반환 바이트에는 호출자의 원래 변환이 적용되며 추측한 클래스 계층 검사로 대체하지 않습니다.
+
 Objective-C 내보내기는 일반 C ABI를 사용하는 정해진 Swift 런타임 가져오기도 지원합니다. 참조 횟수, 네이티브 및 알 수 없는 객체의 약한 참조, 객체 메타데이터, 접근 검사 시작과 종료가 대상입니다. 생성된 C는 호출을 보존하며 링크 시 Swift 런타임이 필요합니다. 전용 레지스터 진입점, 알 수 없는 Swift 호출 규약, 임의의 Swift 심볼은 지원하지 않으며 가져오기 식별 정보와 스칼라 전달 위치가 정확히 일치해야 합니다.
 
 arm64 및 x86_64에서 정확한 Darwin String → NSString 가져오기 `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF`와 선택적 NSString → String 가져오기 `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ`를 각각 바인딩합니다. 소유권과 Clang `swiftcall`을 보존하며, 링크에는 Swift Foundation과 Swift Core가 필요합니다. 역방향 브리지는 반환된 String의 두 워드를 부호 없는 128비트 정수로 전달하고 SSA 구성 전에 명시적인 반환 레지스터로 분리합니다. 이는 비트 전달 형식이며 복원된 String 레이아웃이나 일반 집계 ABI가 아닙니다. 알 수 없는 시그니처와 불완전한 초기화 종속성은 계속 지원하지 않습니다.
