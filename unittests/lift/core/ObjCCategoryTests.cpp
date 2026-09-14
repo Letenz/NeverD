@@ -2,6 +2,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
+#include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Endian.h"
@@ -187,28 +188,85 @@ TEST(ObjCCategories, RejectsMetaclassAndConflictingImportedOwner) {
   EXPECT_TRUE(Fixture.diagnostic("conflicting import bindings"));
 }
 
-TEST(ObjCCategories, PreservesCollidingCategoryRecordsAndRejectsDispatchOrder) {
-  CategoryImage Fixture;
+void addCollidingCategory(CategoryImage &Fixture, va_t Types = 0x2580,
+                          va_t Implementation = 0x1120) {
   Fixture.pointer(0x2018, 0x2440);
   Fixture.pointer(0x2440, 0x2528);
   Fixture.string(0x2528, "Another");
   Fixture.pointer(0x2448, 0x2200);
   Fixture.pointer(0x2450, 0x2680);
-  Fixture.methodList(0x2680, 0x2540, 0x2580, 0x1120);
+  Fixture.methodList(0x2680, 0x2540, Types, Implementation);
   Fixture.word(0x1120, 0xd65f03c0);
-  parseObjCMethods(Fixture.Image);
-  ASSERT_EQ(Fixture.Image.ObjCMethods.size(), 3U);
-  unsigned Ambiguous = 0;
-  std::set<std::string> Categories;
-  for (const auto &Method : Fixture.Image.ObjCMethods)
-    if (Method.Selector == "step:") {
-      ++Ambiguous;
-      EXPECT_EQ(Method.Status, "ambiguous_dispatch");
-      EXPECT_FALSE(Method.TypeHint);
-      Categories.insert(Method.CategoryName);
+}
+
+TEST(ObjCCategories, PreservesCollidingCategoryRecordsAndRejectsDispatchOrder) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool SharedImplementation : {false, true})
+      for (bool Reverse : {false, true}) {
+        CategoryImage Fixture;
+        Fixture.Image.Arch = Architecture;
+        addCollidingCategory(Fixture, 0x2580,
+                             SharedImplementation ? 0x1100 : 0x1120);
+        if (Reverse) {
+          Fixture.pointer(0x2010, 0x2440);
+          Fixture.pointer(0x2018, 0x2400);
+        }
+        parseObjCMethods(Fixture.Image);
+        ASSERT_EQ(Fixture.Image.ObjCMethods.size(), 3U);
+        unsigned Ambiguous = 0;
+        std::set<std::string> Categories;
+        for (const auto &Method : Fixture.Image.ObjCMethods)
+          if (Method.Selector == "step:") {
+            ++Ambiguous;
+            EXPECT_EQ(Method.Status, "ambiguous_dispatch");
+            EXPECT_TRUE(Method.TypeHint);
+            Categories.insert(Method.CategoryName);
+          }
+        EXPECT_EQ(Ambiguous, 2U);
+        EXPECT_EQ(Categories, (std::set<std::string>{"Extra", "Another"}));
+        const auto Call = objcSelectorSourceTypeHint(Fixture.Image, "step:");
+        ASSERT_TRUE(Call);
+        EXPECT_EQ(Call->ReturnType->Size, 4U);
+        EXPECT_EQ(Call->Parameters.size(), 3U);
+        EXPECT_EQ(Call->Architecture, Architecture);
+      }
+}
+
+TEST(ObjCCategories, CollidingDeclarationsStillVetoIncompatibleCallABIs) {
+  for (const char *Encoding :
+       {"q20@0:8i16", "i24@0:8d16", "{Unsupported=ii}20@0:8i16"})
+    for (bool Reverse : {false, true}) {
+      CategoryImage Fixture;
+      Fixture.string(0x25c0, Encoding);
+      addCollidingCategory(Fixture, 0x25c0);
+      if (Reverse) {
+        Fixture.pointer(0x2010, 0x2440);
+        Fixture.pointer(0x2018, 0x2400);
+      }
+      parseObjCMethods(Fixture.Image);
+      ASSERT_EQ(Fixture.Image.ObjCMethods.size(), 3U);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Fixture.Image, "step:"));
     }
-  EXPECT_EQ(Ambiguous, 2U);
-  EXPECT_EQ(Categories, (std::set<std::string>{"Extra", "Another"}));
+}
+
+TEST(ObjCCategories, SharedImplementationConflictsStillInvalidateCallFacts) {
+  CategoryImage Fixture;
+  addCollidingCategory(Fixture);
+  Fixture.string(0x25c0, "other:");
+  Fixture.string(0x25e0, "v20@0:8i16");
+  Fixture.word(0x2684, 2);
+  Fixture.pointer(0x26a0, 0x25c0);
+  Fixture.pointer(0x26a8, 0x25e0);
+  Fixture.pointer(0x26b0, 0x1120);
+  parseObjCMethods(Fixture.Image);
+  ASSERT_EQ(Fixture.Image.ObjCMethods.size(), 4U);
+  for (const auto &Method : Fixture.Image.ObjCMethods)
+    if (Method.Implementation == 0x1120) {
+      EXPECT_EQ(Method.Status, "conflicting_encoding");
+      EXPECT_FALSE(Method.TypeHint);
+    }
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Fixture.Image, "step:"));
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Fixture.Image, "other:"));
 }
 
 TEST(ObjCCategories, RejectsTruncatedPrefixAndMalformedMethodList) {

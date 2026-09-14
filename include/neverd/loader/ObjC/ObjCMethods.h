@@ -51,6 +51,9 @@ struct ObjCMethod {
   std::string TypeEncoding;
   std::string Status;
   bool IsClassMethod = false;
+  /// Validated declaration ABI, independent of runtime override order. An
+  /// ambiguous_dispatch record may retain this hint for call agreement;
+  /// selecting a source method body additionally requires supported Status.
   std::optional<SourceFunctionTypeHint> TypeHint;
   std::vector<std::string> Diagnostics;
 };

@@ -407,7 +407,9 @@ void parseObjCMethods(BinaryImage &Img) {
   for (auto &[Identity, Methods] : BySelector)
     if (Methods.size() > 1)
       for (auto *Method : Methods) {
-        Method->TypeHint.reset();
+        // Dispatch order does not erase a validated declaration's ABI. Calls
+        // still require every matching declaration to agree; body selection
+        // separately requires supported status and must not pick an override.
         Method->Status = "ambiguous_dispatch";
         Method->Diagnostics.push_back(
             "Duplicate class/category selector declarations have no unique "
