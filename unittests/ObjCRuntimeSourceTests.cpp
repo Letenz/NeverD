@@ -55,6 +55,7 @@ enum class RuntimeFixture {
   BlockLifetimes,
   CoreData,
   ScalarConstants,
+  SwiftLiterals,
   Graphics,
   DarwinDeclarations
 };
@@ -66,6 +67,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
+  const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool Graphics = FixtureKind == RuntimeFixture::Graphics;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
@@ -91,6 +93,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
                         : CoreData          ? "ObjCCoreDataCalls.m"
                         : ScalarConstants   ? "ObjCScalarConstants.m"
+                        : SwiftLiterals     ? "ObjCSwiftLiteralStrings.m"
                         : Graphics          ? "ObjCGraphicsCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
@@ -105,6 +108,7 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
+                        : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
                         : Graphics          ? "ObjCGraphicsCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
@@ -155,6 +159,26 @@ void verifyRuntime(bool Chained,
   if (Profiled)
     Compile.push_back("-fprofile-instr-generate=" +
                       (Work / "counters.profraw").string());
+  if (SwiftLiterals) {
+    const auto Base = (Work / "literal-base.o").string();
+    ASSERT_NO_FATAL_FAILURE(
+        run({Compiler, "-arch", HostArch, "-O2", "-fobjc-arc", "-c",
+             (Fixtures / Fixture).string(), "-o", Base},
+            Work / "compile-base"));
+    Compile = {"/usr/bin/swiftc",
+               "-O",
+               "-target",
+               HostArch + "-apple-macosx13.0",
+               "-emit-library",
+               "-import-objc-header",
+               (Fixtures / "ObjCSwiftLiteralStrings.h").string(),
+               (Fixtures / "ObjCSwiftLiteralStrings.swift").string(),
+               Base,
+               "-o",
+               Original};
+    if (!Chained)
+      Compile.insert(Compile.end(), {"-Xlinker", "-no_fixup_chains"});
+  }
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "compile-original"));
 
   std::unique_ptr<void, decltype(&neverd_session_destroy)> Session(
@@ -173,6 +197,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
                              : CoreData          ? 3U
                              : ScalarConstants   ? 6U
+                             : SwiftLiterals     ? 3U
                              : Graphics          ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
@@ -269,6 +294,8 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Remaining = {"widthOfImage:", "heightOfImage:",     "retainImage:",
                  "alphaOfColor:", "componentsInColor:", "imageCountInSource:"};
+  if (SwiftLiterals)
+    Remaining = {"asciiLiteral", "sameAsciiLiteral", "unicodeLiteral"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -298,13 +325,14 @@ void verifyRuntime(bool Chained,
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(DarwinDeclarations  ? "NDDarwinDeclarations"
-                                    : CoreData          ? "NDCoreDataCalls"
-                                    : ScalarConstants   ? "NDScalarConstants"
-                                    : Graphics          ? "NDGraphicsCalls"
-                                    : BlockLifetimes    ? "NDBlockFactory"
-                                    : Foundation        ? "NDFoundationCalls"
-                                    : Protocols         ? "NDProtocolCalls"
+                        std::string(DarwinDeclarations ? "NDDarwinDeclarations"
+                                    : CoreData         ? "NDCoreDataCalls"
+                                    : ScalarConstants  ? "NDScalarConstants"
+                                    : SwiftLiterals    ? "NDSwiftLiteralStrings"
+                                    : Graphics         ? "NDGraphicsCalls"
+                                    : BlockLifetimes   ? "NDBlockFactory"
+                                    : Foundation       ? "NDFoundationCalls"
+                                    : Protocols        ? "NDProtocolCalls"
                                     : DiagnosticReports ? "NDDiagnosticReports"
                                     : SwiftStrings      ? "NDSwiftString"
                                     : UnfairLocks       ? "NDUnfairLocks"
@@ -418,6 +446,7 @@ void verifyRuntime(bool Chained,
     EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
                                        : ConstantStrings ? 6U
                                        : Foundation      ? 6U
+                                       : SwiftLiterals   ? 2U
                                                          : 0U) +
                                           StorageNames.size());
   if (!IdentityHelpers.empty()) {
@@ -512,6 +541,8 @@ void verifyRuntime(bool Chained,
             "nil-context=pass\n"
       : ScalarConstants
           ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
+      : SwiftLiterals ? "swift-literals=3072\nutf8=pass\nlifetime="
+                        "pass\nidentical-objects=0\n"
       : Graphics ? "graphics-queries=6144\nimage-identity=pass\npng-count=1\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
@@ -848,5 +879,17 @@ TEST(ObjCRuntimeSource, RecompiledGraphicsCallsPreserveValuesAndImageIdentity) {
   }
 #else
   GTEST_SKIP() << "Requires macOS CoreGraphics and ImageIO";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledSwiftLiteralsPreserveUTF8AndObjectLifetimes) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SwiftLiterals));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift compiler";
 #endif
 }

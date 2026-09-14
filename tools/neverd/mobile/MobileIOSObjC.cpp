@@ -891,8 +891,8 @@ Rendered render(const Object &native, const Object &runtime,
           !defined.count(s->str()) || s == name ||
           !std::regex_match(
               s->str(),
-              std::regex("neverd_objc_(association_key|constant_string)_"
-                         "[0-9a-f]+_address")))
+              std::regex("neverd_(objc_(association_key|constant_string)_"
+                         "[0-9a-f]+|borrowed_bytes_[0-9a-f]+_[0-9]+)_address")))
         throw Error("invalid shared identity function inventory");
     }
   if (native.get("shared_storage_functions") &&

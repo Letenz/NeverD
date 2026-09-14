@@ -188,6 +188,184 @@ TEST(ObjCSourceBindings, ImmutableScalarsRejectUnprovedStorageAndAddressUses) {
 }
 
 namespace {
+struct SwiftLiteralFixture : Fixture {
+  static constexpr va_t ImportSlot = 0x10e0;
+  static constexpr va_t Contents = 0x1040;
+  std::string Text;
+  ExprPtr Call;
+  SwiftLiteralFixture(Arch Architecture, bool Unicode = false) {
+    Image.Arch = Architecture;
+    Image.ObjCSourceReferences.clear();
+    Text = Unicode ? "literal caf\xc3\xa9 bytes"
+                   : "immutable compiler literal bytes";
+    std::copy(Text.begin(), Text.end(), Image.Segments[0].Data.begin() + 0x40);
+    const std::string Name =
+        "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF";
+    Image.ImportPtrSlots[ImportSlot] = Name;
+    Image.recordDyldBindSlot(
+        ImportSlot, Name, 0,
+        "/System/Library/Frameworks/Foundation.framework/Foundation", false);
+    const uint64_t Flags =
+        Unicode ? UINT64_C(0x1000000000000000) : UINT64_C(0xd000000000000000);
+    const auto Storage = HighExpr::makeBinop(
+        NdOp::INT_OR, HighExpr::makeConst(Contents - 32, 8),
+        HighExpr::makeConst(UINT64_C(0x8000000000000000), 8));
+    Call = HighExpr::makeCall(
+        Name, ImportSlot,
+        {HighExpr::makeConst(Flags | Text.size(), 8), Storage});
+    Call->Type = NdType::makePtr(NdType::makeVoid());
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+        *swiftStringSourceCallHint(Image, ImportSlot));
+    Function.ReturnType = Call->Type;
+    Function.Body[0].RetVal = Call;
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, SwiftLiteralStoragePreservesBytesAndConsumerIdentity) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Unicode : {false, true}) {
+      SwiftLiteralFixture F(Architecture, Unicode);
+      const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      const BorrowedByteRange Range{F.Contents, F.Text.size() + 1};
+      EXPECT_EQ(Result.BorrowedBytes, std::set<BorrowedByteRange>{Range});
+      const auto Bound = Result.Function.Body[0].RetVal;
+      EXPECT_EQ(Bound->SourceCallHint->CallKind,
+                SourceCallTypeHint::Kind::SwiftStringBridge);
+      EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+      ASSERT_NE(
+          objc_binding_detail::swiftLiteralStorageHelper(Bound->Operands[1]),
+          nullptr);
+      EXPECT_EQ(F.Call->Operands[1]->Operands[0]->Kind, ExprKind::Const);
+      std::set<std::string> Shared;
+      const auto Helpers =
+          renderBorrowedByteHelpers(F.Image, Result.BorrowedBytes, Shared);
+      EXPECT_EQ(Shared, std::set<std::string>{borrowedByteHelperName(Range)});
+      EXPECT_NE(Helpers.find("static const unsigned char bytes[]"),
+                std::string::npos);
+      // A raw occurrence outside the established bridge must retain its own
+      // address-binding failure, even when it shares the original node.
+      F.Function.Body[0].RetVal =
+          HighExpr::makeBinop(NdOp::INT_OR, F.Call, F.Call->Operands[1]);
+      EXPECT_FALSE(
+          bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+    }
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftLiteralStorageRejectsChangedWordsStorageAndImports) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 17; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      SwiftLiteralFixture F(Architecture);
+      auto &Word = F.Call->Operands[0]->ConstVal;
+      switch (Mutation) {
+      case 0:
+        Word |= UINT64_C(0x2000000000000000);
+        break;
+      case 1:
+        F.Call->Operands[1]->Operands[1]->ConstVal = 0;
+        break;
+      case 2:
+        ++Word;
+        break;
+      case 3:
+        --Word;
+        break;
+      case 4:
+        F.Image.Segments[0].Data[0x44] = 0;
+        break;
+      case 5:
+        F.Image.Segments[0].Data[0x44] = 0xff;
+        break;
+      case 6:
+        F.Image.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 7:
+        F.Image.Segments[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+        break;
+      case 8:
+        F.Image.DataPtrRelocSlots.insert(F.Contents - 1);
+        break;
+      case 9:
+        F.Image.Sections[0].FileSz = 0x48;
+        break;
+      case 10:
+        F.Image.DyldBindSlots[F.ImportSlot].Module =
+            "/tmp/libswiftFoundation.dylib";
+        break;
+      case 11:
+        F.Image.DyldBindSlots[F.ImportSlot].WeakImport = true;
+        break;
+      case 12:
+        F.Image.DyldBindSlots[F.ImportSlot].Addend = 8;
+        break;
+      case 13:
+        F.Image.MachOChainedFixupsAmbiguous = true;
+        break;
+      case 14:
+        F.Call->Operands[0]->Type = NdType::makeFloat(8);
+        break;
+      case 15:
+        F.Call->IsIndirectCall = true;
+        break;
+      case 16:
+        F.Call->MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      }
+      const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Result.Limitation.empty());
+      EXPECT_TRUE(Result.BorrowedBytes.empty());
+    }
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      SwiftLiteralFixture F(Architecture);
+      auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Result.Limitation.empty());
+      auto Bound = Result.Function.Body[0].RetVal;
+      auto Helper = Bound->Operands[1]->Operands[0]->Operands[0];
+      auto ChangedHint =
+          std::make_shared<SourceCallTypeHint>(*Helper->SourceCallHint);
+      Helper->SourceCallHint = ChangedHint;
+      switch (Mutation) {
+      case 0:
+        ++Bound->Operands[0]->ConstVal;
+        break;
+      case 1:
+        ++ChangedHint->TargetAddress;
+        break;
+      case 2:
+        --ChangedHint->ByteCount;
+        break;
+      case 3:
+        Bound->Operands[1]->Operands[1]->ConstVal = 0;
+        break;
+      case 4:
+        Bound->Operands[1]->Operands[0]->Operands[1]->ConstVal = 16;
+        break;
+      case 5:
+        F.Image.DyldBindSlots[F.ImportSlot].Module = "/tmp/other.dylib";
+        break;
+      case 6:
+        Helper->IsIndirectCall = true;
+        break;
+      case 7:
+        Bound->IsIndirectCall = true;
+        break;
+      case 8:
+        Bound->Operands[1]->Type = NdType::makeFloat(8);
+        break;
+      }
+      EXPECT_FALSE(objcSourceCallBound(*Bound, F.Image, {}));
+    }
+  }
+}
+
+namespace {
 struct ConstantStringFixture {
   BinaryImage Image;
   HighFunc Function;

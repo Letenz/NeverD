@@ -107,6 +107,8 @@ Linked 64-bit Darwin images importing system Foundation also consult built-in co
 
 The C declaration catalog also covers CoreGraphics and ImageIO exports. Opaque image and color pointers, integer counts and floating results retain their declared ABI. Public system framework aliases are generated alongside export facts; private paths, different framework versions and undeclared symbols gain no binding. Mobile declarations now use the loader’s type grammar too: well-formed aggregate pointees become opaque pointers without assuming their layout.
 
+Large immortal Swift string literals can bind their UTF-8 bytes to shared static storage at an established Foundation bridge. The count, flags, terminator, valid UTF-8, immutable storage and exact import must agree. The original tagged representation and bridge remain intact; embedded-zero literals and other storage forms remain unbound.
+
 Ordinary scalar loads from proven immutable, nonrelocated image bytes can become bit-preserving constants. Integer widths of 1, 2, 4 and 8 bytes and 4/8-byte floating values are supported. Writable or ambiguous storage, ordered loads and address consumers remain unbound; a numeric occurrence does not authorize pointer uses of the same expression.
 
 Fixed C calls additionally use compiler-derived declarations and SDK export/reexport facts. Binding requires the exact dyld library, symbol and scalar ABI; weak imports, unknown providers and unsupported prototypes remain unbound. Generated C uses separate identifiers linked to the original symbols. Ordinary synchronization calls without language dispatch tables preserve their real calls and memory effects.

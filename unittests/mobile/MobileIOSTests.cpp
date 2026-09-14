@@ -1783,16 +1783,18 @@ TEST(MobileIOSNative,
 
 TEST(MobileIOSNative,
      SharedAssociationKeysPreserveOneDefinitionAndRejectConflicts) {
-  for (unsigned Kind : {0U, 1U, 2U}) {
+  for (unsigned Kind : {0U, 1U, 2U, 3U}) {
     SCOPED_TRACE(Kind);
     const bool Counters = Kind == 1;
     const std::string Helper =
-        Kind == 2  ? "neverd_objc_constant_string_1050_address"
-        : Counters ? "neverd_profile_counters_1000_address"
-                   : "neverd_objc_association_key_1031_address";
+        Kind == 3   ? "neverd_borrowed_bytes_1050_3_address"
+        : Kind == 2 ? "neverd_objc_constant_string_1050_address"
+        : Counters  ? "neverd_profile_counters_1000_address"
+                    : "neverd_objc_association_key_1031_address";
     const std::string Declaration =
-        Counters ? "static unsigned char key[32] = { [3] = 9 };"
-                 : "static unsigned char key;";
+        Kind == 3  ? "static const unsigned char key[] = {65, 66, 0, 0};"
+        : Counters ? "static unsigned char key[32] = { [3] = 9 };"
+                   : "static unsigned char key;";
     const std::string Definition = "uintptr_t " + Helper + "(void) {\n  " +
                                    Declaration +
                                    "\n"
@@ -1829,8 +1831,10 @@ TEST(MobileIOSNative,
     EXPECT_EQ(Result.source.find(Definition, Position + 1), std::string::npos);
 
     Source.replace(Source.find(Declaration), Declaration.size(),
-                   Counters ? "static unsigned char key[32] = { [3] = 8 };"
-                            : "static unsigned char key = 1;");
+                   Kind == 3
+                       ? "static const unsigned char key[] = {65, 67, 0, 0};"
+                   : Counters ? "static unsigned char key[32] = { [3] = 8 };"
+                              : "static unsigned char key = 1;");
     (*Methods->back().getAsObject())["source"] = Source;
     const auto Conflict = objcSources(batch, metadata, 8, Budget);
     EXPECT_EQ(number(Conflict.coverage, "recovered_method_count"), 0);
