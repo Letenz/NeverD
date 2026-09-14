@@ -895,6 +895,67 @@ TEST(ObjCCallHints, DarwinLocksRejectUnprovenImportsAndNonzeroAddends) {
   }
 }
 
+TEST(ObjCCallHints,
+     BlockRuntimeKeepsExactCNamesPointerCarriersAndOwnershipFlags) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (llvm::StringRef Name :
+         {"_Block_copy", "_Block_release", "_Block_object_assign",
+          "_Block_object_dispose"}) {
+      SCOPED_TRACE(Name.str());
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      auto Image = runtimeImage(("_" + Name).str(), Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      EXPECT_EQ(Hint.TargetName, Name.str());
+      EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+      EXPECT_FALSE(Hint.DoesNotReturn);
+      const bool Assign = Name == "_Block_object_assign";
+      const bool Flags = Assign || Name == "_Block_object_dispose";
+      ASSERT_EQ(Hint.Signature.Parameters.size(), Assign  ? 3U
+                                                  : Flags ? 2U
+                                                          : 1U);
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+                Name == "_Block_copy" ? NdTypeKind::Ptr : NdTypeKind::Void);
+      for (size_t I = 0; I < Hint.Signature.Parameters.size(); ++I) {
+        const auto &P = Hint.Signature.Parameters[I];
+        const bool IsFlags = Flags && I + 1 == Hint.Signature.Parameters.size();
+        EXPECT_EQ(P.Type->Size, IsFlags ? 4U : 8U);
+        EXPECT_EQ(P.Type->Kind, IsFlags ? NdTypeKind::Int : NdTypeKind::Ptr);
+        EXPECT_EQ(P.Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        if (IsFlags)
+          EXPECT_TRUE(P.Type->IsSigned);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      std::string C;
+      llvm::raw_string_ostream OS(C);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+      EXPECT_NE(C.find("#include <Block.h>"), std::string::npos) << C;
+      EXPECT_EQ(C.find("#include <os/lock.h>"), std::string::npos) << C;
+      EXPECT_NE(C.find(Name.str() + "("), std::string::npos) << C;
+      EXPECT_EQ(C.find("nd__Block_"), std::string::npos) << C;
+      EXPECT_EQ(C.find("extern int Block_"), std::string::npos) << C;
+      auto Wrong = *Expression;
+      auto Binding = std::make_shared<SourceCallTypeHint>(Hint);
+      Binding->TargetName = Name.drop_front().str();
+      Wrong.SourceCallHint = Binding;
+      EXPECT_FALSE(sdk::objcSourceCallBound(Wrong, Image, {}));
+      Image.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+  }
+}
+
 TEST(ObjCCallHints, StackFailureRetainsItsTerminalRuntimeCall) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool ThroughSlot : {false, true}) {

@@ -7,6 +7,7 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -56,7 +57,7 @@ enum class RuntimeFixture {
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
-                   bool Profiled = false) {
+                   bool Profiled = false, bool ManualBlocks = false) {
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
@@ -111,6 +112,13 @@ void verifyRuntime(bool Chained,
                                    "-dynamiclib", "-framework",
                                    "Foundation",  (Fixtures / Fixture).string(),
                                    "-o",          Original};
+  if (ManualBlocks) {
+    ASSERT_TRUE(BlockLifetimes);
+    auto Flag = std::find(Compile.begin(), Compile.end(), "-fobjc-arc");
+    ASSERT_NE(Flag, Compile.end());
+    *Flag = "-fno-objc-arc";
+    Compile.push_back("-DNEVERD_MANUAL_BLOCKS");
+  }
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
   if (NativePointers)
@@ -140,7 +148,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), BlockLifetimes      ? 2U
+  ASSERT_EQ(Methods->size(), BlockLifetimes      ? (ManualBlocks ? 5U : 4U)
                              : Protocols         ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
@@ -219,7 +227,10 @@ void verifyRuntime(bool Chained,
                  "put:forKey:in:",
                  "makeDictionary:keys:count:"};
   if (BlockLifetimes)
-    Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:"};
+    Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:",
+                 "duplicateBlock:", "releaseBlock:"};
+  if (ManualBlocks)
+    Remaining.insert("holderForBlock:");
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
@@ -331,6 +342,8 @@ void verifyRuntime(bool Chained,
              Original,
              "-o",
              Baseline};
+  if (ManualBlocks)
+    Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
@@ -642,8 +655,11 @@ TEST(ObjCRuntimeSource,
 #ifdef __APPLE__
   for (bool Chained : {false, true}) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
-    ASSERT_NO_FATAL_FAILURE(
-        verifyRuntime(Chained, RuntimeFixture::BlockLifetimes));
+    for (bool Manual : {false, true}) {
+      SCOPED_TRACE(Manual ? "manual reference counting" : "ARC");
+      ASSERT_NO_FATAL_FAILURE(verifyRuntime(
+          Chained, RuntimeFixture::BlockLifetimes, false, Manual));
+    }
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";

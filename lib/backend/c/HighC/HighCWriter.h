@@ -136,6 +136,7 @@ public:
   bool NeedsObjCRuntime = false;
   bool NeedsObjCSuper2 = false;
   bool NeedsDarwinLocks = false;
+  bool NeedsDarwinBlocks = false;
   bool NeedsDarwinStackGuard = false;
   bool NeedsDarwinStackFailure = false;
   bool NeedsSwiftStringBridge = false;

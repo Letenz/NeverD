@@ -442,6 +442,64 @@ TEST(ObjCBlockSources,
 }
 
 TEST(ObjCBlockSources,
+     RuntimeObjectAssignmentWritesOnlyInitializedStrongFields) {
+  for (uint32_t FieldFlag : {3U, 7U})
+    for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+      for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+        OwnedSourceFixture F(Architecture);
+        F.Image.ImportPtrSlots[F.CopyImport] = "__Block_copy";
+        F.Image.ImportPtrSlots[F.RetainImport] = "__Block_object_assign";
+        F.Image.ImportPtrSlots[F.ReleaseImport] = "__Block_object_dispose";
+        F.caller().Body.back().RetVal->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(
+                *darwinRuntimeSourceCallHint(F.Image, F.CopyImport));
+        auto &Copy = F.Result.HighFuncs[3];
+        auto &Dispose = F.Result.HighFuncs[4];
+        auto Object = Copy.Body[0].CallExpr->Operands[0];
+        auto Destination = HighExpr::makeBinop(
+            NdOp::INT_ADD, parameter(0, Copy.Params[0].Type),
+            HighExpr::makeConst(32, 8));
+        Copy.Body[0].CallExpr->Operands = {Destination, Object,
+                                           HighExpr::makeConst(FieldFlag, 4)};
+        Copy.Body[0].CallExpr->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(
+                *darwinRuntimeSourceCallHint(F.Image, F.RetainImport));
+        Dispose.Body[0].CallExpr->Operands.push_back(
+            HighExpr::makeConst(FieldFlag, 4));
+        Dispose.Body[0].CallExpr->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(
+                *darwinRuntimeSourceCallHint(F.Image, F.ReleaseImport));
+        if (Mutation == 1)
+          Destination->Operands[1] = HighExpr::makeConst(24, 8);
+        if (Mutation == 2)
+          Destination->Operands[1] = HighExpr::makeConst(36, 8);
+        if (Mutation == 3)
+          Copy.Body[0].CallExpr->Operands[2] = HighExpr::makeConst(8, 4);
+        if (Mutation == 4)
+          F.Image.ImportPtrSlots[F.RetainImport] =
+              "__Block_object_assign_unproved";
+        if (Mutation == 5)
+          F.put64(F.Descriptor + 40, 0);
+        if (Mutation == 6)
+          F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 4);
+        if (Mutation == 7)
+          Copy.Body[0].CallExpr->Operands[1] =
+              parameter(0, Copy.Params[0].Type);
+        auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+        const auto Bound = bindObjCBlockSourceReferences(F.caller(), F.Image,
+                                                         Plan, F.functions());
+        EXPECT_EQ(!Plan.StackBlocks.empty() && Bound.Limitation.empty(),
+                  Mutation == 0)
+            << static_cast<int>(Architecture) << ':' << Mutation << ':'
+            << Bound.Limitation;
+        if (Mutation == 0)
+          EXPECT_EQ(Bound.Dependencies,
+                    (std::set<va_t>{F.Invoke, F.Copy, F.Dispose}));
+      }
+    }
+}
+
+TEST(ObjCBlockSources,
      PooledHeaderBitsRequireImmutableUnambiguousScalarStorage) {
   for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
     OwnedSourceFixture F(Arch::AArch64);

@@ -7,6 +7,9 @@
 - (NSUInteger (^)(void))makeCounterForArray:(NSArray *)array
                                       other:(NSArray *)other
                                      offset:(NSUInteger)offset;
+- (void *)duplicateBlock:(void *)block;
+- (void)releaseBlock:(void *)block;
+- (id (^)(void))holderForBlock:(NSUInteger (^)(void))block;
 @end
 static unsigned destroyed;
 @interface NDLifetimeToken : NSObject
@@ -30,15 +33,22 @@ int main(void) {
 #ifdef NEVERD_RECOVERED_ARC
   installRecovered();
 #endif
+  NDBlockFactory *driver = [NDBlockFactory new];
   for (unsigned i = 0; i < 1024; ++i) {
     NSUInteger (^saved)(void);
     NSUInteger (^combined)(void);
+#ifdef NEVERD_MANUAL_BLOCKS
+    id (^holder)(void);
+#endif
     NSMutableArray *observed;
     @autoreleasepool {
       NDBlockFactory *factory = [NDBlockFactory new];
       NDLifetimeToken *token = [NDLifetimeToken new];
       observed = [[NSMutableArray alloc] initWithObjects:token, nil];
       saved = [[factory makeCounterForArray:observed] copy];
+#ifdef NEVERD_MANUAL_BLOCKS
+      holder = [[factory holderForBlock:saved] copy];
+#endif
       combined = [[factory makeCounterForArray:observed other:observed
                                         offset:i] copy];
       [token release];
@@ -48,8 +58,13 @@ int main(void) {
     (void)overwriteStack(i);
     if (destroyed != i || saved() != 1)
       return 1;
-    NSUInteger (^duplicate)(void) = [saved copy];
-    [saved release];
+#ifdef NEVERD_MANUAL_BLOCKS
+    if (holder() != (id)saved)
+      return 6;
+#endif
+    NSUInteger (^duplicate)(void) =
+        (NSUInteger(^)(void))[driver duplicateBlock:(void *)saved];
+    [driver releaseBlock:(void *)saved];
     if (destroyed != i || duplicate() != 1)
       return 2;
     @autoreleasepool {
@@ -57,13 +72,19 @@ int main(void) {
     }
     if (duplicate() != 2 || combined() != 4 + i)
       return 3;
-    [duplicate release];
+    [driver releaseBlock:(void *)duplicate];
     if (destroyed != i || combined() != 4 + i)
       return 4;
-    [combined release];
+    [driver releaseBlock:(void *)combined];
+#ifdef NEVERD_MANUAL_BLOCKS
+    if (destroyed != i || ((NSUInteger(^)(void))holder())() != 2)
+      return 7;
+    [driver releaseBlock:(void *)holder];
+#endif
     if (destroyed != i + 1)
       return 5;
   }
+  [driver release];
   puts("escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass");
   return 0;
 }

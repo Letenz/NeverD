@@ -281,9 +281,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     }
     if (Name.empty())
       return bad("native binding has no source name");
-    // This binding already carries the exact C spelling, including its two
-    // ABI-significant underscores. Generic native-name demangling drops one.
-    if (Hint.CallKind != Kind::DarwinRuntimeCall || Name != "__stack_chk_fail")
+    // These bindings carry exact C spellings; the remaining leading
+    // underscores belong to the runtime API, not Mach-O decoration.
+    const bool ExactRuntimeName =
+        Hint.CallKind == Kind::DarwinRuntimeCall &&
+        (Name == "__stack_chk_fail" || Name == "_Block_copy" ||
+         Name == "_Block_release" || Name == "_Block_object_assign" ||
+         Name == "_Block_object_dispose");
+    if (!ExactRuntimeName)
       Name = Definition ? functionIdentifier(*Definition)
                         : functionIdentifier(Name);
   } else {

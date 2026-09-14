@@ -486,6 +486,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
           if (Hint.TargetName == "__stack_chk_fail")
             NeedsDarwinStackFailure = true;
+          else if (llvm::StringRef(Hint.TargetName).starts_with("_Block_"))
+            NeedsDarwinBlocks = true;
           else
             NeedsDarwinLocks = true;
         } else if (Hint.CallKind ==
@@ -665,6 +667,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   }
   if (NeedsDarwinLocks)
     Headers.insert("os/lock.h");
+  if (NeedsDarwinBlocks)
+    Headers.insert("Block.h");
 
   if (HasCIntrinsics)
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))

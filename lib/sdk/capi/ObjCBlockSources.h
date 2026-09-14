@@ -55,6 +55,8 @@ struct ObjCBlockSourceContext {
 namespace objc_block_source_detail {
 using Identity = objc_projection_detail::LocalIdentity;
 using CallKind = SourceCallTypeHint::Kind;
+constexpr uint64_t StrongObjectFieldFlag = 3;
+constexpr uint64_t StrongBlockFieldFlag = 7;
 struct Invalid : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
@@ -294,7 +296,8 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
                      va_t Entry, size_t Parameter,
                      const std::set<uint64_t> *Initialized,
                      std::set<std::pair<va_t, size_t>> &Active,
-                     std::string &Reason) {
+                     std::string &Reason,
+                     const std::set<uint64_t> *WritableStrongFields = nullptr) {
   try {
     if (Active.size() >= 16 || !Active.insert({Entry, Parameter}).second)
       throw Invalid("block consumer recursion is not established");
@@ -321,6 +324,20 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
     State.Call = [&](const HighExpr &E,
                      const std::vector<Value> &Arguments) -> Value {
       const auto &B = E.SourceCallHint;
+      // These two runtime modes write one strong pointer field. Byref and
+      // weak fields have different lifetime rules and receive no permission.
+      if (WritableStrongFields && B &&
+          B->CallKind == CallKind::DarwinRuntimeCall &&
+          B->TargetName == "_Block_object_assign" && Arguments.size() == 3 &&
+          Arguments[0].K == Value::Context && Arguments[0].Offset >= 32 &&
+          WritableStrongFields->count(Arguments[0].Offset) &&
+          (Arguments[1].K == Value::Scalar || Arguments[1].K == Value::Number ||
+           Arguments[1].K == Value::ImageBits) &&
+          Arguments[2].K == Value::Number &&
+          (Arguments[2].Bits == StrongObjectFieldFlag ||
+           Arguments[2].Bits == StrongBlockFieldFlag) &&
+          objcSourceCallBound(E, Source.Image, Functions))
+        return {};
       if (B && B->CallKind == CallKind::BlockInvoke &&
           Arguments.size() == B->Signature.Parameters.size() &&
           !Arguments.empty() && Arguments[0].K == Value::Context &&
@@ -565,10 +582,13 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         // The copy runtime preserves the stack literal and creates owned heap
         // storage through the recovered helpers. A typed pointer parameter
         // alone does not prove this behavior for an arbitrary consumer.
-        const bool Runtime = Binding &&
-                             Binding->CallKind == CallKind::ObjCRuntimeCall &&
-                             Binding->TargetName == "objc_retainBlock" &&
-                             I == 0 && objcSourceCallBound(E, Image, Functions);
+        const bool Runtime =
+            Binding && I == 0 &&
+            ((Binding->CallKind == CallKind::ObjCRuntimeCall &&
+              Binding->TargetName == "objc_retainBlock") ||
+             (Binding->CallKind == CallKind::DarwinRuntimeCall &&
+              Binding->TargetName == "_Block_copy")) &&
+            objcSourceCallBound(E, Image, Functions);
         if (!Direct && !Runtime &&
             (!Binding || Binding->CallKind != CallKind::Native ||
              E.IsIndirectCall ||
@@ -743,24 +763,39 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       throw Invalid(Rejected->second);
     std::map<const HighExpr *, ObjCBlockAddressBinding> References;
     std::map<const HighExpr *, uint64_t> HeaderConstants;
-    auto RequireOwnership = [&](va_t Entry, size_t Parameter,
+    auto RequireOwnership = [&](const ObjCBlockDescriptor &Descriptor,
                                 const std::set<uint64_t> &Initialized) {
-      if (!Entry)
-        return;
-      auto Found = Functions.find(Entry);
-      auto Hint = Plan.HelperHints.find(Entry);
-      if (Plan.Rejections.count(Entry) || Found == Functions.end() ||
-          Hint == Plan.HelperHints.end() || !Found->second->SourceTypeHint ||
-          !objc_projection_detail::sameHint(*Found->second->SourceTypeHint,
-                                            Hint->second))
-        throw Invalid(
-            "block ownership helper has no descriptor-bound native function");
-      std::string Reason;
-      std::set<std::pair<va_t, size_t>> Active;
-      if (!noEscape(Source, Functions, Entry, Parameter, &Initialized, Active,
-                    Reason))
-        throw Invalid("block ownership helper capture proof failed: " + Reason);
-      Result.Dependencies.insert(Entry);
+      std::set<uint64_t> WritableStrongFields;
+      for (const auto &Capture : Descriptor.Captures)
+        if (Capture.StorageKind == ObjCBlockCaptureRange::Kind::Strong &&
+            Capture.Offset % 8 == 0 && Capture.Size % 8 == 0)
+          for (uint64_t I = 0; I < Capture.Size; I += 8)
+            WritableStrongFields.insert(Capture.Offset + I);
+      for (const auto &[Entry, Parameter] :
+           {std::pair{Descriptor.CopyHelper, size_t(0)},
+            std::pair{Descriptor.CopyHelper, size_t(1)},
+            std::pair{Descriptor.DisposeHelper, size_t(0)}}) {
+        if (!Entry)
+          continue;
+        auto Found = Functions.find(Entry);
+        auto Hint = Plan.HelperHints.find(Entry);
+        if (Plan.Rejections.count(Entry) || Found == Functions.end() ||
+            Hint == Plan.HelperHints.end() || !Found->second->SourceTypeHint ||
+            !objc_projection_detail::sameHint(*Found->second->SourceTypeHint,
+                                              Hint->second))
+          throw Invalid(
+              "block ownership helper has no descriptor-bound native function");
+        std::string Reason;
+        std::set<std::pair<va_t, size_t>> Active;
+        if (!noEscape(Source, Functions, Entry, Parameter, &Initialized, Active,
+                      Reason,
+                      Entry == Descriptor.CopyHelper && Parameter == 0
+                          ? &WritableStrongFields
+                          : nullptr))
+          throw Invalid("block ownership helper capture proof failed: " +
+                        Reason);
+        Result.Dependencies.insert(Entry);
+      }
     };
     auto RequireInvoke = [&](va_t Entry, const ObjCBlockDescriptor &Descriptor,
                              const std::set<uint64_t> &Initialized) {
@@ -794,9 +829,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
         if (Global.Descriptor.Address != Descriptor.Address)
           continue;
         RequireInvoke(Global.InvokeEntry, Global.Descriptor, {});
-        RequireOwnership(Global.Descriptor.CopyHelper, 0, {});
-        RequireOwnership(Global.Descriptor.CopyHelper, 1, {});
-        RequireOwnership(Global.Descriptor.DisposeHelper, 0, {});
+        RequireOwnership(Global.Descriptor, {});
         Result.Literals.insert(Address);
       }
     };
@@ -805,12 +838,7 @@ inline ObjCBlockSourceBindingResult bindObjCBlockSourceReferences(
       for (const auto &Block : Stack->second) {
         RequireInvoke(Block.InvokeEntry, Block.Descriptor,
                       Block.InitializedCaptures);
-        RequireOwnership(Block.Descriptor.CopyHelper, 0,
-                         Block.InitializedCaptures);
-        RequireOwnership(Block.Descriptor.CopyHelper, 1,
-                         Block.InitializedCaptures);
-        RequireOwnership(Block.Descriptor.DisposeHelper, 0,
-                         Block.InitializedCaptures);
+        RequireOwnership(Block.Descriptor, Block.InitializedCaptures);
         RequireDescriptor(Block.Descriptor);
         HeaderConstants.insert(Block.HeaderConstants.begin(),
                                Block.HeaderConstants.end());

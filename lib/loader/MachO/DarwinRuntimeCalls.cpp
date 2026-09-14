@@ -22,8 +22,16 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   // https://github.com/apple-oss-distributions/libplatform/blob/main/include/os/lock.h
   const bool TryLock = Name == "os_unfair_lock_trylock";
   const bool StackFailure = Name == "__stack_chk_fail";
-  if (!StackFailure && !TryLock && Name != "os_unfair_lock_lock" &&
-      Name != "os_unfair_lock_unlock" &&
+  // Block.h declares these fixed C ABIs. Ownership work stays in the real
+  // runtime and, for captured objects, the recovered descriptor helpers.
+  const bool BlockCopy = Name == "_Block_copy";
+  const bool BlockRelease = Name == "_Block_release";
+  const bool BlockAssign = Name == "_Block_object_assign";
+  const bool BlockDispose = Name == "_Block_object_dispose";
+  const bool BlockRuntime =
+      BlockCopy || BlockRelease || BlockAssign || BlockDispose;
+  if (!StackFailure && !BlockRuntime && !TryLock &&
+      Name != "os_unfair_lock_lock" && Name != "os_unfair_lock_unlock" &&
       Name != "os_unfair_lock_assert_owner" &&
       Name != "os_unfair_lock_assert_not_owner")
     return std::nullopt;
@@ -36,7 +44,16 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
   Signature.ReturnType =
       TryLock ? NdType::makeInt(1, false) : NdType::makeVoid();
-  if (!StackFailure)
+  if (BlockRuntime) {
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    if (BlockCopy)
+      Signature.ReturnType = Pointer;
+    if (BlockAssign)
+      Signature.Parameters.push_back({"destination", Pointer});
+    Signature.Parameters.push_back({"object", Pointer});
+    if (BlockAssign || BlockDispose)
+      Signature.Parameters.push_back({"flags", NdType::makeInt(4, true)});
+  } else if (!StackFailure)
     Signature.Parameters = {{"lock", NdType::makePtr(NdType::makeVoid())}};
   std::string Diagnostic;
   if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
