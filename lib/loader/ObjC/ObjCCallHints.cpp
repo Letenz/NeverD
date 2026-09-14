@@ -17,21 +17,14 @@
 
 namespace neverd {
 namespace {
-bool sameType(const TypeRef &A, const TypeRef &B, unsigned Depth = 0) {
-  if (!A || !B || Depth > 16 || A->Kind != B->Kind || A->Size != B->Size ||
-      A->IsSigned != B->IsSigned)
-    return false;
-  return A->Kind != NdTypeKind::Ptr ||
-         sameType(A->Pointee, B->Pointee, Depth + 1);
-}
 
 bool sameSignature(const SourceFunctionTypeHint &A,
                    const SourceFunctionTypeHint &B) {
-  if (!sameType(A.ReturnType, B.ReturnType) ||
+  if (!equalSourceTypes(A.ReturnType, B.ReturnType) ||
       A.Parameters.size() != B.Parameters.size())
     return false;
   for (size_t I = 0; I < A.Parameters.size(); ++I)
-    if (!sameType(A.Parameters[I].Type, B.Parameters[I].Type))
+    if (!equalSourceTypes(A.Parameters[I].Type, B.Parameters[I].Type))
       return false;
   return true;
 }

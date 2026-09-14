@@ -249,6 +249,52 @@ TEST(ObjCCallHints, SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity) {
   }
 }
 
+TEST(ObjCCallHints, SwiftOnceKeepsCallbackContextAndVoidResult) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_swift_once", Architecture);
+    const auto Med = convert(Image, caller(Architecture));
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    const auto &Hint = *Call.SourceCallHint;
+    ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
+    ASSERT_EQ(Call.Args.size(), 3U);
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_EQ(Hint.Signature.ReturnLocation.Kind, SourceABICarrierKind::None);
+    const auto Callback = Hint.Signature.Parameters[1].Type;
+    ASSERT_EQ(Callback->Kind, NdTypeKind::Ptr);
+    ASSERT_TRUE(Callback->Pointee);
+    EXPECT_EQ(Callback->Pointee->Kind, NdTypeKind::Func);
+    EXPECT_EQ(Callback->Pointee->RetType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Callback->Pointee->ParamTypes.size(), 1U);
+    EXPECT_TRUE(equalSourceTypes(Callback->Pointee->ParamTypes[0],
+                                 Hint.Signature.Parameters[2].Type));
+    for (size_t I = 0; I < 3; ++I) {
+      EXPECT_EQ(Call.Args[I].RegOff,
+                getTargetRegInfo(Architecture).IntParamRegs[I]);
+      EXPECT_EQ(Call.Args[I].Size, 8U);
+    }
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Architecture);
+    const auto *Expression = sourceCall(High);
+    ASSERT_NE(Expression, nullptr);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    for (const auto &WrongType :
+         {NdType::makePtr(NdType::makeVoid()),
+          NdType::makePtr(NdType::makeFunc(NdType::makeInt(8))),
+          NdType::makePtr(NdType::makeFunc(NdType::makeVoid()))}) {
+      auto Changed = *Expression;
+      auto Wrong = std::make_shared<SourceCallTypeHint>(Hint);
+      Wrong->Signature.Parameters[1].Type = WrongType;
+      Changed.SourceCallHint = Wrong;
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {}));
+    }
+    Image.ConflictingImportStorageSlots.insert(0x2180);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, DiagnosticRuntimeUsesCABIAndKeepsItsLinkerSpelling) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Count] :

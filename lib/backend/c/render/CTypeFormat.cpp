@@ -11,11 +11,14 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 
+#include "neverd/ir/SourceABI.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
 
 #include <cctype>
+#include <stdexcept>
 #include <string>
 
 namespace neverd {
@@ -57,9 +60,49 @@ std::string escapeCString(llvm::StringRef Str) {
   return Result;
 }
 
+namespace {
+bool containsFunction(const TypeRef &Type) {
+  auto Current = Type;
+  for (unsigned Depth = 0; Current && Depth <= 16; ++Depth) {
+    if (Current->Kind == NdTypeKind::Func)
+      return true;
+    if (Current->Kind != NdTypeKind::Ptr)
+      return false;
+    Current = Current->Pointee;
+  }
+  if (Current)
+    throw std::invalid_argument("C type exceeds the pointer nesting limit");
+  return false;
+}
+} // namespace
+
+std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
+  if (!containsFunction(Ty))
+    return typeToC(Ty) + (Declarator.empty() ? "" : " " + Declarator.str());
+  if (!equalSourceTypes(Ty, Ty))
+    throw std::invalid_argument("C callback type has no supported signature");
+  if (Ty->Kind == NdTypeKind::Ptr) {
+    std::string Pointer = "*" + Declarator.str();
+    if (Ty->Pointee->Kind == NdTypeKind::Func)
+      Pointer = "(" + Pointer + ")";
+    return declarationToC(Ty->Pointee, Pointer);
+  }
+  std::string Function = Declarator.str() + "(";
+  for (size_t I = 0; I < Ty->ParamTypes.size(); ++I) {
+    if (I)
+      Function += ", ";
+    Function += typeToC(Ty->ParamTypes[I]);
+  }
+  if (Ty->ParamTypes.empty())
+    Function += "void";
+  return declarationToC(Ty->RetType, Function + ")");
+}
+
 std::string typeToC(const TypeRef &Ty) {
   if (!Ty)
     return "uint32_t";
+  if (containsFunction(Ty))
+    return declarationToC(Ty, {});
   switch (Ty->Kind) {
   case NdTypeKind::Void:
     return "void";
@@ -140,8 +183,7 @@ std::string llvmStructName(llvm::StructType *ST) {
       else
         Clean += '_';
     }
-    if (Clean.empty() ||
-        std::isdigit(static_cast<unsigned char>(Clean[0])))
+    if (Clean.empty() || std::isdigit(static_cast<unsigned char>(Clean[0])))
       Clean = "nd_" + Clean;
     return "struct " + Clean;
   }

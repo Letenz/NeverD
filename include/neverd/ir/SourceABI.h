@@ -5,6 +5,11 @@
 
 namespace neverd {
 
+/// Compare supported source types structurally, including fixed C callback
+/// signatures. Malformed, cyclic, and excessively deep types never compare
+/// equal, even when both references identify the same object.
+bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right);
+
 /// Assign Darwin's ordinary fixed scalar calling convention. This describes
 /// the requested scalar signature; it does not establish that a binary had
 /// that declaration. Inferred native hints must retain their observed

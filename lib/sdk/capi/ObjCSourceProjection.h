@@ -28,27 +28,6 @@
 namespace neverd::sdk {
 namespace objc_projection_detail {
 
-inline bool sameType(const TypeRef &Left, const TypeRef &Right,
-                     unsigned Depth = 0) {
-  if (!Left || !Right || Depth > 16 || Left->Kind != Right->Kind ||
-      Left->Size != Right->Size || Left->IsSigned != Right->IsSigned)
-    return false;
-  switch (Left->Kind) {
-  case NdTypeKind::Void:
-    return Left->Size == 0;
-  case NdTypeKind::Int:
-    return Left->Size == 1 || Left->Size == 2 || Left->Size == 4 ||
-           Left->Size == 8;
-  case NdTypeKind::Float:
-    return Left->Size == 4 || Left->Size == 8;
-  case NdTypeKind::Ptr:
-    return Left->Size == 8 &&
-           sameType(Left->Pointee, Right->Pointee, Depth + 1);
-  default:
-    return false;
-  }
-}
-
 inline bool sameLocation(const SourceABIValueLocation &Left,
                          const SourceABIValueLocation &Right) {
   return Left.Kind == Right.Kind &&
@@ -64,12 +43,13 @@ inline bool sameHint(const SourceFunctionTypeHint &Left,
       Left.HasExplicitABI != Right.HasExplicitABI ||
       (Left.HasExplicitABI &&
        !sameLocation(Left.ReturnLocation, Right.ReturnLocation)) ||
-      !sameType(Left.ReturnType, Right.ReturnType) ||
+      !equalSourceTypes(Left.ReturnType, Right.ReturnType) ||
       Left.Parameters.size() != Right.Parameters.size())
     return false;
   for (size_t Index = 0; Index < Left.Parameters.size(); ++Index)
     if (Left.Parameters[Index].Name != Right.Parameters[Index].Name ||
-        !sameType(Left.Parameters[Index].Type, Right.Parameters[Index].Type) ||
+        !equalSourceTypes(Left.Parameters[Index].Type,
+                          Right.Parameters[Index].Type) ||
         (Left.HasExplicitABI &&
          !sameLocation(Left.Parameters[Index].Location,
                        Right.Parameters[Index].Location)))
@@ -113,7 +93,7 @@ inline void collectSourceBodyDiagnostics(
     SourceProjectionDiagnostics &Diagnostics) {
   using namespace objc_projection_detail;
   if (!Func.SourceTypeHint || !sameHint(*Func.SourceTypeHint, Hint) ||
-      !sameType(Func.ReturnType, Hint.ReturnType) ||
+      !equalSourceTypes(Func.ReturnType, Hint.ReturnType) ||
       Func.Params.size() != Hint.Parameters.size() ||
       Hint.Parameters.size() > 64)
     Diagnostics.add(
@@ -134,7 +114,7 @@ inline void collectSourceBodyDiagnostics(
        ++Index) {
     const auto &Parameter = Func.Params[Index];
     if (Parameter.Name != Hint.Parameters[Index].Name ||
-        !sameType(Parameter.Type, Hint.Parameters[Index].Type) ||
+        !equalSourceTypes(Parameter.Type, Hint.Parameters[Index].Type) ||
         Parameter.Type->Kind == NdTypeKind::Void)
       Diagnostics.add(
           SourceProjectionIssue::ParameterBinding,

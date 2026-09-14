@@ -74,6 +74,17 @@ struct NdType {
     T->Pointee = Pt ? Pt : makeInt(1, false);
     return T;
   }
+  /// A fixed ordinary C function type. Calling-convention-specific source
+  /// declarations require separate ABI evidence and must not use this type.
+  static std::shared_ptr<NdType>
+  makeFunc(std::shared_ptr<NdType> Return,
+           std::vector<std::shared_ptr<NdType>> Parameters = {}) {
+    auto T = std::make_shared<NdType>();
+    T->Kind = NdTypeKind::Func;
+    T->RetType = std::move(Return);
+    T->ParamTypes = std::move(Parameters);
+    return T;
+  }
 
   std::string str() const;
 };

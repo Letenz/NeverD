@@ -276,7 +276,7 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   auto VarFn = [this](const MedVar &V) { return varName(V); };
 
   std::map<std::string, TypeRef> UsedVars;
-  std::map<std::string, std::string> ExplicitTypes;
+  std::map<std::string, std::string> ExplicitDeclarations;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (Analysis.DeadStmts.count(&S))
       return;
@@ -287,10 +287,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
           (S.Val->Op == NdOp::ATOMIC_ADD ||
            S.Val->Op == NdOp::ATOMIC_CMPXCHG) &&
           S.Val->Type) {
-        ExplicitTypes[Name] = typeToC(S.Val->Type);
+        ExplicitDeclarations[Name] = declarationToC(S.Val->Type, Name);
       } else if (S.Val->Kind == ExprKind::Call &&
                  S.Val->IntrinsicId == Intrinsic::A64_SvePtrue) {
-        ExplicitTypes[Name] = "svbool_t";
+        ExplicitDeclarations[Name] = "svbool_t " + Name;
       } else if (S.Val->Kind == ExprKind::Call &&
                  (S.Val->IntrinsicId == Intrinsic::A64_SveDup ||
                   S.Val->IntrinsicId == Intrinsic::A64_SveIndex)) {
@@ -300,10 +300,11 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         if (S.Val->Operands.size() > ElemIndex &&
             S.Val->Operands[ElemIndex]->Kind == ExprKind::Const)
           ElemBytes = S.Val->Operands[ElemIndex]->ConstVal;
-        ExplicitTypes[Name] = ElemBytes == 2   ? "svuint16_t"
-                              : ElemBytes == 4 ? "svuint32_t"
-                              : ElemBytes == 8 ? "svuint64_t"
-                                               : "svuint8_t";
+        const std::string Type = ElemBytes == 2   ? "svuint16_t"
+                                 : ElemBytes == 4 ? "svuint32_t"
+                                 : ElemBytes == 8 ? "svuint64_t"
+                                                  : "svuint8_t";
+        ExplicitDeclarations[Name] = Type + " " + Name;
       }
     }
     forEachExpr(S, [&](const ExprPtr &E) {
@@ -332,10 +333,11 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       continue;
     DeclaredNames.insert(Local.Name);
     emitIndent(1);
-    auto ExplicitTy = ExplicitTypes.find(Local.Name);
-    OS << (ExplicitTy == ExplicitTypes.end() ? typeToC(Local.Type)
-                                             : ExplicitTy->second)
-       << " " << Local.Name << ";\n";
+    auto ExplicitTy = ExplicitDeclarations.find(Local.Name);
+    OS << (ExplicitTy == ExplicitDeclarations.end()
+               ? declarationToC(Local.Type, Local.Name)
+               : ExplicitTy->second)
+       << ";\n";
   }
 
   for (auto &[Name, Ty] : UsedVars) {
@@ -345,9 +347,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
-    auto ExplicitTy = ExplicitTypes.find(Name);
-    OS << (ExplicitTy == ExplicitTypes.end() ? typeToC(Ty) : ExplicitTy->second)
-       << " " << Name << ";\n";
+    auto ExplicitTy = ExplicitDeclarations.find(Name);
+    OS << (ExplicitTy == ExplicitDeclarations.end() ? declarationToC(Ty, Name)
+                                                    : ExplicitTy->second)
+       << ";\n";
   }
   if (!DeclaredNames.empty())
     OS << "\n";
@@ -543,23 +546,24 @@ void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
     }
   }
 
-  std::string RetType = Func.ReturnType ? typeToC(Func.ReturnType) : "uint32_t";
+  const auto ReturnType = Func.ReturnType;
   std::string FName = functionIdentifier(Func);
 
   CProjectionIdentifierAllocator ParameterIdentifiers;
 
   if (Func.DoesNotReturn)
     OS << "_Noreturn ";
-  OS << RetType << " " << FName << "(";
+  std::string Declarator = FName + "(";
   for (size_t I = 0; I < Func.Params.size(); ++I) {
     if (I > 0)
-      OS << ", ";
-    OS << typeToC(Func.Params[I].Type) << " "
-       << ParameterIdentifiers.allocate(Func.Params[I].Name, "nd_arg");
+      Declarator += ", ";
+    Declarator += declarationToC(
+        Func.Params[I].Type,
+        ParameterIdentifiers.allocate(Func.Params[I].Name, "nd_arg"));
   }
   if (Func.Params.empty())
-    OS << "void";
-  OS << ") {\n"
+    Declarator += "void";
+  OS << declarationToC(ReturnType, Declarator + ")") << " {\n"
      << "    __builtin_trap();\n"
      << "}\n";
 }
@@ -611,11 +615,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     });
   });
 
-  std::string RetType;
-  if (InferredVoid)
-    RetType = "void";
-  else
-    RetType = FuncReturnType ? typeToC(FuncReturnType) : "uint32_t";
+  const auto ReturnType = InferredVoid ? NdType::makeVoid() : FuncReturnType;
 
   std::string FName = functionIdentifier(Func);
 
@@ -637,15 +637,15 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (Func.DoesNotReturn)
     OS << "_Noreturn ";
-  OS << RetType << " " << FName << "(";
+  std::string Declarator = FName + "(";
   for (size_t I = 0; I < Func.Params.size(); ++I) {
     if (I > 0)
-      OS << ", ";
-    OS << typeToC(Func.Params[I].Type) << " " << Func.Params[I].Name;
+      Declarator += ", ";
+    Declarator += declarationToC(Func.Params[I].Type, Func.Params[I].Name);
   }
   if (Func.Params.empty())
-    OS << "void";
-  OS << ") {\n";
+    Declarator += "void";
+  OS << declarationToC(ReturnType, Declarator + ")") << " {\n";
 
   std::set<std::string> ParamNames;
   for (auto &P : Func.Params)

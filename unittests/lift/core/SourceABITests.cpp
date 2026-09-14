@@ -23,6 +23,60 @@
 namespace {
 using namespace neverd;
 
+TEST(SourceABI, CallbackTypesKeepTheirSignaturesAndRejectMalformedGraphs) {
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Callback =
+      NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Pointer}));
+  const auto Other = NdType::makePtr(NdType::makeFunc(
+      NdType::makeVoid(), {NdType::makePtr(NdType::makeVoid())}));
+  EXPECT_TRUE(equalSourceTypes(Callback, Other));
+  EXPECT_FALSE(equalSourceTypes(Callback, Pointer));
+  EXPECT_FALSE(equalSourceTypes(Callback, NdType::makePtr(NdType::makeFunc(
+                                              NdType::makeInt(4), {Pointer}))));
+  EXPECT_FALSE(equalSourceTypes(
+      Callback, NdType::makePtr(NdType::makeFunc(NdType::makeVoid()))));
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = Callback;
+    Hint.Parameters = {{"callback", Callback}, {"context", Pointer}};
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic))
+        << Diagnostic;
+    EXPECT_EQ(Hint.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    EXPECT_EQ(Hint.Parameters[0].Location.ValueBytes, 8U);
+    for (const auto &Invalid :
+         {NdType::makeFunc(nullptr),
+          NdType::makeFunc(NdType::makeVoid(), {NdType::makeVoid()}),
+          NdType::makeFunc(NdType::makeVoid(), {Callback->Pointee}),
+          NdType::makeFunc(Callback->Pointee),
+          NdType::makeFunc(NdType::makeVoid(),
+                           std::vector<TypeRef>(65, Pointer))}) {
+      Hint.Parameters[0].Type = NdType::makePtr(Invalid);
+      EXPECT_FALSE(validateSourceABI(Hint, Diagnostic));
+      EXPECT_FALSE(
+          equalSourceTypes(Hint.Parameters[0].Type, Hint.Parameters[0].Type));
+    }
+    auto Cycle = NdType::makePtr();
+    Cycle->Pointee = Cycle;
+    Hint.Parameters[0].Type = Cycle;
+    EXPECT_FALSE(validateSourceABI(Hint, Diagnostic));
+    EXPECT_FALSE(equalSourceTypes(Cycle, Cycle));
+    Cycle->Pointee.reset();
+    auto Recursive = NdType::makeFunc(NdType::makeVoid());
+    auto RecursivePointer = NdType::makePtr(Recursive);
+    Recursive->ParamTypes.push_back(RecursivePointer);
+    Hint.Parameters[0].Type = RecursivePointer;
+    EXPECT_FALSE(validateSourceABI(Hint, Diagnostic));
+    EXPECT_FALSE(equalSourceTypes(RecursivePointer, RecursivePointer));
+    Recursive->ParamTypes.clear();
+    auto TooDeep = Pointer;
+    for (unsigned I = 0; I < 17; ++I)
+      TooDeep = NdType::makePtr(TooDeep);
+    EXPECT_FALSE(equalSourceTypes(TooDeep, TooDeep));
+  }
+}
+
 SourceFunctionTypeHint declaration(TypeRef Result) {
   SourceFunctionTypeHint Hint;
   Hint.ReturnType = std::move(Result);

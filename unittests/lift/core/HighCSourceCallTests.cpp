@@ -1,13 +1,18 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <stdexcept>
 
 using namespace neverd;
 
@@ -163,6 +168,113 @@ int main(void) {
     if (entry_group(1) != 42 || calls != 5) return 2;
     if (entry_group(0) != 7 || calls != 5) return 3;
     return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, CallbackDeclaratorsPreserveArgumentsAndReturnTypes) {
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Callback =
+      NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Pointer}));
+  EXPECT_EQ(typeToC(Callback), "void (*)(void*)");
+  EXPECT_EQ(declarationToC(Callback, "fn"), "void (*fn)(void*)");
+  EXPECT_EQ(declarationToC(NdType::makePtr(Callback), "slot"),
+            "void (**slot)(void*)");
+  EXPECT_EQ(
+      declarationToC(NdType::makePtr(NdType::makeFunc(Callback)), "factory"),
+      "void (*(*factory)(void))(void*)");
+  auto Cycle = NdType::makePtr();
+  Cycle->Pointee = Cycle;
+  EXPECT_THROW(typeToC(Cycle), std::invalid_argument);
+  Cycle->Pointee.reset();
+  EXPECT_THROW(typeToC(NdType::makePtr(NdType::makeFunc(nullptr))),
+               std::invalid_argument);
+  auto Identity =
+      returning("callback_identity", parameter(0, Callback), {Callback});
+  auto Forward =
+      returning("callback_forward",
+                call(native("callback_identity", Callback, {Callback}),
+                     Callback, {parameter(0, Callback)}),
+                {Callback});
+  auto Apply =
+      returning("callback_apply", parameter(1, Pointer), {Callback, Pointer});
+  HighStmt Invoke;
+  Invoke.Kind = StmtKind::Call;
+  Invoke.CallExpr =
+      call(native("consume_callback", NdType::makeVoid(), {Callback, Pointer}),
+           NdType::makeVoid(), {parameter(0, Callback), parameter(1, Pointer)});
+  Apply.Body.insert(Apply.Body.begin(), Invoke);
+  const auto Source = emit({Forward, Identity, Apply});
+  EXPECT_NE(Source.find("void (*callback_identity(void (*)(void*)))(void*);"),
+            std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  auto WrongIdentity = Identity;
+  WrongIdentity.Params[0].Type =
+      NdType::makePtr(NdType::makeFunc(NdType::makeInt(8), {Pointer}));
+  EXPECT_NE(emit({Forward, WrongIdentity})
+                .find("bad source call: native parameter disagrees"),
+            std::string::npos);
+  compileAndRun(Source + R"(
+void consume_callback(void (*fn)(void*), void *context) { fn(context); }
+static void add(void *p) { ++*(int*)p; }
+static void subtract(void *p) { --*(int*)p; }
+int main(void) {
+  int value = 7;
+  for (int i = 0; i < 128; ++i) {
+    void (*fn)(void*) = callback_forward(i % 3 ? add : subtract);
+    if (fn != (i % 3 ? add : subtract)) return 1;
+    int expected = value + (i % 3 ? 1 : -1);
+    if (callback_apply(fn, &value) != &value || value != expected) return 2;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, RuntimeCallbackPreservesPredicateAndContextOperands) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Image.Arch = Arch::X64;
+  Image.ImportPtrSlots[0x2180] = "_swift_once";
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  const auto Pointer = Hint->Signature.Parameters[0].Type;
+  const auto Callback = Hint->Signature.Parameters[1].Type;
+  auto Forward = returning("once_forward", parameter(2, Pointer),
+                           {Pointer, Callback, Pointer});
+  HighStmt Invoke;
+  Invoke.Kind = StmtKind::Call;
+  Invoke.CallExpr = call(
+      *Hint, NdType::makeVoid(),
+      {parameter(0, Pointer), parameter(1, Callback), parameter(2, Pointer)});
+  Forward.Body.insert(Forward.Body.begin(), Invoke);
+  const auto Source = emit({Forward});
+  EXPECT_NE(
+      Source.find("extern void swift_once(void*, void (*)(void*), void*);"),
+      std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  // The portable model checks the call boundary. It does not claim to test
+  // the runtime's concurrency algorithm or ownership of rebuilt predicates.
+  compileAndRun(Source + R"(
+static int calls, observed[2];
+static uintptr_t predicates[2];
+static void initialize(void *context) { ++*(int*)context; }
+void swift_once(void *predicate, void (*fn)(void*), void *context) {
+  ++calls;
+  if (!*(uintptr_t*)predicate) {
+    fn(context);
+    *(uintptr_t*)predicate = UINTPTR_MAX;
+  }
+}
+int main(void) {
+  for (int i = 0; i < 128; ++i) {
+    int index = i % 2;
+    if (once_forward(&predicates[index], initialize, &observed[index]) !=
+        &observed[index]) return 1;
+  }
+  return calls != 128 || observed[0] != 1 || observed[1] != 1 ||
+         predicates[0] != UINTPTR_MAX || predicates[1] != UINTPTR_MAX;
 }
 )");
 }

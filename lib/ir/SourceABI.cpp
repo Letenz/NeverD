@@ -9,11 +9,49 @@
 
 namespace neverd {
 namespace {
+bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
+                unsigned &Remaining) {
+  if (!Remaining || !Left || !Right || Depth > 16 ||
+      Left->Kind != Right->Kind || Left->Size != Right->Size ||
+      Left->IsSigned != Right->IsSigned)
+    return false;
+  --Remaining;
+  switch (Left->Kind) {
+  case NdTypeKind::Void:
+    return Left->Size == 0;
+  case NdTypeKind::Int:
+    return Left->Size == 1 || Left->Size == 2 || Left->Size == 4 ||
+           Left->Size == 8;
+  case NdTypeKind::Float:
+    return Left->Size == 4 || Left->Size == 8;
+  case NdTypeKind::Ptr:
+    return Left->Size == 8 &&
+           equalTypes(Left->Pointee, Right->Pointee, Depth + 1, Remaining);
+  case NdTypeKind::Func:
+    if (Left->Size != 0 || !Left->RetType || !Right->RetType ||
+        Left->RetType->Kind == NdTypeKind::Func ||
+        Left->ParamTypes.size() > 64 ||
+        Left->ParamTypes.size() != Right->ParamTypes.size() ||
+        !equalTypes(Left->RetType, Right->RetType, Depth + 1, Remaining))
+      return false;
+    for (size_t I = 0; I < Left->ParamTypes.size(); ++I)
+      if (!Left->ParamTypes[I] ||
+          Left->ParamTypes[I]->Kind == NdTypeKind::Void ||
+          Left->ParamTypes[I]->Kind == NdTypeKind::Func ||
+          !equalTypes(Left->ParamTypes[I], Right->ParamTypes[I], Depth + 1,
+                      Remaining))
+        return false;
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool scalarType(const TypeRef &Type) {
   if (!Type)
     return false;
   if (Type->Kind == NdTypeKind::Ptr)
-    return Type->Size == 8 && Type->Pointee;
+    return Type->Size == 8 && equalSourceTypes(Type, Type);
   if (Type->Kind == NdTypeKind::Float)
     return Type->Size == 4 || Type->Size == 8;
   return Type->Kind == NdTypeKind::Int && (Type->Size == 1 || Type->Size == 2 ||
@@ -25,6 +63,11 @@ bool fail(std::string &Diagnostic, const char *Message) {
   return false;
 }
 } // namespace
+
+bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
+  unsigned Remaining = 4096;
+  return equalTypes(Left, Right, 0, Remaining);
+}
 
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                        std::string &Diagnostic) {

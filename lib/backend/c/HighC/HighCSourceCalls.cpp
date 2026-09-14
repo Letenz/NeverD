@@ -38,13 +38,6 @@ bool scalar(const TypeRef &Type) {
                                            Type->Size == 4 || Type->Size == 8);
 }
 
-bool sameSourceType(const TypeRef &A, const TypeRef &B, unsigned Depth = 0) {
-  return A && B && Depth <= 16 && A->Kind == B->Kind && A->Size == B->Size &&
-         A->IsSigned == B->IsSigned &&
-         (A->Kind != NdTypeKind::Ptr ||
-          sameSourceType(A->Pointee, B->Pointee, Depth + 1));
-}
-
 std::string bad(llvm::StringRef Reason) {
   return "(0 /* bad source call: " + Reason.str() + " */)";
 }
@@ -224,7 +217,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                                 Signature.Parameters[0].Type);
     if (!Receiver)
       return bad("incompatible block receiver carrier");
-    std::string Prototype = typeToC(Signature.ReturnType) + " (^)(";
+    std::string Prototype = "(^)(";
     for (size_t I = 1; I < Signature.Parameters.size(); ++I) {
       if (I > 1)
         Prototype += ", ";
@@ -232,7 +225,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     }
     if (Signature.Parameters.size() == 1)
       Prototype += "void";
-    Prototype += ")";
+    Prototype = declarationToC(Signature.ReturnType, Prototype + ")");
     // The source-bound LowIR proof establishes that the original target was
     // loaded from this same receiver's invoke slot. Clang evaluates the block
     // expression once and supplies its hidden receiver itself.
@@ -258,12 +251,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       return bad("conflicting native declarations");
     if (Definition) {
       const auto &Function = *Definition;
-      if (!sameSourceType(Function.ReturnType, Signature.ReturnType) ||
+      if (!equalSourceTypes(Function.ReturnType, Signature.ReturnType) ||
           Function.Params.size() != Signature.Parameters.size())
         return bad("native definition disagrees with the call declaration");
       for (size_t I = 0; I < Function.Params.size(); ++I)
-        if (!sameSourceType(Function.Params[I].Type,
-                            Signature.Parameters[I].Type))
+        if (!equalSourceTypes(Function.Params[I].Type,
+                              Signature.Parameters[I].Type))
           return bad("native parameter disagrees with the call declaration");
     }
     if (Name.empty())
@@ -271,7 +264,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     Name =
         Definition ? functionIdentifier(*Definition) : functionIdentifier(Name);
   } else {
-    std::string Prototype = typeToC(Signature.ReturnType) + " (*)(";
+    std::string Prototype = "(*)(";
     for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
       if (I)
         Prototype += ", ";
@@ -283,7 +276,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       else
         Prototype += typeToC(Signature.Parameters[I].Type);
     }
-    Prototype += ")";
+    Prototype = declarationToC(Signature.ReturnType, Prototype + ")");
     Name = "((" + Prototype + ")" +
            (Hint.CallKind == Kind::ObjCSuper2 ? "objc_msgSendSuper2"
                                               : "objc_msgSend") +

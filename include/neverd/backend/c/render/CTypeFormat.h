@@ -29,6 +29,10 @@ namespace neverd {
 
 std::string typeToC(const TypeRef &Ty);
 
+/// Place a declarator inside a C type, including nested function pointers.
+/// An empty declarator produces the abstract type used by a cast.
+std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator);
+
 std::string typeToCLLVM(llvm::Type *Ty);
 std::string llvmStructName(llvm::StructType *ST);
 

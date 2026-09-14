@@ -95,6 +95,15 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Name == "swift_unknownObjectWeakDestroy") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"reference", Pointer}};
+  } else if (Name == "swift_once") {
+    // Runtime/Once.h uses C_CC, including the context argument passed to the
+    // callback. A source binding preserves the runtime call and its predicate;
+    // it does not prove ownership or permit eager/omitted initialization.
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"predicate", Pointer},
+                            {"function", NdType::makePtr(NdType::makeFunc(
+                                             NdType::makeVoid(), {Pointer}))},
+                            {"context", Pointer}};
   } else if (Name == "swift_beginAccess") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"address", Pointer},

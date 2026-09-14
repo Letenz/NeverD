@@ -721,15 +721,15 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       ConflictingSourceNativeSignatures.insert(Name);
     if (Function.DoesNotReturn)
       OS << "_Noreturn ";
-    OS << typeToC(ReturnType) << " " << functionIdentifier(Function) << "(";
+    std::string Declarator = functionIdentifier(Function) + "(";
     for (size_t I = 0; I < Function.Params.size(); ++I) {
       if (I)
-        OS << ", ";
-      OS << typeToC(Function.Params[I].Type);
+        Declarator += ", ";
+      Declarator += typeToC(Function.Params[I].Type);
     }
     if (Function.Params.empty())
-      OS << "void";
-    OS << ");\n";
+      Declarator += "void";
+    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
   }
   CurrentFunc = nullptr;
   Analysis = {};
@@ -738,16 +738,15 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       continue;
     if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(*Function))
       continue;
-    OS << typeToC(Function->ReturnType) << " " << functionIdentifier(*Function)
-       << "(";
+    std::string Declarator = functionIdentifier(*Function) + "(";
     for (size_t I = 0; I < Function->Params.size(); ++I) {
       if (I)
-        OS << ", ";
-      OS << typeToC(Function->Params[I].Type);
+        Declarator += ", ";
+      Declarator += typeToC(Function->Params[I].Type);
     }
     if (Function->Params.empty())
-      OS << "void";
-    OS << ");\n";
+      Declarator += "void";
+    OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
   }
 
   for (auto &Name : CallTargets) {
@@ -778,16 +777,15 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     if (SourceSignature != SourceNativeSignatures.end() &&
         !ConflictingSourceNativeSignatures.count(Name)) {
       const auto &Signature = *SourceSignature->second;
-      OS << "extern " << typeToC(Signature.ReturnType) << " " << Identifier
-         << "(";
+      std::string Declarator = Identifier + "(";
       for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
         if (I)
-          OS << ", ";
-        OS << typeToC(Signature.Parameters[I].Type);
+          Declarator += ", ";
+        Declarator += typeToC(Signature.Parameters[I].Type);
       }
       if (Signature.Parameters.empty())
-        OS << "void";
-      OS << ")";
+        Declarator += "void";
+      OS << "extern " << declarationToC(Signature.ReturnType, Declarator + ")");
       const auto Link = SourceRuntimeLinkNames.find(Name);
       if (Link != SourceRuntimeLinkNames.end() && Link->second != Identifier) {
         OS << " __asm__(\"";
