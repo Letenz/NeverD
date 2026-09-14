@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDIRHigh
   HighExpr.cpp
   HighIRPrint.cpp
   HighSourceFlow.cpp
+  HighSourceInputs.cpp
   lower/CFStructurer.cpp
   lower/CallArgCollection.cpp
   lower/MedOpToExpr.cpp

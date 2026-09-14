@@ -1,4 +1,5 @@
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
+#include "../../../lib/sdk/capi/ObjCSourceInputs.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -17,6 +18,251 @@
 using namespace neverd;
 using namespace neverd::sdk;
 namespace {
+struct EntryInputFixture {
+  BinaryImage Image;
+  HighFunc Caller, Callee;
+  std::shared_ptr<SourceCallTypeHint> Hint;
+  ExprPtr Pointer, Call, Load;
+  EntryInputFixture(Arch Architecture = Arch::AArch64, unsigned Width = 4) {
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Architecture;
+    Image.Bits = Bitness::Bits64;
+    Image.ObjCSourceReferences.emplace(
+        0x1010, ObjCSourceReference{ObjCSourceReference::Kind::IvarOffset,
+                                    0x1010, 8, "field", "Owner"});
+    auto Type = NdType::makeInt(Width, false);
+    Callee.Entry = 0x2000;
+    Callee.Name = "readField";
+    Callee.ReturnType = Type;
+    Callee.Params = {{"offset", NdType::makePtr(Type)}};
+    SourceFunctionTypeHint Signature;
+    Signature.ReturnType = Type;
+    Signature.Parameters = {{"offset", NdType::makePtr(Type)}};
+    std::string Reason;
+    if (!assignDarwinScalarSourceABI(Signature, Architecture, Reason))
+      ADD_FAILURE() << Reason;
+    Callee.SourceTypeHint = Signature;
+    Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::Native;
+    Hint->TargetAddress = Callee.Entry;
+    Hint->Signature = Signature;
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    Pointer = HighExpr::makeVar(Parameter, NdType::makeInt(8));
+    Load = HighExpr::makeLoad(Pointer, Type);
+    MedVar Temporary;
+    Temporary.Kind = MedVar::Temp;
+    Temporary.Id = 10;
+    Temporary.Size = Width;
+    auto Local = HighExpr::makeVar(Temporary, Type);
+    HighStmt Assignment;
+    Assignment.Kind = StmtKind::Assign;
+    Assignment.Dst = Local;
+    Assignment.Val = Load;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Local;
+    Callee.Body = {Assignment, Return};
+    Call = HighExpr::makeCall(
+        "readField", Callee.Entry,
+        {HighExpr::makeConst(0x1010, 8,
+                             ConstantAddressProvenance::DataAddress)});
+    Call->SourceCallHint = Hint;
+    Call->Type = Type;
+    Return.RetVal = Call;
+    Caller.ReturnType = Type;
+    Caller.Body = {Return};
+  }
+  HighFunc project() {
+    return snapshotObjCEntryInputs(Caller, Image, {{Callee.Entry, &Callee}});
+  }
+};
+
+TEST(ObjCSourceInputs, EntrySnapshotUsesRuntimeOffsetWithoutChangingNativeABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Width : {4U, 8U}) {
+      EntryInputFixture F(Architecture, Width);
+      ASSERT_TRUE(entryScalarLoadInput(F.Callee, 0));
+      auto Projected = F.project();
+      ASSERT_EQ(Projected.Body.size(), 2U);
+      ASSERT_EQ(Projected.Body[0].Val->Kind, ExprKind::Load);
+      EXPECT_EQ(Projected.Body[0].Val->Type->Size, Width);
+      const auto Address = Projected.Body[1].RetVal->Operands[0];
+      ASSERT_EQ(Address->Kind, ExprKind::Addr);
+      EXPECT_TRUE(Address->Operands[0]->structuralEq(*Projected.Body[0].Dst));
+      EXPECT_EQ(Projected.Body[1].RetVal->SourceCallHint, F.Hint);
+      EXPECT_EQ(F.Caller.Body.size(), 1U);
+      EXPECT_EQ(F.Call->Operands[0]->Kind, ExprKind::Const);
+      EXPECT_EQ(F.Callee.Body[0].Val, F.Load);
+      const auto Bound = bindObjCSourceReferences(Projected, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_TRUE(Bound.Function.Body[0].Val->SourceCallHint);
+      EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
+                SourceCallTypeHint::Kind::RuntimeIvarOffset);
+      EXPECT_EQ(Bound.InstanceLayoutClasses, std::set<std::string>{"Owner"});
+    }
+  }
+}
+
+TEST(ObjCSourceInputs, EntryReadRejectsEffectsEscapesControlAndMalformedUses) {
+  for (unsigned Case = 0; Case < 22; ++Case) {
+    SCOPED_TRACE(Case);
+    EntryInputFixture F;
+    switch (Case) {
+    case 0:
+      F.Callee.Body[1].RetVal = F.Load;
+      break;
+    case 1:
+      F.Callee.Body[1].RetVal = F.Pointer;
+      break;
+    case 2:
+      F.Callee.Body[1].Kind = StmtKind::Store;
+      F.Callee.Body[1].StoreAddr = F.Pointer;
+      F.Callee.Body[1].RetVal.reset();
+      F.Callee.Body[1].StoreVal = HighExpr::makeConst(0, 4);
+      break;
+    case 3:
+      F.Callee.Body.insert(F.Callee.Body.begin(), F.Callee.Body.back());
+      break;
+    case 4:
+      F.Callee.Body[1].Kind = StmtKind::Goto;
+      F.Callee.Body[1].GotoTarget = F.Callee.Entry;
+      break;
+    case 5:
+      F.Callee.Body[1].Kind = StmtKind::If;
+      break;
+    case 6:
+      F.Callee.Body[1].Body = {F.Callee.Body.front()};
+      break;
+    case 7:
+      F.Callee.UnstructuredExceptionRegions = 1;
+      break;
+    case 8:
+      F.Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 9:
+      F.Pointer->Var.SSAVer = 1;
+      break;
+    case 10:
+      F.Pointer->Var.RenameTag = 3;
+      break;
+    case 11:
+      F.Pointer->Type = NdType::makeInt(4);
+      break;
+    case 12:
+      F.Load->Type = NdType::makeFloat(4);
+      break;
+    case 13:
+      F.Callee.Body[0].Dst = F.Pointer;
+      break;
+    case 14:
+      F.Callee.Body.insert(F.Callee.Body.begin(), F.Callee.Body.front());
+      F.Callee.Body[0].Val = HighExpr::makeCall("effect", 0x3000, {});
+      break;
+    case 15:
+      F.Callee.Body[1].RetVal =
+          HighExpr::makeCall("escape", 0x3000, {F.Pointer});
+      break;
+    case 16:
+      F.Load->Operands[0] = HighExpr::makeBinop(NdOp::INT_ADD, F.Pointer,
+                                                HighExpr::makeConst(4, 8));
+      break;
+    case 17:
+      F.Callee.Body.resize(257);
+      break;
+    case 18:
+      F.Callee.Body.insert(F.Callee.Body.begin(), F.Callee.Body.front());
+      F.Callee.Body[0].Kind = StmtKind::Nop;
+      F.Callee.Body[0].Dst.reset();
+      F.Callee.Body[0].Val = HighExpr::makeCall("effect", 0x3000, {});
+      break;
+    case 19:
+      F.Callee.Body[1].RetVal = HighExpr::makeCall("effects", 0x3000, {});
+      F.Callee.Body[1].RetVal->IntrinsicOutputs = {F.Pointer->Var};
+      break;
+    case 20:
+      F.Callee.Body[1].RetVal = HighExpr::makeCall(
+          "large", 0x3000,
+          std::vector<ExprPtr>(4096, HighExpr::makeConst(0, 8)));
+      break;
+    case 21:
+      F.Callee.Params[0].Type = NdType::makeInt(8);
+      break;
+    }
+    EXPECT_FALSE(entryScalarLoadInput(F.Callee, 0));
+    EXPECT_EQ(F.project().Body.size(), 1U);
+  }
+}
+
+TEST(ObjCSourceInputs, SnapshotRequiresExactTargetABIStorageAndArgumentOrder) {
+  for (unsigned Case = 0; Case < 18; ++Case) {
+    SCOPED_TRACE(Case);
+    EntryInputFixture F;
+    auto Argument = F.Call->Operands[0];
+    switch (Case) {
+    case 0:
+      F.Call->CallAddr += 4;
+      break;
+    case 1:
+      F.Hint->Signature.ReturnLocation.RegisterOffset += 8;
+      break;
+    case 2:
+      F.Call->IsIndirectCall = true;
+      break;
+    case 3:
+      F.Hint->CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+      break;
+    case 4:
+      Argument->ConstProvenance = ConstantAddressProvenance::Scalar;
+      break;
+    case 5:
+      Argument->ConstProvenance = ConstantAddressProvenance::Unknown;
+      break;
+    case 6:
+      Argument->ConstProvenance = ConstantAddressProvenance::CodeAddress;
+      break;
+    case 7:
+      Argument->AddressOwnerVA = 0x1000;
+      break;
+    case 8:
+      Argument->Type = NdType::makeInt(4);
+      break;
+    case 9:
+      F.Image.ObjCSourceReferences.at(0x1010).Size = 2;
+      break;
+    case 10:
+      F.Image.ObjCSourceReferences.at(0x1010).TheKind =
+          ObjCSourceReference::Kind::Class;
+      break;
+    case 11:
+      F.Image.ObjCSourceReferences.clear();
+      break;
+    case 12:
+      F.Caller.Body[0].MemoryOrdering = NdMemoryOrdering::Acquire;
+      break;
+    case 13:
+      F.Caller.Body[0].Kind = StmtKind::While;
+      break;
+    case 14:
+      F.Call->Operands[0] = HighExpr::makeCall("effect", 0x3000, {});
+      break;
+    case 15:
+      F.Callee.SourceTypeHint.reset();
+      break;
+    case 16:
+      F.Callee.Params[0].Name = "different";
+      break;
+    case 17:
+      F.Callee.Params[0].Type = NdType::makePtr(NdType::makeInt(8));
+      break;
+    }
+    EXPECT_EQ(F.project().Body.size(), 1U);
+    EXPECT_EQ(F.Caller.Body[0].RetVal, F.Call);
+  }
+}
+
 struct Fixture {
   BinaryImage Image;
   HighFunc Function;

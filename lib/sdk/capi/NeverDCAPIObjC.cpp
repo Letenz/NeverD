@@ -9,6 +9,7 @@
 #include "ObjCBlockSources.h"
 #include "ObjCNativeDependencies.h"
 #include "ObjCSourceBindings.h"
+#include "ObjCSourceInputs.h"
 #include "ObjCSourceProjection.h"
 #include "SessionImpl.h"
 #include "SourceProjectionEvidenceJSON.h"
@@ -140,8 +141,9 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         continue;
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
-      auto Binding = bindObjCSourceReferences(BlockBinding.Function, S->Img,
-                                              &ProfileStorage);
+      auto Inputs =
+          snapshotObjCEntryInputs(BlockBinding.Function, S->Img, Functions);
+      auto Binding = bindObjCSourceReferences(Inputs, S->Img, &ProfileStorage);
       Binding.Dependencies.insert(BlockBinding.Dependencies.begin(),
                                   BlockBinding.Dependencies.end());
       std::string Reason = BlockBinding.Limitation.empty()

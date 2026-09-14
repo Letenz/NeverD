@@ -58,6 +58,7 @@ enum class RuntimeFixture {
   SwiftLiterals,
   StoredStrings,
   SystemData,
+  IndirectFields,
   Graphics,
   DarwinDeclarations
 };
@@ -71,6 +72,7 @@ void verifyRuntime(bool Chained,
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
+  const bool IndirectFields = FixtureKind == RuntimeFixture::IndirectFields;
   const bool SystemData = FixtureKind == RuntimeFixture::SystemData;
   const std::vector<std::string> SystemDataFrameworks{
       "-framework", "CoreData", "-framework", "CoreGraphics",
@@ -102,6 +104,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants   ? "ObjCScalarConstants.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStrings.m"
                         : StoredStrings     ? "ObjCStoredStrings.m"
+                        : IndirectFields    ? "ObjCIndirectFields.m"
                         : SystemData        ? "ObjCSystemData.m"
                         : Graphics          ? "ObjCGraphicsCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
@@ -119,6 +122,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
                         : StoredStrings     ? "ObjCStoredStringsHarness.m"
+                        : IndirectFields    ? "ObjCIndirectFieldsHarness.m"
                         : SystemData        ? "ObjCSystemDataHarness.m"
                         : Graphics          ? "ObjCGraphicsCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
@@ -213,6 +217,7 @@ void verifyRuntime(bool Chained,
                              : ScalarConstants   ? 6U
                              : SwiftLiterals     ? 3U
                              : StoredStrings     ? 4U
+                             : IndirectFields    ? 5U
                              : SystemData        ? 9U
                              : Graphics          ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
@@ -316,6 +321,8 @@ void verifyRuntime(bool Chained,
                  "falseObject",      "contextSaveName",
                  "gifDictionaryKey", "searchableItemIdentifier",
                  "colorSpaceName"};
+  if (IndirectFields)
+    Remaining = {"first", "second", "setFirst:", "setSecond:", ".cxx_destruct"};
   if (StoredStrings)
     Remaining = {"arrayWithValue:", "dictionaryWithValue:", "writeLiteralTo:",
                  "literal"};
@@ -355,6 +362,7 @@ void verifyRuntime(bool Chained,
                                     : ScalarConstants  ? "NDScalarConstants"
                                     : SwiftLiterals    ? "NDSwiftLiteralStrings"
                                     : StoredStrings    ? "NDStoredStrings"
+                                    : IndirectFields   ? "NDIndirectFields"
                                     : SystemData       ? "NDSystemData"
                                     : Graphics         ? "NDGraphicsCalls"
                                     : BlockLifetimes   ? "NDBlockFactory"
@@ -412,15 +420,20 @@ void verifyRuntime(bool Chained,
                                    ";");
         }
       }
-    if (NativePointers && (*Selector == "ascii" || *Selector == "unicode")) {
-      EXPECT_NE(MethodSource.find("NDForwardPointer(void* native_arg0)"),
-                std::string::npos)
+    const char *NativeSignature =
+        NativePointers && (*Selector == "ascii" || *Selector == "unicode")
+            ? "int64_t NDForwardPointer(void* native_arg0)"
+        : IndirectFields && (*Selector == "first" || *Selector == "second")
+            ? "int64_t NDReadObjectField(void* native_arg0, void* native_arg1)"
+            : nullptr;
+    if (NativeSignature) {
+      EXPECT_NE(MethodSource.find(NativeSignature), std::string::npos)
           << MethodSource;
       EXPECT_NE(MethodSource.find("objc_retain"), std::string::npos);
       // Each C API method includes its complete native dependency group.
       // Link the common helper once when combining these two independent units.
-      const auto Begin = MethodSource.find(
-          "\nint64_t NDForwardPointer(void* native_arg0) {\n");
+      const auto Begin =
+          MethodSource.find("\n" + std::string(NativeSignature) + " {\n");
       ASSERT_NE(Begin, std::string::npos);
       const auto End = MethodSource.find("\n}", Begin);
       ASSERT_NE(End, std::string::npos);
@@ -576,6 +589,8 @@ void verifyRuntime(bool Chained,
                         "pass\nidentical-objects=0\n"
       : SystemData    ? "system-data=9216\nsingletons=pass\nframework-identity="
                         "pass\nlifetime=pass\n"
+      : IndirectFields ? "indirect-fields=6144\nobject-identity=pass\nlifetime="
+                         "pass\ndestroyed=2048\n"
       : StoredStrings
           ? "stored-strings=4096\nobject-identity=pass\nlifetime=pass\n"
       : Graphics ? "graphics-queries=6144\nimage-identity=pass\npng-count=1\n"
@@ -949,5 +964,18 @@ TEST(ObjCRuntimeSource, RecompiledSystemDataPreservesRuntimeSingletonIdentity) {
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and public data frameworks";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledIndirectFieldsPreserveRuntimeOffsetsAndOwnership) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::IndirectFields));
+  }
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C runtime";
 #endif
 }
