@@ -367,6 +367,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       std::set<va_t> AssociationKeys;
       std::set<va_t> ProfileSections;
       std::set<va_t> ConstantStrings;
+      std::set<BorrowedByteRange> BorrowedBytes;
       for (va_t Entry : Included) {
         const auto &Keys = Projections.at(Entry).AssociationKeys;
         AssociationKeys.insert(Keys.begin(), Keys.end());
@@ -374,12 +375,16 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         ProfileSections.insert(Sections.begin(), Sections.end());
         const auto &Strings = Projections.at(Entry).ConstantStrings;
         ConstantStrings.insert(Strings.begin(), Strings.end());
+        const auto &Bytes = Projections.at(Entry).BorrowedBytes;
+        BorrowedBytes.insert(Bytes.begin(), Bytes.end());
       }
       std::set<std::string> SharedIdentityFunctions;
       std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
           AssociationKeys, SharedIdentityFunctions);
       IdentityHelpers += renderObjCConstantStringHelpers(
           S->Img, ConstantStrings, SharedIdentityFunctions);
+      IdentityHelpers += renderBorrowedByteHelpers(S->Img, BorrowedBytes,
+                                                   SharedIdentityFunctions);
       std::set<std::string> SharedStorageFunctions;
       const std::string StorageHelpers =
           ProfileStorage.render(ProfileSections, SharedStorageFunctions);
@@ -444,6 +449,10 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     Limitations.push_back(
         "Unresolved native dependencies and exception-dependent method bodies "
         "remain individually unrecovered.");
+    Limitations.push_back(
+        "Immutable byte ranges are copied only for proven bounded, read-only "
+        "consumers that do not retain or compare their pointers. These buffers "
+        "preserve contents, not original image addresses or pointer identity.");
     Limitations.push_back(
         "Verified Darwin constant strings preserve ASCII bytes or UTF-16 "
         "code units in rebuilt constant objects. Link Foundation and one "

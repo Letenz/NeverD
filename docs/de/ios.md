@@ -177,6 +177,8 @@ Jede Methode enthält `projection_diagnostics`: `items` erfassen unabhängig pr�
 
 Der `native_dependency_graph` verfolgt im endgültigen LowIR direkte Aufrufe in den Image-Code ab Methoden mit unterstützter Signatur. Er erhält Aufrufer-, Block- und Anweisungsadressen, gemeinsame Ziele und Zyklen; indirekte Ziele bleiben null. Fehlende benötigte LowIR-Funktionen oder das Aufzeichnungslimit setzen `inventory_complete` auf false. `targets_complete` verlangt zusätzlich direkte Ziele für alle erfassten Aufrufe. Nicht unterstützte Methodenwurzeln und unaufgelöste indirekte Ziele sind ausgeschlossen; vollständige native Ausführungsabdeckung oder Wiederherstellung abhängiger Quellen werden nicht bewiesen.
 
+Unveränderliche Bytepuffer werden nur rekonstruiert, wenn der geprüfte Vertrag des importierten Aufrufs den Lesezugriff auf eine nichtnegative Länge begrenzt und Schreibzugriffe, das Speichern von Zeigern und Vergleiche der Adressidentität ausschließt. Bytes und Länge bleiben erhalten; andere Zeigerverwendungen bleiben unaufgelöst. Swift-Diagnosen verwenden ihre deklarierte C-ABI und das genaue Linkersymbol; eine nachfolgende terminierende Trap-Operation bleibt separat erhalten.
+
 Für eine Sitzung mit geladener Mach-O-Datei liefern `neverd_objc_methods_json(session, max_functions)` und `neverd_swift_methods_json(session, signatures_json, max_functions)` die Berichte. Null wählt alle gefundenen Funktionen. Erfolgreiche Strings mit `neverd_free_string` freigeben; `NULL` bedeutet Fehler, erklärt durch den Sitzungsfehler. Diese APIs laden keine IPA- oder `.app`-Container.
 
 ## Verifikation und Fehlerdiagnose

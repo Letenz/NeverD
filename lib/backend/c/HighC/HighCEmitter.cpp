@@ -505,6 +505,12 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               Name = Definition->Name;
           Name.consume_front("_");
           if (!Name.empty()) {
+            if (Runtime) {
+              auto [Link, Added] =
+                  SourceRuntimeLinkNames.emplace(Name.str(), Hint.TargetName);
+              if (!Added && Link->second != Hint.TargetName)
+                ConflictingSourceNativeSignatures.insert(Name.str());
+            }
             Targets.insert(Name.str());
             auto [It, Added] =
                 SourceNativeSignatures.emplace(Name.str(), &Hint.Signature);
@@ -529,6 +535,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           if (Name == "_NSConcreteStackBlock" ||
               Name == "_NSConcreteGlobalBlock")
             SourceBlockIsaNames.insert(Name.str());
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeBorrowedBytes) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_borrowed_bytes_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_" +
+                std::to_string(Hint.ByteCount) + "_address");
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::RuntimeConstantString) {
           if (Hint.TargetAddress)
@@ -774,7 +787,14 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
       if (Signature.Parameters.empty())
         OS << "void";
-      OS << ");\n";
+      OS << ")";
+      const auto Link = SourceRuntimeLinkNames.find(Name);
+      if (Link != SourceRuntimeLinkNames.end() && Link->second != Identifier) {
+        OS << " __asm__(\"";
+        OS.write_escaped("_" + Link->second);
+        OS << "\")";
+      }
+      OS << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
       OS << "extern int " << Identifier << "();\n";
     }

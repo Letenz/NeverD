@@ -249,6 +249,146 @@ TEST(ObjCCallHints, SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity) {
   }
 }
 
+TEST(ObjCCallHints, DiagnosticRuntimeUsesCABIAndKeepsItsLinkerSpelling) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Count] :
+         {std::pair{"_swift_stdlib_reportUnimplementedInitializer", 5U},
+          std::pair{"_swift_stdlib_reportFatalError", 5U},
+          std::pair{"_swift_stdlib_reportUnimplementedInitializerInFile", 9U},
+          std::pair{"_swift_stdlib_reportFatalErrorInFile", 8U}}) {
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), Count);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+      EXPECT_EQ(Hint->BorrowedByteInputs.size(), Count == 5 ? 2U : 3U);
+      EXPECT_EQ(Hint->Signature.Parameters[1].Type->Size, 4U);
+      EXPECT_TRUE(Hint->Signature.Parameters[1].Type->IsSigned);
+      EXPECT_EQ(Hint->Signature.Parameters.back().Type->Size, 4U);
+      EXPECT_FALSE(Hint->Signature.Parameters.back().Type->IsSigned);
+      std::string Error;
+      EXPECT_TRUE(validateSourceABI(Hint->Signature, Error)) << Error;
+      std::vector<ExprPtr> Args;
+      for (const auto &Parameter : Hint->Signature.Parameters)
+        Args.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+      auto Call = HighExpr::makeCall("unrelated_veneer", 0x1100, Args);
+      Call->Type = NdType::makeVoid();
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Call;
+      Statement.CallExpr = Call;
+      HighFunc Function;
+      Function.Entry = 0x1200;
+      Function.Name = "diagnostic_wrapper";
+      Function.ReturnType = NdType::makeVoid();
+      Function.Body = {Statement};
+      std::string C;
+      llvm::raw_string_ostream OS(C);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      Options.Format = BinaryFormat::MachO;
+      ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+      EXPECT_NE(C.find("__asm__(\"_" + std::string(Name) + "\")"),
+                std::string::npos)
+          << C;
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      auto Forged = std::make_shared<SourceCallTypeHint>(*Hint);
+      Forged->BorrowedByteInputs = {{1, 0}};
+      Call->SourceCallHint = Forged;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, ImmutableBytesRejectAliasingWritableAndRelocatedStorage) {
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    auto Image = runtimeImage("__swift_stdlib_reportUnimplementedInitializer");
+    auto &Data = Image.Sections[1];
+    // Linked Mach-O data inherits RX segment permissions; instruction
+    // attributes, rather than those coarse permissions, identify code.
+    Image.Segments[0].Flags =
+        Image.Segments[0].Flags | SegmentFlags::Executable;
+    Data.Flags = Data.Flags | SegmentFlags::Executable;
+    ASSERT_TRUE(readImmutableImageBytes(Image, 0x2200, 5));
+    if (Mutation == 0)
+      Data.Flags = Data.Flags | SegmentFlags::Writable;
+    if (Mutation == 1)
+      Image.Segments[0].Flags =
+          Image.Segments[0].Flags | SegmentFlags::Writable;
+    if (Mutation == 2)
+      Image.Sections.push_back(Data);
+    if (Mutation == 3)
+      Image.Segments.push_back(Image.Segments[0]);
+    if (Mutation == 4)
+      Image.DataPtrRelocSlots.insert(0x21ff);
+    if (Mutation == 5)
+      Image.CodePtrRelocSlots.insert(0x2204);
+    if (Mutation == 6)
+      Image.DyldBindSlots[0x2201] = {};
+    if (Mutation == 7)
+      Image.ConflictingImportStorageSlots.insert(0x21fa);
+    if (Mutation == 8)
+      Data.FileSz = 0x201;
+    if (Mutation == 9)
+      Image.MachOChainedFixupsAmbiguous = true;
+    if (Mutation == 10)
+      Data.Type |= llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    if (Mutation == 11)
+      Image.ImportPtrSlots[0x2200] = "_other";
+    EXPECT_FALSE(readImmutableImageBytes(Image, 0x2200, 5)) << Mutation;
+  }
+  const auto Image =
+      runtimeImage("__swift_stdlib_reportUnimplementedInitializer");
+  EXPECT_FALSE(readImmutableImageBytes(Image, UINT64_MAX - 2, 5));
+  EXPECT_FALSE(readImmutableImageBytes(Image, 0x2200, 1024 * 1024 + 1));
+}
+
+TEST(ObjCCallHints, BorrowedBytesRequireTheBoundedConsumerOccurrence) {
+  auto Image = runtimeImage("__swift_stdlib_reportUnimplementedInitializer");
+  const uint8_t Bytes[] = {65, 0, 255, 34, 92};
+  std::copy(std::begin(Bytes), std::end(Bytes),
+            Image.Segments[0].Data.begin() + 0x1200);
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  auto Address = HighExpr::makeConst(0x2200, 8);
+  auto Count = HighExpr::makeConst(5, 4);
+  auto Call = HighExpr::makeCall(
+      {}, 0x1100, {Address, Count, Address, Count, HighExpr::makeConst(0, 4)});
+  Call->Type = NdType::makeVoid();
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Call;
+  Statement.CallExpr = Call;
+  HighFunc Function;
+  Function.ReturnType = NdType::makeVoid();
+  Function.Body = {Statement};
+  auto Result = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  ASSERT_EQ(Result.BorrowedBytes.size(), 1U);
+  std::set<std::string> Helpers;
+  auto Source =
+      sdk::renderBorrowedByteHelpers(Image, Result.BorrowedBytes, Helpers);
+  EXPECT_NE(Source.find("65, 0, 255, 34, 92, 0"), std::string::npos);
+  EXPECT_EQ(Call->Operands[0], Address)
+      << "Binding must not mutate the original DAG";
+  auto BoundCall = Result.Function.Body[0].CallExpr;
+  EXPECT_TRUE(sdk::objcSourceCallBound(*BoundCall, Image, {}));
+  EXPECT_TRUE(sdk::objcSourceCallBound(*BoundCall->Operands[0], Image, {}));
+  Count->ConstVal =
+      UINT32_MAX; // Negative precision would make printf unbounded.
+  EXPECT_FALSE(
+      sdk::bindObjCSourceReferences(Function, Image).Limitation.empty());
+  Count->ConstVal = 5;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Address;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  Function.Body.push_back(Return);
+  Result = sdk::bindObjCSourceReferences(Function, Image);
+  EXPECT_FALSE(Result.Limitation.empty());
+  EXPECT_EQ(Result.Function.Body.back().RetVal->Kind, ExprKind::Const);
+}
+
 TEST(ObjCCallHints, SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets) {
   for (const char *Name :
        {"_swift_retainDirect", "_swift_releaseDirect", "_swift_retain_x20",

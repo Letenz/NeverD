@@ -41,7 +41,10 @@ struct SourceCallTypeHint {
     DarwinRuntimeCall,
     /// The fixed String-to-NSString bridge, emitted with the Swift convention.
     /// TargetAddress is its exact imported slot, not a local Swift function.
-    SwiftStringBridge
+    SwiftStringBridge,
+    /// Bytes copied for a proven bounded, read-only, nonescaping consumer.
+    /// This reproduces contents, not the original pointer's identity.
+    RuntimeBorrowedBytes
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;
@@ -52,6 +55,12 @@ struct SourceCallTypeHint {
   std::string OwnerClass;
   /// Nonzero only when a verified selector stub loads this exact runtime slot.
   va_t SelectorReferenceAddress = 0;
+  /// Pairs of pointer and byte-count parameter indices. The imported routine
+  /// reads at most that nonnegative count, never writes/retains the pointer,
+  /// and does not observe its identity. These are call effects, not ABI types.
+  std::vector<std::pair<unsigned, unsigned>> BorrowedByteInputs;
+  /// Only RuntimeBorrowedBytes uses this exact byte extent at TargetAddress.
+  uint32_t ByteCount = 0;
 };
 
 } // namespace neverd

@@ -64,6 +64,7 @@ add_neverd_component_library(NeverDLoader
   ObjC/ObjCMethods.cpp
   ObjC/ObjCStorage.cpp
   ObjC/ObjCConstantStrings.cpp
+  ReadOnlyBytes.cpp
   ObjC/ObjCEncoding.cpp
   ObjC/ObjCBlocks.cpp
   ObjC/ObjCBlockCallHints.cpp

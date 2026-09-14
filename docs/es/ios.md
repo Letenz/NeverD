@@ -177,6 +177,8 @@ Cada método incluye `projection_diagnostics`: sus `items` registran obstáculos
 
 El `native_dependency_graph` recorre el LowIR final desde firmas admitidas siguiendo llamadas directas al código de la imagen. Conserva direcciones de llamador, bloque e instrucción, destinos compartidos y ciclos; los destinos indirectos son null. `inventory_complete` es false si falta una función LowIR necesaria o se alcanza el límite de registros. `targets_complete` exige además destinos directos para todas las llamadas registradas. Se excluyen raíces no admitidas y destinos indirectos sin resolver; no demuestra cobertura completa de ejecución nativa ni recuperación de fuentes dependientes.
 
+Los búferes inmutables se reconstruyen solo si el contrato validado de la llamada importada limita la lectura a una longitud no negativa y excluye escrituras, retención de punteros y comparaciones de identidad de direcciones. Se conservan los bytes y la longitud; los demás usos del puntero quedan sin resolver. Los diagnósticos de Swift usan su ABI C declarada y el símbolo de enlace exacto, separados de la trampa terminal posterior.
+
 En una sesión con Mach-O ya cargado, `neverd_objc_methods_json(session, max_functions)` y `neverd_swift_methods_json(session, signatures_json, max_functions)` devuelven los informes. Cero selecciona todas las funciones descubiertas. Libere las cadenas con `neverd_free_string`; `NULL` indica fallo, explicado por el error de sesión. Estas API no cargan contenedores IPA/`.app`.
 
 ## Verificación y resolución de problemas

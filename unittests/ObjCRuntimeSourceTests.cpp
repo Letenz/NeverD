@@ -46,12 +46,15 @@ enum class RuntimeFixture {
   SwiftCalls,
   ConstantStrings,
   UnfairLocks,
-  SwiftStrings
+  SwiftStrings,
+  DiagnosticReports
 };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
+  const bool DiagnosticReports =
+      FixtureKind == RuntimeFixture::DiagnosticReports;
   const bool SwiftStrings = FixtureKind == RuntimeFixture::SwiftStrings;
   const bool Associations = FixtureKind == RuntimeFixture::Associations;
   const bool SwiftCalls = FixtureKind == RuntimeFixture::SwiftCalls;
@@ -66,13 +69,15 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = SwiftStrings      ? "ObjCSwiftString.m"
+  const char *Fixture = DiagnosticReports ? "ObjCDiagnosticReports.m"
+                        : SwiftStrings    ? "ObjCSwiftString.m"
                         : UnfairLocks     ? "ObjCUnfairLocks.m"
                         : ConstantStrings ? "ObjCConstantStrings.m"
                         : SwiftCalls      ? "ObjCSwiftRuntime.m"
                         : Associations    ? "ObjCAssociations.m"
                                           : "ObjCARC.m";
-  const char *Harness = SwiftStrings      ? "ObjCSwiftStringHarness.m"
+  const char *Harness = DiagnosticReports ? "ObjCDiagnosticReportsHarness.m"
+                        : SwiftStrings    ? "ObjCSwiftStringHarness.m"
                         : UnfairLocks     ? "ObjCUnfairLocksHarness.m"
                         : ConstantStrings ? "ObjCConstantStringsHarness.m"
                         : SwiftCalls      ? "ObjCSwiftRuntimeHarness.m"
@@ -93,11 +98,13 @@ void verifyRuntime(bool Chained,
                                    "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
-  if (SwiftCalls || SwiftStrings)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
     Compile.push_back("-lswiftFoundation");
+  if (DiagnosticReports)
+    Compile.insert(Compile.end(), {"-iwithsysroot", "/usr/lib"});
   if (Profiled)
     Compile.push_back("-fprofile-instr-generate=" +
                       (Work / "counters.profraw").string());
@@ -116,7 +123,10 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), SwiftStrings ? 1U : SwiftCalls ? 9U : 7U);
+  ASSERT_EQ(Methods->size(), DiagnosticReports ? 5U
+                             : SwiftStrings    ? 1U
+                             : SwiftCalls      ? 9U
+                                               : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
@@ -146,10 +156,14 @@ void verifyRuntime(bool Chained,
                  "unlock", "assertOwner", "assertNotOwner"};
   if (SwiftStrings)
     Remaining = {"bridgeWord:storage:"};
+  if (DiagnosticReports)
+    Remaining = {"initializer", "initializerInFile", "fatal", "fatalInFile",
+                 "terminal"};
   std::string Declarations;
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
-                        std::string(SwiftStrings      ? "NDSwiftString"
+                        std::string(DiagnosticReports ? "NDDiagnosticReports"
+                                    : SwiftStrings    ? "NDSwiftString"
                                     : UnfairLocks     ? "NDUnfairLocks"
                                     : ConstantStrings ? "NDConstantStrings"
                                     : SwiftCalls      ? "NDSwiftRuntimeCalls"
@@ -201,10 +215,13 @@ void verifyRuntime(bool Chained,
   }
   ASSERT_TRUE(Remaining.empty());
   EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);
-  EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
-                                     : ConstantStrings ? 6U
-                                                       : 0U) +
-                                        StorageNames.size());
+  if (DiagnosticReports)
+    EXPECT_FALSE(IdentityHelpers.empty());
+  else
+    EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
+                                       : ConstantStrings ? 6U
+                                                         : 0U) +
+                                          StorageNames.size());
   if (!IdentityHelpers.empty()) {
     std::string Shared = "#include <stdint.h>\n";
     for (const auto &[Name, Definition] : IdentityHelpers)
@@ -229,7 +246,7 @@ void verifyRuntime(bool Chained,
              Original,
              "-o",
              Baseline};
-  if (SwiftCalls || SwiftStrings)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -250,20 +267,27 @@ void verifyRuntime(bool Chained,
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
-  EXPECT_EQ(read(Work / "recovered.out"),
-            SwiftStrings  ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
-            : UnfairLocks ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
-                            "concurrency=pass\n"
-            : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
-                                "pass\nlifetime=pass\n"
-            : SwiftCalls
-                ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
-            : Associations
-                ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
-                  "keys=pass\nclear="
-                  "pass\ndestroyed=1\n"
-                : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
-                  "pass\ndestroyed=3\n");
+  if (DiagnosticReports) {
+    EXPECT_EQ(read(Work / "baseline.err"), read(Work / "recovered.err"));
+    EXPECT_NE(
+        read(Work / "recovered.err").find("Use of unimplemented initializer"),
+        std::string::npos);
+  }
+  EXPECT_EQ(
+      read(Work / "recovered.out"),
+      DiagnosticReports ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
+      : SwiftStrings    ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
+      : UnfairLocks     ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
+                          "concurrency=pass\n"
+      : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
+                          "pass\nlifetime=pass\n"
+      : SwiftCalls
+          ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
+      : Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
+                       "keys=pass\nclear="
+                       "pass\ndestroyed=1\n"
+                     : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
+                       "pass\ndestroyed=3\n");
 }
 #endif
 
@@ -351,3 +375,15 @@ TEST(ObjCRuntimeSource,
 #endif
 }
 } // namespace
+
+TEST(ObjCRuntimeSource, RecompiledDiagnosticsPreserveMessagesAndTerminalTrap) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::DiagnosticReports));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}

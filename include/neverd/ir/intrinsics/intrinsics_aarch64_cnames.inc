@@ -151,7 +151,7 @@ C(Intrinsic::Sev,              "__sev");
 C(Intrinsic::Sevl,             "__sevl");
 
 // Trap / debug
-C(Intrinsic::Brk,              "__builtin_debugtrap");
+C(Intrinsic::Brk,              "__builtin_trap");
 C(Intrinsic::Hlt_A64,          "__builtin_trap");
 C(Intrinsic::A64_Clrex,        "__clrex");
 

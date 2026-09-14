@@ -2,6 +2,7 @@
 #define NEVERD_SDK_CAPI_OBJCSOURCEBINDINGS_H
 
 #include "../../loader/ObjC/ObjCRuntimeData.h"
+#include "BorrowedByteSources.h"
 #include "ObjCConstantStringSources.h"
 #include "ObjCProfileStorage.h"
 #include "ObjCSourceProjection.h"
@@ -26,10 +27,57 @@ struct ObjCSourceBindingResult {
   std::set<va_t> AssociationKeys;
   std::set<va_t> ProfileCounterSections;
   std::set<va_t> ConstantStrings;
+  std::set<BorrowedByteRange> BorrowedBytes;
   SourceProjectionDiagnostics Diagnostics{};
 };
 
 namespace objc_binding_detail {
+
+inline std::optional<SourceCallTypeHint>
+runtimeSourceCallHint(const BinaryImage &Image,
+                      const SourceCallTypeHint &Binding) {
+  using Kind = SourceCallTypeHint::Kind;
+  switch (Binding.CallKind) {
+  case Kind::ObjCRuntimeCall:
+    return objcRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  case Kind::SwiftRuntimeCall:
+    return swiftRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  case Kind::SwiftStringBridge:
+    return swiftStringSourceCallHint(Image, Binding.TargetAddress);
+  case Kind::DarwinRuntimeCall:
+    return darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  default:
+    return std::nullopt;
+  }
+}
+
+inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
+                                  const SourceCallTypeHint &Expected) {
+  return Binding.CallKind == Expected.CallKind &&
+         Binding.TargetName == Expected.TargetName &&
+         Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+         !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
+         Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
+         objc_projection_detail::sameHint(Binding.Signature,
+                                          Expected.Signature);
+}
+
+inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
+                                                         const TypeRef &Type,
+                                                         unsigned Depth = 0) {
+  if (!Value || !Type || Type->Kind != NdTypeKind::Int || Type->Size != 4 ||
+      !Type->IsSigned || Depth > 16)
+    return std::nullopt;
+  if (Value->Kind == ExprKind::Cast && Value->Operands.size() == 1 &&
+      Value->Type && Value->Type->Kind == NdTypeKind::Int &&
+      Value->Type->Size >= 4)
+    return constantBorrowedByteCount(Value->Operands[0], Type, Depth + 1);
+  if (Value->Kind != ExprKind::Const || !Value->Type ||
+      Value->Type->Kind != NdTypeKind::Int || Value->Type->Size < 4)
+    return std::nullopt;
+  const uint32_t Count = static_cast<uint32_t>(Value->ConstVal);
+  return Count <= 1024 * 1024 ? std::optional<uint32_t>(Count) : std::nullopt;
+}
 
 inline std::optional<SourceCallTypeHint>
 associationKeyHint(const BinaryImage &Image, va_t Address) {
@@ -329,6 +377,46 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       Result.Dependencies.insert(Expression->SourceCallHint->TargetAddress);
     for (size_t Index = 0; Index < Expression->Operands.size(); ++Index) {
       auto &Operand = Expression->Operands[Index];
+      // A bounded content consumer may use a copied byte buffer. This proof
+      // belongs to this operand occurrence: pointer identity, ordinary loads,
+      // escaping addresses and unrelated calls do not inherit it.
+      if (Operand && Expression->Kind == ExprKind::Call &&
+          Expression->SourceCallHint &&
+          Expression->IntrinsicId == Intrinsic::None &&
+          Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Expression->MemoryOrdering == NdMemoryOrdering::None &&
+          !Expression->IsIndirectCall) {
+        const auto &Binding = *Expression->SourceCallHint;
+        if (!Binding.BorrowedByteInputs.empty()) {
+          const auto Expected = runtimeSourceCallHint(Image, Binding);
+          if (Expected && runtimeBindingMatches(Binding, *Expected) &&
+              Expression->Operands.size() ==
+                  Binding.Signature.Parameters.size()) {
+            for (const auto &[PointerIndex, CountIndex] :
+                 Expected->BorrowedByteInputs) {
+              if (Index != PointerIndex ||
+                  CountIndex >= Expression->Operands.size())
+                continue;
+              const auto Address = constantAddress(*Operand);
+              const auto Count = constantBorrowedByteCount(
+                  Expression->Operands[CountIndex],
+                  Expected->Signature.Parameters[CountIndex].Type);
+              auto Hint =
+                  Address && Count
+                      ? borrowedByteSourceHint(Image, {*Address, *Count})
+                      : std::nullopt;
+              if (Hint) {
+                auto Bytes = HighExpr::makeCall({}, 0, {});
+                Bytes->Type = Operand->Type;
+                Bytes->SourceCallHint =
+                    std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+                Result.BorrowedBytes.insert({*Address, *Count});
+                Operand = std::move(Bytes);
+              }
+            }
+          }
+        }
+      }
       // The associated-object API compares key identities and never reads
       // their bytes. Rebuild only this authenticated argument occurrence;
       // ordinary loads, returned addresses, and unrelated calls must retain
@@ -470,6 +558,14 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeBorrowedBytes) {
+    const auto Expected = borrowedByteSourceHint(
+        Image, {Binding.TargetAddress, Binding.ByteCount});
+    return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
+           Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
+           Binding.BorrowedByteInputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
   if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeProfileCounterStorage) {
     std::optional<ObjCProfileStorage> LocalStorage;
@@ -517,20 +613,10 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
       Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
-    const auto Expected =
-        Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall
-            ? objcRuntimeSourceCallHint(Image, Binding.TargetAddress)
-        : Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall
-            ? swiftRuntimeSourceCallHint(Image, Binding.TargetAddress)
-        : Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge
-            ? swiftStringSourceCallHint(Image, Binding.TargetAddress)
-            : darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+    const auto Expected = runtimeSourceCallHint(Image, Binding);
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.
-    return Expected && Binding.TargetName == Expected->TargetName &&
-           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
-           !Binding.SelectorReferenceAddress &&
-           objc_projection_detail::sameHint(Hint, Expected->Signature);
+    return Expected && runtimeBindingMatches(Binding, *Expected);
   }
   return (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage ||
           Binding.CallKind == SourceCallTypeHint::Kind::ObjCSuper2) &&

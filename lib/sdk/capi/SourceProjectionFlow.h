@@ -173,9 +173,7 @@ class SourceProjectionFlow {
     // These actual source intrinsics unconditionally trap. A native function
     // flag, an arbitrary call spelling, and resumable debug traps do not prove
     // source termination. Arguments are still checked as ordinary reads.
-    return Expression->IntrinsicId == Intrinsic::Ud2 ||
-           Expression->IntrinsicId == Intrinsic::ArmHlt ||
-           Expression->IntrinsicId == Intrinsic::Hlt_A64;
+    return isUnconditionalTrapIntrinsic(Expression->IntrinsicId);
   }
   static std::optional<bool> truth(const ExprPtr &Expression) {
     if (!Expression)

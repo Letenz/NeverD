@@ -668,9 +668,14 @@ TEST(ObjCSourceProjection, OnlyAnActualUnconditionalTrapTerminatesThePath) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall("trap", 0, {});
-  Call.CallExpr->IntrinsicId = Intrinsic::Ud2;
-  P.Func.Body = {Call};
-  EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+  for (auto Id : {Intrinsic::Ud2, Intrinsic::ArmHlt, Intrinsic::Brk,
+                  Intrinsic::Hlt_A64}) {
+    Call.CallExpr->IntrinsicId = Id;
+    P.Func.Body = {Call};
+    EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+    EXPECT_TRUE(isUnconditionalTrapIntrinsic(Id));
+  }
+  EXPECT_STREQ(intrinsicCName(Intrinsic::Brk), "__builtin_trap");
 
   // A debugger can resume after a breakpoint. Its spelling is not proof of
   // a terminating path, even when the containing native function is flagged.

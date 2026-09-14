@@ -28,6 +28,40 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   auto &Signature = Result.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const bool ReportInFile =
+      Name == "_swift_stdlib_reportFatalErrorInFile" ||
+      Name == "_swift_stdlib_reportUnimplementedInitializerInFile";
+  const bool ReportInitializer =
+      Name == "_swift_stdlib_reportUnimplementedInitializer" ||
+      Name == "_swift_stdlib_reportUnimplementedInitializerInFile";
+  if (ReportInFile || ReportInitializer ||
+      Name == "_swift_stdlib_reportFatalError") {
+    // SwiftShims/AssertionReporting.h declares ordinary C calls. Reporting
+    // returns; the compiler emits a separate trap. Each string is consumed
+    // through a bounded precision and copied into the diagnostic message.
+    const auto Bytes = NdType::makePtr(NdType::makeInt(1, false));
+    const auto Length = NdType::makeInt(4, true);
+    const auto Unsigned = NdType::makeInt(4, false);
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"first", Bytes},
+                            {"first_length", Length},
+                            {"second", Bytes},
+                            {"second_length", Length}};
+    Result.BorrowedByteInputs = {{0, 1}, {2, 3}};
+    if (ReportInFile) {
+      Signature.Parameters.push_back({"file", Bytes});
+      Signature.Parameters.push_back({"file_length", Length});
+      Signature.Parameters.push_back({"line", Unsigned});
+      Result.BorrowedByteInputs.push_back({4, 5});
+      if (ReportInitializer)
+        Signature.Parameters.push_back({"column", Unsigned});
+    }
+    Signature.Parameters.push_back({"flags", Unsigned});
+    std::string Diagnostic;
+    if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
   // These entries have C_CC declarations in the Swift runtime ABI. In
   // particular, Direct refcount entries use SwiftDirectRR_CC and must not be
   // accepted by prefix matching. Keep calls and their memory effects intact.

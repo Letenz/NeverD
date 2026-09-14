@@ -975,6 +975,9 @@ constexpr bool intrinsicDefaultRegisterShapeIsValid(Intrinsic Id,
 }
 
 const char *intrinsicName(Intrinsic Id);
+/// True only for intrinsic spellings that unconditionally terminate in C.
+/// Debugger breakpoints such as Int3 and ArmBkpt are excluded.
+bool isUnconditionalTrapIntrinsic(Intrinsic Id);
 const char *intrinsicCName(Intrinsic Id);
 const char *intrinsicAsmMnemonic(Intrinsic Id);
 const char *llvmIntrinsicToCName(const char *LLVMName);

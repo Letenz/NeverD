@@ -141,6 +141,7 @@ public:
   std::set<std::string> SourceBlockIsaNames;
   std::set<const HighFunc *> SourceAddressDefinitions;
   std::map<std::string, const SourceFunctionTypeHint *> SourceNativeSignatures;
+  std::map<std::string, std::string> SourceRuntimeLinkNames;
   std::set<std::string> ConflictingSourceNativeSignatures;
   std::map<std::string, unsigned> MemoryTypes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;

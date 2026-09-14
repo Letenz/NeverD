@@ -90,6 +90,12 @@ const char *intrinsicCName(Intrinsic Id) {
   return kCNames.names[Idx];
 }
 
+bool isUnconditionalTrapIntrinsic(Intrinsic Id) {
+  const auto *Name = intrinsicCName(Id);
+  return Name &&
+         (!std::strcmp(Name, "__builtin_trap") || !std::strcmp(Name, "__ud2"));
+}
+
 namespace {
 
 struct LlvmCNameEntry {

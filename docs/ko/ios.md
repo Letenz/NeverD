@@ -177,6 +177,8 @@ Swift 내보내기는 일반 mobile 실행에서 내장 서명 파서가 생성�
 
 배치 `native_dependency_graph`는 지원되는 서명의 메서드에서 최종 LowIR의 이미지 코드 직접 호출을 따라가며 호출자·블록·명령 주소, 공유 대상과 순환을 보존합니다. 간접 대상은 null입니다. 필요한 LowIR 함수가 없거나 기록 한도에 도달하면 `inventory_complete`는 false이고, `targets_complete`는 모든 기록의 직접 대상도 요구합니다. 미지원 메서드 루트와 미해결 간접 대상은 제외하며 완전한 네이티브 실행 범위나 의존 소스 복원을 증명하지 않습니다.
 
+불변 바이트 버퍼는 검증된 가져오기 호출 계약이 음수가 아닌 읽기 길이를 제한하고 쓰기, 포인터 보관, 주소 동일성 비교를 배제할 때만 재구성합니다. 원래 바이트와 길이는 보존하며 다른 포인터 사용은 미해결 상태로 유지합니다. Swift 진단 보고는 선언된 C ABI와 정확한 링커 심벌을 사용하고, 이후 종료 트랩은 별도 연산으로 보존합니다.
+
 Mach-O를 이미 로드한 세션에서 `neverd_objc_methods_json(session, max_functions)`, `neverd_swift_methods_json(session, signatures_json, max_functions)`가 보고서를 반환합니다. 0은 발견한 모든 함수입니다. 성공 문자열은 `neverd_free_string`으로 해제합니다. `NULL`은 실패이며 세션 오류에 이유가 있습니다. 이 API는 IPA/`.app` 컨테이너를 로드하지 않습니다.
 
 ## 검증과 문제 해결
