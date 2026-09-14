@@ -173,6 +173,10 @@ neverd export recovered-ios/artifacts/selected.macho \
 
 L’export Swift consomme l’inventaire structuré de signatures produit par le parseur intégré lors d’un traitement mobile normal. Le JSON Objective-C contient `native_source`, `native_function_count`, `objc_metadata`, puis source C, nom, type de retour et paramètres par méthode. Mobile vérifie encore déclarations, corps et dispositions avant `.m` ; sa couverture finale peut être inférieure à celle du C natif. Un export natif réussi peut ne contenir aucune méthode récupérée.
 
+Chaque méthode fournit `projection_diagnostics` : les `items` décrivent les obstacles vérifiables indépendamment avec `code`, `reason` et les preuves disponibles de l’instruction, de l’appel, de la valeur ou de la dépendance. `checks_complete: false` indique un prérequis manquant ou une limite de ressources ; un rapport partiel vide ne prouve pas la récupération. Les contrôles sont partagés avec l’admission et préservent `status`, `reason` et `unbound_call`.
+
+Le `native_dependency_graph` du lot parcourt le LowIR final depuis les signatures prises en charge, en suivant les appels directs vers le code de l’image. Il conserve les adresses des appelants, blocs et instructions, les cibles partagées et les cycles ; les cibles indirectes restent null. Une fonction LowIR requise manquante ou la limite d’enregistrements rend `inventory_complete` false. `targets_complete` exige aussi une cible directe pour chaque appel enregistré. Les racines non prises en charge et les destinations indirectes non résolues sont exclues ; ce graphe ne prouve ni la couverture complète de l’exécution native ni la récupération des sources dépendantes.
+
 Pour une session Mach-O déjà chargée, `neverd_objc_methods_json(session, max_functions)` et `neverd_swift_methods_json(session, signatures_json, max_functions)` renvoient ces rapports. Zéro sélectionne toutes les fonctions découvertes. Libérez les chaînes avec `neverd_free_string` ; `NULL` indique un échec expliqué par l’erreur de session. Ces API ne chargent pas les conteneurs IPA ou `.app`.
 
 ## Vérification et dépannage

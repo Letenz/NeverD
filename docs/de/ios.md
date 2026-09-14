@@ -173,6 +173,10 @@ neverd export recovered-ios/artifacts/selected.macho \
 
 Der Swift-Export verarbeitet das strukturierte Signaturinventar, das der eingebaute Signaturparser bei einem normalen Mobile-Lauf erzeugt. Objective-C-Batch-JSON enthält `native_source`, `native_function_count`, `objc_metadata` sowie C-Quelltext, Funktionsname, Rückgabetyp und Parameter pro Methode. Vor `.m` prüft Mobile Deklarationen, Körper und Layouts zusätzlich; seine endgültige Abdeckung kann deshalb enger sein als die C-Batch-Abdeckung. Auch ein erfolgreicher nativer Export kann keine rekonstruierte Methode enthalten.
 
+Jede Methode enthält `projection_diagnostics`: `items` erfassen unabhängig prüfbare Hindernisse mit `code`, `reason` und verfügbaren Belegen zu Anweisung, Aufruf, Wert oder Abhängigkeit. `checks_complete: false` kennzeichnet fehlende Voraussetzungen oder Ressourcenlimits; ein leerer Teilbericht belegt keine Wiederherstellung. Dieselben Prüfungen dienen der Zulassung; `status`, `reason` und `unbound_call` bleiben erhalten.
+
+Der `native_dependency_graph` verfolgt im endgültigen LowIR direkte Aufrufe in den Image-Code ab Methoden mit unterstützter Signatur. Er erhält Aufrufer-, Block- und Anweisungsadressen, gemeinsame Ziele und Zyklen; indirekte Ziele bleiben null. Fehlende benötigte LowIR-Funktionen oder das Aufzeichnungslimit setzen `inventory_complete` auf false. `targets_complete` verlangt zusätzlich direkte Ziele für alle erfassten Aufrufe. Nicht unterstützte Methodenwurzeln und unaufgelöste indirekte Ziele sind ausgeschlossen; vollständige native Ausführungsabdeckung oder Wiederherstellung abhängiger Quellen werden nicht bewiesen.
+
 Für eine Sitzung mit geladener Mach-O-Datei liefern `neverd_objc_methods_json(session, max_functions)` und `neverd_swift_methods_json(session, signatures_json, max_functions)` die Berichte. Null wählt alle gefundenen Funktionen. Erfolgreiche Strings mit `neverd_free_string` freigeben; `NULL` bedeutet Fehler, erklärt durch den Sitzungsfehler. Diese APIs laden keine IPA- oder `.app`-Container.
 
 ## Verifikation und Fehlerdiagnose

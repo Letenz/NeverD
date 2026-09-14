@@ -173,6 +173,10 @@ neverd export recovered-ios/artifacts/selected.macho \
 
 La exportación Swift consume el inventario estructurado de firmas que produce el analizador integrado durante una ejecución mobile normal. El lote Objective-C incluye `native_source`, `native_function_count`, `objc_metadata` y, por método, fuente C, nombre, tipo de retorno y parámetros. Mobile comprueba además declaraciones, cuerpos y disposiciones antes de `.m`, por lo que su cobertura puede ser menor que la del lote C. Una exportación nativa exitosa puede no contener métodos recuperados.
 
+Cada método incluye `projection_diagnostics`: sus `items` registran obstáculos comprobables independientemente con `code`, `reason` y pruebas disponibles de sentencia, llamada, valor o dependencia. `checks_complete: false` indica requisitos ausentes o límites de recursos; un informe parcial vacío no demuestra recuperación. Las comprobaciones se comparten con la admisión y mantienen `status`, `reason` y `unbound_call`.
+
+El `native_dependency_graph` recorre el LowIR final desde firmas admitidas siguiendo llamadas directas al código de la imagen. Conserva direcciones de llamador, bloque e instrucción, destinos compartidos y ciclos; los destinos indirectos son null. `inventory_complete` es false si falta una función LowIR necesaria o se alcanza el límite de registros. `targets_complete` exige además destinos directos para todas las llamadas registradas. Se excluyen raíces no admitidas y destinos indirectos sin resolver; no demuestra cobertura completa de ejecución nativa ni recuperación de fuentes dependientes.
+
 En una sesión con Mach-O ya cargado, `neverd_objc_methods_json(session, max_functions)` y `neverd_swift_methods_json(session, signatures_json, max_functions)` devuelven los informes. Cero selecciona todas las funciones descubiertas. Libere las cadenas con `neverd_free_string`; `NULL` indica fallo, explicado por el error de sesión. Estas API no cargan contenedores IPA/`.app`.
 
 ## Verificación y resolución de problemas

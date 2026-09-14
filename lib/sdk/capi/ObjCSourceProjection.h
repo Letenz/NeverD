@@ -376,10 +376,25 @@ inline std::string sourceBodyLimitation(
   const auto Diagnostics =
       sourceBodyDiagnostics(Func, Hint, Audit, CallAllowed,
                             SourceProjectionDiagnostics::Mode::FirstFailure);
-  if (UnboundCall && !Diagnostics.Items.empty() &&
-      Diagnostics.Items.front().Issue == SourceProjectionIssue::CallBinding)
-    *UnboundCall = Diagnostics.Items.front().Expression;
+  if (UnboundCall)
+    *UnboundCall = Diagnostics.firstUnboundCall();
   return Diagnostics.limitation();
+}
+
+inline SourceProjectionDiagnostics objcSourceBodyDiagnostics(
+    const HighFunc &Func, const SourceFunctionTypeHint &Hint,
+    const PipelineFunctionAudit *Audit,
+    const std::function<bool(const HighExpr &)> &CallAllowed = {},
+    SourceProjectionDiagnostics::Mode Collection =
+        SourceProjectionDiagnostics::Mode::All) {
+  if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCRuntime)
+    return sourceBodyDiagnostics(Func, Hint, Audit, CallAllowed, Collection);
+  SourceProjectionDiagnostics Diagnostics(Collection);
+  Diagnostics.Complete = false;
+  Diagnostics.Items.push_back(
+      {SourceProjectionIssue::Signature,
+       "Objective-C method has a different source declaration origin"});
+  return Diagnostics;
 }
 
 inline std::string objcSourceBodyLimitation(
@@ -389,9 +404,12 @@ inline std::string objcSourceBodyLimitation(
     const HighExpr **UnboundCall = nullptr) {
   if (UnboundCall)
     *UnboundCall = nullptr;
-  if (Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime)
-    return "Objective-C method has a different source declaration origin";
-  return sourceBodyLimitation(Func, Hint, Audit, CallAllowed, UnboundCall);
+  const auto Diagnostics = objcSourceBodyDiagnostics(
+      Func, Hint, Audit, CallAllowed,
+      SourceProjectionDiagnostics::Mode::FirstFailure);
+  if (UnboundCall)
+    *UnboundCall = Diagnostics.firstUnboundCall();
+  return Diagnostics.limitation();
 }
 
 /// HighC currently returns success even when it emits a diagnostic placeholder.

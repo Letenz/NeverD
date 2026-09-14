@@ -26,6 +26,7 @@ struct ObjCSourceBindingResult {
   std::set<va_t> AssociationKeys;
   std::set<va_t> ProfileCounterSections;
   std::set<va_t> ConstantStrings;
+  SourceProjectionDiagnostics Diagnostics{};
 };
 
 namespace objc_binding_detail {
@@ -189,9 +190,17 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
   using CopyKey = std::tuple<const HighExpr *, bool, bool, bool>;
   std::map<CopyKey, ExprPtr> Copies;
   size_t Budget = 1000000;
-  auto Fail = [&](const char *Message) {
+  va_t StatementAddress = 0;
+  auto Fail = [&](const char *Message, const HighExpr *Expression = nullptr) {
     if (Result.Limitation.empty())
       Result.Limitation = Message;
+    const bool IsData = Expression != nullptr;
+    if (!IsData)
+      Result.Diagnostics.Complete = false;
+    Result.Diagnostics.add(IsData ? SourceProjectionIssue::DataBinding
+                                  : SourceProjectionIssue::Budget,
+                           Message, StatementAddress, Expression,
+                           IsData ? Expression->ConstVal : 0);
   };
   auto BindMemoryAddress = [&](ExprPtr &Operand, const TypeRef &Type,
                                NdMemoryOrdering Ordering,
@@ -312,7 +321,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           Expression->ConstProvenance == ConstantAddressProvenance::Scalar &&
           Expression->AddressOwnerVA == InvalidVA))
       Fail("method retains an image address without a relocatable source "
-           "binding");
+           "binding",
+           Expression.get());
     if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
         Expression->SourceCallHint->CallKind ==
             SourceCallTypeHint::Kind::Native)
@@ -409,6 +419,7 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       return;
     }
     for (auto &Statement : Body) {
+      StatementAddress = Statement.Addr;
       const bool BoundStore =
           Statement.Kind == StmtKind::Store && Statement.StoreVal &&
           BindMemoryAddress(Statement.StoreAddr, Statement.StoreVal->Type,

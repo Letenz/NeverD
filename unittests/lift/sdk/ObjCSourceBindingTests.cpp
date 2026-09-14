@@ -248,6 +248,13 @@ TEST(ObjCSourceBindings, SlotAddressIsNotTheRuntimeValue) {
   auto Result = bindObjCSourceReferences(F.Function, F.Image);
   EXPECT_FALSE(Result.Limitation.empty());
   EXPECT_EQ(Result.Function.Body[0].RetVal->Kind, ExprKind::Const);
+  ASSERT_EQ(Result.Diagnostics.Items.size(), 1U);
+  EXPECT_TRUE(Result.Diagnostics.Complete);
+  EXPECT_EQ(Result.Diagnostics.Items[0].Issue,
+            SourceProjectionIssue::DataBinding);
+  EXPECT_EQ(Result.Diagnostics.Items[0].RelatedAddress, 0x1010U);
+  EXPECT_EQ(Result.Diagnostics.Items[0].Expression,
+            Result.Function.Body[0].RetVal.get());
   F.Function.Body[0].RetVal =
       HighExpr::makeLoad(HighExpr::makeConst(0x1014, 8), NdType::makeInt(4));
   EXPECT_FALSE(

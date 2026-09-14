@@ -177,6 +177,10 @@ Swift export consumes the structured signature inventory produced by the built-i
 
 When a method fails call binding, its batch row includes `unbound_call` with the first rejected target name/address, indirect-call flag, and recovered argument count. If a source signature exists, the record also includes its binding name and expected argument count. This identifies the first blocking call; it is not an inventory of every remaining problem in that method.
 
+Each method also includes `projection_diagnostics`: `items` records independently checkable blockers with a `code`, `reason`, and available statement, call, value, or dependency evidence. `checks_complete: false` means a missing prerequisite or resource limit prevented further checks; an empty partial report does not establish recovery. This uses the same checks as the admission gate and leaves the existing `status`, `reason`, and `unbound_call` contract intact.
+
+The batch `native_dependency_graph` inventories calls in the final LowIR, starting from supported Objective-C method signatures and following direct calls into image code. It preserves caller, block, and instruction addresses, including shared callees and cycles. Indirect targets remain null. `inventory_complete` is false when a required LowIR function is missing or the call record limit is reached; `targets_complete` additionally requires all inventoried calls to have direct targets. This scope excludes unsupported method roots and unresolved indirect destinations; it does not prove complete native execution coverage or dependency source recovery.
+
 For an already loaded Mach-O session, `neverd_objc_methods_json(session, max_functions)` and `neverd_swift_methods_json(session, signatures_json, max_functions)` return the corresponding reports. Zero selects all discovered functions. Free successful strings with `neverd_free_string`; `NULL` indicates failure and the session error explains it. These APIs do not load IPA or `.app` containers.
 
 ## Verification and troubleshooting

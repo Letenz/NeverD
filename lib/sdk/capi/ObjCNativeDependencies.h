@@ -7,34 +7,44 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace neverd::sdk {
 
-/// Select local direct-call dependencies from the actual LowIR graph. Symbols
-/// never create a callee or an ABI declaration. All evidence comes from this
-/// one result; accepted candidates must be re-lifted with their explicit ABI.
-inline size_t inferObjCNativeDependencies(
-    const BinaryImage &Image, const PipelineResult &Result,
-    PipelineOptions &Options, std::map<va_t, std::string> &Diagnostics) {
+struct NativeSourceDependencyEvidence {
+  struct Call {
+    va_t Caller, Block, Instruction, Target;
+    bool Indirect;
+  };
+  static constexpr size_t MaxCalls = 1000000;
+  std::vector<Call> Calls;
+  std::set<va_t> Roots, MissingFunctions;
+  bool InventoryComplete = true;
+  bool TargetsComplete = true;
+};
+
+/// Both inference and reporting traverse the same supported method roots and
+/// direct native edges. Indirect calls remain recorded but never add a guessed
+/// target. Reporting can run against the final result without changing hints.
+inline std::set<va_t>
+walkObjCNativeDependencies(const BinaryImage &Image,
+                           const PipelineResult &Result,
+                           NativeSourceDependencyEvidence *Evidence = nullptr) {
   if (Result.SourceImage != &Image)
     throw std::invalid_argument(
         "native source dependency evidence belongs to another image");
+  if (Evidence)
+    *Evidence = {};
   std::map<va_t, const LowFunc *> Low;
-  std::map<va_t, const MedFunc *> Med;
-  std::map<va_t, const HighFunc *> High;
-  std::map<va_t, const PipelineFunctionAudit *> Audits;
   for (const auto &Function : Result.LowFuncs)
     Low.emplace(Function.Entry, &Function);
-  for (const auto &Function : Result.MedFuncs)
-    Med.emplace(Function.Entry, &Function);
-  for (const auto &Function : Result.HighFuncs)
-    High.emplace(Function.Entry, &Function);
-  for (const auto &Audit : Result.FunctionAudits)
-    Audits.emplace(Audit.Entry, &Audit);
   std::vector<va_t> Pending;
   for (const auto &Method : Image.ObjCMethods)
-    if (Method.TypeHint && Method.Status == "supported")
+    if (Method.TypeHint && Method.Status == "supported") {
       Pending.push_back(Method.Implementation);
+      if (Evidence)
+        Evidence->Roots.insert(Method.Implementation);
+    }
   std::set<va_t> Seen;
   std::set<va_t> Targets;
   while (!Pending.empty()) {
@@ -43,10 +53,28 @@ inline size_t inferObjCNativeDependencies(
     if (!Seen.insert(Entry).second)
       continue;
     const auto Found = Low.find(Entry);
-    if (Found == Low.end())
+    if (Found == Low.end()) {
+      if (Evidence) {
+        Evidence->MissingFunctions.insert(Entry);
+        Evidence->InventoryComplete = false;
+      }
       continue;
+    }
     for (const auto &Block : Found->second->Blocks)
-      for (const auto &Operation : Block.Ops)
+      for (const auto &Operation : Block.Ops) {
+        if (Evidence && (Operation.Opcode == NdOp::CALL ||
+                         Operation.Opcode == NdOp::INDIR_CALL)) {
+          const bool Direct = Operation.Opcode == NdOp::CALL &&
+                              Operation.NumInputs &&
+                              Operation.Inputs[0].isConst();
+          Evidence->TargetsComplete &= Direct;
+          if (Evidence->Calls.size() < NativeSourceDependencyEvidence::MaxCalls)
+            Evidence->Calls.push_back({Entry, Block.StartAddr, Operation.Addr,
+                                       Direct ? Operation.Inputs[0].Offset : 0,
+                                       !Direct});
+          else
+            Evidence->InventoryComplete = false;
+        }
         if (Operation.Opcode == NdOp::CALL && Operation.NumInputs &&
             Operation.Inputs[0].isConst() &&
             Image.isCodeAddress(Operation.Inputs[0].Offset)) {
@@ -54,7 +82,28 @@ inline size_t inferObjCNativeDependencies(
           Targets.insert(Target);
           Pending.push_back(Target);
         }
+      }
   }
+  if (Evidence)
+    Evidence->TargetsComplete &= Evidence->InventoryComplete;
+  return Targets;
+}
+
+/// Symbols never create a callee or an ABI declaration. Accepted candidates
+/// must be re-lifted with their explicit ABI before they can become evidence.
+inline size_t inferObjCNativeDependencies(
+    const BinaryImage &Image, const PipelineResult &Result,
+    PipelineOptions &Options, std::map<va_t, std::string> &Diagnostics) {
+  const auto Targets = walkObjCNativeDependencies(Image, Result);
+  std::map<va_t, const MedFunc *> Med;
+  std::map<va_t, const HighFunc *> High;
+  std::map<va_t, const PipelineFunctionAudit *> Audits;
+  for (const auto &Function : Result.MedFuncs)
+    Med.emplace(Function.Entry, &Function);
+  for (const auto &Function : Result.HighFuncs)
+    High.emplace(Function.Entry, &Function);
+  for (const auto &Audit : Result.FunctionAudits)
+    Audits.emplace(Audit.Entry, &Audit);
   size_t Added = 0;
   for (va_t Target : Targets) {
     if (Options.SourceTypeHints.count(Target))

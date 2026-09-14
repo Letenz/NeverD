@@ -173,6 +173,10 @@ neverd export recovered-ios/artifacts/selected.macho \
 
 Swift エクスポートは、通常の mobile 実行で内蔵の署名パーサーが生成した構造化署名一覧を受け取ります。Objective-C バッチ JSON は `native_source`、`native_function_count`、`objc_metadata` と、各メソッドの C ソース、関数名、戻り型、引数を含みます。Mobile は `.m` の前に宣言、本体、配置を追加検証するため、最終カバレッジは C バッチより狭くなる場合があります。ネイティブエクスポート成功時も復元メソッドがゼロの場合があります。
 
+各メソッドの `projection_diagnostics` は、独立して検査できる問題を `items` の `code`、`reason` と利用可能な文・呼び出し・値・依存関係の証拠で記録します。`checks_complete: false` は前提不足または資源上限を示し、空の部分報告は復元成功を意味しません。判定と同じ検査を使い、既存の `status`、`reason`、`unbound_call` を維持します。
+
+バッチの `native_dependency_graph` は、対応する署名のメソッドから最終 LowIR の直接呼び出しを追跡し、呼び出し元・ブロック・命令アドレス、共有先、循環を保持します。間接ターゲットは null です。必要な LowIR 関数の欠落または記録上限で `inventory_complete` が false となり、`targets_complete` はさらに全記録の直接ターゲットを要求します。未対応のメソッド起点と未解決の間接ターゲットは範囲外で、完全なネイティブ実行カバレッジや依存ソースの復元は証明しません。
+
 Mach-O 読み込み済みセッションでは `neverd_objc_methods_json(session, max_functions)` と `neverd_swift_methods_json(session, signatures_json, max_functions)` が対応するレポートを返します。ゼロは検出した全関数です。返された文字列は `neverd_free_string` で解放してください。`NULL` は失敗で、理由はセッションエラーにあります。これらの API は IPA/`.app` コンテナを読み込みません。
 
 ## 検証とトラブルシューティング

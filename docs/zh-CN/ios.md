@@ -177,6 +177,10 @@ Swift 导出使用正常 mobile 流程由内置签名解析器生成的结构化
 
 方法因调用绑定失败时，批量记录包含 `unbound_call`，给出第一个被拒绝调用的目标名称、地址、间接调用标记和已恢复参数数量。已有源码签名时，还包含绑定名称和预期参数数量。这是首个阻塞调用的诊断，并非该方法所有剩余问题的清单。
 
+每个方法还包含 `projection_diagnostics`：`items` 记录可独立检查的阻塞原因，包括 `code`、`reason` 以及可用的语句、调用、值或依赖证据。`checks_complete: false` 表示缺少前提或达到资源限制，无法继续检查；不完整报告为空不代表恢复成功。它与准入门槛共用校验逻辑，保持现有 `status`、`reason` 和 `unbound_call` 契约。
+
+批次中的 `native_dependency_graph` 从签名受支持的 Objective-C 方法出发，沿映像代码内的直接调用遍历最终 LowIR。它保留调用者、基本块和指令地址，包括共享被调函数和环；间接目标保持 null。缺少所需 LowIR 函数或达到调用记录上限时，`inventory_complete` 为 false；`targets_complete` 还要求所有已记录调用都有直接目标。范围不包含签名不受支持的方法根和未解析的间接目标，也不证明完整的原生执行覆盖或依赖源码恢复。
+
 对已加载 Mach-O 的会话，`neverd_objc_methods_json(session, max_functions)` 和 `neverd_swift_methods_json(session, signatures_json, max_functions)` 返回相应报告。零表示所有发现的函数。成功返回的字符串用 `neverd_free_string` 释放；`NULL` 表示失败，原因见会话错误。这些 API 不加载 IPA 或 `.app` 容器。
 
 ## 验证与故障排查

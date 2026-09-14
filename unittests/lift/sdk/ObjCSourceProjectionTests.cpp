@@ -1,6 +1,7 @@
 //===- ObjCSourceProjectionTests.cpp - Objective-C projection boundaries --===//
 
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
+#include "../../../lib/sdk/capi/SourceProjectionEvidenceJSON.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -810,6 +811,155 @@ TEST(ObjCSourceProjection, TextGuardRejectsEmitterPlaceholdersButNotCLiterals) {
   EXPECT_FALSE(objcSourceTextLimitation("\n ").empty());
   EXPECT_FALSE(
       objcSourceTextLimitation("int method(void) { /* incomplete").empty());
+}
+
+TEST(ObjCSourceProjection, SerializesEvidenceWithoutBorrowedIdentities) {
+  const std::string InvalidName("helper\xff", 7);
+  auto Call = HighExpr::makeCall(InvalidName, 0x8000, {});
+  auto Hint = std::make_shared<SourceCallTypeHint>();
+  Hint->TargetName = InvalidName;
+  Call->SourceCallHint = std::move(Hint);
+  MedVar Variable;
+  Variable.Kind = MedVar::Temp;
+  Variable.Id = 7;
+  Variable.SSAVer = 3;
+  Variable.RenameTag = 2;
+  Variable.StackOff = -16;
+  auto Value = HighExpr::makeVar(Variable);
+  SourceProjectionDiagnostics Diagnostics;
+  Diagnostics.add(SourceProjectionIssue::CallBinding, InvalidName, 0x1004,
+                  Call.get());
+  Diagnostics.add(SourceProjectionIssue::DefiniteAssignment, "missing write",
+                  0x1008, Value.get());
+  SourceProjectionDiagnostics Dependencies;
+  Dependencies.Complete = false;
+  Dependencies.add(SourceProjectionIssue::Dependency, "missing dependency", 0,
+                   nullptr, 0x9000);
+  Diagnostics.append(Dependencies);
+  auto Object = sourceProjectionEvidenceJSON(Diagnostics);
+  EXPECT_EQ(Object.getBoolean("checks_complete"), false);
+  auto *Items = Object.getArray("items");
+  ASSERT_TRUE(Items);
+  ASSERT_EQ(Items->size(), 3U);
+  auto *First = (*Items)[0].getAsObject();
+  ASSERT_TRUE(First);
+  EXPECT_EQ(First->getString("statement_address"), "0x1004");
+  auto *CallObject = First->getObject("call");
+  ASSERT_TRUE(CallObject);
+  EXPECT_EQ(CallObject->getString("target_address"), "0x8000");
+  EXPECT_EQ(CallObject->getString("binding_name"), jsonSafeText(InvalidName));
+  auto *Local = (*Items)[1].getAsObject()->getObject("value");
+  ASSERT_TRUE(Local);
+  EXPECT_EQ(Local->getInteger("ssa_version"), 3);
+  EXPECT_EQ(Local->getInteger("rename_tag"), 2);
+  EXPECT_EQ(Local->getInteger("stack_offset"), -16);
+  EXPECT_EQ((*Items)[2].getAsObject()->getString("related_address"), "0x9000");
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  OS << llvm::json::Value(std::move(Object));
+  auto Parsed = llvm::json::parse(Text);
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << llvm::toString(Parsed.takeError());
+  EXPECT_EQ(Call->CallTarget, InvalidName);
+}
+
+struct NativeDependencyFixture {
+  BinaryImage Image;
+  PipelineResult Result;
+  NativeDependencyFixture() {
+    Segment Text;
+    Text.VA = 0x1000;
+    Text.Size = Text.FileSz = 0x5000;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    Image.Segments.push_back(std::move(Text));
+    Result.SourceImage = &Image;
+    for (va_t Entry : {0x1000, 0x2000}) {
+      ObjCMethod Method;
+      Method.Implementation = Entry;
+      Method.Status = "supported";
+      Method.TypeHint = SourceFunctionTypeHint{};
+      Image.ObjCMethods.push_back(std::move(Method));
+    }
+    for (va_t Entry : {0x1000, 0x2000, 0x3000}) {
+      LowFunc Function;
+      Function.Entry = Entry;
+      Function.Blocks.emplace_back();
+      Function.Blocks[0].StartAddr = Entry;
+      Result.LowFuncs.push_back(std::move(Function));
+    }
+  }
+  void call(size_t Function, va_t Target, bool Indirect = false) {
+    auto &Block = Result.LowFuncs[Function].Blocks[0];
+    LowOp Op;
+    Op.Opcode = Indirect ? NdOp::INDIR_CALL : NdOp::CALL;
+    Op.Addr = Block.StartAddr + Block.Ops.size() * 4;
+    Op.addInput(NdVar::cst(Target, 8));
+    Block.Ops.push_back(Op);
+  }
+};
+
+TEST(ObjCSourceProjection, NativeDependencyGraphKeepsSharedCallsAndCycles) {
+  NativeDependencyFixture F;
+  F.call(0, 0x3000);
+  F.call(1, 0x3000);
+  F.call(2, 0x1000);
+  // An indirect operand is not an authenticated edge, even if constant.
+  F.call(2, 0x4000, true);
+  NativeSourceDependencyEvidence Evidence;
+  const auto Targets = walkObjCNativeDependencies(F.Image, F.Result, &Evidence);
+  EXPECT_EQ(Targets, (std::set<va_t>{0x1000, 0x3000}));
+  EXPECT_EQ(Evidence.Roots, (std::set<va_t>{0x1000, 0x2000}));
+  EXPECT_TRUE(Evidence.InventoryComplete);
+  EXPECT_FALSE(Evidence.TargetsComplete);
+  ASSERT_EQ(Evidence.Calls.size(), 4U);
+  size_t SharedCallers = 0;
+  for (const auto &Call : Evidence.Calls) {
+    if (Call.Target == 0x3000)
+      ++SharedCallers;
+    if (Call.Indirect)
+      EXPECT_EQ(Call.Target, 0U);
+  }
+  EXPECT_EQ(SharedCallers, 2U);
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(
+      inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics), 0U);
+  EXPECT_TRUE(Options.SourceTypeHints.empty());
+  ASSERT_EQ(Diagnostics.size(), Targets.size());
+  for (const auto &[Entry, Reason] : Diagnostics) {
+    EXPECT_TRUE(Targets.count(Entry));
+    EXPECT_FALSE(Reason.empty());
+  }
+  auto JSON = nativeSourceDependencyEvidenceJSON(Evidence);
+  EXPECT_EQ(JSON.getBoolean("inventory_complete"), true);
+  EXPECT_EQ(JSON.getBoolean("targets_complete"), false);
+  ASSERT_EQ(JSON.getArray("calls")->size(), 4U);
+  for (const auto &Call : *JSON.getArray("calls"))
+    if (*Call.getAsObject()->getBoolean("indirect"))
+      EXPECT_EQ(*Call.getAsObject()->get("target_address"),
+                llvm::json::Value(nullptr));
+}
+
+TEST(ObjCSourceProjection, NativeDependencyGraphTracksMissingAndFinalEvidence) {
+  NativeDependencyFixture F;
+  F.call(0, 0x3000);
+  F.call(2, 0x4000);
+  NativeSourceDependencyEvidence Evidence;
+  walkObjCNativeDependencies(F.Image, F.Result, &Evidence);
+  EXPECT_FALSE(Evidence.InventoryComplete);
+  EXPECT_FALSE(Evidence.TargetsComplete);
+  EXPECT_EQ(Evidence.MissingFunctions, (std::set<va_t>{0x4000}));
+  LowFunc Added;
+  Added.Entry = 0x4000;
+  F.Result.LowFuncs.push_back(std::move(Added));
+  walkObjCNativeDependencies(F.Image, F.Result, &Evidence);
+  EXPECT_TRUE(Evidence.InventoryComplete);
+  EXPECT_TRUE(Evidence.TargetsComplete);
+  EXPECT_TRUE(Evidence.MissingFunctions.empty());
+  EXPECT_EQ(Evidence.Calls.size(), 2U);
+  BinaryImage Other;
+  EXPECT_THROW(walkObjCNativeDependencies(Other, F.Result, &Evidence),
+               std::invalid_argument);
 }
 
 } // namespace

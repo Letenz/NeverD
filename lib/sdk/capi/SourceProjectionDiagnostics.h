@@ -79,6 +79,20 @@ struct SourceProjectionDiagnostics {
   std::string limitation() const {
     return Items.empty() ? std::string{} : Items.front().Reason;
   }
+
+  void append(const SourceProjectionDiagnostics &Other) {
+    Complete &= Other.Complete;
+    for (const auto &Item : Other.Items)
+      add(Item.Issue, Item.Reason, Item.StatementAddress, Item.Expression,
+          Item.RelatedAddress);
+  }
+
+  const HighExpr *firstUnboundCall() const {
+    return !Items.empty() &&
+                   Items.front().Issue == SourceProjectionIssue::CallBinding
+               ? Items.front().Expression
+               : nullptr;
+  }
 };
 
 } // namespace neverd::sdk

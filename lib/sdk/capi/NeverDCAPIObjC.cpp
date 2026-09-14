@@ -11,6 +11,7 @@
 #include "ObjCSourceBindings.h"
 #include "ObjCSourceProjection.h"
 #include "SessionImpl.h"
+#include "SourceProjectionEvidenceJSON.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -175,6 +176,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
 
     // Stack expression identities belong to the final pipeline result.
     BlockPlan = discoverObjCBlockSources(BlockSource, Result);
+    NativeSourceDependencyEvidence NativeEvidence;
+    walkObjCNativeDependencies(S->Img, Result, &NativeEvidence);
 
     CEmitterOptions COptions;
     COptions.TheArch = S->Img.Arch;
@@ -263,27 +266,51 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         Diagnostics.push_back(jsonSafeText(Diagnostic));
       Row["diagnostics"] = std::move(Diagnostics);
       std::string Reason;
+      SourceProjectionDiagnostics Evidence;
       const HighExpr *UnboundCall = nullptr;
       const HighFunc *Func = nullptr;
       if (auto It = Functions.find(Method.Implementation);
           It != Functions.end())
         Func = It->second;
-      if (Method.Status != "supported" || !Method.TypeHint)
+      if (Method.Status != "supported" || !Method.TypeHint) {
         Reason = "runtime method signature is not supported: " + Method.Status;
-      else if (!Func || !Func->SourceTypeHint)
+        Evidence.Complete = false;
+        Evidence.add(SourceProjectionIssue::Signature, Reason);
+      } else if (!Func || !Func->SourceTypeHint) {
         Reason = "method has no complete typed source body (possibly limited "
                  "by max-func)";
-      else {
+        Evidence.Complete = false;
+        Evidence.add(SourceProjectionIssue::Body, Reason);
+      } else {
         auto It = Audits.find(Method.Implementation);
-        Reason = objcSourceBodyLimitation(
-            Projections.at(Method.Implementation).Function, *Method.TypeHint,
-            It == Audits.end() ? nullptr : It->second,
-            [&](const HighExpr &Expression) {
-              return objcSourceCallBound(Expression, S->Img, Functions) ||
-                     objcBlockSourceCallBound(Expression, BlockSource,
-                                              BlockPlan, Functions);
-            },
-            &UnboundCall);
+        const auto &Projection = Projections.at(Method.Implementation);
+        const auto *Audit = It == Audits.end() ? nullptr : It->second;
+        auto CallAllowed = [&](const HighExpr &Expression) {
+          return objcSourceCallBound(Expression, S->Img, Functions,
+                                     &ProfileStorage) ||
+                 objcBlockSourceCallBound(Expression, BlockSource, BlockPlan,
+                                          Functions);
+        };
+        // Per-occurrence inventory may consume more evidence budget than the
+        // compatibility gate's shared-expression check. Its resource limits
+        // do not change the result of that already completed check.
+        Reason = objcSourceBodyLimitation(Projection.Function, *Method.TypeHint,
+                                          Audit, CallAllowed, &UnboundCall);
+        Evidence = objcSourceBodyDiagnostics(
+            Projection.Function, *Method.TypeHint, Audit, CallAllowed);
+        Evidence.append(Projection.Diagnostics);
+        const auto &Block = BlockProjections.at(Method.Implementation);
+        if (!Block.Limitation.empty()) {
+          // Block binding currently stops at its first failed proof.
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Dependency, Block.Limitation);
+        }
+        for (va_t Dependency : Projection.Dependencies)
+          if (!Closed.count(Dependency))
+            Evidence.add(SourceProjectionIssue::Dependency,
+                         "method depends on native source that was not "
+                         "completely recovered",
+                         0, nullptr, Dependency);
         if (Reason.empty()) {
           if (auto Projection = ProjectionReasons.find(Method.Implementation);
               Projection != ProjectionReasons.end())
@@ -293,23 +320,15 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         }
       }
       if (!Reason.empty()) {
+        if (Evidence.Items.empty()) {
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Body, Reason);
+        }
         Row["status"] = "unrecovered";
         Row["reason"] = std::move(Reason);
-        if (UnboundCall) {
-          llvm::json::Object Call{
-              {"target_name", jsonSafeText(UnboundCall->CallTarget)},
-              {"target_address", addressText(UnboundCall->CallAddr)},
-              {"indirect", UnboundCall->IsIndirectCall},
-              {"recovered_arguments",
-               static_cast<int64_t>(UnboundCall->Operands.size())}};
-          if (UnboundCall->SourceCallHint) {
-            const auto &Binding = *UnboundCall->SourceCallHint;
-            Call["binding_name"] = jsonSafeText(Binding.TargetName);
-            Call["expected_arguments"] =
-                static_cast<int64_t>(Binding.Signature.Parameters.size());
-          }
-          Row["unbound_call"] = std::move(Call);
-        }
+        if (UnboundCall)
+          Row["unbound_call"] = sourceCallEvidenceJSON(*UnboundCall);
+        Row["projection_diagnostics"] = sourceProjectionEvidenceJSON(Evidence);
         Methods.push_back(std::move(Row));
         continue;
       }
@@ -408,6 +427,11 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         Row["shared_storage_functions"] = std::move(StorageFunctions);
         ++Recovered;
       }
+      if (auto Failure = Row.getString("reason")) {
+        Evidence.Complete = false;
+        Evidence.add(SourceProjectionIssue::Body, Failure->str());
+      }
+      Row["projection_diagnostics"] = sourceProjectionEvidenceJSON(Evidence);
       Methods.push_back(std::move(Row));
     }
     llvm::json::Array Limitations;
@@ -444,6 +468,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         {"pointer_size", S->Img.Bits == Bitness::Bits64 ? 8 : 4},
         {"native_source", jsonSafeText(NativeSource)},
         {"native_function_count", static_cast<int64_t>(NativeFunctionCount)},
+        {"native_dependency_graph",
+         nativeSourceDependencyEvidenceJSON(NativeEvidence)},
         {"objc_metadata", metadataJSON(S->Img)},
         {"method_count", static_cast<int64_t>(S->Img.ObjCMethods.size())},
         {"recovered_method_count", static_cast<int64_t>(Recovered)},
