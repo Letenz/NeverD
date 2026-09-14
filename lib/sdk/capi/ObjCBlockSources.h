@@ -366,6 +366,52 @@ public:
   }
 };
 
+/// Transfer every reachable emitted edge to a bounded fixed point. A failed
+/// transfer or join invalidates the entire proof, including earlier visits.
+template <typename Facts, typename Transfer, typename Join>
+void proveSourceFlow(const HighFunc &F, Facts Initial, Transfer Evaluate,
+                     Join Merge) {
+  const auto Graph = buildHighSourceFlowGraph(F);
+  if (!Graph.Diagnostics.Complete || Graph.Nodes.empty())
+    throw Invalid("block source has incomplete source control flow");
+  constexpr size_t MaxWork = 1000000, MaxFacts = 262144;
+  size_t Work = 0, FactCount = 0;
+  std::vector<std::optional<Facts>> Incoming(Graph.Nodes.size());
+  std::vector<bool> Queued(Graph.Nodes.size());
+  std::vector<size_t> Pending{Graph.Entry};
+  Incoming[Graph.Entry] = std::move(Initial);
+  FactCount = Incoming[Graph.Entry]->size();
+  Queued[Graph.Entry] = true;
+  auto Spend = [&](size_t Count) {
+    if (Count > MaxWork - Work)
+      throw Invalid("block source exceeds its flow proof budget");
+    Work += Count;
+  };
+  while (!Pending.empty()) {
+    const auto Index = Pending.back();
+    Pending.pop_back();
+    Queued[Index] = false;
+    Spend(1 + Incoming[Index]->size());
+    auto Output = *Incoming[Index];
+    Evaluate(Output, Graph.Nodes[Index]);
+    for (auto Next : Graph.Nodes[Index].Successors) {
+      auto &Input = Incoming[Next];
+      const auto Before = Input ? Input->size() : 0;
+      Spend(1 + Before + Output.size());
+      const bool Changed = !Input || Merge(*Input, Output);
+      if (!Input)
+        Input = Output;
+      FactCount = FactCount - Before + Input->size();
+      if (FactCount > MaxFacts)
+        throw Invalid("block source exceeds its flow storage budget");
+      if (Changed && !Queued[Next]) {
+        Queued[Next] = true;
+        Pending.push_back(Next);
+      }
+    }
+  }
+}
+
 /// Prove that a context pointer is neither returned nor exposed to memory or
 /// unknown callees. A descriptor-backed invoke may read only known capture
 /// bytes. Forwarding consumers may read only the invoke pointer at byte 16.
@@ -442,22 +488,6 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
       }
       return {};
     };
-    const auto Graph = buildHighSourceFlowGraph(F);
-    if (!Graph.Diagnostics.Complete || Graph.Nodes.empty())
-      throw Invalid("block consumer has incomplete source control flow");
-    constexpr size_t MaxWork = 1000000, MaxFacts = 262144;
-    size_t Work = 0, FactCount = 0;
-    std::vector<std::optional<Values::Facts>> Incoming(Graph.Nodes.size());
-    std::vector<bool> Queued(Graph.Nodes.size());
-    std::vector<size_t> Pending{Graph.Entry};
-    Incoming[Graph.Entry] = State.facts();
-    FactCount = Incoming[Graph.Entry]->size();
-    Queued[Graph.Entry] = true;
-    auto Spend = [&](size_t Count) {
-      if (Count > MaxWork - Work)
-        throw Invalid("block consumer exceeds its flow proof budget");
-      Work += Count;
-    };
     auto Evaluate = [&](const HighSourceFlowNode &Node) {
       if (Node.Test) {
         (void)State.eval(Node.Test);
@@ -513,30 +543,14 @@ inline bool noEscape(const ObjCBlockSourceContext &Source,
         throw Invalid("block consumer has unmodeled control flow");
       }
     };
-    while (!Pending.empty()) {
-      const auto Index = Pending.back();
-      Pending.pop_back();
-      Queued[Index] = false;
-      Spend(1 + Incoming[Index]->size());
-      State.restore(*Incoming[Index]);
-      Evaluate(Graph.Nodes[Index]);
-      const auto Output = State.facts();
-      for (auto Next : Graph.Nodes[Index].Successors) {
-        auto &Input = Incoming[Next];
-        const auto Before = Input ? Input->size() : 0;
-        Spend(1 + Before + Output.size());
-        const bool Changed = !Input || Values::merge(*Input, Output);
-        if (!Input)
-          Input = Output;
-        FactCount = FactCount - Before + Input->size();
-        if (FactCount > MaxFacts)
-          throw Invalid("block consumer exceeds its flow storage budget");
-        if (Changed && !Queued[Next]) {
-          Queued[Next] = true;
-          Pending.push_back(Next);
-        }
-      }
-    }
+    proveSourceFlow(
+        F, State.facts(),
+        [&](Values::Facts &Facts, const HighSourceFlowNode &Node) {
+          State.restore(Facts);
+          Evaluate(Node);
+          Facts = State.facts();
+        },
+        Values::merge);
     return true;
   } catch (const Invalid &Error) {
     Reason = Error.what();
@@ -590,7 +604,52 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
     Value V;
     unsigned Index = 0, Width = 0;
   };
-  std::map<int64_t, Byte> Memory;
+  struct ConstructionFacts {
+    Values::Facts Values;
+    std::map<int64_t, Byte> Memory;
+    bool SawIsa = false;
+    size_t size() const { return Values.size() + Memory.size() + 1; }
+  } Current;
+  auto &Memory = Current.Memory;
+  auto Merge = [](ConstructionFacts &Into, const ConstructionFacts &From) {
+    bool Changed = Values::merge(Into.Values, From.Values);
+    Changed |= !Into.SawIsa && From.SawIsa;
+    Into.SawIsa |= From.SawIsa;
+    for (auto It = Into.Memory.begin(); It != Into.Memory.end();) {
+      auto Other = From.Memory.find(It->first);
+      if (Other == From.Memory.end()) {
+        It = Into.Memory.erase(It);
+        Changed = true;
+        continue;
+      }
+      auto &A = It->second;
+      const auto &B = Other->second;
+      ++It;
+      if (A.Index == B.Index && A.Width == B.Width && A.V.K == B.V.K &&
+          A.V.Offset == B.V.Offset && A.V.Bits == B.V.Bits &&
+          A.V.Name == B.V.Name && A.V.Producer == B.V.Producer)
+        continue;
+      Byte Joined{{}, 0, 1};
+      if (pointerIdentity(A.V) || pointerIdentity(B.V))
+        Joined.V.K = Value::UnprovenIdentity;
+      else if (A.V.K == Value::Number && B.V.K == Value::Number &&
+               ((A.V.Bits >> (A.Index * 8)) & 255) ==
+                   ((B.V.Bits >> (B.Index * 8)) & 255)) {
+        Joined.V.K = Value::Number;
+        Joined.V.Bits = (A.V.Bits >> (A.Index * 8)) & 255;
+      }
+      // The byte is initialized on every reaching path. A scalar capture may
+      // have different values, but header addresses still need one complete
+      // producer recipe; a scalar merge cannot authorize a pointer field.
+      if (A.Index != Joined.Index || A.Width != Joined.Width ||
+          A.V.K != Joined.V.K || A.V.Bits != Joined.V.Bits || A.V.Offset ||
+          !A.V.Name.empty() || A.V.Producer) {
+        A = Joined;
+        Changed = true;
+      }
+    }
+    return Changed;
+  };
   std::map<int64_t, ObjCStackBlockSource> Blocks;
   std::map<const HighExpr *, uint64_t> PooledHeaderValues;
   bool SawIsa = false;
@@ -643,7 +702,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
                  Descriptor = Word(Base + 24);
       if (Isa.K != Value::Isa || Isa.Name != "_NSConcreteStackBlock" ||
           Invoke.K != Value::Number || !Image.isCodeAddress(Invoke.Bits) ||
-          Descriptor.K != Value::Number || !Invoke.Producer ||
+          Descriptor.K != Value::Number || !Isa.Producer || !Invoke.Producer ||
           !Descriptor.Producer || Integer(Base + 12, 4) != 0)
         throw Invalid("block literal header has no complete "
                       "stack/invoke/descriptor identity");
@@ -673,8 +732,7 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         auto B = Memory.find(Base + static_cast<int64_t>(Offset));
         if (B == Memory.end())
           continue;
-        if (B->second.V.K == Value::Frame || B->second.V.K == Value::Context ||
-            B->second.V.K == Value::Invoke || B->second.V.K == Value::Isa)
+        if (pointerIdentity(B->second.V))
           throw Invalid("block capture retains an unproven context or private "
                         "frame address");
         Result.InitializedCaptures.insert(Offset);
@@ -735,20 +793,46 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
              Previous->second.InitializedCaptures != Block.InitializedCaptures))
           throw Invalid("stack block storage is reused with inconsistent "
                         "construction evidence");
-        Blocks[Block.FrameOffset] = std::move(Block);
+        if (Previous == Blocks.end()) {
+          Blocks.emplace(Block.FrameOffset, std::move(Block));
+        } else {
+          auto &Known = Previous->second;
+          for (const auto &[Expression, Reference] : Block.References) {
+            auto [It, Fresh] = Known.References.emplace(Expression, Reference);
+            if (!Fresh && (It->second.Kind != Reference.Kind ||
+                           It->second.Address != Reference.Address ||
+                           It->second.Name != Reference.Name))
+              throw Invalid("block header expression has conflicting roles");
+          }
+          for (const auto &[Expression, Bits] : Block.HeaderConstants) {
+            auto [It, Fresh] = Known.HeaderConstants.emplace(Expression, Bits);
+            if (!Fresh && It->second != Bits)
+              throw Invalid("block header expression has conflicting bytes");
+          }
+        }
       }
       return {};
     };
-    if (Function.Body.size() > 65536)
-      throw Invalid("block construction exceeds its statement budget");
-    for (const auto &S : Function.Body) {
-      if (!S.Body.empty() || !S.ElseBody.empty() || !S.DefaultBody.empty() ||
-          !S.Cases.empty() || !S.EHClauseBodies.empty())
-        throw Invalid("stack block construction requires straight-line "
-                      "initialization proof");
+    auto Evaluate = [&](const HighSourceFlowNode &Node) {
+      if (Node.Test) {
+        (void)State.eval(Node.Test);
+        return;
+      }
+      if (!Node.Statement)
+        return;
+      const auto &S = *Node.Statement;
       switch (S.Kind) {
       case StmtKind::Nop:
       case StmtKind::Block:
+      case StmtKind::If:
+      case StmtKind::IfElse:
+      case StmtKind::While:
+      case StmtKind::For:
+      case StmtKind::DoWhile:
+      case StmtKind::Switch:
+      case StmtKind::Goto:
+      case StmtKind::Break:
+      case StmtKind::Continue:
         break;
       case StmtKind::Assign:
         State.assign(S);
@@ -756,13 +840,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       case StmtKind::Call:
         (void)State.eval(S.CallExpr);
         break;
+      case StmtKind::ExprStmt:
+        (void)State.eval(S.Val);
+        break;
       case StmtKind::Store: {
         auto Address = State.eval(S.StoreAddr), V = State.eval(S.StoreVal);
-        SawIsa |= V.K == Value::Isa && V.Name == "_NSConcreteStackBlock";
+        Current.SawIsa |=
+            V.K == Value::Isa && V.Name == "_NSConcreteStackBlock";
+        SawIsa |= Current.SawIsa;
         if (Address.K != Value::Frame) {
           if (V.K == Value::Frame)
             throw Invalid("stack address escapes to nonlocal storage");
-          if (SawIsa)
+          if (Current.SawIsa)
             throw Invalid(
                 "stack block construction has an unknown aliasing write");
           break;
@@ -786,7 +875,18 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
       default:
         throw Invalid("stack block construction has unmodeled control flow");
       }
-    }
+    };
+    Current.Values = State.facts();
+    proveSourceFlow(
+        Function, Current,
+        [&](ConstructionFacts &Facts, const HighSourceFlowNode &Node) {
+          Current = Facts;
+          State.restore(Current.Values);
+          Evaluate(Node);
+          Current.Values = State.facts();
+          Facts = Current;
+        },
+        Merge);
     std::vector<ObjCStackBlockSource> Result;
     for (auto &[Offset, Block] : Blocks)
       Result.push_back(std::move(Block));

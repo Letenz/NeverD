@@ -575,6 +575,155 @@ TEST(ObjCBlockSources,
         << Mutation;
   }
 }
+
+TEST(ObjCBlockSources, ConstructionUsesOnlyReachableBranchAndLoopStates) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Shape = 0; Shape != 6; ++Shape) {
+      SCOPED_TRACE(Shape);
+      SourceFixture F(true, Architecture);
+      auto &Caller = F.caller();
+      HighStmt Control;
+      Control.Cond = parameter(1, Caller.Params[1].Type);
+      Control.Kind = StmtKind::IfElse;
+      Control.Body = Caller.Body;
+      Control.ElseBody = {ret(HighExpr::makeConst(0, 4))};
+      if (Shape >= 1 && Shape <= 3) {
+        Control.Kind = Shape == 1   ? StmtKind::While
+                       : Shape == 2 ? StmtKind::For
+                                    : StmtKind::DoWhile;
+        auto &Call = Control.Body.back();
+        Call.Kind = StmtKind::Call;
+        Call.CallExpr = Call.RetVal;
+        Call.RetVal.reset();
+        HighStmt Continue;
+        Continue.Kind = StmtKind::Continue;
+        Control.Body.push_back(Continue);
+        Control.ElseBody.clear();
+      }
+      if (Shape == 4) {
+        Control.Kind = StmtKind::Switch;
+        Control.SwitchExpr = Control.Cond;
+        Control.Cases.push_back({7, Control.Body});
+        Control.DefaultBody = Control.ElseBody;
+        Control.Body.clear();
+        Control.ElseBody.clear();
+      }
+      if (Shape == 5) {
+        // A return ends the proof path; dead writes cannot expose a context.
+        Caller.Body.push_back(ret(frame(F.Image, -48)));
+      } else {
+        Caller.Body = {Control, ret(HighExpr::makeConst(0, 4))};
+      }
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      EXPECT_EQ(Plan.StackBlocks.count(F.Caller), 1U);
+      const auto Bound =
+          bindObjCBlockSourceReferences(Caller, F.Image, Plan, F.functions());
+      EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    }
+}
+
+TEST(ObjCBlockSources, ConstructionJoinsRequireEveryHeaderAndCaptureByte) {
+  for (bool Reverse : {false, true})
+    for (unsigned Field : {1U, 2U, 3U, 4U}) {
+      SCOPED_TRACE(Field);
+      SourceFixture F(true);
+      auto &Caller = F.caller();
+      HighStmt Choose;
+      Choose.Kind = StmtKind::IfElse;
+      Choose.Cond = parameter(1, Caller.Params[1].Type);
+      Choose.Body = {Caller.Body[Field]};
+      if (Reverse)
+        std::swap(Choose.Body, Choose.ElseBody);
+      Caller.Body.erase(Caller.Body.begin() + Field);
+      Caller.Body.insert(Caller.Body.end() - 1, Choose);
+      const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+      const auto Bound =
+          bindObjCBlockSourceReferences(Caller, F.Image, Plan, F.functions());
+      EXPECT_FALSE(Bound.Limitation.empty());
+    }
+  for (bool Overwrite : {false, true}) {
+    SourceFixture F(true);
+    auto &Caller = F.caller();
+    HighStmt Choose;
+    Choose.Kind = StmtKind::If;
+    Choose.Cond = parameter(1, Caller.Params[1].Type);
+    Choose.Body = {store(frame(F.Image, -16), frame(F.Image, -48))};
+    Caller.Body.insert(Caller.Body.end() - 1, Choose);
+    if (Overwrite)
+      Caller.Body.insert(Caller.Body.end() - 1,
+                         store(frame(F.Image, -16), HighExpr::makeConst(0, 8)));
+    const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    const auto Bound =
+        bindObjCBlockSourceReferences(Caller, F.Image, Plan, F.functions());
+    EXPECT_EQ(Bound.Limitation.empty(), Overwrite) << Bound.Limitation;
+  }
+}
+
+TEST(ObjCBlockSources, ReusedConstructionBindsEveryHeaderProducer) {
+  SourceFixture F(true), Other(true);
+  auto First = F.caller().Body;
+  auto Second = Other.caller().Body;
+  First.back().Kind = StmtKind::Call;
+  First.back().CallExpr = First.back().RetVal;
+  First.back().RetVal.reset();
+  First.insert(First.end(), Second.begin(), Second.end());
+  F.caller().Body = First;
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks.count(F.Caller), 1U);
+  ASSERT_EQ(Plan.StackBlocks.at(F.Caller).size(), 1U);
+  EXPECT_EQ(Plan.StackBlocks.at(F.Caller)[0].References.size(), 6U);
+  const auto Bound =
+      bindObjCBlockSourceReferences(F.caller(), F.Image, Plan, F.functions());
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  for (auto Index : {0U, 2U, 3U, 6U, 8U, 9U})
+    EXPECT_TRUE(Bound.Function.Body[Index].StoreVal->SourceCallHint) << Index;
+}
+
+TEST(ObjCBlockSources, ConstructionRejectsLateUnsafeEdgesTransactionally) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    SourceFixture F(true);
+    auto &Caller = F.caller();
+    HighStmt Control;
+    Control.Kind = StmtKind::While;
+    Control.Cond = parameter(1, Caller.Params[1].Type);
+    auto Invoke = Caller.Body.back();
+    Invoke.Kind = StmtKind::Call;
+    Invoke.CallExpr = Invoke.RetVal;
+    Invoke.RetVal.reset();
+    Control.Body = {Invoke,
+                    store(frame(F.Image, -24), HighExpr::makeConst(0x9999, 8))};
+    Caller.Body.back() = Control;
+    Caller.Body.push_back(ret(HighExpr::makeConst(0, 4)));
+    if (Mutation == 1) {
+      Caller.Body = SourceFixture(true).caller().Body;
+      Caller.Body.back().Addr = F.Caller + 16;
+      Control.Kind = StmtKind::Goto;
+      Control.GotoTarget = F.Caller + 16;
+      Control.Body.clear();
+      Caller.Body.insert(Caller.Body.begin() + 1, Control);
+    }
+    if (Mutation == 2) {
+      Control.Kind = StmtKind::Goto;
+      Control.GotoTarget = 0x9999;
+      Control.Body.clear();
+      Caller.Body.push_back(Control);
+    }
+    if (Mutation == 3) {
+      Control.Kind = StmtKind::ItaniumTry;
+      Caller.Body.push_back(Control);
+    }
+    const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+    EXPECT_TRUE(Plan.StackBlocks.empty());
+    const auto Bound =
+        bindObjCBlockSourceReferences(Caller, F.Image, Plan, F.functions());
+    // An invalid graph can stop before the first ISA write is visited. It
+    // still supplies no block bindings, and ordinary source admission fails.
+    EXPECT_FALSE(
+        Bound.Limitation.empty() &&
+        bindObjCSourceReferences(Bound.Function, F.Image).Limitation.empty());
+  }
+}
 TEST(ObjCBlockSources,
      InvokeCannotReadPaddingOrEscapeThroughReturnStoreOrUnknownCall) {
   for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {

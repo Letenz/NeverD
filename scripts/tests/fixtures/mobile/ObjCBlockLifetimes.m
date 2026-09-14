@@ -25,6 +25,8 @@
 - (NSUInteger (^)(void))makeCounterForArray:(NSArray *)array
                                       other:(NSArray *)other
                                      offset:(NSUInteger)offset {
+  if (!array)
+    return nil;
   NSUInteger (^block)(void) = ^{
     if (offset & 1)
       return array.count + offset;

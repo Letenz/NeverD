@@ -34,6 +34,8 @@ int main(void) {
   installRecovered();
 #endif
   NDBlockFactory *driver = [NDBlockFactory new];
+  if ([driver makeCounterForArray:nil other:nil offset:7] != nil)
+    return 8;
   for (unsigned i = 0; i < 1024; ++i) {
     NSUInteger (^saved)(void);
     NSUInteger (^combined)(void);
@@ -87,6 +89,6 @@ int main(void) {
   }
   [driver release];
   puts("escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
-       "conditional-invokes=1024");
+       "conditional-invokes=1024\nconditional-construction=pass");
   return 0;
 }
