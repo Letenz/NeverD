@@ -3,6 +3,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
@@ -122,6 +123,63 @@ void compileAndRun(const std::string &Source) {
   const int Ran = llvm::sys::ExecuteAndWait(
       BinaryPath, {BinaryPath}, std::nullopt, Redirects, 30, 0, &Error);
   ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
+}
+
+TEST(HighCSourceCalls, GuardedPhiCleanupKeepsTargetLabelsExecutable) {
+  const auto Integer = NdType::makeInt(4);
+  MedVar Variable;
+  Variable.Kind = MedVar::Temp;
+  Variable.Id = 10;
+  Variable.Size = 4;
+  auto Value = HighExpr::makeVar(Variable);
+  auto Function = returning("guarded_value", Value, {Integer});
+  auto Return = Function.Body.back();
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x2000;
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0, Integer),
+                                   HighExpr::makeConst(0, 4));
+  Enter.Body = {Jump};
+  HighStmt Defined;
+  Defined.Kind = StmtKind::Assign;
+  Defined.Dst = Value;
+  Defined.Val = HighExpr::makeConst(42, 4);
+  HighStmt Copy = Defined;
+  ++Variable.Id;
+  Copy.Val = HighExpr::makeVar(Variable);
+  Copy.IsPhiCopy = true;
+  Copy.Addr = Jump.GotoTarget;
+  HighStmt Define;
+  Define.Kind = StmtKind::IfElse;
+  Define.Cond = parameter(0, Integer);
+  Define.Body = {Defined};
+  Define.ElseBody = {Copy};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Cond = parameter(0, Integer);
+  Use.Body = {Return};
+  Return.RetVal = HighExpr::makeConst(7, 4);
+  Function.Body = {Enter, Define, Use, Return};
+  EXPECT_FALSE(analyzeHighSourceFlow(Function, true).Items.empty());
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(Function));
+  EXPECT_EQ(Function.Body[1].ElseBody[0].Addr, Jump.GotoTarget);
+  const auto Report = analyzeHighSourceFlow(Function, true);
+  ASSERT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+  compileAndRun(R"(
+#if defined(__clang__)
+#pragma clang diagnostic error "-Wc2x-extensions"
+#endif
+)" + emit({Function}) +
+                R"(
+int main(void) {
+    for (int condition = -256; condition <= 256; ++condition)
+        if (guarded_value(condition) != (condition ? 42 : 7)) return 1;
+    return 0;
+}
+)");
 }
 
 TEST(HighCSourceCalls, SharedNativeEntryExecutesCallAndPhiExactlyOnce) {

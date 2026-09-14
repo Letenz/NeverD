@@ -46,6 +46,14 @@ sono dettagli privati della libreria condivisa. La CLI usa LLVM
 Support per l’interfaccia a riga di comando, ma non aggira la C API per pilotare
 il motore.
 
+L’analisi HighIR `HighSourceFlow` gestisce gli archi delle istruzioni emesse, l’identità
+delle variabili locali e l’assegnazione certa. La verifica del sorgente e l’eliminazione
+delle copie PHI inutilizzate condividono il grafo. Partizioni limitate zero/non-zero seguono
+le condizioni scalari ripetute; le scritture invalidano i fatti e le variabili il cui indirizzo
+sfugge restano sconosciute. Al limite si torna al grafo conservativo. Una copia PHI viene
+eliminata solo se il valore è inutilizzato in ogni contesto realizzabile. Chiamate, letture,
+scritture ed etichette mantengono il comportamento osservabile.
+
 ## Rappresentazioni IR e percorsi
 
 | Rappresentazione | Scopo | Definizioni e trasformazioni principali |

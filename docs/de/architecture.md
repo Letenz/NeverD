@@ -46,6 +46,14 @@ sind private Implementierungsdetails der Shared Library. Die CLI nutzt LLVM
 Support für ihre Kommandozeilenoberfläche, umgeht beim Ansteuern der Engine
 aber nicht die C-API.
 
+Die HighIR-Analyse `HighSourceFlow` verwaltet die Kanten der ausgegebenen Anweisungen,
+lokale Variablenidentitäten und sichere Zuweisungen. Quellcodeprüfung und Entfernung toter
+PHI-Kopien verwenden denselben Graphen. Begrenzte Null/Nichtnull-Partitionen verfolgen
+wiederholte skalare Bedingungen; Schreibzugriffe verwerfen Fakten, Variablen mit entwichener
+Adresse bleiben unbekannt. Bei Erreichen des Limits gilt wieder der konservative Graph.
+Eine PHI-Kopie entfällt nur, wenn ihr Wert in allen möglichen Kontexten unbenutzt bleibt.
+Aufrufe, Speicherzugriffe und Quellcodelabels behalten ihr beobachtbares Verhalten.
+
 ## IR-Darstellungen und Pfade
 
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |

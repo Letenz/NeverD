@@ -46,6 +46,14 @@ Capstone sont des détails privés de cette bibliothèque partagée. Le CLI
 utilise LLVM Support pour son interface en ligne de commande, mais ne
 contourne pas l’API C pour piloter le moteur.
 
+L’analyse HighIR `HighSourceFlow` possède les arêtes du flux des instructions émises,
+l’identité des variables locales et l’affectation certaine. La validation du source et
+l’élimination des copies PHI mortes partagent ce graphe. Des partitions bornées zéro/non-zéro
+suivent les gardes scalaires répétées ; les écritures invalident les faits et les variables
+dont l’adresse s’échappe restent inconnues. À la limite de partition, l’analyse reprend le
+graphe conservateur. Une copie PHI ne disparaît que si sa valeur est morte dans tous les
+contextes réalisables. Appels, lectures, écritures et étiquettes conservent leur comportement.
+
 ## Représentations IR et parcours
 
 | Représentation | Rôle | Définitions et transformations principales |

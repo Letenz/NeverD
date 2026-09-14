@@ -2,6 +2,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/ADT/APInt.h"
@@ -209,6 +210,69 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
     Position = I - F.Body.begin();
   }
   return {};
+}
+
+HighFunc guardedPhiCopy() {
+  HighFunc F;
+  HighStmt Define;
+  Define.Kind = StmtKind::IfElse;
+  Define.Cond = local(0);
+  Define.Body = {assign(0x1004, 1, 42)};
+  auto Copy = assign(0x1008, 1, 0);
+  Copy.Val = local(2);
+  Copy.IsPhiCopy = true;
+  Define.ElseBody = {Copy};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Cond = local(0);
+  Use.Body = {result(0x1010, local(1))};
+  F.Body = {Define, Use, result(0x1014, HighExpr::makeConst(7, 8))};
+  return F;
+}
+
+TEST(HighControlFlowSemantics, DeadGuardedPhiReadIsRemovedBeforeExecution) {
+  auto F = guardedPhiCopy();
+  EXPECT_THROW(execute(F, 0), std::runtime_error);
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+  for (uint64_t Condition :
+       {uint64_t{0}, uint64_t{1}, uint64_t{2}, ~uint64_t{0}})
+    EXPECT_EQ(execute(F, Condition), Condition ? 42u : 7u);
+}
+
+TEST(HighControlFlowSemantics, RewrittenGuardKeepsTheReachingPhiValue) {
+  auto F = guardedPhiCopy();
+  F.Body.insert(F.Body.begin(), assign(0, 2, 19));
+  F.Body.insert(F.Body.begin() + 2, assign(0, 0, 1));
+  ASSERT_EQ(execute(F, 0), 19u);
+  ASSERT_EQ(execute(F, 1), 42u);
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  EXPECT_EQ(execute(F, 0), 19u);
+  EXPECT_EQ(execute(F, 1), 42u);
+}
+
+TEST(HighControlFlowSemantics, RetainedCopyKeepsDependenciesInEveryContext) {
+  auto F = guardedPhiCopy();
+  auto Copy = assign(0, 3, 0);
+  Copy.Val = local(1);
+  Copy.IsPhiCopy = true;
+  F.Body.insert(F.Body.begin() + 1, Copy);
+  F.Body[2].Body[0].RetVal = local(3);
+  // Although the false path never uses local 3, its source assignment remains
+  // because the true path does. Its RHS must remain valid in both contexts.
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  EXPECT_THROW(execute(F, 0), std::runtime_error);
+  EXPECT_EQ(execute(F, 1), 42u);
+}
+
+TEST(HighControlFlowSemantics, PhiAnnotationCannotDiscardObservableLoads) {
+  auto F = guardedPhiCopy();
+  auto &Copy = F.Body[0].ElseBody[0];
+  Copy.Val =
+      HighExpr::makeLoad(HighExpr::makeConst(0x4000, 8), NdType::makeInt(8));
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  EXPECT_EQ(F.Body[0].ElseBody[0].Val->Kind, ExprKind::Load);
+  Copy.Val = HighExpr::makeCall("side_effect", 0x5000, {});
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
 }
 
 TEST(HighControlFlowSemantics, TargetReturnIsNotAnEarlyFallthroughReturn) {

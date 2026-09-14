@@ -384,6 +384,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::Nop:
+    // A removed PHI copy may still own a goto label, including the last label
+    // in a compound statement. C11 requires a statement after that label.
+    if (GotoTargets.count(Stmt.Addr)) {
+      emitIndent(Indent);
+      OS << ";\n";
+    }
     break;
   }
 }

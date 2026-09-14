@@ -46,6 +46,14 @@ son detalles privados de esa biblioteca compartida. El CLI usa LLVM Support
 para su interfaz de línea de comandos, pero no evita la API C
 para controlar el motor.
 
+El análisis HighIR `HighSourceFlow` controla las aristas de las sentencias emitidas,
+la identidad de las variables locales y la asignación definida. La validación del código
+y la eliminación de copias PHI muertas comparten el grafo. Las particiones acotadas cero/no cero
+siguen condiciones escalares repetidas; las escrituras invalidan los hechos y las variables
+cuya dirección escapa siguen desconocidas. Al alcanzar el límite se usa el grafo conservador.
+Una copia PHI se elimina solo si su valor está muerto en todos los contextos viables.
+Las llamadas, lecturas, escrituras y etiquetas conservan su comportamiento observable.
+
 ## Representaciones IR y rutas
 
 | Representación | Propósito | Definiciones y transformaciones principales |

@@ -475,6 +475,143 @@ TEST(ObjCSourceProjection, OneBranchDefinitionDoesNotCoverTheOtherPath) {
   EXPECT_TRUE(P.limitation().empty()) << P.limitation();
 }
 
+TEST(ObjCSourceProjection, RepeatedStableGuardProvesConditionalDefinition) {
+  Projection P;
+  HighStmt Define;
+  Define.Kind = StmtKind::If;
+  Define.Cond = flowCondition();
+  Define.Body = {flowAssignment()};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Cond = flowCondition();
+  Use.Body = {flowReturn()};
+  P.Func.Body = {Define, Use, flowReturn(HighExpr::makeConst(7, 4))};
+  EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+
+  HighStmt Change;
+  Change.Kind = StmtKind::Assign;
+  Change.Dst = flowCondition();
+  Change.Val = HighExpr::makeConst(1, 4);
+  P.Func.Body.insert(P.Func.Body.begin() + 1, Change);
+  EXPECT_FALSE(P.limitation().empty())
+      << "Overwriting the guard must invalidate the earlier branch fact";
+}
+
+TEST(ObjCSourceProjection, GuardedPhiCleanupRemovesTheUndefinedReadItself) {
+  Projection P;
+  HighStmt Define;
+  Define.Kind = StmtKind::IfElse;
+  Define.Cond = flowCondition();
+  Define.Body = {flowAssignment()};
+  auto Copy = flowAssignment();
+  auto Incoming = flowLocal();
+  Incoming.Id = 100;
+  Copy.Val = HighExpr::makeVar(Incoming);
+  Copy.IsPhiCopy = true;
+  Copy.Addr = 0x2000;
+  Define.ElseBody = {Copy};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, flowCondition(),
+                                 HighExpr::makeConst(0, 4));
+  Use.Body = {flowReturn()};
+  P.Func.Body = {Define, Use, flowReturn(HighExpr::makeConst(7, 4))};
+  EXPECT_FALSE(P.limitation().empty());
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(P.Func));
+  EXPECT_EQ(P.Func.Body[0].ElseBody[0].Kind, StmtKind::Nop);
+  EXPECT_EQ(P.Func.Body[0].ElseBody[0].Addr, 0x2000u);
+  EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(P.Func));
+}
+
+TEST(ObjCSourceProjection, GuardFactsDoNotCrossDifferentLocalsOrWidths) {
+  for (bool DifferentWidth : {false, true}) {
+    Projection P;
+    HighStmt Define;
+    Define.Kind = StmtKind::If;
+    Define.Cond = flowCondition();
+    Define.Body = {flowAssignment()};
+    HighStmt Use = Define;
+    Use.Cond = flowCondition();
+    Use.Body = {flowReturn()};
+    if (DifferentWidth) {
+      Use.Cond->Var.Size = 1;
+      Use.Cond->Type = NdType::makeInt(1);
+    } else {
+      Use.Cond->Var.Id = 3;
+    }
+    P.Func.Body = {Define, Use, flowReturn(HighExpr::makeConst(7, 4))};
+    const auto Report = analyzeHighSourceFlow(P.Func, true);
+    ASSERT_TRUE(Report.Complete);
+    EXPECT_FALSE(Report.Items.empty());
+  }
+}
+
+TEST(ObjCSourceProjection, EscapedGuardAndIntrinsicWritesInvalidateFacts) {
+  for (bool AddressEscape : {false, true}) {
+    Projection P;
+    HighStmt Define;
+    Define.Kind = StmtKind::If;
+    Define.Cond = flowCondition();
+    Define.Body = {flowAssignment()};
+    HighStmt Use = Define;
+    Use.Cond = flowCondition();
+    Use.Body = {flowReturn()};
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("may_change_guard", 0x3000, {});
+    if (AddressEscape) {
+      auto Address = std::make_shared<HighExpr>();
+      Address->Kind = ExprKind::Addr;
+      Address->Type = NdType::makePtr();
+      Address->Operands = {flowCondition()};
+      Call.CallExpr->Operands = {Address};
+    } else {
+      Call.CallExpr->IntrinsicOutputs = {flowCondition()->Var};
+    }
+    P.Func.Body = {Define, Call, Use, flowReturn(HighExpr::makeConst(7, 4))};
+    const auto Report = analyzeHighSourceFlow(P.Func, true);
+    ASSERT_TRUE(Report.Complete);
+    EXPECT_FALSE(Report.Items.empty());
+  }
+}
+
+TEST(ObjCSourceProjection, GotoIntoGuardedArmCannotBorrowItsCondition) {
+  Projection P;
+  HighStmt Define;
+  Define.Kind = StmtKind::If;
+  Define.Cond = flowCondition();
+  Define.Body = {flowAssignment()};
+  HighStmt Use = Define;
+  Use.Body = {flowReturn()};
+  Use.Body[0].Addr = 0x2000;
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x2000;
+  P.Func.Body = {Define, Jump, Use, flowReturn(HighExpr::makeConst(7, 4))};
+  EXPECT_FALSE(P.limitation().empty());
+}
+
+TEST(ObjCSourceProjection, PredicatePartitionBudgetFallsBackConservatively) {
+  Projection P;
+  P.Func.Body.clear();
+  // Repeated independent tests produce more than 32 contexts at a join.
+  // An unreachable return must never be inferred from a partial expansion.
+  for (int Pass = 0; Pass < 2; ++Pass)
+    for (int Id = 2; Id < 10; ++Id) {
+      HighStmt Branch;
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = flowCondition();
+      Branch.Cond->Var.Id = Id;
+      P.Func.Body.push_back(Branch);
+    }
+  P.Func.Body.push_back(flowReturn());
+  auto Report = analyzeHighSourceFlow(P.Func, true);
+  ASSERT_TRUE(Report.Complete);
+  ASSERT_FALSE(Report.Items.empty());
+  EXPECT_EQ(Report.Items[0].Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
 TEST(ObjCSourceProjection, AReadCannotBorrowALaterOrUnreachableDefinition) {
   Projection P;
   P.Func.Body = {flowReturn(), flowAssignment()};
@@ -544,7 +681,8 @@ TEST(ObjCSourceProjection, ContinueCannotSkipARequiredLoopDefinition) {
   Branch.Body = {Continue};
   HighStmt Loop;
   Loop.Kind = StmtKind::DoWhile;
-  Loop.Cond = flowCondition();
+  // continue reaches a false test and exits before the assignment.
+  Loop.Cond = HighExpr::makeConst(0, 1);
   Loop.Body = {Branch, flowAssignment()};
   P.Func.Body = {Loop, flowReturn()};
   EXPECT_FALSE(P.limitation().empty())
@@ -552,6 +690,31 @@ TEST(ObjCSourceProjection, ContinueCannotSkipARequiredLoopDefinition) {
 
   P.Func.Body.insert(P.Func.Body.begin(), flowAssignment(7));
   EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+}
+
+TEST(ObjCSourceProjection, RepeatedLoopTestDoesNotInventAnExitingPath) {
+  Projection P;
+  HighStmt Continue;
+  Continue.Kind = StmtKind::Continue;
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = flowCondition();
+  Branch.Body = {Continue};
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Cond = flowCondition();
+  Loop.Body = {Branch, flowAssignment()};
+  P.Func.Body = {Loop, flowReturn()};
+  EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+
+  HighStmt Change;
+  Change.Kind = StmtKind::Assign;
+  Change.Dst = flowCondition();
+  Change.Val = HighExpr::makeConst(0, 4);
+  P.Func.Body[0].Body[0].Body.insert(P.Func.Body[0].Body[0].Body.begin(),
+                                     Change);
+  EXPECT_FALSE(P.limitation().empty())
+      << "Clearing the guard before continue creates an undefined exit";
 }
 
 TEST(ObjCSourceProjection, BreakPreservesDefinitionsFromAnEnteredLoop) {

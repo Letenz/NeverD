@@ -44,6 +44,14 @@ and their LLVM/Capstone dependencies are private implementation details of
 that shared library. The CLI uses LLVM Support for its command-line UI,
 but it does not bypass the C API to drive the engine.
 
+The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
+and definite assignment. Both source validation and dead PHI copy elimination
+use this graph. Bounded zero/nonzero partitions track repeated scalar guards;
+writes invalidate facts, escaped locals stay unknown, and partition exhaustion
+falls back to the conservative graph. A PHI copy is removed only when its scalar
+value is dead in every feasible context. Calls, loads, and stores keep their
+observable behavior; source labels survive removal.
+
 ## IR representations and routes
 
 | Representation | Purpose | Primary definitions and transformations |

@@ -20,6 +20,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -600,6 +601,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   foldStructuredContinuations(Func, &Med);
   structureExceptionRegions(Func, Med);
   coalesceBranchEntryStatements(Func);
+  eliminateHighDeadPhiCopies(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 
