@@ -2,6 +2,7 @@
 #define NEVERD_SDK_CAPI_OBJCSOURCEBINDINGS_H
 
 #include "../../loader/ObjC/ObjCRuntimeData.h"
+#include "ObjCConstantStringSources.h"
 #include "ObjCProfileStorage.h"
 #include "ObjCSourceProjection.h"
 
@@ -22,6 +23,7 @@ struct ObjCSourceBindingResult {
   std::set<std::string> InstanceLayoutClasses;
   std::set<va_t> AssociationKeys;
   std::set<va_t> ProfileCounterSections;
+  std::set<va_t> ConstantStrings;
 };
 
 namespace objc_binding_detail {
@@ -175,14 +177,14 @@ inline ObjCSourceBindingResult
 bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
                          const ObjCProfileStorage *ProfileStorage = nullptr) {
   using namespace objc_binding_detail;
-  ObjCSourceBindingResult Result{Function, {}, {}, {}, {}, {}};
+  ObjCSourceBindingResult Result{Function, {}, {}, {}, {}, {}, {}};
   std::optional<ObjCProfileStorage> LocalStorage;
   if (!ProfileStorage) {
     LocalStorage.emplace(Image);
     ProfileStorage = &*LocalStorage;
   }
   const auto ClassObjects = classObjectIdentities(Image);
-  using CopyKey = std::tuple<const HighExpr *, bool, bool>;
+  using CopyKey = std::tuple<const HighExpr *, bool, bool, bool>;
   std::map<CopyKey, ExprPtr> Copies;
   size_t Budget = 1000000;
   auto Fail = [&](const char *Message) {
@@ -218,9 +220,9 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     Result.ProfileCounterSections.insert(*Base);
     return true;
   };
-  std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool)> Copy;
+  std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool, bool)> Copy;
   Copy = [&](const ExprPtr &Original, unsigned Depth, bool NumericOperand,
-             bool AddressContext) -> ExprPtr {
+             bool AddressContext, bool MemoryAddress) -> ExprPtr {
     if (!Original)
       return nullptr;
     if (Depth > 200 || !Budget) {
@@ -229,11 +231,27 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     }
     --Budget;
     AddressContext |= Original->Type && Original->Type->Kind == NdTypeKind::Ptr;
-    const CopyKey Key{Original.get(), NumericOperand, AddressContext};
+    const CopyKey Key{Original.get(), NumericOperand, AddressContext,
+                      MemoryAddress};
     if (auto Found = Copies.find(Key); Found != Copies.end())
       return Found->second;
     auto Expression = std::make_shared<HighExpr>(*Original);
     Copies.emplace(Key, Expression);
+    if (AddressContext && !MemoryAddress && !NumericOperand &&
+        !(Original->Kind == ExprKind::Const &&
+          Original->ConstProvenance == ConstantAddressProvenance::Scalar)) {
+      const auto Address = constantAddress(*Original);
+      auto Hint =
+          Address ? constantStringSourceHint(Image, *Address) : std::nullopt;
+      if (Hint) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+        Result.ConstantStrings.insert(*Address);
+        return Expression;
+      }
+    }
     if (Original->Kind == ExprKind::Load && Original->Type &&
         Original->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         Original->MemoryOrdering == NdMemoryOrdering::None &&
@@ -283,7 +301,7 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
             Expression->Operands[0], Expression->Operands[1]->Type,
             Expression->MemoryOrdering, Expression->MemoryAddressSpace)) {
       Expression->Operands[1] =
-          Copy(Expression->Operands[1], Depth + 1, false, false);
+          Copy(Expression->Operands[1], Depth + 1, false, false, false);
       return Expression;
     }
     if (Expression->Kind == ExprKind::Const && Expression->ConstVal &&
@@ -365,6 +383,7 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           (Index == 0 && (Expression->Kind == ExprKind::Load ||
                           Expression->Kind == ExprKind::Store));
       if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint) {
+        OperandAddress = MemoryAddress;
         const auto &Parameters =
             Expression->SourceCallHint->Signature.Parameters;
         if (Index < Parameters.size() && Parameters[Index].Type &&
@@ -374,7 +393,10 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
                             Expression->Kind == ExprKind::UnaryOp) &&
                            isNumericConstantOperand(Expression->Op, Index);
-      Operand = Copy(Operand, Depth + 1, Numeric, OperandAddress);
+      Operand = Copy(Operand, Depth + 1, Numeric, OperandAddress,
+                     MemoryAddress ||
+                         (Index == 0 && (Expression->Kind == ExprKind::Load ||
+                                         Expression->Kind == ExprKind::Store)));
     }
     return Expression;
   };
@@ -396,7 +418,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
               Copy(Expression, 0, false,
                    Expression == Statement.StoreAddr ||
                        (Expression == Statement.RetVal && Function.ReturnType &&
-                        Function.ReturnType->Kind == NdTypeKind::Ptr));
+                        Function.ReturnType->Kind == NdTypeKind::Ptr),
+                   Expression == Statement.StoreAddr);
       });
       Walk(Statement.Body, Depth + 1);
       Walk(Statement.ElseBody, Depth + 1);
@@ -427,6 +450,13 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeConstantString) {
+    const auto Expected =
+        constantStringSourceHint(Image, Binding.TargetAddress);
+    return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
+           Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
   if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeProfileCounterStorage) {
     std::optional<ObjCProfileStorage> LocalStorage;

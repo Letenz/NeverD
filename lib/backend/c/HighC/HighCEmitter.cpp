@@ -522,6 +522,12 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               Name == "_NSConcreteGlobalBlock")
             SourceBlockIsaNames.insert(Name.str());
         } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeConstantString) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_objc_constant_string_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::RuntimeProfileCounterStorage) {
           if (Hint.TargetAddress)
             SourceObjectAddressHelpers.insert(

@@ -46,6 +46,186 @@ struct Fixture {
 };
 } // namespace
 
+namespace {
+struct ConstantStringFixture {
+  BinaryImage Image;
+  HighFunc Function;
+  ConstantStringFixture() {
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Segment Objects;
+    Objects.Name = "__DATA_CONST";
+    Objects.VA = 0x2000;
+    Objects.Size = Objects.FileSz = 64;
+    Objects.Flags = SegmentFlags::Readable;
+    Objects.Data.resize(64);
+    Image.Segments.push_back(Objects);
+    Section Records;
+    Records.Name = "__cfstring";
+    Records.SegmentName = Objects.Name;
+    Records.VA = Objects.VA;
+    Records.Size = Records.FileSz = Objects.Size;
+    Records.Flags = Objects.Flags;
+    Image.Sections.push_back(Records);
+    Segment Text;
+    Text.Name = "__TEXT";
+    Text.VA = Text.FileOff = 0x1000;
+    Text.Size = Text.FileSz = 0x200;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(0x200);
+    Image.Segments.push_back(Text);
+    Section ASCII;
+    ASCII.Name = "__cstring";
+    ASCII.SegmentName = Text.Name;
+    ASCII.VA = ASCII.FileOff = Text.VA;
+    ASCII.Size = ASCII.FileSz = 0x100;
+    ASCII.Flags = Text.Flags;
+    ASCII.Type = llvm::MachO::S_CSTRING_LITERALS;
+    Image.Sections.push_back(ASCII);
+    Section Unicode = ASCII;
+    Unicode.Name = "__ustring";
+    Unicode.VA = Unicode.FileOff = 0x1100;
+    Unicode.Type = llvm::MachO::S_REGULAR;
+    Image.Sections.push_back(Unicode);
+    for (unsigned I = 0; I < 2; ++I) {
+      const va_t Address = 0x2000 + I * 32;
+      Image.recordDyldBindSlot(
+          Address, "___CFConstantStringClassReference", 0,
+          "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+          false);
+      auto *Record = Image.Segments[0].Data.data() + I * 32;
+      llvm::support::endian::write64le(Record + 8, I ? 0x7d0 : 0x7c8);
+      llvm::support::endian::write64le(Record + 16, I ? 0x1100 : 0x1000);
+      llvm::support::endian::write64le(Record + 24, I ? 4 : 3);
+    }
+    Image.Segments[1].Data[0] = 'a';
+    Image.Segments[1].Data[1] = '\n';
+    Image.Segments[1].Data[2] = '"';
+    const uint16_t Units[] = {0x767e, 0, 0xd83d, 0xde00, 0};
+    for (unsigned I = 0; I < 5; ++I)
+      llvm::support::endian::write16le(
+          Image.Segments[1].Data.data() + 0x100 + I * 2, Units[I]);
+    Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeConst(0x2000, 8);
+    Function.Body.push_back(Return);
+  }
+};
+} // namespace
+
+TEST(ObjCSourceBindings, ConstantStringsKeepBytesUnicodeAndObjectIdentity) {
+  ConstantStringFixture F;
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    F.Image.Arch = Architecture;
+    for (bool Chained : {false, true}) {
+      F.Image.MachOHasChainedFixups = Chained;
+      F.Image.MachOResolvedChainedPointerSlots = {0x2000, 0x2010, 0x2020,
+                                                  0x2030};
+      auto A = readObjCConstantString(F.Image, 0x2000);
+      auto U = readObjCConstantString(F.Image, 0x2020);
+      ASSERT_TRUE(A && U);
+      EXPECT_FALSE(A->UTF16);
+      EXPECT_TRUE(U->UTF16);
+      EXPECT_EQ(A->Units, (std::vector<uint16_t>{'a', '\n', '"'}));
+      EXPECT_EQ(U->Units, (std::vector<uint16_t>{0x767e, 0, 0xd83d, 0xde00}));
+      auto Result = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      EXPECT_EQ(Result.ConstantStrings, std::set<va_t>{0x2000});
+      const auto Call = Result.Function.Body[0].RetVal;
+      ASSERT_TRUE(Call->SourceCallHint);
+      EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+      std::set<std::string> Shared;
+      const auto Helpers =
+          renderObjCConstantStringHelpers(F.Image, {0x2000, 0x2020}, Shared);
+      EXPECT_EQ(Shared.size(), 2U);
+      EXPECT_NE(Helpers.find("97, 10, 34, 0"), std::string::npos);
+      EXPECT_NE(Helpers.find("30334, 0, 55357, 56832, 0"), std::string::npos);
+      EXPECT_EQ(F.Function.Body[0].RetVal->Kind, ExprKind::Const);
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, ConstantStringsRejectUnprovedRecordsAndContents) {
+  using Mutation = std::function<void(BinaryImage &)>;
+  const std::vector<Mutation> Mutations = {
+      [](auto &I) { I.IsRelocatable = true; },
+      [](auto &I) { I.MachOChainedFixupsAmbiguous = true; },
+      [](auto &I) {
+        I.Raw.resize(32);
+        llvm::support::endian::write32le(I.Raw.data(),
+                                         llvm::MachO::MH_MAGIC_64);
+        llvm::support::endian::write32le(I.Raw.data() + 8,
+                                         llvm::MachO::CPU_SUBTYPE_ARM64E);
+      },
+      [](auto &I) { I.DyldBindSlots.clear(); },
+      [](auto &I) { I.DyldBindSlots.at(0x2000).Name = "_otherClass"; },
+      [](auto &I) { I.DyldBindSlots.at(0x2000).Addend = 1; },
+      [](auto &I) { I.DyldBindSlots.at(0x2000).WeakImport = true; },
+      [](auto &I) { I.ConflictingImportStorageSlots.insert(0x2010); },
+      [](auto &I) { I.ImportStorageSlots.at(0x2000).Addend = 8; },
+      [](auto &I) { I.ImportPtrSlots[0x2010] = "_otherData"; },
+      [](auto &I) { I.MachOHasChainedFixups = true; },
+      [](auto &I) { I.DataPtrRelocSlots.insert(0x2008); },
+      [](auto &I) { I.CodePtrRelocSlots.insert(0x2010); },
+      [](auto &I) { I.DataPtrRelocSlots.insert(0xfff); },
+      [](auto &I) { I.DataPtrRelocSlots.insert(0x1002); },
+      [](auto &I) { I.Sections[0].Size = 63; },
+      [](auto &I) { I.Sections[0].FileSz = 31; },
+      [](auto &I) { I.Sections[0].FileOff = 1; },
+      [](auto &I) { I.Sections[1].FileSz = 2; },
+      [](auto &I) {
+        I.Sections[1].Type |= llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+      },
+      [](auto &I) {
+        I.Segments[1].Flags = I.Segments[1].Flags | SegmentFlags::Writable;
+      },
+      [](auto &I) {
+        I.Sections[1].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      },
+      [](auto &I) { I.Sections.push_back(I.Sections[1]); },
+      [](auto &I) { I.Segments.push_back(I.Segments[1]); },
+      [](auto &I) { I.Segments[0].Data[8] = 0xc9; },
+      [](auto &I) { I.Segments[0].Data[12] = 1; },
+      [](auto &I) { I.Segments[0].Data[31] = 0xff; },
+      [](auto &I) { I.Segments[1].Data[3] = 1; },
+      [](auto &I) { I.Segments[1].Data[0] = 0x80; },
+  };
+  for (size_t Index = 0; Index < Mutations.size(); ++Index) {
+    SCOPED_TRACE(Index);
+    ConstantStringFixture F;
+    Mutations[Index](F.Image);
+    EXPECT_FALSE(readObjCConstantString(F.Image, 0x2000));
+    EXPECT_FALSE(
+        bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  }
+  ConstantStringFixture F;
+  EXPECT_FALSE(readObjCConstantString(F.Image, 0x2008));
+  EXPECT_FALSE(readObjCConstantString(F.Image, 0x2040));
+}
+
+TEST(ObjCSourceBindings, ConstantStringObjectsCannotAuthorizeRawMemoryAccess) {
+  ConstantStringFixture F;
+  auto Address = F.Function.Body[0].RetVal;
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = Address;
+  Store.StoreVal = HighExpr::makeConst(0, 8);
+  F.Function.Body.insert(F.Function.Body.begin(), Store);
+  for (bool Reversed : {false, true}) {
+    if (Reversed)
+      std::reverse(F.Function.Body.begin(), F.Function.Body.end());
+    EXPECT_FALSE(
+        bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  }
+  F.Function.Body.resize(1);
+  F.Function.Body[0].Kind = StmtKind::Return;
+  F.Function.Body[0].RetVal = HighExpr::makeLoad(Address, NdType::makeInt(8));
+  EXPECT_FALSE(
+      bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+}
+
 TEST(ObjCSourceBindings, ReplacesLoadedSelectorAndKeepsOriginalProjection) {
   Fixture F;
   auto Result = bindObjCSourceReferences(F.Function, F.Image);

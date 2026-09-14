@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Simplifies the flat HighIR statement list into structured control
-/// flow: the simplifyControlFlow driver, goto elimination, and store-goto
-/// to return conversion.
+/// flow: the simplifyControlFlow driver, goto elimination, and proven
+/// return-block inlining.
 ///
 /// If/else structuring, loop detection and switch recovery are in separate
 /// files:
@@ -29,7 +29,6 @@
 #include <functional>
 #include <map>
 #include <optional>
-#include <set>
 #include <unordered_map>
 
 namespace neverd {
@@ -133,52 +132,6 @@ static void simplifyNestedGotos(std::vector<HighStmt> &Stmts) {
 }
 
 //===----------------------------------------------------------------------===//
-// Store-goto to return conversion
-//===----------------------------------------------------------------------===//
-
-static void convertStoreGotoToReturn(std::vector<HighStmt> &Stmts,
-                                     const std::set<va_t> &LoopHeaders,
-                                     const std::set<va_t> &LiveTargets) {
-  auto TryConvert = [&](std::vector<HighStmt> &Body) {
-    if (Body.size() < 2)
-      return;
-    if (Body.back().Kind != StmtKind::Goto)
-      return;
-    va_t GotoTarget = Body.back().GotoTarget;
-    if (GotoTarget == 0 || GotoTarget == InvalidVA)
-      return;
-    if (LoopHeaders.count(GotoTarget))
-      return;
-    if (LiveTargets.count(GotoTarget))
-      return;
-    if (Body[Body.size() - 2].Kind != StmtKind::Store)
-      return;
-    auto &StoreStmt = Body[Body.size() - 2];
-    if (StoreStmt.MemoryOrdering != NdMemoryOrdering::None ||
-        StoreStmt.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      return;
-    HighStmt RetStmt;
-    RetStmt.Kind = StmtKind::Return;
-    RetStmt.Addr = StoreStmt.Addr;
-    RetStmt.RetVal = StoreStmt.StoreVal;
-    Body.pop_back();
-    Body.pop_back();
-    Body.push_back(std::move(RetStmt));
-  };
-
-  for (auto &S : Stmts) {
-    if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) {
-      TryConvert(S.Body);
-      TryConvert(S.ElseBody);
-    }
-    if (!S.Body.empty())
-      convertStoreGotoToReturn(S.Body, LoopHeaders, LiveTargets);
-    if (!S.ElseBody.empty())
-      convertStoreGotoToReturn(S.ElseBody, LoopHeaders, LiveTargets);
-  }
-}
-
-//===----------------------------------------------------------------------===//
 // Guard-before-switch cleanup
 //===----------------------------------------------------------------------===//
 
@@ -236,54 +189,6 @@ static void cleanupGuardBeforeSwitch(HighFunc &Func) {
       Func.Body.erase(Func.Body.begin() + static_cast<long>(I));
       --I;
     }
-  }
-}
-
-//===----------------------------------------------------------------------===//
-// collectLoopHeaders — gather addresses of while-loop heads
-//===----------------------------------------------------------------------===//
-
-static void collectLoopHeaders(const std::vector<HighStmt> &Stmts,
-                               std::set<va_t> &LoopHeaders) {
-  for (auto &S : Stmts) {
-    if (S.Kind == StmtKind::While) {
-      if (S.Addr != 0)
-        LoopHeaders.insert(S.Addr);
-      if (S.LoopHeaderAddr != 0)
-        LoopHeaders.insert(S.LoopHeaderAddr);
-    }
-    if (!S.Body.empty())
-      collectLoopHeaders(S.Body, LoopHeaders);
-    if (!S.ElseBody.empty())
-      collectLoopHeaders(S.ElseBody, LoopHeaders);
-  }
-}
-
-//===----------------------------------------------------------------------===//
-// foldStoreGotoAfterIf — if { ... } store X; goto → if-else { return X }
-//===----------------------------------------------------------------------===//
-
-static void foldStoreGotoAfterIf(HighFunc &Func) {
-  for (size_t I = 0; I + 2 < Func.Body.size(); ++I) {
-    auto &Stmt = Func.Body[I];
-    if (Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse)
-      continue;
-    auto &Store = Func.Body[I + 1];
-    auto &Go = Func.Body[I + 2];
-    if (Store.Kind != StmtKind::Store || Go.Kind != StmtKind::Goto)
-      continue;
-    if (Store.MemoryOrdering != NdMemoryOrdering::None ||
-        Store.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      continue;
-    if (Stmt.Kind == StmtKind::If)
-      Stmt.Kind = StmtKind::IfElse;
-    HighStmt RetStmt;
-    RetStmt.Kind = StmtKind::Return;
-    RetStmt.Addr = Store.Addr;
-    RetStmt.RetVal = Store.StoreVal;
-    Stmt.ElseBody.push_back(std::move(RetStmt));
-    Func.Body.erase(Func.Body.begin() + static_cast<long>(I + 1),
-                    Func.Body.begin() + static_cast<long>(I + 3));
   }
 }
 
@@ -405,21 +310,7 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   removeTrivialGotos(Func.Body);
   simplifyNestedGotos(Func.Body);
 
-  std::set<va_t> LoopHeaders;
-  collectLoopHeaders(Func.Body, LoopHeaders);
-
-  std::set<va_t> LiveTargets;
-  for (auto &S : Func.Body) {
-    if (S.Kind == StmtKind::While && !S.Body.empty())
-      for (auto &WS : S.Body)
-        if (WS.Addr != 0)
-          LiveTargets.insert(WS.Addr);
-  }
-  LiveTargets.insert(LoopHeaders.begin(), LoopHeaders.end());
-
   mergeConsecutiveCondBlocks(Func.Body);
-  convertStoreGotoToReturn(Func.Body, LoopHeaders, LiveTargets);
-  foldStoreGotoAfterIf(Func);
   inlineGotoReturns(Func, Med);
   cleanupGuardBeforeSwitch(Func);
 

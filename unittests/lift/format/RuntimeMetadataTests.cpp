@@ -223,6 +223,48 @@ TEST(RuntimeMetadata, DyldBindingsValidateStorageBeforeMutation) {
             ImportStorageEvidence::LoaderBind);
 }
 
+TEST(RuntimeMetadata, DyldBackwardULEBDeltasKeepFollowingBindingsAndBounds) {
+  using namespace llvm::MachO;
+  for (bool BindAndAdvance : {false, true}) {
+    for (uint64_t Destination : {0x10ULL, 0x18ULL, 0x100ULL, UINT64_MAX}) {
+      SCOPED_TRACE(BindAndAdvance);
+      SCOPED_TRACE(Destination);
+      BinaryImage Image;
+      Image.Bits = Bitness::Bits64;
+      Image.Segments.push_back(makeSegment(0x3000, 0x100, false));
+      std::vector<uint8_t> Bytes(16, 0);
+      auto Append = [&](uint64_t Value) {
+        do {
+          const uint8_t Part = Value & 0x7f;
+          Value >>= 7;
+          Bytes.push_back(Part | (Value ? 0x80 : 0));
+        } while (Value);
+      };
+      const uint8_t Header[] = {
+          BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM, '_', 's', 0,
+          BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB,   0x30};
+      Bytes.insert(Bytes.end(), std::begin(Header), std::end(Header));
+      if (!BindAndAdvance)
+        Bytes.push_back(BIND_OPCODE_DO_BIND);
+      Bytes.push_back(BindAndAdvance ? BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB
+                                     : BIND_OPCODE_ADD_ADDR_ULEB);
+      Append(Destination - uint64_t(0x38));
+      Bytes.push_back(BIND_OPCODE_DO_BIND);
+      Bytes.push_back(BIND_OPCODE_DONE);
+      macho_loader::DyldInfoOffsets Info;
+      Info.BindOff = 16;
+      Info.BindSize = Bytes.size() - 16;
+      macho_loader::parseBindStreams(Bytes.data(), Bytes.size(), Info, Image);
+      const bool InBounds = Destination < 0x100;
+      EXPECT_EQ(Image.DyldBindSlots.size(), InBounds ? 2U : 1U);
+      EXPECT_EQ(Image.ImportStorageSlots.size(), InBounds ? 2U : 1U);
+      EXPECT_EQ(Image.DyldBindSlots.count(0x3030), 1U);
+      if (InBounds)
+        EXPECT_EQ(Image.DyldBindSlots.at(0x3000 + Destination).Name, "_s");
+    }
+  }
+}
+
 TEST(RuntimeMetadata, DyldBindingIdentityConflictsAreSticky) {
   const ImportBindSlot First{"_s", 0, "first-module", false};
   const std::vector<ImportBindSlot> Conflicts = {

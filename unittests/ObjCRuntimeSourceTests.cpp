@@ -40,13 +40,14 @@ void run(const std::vector<std::string> &Arguments,
   ASSERT_EQ(Status, 0) << Error << '\n' << read(Err);
 }
 
-enum class RuntimeFixture { ARC, Associations, SwiftCalls };
+enum class RuntimeFixture { ARC, Associations, SwiftCalls, ConstantStrings };
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
   const bool Associations = FixtureKind == RuntimeFixture::Associations;
   const bool SwiftCalls = FixtureKind == RuntimeFixture::SwiftCalls;
+  const bool ConstantStrings = FixtureKind == RuntimeFixture::ConstantStrings;
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
@@ -56,12 +57,14 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = SwiftCalls     ? "ObjCSwiftRuntime.m"
-                        : Associations ? "ObjCAssociations.m"
-                                       : "ObjCARC.m";
-  const char *Harness = SwiftCalls     ? "ObjCSwiftRuntimeHarness.m"
-                        : Associations ? "ObjCAssociationsHarness.m"
-                                       : "ObjCARCHarness.m";
+  const char *Fixture = ConstantStrings ? "ObjCConstantStrings.m"
+                        : SwiftCalls    ? "ObjCSwiftRuntime.m"
+                        : Associations  ? "ObjCAssociations.m"
+                                        : "ObjCARC.m";
+  const char *Harness = ConstantStrings ? "ObjCConstantStringsHarness.m"
+                        : SwiftCalls    ? "ObjCSwiftRuntimeHarness.m"
+                        : Associations  ? "ObjCAssociationsHarness.m"
+                                        : "ObjCARCHarness.m";
   const auto Original = (Work / "original.dylib").string();
   const std::string Compiler = NEVERD_TEST_CLANG;
 #if defined(__aarch64__) || defined(__arm64__)
@@ -120,11 +123,16 @@ void verifyRuntime(bool Chained,
                  "objectType:",
                  "begin:scratch:flags:",
                  "end:"};
+  if (ConstantStrings)
+    Remaining = {"ascii", "alias", "unicode", "embedded",
+                 "empty", "first", "second"};
   std::string Declarations;
-  std::string Install =
-      "static void installRecovered(void) {\n"
-      "Class cls = objc_getClass(\"" +
-      std::string(SwiftCalls ? "NDSwiftRuntimeCalls" : "NDARCBox") + "\");\n";
+  std::string Install = "static void installRecovered(void) {\n"
+                        "Class cls = objc_getClass(\"" +
+                        std::string(ConstantStrings ? "NDConstantStrings"
+                                    : SwiftCalls    ? "NDSwiftRuntimeCalls"
+                                                    : "NDARCBox") +
+                        "\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
   std::set<std::string> StorageNames;
@@ -171,8 +179,10 @@ void verifyRuntime(bool Chained,
   }
   ASSERT_TRUE(Remaining.empty());
   EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);
-  EXPECT_EQ(IdentityHelpers.size(),
-            (Associations ? 2U : 0U) + StorageNames.size());
+  EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
+                                     : ConstantStrings ? 6U
+                                                       : 0U) +
+                                        StorageNames.size());
   if (!IdentityHelpers.empty()) {
     std::string Shared = "#include <stdint.h>\n";
     for (const auto &[Name, Definition] : IdentityHelpers)
@@ -209,14 +219,17 @@ void verifyRuntime(bool Chained,
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
-  EXPECT_EQ(
-      read(Work / "recovered.out"),
-      SwiftCalls ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
-      : Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
-                       "keys=pass\nclear="
-                       "pass\ndestroyed=1\n"
-                     : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
-                       "pass\ndestroyed=3\n");
+  EXPECT_EQ(read(Work / "recovered.out"),
+            ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
+                              "pass\nlifetime=pass\n"
+            : SwiftCalls
+                ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
+            : Associations
+                ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
+                  "keys=pass\nclear="
+                  "pass\ndestroyed=1\n"
+                : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
+                  "pass\ndestroyed=3\n");
 }
 #endif
 
@@ -264,6 +277,18 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledConstantStringsPreserveContentsAndIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ConstantStrings));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }
 } // namespace

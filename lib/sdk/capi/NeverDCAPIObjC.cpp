@@ -347,15 +347,20 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
           BlockPlan, BlockDescriptors, SharedBlockFunctions);
       std::set<va_t> AssociationKeys;
       std::set<va_t> ProfileSections;
+      std::set<va_t> ConstantStrings;
       for (va_t Entry : Included) {
         const auto &Keys = Projections.at(Entry).AssociationKeys;
         AssociationKeys.insert(Keys.begin(), Keys.end());
         const auto &Sections = Projections.at(Entry).ProfileCounterSections;
         ProfileSections.insert(Sections.begin(), Sections.end());
+        const auto &Strings = Projections.at(Entry).ConstantStrings;
+        ConstantStrings.insert(Strings.begin(), Strings.end());
       }
       std::set<std::string> SharedIdentityFunctions;
-      const std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
+      std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
           AssociationKeys, SharedIdentityFunctions);
+      IdentityHelpers += renderObjCConstantStringHelpers(
+          S->Img, ConstantStrings, SharedIdentityFunctions);
       std::set<std::string> SharedStorageFunctions;
       const std::string StorageHelpers =
           ProfileStorage.render(ProfileSections, SharedStorageFunctions);
@@ -415,6 +420,12 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     Limitations.push_back(
         "Unresolved native dependencies and exception-dependent method bodies "
         "remain individually unrecovered.");
+    Limitations.push_back(
+        "Verified Darwin constant strings preserve ASCII bytes or UTF-16 "
+        "code units in rebuilt constant objects. Link Foundation and one "
+        "definition of each shared_identity_functions helper. Equal original "
+        "object addresses share one rebuilt object; these identities are "
+        "independent of the original loaded image.");
     Limitations.push_back(
         "Numeric profiling counters retain their captured initial bytes and "
         "updates in shared rebuilt storage. Link one definition of each "

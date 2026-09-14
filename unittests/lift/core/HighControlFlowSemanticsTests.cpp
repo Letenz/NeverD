@@ -1027,6 +1027,70 @@ TEST(HighControlFlowSemantics, ConditionalFalseEdgeKeepsNonlexicalSuccessor) {
   }
 }
 
+TEST(HighControlFlowSemantics, BranchStoresKeepTheirObservableContinuation) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    MedFunc M;
+    M.Entry = 0x1000;
+    M.Name = "store_before_tail_call";
+    M.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    M.Params = {Input};
+    auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+    M.Blocks.resize(5);
+    for (int I = 0; I < 5; ++I) {
+      M.Blocks[I].Id = I;
+      M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+    }
+    M.Blocks[0].Succs = {1, 2};
+    M.Blocks[0].Ops = {
+        operation(NdOp::STORE, 0x1000, {}, {C(0x8000), C(5)}),
+        operation(NdOp::COND_BR, 0x1004, {}, {C(0x1200), Input})};
+    M.Blocks[1].Preds = {0};
+    M.Blocks[1].Succs = {3};
+    M.Blocks[1].Ops = {operation(NdOp::STORE, 0x1100, {}, {C(0x8000), C(17)}),
+                       operation(NdOp::BRANCH, 0x1104, {}, {C(0x1300)})};
+    M.Blocks[2].Preds = {0};
+    M.Blocks[2].Succs = {4};
+    M.Blocks[2].Ops = {operation(NdOp::BRANCH, 0x1200, {}, {C(0x1400)})};
+    for (int I = 3; I < 5; ++I) {
+      auto &B = M.Blocks[I];
+      B.Preds = {I - 2};
+      auto Observed = machineValue(I, Architecture);
+      auto Return = machineValue(I + 2, Architecture);
+      Return.SSAVer = I;
+      Return.Kind = MedVar::Reg;
+      Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+      auto Call = operation(NdOp::CALL, B.StartAddr, Observed,
+                            {C(0x2000), C(0), C(0x8000)});
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->Signature.ReturnType = M.ReturnType;
+      Hint->Signature.Parameters = {
+          {"unused", M.ReturnType, {}},
+          {"address", NdType::makePtr(M.ReturnType), {}}};
+      Call.SourceCallHint = Hint;
+      B.Ops = {Call,
+               operation(NdOp::INT_ADD, B.StartAddr + 4, Return,
+                         {Observed, C((I - 2) * 100)}),
+               operation(NdOp::RETURN, B.StartAddr + 8, {}, {Return})};
+    }
+    const std::map<va_t, std::string> Names{{0x2000, "observe"}};
+    for (bool ReverseSuccessors : {false, true}) {
+      auto Variant = M;
+      if (ReverseSuccessors)
+        std::reverse(Variant.Blocks[0].Succs.begin(),
+                     Variant.Blocks[0].Succs.end());
+      MedToHighConverter Converter;
+      Converter.setFuncNames(&Names);
+      auto F = Converter.convert(Variant, Architecture);
+      EXPECT_EQ(execute(F, 0), 117u);
+      EXPECT_EQ(execute(F, 1), 205u);
+    }
+  }
+}
+
 MedFunc loopFunction(Arch Architecture, bool Swap, bool ReversePhis) {
   MedFunc F;
   F.Entry = 0x1000;

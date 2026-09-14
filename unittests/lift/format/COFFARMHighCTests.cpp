@@ -7,6 +7,8 @@
 #include "COFFARMPipelineTestsDetail.h"
 #include "gtest/gtest.h"
 
+#include <regex>
+
 namespace {
 
 using namespace neverd;
@@ -244,7 +246,13 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
   auto Body = cFunctionBody(C, "frame_lvalue_address");
   ASSERT_TRUE(Body.has_value()) << C;
   EXPECT_NE(Body->find("stack_storage[16]"), std::string::npos) << *Body;
-  EXPECT_NE(Body->find("frame_base - 4"), std::string::npos) << *Body;
+  // Integer-width casts may surround the frame subtraction. The emitted
+  // storage and accesses must remain explicit regardless of that spelling.
+  EXPECT_TRUE(std::regex_search(
+      *Body, std::regex(R"(frame_base[() ]*-[() ]*(uint64_t[() ]*)?4)")))
+      << *Body;
+  EXPECT_NE(Body->find("neverd_mem_store_"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("neverd_mem_load_"), std::string::npos) << *Body;
 
   const fs::path CPath = tmpFile("frame_lvalue_address.c");
   std::ofstream Out(CPath);

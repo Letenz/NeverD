@@ -514,6 +514,14 @@ jobs:
                    "NeverDLiftTests"),
                   ("HighSymSimplify.AddressConstantsRetainTheirOriginAcrossNumericRewrites",
                    "NeverDLiftTests"),
+                  ("RuntimeMetadata.DyldBackwardULEBDeltasKeepFollowingBindingsAndBounds",
+                   "NeverDLiftTests"),
+                  ("ObjCSourceBindings.ConstantStringsKeepBytesUnicodeAndObjectIdentity",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ConstantStringsRejectUnprovedRecordsAndContents",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ConstantStringObjectsCannotAuthorizeRawMemoryAccess",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.NumericMasksKeepOccurrenceProvenanceThroughHighIR",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ScalarMaskIdentityCannotAuthorizeAnAddressConsumer",
@@ -566,6 +574,8 @@ jobs:
                    "NeverDPipelineOutcomeTests"),
                   ("PipelineStageTrace.KeepsLiftBranchAndItsNativeDefinition",
                    "NeverDPipelineOutcomeTests"),
+                  ("HighControlFlowSemantics.BranchStoresKeepTheirObservableContinuation",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.TargetReturnIsNotAnEarlyFallthroughReturn",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.SharedReturnRemainsOnItsFallthroughPath",
@@ -634,9 +644,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 193,
-              ("macOS", "macos-patch"): 195,
-              ("Windows", "windows-focused"): 189,
+              ("Linux", "linux-semantic"): 198,
+              ("macOS", "macos-patch"): 201,
+              ("Windows", "windows-focused"): 194,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -645,6 +655,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledAssociatedObjectsPreserveLifetimeAndPolicy",
                       "ObjCRuntimeSource.RecompiledProfiledMethodsKeepSharedCounterStorage",
                       "ObjCRuntimeSource.RecompiledSwiftRuntimeCallsPreserveWeakObjectLifetimes",
+                      "ObjCRuntimeSource.RecompiledConstantStringsPreserveContentsAndIdentity",
                   ))
           if runner_os in ("Linux", "macOS"):
               expected += (TestRecord(

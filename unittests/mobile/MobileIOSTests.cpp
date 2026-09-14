@@ -1725,11 +1725,13 @@ TEST(MobileIOSNative,
 
 TEST(MobileIOSNative,
      SharedAssociationKeysPreserveOneDefinitionAndRejectConflicts) {
-  for (bool Counters : {false, true}) {
-    SCOPED_TRACE(Counters);
-    const std::string Helper = Counters
-                                   ? "neverd_profile_counters_1000_address"
-                                   : "neverd_objc_association_key_1031_address";
+  for (unsigned Kind : {0U, 1U, 2U}) {
+    SCOPED_TRACE(Kind);
+    const bool Counters = Kind == 1;
+    const std::string Helper =
+        Kind == 2  ? "neverd_objc_constant_string_1050_address"
+        : Counters ? "neverd_profile_counters_1000_address"
+                   : "neverd_objc_association_key_1031_address";
     const std::string Declaration =
         Counters ? "static unsigned char key[32] = { [3] = 9 };"
                  : "static unsigned char key;";

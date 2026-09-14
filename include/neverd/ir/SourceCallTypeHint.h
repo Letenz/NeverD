@@ -34,7 +34,9 @@ struct SourceCallTypeHint {
     RuntimeProfileCounterStorage,
     /// A Swift runtime import with an explicitly declared ordinary C ABI.
     /// Swift calling conventions and register-specialized entries are excluded.
-    SwiftRuntimeCall
+    SwiftRuntimeCall,
+    /// A verified Darwin constant-string object with one rebuilt identity.
+    RuntimeConstantString
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;

@@ -94,6 +94,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
       Hint.CallKind == Kind::RuntimeAssociationKey ||
+      Hint.CallKind == Kind::RuntimeConstantString ||
       Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
         !Signature.ReturnType ||
@@ -114,6 +115,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (Name != "_NSConcreteStackBlock" && Name != "_NSConcreteGlobalBlock")
         return bad("unknown concrete block class");
       Value = Name.str();
+    } else if (Hint.CallKind == Kind::RuntimeConstantString) {
+      if (!Hint.TargetAddress)
+        return bad("constant string has no object identity");
+      Value = "neverd_objc_constant_string_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
       if (!Hint.TargetAddress)
         return bad("profile counters have no storage identity");

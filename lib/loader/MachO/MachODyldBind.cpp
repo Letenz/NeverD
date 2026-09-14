@@ -139,8 +139,12 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
       }
       case BIND_OPCODE_ADD_ADDR_ULEB: {
         uint64_t Delta = 0;
-        if (!ReadULEB(Delta) || Delta > InvalidVA - SegOff)
+        if (!ReadULEB(Delta))
           return;
+        // Darwin linkers also encode backward moves as a modulo-2^64 ULEB
+        // delta. dyld adds this to its uint64_t segment offset; rejecting the
+        // wrap truncates an otherwise valid stream. RecordAt still validates
+        // the resulting slot against its segment before publishing a binding.
         SegOff += Delta;
         break;
       }
@@ -237,7 +241,7 @@ void parseBindStreams(const uint8_t *BasePtr, size_t FileSize,
         SegOff += PtrSz;
         if (Opcode == BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB) {
           uint64_t Delta = 0;
-          if (!ReadULEB(Delta) || Delta > InvalidVA - SegOff)
+          if (!ReadULEB(Delta))
             return;
           SegOff += Delta;
         } else if (Opcode == BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED) {

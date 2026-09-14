@@ -887,7 +887,8 @@ Rendered render(const Object &native, const Object &runtime,
           !defined.count(s->str()) || s == name ||
           !std::regex_match(
               s->str(),
-              std::regex("neverd_objc_association_key_[0-9a-f]+_address")))
+              std::regex("neverd_objc_(association_key|constant_string)_"
+                         "[0-9a-f]+_address")))
         throw Error("invalid shared identity function inventory");
     }
   if (native.get("shared_storage_functions") &&
@@ -1410,7 +1411,8 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
                  "Coverage applies only to the discovered runtime method "
                  "inventory; an empty inventory does not prove that no methods "
                  "exist.",
-                 "Verified identical Block, association-key and numeric "
+                 "Verified identical Block, constant-string, association-key "
+                 "and numeric "
                  "profiling-counter storage helpers share identity across "
                  "methods. Rebuilt keys and counters are independent of the "
                  "original image and profiling runtime. External dependencies "

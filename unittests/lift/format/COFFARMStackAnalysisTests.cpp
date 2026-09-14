@@ -1,12 +1,14 @@
-//===- COFFARMStackAnalysisTests.cpp - Windows ARM stack frame analysis tests -===//
+//===- COFFARMStackAnalysisTests.cpp - Windows ARM stack frame analysis tests
+//-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
+#include "COFFARMPipelineTestsDetail.h"
 #include "gtest/gtest.h"
 
-#include "COFFARMPipelineTestsDetail.h"
+#include <regex>
 
 namespace {
 
@@ -45,8 +47,8 @@ TEST_F(COFFARMPipeline, HighCStackStorageIsAlignedBoundedAndAliasSafe) {
   SP.Id = 1;
   SP.Size = 8;
   SP.RegOff = getTargetRegInfo(Arch::AArch64).StackPointer;
-  auto Addr = HighExpr::makeBinop(
-      NdOp::INT_ADD, HighExpr::makeVar(SP), HighExpr::makeConst(4, 8));
+  auto Addr = HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(SP),
+                                  HighExpr::makeConst(4, 8));
   auto Store = std::make_shared<HighExpr>();
   Store->Kind = ExprKind::Store;
   Store->Type = NdType::makeInt(4);
@@ -56,8 +58,7 @@ TEST_F(COFFARMPipeline, HighCStackStorageIsAlignedBoundedAndAliasSafe) {
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
   Ret.RetVal = HighExpr::makeBinop(
-      NdOp::INT_ADD, Store,
-      HighExpr::makeLoad(Addr, NdType::makeInt(4)));
+      NdOp::INT_ADD, Store, HighExpr::makeLoad(Addr, NdType::makeInt(4)));
   Func.Body.push_back(std::move(Ret));
 
   std::string C;
@@ -88,16 +89,20 @@ TEST_F(COFFARMPipeline, HighCStackStorageIsAlignedBoundedAndAliasSafe) {
             std::string::npos)
       << C;
   EXPECT_EQ(C.find("*(int32_t*)"), std::string::npos) << C;
-  EXPECT_NE(C.find("frame_base + 4"), std::string::npos) << C;
-  EXPECT_NE(C.find("frame_base - 4"), std::string::npos) << C;
+  EXPECT_TRUE(std::regex_search(
+      C, std::regex(R"(frame_base[() ]*\+[() ]*(uint64_t[() ]*)?4)")))
+      << C;
+  EXPECT_TRUE(std::regex_search(
+      C, std::regex(R"(frame_base[() ]*-[() ]*(uint64_t[() ]*)?4)")))
+      << C;
 
   const fs::path CPath = tmpFile("stack_bounds.c");
   std::ofstream Out(CPath);
   Out << C;
   Out.close();
   ASSERT_TRUE(Out.good());
-  RunResult Syntax = exec("clang", {"-std=c11", "-fsyntax-only",
-                                    CPath.string()});
+  RunResult Syntax =
+      exec("clang", {"-std=c11", "-fsyntax-only", CPath.string()});
   EXPECT_EQ(Syntax.exitCode, 0) << Syntax.err << "\n" << C;
 }
 
@@ -348,8 +353,7 @@ TEST_F(COFFARMPipeline, StackAnalysisScopesFlagPairsToInstruction) {
   CopyIndex.Opcode = NdOp::COPY;
   CopyIndex.Addr = 0x1004;
   CopyIndex.Output = Index;
-  CopyIndex.addInput(
-      NdVar::reg(TRI.IntParamRegs.front(), TRI.PointerSize));
+  CopyIndex.addInput(NdVar::reg(TRI.IntParamRegs.front(), TRI.PointerSize));
   Block.Ops.push_back(CopyIndex);
 
   LowOp AddIndex;

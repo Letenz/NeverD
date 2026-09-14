@@ -303,25 +303,9 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
   };
   StripRecursive(Func.Body);
 
-  if (Func.Body.size() >= 2 && Func.Body.back().Kind == StmtKind::Return) {
-    std::function<bool(const std::vector<HighStmt> &)> AllPathsReturn;
-    AllPathsReturn = [&](const std::vector<HighStmt> &Stmts) -> bool {
-      for (auto Rit = Stmts.rbegin(); Rit != Stmts.rend(); ++Rit) {
-        if (Rit->Kind == StmtKind::Return)
-          return true;
-        if (Rit->Kind == StmtKind::IfElse)
-          return AllPathsReturn(Rit->Body) && AllPathsReturn(Rit->ElseBody);
-        if (Rit->Kind == StmtKind::While)
-          return false;
-        if (Rit->Kind == StmtKind::If && AllPathsReturn(Rit->Body))
-          continue;
-      }
-      return false;
-    };
-    std::vector<HighStmt> BeforeLast(Func.Body.begin(), Func.Body.end() - 1);
-    if (AllPathsReturn(BeforeLast))
-      Func.Body.pop_back();
-  }
+  // Prologue cleanup cannot remove a return based on a lexical predecessor.
+  // A later block may have its own incoming edge and a different return value;
+  // reachability cleanup owns elimination after considering those edges.
 }
 
 //===----------------------------------------------------------------------===//
