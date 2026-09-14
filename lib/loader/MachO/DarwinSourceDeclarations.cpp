@@ -33,23 +33,9 @@ constexpr DataDeclaration DataDeclarations[] = {
 #include "DarwinSourceDataDeclarations.inc"
 };
 
-llvm::StringRef canonicalModule(llvm::StringRef Module) {
-  // These frameworks use unversioned install names on iOS. All other names
-  // retain their exact identity, including private/user framework paths.
-  if (Module == "/System/Library/Frameworks/Foundation.framework/Foundation")
-    return "/System/Library/Frameworks/Foundation.framework/Versions/C/"
-           "Foundation";
-  if (Module ==
-      "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
-    return "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/"
-           "CoreFoundation";
-  return Module;
-}
-
 bool exportsFrom(llvm::StringRef Modules, llvm::StringRef Module) {
   if (Module.empty())
     return false;
-  Module = canonicalModule(Module);
   while (!Modules.empty()) {
     const auto [Current, Remaining] = Modules.split('|');
     if (Current == Module)

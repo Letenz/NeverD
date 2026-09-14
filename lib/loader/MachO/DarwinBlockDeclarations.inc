@@ -19,4 +19,4 @@
 {"qsort_b", "v32^v0Q8Q16@?24", "v32^v0Q8Q16@?24", 3, "i24@?0^v8^v16", "i24@?0^v8^v16", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libsystem_c.dylib", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libsystem_c.dylib"},
 {"xpc_array_apply", "B16@0@?8", "B16@0@?8", 1, "B24@?0Q8@16", "B24@?0Q8@16", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libxpc.dylib", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libxpc.dylib"},
 {"xpc_dictionary_apply", "B16@0@?8", "B16@0@?8", 1, "B24@?0^c8@16", "B24@?0^c8@16", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libxpc.dylib", "/usr/lib/libSystem.B.dylib|/usr/lib/system/libxpc.dylib"},
-    // clang-format on
+// clang-format on

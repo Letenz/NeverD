@@ -55,6 +55,7 @@ enum class RuntimeFixture {
   BlockLifetimes,
   CoreData,
   ScalarConstants,
+  Graphics,
   DarwinDeclarations
 };
 
@@ -65,6 +66,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
+  const bool Graphics = FixtureKind == RuntimeFixture::Graphics;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
@@ -89,6 +91,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
                         : CoreData          ? "ObjCCoreDataCalls.m"
                         : ScalarConstants   ? "ObjCScalarConstants.m"
+                        : Graphics          ? "ObjCGraphicsCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
                         : Protocols         ? "ObjCProtocols.m"
@@ -102,6 +105,7 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
+                        : Graphics          ? "ObjCGraphicsCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
                         : Protocols         ? "ObjCProtocolsHarness.m"
@@ -134,6 +138,9 @@ void verifyRuntime(bool Chained,
   }
   if (CoreData)
     Compile.insert(Compile.end(), {"-framework", "CoreData"});
+  if (Graphics)
+    Compile.insert(Compile.end(),
+                   {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
   if (NativePointers)
@@ -166,6 +173,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
                              : CoreData          ? 3U
                              : ScalarConstants   ? 6U
+                             : Graphics          ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
                              : Protocols         ? 6U
@@ -258,6 +266,9 @@ void verifyRuntime(bool Chained,
   if (ScalarConstants)
     Remaining = {"finiteDouble", "negativeZeroDouble", "payloadDouble",
                  "finiteFloat",  "negativeZeroFloat",  "payloadFloat"};
+  if (Graphics)
+    Remaining = {"widthOfImage:", "heightOfImage:",     "retainImage:",
+                 "alphaOfColor:", "componentsInColor:", "imageCountInSource:"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -290,6 +301,7 @@ void verifyRuntime(bool Chained,
                         std::string(DarwinDeclarations  ? "NDDarwinDeclarations"
                                     : CoreData          ? "NDCoreDataCalls"
                                     : ScalarConstants   ? "NDScalarConstants"
+                                    : Graphics          ? "NDGraphicsCalls"
                                     : BlockLifetimes    ? "NDBlockFactory"
                                     : Foundation        ? "NDFoundationCalls"
                                     : Protocols         ? "NDProtocolCalls"
@@ -436,6 +448,9 @@ void verifyRuntime(bool Chained,
     Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
   if (CoreData)
     Compile.insert(Compile.end() - 2, {"-framework", "CoreData"});
+  if (Graphics)
+    Compile.insert(Compile.end() - 2,
+                   {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
@@ -497,6 +512,7 @@ void verifyRuntime(bool Chained,
             "nil-context=pass\n"
       : ScalarConstants
           ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
+      : Graphics ? "graphics-queries=6144\nimage-identity=pass\npng-count=1\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
             "conditional-invokes=1024\nconditional-construction=pass\n"
@@ -821,5 +837,16 @@ TEST(ObjCRuntimeSource, RecompiledImmutableScalarsPreserveFloatingBitPatterns) {
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledGraphicsCallsPreserveValuesAndImageIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Graphics));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS CoreGraphics and ImageIO";
 #endif
 }

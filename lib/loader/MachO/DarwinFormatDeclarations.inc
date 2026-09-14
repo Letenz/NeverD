@@ -4,5 +4,5 @@
 // Apple clang version 17.0.0 (clang-1700.0.13.5)
 // Target profiles: arm64-apple-macos15.0, arm64-apple-ios18.0, x86_64-apple-macos15.0, x86_64-apple-ios18.0-simulator
 // No SDK implementation is included.
-{"NSLog", "v8@0", "v8@0", 0, 1, "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation", "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation"},
-    // clang-format on
+{"NSLog", "v8@0", "v8@0", 0, 1, "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation", "/System/Library/Frameworks/Foundation.framework/Foundation|/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation"},
+// clang-format on

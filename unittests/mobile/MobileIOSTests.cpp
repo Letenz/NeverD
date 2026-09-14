@@ -2,6 +2,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include <algorithm>
 #include <chrono>
@@ -718,6 +719,30 @@ TEST(MobileIOSNative, RuntimeBlockTypeDoesNotInventInvocationSignature) {
       objcTypes("q32@0:8@?16q24"),
       (std::vector<std::string>{"long long", "id", "SEL", "id", "long long"}));
   EXPECT_TRUE(objcTypes("q32@0:8@??16q24").empty());
+}
+
+TEST(MobileIOSNative, OpaquePointeesUseTheLoaderTypeGrammar) {
+  for (const char *pointee : {"{Image=}", "{Image}", "(Color=qd)", "[4f]",
+                              "{Outer=\"child\"^{Inner=iq}}"}) {
+    const std::string encoding = "q24@0:8^" + std::string(pointee) + "16";
+    ASSERT_TRUE(neverd::parseObjCMethodEncoding("value:", encoding));
+    EXPECT_EQ(objcTypes(encoding),
+              (std::vector<std::string>{"long long", "id", "SEL", "void *"}));
+  }
+  EXPECT_EQ(objcTypes("v40@0:8r^^{Image=}16^@\"NSObject\"24^rQ32"),
+            (std::vector<std::string>{"void", "id", "SEL", "void * *", "id *",
+                                      "unsigned long long *"}));
+  for (const auto &type :
+       {std::string("{Image=dd}"), std::string("^{Image="),
+        std::string("^{=i}"), std::string("^{Image=\"bad\\name\"i}"),
+        std::string("^[i]"), std::string("^?"),
+        std::string(18, '^') + "{Image=}"}) {
+    const std::string encoding = "q24@0:8" + type + "16";
+    EXPECT_FALSE(neverd::parseObjCMethodEncoding("value:", encoding));
+    EXPECT_TRUE(objcTypes(encoding).empty());
+  }
+  EXPECT_TRUE(objcTypes("q24@0:8^q+16").empty());
+  EXPECT_TRUE(objcTypes("q24@0:8^q12345678901").empty());
 }
 TEST(MobileIOSNative, IvarOffsetsAndSuperclassRemainInHeader) {
   auto [batch, metadata] = objcFixture();

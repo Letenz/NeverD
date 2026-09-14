@@ -24,6 +24,21 @@ class DarwinDeclarationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             export_index([doc], "arm64-macos")
 
+    def test_public_framework_aliases_keep_export_and_path_identity(self):
+        root = "/System/Library/Frameworks/Graphics.framework/"
+        versioned = root + "Versions/A/Graphics"
+        docs = [self.document(versioned, ["_image"]),
+                self.document("/tmp/Graphics.framework/Versions/A/Graphics", ["_private"]),
+                self.document(root + "Versions/A/Other", ["_mismatch"])]
+        expected = {"image": {versioned, root + "Graphics"},
+                    "private": {"/tmp/Graphics.framework/Versions/A/Graphics"},
+                    "mismatch": {root + "Versions/A/Other"}}
+        self.assertEqual(export_index(docs, "arm64-macos"), expected)
+        self.assertEqual(export_index(docs, "x86_64-macos"), {})
+        docs.append(self.document("Reexporter", dependencies=[versioned]))
+        self.assertEqual(export_index(docs, "arm64-macos")["image"],
+                         {versioned, root + "Graphics", "Reexporter"})
+
     def test_declaration_does_not_authorize_an_unexported_symbol(self):
         profile = {"known": {"i0"}, "unknown": {"i0"}}
         output, count = render([profile] * 4, [{"known": {"A"}}] * 2, "test", "test")

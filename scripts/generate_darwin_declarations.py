@@ -13,9 +13,9 @@ from pathlib import Path
 import tempfile
 
 try:
-    from .generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from .generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows, framework_module_aliases
 except ImportError:
-    from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows, framework_module_aliases
 
 
 class CXType(ctypes.Structure):
@@ -78,11 +78,11 @@ def export_index(documents, target):
     for module, symbols in exports.items():
         for symbol in symbols:
             if symbol.startswith("_"):
-                result.setdefault(symbol[1:], set()).add(module)
+                result.setdefault(symbol[1:], set()).update(framework_module_aliases(module))
     return result
 
 
-def load_exports(sdk):
+def load_exports(sdk, extra_frameworks=()):
     import yaml
 
     class TBDLoader(yaml.SafeLoader):
@@ -98,6 +98,12 @@ def load_exports(sdk):
              frameworks / "Foundation.framework/Versions/C/Foundation.tbd",
              frameworks / "CoreFoundation.framework/Versions/A/CoreFoundation.tbd"]
     paths.extend(sorted((sdk / "usr/lib/system").glob("*.tbd")))
+    for name in extra_frameworks:
+        # Restrict requested declarations to one public SDK framework path.
+        module = f"/System/Library/Frameworks/{name}.framework/Versions/A/{name}"
+        if len(framework_module_aliases(module)) != 2:
+            raise ValueError("invalid framework name")
+        paths.append(frameworks / f"{name}.framework/{name}.tbd")
     documents = []
     for path in paths:
         documents.extend(yaml.load_all(path.read_text(), Loader=TBDLoader))
@@ -132,15 +138,17 @@ def main():
     args = parser.parse_args()
     sdk = args.sdk.resolve(strict=True)
     clang = CDeclarations(args.libclang)
+    frameworks = ("CoreGraphics", "ImageIO")
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-declarations-") as work:
         source = Path(work) / "declarations.m"
         source.write_text(
             "#import <Foundation/Foundation.h>\n#include <objc/runtime.h>\n"
             "#include <objc/objc-sync.h>\n#include <pthread.h>\n"
-            "#include <dispatch/dispatch.h>\n")
+            "#include <dispatch/dispatch.h>\n" +
+            "".join(f"#import <{name}/{name}.h>\n" for name in frameworks))
         profiles = [clang.extract(source, sdk, target) for target in TARGETS]
     version = json.loads((sdk / "SDKSettings.json").read_text())["Version"]
-    output, count = render(profiles, load_exports(sdk), version,
+    output, count = render(profiles, load_exports(sdk, frameworks), version,
                            clang.string(clang.clang_getClangVersion()))
     if args.check:
         if args.output.read_text() != output:

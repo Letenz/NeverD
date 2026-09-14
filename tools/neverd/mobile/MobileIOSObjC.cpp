@@ -1,5 +1,7 @@
 #include "MobileIOSInternal.h"
 
+#include "neverd/loader/ObjC/ObjCEncoding.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
@@ -1075,37 +1077,39 @@ std::vector<std::string> objcTypes(std::string_view e) {
       {':', "SEL"},
       {'*', "char *"}};
   std::vector<std::string> out;
+  if (e.size() > 4096)
+    return out;
   size_t p = 0;
   while (p < e.size()) {
-    unsigned pointers = 0;
-    while (p < e.size() &&
-           (std::isdigit(static_cast<unsigned char>(e[p])) ||
-            std::string_view("rnNoORV+-").find(e[p]) != std::string_view::npos))
-      ++p;
-    if (p == e.size())
-      break;
-    while (p < e.size() && e[p] == '^') {
-      ++p;
-      ++pointers;
-      while (p < e.size() &&
-             std::string_view("rnNoORV").find(e[p]) != std::string_view::npos)
-        ++p;
-    }
-    if (p == e.size() || !primitive.count(e[p]))
+    const size_t begin = p;
+    if (!parseObjCScalarType(llvm::StringRef(e.data(), e.size()), p))
       return {};
-    char marker = e[p++];
-    auto value = primitive.at(marker);
-    if (marker == '@' && p < e.size() && e[p] == '"') {
-      auto end = e.find('"', p + 1);
-      if (end == e.npos)
-        return {};
-      p = end + 1;
+    // The loader owns grammar and pointer opacity. This view only chooses
+    // Objective-C spelling, preserving id/Class/SEL and nested scalar pointers.
+    size_t spelling = begin;
+    unsigned pointers = 0;
+    while (spelling < p) {
+      if (e[spelling] == '^')
+        ++pointers;
+      else if (!llvm::StringRef("rnNoORV").contains(e[spelling]))
+        break;
+      ++spelling;
     }
-    if (marker == '@' && p < e.size() && e[p] == '?')
-      ++p;
+    if (spelling == p)
+      return {};
+    auto found = primitive.find(e[spelling]);
+    if (found == primitive.end() &&
+        (!pointers || !llvm::StringRef("{([").contains(e[spelling])))
+      return {};
+    auto value = found == primitive.end() ? std::string("void") : found->second;
     while (pointers--)
       value += " *";
     out.push_back(value);
+    const auto offset = p;
+    while (p < e.size() && e[p] >= '0' && e[p] <= '9')
+      ++p;
+    if (p - offset > 10)
+      return {};
   }
   return out;
 }

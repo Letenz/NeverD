@@ -1963,6 +1963,68 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
   }
 }
 
+TEST(ObjCCallHints, GraphicsDeclarationsPreserveOpaquePointersAndExactExports) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Framework, Kind] :
+         {std::tuple{"CGImageGetWidth", "CoreGraphics", NdTypeKind::Int},
+          std::tuple{"CGImageGetHeight", "CoreGraphics", NdTypeKind::Int},
+          std::tuple{"CGImageRetain", "CoreGraphics", NdTypeKind::Ptr},
+          std::tuple{"CGColorGetAlpha", "CoreGraphics", NdTypeKind::Float},
+          std::tuple{"CGColorGetNumberOfComponents", "CoreGraphics",
+                     NdTypeKind::Int},
+          std::tuple{"CGImageSourceGetCount", "ImageIO", NdTypeKind::Int}}) {
+      SCOPED_TRACE(Name);
+      const std::string Root = "/System/Library/Frameworks/" +
+                               std::string(Framework) + ".framework/";
+      for (const std::string &Version :
+           {std::string(), std::string("Versions/A/")}) {
+        auto Image = runtimeImage("_" + std::string(Name), Architecture);
+        Image.DyldBindSlots[0x2180] = {"_" + std::string(Name), 0,
+                                       Root + Version + Framework, false};
+        const auto Med = convert(Image, caller(Architecture));
+        ASSERT_EQ(Med.CallInfos.size(), 1U);
+        ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+        const auto &Hint = Med.CallInfos[0].SourceCallHint->Signature;
+        EXPECT_EQ(Hint.Origin, SourceFunctionTypeHint::OriginKind::DarwinSDK);
+        EXPECT_EQ(Hint.ReturnType->Kind, Kind);
+        EXPECT_EQ(Hint.ReturnType->Size, 8U);
+        EXPECT_EQ(Hint.ReturnLocation.Kind,
+                  Kind == NdTypeKind::Float
+                      ? SourceABICarrierKind::FloatingRegister
+                      : SourceABICarrierKind::IntegerRegister);
+        ASSERT_EQ(Hint.Parameters.size(), 1U);
+        EXPECT_EQ(Hint.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Hint.Parameters[0].Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+        MedToHighConverter Converter;
+        Converter.setBinaryImage(&Image);
+        const auto High = Converter.convert(Med, Architecture);
+        const auto *Expression = sourceCall(High);
+        ASSERT_NE(Expression, nullptr);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+        for (const auto &Wrong :
+             {"/tmp/" + std::string(Framework) + ".framework/" + Framework,
+              Root + "Versions/B/" + Framework, Root + "Other",
+              std::string("/usr/lib/libSystem.B.dylib")}) {
+          Image.DyldBindSlots[0x2180].Module = Wrong;
+          EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+          EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+        }
+      }
+    }
+    for (const char *Name : {"CGContextGetCTM", "CGPathApply"}) {
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_" + std::string(Name), 0,
+          "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+          false};
+      // Aggregate results and unknown callback prototypes still need their
+      // own complete ABI proof even when the exported symbol is known.
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+    }
+  }
+}
+
 TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Module] :

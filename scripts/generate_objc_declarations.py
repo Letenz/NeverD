@@ -12,7 +12,16 @@ import argparse
 import ctypes
 import json
 from pathlib import Path
+import re
 import tempfile
+
+
+def framework_module_aliases(module):
+    """Keep exact SDK install names and public unversioned framework aliases."""
+    match = re.fullmatch(
+        r"(/System/Library/Frameworks/([A-Za-z][A-Za-z0-9]*)\.framework/)"
+        r"(?:Versions/[A-Za-z0-9]+/)?\2", module)
+    return {module, match[1] + match[2]} if match else {module}
 
 
 class CXString(ctypes.Structure):

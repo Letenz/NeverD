@@ -13,9 +13,9 @@ import re
 import tempfile
 
 try:
-    from .generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from .generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows, framework_module_aliases
 except ImportError:
-    from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows
+    from generate_objc_declarations import Clang, CXCursor, CXString, TARGETS, catalog_rows, framework_module_aliases
 
 
 class CXSourceLocation(ctypes.Structure):
@@ -55,7 +55,7 @@ def module_paths(framework, install_name):
     if install_name != root + framework and not re.fullmatch(
             re.escape(root) + r"Versions/[A-Za-z0-9]+/" + re.escape(framework), install_name):
         raise ValueError("SDK install name does not identify this public framework")
-    return "|".join(sorted({root + framework, install_name}))
+    return "|".join(sorted(framework_module_aliases(install_name)))
 
 
 def sdk_module_paths(sdk, framework):
