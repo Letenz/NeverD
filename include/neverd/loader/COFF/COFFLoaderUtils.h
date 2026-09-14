@@ -66,6 +66,15 @@ struct CodeViewRSDSRecord {
 llvm::Expected<CodeViewRSDSRecord>
 parseCodeViewRSDS(llvm::ArrayRef<uint8_t> Bytes);
 
+/// Parse one complete IMAGE_DEBUG_TYPE_CODEVIEW payload as an NB10 / PDB 2.00
+/// record (timestamp signature + age + path).
+llvm::Expected<CodeViewRSDSRecord>
+parseCodeViewNB10(llvm::ArrayRef<uint8_t> Bytes);
+
+/// Dispatch RSDS or NB10.  Any other signature is an error.
+llvm::Expected<CodeViewRSDSRecord>
+parseCodeViewIdentity(llvm::ArrayRef<uint8_t> Bytes);
+
 /// Order-independent reduction of all CodeView records in one image.  Once a
 /// malformed or conflicting record is observed, the result remains Ambiguous.
 class CodeViewIdentityRegistry {
@@ -123,8 +132,9 @@ void parseTLSDirectory(const llvm::object::COFFObjectFile &Obj,
 void parseBaseRelocations(const llvm::object::COFFObjectFile &Obj,
                           BinaryImage &Img, uint64_t ImageBase);
 
-/// Parse the PE debug directory and reduce all bounded CodeView RSDS entries
-/// to one typed build identity.  The path is retained only as a discovery hint.
+/// Parse the PE debug directory and reduce all bounded CodeView RSDS/NB10
+/// entries to one typed build identity.  The path is retained only as a
+/// discovery hint.
 void parseDebugDirectory(const llvm::object::COFFObjectFile &Obj,
                          BinaryImage &Img);
 

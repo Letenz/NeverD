@@ -24,16 +24,22 @@
 
 namespace neverd {
 
-/// Linker-authored identity shared by a PE CodeView RSDS record and its PDB
-/// Info stream.  The GUID bytes are kept in serialized order; comparing a
-/// formatted GUID string would introduce byte-order ambiguity.
+/// Linker-authored identity shared by a PE CodeView record and its PDB Info
+/// stream.  RSDS (VC7+) uses a GUID; NB10 (VC6 / PDB 2.00) uses the PE
+/// timestamp signature.  GUID bytes stay in serialized order.
+enum class PDBIdentityKind : uint8_t { RSDS, NB10 };
+
 struct PDBBuildIdentity {
+  PDBIdentityKind Kind = PDBIdentityKind::RSDS;
   std::array<uint8_t, 16> Guid{};
+  uint32_t Signature = 0;
   uint32_t Age = 0;
 
   bool isValid() const {
     if (Age == 0)
       return false;
+    if (Kind == PDBIdentityKind::NB10)
+      return Signature != 0;
     for (uint8_t Byte : Guid)
       if (Byte != 0)
         return true;
@@ -65,9 +71,10 @@ struct DynamicInfo {
   /// PDB path (PE/COFF) or build-id string (ELF).
   std::string PDBPath;
 
-  /// PE/COFF CodeView RSDS identity.  The optional is populated exactly when
-  /// CodeViewPDBIdentityState is Unique.  PDBPath remains a discovery hint and
-  /// is never evidence that a companion belongs to this image.
+  /// PE/COFF CodeView identity (RSDS or NB10).  The optional is populated
+  /// exactly when CodeViewPDBIdentityState is Unique.  PDBPath remains a
+  /// discovery hint and is never evidence that a companion belongs to this
+  /// image.
   PDBIdentityState CodeViewPDBIdentityState = PDBIdentityState::Absent;
   std::optional<PDBBuildIdentity> CodeViewPDBIdentity;
 

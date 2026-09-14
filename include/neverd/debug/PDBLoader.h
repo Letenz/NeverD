@@ -78,14 +78,19 @@ private:
 
 } // namespace pdb_loader_detail
 
+llvm::Expected<std::unique_ptr<class PDBDebugContext>>
+loadPdb20DebugContext(const std::filesystem::path &PdbPath,
+                      const BinaryImage &Image);
+
 class PDBDebugContext : public DebugContext {
 public:
   ~PDBDebugContext() override;
 
-  /// Load only a PDB whose Info GUID+age, DBI metadata, machine, and section
-  /// table all agree with the already loaded PE image.  A mismatched companion
-  /// is an error rather than a names-only context, because debug names affect
-  /// downstream semantic classification too.
+  /// Load only a PDB whose Info identity (RSDS GUID+age or NB10
+  /// signature+age), DBI metadata, machine, and section table all agree with
+  /// the already loaded PE image.  A mismatched companion is an error rather
+  /// than a names-only context, because debug names affect downstream
+  /// semantic classification too.
   static llvm::Expected<std::unique_ptr<PDBDebugContext>>
   load(const std::filesystem::path &PdbPath, const BinaryImage &Image);
 
@@ -103,7 +108,11 @@ public:
   bool hasExactObjectMetadataPrerequisites() const;
 
 private:
-  PDBDebugContext() = default;
+  PDBDebugContext();
+  void commitFunctions(std::vector<FunctionSym> Functions, bool Authenticated);
+  friend llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  loadPdb20DebugContext(const std::filesystem::path &PdbPath,
+                        const BinaryImage &Image);
 
   struct Impl;
   std::unique_ptr<Impl> PImpl;

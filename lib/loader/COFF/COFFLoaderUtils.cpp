@@ -293,6 +293,52 @@ detail::parseCodeViewRSDS(llvm::ArrayRef<uint8_t> Bytes) {
   return Record;
 }
 
+llvm::Expected<detail::CodeViewRSDSRecord>
+detail::parseCodeViewNB10(llvm::ArrayRef<uint8_t> Bytes) {
+  using PDB20 = llvm::codeview::PDB20DebugInfo;
+  if (Bytes.size() < sizeof(PDB20) + 1)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "CodeView NB10 record is truncated");
+
+  PDB20 Info{};
+  std::memcpy(&Info, Bytes.data(), sizeof(Info));
+  if (Info.CVSignature != llvm::OMF::Signature::PDB20)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "CodeView record is not NB10/PDB20");
+
+  CodeViewRSDSRecord Record;
+  Record.Identity.Kind = PDBIdentityKind::NB10;
+  Record.Identity.Signature = Info.Signature;
+  Record.Identity.Age = Info.Age;
+  if (!Record.Identity.isValid())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "CodeView NB10 identity is invalid");
+
+  llvm::ArrayRef<uint8_t> PathBytes = Bytes.drop_front(sizeof(PDB20));
+  const auto End = std::find(PathBytes.begin(), PathBytes.end(), uint8_t{0});
+  if (End == PathBytes.end())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "CodeView NB10 path is unterminated");
+  Record.Path.assign(reinterpret_cast<const char *>(PathBytes.data()),
+                     static_cast<size_t>(End - PathBytes.begin()));
+  return Record;
+}
+
+llvm::Expected<detail::CodeViewRSDSRecord>
+detail::parseCodeViewIdentity(llvm::ArrayRef<uint8_t> Bytes) {
+  if (Bytes.size() < 4)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "CodeView record is truncated");
+  uint32_t Signature = 0;
+  std::memcpy(&Signature, Bytes.data(), sizeof(Signature));
+  if (Signature == llvm::OMF::Signature::PDB70)
+    return parseCodeViewRSDS(Bytes);
+  if (Signature == llvm::OMF::Signature::PDB20)
+    return parseCodeViewNB10(Bytes);
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 "CodeView record is not RSDS/NB10");
+}
+
 void detail::CodeViewIdentityRegistry::observe(
     const CodeViewRSDSRecord &Record) {
   if (!Record.Identity.isValid()) {
@@ -665,7 +711,7 @@ void parseDebugDirectory(const COFFObjectFile &Obj, BinaryImage &Img) {
       continue;
     }
 
-    auto Record = detail::parseCodeViewRSDS(*Payload);
+    auto Record = detail::parseCodeViewIdentity(*Payload);
     if (!Record) {
       llvm::consumeError(Record.takeError());
       Registry.observeMalformed();

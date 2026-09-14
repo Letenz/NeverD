@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDDebugInfo
   DWARFLoader.cpp
   DebugInfoDiscovery.cpp
   PDBLoader.cpp
+  PDB20Loader.cpp
   map/COFFLLDMapParser.cpp
   map/ELFMapParser.cpp
   map/GNUldMapParser.cpp

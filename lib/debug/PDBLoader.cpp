@@ -120,6 +120,7 @@ llvm::Error pdbLoadError(const llvm::Twine &Message) {
 
 PDBBuildIdentity pdbIdentity(const llvm::pdb::InfoStream &Info) {
   PDBBuildIdentity Identity;
+  Identity.Kind = PDBIdentityKind::RSDS;
   const llvm::codeview::GUID Guid = Info.getGuid();
   std::copy(std::begin(Guid.Guid), std::end(Guid.Guid), Identity.Guid.begin());
   Identity.Age = Info.getAge();
@@ -245,7 +246,17 @@ struct PDBDebugContext::Impl {
   bool Loaded = false;
 };
 
+PDBDebugContext::PDBDebugContext() = default;
 PDBDebugContext::~PDBDebugContext() = default;
+
+void PDBDebugContext::commitFunctions(std::vector<FunctionSym> Functions,
+                                      bool Authenticated) {
+  PImpl = std::make_unique<Impl>();
+  for (FunctionSym &FS : Functions)
+    PImpl->Functions[FS.Addr] = std::move(FS);
+  PImpl->ImageIdentityAuthenticated = Authenticated;
+  PImpl->Loaded = !PImpl->Functions.empty();
+}
 
 llvm::Expected<std::unique_ptr<PDBDebugContext>>
 PDBDebugContext::load(const std::filesystem::path &PdbPath,
@@ -256,8 +267,10 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
       !Image.DynInfo.CodeViewPDBIdentity)
     return pdbLoadError(
         Image.DynInfo.CodeViewPDBIdentityState == PDBIdentityState::Ambiguous
-            ? "PE CodeView RSDS identity is malformed or ambiguous"
-            : "PE image has no unique CodeView RSDS identity");
+            ? "PE CodeView identity is malformed or ambiguous"
+            : "PE image has no unique CodeView identity");
+  if (Image.DynInfo.CodeViewPDBIdentity->Kind == PDBIdentityKind::NB10)
+    return loadPdb20DebugContext(PdbPath, Image);
 
   auto Ctx = std::unique_ptr<PDBDebugContext>(new PDBDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
