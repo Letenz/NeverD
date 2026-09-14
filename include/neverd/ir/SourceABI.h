@@ -10,7 +10,9 @@ namespace neverd {
 /// equal, even when both references identify the same object.
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right);
 
-/// Assign Darwin's ordinary fixed scalar calling convention. This describes
+/// Assign Darwin's ordinary fixed scalar calling convention, including a
+/// 128-bit integer result in two registers (parameters remain at most 64 bits).
+/// This describes
 /// the requested scalar signature; it does not establish that a binary had
 /// that declaration. Inferred native hints must retain their observed
 /// locations.
@@ -23,7 +25,8 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                std::string &Diagnostic);
 
-/// Validate an explicit scalar register/stack description, including Swift
+/// Validate an explicit scalar register/stack description and integer-pair
+/// results, including Swift
 /// source hints whose receiver is in a dedicated register. This validates the
 /// description's shape; it does not authenticate its origin or truth.
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,

@@ -55,6 +55,10 @@ struct SourceFunctionTypeHint {
   Arch Architecture = Arch::Unknown;
   bool HasExplicitABI = false;
   SourceABIValueLocation ReturnLocation;
+  /// A 128-bit integer carrier returned in two canonical integer registers,
+  /// ordered from low to high bits. ReturnLocation must be empty when these
+  /// components are present. This transports bits, not a source struct type.
+  std::vector<SourceABIValueLocation> ReturnComponents;
 };
 
 } // namespace neverd

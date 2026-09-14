@@ -75,7 +75,7 @@ Fat 二進位檔案的 `--arch=auto` 優先順序是 arm64、arm、x86_64、i386
 
 Objective-C 匯出也支援一組固定、使用一般 C ABI 的 Swift 執行階段匯入：參照計數、原生及未知物件弱參照、物件中繼資料，以及存取檢查的開始與結束。產生的 C 保留這些呼叫，連結時需要 Swift 執行階段。專用暫存器入口、未知的 Swift 呼叫慣例及任意 Swift 符號仍不支援；匯入身分與純量載體必須精確符合。
 
-另一個獨立繫結支援 arm64 和 x86_64 上確切的 Darwin String → NSString 匯入 `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF`，保留 String 的兩個機器字、具所有權的物件回傳值及 Clang `swiftcall`；連結需要 Swift Foundation 和 Swift Core。反向橋接及其他 Swift 簽名仍不受支援。
+獨立綁定支援 arm64 和 x86_64 上精確的 Darwin String → NSString 匯入 `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF`，以及可選 NSString → String 匯入 `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ`。兩者均保留所有權語義和 Clang `swiftcall`；連結需要 Swift Foundation 與 Swift Core。反向橋接將傳回的兩個 String 機器字作為無號 128 位元整數傳遞，在建立 SSA 前拆入明確的傳回暫存器。這只是位元載體，不代表已還原 String 配置或通用聚合 ABI。未知簽章和不完整的初始化相依性仍不受支援。
 
 對於已確認的關聯物件 key 參數，NeverD 可將唯讀 Mach-O C 字串區域內的確定位址重建為共用的鍵識別。同一原始位址共用一個鍵，不同內部偏移保持不同身分。mobile 匯出會自動合併輔助函式；C API 在 `shared_identity_functions` 中列出名稱，跨方法原始碼檔案連結時，每個輔助函式只保留一個定義。這些鍵屬於重新建構的程式碼，不指向已載入的原始映像；其他用途的未繫結映像位址仍會阻止完整還原。
 

@@ -21,7 +21,7 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
     return Left->Size == 0;
   case NdTypeKind::Int:
     return Left->Size == 1 || Left->Size == 2 || Left->Size == 4 ||
-           Left->Size == 8;
+           Left->Size == 8 || Left->Size == 16;
   case NdTypeKind::Float:
     return Left->Size == 4 || Left->Size == 8;
   case NdTypeKind::Ptr:
@@ -116,10 +116,26 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
              (!IsReturn || Location.RegisterOffset == TRI.IntReturnReg);
     return false;
   };
-  if (Hint.ReturnType->Kind == NdTypeKind::Void) {
-    if (Hint.ReturnLocation.Kind != SourceABICarrierKind::None ||
-        Hint.ReturnLocation.ValueBytes != 0 ||
-        Hint.ReturnLocation.ExtendTo32Bits)
+  const auto EmptyLocation = [](const SourceABIValueLocation &Location) {
+    return Location.Kind == SourceABICarrierKind::None &&
+           Location.RegisterOffset == 0 && Location.EntryStackOffset == 0 &&
+           Location.ValueBytes == 0 && !Location.ExtendTo32Bits;
+  };
+  if (!Hint.ReturnComponents.empty()) {
+    if (Hint.ReturnType->Kind != NdTypeKind::Int ||
+        Hint.ReturnType->Size != 16 || Hint.ReturnComponents.size() != 2 ||
+        !EmptyLocation(Hint.ReturnLocation) || TRI.IntReturnRegs.size() < 2)
+      return fail(Diagnostic, "Unsupported source return components");
+    for (size_t I = 0; I != 2; ++I) {
+      const auto &Component = Hint.ReturnComponents[I];
+      if (Component.Kind != SourceABICarrierKind::IntegerRegister ||
+          Component.RegisterOffset != TRI.IntReturnRegs[I] ||
+          Component.EntryStackOffset != 0 || Component.ValueBytes != 8 ||
+          Component.ExtendTo32Bits)
+        return fail(Diagnostic, "Invalid source integer-pair return carrier");
+    }
+  } else if (Hint.ReturnType->Kind == NdTypeKind::Void) {
+    if (!EmptyLocation(Hint.ReturnLocation))
       return fail(Diagnostic,
                   "Void source result has a physical value carrier");
   } else if (!ValidLocation(Hint.ReturnType, Hint.ReturnLocation, true)) {
@@ -184,7 +200,13 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
     }
   }
   Hint.ReturnLocation = {};
-  if (Hint.ReturnType->Kind != NdTypeKind::Void) {
+  Hint.ReturnComponents.clear();
+  if (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16 &&
+      TRI.IntReturnRegs.size() >= 2) {
+    for (size_t I = 0; I != 2; ++I)
+      Hint.ReturnComponents.push_back(
+          {SourceABICarrierKind::IntegerRegister, TRI.IntReturnRegs[I], 0, 8});
+  } else if (Hint.ReturnType->Kind != NdTypeKind::Void) {
     if (!scalarType(Hint.ReturnType))
       return fail(Diagnostic, "Unsupported Darwin scalar return value");
     const bool Floating = Hint.ReturnType->Kind == NdTypeKind::Float;

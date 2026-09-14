@@ -91,7 +91,12 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   const bool ExplicitABI =
       Med.SourceTypeHint && Med.SourceTypeHint->HasExplicitABI;
 
-  if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].Id >= 0 &&
+  if (ExplicitABI && Med.SourceParametersBound &&
+      !Med.SourceTypeHint->ReturnComponents.empty() && CurOp.NumInputs == 1 &&
+      CurOp.Inputs[0].Size == Func.ReturnType->Size)
+    RetVal = medvarToExpr(CurOp.Inputs[0]);
+
+  if (!RetVal && CurOp.NumInputs >= 1 && CurOp.Inputs[0].Id >= 0 &&
       CurOp.Inputs[0].Kind == MedVar::Reg) {
     uint64_t RO = CurOp.Inputs[0].RegOff;
     if (!TRI.isFrameOrLinkReg(RO) && (!ExplicitABI || RO == ReturnReg))

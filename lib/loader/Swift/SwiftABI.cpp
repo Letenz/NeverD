@@ -426,6 +426,8 @@ public:
         !validateSourceABI(Explicit, Diagnostic))
       throw Unproven("Swift explicit argument ABI is not validated: " +
                      Diagnostic);
+    if (!Explicit.ReturnComponents.empty())
+      throw Unproven("Swift self proof does not model multi-register results");
     put(NdVar::reg(Regs.StackPointer, 8), {Value::Stack, 0, false, false});
     put(NdVar::reg(Image.Arch == Arch::AArch64 ? a64reg::X20 : reg::R13, 8),
         {Value::Self, 0, false, false});

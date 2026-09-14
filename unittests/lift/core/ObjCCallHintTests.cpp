@@ -525,6 +525,65 @@ TEST(ObjCCallHints,
   }
 }
 
+TEST(ObjCCallHints, NSStringBridgePreservesBothResultWordsAndExactImport) {
+  const std::string Name =
+      "_$sSS10FoundationE36_"
+      "unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    auto Image = runtimeImage(Name, Architecture);
+    auto Low = caller(Architecture);
+    Low.Blocks[0].Ops.insert(
+        Low.Blocks[0].Ops.begin() + 1,
+        operation(NdOp::COPY, NdVar::reg(TRI.IntReturnReg, 8),
+                  {NdVar::reg(TRI.IntReturnRegs[1], 8)}, 0x1204));
+    auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+    const auto &Hint = *Med.CallInfos[0].SourceCallHint;
+    EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::SwiftStringFromNSString);
+    ASSERT_EQ(Hint.Signature.ReturnComponents.size(), 2U);
+    ASSERT_EQ(Hint.Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Hint.Signature.ReturnType->Size, 16U);
+    EXPECT_EQ(Hint.Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    const auto High = MedToHighConverter().convert(Med, Architecture);
+    const auto *Expression = sourceCall(High);
+    ASSERT_NE(Expression, nullptr);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(Source.find("extern unsigned __int128 "
+                          "neverd_nsstring_to_swift_string(void *) __asm__(\"" +
+                          Name + "\") __attribute__((swiftcall));"),
+              std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("caller-saved register clobbered"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Changed = *Expression;
+      auto Wrong = std::make_shared<SourceCallTypeHint>(Hint);
+      if (Mutation == 0)
+        Wrong->Signature.ReturnComponents.pop_back();
+      else if (Mutation == 1)
+        std::swap(Wrong->Signature.ReturnComponents[0],
+                  Wrong->Signature.ReturnComponents[1]);
+      else if (Mutation == 2)
+        Wrong->CallKind = SourceCallTypeHint::Kind::SwiftStringBridge;
+      else
+        Wrong->TargetName += "_suffix";
+      Changed.SourceCallHint = std::move(Wrong);
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {})) << Mutation;
+    }
+    Image.DyldBindSlots[0x2180].Name = Name;
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, SwiftStringBridgeRejectsOtherABIsAndUnprovenImports) {
   const std::string Name =
       "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF";

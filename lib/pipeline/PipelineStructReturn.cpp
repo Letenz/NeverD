@@ -37,8 +37,11 @@ void recoverStructReturnFromCallers(const BinaryImage &Img,
       for (const auto &Blk : MF.Blocks)
         for (size_t I = 0; I < Blk.Ops.size(); ++I) {
           const auto &Op = Blk.Ops[I];
-          if (Op.Opcode != NdOp::CALL || Op.Output.Kind != MedVar::Temp ||
-              Op.NumInputs < 1 || !Op.Inputs[0].isConst())
+          // Source ABI components are projection metadata; they must not
+          // become caller-derived evidence for the binary rewrite ABI.
+          if (Op.SourceCallHint || Op.Opcode != NdOp::CALL ||
+              Op.Output.Kind != MedVar::Temp || Op.NumInputs < 1 ||
+              !Op.Inputs[0].isConst())
             continue;
           std::vector<MedReturnReg> Desc;
           for (size_t J = I + 1; J < Blk.Ops.size(); ++J) {

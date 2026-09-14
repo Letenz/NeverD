@@ -44,8 +44,12 @@ inline bool sameHint(const SourceFunctionTypeHint &Left,
       (Left.HasExplicitABI &&
        !sameLocation(Left.ReturnLocation, Right.ReturnLocation)) ||
       !equalSourceTypes(Left.ReturnType, Right.ReturnType) ||
+      Left.ReturnComponents.size() != Right.ReturnComponents.size() ||
       Left.Parameters.size() != Right.Parameters.size())
     return false;
+  for (size_t I = 0; I < Left.ReturnComponents.size(); ++I)
+    if (!sameLocation(Left.ReturnComponents[I], Right.ReturnComponents[I]))
+      return false;
   for (size_t Index = 0; Index < Left.Parameters.size(); ++Index)
     if (Left.Parameters[Index].Name != Right.Parameters[Index].Name ||
         !equalSourceTypes(Left.Parameters[Index].Type,

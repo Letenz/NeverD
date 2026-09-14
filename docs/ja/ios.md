@@ -75,7 +75,7 @@ Fat バイナリの `--arch=auto` は arm64、arm、x86_64、i386 の順に優�
 
 Objective-C 出力は、通常の C ABI を持つ限定された Swift ランタイムのインポートも扱います。対象は参照カウント、ネイティブおよび型不明オブジェクトの弱参照、オブジェクトのメタデータ、アクセス検査の開始と終了です。生成 C は呼び出しを保持し、リンクには Swift ランタイムが必要です。専用レジスタの入口、未知の Swift 呼び出し規約、任意の Swift シンボルは対象外で、インポートの識別情報とスカラーの格納位置が正確に一致する必要があります。
 
-別の専用バインドは、arm64 と x86_64 の Darwin String → NSString インポート `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` のみを扱います。String の両ワード、所有権付きの戻りオブジェクト、Clang `swiftcall` を保持し、リンクには Swift Foundation と Swift Core が必要です。逆方向のブリッジと他の Swift シグネチャは未対応です。
+arm64 と x86_64 では、Darwin の正確な String → NSString インポート `_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` と、オプショナル NSString → String インポート `_$sSS10FoundationE36_unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ` を個別にバインドします。所有権と Clang `swiftcall` を保持し、リンクには Swift Foundation と Swift Core が必要です。逆変換は返された String の 2 ワードを符号なし 128 ビット整数で運び、SSA の構築前に明示的な戻り値レジスタへ分割します。これはビットの搬送形式であり、復元された String レイアウトや汎用の集約 ABI ではありません。未知のシグネチャと不完全な初期化依存関係は引き続き未対応です。
 
 確認済みの関連オブジェクト API のキー引数では、読み取り専用 Mach-O C 文字列領域内の確定したアドレスを共有キーとして再構築できます。同じ元アドレスは同じキーを使い、異なる内部オフセットは別のキーを保ちます。mobile 出力は補助関数を自動的に統合します。C API は `shared_identity_functions` に名前を列挙するため、メソッドの翻訳単位をリンクする際は各補助関数の定義を一つにしてください。キーは再構築したコードに属し、ロード済みの元イメージは参照しません。それ以外の未解決イメージアドレスは復元上の制限として残ります。
 

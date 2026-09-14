@@ -42,28 +42,26 @@ inline void number(std::string &Key, uint64_t Value) {
   Key += ':';
 }
 inline void type(std::string &Key, const TypeRef &Type, unsigned Depth = 0) {
-  if (!Type || Depth > 16)
+  if (!Type || Depth > 16 || (Depth == 0 && !equalSourceTypes(Type, Type)))
     throw std::invalid_argument("Swift ABI projection has an invalid type");
-  if ((Type->Kind == NdTypeKind::Void && Type->Size != 0) ||
-      (Type->Kind == NdTypeKind::Int && Type->Size != 1 && Type->Size != 2 &&
-       Type->Size != 4 && Type->Size != 8) ||
-      (Type->Kind == NdTypeKind::Float && Type->Size != 4 && Type->Size != 8) ||
-      (Type->Kind == NdTypeKind::Ptr && Type->Size != 8) ||
-      (Type->Kind != NdTypeKind::Void && Type->Kind != NdTypeKind::Int &&
-       Type->Kind != NdTypeKind::Float && Type->Kind != NdTypeKind::Ptr))
-    throw std::invalid_argument(
-        "Swift ABI projection has an unsupported pointee type");
   number(Key, static_cast<unsigned>(Type->Kind));
   number(Key, Type->Size);
   number(Key, Type->IsSigned);
   if (Type->Kind == NdTypeKind::Ptr)
     type(Key, Type->Pointee, Depth + 1);
+  else if (Type->Kind == NdTypeKind::Func) {
+    type(Key, Type->RetType, Depth + 1);
+    number(Key, Type->ParamTypes.size());
+    for (const auto &Parameter : Type->ParamTypes)
+      type(Key, Parameter, Depth + 1);
+  }
 }
 inline void location(std::string &Key, const SourceABIValueLocation &Location) {
   number(Key, static_cast<unsigned>(Location.Kind));
   number(Key, Location.RegisterOffset);
   number(Key, static_cast<uint64_t>(Location.EntryStackOffset));
   number(Key, Location.ValueBytes);
+  number(Key, Location.ExtendTo32Bits);
 }
 inline std::string key(const SourceFunctionTypeHint &Hint) {
   std::string Diagnostic;
@@ -75,6 +73,9 @@ inline std::string key(const SourceFunctionTypeHint &Hint) {
   number(Key, Hint.HasExplicitABI);
   type(Key, Hint.ReturnType);
   location(Key, Hint.ReturnLocation);
+  number(Key, Hint.ReturnComponents.size());
+  for (const auto &Component : Hint.ReturnComponents)
+    location(Key, Component);
   number(Key, Hint.Parameters.size());
   for (const auto &Parameter : Hint.Parameters) {
     number(Key, Parameter.Name.size());

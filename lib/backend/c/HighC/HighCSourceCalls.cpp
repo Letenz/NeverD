@@ -38,6 +38,10 @@ bool scalar(const TypeRef &Type) {
                                            Type->Size == 4 || Type->Size == 8);
 }
 
+bool integerPair(const TypeRef &Type) {
+  return Type && Type->Kind == NdTypeKind::Int && Type->Size == 16;
+}
+
 std::string bad(llvm::StringRef Reason) {
   return "(0 /* bad source call: " + Reason.str() + " */)";
 }
@@ -47,6 +51,8 @@ std::string bad(llvm::StringRef Reason) {
 std::optional<std::string> sourceValue(llvm::StringRef Text,
                                        const TypeRef &Carrier,
                                        const TypeRef &Source) {
+  if (integerPair(Carrier) && integerPair(Source))
+    return "(" + typeToC(Source) + ")(" + Text.str() + ")";
   if (!scalar(Carrier) || !scalar(Source) || Carrier->Size != Source->Size)
     return std::nullopt;
   const bool CarrierFloat = Carrier->Kind == NdTypeKind::Float;
@@ -182,14 +188,20 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::ObjCRuntimeCall &&
       Hint.CallKind != Kind::SwiftRuntimeCall &&
       Hint.CallKind != Kind::SwiftStringBridge &&
+      Hint.CallKind != Kind::SwiftStringFromNSString &&
       Hint.CallKind != Kind::DarwinRuntimeCall)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
       E.Operands.size() != Signature.Parameters.size())
     return bad("argument count disagrees with the source declaration");
+  std::string ABIDiagnostic;
+  if (Signature.HasExplicitABI && !validateSourceABI(Signature, ABIDiagnostic))
+    return bad("invalid source ABI declaration");
+  const bool PairResult = integerPair(Signature.ReturnType) &&
+                          validateSourceABI(Signature, ABIDiagnostic);
   if (!Signature.ReturnType ||
       (Signature.ReturnType->Kind != NdTypeKind::Void &&
-       !scalar(Signature.ReturnType)))
+       !scalar(Signature.ReturnType) && !PairResult))
     return bad("unsupported result type");
   for (const auto &Parameter : Signature.Parameters)
     if (!scalar(Parameter.Type))
@@ -234,11 +246,14 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     const bool Runtime = Hint.CallKind == Kind::ObjCRuntimeCall ||
                          Hint.CallKind == Kind::SwiftRuntimeCall ||
                          Hint.CallKind == Kind::SwiftStringBridge ||
+                         Hint.CallKind == Kind::SwiftStringFromNSString ||
                          Hint.CallKind == Kind::DarwinRuntimeCall;
     if (Runtime)
       Name = Hint.TargetName;
     if (Hint.CallKind == Kind::SwiftStringBridge)
       Name = "neverd_swift_string_to_nsstring";
+    else if (Hint.CallKind == Kind::SwiftStringFromNSString)
+      Name = "neverd_nsstring_to_swift_string";
     const auto *Definition =
         Runtime ? nullptr : sourceCallDefinition(Hint, Name);
     if (Hint.TargetAddress && !Definition && DefinedFuncs.count(Name))

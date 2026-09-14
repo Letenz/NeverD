@@ -106,6 +106,35 @@ TEST(SwiftABIProjectionPlan, RegisterAndStackLocationsArePartOfTheFullHint) {
   EXPECT_EQ(Plan.Batches.size(), 4U);
 }
 
+TEST(SwiftABIProjectionPlan, PairResultsAndCallbackTypesKeepCompleteABIKeys) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Pair = signature(NdType::makeInt(8), Architecture);
+    Pair.ReturnType = NdType::makeInt(16, false);
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Pair, Architecture, Diagnostic));
+    auto Scalar = signature(NdType::makeInt(8), Architecture);
+    auto Callback = signature(
+        NdType::makePtr(NdType::makeFunc(NdType::makeInt(8))), Architecture);
+    auto OtherCallback = signature(
+        NdType::makePtr(NdType::makeFunc(NdType::makeVoid())), Architecture);
+    auto Plan = planABIProjections(
+        {row(0, 0x1000, Pair), row(1, 0x1000, Scalar), row(2, 0x1000, Callback),
+         row(3, 0x1000, OtherCallback)},
+        {});
+    EXPECT_EQ(Plan.Batches.size(), 4U);
+    Pair.ReturnComponents.pop_back();
+    EXPECT_THROW(planABIProjections({row(0, 0x1000, Pair)}, {}),
+                 std::invalid_argument);
+  }
+  auto Extended = signature(NdType::makeInt(1), Arch::AArch64);
+  auto Unextended = Extended;
+  Unextended.ReturnLocation.ExtendTo32Bits = false;
+  EXPECT_EQ(planABIProjections(
+                {row(0, 0x1000, Extended), row(1, 0x1000, Unextended)}, {})
+                .Batches.size(),
+            2U);
+}
+
 TEST(SwiftABIProjectionPlan,
      NamesSignednessOriginAndPointeeTypesNeverCoalesce) {
   auto A = signature(NdType::makePtr(NdType::makeInt(4)));
@@ -160,7 +189,8 @@ TEST(SwiftABIProjectionPlan,
   Aggregate->Size = 8;
   Aggregate->ArrayCount = 2;
   Aggregate->ElemType = NdType::makeInt(4);
-  Invalid = row(0, 0x1000, signature(NdType::makePtr(Aggregate)));
+  Invalid = A;
+  Invalid.Hint.Parameters[0].Type = NdType::makePtr(Aggregate);
   EXPECT_THROW(planABIProjections({Invalid}, {}), std::invalid_argument);
 }
 

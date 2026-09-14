@@ -137,6 +137,7 @@ public:
   bool NeedsObjCSuper2 = false;
   bool NeedsDarwinLocks = false;
   bool NeedsSwiftStringBridge = false;
+  bool NeedsSwiftStringFromNSString = false;
   std::set<std::string> SourceObjectAddressHelpers;
   std::set<std::string> SourceBlockIsaNames;
   std::set<const HighFunc *> SourceAddressDefinitions;

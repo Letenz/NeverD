@@ -5,6 +5,7 @@
 
 @interface NDSwiftString : NSObject
 - (NSString *)bridgeWord:(uint64_t)word storage:(void *)storage;
+- (NSString *)roundTrip:(NSString *)object;
 @end
 extern int32_t nd_swift_string_case_count(void);
 extern void nd_swift_string_words(int32_t, uint64_t *);
@@ -36,9 +37,17 @@ int main(void) {
         if (![actual isEqualToString:expected])
           return 2;
         [actual release];
+        @autoreleasepool {
+          actual = [[box roundTrip:expected] retain];
+        }
+        if (![actual isEqualToString:expected])
+          return 3;
+        [actual release];
         [expected release];
       }
     }
+    if (![[box roundTrip:nil] isEqualToString:@""])
+      return 4;
     [box release];
   }
   puts("swift-string=pass\ncontents=pass\nlifetime=pass");

@@ -72,8 +72,24 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
       if (Op.Opcode == NdOp::RETURN && EntrySignature &&
-          EntrySignature->ReturnLocation.Kind ==
-              SourceABICarrierKind::IntegerRegister) {
+          !EntrySignature->ReturnComponents.empty()) {
+        // Publish both physical dependencies before SSA. They are separate
+        // registers, not one contiguous register-bank slice (notably RAX/RDX).
+        MedOp Result;
+        Result.Opcode = NdOp::CONCAT;
+        Result.Addr = Op.Addr;
+        Result.Output = Temporary(EntrySignature->ReturnType->Size);
+        for (const auto I : {1U, 0U}) {
+          const auto &Piece = EntrySignature->ReturnComponents[I];
+          Result.addInput(ndVarToMedVar(
+              NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes)));
+        }
+        Op.NumInputs = 0;
+        Op.addInput(Result.Output);
+        Ops.push_back(std::move(Result));
+      } else if (Op.Opcode == NdOp::RETURN && EntrySignature &&
+                 EntrySignature->ReturnLocation.Kind ==
+                     SourceABICarrierKind::IntegerRegister) {
         // RET itself does not read X0/RAX. Publish the declared source lane
         // before SSA so PHIs carry its low bytes without requiring unknown
         // upper bits from a narrow call result.
@@ -161,8 +177,22 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
                       : ndVarToMedVar(NdVar::reg(Return.RegisterOffset,
                                                  Return.ValueBytes));
       std::vector<MedOp> ReturnOps;
-      if (Return.Kind == SourceABICarrierKind::IntegerRegister &&
-          Return.ValueBytes < 8) {
+      if (!Signature.ReturnComponents.empty()) {
+        Op.Output = Temporary(Signature.ReturnType->Size);
+        uint16_t Offset = 0;
+        for (const auto &Piece : Signature.ReturnComponents) {
+          MedOp Extract;
+          Extract.Opcode = NdOp::SUBBYTES;
+          Extract.Addr = Op.Addr;
+          Extract.Output =
+              ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes));
+          Extract.addInput(Op.Output);
+          Extract.addInput(MedVar::makeConst(Offset, 4));
+          Offset += Piece.ValueBytes;
+          ReturnOps.push_back(std::move(Extract));
+        }
+      } else if (Return.Kind == SourceABICarrierKind::IntegerRegister &&
+                 Return.ValueBytes < 8) {
         // A scalar ABI result does not define the rest of its register. Keep
         // those bits tied to this call's unknown clobber instead of either
         // preserving the pre-call input or inventing an architectural write.

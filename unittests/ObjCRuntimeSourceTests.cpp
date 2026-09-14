@@ -129,7 +129,7 @@ void verifyRuntime(bool Chained,
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DiagnosticReports ? 5U
-                             : SwiftStrings    ? 1U
+                             : SwiftStrings    ? 2U
                              : SwiftCalls      ? 9U
                                                : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
@@ -160,7 +160,7 @@ void verifyRuntime(bool Chained,
     Remaining = {"add:",   "value",       "tryAdd:",       "lock",
                  "unlock", "assertOwner", "assertNotOwner"};
   if (SwiftStrings)
-    Remaining = {"bridgeWord:storage:"};
+    Remaining = {"bridgeWord:storage:", "roundTrip:"};
   if (DiagnosticReports)
     Remaining = {"initializer", "initializerInFile", "fatal", "fatalInFile",
                  "terminal"};

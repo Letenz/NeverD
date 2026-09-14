@@ -1,3 +1,4 @@
+#include "../../../lib/pipeline/PipelineReturnModelingDetail.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -9,6 +10,8 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -22,6 +25,112 @@
 
 namespace {
 using namespace neverd;
+
+TEST(SourceABI, DarwinIntegerPairResultRequiresBothReturnRegisters) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeInt(16, false);
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic))
+        << Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Hint, Diagnostic)) << Diagnostic;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
+    EXPECT_EQ(Hint.ReturnLocation.Kind, SourceABICarrierKind::None);
+    for (unsigned I = 0; I != 2; ++I) {
+      EXPECT_EQ(Hint.ReturnComponents[I].RegisterOffset, TRI.IntReturnRegs[I]);
+      EXPECT_EQ(Hint.ReturnComponents[I].ValueBytes, 8U);
+    }
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      auto Bad = Hint;
+      switch (Mutation) {
+      case 0:
+        Bad.ReturnComponents.pop_back();
+        break;
+      case 1:
+        Bad.ReturnComponents[1] = Bad.ReturnComponents[0];
+        break;
+      case 2:
+        std::swap(Bad.ReturnComponents[0], Bad.ReturnComponents[1]);
+        break;
+      case 3:
+        Bad.ReturnComponents[1].ValueBytes = 4;
+        break;
+      case 4:
+        Bad.ReturnComponents[1].ExtendTo32Bits = true;
+        break;
+      case 5:
+        Bad.ReturnComponents[1].EntryStackOffset = 8;
+        break;
+      case 6:
+        Bad.ReturnComponents[1].Kind = SourceABICarrierKind::FloatingRegister;
+        break;
+      case 7:
+        Bad.ReturnLocation = Bad.ReturnComponents[0];
+        break;
+      case 8:
+        Bad.ReturnType = NdType::makeVoid();
+        break;
+      case 9:
+        Bad.ReturnType = NdType::makeInt(8);
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Bad, Diagnostic)) << Mutation;
+    }
+    Hint.ReturnType = NdType::makeInt(8);
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic));
+    EXPECT_TRUE(Hint.ReturnComponents.empty());
+    Hint.Parameters = {{"wide", NdType::makeInt(16)}};
+    EXPECT_FALSE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic));
+  }
+}
+
+TEST(SourceABI, SourceReturnComponentsNeverBecomeRewriteABIEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    BinaryImage Image;
+    Image.Arch = Architecture;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    PipelineResult Result;
+    Result.MedFuncs.resize(2);
+    auto &Caller = Result.MedFuncs[0];
+    auto &Callee = Result.MedFuncs[1];
+    Caller.Entry = 0x1000;
+    Callee.Entry = 0x2000;
+    Caller.Blocks.resize(1);
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Output.Kind = MedVar::Temp;
+    Call.Output.Id = 10;
+    Call.Output.Size = 16;
+    Call.addInput(MedVar::makeConst(Callee.Entry, 8));
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->Signature.ReturnType = NdType::makeInt(16, false);
+    std::string Diagnostic;
+    ASSERT_TRUE(
+        assignDarwinScalarSourceABI(Hint->Signature, Architecture, Diagnostic));
+    Call.SourceCallHint = Hint;
+    Caller.Blocks[0].Ops.push_back(Call);
+    for (unsigned I = 0; I != 2; ++I) {
+      MedOp Extract;
+      Extract.Opcode = NdOp::SUBBYTES;
+      Extract.Output.Kind = MedVar::Reg;
+      Extract.Output.Id = 11 + I;
+      Extract.Output.Size = 8;
+      Extract.Output.RegOff = TRI.IntReturnRegs[I];
+      Extract.addInput(Call.Output);
+      Extract.addInput(MedVar::makeConst(I * 8, 4));
+      Caller.Blocks[0].Ops.push_back(Extract);
+    }
+    recoverStructReturnFromCallers(Image, Result);
+    EXPECT_TRUE(Callee.MultiReturn.empty());
+    // Preserve the ordinary aggregate-remodeling path when no source hint
+    // supplies the extracts; source annotation must be the deciding boundary.
+    Caller.Blocks[0].Ops[0].SourceCallHint.reset();
+    recoverStructReturnFromCallers(Image, Result);
+    ASSERT_EQ(Callee.MultiReturn.size(), 2U);
+    EXPECT_EQ(Callee.MultiReturn[1].RegOff, TRI.IntReturnRegs[1]);
+  }
+}
 
 TEST(SourceABI, CallbackTypesKeepTheirSignaturesAndRejectMalformedGraphs) {
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
@@ -486,6 +595,146 @@ void executeC(const std::string &Source) {
     EXPECT_EQ(Status, 0) << Error
                          << (Errors ? (*Errors)->getBuffer().str() : "") << '\n'
                          << Source;
+  }
+}
+
+TEST(SourceABI, IntegerPairCallsPreserveBothWordsThroughSSAAndReturns) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto &TRI = getTargetRegInfo(Architecture);
+    SourceFunctionTypeHint Pair;
+    Pair.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Pair.ReturnType = NdType::makeInt(16, false);
+    std::string Diagnostic;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Pair, Architecture, Diagnostic));
+    std::map<va_t, SourceFunctionTypeHint> Hints{{0x1100, Pair}};
+    auto Scalar = Pair;
+    Scalar.ReturnType = NdType::makeInt(8, false);
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Scalar, Architecture, Diagnostic));
+    Hints[0x1150] = Scalar;
+    std::vector<HighFunc> Functions;
+    auto Operation = [](NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Addr = 0x1200;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    for (unsigned Mode = 0; Mode != 5; ++Mode) {
+      LowFunc Low;
+      Low.Entry = 0x1200;
+      Low.Name = "pair_mode_" + std::to_string(Mode);
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Low.Entry;
+      Block.EndAddr = 0x1220;
+      Block.Ops.push_back(Operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                                    {NdVar::cst(0x1100, 8)}));
+      auto Entry = Pair;
+      if (Mode == 1) {
+        Entry.ReturnType = NdType::makeInt(8, false);
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Entry, Architecture, Diagnostic));
+        Block.Ops.push_back(Operation(NdOp::COPY,
+                                      NdVar::reg(TRI.IntReturnReg, 8),
+                                      {NdVar::reg(TRI.IntReturnRegs[1], 8)}));
+      } else if (Mode == 2) {
+        Block.Ops.push_back(Operation(NdOp::COPY,
+                                      NdVar::reg(TRI.IntReturnRegs[1], 8),
+                                      {NdVar::cst(0x123456789abcdef0ULL, 8)}));
+      } else if (Mode == 3) {
+        // A later scalar call still destroys the second word. The source
+        // declaration of the earlier call cannot make that clobber disappear.
+        Block.Ops.push_back(Operation(NdOp::CALL,
+                                      NdVar::reg(TRI.IntReturnReg, 8),
+                                      {NdVar::cst(0x1150, 8)}));
+      }
+      Block.Ops.push_back(Operation(NdOp::RETURN, {}, {}));
+      Low.Blocks.push_back(Block);
+      if (Mode == 4) {
+        Low.Blocks.resize(4);
+        Low.Blocks[0].Ops.back() =
+            Operation(NdOp::COND_BR, {},
+                      {NdVar::cst(0x1400, 8), NdVar::reg(TRI.IntReturnReg, 1)});
+        Low.Blocks[0].Succs = {1, 2};
+        for (unsigned I = 1; I != 4; ++I) {
+          auto &B = Low.Blocks[I];
+          B.Id = I;
+          B.StartAddr = 0x1200 + I * 0x100;
+          B.EndAddr = B.StartAddr + 0x10;
+          if (I != 3) {
+            B.Preds = {0};
+            B.Succs = {3};
+            if (I == 2)
+              B.Ops.push_back(Operation(NdOp::COPY,
+                                        NdVar::reg(TRI.IntReturnRegs[1], 8),
+                                        {NdVar::cst(17, 8)}));
+            B.Ops.push_back(
+                Operation(NdOp::BRANCH, {}, {NdVar::cst(0x1500, 8)}));
+          } else {
+            B.Preds = {1, 2};
+            B.Ops.push_back(Operation(NdOp::RETURN, {}, {}));
+          }
+        }
+      }
+      Hints[Low.Entry] = Entry;
+      LowToMedConverter Converter;
+      Converter.setSourceCallHintsEnabled(true);
+      Converter.setSourceCalleeTypeHints(&Hints);
+      auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+      recoverCallAbi(Med, Architecture, {});
+      Med.SourceTypeHint = Entry;
+      inferMedTypes(Med, Architecture);
+      auto High = MedToHighConverter().convert(Med, Architecture);
+      EXPECT_TRUE(Med.MultiReturn.empty());
+      if (Mode == 3) {
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        EXPECT_NE(Source.find("caller-saved register clobbered"),
+                  std::string::npos)
+            << Source;
+      } else {
+        Functions.push_back(std::move(High));
+      }
+    }
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    EXPECT_EQ(Source.find("caller-saved register clobbered"), std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    Source += R"(
+static uint64_t low_word, high_word;
+static unsigned calls;
+unsigned __int128 sub_1100(void) {
+  ++calls;
+  return ((unsigned __int128)high_word << 64) | low_word;
+}
+int main(void) {
+  for (unsigned i = 0; i != 4096; ++i) {
+    low_word = UINT64_C(0x9e3779b97f4a7c15) * i;
+    high_word = UINT64_C(0xfedcba9876543210) ^ ~low_word;
+    unsigned __int128 expected = ((unsigned __int128)high_word << 64) | low_word;
+    calls = 0;
+    if (pair_mode_0() != expected || calls != 1) return 1;
+    if (pair_mode_1() != high_word || calls != 2) return 2;
+    expected = ((unsigned __int128)UINT64_C(0x123456789abcdef0) << 64) | low_word;
+    if (pair_mode_2() != expected || calls != 3) return 3;
+    expected = ((unsigned __int128)((uint8_t)low_word ? 17 : high_word) << 64) | low_word;
+    if (pair_mode_4() != expected || calls != 4) return 4;
+  }
+  return 0;
+}
+)";
+    ASSERT_NO_FATAL_FAILURE(executeC(Source));
   }
 }
 

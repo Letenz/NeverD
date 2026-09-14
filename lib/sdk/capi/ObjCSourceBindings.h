@@ -43,6 +43,7 @@ runtimeSourceCallHint(const BinaryImage &Image,
   case Kind::SwiftRuntimeCall:
     return swiftRuntimeSourceCallHint(Image, Binding.TargetAddress);
   case Kind::SwiftStringBridge:
+  case Kind::SwiftStringFromNSString:
     return swiftStringSourceCallHint(Image, Binding.TargetAddress);
   case Kind::DarwinRuntimeCall:
     return darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
@@ -612,6 +613,7 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
+      Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringFromNSString ||
       Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
     // HighIR retains the original veneer spelling in CallTarget. The source

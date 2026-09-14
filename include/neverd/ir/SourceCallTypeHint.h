@@ -44,7 +44,10 @@ struct SourceCallTypeHint {
     SwiftStringBridge,
     /// Bytes copied for a proven bounded, read-only, nonescaping consumer.
     /// This reproduces contents, not the original pointer's identity.
-    RuntimeBorrowedBytes
+    RuntimeBorrowedBytes,
+    /// The fixed optional-NSString-to-String bridge. Its owned String bits
+    /// occupy two return registers; emitted calls retain the Swift convention.
+    SwiftStringFromNSString
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;

@@ -925,6 +925,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   sdk/ObjCBlockSourceTests.cpp
   sdk/ObjCSourceBindingTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
+  sdk/SwiftABIProjectionPlanTests.cpp
   LINK_COMPONENTS
   BackendC
   Pipeline
