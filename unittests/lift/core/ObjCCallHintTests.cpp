@@ -213,6 +213,64 @@ TEST(ObjCCallHints, FrameworkDeclarationsKeepMissingAndConflictingEvidence) {
   EXPECT_EQ(buildObjCSourceCallHints(Image, caller()).size(), 1U);
 }
 
+TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ObjCMethods.clear();
+    const std::string Foundation =
+        "/System/Library/Frameworks/Foundation.framework/Foundation";
+    const std::string CoreData =
+        "/System/Library/Frameworks/CoreData.framework/CoreData";
+    Image.DynInfo.NeededLibs = {Foundation};
+    auto Options = objcSelectorSourceTypeHint(Image, "options");
+    ASSERT_TRUE(Options);
+    EXPECT_EQ(Options->ReturnType->Kind, NdTypeKind::Int);
+    Image.DynInfo.NeededLibs = {CoreData};
+    Options = objcSelectorSourceTypeHint(Image, "options");
+    ASSERT_TRUE(Options);
+    EXPECT_EQ(Options->ReturnType->Kind, NdTypeKind::Ptr);
+    for (const bool Reverse : {false, true}) {
+      Image.DynInfo.NeededLibs = Reverse ? std::vector{CoreData, Foundation}
+                                         : std::vector{Foundation, CoreData};
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "options"));
+    }
+    constexpr auto Selector = "executeFetchRequest:error:";
+    for (const auto *Module :
+         {"/tmp/CoreData.framework/CoreData",
+          "/System/Library/Frameworks/CoreData.framework/Versions/C/CoreData",
+          "/System/Library/Frameworks/Foundation.framework/Foundation"}) {
+      Image.DynInfo.NeededLibs = {Module};
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector)) << Module;
+    }
+    for (const auto *Module :
+         {"/System/Library/Frameworks/CoreData.framework/CoreData",
+          "/System/Library/Frameworks/CoreData.framework/Versions/A/"
+          "CoreData"}) {
+      Image.DynInfo.NeededLibs = {Module};
+      auto Hint = objcSelectorSourceTypeHint(Image, Selector);
+      ASSERT_TRUE(Hint) << Module;
+      EXPECT_EQ(Hint->Architecture, Architecture);
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+      ASSERT_EQ(Hint->Parameters.size(), 4U);
+      EXPECT_EQ(Hint->Parameters[3].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "doubleValue"));
+      Image.DynInfo.NeededLibs.push_back(
+          "/System/Library/Frameworks/Foundation.framework/Foundation");
+      EXPECT_TRUE(objcSelectorSourceTypeHint(Image, "doubleValue"));
+      ObjCMethod Conflict;
+      Conflict.Selector = Selector;
+      Conflict.TypeHint = signature(Architecture, 0);
+      Image.ObjCMethods.push_back(Conflict);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector));
+      Image.ObjCMethods.clear();
+      EXPECT_EQ(bool(objcSelectorSourceTypeHint(Image, "save:")),
+                Architecture == Arch::AArch64);
+      Image.DynInfo.NeededLibs.clear();
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector));
+    }
+  }
+}
+
 TEST(ObjCCallHints, FrameworkVariadicAndAggregateCallsRemainUnbound) {
   auto Image = image();
   Image.ObjCMethods.clear();

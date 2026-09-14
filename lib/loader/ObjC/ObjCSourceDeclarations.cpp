@@ -31,56 +31,88 @@ bool mergeSignature(SourceFunctionTypeHint &A,
 using DeclarationIndex =
     std::map<std::string, std::optional<SourceFunctionTypeHint>, std::less<>>;
 
-DeclarationIndex foundationDeclarations(Arch Architecture) {
-  static constexpr struct {
-    const char *Selector;
-    const char *AArch64;
-    const char *X64;
-  } Declarations[] = {
-#include "ObjCFoundationDeclarations.inc"
-  };
-  DeclarationIndex Result;
-  for (const auto &Declaration : Declarations) {
-    const auto *Encoding =
-        Architecture == Arch::AArch64 ? Declaration.AArch64 : Declaration.X64;
+struct FrameworkDeclarations {
+  std::string Modules;
+  DeclarationIndex Selectors;
+};
+using FrameworkCatalog = std::map<std::string, FrameworkDeclarations>;
+
+FrameworkCatalog buildFrameworkDeclarations(Arch Architecture) {
+  FrameworkCatalog Result;
+  auto Add = [&](DeclarationIndex &Index, const char *Selector,
+                 const char *Encoding) {
     if (!Encoding)
-      continue;
-    auto Hint = parseObjCMethodEncoding(Declaration.Selector, Encoding);
+      return;
+    auto Hint = parseObjCMethodEncoding(Selector, Encoding);
     std::string Diagnostic;
     if (Hint) {
       Hint->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
       if (!assignDarwinObjCSourceABI(*Hint, Architecture, Diagnostic))
         Hint.reset();
     }
-    auto [It, Inserted] = Result.try_emplace(Declaration.Selector, Hint);
+    auto [It, Inserted] = Index.try_emplace(Selector, Hint);
     // Negative evidence survives later valid declarations and their order.
     if (!Inserted && It->second &&
         (!Hint || !mergeSignature(*It->second, *Hint)))
       It->second.reset();
+  };
+  static constexpr struct {
+    const char *Selector;
+    const char *AArch64;
+    const char *X64;
+  } Foundation[] = {
+#include "ObjCFoundationDeclarations.inc"
+  };
+  auto &Base = Result["Foundation"];
+  Base.Modules =
+      "/System/Library/Frameworks/Foundation.framework/Foundation|"
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation";
+  for (const auto &D : Foundation)
+    Add(Base.Selectors, D.Selector,
+        Architecture == Arch::AArch64 ? D.AArch64 : D.X64);
+  static constexpr struct {
+    const char *Framework;
+    const char *Modules;
+    const char *Selector;
+    const char *AArch64;
+    const char *X64;
+  } Frameworks[] = {
+#include "ObjCFrameworkDeclarations.inc"
+  };
+  for (const auto &D : Frameworks) {
+    auto &Framework = Result[D.Framework];
+    Framework.Modules = D.Modules;
+    Add(Framework.Selectors, D.Selector,
+        Architecture == Arch::AArch64 ? D.AArch64 : D.X64);
   }
   return Result;
 }
 
-const DeclarationIndex *frameworkDeclarations(const BinaryImage &Image) {
-  bool Foundation = false;
-  for (const auto &Name : Image.DynInfo.NeededLibs)
-    Foundation |=
-        Name == "/System/Library/Frameworks/Foundation.framework/Foundation" ||
-        Name == "/System/Library/Frameworks/Foundation.framework/Versions/C/"
-                "Foundation";
-  if (!Foundation)
-    return nullptr;
-  // Compiler-derived facts are immutable and shared between sessions. Image
-  // metadata is never cached here, so reloads and conflicts remain observable.
-  if (Image.Arch == Arch::AArch64) {
-    static const auto Declarations = foundationDeclarations(Arch::AArch64);
+const FrameworkCatalog *frameworkDeclarations(Arch Architecture) {
+  // Compiler facts are immutable. Activation and binary metadata are checked
+  // on every query, so another image or reload cannot retain a framework.
+  if (Architecture == Arch::AArch64) {
+    static const auto Declarations = buildFrameworkDeclarations(Arch::AArch64);
     return &Declarations;
   }
-  if (Image.Arch == Arch::X64) {
-    static const auto Declarations = foundationDeclarations(Arch::X64);
+  if (Architecture == Arch::X64) {
+    static const auto Declarations = buildFrameworkDeclarations(Arch::X64);
     return &Declarations;
   }
   return nullptr;
+}
+
+bool usesFramework(const BinaryImage &Image,
+                   const FrameworkDeclarations &Framework) {
+  llvm::StringRef Modules(Framework.Modules);
+  while (!Modules.empty()) {
+    const auto [Module, Rest] = Modules.split('|');
+    for (const auto &Needed : Image.DynInfo.NeededLibs)
+      if (Needed == Module)
+        return true;
+    Modules = Rest;
+  }
+  return false;
 }
 } // namespace
 
@@ -115,17 +147,24 @@ selectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
     for (const auto &Method : Protocol.Methods)
       if (!Include(Method))
         return std::nullopt;
-  if (const auto *Declarations = frameworkDeclarations(Image)) {
-    auto Found = Declarations->find(Selector.str());
-    if (Found != Declarations->end()) {
-      const auto *Declared = Found->second ? &*Found->second : FormatSignature;
+  if (const auto *Catalog = frameworkDeclarations(Image.Arch))
+    for (const auto &[Name, Framework] : *Catalog) {
+      if (!usesFramework(Image, Framework))
+        continue;
+      auto Found = Framework.Selectors.find(Selector.str());
+      if (Found == Framework.Selectors.end())
+        continue;
+      // The format catalog currently belongs to Foundation. A negative
+      // declaration from another framework must not inherit that contract.
+      const auto *Declared = Found->second          ? &*Found->second
+                             : Name == "Foundation" ? FormatSignature
+                                                    : nullptr;
       if (!Declared || (Result && !mergeSignature(*Result, *Declared)))
         return std::nullopt;
       if (!Result)
         Result = *Declared;
       Result->Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
     }
-  }
   return Result;
 }
 
@@ -137,11 +176,14 @@ objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector) {
 std::optional<ObjCFormatDeclaration>
 objcSelectorFormatDeclaration(const BinaryImage &Image,
                               llvm::StringRef Selector) {
-  const auto *Framework = frameworkDeclarations(Image);
-  if (!Framework)
+  const auto *Catalog = frameworkDeclarations(Image.Arch);
+  if (!Catalog)
     return std::nullopt;
-  const auto Ordinary = Framework->find(Selector.str());
-  if (Ordinary == Framework->end() || Ordinary->second)
+  const auto &Foundation = Catalog->at("Foundation");
+  if (!usesFramework(Image, Foundation))
+    return std::nullopt;
+  const auto Ordinary = Foundation.Selectors.find(Selector.str());
+  if (Ordinary == Foundation.Selectors.end() || Ordinary->second)
     return std::nullopt;
   static constexpr struct {
     const char *Selector;

@@ -147,6 +147,7 @@ jobs:
             scripts.tests.test_audit_evm_opcode_metadata \
             scripts.tests.test_eh_signature_generation \
             scripts.tests.test_generate_objc_declarations \
+            scripts.tests.test_generate_objc_framework_declarations \
             scripts.tests.test_generate_objc_format_declarations \
             scripts.tests.test_generate_darwin_format_declarations \
             scripts.tests.test_generate_darwin_block_declarations \
@@ -854,6 +855,8 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameworkDeclarationsSupplyAbsentScalarCallSignatures",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameworkProvidersRequireExactActivationAndAgreement",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameworkDeclarationsKeepMissingAndConflictingEvidence",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameworkVariadicAndAggregateCallsRemainUnbound",
@@ -876,13 +879,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 311,
-              ("macOS", "macos-patch"): 323,
-              ("Windows", "windows-focused"): 307,
+              ("Linux", "linux-semantic"): 312,
+              ("macOS", "macos-patch"): 325,
+              ("Windows", "windows-focused"): 308,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.RecompiledFrameworkFetchesPreserveContextObjects",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",

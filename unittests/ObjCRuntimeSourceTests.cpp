@@ -53,6 +53,7 @@ enum class RuntimeFixture {
   NativePointers,
   Foundation,
   BlockLifetimes,
+  CoreData,
   DarwinDeclarations
 };
 
@@ -61,6 +62,7 @@ void verifyRuntime(bool Chained,
                    bool Profiled = false, bool ManualBlocks = false) {
   const bool DarwinDeclarations =
       FixtureKind == RuntimeFixture::DarwinDeclarations;
+  const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
   const bool DiagnosticReports =
@@ -83,6 +85,7 @@ void verifyRuntime(bool Chained,
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
   const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
+                        : CoreData          ? "ObjCCoreDataCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
                         : Protocols         ? "ObjCProtocols.m"
@@ -94,6 +97,7 @@ void verifyRuntime(bool Chained,
                         : Associations      ? "ObjCAssociations.m"
                                             : "ObjCARC.m";
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
+                        : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
                         : Protocols         ? "ObjCProtocolsHarness.m"
@@ -124,6 +128,8 @@ void verifyRuntime(bool Chained,
     *Flag = "-fno-objc-arc";
     Compile.push_back("-DNEVERD_MANUAL_BLOCKS");
   }
+  if (CoreData)
+    Compile.insert(Compile.end(), {"-framework", "CoreData"});
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
   if (NativePointers)
@@ -154,6 +160,7 @@ void verifyRuntime(bool Chained,
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
+                             : CoreData          ? 3U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
                              : Protocols         ? 6U
@@ -239,6 +246,10 @@ void verifyRuntime(bool Chained,
                  "formatWide:small:",
                  "logObject:count:fraction:",
                  "logEmpty"};
+  if (CoreData)
+    Remaining = {
+        "fetchFromContext:request:error:", "countInContext:request:error:",
+        "registeredObjectsInContext:"};
   if (DarwinDeclarations)
     Remaining = {"nameOfClass:",
                  "classNamed:",
@@ -269,6 +280,7 @@ void verifyRuntime(bool Chained,
   std::string Install = "static void installRecovered(void) {\n"
                         "Class cls = objc_getClass(\"" +
                         std::string(DarwinDeclarations  ? "NDDarwinDeclarations"
+                                    : CoreData          ? "NDCoreDataCalls"
                                     : BlockLifetimes    ? "NDBlockFactory"
                                     : Foundation        ? "NDFoundationCalls"
                                     : Protocols         ? "NDProtocolCalls"
@@ -413,6 +425,8 @@ void verifyRuntime(bool Chained,
              Baseline};
   if (ManualBlocks)
     Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
+  if (CoreData)
+    Compile.insert(Compile.end() - 2, {"-framework", "CoreData"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
@@ -469,6 +483,9 @@ void verifyRuntime(bool Chained,
       read(Work / "recovered.out"),
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
+      : CoreData
+          ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
+            "nil-context=pass\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
             "conditional-invokes=1024\nconditional-construction=pass\n"
@@ -770,5 +787,16 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledFrameworkFetchesPreserveContextObjects) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::CoreData));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS CoreData and Objective-C runtime";
 #endif
 }
