@@ -91,6 +91,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEFPTests.cpp
   x86_64/X86_64_SSEMiscTests.cpp
   x86_64/X86_64_StackMovTests.cpp
+  x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_StringOpsTests.cpp
   x86_64/X86_64_X87FPUTests.cpp
   x86_64/X86_64_EVEXCompareTests.cpp
