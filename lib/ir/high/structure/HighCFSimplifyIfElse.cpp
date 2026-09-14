@@ -314,10 +314,8 @@ static ElseTargetInfo findElseTarget(const std::vector<HighStmt> &Body,
       Info.GotoIdx = K;
       break;
     }
-    if (S.IsPhiCopy)
-      continue;
-    bool IsFallthrough =
-        (S.Addr != 0 && S.Addr < IfTarget) || S.Kind == StmtKind::Return;
+    bool IsFallthrough = S.IsPhiCopy || (S.Addr != 0 && S.Addr < IfTarget) ||
+                         S.Kind == StmtKind::Return;
     if (IsFallthrough) {
       Info.FallthroughIndices.push_back(K);
       if (S.Kind == StmtKind::Return) {
@@ -596,7 +594,11 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
 
       // Early-return fold.
       if (TakenCopies.empty() && Else.HasEarlyReturn && Else.Target == 0 &&
-          Else.ReturnIdx != SIZE_MAX) {
+          Else.ReturnIdx != SIZE_MAX &&
+          Else.FallthroughIndices.size() == Else.ReturnIdx - NextI + 1 &&
+          ownsRun(Func.Body, AM, {NextI, Else.ReturnIdx + 1}, I, Med)) {
+        // The complete false-edge prefix, including its PHI copies, belongs
+        // before this return. Shared entries must retain their original scope.
         Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
         Stmt.Body.clear();
         for (size_t Idx : Else.FallthroughIndices)

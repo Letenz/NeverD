@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Detects backward gotos in the flat HighIR statement list and converts
-/// them into while-loop constructs.  Handles latch-conditional loops,
+/// Proves natural-loop regions in the MedIR CFG before converting backward
+/// gotos into while-loop constructs. Handles latch-conditional loops,
 /// header-conditional loops, phi-copy ordering inside loop bodies, and
 /// break/continue conversion for nested gotos.
 ///
@@ -22,14 +22,145 @@
 #include "neverd/ir/high/MedToHigh.h"
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 
 namespace neverd {
 
+namespace {
+
+// Statement order is a layout property. A natural loop additionally needs an
+// actual CFG edge to a header that dominates the latch. Compute its reverse
+// predecessor closure, stopping at the header: reaching another entry would
+// disprove that dominance. This also gives the exact blocks a rewrite may move.
+class NaturalLoopEvidence {
+  const MedFunc &Function;
+  std::map<va_t, int> Entries, Owners;
+  std::vector<std::vector<int>> Predecessors;
+  std::vector<bool> Reachable;
+  int Entry = -1;
+  size_t Budget = 1000000;
+  bool Valid = true;
+
+  bool consume() {
+    if (!Budget)
+      return false;
+    --Budget;
+    return true;
+  }
+
+public:
+  explicit NaturalLoopEvidence(const MedFunc &Function) : Function(Function) {
+    const size_t Count = Function.Blocks.size();
+    Predecessors.resize(Count);
+    Reachable.resize(Count);
+    auto Record = [&](auto &Map, va_t Address, int Block) {
+      if (!Address || Address == InvalidVA)
+        return;
+      auto [It, Added] = Map.emplace(Address, Block);
+      if (!Added && It->second != Block)
+        Valid = false;
+    };
+    for (size_t I = 0; I < Count; ++I) {
+      const auto &Block = Function.Blocks[I];
+      if (Block.Id != static_cast<int>(I) || !Block.ExceptionalSuccs.empty()) {
+        Valid = false;
+        return;
+      }
+      Record(Entries, Block.StartAddr, I);
+      Record(Owners, Block.StartAddr, I);
+      if (!Block.Ops.empty())
+        Record(Entries, Block.Ops.front().Addr, I);
+      for (const auto &Op : Block.Ops) {
+        if (!consume()) {
+          Valid = false;
+          return;
+        }
+        Record(Owners, Op.Addr, I);
+      }
+      for (int Successor : Block.Succs) {
+        if (!consume() || Successor < 0 ||
+            Successor >= static_cast<int>(Count)) {
+          Valid = false;
+          return;
+        }
+        Predecessors[Successor].push_back(I);
+      }
+    }
+    const auto Found = Entries.find(Function.Entry);
+    if (!Valid || Found == Entries.end()) {
+      Valid = false;
+      return;
+    }
+    Entry = Found->second;
+    std::vector<int> Pending{Entry};
+    Reachable[Entry] = true;
+    while (!Pending.empty()) {
+      int Block = Pending.back();
+      Pending.pop_back();
+      for (int Successor : Function.Blocks[Block].Succs) {
+        if (!consume()) {
+          Valid = false;
+          return;
+        }
+        if (!Reachable[Successor]) {
+          Reachable[Successor] = true;
+          Pending.push_back(Successor);
+        }
+      }
+    }
+  }
+
+  std::optional<std::set<int>> body(va_t Branch, va_t Target) {
+    if (!Valid)
+      return std::nullopt;
+    const auto Latch = Owners.find(Branch), Header = Entries.find(Target);
+    if (Latch == Owners.end() || Header == Entries.end() ||
+        !Reachable[Latch->second])
+      return std::nullopt;
+    const auto &Successors = Function.Blocks[Latch->second].Succs;
+    if (std::find(Successors.begin(), Successors.end(), Header->second) ==
+        Successors.end())
+      return std::nullopt;
+    std::set<int> Members{Header->second};
+    std::vector<int> Pending{Latch->second};
+    while (!Pending.empty()) {
+      const int Block = Pending.back();
+      Pending.pop_back();
+      if (!consume())
+        return std::nullopt;
+      if (!Members.insert(Block).second)
+        continue;
+      if (Block == Entry || !Reachable[Block] || Predecessors[Block].empty())
+        return std::nullopt;
+      for (int Predecessor : Predecessors[Block]) {
+        if (!consume())
+          return std::nullopt;
+        Pending.push_back(Predecessor);
+      }
+    }
+    return Members;
+  }
+
+  bool contains(const std::set<int> &Members, va_t Address) const {
+    const auto Found = Owners.find(Address);
+    return Found != Owners.end() && Members.count(Found->second);
+  }
+
+  bool startsAtHeader(va_t Target, va_t Address) const {
+    const auto Header = Entries.find(Target), Owner = Owners.find(Address);
+    return Header != Entries.end() && Owner != Owners.end() &&
+           Header->second == Owner->second;
+  }
+};
+
+} // namespace
+
 void detectAndConvertLoops(HighFunc &Func,
                            const std::unordered_map<va_t, int> &AddrToBlock,
-                           bool IsMega) {
+                           const MedFunc &Med, bool IsMega) {
+  NaturalLoopEvidence Evidence(Med);
   AddrMap AM;
   AM.rebuild(Func.Body);
 
@@ -79,6 +210,20 @@ void detectAndConvertLoops(HighFunc &Func,
         continue;
       size_t HeaderIdx = *OptIdx;
       if (HeaderIdx > static_cast<size_t>(I))
+        continue;
+
+      const auto Members = Evidence.body(GotoStmt.Addr, Target);
+      if (!Members ||
+          !Evidence.startsAtHeader(Target, Func.Body[HeaderIdx].Addr))
+        continue;
+      bool OwnsRegion = true;
+      for (size_t K = HeaderIdx; K <= static_cast<size_t>(I); ++K)
+        if (Func.Body[K].Kind != StmtKind::Nop &&
+            !Evidence.contains(*Members, Func.Body[K].Addr)) {
+          OwnsRegion = false;
+          break;
+        }
+      if (!OwnsRegion)
         continue;
 
       std::vector<HighStmt> LoopBody;

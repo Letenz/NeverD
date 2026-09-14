@@ -53,11 +53,13 @@ struct AddrMap {
   }
 };
 
-/// Detect backward gotos and convert them into while loops.
+struct MedFunc;
+
+/// Convert layout-backward gotos only after proving their native loop region.
 /// Defined in HighLoopRecovery.cpp.
 void detectAndConvertLoops(HighFunc &Func,
                            const std::unordered_map<va_t, int> &AddrToBlock,
-                           bool IsMega);
+                           const MedFunc &Med, bool IsMega);
 
 /// Recover switch statements from if-chains comparing the same variable.
 /// Defined in HighIfChainToSwitch.cpp.
@@ -65,7 +67,6 @@ void recoverSwitchStatements(HighFunc &Func);
 
 /// Fold if(cond){goto} patterns into if/else trees, up to \p MaxPasses
 /// iterations.  Defined in HighCFSimplifyIfElse.cpp.
-struct MedFunc;
 void structureIfElse(HighFunc &Func, int MaxPasses,
                      const MedFunc *Med = nullptr);
 

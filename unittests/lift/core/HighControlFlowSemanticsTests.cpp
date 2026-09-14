@@ -11,6 +11,8 @@
 
 namespace neverd {
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
+void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
+                           const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
 void resolveRegAliases(std::vector<HighStmt> &);
 void simplifyAllExprs(std::vector<HighStmt> &);
@@ -1025,6 +1027,111 @@ TEST(HighControlFlowSemantics, ConditionalFalseEdgeKeepsNonlexicalSuccessor) {
             << "reverse successors=" << ReverseSuccessors << " input=" << Value;
     }
   }
+}
+
+TEST(HighControlFlowSemantics, LayoutBackwardJoinDoesNotBecomeALoop) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "late_branch_shared_return";
+    Med.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    Med.Params = {Input};
+    auto Updated = machineValue(1, Architecture);
+    auto Joined = machineValue(2, Architecture);
+    auto Return = machineValue(3, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+    auto C = [](uint64_t Value) { return MedVar::makeConst(Value, 8); };
+    Med.Blocks.resize(3);
+    for (int I = 0; I < 3; ++I) {
+      Med.Blocks[I].Id = I;
+      Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      Med.Blocks[I].EndAddr = Med.Blocks[I].StartAddr + 0x10;
+    }
+    Med.Blocks[0].Succs = {1, 2};
+    Med.Blocks[0].Ops = {
+        operation(NdOp::COND_BR, 0x1000, {}, {C(0x1200), Input})};
+    Med.Blocks[1].Preds = {0, 2};
+    Med.Blocks[1].Phis = {{Joined, {{0, C(7)}, {2, Updated}}}};
+    Med.Blocks[1].Ops = {operation(NdOp::COPY, 0x1100, Return, {Joined}),
+                         operation(NdOp::RETURN, 0x1104, {}, {Return})};
+    Med.Blocks[2].Preds = {0};
+    Med.Blocks[2].Succs = {1};
+    Med.Blocks[2].Ops = {
+        operation(NdOp::INT_ADD, 0x1200, Updated, {Input, C(9)}),
+        operation(NdOp::BRANCH, 0x1204, {}, {C(0x1100)})};
+    for (bool ReverseSuccessors : {false, true}) {
+      auto Variant = Med;
+      if (ReverseSuccessors)
+        std::reverse(Variant.Blocks[0].Succs.begin(),
+                     Variant.Blocks[0].Succs.end());
+      auto F = MedToHighConverter().convert(Variant, Architecture);
+      std::function<void(const std::vector<HighStmt> &)> Check =
+          [&](const auto &Body) {
+            for (const auto &S : Body) {
+              EXPECT_NE(S.Kind, StmtKind::While);
+              EXPECT_NE(S.Kind, StmtKind::DoWhile);
+              Check(S.Body);
+              Check(S.ElseBody);
+            }
+          };
+      Check(F.Body);
+      for (uint64_t Value : {UINT64_C(0), UINT64_C(1), UINT64_C(37),
+                             UINT64_C(0x8000000000000000), UINT64_MAX})
+        EXPECT_EQ(execute(F, Value), Value ? Value + 9 : 7);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, EarlyReturnMovesItsCompletePhiEdgePrefix) {
+  for (va_t CopyAddress : {0U, 0x1000U, 0x1004U}) {
+    HighFunc F;
+    auto Copy = assign(CopyAddress, 1, 7);
+    Copy.IsPhiCopy = true;
+    F.Body = {conditional(0x1000, 0x1030), Copy, result(0x1010, local(1)),
+              assign(0x1030, 1, 9), result(0x1034, local(1))};
+    ASSERT_EQ(execute(F, 0), 7U);
+    ASSERT_EQ(execute(F, 1), 9U);
+    structureIfElse(F, 4);
+    EXPECT_EQ(execute(F, 0), 7U);
+    EXPECT_EQ(execute(F, 1), 9U);
+    ASSERT_EQ(F.Body.front().Kind, StmtKind::If);
+    ASSERT_FALSE(F.Body.front().Body.empty());
+    EXPECT_TRUE(F.Body.front().Body.front().IsPhiCopy);
+  }
+}
+
+TEST(HighControlFlowSemantics, MultiEntryCycleKeepsExplicitTransfers) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  F.Body = {conditional(0x1000, 0x1020), assign(0x1010, 1, 7),
+            assign(0x1014, 0, 0),        jump(0x1018, 0x1020),
+            conditional(0x1020, 0x1010), result(0x1030, local(1))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    Med.Blocks[I].Id = I;
+    Med.Blocks[I].StartAddr = 0x1000 + I * 0x10;
+  }
+  Med.Blocks[0].Succs = {1, 2};
+  Med.Blocks[1].Succs = {2};
+  Med.Blocks[2].Succs = {1, 3};
+  for (const auto &S : F.Body) {
+    MedOp Op;
+    Op.Addr = S.Addr;
+    Med.Blocks[(S.Addr - 0x1000) / 0x10].Ops.push_back(Op);
+  }
+  for (uint64_t Input : {0U, 1U, 19U})
+    ASSERT_EQ(execute(F, Input), 7U);
+  detectAndConvertLoops(F, {}, Med, false);
+  for (const auto &S : F.Body)
+    EXPECT_NE(S.Kind, StmtKind::While);
+  for (uint64_t Input : {0U, 1U, 19U})
+    EXPECT_EQ(execute(F, Input), 7U);
 }
 
 TEST(HighControlFlowSemantics, BranchStoresKeepTheirObservableContinuation) {

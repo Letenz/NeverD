@@ -299,7 +299,7 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
     if (!Block.Ops.empty())
       AddrToBlock[Block.Ops.front().Addr] = Block.Id;
 
-  detectAndConvertLoops(Func, AddrToBlock, IsMega);
+  detectAndConvertLoops(Func, AddrToBlock, Med, IsMega);
 
   if (!IsMega)
     recoverSwitchStatements(Func);
