@@ -239,9 +239,9 @@ constexpr bool isValidX86FPScaleControl(uint8_t Control) {
          (Rounding == X86FPRounding::MXCSR || SuppressExceptions);
 }
 
-constexpr uint8_t makeX86FPRoundTransformControl(
-    X86FPRoundTransformKind Kind, bool IsF64, bool Scalar,
-    bool SuppressExceptions) {
+constexpr uint8_t makeX86FPRoundTransformControl(X86FPRoundTransformKind Kind,
+                                                 bool IsF64, bool Scalar,
+                                                 bool SuppressExceptions) {
   return static_cast<uint8_t>(Kind) | (IsF64 ? UINT8_C(1) << 1 : 0) |
          (Scalar ? UINT8_C(1) << 2 : 0) |
          (SuppressExceptions ? UINT8_C(1) << 3 : 0);
@@ -250,8 +250,7 @@ constexpr uint8_t makeX86FPRoundTransformControl(
 constexpr bool isValidX86FPRoundTransformControl(uint8_t Control) {
   constexpr uint8_t KnownBits = UINT8_C(0x0f);
   const auto Kind = static_cast<X86FPRoundTransformKind>(Control & 1U);
-  return (Control & ~KnownBits) == 0 &&
-         Kind <= X86FPRoundTransformKind::Reduce;
+  return (Control & ~KnownBits) == 0 && Kind <= X86FPRoundTransformKind::Reduce;
 }
 
 /// Pack the complete per-instruction conversion contract into a stable LowIR
@@ -489,8 +488,9 @@ struct X86MsrAccessIntrinsicShape {
   uint16_t ValueSize = 0;
 };
 
-constexpr bool intrinsicX86MsrAccessShapeIsValid(
-    Intrinsic Id, const X86MsrAccessIntrinsicShape &Shape) {
+constexpr bool
+intrinsicX86MsrAccessShapeIsValid(Intrinsic Id,
+                                  const X86MsrAccessIntrinsicShape &Shape) {
   if (Id != Intrinsic::X86MsrAccess ||
       (Shape.TargetArch != Arch::Unknown && Shape.TargetArch != Arch::X64) ||
       Shape.MemoryOrdering != NdMemoryOrdering::None ||
@@ -509,8 +509,7 @@ constexpr bool intrinsicX86MsrAccessShapeIsValid(
     return Shape.NumInputs == 4 && Shape.OutputSize == 0 &&
            Shape.ValueIsScalar && Shape.ValueSize == 8;
   return Shape.NumInputs == 3 && Shape.OutputIsWritableScalar &&
-         Shape.OutputSize == 8 && !Shape.ValueIsScalar &&
-         Shape.ValueSize == 0;
+         Shape.OutputSize == 8 && !Shape.ValueIsScalar && Shape.ValueSize == 0;
 }
 
 /// Representation-neutral contract for the x86 DIV/IDIV architectural
@@ -570,10 +569,11 @@ constexpr bool isX86VP4DPIntrinsic(Intrinsic Id) {
 /// base and zeroing bit are constants because both are decoded from EVEX; the
 /// mask remains a 16-bit K-register view.  The memory address space is carried
 /// separately on the operation so FS/GS remains architectural.
-constexpr bool intrinsicX86VP4DPShapeIsValid(
-    Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize,
-    uint16_t AddressSize, uint16_t DestinationSize, uint16_t GroupSize,
-    uint16_t MaskSize, uint16_t ControlSize) {
+constexpr bool
+intrinsicX86VP4DPShapeIsValid(Intrinsic Id, uint8_t NumInputs,
+                              uint16_t OutputSize, uint16_t AddressSize,
+                              uint16_t DestinationSize, uint16_t GroupSize,
+                              uint16_t MaskSize, uint16_t ControlSize) {
   return isX86VP4DPIntrinsic(Id) && NumInputs == 6 && OutputSize == 64 &&
          AddressSize == 8 && DestinationSize == 64 && GroupSize == 1 &&
          MaskSize == 2 && ControlSize == 1;
