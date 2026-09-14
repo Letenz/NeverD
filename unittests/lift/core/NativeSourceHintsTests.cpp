@@ -274,4 +274,178 @@ TEST(NativeSourceHints, InferenceSurvivesRealLowMedHighScalarPipeline) {
     EXPECT_EQ(Fixture.High.Params[1].Name, "native_arg1");
   }
 }
+
+void addPointerCall(NativeFixture &Fixture) {
+  for (size_t Index = 0; Index < Fixture.Med.Params.size(); ++Index) {
+    Fixture.Med.Params[Index].Size = 8;
+    Fixture.Med.TypedParams[Index].Type = NdType::makeInt(8);
+    Fixture.High.Params[Index].Type = NdType::makeInt(8);
+    Fixture.Med.Blocks[0].Ops[0].Inputs[Index] = MedVar::makeConst(21, 4);
+  }
+  auto CallHint = std::make_shared<SourceCallTypeHint>();
+  CallHint->Signature.Origin =
+      SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  CallHint->Signature.ReturnType = NdType::makeVoid();
+  CallHint->Signature.Parameters = {
+      {"first", NdType::makePtr(NdType::makeVoid())},
+      {"second", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(CallHint->Signature,
+                                          Fixture.Image.Arch, Error))
+      << Error;
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.SourceCallHint = std::move(CallHint);
+  Call.addInput(MedVar::makeConst(0x1020, 8));
+  Call.addInput(Fixture.Med.Params[0]);
+  Call.addInput(Fixture.Med.Params[1]);
+  // Generic MedIR keeps the incoming SSA registers until source parameters
+  // are bound in the second pipeline run. Their IDs need not match Param IDs.
+  for (unsigned Index = 1; Index <= 2; ++Index) {
+    Call.Inputs[Index].Kind = MedVar::Reg;
+    Call.Inputs[Index].Id += 100;
+  }
+  Fixture.Med.Blocks[0].Ops.insert(Fixture.Med.Blocks[0].Ops.begin(), Call);
+}
+
+TEST(NativeSourceHints,
+     PointerUsesFollowWholeValuesWithoutChangingMachineTypes) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Shape = 0; Shape < 4; ++Shape) {
+      NativeFixture Fixture(Architecture);
+      addPointerCall(Fixture);
+      if (Shape == 3) {
+        auto &Ops = Fixture.Med.Blocks[0].Ops;
+        MedOp SelfCopy;
+        SelfCopy.Opcode = NdOp::COPY;
+        SelfCopy.Output = Ops[0].Inputs[1];
+        SelfCopy.addInput(SelfCopy.Output);
+        Ops.insert(Ops.begin(), SelfCopy);
+      } else if (Shape) {
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 30;
+        Copy.Output.SSAVer = 1;
+        Copy.Output.Size = 8;
+        Copy.addInput(Fixture.Med.Params[0]);
+        auto &Entry = Fixture.Med.Blocks[0];
+        Entry.Ops[0].Inputs[1] = Copy.Output;
+        if (Shape == 1) {
+          Entry.Ops.insert(Entry.Ops.begin(), Copy);
+        } else {
+          // A loop PHI retains the exact incoming value through its backedge.
+          MedBlock Exit = std::move(Entry);
+          Exit.Id = 1;
+          Exit.Preds = {2};
+          MedBlock Loop;
+          Loop.Id = 2;
+          Loop.Preds = {0, 2};
+          Loop.Succs = {2, 1};
+          PhiNode Phi;
+          Phi.Output = Copy.Output;
+          ++Phi.Output.Id;
+          Phi.Args = {{0, Copy.Output}, {2, Phi.Output}};
+          Loop.Phis.push_back(Phi);
+          Exit.Ops[0].Inputs[1] = Phi.Output;
+          Entry = {};
+          Entry.Id = 0;
+          Entry.Succs = {2};
+          Entry.Ops.push_back(Copy);
+          // Deliberately keep the consumer before the producer in block order.
+          Fixture.Med.Blocks.push_back(std::move(Exit));
+          Fixture.Med.Blocks.push_back(std::move(Loop));
+        }
+      }
+      std::string Error;
+      auto Hint = Fixture.infer(Error);
+      ASSERT_TRUE(Hint) << Error;
+      ASSERT_EQ(Hint->Parameters.size(), 2U);
+      for (size_t Index = 0; Index < 2; ++Index) {
+        EXPECT_EQ(Hint->Parameters[Index].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Hint->Parameters[Index].Location.ValueBytes, 8U);
+        EXPECT_EQ(Hint->Parameters[Index].Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[Index]);
+        EXPECT_EQ(Fixture.Med.TypedParams[Index].Type->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Fixture.High.Params[Index].Type->Kind, NdTypeKind::Int);
+      }
+      EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                MedReturnValueEvidence::Unknown);
+    }
+  }
+}
+
+TEST(NativeSourceHints, ConflictingOrPartialUsesCannotInventPointerParameters) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      NativeFixture Fixture(Architecture);
+      addPointerCall(Fixture);
+      auto &Ops = Fixture.Med.Blocks[0].Ops;
+      if (Mutation == 0) {
+        Ops[1].Inputs[0] = Fixture.Med.Params[0];
+      } else if (Mutation == 1) {
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 30;
+        Copy.Output.Size = 4;
+        Copy.addInput(Fixture.Med.Params[0]);
+        Ops.insert(Ops.begin(), Copy);
+      } else if (Mutation == 2) {
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*Ops[0].SourceCallHint);
+        Hint->Signature.Parameters[0].Type = NdType::makeInt(8);
+        auto ScalarCall = Ops[0];
+        ScalarCall.SourceCallHint = std::move(Hint);
+        Ops.insert(Ops.begin(), ScalarCall);
+      } else if (Mutation == 3) {
+        // A later register version is not the incoming parameter.
+        Ops[0].Inputs[1].Kind = MedVar::Reg;
+        ++Ops[0].Inputs[1].SSAVer;
+      } else {
+        Ops[0].Inputs[1].Size = 4;
+      }
+      std::string Error;
+      auto Hint = Fixture.infer(Error);
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Int) << Mutation;
+      EXPECT_EQ(Hint->Parameters[1].Type->Kind, NdTypeKind::Ptr) << Mutation;
+    }
+  }
+}
+
+TEST(NativeSourceHints, AmbiguousValuesAndUnboundCallsDoNotSupplyPointerFacts) {
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    NativeFixture Fixture;
+    addPointerCall(Fixture);
+    auto &Ops = Fixture.Med.Blocks[0].Ops;
+    if (Mutation == 0) {
+      Ops[0].SourceCallHint.reset();
+    } else if (Mutation == 1) {
+      auto Hint = std::make_shared<SourceCallTypeHint>(*Ops[0].SourceCallHint);
+      Hint->Signature.Parameters[0].Location.ValueBytes = 4;
+      Ops[0].SourceCallHint = std::move(Hint);
+    } else if (Mutation == 2) {
+      const auto Duplicate = Ops[1];
+      Ops.insert(Ops.begin(), Duplicate);
+    } else if (Mutation == 3) {
+      Ops[0].Inputs[1] = Fixture.Med.Params[0];
+      Ops[0].Inputs[1].RegOff = Fixture.Med.Params[1].RegOff;
+    } else {
+      PhiNode Phi;
+      Phi.Output = Ops[0].Inputs[1];
+      Phi.Args = {{0, MedVar::makeConst(7, 8)}};
+      Fixture.Med.Blocks[0].Phis.push_back(Phi);
+    }
+    std::string Error;
+    auto Hint = Fixture.infer(Error);
+    if (Mutation < 2) {
+      EXPECT_FALSE(Hint);
+    } else {
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Parameters[1].Type->Kind, NdTypeKind::Int);
+    }
+  }
+}
 } // namespace

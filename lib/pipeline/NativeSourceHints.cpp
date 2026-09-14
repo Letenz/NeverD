@@ -2,6 +2,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -172,6 +173,15 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   }
   if (!HasReturn)
     return Reject("native function has no machine return");
+  const auto PointerParameters = inferMedSourcePointerParameters(Med);
+  size_t SourceIndex = 0;
+  for (size_t Index = 0; Index < Med.Params.size(); ++Index) {
+    if (Med.Params[Index].Id < 0)
+      continue;
+    auto &Parameter = Hint.Parameters[SourceIndex++];
+    if (PointerParameters[Index] && Parameter.Type->Kind == NdTypeKind::Int)
+      Parameter.Type = NdType::makePtr(NdType::makeVoid());
+  }
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
   return Hint;

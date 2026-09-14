@@ -47,7 +47,8 @@ enum class RuntimeFixture {
   ConstantStrings,
   UnfairLocks,
   SwiftStrings,
-  DiagnosticReports
+  DiagnosticReports,
+  NativePointers
 };
 
 void verifyRuntime(bool Chained,
@@ -58,7 +59,9 @@ void verifyRuntime(bool Chained,
   const bool SwiftStrings = FixtureKind == RuntimeFixture::SwiftStrings;
   const bool Associations = FixtureKind == RuntimeFixture::Associations;
   const bool SwiftCalls = FixtureKind == RuntimeFixture::SwiftCalls;
-  const bool ConstantStrings = FixtureKind == RuntimeFixture::ConstantStrings;
+  const bool NativePointers = FixtureKind == RuntimeFixture::NativePointers;
+  const bool ConstantStrings =
+      FixtureKind == RuntimeFixture::ConstantStrings || NativePointers;
   const bool UnfairLocks = FixtureKind == RuntimeFixture::UnfairLocks;
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
@@ -98,6 +101,8 @@ void verifyRuntime(bool Chained,
                                    "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
+  if (NativePointers)
+    Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
@@ -171,6 +176,7 @@ void verifyRuntime(bool Chained,
                         "\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
+  std::string NativeHelper;
   std::set<std::string> StorageNames;
   for (const auto &Value : *Methods) {
     const auto *Method = Value.getAsObject();
@@ -182,6 +188,26 @@ void verifyRuntime(bool Chained,
     ASSERT_TRUE(Selector && Name && Source);
     ASSERT_EQ(Remaining.erase(Selector->str()), 1U);
     std::string MethodSource = Source->str();
+    if (NativePointers && (*Selector == "ascii" || *Selector == "unicode")) {
+      EXPECT_NE(MethodSource.find("NDForwardPointer(void* native_arg0)"),
+                std::string::npos)
+          << MethodSource;
+      EXPECT_NE(MethodSource.find("objc_retain"), std::string::npos);
+      // Each C API method includes its complete native dependency group.
+      // Link the common helper once when combining these two independent units.
+      const auto Begin = MethodSource.find(
+          "\nint64_t NDForwardPointer(void* native_arg0) {\n");
+      ASSERT_NE(Begin, std::string::npos);
+      const auto End = MethodSource.find("\n}", Begin);
+      ASSERT_NE(End, std::string::npos);
+      const auto Definition = MethodSource.substr(Begin, End + 2 - Begin);
+      if (NativeHelper.empty()) {
+        NativeHelper = Definition;
+      } else {
+        EXPECT_EQ(NativeHelper, Definition);
+        MethodSource.erase(Begin, End + 2 - Begin);
+      }
+    }
     for (const char *Inventory :
          {"shared_identity_functions", "shared_storage_functions"})
       if (const auto *Helpers = Method->getArray(Inventory)) {
@@ -344,6 +370,18 @@ TEST(ObjCRuntimeSource, RecompiledConstantStringsPreserveContentsAndIdentity) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::ConstantStrings));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, NativePointerForwardingPreservesStringsAndOwnership) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::NativePointers));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";

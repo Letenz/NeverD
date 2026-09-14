@@ -22,6 +22,9 @@ struct PipelineFunctionAudit;
 /// closed. The final source body and dependency closure must still pass
 /// projection validation after the second run. No symbol names participate in
 /// inference.
+/// Complete integer inputs forwarded to known pointer parameters can refine
+/// the source candidate through conflict-free COPY/PHI uses. Physical carriers
+/// remain unchanged; this does not modify generic lifting or rewrite types.
 std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
     const PipelineFunctionAudit &Audit, std::string &Diagnostic);

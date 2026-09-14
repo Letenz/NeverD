@@ -918,6 +918,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 # complete fixture inventory during mobile decompiler development.
 add_neverd_unittest(NeverDObjCSourceCallTests
   core/SourceABITests.cpp
+  core/NativeSourceHintsTests.cpp
   core/ObjCStorageTests.cpp
   core/ObjCCallHintTests.cpp
   core/HighCSourceCallTests.cpp

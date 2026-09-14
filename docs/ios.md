@@ -67,6 +67,8 @@ The native loader binds a runtime method record, executable IMP address, and sup
 
 `sources/objc.m` places actual recovered statements in `@implementation` bodies and preserves required C helpers and typed calls. Eligible call targets must have a supported source binding; unknown targets and incomplete dependency groups remain unrecovered. Missing definitions, invalid executable addresses, conflicting encodings, unsupported ABI mappings, incomplete decoding, and rejected IR cannot become recovered methods merely because a declaration is available.
 
+Native helper parameters may acquire pointer types for source projection when complete incoming values reach already bound pointer arguments through COPY/PHI operations without conflicting scalar uses. This inference preserves physical ABI locations and generic IR types; source bodies and their entire native dependency groups still require validation.
+
 Known imported Objective-C runtime calls retain explicit argument and return bindings: retain/release, autorelease, strong/weak storage, object allocation, and fixed-signature property setters. ARM64 register-specific retain/release entry points read the named register and emit the corresponding ordinary runtime call. Import identity and ABI must agree; an arbitrary similarly named function does not qualify. Recompiled ARC fixtures check strong-reference lifetimes, weak zeroing, property copying, and destruction against the original methods on macOS.
 
 Associated-object get/set/remove calls preserve the object, key, value, and pointer-sized policy arguments. Generated C uses the public Objective-C runtime header, and executable regression tests compare retention, copying, and removal with the original methods.
