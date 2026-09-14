@@ -484,9 +484,11 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
         if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
-            Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall) {
+            Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+            Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall) {
           const bool Runtime =
-              Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall;
+              Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+              Hint.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall;
           llvm::StringRef Name = Runtime || Ex.CallTarget.empty()
                                      ? Hint.TargetName
                                      : Ex.CallTarget;

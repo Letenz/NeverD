@@ -5,6 +5,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/Support/Endian.h"
@@ -63,7 +64,8 @@ std::string importAt(const BinaryImage &Image, va_t Slot) {
   llvm::StringRef Name(It->second);
   Name.consume_front("_");
   if (Name == "objc_msgSend" || Name == "objc_msgSendSuper2" ||
-      objcRuntimeSourceCallHint(Image, Slot))
+      objcRuntimeSourceCallHint(Image, Slot) ||
+      swiftRuntimeSourceCallHint(Image, Slot))
     return Name.str();
   return {};
 }
@@ -324,13 +326,16 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Target = veneer(Image, V->Number);
           }
         }
-        if (Target)
-          if (auto Runtime =
-                  objcRuntimeSourceCallHint(Image, Target->ImportSlot)) {
+        if (Target) {
+          auto Runtime = objcRuntimeSourceCallHint(Image, Target->ImportSlot);
+          if (!Runtime)
+            Runtime = swiftRuntimeSourceCallHint(Image, Target->ImportSlot);
+          if (Runtime) {
             Result.emplace(Op.Addr, std::move(*Runtime));
             Values.clear();
             continue;
           }
+        }
         if (Target && Target->Selector.empty()) {
           NdVar Selector;
           Selector.Space = VnodeSpace::REG;

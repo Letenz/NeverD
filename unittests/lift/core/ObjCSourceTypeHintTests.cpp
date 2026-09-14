@@ -521,7 +521,22 @@ TEST(ObjCSourceTypeHints, PreservesDeclaredParameterOrderAndNamesInBody) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("arg0 + 1"), std::string::npos) << Source;
+  // Integer rendering may insert width-preserving casts. Check the actual
+  // parameter identity in the return expression instead of its punctuation.
+  ASSERT_FALSE(High.Body.empty());
+  ASSERT_EQ(High.Body.back().Kind, StmtKind::Return);
+  const auto &Value = High.Body.back().RetVal;
+  ASSERT_TRUE(Value);
+  ASSERT_EQ(Value->Kind, ExprKind::BinOp);
+  EXPECT_EQ(Value->Op, NdOp::INT_ADD);
+  ASSERT_EQ(Value->Operands.size(), 2U);
+  ASSERT_TRUE(Value->Operands[0]);
+  EXPECT_EQ(Value->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Value->Operands[0]->Var.Kind, MedVar::Param);
+  EXPECT_EQ(Value->Operands[0]->Var.Id, 2);
+  ASSERT_TRUE(Value->Operands[1]);
+  EXPECT_EQ(Value->Operands[1]->Kind, ExprKind::Const);
+  EXPECT_EQ(Value->Operands[1]->ConstVal, 1U);
   EXPECT_EQ(Source.find("arg2"), std::string::npos) << Source;
 }
 

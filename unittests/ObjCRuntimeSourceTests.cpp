@@ -40,8 +40,13 @@ void run(const std::vector<std::string> &Arguments,
   ASSERT_EQ(Status, 0) << Error << '\n' << read(Err);
 }
 
-void verifyRuntime(bool Chained, bool Associations = false,
+enum class RuntimeFixture { ARC, Associations, SwiftCalls };
+
+void verifyRuntime(bool Chained,
+                   RuntimeFixture FixtureKind = RuntimeFixture::ARC,
                    bool Profiled = false) {
+  const bool Associations = FixtureKind == RuntimeFixture::Associations;
+  const bool SwiftCalls = FixtureKind == RuntimeFixture::SwiftCalls;
   llvm::SmallString<128> Directory;
   ASSERT_FALSE(
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
@@ -51,9 +56,12 @@ void verifyRuntime(bool Chained, bool Associations = false,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = Associations ? "ObjCAssociations.m" : "ObjCARC.m";
-  const char *Harness =
-      Associations ? "ObjCAssociationsHarness.m" : "ObjCARCHarness.m";
+  const char *Fixture = SwiftCalls     ? "ObjCSwiftRuntime.m"
+                        : Associations ? "ObjCAssociations.m"
+                                       : "ObjCARC.m";
+  const char *Harness = SwiftCalls     ? "ObjCSwiftRuntimeHarness.m"
+                        : Associations ? "ObjCAssociationsHarness.m"
+                                       : "ObjCARCHarness.m";
   const auto Original = (Work / "original.dylib").string();
   const std::string Compiler = NEVERD_TEST_CLANG;
 #if defined(__aarch64__) || defined(__arm64__)
@@ -69,6 +77,9 @@ void verifyRuntime(bool Chained, bool Associations = false,
                                    "-o",          Original};
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
+  if (SwiftCalls)
+    Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
+                                   "-Wl,-rpath,/usr/lib/swift"});
   if (Profiled)
     Compile.push_back("-fprofile-instr-generate=" +
                       (Work / "counters.profraw").string());
@@ -87,7 +98,7 @@ void verifyRuntime(bool Chained, bool Associations = false,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), 7U);
+  ASSERT_EQ(Methods->size(), SwiftCalls ? 9U : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
@@ -99,9 +110,21 @@ void verifyRuntime(bool Chained, bool Associations = false,
                  "storeObjectForStaticKey:",
                  "objectForInteriorKey",
                  "storeObjectForInteriorKey:"};
+  if (SwiftCalls)
+    Remaining = {"keep:",
+                 "drop:",
+                 "weakInitialize:object:",
+                 "weakAssign:object:",
+                 "weakRead:",
+                 "weakDestroy:",
+                 "objectType:",
+                 "begin:scratch:flags:",
+                 "end:"};
   std::string Declarations;
-  std::string Install = "static void installRecovered(void) {\n"
-                        "Class cls = objc_getClass(\"NDARCBox\");\n";
+  std::string Install =
+      "static void installRecovered(void) {\n"
+      "Class cls = objc_getClass(\"" +
+      std::string(SwiftCalls ? "NDSwiftRuntimeCalls" : "NDARCBox") + "\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
   std::set<std::string> StorageNames;
@@ -174,6 +197,9 @@ void verifyRuntime(bool Chained, bool Associations = false,
              Original,
              "-o",
              Baseline};
+  if (SwiftCalls)
+    Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
+                                       "-Wl,-rpath,/usr/lib/swift"});
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-baseline"));
   ASSERT_NO_FATAL_FAILURE(run({Baseline}, Work / "baseline"));
   const auto Recovered = (Work / "recovered").string();
@@ -183,12 +209,14 @@ void verifyRuntime(bool Chained, bool Associations = false,
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-recovered"));
   ASSERT_NO_FATAL_FAILURE(run({Recovered}, Work / "recovered"));
   EXPECT_EQ(read(Work / "baseline.out"), read(Work / "recovered.out"));
-  EXPECT_EQ(read(Work / "recovered.out"),
-            Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
-                           "keys=pass\nclear="
-                           "pass\ndestroyed=1\n"
-                         : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
-                           "pass\ndestroyed=3\n");
+  EXPECT_EQ(
+      read(Work / "recovered.out"),
+      SwiftCalls ? "swift-runtime=pass\nweak=pass\naccess=pass\ndestroyed=128\n"
+      : Associations ? "associations=pass\nretain=pass\ncopy=pass\nstatic-"
+                       "keys=pass\nclear="
+                       "pass\ndestroyed=1\n"
+                     : "strong=pass\nweak=pass\ncopy=pass\ndestructor="
+                       "pass\ndestroyed=3\n");
 }
 #endif
 
@@ -207,7 +235,8 @@ TEST(ObjCRuntimeSource, RecompiledAssociatedObjectsPreserveLifetimeAndPolicy) {
 #ifdef __APPLE__
   for (bool Chained : {false, true}) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
-    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, true));
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::Associations));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
@@ -218,10 +247,23 @@ TEST(ObjCRuntimeSource, RecompiledProfiledMethodsKeepSharedCounterStorage) {
 #ifdef __APPLE__
   for (bool Chained : {false, true}) {
     SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
-    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, true, true));
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::Associations, true));
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledSwiftRuntimeCallsPreserveWeakObjectLifetimes) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::SwiftCalls));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
 #endif
 }
 } // namespace

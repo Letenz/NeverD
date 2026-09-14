@@ -194,6 +194,78 @@ TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   }
 }
 
+TEST(ObjCCallHints, SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    for (const auto &[Name, Count, ReturnsPointer] :
+         {std::tuple{"swift_unknownObjectWeakLoadStrong", 1U, true},
+          std::tuple{"swift_unknownObjectWeakAssign", 2U, true},
+          std::tuple{"swift_unknownObjectWeakDestroy", 1U, false},
+          std::tuple{"swift_getObjectType", 1U, true},
+          std::tuple{"swift_bridgeObjectRetain", 1U, true},
+          std::tuple{"swift_bridgeObjectRelease", 1U, false},
+          std::tuple{"swift_beginAccess", 4U, false},
+          std::tuple{"swift_endAccess", 1U, false}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+      EXPECT_EQ(Hint.TargetAddress, 0x2180U);
+      EXPECT_EQ(Hint.TargetName, Name);
+      EXPECT_EQ(Hint.Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+                ReturnsPointer ? NdTypeKind::Ptr : NdTypeKind::Void);
+      ASSERT_EQ(Call.Args.size(), Count);
+      for (size_t I = 0; I < Count; ++I) {
+        EXPECT_EQ(Call.Args[I].RegOff,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        EXPECT_EQ(Call.Args[I].Size, 8U);
+        EXPECT_EQ(Hint.Signature.Parameters[I].Type->Kind,
+                  std::string(Name) == "swift_beginAccess" && I == 2
+                      ? NdTypeKind::Int
+                      : NdTypeKind::Ptr);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      auto Changed = *Expression;
+      auto WrongHint = std::make_shared<SourceCallTypeHint>(Hint);
+      WrongHint->TargetName = "swift_release";
+      Changed.SourceCallHint = std::move(WrongHint);
+      EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {}));
+      Image.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      EXPECT_TRUE(
+          buildObjCSourceCallHints(Image, caller(Architecture)).empty());
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets) {
+  for (const char *Name :
+       {"_swift_retainDirect", "_swift_releaseDirect", "_swift_retain_x20",
+        "_swift_getTypeByMangledName",
+        "_swift_unknownObjectWeakLoadStrong_suffix", "swift_retain"}) {
+    auto Image = runtimeImage(Name);
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty()) << Name;
+  }
+  auto Image = runtimeImage("_swift_retain");
+  Image.ImportPtrSlots.clear();
+  Image.Symbols.push_back({"_swift_retain", 0x1100});
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  Image = runtimeImage("_swift_retain");
+  Image.Segments[0].Data[0x108] ^= 1;
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+}
+
 TEST(ObjCCallHints, AssociatedObjectImportsPreserveKeyValueAndPolicyCarriers) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

@@ -40,7 +40,8 @@ struct SourceFunctionTypeHint {
     ObjCRuntime,
     SwiftMangled,
     NativeAnalysis,
-    BlockRuntime
+    BlockRuntime,
+    SwiftRuntime
   };
   OriginKind Origin = OriginKind::ObjCRuntime;
   TypeRef ReturnType;

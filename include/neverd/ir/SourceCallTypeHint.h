@@ -31,7 +31,10 @@ struct SourceCallTypeHint {
     RuntimeAssociationKey,
     /// Base of a rebuilt numeric profiling-counter section. The SDK proves
     /// storage extents and permits only bounded, unordered memory accesses.
-    RuntimeProfileCounterStorage
+    RuntimeProfileCounterStorage,
+    /// A Swift runtime import with an explicitly declared ordinary C ABI.
+    /// Swift calling conventions and register-specialized entries are excluded.
+    SwiftRuntimeCall
   };
   Kind CallKind = Kind::Native;
   SourceFunctionTypeHint Signature;
