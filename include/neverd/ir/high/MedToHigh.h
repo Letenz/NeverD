@@ -76,7 +76,6 @@ private:
   void simplifyControlFlow(HighFunc &Func, const MedFunc &Med);
   void inlineGotoReturns(HighFunc &Func, const MedFunc &Med);
   void eliminateDeadStmts(HighFunc &Func);
-  void stripStackCanary(HighFunc &Func);
   void stripPrologueEpilogue(HighFunc &Func);
   void ensureTrailingReturn(HighFunc &Func, const MedFunc &Med);
 

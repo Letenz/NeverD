@@ -578,8 +578,6 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   inferTypes(Func);
   auto TPost = std::chrono::steady_clock::now();
 
-  stripStackCanary(Func);
-
   Func.Body.erase(std::remove_if(Func.Body.begin(), Func.Body.end(),
                                  [](const HighStmt &S) {
                                    if (S.Kind != StmtKind::Assign || !S.Dst ||

@@ -1,5 +1,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 
+#include "../MachO/DarwinRuntimeImport.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
@@ -193,15 +195,10 @@ Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
 
 std::optional<SourceCallTypeHint>
 objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
-  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 ||
-      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Image.ConflictingImportStorageSlots.count(ImportSlot))
+  const auto Import = darwinRuntimeImport(Image, ImportSlot);
+  if (!Import)
     return std::nullopt;
-  const auto Import = Image.ImportPtrSlots.find(ImportSlot);
-  if (Import == Image.ImportPtrSlots.end())
-    return std::nullopt;
-  llvm::StringRef Name(Import->second);
+  llvm::StringRef Name(*Import);
   Name.consume_front("_");
   std::optional<unsigned> ArgumentRegister;
   llvm::StringRef Canonical = Name;
@@ -266,7 +263,8 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
                             {"key", Object},
                             {"value", Object},
                             {"policy", NdType::makeInt(8, false)}};
-  } else if (Canonical == "objc_removeAssociatedObjects") {
+  } else if (Canonical == "objc_removeAssociatedObjects" ||
+             Canonical == "objc_enumerationMutation") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Object}};
   } else if (Canonical == "objc_setProperty_atomic" ||

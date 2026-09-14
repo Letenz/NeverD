@@ -137,6 +137,10 @@ struct HighExpr {
 
 using ExprPtr = std::shared_ptr<HighExpr>;
 
+/// Termination promised by the bound source routine, independently of a
+/// native CFG flag or call spelling. Source admission revalidates the binding.
+bool isNonReturningSourceCall(const ExprPtr &Expression);
+
 //===----------------------------------------------------------------------===//
 // Statements (structured control flow)
 //===----------------------------------------------------------------------===//

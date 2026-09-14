@@ -1,5 +1,7 @@
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
+#include "../MachO/DarwinRuntimeImport.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -9,15 +11,10 @@ namespace neverd {
 
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
-  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 ||
-      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Image.ConflictingImportStorageSlots.count(ImportSlot))
+  const auto Import = darwinRuntimeImport(Image, ImportSlot);
+  if (!Import)
     return std::nullopt;
-  const auto Import = Image.ImportPtrSlots.find(ImportSlot);
-  if (Import == Image.ImportPtrSlots.end())
-    return std::nullopt;
-  llvm::StringRef Name(Import->second);
+  llvm::StringRef Name(*Import);
   if (!Name.consume_front("_"))
     return std::nullopt;
 

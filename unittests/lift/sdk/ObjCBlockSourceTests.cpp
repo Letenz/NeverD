@@ -200,6 +200,11 @@ TEST(ObjCBlockSources,
   EXPECT_EQ(E->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeBlockLiteral);
   EXPECT_TRUE(objcBlockSourceCallBound(*E, F.Image, Plan, F.functions()));
+  auto Forged = *E;
+  auto WrongEffect = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+  WrongEffect->DoesNotReturn = true;
+  Forged.SourceCallHint = WrongEffect;
+  EXPECT_FALSE(objcBlockSourceCallBound(Forged, F.Image, Plan, F.functions()));
   std::set<std::string> Shared;
   auto Text = renderObjCBlockSourceHelpers(Plan, Bound.Descriptors, Shared);
   EXPECT_NE(Text.find("&neverd_block_invoke_1100"), std::string::npos);
@@ -334,6 +339,11 @@ TEST(ObjCBlockSources,
   auto E = F.Result.HighFuncs[1].Body[0].RetVal;
   E->IsIndirectCall = true;
   EXPECT_TRUE(objcBlockSourceCallBound(*E, F.Image, P, F.functions()));
+  auto Forged = *E;
+  auto WrongEffect = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+  WrongEffect->DoesNotReturn = true;
+  Forged.SourceCallHint = WrongEffect;
+  EXPECT_FALSE(objcBlockSourceCallBound(Forged, F.Image, P, F.functions()));
   E->Operands.pop_back();
   EXPECT_FALSE(objcBlockSourceCallBound(*E, F.Image, P, F.functions()));
 }

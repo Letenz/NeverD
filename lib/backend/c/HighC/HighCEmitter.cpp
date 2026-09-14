@@ -484,9 +484,13 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
         if (Hint.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
-          // The SDK owns the exact public declarations, including bool and
-          // opaque lock pointers. Do not synthesize incompatible prototypes.
-          NeedsDarwinLocks = true;
+          if (Hint.TargetName == "__stack_chk_fail")
+            NeedsDarwinStackFailure = true;
+          else
+            NeedsDarwinLocks = true;
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
+          NeedsDarwinStackGuard |= Hint.TargetName == "__stack_chk_guard";
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::SwiftStringBridge) {
           NeedsSwiftStringBridge = true;
@@ -509,6 +513,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           Name.consume_front("_");
           if (!Name.empty()) {
             if (Runtime) {
+              const auto [Effect, Fresh] =
+                  SourceCallTermination.emplace(Name.str(), Hint.DoesNotReturn);
+              if (!Fresh && Effect->second != Hint.DoesNotReturn)
+                ConflictingSourceNativeSignatures.insert(Name.str());
               auto [Link, Added] =
                   SourceRuntimeLinkNames.emplace(Name.str(), Hint.TargetName);
               if (!Added && Link->second != Hint.TargetName)
@@ -676,6 +684,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 }
 
 void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
+  if (NeedsDarwinStackGuard)
+    OS << "extern long __stack_chk_guard[8];\n";
+  if (NeedsDarwinStackFailure)
+    OS << "extern void __stack_chk_fail(void) __attribute__((noreturn));\n";
   for (auto &F : Funcs) {
     DefinedFuncs[F.Name] = &F;
     // Mach-O object symbols carry one platform decoration underscore.  Calls
@@ -793,7 +805,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
       if (Signature.Parameters.empty())
         Declarator += "void";
-      OS << "extern " << declarationToC(Signature.ReturnType, Declarator + ")");
+      OS << "extern ";
+      if (auto Effect = SourceCallTermination.find(Name);
+          Effect != SourceCallTermination.end() && Effect->second)
+        OS << "__attribute__((noreturn)) ";
+      OS << declarationToC(Signature.ReturnType, Declarator + ")");
       const auto Link = SourceRuntimeLinkNames.find(Name);
       if (Link != SourceRuntimeLinkNames.end() && Link->second != Identifier) {
         OS << " __asm__(\"";

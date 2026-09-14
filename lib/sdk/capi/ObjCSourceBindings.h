@@ -47,6 +47,8 @@ runtimeSourceCallHint(const BinaryImage &Image,
     return swiftStringSourceCallHint(Image, Binding.TargetAddress);
   case Kind::DarwinRuntimeCall:
     return darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  case Kind::DarwinRuntimeGlobalAddress:
+    return darwinRuntimeGlobalAddressHint(Image, Binding.TargetAddress);
   default:
     return std::nullopt;
   }
@@ -55,6 +57,7 @@ runtimeSourceCallHint(const BinaryImage &Image,
 inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                                   const SourceCallTypeHint &Expected) {
   return Binding.CallKind == Expected.CallKind &&
+         Binding.DoesNotReturn == Expected.DoesNotReturn &&
          Binding.TargetName == Expected.TargetName &&
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
@@ -317,6 +320,17 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         Original->MemoryOrdering == NdMemoryOrdering::None &&
         Original->Operands.size() == 1 && Original->Operands[0]) {
       auto Address = constantAddress(*Original->Operands[0]);
+      if (Address && Original->Type->Size == 8 &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr)) {
+        if (auto Hint = darwinRuntimeGlobalAddressHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          return Expression;
+        }
+      }
       auto Found = Address ? Image.ObjCSourceReferences.find(*Address)
                            : Image.ObjCSourceReferences.end();
       if (Found != Image.ObjCSourceReferences.end()) {
@@ -549,6 +563,15 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
   std::string Reason;
+  // Only catalogued runtime calls currently establish source noreturn
+  // effects. A native function flag or a forged reference hint cannot.
+  if (Binding.DoesNotReturn &&
+      Binding.CallKind != SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringBridge &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringFromNSString &&
+      Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
+    return false;
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
@@ -614,7 +637,9 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge ||
       Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringFromNSString ||
-      Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall) {
+      Binding.CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+      Binding.CallKind ==
+          SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.

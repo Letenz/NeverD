@@ -47,9 +47,15 @@ struct SourceCallTypeHint {
     RuntimeBorrowedBytes,
     /// The fixed optional-NSString-to-String bridge. Its owned String bits
     /// occupy two return registers; emitted calls retain the Swift convention.
-    SwiftStringFromNSString
+    SwiftStringFromNSString,
+    /// Address loaded from an exact Darwin runtime data import. This binds
+    /// the platform object's identity; it does not copy or fold its contents.
+    DarwinRuntimeGlobalAddress
   };
   Kind CallKind = Kind::Native;
+  /// The bound source routine has a noreturn contract. Runtime bindings must
+  /// revalidate this effect against their authoritative catalog.
+  bool DoesNotReturn = false;
   SourceFunctionTypeHint Signature;
   va_t TargetAddress = 0;
   std::string TargetName;

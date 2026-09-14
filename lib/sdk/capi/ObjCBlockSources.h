@@ -799,7 +799,8 @@ objcBlockSourceCallBound(const HighExpr &Expression,
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
   std::string Error;
-  if (Hint.Architecture != Image.Arch || !validateSourceABI(Hint, Error))
+  if (Binding.DoesNotReturn || Hint.Architecture != Image.Arch ||
+      !validateSourceABI(Hint, Error))
     return false;
   if (Binding.CallKind == CallKind::BlockInvoke)
     return Hint.Parameters.size() == Expression.Operands.size() &&

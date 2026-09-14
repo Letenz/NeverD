@@ -124,6 +124,19 @@ ExprPtr HighExpr::makeLoad(ExprPtr Addr, TypeRef Ty,
   return E;
 }
 
+bool isNonReturningSourceCall(const ExprPtr &Expression) {
+  // A proven runtime binding emits a direct source call even if the machine
+  // reached it through an import slot. Native indirectness is not the emitted
+  // dispatch contract; unbound indirect calls have no such source effect.
+  return Expression && Expression->Kind == ExprKind::Call &&
+         Expression->SourceCallHint &&
+         Expression->SourceCallHint->DoesNotReturn &&
+         Expression->IntrinsicId == Intrinsic::None &&
+         Expression->IntrinsicOutputs.empty() &&
+         Expression->MemoryOrdering == NdMemoryOrdering::None &&
+         Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+}
+
 bool HighExpr::hasOrderedMemoryAccess() const {
   std::unordered_set<const HighExpr *> Seen;
   std::vector<const HighExpr *> Work{this};

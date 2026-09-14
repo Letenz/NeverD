@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// HighIR cleanup passes: stack canary stripping, prologue/epilogue
-/// removal, and trailing return insertion.  The main DCE logic lives
+/// HighIR cleanup passes: prologue/epilogue removal, branch entry
+/// coalescing, and trailing return insertion. The main DCE logic lives
 /// in HighDCE.cpp.
 ///
 //===----------------------------------------------------------------------===//
@@ -94,81 +94,6 @@ void coalesceBranchEntryStatements(HighFunc &Func) {
     Body = std::move(Result);
   };
   Group(Func.Body);
-}
-
-//===----------------------------------------------------------------------===//
-// Stack canary stripping
-//===----------------------------------------------------------------------===//
-
-void MedToHighConverter::stripStackCanary(HighFunc &Func) {
-  auto IsStackChkCall = [](const HighStmt &S) -> bool {
-    if (S.Kind == StmtKind::Call && S.CallExpr)
-      return S.CallExpr->CallTarget.find("stack_chk_fail") != std::string::npos;
-    if (S.Kind == StmtKind::Assign && S.Val && S.Val->Kind == ExprKind::Call)
-      return S.Val->CallTarget.find("stack_chk_fail") != std::string::npos;
-    return false;
-  };
-  auto ContainsStackChk = [&](const std::vector<HighStmt> &Body) -> bool {
-    for (auto &S : Body)
-      if (IsStackChkCall(S))
-        return true;
-    return false;
-  };
-
-  Func.Body.erase(std::remove_if(Func.Body.begin(), Func.Body.end(),
-                                 [&](const HighStmt &S) {
-                                   if (S.Kind == StmtKind::If ||
-                                       S.Kind == StmtKind::IfElse)
-                                     if (ContainsStackChk(S.Body) ||
-                                         ContainsStackChk(S.ElseBody))
-                                       return true;
-                                   return IsStackChkCall(S);
-                                 }),
-                  Func.Body.end());
-
-  Func.Body.erase(
-      std::remove_if(Func.Body.begin(), Func.Body.end(),
-                     [](const HighStmt &S) {
-                       if (S.Kind != StmtKind::Store || !S.StoreVal)
-                         return false;
-                       if (S.MemoryOrdering != NdMemoryOrdering::None ||
-                           S.MemoryAddressSpace !=
-                               NdMemoryAddressSpace::Default ||
-                           S.StoreVal->hasOrderedMemoryAccess())
-                         return false;
-                       if (S.StoreVal->Kind != ExprKind::Load)
-                         return false;
-                       if (S.StoreVal->Operands.empty())
-                         return false;
-                       return S.StoreVal->Operands[0]->Kind == ExprKind::Load;
-                     }),
-      Func.Body.end());
-
-  for (size_t I = 0; I < Func.Body.size(); ++I) {
-    auto &S = Func.Body[I];
-    if (S.Kind != StmtKind::If)
-      continue;
-    if (S.Body.size() != 1 || S.Body[0].Kind != StmtKind::Return)
-      continue;
-    if (!S.Cond)
-      continue;
-
-    auto &Cond = S.Cond;
-    if (Cond->hasOrderedMemoryAccess())
-      continue;
-    if (Cond->Kind != ExprKind::BinOp || Cond->Op != NdOp::INT_EQUAL)
-      continue;
-    if (Cond->Operands.size() != 2)
-      continue;
-    auto &LHS = Cond->Operands[0];
-    auto &RHS = Cond->Operands[1];
-    if (RHS->Kind == ExprKind::Const && RHS->ConstVal == 0 &&
-        LHS->Kind == ExprKind::BinOp && LHS->Op == NdOp::INT_SUB &&
-        LHS->Operands.size() == 2 && LHS->Operands[0]->Kind == ExprKind::Load) {
-      auto Extracted = std::move(S.Body[0]);
-      Func.Body[I] = std::move(Extracted);
-    }
-  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -319,6 +244,12 @@ void MedToHighConverter::ensureTrailingReturn(HighFunc &Func,
   if (!Func.Body.empty() && Func.Body.back().Kind == StmtKind::Return)
     return;
   if (Func.Body.empty())
+    return;
+  const auto &Last = Func.Body.back();
+  if ((Last.Kind == StmtKind::Call &&
+       isNonReturningSourceCall(Last.CallExpr)) ||
+      ((Last.Kind == StmtKind::Assign || Last.Kind == StmtKind::ExprStmt) &&
+       isNonReturningSourceCall(Last.Val)))
     return;
 
   ExprPtr RetExpr;

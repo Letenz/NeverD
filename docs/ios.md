@@ -95,6 +95,8 @@ Supported Objective-C Block calls use a complete fixed scalar invocation ABI, in
 
 Protocol method declarations are read from resolved local runtime records, including inherited protocols and required/optional instance and class methods. Ordinary and relative method lists share the same decoder. All matching class and protocol declarations must agree before a selector receives a fixed call signature; malformed records and inheritance cycles cannot supply hints. Well-formed pointers to structures, unions and arrays use opaque pointer carriers without inferring their layouts. `objc_metadata.protocols` exposes declarations separately: they do not count as recovered implementations or establish class conformance. For otherwise identical signatures, signed and unsigned 64-bit integer results share an unsigned bit carrier; narrower integer, floating-point, pointer, or argument-type conflicts still reject the call.
 
+Known `objc_enumerationMutation` calls preserve the object argument and the continuation because an installed mutation handler may return. Exact Darwin `__stack_chk_guard` imports bind the runtime object identity; guard loads, comparisons, and `__stack_chk_fail` calls remain observable in recovered source.
+
 This is a limited reconstruction of runtime information. Complete properties, protocols, original ownership annotations, arbitrary aggregates, variadic tails, exception-dependent bodies, and unmodelled Block/capture layouts are not promised. Runtime encoding describes fixed arguments and cannot prove that the original declaration had no variadic tail. Chained pointers are used only where the native loader resolved the relevant slots; unresolved formats retain diagnostics.
 
 ## Swift source and storage

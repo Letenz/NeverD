@@ -164,6 +164,8 @@ class SourceProjectionFlow {
     }
   }
   static bool terminates(const ExprPtr &Expression) {
+    if (isNonReturningSourceCall(Expression))
+      return true;
     if (!Expression || Expression->Kind != ExprKind::Call ||
         Expression->IsIndirectCall || Expression->SourceCallHint ||
         !Expression->Operands.empty() ||

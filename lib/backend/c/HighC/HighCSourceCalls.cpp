@@ -95,6 +95,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeAssociationKey ||
       Hint.CallKind == Kind::RuntimeConstantString ||
       Hint.CallKind == Kind::RuntimeBorrowedBytes ||
+      Hint.CallKind == Kind::DarwinRuntimeGlobalAddress ||
       Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
         !Signature.ReturnType ||
@@ -108,6 +109,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (!Definition)
         return bad("native address has no recovered definition");
       Value = "&" + functionIdentifier(*Definition);
+    } else if (Hint.CallKind == Kind::DarwinRuntimeGlobalAddress) {
+      if (Hint.TargetName != "__stack_chk_guard")
+        return bad("unknown runtime data identity");
+      Value = "__stack_chk_guard";
     } else if (Hint.CallKind == Kind::RuntimeBlockIsa) {
       llvm::StringRef Name(Hint.TargetName);
       if (Name.starts_with("__"))
@@ -276,8 +281,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     }
     if (Name.empty())
       return bad("native binding has no source name");
-    Name =
-        Definition ? functionIdentifier(*Definition) : functionIdentifier(Name);
+    // This binding already carries the exact C spelling, including its two
+    // ABI-significant underscores. Generic native-name demangling drops one.
+    if (Hint.CallKind != Kind::DarwinRuntimeCall || Name != "__stack_chk_fail")
+      Name = Definition ? functionIdentifier(*Definition)
+                        : functionIdentifier(Name);
   } else {
     std::string Prototype = "(*)(";
     for (size_t I = 0; I < Signature.Parameters.size(); ++I) {

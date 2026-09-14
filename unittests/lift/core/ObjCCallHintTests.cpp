@@ -729,6 +729,110 @@ TEST(ObjCCallHints, DarwinLocksRejectUnprovenImportsAndNonzeroAddends) {
   }
 }
 
+TEST(ObjCCallHints, StackFailureRetainsItsTerminalRuntimeCall) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool ThroughSlot : {false, true}) {
+      auto Image = runtimeImage("___stack_chk_fail", Architecture);
+      auto Low = caller(Architecture);
+      if (ThroughSlot) {
+        Low.Blocks[0].Ops.front().Opcode = NdOp::INDIR_CALL;
+        Low.Blocks[0].Ops.front().Inputs[0] = NdVar::cst(0x2180, 8);
+      }
+      const auto Med = convert(Image, Low);
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+      const auto &Hint = *Med.CallInfos.front().SourceCallHint;
+      EXPECT_EQ(Hint.TargetName, "__stack_chk_fail");
+      EXPECT_TRUE(Hint.DoesNotReturn);
+      EXPECT_TRUE(Hint.Signature.Parameters.empty());
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      auto High = Converter.convert(Med, Architecture);
+      const auto *Call = sourceCall(High);
+      ASSERT_NE(Call, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+      EXPECT_NE(Source.find("__stack_chk_fail();"), std::string::npos)
+          << Source;
+      EXPECT_NE(Source.find("__attribute__((noreturn))"), std::string::npos);
+      EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+      auto Forged = *Call;
+      auto ChangedHint = std::make_shared<SourceCallTypeHint>(Hint);
+      ChangedHint->DoesNotReturn = false;
+      Forged.SourceCallHint = ChangedHint;
+      EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+      Image.DyldBindSlots[0x2180].Name = "___stack_chk_fail";
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, StackGuardAddressRequiresExactRuntimeIdentity) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("___stack_chk_guard", Architecture);
+    HighFunc Function;
+    Function.Name = "guard_address";
+    Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.Addr = 0x1200;
+    Return.RetVal =
+        HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8), NdType::makeInt(8));
+    Function.Body = {Return};
+    auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto *Address = sourceCall(Bound.Function);
+    ASSERT_NE(Address, nullptr);
+    EXPECT_EQ(Address->SourceCallHint->TargetName, "__stack_chk_guard");
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+    EXPECT_NE(Source.find("extern long __stack_chk_guard[8];"),
+              std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("0x2180"), std::string::npos);
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.ImportPtrSlots[0x2180] = "___stack_chk_guard_suffix";
+      else if (Mutation == 1)
+        Changed.ImportPtrSlots.clear();
+      else if (Mutation == 2)
+        Changed.IsRelocatable = true;
+      else if (Mutation == 3)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      else {
+        auto &Binding = Changed.DyldBindSlots[0x2180];
+        Binding.Name = Mutation == 4 ? "_different" : "___stack_chk_guard";
+        Binding.Addend = Mutation == 5;
+        Binding.WeakImport = Mutation == 6;
+        if (Mutation == 7)
+          Changed.Format = BinaryFormat::ELF;
+      }
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}));
+      EXPECT_FALSE(
+          sdk::bindObjCSourceReferences(Function, Changed).Limitation.empty());
+    }
+    for (bool Ordered : {false, true}) {
+      auto Copy = Function;
+      Copy.Body.front().RetVal = HighExpr::makeLoad(
+          HighExpr::makeConst(0x2180, 8), NdType::makeInt(Ordered ? 8 : 4),
+          Ordered ? NdMemoryOrdering::Acquire : NdMemoryOrdering::None);
+      EXPECT_FALSE(
+          sdk::bindObjCSourceReferences(Copy, Image).Limitation.empty());
+    }
+  }
+}
+
 TEST(ObjCCallHints, AssociatedObjectImportsPreserveKeyValueAndPolicyCarriers) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
@@ -894,6 +998,79 @@ TEST(ObjCCallHints, RuntimeVoidAndWeakSignaturesDoNotInventResults) {
   ASSERT_EQ(Pool.size(), 1U);
   EXPECT_TRUE(Pool.begin()->second.Signature.Parameters.empty());
   EXPECT_EQ(Pool.begin()->second.Signature.ReturnType->Kind, NdTypeKind::Ptr);
+}
+
+TEST(ObjCCallHints, EnumerationMutationKeepsItsObjectAndReturningContinuation) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_enumerationMutation", Architecture);
+    auto Low = caller(Architecture);
+    auto &Block = Low.Blocks[0];
+    Block.Ops.insert(
+        Block.Ops.end() - 1,
+        operation(NdOp::COPY,
+                  NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 4),
+                  {NdVar::cst(73, 4)}, 0x1204));
+    Block.Ops.back().Addr = 0x1208;
+    Block.EndAddr = 0x120c;
+    const auto Hints = buildObjCSourceCallHints(Image, Low);
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Signature = Hints.begin()->second.Signature;
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    EXPECT_EQ(Med.Blocks[Call.BlockId].Ops[Call.OpIdx].Output.Size, 0U);
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Architecture);
+    ASSERT_NE(sourceCall(High), nullptr);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(Source.find("#include <objc/runtime.h>"), std::string::npos);
+    EXPECT_NE(Source.find("objc_enumerationMutation("), std::string::npos);
+    bool ReturnsMarker = false;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Return)
+        return;
+      std::vector<ExprPtr> Work{S.RetVal};
+      while (!Work.empty()) {
+        auto E = Work.back();
+        Work.pop_back();
+        if (!E)
+          continue;
+        ReturnsMarker |= E->Kind == ExprKind::Const && E->ConstVal == 73;
+        Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
+      }
+    });
+    EXPECT_TRUE(ReturnsMarker);
+  }
+}
+
+TEST(ObjCCallHints,
+     RuntimeImportsRejectContradictoryBindingsAndWeakIdentities) {
+  for (const auto *Name : {"_objc_enumerationMutation", "_objc_retain"})
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Image = runtimeImage(Name);
+      if (Mutation < 2) {
+        auto &Binding = Image.ImportStorageSlots[0x2180];
+        Binding.Name = Mutation == 0 ? "_different" : Name;
+        Binding.Addend = Mutation == 1;
+      } else {
+        auto &Binding = Image.DyldBindSlots[0x2180];
+        Binding.Name = Mutation == 2 ? "_different" : Name;
+        Binding.Addend = Mutation == 3;
+        Binding.WeakImport = Mutation == 4;
+      }
+      EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180))
+          << Name << ':' << Mutation;
+    }
 }
 
 TEST(ObjCCallHints, PropertyRuntimeKeepsValueBeforeSignedOffset) {

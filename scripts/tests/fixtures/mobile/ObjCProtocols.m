@@ -1,4 +1,8 @@
 #import <Foundation/Foundation.h>
+#include <objc/runtime.h>
+
+extern long __stack_chk_guard[8];
+extern void __stack_chk_fail(void) __attribute__((noreturn));
 
 @protocol NDSignedMetric
 - (int64_t)metric;
@@ -18,6 +22,9 @@ Protocol *NDSignedMetricProtocol(void) { return @protocol(NDSignedMetric); }
                   count:(NSUInteger)count;
 - (uint64_t)metricOf:(id<NDSignedMetric>)source;
 - (BOOL)isNegativeMetric:(id<NDSignedMetric>)source;
+- (NSUInteger)countObjects:(id<NSFastEnumeration>)source;
+- (NSUInteger)reportMutation:(id)object;
+- (NSUInteger)checkRuntimeGuard:(uintptr_t)expected;
 @end
 
 @implementation NDProtocolCalls
@@ -32,5 +39,21 @@ Protocol *NDSignedMetricProtocol(void) { return @protocol(NDSignedMetric); }
 }
 - (BOOL)isNegativeMetric:(id<NDSignedMetric>)source {
   return [source metric] < 0;
+}
+- (NSUInteger)countObjects:(id<NSFastEnumeration>)source {
+  NSUInteger count = 0;
+  for (id object in source)
+    if (object)
+      ++count;
+  return count;
+}
+- (NSUInteger)reportMutation:(id)object {
+  objc_enumerationMutation(object);
+  return 73;
+}
+- (NSUInteger)checkRuntimeGuard:(uintptr_t)expected {
+  if ((uintptr_t)__stack_chk_guard[0] != expected)
+    __stack_chk_fail();
+  return 73;
 }
 @end

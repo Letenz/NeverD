@@ -1599,6 +1599,40 @@ TEST(HighControlFlowSemantics, DeadValueCyclesAndLongChainsKeepBranchEntries) {
             [&](const HighStmt &S) { EXPECT_NE(S.Kind, StmtKind::Assign); });
 }
 
+TEST(HighControlFlowSemantics, StackCheckNameDoesNotAuthorizeDeletingCalls) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    MedFunc M;
+    M.Name = "observable_named_call";
+    M.Entry = 0x1000;
+    M.ReturnType = NdType::makeInt(8, false);
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = M.Entry;
+    auto Call =
+        operation(NdOp::CALL, 0x1000, {}, {MedVar::makeConst(0x2000, 8)});
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->Signature.ReturnType = NdType::makeVoid();
+    Call.SourceCallHint = Hint;
+    Block.Ops = {
+        Call, operation(NdOp::RETURN, 0x1004, {}, {MedVar::makeConst(73, 8)})};
+    M.Blocks = {Block};
+    for (const char *Name : {"__stack_chk_fail", "app_stack_chk_fail_audit"}) {
+      const std::map<va_t, std::string> Names{{0x2000, Name}};
+      MedToHighConverter Converter;
+      Converter.setFuncNames(&Names);
+      auto F = Converter.convert(M, Architecture);
+      unsigned Calls = 0;
+      walkStmts(F.Body, [&](const HighStmt &S) {
+        forEachExpr(S, [&](const ExprPtr &E) {
+          if (E && E->Kind == ExprKind::Call && E->CallTarget == Name)
+            ++Calls;
+        });
+      });
+      EXPECT_EQ(Calls, 1U) << Name;
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, LiveValueCyclesAndNestedEffectsSurviveDCE) {
   for (unsigned Sink = 0; Sink < 5; ++Sink) {
     SCOPED_TRACE(Sink);

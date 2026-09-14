@@ -132,7 +132,7 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), Protocols           ? 3U
+  ASSERT_EQ(Methods->size(), Protocols           ? 6U
                              : DiagnosticReports ? 5U
                              : SwiftStrings      ? 2U
                              : SwiftCalls        ? 9U
@@ -170,8 +170,12 @@ void verifyRuntime(bool Chained,
     Remaining = {"initializer", "initializerInFile", "fatal", "fatalInFile",
                  "terminal"};
   if (Protocols) {
-    Remaining = {
-        "enumerate:state:objects:count:", "metricOf:", "isNegativeMetric:"};
+    Remaining = {"enumerate:state:objects:count:",
+                 "metricOf:",
+                 "isNegativeMetric:",
+                 "countObjects:",
+                 "reportMutation:",
+                 "checkRuntimeGuard:"};
     const auto *Metadata = Object->getObject("objc_metadata");
     ASSERT_NE(Metadata, nullptr);
     const auto *Declarations = Metadata->getArray("protocols");
@@ -318,6 +322,14 @@ void verifyRuntime(bool Chained,
             Work / "compile-swift-words"));
     Compile.insert(Compile.end() - 2, {"-lswiftFoundation", Words});
   }
+  if (Protocols) {
+    const auto Probe = (Work / "stack-failure-probe.dylib").string();
+    ASSERT_NO_FATAL_FAILURE(
+        run({Compiler, "-arch", HostArch, "-O2", "-dynamiclib",
+             (Fixtures / "ObjCStackFailureProbe.c").string(), "-o", Probe},
+            Work / "compile-stack-probe"));
+    Compile.insert(Compile.end() - 2, Probe);
+  }
   ASSERT_NO_FATAL_FAILURE(run(Compile, Work / "link-baseline"));
   ASSERT_NO_FATAL_FAILURE(run({Baseline}, Work / "baseline"));
   const auto Recovered = (Work / "recovered").string();
@@ -334,7 +346,8 @@ void verifyRuntime(bool Chained,
         std::string::npos);
   }
   EXPECT_EQ(read(Work / "recovered.out"),
-            Protocols ? "enumerated=132096\ninteger-bits=4096\n"
+            Protocols ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
+                        "integer-bits=4096\nguard-check=pass\n"
             : DiagnosticReports
                 ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
             : SwiftStrings ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"

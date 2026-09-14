@@ -9,9 +9,13 @@ namespace neverd {
 struct BinaryImage;
 
 /// A source binding for an exact platform import with a declared Darwin C ABI.
-/// The original lock storage and all calls remain observable.
+/// Storage, checks, and runtime calls remain observable.
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
+
+/// Address supplied by an exact data import with a known platform contract.
+std::optional<SourceCallTypeHint>
+darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot);
 } // namespace neverd
 
 #endif
