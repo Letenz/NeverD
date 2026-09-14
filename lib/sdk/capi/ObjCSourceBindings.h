@@ -391,7 +391,18 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       return Found->second;
     auto Expression = std::make_shared<HighExpr>(*Original);
     Copies.emplace(Key, Expression);
-    if (AddressContext && !MemoryAddress && !NumericOperand &&
+    // Machine pointer stores use integer carriers. Preserve the occurrence's
+    // complete address provenance even without a pointer-typed consumer; a
+    // stored constant object must retain the identity of a directly used one.
+    const bool ObjectAddress =
+        Original->Kind == ExprKind::Const && Original->Type &&
+        Original->Type->Kind == NdTypeKind::Int && Original->Type->Size == 8 &&
+        isExactAddressProvenance(Original->ConstProvenance) &&
+        !isCodeAddressProvenance(Original->ConstProvenance) &&
+        (Original->AddressOwnerVA == InvalidVA ||
+         Original->AddressOwnerVA == Original->ConstVal);
+    if ((AddressContext || ObjectAddress) && !MemoryAddress &&
+        !NumericOperand &&
         !(Original->Kind == ExprKind::Const &&
           Original->ConstProvenance == ConstantAddressProvenance::Scalar)) {
       const auto Address = constantAddress(*Original);

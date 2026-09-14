@@ -709,6 +709,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsRejectUnprovedRecordsAndContents",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ConstantStringPointersRetainStoredAddressProvenance",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.StoredStringsRejectIncompleteAndNumericProvenance",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringObjectsCannotAuthorizeRawMemoryAccess",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.NumericMasksKeepOccurrenceProvenanceThroughHighIR",
@@ -891,9 +895,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 318,
-              ("macOS", "macos-patch"): 334,
-              ("Windows", "windows-focused"): 314,
+              ("Linux", "linux-semantic"): 320,
+              ("macOS", "macos-patch"): 337,
+              ("Windows", "windows-focused"): 316,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -902,6 +906,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledImmutableScalarsPreserveFloatingBitPatterns",
                       "ObjCRuntimeSource.RecompiledGraphicsCallsPreserveValuesAndImageIdentity",
                       "ObjCRuntimeSource.RecompiledSwiftLiteralsPreserveUTF8AndObjectLifetimes",
+                      "ObjCRuntimeSource.RecompiledStoredStringsPreserveCollectionsAndIdentity",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",

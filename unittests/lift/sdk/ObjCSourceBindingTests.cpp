@@ -545,6 +545,100 @@ TEST(ObjCSourceBindings, ConstantStringObjectsCannotAuthorizeRawMemoryAccess) {
       bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
 }
 
+TEST(ObjCSourceBindings, ConstantStringPointersRetainStoredAddressProvenance) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (auto Provenance : {ConstantAddressProvenance::Address,
+                            ConstantAddressProvenance::DataAddress}) {
+      for (bool ExpressionStore : {false, true}) {
+        ConstantStringFixture F;
+        F.Image.Arch = Architecture;
+        auto Value = HighExpr::makeConst(0x2000, 8, Provenance);
+        auto Destination =
+            HighExpr::makeVar(MedVar{.Kind = MedVar::Param, .Size = 8});
+        HighStmt Store;
+        if (ExpressionStore) {
+          Store.Kind = StmtKind::ExprStmt;
+          Store.Val = std::make_shared<HighExpr>();
+          Store.Val->Kind = ExprKind::Store;
+          Store.Val->Operands = {Destination, Value};
+        } else {
+          Store.Kind = StmtKind::Store;
+          Store.StoreAddr = Destination;
+          Store.StoreVal = Value;
+        }
+        F.Function.Body.insert(F.Function.Body.begin(), Store);
+        auto Result = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+        EXPECT_EQ(Result.ConstantStrings, std::set<va_t>{0x2000});
+        const auto Bound = ExpressionStore
+                               ? Result.Function.Body[0].Val->Operands[1]
+                               : Result.Function.Body[0].StoreVal;
+        ASSERT_TRUE(Bound && Bound->SourceCallHint);
+        EXPECT_TRUE(objcSourceCallBound(*Bound, F.Image, {}));
+        EXPECT_EQ(Value->Kind, ExprKind::Const);
+        EXPECT_EQ(Value->ConstProvenance, Provenance);
+        // A shared node used to access the object's private bytes is still
+        // unbound, independently of which occurrence is visited first.
+        HighStmt Read;
+        Read.Kind = StmtKind::Return;
+        Read.RetVal = HighExpr::makeLoad(Value, NdType::makeInt(8));
+        F.Function.Body.push_back(Read);
+        for (bool Reversed : {false, true}) {
+          if (Reversed)
+            std::reverse(F.Function.Body.begin(), F.Function.Body.end());
+          EXPECT_FALSE(
+              bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+        }
+      }
+    }
+  }
+}
+
+TEST(ObjCSourceBindings, StoredStringsRejectIncompleteAndNumericProvenance) {
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ConstantStringFixture F;
+    auto Value =
+        HighExpr::makeConst(0x2000, 8, ConstantAddressProvenance::DataAddress);
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr =
+        HighExpr::makeVar(MedVar{.Kind = MedVar::Param, .Size = 8});
+    Store.StoreVal = Value;
+    switch (Mutation) {
+    case 0:
+      Value->ConstProvenance = ConstantAddressProvenance::Unknown;
+      break;
+    case 1:
+      Value->ConstProvenance = ConstantAddressProvenance::Scalar;
+      break;
+    case 2:
+      Value->ConstProvenance = ConstantAddressProvenance::AddressFragment;
+      break;
+    case 3:
+      Value->ConstProvenance = ConstantAddressProvenance::CodeAddress;
+      break;
+    case 4:
+      Value->Type = NdType::makeInt(4);
+      break;
+    case 5:
+      Value->Type = NdType::makeFloat(8);
+      break;
+    case 6:
+      Value->AddressOwnerVA = 0x2020;
+      break;
+    case 7:
+      Store.StoreVal =
+          HighExpr::makeBinop(NdOp::INT_ADD, Value, HighExpr::makeConst(1, 8));
+      break;
+    }
+    F.Function.Body = {Store};
+    auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_FALSE(Result.Limitation.empty());
+    EXPECT_TRUE(Result.ConstantStrings.empty());
+  }
+}
+
 TEST(ObjCSourceBindings, ReplacesLoadedSelectorAndKeepsOriginalProjection) {
   Fixture F;
   auto Result = bindObjCSourceReferences(F.Function, F.Image);

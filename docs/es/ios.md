@@ -107,6 +107,8 @@ El catálogo de declaraciones C también cubre las exportaciones de CoreGraphics
 
 Los literales Swift grandes e inmortales pueden vincular sus bytes UTF-8 a almacenamiento estático compartido en un puente Foundation verificado. Se comprueban conjuntamente longitud, indicadores, terminación, UTF-8 válido, inmutabilidad e importación exacta. Se conservan la representación etiquetada y el puente originales; los ceros internos y otras formas de almacenamiento siguen sin vincularse.
 
+Los objetos NSString constantes validados conservan su identidad compartida al asignarse o almacenarse mediante enteros con procedencia de dirección de datos completa. Los valores escalares, las direcciones incompletas, las operaciones numéricas y los accesos a bytes internos del objeto no reciben este enlace.
+
 Las cargas escalares ordinarias de bytes de la imagen cuya inmutabilidad y ausencia de reubicación se han probado pueden convertirse en constantes que conservan sus bits. Se admiten enteros de 1, 2, 4 y 8 bytes y valores flotantes de 4 y 8 bytes. El almacenamiento modificable o ambiguo, las cargas ordenadas y los usos como dirección siguen sin vincularse; un uso numérico no autoriza usos como puntero de la misma expresión.
 
 Las llamadas C con parámetros fijos también usan declaraciones extraídas por el compilador y datos de exportación y reexportación del SDK. Deben coincidir la biblioteca dyld exacta, el símbolo y la ABI escalar; las importaciones débiles, proveedores desconocidos y prototipos no admitidos quedan sin vincular. El C generado usa identificadores separados enlazados con los símbolos originales. Las llamadas de sincronización ordinarias sin tablas de excepciones conservan las llamadas reales y sus efectos en memoria.

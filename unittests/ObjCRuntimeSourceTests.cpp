@@ -56,6 +56,7 @@ enum class RuntimeFixture {
   CoreData,
   ScalarConstants,
   SwiftLiterals,
+  StoredStrings,
   Graphics,
   DarwinDeclarations
 };
@@ -68,6 +69,7 @@ void verifyRuntime(bool Chained,
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
+  const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
   const bool Graphics = FixtureKind == RuntimeFixture::Graphics;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
@@ -94,6 +96,7 @@ void verifyRuntime(bool Chained,
                         : CoreData          ? "ObjCCoreDataCalls.m"
                         : ScalarConstants   ? "ObjCScalarConstants.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStrings.m"
+                        : StoredStrings     ? "ObjCStoredStrings.m"
                         : Graphics          ? "ObjCGraphicsCalls.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimes.m"
                         : Foundation        ? "ObjCFoundationCalls.m"
@@ -109,6 +112,7 @@ void verifyRuntime(bool Chained,
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
+                        : StoredStrings     ? "ObjCStoredStringsHarness.m"
                         : Graphics          ? "ObjCGraphicsCallsHarness.m"
                         : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
                         : Foundation        ? "ObjCFoundationCallsHarness.m"
@@ -198,6 +202,7 @@ void verifyRuntime(bool Chained,
                              : CoreData          ? 3U
                              : ScalarConstants   ? 6U
                              : SwiftLiterals     ? 3U
+                             : StoredStrings     ? 4U
                              : Graphics          ? 6U
                              : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
                              : Foundation        ? 13U
@@ -294,6 +299,9 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Remaining = {"widthOfImage:", "heightOfImage:",     "retainImage:",
                  "alphaOfColor:", "componentsInColor:", "imageCountInSource:"};
+  if (StoredStrings)
+    Remaining = {"arrayWithValue:", "dictionaryWithValue:", "writeLiteralTo:",
+                 "literal"};
   if (SwiftLiterals)
     Remaining = {"asciiLiteral", "sameAsciiLiteral", "unicodeLiteral"};
   if (DarwinDeclarations)
@@ -329,6 +337,7 @@ void verifyRuntime(bool Chained,
                                     : CoreData         ? "NDCoreDataCalls"
                                     : ScalarConstants  ? "NDScalarConstants"
                                     : SwiftLiterals    ? "NDSwiftLiteralStrings"
+                                    : StoredStrings    ? "NDStoredStrings"
                                     : Graphics         ? "NDGraphicsCalls"
                                     : BlockLifetimes   ? "NDBlockFactory"
                                     : Foundation       ? "NDFoundationCalls"
@@ -447,6 +456,7 @@ void verifyRuntime(bool Chained,
                                        : ConstantStrings ? 6U
                                        : Foundation      ? 6U
                                        : SwiftLiterals   ? 2U
+                                       : StoredStrings   ? 4U
                                                          : 0U) +
                                           StorageNames.size());
   if (!IdentityHelpers.empty()) {
@@ -543,6 +553,8 @@ void verifyRuntime(bool Chained,
           ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
       : SwiftLiterals ? "swift-literals=3072\nutf8=pass\nlifetime="
                         "pass\nidentical-objects=0\n"
+      : StoredStrings
+          ? "stored-strings=4096\nobject-identity=pass\nlifetime=pass\n"
       : Graphics ? "graphics-queries=6144\nimage-identity=pass\npng-count=1\n"
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
@@ -891,5 +903,17 @@ TEST(ObjCRuntimeSource, RecompiledSwiftLiteralsPreserveUTF8AndObjectLifetimes) {
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Swift compiler";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledStoredStringsPreserveCollectionsAndIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::StoredStrings));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation";
 #endif
 }

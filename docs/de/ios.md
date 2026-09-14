@@ -107,6 +107,8 @@ Der C-Deklarationskatalog erfasst auch Exporte von CoreGraphics und ImageIO. Und
 
 Große unsterbliche Swift-Stringliterale können ihre UTF-8-Bytes an einer nachgewiesenen Foundation-Brücke in gemeinsamem statischem Speicher ablegen. Länge, Flags, Terminator, gültiges UTF-8, unveränderlicher Speicher und exakter Import müssen übereinstimmen. Die ursprüngliche markierte Darstellung und der Brückenaufruf bleiben erhalten; eingebettete Nullbytes und andere Speicherformen bleiben ungebunden.
 
+Validierte konstante NSString-Objekte behalten ihre gemeinsame Identität auch bei Zuweisungen und Speicherzugriffen über Ganzzahlwerte mit nachgewiesener vollständiger Datenadresse. Skalare Konstanten, unvollständige Adressen, numerische Operationen und Zugriffe auf interne Objektbytes erhalten diese Bindung nicht.
+
 Gewöhnliche skalare Lesezugriffe auf nachweislich unveränderliche, nicht relocierte Image-Bytes können zu bitgetreuen Konstanten werden. Unterstützt werden Ganzzahlen mit 1, 2, 4 und 8 Byte sowie Gleitkommawerte mit 4 und 8 Byte. Schreibbarer oder mehrdeutiger Speicher, geordnete Lesezugriffe und Adressverwendungen bleiben ungebunden; ein numerisches Vorkommen legitimiert keine Zeigerverwendung desselben Ausdrucks.
 
 C-Aufrufe mit festen Parametern verwenden zusätzlich compilerabgeleitete Deklarationen und SDK-Exportinformationen einschließlich Reexports. Die konkrete dyld-Bibliothek, das Symbol und die skalare ABI müssen übereinstimmen; schwache Imports, unbekannte Anbieter und nicht unterstützte Prototypen bleiben ungebunden. Generiertes C verwendet eigene Bezeichner mit den ursprünglichen Linkersymbolen. Gewöhnliche Synchronisationsaufrufe ohne sprachspezifische Ausnahmetabellen behalten ihre Aufrufe und Speicherwirkungen.

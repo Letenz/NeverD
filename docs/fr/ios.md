@@ -107,6 +107,8 @@ Le catalogue de déclarations C couvre aussi les exports de CoreGraphics et Imag
 
 Les grands littéraux Swift immortels peuvent lier leurs octets UTF-8 à un stockage statique partagé au niveau d’un pont Foundation établi. Le nombre d’octets, les indicateurs, la terminaison, la validité UTF-8, l’immutabilité et l’import exact doivent être vérifiés ensemble. La représentation marquée et le pont d’origine sont conservés ; les zéros intégrés et les autres formes de stockage restent non liés.
 
+Les objets NSString constants validés conservent aussi leur identité partagée lors des affectations et écritures utilisant un entier dont la provenance est une adresse de données complète. Les valeurs scalaires, adresses incomplètes, opérations numériques et accès aux octets internes des objets ne bénéficient pas de cette liaison.
+
 Les lectures scalaires ordinaires dans des octets de l’image prouvés immuables et sans relocalisation peuvent devenir des constantes préservant leurs bits. Les entiers de 1, 2, 4 et 8 octets et les flottants de 4 et 8 octets sont pris en charge. Le stockage modifiable ou ambigu, les lectures ordonnées et les usages comme adresse restent non liés ; une occurrence numérique ne justifie pas les usages du même calcul comme pointeur.
 
 Les appels C à paramètres fixes utilisent aussi les déclarations extraites par le compilateur et les exports et réexports du SDK. La bibliothèque dyld exacte, le symbole et l’ABI scalaire doivent correspondre ; les imports faibles, fournisseurs inconnus et prototypes non pris en charge restent non liés. Le C généré emploie des identifiants distincts liés aux symboles originaux. Les appels ordinaires de synchronisation sans tables de gestion des exceptions conservent leurs appels réels et effets mémoire.

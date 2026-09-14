@@ -107,6 +107,8 @@ Il catalogo delle dichiarazioni C copre anche le esportazioni di CoreGraphics e 
 
 I grandi letterali Swift immortali possono associare i byte UTF-8 a memoria statica condivisa presso un ponte Foundation verificato. Lunghezza, flag, terminatore, validità UTF-8, immutabilità e importazione esatta devono essere verificati insieme. La rappresentazione marcata e il ponte originali restano invariati; gli zeri interni e altre forme di memorizzazione rimangono non associati.
 
+Gli oggetti NSString costanti convalidati mantengono la loro identità condivisa anche nelle assegnazioni e scritture tramite interi con provenienza da un indirizzo dati completo. Valori scalari, indirizzi incompleti, operazioni numeriche e accessi ai byte interni degli oggetti non ricevono questo collegamento.
+
 I caricamenti scalari ordinari da byte dell’immagine dimostrati immutabili e privi di rilocazione possono diventare costanti che conservano i bit. Sono supportati interi di 1, 2, 4 e 8 byte e valori in virgola mobile di 4 e 8 byte. Memoria scrivibile o ambigua, caricamenti ordinati e usi come indirizzo rimangono non associati; un uso numerico non autorizza usi come puntatore della stessa espressione.
 
 Le chiamate C con parametri fissi usano anche dichiarazioni estratte dal compilatore e informazioni di esportazione e riesportazione dell’SDK. Devono corrispondere la libreria dyld esatta, il simbolo e l’ABI scalare; importazioni deboli, fornitori sconosciuti e prototipi non supportati restano non associati. Il C generato usa identificatori distinti collegati ai simboli originali. Le normali chiamate di sincronizzazione senza tabelle di eccezione conservano chiamate reali ed effetti sulla memoria.

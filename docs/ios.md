@@ -109,6 +109,8 @@ The C declaration catalog also covers CoreGraphics and ImageIO exports. Opaque i
 
 Large immortal Swift string literals can bind their UTF-8 bytes to shared static storage at an established Foundation bridge. The count, flags, terminator, valid UTF-8, immutable storage and exact import must agree. The original tagged representation and bridge remain intact; embedded-zero literals and other storage forms remain unbound.
 
+Validated constant NSString objects also retain shared identity when an integer carrier with complete data-address provenance is assigned or stored. Scalar immediates, incomplete addresses, numeric operations and accesses to private object bytes do not gain that binding.
+
 Ordinary scalar loads from proven immutable, nonrelocated image bytes can become bit-preserving constants. Integer widths of 1, 2, 4 and 8 bytes and 4/8-byte floating values are supported. Writable or ambiguous storage, ordered loads and address consumers remain unbound; a numeric occurrence does not authorize pointer uses of the same expression.
 
 Fixed C calls additionally use compiler-derived declarations and SDK export/reexport facts. Binding requires the exact dyld library, symbol and scalar ABI; weak imports, unknown providers and unsupported prototypes remain unbound. Generated C uses separate identifiers linked to the original symbols. Ordinary synchronization calls without language dispatch tables preserve their real calls and memory effects.
