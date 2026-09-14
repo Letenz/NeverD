@@ -601,6 +601,54 @@ TEST(ObjCCallHints, BorrowedBytesRequireTheBoundedConsumerOccurrence) {
   EXPECT_EQ(Result.Function.Body.back().RetVal->Kind, ExprKind::Const);
 }
 
+TEST(ObjCCallHints, BorrowedByteArgumentsRetainDistinctRangesAcrossCopies) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("__swift_stdlib_reportUnimplementedInitializer",
+                              Architecture);
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    HighFunc Function;
+    Function.ReturnType = NdType::makeVoid();
+    for (unsigned I = 0; I < 64; ++I) {
+      auto FirstCount = HighExpr::makeConst(1 + I % 7, 4);
+      HighStmt SharedCount;
+      SharedCount.Kind = StmtKind::ExprStmt;
+      SharedCount.Val = FirstCount;
+      Function.Body.push_back(std::move(SharedCount));
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Call;
+      Statement.CallExpr = HighExpr::makeCall(
+          {}, 0x1100,
+          {HighExpr::makeConst(0x2200 + 8 * I, 8), FirstCount,
+           HighExpr::makeConst(0x2600 + 8 * I, 8),
+           HighExpr::makeConst(7 - I % 7, 4), HighExpr::makeConst(0, 4)});
+      Statement.CallExpr->Type = Function.ReturnType;
+      Statement.CallExpr->SourceCallHint =
+          std::make_shared<SourceCallTypeHint>(*Hint);
+      Function.Body.push_back(std::move(Statement));
+    }
+    for (unsigned Round = 0; Round < 8; ++Round) {
+      SCOPED_TRACE(::testing::Message()
+                   << static_cast<int>(Architecture) << ':' << Round);
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_EQ(Bound.BorrowedBytes.size(), 128U);
+      for (unsigned I = 0; I < 64; ++I) {
+        const auto &Operands =
+            Bound.Function.Body[2 * I + 1].CallExpr->Operands;
+        for (unsigned Argument : {0U, 2U}) {
+          ASSERT_TRUE(Operands[Argument]->SourceCallHint);
+          const auto &Bytes = *Operands[Argument]->SourceCallHint;
+          EXPECT_EQ(Bytes.TargetAddress, (Argument ? 0x2600 : 0x2200) + 8 * I);
+          EXPECT_EQ(Bytes.ByteCount, Argument ? 7 - I % 7 : 1 + I % 7);
+          EXPECT_EQ(Function.Body[2 * I + 1].CallExpr->Operands[Argument]->Kind,
+                    ExprKind::Const);
+        }
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftRuntimeRejectsSpecialConventionsAndUnprovenTargets) {
   for (const char *Name :
        {"_swift_retainDirect", "_swift_releaseDirect", "_swift_retain_x20",

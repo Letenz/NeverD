@@ -240,7 +240,10 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     ProfileStorage = &*LocalStorage;
   }
   const auto ClassObjects = classObjectIdentities(Image);
-  using CopyKey = std::tuple<const HighExpr *, bool, bool, bool>;
+  // Contextual bindings create temporary input nodes. Retain those nodes for
+  // the lifetime of their memoized copies so allocator address reuse cannot
+  // make a later argument borrow an earlier argument's binding.
+  using CopyKey = std::tuple<ExprPtr, bool, bool, bool>;
   std::map<CopyKey, ExprPtr> Copies;
   size_t Budget = 1000000;
   va_t StatementAddress = 0;
@@ -295,8 +298,7 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     }
     --Budget;
     AddressContext |= Original->Type && Original->Type->Kind == NdTypeKind::Ptr;
-    const CopyKey Key{Original.get(), NumericOperand, AddressContext,
-                      MemoryAddress};
+    const CopyKey Key{Original, NumericOperand, AddressContext, MemoryAddress};
     if (auto Found = Copies.find(Key); Found != Copies.end())
       return Found->second;
     auto Expression = std::make_shared<HighExpr>(*Original);

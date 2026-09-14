@@ -523,6 +523,48 @@ TEST(ObjCBlockSources,
   }
 }
 
+TEST(ObjCBlockSources, ScalarLoadConversionsPreserveIndependentConstruction) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Bytes : {1U, 2U, 4U, 8U}) {
+      for (NdOp Extension : {NdOp::INT_ZEXT, NdOp::INT_SEXT}) {
+        for (unsigned Destination : {0U, 2U, 3U}) {
+          SCOPED_TRACE(::testing::Message()
+                       << static_cast<int>(Architecture) << ':' << Bytes << ':'
+                       << static_cast<int>(Extension) << ':' << Destination);
+          SourceFixture F(true, Architecture);
+          auto Loaded = HighExpr::makeLoad(HighExpr::makeConst(0x2900, 8),
+                                           NdType::makeInt(Bytes));
+          auto Converted = HighExpr::makeUnary(Extension, Loaded);
+          Converted->Type = NdType::makeInt(Bytes == 8 ? 4 : 8);
+          if (Bytes == 8)
+            Converted->Kind = ExprKind::Cast;
+          if (Destination) {
+            // Equal runtime bits cannot turn a numeric load into an invoke
+            // or descriptor identity through an integer conversion.
+            F.put64(0x2900, Destination == 2 ? F.Invoke : F.Descriptor);
+            F.caller().Body[Destination].StoreVal = Converted;
+          } else {
+            MedVar Local;
+            Local.Kind = MedVar::Temp;
+            Local.Id = 42;
+            Local.Size = Converted->Type->Size;
+            HighStmt Prefix;
+            Prefix.Kind = StmtKind::Assign;
+            Prefix.Dst = HighExpr::makeVar(Local);
+            Prefix.Val = Converted;
+            // An unrelated scalar load before the first ISA store must not
+            // prevent discovering the independently initialized literal.
+            F.caller().Body.insert(F.caller().Body.begin(), Prefix);
+          }
+          auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+          EXPECT_EQ(!Plan.StackBlocks.empty(), Destination == 0)
+              << Plan.Rejections[F.Caller];
+        }
+      }
+    }
+  }
+}
+
 TEST(ObjCBlockSources, DescriptorOwnershipAndFunctionRolesCannotConflict) {
   OwnedSourceFixture F(Arch::AArch64);
   auto Plan = discoverObjCBlockSources(F.Image, F.Result);

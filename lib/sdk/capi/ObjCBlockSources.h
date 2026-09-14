@@ -192,7 +192,10 @@ public:
       }
       if (Bytes == 8 && E->Operands[0]->Type->Size == 8)
         return V;
-      if (V.K != Value::Scalar)
+      // Deferred image bytes are an ordinary loaded value, not a pointer
+      // identity. A width conversion loses the raw header-byte recipe while
+      // preserving the scalar expression for the source emitter.
+      if (V.K != Value::Scalar && V.K != Value::ImageBits)
         throw Invalid("block pointer is consumed through a partial value");
       return {};
     }
