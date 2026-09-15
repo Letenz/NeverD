@@ -162,6 +162,40 @@ static const std::vector<RoundTripTC> kX64LegacyBit = {
    "}\n",
    {0xFF00FF00FF00FF00ULL, 8}, "LegacyBit", 1},
 
+  // clang -O2 `x % 7` is a 64-bit MUL high-half + `lea (,%rdx,8); sub`.
+  // The same recipe is the selector for x64swm_m7's jump table.
+  {"urem7_magic",
+   "long urem7_magic(long a) {\n"
+   "  return (long)((unsigned)a % 7u);\n"
+   "}\n",
+   {0x1234ULL}, "LegacyBit", 2},
+
+  // clang -O2 `x % 54` is mulq of a 64-bit widen magic, then `imul $54, %edx`.
+  // Tokenize uses this as the rodata GEP index.
+  {"urem54_magic",
+   "long urem54_magic(long a) {\n"
+   "  return (long)((unsigned)a % 54u);\n"
+   "}\n",
+   {0x1234ULL}, "LegacyBit", 2},
+
+  // Tokenize -O2 classifies rodata bytes by `shr %cl` of two masks, 32-bit
+  // AND, bit 0.  Positions 19-21 of 0x77BBFF03BE1FF & 0x7884400FFC1E00.
+  {"shr_and_bit19",
+   "long shr_and_bit19(long a){\n"
+   "  unsigned out;\n"
+   "  __asm__ volatile(\n"
+   "    \"movabs $0x77BBFF03BE1FF, %%rax\\n\\t\"\n"
+   "    \"movabs $0x7884400FFC1E00, %%rdx\\n\\t\"\n"
+   "    \"movl %1, %%ecx\\n\\t\"\n"
+   "    \"shrq %%cl, %%rax\\n\\t\"\n"
+   "    \"shrq %%cl, %%rdx\\n\\t\"\n"
+   "    \"andl %%eax, %%edx\\n\\t\"\n"
+   "    \"andl $1, %%edx\\n\\t\"\n"
+   "    \"movl %%edx, %0\\n\\t\"\n"
+   "    : \"=m\"(out) : \"r\"((int)a) : \"rax\", \"rdx\", \"rcx\");\n"
+   "  return (long)out;\n}\n",
+   {19ULL}, "LegacyBit", 0},
+
   {"bts_basic",
    "long bts_basic(long a, long b) {\n"
    "  return a | (1UL << (b & 63));\n"

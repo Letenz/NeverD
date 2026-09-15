@@ -773,6 +773,7 @@ add_neverd_unittest(NeverDSemanticTests
   x86_64/X64_DivMulEdgeRTTests.cpp
   x86_64/X64_DoubleShiftFlagsRTTests.cpp
   x86_64/X64_EnterNestingRTTests.cpp
+  x86_64/X64_EnterLeaveOperandSizeRTTests.cpp
   x86_64/X64_ExtendedCExprTests.cpp
   x86_64/X64_FMASIMDExtRTTests.cpp
   x86_64/X64_FPAdvancedTests.cpp

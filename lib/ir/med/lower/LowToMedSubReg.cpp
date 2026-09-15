@@ -9,15 +9,30 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/ir/med/LowToMed.h"
-
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/LowToMed.h"
 
 #include <algorithm>
 #include <map>
 #include <set>
 
 namespace neverd {
+
+// SUBBYTES that re-views the low bytes of the SAME register it writes
+// (EAX := low32(RAX), offset 0) is a projection, not a new definition.
+// SUBBYTES of an unrelated temp or register into a GP (MUL/DIV high half
+// stored to RDX, low half stored to RAX) is a real write: Phase A must
+// zero-extend a 32-bit dest, and Phase C must project narrower aliases
+// across a block edge (tokenize: `mulq` then a branch then `imul %edx`).
+static bool isSelfLowSliceSubbytes(const MedOp &MOp) {
+  if (MOp.Opcode != NdOp::SUBBYTES)
+    return false;
+  return MOp.NumInputs >= 1 && MOp.Inputs[0].Kind == MedVar::Reg &&
+         MOp.Inputs[0].RegOff == MOp.Output.RegOff &&
+         MOp.Inputs[0].Size >= MOp.Output.Size &&
+         (MOp.NumInputs < 2 || !MOp.Inputs[1].isConst() ||
+          MOp.Inputs[1].ConstVal == 0);
+}
 
 void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
   const auto &TRI = getTargetRegInfo(TargetArch);
@@ -30,23 +45,8 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
       auto &MOp = MB.Ops[OI];
       if (MOp.Output.Kind != MedVar::Reg || MOp.Output.Size == 0)
         continue;
-      if (MOp.Opcode == NdOp::SUBBYTES) {
-        // A SUBBYTES re-viewing the low bytes of the SAME wide register it
-        // writes (EAX := low32(RAX), offset 0) is a no-op extract; zero-
-        // extending it would wrongly clobber that register's genuine upper
-        // bits.  But a SUBBYTES that narrows an UNRELATED value (a temp, or a
-        // different register) into a 32-bit GP register is a real zero-
-        // extending write — e.g. the low word of a 64-bit MUL product stored
-        // to EAX must clear RAX[63:32].  Only skip the self low-slice form.
-        bool SelfLowSlice = MOp.NumInputs >= 1 &&
-                            MOp.Inputs[0].Kind == MedVar::Reg &&
-                            MOp.Inputs[0].RegOff == MOp.Output.RegOff &&
-                            MOp.Inputs[0].Size >= MOp.Output.Size &&
-                            (MOp.NumInputs < 2 || !MOp.Inputs[1].isConst() ||
-                             MOp.Inputs[1].ConstVal == 0);
-        if (SelfLowSlice)
-          continue;
-      }
+      if (isSelfLowSliceSubbytes(MOp))
+        continue;
       if (!TRI.writeZeroExtends(MOp.Output.RegOff, MOp.Output.Size))
         continue;
 
@@ -356,6 +356,11 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
   // in a block, (2) no narrower write follows, and (3) the narrow sub-reg
   // is read in a DIFFERENT block. This targets the case where a loop body
   // mixes 64-bit and 32-bit operations on the same register (e.g. c_gcd).
+  // Self-extract SUBBYTES (EAX := low32(RAX)) are projections, not new
+  // wide definitions.  SUBBYTES from an unrelated temp (one-operand MUL/
+  // DIV writing RDX:RAX) ARE wide definitions and must project EDX/EAX
+  // to successors; otherwise a branch between `mulq` and `imul %edx`
+  // keeps a stale 32-bit overlay (x64o55_tokenize).
   {
     using RegKey = std::pair<uint64_t, uint16_t>;
     std::map<RegKey, std::set<int>> UpwardReadBlocks;
@@ -400,17 +405,18 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
     }
 
     for (auto &MB : Func.Blocks) {
-      // Find the LAST write index for each (RegOff, Size) pair, excluding
-      // SUBBYTES (a sub-register extract).  An INT_ZEXT normally leaves its
-      // input alias as the real narrow definition, but it is also the only
-      // definition of any intermediate alias wider than that input (for
-      // example YMM after a VEX.128 XMM -> ZMM zero-extension), so retain it
-      // for the per-read filter below.
+      // Find the LAST write index for each (RegOff, Size) pair.  Skip only
+      // self-extract SUBBYTES (a sub-register projection of the same
+      // register).  An INT_ZEXT normally leaves its input alias as the real
+      // narrow definition, but it is also the only definition of any
+      // intermediate alias wider than that input (for example YMM after a
+      // VEX.128 XMM -> ZMM zero-extension), so retain it for the per-read
+      // filter below.
       std::map<std::pair<uint64_t, uint16_t>, size_t> LastWide;
       for (size_t OI = 0; OI < MB.Ops.size(); ++OI) {
         auto &MOp = MB.Ops[OI];
         if (MOp.Output.Kind == MedVar::Reg && MOp.Output.Size > 0 &&
-            MOp.Opcode != NdOp::SUBBYTES)
+            !isSelfLowSliceSubbytes(MOp))
           LastWide[{MOp.Output.RegOff, MOp.Output.Size}] = OI;
       }
 

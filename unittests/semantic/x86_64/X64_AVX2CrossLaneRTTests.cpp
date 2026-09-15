@@ -77,7 +77,10 @@ static std::vector<RoundTripTC> makeCrossLaneTC() {
      "  return (long)r; }\n",
      {0x70ULL}, "AVX2CrossLane", 2, "-mavx2"},
 
-    // u8 x32 sum-of-absolute-differences -> VPSADBW ymm (lane-wise byte SAD).
+    // u8 x32 sum-of-absolute-differences.  clang -O3 -mavx2 keeps the SAD
+    // scalar but holds the 32-byte buffers in YMM and realigns with
+    // `and rsp, -32`; the synthetic frame must reserve that alignment slop
+    // or the byte inserts land outside the alloca.
     {p+"_sadbw",
      "long "+p+"_sadbw(long a){\n"
      "  typedef unsigned char v32b __attribute__((vector_size(32)));\n"

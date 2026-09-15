@@ -123,6 +123,49 @@ static const std::vector<RoundTripTC> kX64 = {
    "    :\"=r\"(r):\"r\"(a):\"rax\");\n"
    "  return r; }\n",
    {0xAABBCCDD11223344ULL}, "PartialAlias"},
+
+  // One-operand MUL writes RDX:RAX via SUBBYTES of the i128 product.  A
+  // later 32-bit EDX read in a *successor* block must see the new high
+  // half, not a stale EDX overlay live from before the MUL.  clang -O2
+  // tokenize peels `mulq; movsbl %eax; jcc; imul $54,%edx` across that
+  // edge; Phase C used to skip all SUBBYTES writes and kept the overlay.
+  {"mulq_edx_across_branch",
+   "unsigned long f(unsigned long a, unsigned long b){ unsigned long r;\n"
+   "  __asm__ volatile(\n"
+   "    \"movq %1,%%rax\\n\\t\"\n"
+   "    \"movl $0x12345678,%%edx\\n\\t\"\n"
+   "    \"mulq %2\\n\\t\"\n"
+   "    \"xorl %%eax,%%eax\\n\\t\"\n"
+   "    \"testq %2,%2\\n\\t\"\n"
+   "    \"je 1f\\n\\t\"\n"
+   "    \"movl %%edx,%%eax\\n\\t\"\n"
+   "    \"jmp 2f\\n\"\n"
+   "    \"1:\\n\\t\"\n"
+   "    \"movl %%edx,%%eax\\n\"\n"
+   "    \"2:\\n\\t\"\n"
+   "    \"movq %%rax,%0\\n\"\n"
+   "    :\"=r\"(r):\"r\"(a),\"r\"(b):\"rax\",\"rdx\",\"cc\");\n"
+   "  return r; }\n",
+   {~0ULL, ~0ULL}, "PartialAlias"},
+
+  {"mulq_imul_edx_across_branch",
+   "unsigned long f(unsigned long a, unsigned long b){ unsigned r;\n"
+   "  __asm__ volatile(\n"
+   "    \"movq %1,%%rax\\n\\t\"\n"
+   "    \"movl $0x12345678,%%edx\\n\\t\"\n"
+   "    \"mulq %2\\n\\t\"\n"
+   "    \"xorl %%eax,%%eax\\n\\t\"\n"
+   "    \"testq %2,%2\\n\\t\"\n"
+   "    \"je 1f\\n\\t\"\n"
+   "    \"imull $54,%%edx,%%eax\\n\\t\"\n"
+   "    \"jmp 2f\\n\"\n"
+   "    \"1:\\n\\t\"\n"
+   "    \"imull $54,%%edx,%%eax\\n\"\n"
+   "    \"2:\\n\\t\"\n"
+   "    \"movl %%eax,%0\\n\"\n"
+   "    :\"=r\"(r):\"r\"(a),\"r\"(b):\"rax\",\"rdx\",\"cc\");\n"
+   "  return r; }\n",
+   {~0ULL, ~0ULL}, "PartialAlias"},
 };
 // clang-format on
 

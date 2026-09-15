@@ -418,18 +418,20 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(X86.operands[0]);
     NdVar Src = L.operandRead(S, X86.operands[1]);
+    // Convert into an 8-byte temp so FLOAT_INT2FLOAT infers double, then
+    // merge into DEST.  Legacy SSE writes only [63:0]; [127:64] is unchanged.
+    // clang -O2 consumes that high lane (`cvtsi2sd; mulpd`).
     NdVar Tmp = S.makeTemp(8);
     S.emit(NdOp::FLOAT_INT2FLOAT, Tmp, {Src});
-    // NOTE: this writes the low double as a narrow (8-byte) scalar value and
-    // does NOT rebuild the destination's upper 64 bits.  That is deliberate and
-    // matches the codebase-wide scalar-SSE convention: a scalar XMM value is
-    // kept narrow-typed so downstream scalar ops (sqrtss/mulss/comiss/...)
-    // infer the right FP width.  Forcing a 16-byte CONCAT here to preserve
-    // xmm[127:64] re-types the register as i128, and inferFloatTy() then
-    // mis-selects double for those consumers.  Real
-    // compilers never read the upper lane after CVTSI2*, so the divergence is
-    // unobservable in practice; only hand-written asm can see it.
-    S.emit(NdOp::COPY, Dst, {Tmp});
+    if (X86.operands[0].type == X86_OP_MEM) {
+      S.storeToMem(X86.operands[0], Tmp);
+    } else if (Dst.Size > 8) {
+      NdVar Hi = S.makeTemp(Dst.Size - 8);
+      S.emit(NdOp::SUBBYTES, Hi, {Dst, NdVar::cst(8, 4)});
+      S.emit(NdOp::CONCAT, Dst, {Hi, Tmp});
+    } else {
+      S.emit(NdOp::COPY, Dst, {Tmp});
+    }
     break;
   }
   case X86_INS_CVTSI2SS: {
@@ -437,11 +439,19 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       break;
     NdVar Dst = L.operandWrite(X86.operands[0]);
     NdVar Src = L.operandRead(S, X86.operands[1]);
+    // Convert into a 4-byte temp so FLOAT_INT2FLOAT infers float, then merge
+    // into DEST.  Legacy SSE writes only [31:0]; [127:32] is unchanged.
     NdVar Tmp = S.makeTemp(4);
     S.emit(NdOp::FLOAT_INT2FLOAT, Tmp, {Src});
-    // See CVTSI2SD above: narrow scalar write by design; upper lanes are not
-    // rebuilt to keep the value float-typed for downstream scalar consumers.
-    S.emit(NdOp::COPY, Dst, {Tmp});
+    if (X86.operands[0].type == X86_OP_MEM) {
+      S.storeToMem(X86.operands[0], Tmp);
+    } else if (Dst.Size > 4) {
+      NdVar Hi = S.makeTemp(Dst.Size - 4);
+      S.emit(NdOp::SUBBYTES, Hi, {Dst, NdVar::cst(4, 4)});
+      S.emit(NdOp::CONCAT, Dst, {Hi, Tmp});
+    } else {
+      S.emit(NdOp::COPY, Dst, {Tmp});
+    }
     break;
   }
   case X86_INS_CVTSD2SS:

@@ -7,15 +7,16 @@
 // Forty-seventh batch of clang -O2 vector probes covering the INTERSECTION of a
 // constant-pool-dense NEON region and a switch jump table within one function.
 // On ARM32 both the NEON constant pool and the PC-relative switch offset table
-// live in the executable `.text`; #531 rebuilds the pool as one GEP'd global via
-// embedExecSegmentRun while the jump-table resolver independently recovers the
-// switch — this batch verifies the two coexist (neither the pool's single-global
-// rebuild nor the switch recovery corrupts the other).  Earlier batches probed
-// pure-SIMD or pure-switch functions but never their mix.
+// live in the executable `.text`; #531 rebuilds the pool as one GEP'd global
+// via embedExecSegmentRun while the jump-table resolver independently recovers
+// the switch — this batch verifies the two coexist (neither the pool's
+// single-global rebuild nor the switch recovery corrupts the other).  Earlier
+// batches probed pure-SIMD or pure-switch functions but never their mix.
 //
 // Each kernel folds to one exact integer for a bit-exact compare.  Unsigned
-// arithmetic keeps the scalar wraparound well-defined; bitmask gather stays in a
-// u32 accumulator.  x64 uses -mssse3; a64/arm32 use the default NEON baseline.
+// arithmetic keeps the scalar wraparound well-defined; bitmask gather stays in
+// a u32 accumulator.  x64 uses -mssse3; a64/arm32 use the default NEON
+// baseline.
 //
 //===----------------------------------------------------------------------===//
 
@@ -30,7 +31,8 @@ class A64VectorAlgo47RT : public SemanticRoundTripFixture,
 TEST_P(A64VectorAlgo47RT, Verify) { roundTripAArch64(GetParam()); }
 
 class ARM32VectorAlgo47RT : public SemanticRoundTripFixture,
-                            public ::testing::WithParamInterface<RoundTripTC> {};
+                            public ::testing::WithParamInterface<RoundTripTC> {
+};
 TEST_P(ARM32VectorAlgo47RT, Verify) { roundTripARM32(GetParam()); }
 
 // clang-format off
@@ -101,8 +103,8 @@ static std::vector<RoundTripTC> makeVec47TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64Vec47 =
-    makeVec47TC("x64v47", "long", 2, "-mssse3");
+static const std::vector<RoundTripTC> kX64Vec47 = withForbiddenSwitch(
+    makeVec47TC("x64v47", "long", 2, "-mssse3"), {"_vecsw"});
 static const std::vector<RoundTripTC> kA64Vec47 =
     makeVec47TC("a64v47", "long", 2, "");
 static const std::vector<RoundTripTC> kARM32Vec47 =

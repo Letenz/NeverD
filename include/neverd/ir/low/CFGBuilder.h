@@ -1834,6 +1834,12 @@ private:
   /// and a check that the comparison actually reaches a conditional branch.
   bool inferBoundsFromLoadAliasGuard(const InsnRecord &Rec,
                                      JumpTableInfo &Info);
+  /// Bound a computed-goto index of the form
+  /// `idx = bt(pc, mask) ? K : pg[pc]` when the bit-test is a compile-time
+  /// specialization of `if (pg[pc] > K) idx = K`.  Verified against the
+  /// concrete program bytes and mask; sets MaxEntries = K+1.
+  bool inferBoundsFromBitTestClamp(const BinaryImage &Img,
+                                   const InsnRecord &Rec, JumpTableInfo &Info);
   bool inferBoundsFromModulo(
       const BinaryImage &Img, const InsnRecord &Rec, JumpTableInfo &Info,
       size_t *AggregateEvidenceBudget, bool *EvidenceIncomplete = nullptr,

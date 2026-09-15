@@ -2067,6 +2067,38 @@ static bool provesExactUnsignedModuloRecipe(
         return {};
       return Ctx.mkExtract(Product, 0, Width);
     };
+    // clang/LLVM x86 lowers uncooperative 32-bit unsigned division with
+    // AllowWidenOptimization: MULHU of zext64(x) by a 64-bit magic
+    // ((2^W+Magic)<<k) and no post-shift.  The 128-bit product does not fit
+    // the 2W-bit non-widen theorem above.  Charge only the interned zext/mul/
+    // extract nodes; mkExtract of a mul of two zexts does not walk a concat.
+    if (Width == 32 && Ctx.width(Recipe.QuotientDividend) == Width) {
+      const llvm::UnsignedDivisionByConstantInfo WideMagics =
+          llvm::UnsignedDivisionByConstantInfo::get(
+              D, Recipe.LeadingZeros,
+              /*AllowEvenDivisorOptimization=*/true,
+              /*AllowWidenOptimization=*/true);
+      if (WideMagics.Widen && !WideMagics.IsAdd && WideMagics.PreShift == 0 &&
+          WideMagics.PostShift == 0 && WideMagics.Magic.getBitWidth() == 64) {
+        if (!consume(12))
+          return false;
+        SymRef X64 = Ctx.mkZExt(Recipe.QuotientDividend, 64);
+        SymRef X128 = X64 ? Ctx.mkZExt(X64, 128) : SymRef{};
+        SymRef Magic64 = Ctx.mkConst(WideMagics.Magic);
+        SymRef Magic128 = Magic64 ? Ctx.mkZExt(Magic64, 128) : SymRef{};
+        SymRef Prod =
+            (X128 && Magic128) ? mkMul2Budgeted(X128, Magic128) : SymRef{};
+        if (Prod) {
+          SymRef Q64 = Ctx.mkExtract(Prod, 64, 64);
+          SymRef Q32 = Q64 ? Ctx.mkExtract(Q64, 0, 32) : SymRef{};
+          if (Q32 && !addQuotient(Quotients, Q32, Q64))
+            return false;
+        } else if (AnalysisIncomplete && *AnalysisIncomplete) {
+          return false;
+        }
+      }
+    }
+
     auto matchesRemainder = [&](const QuotientForm &Q) {
       if (!consume(3))
         return false;
@@ -6488,6 +6520,52 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         break;
       }
       case ResolverValueExpr::Kind::Slice: {
+        // x86 MULHU of two 64-bit values is lifted as a 128-bit INT_MULT
+        // followed by SUBBYTES of the high half.  Exact unsigned-modulo
+        // recipes need that high half as a 64-bit extract; 16-byte nodes are
+        // otherwise rejected so SAT never sees a 128-bit value.
+        if (ExactModuloRecipeOnly && Node->Input && Node->Input->Size == 16 &&
+            Node->SliceOffset + Node->Size <= 16 &&
+            Node->Input->K == ResolverValueExpr::Kind::Transform &&
+            Node->Input->HasOpcode && Node->Input->Opcode == NdOp::INT_MULT &&
+            Node->Input->Inputs.size() == 2) {
+          auto peelMulhuOperand =
+              [&](const ResolverValue &Wide) -> ResolverValue {
+            if (!Wide || Wide->Size != 16)
+              return {};
+            // Consecutive zexts collapse, so zext128(zext64(x32)) is stored
+            // as zext128(x32).  Accept the 32- or 64-bit source and widen it
+            // to 128 bits below.
+            auto accept = [](uint16_t Size) { return Size == 4 || Size == 8; };
+            if (Wide->K == ResolverValueExpr::Kind::ZeroExtend && Wide->Input &&
+                accept(Wide->Input->Size))
+              return Wide->Input;
+            if (Wide->K == ResolverValueExpr::Kind::Transform &&
+                Wide->HasOpcode &&
+                (Wide->Opcode == NdOp::INT_ZEXT ||
+                 Wide->Opcode == NdOp::COPY) &&
+                Wide->Inputs.size() == 1 && Wide->Inputs[0] &&
+                accept(Wide->Inputs[0]->Size))
+              return Wide->Inputs[0];
+            return {};
+          };
+          const ResolverValue Lo0 = peelMulhuOperand(Node->Input->Inputs[0]);
+          const ResolverValue Lo1 = peelMulhuOperand(Node->Input->Inputs[1]);
+          if (Lo0 && Lo1) {
+            symbolic::SymRef A = Symbolize(Lo0, Depth + 1);
+            symbolic::SymRef B = Symbolize(Lo1, Depth + 1);
+            const bool WidthOk = A && B &&
+                                 (Ctx.width(A) == 32 || Ctx.width(A) == 64) &&
+                                 (Ctx.width(B) == 32 || Ctx.width(B) == 64);
+            if (WidthOk && consumeSymbolWork(8)) {
+              symbolic::SymRef Prod =
+                  Ctx.mkMul(Ctx.mkZExt(A, 128), Ctx.mkZExt(B, 128));
+              Result = Ctx.mkExtract(Prod, uint32_t(Node->SliceOffset) * 8u,
+                                     NodeWidth);
+              break;
+            }
+          }
+        }
         symbolic::SymRef Input = Symbolize(Node->Input, Depth + 1);
         const uint64_t Low = uint64_t(Node->SliceOffset) * 8u;
         if (!Input || Low > Ctx.width(Input) ||

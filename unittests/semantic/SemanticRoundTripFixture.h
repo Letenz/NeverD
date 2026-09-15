@@ -50,6 +50,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -132,6 +133,30 @@ struct RoundTripTC {
   /// use this to prevent one recovered dispatch from hiding a lost sibling.
   uint32_t MinimumRecoveredSwitchCount = 1;
 };
+
+/// True when LLVM emission refused a guessed table/code address instead of
+/// emitting a stale GEP or an unauthenticated switch.
+inline bool isFailClosedJumpTableDiagnostic(const std::string &Text) {
+  return Text.find("refusing stale-address fallback") != std::string::npos ||
+         Text.find("unproved runtime offset") != std::string::npos ||
+         Text.find("ambiguous reachable read-only table-base") !=
+             std::string::npos ||
+         Text.find("no unique lifted function entry") != std::string::npos ||
+         Text.find("relocatable code-address") != std::string::npos;
+}
+
+/// Mark named cases as Forbidden switch certificates (x64/i386 only).
+inline std::vector<RoundTripTC>
+withForbiddenSwitch(std::vector<RoundTripTC> Cases,
+                    std::initializer_list<const char *> NameNeedles) {
+  for (auto &TC : Cases)
+    for (const char *Needle : NameNeedles)
+      if (TC.Name.find(Needle) != std::string::npos) {
+        TC.RecoveredSwitch = RecoveredSwitchExpectation::Forbidden;
+        break;
+      }
+  return Cases;
+}
 
 inline std::ostream &operator<<(std::ostream &OS, const RoundTripTC &TC) {
   return OS << TC.Category << "/" << TC.Name;
@@ -431,13 +456,24 @@ private:
         << "\n  Test: " << TC.Name;
 
     // ---- Step 5: Lift and recompile with NeverD ----
+    const bool ExpectFailClosedSwitch =
+        TC.RecoveredSwitch == RecoveredSwitchExpectation::Forbidden;
+    if (ExpectFailClosedSwitch)
+      testing::internal::CaptureStderr();
     int Ret = liftToObject(Sess, ObjPath.c_str(), /*NoOpt=*/TC.NoOpt ? 1 : 0);
+    const std::string ClosedStderr =
+        ExpectFailClosedSwitch ? testing::internal::GetCapturedStderr()
+                               : std::string();
     if (Ret != 0) {
       const char *Err = neverd_last_error(Sess);
       const std::string Diagnostic = Err ? Err : "unknown";
       neverd_free_string(Err);
+      if (ExpectFailClosedSwitch &&
+          isFailClosedJumpTableDiagnostic(ClosedStderr + Diagnostic))
+        return;
       FAIL() << "Lift-to-obj failed: " << Diagnostic << "\n  Status: " << Ret
-             << "\n  Test: " << TC.Name << "\n  Object: " << ObjPath;
+             << "\n  Test: " << TC.Name << "\n  Object: " << ObjPath
+             << (ClosedStderr.empty() ? "" : "\n  Stderr: " + ClosedStderr);
     }
 
     if (TC.RecoveredSwitch != RecoveredSwitchExpectation::Unspecified) {

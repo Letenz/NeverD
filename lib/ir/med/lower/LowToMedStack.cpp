@@ -22,6 +22,39 @@
 
 namespace neverd {
 
+namespace {
+
+// `and rsp, -32` (and AArch64 `and sp, sp, #-16`) realigns the stack pointer.
+// The pointer can drop by at most Align-1 bytes; those bytes must be inside
+// the synthetic frame or later [rsp+k] YMM/vector spills go out of the alloca.
+bool stackAlignMaskSlop(const NdVar &C, int64_t &Slop) {
+  if (!C.isConst() || C.Size == 0 || C.Size > 8)
+    return false;
+  unsigned Bits = static_cast<unsigned>(C.Size) * 8u;
+  uint64_t U = C.Offset;
+  if (Bits < 64)
+    U &= (UINT64_C(1) << Bits) - 1;
+  int64_t S = 0;
+  if (Bits == 64)
+    S = static_cast<int64_t>(U);
+  else {
+    const uint64_t Sign = UINT64_C(1) << (Bits - 1);
+    if (U & Sign)
+      S = static_cast<int64_t>(U | ~((UINT64_C(1) << Bits) - 1));
+    else
+      S = static_cast<int64_t>(U);
+  }
+  if (S >= 0)
+    return false;
+  const uint64_t Align = static_cast<uint64_t>(-S);
+  if (Align < 8 || Align > 256 || (Align & (Align - 1)) != 0)
+    return false;
+  Slop = static_cast<int64_t>(Align - 1);
+  return true;
+}
+
+} // namespace
+
 void LowToMedConverter::analyzeStack(const LowFunc &Low) {
   std::set<std::pair<int64_t, uint16_t>> SeenSlots;
 
@@ -236,6 +269,32 @@ void LowToMedConverter::analyzeStack(const LowFunc &Low) {
         if (Propagated) {
           AddrMap[VnKey(Op.Output)] = Offset;
           FrameDefsInBlock.insert(VnKey(Op.Output));
+        }
+      } else if (Op.Opcode == NdOp::INT_AND && Op.NumInputs >= 2) {
+        int64_t Slop = 0;
+        int64_t Base = 0;
+        bool FrameAlign = false;
+        for (uint8_t I = 0; I < 2; ++I) {
+          const NdVar &Mask = Op.Inputs[1 - I];
+          if (!stackAlignMaskSlop(Mask, Slop))
+            continue;
+          if (!FrameOffset(Op.Inputs[I], Base))
+            continue;
+          FrameAlign = true;
+          break;
+        }
+        ClearOutput(Op);
+        if (FrameAlign && Slop > 0 &&
+            Base >= std::numeric_limits<int64_t>::min() + Slop) {
+          const int64_t Aligned = Base - Slop;
+          if (Aligned >= -limits::kMaxFrameSize &&
+              Aligned <= limits::kMaxFrameSize) {
+            if (IsTrackableOutput(Op)) {
+              AddrMap[VnKey(Op.Output)] = Aligned;
+              FrameDefsInBlock.insert(VnKey(Op.Output));
+            }
+            AddSlot(Aligned, Op.Output.Size > 0 ? Op.Output.Size : 8);
+          }
         }
       } else
         ClearOutput(Op);

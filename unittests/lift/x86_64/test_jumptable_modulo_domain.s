@@ -1380,6 +1380,57 @@ jt_modulo_add_after_scaled_difference_wrong_capacity:
         .quad .Ladd_after_scaled_wrong_capacity_case3
         .quad .Ladd_after_scaled_wrong_capacity_case4
 
+// clang 21 x86-64 `x % 7u` uses LLVM's AllowWidenOptimization MULHU:
+// mulq of zext(x) by ((2^32+Magic)<<k), then `lea (,%rdx,8); sub; add` for
+// x + (q - 8q).  The 128-bit product is outside the 2W-bit non-widen theorem.
+        .text
+        .globl  jt_modulo_widen_mulhu
+        .type   jt_modulo_widen_mulhu,@function
+jt_modulo_widen_mulhu:
+        movl    %edi, %eax
+        movabs  $0x24924924A0000000, %rcx
+        mulq    %rcx
+        leal    (,%rdx,8), %eax
+        subl    %eax, %edx
+        addl    %edi, %edx
+        leaq    .Lwiden_mulhu_table(%rip), %rax
+        movslq  (%rax,%rdx,4), %rdx
+        addq    %rax, %rdx
+        jmpq    *%rdx
+.Lwiden_mulhu_case0:
+        movl    $4870, %eax
+        retq
+.Lwiden_mulhu_case1:
+        movl    $4871, %eax
+        retq
+.Lwiden_mulhu_case2:
+        movl    $4872, %eax
+        retq
+.Lwiden_mulhu_case3:
+        movl    $4873, %eax
+        retq
+.Lwiden_mulhu_case4:
+        movl    $4874, %eax
+        retq
+.Lwiden_mulhu_case5:
+        movl    $4875, %eax
+        retq
+.Lwiden_mulhu_case6:
+        movl    $4876, %eax
+        retq
+        .size   jt_modulo_widen_mulhu, .-jt_modulo_widen_mulhu
+
+        .section .rodata,"a",@progbits
+        .p2align 3
+.Lwiden_mulhu_table:
+        .long .Lwiden_mulhu_case0-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case1-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case2-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case3-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case4-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case5-.Lwiden_mulhu_table
+        .long .Lwiden_mulhu_case6-.Lwiden_mulhu_table
+
 // clang's x86 `% 6u` lowering keeps the quotient in a 64-bit container, then
 // spells q*6 as low32(3*zext32(2*q)).  Low-bit ring normalization must prove
 // that exact factorized back-multiply without admitting a wrong factor,

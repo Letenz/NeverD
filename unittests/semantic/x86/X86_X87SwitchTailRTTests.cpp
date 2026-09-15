@@ -15,7 +15,8 @@
 //      adjacent tables form one continuous relocation run, which the run-length
 //      count over-read as a single table -- fabricating bogus successor edges
 //      into the loop body.  `inferBoundsFromMask` now clamps to the mask.
-//   2. The steady switch's PIC table base (`lea tab(%rip),%rdx`) is materialised
+//   2. The steady switch's PIC table base (`lea tab(%rip),%rdx`) is
+//   materialised
 //      in the loop preheader, which sits *after* the peeled switch; folding the
 //      base from the function entry halted at the peeled INDIR_BR before the
 //      `lea`.  `foldRegConstant` now also emulates from intervening dominator
@@ -136,7 +137,11 @@ static std::vector<RoundTripTC> kX64Build() {
 // per-TOP block copies.
 static std::vector<RoundTripTC> kX86Build() {
   auto v = makeSwTailTC("x86swt", "int");
-  v.push_back(forcepeelTC("x86swt", "int", 2));
+  auto Peel = forcepeelTC("x86swt", "int", 2);
+  // i386 PIC forcepeel has two adjacent tables and no unique GOT-relative
+  // base; emission must refuse rather than guess a table or function entry.
+  Peel.RecoveredSwitch = RecoveredSwitchExpectation::Forbidden;
+  v.push_back(std::move(Peel));
   for (auto &c : v)
     c.ExtraFlags = "-fPIC";
   return v;
@@ -146,7 +151,7 @@ static std::vector<RoundTripTC> kX86Build() {
 static const std::vector<RoundTripTC> kX64 = kX64Build();
 static const std::vector<RoundTripTC> kX86 = kX86Build();
 
-INSTANTIATE_TEST_SUITE_P(X87SwTail, X64X87SwTailRT,
-                         ::testing::ValuesIn(kX64), rtTCName);
-INSTANTIATE_TEST_SUITE_P(X87SwTail, X86X87SwTailRT,
-                         ::testing::ValuesIn(kX86), rtTCName);
+INSTANTIATE_TEST_SUITE_P(X87SwTail, X64X87SwTailRT, ::testing::ValuesIn(kX64),
+                         rtTCName);
+INSTANTIATE_TEST_SUITE_P(X87SwTail, X86X87SwTailRT, ::testing::ValuesIn(kX86),
+                         rtTCName);

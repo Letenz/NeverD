@@ -6407,6 +6407,271 @@ bool CFGBuilder::inferBoundsFromModulo(
 }
 
 //===----------------------------------------------------------------------===//
+// inferBoundsFromBitTestClamp — computed-goto `bt pc,mask ? K : pg[pc]`
+//===----------------------------------------------------------------------===//
+
+bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
+                                             const InsnRecord &Rec,
+                                             JumpTableInfo &Info) {
+  if (!CurrentImg || !Info.RelocAbsolute || Info.IsRelative ||
+      !Info.HasBaseAddr || Info.EntrySize == 0 ||
+      Info.PhysicalCapacity < limits::kMinJumpTableEntries ||
+      Info.PhysicalCapacity > limits::kMaxJumpTableEntries ||
+      Info.IndexUseAddr == InvalidVA || Info.IndexUseSeq < 0 ||
+      Info.IndexValueAtUse.Size == 0)
+    return false;
+
+  va_t BlkStart = CurrentFuncEntry;
+  auto BIt = BlockStarts.upper_bound(Rec.Addr);
+  if (BIt != BlockStarts.begin()) {
+    --BIt;
+    BlkStart = *BIt;
+  }
+  std::vector<LowOp> Ops;
+  for (auto It = Insns.lower_bound(BlkStart);
+       It != Insns.end() && It->first <= Rec.Addr; ++It)
+    for (const LowOp &Op : It->second.Ops)
+      Ops.push_back(Op);
+  if (Ops.empty())
+    return false;
+
+  auto same = [](const NdVar &A, const NdVar &B) {
+    return A.Space == B.Space && A.Offset == B.Offset && A.Size == B.Size;
+  };
+  auto peelCopyZext = [&](NdVar Value, int From) -> std::pair<NdVar, int> {
+    for (int Depth = 0; Depth < limits::kMaxQuasiCopyDepth; ++Depth) {
+      const int Def = reachingDefIdx(Ops, From, Value);
+      if (Def < 0)
+        return {Value, From};
+      const LowOp &Op = Ops[Def];
+      if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT) &&
+          Op.NumInputs >= 1 &&
+          (Op.Inputs[0].isReg() || Op.Inputs[0].isTemp())) {
+        Value = Op.Inputs[0];
+        From = Def - 1;
+        continue;
+      }
+      return {Value, Def};
+    }
+    return {Value, From};
+  };
+
+  NdVar Index = Info.IndexValueAtUse;
+  int From = static_cast<int>(Ops.size()) - 1;
+  int UseIdx = -1;
+  for (int I = static_cast<int>(Ops.size()) - 1; I >= 0; --I)
+    if (Ops[I].Addr == Info.IndexUseAddr && Ops[I].Seq == Info.IndexUseSeq) {
+      UseIdx = I;
+      break;
+    }
+  if (UseIdx < 0) {
+    return false;
+  }
+  From = UseIdx - 1;
+  const int BlendDef = peelCopyZext(Index, From).second;
+  if (BlendDef < 0 || BlendDef >= static_cast<int>(Ops.size()))
+    return false;
+  const LowOp &Blend = Ops[BlendDef];
+  if (Blend.Opcode != NdOp::INT_OR || Blend.NumInputs < 2) {
+    return false;
+  }
+
+  int ConstArm = -1;
+  uint64_t K = 0;
+  NdVar ByteValue;
+  int ByteFrom = -1;
+  NdVar Condition;
+  int ConditionFrom = -1;
+  for (int Positive = 0; Positive < 2; ++Positive) {
+    const int Neg = 1 - Positive;
+    const int PosAnd =
+        reachingDefIdx(Ops, BlendDef - 1, Blend.Inputs[Positive]);
+    const int NegAnd = reachingDefIdx(Ops, BlendDef - 1, Blend.Inputs[Neg]);
+    if (PosAnd < 0 || NegAnd < 0 || Ops[PosAnd].Opcode != NdOp::INT_AND ||
+        Ops[NegAnd].Opcode != NdOp::INT_AND || Ops[PosAnd].NumInputs < 2 ||
+        Ops[NegAnd].NumInputs < 2)
+      continue;
+    for (int MaskSide = 0; MaskSide < 2; ++MaskSide) {
+      const int Neg2 =
+          reachingDefIdx(Ops, PosAnd - 1, Ops[PosAnd].Inputs[MaskSide]);
+      if (Neg2 < 0 || Ops[Neg2].Opcode != NdOp::INT_NEG2 ||
+          Ops[Neg2].NumInputs < 1)
+        continue;
+      int NotSide = -1;
+      for (int Side = 0; Side < 2; ++Side) {
+        const int Not =
+            reachingDefIdx(Ops, NegAnd - 1, Ops[NegAnd].Inputs[Side]);
+        if (Not >= 0 && Ops[Not].Opcode == NdOp::INT_NOT &&
+            Ops[Not].NumInputs >= 1 &&
+            same(Ops[Not].Inputs[0], Ops[PosAnd].Inputs[MaskSide])) {
+          NotSide = Side;
+          break;
+        }
+      }
+      if (NotSide < 0)
+        continue;
+      const NdVar PosData = Ops[PosAnd].Inputs[1 - MaskSide];
+      const NdVar NegData = Ops[NegAnd].Inputs[1 - NotSide];
+      auto asConst = [&](NdVar V, int Before) -> std::optional<uint64_t> {
+        auto [P, D] = peelCopyZext(V, Before);
+        if (P.isConst())
+          return P.Offset;
+        if (D >= 0 && Ops[D].Opcode == NdOp::COPY && Ops[D].NumInputs >= 1 &&
+            Ops[D].Inputs[0].isConst())
+          return Ops[D].Inputs[0].Offset;
+        if (P.isReg()) {
+          auto Folded = foldRegConstant(Img, Rec, P.Offset, Blend.Addr, {},
+                                        /*RequireMappedValue=*/false);
+          if (Folded)
+            return *Folded;
+        }
+        return std::nullopt;
+      };
+      const std::optional<uint64_t> PosK = asConst(PosData, PosAnd - 1);
+      const std::optional<uint64_t> NegK = asConst(NegData, NegAnd - 1);
+      if (PosK && !NegK) {
+        K = *PosK;
+        ByteValue = NegData;
+        ByteFrom = NegAnd - 1;
+        Condition = Ops[Neg2].Inputs[0];
+        ConditionFrom = Neg2 - 1;
+        ConstArm = Positive;
+        break;
+      }
+      if (NegK && !PosK) {
+        K = *NegK;
+        ByteValue = PosData;
+        ByteFrom = PosAnd - 1;
+        Condition = Ops[Neg2].Inputs[0];
+        ConditionFrom = Neg2 - 1;
+        ConstArm = Neg;
+        break;
+      }
+    }
+    if (ConstArm >= 0)
+      break;
+  }
+  if (ConstArm < 0 || K + 1 != Info.PhysicalCapacity) {
+    return false;
+  }
+
+  const int ByteDef = peelCopyZext(ByteValue, ByteFrom).second;
+  if (ByteDef < 0 || Ops[ByteDef].Opcode != NdOp::LOAD ||
+      Ops[ByteDef].Output.Size != 1) {
+    return false;
+  }
+  const LowOp &ByteLoad = Ops[ByteDef];
+  const NdVar &LoadAddr =
+      ByteLoad.NumInputs >= 2 ? ByteLoad.Inputs[1] : ByteLoad.Inputs[0];
+  const va_t FoldAt = ByteLoad.Addr;
+  std::optional<uint64_t> ProgBase;
+  auto tryFold = [&](NdVar V) {
+    auto [P, D] = peelCopyZext(V, ByteDef - 1);
+    if (P.isConst() && Img.getSegmentFor(P.Offset)) {
+      ProgBase = P.Offset;
+      return;
+    }
+    if (P.isReg()) {
+      auto Folded = foldRegConstant(Img, Rec, P.Offset, FoldAt, {},
+                                    /*RequireMappedValue=*/true);
+      if (Folded && Img.getSegmentFor(*Folded))
+        ProgBase = Folded;
+    }
+  };
+  tryFold(LoadAddr);
+  if (!ProgBase) {
+    const int AddrDef = reachingDefIdx(Ops, ByteDef - 1, LoadAddr);
+    if (AddrDef >= 0 && Ops[AddrDef].Opcode == NdOp::INT_ADD &&
+        Ops[AddrDef].NumInputs >= 2) {
+      tryFold(Ops[AddrDef].Inputs[0]);
+      if (!ProgBase)
+        tryFold(Ops[AddrDef].Inputs[1]);
+    }
+  }
+  if (!ProgBase || !Img.getSegmentFor(*ProgBase)) {
+    return false;
+  }
+  const uint64_t ProgSize = Img.dataObjectSizeAt(*ProgBase);
+  if (ProgSize < 2 || ProgSize > 64) {
+    return false;
+  }
+
+  const int CondDef = peelCopyZext(Condition, ConditionFrom).second;
+  if (CondDef < 0)
+    return false;
+  const LowOp *Compare = &Ops[CondDef];
+  if (Compare->Opcode != NdOp::INT_NOTEQUAL &&
+      Compare->Opcode != NdOp::INT_EQUAL) {
+    return false;
+  }
+  if (Compare->NumInputs < 2)
+    return false;
+  int ZeroSide =
+      Compare->Inputs[0].isConst() && Compare->Inputs[0].Offset == 0
+          ? 0
+          : (Compare->Inputs[1].isConst() && Compare->Inputs[1].Offset == 0
+                 ? 1
+                 : -1);
+  if (ZeroSide < 0)
+    return false;
+  const int And1 =
+      reachingDefIdx(Ops, CondDef - 1, Compare->Inputs[1 - ZeroSide]);
+  if (And1 < 0 || Ops[And1].Opcode != NdOp::INT_AND || Ops[And1].NumInputs < 2)
+    return false;
+  int OneSide = -1;
+  for (int Side = 0; Side < 2; ++Side)
+    if (Ops[And1].Inputs[Side].isConst() && Ops[And1].Inputs[Side].Offset == 1)
+      OneSide = Side;
+  if (OneSide < 0)
+    return false;
+  const int Shift =
+      reachingDefIdx(Ops, And1 - 1, Ops[And1].Inputs[1 - OneSide]);
+  if (Shift < 0 || Ops[Shift].Opcode != NdOp::INT_RIGHT ||
+      Ops[Shift].NumInputs < 2)
+    return false;
+  auto [MaskVar, MaskDef] = peelCopyZext(Ops[Shift].Inputs[0], Shift - 1);
+  uint64_t Mask = 0;
+  if (MaskVar.isConst())
+    Mask = MaskVar.Offset;
+  else if (MaskDef >= 0 && Ops[MaskDef].Opcode == NdOp::COPY &&
+           Ops[MaskDef].NumInputs >= 1 && Ops[MaskDef].Inputs[0].isConst())
+    Mask = Ops[MaskDef].Inputs[0].Offset;
+  else if (MaskVar.isReg()) {
+    auto Folded = foldRegConstant(Img, Rec, MaskVar.Offset, Ops[Shift].Addr, {},
+                                  /*RequireMappedValue=*/false);
+    if (!Folded)
+      return false;
+    Mask = *Folded;
+  } else
+    return false;
+  if (Mask == 0)
+    return false;
+
+  const uint64_t MaskBits = Ops[Shift].Inputs[0].Size * 8ull;
+  if (MaskBits == 0 || MaskBits > 64)
+    return false;
+  for (uint64_t Pc = 0; Pc < ProgSize; ++Pc) {
+    const uint8_t *Bytes = Img.readVA(*ProgBase + Pc, 1);
+    if (!Bytes)
+      return false;
+    const uint64_t Op = Bytes[0];
+    const bool BitSet = Pc < MaskBits && ((Mask >> Pc) & 1ull) != 0;
+    const uint64_t Effective = BitSet ? K : Op;
+    if (Effective >= Info.PhysicalCapacity) {
+      return false;
+    }
+  }
+
+  Info.MaxEntries = Info.PhysicalCapacity;
+  Info.IndexDomainAuthenticated = true;
+  Info.AuthenticatedGuardBound = Info.PhysicalCapacity;
+  Info.NormBase = 0;
+  Info.NormShift = 0;
+  Info.Stride = 1;
+  return true;
+}
+
+//===----------------------------------------------------------------------===//
 // pullBackBound — adjust a guard bound through normalization operations
 //===----------------------------------------------------------------------===//
 

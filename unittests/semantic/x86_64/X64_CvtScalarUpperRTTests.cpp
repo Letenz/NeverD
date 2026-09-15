@@ -6,28 +6,16 @@
 //
 // Guardrail for the scalar integer->FP converts CVTSI2SD / CVTSI2SS.
 //
-// Design note (the reason this file exists):
-//   These converts write only the low element of the destination XMM
-//   (CVTSI2SD -> [63:0], CVTSI2SS -> [31:0]).  Real hardware AND the bundled
-//   Unicorn PRESERVE the destination's upper lanes.  NeverD intentionally does
-//   NOT rebuild those upper bits: a scalar XMM value is kept *narrow-typed*
-//   (an 8- or 4-byte float SSA value) so that downstream scalar consumers
-//   (SQRTSS, MULSS, COMISS, CVTSS2SD, ...) infer the correct FP width via
-//   inferFloatTy().  Forcing a 16-byte CONCAT at the producer to preserve
-//   xmm[127:64] re-types the register as i128, after which inferFloatTy() picks
-//   `double` for a single-precision consumer and every following scalar op
-//   silently computes on the wrong width (verified: it breaks sqrtss/mulss/
-//   comiss chains).  Because no compiler ever reads the upper lane after a
-//   scalar CVTSI2*, the upper-lane divergence from Unicorn is unobservable in
-//   compiled code; the trade-off is deliberate and consistent across the whole
-//   scalar-SSE lifter.
-//
-// These probes therefore LOCK the narrow-scalar behaviour that the design
-// relies on: a CVTSI2* result fed straight into a following scalar op (with a
-// deliberately dirtied upper lane) must still produce the right scalar value.
-// A future attempt to "preserve the upper lane" at the producer would re-widen
-// the value and fail these immediately.  Rounding probes additionally pin the
-// round-to-nearest-even behaviour for values past the float/double mantissa.
+// Hardware (and Unicorn) write only the low element (CVTSI2SD -> [63:0],
+// CVTSI2SS -> [31:0]) and leave the rest of the XMM unchanged.  clang -O2
+// really does consume that preserved high lane: `movapd dst,src; cvtsi2sd
+// r32,dst; mulpd dst,src` treats xmm[127:64] as a live packed double (see
+// x64o63_dotp / x64o63_det3).  The producer must CONCAT the old upper bytes
+// onto a *narrow* convert temp so FLOAT_INT2FLOAT still infers float/double
+// from the temp width.  Scalar *SS/*SD consumers extract the low element
+// before inferFloatTy(); packed consumers (MULPD/MULPS) read the preserved
+// lanes.  The dirty-upper scalar probes lock the extract-at-consumer side;
+// the packed-mul probes lock the preserve-at-producer side.
 //
 //===----------------------------------------------------------------------===//
 
@@ -112,6 +100,39 @@ static const std::vector<RoundTripTC> kCvt = {
    "    : \"=m\"(b) : \"r\"(a) : \"xmm5\", \"xmm6\", \"cc\");\n"
    "  return (long)b;\n}\n",
    {25ULL}, "CvtScalar"},
+
+  // Packed consumer of the preserved high lane.  This is the clang -O2
+  // `cvtsi2sd; mulpd` pattern: converting the low element must not zero
+  // xmm[127:64].  a=3, b=2.0; after mulpd the high lane is 4.0.
+  {"cvtsi2sd_mulpd_dirtyup",
+   "long f(long a, long b){\n"
+   "  unsigned long long out;\n"
+   "  __asm__ volatile(\n"
+   "    \"movq %2, %%xmm5\\n\\t\"\n"
+   "    \"unpcklpd %%xmm5, %%xmm5\\n\\t\"\n"
+   "    \"cvtsi2sd %k1, %%xmm5\\n\\t\"\n"
+   "    \"mulpd %%xmm5, %%xmm5\\n\\t\"\n"
+   "    \"movhlps %%xmm5, %%xmm5\\n\\t\"\n"
+   "    \"movq %%xmm5, %0\\n\\t\"\n"
+   "    : \"=m\"(out) : \"r\"(a), \"r\"(b) : \"xmm5\");\n"
+   "  return (long)out;\n}\n",
+   {3ULL, 0x4000000000000000ULL}, "CvtScalar"},
+
+  // CVTSI2SS preserves [127:32].  Broadcast 2.0f, overwrite lane 0 with
+  // (float)3, mulps, return lane 1 = 4.0f.
+  {"cvtsi2ss_mulps_dirtyup",
+   "long f(long a, long b){\n"
+   "  unsigned out;\n"
+   "  __asm__ volatile(\n"
+   "    \"movd %2, %%xmm5\\n\\t\"\n"
+   "    \"shufps $0, %%xmm5, %%xmm5\\n\\t\"\n"
+   "    \"cvtsi2ss %k1, %%xmm5\\n\\t\"\n"
+   "    \"mulps %%xmm5, %%xmm5\\n\\t\"\n"
+   "    \"psrldq $4, %%xmm5\\n\\t\"\n"
+   "    \"movd %%xmm5, %0\\n\\t\"\n"
+   "    : \"=m\"(out) : \"r\"(a), \"r\"(b) : \"xmm5\");\n"
+   "  return (long)(unsigned)out;\n}\n",
+   {3ULL, 0x40000000ULL}, "CvtScalar"},
 
   // ===== Conversion value / round-to-nearest-even correctness ================
   // int64 just past the double 53-bit mantissa: 2^53+3 -> rounds to 2^53+4.

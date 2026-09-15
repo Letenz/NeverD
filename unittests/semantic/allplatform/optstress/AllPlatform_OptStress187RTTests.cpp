@@ -5,8 +5,8 @@
 //===----------------------------------------------------------------------===//
 //
 // Green guardrails for three more rodata access SHAPES.  Each reads its rodata
-// through plain forward base+index copies (symbol always referenced at offset 0)
-// and folds a result that depends only on the bytes + control flow (never an
+// through plain forward base+index copies (symbol always referenced at offset
+// 0) and folds a result that depends only on the bytes + control flow (never an
 // absolute VA), so nothing touches the deferred i386/ARM32 PIC rodata
 // *interior*-pointer model (#477/#487); every probe runs on all four targets.
 //
@@ -39,7 +39,8 @@ class A64OptStress187RT : public SemanticRoundTripFixture,
                           public ::testing::WithParamInterface<RoundTripTC> {};
 TEST_P(A64OptStress187RT, Verify) { roundTripAArch64(GetParam()); }
 class ARM32OptStress187RT : public SemanticRoundTripFixture,
-                            public ::testing::WithParamInterface<RoundTripTC> {};
+                            public ::testing::WithParamInterface<RoundTripTC> {
+};
 TEST_P(ARM32OptStress187RT, Verify) { roundTripARM32(GetParam()); }
 
 // clang-format off
@@ -91,12 +92,20 @@ static std::vector<RoundTripTC> makeOptStress187TC(const char *prefix, const cha
 }
 // clang-format on
 
-static const std::vector<RoundTripTC> kX64 = makeOptStress187TC("x64o187", "long");
-static const std::vector<RoundTripTC> kX86 = makeOptStress187TC("x86o187", "int");
-static const std::vector<RoundTripTC> kA64 = makeOptStress187TC("a64o187", "long");
-static const std::vector<RoundTripTC> kARM = makeOptStress187TC("armo187", "int");
+static const std::vector<RoundTripTC> kX64 =
+    withForbiddenSwitch(makeOptStress187TC("x64o187", "long"), {"_divsigma"});
+static const std::vector<RoundTripTC> kX86 =
+    makeOptStress187TC("x86o187", "int");
+static const std::vector<RoundTripTC> kA64 =
+    makeOptStress187TC("a64o187", "long");
+static const std::vector<RoundTripTC> kARM =
+    makeOptStress187TC("armo187", "int");
 
-INSTANTIATE_TEST_SUITE_P(OptStress187, X64OptStress187RT, ::testing::ValuesIn(kX64), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress187, X86OptStress187RT, ::testing::ValuesIn(kX86), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress187, A64OptStress187RT, ::testing::ValuesIn(kA64), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress187, ARM32OptStress187RT, ::testing::ValuesIn(kARM), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress187, X64OptStress187RT,
+                         ::testing::ValuesIn(kX64), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress187, X86OptStress187RT,
+                         ::testing::ValuesIn(kX86), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress187, A64OptStress187RT,
+                         ::testing::ValuesIn(kA64), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress187, ARM32OptStress187RT,
+                         ::testing::ValuesIn(kARM), rtTCName);

@@ -8,8 +8,8 @@
 /// \file
 /// Baseline (non-VEX) SSE/SSE2 packed integer compares,
 /// ordered/unordered scalar float compares, scalar and
-/// packed float arithmetic, scalar integer/float conversion,
-/// and the MXCSR load/store.
+/// packed float arithmetic, scalar float-to-integer conversion,
+/// and the MXCSR load/store.  Legacy CVTSI2SS/SD live in liftCoreMove.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -239,17 +239,8 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
   }
 
   // ========================================================================
-  // SSE scalar conversions
+  // SSE scalar conversions (int->FP CVTSI2SS/SD: liftCoreMove)
   // ========================================================================
-  case X86_INS_CVTSI2SS:
-  case X86_INS_CVTSI2SD: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    S.emit(NdOp::FLOAT_INT2FLOAT, Dst, {Src});
-    break;
-  }
   case X86_INS_CVTSS2SI:
   case X86_INS_CVTSD2SI: {
     if (X86.op_count < 2)

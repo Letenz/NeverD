@@ -4862,6 +4862,13 @@ TEST_F(JTE_X86_64,
       << "a five-slot relocation run cannot authorize a selector whose exact "
          "producer is remainder modulo seven";
 
+  const neverd::LowFunc WidenMulhu = Recover("jt_modulo_widen_mulhu");
+  ASSERT_EQ(WidenMulhu.JumpTables.size(), 1u)
+      << "clang-21 mulq widen magic + lea*8/sub/add remainder must recover "
+         "the seven-entry PIC table";
+  EXPECT_EQ(WidenMulhu.JumpTables.front().Targets.size(), 7u);
+  EXPECT_TRUE(WidenMulhu.UnsafeIndirectBranchAddresses.empty());
+
   auto LLVM = liftToLLVMIRUnopt(moduloDomainObj());
   ASSERT_EQ(LLVM.exitCode, 0) << LLVM.err;
   for (const char *Name : {
