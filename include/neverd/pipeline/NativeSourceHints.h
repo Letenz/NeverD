@@ -23,8 +23,12 @@ struct PipelineFunctionAudit;
 /// closed. A full-width observed parameter at the return register can supply
 /// its incoming value; unused placeholders, seeds and PHIs cannot. The bounded
 /// CFG proof meets the initial entry fact with backedges and invalidates
-/// calls and partial writes, including narrowed self copies. The
-/// final source body and dependency closure must still pass projection
+/// calls and partial writes, including narrowed self copies.
+/// A leaf forwarding only to declared external void tail calls may instead
+/// supply a void source summary, with no usable result. This requires complete
+/// LowIR evidence and forbids preserved-register and frame writes. CFG checks
+/// still apply, and callers observing a result must fail source validation.
+/// The final source body and dependency closure must still pass projection
 /// validation after the second run. No symbol names participate in inference.
 /// Complete integer inputs forwarded to known pointer parameters can refine
 /// the source candidate through conflict-free COPY/PHI uses. Physical carriers

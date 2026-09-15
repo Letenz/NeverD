@@ -64,6 +64,13 @@ construct the same scalar prefix and all reads explicitly select that prefix.
 Only effect-free upper expressions are discarded; lower expressions and their
 control-flow positions remain unchanged. Unknown lanes are never filled in.
 
+An internal void summary for a native cleanup forwarder does not assert an
+original void prototype. It contributes no result carrier. The initial subset
+requires matched LowIR external void tail calls and rejects preserved-register
+or frame writes; the ordinary CFG and source dependency proofs still apply.
+Re-lifted callers that observe a missing result retain their unknown value and
+cannot pass source publication.
+
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 
 Source-call discovery uses a bounded forward fixed point for register facts.

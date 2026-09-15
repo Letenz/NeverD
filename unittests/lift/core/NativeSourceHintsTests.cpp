@@ -97,6 +97,141 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
   }
 }
 
+struct NativeVoidFixture : NativeFixture {
+  LowFunc Low;
+  NativeVoidFixture(Arch Architecture, bool Indirect = false)
+      : NativeFixture(Architecture) {
+    Med.Params[0].Size = 8;
+    Med.TypedParams[0].Type = High.Params[0].Type = NdType::makeInt(8);
+    Med.Params[1].Id = -1;
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
+    Hint->Signature.ReturnType = NdType::makeVoid();
+    Hint->Signature.Parameters.push_back(
+        {"object", NdType::makePtr(NdType::makeVoid())});
+    std::string Error;
+    EXPECT_TRUE(
+        assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+    MedOp Call;
+    Call.Opcode = Indirect ? NdOp::INDIR_CALL : NdOp::CALL;
+    Call.Addr = 0x1010;
+    Call.SourceCallHint = Hint;
+    Call.addInput(MedVar::makeConst(0x1080, 8));
+    Call.addInput(Med.Params[0]);
+    auto Return = Med.Blocks[0].Ops.back();
+    Return.Addr = Call.Addr;
+    Med.Blocks[0].Ops = {Call, Return};
+    Low.Entry = Med.Entry;
+    Low.Blocks.emplace_back();
+    Low.Blocks[0].Id = 0;
+    LowOp NativeCall;
+    NativeCall.Opcode = Call.Opcode;
+    NativeCall.Addr = Call.Addr;
+    NativeCall.Output =
+        NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8);
+    NativeCall.addInput(NdVar::cst(0x1080, 8));
+    LowOp NativeReturn;
+    NativeReturn.Opcode = NdOp::RETURN;
+    NativeReturn.Addr = Call.Addr;
+    Low.Blocks[0].Ops = {NativeCall, NativeReturn};
+  }
+  std::optional<SourceFunctionTypeHint> inferVoid(std::string &Error) const {
+    return inferNativeSourceTypeHint(Image, Med, High, Audit, Error, &Low);
+  }
+};
+
+TEST(NativeSourceHints, VoidTailForwardersNeverSupplyAnUnprovenResult) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Indirect : {false, true}) {
+      NativeVoidFixture Fixture(Architecture, Indirect);
+      std::string Error;
+      const auto Hint = Fixture.inferVoid(Error);
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+      EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::None);
+      EXPECT_EQ(Hint->ReturnLocation.ValueBytes, 0U);
+      ASSERT_EQ(Hint->Parameters.size(), 1U);
+      EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs[0]);
+      EXPECT_FALSE(Fixture.infer(Error));
+      EXPECT_EQ(Fixture.Med.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                MedReturnValueEvidence::Unknown);
+    }
+}
+
+TEST(NativeSourceHints,
+     VoidTailContractsRejectHiddenOutputsAndIncompleteEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+      NativeVoidFixture Fixture(Architecture);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      auto &Ops = Fixture.Low.Blocks[0].Ops;
+      switch (Mutation) {
+      case 0:
+        ++Ops[1].Addr;
+        break;
+      case 1:
+      case 2:
+      case 3: {
+        LowOp Write;
+        Write.Opcode = NdOp::COPY;
+        const auto Register = Mutation == 1                   ? TRI.StackPointer
+                              : Mutation == 2                 ? TRI.FramePointer
+                              : Architecture == Arch::AArch64 ? a64reg::X19
+                                                              : x86reg::RBX;
+        Write.Output = NdVar::reg(Register, 8);
+        Write.addInput(NdVar::cst(0, 8));
+        Ops.insert(Ops.begin(), Write);
+        break;
+      }
+      case 4:
+        Ops[0].Inputs[0].Offset += 8;
+        break;
+      case 5:
+        Ops[0].Addr += 4;
+        Ops[1].Addr += 4;
+        break;
+      case 6:
+      case 7:
+      case 8: {
+        auto Hint = std::make_shared<SourceCallTypeHint>(
+            *Fixture.Med.Blocks[0].Ops[0].SourceCallHint);
+        if (Mutation == 6) {
+          Hint->Signature.ReturnType = NdType::makeInt(8);
+          std::string Error;
+          ASSERT_TRUE(assignDarwinScalarSourceABI(Hint->Signature, Architecture,
+                                                  Error));
+        } else if (Mutation == 7) {
+          Hint->CallKind = SourceCallTypeHint::Kind::Native;
+        } else {
+          Hint->DoesNotReturn = true;
+        }
+        Fixture.Med.Blocks[0].Ops[0].SourceCallHint = Hint;
+        break;
+      }
+      case 9:
+        Fixture.Low.Entry += 4;
+        break;
+      case 10:
+        Fixture.Low.Blocks.clear();
+        break;
+      case 11:
+        Fixture.Med.Blocks[0].Preds = {17};
+        break;
+      case 12:
+        Ops[0].Inputs[0] = NdVar::reg(TRI.IntParamRegs[0], 8);
+        break;
+      case 13:
+        Ops[0].NumInputs = 7;
+        break;
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.inferVoid(Error)) << Mutation << ": " << Error;
+    }
+}
+
 struct NativeFloatingFixture : NativeFixture {
   NativeFloatingFixture(Arch Architecture, unsigned Width, bool Wide = false)
       : NativeFixture(Architecture) {

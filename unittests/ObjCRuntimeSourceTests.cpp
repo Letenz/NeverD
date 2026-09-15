@@ -83,6 +83,7 @@ enum class RuntimeFixture {
   SwiftRecordRuntime,
   NativeRecords,
   NativeFloating,
+  NativeVoid,
   ReadOnlyTables,
   ScalarConstants,
   SwiftLiterals,
@@ -115,6 +116,7 @@ void verifyRuntime(bool Chained,
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
   const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
+  const bool NativeVoid = FixtureKind == RuntimeFixture::NativeVoid;
   const bool NativeFloating = FixtureKind == RuntimeFixture::NativeFloating;
   const bool NativeRecords = FixtureKind == RuntimeFixture::NativeRecords;
   const bool SwiftRecordRuntime =
@@ -186,6 +188,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords         ? "ObjCWordRecords.m"
                         : PredicateFormats    ? "ObjCPredicateFormats.m"
                         : CRecords            ? "ObjCCRecordCalls.m"
+                        : NativeVoid          ? "ObjCNativeVoid.m"
                         : NativeFloating      ? "ObjCNativeFloating.m"
                         : NativeRecords       ? "ObjCNativeRecordResults.m"
                         : SwiftRecordRuntime  ? "ObjCSwiftRecordRuntime.m"
@@ -238,6 +241,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords      ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats ? "ObjCPredicateFormatsHarness.m"
                         : CRecords         ? "ObjCCRecordCallsHarness.m"
+                        : NativeVoid       ? "ObjCNativeVoidHarness.m"
                         : NativeFloating   ? "ObjCNativeFloatingHarness.m"
                         : NativeRecords    ? "ObjCNativeRecordResultsHarness.m"
                         : SwiftRecordRuntime ? "ObjCSwiftRecordRuntimeHarness.m"
@@ -324,6 +328,8 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Compile.insert(Compile.end(),
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
+  if (NativeVoid)
+    Compile.push_back("-fomit-frame-pointer");
   if (NativeReturnPaths)
     Compile.push_back((Fixtures / "ObjCNativeReturnPaths.S").string());
   if (IncomingResults)
@@ -342,7 +348,7 @@ void verifyRuntime(bool Chained,
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      NativeRecords || RuntimeIvars)
+      NativeRecords || NativeVoid || RuntimeIvars)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -459,6 +465,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords         ? 11U
                              : PredicateFormats    ? 8U
                              : CRecords            ? CRecordMethods
+                             : NativeVoid          ? 3U
                              : NativeFloating      ? 3U
                              : NativeRecords       ? 2U
                              : SwiftRecordRuntime  ? 2U
@@ -548,6 +555,8 @@ void verifyRuntime(bool Chained,
                  "find:needle:"};
   if (SwiftTypeLookup)
     Remaining = {"lookup:length:"};
+  if (NativeVoid)
+    Remaining = {"releaseObject:active:", "releaseObject:active:result:"};
   if (NativeFloating)
     Remaining = {"doubleValue:other:mode:output:",
                  "floatValue:other:mode:output:", "compare:other:bias:"};
@@ -763,6 +772,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords         ? "NDWordRecords"
                   : PredicateFormats    ? "NDPredicateFormats"
                   : CRecords            ? "NDCCRecords"
+                  : NativeVoid          ? "NDVoidForwarders"
                   : NativeFloating      ? "NDNativeFloating"
                   : NativeRecords       ? "NDNativeRecordResults"
                   : SwiftRecordRuntime  ? "NDSwiftRecordRuntime"
@@ -820,6 +830,12 @@ void verifyRuntime(bool Chained,
     ASSERT_NE(Method, nullptr);
     auto Selector = Method->getString("selector");
     ASSERT_TRUE(Selector);
+    if (NativeVoid && *Selector == "unprovenResult:active:") {
+      EXPECT_EQ(Method->getString("status"), "unrecovered");
+      EXPECT_EQ(Method->getString("reason"),
+                "method contains an unresolved value");
+      continue;
+    }
     if (RuntimeIvars && (*Selector == "init" || *Selector == ".cxx_destruct"))
       continue; // This fixture replaces only the two scalar property methods.
     if (RejectedConstantUses.erase(Selector->str())) {
@@ -876,7 +892,9 @@ void verifyRuntime(bool Chained,
         }
       }
     const char *NativeSignature =
-        NativePointers && (*Selector == "ascii" || *Selector == "unicode")
+        NativeVoid
+            ? "void releaseIfActive(void* native_arg0, int64_t native_arg1)"
+        : NativePointers && (*Selector == "ascii" || *Selector == "unicode")
             ? "int64_t NDForwardPointer(void* native_arg0)"
         : IndirectFields && (*Selector == "first" || *Selector == "second")
             ? "int64_t NDReadObjectField(void* native_arg0, void* native_arg1)"
@@ -884,7 +902,9 @@ void verifyRuntime(bool Chained,
     if (NativeSignature) {
       EXPECT_NE(MethodSource.find(NativeSignature), std::string::npos)
           << MethodSource;
-      EXPECT_NE(MethodSource.find("objc_retain"), std::string::npos);
+      EXPECT_NE(MethodSource.find(NativeVoid ? "swift_unknownObjectRelease"
+                                             : "objc_retain"),
+                std::string::npos);
       // Each C API method includes its complete native dependency group.
       // Link the common helper once when combining these two independent units.
       const auto Begin =
@@ -994,7 +1014,7 @@ void verifyRuntime(bool Chained,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      NativeRecords || RuntimeIvars)
+      NativeRecords || NativeVoid || RuntimeIvars)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -1068,6 +1088,8 @@ void verifyRuntime(bool Chained,
             "pass\nrecord-stack=pass\n"
       : SwiftTypeLookup    ? "swift-type-lookup-cases=20480\nmetadata-identity="
                              "pass\nbyte-length=pass\n"
+      : NativeVoid         ? "native-void-cases=16384\nrelease-effects=pass\n"
+                             "independent-results=pass\n"
       : NativeFloating     ? "native-floating-cases=24576\nfloating-bits=pass\n"
                              "memory-effects=pass\n"
       : NativeRecords      ? "native-record-result-cases=16384\nbox-storage="
@@ -1877,6 +1899,16 @@ TEST(ObjCRuntimeSource, NativeFloatingHelpersPreserveLanesAndMemoryEffects) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::NativeFloating));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     VoidNativeTailCallsPreserveLifetimesAndRejectResultUses) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::NativeVoid));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

@@ -119,6 +119,74 @@ bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
   return true;
 }
 
+// A leaf cleanup forwarder can have no usable scalar result. An internal
+// void summary preserves its effects and deliberately supplies no result to
+// callers. Reject any hidden preserved-register or frame update: this subset
+// contains only validated external void tail calls and ordinary return paths.
+bool hasVoidTailContract(const BinaryImage &Image, const LowFunc *Low,
+                         const MedFunc &Med) {
+  if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
+      Low->Blocks.size() > 16384)
+    return false;
+  using CallKey = std::pair<va_t, va_t>;
+  std::set<CallKey> Calls;
+  size_t Remaining = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Remaining--)
+        return false;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (!Op.NumInputs || !Op.Inputs[0].isConst() || !Op.SourceCallHint)
+        return false;
+      const auto &Binding = *Op.SourceCallHint;
+      using Kind = SourceCallTypeHint::Kind;
+      if ((Binding.CallKind != Kind::ObjCRuntimeCall &&
+           Binding.CallKind != Kind::SwiftRuntimeCall &&
+           Binding.CallKind != Kind::DarwinRuntimeCall) ||
+          Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
+          Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
+          !Image.isCodeAddress(Op.Addr) ||
+          !Calls.emplace(Op.Addr, Op.Inputs[0].ConstVal).second)
+        return false;
+    }
+  if (Calls.empty())
+    return false;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto Preserved = TRI.callPreservedRanges(Image.Format);
+  std::set<CallKey> NativeCalls;
+  for (const auto &Block : Low->Blocks)
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const auto &Op = Block.Ops[I];
+      if (!Remaining-- || Op.NumInputs > 6)
+        return false;
+      const auto &Out = Op.Output;
+      const auto Overlaps = [&](uint64_t Offset, uint16_t Bytes) {
+        return Out.isReg() && Out.Size &&
+               (Out.Offset <= Offset ? Offset - Out.Offset < Out.Size
+                                     : Out.Offset - Offset < Bytes);
+      };
+      if (Overlaps(TRI.StackPointer, 8) || Overlaps(TRI.FramePointer, 8) ||
+          (TRI.LinkRegister && Overlaps(TRI.LinkRegister, 8)) ||
+          std::any_of(Preserved.begin(), Preserved.end(),
+                      [&](const auto &Range) {
+                        return Overlaps(Range.Offset, Range.Bytes);
+                      }))
+        return false;
+      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+        continue;
+      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+          I + 1 >= Block.Ops.size() ||
+          Block.Ops[I + 1].Opcode != NdOp::RETURN ||
+          Block.Ops[I + 1].Addr != Op.Addr)
+        return false;
+      const CallKey Key{Op.Addr, Op.Inputs[0].Offset};
+      if (!Calls.count(Key) || !NativeCalls.insert(Key).second)
+        return false;
+    }
+  return NativeCalls == Calls;
+}
+
 // This proves a defined machine carrier, not an original return declaration.
 // An observed full-width parameter can supply the initial register value.
 // PHIs merge physical state, and calls or partial writes invalidate it until
@@ -285,7 +353,8 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
         std::all_of(Preds[I].begin(), Preds[I].end(),
                     [&](size_t Predecessor) { return Outgoing[Predecessor]; });
   for (const auto &[I, Fact] : Returns)
-    if (!Fact.value_or(Incoming[I]))
+    if (Location.Kind != SourceABICarrierKind::None &&
+        !Fact.value_or(Incoming[I]))
       return false;
   return !Returns.empty();
 }
@@ -469,9 +538,14 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   if (!HasReturn)
     return Reject("native function has no machine return");
   if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
-                          IncomingReturnParameter))
-    return Reject("native result has no complete defined carrier on every "
-                  "return path");
+                          IncomingReturnParameter)) {
+    if (!hasVoidTailContract(Image, Low, Med) ||
+        !definedReturnPaths(Med, Image.Arch, {}, std::nullopt))
+      return Reject("native result has no complete defined carrier on every "
+                    "return path");
+    Hint.ReturnType = NdType::makeVoid();
+    Hint.ReturnLocation = {};
+  }
   const auto PointerParameters = inferMedSourcePointerParameters(Med);
   size_t SourceIndex = 0;
   for (size_t Index = 0; Index < Med.Params.size(); ++Index) {
