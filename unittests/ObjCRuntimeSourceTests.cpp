@@ -76,6 +76,7 @@ enum class RuntimeFixture {
   NativeReturnPaths,
   IncomingResults,
   NativeContext,
+  AuxiliaryInputs,
   SwiftTypeLookup,
   SwiftIntegerRuntime,
   ReadOnlyTables,
@@ -116,6 +117,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
   const bool NativeContext = FixtureKind == RuntimeFixture::NativeContext;
+  const bool AuxiliaryInputs = FixtureKind == RuntimeFixture::AuxiliaryInputs;
   const bool FramePadding = FixtureKind == RuntimeFixture::FramePadding;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
@@ -179,6 +181,7 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup     ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths   ? "ObjCNativeReturnPaths.m"
                         : IncomingResults     ? "ObjCIncomingResults.m"
+                        : AuxiliaryInputs     ? "ObjCNativeAuxiliaryInputs.m"
                         : NativeContext       ? "ObjCNativeContext.m"
                         : FramePadding        ? "ObjCFramePadding.m"
                         : FrameSelectors      ? "ObjCFrameSelectors.m"
@@ -227,19 +230,20 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : IncomingResults   ? "ObjCIncomingResultsHarness.m"
-                        : NativeContext     ? "ObjCNativeContextHarness.m"
-                        : FramePadding      ? "ObjCFramePaddingHarness.m"
-                        : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
-                        : LoopEdges         ? "ObjCLoopEdgesHarness.m"
-                        : SwitchEffects     ? "ObjCSwitchEffectsHarness.m"
-                        : InvariantLoops    ? "ObjCInvariantLoopsHarness.m"
-                        : MetadataCalls     ? "ObjCMetadataCallsHarness.m"
-                        : SystemCalls       ? "ObjCSystemCallsHarness.m"
-                        : SavedScalars      ? "ObjCSavedScalarsHarness.m"
-                        : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
-                        : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
-                        : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
-                        : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
+                        : AuxiliaryInputs ? "ObjCNativeAuxiliaryInputsHarness.m"
+                        : NativeContext   ? "ObjCNativeContextHarness.m"
+                        : FramePadding    ? "ObjCFramePaddingHarness.m"
+                        : FrameSelectors  ? "ObjCFrameSelectorsHarness.m"
+                        : LoopEdges       ? "ObjCLoopEdgesHarness.m"
+                        : SwitchEffects   ? "ObjCSwitchEffectsHarness.m"
+                        : InvariantLoops  ? "ObjCInvariantLoopsHarness.m"
+                        : MetadataCalls   ? "ObjCMetadataCallsHarness.m"
+                        : SystemCalls     ? "ObjCSystemCallsHarness.m"
+                        : SavedScalars    ? "ObjCSavedScalarsHarness.m"
+                        : ReceiverResults ? "ObjCReceiverResultsHarness.m"
+                        : ReceiverAliases ? "ObjCReceiverAliasesHarness.m"
+                        : ReceiverFields  ? "ObjCReceiverFieldsHarness.m"
+                        : ReceiverTypes   ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : ReadOnlyTables    ? "ObjCReadOnlyTablesHarness.m"
@@ -309,6 +313,8 @@ void verifyRuntime(bool Chained,
     Compile.push_back((Fixtures / "ObjCIncomingResults.S").string());
   if (NativeContext)
     Compile.push_back((Fixtures / "ObjCNativeContext.S").string());
+  if (AuxiliaryInputs)
+    Compile.push_back((Fixtures / "ObjCNativeAuxiliaryInputs.S").string());
   if (ReceiverFields)
     Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
@@ -425,6 +431,7 @@ void verifyRuntime(bool Chained,
                              : SwiftTypeLookup     ? 1U
                              : NativeReturnPaths   ? 1U
                              : IncomingResults     ? 2U
+                             : AuxiliaryInputs     ? 2U
                              : NativeContext       ? 2U
                              : FramePadding        ? 5U
                              : FrameSelectors      ? 1U
@@ -513,6 +520,8 @@ void verifyRuntime(bool Chained,
     Remaining = {"word:flags:", "word:memory:"};
   if (NativeContext)
     Remaining = {"word:context:", "contextWord:"};
+  if (AuxiliaryInputs)
+    Remaining = {"fillWithWord:buffer:", "addWord:buffer:"};
   if (ReadOnlyTables)
     Remaining = {
         "actionForKind:", "shortForKind:", "maskedForKind:", "doubleForKind:"};
@@ -713,6 +722,7 @@ void verifyRuntime(bool Chained,
                   : SwiftTypeLookup     ? "NDSwiftTypeLookup"
                   : NativeReturnPaths   ? "NDNativeReturnPaths"
                   : IncomingResults     ? "NDIncomingResults"
+                  : AuxiliaryInputs     ? "NDNativeAuxiliaryInputs"
                   : NativeContext       ? "NDNativeContext"
                   : FramePadding        ? "NDFramePadding"
                   : FrameSelectors      ? "NDFrameSelectors"
@@ -1012,6 +1022,8 @@ void verifyRuntime(bool Chained,
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
                           "memory-input=pass\n"
+      : AuxiliaryInputs ? "native-auxiliary-cases=16384\nresult-buffers=pass\n"
+                          "scalar-results=pass\n"
       : NativeContext   ? "native-context-cases=16384\ncontext-bits=pass\n"
                           "memory-input=pass\n"
       : ReadOnlyTables  ? "read-only-table-cases=32768\ninteger-bits=pass\n"
@@ -1754,6 +1766,16 @@ TEST(ObjCRuntimeSource, SwiftIntegerRuntimeCallsPreserveCastsAndRetainCounts) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::SwiftIntegerRuntime));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, AuxiliaryNativeInputsPreserveBuffersAndScalarResults) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::AuxiliaryInputs));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

@@ -883,6 +883,81 @@ TEST(SourceABI, EntryByteDemandsKeepPhiEffectsAndRejectIncompleteGraphs) {
   }
 }
 
+TEST(SourceABI, EntryDemandsDistinguishImplicitCallDefinitionsFromInputs) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeInt(8);
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+    for (int Version : {0, 3})
+      for (bool Used : {false, true}) {
+        MedVar Clobbered;
+        Clobbered.Kind = MedVar::Reg;
+        Clobbered.Id = 10;
+        Clobbered.RegOff =
+            Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+        Clobbered.Size = 8;
+        Clobbered.SSAVer = Version;
+        Clobbered.TheArch = Architecture;
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output = Clobbered;
+        Copy.Output.Id = 20;
+        Copy.Output.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+        Copy.addInput(Used ? Clobbered : MedVar::makeConst(7, 8));
+        MedOp Return;
+        Return.Opcode = NdOp::RETURN;
+        MedFunc Function;
+        Function.Blocks.resize(1);
+        Function.Blocks[0].Ops = {Copy, Return};
+        Function.CallClobbers.push_back({Clobbered, 1});
+        const auto Observed = observedMedSourceEntryRegisters(Function, Hint);
+        EXPECT_EQ(bool(Observed), !Used);
+        if (Observed)
+          EXPECT_TRUE(Observed->empty());
+      }
+  }
+}
+
+TEST(SourceABI, EntryDemandsTraceOnlyProvenCallPreservedPrefixes) {
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = NdType::makeInt(8);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error));
+  MedVar Before;
+  Before.Kind = MedVar::Reg;
+  Before.Id = 10;
+  Before.RegOff = a64reg::V(8);
+  Before.Size = 16;
+  Before.TheArch = Arch::AArch64;
+  auto After = Before;
+  After.SSAVer = 1;
+  for (unsigned Offset : {0, 8}) {
+    MedOp Extract;
+    Extract.Opcode = NdOp::SUBBYTES;
+    Extract.Output = Before;
+    Extract.Output.Id = 20;
+    Extract.Output.RegOff = a64reg::X0;
+    Extract.Output.Size = 8;
+    Extract.addInput(After);
+    Extract.addInput(MedVar::makeConst(Offset, 4));
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    MedFunc Function;
+    Function.Blocks.resize(1);
+    Function.Blocks[0].Ops = {Extract, Return};
+    Function.CallClobbers.push_back({After, 1, Before, 8});
+    const auto Observed = observedMedSourceEntryRegisters(Function, Hint);
+    EXPECT_EQ(bool(Observed), Offset == 0);
+    if (Observed)
+      EXPECT_EQ(*Observed, std::set<uint64_t>{Before.RegOff});
+    Function.CallClobbers[0].PreservedInput.Size = 4;
+    EXPECT_FALSE(observedMedSourceEntryRegisters(Function, Hint));
+    Function.CallClobbers[0].PreservedInput = After;
+    EXPECT_FALSE(observedMedSourceEntryRegisters(Function, Hint));
+  }
+}
+
 TEST(SourceABI, IntegerPairCallsPreserveBothWordsThroughSSAAndReturns) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));

@@ -46,6 +46,7 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
     MedVar Value;
     const MedOp *Definition = nullptr;
     const PhiNode *Phi = nullptr;
+    const MedCallClobber *Clobber = nullptr;
     uint64_t Needed = 0;
   };
   std::map<ValueKey, Node> Nodes;
@@ -91,6 +92,21 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
       for (unsigned I = 0; I < Op.NumInputs; ++I)
         Observe(Op.Inputs[I]);
     }
+  }
+  // Calls can create version zero as their first implicit definition. Such a
+  // value is not an entry input. Preserve only an explicitly recorded prefix;
+  // demand for any other byte leaves this proof unavailable.
+  for (const auto &Clobber : Function.CallClobbers) {
+    if (auto *N = Observe(Clobber.Value)) {
+      Valid &= !N->Definition && !N->Phi && !N->Clobber &&
+               Clobber.PreservedPrefixSize <= Clobber.Value.Size &&
+               Clobber.PreservedPrefixSize <= Clobber.PreservedInput.Size &&
+               (!Clobber.PreservedPrefixSize ||
+                key(Clobber.Value) != key(Clobber.PreservedInput));
+      N->Clobber = &Clobber;
+    }
+    if (Clobber.PreservedPrefixSize)
+      Observe(Clobber.PreservedInput);
   }
   std::deque<ValueKey> Pending;
   auto Need = [&](const MedVar &Value, uint64_t Bytes) {
@@ -169,6 +185,14 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
     Pending.pop_front();
     const auto &N = Nodes.at(Key);
     const uint64_t Bytes = N.Needed;
+    if (N.Clobber) {
+      const auto &Clobber = *N.Clobber;
+      const auto Preserved = Mask(Clobber.PreservedPrefixSize);
+      Valid &= !(Bytes & ~Preserved);
+      if (Clobber.PreservedPrefixSize)
+        Need(Clobber.PreservedInput, Bytes & Preserved);
+      continue;
+    }
     if (N.Phi) {
       for (const auto &[Pred, Input] : N.Phi->Args) {
         Valid &= Input.Size == N.Phi->Output.Size;

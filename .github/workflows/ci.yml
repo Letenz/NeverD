@@ -593,6 +593,16 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.EntryDemandsDistinguishImplicitCallDefinitionsFromInputs",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.EntryDemandsTraceOnlyProvenCallPreservedPrefixes",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.AuxiliaryInputsAllowLaterCallerSavedWrites",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.AuxiliaryParametersRequireCompleteNativeReadEvidence",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.AuxiliaryCallClobbersCannotBecomeEntryParameters",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.ReadOnlyContextsRetainObservedPreservedRegisters",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.ContextProofRejectsClobbersAndIncompleteNativeReads",
@@ -1253,14 +1263,15 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 497,
-              ("macOS", "macos-patch"): 545,
-              ("Windows", "windows-focused"): 493,
+              ("Linux", "linux-semantic"): 502,
+              ("macOS", "macos-patch"): 551,
+              ("Windows", "windows-focused"): 498,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
                       "ObjCRuntimeSource.SwiftIntegerRuntimeCallsPreserveCastsAndRetainCounts",
+                      "ObjCRuntimeSource.AuxiliaryNativeInputsPreserveBuffersAndScalarResults",
                       "ObjCRuntimeSource.NativeContextParametersPreserveRegisterInputsAndBits",
                       "ObjCRuntimeSource.IncomingNativeResultsPreserveWordBitsAndMemoryReads",
                       "ObjCRuntimeSource.ReadOnlyTablesPreserveIntegerFloatingBitsAndIndexBounds",

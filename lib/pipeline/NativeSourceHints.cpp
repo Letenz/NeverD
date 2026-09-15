@@ -28,14 +28,14 @@ bool sameScalar(const TypeRef &A, const TypeRef &B) {
 }
 
 // These are internal source parameters, not a guessed external convention.
-// Use MedIR's observable entry-byte analysis, and independently require native
-// reads without any writes to preserved non-frame registers. In particular,
-// outlined helpers with hidden register outputs cannot gain a scalar binding
-// from their context reads. An unavailable proof leaves the ordinary candidate
-// unchanged; its body still has to pass complete source validation.
-std::vector<uint64_t>
-readOnlyContextRegisters(const LowFunc *Low, const MedFunc &Med,
-                         const SourceFunctionTypeHint &Hint) {
+// Use MedIR's observable entry-byte analysis and independent full-width native
+// reads. Caller-saved input registers may subsequently become scratch values.
+// Preserved context inputs additionally require no native writes to preserved
+// non-frame registers: hidden outputs cannot acquire a scalar call contract.
+// The complete source body and its callers still require validation.
+std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
+                                           const MedFunc &Med,
+                                           const SourceFunctionTypeHint &Hint) {
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
       Low->Blocks.size() > 16384)
     return {};
@@ -43,9 +43,8 @@ readOnlyContextRegisters(const LowFunc *Low, const MedFunc &Med,
   if (!Observed)
     return {};
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
-  auto IntegerContext = [&](uint64_t Register) {
+  auto IntegerRegister = [&](uint64_t Register) {
     return !TRI.isFrameOrLinkReg(Register) &&
-           TRI.isCallPreserved(Register, 8) &&
            (Hint.Architecture == Arch::AArch64
                 ? Register <= a64reg::X28 && Register % 8 == 0
                 : TRI.isGeneralReg(Register));
@@ -53,6 +52,7 @@ readOnlyContextRegisters(const LowFunc *Low, const MedFunc &Med,
   const auto Preserved = TRI.callPreservedRanges(BinaryFormat::MachO);
   size_t Remaining = 262144;
   std::set<uint64_t> Reads;
+  bool PreservedWrite = false;
   for (const auto &Block : Low->Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Remaining-- || Op.NumInputs > 6)
@@ -65,16 +65,20 @@ readOnlyContextRegisters(const LowFunc *Low, const MedFunc &Med,
               (Output.Offset <= Range.Offset
                    ? Range.Offset - Output.Offset < Output.Size
                    : Output.Offset - Range.Offset < Range.Bytes))
-            return {};
+            PreservedWrite = true;
       for (unsigned I = 0; I < Op.NumInputs; ++I) {
         if (!Remaining--)
           return {};
         const auto &Input = Op.Inputs[I];
-        if (Input.isReg() && Input.Size == 8 && IntegerContext(Input.Offset) &&
+        if (Input.isReg() && Input.Size == 8 && IntegerRegister(Input.Offset) &&
             Observed->count(Input.Offset))
           Reads.insert(Input.Offset);
       }
     }
+  if (PreservedWrite)
+    std::erase_if(Reads, [&](uint64_t Register) {
+      return TRI.isCallPreserved(Register, 8);
+    });
   return {Reads.begin(), Reads.end()};
 }
 
@@ -284,6 +288,7 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   Hint.ReturnLocation.RegisterOffset = TRI.IntReturnReg;
   Hint.ReturnLocation.ValueBytes = Hint.ReturnType->Size;
   std::set<uint64_t> ParameterRegisters;
+  std::set<uint64_t> AuxiliaryRegisters;
   std::set<int> StackSlots;
   std::optional<MedVar> IncomingReturnParameter;
   for (size_t Index = 0; Index < Med.Params.size(); ++Index) {
@@ -316,10 +321,14 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
       if (!StackSlots.insert(Parameter.Id).second)
         return Reject("native stack parameters overlap");
     } else {
-      if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
-                    Parameter.RegOff) == TRI.IntParamRegs.end() ||
-          !ParameterRegisters.insert(Parameter.RegOff).second)
+      if (!ParameterRegisters.insert(Parameter.RegOff).second)
         return Reject("native parameter register is ambiguous or non-integer");
+      if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
+                    Parameter.RegOff) == TRI.IntParamRegs.end()) {
+        if (Parameter.Size != 8)
+          return Reject("native auxiliary parameter requires a complete word");
+        AuxiliaryRegisters.insert(Parameter.RegOff);
+      }
       Source.Location.Kind = SourceABICarrierKind::IntegerRegister;
       Source.Location.RegisterOffset = Parameter.RegOff;
       if (Parameter.RegOff == TRI.IntReturnReg &&
@@ -388,7 +397,13 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   }
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
-  for (uint64_t Register : readOnlyContextRegisters(Low, Med, Hint))
+  const auto EntryRegisters = nativeEntryRegisters(Low, Med, Hint);
+  for (uint64_t Register : AuxiliaryRegisters)
+    if (std::find(EntryRegisters.begin(), EntryRegisters.end(), Register) ==
+        EntryRegisters.end())
+      return Reject(
+          "native auxiliary parameter lacks observed native input evidence");
+  for (uint64_t Register : EntryRegisters)
     if (!ParameterRegisters.count(Register))
       Hint.Parameters.push_back(
           {"native_arg" + std::to_string(Hint.Parameters.size()),

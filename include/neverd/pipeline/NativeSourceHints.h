@@ -29,9 +29,11 @@ struct PipelineFunctionAudit;
 /// Complete integer inputs forwarded to known pointer parameters can refine
 /// the source candidate through conflict-free COPY/PHI uses. Physical carriers
 /// remain unchanged; this does not modify generic lifting or rewrite types.
-/// When Low is supplied from the same pipeline, observed preserved integer
-/// entry registers can become explicit context parameters if the native body
-/// never writes preserved registers other than its frame/link registers.
+/// When Low is supplied from the same pipeline, observed full-width integer
+/// entry registers can become explicit auxiliary parameters. Caller-saved
+/// inputs may later be overwritten; preserved context inputs require that the
+/// native body never writes preserved non-frame/link registers. Implicit call
+/// definitions do not establish entry inputs, including SSA version zero.
 /// Both callers and definitions must use the resulting source projection;
 /// these parameters do not describe an external C or Swift calling convention.
 std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(

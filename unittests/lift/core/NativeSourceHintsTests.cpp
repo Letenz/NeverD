@@ -5,6 +5,8 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
+#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -155,6 +157,80 @@ TEST(NativeSourceHints, ReadOnlyContextsRetainObservedPreservedRegisters) {
       ++Checked;
     }
     EXPECT_GT(Checked, 0U);
+  }
+}
+
+TEST(NativeSourceHints, AuxiliaryInputsAllowLaterCallerSavedWrites) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Register =
+        Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+    for (bool RecordedParameter : {false, true}) {
+      NativeContextFixture Fixture(Architecture, Register);
+      if (RecordedParameter) {
+        Fixture.Context.Kind = MedVar::Param;
+        Fixture.Med.Params[1] = Fixture.Context;
+        Fixture.Med.TypedParams[1].Type = NdType::makeInt(8);
+        Fixture.High.Params[1].Type = NdType::makeInt(8);
+        Fixture.Med.Blocks[0].Ops[0].Inputs[0] = Fixture.Context;
+      }
+      LowOp Write;
+      Write.Opcode = NdOp::COPY;
+      Write.Output = NdVar::reg(Register, 8);
+      Write.addInput(NdVar::cst(7, 8));
+      Fixture.Low.Blocks[0].Ops.push_back(Write);
+      std::string Error;
+      const auto Hint = Fixture.inferContext(Error);
+      ASSERT_TRUE(Hint) << Error;
+      ASSERT_EQ(Hint->Parameters.size(), 2U);
+      EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, Register);
+      EXPECT_EQ(Hint->Parameters[1].Location.ValueBytes, 8U);
+      EXPECT_FALSE(Hint->Parameters[1].Location.ExtendTo32Bits);
+      EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                MedReturnValueEvidence::Unknown);
+      EXPECT_EQ(bool(Fixture.infer(Error)), !RecordedParameter);
+    }
+  }
+}
+
+TEST(NativeSourceHints, AuxiliaryParametersRequireCompleteNativeReadEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Register =
+        Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      NativeContextFixture Fixture(Architecture, Register);
+      Fixture.Context.Kind = MedVar::Param;
+      Fixture.Med.Params[1] = Fixture.Context;
+      Fixture.Med.TypedParams[1].Type = NdType::makeInt(8);
+      Fixture.High.Params[1].Type = NdType::makeInt(8);
+      Fixture.Med.Blocks[0].Ops[0].Inputs[0] = Fixture.Context;
+      if (Mutation == 0)
+        Fixture.Low.Blocks[0].Ops[0].Inputs[0].Size = 4;
+      else if (Mutation == 1)
+        Fixture.Low.Blocks[0].Ops.clear();
+      else if (Mutation == 2)
+        ++Fixture.Low.Entry;
+      else if (Mutation == 3)
+        Fixture.Low.Blocks[0].Ops[0].NumInputs = 7;
+      else {
+        Fixture.Med.Params[1].Size = 4;
+        Fixture.Med.TypedParams[1].Type = NdType::makeInt(4);
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.inferContext(Error)) << Mutation;
+    }
+  }
+}
+
+TEST(NativeSourceHints, AuxiliaryCallClobbersCannotBecomeEntryParameters) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Register =
+        Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::R10;
+    NativeContextFixture Fixture(Architecture, Register);
+    Fixture.Med.CallClobbers.push_back({Fixture.Context, 1});
+    std::string Error;
+    const auto Hint = Fixture.inferContext(Error);
+    ASSERT_TRUE(Hint) << Error;
+    EXPECT_EQ(Hint->Parameters.size(), 1U);
   }
 }
 
