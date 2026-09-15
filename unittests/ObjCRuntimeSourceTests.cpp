@@ -64,6 +64,7 @@ enum class RuntimeFixture {
   AggregateRecords,
   WordRecords,
   PredicateFormats,
+  CRecords,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -93,6 +94,7 @@ void verifyRuntime(bool Chained,
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
+  const bool CRecords = FixtureKind == RuntimeFixture::CRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -142,6 +144,7 @@ void verifyRuntime(bool Chained,
                         : AggregateRecords   ? "ObjCAggregateRecords.m"
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
+                        : CRecords           ? "ObjCCRecordCalls.m"
                         : SavedScalars       ? "ObjCSavedScalars.m"
                         : ReceiverResults    ? "ObjCReceiverResults.m"
                         : ReceiverAliases    ? "ObjCReceiverAliases.m"
@@ -174,6 +177,7 @@ void verifyRuntime(bool Chained,
                         : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
+                        : CRecords          ? "ObjCCRecordCallsHarness.m"
                         : SavedScalars      ? "ObjCSavedScalarsHarness.m"
                         : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
                         : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
@@ -206,6 +210,7 @@ void verifyRuntime(bool Chained,
 #else
   const std::string HostArch = "x86_64";
 #endif
+  const unsigned CRecordMethods = HostArch == "arm64" ? 8U : 2U;
   std::vector<std::string> Compile{Compiler,      "-arch",
                                    HostArch,      "-O2",
                                    "-g0",         "-fobjc-arc",
@@ -234,6 +239,8 @@ void verifyRuntime(bool Chained,
                    SystemDataFrameworks.end());
   if (CoreData || DynamicProperties)
     Compile.insert(Compile.end(), {"-framework", "CoreData"});
+  if (CRecords)
+    Compile.insert(Compile.end(), {"-framework", "CoreGraphics"});
   if (Graphics)
     Compile.insert(Compile.end(),
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
@@ -345,6 +352,7 @@ void verifyRuntime(bool Chained,
                              : AggregateRecords   ? 8U
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
+                             : CRecords           ? CRecordMethods
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
@@ -407,6 +415,12 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (CRecords) {
+    Remaining = {"unionRange:with:", "intersection:with:"};
+    if (HostArch == "arm64")
+      Remaining.insert({"width:", "midY:", "standardize:", "unionRect:with:",
+                        "textPosition:", "fill:context:"});
+  }
   if (PredicateFormats)
     Remaining = {"object:", "key:value:", "minimum:maximum:", "count:",
                  "score:",  "quoted:",    "always",           "expression:"};
@@ -563,6 +577,7 @@ void verifyRuntime(bool Chained,
                   : AggregateRecords   ? "NDRecords"
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
+                  : CRecords           ? "NDCCRecords"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
@@ -749,6 +764,8 @@ void verifyRuntime(bool Chained,
                    SystemDataFrameworks.end());
   if (CoreData || DynamicProperties)
     Compile.insert(Compile.end() - 2, {"-framework", "CoreData"});
+  if (CRecords)
+    Compile.insert(Compile.end() - 2, {"-framework", "CoreGraphics"});
   if (Graphics)
     Compile.insert(Compile.end() - 2,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
@@ -815,6 +832,9 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : CRecords
+          ? (HostArch == "arm64" ? "c-record-checks=8192\nbitmap-effects=1024\n"
+                                 : "c-record-checks=2048\n")
       : PredicateFormats ? "predicate-checks=30720\nquoted-placeholders="
                            "pass\nscalar-widths=pass\n"
       : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
@@ -1341,6 +1361,15 @@ TEST(ObjCRuntimeSource, WordRecordsPreserveBitsPointersCallsAndStackArguments) {
         verifyRuntime(Chained, RuntimeFixture::WordRecords));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, FixedCRecordsPreserveValuesAndBitmapEffects) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::CRecords));
+#else
+  GTEST_SKIP() << "Requires Darwin Foundation and CoreGraphics";
 #endif
 }
 

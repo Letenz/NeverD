@@ -1089,6 +1089,82 @@ TEST(ObjCSourceBindings, RuntimeCallsRevalidateImportedSignatureAndRegister) {
   EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
 }
 
+TEST(ObjCSourceBindings, FixedCRecordsRevalidateExportsTypesAndCarriers) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Floating : {false, true}) {
+      Fixture F;
+      F.Image.Arch = Architecture;
+      constexpr va_t Slot = 0x10e0;
+      const std::string Name =
+          Floating ? "_CGRectStandardize" : "_NSUnionRange";
+      const std::string Module =
+          Floating
+              ? "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+              : "/System/Library/Frameworks/Foundation.framework/Foundation";
+      F.Image.ImportPtrSlots[Slot] = Name;
+      ASSERT_TRUE(F.Image.recordDyldBindSlot(Slot, Name, 0, Module, false));
+      const auto Hint = darwinRuntimeSourceCallHint(F.Image, Slot);
+      if (Floating && Architecture == Arch::X64) {
+        EXPECT_FALSE(Hint);
+        continue;
+      }
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), Floating ? 1U : 2U);
+      ASSERT_EQ(Hint->Signature.ReturnComponents.size(), Floating ? 4U : 2U);
+      std::vector<ExprPtr> Arguments;
+      for (const auto &Parameter : Hint->Signature.Parameters) {
+        std::vector<ExprPtr> Leaves;
+        for (const auto &Member : sourceAggregateMembers(Parameter.Type))
+          Leaves.push_back(
+              HighExpr::makeBitCast(HighExpr::makeConst(0, 8), Member.Type));
+        Arguments.push_back(HighExpr::makeRecord(Parameter.Type, Leaves));
+      }
+      auto Call = HighExpr::makeCall(Name, Slot, Arguments);
+      Call->Type = Hint->Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      ASSERT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+      for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+        auto Bad = std::make_shared<SourceCallTypeHint>(*Hint);
+        if (Mutation == 0)
+          Bad->Signature.ReturnComponents.pop_back();
+        else if (Mutation == 1)
+          Bad->Signature.Parameters[0].Components[0].RegisterOffset += 8;
+        else if (Mutation == 2) {
+          auto Record = std::make_shared<NdType>(*Bad->Signature.ReturnType);
+          Record->FieldOffsets[1] = 0;
+          Bad->Signature.ReturnType = Record;
+        } else
+          Bad->Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+        Call->SourceCallHint = Bad;
+        EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {})) << Mutation;
+      }
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      const auto Bind = F.Image.DyldBindSlots.at(Slot);
+      for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+        F.Image.DyldBindSlots[Slot] = Bind;
+        F.Image.ImportPtrSlots[Slot] = Name;
+        if (Mutation == 0)
+          F.Image.DyldBindSlots[Slot].Module = "/tmp/Other.framework/Other";
+        else if (Mutation == 1)
+          F.Image.DyldBindSlots[Slot].Addend = 8;
+        else if (Mutation == 2)
+          F.Image.DyldBindSlots[Slot].WeakImport = true;
+        else if (Mutation == 3)
+          F.Image.DyldBindSlots.erase(Slot);
+        else
+          F.Image.ImportPtrSlots.erase(Slot);
+        EXPECT_FALSE(darwinRuntimeSourceCallHint(F.Image, Slot)) << Mutation;
+        EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {})) << Mutation;
+      }
+      F.Image.DyldBindSlots[Slot] = Bind;
+      F.Image.ImportPtrSlots[Slot] = Name;
+      EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+    }
+  }
+}
+
 TEST(ObjCSourceBindings, StaticAssociationKeysKeepExactContextAndIdentity) {
   Fixture F;
   F.Image.Sections[0].Type = llvm::MachO::S_CSTRING_LITERALS;

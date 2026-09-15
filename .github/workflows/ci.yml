@@ -452,6 +452,8 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceAggregate.RecordLayoutPreservesNestedMembersAndRejectsMalformedGraphs",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.FixedCRecordsAllocateOnlyExplicitParameters",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceAggregate.RecordEncodingSeparatesShapeFromPhysicalABI",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceAggregate.FloatingMembersUseIndependentContiguousRegisters",
@@ -735,6 +737,8 @@ jobs:
                   ("ObjCSourceProjection.InvalidSignatureDoesNotHideIndependentBodyEvidence",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceProjection.EvidenceBudgetCannotTurnAnIncompleteGraphIntoSuccess",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.FixedCRecordsRevalidateExportsTypesAndCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.DarwinFormattedCallsRequireExactImportAndFormat",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
@@ -1074,9 +1078,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 408,
-              ("macOS", "macos-patch"): 441,
-              ("Windows", "windows-focused"): 404,
+              ("Linux", "linux-semantic"): 410,
+              ("macOS", "macos-patch"): 444,
+              ("Windows", "windows-focused"): 406,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1100,6 +1104,7 @@ jobs:
                       "ObjCRuntimeSource.HomogeneousRecordsPreserveFieldsCallsAndStackArguments",
                       "ObjCRuntimeSource.WordRecordsPreserveBitsPointersCallsAndStackArguments",
                       "ObjCRuntimeSource.PredicateFormatsPreserveValuesAndQuotedPlaceholders",
+                      "ObjCRuntimeSource.FixedCRecordsPreserveValuesAndBitmapEffects",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

@@ -284,12 +284,12 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
 }
 
 namespace {
-bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
-                                std::string &Diagnostic, bool Records) {
+bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
+                           std::string &Diagnostic, bool Records) {
   Diagnostic.clear();
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
       !Hint.ReturnType || Hint.Parameters.size() > 64)
-    return fail(Diagnostic, "Unsupported Darwin scalar source ABI");
+    return fail(Diagnostic, "Unsupported Darwin fixed source ABI");
   const auto &TRI = getTargetRegInfo(Architecture);
   size_t IntegerIndex = 0;
   size_t FloatIndex = 0;
@@ -401,7 +401,12 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 
 bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
                                  Arch Architecture, std::string &Diagnostic) {
-  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic, false);
+  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, false);
+}
+
+bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
+                                std::string &Diagnostic) {
+  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, true);
 }
 
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
@@ -410,7 +415,7 @@ bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
        Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK) ||
       Hint.Parameters.size() < 2)
     return fail(Diagnostic, "Unsupported Objective-C source ABI");
-  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic, true);
+  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic);
 }
 
 bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,

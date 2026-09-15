@@ -55,7 +55,7 @@ Index signatures(Arch Architecture) {
     std::string Diagnostic;
     if (Hint) {
       Hint->Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
-      if (!assignDarwinScalarSourceABI(*Hint, Architecture, Diagnostic))
+      if (!assignDarwinFixedSourceABI(*Hint, Architecture, Diagnostic))
         Hint.reset();
     }
     auto [It, Added] = Result.try_emplace(D.Name, Hint);

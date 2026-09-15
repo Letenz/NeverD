@@ -84,6 +84,75 @@ TEST(SourceAggregate, RecordEncodingSeparatesShapeFromPhysicalABI) {
   EXPECT_FALSE(assignDarwinObjCSourceABI(*Mixed, Arch::AArch64, Error));
 }
 
+TEST(SourceAggregate, FixedCRecordsAllocateOnlyExplicitParameters) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    for (bool Floating : {false, true}) {
+      if (Floating && A != Arch::AArch64)
+        continue;
+      const auto Scalar = Floating ? NdType::makeFloat(8) : NdType::makeInt(8);
+      const auto Record = NdType::makeStruct({Scalar, Scalar});
+      for (unsigned Count : {0U, 1U, 2U}) {
+        SourceFunctionTypeHint H;
+        H.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+        H.ReturnType = Record;
+        H.Parameters.assign(Count, {"value", Record});
+        if (Count)
+          H.Parameters.push_back({"tail", Scalar});
+        std::string Error;
+        ASSERT_TRUE(assignDarwinFixedSourceABI(H, A, Error)) << Error;
+        const auto Params = Floating ? TRI.FPParamRegs : TRI.IntParamRegs;
+        const auto Returns = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
+        ASSERT_EQ(H.ReturnComponents.size(), 2U);
+        for (unsigned I = 0; I < 2; ++I)
+          EXPECT_EQ(H.ReturnComponents[I].RegisterOffset, Returns[I]);
+        for (unsigned I = 0; I < Count; ++I) {
+          ASSERT_EQ(H.Parameters[I].Components.size(), 2U);
+          for (unsigned J = 0; J < 2; ++J)
+            EXPECT_EQ(H.Parameters[I].Components[J].RegisterOffset,
+                      Params[I * 2 + J]);
+        }
+        if (Count)
+          EXPECT_EQ(H.Parameters.back().Location.RegisterOffset,
+                    Params[Count * 2]);
+        EXPECT_EQ(sourceABIParameters(H).size(), Count ? Count * 2 + 1 : 0);
+        auto Restricted = H;
+        EXPECT_FALSE(assignDarwinScalarSourceABI(Restricted, A, Error));
+        Restricted = H;
+        EXPECT_FALSE(assignDarwinObjCSourceABI(Restricted, A, Error));
+        if (Count) {
+          auto Method = declaration(Record);
+          ASSERT_TRUE(assignDarwinObjCSourceABI(Method, A, Error));
+          const auto Physical = sourceABIParameters(Method);
+          Method.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+          ASSERT_TRUE(assignDarwinFixedSourceABI(Method, A, Error));
+          const auto Explicit = sourceABIParameters(Method);
+          ASSERT_EQ(Physical.size(), Explicit.size());
+          for (size_t I = 0; I < Physical.size(); ++I) {
+            EXPECT_EQ(Physical[I].Location.RegisterOffset,
+                      Explicit[I].Location.RegisterOffset);
+            EXPECT_EQ(Physical[I].Location.Kind, Explicit[I].Location.Kind);
+          }
+        }
+      }
+    }
+    for (const auto &Record :
+         {quad(),
+          NdType::makeStruct({NdType::makeInt(8), NdType::makeFloat(8)})}) {
+      auto H = declaration(Record);
+      H.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+      std::string Error;
+      EXPECT_EQ(assignDarwinFixedSourceABI(H, A, Error),
+                A == Arch::AArch64 && Record->Size == 32);
+    }
+    auto Malformed = pair();
+    Malformed->FieldOffsets[1] = 0;
+    auto H = declaration(Malformed);
+    std::string Error;
+    EXPECT_FALSE(assignDarwinFixedSourceABI(H, A, Error));
+  }
+}
+
 TEST(SourceAggregate, FloatingMembersUseIndependentContiguousRegisters) {
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
   for (unsigned Bytes : {4U, 8U})

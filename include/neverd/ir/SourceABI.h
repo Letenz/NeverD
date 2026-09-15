@@ -42,6 +42,13 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint);
 bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
                                  Arch Architecture, std::string &Diagnostic);
 
+/// Assign Darwin's ordinary fixed calling convention to the declared scalar
+/// and supported record values. Only explicit parameters consume carriers;
+/// callers supply any language-specific hidden parameters. This describes a
+/// signature without authenticating its declaration or authorizing rewriting.
+bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
+                                std::string &Diagnostic);
+
 /// Assign a call's complete promoted scalar arguments, with a named prefix
 /// and an ellipsis. Darwin arm64 puts the unnamed values in eight-byte stack
 /// slots; x86_64 continues its independent integer and floating banks.
