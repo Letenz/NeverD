@@ -1,10 +1,13 @@
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
+#include "ObjCReceiverDeclarations.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
 
 #include <map>
+#include <set>
 
 namespace neverd {
 namespace {
@@ -183,6 +186,203 @@ selectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
 std::optional<SourceFunctionTypeHint>
 objcSelectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector) {
   return selectorSourceTypeHint(Image, Selector, nullptr);
+}
+
+std::optional<ObjCReceiverTypeHint>
+objcMethodReceiverTypeHint(const BinaryImage &Image, va_t Entry) {
+  if (!Entry || Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
+    return std::nullopt;
+  std::optional<ObjCReceiverTypeHint> Result;
+  for (const auto &Method : Image.ObjCMethods) {
+    if (Method.Implementation != Entry)
+      continue;
+    if (Method.ClassName.empty() || !Method.TypeHint ||
+        (Result && (Result->ClassName != Method.ClassName ||
+                    Result->IsClassMethod != Method.IsClassMethod)))
+      return std::nullopt;
+    auto Signature = *Method.TypeHint;
+    std::string Diagnostic;
+    if (!assignDarwinObjCSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    Result =
+        ObjCReceiverTypeHint{ObjCReceiverTypeHint::OriginKind::MethodEntry,
+                             Entry, Method.ClassName, Method.IsClassMethod};
+  }
+  return Result;
+}
+
+bool objcReceiverTypeHintValid(const BinaryImage &Image,
+                               const ObjCReceiverTypeHint &Receiver) {
+  if (!Receiver.Address || Receiver.ClassName.empty() ||
+      Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
+    return false;
+  switch (Receiver.Origin) {
+  case ObjCReceiverTypeHint::OriginKind::MethodEntry: {
+    const auto Expected = objcMethodReceiverTypeHint(Image, Receiver.Address);
+    return Expected && Expected->ClassName == Receiver.ClassName &&
+           Expected->IsClassMethod == Receiver.IsClassMethod;
+  }
+  case ObjCReceiverTypeHint::OriginKind::ClassReference: {
+    const auto Found = Image.ObjCSourceReferences.find(Receiver.Address);
+    return Receiver.IsClassMethod &&
+           Found != Image.ObjCSourceReferences.end() &&
+           Found->second.Address == Receiver.Address &&
+           Found->second.TheKind == ObjCSourceReference::Kind::Class &&
+           Found->second.Size == 8 && Found->second.Name == Receiver.ClassName;
+  }
+  }
+  return false;
+}
+
+ObjCReceiverDeclaration
+objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
+                           const ObjCReceiverTypeHint &Receiver) {
+  ObjCReceiverDeclaration Result;
+  if (!objcReceiverTypeHintValid(Image, Receiver))
+    return {true, std::nullopt};
+  bool Complete = true;
+  bool KnownScope = true;
+  auto Include = [&](const std::optional<SourceFunctionTypeHint> &Signature) {
+    Result.HasDeclaration = true;
+    if (!Signature) {
+      Complete = false;
+      return;
+    }
+    auto Hint = *Signature;
+    std::string Diagnostic;
+    if (!assignDarwinObjCSourceABI(Hint, Image.Arch, Diagnostic) ||
+        (Result.Signature && !mergeSignature(*Result.Signature, Hint))) {
+      Complete = false;
+      return;
+    }
+    if (!Result.Signature)
+      Result.Signature = Hint;
+    if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK)
+      Result.Signature->Origin = Hint.Origin;
+  };
+  // Class and protocol namespaces can share names (notably NSObject).
+  using Owner = std::pair<bool, std::string>;
+  std::set<Owner> Active, Visited;
+  auto Visit = [&](auto &&Self, const Owner &Key) -> bool {
+    if (Active.count(Key) || Visited.size() + Active.size() >= 256)
+      return false;
+    if (Visited.count(Key))
+      return true;
+    Active.insert(Key);
+    const auto &[Protocol, Name] = Key;
+    const auto SDK = objc::sdkReceiverDeclarations(
+        Image, Name, Protocol, Receiver.IsClassMethod, Selector);
+    Complete &= SDK.Complete;
+    std::optional<std::string> Superclass = SDK.Superclass;
+    std::set<Owner> Parents;
+    for (const auto &Parent : SDK.Protocols)
+      Parents.emplace(true, Parent);
+    for (const auto &Member : SDK.Members)
+      Include(Member.Signature);
+    bool Present = SDK.Present;
+    if (Protocol) {
+      for (const auto &Declaration : Image.ObjCProtocols) {
+        if (Declaration.Name != Name)
+          continue;
+        Present = true;
+        Complete &= Declaration.Status == "recovered";
+        for (const auto &Method : Declaration.Methods)
+          if (Method.IsClassMethod == Receiver.IsClassMethod &&
+              Method.Selector == Selector)
+            Include(Method.TypeHint);
+        for (va_t Address : Declaration.AdoptedProtocols) {
+          std::optional<std::string> ParentName;
+          for (const auto &Parent : Image.ObjCProtocols)
+            if (Parent.Address == Address) {
+              if (ParentName && *ParentName != Parent.Name)
+                return false;
+              ParentName = Parent.Name;
+            }
+          if (!ParentName || ParentName->empty())
+            return false;
+          Parents.emplace(true, *ParentName);
+        }
+      }
+    } else {
+      for (const auto &Class : Image.ObjCClasses) {
+        if (Class.Name != Name)
+          continue;
+        Present = true;
+        const bool Root = Class.RootClass &&
+                          Class.InheritanceStatus == "root" &&
+                          Class.SuperclassName.empty();
+        if (!Root && (Class.InheritanceStatus != "resolved" ||
+                      Class.SuperclassName.empty())) {
+          Complete = false;
+          continue;
+        }
+        if (Superclass && *Superclass != Class.SuperclassName)
+          return false;
+        Superclass = Class.SuperclassName;
+      }
+      for (const auto &Method : Image.ObjCMethods)
+        if (Method.ClassName == Name &&
+            Method.IsClassMethod == Receiver.IsClassMethod &&
+            Method.Selector == Selector)
+          Include(Method.TypeHint);
+      if (!Superclass)
+        KnownScope = false;
+      else if (!Superclass->empty())
+        Parents.emplace(false, *Superclass);
+    }
+    for (const auto &Property : Image.ObjCProperties) {
+      const bool IsProtocol =
+          Property.Owner == ObjCProperty::OwnerKind::Protocol;
+      if (IsProtocol != Protocol ||
+          Property.IsClassProperty != Receiver.IsClassMethod ||
+          (Protocol ? Property.OwnerName : Property.ClassName) != Name)
+        continue;
+      if (!Property.Getter.empty() && Property.Getter == Selector)
+        Include(Property.GetterTypeHint);
+      if (!Property.Setter.empty() && Property.Setter == Selector)
+        Include(Property.SetterTypeHint);
+    }
+    KnownScope &= Present;
+    for (const auto &Parent : Parents)
+      if (!Self(Self, Parent))
+        return false;
+    Active.erase(Key);
+    Visited.insert(Key);
+    return true;
+  };
+  // Entry self is a base-class constraint. Known subclass declarations still
+  // participate, whereas loading an exact class object fixes class dispatch.
+  std::set<std::string> Classes{Receiver.ClassName};
+  std::vector<std::string> Work{Receiver.ClassName};
+  if (Receiver.Origin == ObjCReceiverTypeHint::OriginKind::MethodEntry)
+    while (!Work.empty()) {
+      auto Name = std::move(Work.back());
+      Work.pop_back();
+      auto Children = objc::sdkReceiverSubclasses(Image, Name);
+      for (const auto &Class : Image.ObjCClasses)
+        if (Class.SuperclassName == Name)
+          Children.push_back(Class.Name);
+      for (const auto &Child : Children) {
+        if (Child.empty() || Classes.size() >= 256)
+          return {true, std::nullopt};
+        if (Classes.insert(Child).second)
+          Work.push_back(Child);
+      }
+    }
+  for (const auto &Class : Classes)
+    if (!Visit(Visit, {false, Class}))
+      return {true, std::nullopt};
+  if (!Complete)
+    Result.Signature.reset();
+  else if (!KnownScope) {
+    Result.Signature.reset();
+    Result.RequiresGlobalAgreement = true;
+  }
+  return Result;
 }
 
 std::optional<ObjCFormatDeclaration>

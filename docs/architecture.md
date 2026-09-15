@@ -60,7 +60,7 @@ Block consumer escape analysis also uses this graph. A bounded fixed point carri
 
 Source-call discovery uses a bounded forward fixed point for register facts.
 At ordinary joins, a selector, import slot or numeric address survives only
-when every reached predecessor agrees. Entry roles and exceptional entries
+when every reached predecessor agrees. Independent and exceptional entries
 start unknown. Call bindings are published only after backedges converge;
 physical alias writes, unknown calls and instruction-local temporaries cannot
 carry stale facts into a later block. Invalid edges or exhausted work budgets
@@ -77,6 +77,18 @@ or increase the runtime method inventory. The 64-bit record layout follows
 optional category class properties require the
 [image layout flag](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-abi.h).
 Unsupported property encodings and malformed lists remain explicit diagnostics.
+
+Objective-C receiver facts distinguish method-entry self from an exact class
+reference. All metadata records sharing an entry must agree before self is
+seeded. Full-width copies and ABI-preserved registers carry the fact through
+the same fixed point, including entry backedges. Declaration agreement uses
+class/instance scope, recorded categories, superclass chains and adopted
+protocols; entry self also includes known subclass declarations. Compiler
+catalogs retain declaration owners and hierarchy separately from selector-wide
+agreement. The SDK revalidates the receiver origin and applicable declarations
+against the current image before publishing source. These facts neither select
+an IMP nor authorize binary rewriting.
+Missing external hierarchy requires selector-wide agreement instead of a receiver-specific signature; explicit unsupported or conflicting declarations remain negative evidence.
 
 ## IR representations and routes
 

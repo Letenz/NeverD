@@ -724,6 +724,10 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     return false;
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
+  if (Binding.Receiver &&
+      (Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage ||
+       Binding.Format))
+    return false;
   if (Binding.Format &&
       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
@@ -862,7 +866,13 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     // emitter uses the canonical operation carried by this runtime binding.
     return Expected && runtimeBindingMatches(Binding, *Expected);
   }
-  if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK) {
+  if (Binding.Receiver) {
+    const auto Expected =
+        objcReceiverSourceTypeHint(Image, Binding.Selector, *Binding.Receiver);
+    if (!Expected.HasDeclaration || !Expected.Signature ||
+        !objc_projection_detail::sameHint(Hint, *Expected.Signature))
+      return false;
+  } else if (Hint.Origin == SourceFunctionTypeHint::OriginKind::ObjCSDK) {
     const auto Expected = objcSelectorSourceTypeHint(Image, Binding.Selector);
     if (!Expected || !objc_projection_detail::sameHint(Hint, *Expected))
       return false;

@@ -55,6 +55,7 @@ enum class RuntimeFixture {
   BlockLifetimes,
   CoreData,
   DynamicProperties,
+  ReceiverTypes,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -75,6 +76,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool DynamicProperties =
       FixtureKind == RuntimeFixture::DynamicProperties;
+  const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -114,6 +116,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
+                        : ReceiverTypes      ? "ObjCReceiverTypes.m"
                         : DynamicProperties  ? "ObjCDynamicProperties.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
                         : ScalarConstants    ? "ObjCScalarConstants.m"
@@ -137,6 +140,7 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : Equality          ? "ObjCEqualityHarness.m"
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
+                        : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
@@ -284,6 +288,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
                              : CoreData           ? 3U
                              : ScalarConstants    ? 6U
@@ -304,6 +309,13 @@ void verifyRuntime(bool Chained,
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
+  if (ReceiverTypes)
+    Remaining = {
+        "NDIntegerReceiver-sharedValue", "NDIntegerReceiver-readOwnValue",
+        "NDIntegerReceiver+sharedValue", "NDIntegerReceiver+readClassValue",
+        "NDPointerReceiver-sharedValue", "NDPointerReceiver-readOwnValue",
+        "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
+        "NDTypedError-declaredCode"};
   if (Associations)
     Remaining = {"objectForKey:",
                  "storeObject:forKey:policy:",
@@ -471,6 +483,8 @@ void verifyRuntime(bool Chained,
                   : SwiftCalls         ? "NDSwiftRuntimeCalls"
                                        : "NDARCBox") +
       "\");\n";
+  if (ReceiverTypes)
+    Install = "static void installRecovered(void) {\nClass cls;\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
   std::map<std::string, std::string> BlockHelpers;
@@ -485,7 +499,17 @@ void verifyRuntime(bool Chained,
     auto Name = Method->getString("function_name");
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
-    ASSERT_EQ(Remaining.erase(Selector->str()), 1U);
+    std::string Identity = Selector->str();
+    if (ReceiverTypes) {
+      const auto Class = Method->getString("class_name");
+      const auto ClassMethod = Method->getBoolean("class_method");
+      ASSERT_TRUE(Class && ClassMethod);
+      Identity = Class->str() + (*ClassMethod ? "+" : "-") + Identity;
+      Install += "cls = objc_getClass(\"" + Class->str() + "\");\n";
+      if (*ClassMethod)
+        Install += "cls = object_getClass(cls);\n";
+    }
+    ASSERT_EQ(Remaining.erase(Identity), 1U) << Identity;
     std::string MethodSource = Source->str();
     // Each C API unit is independently compilable. Its inventory identifies
     // functions whose address must be shared when units are linked together.
@@ -677,7 +701,9 @@ void verifyRuntime(bool Chained,
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
       : Equality ? "equality-cases=4096\nshort-circuit=pass\nownership=pass\n"
-      : FloatingSaves     ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : FloatingSaves ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : ReceiverTypes ? "receiver-checks=5120\nclass-instance-abi=pass\nsdk-"
+                        "inheritance=pass\n"
       : DynamicProperties ? "dynamic-property-checks=6144\nscalar-widths="
                             "pass\nobject-identity=pass\n"
       : CoreData
@@ -1137,5 +1163,16 @@ TEST(ObjCRuntimeSource, DynamicPropertyAccessorsExecuteAgainstCoreData) {
         verifyRuntime(Chained, RuntimeFixture::DynamicProperties));
 #else
   GTEST_SKIP() << "Requires macOS CoreData and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     ReceiverDeclarationsPreserveClassInstanceAndInheritedABI) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ReceiverTypes));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }

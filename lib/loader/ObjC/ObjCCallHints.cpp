@@ -133,7 +133,14 @@ std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
 }
 
 struct Value {
-  enum class Kind { Number, Selector, Import };
+  enum class Kind {
+    Number,
+    Selector,
+    Import,
+    InstanceSelf,
+    ClassSelf,
+    ClassReference
+  };
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
   std::string Name;
@@ -144,6 +151,18 @@ struct Value {
 };
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
+
+std::optional<ObjCReceiverTypeHint> receiver(const Value &V) {
+  if (V.TheKind != Value::Kind::InstanceSelf &&
+      V.TheKind != Value::Kind::ClassSelf &&
+      V.TheKind != Value::Kind::ClassReference)
+    return std::nullopt;
+  return ObjCReceiverTypeHint{
+      V.TheKind == Value::Kind::ClassReference
+          ? ObjCReceiverTypeHint::OriginKind::ClassReference
+          : ObjCReceiverTypeHint::OriginKind::MethodEntry,
+      V.Number, V.Name, V.TheKind != Value::Kind::InstanceSelf};
+}
 } // namespace
 
 std::optional<SourceCallTypeHint>
@@ -286,7 +305,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
   // Unvisited predecessors are the dataflow bottom, not an unknown value;
   // later backedges can invalidate provisional facts before publication.
   std::vector<std::vector<size_t>> Parents(Count), Children(Count);
-  std::vector<bool> Roots(Count), Queued(Count);
+  std::vector<bool> Roots(Count), ExceptionalRoots(Count), Queued(Count);
   std::map<va_t, unsigned> CallOccurrences;
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Function.Blocks[I];
@@ -294,6 +313,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                Function.ModuleAnalysisRoots.count(Block.StartAddr) ||
                Function.OrdinaryModuleAnalysisRoots.count(Block.StartAddr) ||
                !Block.ExceptionalPreds.empty();
+    ExceptionalRoots[I] = !Block.ExceptionalPreds.empty();
     for (int Parent : Block.Preds) {
       const auto Found = BlockIndices.find(Parent);
       if (Found == BlockIndices.end() ||
@@ -320,9 +340,23 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       if (Found == BlockIndices.end())
         return {};
       Roots[Found->second] = true;
+      ExceptionalRoots[Found->second] = true;
     }
   using Facts = std::map<Key, Value>;
   using Hints = std::map<va_t, SourceCallTypeHint>;
+  Facts EntryFacts;
+  if (llvm::count_if(Function.Blocks, [&](const auto &Block) {
+        return Block.StartAddr == Function.Entry;
+      }) == 1)
+    if (const auto Receiver = objcMethodReceiverTypeHint(Image, Function.Entry))
+      EntryFacts.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
+                         Value{Receiver->IsClassMethod
+                                   ? Value::Kind::ClassSelf
+                                   : Value::Kind::InstanceSelf,
+                               Receiver->Address, Receiver->ClassName});
+  std::map<std::tuple<Value::Kind, uint64_t, std::string, std::string>,
+           ObjCReceiverDeclaration>
+      ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts Values,
                       Hints &BlockHints) -> std::optional<Facts> {
     const auto &Block = Function.Blocks[Index];
@@ -425,8 +459,25 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Target->Selector = Name->Name;
         }
         if (Target && !Target->Selector.empty()) {
-          if (auto Signature =
-                  objcSelectorSourceTypeHint(Image, Target->Selector)) {
+          std::optional<ObjCReceiverTypeHint> Receiver;
+          ObjCReceiverDeclaration Declaration;
+          const auto Self = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
+          if (Self && Target->Name == "objc_msgSend")
+            Receiver = receiver(*Self);
+          if (Receiver) {
+            auto [It, Inserted] = ReceiverDeclarations.try_emplace(std::tuple{
+                Self->TheKind, Self->Number, Self->Name, Target->Selector});
+            if (Inserted)
+              It->second = objcReceiverSourceTypeHint(Image, Target->Selector,
+                                                      *Receiver);
+            Declaration = It->second;
+          }
+          const bool Qualified = Declaration.HasDeclaration &&
+                                 !Declaration.RequiresGlobalAgreement;
+          auto Signature =
+              Qualified ? Declaration.Signature
+                        : objcSelectorSourceTypeHint(Image, Target->Selector);
+          if (Signature) {
             SourceCallTypeHint Hint;
             Hint.CallKind = Target->Name == "objc_msgSendSuper2"
                                 ? SourceCallTypeHint::Kind::ObjCSuper2
@@ -437,6 +488,8 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Hint.TargetName = Target->Name;
             Hint.Selector = Target->Selector;
             Hint.SelectorReferenceAddress = Target->SelectorSlot;
+            if (Qualified)
+              Hint.Receiver = std::move(Receiver);
             BlockHints.emplace(Op.Addr, std::move(Hint));
           } else if (Target->Name == "objc_msgSend") {
             const auto Declaration =
@@ -490,6 +543,13 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
               Ref->second.TheKind == ObjCSourceReference::Kind::Selector &&
               Ref->second.Size == 8)
             Out = Value{Value::Kind::Selector, 0, Ref->second.Name};
+          else if (Ref != Image.ObjCSourceReferences.end() &&
+                   Ref->second.TheKind == ObjCSourceReference::Kind::Class &&
+                   Ref->second.Size == 8 &&
+                   Ref->second.Address == Address->Number &&
+                   !Ref->second.Name.empty())
+            Out = Value{Value::Kind::ClassReference, Address->Number,
+                        Ref->second.Name};
           else if (auto Name = importAt(Image, Address->Number); !Name.empty())
             Out = Value{Value::Kind::Import, Address->Number, std::move(Name)};
         }
@@ -541,23 +601,25 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
     Remaining -= Cost;
     Facts Incoming;
     bool Initialized = Roots[Index];
-    if (!Roots[Index])
-      for (size_t Parent : Parents[Index]) {
-        if (!Exits[Parent])
-          continue;
-        if (!Initialized) {
-          Incoming = *Exits[Parent];
-          Initialized = true;
-        } else {
-          for (auto It = Incoming.begin(); It != Incoming.end();) {
-            const auto Found = Exits[Parent]->find(It->first);
-            if (Found == Exits[Parent]->end() || !(It->second == Found->second))
-              It = Incoming.erase(It);
-            else
-              ++It;
-          }
+    if (Function.Blocks[Index].StartAddr == Function.Entry &&
+        !ExceptionalRoots[Index])
+      Incoming = EntryFacts;
+    for (size_t Parent : Parents[Index]) {
+      if (!Exits[Parent])
+        continue;
+      if (!Initialized) {
+        Incoming = *Exits[Parent];
+        Initialized = true;
+      } else {
+        for (auto It = Incoming.begin(); It != Incoming.end();) {
+          const auto Found = Exits[Parent]->find(It->first);
+          if (Found == Exits[Parent]->end() || !(It->second == Found->second))
+            It = Incoming.erase(It);
+          else
+            ++It;
         }
       }
+    }
     if (!Initialized)
       continue;
     Bindings[Index].clear();

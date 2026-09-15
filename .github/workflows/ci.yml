@@ -148,6 +148,7 @@ jobs:
             scripts.tests.test_eh_signature_generation \
             scripts.tests.test_generate_objc_declarations \
             scripts.tests.test_generate_objc_framework_declarations \
+            scripts.tests.test_generate_objc_receiver_declarations \
             scripts.tests.test_generate_objc_format_declarations \
             scripts.tests.test_generate_darwin_format_declarations \
             scripts.tests.test_generate_darwin_block_declarations \
@@ -804,6 +805,32 @@ jobs:
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighCSourceCalls.ConditionalDefaultPreservesResultsAndCallCounts",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFactsSurviveOnlyAgreedCopiesAndPreservedViews",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverExactClassDispatchExcludesDerivedOverrides",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFrameworkVariadicsRetainTheirFormatRequirement",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.MissingExternalHierarchyRequiresGlobalDeclarationAgreement",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverDeclarationsSeparateOwnersAndDispatchRoles",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverSDKInheritanceRequiresCurrentFrameworkIdentity",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverCategoriesPropertiesAndSubclassesKeepNegativeEvidence",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverHierarchyRejectsCyclesMissingParentsAndBounds",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverProtocolsUseRecordedAdoptionAndSeparateNamespaces",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverEntryRequiresEveryAliasedMethodToAgree",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverClassReferencesRequireExactSlotsAndFullWidth",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverEntryBackedgesAndIndependentEntriesEraseSelfFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverSourceBindingsRevalidateProvenanceAndDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.EqualPredecessorFactsBindRegardlessOfBlockOrder",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.ConflictingMissingAndOverlappingIncomingFactsStayUnknown",
@@ -972,9 +999,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 358,
-              ("macOS", "macos-patch"): 382,
-              ("Windows", "windows-focused"): 354,
+              ("Linux", "linux-semantic"): 371,
+              ("macOS", "macos-patch"): 396,
+              ("Windows", "windows-focused"): 367,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -990,6 +1017,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledSwiftAllocationPreservesAlignmentMetadataAndDestruction",
                       "ObjCRuntimeSource.RecompiledFloatingValuesSurviveRuntimeCalls",
                       "ObjCRuntimeSource.EqualityProjectionPreservesOwnershipOrRejectsMissingCallEvidence",
+                      "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",

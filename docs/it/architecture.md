@@ -56,6 +56,9 @@ scritture ed etichette mantengono il comportamento osservabile.
 
 Anche l’analisi di fuga dei consumatori di blocchi usa questo grafo. Un punto fisso limitato propaga identità dei puntatori e memoria privata dello stack tra rami e cicli. Le confluenze conservano possibili indirizzi di contesto; solo una sovrascrittura completa li elimina. Archi sconosciuti, eccezioni e budget di prova esauriti impediscono il collegamento.
 
+I fatti sul ricevitore Objective-C distinguono self all’ingresso del metodo da un riferimento esatto di classe. Tutti i record che condividono l’ingresso devono concordare prima di stabilire self. Le copie a larghezza completa e i registri preservati dall’ABI propagano i fatti con lo stesso punto fisso, inclusi gli archi di ritorno all’ingresso. Il confronto distingue metodi di classe e d’istanza, categorie registrate, superclassi e protocolli adottati; self include anche le sottoclassi note. I cataloghi del compilatore mantengono proprietari e gerarchia separati dall’accordo globale dei selettori. Prima della pubblicazione, l’SDK riconvalida origine del ricevitore e dichiarazioni nell’immagine corrente. Questi fatti non selezionano un IMP né autorizzano riscritture binarie.
+Se manca la gerarchia esterna, si richiede l’accordo globale dei selettori senza restringere il ricevitore; dichiarazioni esplicitamente incompatibili o non supportate restano evidenza negativa.
+
 ## Rappresentazioni IR e percorsi
 
 | Rappresentazione | Scopo | Definizioni e trasformazioni principali |

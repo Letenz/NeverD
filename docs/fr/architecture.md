@@ -56,6 +56,9 @@ contextes réalisables. Appels, lectures, écritures et étiquettes conservent l
 
 L’analyse d’échappement des consommateurs de blocs utilise aussi ce graphe. Un point fixe borné propage les identités de pointeurs et les emplacements privés de pile à travers les branches et les boucles. Les jonctions conservent les adresses de contexte possibles ; seul un écrasement complet les efface. Les arêtes inconnues, les exceptions et les budgets de preuve épuisés refusent la liaison.
 
+Les faits de récepteur Objective-C distinguent self à l’entrée d’une méthode d’une référence exacte de classe. Tous les enregistrements partageant l’entrée doivent s’accorder avant d’établir self. Les copies de largeur complète et les registres préservés par l’ABI propagent ces faits dans le même point fixe, y compris les retours vers l’entrée. L’accord des déclarations distingue méthodes de classe et d’instance, catégories enregistrées, superclasses et protocoles adoptés ; self inclut aussi les sous-classes connues. Les catalogues du compilateur conservent propriétaires et hiérarchie séparément de l’accord global des sélecteurs. Avant publication, le SDK revalide l’origine du récepteur et les déclarations dans l’image courante. Ces faits ne sélectionnent aucun IMP et n’autorisent aucune réécriture binaire.
+Une hiérarchie externe manquante impose l’accord global des sélecteurs, sans restreindre le récepteur ; les déclarations explicitement incompatibles ou non prises en charge restent des preuves négatives.
+
 ## Représentations IR et parcours
 
 | Représentation | Rôle | Définitions et transformations principales |

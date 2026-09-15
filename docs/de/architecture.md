@@ -56,6 +56,9 @@ Aufrufe, Speicherzugriffe und Quellcodelabels behalten ihr beobachtbares Verhalt
 
 Auch die Escape-Analyse von Block-Verbrauchern verwendet diesen Graphen. Eine begrenzte Fixpunktanalyse verfolgt Zeigeridentitäten und private Stapelspeicher über Verzweigungen und Schleifen. Zusammenführungen erhalten mögliche Kontextadressen; nur vollständiges Überschreiben entfernt sie. Unbekannte Kanten, Ausnahmefluss und erschöpfte Beweisbudgets verhindern die Bindung.
 
+Objective-C-Empfängerinformationen unterscheiden self am Methodeneintritt von einer exakten Klassenreferenz. Alle Metadatensätze mit demselben Eintritt müssen übereinstimmen, bevor self gesetzt wird. Kopien voller Breite und ABI-erhaltene Register transportieren die Informationen durch dieselbe Fixpunktanalyse, einschließlich Rückkanten zum Eintritt. Der Deklarationsabgleich berücksichtigt Klassen- und Instanzmethoden, erfasste Kategorien, Oberklassen und übernommene Protokolle; für self zählen auch bekannte Unterklassen. Compilerkataloge halten Eigentümer und Hierarchie getrennt vom globalen Selektorabgleich fest. Das SDK prüft Empfängerursprung und Deklarationen vor der Quelltextausgabe erneut am aktuellen Abbild. Diese Informationen wählen kein konkretes IMP aus und erlauben kein binäres Umschreiben.
+Fehlende externe Hierarchie erfordert den globalen Selektorabgleich statt einer Eingrenzung auf den Empfänger; explizit widersprüchliche oder nicht unterstützte Deklarationen bleiben negative Evidenz.
+
 ## IR-Darstellungen und Pfade
 
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |

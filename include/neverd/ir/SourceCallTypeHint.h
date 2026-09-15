@@ -6,6 +6,17 @@
 
 namespace neverd {
 
+/// Source receiver provenance carried through full-width machine copies.
+/// Method self has a declared base class; an exact class reference denotes
+/// that class object. Neither fact selects a dynamic method implementation.
+struct ObjCReceiverTypeHint {
+  enum class OriginKind { MethodEntry, ClassReference };
+  OriginKind Origin = OriginKind::MethodEntry;
+  va_t Address = 0;
+  std::string ClassName;
+  bool IsClassMethod = false;
+};
+
 /// A source projection binding, never authenticated ABI or safety evidence.
 /// It describes the dispatch operation, not a statically selected method IMP.
 struct SourceCallTypeHint {
@@ -80,6 +91,8 @@ struct SourceCallTypeHint {
     va_t FormatAddress = 0;
   };
   std::optional<FormatArguments> Format;
+  /// Restricts declaration agreement using revalidated receiver provenance.
+  std::optional<ObjCReceiverTypeHint> Receiver;
   /// Only RuntimeBorrowedBytes uses this exact byte extent at TargetAddress.
   uint32_t ByteCount = 0;
 };

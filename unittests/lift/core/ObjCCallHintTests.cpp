@@ -2545,3 +2545,526 @@ TEST(ObjCCallHints, OptimizedRuntimeQueriesRetainByteResultsAndExactImports) {
     }
   }
 }
+
+namespace {
+BinaryImage receiverImage(Arch Architecture, bool ClassMethod = false) {
+  auto Image = image(Architecture);
+  Image.ObjCMethods.front().Implementation = 0x1200;
+  Image.ObjCMethods.front().IsClassMethod = ClassMethod;
+  ObjCClass Class;
+  Class.Name = "First";
+  Class.RootClass = true;
+  Class.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(Class);
+  auto Other = Image.ObjCMethods.front();
+  Other.ClassName = "Other";
+  Other.Implementation = 0x1400;
+  Other.TypeHint->ReturnType = NdType::makePtr(NdType::makeVoid());
+  Image.ObjCMethods.push_back(Other);
+  return Image;
+}
+
+LowFunc receiverCaller(Arch Architecture) {
+  auto Function = caller(Architecture);
+  auto &Ops = Function.Blocks.front().Ops;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  Ops.front() =
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1204);
+  Ops.insert(Ops.begin(),
+             operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                       {NdVar::cst(0x2100, 8)}, 0x1200));
+  Ops.back().Addr = 0x1208;
+  return Function;
+}
+
+ExprPtr receiverCallExpression(const SourceCallTypeHint &Binding) {
+  auto Call = HighExpr::makeCall("objc_msgSend", 0, {});
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Binding);
+  Call->Type = Binding.Signature.ReturnType;
+  for (const auto &Parameter : Binding.Signature.Parameters)
+    Call->Operands.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+  return Call;
+}
+} // namespace
+
+TEST(ObjCCallHints, ReceiverDeclarationsSeparateOwnersAndDispatchRoles) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool ClassMethod : {false, true}) {
+      auto Image = receiverImage(Architecture, ClassMethod);
+      auto Opposite = Image.ObjCMethods.front();
+      Opposite.IsClassMethod = !ClassMethod;
+      Opposite.Implementation = 0x1500;
+      Opposite.TypeHint->ReturnType = NdType::makeFloat(8);
+      Image.ObjCMethods.push_back(Opposite);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "scale:"));
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      for (const bool Reverse : {false, true}) {
+        if (Reverse)
+          std::reverse(Image.ObjCMethods.begin(), Image.ObjCMethods.end());
+        const auto Hint =
+            objcReceiverSourceTypeHint(Image, "scale:", *Receiver);
+        ASSERT_TRUE(Hint.HasDeclaration);
+        ASSERT_TRUE(Hint.Signature);
+        EXPECT_EQ(Hint.Signature->ReturnType->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Hint.Signature->ReturnType->Size, 4U);
+        const auto Hints =
+            buildObjCSourceCallHints(Image, receiverCaller(Architecture));
+        ASSERT_EQ(Hints.size(), 1U);
+        ASSERT_TRUE(Hints.at(0x1204).Receiver);
+        EXPECT_EQ(Hints.at(0x1204).Receiver->IsClassMethod, ClassMethod);
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverSDKInheritanceRequiresCurrentFrameworkIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture);
+    for (auto &Method : Image.ObjCMethods)
+      Method.Selector = "code";
+    Image.ObjCMethods.front().Selector = "readCode";
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.SuperclassName = "NSError";
+    Class.InheritanceStatus = "resolved";
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    for (const auto *Module :
+         {"/System/Library/Frameworks/Foundation.framework/Foundation",
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation"}) {
+      Image.DynInfo.NeededLibs = {Module};
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "code"));
+      const auto Hint = objcReceiverSourceTypeHint(Image, "code", *Receiver);
+      ASSERT_TRUE(Hint.Signature);
+      EXPECT_EQ(Hint.Signature->ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint.Signature->ReturnType->Size, 8U);
+      EXPECT_TRUE(Hint.Signature->ReturnType->IsSigned);
+      EXPECT_EQ(Hint.Signature->Origin,
+                SourceFunctionTypeHint::OriginKind::ObjCSDK);
+    }
+    for (const auto *Module : {"", "/tmp/Foundation.framework/Foundation"}) {
+      Image.DynInfo.NeededLibs = {Module};
+      EXPECT_FALSE(
+          objcReceiverSourceTypeHint(Image, "code", *Receiver).Signature);
+    }
+  }
+}
+
+TEST(ObjCCallHints,
+     ReceiverCategoriesPropertiesAndSubclassesKeepNegativeEvidence) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      if (Mutation == 0 || Mutation == 1) {
+        auto Conflict = Image.ObjCMethods.back();
+        Conflict.ClassName = "First";
+        Conflict.CategoryName = "Extension";
+        if (Mutation == 1)
+          Conflict.TypeHint.reset();
+        Image.ObjCMethods.push_back(Conflict);
+      } else if (Mutation == 2) {
+        ObjCProperty Property;
+        Property.Owner = ObjCProperty::OwnerKind::Category;
+        Property.ClassName = "First";
+        Property.Getter = "scale:";
+        Image.ObjCProperties.push_back(Property);
+      } else {
+        ObjCClass Child;
+        Child.Name = "Other";
+        Child.SuperclassName = "First";
+        Child.InheritanceStatus = "resolved";
+        Image.ObjCClasses.push_back(Child);
+      }
+      for (const bool Reverse : {false, true}) {
+        if (Reverse)
+          std::reverse(Image.ObjCMethods.begin(), Image.ObjCMethods.end());
+        const auto Hint =
+            objcReceiverSourceTypeHint(Image, "scale:", *Receiver);
+        EXPECT_TRUE(Hint.HasDeclaration);
+        EXPECT_FALSE(Hint.Signature) << Mutation;
+        EXPECT_TRUE(
+            buildObjCSourceCallHints(Image, receiverCaller(Architecture))
+                .empty());
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverHierarchyRejectsCyclesMissingParentsAndBounds) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      auto &Class = Image.ObjCClasses.front();
+      if (Mutation == 0) {
+        Class.InheritanceStatus = "unresolved";
+      } else if (Mutation == 1 || Mutation == 2) {
+        Class.RootClass = false;
+        Class.InheritanceStatus = "resolved";
+        Class.SuperclassName = Mutation == 1 ? "Missing" : "First";
+      } else if (Mutation == 3) {
+        auto Conflict = Class;
+        Conflict.RootClass = false;
+        Conflict.InheritanceStatus = "resolved";
+        Conflict.SuperclassName = "Other";
+        Image.ObjCClasses.push_back(Conflict);
+      } else {
+        for (unsigned I = 0; I != 256; ++I) {
+          ObjCClass Child;
+          Child.Name = "Child" + std::to_string(I);
+          Child.SuperclassName = "First";
+          Child.InheritanceStatus = "resolved";
+          Image.ObjCClasses.push_back(Child);
+        }
+      }
+      const auto Hint = objcReceiverSourceTypeHint(Image, "scale:", *Receiver);
+      EXPECT_TRUE(Hint.HasDeclaration);
+      EXPECT_FALSE(Hint.Signature) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverProtocolsUseRecordedAdoptionAndSeparateNamespaces) {
+  auto Image = receiverImage(Arch::AArch64);
+  auto &Class = Image.ObjCClasses.front();
+  Class.RootClass = false;
+  Class.InheritanceStatus = "resolved";
+  Class.SuperclassName = "NSObject";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Receiver);
+  ASSERT_TRUE(objcReceiverSourceTypeHint(Image, "scale:", *Receiver).Signature);
+  ObjCProtocol Protocol;
+  Protocol.Name = "Unrelated";
+  Protocol.Address = 0x2500;
+  Protocol.Status = "recovered";
+  ObjCProtocolMethod Method;
+  Method.Selector = "scale:";
+  Protocol.Methods.push_back(Method);
+  Image.ObjCProtocols.push_back(Protocol);
+  EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "scale:", *Receiver).Signature);
+  ObjCProtocol Root;
+  Root.Name = "NSObject";
+  Root.Address = 0x2600;
+  Root.Status = "recovered";
+  Root.AdoptedProtocols = {Protocol.Address};
+  Image.ObjCProtocols.push_back(Root);
+  EXPECT_FALSE(
+      objcReceiverSourceTypeHint(Image, "scale:", *Receiver).Signature);
+  Image.ObjCProtocols.front().Methods.clear();
+  EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "scale:", *Receiver).Signature);
+  Image.ObjCProtocols.front().AdoptedProtocols = {Root.Address};
+  EXPECT_FALSE(
+      objcReceiverSourceTypeHint(Image, "scale:", *Receiver).Signature);
+}
+
+TEST(ObjCCallHints, ReceiverEntryRequiresEveryAliasedMethodToAgree) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      auto Alias = Image.ObjCMethods.front();
+      Alias.Selector = "alias";
+      if (Mutation == 1)
+        Alias.ClassName = "Other";
+      else if (Mutation == 2)
+        Alias.IsClassMethod = true;
+      else if (Mutation == 3)
+        Alias.TypeHint.reset();
+      else if (Mutation == 4)
+        Alias.ClassName.clear();
+      Image.ObjCMethods.push_back(Alias);
+      EXPECT_EQ(bool(objcMethodReceiverTypeHint(Image, 0x1200)), Mutation == 0);
+      EXPECT_EQ(
+          buildObjCSourceCallHints(Image, receiverCaller(Architecture)).size(),
+          Mutation == 0 ? 1U : 0U);
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverClassReferencesRequireExactSlotsAndFullWidth) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Image = receiverImage(Architecture, true);
+      Image.ObjCMethods.front().Implementation = 0x1300;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      ObjCSourceReference Ref;
+      Ref.TheKind = ObjCSourceReference::Kind::Class;
+      Ref.Address = 0x2200;
+      Ref.Name = "First";
+      if (Mutation == 1)
+        Ref.TheKind = ObjCSourceReference::Kind::Metaclass;
+      else if (Mutation == 2)
+        Ref.Address += 8;
+      else if (Mutation == 3)
+        Ref.Size = 4;
+      Image.ObjCSourceReferences[0x2200] = Ref;
+      auto Function = receiverCaller(Architecture);
+      Function.Blocks.front().Ops.insert(
+          Function.Blocks.front().Ops.begin(),
+          operation(NdOp::LOAD,
+                    NdVar::reg(TRI.IntParamRegs[0], Mutation == 4 ? 4 : 8),
+                    {NdVar::cst(0x2200, 8)}, 0x11fc));
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Hints.size(), Mutation == 0 ? 1U : 0U);
+      if (Mutation == 0) {
+        const auto &Hint = Hints.at(0x1204);
+        ASSERT_TRUE(Hint.Receiver);
+        EXPECT_EQ(Hint.Receiver->Origin,
+                  ObjCReceiverTypeHint::OriginKind::ClassReference);
+        auto Expression = receiverCallExpression(Hint);
+        EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+        Image.ObjCSourceReferences.clear();
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverEntryBackedgesAndIndependentEntriesEraseSelfFacts) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      auto Function = receiverCaller(Architecture);
+      auto &Entry = Function.Blocks.front();
+      Entry.Succs = {1};
+      LowBlock Back;
+      Back.Id = 1;
+      Back.StartAddr = 0x1300;
+      Back.Preds = {Entry.Id};
+      if (Mutation <= 1) {
+        Back.Succs = {Entry.Id};
+        Entry.Preds = {Back.Id};
+      }
+      const auto &TRI = getTargetRegInfo(Architecture);
+      if (Mutation == 1)
+        Back.Ops.push_back(operation(NdOp::COPY,
+                                     NdVar::reg(TRI.IntParamRegs[0], 4),
+                                     {NdVar::cst(0, 4)}, 0x1300));
+      // The message call itself invalidates caller-saved self on the backedge.
+      if (Mutation <= 1)
+        EXPECT_TRUE(buildObjCSourceCallHints(Image,
+                                             [&] {
+                                               auto F = Function;
+                                               F.Blocks.push_back(Back);
+                                               return F;
+                                             }())
+                        .empty());
+      else {
+        Back.Ops = Entry.Ops;
+        for (auto &Op : Back.Ops)
+          Op.Addr += 0x100;
+        if (Mutation == 2)
+          Function.ModuleAnalysisRoots.insert(Back.StartAddr);
+        else if (Mutation == 3)
+          Function.OrdinaryModuleAnalysisRoots.insert(Back.StartAddr);
+        else
+          Back.ExceptionalPreds.emplace_back();
+        Function.Blocks.push_back(Back);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_TRUE(Hints.count(0x1204));
+        EXPECT_FALSE(Hints.count(0x1304));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverSourceBindingsRevalidateProvenanceAndDeclarations) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Image = receiverImage(Architecture);
+    const auto Hints =
+        buildObjCSourceCallHints(Image, receiverCaller(Architecture));
+    ASSERT_EQ(Hints.size(), 1U);
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Changed = Image;
+      auto Expression = receiverCallExpression(Hints.at(0x1204));
+      auto Binding =
+          std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+      Expression->SourceCallHint = Binding;
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+      if (Mutation == 0)
+        Binding->Receiver->ClassName = "Other";
+      else if (Mutation == 1)
+        Binding->Receiver->Address += 4;
+      else if (Mutation == 2)
+        Binding->Receiver->IsClassMethod = true;
+      else if (Mutation == 3)
+        Binding->Receiver->Origin =
+            ObjCReceiverTypeHint::OriginKind::ClassReference;
+      else if (Mutation == 4)
+        Binding->CallKind = SourceCallTypeHint::Kind::ObjCSuper2;
+      else if (Mutation == 5)
+        Binding->Format = SourceCallTypeHint::FormatArguments{};
+      else if (Mutation == 6)
+        Changed.ObjCMethods.front().TypeHint.reset();
+      else
+        Changed.ObjCMethods.back().ClassName = "First";
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}))
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFactsSurviveOnlyAgreedCopiesAndPreservedViews) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      Image.ImportPtrSlots[0x2188] = "_objc_retain";
+      const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+      const auto Saved = NdVar::reg(TRI.CalleeSaveRegs.front(), 8);
+      LowFunc Function;
+      Function.Entry = 0x1200;
+      LowBlock Entry;
+      Entry.Id = 0;
+      Entry.StartAddr = 0x1200;
+      Entry.Succs = {1, 2};
+      Entry.Ops = {operation(NdOp::COPY, Saved, {Self})};
+      LowBlock Left;
+      Left.Id = 1;
+      Left.StartAddr = 0x1300;
+      Left.Preds = {0};
+      Left.Succs = {3};
+      Left.Ops = {
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x1300)};
+      LowBlock Right = Left;
+      Right.Id = 2;
+      Right.StartAddr = 0x1400;
+      Right.Ops.front().Addr = 0x1400;
+      if (Mutation == 1)
+        Right.Ops.push_back(operation(NdOp::COPY, NdVar::reg(Saved.Offset, 4),
+                                      {NdVar::cst(0, 4)}, 0x1404));
+      else if (Mutation == 2)
+        Right.Ops.front().Inputs[0] = NdVar::cst(0x2190, 8);
+      else if (Mutation == 3)
+        Function.ModuleAnalysisRoots.insert(Right.StartAddr);
+      else if (Mutation == 4)
+        Function.OrdinaryModuleAnalysisRoots.insert(Right.StartAddr);
+      else if (Mutation == 5)
+        Right.ExceptionalPreds.emplace_back();
+      auto Join = receiverCaller(Architecture).Blocks.front();
+      Join.Id = 3;
+      Join.StartAddr = 0x1500;
+      Join.Preds = {1, 2};
+      for (auto &Op : Join.Ops)
+        Op.Addr += 0x300;
+      Join.Ops.insert(Join.Ops.begin(),
+                      operation(NdOp::COPY, Self, {Saved}, 0x14fc));
+      std::vector<LowBlock> Blocks{Entry, Left, Right, Join};
+      std::array<unsigned, 4> Order{0, 1, 2, 3};
+      do {
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1504), Mutation == 0) << Mutation;
+        if (Mutation == 0) {
+          ASSERT_TRUE(Hints.at(0x1504).Receiver);
+          EXPECT_EQ(Hints.at(0x1504).Receiver->Address, 0x1200U);
+        }
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverExactClassDispatchExcludesDerivedOverrides) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture, true);
+    ObjCClass Child;
+    Child.Name = "Other";
+    Child.SuperclassName = "First";
+    Child.InheritanceStatus = "resolved";
+    Image.ObjCClasses.push_back(Child);
+    const auto Self = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Self);
+    EXPECT_FALSE(objcReceiverSourceTypeHint(Image, "scale:", *Self).Signature);
+    ObjCSourceReference Ref;
+    Ref.TheKind = ObjCSourceReference::Kind::Class;
+    Ref.Address = 0x2200;
+    Ref.Name = "First";
+    Image.ObjCSourceReferences[Ref.Address] = Ref;
+    const ObjCReceiverTypeHint Exact{
+        ObjCReceiverTypeHint::OriginKind::ClassReference, Ref.Address, Ref.Name,
+        true};
+    ASSERT_TRUE(objcReceiverSourceTypeHint(Image, "scale:", Exact).Signature);
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFrameworkVariadicsRetainTheirFormatRequirement) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture, true);
+    Image.ObjCMethods.clear();
+    Image.ObjCClasses.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    ObjCSourceReference Ref;
+    Ref.TheKind = ObjCSourceReference::Kind::Class;
+    Ref.Address = 0x2200;
+    Ref.Name = "NSString";
+    Image.ObjCSourceReferences[Ref.Address] = Ref;
+    const ObjCReceiverTypeHint Exact{
+        ObjCReceiverTypeHint::OriginKind::ClassReference, Ref.Address, Ref.Name,
+        true};
+    const auto Decl =
+        objcReceiverSourceTypeHint(Image, "stringWithFormat:", Exact);
+    EXPECT_TRUE(Decl.HasDeclaration);
+    EXPECT_FALSE(Decl.Signature);
+    auto Function = receiverCaller(Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    Image.ObjCSourceReferences.at(0x2100).Name = "stringWithFormat:";
+    Function.Blocks.front().Ops.insert(
+        Function.Blocks.front().Ops.begin(),
+        operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[0], 8),
+                  {NdVar::cst(Ref.Address, 8)}, 0x11fc));
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+  }
+}
+
+TEST(ObjCCallHints,
+     MissingExternalHierarchyRequiresGlobalDeclarationAgreement) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      auto &Class = Image.ObjCClasses.front();
+      Class.RootClass = false;
+      Class.InheritanceStatus = "resolved";
+      Class.SuperclassName = "ExternalBase";
+      if (Mutation == 0)
+        Image.ObjCMethods.back().TypeHint = Image.ObjCMethods.front().TypeHint;
+      else if (Mutation == 2)
+        Image.ObjCMethods.front().TypeHint->ReturnType = NdType::makeFloat(16);
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      if (Mutation == 2) {
+        EXPECT_FALSE(Receiver);
+        continue;
+      }
+      ASSERT_TRUE(Receiver);
+      const auto Decl = objcReceiverSourceTypeHint(Image, "scale:", *Receiver);
+      EXPECT_TRUE(Decl.HasDeclaration);
+      EXPECT_TRUE(Decl.RequiresGlobalAgreement);
+      EXPECT_FALSE(Decl.Signature);
+      const auto Hints =
+          buildObjCSourceCallHints(Image, receiverCaller(Architecture));
+      ASSERT_EQ(Hints.size(), Mutation == 0 ? 1U : 0U);
+      if (Mutation == 0)
+        EXPECT_FALSE(Hints.at(0x1204).Receiver);
+      // Missing hierarchy never suppresses an explicitly unsupported member.
+      ObjCProperty Property;
+      Property.ClassName = "First";
+      Property.Getter = "scale:";
+      Image.ObjCProperties.push_back(Property);
+      const auto Rejected =
+          objcReceiverSourceTypeHint(Image, "scale:", *Receiver);
+      EXPECT_TRUE(Rejected.HasDeclaration);
+      EXPECT_FALSE(Rejected.RequiresGlobalAgreement);
+      EXPECT_FALSE(Rejected.Signature);
+      EXPECT_TRUE(buildObjCSourceCallHints(Image, receiverCaller(Architecture))
+                      .empty());
+    }
+  }
+}
