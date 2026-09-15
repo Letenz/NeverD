@@ -25,6 +25,9 @@ struct ObjCReceiverDeclaration {
   bool HasDeclaration = false;
   std::optional<SourceFunctionTypeHint> Signature;
   bool RequiresGlobalAgreement = false;
+  /// Declared instance class returned by the agreed pointer-valued method.
+  /// Related result types are instantiated using the current receiver class.
+  std::optional<std::string> ReturnClass;
 };
 ObjCReceiverDeclaration
 objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
@@ -45,6 +48,13 @@ std::optional<ObjCReceiverTypeHint>
 objcReceiverFieldTypeHint(const BinaryImage &Image,
                           const ObjCReceiverTypeHint &Receiver,
                           uint64_t Offset);
+
+/// Extend type provenance using an agreed object-return declaration. Bare id
+/// does not add a class fact; dynamic dispatch and ownership effects remain.
+std::optional<ObjCReceiverTypeHint>
+objcReceiverCallResultTypeHint(const BinaryImage &Image,
+                               const ObjCReceiverTypeHint &Receiver,
+                               llvm::StringRef Selector);
 
 struct ObjCFormatDeclaration {
   SourceFunctionTypeHint Signature;

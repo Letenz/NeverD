@@ -3146,7 +3146,7 @@ TEST(ObjCCallHints, ReceiverFieldsPreserveExactObjectTypesAcrossNestedLoads) {
             Nested ? std::vector<va_t>{0x2308, 0x2300}
                    : std::vector<va_t>{0x2300};
         std::vector<va_t> Actual;
-        for (const auto &Access : Hint.Receiver->IvarLoads) {
+        for (const auto &Access : Hint.Receiver->Steps) {
           Actual.push_back(Access.OffsetSlot);
           EXPECT_EQ(Access.ByteOffset.has_value(), !Dynamic);
           EXPECT_EQ(Access.OffsetWidth,
@@ -3275,11 +3275,11 @@ TEST(ObjCCallHints, ReceiverFieldProofsRevalidateEveryStepAfterReload) {
       Expression->SourceCallHint = Binding;
       ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Changed, {}));
       if (Mutation == 0)
-        Binding->Receiver->IvarLoads.front().OffsetSlot += 1;
+        Binding->Receiver->Steps.front().OffsetSlot += 1;
       else if (Mutation == 1)
-        Binding->Receiver->IvarLoads.back().OffsetSlot = 0x2308;
+        Binding->Receiver->Steps.back().OffsetSlot = 0x2308;
       else if (Mutation == 2)
-        Binding->Receiver->IvarLoads.resize(9, {0x2308, std::nullopt, 4});
+        Binding->Receiver->Steps.resize(9, {0x2308, std::nullopt, 4});
       else if (Mutation == 3)
         Changed.ObjCClasses.front().Ivars[1].TypeEncoding = "@\"Other\"";
       else if (Mutation == 4)
@@ -3304,11 +3304,11 @@ TEST(ObjCCallHints, ReceiverFieldPathsHaveABoundedDepth) {
     for (unsigned Depth = 0; Depth != 8; ++Depth) {
       Receiver = objcReceiverIvarTypeHint(Image, *Receiver, 0x2308);
       ASSERT_TRUE(Receiver);
-      EXPECT_EQ(Receiver->IvarLoads.size(), Depth + 1U);
+      EXPECT_EQ(Receiver->Steps.size(), Depth + 1U);
       EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Receiver));
     }
     EXPECT_FALSE(objcReceiverIvarTypeHint(Image, *Receiver, 0x2300));
-    Receiver->IvarLoads.push_back({0x2300, std::nullopt, 4});
+    Receiver->Steps.push_back({0x2300, std::nullopt, 4});
     EXPECT_FALSE(objcReceiverTypeHintValid(Image, *Receiver));
   }
 }
@@ -3372,6 +3372,210 @@ LowFunc receiverRuntimeCaller(Arch Architecture) {
   return Function;
 }
 } // namespace
+
+namespace {
+BinaryImage receiverResultImage(Arch Architecture) {
+  auto Image = receiverFieldImage(Architecture);
+  auto &Class = Image.ObjCClasses.front();
+  Class.RootClass = false;
+  Class.SuperclassName = "NSObject";
+  Class.InheritanceStatus = "resolved";
+  ObjCProperty Property;
+  Property.ClassName = "First";
+  Property.Getter = "error";
+  Property.TypeEncoding = "@\"NSError\"";
+  Property.GetterTypeHint = signature(Architecture, 0);
+  Property.GetterTypeHint->ReturnType = NdType::makePtr(NdType::makeVoid());
+  Image.ObjCProperties.push_back(Property);
+  auto Getter = Image.ObjCMethods.front();
+  Getter.Selector = "error";
+  Getter.Implementation = 0x1600;
+  Getter.TypeEncoding = "@16@0:8";
+  Getter.TypeHint = Property.GetterTypeHint;
+  Image.ObjCMethods.push_back(Getter);
+  Image.ObjCSourceReferences[0x2110] = {ObjCSourceReference::Kind::Selector,
+                                        0x2110, 8, "error"};
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints, ReceiverResultsRevalidatePropertyAndSDKDeclarations) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverResultImage(Architecture);
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    const auto Result = objcReceiverCallResultTypeHint(Image, *Root, "error");
+    ASSERT_TRUE(Result);
+    EXPECT_EQ(Result->Steps.size(), 1U);
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "code"));
+    const auto Declaration = objcReceiverSourceTypeHint(Image, "code", *Result);
+    ASSERT_TRUE(Declaration.Signature);
+    EXPECT_EQ(Declaration.Signature->ReturnType->Kind, NdTypeKind::Int);
+    auto Changed = Image;
+    Changed.ObjCProperties.front().TypeEncoding = "@";
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Result));
+    Changed = Image;
+    Changed.DynInfo.NeededLibs = {"/tmp/Foundation.framework/Foundation"};
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Result));
+
+    // The SDK names this factory's result and the related alloc/init result.
+    Image.ObjCMethods.front().IsClassMethod = true;
+    Image.ObjCMethods.front().ClassName = "NSError";
+    const auto ErrorClass = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(ErrorClass);
+    const auto Error = objcReceiverCallResultTypeHint(
+        Image, *ErrorClass, "errorWithDomain:code:userInfo:");
+    ASSERT_TRUE(Error);
+    EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "code", *Error).Signature);
+    const auto Alloc =
+        objcReceiverCallResultTypeHint(Image, *ErrorClass, "alloc");
+    ASSERT_TRUE(Alloc);
+    const auto Init = objcReceiverCallResultTypeHint(Image, *Alloc, "init");
+    ASSERT_TRUE(Init);
+    EXPECT_EQ(Init->Steps.size(), 2U);
+    EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "code", *Init).Signature);
+  }
+}
+
+TEST(ObjCCallHints, ReceiverResultsRejectUnknownConflictingAndMalformedPaths) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverResultImage(Architecture);
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    const auto Result = objcReceiverCallResultTypeHint(Image, *Root, "error");
+    ASSERT_TRUE(Result);
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.ObjCProperties.front().TypeEncoding = "@";
+      if (Mutation == 1)
+        Changed.ObjCMethods.back().TypeEncoding = "@\"Other\"16@0:8";
+      if (Mutation == 2)
+        Changed.ObjCMethods.back().TypeHint.reset();
+      if (Mutation == 3)
+        Changed.ObjCMethods.back().TypeHint->ReturnType = NdType::makeFloat(8);
+      if (Mutation == 4)
+        Changed.ObjCClasses.front().SuperclassName = "Missing";
+      if (Mutation == 5)
+        Changed.ObjCProperties.front().TypeEncoding = "@?";
+      if (Mutation == 6)
+        Changed.ObjCProperties.front().TypeEncoding = "@\"<NSObject>\"";
+      for (const bool Reverse : {false, true}) {
+        if (Reverse)
+          std::reverse(Changed.ObjCMethods.begin(), Changed.ObjCMethods.end());
+        EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Result)) << Mutation;
+      }
+    }
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Changed = *Result;
+      auto &Step = Changed.Steps.front();
+      if (Mutation == 0)
+        Step.OffsetSlot = 0x2300;
+      if (Mutation == 1)
+        Step.ByteOffset = 0;
+      if (Mutation == 2)
+        Step.OffsetWidth = 8;
+      if (Mutation == 3)
+        Step.Selector.clear();
+      if (Mutation == 4)
+        Step.TheKind = static_cast<ObjCReceiverTypeHint::TypeStep::Kind>(99);
+      EXPECT_FALSE(objcReceiverTypeHintValid(Image, Changed)) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverResultsShareOneBoundWithFieldProvenance) {
+  auto Image = receiverResultImage(Arch::AArch64);
+  auto Current = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Current);
+  for (unsigned I = 0; I != 7; ++I) {
+    Current = objcReceiverIvarTypeHint(Image, *Current, 0x2308);
+    ASSERT_TRUE(Current);
+  }
+  const auto Result = objcReceiverCallResultTypeHint(Image, *Current, "error");
+  ASSERT_TRUE(Result);
+  EXPECT_EQ(Result->Steps.size(), 8U);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Result));
+  EXPECT_FALSE(objcReceiverCallResultTypeHint(Image, *Result, "self"));
+  auto TooLong = *Result;
+  TooLong.Steps.push_back(Result->Steps.back());
+  EXPECT_FALSE(objcReceiverTypeHintValid(Image, TooLong));
+  auto Reordered = *Result;
+  std::swap(Reordered.Steps.front(), Reordered.Steps.back());
+  EXPECT_FALSE(objcReceiverTypeHintValid(Image, Reordered));
+}
+
+TEST(ObjCCallHints, ReceiverResultsFlowThroughMessageReturnRegisters) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverResultImage(Architecture);
+    auto Function = receiverCaller(Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    auto &Ops = Function.Blocks.front().Ops;
+    const std::vector<LowOp> Prefix{
+        operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                  {NdVar::cst(0x2110, 8)}, 0x11e0),
+        operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x11e4),
+        operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                  {NdVar::reg(TRI.IntReturnReg, 8)}, 0x11e8)};
+    Ops.insert(Ops.begin(), Prefix.begin(), Prefix.end());
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_EQ(Hints.size(), 2U);
+    ASSERT_TRUE(Hints.at(0x1204).Receiver);
+    EXPECT_EQ(Hints.at(0x1204).Receiver->Steps.back().Selector, "error");
+    const auto Call = receiverCallExpression(Hints.at(0x1204));
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.ObjCProperties.front().TypeEncoding = "@";
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1204), 0U);
+  }
+}
+
+TEST(ObjCCallHints, RuntimeResultTypesPreserveFactoryCallsAndValidateEffects) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name : {"objc_alloc", "objc_allocWithZone",
+                             "objc_alloc_init", "objc_opt_new"}) {
+      auto Image = receiverResultImage(Architecture);
+      Image.ObjCMethods.front().IsClassMethod = true;
+      Image.ObjCSourceReferences.at(0x2100).Name = "error";
+      receiverRuntimeImport(Image, Name);
+      auto Function = receiverRuntimeCaller(Architecture);
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Hints.size(), 2U) << Name;
+      const auto &Runtime = Hints.at(0x1200);
+      EXPECT_FALSE(Runtime.ReturnedArgument);
+      ASSERT_TRUE(Runtime.RuntimeObjCResultType);
+      EXPECT_EQ(Runtime.RuntimeObjCResultType->ReceiverArgument, 0U);
+      ASSERT_TRUE(Hints.at(0x1244).Receiver);
+      EXPECT_EQ(Hints.at(0x1244).Receiver->Steps.size(),
+                llvm::StringRef(Name) == "objc_alloc_init" ? 2U : 1U);
+      auto Call = HighExpr::makeCall(Name, 0, {HighExpr::makeConst(0, 8)});
+      Call->Type = Runtime.Signature.ReturnType;
+      auto Binding = std::make_shared<SourceCallTypeHint>(Runtime);
+      Call->SourceCallHint = Binding;
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Binding->RuntimeObjCResultType->Selectors = {"self"};
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      *Binding = Runtime;
+      Binding->RuntimeObjCResultType->ReceiverArgument = 1;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      *Binding = Runtime;
+      Image.DyldBindSlots[0x2188].Module = "/tmp/libobjc.A.dylib";
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      EXPECT_FALSE(
+          objcRuntimeSourceCallHint(Image, 0x2188)->RuntimeObjCResultType);
+      receiverRuntimeImport(Image, Name);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      Function.Blocks.front().Ops.insert(
+          Function.Blocks.front().Ops.begin(),
+          operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 4),
+                    {NdVar::cst(0, 4)}, 0x11f0));
+      const auto Partial = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Partial.count(0x1200), 1U);
+      if (Partial.count(0x1244))
+        EXPECT_FALSE(Partial.at(0x1244).Receiver);
+    }
+  }
+}
 
 TEST(ObjCCallHints, RuntimeReturnIdentityRequiresExactCatalogAndImport) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
@@ -3534,7 +3738,7 @@ TEST(ObjCCallHints, RuntimeReturnIdentityRetainsCompleteFieldProvenance) {
       const auto Hints = buildObjCSourceCallHints(Image, Function);
       ASSERT_EQ(Hints.size(), 2U);
       ASSERT_TRUE(Hints.at(0x1230).Receiver);
-      EXPECT_EQ(Hints.at(0x1230).Receiver->IvarLoads.size(), 2U);
+      EXPECT_EQ(Hints.at(0x1230).Receiver->Steps.size(), 2U);
       EXPECT_TRUE(sdk::objcSourceCallBound(
           *receiverCallExpression(Hints.at(0x1230)), Image, {}));
     }
@@ -3602,5 +3806,160 @@ TEST(ObjCCallHints, RuntimeReturnIdentityConvergesAcrossJoinsAndBackedges) {
         EXPECT_EQ(Hints.count(0x1504), Mutation == 0) << Mutation;
       } while (std::next_permutation(Order.begin(), Order.end()));
     }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverResultsKeepMessagePathsDistinctAtJoins) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      auto Image = receiverResultImage(Architecture);
+      auto Property = Image.ObjCProperties.front();
+      Property.Getter = "otherError";
+      Image.ObjCProperties.push_back(Property);
+      Image.ObjCSourceReferences[0x2118] = {
+          ObjCSourceReference::Kind::Selector, 0x2118, 8,
+          Mutation == 1 ? "otherError" : "error"};
+      const auto &TRI = getTargetRegInfo(Architecture);
+      LowFunc Function;
+      Function.Entry = 0x1200;
+      LowBlock Entry;
+      Entry.Id = 0;
+      Entry.StartAddr = 0x1200;
+      Entry.Succs = {1, 2};
+      LowBlock Left;
+      Left.Id = 1;
+      Left.StartAddr = 0x1300;
+      Left.Preds = {0};
+      Left.Succs = {3};
+      Left.Ops = {
+          operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                    {NdVar::cst(0x2110, 8)}, 0x1300),
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1304),
+          operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                    {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1308)};
+      auto Right = Left;
+      Right.Id = 2;
+      Right.StartAddr = 0x1400;
+      Right.Ops.front().Inputs[0] = NdVar::cst(0x2118, 8);
+      for (auto &Op : Right.Ops)
+        Op.Addr += 0x100;
+      if (Mutation == 2)
+        Function.ModuleAnalysisRoots.insert(0x1400);
+      auto Join = receiverCaller(Architecture).Blocks.front();
+      Join.Id = 3;
+      Join.StartAddr = 0x1500;
+      Join.Preds = {1, 2};
+      for (auto &Op : Join.Ops)
+        Op.Addr += 0x300;
+      const std::vector<LowBlock> Blocks{Entry, Left, Right, Join};
+      std::array<unsigned, 4> Order{0, 1, 2, 3};
+      do {
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1504), Mutation == 0) << Mutation;
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SharedFrameworkDeclarationsKeepExactProviderAndScalarABI) {
+  const struct {
+    const char *Framework;
+    const char *Selector;
+    NdTypeKind Kind;
+    unsigned Bytes;
+    unsigned Parameters;
+  } Cases[] = {
+      {"QuartzCore", "opacity", NdTypeKind::Float, 4, 2},
+      {"CoreLocation", "distanceFromLocation:", NdTypeKind::Float, 8, 3},
+      {"CoreSpotlight", "contentDescription", NdTypeKind::Ptr, 8, 2},
+      {"UserNotifications",
+       "requestWithIdentifier:content:trigger:", NdTypeKind::Ptr, 8, 5},
+      {"UniformTypeIdentifiers", "typeWithIdentifier:", NdTypeKind::Ptr, 8, 3}};
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &Case : Cases) {
+      SCOPED_TRACE(Case.Framework);
+      auto Image = image(Architecture);
+      Image.ObjCMethods.clear();
+      Image.ObjCSourceReferences.at(0x2100).Name = Case.Selector;
+      const auto Root = std::string("/System/Library/Frameworks/") +
+                        Case.Framework + ".framework/";
+      for (const auto &Module :
+           {Root + Case.Framework, Root + "Versions/A/" + Case.Framework}) {
+        Image.DynInfo.NeededLibs = {Module};
+        const auto Hints =
+            buildObjCSourceCallHints(Image, receiverCaller(Architecture));
+        ASSERT_EQ(Hints.size(), 1U);
+        const auto &Hint = Hints.at(0x1204);
+        EXPECT_EQ(Hint.Signature.ReturnType->Kind, Case.Kind);
+        EXPECT_EQ(Hint.Signature.ReturnType->Size, Case.Bytes);
+        EXPECT_EQ(Hint.Signature.Parameters.size(), Case.Parameters);
+        EXPECT_TRUE(
+            sdk::objcSourceCallBound(*receiverCallExpression(Hint), Image, {}));
+        auto Changed = Image;
+        Changed.DynInfo.NeededLibs = {std::string("/tmp/") + Case.Framework +
+                                      ".framework/" + Case.Framework};
+        EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Case.Selector));
+        EXPECT_FALSE(sdk::objcSourceCallBound(*receiverCallExpression(Hint),
+                                              Changed, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, SharedFrameworkRecordsUseTheSupportedArchitectureLayout) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+    const auto Position = objcSelectorSourceTypeHint(Image, "position");
+    const auto SetPosition = objcSelectorSourceTypeHint(Image, "setPosition:");
+    if (Architecture == Arch::AArch64) {
+      ASSERT_TRUE(Position);
+      ASSERT_TRUE(SetPosition);
+      EXPECT_EQ(Position->ReturnType->Size, 16U);
+      EXPECT_EQ(Position->ReturnComponents.size(), 2U);
+      EXPECT_EQ(SetPosition->Parameters.size(), 3U);
+      EXPECT_EQ(SetPosition->Parameters.back().Components.size(), 2U);
+      EXPECT_TRUE(equalSourceTypes(Position->ReturnType,
+                                   SetPosition->Parameters.back().Type));
+    } else {
+      EXPECT_FALSE(Position);
+      EXPECT_FALSE(SetPosition);
+    }
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "transform"));
+  }
+}
+
+TEST(ObjCCallHints, SharedFrameworkReceiverHierarchyKeepsConflictingEvidence) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture);
+    Image.ObjCMethods.front().Selector = "readOpacity";
+    Image.ObjCMethods.back().Selector = "opacity";
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = "CALayer";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/QuartzCore.framework/QuartzCore",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    Image.ObjCSourceReferences.at(0x2100).Name = "opacity";
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "opacity"));
+    const auto Hints =
+        buildObjCSourceCallHints(Image, receiverCaller(Architecture));
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Hint = Hints.at(0x1204);
+    ASSERT_TRUE(Hint.Receiver);
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Hint.Signature.ReturnType->Size, 4U);
+    auto Call = receiverCallExpression(Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Conflicting = Image.ObjCMethods.back();
+    Conflicting.ClassName = "First";
+    Image.ObjCMethods.push_back(Conflicting);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
   }
 }

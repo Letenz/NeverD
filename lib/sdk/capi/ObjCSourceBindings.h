@@ -65,6 +65,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
   return Binding.CallKind == Expected.CallKind &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
+         Binding.RuntimeObjCResultType == Expected.RuntimeObjCResultType &&
          Binding.TargetName == Expected.TargetName &&
          Binding.Selector.empty() && Binding.OwnerClass.empty() &&
          !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
@@ -725,7 +726,7 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
     return false;
   const auto &Binding = *Expression.SourceCallHint;
   const auto &Hint = Binding.Signature;
-  if (Binding.ReturnedArgument &&
+  if ((Binding.ReturnedArgument || Binding.RuntimeObjCResultType) &&
       Binding.CallKind != SourceCallTypeHint::Kind::ObjCRuntimeCall)
     return false;
   if (Binding.Receiver &&

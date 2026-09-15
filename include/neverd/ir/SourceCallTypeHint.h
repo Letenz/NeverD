@@ -15,33 +15,38 @@ struct ObjCReceiverTypeHint {
   enum class OriginKind { MethodEntry, ClassReference };
   OriginKind Origin = OriginKind::MethodEntry;
   va_t Address = 0;
-  /// Root receiver's declared class, before any field loads.
+  /// Root receiver's declared class, before any type steps.
   std::string ClassName;
   bool IsClassMethod = false;
-  struct IvarAccess {
+  struct TypeStep {
+    enum class Kind { IvarLoad, MessageResult };
     va_t OffsetSlot = 0;
     /// Present only for a literal byte offset in the machine access. A
     /// runtime offset load may follow layout changes; a literal cannot.
     std::optional<uint32_t> ByteOffset;
     uint16_t OffsetWidth = 0;
-    bool operator==(const IvarAccess &Other) const {
-      return std::tie(OffsetSlot, ByteOffset, OffsetWidth) ==
-             std::tie(Other.OffsetSlot, Other.ByteOffset, Other.OffsetWidth);
+    Kind TheKind = Kind::IvarLoad;
+    std::string Selector;
+    bool operator==(const TypeStep &Other) const {
+      return std::tie(TheKind, OffsetSlot, ByteOffset, OffsetWidth, Selector) ==
+             std::tie(Other.TheKind, Other.OffsetSlot, Other.ByteOffset,
+                      Other.OffsetWidth, Other.Selector);
     }
-    bool operator<(const IvarAccess &Other) const {
-      return std::tie(OffsetSlot, ByteOffset, OffsetWidth) <
-             std::tie(Other.OffsetSlot, Other.ByteOffset, Other.OffsetWidth);
+    bool operator<(const TypeStep &Other) const {
+      return std::tie(TheKind, OffsetSlot, ByteOffset, OffsetWidth, Selector) <
+             std::tie(Other.TheKind, Other.OffsetSlot, Other.ByteOffset,
+                      Other.OffsetWidth, Other.Selector);
     }
   };
-  /// Exact runtime ivar-offset slots, in load order from the root receiver.
-  /// Each step must name a declared object field in the current class lineage.
-  /// This bounded path records type provenance, not loaded object identity.
-  std::vector<IvarAccess> IvarLoads;
+  /// Ordered, bounded type provenance from the root receiver. A field step
+  /// identifies exact storage; a result step identifies an agreed declaration.
+  /// Neither supplies object identity or permission to remove operations.
+  std::vector<TypeStep> Steps;
 
   bool operator==(const ObjCReceiverTypeHint &Other) const {
     return Origin == Other.Origin && Address == Other.Address &&
            ClassName == Other.ClassName &&
-           IsClassMethod == Other.IsClassMethod && IvarLoads == Other.IvarLoads;
+           IsClassMethod == Other.IsClassMethod && Steps == Other.Steps;
   }
 };
 
@@ -101,6 +106,18 @@ struct SourceCallTypeHint {
   /// remove call effects or establish memory immutability. Runtime bindings
   /// must revalidate the identity contract against the imported routine.
   std::optional<unsigned> ReturnedArgument;
+  /// An imported runtime operation has the result type of these message
+  /// sends, starting at one argument. This describes declaration lookup only;
+  /// it neither identifies the returned object nor replaces the runtime call.
+  struct ObjCResultType {
+    unsigned ReceiverArgument = 0;
+    std::vector<std::string> Selectors;
+    bool operator==(const ObjCResultType &Other) const {
+      return ReceiverArgument == Other.ReceiverArgument &&
+             Selectors == Other.Selectors;
+    }
+  };
+  std::optional<ObjCResultType> RuntimeObjCResultType;
   SourceFunctionTypeHint Signature;
   va_t TargetAddress = 0;
   std::string TargetName;

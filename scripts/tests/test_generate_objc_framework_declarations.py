@@ -2,10 +2,17 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.generate_objc_framework_declarations import module_paths, owns_header, render
+from scripts.generate_objc_framework_declarations import framework_header, module_paths, owns_header, render
 
 
 class ObjCFrameworkDeclarationTests(unittest.TestCase):
+    def test_public_umbrella_retains_provider_boundary(self):
+        self.assertEqual(framework_header("QuartzCore"), "QuartzCore/CoreAnimation.h")
+        self.assertEqual(framework_header("CoreLocation"), "CoreLocation/CoreLocation.h")
+        for name in ("../CoreData", "QuartzCore/CoreImage", "QuartzCore>\n#import <Other"):
+            with self.assertRaises(ValueError):
+                framework_header(name)
+
     def test_headers_belong_to_one_framework(self):
         with tempfile.TemporaryDirectory() as work:
             root = Path(work)

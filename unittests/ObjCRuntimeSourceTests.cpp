@@ -58,6 +58,8 @@ enum class RuntimeFixture {
   ReceiverTypes,
   ReceiverFields,
   ReceiverAliases,
+  ReceiverResults,
+  SharedFrameworks,
   AggregateRecords,
   ScalarConstants,
   SwiftLiterals,
@@ -82,6 +84,8 @@ void verifyRuntime(bool Chained,
   const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
   const bool ReceiverFields = FixtureKind == RuntimeFixture::ReceiverFields;
   const bool ReceiverAliases = FixtureKind == RuntimeFixture::ReceiverAliases;
+  const bool ReceiverResults = FixtureKind == RuntimeFixture::ReceiverResults;
+  const bool SharedFrameworks = FixtureKind == RuntimeFixture::SharedFrameworks;
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
@@ -97,6 +101,12 @@ void verifyRuntime(bool Chained,
   const std::vector<std::string> SystemDataFrameworks{
       "-framework", "CoreData", "-framework", "CoreGraphics",
       "-framework", "ImageIO",  "-framework", "CoreSpotlight"};
+  const std::vector<std::string> SharedFrameworkFlags{
+      "-framework", "QuartzCore",
+      "-framework", "CoreLocation",
+      "-framework", "CoreSpotlight",
+      "-framework", "UserNotifications",
+      "-framework", "UniformTypeIdentifiers"};
   const bool Graphics = FixtureKind == RuntimeFixture::Graphics;
   const bool BlockLifetimes = FixtureKind == RuntimeFixture::BlockLifetimes;
   const bool Foundation = FixtureKind == RuntimeFixture::Foundation;
@@ -122,7 +132,9 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
+                        : SharedFrameworks   ? "ObjCSharedFrameworks.m"
                         : AggregateRecords   ? "ObjCAggregateRecords.m"
+                        : ReceiverResults    ? "ObjCReceiverResults.m"
                         : ReceiverAliases    ? "ObjCReceiverAliases.m"
                         : ReceiverFields     ? "ObjCReceiverFields.m"
                         : ReceiverTypes      ? "ObjCReceiverTypes.m"
@@ -149,7 +161,9 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : Equality          ? "ObjCEqualityHarness.m"
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
+                        : SharedFrameworks  ? "ObjCSharedFrameworksHarness.m"
                         : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
+                        : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
                         : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
                         : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
                         : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
@@ -198,6 +212,11 @@ void verifyRuntime(bool Chained,
     *Flag = "-fno-objc-arc";
     Compile.push_back("-DNEVERD_MANUAL_BLOCKS");
   }
+  if (ReceiverResults)
+    Compile.insert(Compile.end(), {"-framework", "CoreSpotlight"});
+  if (SharedFrameworks)
+    Compile.insert(Compile.end(), SharedFrameworkFlags.begin(),
+                   SharedFrameworkFlags.end());
   if (SystemData)
     Compile.insert(Compile.end(), SystemDataFrameworks.begin(),
                    SystemDataFrameworks.end());
@@ -307,6 +326,8 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : SharedFrameworks   ? 11U
+                             : ReceiverResults    ? 8U
                              : ReceiverAliases    ? 5U
                              : AggregateRecords   ? 8U
                              : ReceiverFields     ? 4U
@@ -338,6 +359,16 @@ void verifyRuntime(bool Chained,
         "NDPointerReceiver-sharedValue", "NDPointerReceiver-readOwnValue",
         "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
         "NDTypedError-declaredCode"};
+  if (SharedFrameworks)
+    Remaining = {"makeLayer",      "opacity:",        "opacity:layer:",
+                 "position:",      "position:layer:", "distance:from:",
+                 "describe:text:", "descriptionOf:",  "request:content:",
+                 "type:",          "extensionOf:"};
+  if (ReceiverResults)
+    Remaining = {"NDResultValue-duration",         "NDResultValue-setDuration:",
+                 "NDResultValue+factoryDuration:", "NDResultOwner-error",
+                 "NDResultOwner-setError:",        "NDResultOwner-errorCode",
+                 "NDResultOwner-.cxx_destruct",    "NDResultOther-code"};
   if (ReceiverAliases)
     Remaining = {"NDAliasError-retainedCode", "NDAliasError-autoreleasedCode",
                  "NDAliasError-retainAutoreleasedCode",
@@ -494,6 +525,7 @@ void verifyRuntime(bool Chained,
       "static void installRecovered(void) {\n"
       "Class cls = objc_getClass(\"" +
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
+                  : SharedFrameworks   ? "NDFrameworkCalls"
                   : AggregateRecords   ? "NDRecords"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
@@ -517,7 +549,7 @@ void verifyRuntime(bool Chained,
                   : SwiftCalls         ? "NDSwiftRuntimeCalls"
                                        : "NDARCBox") +
       "\");\n";
-  if (ReceiverTypes || ReceiverFields || ReceiverAliases)
+  if (ReceiverTypes || ReceiverFields || ReceiverAliases || ReceiverResults)
     Install = "static void installRecovered(void) {\nClass cls;\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
@@ -534,7 +566,7 @@ void verifyRuntime(bool Chained,
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
     std::string Identity = Selector->str();
-    if (ReceiverTypes || ReceiverFields || ReceiverAliases) {
+    if (ReceiverTypes || ReceiverFields || ReceiverAliases || ReceiverResults) {
       const auto Class = Method->getString("class_name");
       const auto ClassMethod = Method->getBoolean("class_method");
       ASSERT_TRUE(Class && ClassMethod);
@@ -670,6 +702,11 @@ void verifyRuntime(bool Chained,
              Baseline};
   if (ManualBlocks)
     Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
+  if (ReceiverResults)
+    Compile.insert(Compile.end() - 2, {"-framework", "CoreSpotlight"});
+  if (SharedFrameworks)
+    Compile.insert(Compile.end() - 2, SharedFrameworkFlags.begin(),
+                   SharedFrameworkFlags.end());
   if (SystemData)
     Compile.insert(Compile.end() - 2, SystemDataFrameworks.begin(),
                    SystemDataFrameworks.end());
@@ -738,6 +775,10 @@ void verifyRuntime(bool Chained,
       : FloatingSaves    ? "floating-saves=4096\nvalues-across-calls=pass\n"
       : AggregateRecords ? "record-checks=8192\nrecord-bits=pass\nrecord-calls="
                            "pass\nrecord-stack=pass\n"
+      : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
+                           "pass\nobject-identity=pass\n"
+      : ReceiverResults
+          ? "receiver-results=5120\nlifetime-checks=1024\nidentity=pass\n"
       : ReceiverAliases
           ? "receiver-aliases=5120\nlifetime-checks=1024\nidentity=pass\n"
       : ReceiverFields
@@ -1244,6 +1285,26 @@ TEST(ObjCRuntimeSource,
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::ReceiverAliases));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SharedFrameworkCallsPreserveScalarsRecordsAndObjects) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SharedFrameworks));
+#else
+  GTEST_SKIP() << "Requires macOS frameworks and Darwin ARM64 record ABI";
+#endif
+}
+
+TEST(ObjCRuntimeSource, ReceiverResultTypesPreserveFactoryAndPropertyBehavior) {
+#if defined(__APPLE__)
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ReceiverResults));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif

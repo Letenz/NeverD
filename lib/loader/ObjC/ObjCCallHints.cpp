@@ -270,6 +270,19 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (ReturnsArgument && Bind != Image.DyldBindSlots.end() &&
       Bind->second.Module == "/usr/lib/libobjc.A.dylib")
     Result.ReturnedArgument = 0;
+  // These routines preserve the corresponding message's overrides. Use its
+  // declared result type, never an allocation or pointer-identity assumption.
+  if (Bind != Image.DyldBindSlots.end() &&
+      Bind->second.Module == "/usr/lib/libobjc.A.dylib") {
+    if (Canonical == "objc_alloc")
+      Result.RuntimeObjCResultType = {0, {"alloc"}};
+    else if (Canonical == "objc_allocWithZone")
+      Result.RuntimeObjCResultType = {0, {"allocWithZone:"}};
+    else if (Canonical == "objc_alloc_init")
+      Result.RuntimeObjCResultType = {0, {"alloc", "init"}};
+    else if (Canonical == "objc_opt_new")
+      Result.RuntimeObjCResultType = {0, {"new"}};
+  }
   return Result;
 }
 
@@ -353,7 +366,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                          Value{Value::Kind::Receiver, 0, {}, *Receiver});
   using ReceiverKey =
       std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
-                 std::vector<ObjCReceiverTypeHint::IvarAccess>, std::string>;
+                 std::vector<ObjCReceiverTypeHint::TypeStep>, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts Values,
                       Hints &BlockHints) -> std::optional<Facts> {
@@ -450,6 +463,28 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                   ReturnedReceiver = std::move(Input);
               }
             }
+            if (Runtime->RuntimeObjCResultType) {
+              const auto &Effect = *Runtime->RuntimeObjCResultType;
+              if (Effect.ReceiverArgument < Signature.Parameters.size() &&
+                  Return.Kind == SourceABICarrierKind::IntegerRegister &&
+                  Return.ValueBytes == 8) {
+                const auto &Argument =
+                    Signature.Parameters[Effect.ReceiverArgument].Location;
+                const auto Input =
+                    Argument.Kind == SourceABICarrierKind::IntegerRegister &&
+                            Argument.ValueBytes == 8
+                        ? Read(NdVar::reg(Argument.RegisterOffset, 8))
+                        : std::nullopt;
+                auto Type = Input ? receiver(*Input) : std::nullopt;
+                for (const auto &Selector : Effect.Selectors)
+                  if (Type)
+                    Type =
+                        objcReceiverCallResultTypeHint(Image, *Type, Selector);
+                if (Type)
+                  ReturnedReceiver =
+                      Value{Value::Kind::Receiver, 0, {}, std::move(Type)};
+              }
+            }
             Clobber(true);
             if (ReturnedReceiver)
               Values.emplace(key(NdVar::reg(Return.RegisterOffset, 8)),
@@ -482,10 +517,9 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           if (Self && Target->Name == "objc_msgSend")
             Receiver = receiver(*Self);
           if (Receiver) {
-            auto [It, Inserted] = ReceiverDeclarations.try_emplace(
-                std::tuple{Receiver->Origin, Receiver->Address,
-                           Receiver->ClassName, Receiver->IsClassMethod,
-                           Receiver->IvarLoads, Target->Selector});
+            auto [It, Inserted] = ReceiverDeclarations.try_emplace(std::tuple{
+                Receiver->Origin, Receiver->Address, Receiver->ClassName,
+                Receiver->IsClassMethod, Receiver->Steps, Target->Selector});
             if (Inserted)
               It->second = objcReceiverSourceTypeHint(Image, Target->Selector,
                                                       *Receiver);
@@ -537,7 +571,23 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         }
         // Only a bound Darwin ABI establishes which physical views survive.
         // Unknown calls may use another convention and invalidate every fact.
-        Clobber(BlockHints.count(Op.Addr) != 0);
+        const auto Bound = BlockHints.find(Op.Addr);
+        std::optional<ObjCReceiverTypeHint> ReturnedReceiver;
+        if (Bound != BlockHints.end() &&
+            Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+            Bound->second.Receiver)
+          ReturnedReceiver = objcReceiverCallResultTypeHint(
+              Image, *Bound->second.Receiver, Bound->second.Selector);
+        Clobber(Bound != BlockHints.end());
+        if (ReturnedReceiver) {
+          const auto &Location = Bound->second.Signature.ReturnLocation;
+          if (Location.Kind == SourceABICarrierKind::IntegerRegister &&
+              Location.ValueBytes == 8)
+            Values.emplace(
+                key(NdVar::reg(Location.RegisterOffset, 8)),
+                Value{
+                    Value::Kind::Receiver, 0, {}, std::move(ReturnedReceiver)});
+        }
         continue;
       }
       std::optional<Value> Out;
