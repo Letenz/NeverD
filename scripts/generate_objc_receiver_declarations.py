@@ -128,12 +128,12 @@ class ReceiverDeclarations(FrameworkDeclarations):
                           return_class, spelling == "instancetype"))
         return selector, encoding
 
-    def extract_owned(self, source, sdk, target):
+    def extract_owned(self, source, sdk, target, extra_arguments=()):
         # Cursor addresses can be reused after a translation unit is disposed.
         self.owner_cache = {}
         self.owners = set()
         self.methods = set()
-        self.extract(source, sdk, target)
+        self.extract(source, sdk, target, extra_arguments)
         return {"owners": sorted(self.owners), "methods": sorted(self.methods)}
 
 

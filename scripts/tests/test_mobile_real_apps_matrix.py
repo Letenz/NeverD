@@ -319,8 +319,11 @@ class MobileRealAppsMatrixTests(unittest.TestCase):
             if platform == "ios":
                 expected_uploads.append("mobile-ios-sdk-declarations")
                 self.assertIn("python scripts/collect_mobile_ios_sdk_declarations.py", build)
+                self.assertIn("python scripts/collect_objc_sdk_declarations.py", build)
+                self.assertIn('"$RUNNER_TEMP/ios-sdk-declarations/objc-abi"', build)
             else:
                 self.assertNotIn("collect_mobile_ios_sdk_declarations.py", build)
+                self.assertNotIn("collect_objc_sdk_declarations.py", build)
             self.assertEqual(artifact_names(build, "upload"), expected_uploads)
 
             job = re.search(rf"(?ms)^  {platform}:\n(.*?)(?=^  \S|\Z)", active)

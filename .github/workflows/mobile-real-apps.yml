@@ -100,6 +100,7 @@ jobs:
             scripts.tests.test_mobile_real_apps_ios \
             scripts.tests.test_mobile_swift_toolchain \
             scripts.tests.test_mobile_ios_sdk_declarations \
+            scripts.tests.test_collect_objc_sdk_declarations \
             scripts.tests.test_mobile_real_apps_objc_inventory \
             scripts.tests.test_mobile_real_apps_matrix \
             scripts.tests.test_mobile_real_apps_trigger \
@@ -261,6 +262,14 @@ jobs:
         run: |
           python scripts/collect_mobile_ios_sdk_declarations.py \
             --sdk-version 26.5 --output "$RUNNER_TEMP/ios-sdk-declarations"
+      - name: Collect public framework call declarations on every SDK target
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          CONSUMER_COMMIT: ${{ needs.trigger.outputs.consumer_commit }}
+        run: |
+          python scripts/collect_objc_sdk_declarations.py \
+            --sdk-version 26.5 --output "$RUNNER_TEMP/ios-sdk-declarations/objc-abi"
       - name: Preserve SDK declaration evidence for native source recovery
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

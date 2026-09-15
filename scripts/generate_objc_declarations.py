@@ -95,9 +95,9 @@ class Clang:
             encoding = ""
         return selector, encoding
 
-    def extract(self, source, sdk, target):
+    def extract(self, source, sdk, target, extra_arguments=()):
         arguments = ["-x", "objective-c", "-fblocks", "-target", target,
-                     "-isysroot", str(sdk)]
+                     "-isysroot", str(sdk), *extra_arguments]
         argv = (ctypes.c_char_p * len(arguments))(
             *(argument.encode() for argument in arguments)
         )
