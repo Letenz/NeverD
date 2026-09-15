@@ -59,6 +59,7 @@ enum class RuntimeFixture {
   ReceiverFields,
   ReceiverAliases,
   ReceiverResults,
+  SavedScalars,
   SharedFrameworks,
   AggregateRecords,
   ScalarConstants,
@@ -84,6 +85,7 @@ void verifyRuntime(bool Chained,
   const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
   const bool ReceiverFields = FixtureKind == RuntimeFixture::ReceiverFields;
   const bool ReceiverAliases = FixtureKind == RuntimeFixture::ReceiverAliases;
+  const bool SavedScalars = FixtureKind == RuntimeFixture::SavedScalars;
   const bool ReceiverResults = FixtureKind == RuntimeFixture::ReceiverResults;
   const bool SharedFrameworks = FixtureKind == RuntimeFixture::SharedFrameworks;
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
@@ -134,6 +136,7 @@ void verifyRuntime(bool Chained,
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
                         : SharedFrameworks   ? "ObjCSharedFrameworks.m"
                         : AggregateRecords   ? "ObjCAggregateRecords.m"
+                        : SavedScalars       ? "ObjCSavedScalars.m"
                         : ReceiverResults    ? "ObjCReceiverResults.m"
                         : ReceiverAliases    ? "ObjCReceiverAliases.m"
                         : ReceiverFields     ? "ObjCReceiverFields.m"
@@ -163,6 +166,7 @@ void verifyRuntime(bool Chained,
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
                         : SharedFrameworks  ? "ObjCSharedFrameworksHarness.m"
                         : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
+                        : SavedScalars      ? "ObjCSavedScalarsHarness.m"
                         : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
                         : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
                         : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
@@ -327,6 +331,7 @@ void verifyRuntime(bool Chained,
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
                              : SharedFrameworks   ? 11U
+                             : SavedScalars       ? 8U
                              : ReceiverResults    ? 8U
                              : ReceiverAliases    ? 5U
                              : AggregateRecords   ? 8U
@@ -364,6 +369,9 @@ void verifyRuntime(bool Chained,
                  "position:",      "position:layer:", "distance:from:",
                  "describe:text:", "descriptionOf:",  "request:content:",
                  "type:",          "extensionOf:"};
+  if (SavedScalars)
+    Remaining = {"flag", "setFlag:", "byte",    "setByte:",
+                 "word", "setWord:", "integer", "setInteger:"};
   if (ReceiverResults)
     Remaining = {"NDResultValue-duration",         "NDResultValue-setDuration:",
                  "NDResultValue+factoryDuration:", "NDResultOwner-error",
@@ -525,6 +533,7 @@ void verifyRuntime(bool Chained,
       "static void installRecovered(void) {\n"
       "Class cls = objc_getClass(\"" +
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
+                  : SavedScalars       ? "NDSavedValues"
                   : SharedFrameworks   ? "NDFrameworkCalls"
                   : AggregateRecords   ? "NDRecords"
                   : DynamicProperties  ? "NDPropertyDriver"
@@ -777,6 +786,8 @@ void verifyRuntime(bool Chained,
                            "pass\nrecord-stack=pass\n"
       : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
                            "pass\nobject-identity=pass\n"
+      : SavedScalars
+          ? "scalar-cases=262144\ncall-effects=262144\nknown-bytes=pass\n"
       : ReceiverResults
           ? "receiver-results=5120\nlifetime-checks=1024\nidentity=pass\n"
       : ReceiverAliases
@@ -1305,6 +1316,16 @@ TEST(ObjCRuntimeSource, ReceiverResultTypesPreserveFactoryAndPropertyBehavior) {
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::ReceiverResults));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, NarrowSavedParametersPreserveValuesAndCallEffects) {
+#if defined(__APPLE__)
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SavedScalars));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif

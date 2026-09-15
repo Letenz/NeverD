@@ -907,6 +907,107 @@ TEST(SourceABI, NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits) {
   }
 }
 
+TEST(SourceABI, NarrowParametersPreserveKnownBytesThroughWideCopies) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Argument = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Saved = NdVar::reg(TRI.CalleeSaveRegs.front(), 8);
+    for (const uint16_t Bytes : {1, 2, 4}) {
+      for (const bool Signed : {false, true}) {
+        std::vector<HighFunc> Functions;
+        for (unsigned Mode = 0; Mode != 5; ++Mode) {
+          LowFunc Low;
+          Low.Entry = 0x1200;
+          Low.Name = "saved_parameter_" + std::to_string(Mode);
+          LowBlock Block;
+          Block.Id = 0;
+          Block.StartAddr = 0x1200;
+          Block.EndAddr = 0x1220;
+          LowOp Save;
+          Save.Opcode = NdOp::COPY;
+          Save.Addr = 0x1200;
+          Save.Output = Saved;
+          Save.addInput(Argument);
+          Block.Ops.push_back(Save);
+          if (Mode != 0) {
+            LowOp Call;
+            Call.Opcode = NdOp::CALL;
+            Call.Addr = 0x1204;
+            Call.addInput(NdVar::cst(0x1100, 8));
+            Block.Ops.push_back(Call);
+          }
+          LowOp Slice;
+          Slice.Opcode = NdOp::SUBBYTES;
+          Slice.Addr = 0x1208;
+          Slice.Output = NdVar::reg(TRI.IntReturnReg, Mode == 4 ? 8 : 4);
+          Slice.addInput(Mode == 2 ? Argument : Saved);
+          Slice.addInput(NdVar::cst(Mode == 3 ? Bytes : 0, 4));
+          Block.Ops.push_back(Slice);
+          LowOp Return;
+          Return.Opcode = NdOp::RETURN;
+          Return.Addr = 0x120c;
+          Return.addInput(NdVar::reg(TRI.IntReturnReg, Mode == 4   ? 8
+                                                       : Mode == 3 ? 1
+                                                                   : Bytes));
+          Block.Ops.push_back(Return);
+          Low.Blocks.push_back(Block);
+          SourceFunctionTypeHint Entry, Callee;
+          Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+          Entry.ReturnType = NdType::makeInt(Mode == 4   ? 8
+                                             : Mode == 3 ? 1
+                                                         : Bytes,
+                                             Signed);
+          Entry.Parameters = {{"value", NdType::makeInt(Bytes, Signed)}};
+          Callee.ReturnType = NdType::makeVoid();
+          std::string Error;
+          ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error));
+          ASSERT_TRUE(assignDarwinScalarSourceABI(Callee, Architecture, Error));
+          std::map<va_t, SourceFunctionTypeHint> Hints{{0x1100, Callee},
+                                                       {Low.Entry, Entry}};
+          LowToMedConverter Converter;
+          Converter.setSourceCallHintsEnabled(true);
+          Converter.setSourceCalleeTypeHints(&Hints);
+          auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+          recoverCallAbi(Med, Architecture, {});
+          Med.SourceTypeHint = Entry;
+          inferMedTypes(Med, Architecture);
+          auto High = MedToHighConverter().convert(Med, Architecture);
+          if (Mode < 2) {
+            Functions.push_back(std::move(High));
+          } else {
+            std::string Source;
+            llvm::raw_string_ostream OS(Source);
+            CEmitterOptions Options;
+            Options.TheArch = Architecture;
+            ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+            EXPECT_NE(Source.find("unknown"), std::string::npos) << Source;
+          }
+        }
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+        EXPECT_EQ(Source.find("unknown"), std::string::npos) << Source;
+        const auto Type = std::string(Signed ? "int" : "uint") +
+                          std::to_string(Bytes * 8) + "_t";
+        Source +=
+            "\nstatic unsigned calls;\n"
+            "void sub_1100(void) { ++calls; }\n"
+            "int main(void) {\n"
+            "for (uint32_t i = 0; i != 65536; ++i) {\n" +
+            Type + " value = (" + Type +
+            ")(i * UINT32_C(65537));\n"
+            "if (saved_parameter_0(value) != value || calls != i) return 1;\n"
+            "if (saved_parameter_1(value) != value || calls != i + 1) return "
+            "2;\n"
+            "}\nreturn 0;\n}\n";
+        ASSERT_NO_FATAL_FAILURE(executeC(Source));
+      }
+    }
+  }
+}
+
 TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {

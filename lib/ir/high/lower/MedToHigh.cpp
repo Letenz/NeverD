@@ -388,11 +388,19 @@ ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
     if (auto Definition = inlineableDefinition(varKey(Value->Var)))
       if (Definition.get() != Value.get())
         return sourceBitSlice(Definition, ByteOffset, Bytes, Depth + 1);
-  // A source scalar describes only the low lane of its SIMD carrier. Reading
-  // an upper lane cannot silently manufacture zeroes or adjacent parameters.
-  if (!Value->Type || ByteOffset > Value->Type->Size ||
-      Bytes > Value->Type->Size - ByteOffset)
+  // A source scalar describes only part of its machine carrier. Preserve a
+  // partially overlapping slice's known bytes: a subsequent narrower read may
+  // discard the unknown suffix. An entirely unknown slice stays unknown.
+  if (!Value->Type || ByteOffset >= Value->Type->Size)
     return HighExpr::makeUndef(Bytes);
+  if (Bytes > Value->Type->Size - ByteOffset) {
+    const uint16_t Known = Value->Type->Size - ByteOffset;
+    auto Slice = HighExpr::makeBinop(
+        NdOp::CONCAT, HighExpr::makeUndef(Bytes - Known),
+        sourceBitSlice(Value, ByteOffset, Known, Depth + 1));
+    Slice->Type = NdType::makeInt(Bytes, false);
+    return Slice;
+  }
   if (Value->Type->Kind == NdTypeKind::Struct)
     return HighExpr::makeBitCast(
         HighExpr::makeRecordField(Value, static_cast<uint16_t>(ByteOffset),
