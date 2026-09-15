@@ -138,9 +138,6 @@ static std::vector<RoundTripTC> kX64Build() {
 static std::vector<RoundTripTC> kX86Build() {
   auto v = makeSwTailTC("x86swt", "int");
   auto Peel = forcepeelTC("x86swt", "int", 2);
-  // i386 PIC forcepeel has two adjacent tables and no unique GOT-relative
-  // base; emission must refuse rather than guess a table or function entry.
-  Peel.RecoveredSwitch = RecoveredSwitchExpectation::Forbidden;
   v.push_back(std::move(Peel));
   for (auto &c : v)
     c.ExtraFlags = "-fPIC";

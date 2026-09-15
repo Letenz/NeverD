@@ -12,6 +12,7 @@
 
 #include "MedLLVMFailureSnapshot.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/support/Diagnostic.h"
@@ -1061,56 +1062,175 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   if (!Def || Def->NumInputs < 2 ||
       (Def->Opcode != NdOp::INT_ADD && Def->Opcode != NdOp::INT_SUB))
     return nullptr;
-  auto isBoundedScalarLookup = [&](const MedVar &Value) {
-    const MedOp *Load = lookupDef(Value);
-    if (!Load || Load->Opcode != NdOp::LOAD || Load->NumInputs < 1)
+  // A jump-table or byte-table GEP index is a scalar even when its source is
+  // a vector reduction: `sum & 7` / `(sum>>2)&15` then `*4` is bounded by the
+  // mask, independent of whether the reduction DAG is a proven address offset.
+  auto isSmallIndexMask = [](uint64_t Mask) {
+    return Mask != 0 && Mask < limits::kMaxJumpTableEntries &&
+           (Mask & (Mask + 1)) == 0;
+  };
+  auto sameValue = [](const MedVar &A, const MedVar &B) {
+    return !A.isConst() && !B.isConst() && A.Kind == B.Kind && A.Id == B.Id &&
+           A.SSAVer == B.SSAVer;
+  };
+  std::set<std::tuple<int, int, int>> BoundedPhiSeen;
+  std::function<bool(const MedVar &, int)> isBoundedScalarLookup =
+      [&](const MedVar &Value, int Depth) -> bool {
+    if (Depth > 16)
       return false;
-    auto sameValue = [](const MedVar &A, const MedVar &B) {
-      return !A.isConst() && !B.isConst() && A.Kind == B.Kind && A.Id == B.Id &&
-             A.SSAVer == B.SSAVer;
+    if (Value.isConst())
+      return Value.ConstVal < limits::kMaxJumpTableEntries;
+    // An i8 addend is a 0..255 table index (clang-23 CRC bit-loop → 256-byte
+    // table, `movzbl` then `(%r8,%r9,1)`).
+    if (Value.Size == 1)
+      return true;
+    if (const PhiNode *Phi = lookupPhi(Value)) {
+      const auto PhiKey =
+          std::make_tuple(Value.Id, Value.SSAVer, static_cast<int>(Value.Size));
+      if (!BoundedPhiSeen.insert(PhiKey).second)
+        return true;
+      if (Phi->Args.empty())
+        return false;
+      for (const auto &[Pred, Arg] : Phi->Args)
+        if (!isBoundedScalarLookup(Arg, Depth + 1))
+          return false;
+      return true;
+    }
+    const MedOp *Def = lookupDef(Value);
+    if (!Def)
+      return false;
+    auto peel = [&](const MedVar &V) {
+      return isBoundedScalarLookup(V, Depth + 1);
     };
-    bool HasSmallBound = false;
-    for (const MedBlock &Block : CurMedFunc->Blocks)
-      for (const MedOp &Use : Block.Ops)
-        for (uint8_t I = 0; I < Use.NumInputs; ++I) {
-          if (!sameValue(Use.Inputs[I], Value))
-            continue;
-          const uint8_t Other = I ^ 1u;
-          const bool IsCompare = Use.Opcode == NdOp::INT_EQUAL ||
-                                 Use.Opcode == NdOp::INT_NOTEQUAL ||
-                                 Use.Opcode == NdOp::INT_LESS ||
-                                 Use.Opcode == NdOp::INT_SLESS ||
-                                 Use.Opcode == NdOp::INT_LESSEQUAL ||
-                                 Use.Opcode == NdOp::INT_SLESSEQUAL;
-          if (IsCompare) {
-            if (Use.NumInputs >= 2 && Use.Inputs[Other].isConst() &&
-                Use.Inputs[Other].ConstVal <= 0x100000)
-              HasSmallBound = true;
-            continue;
-          }
-          switch (Use.Opcode) {
-          case NdOp::COPY:
-          case NdOp::SUBBYTES:
-          case NdOp::INT_ZEXT:
-          case NdOp::INT_SEXT:
-          case NdOp::INT_ADD:
-          case NdOp::INT_SUB:
-          case NdOp::INT_AND:
-          case NdOp::INT_OR:
-          case NdOp::INT_XOR:
-          case NdOp::INT_LEFT:
-          case NdOp::INT_RIGHT:
-          case NdOp::INT_ASHR:
-          case NdOp::INT_CARRY:
-          case NdOp::INT_SOVF:
-          case NdOp::INT_SBOR:
-          case NdOp::BOOL_NOT:
-            continue;
-          default:
-            return false;
-          }
+    switch (Def->Opcode) {
+    case NdOp::COPY:
+    case NdOp::INT_ZEXT:
+    case NdOp::INT_SEXT:
+      return Def->NumInputs >= 1 && peel(Def->Inputs[0]);
+    case NdOp::SUBBYTES:
+      return Def->NumInputs >= 1 && peel(Def->Inputs[0]);
+    case NdOp::INT_AND: {
+      if (Def->NumInputs < 2)
+        return false;
+      for (uint8_t I = 0; I < 2; ++I)
+        if (Def->Inputs[I].isConst() &&
+            isSmallIndexMask(Def->Inputs[I].ConstVal))
+          return true;
+      return false;
+    }
+    case NdOp::INT_MULT:
+    case NdOp::INT_LEFT: {
+      if (Def->NumInputs < 2)
+        return false;
+      for (uint8_t I = 0; I < 2; ++I) {
+        if (!Def->Inputs[I].isConst())
+          continue;
+        const uint64_t C = Def->Inputs[I].ConstVal;
+        if (Def->Opcode == NdOp::INT_LEFT) {
+          if (C <= 3)
+            return peel(Def->Inputs[1 - I]);
+        } else if (C == 1 || C == 2 || C == 4 || C == 8) {
+          return peel(Def->Inputs[1 - I]);
         }
-    return HasSmallBound;
+      }
+      return false;
+    }
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR:
+      return Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
+             peel(Def->Inputs[0]);
+    case NdOp::INT_REM:
+    case NdOp::INT_SREM:
+      return Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
+             Def->Inputs[1].ConstVal > 0 &&
+             Def->Inputs[1].ConstVal <= limits::kMaxJumpTableEntries;
+    case NdOp::INT_SUB: {
+      // clang -O2 `x % C` is `x - q*C` (or `x - (q*4+q)` for C=5, 20, …).
+      if (Def->NumInputs < 2)
+        return false;
+      auto peelFwd = [&](MedVar V) {
+        for (int I = 0; I < 8; ++I) {
+          const MedOp *D = lookupDef(V);
+          if (!D || D->NumInputs < 1)
+            return V;
+          if (D->Opcode != NdOp::COPY && D->Opcode != NdOp::INT_ZEXT &&
+              D->Opcode != NdOp::INT_SEXT && D->Opcode != NdOp::SUBBYTES)
+            return V;
+          V = D->Inputs[0];
+        }
+        return V;
+      };
+      auto smallMulC = [&](const MedOp *Mul) {
+        if (!Mul || Mul->Opcode != NdOp::INT_MULT || Mul->NumInputs < 2)
+          return false;
+        for (uint8_t I = 0; I < 2; ++I)
+          if (Mul->Inputs[I].isConst() && Mul->Inputs[I].ConstVal >= 2 &&
+              Mul->Inputs[I].ConstVal <= limits::kMaxJumpTableEntries)
+            return true;
+        return false;
+      };
+      const MedVar Q = peelFwd(Def->Inputs[1]);
+      const MedOp *QDef = lookupDef(Q);
+      if (smallMulC(QDef))
+        return true;
+      if (QDef && QDef->Opcode == NdOp::INT_ADD && QDef->NumInputs >= 2) {
+        if (smallMulC(lookupDef(QDef->Inputs[0])) ||
+            smallMulC(lookupDef(QDef->Inputs[1])))
+          return true;
+      }
+      return false;
+    }
+    case NdOp::LOAD: {
+      if (Def->NumInputs < 1)
+        return false;
+      if (Def->Output.Size == 1)
+        return true;
+      bool HasSmallBound = false;
+      for (const MedBlock &Block : CurMedFunc->Blocks)
+        for (const MedOp &Use : Block.Ops)
+          for (uint8_t I = 0; I < Use.NumInputs; ++I) {
+            if (!sameValue(Use.Inputs[I], Value))
+              continue;
+            const uint8_t Other = I ^ 1u;
+            const bool IsCompare = Use.Opcode == NdOp::INT_EQUAL ||
+                                   Use.Opcode == NdOp::INT_NOTEQUAL ||
+                                   Use.Opcode == NdOp::INT_LESS ||
+                                   Use.Opcode == NdOp::INT_SLESS ||
+                                   Use.Opcode == NdOp::INT_LESSEQUAL ||
+                                   Use.Opcode == NdOp::INT_SLESSEQUAL;
+            if (IsCompare) {
+              if (Use.NumInputs >= 2 && Use.Inputs[Other].isConst() &&
+                  Use.Inputs[Other].ConstVal <= 0x100000)
+                HasSmallBound = true;
+              continue;
+            }
+            switch (Use.Opcode) {
+            case NdOp::COPY:
+            case NdOp::SUBBYTES:
+            case NdOp::INT_ZEXT:
+            case NdOp::INT_SEXT:
+            case NdOp::INT_ADD:
+            case NdOp::INT_SUB:
+            case NdOp::INT_AND:
+            case NdOp::INT_OR:
+            case NdOp::INT_XOR:
+            case NdOp::INT_LEFT:
+            case NdOp::INT_RIGHT:
+            case NdOp::INT_ASHR:
+            case NdOp::INT_CARRY:
+            case NdOp::INT_SOVF:
+            case NdOp::INT_SBOR:
+            case NdOp::BOOL_NOT:
+              continue;
+            default:
+              return false;
+            }
+          }
+      return HasSmallBound;
+    }
+    default:
+      return false;
+    }
   };
   // Decompose the address into one global base constant plus the runtime index
   // addends.  Handles both the one-level `INT_ADD(base,index)` form and a base
@@ -1128,7 +1248,7 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
       Def->Output.Size != 0 && Def->Inputs[0].Size != 0 &&
       Def->Output.Size >= Def->Inputs[0].Size &&
       (valueIsStableAddressOffset(Def->Inputs[1]) ||
-       isBoundedScalarLookup(Def->Inputs[1])) &&
+       isBoundedScalarLookup(Def->Inputs[1], 0)) &&
       collectIndexedGlobalBase(Def->Inputs[0], Base, HaveBase, IdxTerms,
                                /*Depth=*/0, FailClosed) &&
       HaveBase)
@@ -1168,7 +1288,7 @@ MedLLVMEmitter::tryResolveIndexedGlobalPtr(const MedVar &AddrVar,
   for (const auto &T : IdxTerms) {
     if (varIsFrameDerived(T))
       return nullptr;
-    if (!valueIsStableAddressOffset(T) && !isBoundedScalarLookup(T)) {
+    if (!valueIsStableAddressOffset(T) && !isBoundedScalarLookup(T, 0)) {
       if (FailClosed) {
         if (!FatalDataPointerResolution) {
           syncError() << "med_llvm_emitter: read-only table address "

@@ -169,9 +169,8 @@ static std::vector<RoundTripTC> makeVec53TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64Vec53 = withForbiddenSwitch(
-    makeVec53TC("x64v53", "long", 2, "-msse4.2"),
-    {"_r64hi", "_r64dense", "_r64xor", "_r64imm"});
+static const std::vector<RoundTripTC> kX64Vec53 =
+    makeVec53TC("x64v53", "long", 2, "-msse4.2");
 static const std::vector<RoundTripTC> kA64Vec53 =
     makeVec53TC("a64v53", "long", 2, "");
 static const std::vector<RoundTripTC> kARM32Vec53 =

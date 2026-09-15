@@ -156,7 +156,7 @@ static std::vector<RoundTripTC> makeOptStress58TC(const char *prefix, const char
 // clang-format on
 
 static const std::vector<RoundTripTC> kX64 =
-    withForbiddenSwitch(makeOptStress58TC("x64o58", "long"), {"_trie"});
+    makeOptStress58TC("x64o58", "long");
 static const std::vector<RoundTripTC> kX86 = makeOptStress58TC("x86o58", "int");
 static const std::vector<RoundTripTC> kA64 =
     makeOptStress58TC("a64o58", "long");

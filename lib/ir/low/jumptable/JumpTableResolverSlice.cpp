@@ -3193,6 +3193,21 @@ bool CFGBuilder::exactI386ModelZeroReaches(const LowOp &Use, int BaseSide,
       }
       if (!RunAnalysisComplete)
         return false;
+      // A sized symbol at this base is a tighter object than a concatenated
+      // CodePtr run in a shared .rodata section.  Cap before the next-anchor
+      // walk so an adjacent sibling table is not paid as this candidate's
+      // storage.
+      if (!consumeI386GOTOFFProposalEvidence(CurrentImg->Symbols.size()))
+        return false;
+      const uint64_t CandidateObjectSize =
+          CurrentImg->dataObjectSizeAt(TableBase);
+      if (CandidateObjectSize != 0 && PointerSize != 0 &&
+          CandidateObjectSize % PointerSize == 0) {
+        const uint64_t SizedSlots = CandidateObjectSize / PointerSize;
+        if (SizedSlots >= limits::kMinJumpTableEntries && SizedSlots < Run &&
+            SizedSlots <= limits::kMaxJumpTableEntries)
+          Run = static_cast<uint32_t>(SizedSlots);
+      }
 
       if (Run >= limits::kMinJumpTableEntries) {
         const size_t AddressOccurrenceCount =
@@ -3280,18 +3295,224 @@ bool CFGBuilder::exactI386ModelZeroReaches(const LowOp &Use, int BaseSide,
                 OrderedLookupWork(DecodedAnchors.size())) ||
             !ConsumeProduct(DataFieldCount, OwnerQueryWork + 1))
           return false;
-        if (Run < limits::kMinJumpTableEntries ||
-            !codePtrRelocRunHasExactBoundary(
-                *CurrentImg, TableBase, PointerSize, Run, DecodedAnchors)) {
+        auto CodePtrRunNaturallyEnds = [&](va_t Base, uint32_t Slots) {
+          if (Slots < limits::kMinJumpTableEntries ||
+              Slots >= limits::kMaxJumpTableEntries || PointerSize == 0 ||
+              PointerSize > InvalidVA - Base ||
+              uint64_t(Slots) > (InvalidVA - Base) / PointerSize)
+            return false;
+          return !CurrentImg->CodePtrRelocSlots.count(Base + uint64_t(Slots) *
+                                                                 PointerSize);
+        };
+        auto ExactGOTOFFCodePtrRun = [&](va_t Base, uint32_t Slots,
+                                         uint64_t ObjectSize) {
+          if (Slots < limits::kMinJumpTableEntries)
+            return false;
+          if (ObjectSize != 0) {
+            // A sized symbol is the object identity.  An over-size or
+            // misaligned symbol must not fall back to an interior reloc-run
+            // or section-end boundary.
+            return PointerSize != 0 && ObjectSize % PointerSize == 0 &&
+                   ObjectSize / PointerSize == Slots &&
+                   ObjectSize <= InvalidVA - Base;
+          }
+          if (codePtrRelocRunHasExactBoundary(*CurrentImg, Base, PointerSize,
+                                              Slots, DecodedAnchors))
+            return true;
+          return CodePtrRunNaturallyEnds(Base, Slots);
+        };
+        if (!consumeI386GOTOFFProposalEvidence(
+                OrderedLookupWork(CurrentImg->CodePtrRelocSlots.size())))
+          return false;
+        if (!ExactGOTOFFCodePtrRun(TableBase, Run, CandidateObjectSize)) {
+          if (I386GOTOFFProposalEvidenceIncomplete)
+            return false;
           Run = 0;
         }
 
         if (Run >= limits::kMinJumpTableEntries) {
-          // Candidate owns one storage-range node and Run suppressible slot
-          // values.  Pay their construction and destruction before either
-          // temporary container is populated.
-          if (!ConsumeProduct(size_t{1}, size_t{2}) ||
-              !ConsumeProduct(Run, size_t{4}))
+          // Clang i386 PIC forcepeel emits two adjacent GOTOFF tables.  Case
+          // labels of the sibling remain independent CFG roots until that
+          // table publishes, re-enter the loop without the get-PC seed, and
+          // an unpublished INDIR_BR then pollutes the peeled dispatch's GOT
+          // proof.  Include every exact-bounded GOTOFF CodePtr run named by
+          // this function so jumpTableProofRoots can suppress the family.
+          // This is proposal-root evidence only: publication still owns just
+          // the candidate's authenticated runtime domain.
+          struct SiblingGOTOFFRun {
+            va_t Base = 0;
+            uint32_t Slots = 0;
+          };
+          std::vector<SiblingGOTOFFRun> SiblingRuns;
+          constexpr uint32_t kMaxI386GOTOFFSiblingTables = 8;
+          const std::pair<va_t, va_t> *FuncRange = nullptr;
+          if (AuthoritativeCurrentFuncRange)
+            FuncRange = &*AuthoritativeCurrentFuncRange;
+          else if (CurrentFuncRange)
+            FuncRange = &*CurrentFuncRange;
+          // A rejected guarded group already had a transactional chance to
+          // suppress every owner slot.  Reusing sibling tables as extra
+          // proof-root storage would let one valid member publish after a
+          // sibling's stale guard failed the joint proof.
+          if (FuncRange && !GuardedGroupRejected) {
+            if (!consumeI386GOTOFFProposalEvidence(
+                    OrderedLookupWork(DataFieldCount) + 1) ||
+                !consumeI386GOTOFFProposalEvidence(OwnerEndWork))
+              return false;
+            const std::optional<va_t> CandidateOwnerEnd =
+                CurrentImg->mappedObjectOwnerEnd(TableBase);
+            std::set<va_t> SiblingBases;
+            for (auto FieldIt =
+                     CurrentImg->DataAddressRelocOperands.lower_bound(
+                         FuncRange->first);
+                 FieldIt != CurrentImg->DataAddressRelocOperands.end() &&
+                 FieldIt->first < FuncRange->second;
+                 ++FieldIt) {
+              const auto &Field = FieldIt->second;
+              if (Field.Kind != RelocatedAddressFieldKind::I386ELFGOTOFF ||
+                  Field.Width != PointerSize ||
+                  Field.PCRelativeFromInstructionEnd ||
+                  Field.TargetVA == InvalidVA || Field.TargetVA == TableBase)
+                continue;
+              if (!consumeI386GOTOFFProposalEvidence(
+                      OrderedLookupWork(CurrentImg->CodePtrRelocSlots.size())))
+                return false;
+              if (!CurrentImg->CodePtrRelocSlots.count(Field.TargetVA))
+                continue;
+              if (!consumeI386GOTOFFProposalEvidence(OwnerEndWork))
+                return false;
+              if (CurrentImg->mappedObjectOwnerEnd(Field.TargetVA) !=
+                  CandidateOwnerEnd)
+                continue;
+              if (!ConsumeProduct(1,
+                                  OrderedLookupWork(SiblingBases.size()) + 2))
+                return false;
+              SiblingBases.insert(Field.TargetVA);
+            }
+            // An unnamed CodePtr object in the same section is not a sibling
+            // table.  Suppressing through it would drop an independent
+            // relocation root that the guarded-group owner proof refuses.
+            if (!SiblingBases.empty()) {
+              if (!ConsumeProduct(DataFieldCount, 2) ||
+                  !consumeI386GOTOFFProposalEvidence(
+                      CurrentImg->Symbols.size()))
+                return false;
+              std::set<va_t> ImageGOTOFFTargets;
+              for (const auto &[FieldVA, Field] :
+                   CurrentImg->DataAddressRelocOperands) {
+                (void)FieldVA;
+                if (Field.Kind != RelocatedAddressFieldKind::I386ELFGOTOFF ||
+                    Field.Width != PointerSize ||
+                    Field.PCRelativeFromInstructionEnd ||
+                    Field.TargetVA == InvalidVA)
+                  continue;
+                if (!ConsumeProduct(
+                        1, OrderedLookupWork(ImageGOTOFFTargets.size()) + 2))
+                  return false;
+                ImageGOTOFFTargets.insert(Field.TargetVA);
+              }
+              if (const Section *TableSection =
+                      CurrentImg->getSectionFor(TableBase);
+                  TableSection &&
+                  TableSection->Size <= InvalidVA - TableSection->VA) {
+                const va_t SectionEnd = TableSection->VA + TableSection->Size;
+                for (const auto &Symbol : CurrentImg->Symbols) {
+                  if (Symbol.IsFunc || Symbol.Size == 0 ||
+                      Symbol.Addr < TableSection->VA ||
+                      Symbol.Addr >= SectionEnd)
+                    continue;
+                  if (!ImageGOTOFFTargets.count(Symbol.Addr)) {
+                    SiblingBases.clear();
+                    break;
+                  }
+                }
+              }
+            }
+            if (SiblingBases.size() > kMaxI386GOTOFFSiblingTables)
+              SiblingBases.clear();
+            for (va_t SiblingBase : SiblingBases) {
+              uint32_t SiblingRun = 0;
+              va_t SiblingSlot = SiblingBase;
+              bool SiblingComplete = true;
+              while (SiblingRun < limits::kMaxJumpTableEntries) {
+                if (!consumeI386GOTOFFProposalEvidence() ||
+                    !consumeI386GOTOFFProposalEvidence(OrderedLookupWork(
+                        CurrentImg->CodePtrRelocSlots.size()))) {
+                  SiblingComplete = false;
+                  break;
+                }
+                if (!CurrentImg->CodePtrRelocSlots.count(SiblingSlot))
+                  break;
+                ++SiblingRun;
+                if (PointerSize > InvalidVA - SiblingSlot)
+                  break;
+                SiblingSlot += PointerSize;
+              }
+              if (!SiblingComplete)
+                return false;
+              if (!consumeI386GOTOFFProposalEvidence(
+                      CurrentImg->Symbols.size()))
+                return false;
+              const uint64_t SiblingObjectSize =
+                  CurrentImg->dataObjectSizeAt(SiblingBase);
+              if (SiblingObjectSize != 0 && PointerSize != 0 &&
+                  SiblingObjectSize % PointerSize == 0) {
+                const uint64_t SizedSlots = SiblingObjectSize / PointerSize;
+                if (SizedSlots >= limits::kMinJumpTableEntries &&
+                    SizedSlots < SiblingRun &&
+                    SizedSlots <= limits::kMaxJumpTableEntries)
+                  SiblingRun = static_cast<uint32_t>(SizedSlots);
+              }
+              if (SiblingRun < limits::kMinJumpTableEntries)
+                continue;
+              if (!ConsumeProduct(RelAnchorCount, AnchorLookup + 3) ||
+                  !ConsumeProduct(AddressOccurrenceCount, AnchorLookup + 3) ||
+                  !ConsumeProduct(DataFieldCount,
+                                  OwnerQueryWork + AnchorLookup + 4) ||
+                  !consumeI386GOTOFFProposalEvidence(AnchorLookup) ||
+                  !ConsumeProduct(
+                      AnchorUpper,
+                      OrderedLookupWork(CurrentImg->CodePtrRelocSlots.size()) +
+                          1) ||
+                  !consumeI386GOTOFFProposalEvidence(OwnerEndWork) ||
+                  !consumeI386GOTOFFProposalEvidence(OrderedLookupWork(
+                      CurrentImg->RelCodeTableAnchors.size())) ||
+                  !consumeI386GOTOFFProposalEvidence(
+                      OrderedLookupWork(DecodedAnchors.size())) ||
+                  !ConsumeProduct(DataFieldCount, OwnerQueryWork + 1) ||
+                  !consumeI386GOTOFFProposalEvidence(
+                      OrderedLookupWork(CurrentImg->CodePtrRelocSlots.size())))
+                return false;
+              SiblingRun = boundCodePtrRunByNextAnchor(*CurrentImg, SiblingBase,
+                                                       PointerSize, SiblingRun,
+                                                       DecodedAnchors);
+              if (!ExactGOTOFFCodePtrRun(SiblingBase, SiblingRun,
+                                         SiblingObjectSize)) {
+                if (I386GOTOFFProposalEvidenceIncomplete)
+                  return false;
+                continue;
+              }
+              if (!ConsumeProduct(SiblingRuns.size(), 2))
+                return false;
+              SiblingRuns.push_back({SiblingBase, SiblingRun});
+            }
+          }
+
+          size_t TotalProposalSlots = Run;
+          for (const SiblingGOTOFFRun &Sibling : SiblingRuns) {
+            if (Sibling.Slots >
+                std::numeric_limits<size_t>::max() - TotalProposalSlots)
+              return consumeI386GOTOFFProposalEvidence(
+                         std::numeric_limits<size_t>::max()),
+                     false;
+            TotalProposalSlots += Sibling.Slots;
+          }
+          // Candidate owns one storage-range node per authenticated GOTOFF
+          // run and TotalProposalSlots suppressible slot values.  Pay their
+          // construction and destruction before either temporary container
+          // is populated.
+          if (!ConsumeProduct(SiblingRuns.size() + 1, size_t{2}) ||
+              !ConsumeProduct(TotalProposalSlots, size_t{4}))
             return false;
           JumpTableInfo Candidate;
           Candidate.setBaseAddr(TableBase);
@@ -3302,10 +3523,18 @@ bool CFGBuilder::exactI386ModelZeroReaches(const LowOp &Use, int BaseSide,
           Candidate.StorageRanges.push_back({TableBase,
                                              static_cast<uint16_t>(PointerSize),
                                              PointerSize, Run});
-          Candidate.SuppressibleRelocationSlots.reserve(Run);
+          Candidate.SuppressibleRelocationSlots.reserve(TotalProposalSlots);
           for (uint32_t Slot = 0; Slot < Run; ++Slot)
             Candidate.SuppressibleRelocationSlots.push_back(
                 TableBase + uint64_t(Slot) * PointerSize);
+          for (const SiblingGOTOFFRun &Sibling : SiblingRuns) {
+            Candidate.StorageRanges.push_back(
+                {Sibling.Base, static_cast<uint16_t>(PointerSize), PointerSize,
+                 Sibling.Slots});
+            for (uint32_t Slot = 0; Slot < Sibling.Slots; ++Slot)
+              Candidate.SuppressibleRelocationSlots.push_back(
+                  Sibling.Base + uint64_t(Slot) * PointerSize);
+          }
 
           // Mirror budgetedJumpTableProofRoots exactly.  A rank-0 candidate
           // proves itself against the full persistent-root set; later
@@ -3314,8 +3543,9 @@ bool CFGBuilder::exactI386ModelZeroReaches(const LowOp &Use, int BaseSide,
           if (!consumeI386GOTOFFProposalEvidence(
                   PriorStrongJumpTableProposals.size()))
             return false;
-          size_t StorageCount = 1;
-          size_t SuppressibleSlotCount = Run;
+          size_t StorageCount = Candidate.StorageRanges.size();
+          size_t SuppressibleSlotCount =
+              Candidate.SuppressibleRelocationSlots.size();
           for (const auto &[Addr, Proposal] : PriorStrongJumpTableProposals) {
             if (Addr == ActiveJumpTableCandidateAddr ||
                 (!ActiveJumpTableConsumerAudit &&

@@ -111,8 +111,7 @@ static std::vector<RoundTripTC> makeScalarMix(const char *prefix) {
   };
 }
 
-static const std::vector<RoundTripTC> kX64SM =
-    withForbiddenSwitch(makeScalarMix("x64sm"), {"_crc8"});
+static const std::vector<RoundTripTC> kX64SM = makeScalarMix("x64sm");
 static const std::vector<RoundTripTC> kX86SM   = makeScalarMix("x86sm");
 static const std::vector<RoundTripTC> kA64SM   = makeScalarMix("a64sm");
 static const std::vector<RoundTripTC> kARM32SM = makeScalarMix("armsm");
