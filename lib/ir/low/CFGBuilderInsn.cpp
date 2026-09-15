@@ -277,6 +277,40 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
                          : libc::isNoReturnTarget(*CurrentImg, Target);
 }
 
+void CFGBuilder::restoreAdjacentNoReturnCall(InsnRecord &Rec,
+                                             va_t DecodedCallTarget) {
+  if (!CurrentImg ||
+      (CurrentImg->Arch != Arch::X86 && CurrentImg->Arch != Arch::X64) ||
+      DecodedCallTarget == InvalidVA ||
+      DecodedCallTarget != Rec.Addr + Rec.Size || Rec.Ops.size() != 2)
+    return;
+  const auto &TRI = getTargetRegInfo(CurrentImg->Arch);
+  const auto Stack = NdVar::reg(TRI.StackPointer, TRI.PointerSize);
+  const auto &Adjust = Rec.Ops[0];
+  const auto &Push = Rec.Ops[1];
+  if (Adjust.Opcode != NdOp::INT_SUB || Adjust.NumInputs != 2 ||
+      Adjust.Output != Stack || Adjust.Inputs[0] != Stack ||
+      !Adjust.Inputs[1].isConst() ||
+      Adjust.Inputs[1].Offset != TRI.PointerSize ||
+      Push.Opcode != NdOp::STORE || Push.NumInputs != 2 ||
+      Push.Inputs[0] != Stack || !Push.Inputs[1].isConst() ||
+      Push.Inputs[1].Size != TRI.PointerSize ||
+      Push.Inputs[1].Offset != DecodedCallTarget)
+    return;
+  InsnRecord Candidate = Rec;
+  LowOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Rec.Addr;
+  Call.Seq = Adjust.Seq;
+  Call.Output = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+  Call.addInput(Push.Inputs[1]);
+  Candidate.Ops = {Call};
+  // The established no-return target index owns this decision. Ordinary
+  // call-next/POP sequences keep their physical push and architectural PC.
+  if (isNoReturnCall(Candidate))
+    Rec.Ops = std::move(Candidate.Ops);
+}
+
 void CFGBuilder::rewriteAsTailCall(InsnRecord &Rec) {
   if (!CurrentImg)
     return;

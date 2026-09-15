@@ -991,6 +991,9 @@ private:
   void linkSuccessors(LowFunc &Func, const std::map<va_t, int> &AddrToBlock);
   void linkExceptionalSuccessors(LowFunc &Func);
   void classifyInsn(InsnRecord &Rec);
+  /// A CALL to its next instruction may target a known no-return entry rather
+  /// than form a get-PC pair. Preserve the decoded call and its ABI boundary.
+  void restoreAdjacentNoReturnCall(InsnRecord &Rec, va_t DecodedCallTarget);
   /// Replace an AArch64 explicit-register RET with a direct branch when its
   /// target has a dominating constant definition in the decoded prefix.
   bool resolveConstantIndirectBranch(const BinaryImage &Img, uint32_t InsnId,
