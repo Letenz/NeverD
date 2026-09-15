@@ -62,6 +62,7 @@ enum class RuntimeFixture {
   ProtocolReferences,
   SwiftAllocation,
   FloatingSaves,
+  Equality,
   Graphics,
   DarwinDeclarations
 };
@@ -76,6 +77,7 @@ void verifyRuntime(bool Chained,
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
   const bool SwiftAllocation = FixtureKind == RuntimeFixture::SwiftAllocation;
+  const bool Equality = FixtureKind == RuntimeFixture::Equality;
   const bool FloatingSaves = FixtureKind == RuntimeFixture::FloatingSaves;
   const bool ProtocolReferences =
       FixtureKind == RuntimeFixture::ProtocolReferences;
@@ -107,6 +109,7 @@ void verifyRuntime(bool Chained,
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
+                        : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
                         : ScalarConstants    ? "ObjCScalarConstants.m"
@@ -128,6 +131,7 @@ void verifyRuntime(bool Chained,
                         : Associations       ? "ObjCAssociations.m"
                                              : "ObjCARC.m";
   const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
+                        : Equality         ? "ObjCEqualityHarness.m"
                         : FloatingSaves    ? "ObjCFloatingSavesHarness.m"
                         : CoreData         ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants  ? "ObjCScalarConstantsHarness.m"
@@ -229,7 +233,38 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
+  if (Equality && HostArch == "x86_64") {
+    // This SDK catalog has conflicting x86-64 isEqual: return declarations.
+    // Without that call contract the source cannot prove the subsequent
+    // register lifetimes. Keep the negative case explicit until those facts
+    // can be recovered, instead of accepting a body with unknown calls.
+    ASSERT_EQ(Methods->size(), 6U);
+    unsigned Rejected = 0;
+    for (const auto &Value : *Methods) {
+      const auto *Method = Value.getAsObject();
+      ASSERT_NE(Method, nullptr);
+      if (Method->getString("selector") == "equivalent:") {
+        ++Rejected;
+        EXPECT_EQ(Method->getString("status"), "unrecovered");
+        const auto *Diagnostics = Method->getObject("projection_diagnostics");
+        ASSERT_NE(Diagnostics, nullptr);
+        const auto *Items = Diagnostics->getArray("items");
+        ASSERT_NE(Items, nullptr);
+        EXPECT_TRUE(
+            std::any_of(Items->begin(), Items->end(), [](const auto &Item) {
+              const auto *Diagnostic = Item.getAsObject();
+              return Diagnostic &&
+                     Diagnostic->getString("code") == "call_binding";
+            }));
+      } else {
+        EXPECT_EQ(Method->getString("status"), "recovered");
+      }
+    }
+    EXPECT_EQ(Rejected, 1U);
+    return;
+  }
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
+                             : Equality           ? 6U
                              : FloatingSaves      ? 2U
                              : CoreData           ? 3U
                              : ScalarConstants    ? 6U
@@ -345,6 +380,9 @@ void verifyRuntime(bool Chained,
     Remaining = {
         "allocateRaw:alignment:", "freeRaw:size:alignment:",
         "allocateObject:size:alignment:", "freeUninitialized:size:alignment:"};
+  if (Equality)
+    Remaining = {"equivalent:",   "leftValue",      "rightValue",
+                 "setLeftValue:", "setRightValue:", ".cxx_destruct"};
   if (FloatingSaves)
     Remaining = {"sumSine:cosine:", "weighted:bias:"};
   if (ProtocolReferences)
@@ -390,6 +428,7 @@ void verifyRuntime(bool Chained,
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
+                  : Equality           ? "NDEquality"
                   : FloatingSaves      ? "NDFloatingSaves"
                   : SwiftLiterals      ? "NDSwiftLiteralStrings"
                   : StoredStrings      ? "NDStoredStrings"
@@ -613,7 +652,8 @@ void verifyRuntime(bool Chained,
       read(Work / "recovered.out"),
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
-      : FloatingSaves    ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : Equality ? "equality-cases=4096\nshort-circuit=pass\nownership=pass\n"
+      : FloatingSaves ? "floating-saves=4096\nvalues-across-calls=pass\n"
       : CoreData
           ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
             "nil-context=pass\n"
@@ -1049,6 +1089,16 @@ TEST(ObjCRuntimeSource, RecompiledFloatingValuesSurviveRuntimeCalls) {
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::FloatingSaves));
+#else
+  GTEST_SKIP() << "Objective-C runtime source execution requires macOS";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     EqualityProjectionPreservesOwnershipOrRejectsMissingCallEvidence) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Equality));
 #else
   GTEST_SKIP() << "Objective-C runtime source execution requires macOS";
 #endif

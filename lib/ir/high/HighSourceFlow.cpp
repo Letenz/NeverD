@@ -70,8 +70,10 @@ class SourceFlow {
   };
   struct Predicate {
     size_t Local;
+    size_t Other;
     uint16_t Width;
     bool Nonzero;
+    std::pair<size_t, size_t> identity() const { return {Local, Other}; }
   };
   struct Node {
     std::vector<size_t> Next, Previous, Uses, Writes;
@@ -233,6 +235,7 @@ class SourceFlow {
   }
   std::optional<Predicate> predicate(const ExprPtr &Expression) {
     ExprPtr Value = Expression;
+    ExprPtr Other;
     bool Nonzero = true;
     if (Value && Value->Kind == ExprKind::BinOp &&
         (Value->Op == NdOp::INT_EQUAL || Value->Op == NdOp::INT_NOTEQUAL) &&
@@ -246,12 +249,48 @@ class SourceFlow {
         Value = Value->Operands[0];
       else if (IsZero(Value->Operands[0]))
         Value = Value->Operands[1];
-      else
-        return std::nullopt;
+      else {
+        Other = Value->Operands[1];
+        Value = Value->Operands[0];
+      }
     }
+    // An integer cast of unchanged width preserves equality and zero tests.
+    // Narrowing, extension and floating conversion do not preserve these
+    // facts. Bound the peel so malformed expression cycles remain unknown.
+    auto StripIntegerView = [](ExprPtr E) {
+      for (unsigned Depth = 0; E && Depth != 16; ++Depth) {
+        if (E->Kind != ExprKind::Cast || E->Operands.size() != 1 || !E->Type ||
+            !E->CastTo || !E->Operands[0] || !E->Operands[0]->Type ||
+            E->Type->Kind != NdTypeKind::Int ||
+            E->CastTo->Kind != NdTypeKind::Int ||
+            E->Operands[0]->Type->Kind != NdTypeKind::Int ||
+            E->Type->Size < 4 || E->Type->Size != E->CastTo->Size ||
+            E->Type->Size != E->Operands[0]->Type->Size ||
+            !E->IntrinsicOutputs.empty() ||
+            E->MemoryOrdering != NdMemoryOrdering::None ||
+            E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          break;
+        E = E->Operands[0];
+      }
+      return E;
+    };
+    Value = StripIntegerView(Value);
+    Other = StripIntegerView(Other);
     if (!scalarLocal(Value) || highSourceFrameBase(Function, Value->Var))
       return std::nullopt;
-    return Predicate{local(Value->Var), Value->Type->Size, Nonzero};
+    size_t Left = local(Value->Var), Right = NoNode;
+    if (Other) {
+      if (!scalarLocal(Other) || highSourceFrameBase(Function, Other->Var) ||
+          Value->Type->Kind != Other->Type->Kind ||
+          Value->Type->Size != Other->Type->Size ||
+          (Value->Type->Size < 4 &&
+           Value->Type->IsSigned != Other->Type->IsSigned))
+        return std::nullopt;
+      Right = local(Other->Var);
+      if (Right < Left)
+        std::swap(Left, Right);
+    }
+    return Predicate{Left, Right, Value->Type->Size, Nonzero};
   }
   void branch(size_t Index, const ExprPtr &Condition, size_t Yes, size_t No) {
     Nodes[Index].Test = Condition;
@@ -419,31 +458,40 @@ class SourceFlow {
     return Index;
   }
 
-  // Partition the emitted CFG by repeated zero/nonzero tests. Facts belong
-  // to individual edges, including two edges with the same destination. Every
-  // write kills the old fact before the next test. Inconsistent widths and
-  // escaped locals remain unknown; no memory-value or alias guess is needed.
+  // Partition the emitted CFG by repeated scalar equality tests, including
+  // comparison with zero. Facts belong to individual edges, even those with
+  // the same destination. A write to either operand kills the relation.
+  // Inconsistent widths and escaped locals remain unknown; no memory-value,
+  // alias, or transitive equality inference is needed.
   size_t refine(size_t Entry) {
     struct Observations {
       size_t Count = 0;
       uint16_t Width = 0;
       bool Consistent = true;
     };
-    std::map<size_t, Observations> Tests;
+    using Relation = std::pair<size_t, size_t>;
+    std::map<Relation, Observations> Tests;
     for (const auto &N : Nodes) {
       if (N.EdgeFacts.empty() || !N.EdgeFacts[0])
         continue;
       const auto &Fact = *N.EdgeFacts[0];
-      auto &Seen = Tests[Fact.Local];
+      auto &Seen = Tests[Fact.identity()];
       Seen.Consistent &= !Seen.Count || Seen.Width == Fact.Width;
       Seen.Width = Fact.Width;
       ++Seen.Count;
     }
-    std::map<size_t, uint32_t> Masks;
-    for (const auto &[Local, Seen] : Tests)
-      if (Seen.Count > 1 && Seen.Consistent && !AddressTaken.count(Local) &&
-          Masks.size() < 32)
-        Masks.emplace(Local, uint32_t{1} << Masks.size());
+    std::map<Relation, uint32_t> Masks;
+    std::map<size_t, uint32_t> InvalidatedBy;
+    for (const auto &[Pair, Seen] : Tests)
+      if (Seen.Count > 1 && Seen.Consistent &&
+          !AddressTaken.count(Pair.first) && !AddressTaken.count(Pair.second) &&
+          Masks.size() < 32) {
+        const uint32_t Mask = uint32_t{1} << Masks.size();
+        Masks.emplace(Pair, Mask);
+        InvalidatedBy[Pair.first] |= Mask;
+        if (Pair.second != NoNode)
+          InvalidatedBy[Pair.second] |= Mask;
+      }
     if (Masks.empty())
       return Entry;
 
@@ -488,14 +536,15 @@ class SourceFlow {
         uint32_t Known = S.Known, Nonzero = S.Nonzero;
         const auto &Original = Nodes[S.Original];
         for (size_t Written : Original.Writes)
-          if (auto It = Masks.find(Written); It != Masks.end()) {
+          if (auto It = InvalidatedBy.find(Written);
+              It != InvalidatedBy.end()) {
             Known &= ~It->second;
             Nonzero &= ~It->second;
           }
         for (size_t E = 0; E < Original.Next.size(); ++E) {
           uint32_t NextKnown = Known, NextNonzero = Nonzero;
           if (auto Fact = Original.EdgeFacts[E])
-            if (auto It = Masks.find(Fact->Local); It != Masks.end()) {
+            if (auto It = Masks.find(Fact->identity()); It != Masks.end()) {
               const uint32_t Mask = It->second;
               if ((Known & Mask) && bool(Nonzero & Mask) != Fact->Nonzero)
                 continue;

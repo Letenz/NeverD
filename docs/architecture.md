@@ -46,11 +46,15 @@ but it does not bypass the C API to drive the engine.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
-use this graph. Bounded zero/nonzero partitions track repeated scalar guards;
-writes invalidate facts, escaped locals stay unknown, and partition exhaustion
+use this graph. Bounded partitions track repeated equality tests between scalar
+locals or against zero. Swapped operands and unchanged-width integer views
+share the same fact; writing either operand invalidates it. Escaped locals stay
+unknown, inconsistent widths are rejected, and partition exhaustion
 falls back to the conservative graph. A PHI copy is removed only when its scalar
 value is dead in every feasible context. Calls, loads, and stores keep their
-observable behavior; source labels survive removal.
+observable behavior; source labels survive removal. Adjacent byte slices of
+the same local are simplified in HighIR before this analysis, preserving their
+result type. This identity does not merge independent loads or calls.
 
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 

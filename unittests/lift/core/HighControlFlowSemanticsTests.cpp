@@ -122,6 +122,15 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
         return uint64_t(A != B);
+      case NdOp::SUBBYTES:
+        return llvm::APInt(E->Operands[0]->Type->Size * 8, A)
+            .lshr(B * 8)
+            .zextOrTrunc(E->Type->Size * 8)
+            .getZExtValue();
+      case NdOp::CONCAT:
+        return llvm::APInt(E->Operands[0]->Type->Size * 8, A)
+            .concat(llvm::APInt(E->Operands[1]->Type->Size * 8, B))
+            .getZExtValue();
       default:
         break;
       }
@@ -248,6 +257,169 @@ TEST(HighControlFlowSemantics, RewrittenGuardKeepsTheReachingPhiValue) {
   EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
   EXPECT_EQ(execute(F, 0), 19u);
   EXPECT_EQ(execute(F, 1), 42u);
+}
+
+HighFunc relationalPhiCopy(bool Swapped, bool Inverted) {
+  auto F = guardedPhiCopy();
+  F.Body[0].Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), local(3));
+  F.Body[1].Cond =
+      HighExpr::makeBinop(Inverted ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL,
+                          local(Swapped ? 3 : 0), local(Swapped ? 0 : 3));
+  if (Inverted) {
+    F.Body[1].Kind = StmtKind::IfElse;
+    F.Body[1].ElseBody = std::move(F.Body[1].Body);
+    F.Body[1].Body.clear();
+  }
+  F.Body.insert(F.Body.begin(), assign(0, 3, 7));
+  return F;
+}
+
+TEST(HighControlFlowSemantics, RepeatedEqualityRemovesOnlyDeadEdgeCopies) {
+  for (bool Swapped : {false, true})
+    for (bool Inverted : {false, true}) {
+      auto F = relationalPhiCopy(Swapped, Inverted);
+      EXPECT_THROW(execute(F, 0), std::runtime_error);
+      ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+      for (uint64_t Value :
+           {uint64_t{0}, uint64_t{7}, uint64_t{19}, UINT64_MAX})
+        EXPECT_EQ(execute(F, Value), Value == 7 ? 42u : 7u);
+    }
+}
+
+TEST(HighControlFlowSemantics, EitherEqualityOperandWriteInvalidatesTheFact) {
+  for (unsigned Operand : {0U, 3U})
+    for (bool Swapped : {false, true}) {
+      auto F = relationalPhiCopy(Swapped, false);
+      F.Body.insert(F.Body.begin() + 2, assign(0, Operand, Operand ? 0 : 7));
+      F.Body.insert(F.Body.begin(), assign(0, 2, 19));
+      const auto Before = execute(F, 0);
+      ASSERT_EQ(Before, 19u);
+      EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+      EXPECT_EQ(execute(F, 0), Before);
+    }
+}
+
+TEST(HighControlFlowSemantics, EscapedEqualityOperandsDoNotCarryFacts) {
+  for (unsigned Operand : {0U, 3U}) {
+    auto F = relationalPhiCopy(false, false);
+    auto Address = std::make_shared<HighExpr>();
+    Address->Kind = ExprKind::Addr;
+    Address->Type = NdType::makePtr();
+    Address->Operands = {local(Operand)};
+    HighStmt Escape;
+    Escape.Kind = StmtKind::Call;
+    Escape.CallExpr = HighExpr::makeCall("mutate", 0x5000, {Address});
+    F.Body.insert(F.Body.begin() + 2, Escape);
+    EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  }
+}
+
+TEST(HighControlFlowSemantics, EqualityFactsRequireConsistentWidths) {
+  auto F = relationalPhiCopy(false, false);
+  for (auto &Operand : F.Body[2].Cond->Operands) {
+    Operand->Type = NdType::makeInt(4);
+    Operand->Var.Size = 4;
+  }
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+}
+
+TEST(HighControlFlowSemantics, EqualityViewsCannotHideNarrowingOrPromotion) {
+  for (unsigned Bytes : {1U, 2U, 4U}) {
+    auto F = relationalPhiCopy(false, false);
+    auto View = std::make_shared<HighExpr>();
+    View->Kind = ExprKind::Cast;
+    View->Type = View->CastTo = NdType::makeInt(Bytes, false);
+    View->Operands = {F.Body[2].Cond->Operands[0]};
+    F.Body[2].Cond->Operands[0] = View;
+    EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+    if (Bytes < 4) {
+      // Even an equal-width cast changes C's integer promotion of a negative
+      // byte or short. It cannot borrow a signed comparison's edge fact.
+      for (unsigned Statement : {1U, 2U})
+        for (auto &Operand : F.Body[Statement].Cond->Operands) {
+          auto Base =
+              Operand->Kind == ExprKind::Cast ? Operand->Operands[0] : Operand;
+          Base->Type = NdType::makeInt(Bytes);
+          Base->Var.Size = Bytes;
+        }
+      EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+    }
+  }
+}
+
+ExprPtr byteSlice(ExprPtr Base, unsigned Offset, unsigned Size) {
+  auto Slice = HighExpr::makeBinop(NdOp::SUBBYTES, std::move(Base),
+                                   HighExpr::makeConst(Offset, 4));
+  Slice->Type = NdType::makeInt(Size, false);
+  return Slice;
+}
+
+ExprPtr concatenate(ExprPtr High, ExprPtr Low) {
+  const auto Bytes = High->Type->Size + Low->Type->Size;
+  auto Joined =
+      HighExpr::makeBinop(NdOp::CONCAT, std::move(High), std::move(Low));
+  Joined->Type = NdType::makeInt(Bytes, false);
+  return Joined;
+}
+
+TEST(HighControlFlowSemantics, AdjacentLocalSlicesPreserveEveryBit) {
+  for (unsigned Offset : {0U, 1U, 2U})
+    for (unsigned Bytes : {2U, 4U, 8U}) {
+      if (Offset + Bytes > 8)
+        continue;
+      auto Joined = byteSlice(local(0), Offset, 1);
+      for (unsigned Size = 1; Size < Bytes; Size *= 2)
+        Joined = concatenate(byteSlice(local(0), Offset + Size, Size), Joined);
+      HighFunc F;
+      F.Body = {result(0, Joined)};
+      std::vector<uint64_t> Inputs{0, UINT64_MAX, UINT64_C(0x8765432101234567)};
+      for (unsigned Bit = 0; Bit != 64; ++Bit)
+        Inputs.push_back(uint64_t{1} << Bit);
+      std::vector<std::optional<uint64_t>> Expected;
+      for (auto Input : Inputs)
+        Expected.push_back(execute(F, Input));
+      simplifyAllExprs(F.Body);
+      EXPECT_NE(F.Body[0].RetVal->Op, NdOp::CONCAT);
+      EXPECT_FALSE(F.Body[0].RetVal->Type->IsSigned);
+      for (size_t I = 0; I != Inputs.size(); ++I)
+        EXPECT_EQ(execute(F, Inputs[I]), Expected[I]);
+    }
+}
+
+TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
+  for (unsigned Case = 0; Case != 6; ++Case) {
+    auto High = byteSlice(local(0), 4, 4);
+    auto Low = byteSlice(local(0), 0, 4);
+    if (Case == 0)
+      High->Operands[1] = HighExpr::makeConst(3, 4); // Overlap.
+    if (Case == 1)
+      Low->Type = NdType::makeInt(2, false); // Gap.
+    if (Case == 2)
+      High->Operands[0] = local(1);
+    if (Case == 3)
+      std::swap(High, Low);
+    if (Case >= 4) {
+      auto Base = Case == 4 ? HighExpr::makeLoad(local(0), NdType::makeInt(8))
+                            : HighExpr::makeCall("next_value", 0x4000, {});
+      Base->Type = NdType::makeInt(8);
+      High->Operands[0] = Low->Operands[0] = Base;
+    }
+    HighFunc F;
+    F.Body = {result(0, concatenate(High, Low))};
+    simplifyAllExprs(F.Body);
+    EXPECT_EQ(F.Body[0].RetVal->Op, NdOp::CONCAT) << Case;
+  }
+}
+
+TEST(HighControlFlowSemantics, ReconstructedEqualityKeepsOnlyFeasibleUses) {
+  auto F = relationalPhiCopy(true, true);
+  F.Body[2].Cond->Operands[1] =
+      concatenate(byteSlice(local(0), 4, 4), byteSlice(local(0), 0, 4));
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  simplifyAllExprs(F.Body);
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+  for (uint64_t Value : {uint64_t{0}, uint64_t{7}, UINT64_MAX})
+    EXPECT_EQ(execute(F, Value), Value == 7 ? 42u : 7u);
 }
 
 TEST(HighControlFlowSemantics, RetainedCopyKeepsDependenciesInEveryContext) {

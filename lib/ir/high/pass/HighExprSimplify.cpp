@@ -23,6 +23,64 @@
 
 namespace neverd {
 
+// Register reconstruction often concatenates adjacent byte slices of the
+// same scalar. Fold only direct local reads: two identical-looking loads or
+// calls need not observe the same value. Keep the result's integer type when
+// replacing a full-width reconstruction, including its unsigned interpretation.
+static ExprPtr joinLocalSlices(const ExprPtr &E) {
+  if (E->Kind != ExprKind::BinOp || E->Op != NdOp::CONCAT ||
+      E->Operands.size() != 2 || !E->Type || E->Type->Kind != NdTypeKind::Int ||
+      !E->Type->Size || E->Type->Size > 8 || !E->IntrinsicOutputs.empty() ||
+      E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return nullptr;
+  auto IsSlice = [](const ExprPtr &S) {
+    if (!S || S->Kind != ExprKind::BinOp || S->Op != NdOp::SUBBYTES ||
+        S->Operands.size() != 2 || !S->Type ||
+        S->Type->Kind != NdTypeKind::Int || !S->Type->Size ||
+        !S->IntrinsicOutputs.empty() ||
+        S->MemoryOrdering != NdMemoryOrdering::None ||
+        S->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    const auto &Base = S->Operands[0];
+    const auto &Offset = S->Operands[1];
+    return Base && Base->Kind == ExprKind::Var && Base->Operands.empty() &&
+           Base->IntrinsicOutputs.empty() && Base->Type &&
+           Base->Type->Kind == NdTypeKind::Int &&
+           Base->Type->Size == Base->Var.Size && Base->Type->Size <= 8 &&
+           Base->MemoryOrdering == NdMemoryOrdering::None &&
+           Base->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+           Offset && Offset->Kind == ExprKind::Const &&
+           Offset->Operands.empty() && Offset->Type &&
+           Offset->Type->Kind == NdTypeKind::Int &&
+           Offset->ConstVal <= Base->Type->Size &&
+           S->Type->Size <= Base->Type->Size - Offset->ConstVal;
+  };
+  const auto &High = E->Operands[0], &Low = E->Operands[1];
+  if (!IsSlice(High) || !IsSlice(Low) ||
+      !High->Operands[0]->structuralEq(*Low->Operands[0]) ||
+      High->Operands[0]->Type->IsSigned != Low->Operands[0]->Type->IsSigned ||
+      High->Operands[1]->ConstVal !=
+          Low->Operands[1]->ConstVal + Low->Type->Size ||
+      E->Type->Size != High->Type->Size + Low->Type->Size)
+    return nullptr;
+  const auto &Base = Low->Operands[0];
+  auto Result = std::make_shared<HighExpr>();
+  Result->Type = E->Type;
+  if (Low->Operands[1]->ConstVal == 0 && E->Type->Size == Base->Type->Size) {
+    if (E->Type->IsSigned == Base->Type->IsSigned)
+      return Base;
+    Result->Kind = ExprKind::Cast;
+    Result->CastTo = E->Type;
+    Result->Operands = {Base};
+  } else {
+    Result->Kind = ExprKind::BinOp;
+    Result->Op = NdOp::SUBBYTES;
+    Result->Operands = {Base, Low->Operands[1]};
+  }
+  return Result;
+}
+
 static void simplifyExprRecursive(ExprPtr &E,
                                   std::unordered_set<const HighExpr *> &Seen) {
   if (!E || !Seen.insert(E.get()).second)
@@ -35,6 +93,11 @@ static void simplifyExprRecursive(ExprPtr &E,
   // simplification cannot discard, duplicate, or move the access.
   if (E->hasOrderedMemoryAccess())
     return;
+
+  if (auto Joined = joinLocalSlices(E)) {
+    E = std::move(Joined);
+    return;
+  }
 
   if (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::BOOL_NOT &&
       !E->Operands.empty() && E->Operands[0]->Kind == ExprKind::UnaryOp &&
