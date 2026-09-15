@@ -20,6 +20,7 @@ using namespace neverd;
 
 namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
+void eliminateUnusedValues(std::vector<HighStmt> &);
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
 } // namespace neverd
 
@@ -1022,4 +1023,103 @@ int main(void) {
   EXPECT_NE(emit({Identity, Get})
                 .find("unsupported native callback calling convention"),
             std::string::npos);
+}
+
+TEST(HighCSourceCalls, DeadPhiCleanupPreservesConditionalEntryAndCallEffects) {
+  for (bool ExplicitElse : {false, true}) {
+    const auto Integer = NdType::makeInt(4);
+    auto Function =
+        returning("dead_phi_entry", HighExpr::makeConst(7, 4), {Integer});
+    Function.SourceTypeHint =
+        native("dead_phi_entry", Integer, {Integer}).Signature;
+    auto Return = Function.Body.back();
+    Return.Addr = 0x1300;
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = 0x1200;
+    HighStmt Exit = Jump;
+    Exit.GotoTarget = Return.Addr;
+    MedVar Dead;
+    Dead.Kind = MedVar::Temp;
+    Dead.Id = 10;
+    Dead.Size = 4;
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.IsPhiCopy = true;
+    Copy.Addr = Jump.GotoTarget;
+    Copy.Dst = HighExpr::makeVar(Dead, Integer);
+    Copy.Val = HighExpr::makeConst(42, 4);
+    auto Observe = [&](va_t Address, unsigned Value) {
+      HighStmt S;
+      S.Kind = StmtKind::Call;
+      S.Addr = Address;
+      S.CallExpr = call(native("record_branch", NdType::makeVoid(), {Integer}),
+                        NdType::makeVoid(), {HighExpr::makeConst(Value, 4)});
+      return S;
+    };
+    HighStmt Branch;
+    Branch.Kind = ExplicitElse ? StmtKind::IfElse : StmtKind::If;
+    Branch.Addr = Jump.GotoTarget;
+    Branch.Cond = parameter(0, Integer);
+    Branch.Body = {Copy, Observe(0x1204, 11), Exit};
+    if (ExplicitElse)
+      Branch.ElseBody = {Copy, Observe(0x1208, 23), Exit};
+    Function.Body = {Jump, Branch, Return};
+    eliminateUnusedValues(Function.Body);
+    coalesceBranchEntryStatements(Function);
+    compileAndRun(emit({Function}) + "\n#define HAS_ELSE " +
+                  std::to_string(ExplicitElse) + R"(
+static unsigned calls;
+static int last;
+void record_branch(int value) { ++calls; last = value; }
+int main(void) {
+    for (int value = -32; value <= 32; ++value) {
+        unsigned before = calls;
+        if (dead_phi_entry(value) != 7) return 1;
+        unsigned expected_calls = HAS_ELSE || value != 0;
+        if (calls - before != expected_calls) return 2;
+        if (expected_calls && last != (value ? 11 : 23)) return 3;
+    }
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, DeadPhiCleanupKeepsUnprovenNestedEntriesAmbiguous) {
+  for (bool Separated : {false, true}) {
+    auto Function = returning("unproven_dead_entry", HighExpr::makeConst(7, 4),
+                              {NdType::makeInt(4)});
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = 0x1200;
+    MedVar Dead;
+    Dead.Kind = MedVar::Temp;
+    Dead.Id = 10;
+    Dead.Size = 4;
+    HighStmt Copy;
+    Copy.Kind = StmtKind::Assign;
+    Copy.IsPhiCopy = Separated;
+    Copy.Addr = Jump.GotoTarget;
+    Copy.Dst = HighExpr::makeVar(Dead);
+    Copy.Val = HighExpr::makeConst(42, 4);
+    HighStmt Branch;
+    Branch.Kind = StmtKind::If;
+    Branch.Addr = Jump.GotoTarget;
+    Branch.Cond = parameter(0, NdType::makeInt(4));
+    if (Separated) {
+      HighStmt Separator;
+      Separator.Kind = StmtKind::Block;
+      Separator.Addr = 0x1210;
+      Branch.Body.push_back(Separator);
+    }
+    Branch.Body.push_back(Copy);
+    Function.Body = {Jump, Branch, Function.Body.back()};
+    eliminateUnusedValues(Function.Body);
+    coalesceBranchEntryStatements(Function);
+    unsigned Entries = 0;
+    walkStmts(Function.Body,
+              [&](const HighStmt &S) { Entries += S.Addr == 0x1200; });
+    EXPECT_EQ(Entries, 2u);
+  }
 }

@@ -310,6 +310,7 @@ static void preDCE(std::vector<HighStmt> &Stmts,
 }
 
 void eliminateUnusedValues(std::vector<HighStmt> &Stmts) {
+  coalesceBranchEntryStatements(Stmts);
   preDCE(Stmts, referencedStatementEntries(Stmts));
 }
 
@@ -441,6 +442,7 @@ static void iterativeDCE(HighFunc &Func,
 void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   ExprRecurseDepth = 0;
   breakStmtCycles(Func.Body);
+  coalesceBranchEntryStatements(Func.Body);
   const auto Entries = referencedStatementEntries(Func.Body);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 0: unreachable (" << Func.Name

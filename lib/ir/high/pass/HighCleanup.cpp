@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
 #include "neverd/ir/TargetRegInfo.h"
@@ -26,9 +27,9 @@
 
 namespace neverd {
 
-void coalesceBranchEntryStatements(HighFunc &Func) {
+void coalesceBranchEntryStatements(std::vector<HighStmt> &Stmts) {
   std::set<va_t> Targets;
-  walkStmts(Func.Body, [&](const HighStmt &Statement) {
+  walkStmts(Stmts, [&](const HighStmt &Statement) {
     if (Statement.Kind == StmtKind::Goto && Statement.GotoTarget &&
         Statement.GotoTarget != InvalidVA)
       Targets.insert(Statement.GotoTarget);
@@ -95,7 +96,11 @@ void coalesceBranchEntryStatements(HighFunc &Func) {
     }
     Body = std::move(Result);
   };
-  Group(Func.Body);
+  Group(Stmts);
+}
+
+void coalesceBranchEntryStatements(HighFunc &Func) {
+  coalesceBranchEntryStatements(Func.Body);
 }
 
 //===----------------------------------------------------------------------===//

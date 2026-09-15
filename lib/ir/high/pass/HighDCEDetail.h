@@ -68,6 +68,9 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 
 void simplifyAllExprs(std::vector<HighStmt> &Stmts);
 void removeUnreachableCode(std::vector<HighStmt> &Stmts);
+/// Normalize native entry ownership before dead edge copies lose their PHI
+/// provenance. Uses the same coalescer as final source normalization.
+void coalesceBranchEntryStatements(std::vector<HighStmt> &Stmts);
 void eliminateUnusedValues(std::vector<HighStmt> &Stmts);
 
 //===----------------------------------------------------------------------===//
