@@ -72,6 +72,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
          bool(Binding.Format) == bool(Expected.Format) &&
          (!Binding.Format ||
           (Binding.Format->FixedCount == Expected.Format->FixedCount &&
+           Binding.Format->Syntax == Expected.Format->Syntax &&
            Binding.Format->FormatParameter ==
                Expected.Format->FormatParameter &&
            Binding.Format->FormatAddress == Expected.Format->FormatAddress)) &&
@@ -818,6 +819,7 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
                 : darwinFormattedSourceCallHint(Image, Binding.TargetAddress,
                                                 Format.FormatAddress);
     if (!Expected || !Expected->Format || Binding.DoesNotReturn ||
+        Format.Syntax != Expected->Format->Syntax ||
         Format.FixedCount != Expected->Format->FixedCount ||
         Format.FormatParameter != Expected->Format->FormatParameter ||
         Format.FormatParameter >= Expression.Operands.size() ||

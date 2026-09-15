@@ -63,6 +63,7 @@ enum class RuntimeFixture {
   SharedFrameworks,
   AggregateRecords,
   WordRecords,
+  PredicateFormats,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -91,6 +92,7 @@ void verifyRuntime(bool Chained,
   const bool SharedFrameworks = FixtureKind == RuntimeFixture::SharedFrameworks;
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
+  const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -139,6 +141,7 @@ void verifyRuntime(bool Chained,
                         : SharedFrameworks   ? "ObjCSharedFrameworks.m"
                         : AggregateRecords   ? "ObjCAggregateRecords.m"
                         : WordRecords        ? "ObjCWordRecords.m"
+                        : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : SavedScalars       ? "ObjCSavedScalars.m"
                         : ReceiverResults    ? "ObjCReceiverResults.m"
                         : ReceiverAliases    ? "ObjCReceiverAliases.m"
@@ -170,6 +173,7 @@ void verifyRuntime(bool Chained,
                         : SharedFrameworks  ? "ObjCSharedFrameworksHarness.m"
                         : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
+                        : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : SavedScalars      ? "ObjCSavedScalarsHarness.m"
                         : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
                         : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
@@ -340,6 +344,7 @@ void verifyRuntime(bool Chained,
                              : ReceiverAliases    ? 5U
                              : AggregateRecords   ? 8U
                              : WordRecords        ? 11U
+                             : PredicateFormats   ? 8U
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
@@ -402,6 +407,9 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (PredicateFormats)
+    Remaining = {"object:", "key:value:", "minimum:maximum:", "count:",
+                 "score:",  "quoted:",    "always",           "expression:"};
   if (ReceiverFields)
     Remaining = {"NDFieldOwner-errorCode", "NDFieldOwner-nestedErrorCode",
                  "NDFieldOwner-errorCodeAfterCall:", "NDFieldUnrelated-code"};
@@ -554,6 +562,7 @@ void verifyRuntime(bool Chained,
                   : SharedFrameworks   ? "NDFrameworkCalls"
                   : AggregateRecords   ? "NDRecords"
                   : WordRecords        ? "NDWordRecords"
+                  : PredicateFormats   ? "NDPredicateFormats"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
@@ -696,12 +705,13 @@ void verifyRuntime(bool Chained,
   if (DiagnosticReports)
     EXPECT_FALSE(IdentityHelpers.empty());
   else
-    EXPECT_EQ(IdentityHelpers.size(), (Associations      ? 2U
-                                       : ConstantStrings ? 6U
-                                       : Foundation      ? 6U
-                                       : SwiftLiterals   ? 2U
-                                       : StoredStrings   ? 4U
-                                                         : 0U) +
+    EXPECT_EQ(IdentityHelpers.size(), (Associations       ? 2U
+                                       : ConstantStrings  ? 6U
+                                       : Foundation       ? 6U
+                                       : SwiftLiterals    ? 2U
+                                       : StoredStrings    ? 4U
+                                       : PredicateFormats ? 8U
+                                                          : 0U) +
                                           StorageNames.size());
   if (!IdentityHelpers.empty()) {
     std::string Shared = "#include <stdint.h>\n";
@@ -805,6 +815,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : PredicateFormats ? "predicate-checks=30720\nquoted-placeholders="
+                           "pass\nscalar-widths=pass\n"
       : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
                            "pass\nobject-identity=pass\n"
       : SavedScalars
@@ -1327,6 +1339,16 @@ TEST(ObjCRuntimeSource, WordRecordsPreserveBitsPointersCallsAndStackArguments) {
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::WordRecords));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, PredicateFormatsPreserveValuesAndQuotedPlaceholders) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::PredicateFormats));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif

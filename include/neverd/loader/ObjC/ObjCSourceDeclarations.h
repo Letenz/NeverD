@@ -59,11 +59,13 @@ objcReceiverCallResultTypeHint(const BinaryImage &Image,
 struct ObjCFormatDeclaration {
   SourceFunctionTypeHint Signature;
   unsigned FormatParameter = 0;
+  SourceCallTypeHint::FormatSyntax Syntax =
+      SourceCallTypeHint::FormatSyntax::NSString;
 };
 
-/// A compiler-declared NSString format contract, after agreement with every
-/// runtime and protocol declaration. Signature contains only the fixed prefix;
-/// callers must prove the format and assign all promoted variadic arguments.
+/// An NSString attribute or documented predicate-language contract, verified
+/// against SDK declarations and every runtime/protocol declaration. Signature
+/// contains the fixed prefix; callers must prove all actual format arguments.
 std::optional<ObjCFormatDeclaration>
 objcSelectorFormatDeclaration(const BinaryImage &Image,
                               llvm::StringRef Selector);

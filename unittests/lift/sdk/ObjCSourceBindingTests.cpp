@@ -1611,12 +1611,12 @@ TEST(ObjCSourceBindings, FormatArgumentsRequireCompleteConsistentSlots) {
 }
 
 namespace {
-ConstantStringFixture formatFixture(Arch Architecture) {
+ConstantStringFixture formatFixture(Arch Architecture,
+                                    const std::string &Format = "%@ %d %.2f") {
   ConstantStringFixture F;
   F.Image.Arch = Architecture;
   F.Image.DynInfo.NeededLibs.push_back(
       "/System/Library/Frameworks/Foundation.framework/Foundation");
-  const std::string Format = "%@ %d %.2f";
   std::copy(Format.begin(), Format.end(), F.Image.Segments[1].Data.begin());
   F.Image.Segments[1].Data[Format.size()] = 0;
   llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 24,
@@ -1624,6 +1624,89 @@ ConstantStringFixture formatFixture(Arch Architecture) {
   return F;
 }
 } // namespace
+
+TEST(ObjCSourceBindings,
+     PredicateFormatsRespectQuotedTokensAndScalarPromotions) {
+  auto Parse = [](llvm::StringRef Text) {
+    return objcFormatArgumentTypes(
+        std::vector<uint16_t>(Text.begin(), Text.end()),
+        SourceCallTypeHint::FormatSyntax::Predicate);
+  };
+  const auto Types = Parse("%K == %@ AND n > %d AND t < %ld AND f > %f");
+  ASSERT_TRUE(Types);
+  ASSERT_EQ(Types->size(), 5U);
+  EXPECT_EQ((*Types)[0]->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ((*Types)[1]->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ((*Types)[2]->Size, 4);
+  EXPECT_TRUE((*Types)[2]->IsSigned);
+  EXPECT_EQ((*Types)[3]->Size, 8);
+  EXPECT_EQ((*Types)[4]->Kind, NdTypeKind::Float);
+  const auto Quoted = Parse("\"%@ %d\" == '%K' OR SELF == %@");
+  ASSERT_TRUE(Quoted);
+  ASSERT_EQ(Quoted->size(), 1U);
+  EXPECT_EQ(Quoted->front()->Kind, NdTypeKind::Ptr);
+  ASSERT_TRUE(Parse("TRUEPREDICATE"));
+  EXPECT_TRUE(Parse("TRUEPREDICATE")->empty());
+  for (const char *Bad :
+       {"'unclosed %@", "\"unclosed %K", "'escaped\\' %@'", "%2$@", "%*d",
+        "%.2f", "%n", "%s", "%p", "%lK", "%Lf", "%", "%h", "%ll", "%%", "%llf"})
+    EXPECT_FALSE(Parse(Bad)) << Bad;
+  std::string TooMany;
+  for (unsigned I = 0; I < 65; ++I)
+    TooMany += "%@ ";
+  EXPECT_FALSE(Parse(TooMany));
+  EXPECT_FALSE(
+      objcFormatArgumentTypes(std::vector<uint16_t>{'\'', 0, '\''},
+                              SourceCallTypeHint::FormatSyntax::Predicate));
+  EXPECT_FALSE(objcFormatArgumentTypes(
+      {}, static_cast<SourceCallTypeHint::FormatSyntax>(255)));
+}
+
+TEST(ObjCSourceBindings, PredicateCallsRevalidateSyntaxDeclarationAndImage) {
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (const char *Selector :
+         {"predicateWithFormat:", "expressionWithFormat:"}) {
+      auto F = formatFixture(A, "'quoted %@' == %@");
+      const auto Declaration = objcSelectorFormatDeclaration(F.Image, Selector);
+      ASSERT_TRUE(Declaration);
+      EXPECT_EQ(Declaration->Syntax,
+                SourceCallTypeHint::FormatSyntax::Predicate);
+      EXPECT_FALSE(objcSelectorSourceTypeHint(F.Image, Selector));
+      const auto Hint = objcFormattedSourceCallHint(F.Image, Selector, 0x2000);
+      ASSERT_TRUE(Hint);
+      ASSERT_TRUE(Hint->Format);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 4U);
+      auto Call = HighExpr::makeCall("objc_msgSend", 0, {});
+      Call->Type = Hint->Signature.ReturnType;
+      for (unsigned I = 0; I < 4; ++I)
+        Call->Operands.push_back(HighExpr::makeConst(I == 2 ? 0x2000 : 0, 8));
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+      auto Bad = std::make_shared<SourceCallTypeHint>(*Hint);
+      Bad->Format->Syntax = SourceCallTypeHint::FormatSyntax::NSString;
+      Call->SourceCallHint = Bad;
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      ObjCMethod Method;
+      Method.Selector = Selector;
+      Method.TypeHint = Declaration->Signature;
+      F.Image.ObjCMethods.push_back(Method);
+      EXPECT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+      F.Image.ObjCMethods.back().TypeHint->Parameters.back().Type =
+          NdType::makeInt(8);
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+      F.Image.ObjCMethods.clear();
+      F.Image.Segments[1].Data[0] = ' ';
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+      F.Image.Segments[1].Data[0] = '\'';
+      F.Image.Segments[1].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+      F.Image.Segments[1].Flags = SegmentFlags::Readable;
+      F.Image.DynInfo.NeededLibs.clear();
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
+    }
+}
 
 TEST(ObjCSourceBindings, FormattedMessagesRevalidateFormatAndActualArguments) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {

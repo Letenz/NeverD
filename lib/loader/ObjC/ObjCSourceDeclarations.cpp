@@ -596,8 +596,11 @@ objcSelectorFormatDeclaration(const BinaryImage &Image,
     const char *X64;
     unsigned FormatParameter;
     unsigned FixedCount;
+    SourceCallTypeHint::FormatSyntax Syntax =
+        SourceCallTypeHint::FormatSyntax::NSString;
   } Formats[] = {
 #include "ObjCFormatDeclarations.inc"
+#include "ObjCPredicateDeclarations.inc"
   };
   std::optional<ObjCFormatDeclaration> Result;
   for (const auto &D : Formats) {
@@ -619,7 +622,8 @@ objcSelectorFormatDeclaration(const BinaryImage &Image,
     Signature = selectorSourceTypeHint(Image, Selector, &*Signature);
     if (!Signature)
       return std::nullopt;
-    Result = ObjCFormatDeclaration{std::move(*Signature), D.FormatParameter};
+    Result = ObjCFormatDeclaration{std::move(*Signature), D.FormatParameter,
+                                   D.Syntax};
   }
   return Result;
 }

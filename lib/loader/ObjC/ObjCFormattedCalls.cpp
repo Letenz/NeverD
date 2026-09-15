@@ -9,9 +9,71 @@
 #include <map>
 
 namespace neverd {
+namespace {
+// Predicate substitutions are tokens outside quoted literals. Extract only
+// the proven conversion tokens, then share the promoted scalar type rules
+// with NSString. The original string still goes to the framework parser.
+std::optional<std::vector<uint16_t>>
+predicateConversions(llvm::ArrayRef<uint16_t> Format) {
+  std::vector<uint16_t> Result;
+  uint16_t Quote = 0;
+  for (size_t I = 0; I < Format.size(); ++I) {
+    const auto C = Format[I];
+    // Escape sequences can affect token boundaries; they need their own
+    // lexical contract before their argument consumption can be inferred.
+    if (C == '\\')
+      return std::nullopt;
+    if (Quote) {
+      if (C == Quote)
+        Quote = 0;
+      continue;
+    }
+    if (C == '\'' || C == '"') {
+      Quote = C;
+      continue;
+    }
+    if (C != '%')
+      continue;
+    Result.push_back('%');
+    if (++I == Format.size())
+      return std::nullopt;
+    if (Format[I] == 'K' || Format[I] == '@') {
+      Result.push_back('@');
+      continue;
+    }
+    // Width, precision, positional, and string-storage modifiers are not
+    // established by this predicate contract. No guessed argument slots.
+    if (Format[I] < 128 &&
+        llvm::StringRef("hlqjzt").contains(char(Format[I]))) {
+      const auto Length = Format[I];
+      Result.push_back(Length);
+      if (++I == Format.size())
+        return std::nullopt;
+      if ((Length == 'h' || Length == 'l') && Format[I] == Length) {
+        Result.push_back(Length);
+        if (++I == Format.size())
+          return std::nullopt;
+      }
+    }
+    if (Format[I] >= 128 ||
+        !llvm::StringRef("diouxXaAeEfFgG").contains(char(Format[I])))
+      return std::nullopt;
+    Result.push_back(Format[I]);
+  }
+  return Quote ? std::nullopt : std::optional(std::move(Result));
+}
+} // namespace
+
 std::optional<std::vector<TypeRef>>
-objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format) {
+objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
+                        SourceCallTypeHint::FormatSyntax Syntax) {
   if (Format.size() > 65536 || llvm::is_contained(Format, uint16_t(0)))
+    return std::nullopt;
+  if (Syntax == SourceCallTypeHint::FormatSyntax::Predicate) {
+    auto Tokens = predicateConversions(Format);
+    return Tokens ? objcFormatArgumentTypes(*Tokens) : std::nullopt;
+  }
+  if (Syntax != SourceCallTypeHint::FormatSyntax::NSString)
     return std::nullopt;
   size_t Cursor = 0;
   unsigned Sequential = 0;
@@ -129,10 +191,11 @@ objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format) {
 
 std::optional<SourceCallTypeHint>
 bindObjCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
-                        unsigned FormatParameter, va_t FormatAddress) {
+                        unsigned FormatParameter, va_t FormatAddress,
+                        SourceCallTypeHint::FormatSyntax Syntax) {
   auto Format = readObjCConstantString(Image, FormatAddress);
   auto Arguments =
-      Format ? objcFormatArgumentTypes(Format->Units) : std::nullopt;
+      Format ? objcFormatArgumentTypes(Format->Units, Syntax) : std::nullopt;
   if (!Arguments || FormatParameter >= Result.Signature.Parameters.size() ||
       !Result.Signature.Parameters[FormatParameter].Type ||
       Result.Signature.Parameters[FormatParameter].Type->Kind !=
@@ -141,7 +204,7 @@ bindObjCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
     return std::nullopt;
   const auto Fixed = unsigned(Result.Signature.Parameters.size());
   Result.Format = SourceCallTypeHint::FormatArguments{Fixed, FormatParameter,
-                                                      FormatAddress};
+                                                      FormatAddress, Syntax};
   for (const auto &Type : *Arguments)
     Result.Signature.Parameters.push_back({"format_arg", Type});
   std::string Diagnostic;
@@ -163,6 +226,7 @@ objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
   Call.TargetName = "objc_msgSend";
   Call.Signature = std::move(Declaration->Signature);
   return bindObjCFormatArguments(Image, std::move(Call),
-                                 Declaration->FormatParameter, FormatAddress);
+                                 Declaration->FormatParameter, FormatAddress,
+                                 Declaration->Syntax);
 }
 } // namespace neverd

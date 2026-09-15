@@ -9,16 +9,21 @@
 namespace neverd {
 struct BinaryImage;
 
-/// Promoted scalar arguments of a bounded NSString format. Positional slots
-/// must be contiguous and consistent; malformed or unsupported forms fail.
+/// Promoted scalar arguments of a bounded declared format. NSString positional
+/// slots must agree; predicate substitutions exclude quoted literals. Malformed
+/// and unsupported forms fail instead of supplying partial argument lists.
 std::optional<std::vector<TypeRef>>
-objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format);
+objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
+                        SourceCallTypeHint::FormatSyntax Syntax =
+                            SourceCallTypeHint::FormatSyntax::NSString);
 
-/// Complete a declared message or C call using the same NSString format
-/// contract. The caller supplies the independently validated fixed signature.
+/// Complete a declared message or C call using its format-language contract.
+/// The caller supplies the independently validated fixed signature.
 std::optional<SourceCallTypeHint>
 bindObjCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Call,
-                        unsigned FormatParameter, va_t FormatAddress);
+                        unsigned FormatParameter, va_t FormatAddress,
+                        SourceCallTypeHint::FormatSyntax Syntax =
+                            SourceCallTypeHint::FormatSyntax::NSString);
 
 /// Bind a dynamic message using an immutable format object and a declaration
 /// agreed by the SDK and every matching runtime/protocol method.

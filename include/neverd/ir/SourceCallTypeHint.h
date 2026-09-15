@@ -130,7 +130,8 @@ struct SourceCallTypeHint {
   /// reads at most that nonnegative count, never writes/retains the pointer,
   /// and does not observe its identity. These are call effects, not ABI types.
   std::vector<std::pair<unsigned, unsigned>> BorrowedByteInputs;
-  /// Proven actual arguments of an NSString format call. Signature contains
+  enum class FormatSyntax { NSString, Predicate };
+  /// Proven actual arguments of a declared format call. Signature contains
   /// every supplied value at its physical location; only FixedCount values
   /// belong in the emitted prototype. Revalidate the format object's identity
   /// and compiler-derived declaration before publishing source.
@@ -138,6 +139,7 @@ struct SourceCallTypeHint {
     unsigned FixedCount = 0;
     unsigned FormatParameter = 0;
     va_t FormatAddress = 0;
+    FormatSyntax Syntax = FormatSyntax::NSString;
   };
   std::optional<FormatArguments> Format;
   /// Restricts declaration agreement using revalidated receiver provenance.
