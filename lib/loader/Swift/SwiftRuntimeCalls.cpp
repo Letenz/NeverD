@@ -80,6 +80,12 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
       return NdType::makePtr(NdType::makeVoid());
     case 'z':
       return NdType::makeInt(8, false);
+    case 'u':
+      return NdType::makeInt(4, false);
+    case 'b':
+      // Catalog boolean results have an explicit zero-extension contract.
+      // Keep their complete low byte as an unsigned source carrier.
+      return NdType::makeInt(1, false);
     default:
       return {};
     }

@@ -77,6 +77,7 @@ enum class RuntimeFixture {
   IncomingResults,
   NativeContext,
   SwiftTypeLookup,
+  SwiftIntegerRuntime,
   ReadOnlyTables,
   ScalarConstants,
   SwiftLiterals,
@@ -109,6 +110,8 @@ void verifyRuntime(bool Chained,
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
   const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
+  const bool SwiftIntegerRuntime =
+      FixtureKind == RuntimeFixture::SwiftIntegerRuntime;
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
@@ -164,60 +167,63 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
-                        : Equality           ? "ObjCEquality.m"
-                        : FloatingSaves      ? "ObjCFloatingSaves.m"
-                        : SharedFrameworks   ? "ObjCSharedFrameworks.m"
-                        : AggregateRecords   ? "ObjCAggregateRecords.m"
-                        : WordRecords        ? "ObjCWordRecords.m"
-                        : PredicateFormats   ? "ObjCPredicateFormats.m"
-                        : CRecords           ? "ObjCCRecordCalls.m"
-                        : SwiftTypeLookup    ? "ObjCSwiftTypeLookup.m"
-                        : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
-                        : IncomingResults    ? "ObjCIncomingResults.m"
-                        : NativeContext      ? "ObjCNativeContext.m"
-                        : FramePadding       ? "ObjCFramePadding.m"
-                        : FrameSelectors     ? "ObjCFrameSelectors.m"
-                        : LoopEdges          ? "ObjCLoopEdges.m"
-                        : SwitchEffects      ? "ObjCSwitchEffects.m"
-                        : InvariantLoops     ? "ObjCInvariantLoops.m"
-                        : MetadataCalls      ? "ObjCMetadataCalls.m"
-                        : SystemCalls        ? "ObjCSystemCalls.m"
-                        : SavedScalars       ? "ObjCSavedScalars.m"
-                        : ReceiverResults    ? "ObjCReceiverResults.m"
-                        : ReceiverAliases    ? "ObjCReceiverAliases.m"
-                        : ReceiverFields     ? "ObjCReceiverFields.m"
-                        : ReceiverTypes      ? "ObjCReceiverTypes.m"
-                        : DynamicProperties  ? "ObjCDynamicProperties.m"
-                        : CoreData           ? "ObjCCoreDataCalls.m"
-                        : ReadOnlyTables     ? "ObjCReadOnlyTables.m"
-                        : ScalarConstants    ? "ObjCScalarConstants.m"
-                        : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
-                        : StoredStrings      ? "ObjCStoredStrings.m"
-                        : SwiftAllocation    ? "ObjCSwiftAllocation.m"
-                        : ProtocolReferences ? "ObjCProtocolReferences.m"
-                        : IndirectFields     ? "ObjCIndirectFields.m"
-                        : SystemData         ? "ObjCSystemData.m"
-                        : Graphics           ? "ObjCGraphicsCalls.m"
-                        : BlockLifetimes     ? "ObjCBlockLifetimes.m"
-                        : Foundation         ? "ObjCFoundationCalls.m"
-                        : Protocols          ? "ObjCProtocols.m"
-                        : DiagnosticReports  ? "ObjCDiagnosticReports.m"
-                        : SwiftStrings       ? "ObjCSwiftString.m"
-                        : UnfairLocks        ? "ObjCUnfairLocks.m"
-                        : ConstantObjects    ? "ObjCConstantObjects.m"
-                        : ConstantStrings    ? "ObjCConstantStrings.m"
-                        : SwiftCalls         ? "ObjCSwiftRuntime.m"
-                        : Associations       ? "ObjCAssociations.m"
-                                             : "ObjCARC.m";
-  const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
-                        : Equality          ? "ObjCEqualityHarness.m"
-                        : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
-                        : SharedFrameworks  ? "ObjCSharedFrameworksHarness.m"
-                        : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
-                        : WordRecords       ? "ObjCWordRecordsHarness.m"
-                        : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
-                        : CRecords          ? "ObjCCRecordCallsHarness.m"
+  const char *Fixture = DarwinDeclarations    ? "ObjCDarwinDeclarations.m"
+                        : Equality            ? "ObjCEquality.m"
+                        : FloatingSaves       ? "ObjCFloatingSaves.m"
+                        : SharedFrameworks    ? "ObjCSharedFrameworks.m"
+                        : AggregateRecords    ? "ObjCAggregateRecords.m"
+                        : WordRecords         ? "ObjCWordRecords.m"
+                        : PredicateFormats    ? "ObjCPredicateFormats.m"
+                        : CRecords            ? "ObjCCRecordCalls.m"
+                        : SwiftIntegerRuntime ? "ObjCSwiftIntegerRuntime.m"
+                        : SwiftTypeLookup     ? "ObjCSwiftTypeLookup.m"
+                        : NativeReturnPaths   ? "ObjCNativeReturnPaths.m"
+                        : IncomingResults     ? "ObjCIncomingResults.m"
+                        : NativeContext       ? "ObjCNativeContext.m"
+                        : FramePadding        ? "ObjCFramePadding.m"
+                        : FrameSelectors      ? "ObjCFrameSelectors.m"
+                        : LoopEdges           ? "ObjCLoopEdges.m"
+                        : SwitchEffects       ? "ObjCSwitchEffects.m"
+                        : InvariantLoops      ? "ObjCInvariantLoops.m"
+                        : MetadataCalls       ? "ObjCMetadataCalls.m"
+                        : SystemCalls         ? "ObjCSystemCalls.m"
+                        : SavedScalars        ? "ObjCSavedScalars.m"
+                        : ReceiverResults     ? "ObjCReceiverResults.m"
+                        : ReceiverAliases     ? "ObjCReceiverAliases.m"
+                        : ReceiverFields      ? "ObjCReceiverFields.m"
+                        : ReceiverTypes       ? "ObjCReceiverTypes.m"
+                        : DynamicProperties   ? "ObjCDynamicProperties.m"
+                        : CoreData            ? "ObjCCoreDataCalls.m"
+                        : ReadOnlyTables      ? "ObjCReadOnlyTables.m"
+                        : ScalarConstants     ? "ObjCScalarConstants.m"
+                        : SwiftLiterals       ? "ObjCSwiftLiteralStrings.m"
+                        : StoredStrings       ? "ObjCStoredStrings.m"
+                        : SwiftAllocation     ? "ObjCSwiftAllocation.m"
+                        : ProtocolReferences  ? "ObjCProtocolReferences.m"
+                        : IndirectFields      ? "ObjCIndirectFields.m"
+                        : SystemData          ? "ObjCSystemData.m"
+                        : Graphics            ? "ObjCGraphicsCalls.m"
+                        : BlockLifetimes      ? "ObjCBlockLifetimes.m"
+                        : Foundation          ? "ObjCFoundationCalls.m"
+                        : Protocols           ? "ObjCProtocols.m"
+                        : DiagnosticReports   ? "ObjCDiagnosticReports.m"
+                        : SwiftStrings        ? "ObjCSwiftString.m"
+                        : UnfairLocks         ? "ObjCUnfairLocks.m"
+                        : ConstantObjects     ? "ObjCConstantObjects.m"
+                        : ConstantStrings     ? "ObjCConstantStrings.m"
+                        : SwiftCalls          ? "ObjCSwiftRuntime.m"
+                        : Associations        ? "ObjCAssociations.m"
+                                              : "ObjCARC.m";
+  const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
+                        : Equality         ? "ObjCEqualityHarness.m"
+                        : FloatingSaves    ? "ObjCFloatingSavesHarness.m"
+                        : SharedFrameworks ? "ObjCSharedFrameworksHarness.m"
+                        : AggregateRecords ? "ObjCAggregateRecordsHarness.m"
+                        : WordRecords      ? "ObjCWordRecordsHarness.m"
+                        : PredicateFormats ? "ObjCPredicateFormatsHarness.m"
+                        : CRecords         ? "ObjCCRecordCallsHarness.m"
+                        : SwiftIntegerRuntime
+                            ? "ObjCSwiftIntegerRuntimeHarness.m"
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : IncomingResults   ? "ObjCIncomingResultsHarness.m"
@@ -312,7 +318,7 @@ void verifyRuntime(bool Chained,
   if (NativePointers)
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
-      SwiftTypeLookup)
+      SwiftTypeLookup || SwiftIntegerRuntime)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -404,50 +410,51 @@ void verifyRuntime(bool Chained,
     EXPECT_EQ(Rejected, 1U);
     return;
   }
-  ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
-                             : Equality           ? 6U
-                             : FloatingSaves      ? 2U
-                             : SharedFrameworks   ? 11U
-                             : SavedScalars       ? 13U
-                             : ReceiverResults    ? 8U
-                             : ReceiverAliases    ? 5U
-                             : AggregateRecords   ? 8U
-                             : WordRecords        ? 11U
-                             : PredicateFormats   ? 8U
-                             : CRecords           ? CRecordMethods
-                             : SwiftTypeLookup    ? 1U
-                             : NativeReturnPaths  ? 1U
-                             : IncomingResults    ? 2U
-                             : NativeContext      ? 2U
-                             : FramePadding       ? 5U
-                             : FrameSelectors     ? 1U
-                             : LoopEdges          ? 1U
-                             : SwitchEffects      ? 1U
-                             : InvariantLoops     ? 2U
-                             : MetadataCalls      ? 8U
-                             : SystemCalls        ? 11U
-                             : ReceiverFields     ? 4U
-                             : ReceiverTypes      ? 9U
-                             : DynamicProperties  ? 6U
-                             : CoreData           ? 3U
-                             : ReadOnlyTables     ? 4U
-                             : ScalarConstants    ? 6U
-                             : SwiftLiterals      ? 3U
-                             : StoredStrings      ? 4U
-                             : SwiftAllocation    ? 4U
-                             : ProtocolReferences ? 4U
-                             : IndirectFields     ? 5U
-                             : SystemData         ? 9U
-                             : Graphics           ? 6U
-                             : BlockLifetimes     ? (ManualBlocks ? 6U : 5U)
-                             : Foundation         ? 13U
-                             : Protocols          ? 6U
-                             : DiagnosticReports  ? 5U
-                             : SwiftStrings       ? 2U
-                             : ConstantObjects    ? 5U
-                             : ConstantStrings    ? 12U
-                             : SwiftCalls         ? 9U
-                                                  : 7U);
+  ASSERT_EQ(Methods->size(), DarwinDeclarations    ? 19U
+                             : Equality            ? 6U
+                             : FloatingSaves       ? 2U
+                             : SharedFrameworks    ? 11U
+                             : SavedScalars        ? 13U
+                             : ReceiverResults     ? 8U
+                             : ReceiverAliases     ? 5U
+                             : AggregateRecords    ? 8U
+                             : WordRecords         ? 11U
+                             : PredicateFormats    ? 8U
+                             : CRecords            ? CRecordMethods
+                             : SwiftIntegerRuntime ? 2U
+                             : SwiftTypeLookup     ? 1U
+                             : NativeReturnPaths   ? 1U
+                             : IncomingResults     ? 2U
+                             : NativeContext       ? 2U
+                             : FramePadding        ? 5U
+                             : FrameSelectors      ? 1U
+                             : LoopEdges           ? 1U
+                             : SwitchEffects       ? 1U
+                             : InvariantLoops      ? 2U
+                             : MetadataCalls       ? 8U
+                             : SystemCalls         ? 11U
+                             : ReceiverFields      ? 4U
+                             : ReceiverTypes       ? 9U
+                             : DynamicProperties   ? 6U
+                             : CoreData            ? 3U
+                             : ReadOnlyTables      ? 4U
+                             : ScalarConstants     ? 6U
+                             : SwiftLiterals       ? 3U
+                             : StoredStrings       ? 4U
+                             : SwiftAllocation     ? 4U
+                             : ProtocolReferences  ? 4U
+                             : IndirectFields      ? 5U
+                             : SystemData          ? 9U
+                             : Graphics            ? 6U
+                             : BlockLifetimes      ? (ManualBlocks ? 6U : 5U)
+                             : Foundation          ? 13U
+                             : Protocols           ? 6U
+                             : DiagnosticReports   ? 5U
+                             : SwiftStrings        ? 2U
+                             : ConstantObjects     ? 5U
+                             : ConstantStrings     ? 12U
+                             : SwiftCalls          ? 9U
+                                                   : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
@@ -498,6 +505,8 @@ void verifyRuntime(bool Chained,
                  "find:needle:"};
   if (SwiftTypeLookup)
     Remaining = {"lookup:length:"};
+  if (SwiftIntegerRuntime)
+    Remaining = {"retainObject:times:", "object:canCastToClass:"};
   if (NativeReturnPaths)
     Remaining = {"adjusted:choose:output:"};
   if (IncomingResults)
@@ -693,47 +702,48 @@ void verifyRuntime(bool Chained,
   std::string Install =
       "static void installRecovered(void) {\n"
       "Class cls = objc_getClass(\"" +
-      std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
-                  : SavedScalars       ? "NDSavedValues"
-                  : SharedFrameworks   ? "NDFrameworkCalls"
-                  : AggregateRecords   ? "NDRecords"
-                  : WordRecords        ? "NDWordRecords"
-                  : PredicateFormats   ? "NDPredicateFormats"
-                  : CRecords           ? "NDCCRecords"
-                  : SwiftTypeLookup    ? "NDSwiftTypeLookup"
-                  : NativeReturnPaths  ? "NDNativeReturnPaths"
-                  : IncomingResults    ? "NDIncomingResults"
-                  : NativeContext      ? "NDNativeContext"
-                  : FramePadding       ? "NDFramePadding"
-                  : FrameSelectors     ? "NDFrameSelectors"
-                  : LoopEdges          ? "NDLoopEdges"
-                  : SwitchEffects      ? "NDSwitchEffects"
-                  : InvariantLoops     ? "NDInvariantLoops"
-                  : MetadataCalls      ? "NDMetadataCalls"
-                  : SystemCalls        ? "NDSystemCalls"
-                  : DynamicProperties  ? "NDPropertyDriver"
-                  : CoreData           ? "NDCoreDataCalls"
-                  : ReadOnlyTables     ? "NDReadOnlyTables"
-                  : ScalarConstants    ? "NDScalarConstants"
-                  : Equality           ? "NDEquality"
-                  : FloatingSaves      ? "NDFloatingSaves"
-                  : SwiftLiterals      ? "NDSwiftLiteralStrings"
-                  : StoredStrings      ? "NDStoredStrings"
-                  : SwiftAllocation    ? "NDSwiftAllocation"
-                  : ProtocolReferences ? "NDProtocolReferences"
-                  : IndirectFields     ? "NDIndirectFields"
-                  : SystemData         ? "NDSystemData"
-                  : Graphics           ? "NDGraphicsCalls"
-                  : BlockLifetimes     ? "NDBlockFactory"
-                  : Foundation         ? "NDFoundationCalls"
-                  : Protocols          ? "NDProtocolCalls"
-                  : DiagnosticReports  ? "NDDiagnosticReports"
-                  : SwiftStrings       ? "NDSwiftString"
-                  : UnfairLocks        ? "NDUnfairLocks"
-                  : ConstantObjects    ? "NDConstantObjects"
-                  : ConstantStrings    ? "NDConstantStrings"
-                  : SwiftCalls         ? "NDSwiftRuntimeCalls"
-                                       : "NDARCBox") +
+      std::string(DarwinDeclarations    ? "NDDarwinDeclarations"
+                  : SavedScalars        ? "NDSavedValues"
+                  : SharedFrameworks    ? "NDFrameworkCalls"
+                  : AggregateRecords    ? "NDRecords"
+                  : WordRecords         ? "NDWordRecords"
+                  : PredicateFormats    ? "NDPredicateFormats"
+                  : CRecords            ? "NDCCRecords"
+                  : SwiftIntegerRuntime ? "NDSwiftIntegerRuntime"
+                  : SwiftTypeLookup     ? "NDSwiftTypeLookup"
+                  : NativeReturnPaths   ? "NDNativeReturnPaths"
+                  : IncomingResults     ? "NDIncomingResults"
+                  : NativeContext       ? "NDNativeContext"
+                  : FramePadding        ? "NDFramePadding"
+                  : FrameSelectors      ? "NDFrameSelectors"
+                  : LoopEdges           ? "NDLoopEdges"
+                  : SwitchEffects       ? "NDSwitchEffects"
+                  : InvariantLoops      ? "NDInvariantLoops"
+                  : MetadataCalls       ? "NDMetadataCalls"
+                  : SystemCalls         ? "NDSystemCalls"
+                  : DynamicProperties   ? "NDPropertyDriver"
+                  : CoreData            ? "NDCoreDataCalls"
+                  : ReadOnlyTables      ? "NDReadOnlyTables"
+                  : ScalarConstants     ? "NDScalarConstants"
+                  : Equality            ? "NDEquality"
+                  : FloatingSaves       ? "NDFloatingSaves"
+                  : SwiftLiterals       ? "NDSwiftLiteralStrings"
+                  : StoredStrings       ? "NDStoredStrings"
+                  : SwiftAllocation     ? "NDSwiftAllocation"
+                  : ProtocolReferences  ? "NDProtocolReferences"
+                  : IndirectFields      ? "NDIndirectFields"
+                  : SystemData          ? "NDSystemData"
+                  : Graphics            ? "NDGraphicsCalls"
+                  : BlockLifetimes      ? "NDBlockFactory"
+                  : Foundation          ? "NDFoundationCalls"
+                  : Protocols           ? "NDProtocolCalls"
+                  : DiagnosticReports   ? "NDDiagnosticReports"
+                  : SwiftStrings        ? "NDSwiftString"
+                  : UnfairLocks         ? "NDUnfairLocks"
+                  : ConstantObjects     ? "NDConstantObjects"
+                  : ConstantStrings     ? "NDConstantStrings"
+                  : SwiftCalls          ? "NDSwiftRuntimeCalls"
+                                        : "NDARCBox") +
       "\");\n";
   if (ReceiverTypes || ReceiverFields || ReceiverAliases || ReceiverResults)
     Install = "static void installRecovered(void) {\nClass cls;\n";
@@ -922,7 +932,7 @@ void verifyRuntime(bool Chained,
     Compile.insert(Compile.end() - 2,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
-      SwiftTypeLookup)
+      SwiftTypeLookup || SwiftIntegerRuntime)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -996,6 +1006,8 @@ void verifyRuntime(bool Chained,
             "pass\nrecord-stack=pass\n"
       : SwiftTypeLookup ? "swift-type-lookup-cases=20480\nmetadata-identity="
                           "pass\nbyte-length=pass\n"
+      : SwiftIntegerRuntime ? "runtime-integer-cases=4096\ncast-results="
+                              "pass\nreference-counts=pass\n"
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
@@ -1732,6 +1744,16 @@ TEST(ObjCRuntimeSource, NativeContextParametersPreserveRegisterInputsAndBits) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::NativeContext));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SwiftIntegerRuntimeCallsPreserveCastsAndRetainCounts) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SwiftIntegerRuntime));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

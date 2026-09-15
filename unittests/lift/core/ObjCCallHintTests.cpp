@@ -537,8 +537,8 @@ TEST(ObjCCallHints, SwiftDeclaredABIsRejectOtherConventionsAndUnprovedImports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const char *Name :
          {"_swift_allocBox", "_swift_allocObject_suffix", "swift_allocObject",
-          "_swift_retainDirect", "_swift_dynamicCast", "_malloc",
-          "_objc_msgSend"}) {
+          "_swift_retainDirect", "_swift_getEnumTagSinglePayloadGeneric",
+          "_malloc", "_objc_msgSend"}) {
       auto Image = runtimeImage(Name, Architecture);
       EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Name;
     }
@@ -631,6 +631,84 @@ TEST(ObjCCallHints,
       EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
     }
   }
+}
+
+TEST(ObjCCallHints, SwiftCIntegerDeclarationsPreserveWordAndBooleanCarriers) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &[Name, Encoding] :
+         {std::pair{"_swift_unknownObjectRetain_n", "ppu"},
+          std::pair{"_swift_unknownObjectRelease_n", "vpu"},
+          std::pair{"_swift_getEnumCaseMultiPayload", "upp"},
+          std::pair{"_swift_dynamicCast", "bppppz"},
+          std::pair{"_swift_isUniquelyReferenced_nonNull_native", "bp"}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage(Name, Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      const auto &Signature = Hint.Signature;
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::C);
+      EXPECT_FALSE(Hint.DoesNotReturn);
+      EXPECT_TRUE(Hint.BorrowedByteInputs.empty());
+      const auto Bytes = [](char Code) -> unsigned {
+        return Code == 'v' ? 0 : Code == 'b' ? 1 : Code == 'u' ? 4 : 8;
+      };
+      EXPECT_EQ(Signature.ReturnType->Size, Bytes(Encoding[0]));
+      EXPECT_EQ(Signature.ReturnLocation.ExtendTo32Bits,
+                Architecture == Arch::AArch64 && Encoding[0] == 'b');
+      if (Encoding[0] == 'b' || Encoding[0] == 'u')
+        EXPECT_FALSE(Signature.ReturnType->IsSigned);
+      const llvm::StringRef Arguments(Encoding + 1);
+      ASSERT_EQ(Call.Args.size(), Arguments.size());
+      for (size_t I = 0; I < Arguments.size(); ++I) {
+        EXPECT_EQ(Call.Args[I].Size, Bytes(Arguments[I]));
+        EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        EXPECT_EQ(Signature.Parameters[I].Location.ValueBytes,
+                  Bytes(Arguments[I]));
+        EXPECT_FALSE(Signature.Parameters[I].Location.ExtendTo32Bits);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+}
+
+TEST(ObjCCallHints, SwiftCIntegerBindingsRevalidateWidthsAndImports) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Name :
+         {"_swift_unknownObjectRetain_n", "_swift_dynamicCast"}) {
+      auto Image = runtimeImage(Name, Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      auto Forged = *Expression;
+      auto Changed =
+          std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+      if (llvm::StringRef(Name) == "_swift_dynamicCast") {
+        Changed->Signature.ReturnType = NdType::makeInt(4, false);
+        Changed->Signature.ReturnLocation.ValueBytes = 4;
+        Changed->Signature.ReturnLocation.ExtendTo32Bits = false;
+      } else {
+        Changed->Signature.Parameters[1].Type = NdType::makeInt(8, false);
+        Changed->Signature.Parameters[1].Location.ValueBytes = 8;
+      }
+      Forged.SourceCallHint = Changed;
+      EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
 }
 
 TEST(ObjCCallHints, SwiftFixedRuntimeImportsRequireExactStrongProvider) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract fixed pointer/size runtime ABI facts from pinned Swift runtime declarations.
+"""Extract fixed scalar runtime ABI facts from pinned Swift runtime declarations.
 
 Only unconditional, directly written FUNCTION records are inputs. Macro-generated
 families, unknown representations and unsupported calling conventions supply no facts.
@@ -94,6 +94,10 @@ def types(field, macro):
             result.append('p')
         elif name == 'SizeTy':
             result.append('z')
+        elif name == 'Int32Ty':
+            result.append('u')
+        elif name == 'Int1Ty':
+            result.append('b')
         elif name == 'VoidTy':
             result.append('v')
         else:
@@ -113,18 +117,31 @@ def declarations(source):
             continue
         result, args = types(returns, 'RETURNS'), types(parameters, 'ARGS')
         attributes = re.fullmatch(r'ATTRS\(([A-Za-z_0-9,\s]*)\)', attrs)
-        no_return = bool(attributes and 'NoReturn' in {a.strip() for a in attributes[1].split(',')})
+        attribute_names = {a.strip() for a in attributes[1].split(',')} if attributes else set()
+        no_return = 'NoReturn' in attribute_names
         fact = None
         supported_c = convention == 'C_CC' and availability == 'AlwaysAvailable'
         supported_swift = (convention == 'SwiftCC' and
                            availability in SWIFT_AVAILABILITIES and
                            attributes and
-                           {a.strip() for a in attributes[1].split(',')} <=
+                           attribute_names <=
                            {'NoUnwind', 'WillReturn', 'NoReturn'} and
-                           args is not None and len(args) <= 8)
+                           args is not None and len(args) <= 8 and result and
+                           not {'u', 'b'} & set(result + args))
+        # The DSL's i32 fixes the four-byte carrier, not C signedness. It needs
+        # no narrow integer promotion in these Darwin C conventions. A boolean
+        # result supplies a complete unsigned byte only with explicit zero
+        # extension. Boolean parameters need their own extension contract;
+        # neither their width nor a return attribute establishes that contract.
+        supported_integer_shape = (result is not None and args is not None and
+                                   'b' not in args and
+                                   ('b' not in result or
+                                    (result == ['b'] and 'ZExt' in attribute_names and
+                                     'SExt' not in attribute_names)))
         if (module == 'Swift' and name not in CUSTOM_PARAMETER_ABIS and
                 (supported_c or supported_swift) and result and len(result) == 1 and
                 args is not None and len(args) <= 16 and 'v' not in args and
+                supported_integer_shape and
                 (attributes or attrs == 'NO_ATTRS') and
                 (not no_return or result == ['v'])):
             fact = ''.join(result + args), no_return, convention == 'SwiftCC'
@@ -141,7 +158,7 @@ def render(facts, digest):
              '// ' + SOURCE, '// SHA256: ' + digest,
              '// Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors.',
              '// Apache-2.0 WITH Swift-exception; see LICENSES/Swift-Runtime-ABI.txt.',
-             '// Changes: extract fixed pointer/size C and Swift ABI declarations, 2026-09-16.',
+             '// Changes: extract fixed scalar C and Swift ABI declarations, 2026-09-16.',
              '// Implementations and runtime effect assumptions are not included.',
              'static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {']
     for name, (signature, no_return, swift) in facts.items():

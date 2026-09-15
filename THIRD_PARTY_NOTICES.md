@@ -9,7 +9,8 @@ from Swift's `include/swift/Runtime/RuntimeFunctions.def`, revision
 Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors.
 The applicable Apache 2.0 license with Runtime Library Exception is included
 in [LICENSES/Swift-Runtime-ABI.txt](LICENSES/Swift-Runtime-ABI.txt).
-NeverD's generator extracts pointer and size signatures and explicit
+NeverD's generator extracts pointer, size, 32-bit integer and explicitly
+zero-extended Boolean result carriers, together with explicit
 nonreturning declarations, as recorded in the generated file. No Swift
 runtime implementation is included. The fixed Swift subset excludes the custom
 parameter attributes assigned to `swift_willThrow` by

@@ -25,7 +25,7 @@ class SwiftRuntimeDeclarationTests(unittest.TestCase):
         cases = [dict(cc='SwiftTailCC'), dict(cc='SwiftDirectRR_CC'),
                  dict(module='objc2'), dict(module='stdlib'),
                  dict(availability='SwiftRuntime53'), dict(args='NO_ARGS'),
-                 dict(args='ARGS(Int32Ty)'), dict(args='ARGS(ObjCBoolTy)'),
+                 dict(args='ARGS(Int16Ty)'), dict(args='ARGS(ObjCBoolTy)'),
                  dict(args='ARGS(UnknownPtrTy)'), dict(args='ARGS(VoidTy)'),
                  dict(args='ARGS(TypeMetadataPtrTy->getPointerTo())'),
                  dict(returns='RETURNS(RefCountedPtrTy, OpaquePtrTy)'),
@@ -35,6 +35,29 @@ class SwiftRuntimeDeclarationTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertEqual(declarations(record(**case)), {})
                 self.assertEqual(declarations(record() + record(**case)), {})
+
+    def test_c_integer_words_keep_exact_carriers(self):
+        source = record(returns='RETURNS(Int32Ty)', args='ARGS(PtrTy, Int32Ty)')
+        self.assertEqual(declarations(source), {'swift_allocate': ('upu', False, False)})
+        self.assertEqual(declarations(source + record()), {})
+        self.assertEqual(declarations(record() + source), {})
+        self.assertEqual(declarations(record(cc='SwiftCC', returns='RETURNS(Int32Ty)')), {})
+        self.assertEqual(declarations(record(cc='SwiftCC', args='ARGS(Int32Ty)')), {})
+
+    def test_boolean_result_needs_explicit_zero_extension(self):
+        source = record(returns='RETURNS(Int1Ty)', args='ARGS(PtrTy)',
+                        attrs='ATTRS(ZExt, NoUnwind)')
+        self.assertEqual(declarations(source), {'swift_allocate': ('bp', False, False)})
+        for attrs in ('ATTRS(NoUnwind)', 'ATTRS(SExt)', 'ATTRS(SExt, ZExt)', 'NO_ATTRS'):
+            invalid = record(returns='RETURNS(Int1Ty)', attrs=attrs)
+            self.assertEqual(declarations(invalid), {})
+            self.assertEqual(declarations(source + invalid), {})
+            self.assertEqual(declarations(invalid + source), {})
+
+    def test_return_extension_cannot_authenticate_boolean_parameters(self):
+        for cc in ('C_CC', 'SwiftCC'):
+            for attrs in ('ATTRS(NoUnwind)', 'ATTRS(ZExt)', 'ATTRS(SExt)'):
+                self.assertEqual(declarations(record(cc=cc, args='ARGS(Int1Ty)', attrs=attrs)), {})
 
     def test_macro_bodies_comments_and_conditional_declarations_supply_no_facts(self):
         hidden = [f'/* {record()} */', f'// {record()}',
