@@ -153,6 +153,7 @@ jobs:
             scripts.tests.test_generate_darwin_block_declarations \
             scripts.tests.test_generate_darwin_declarations \
             scripts.tests.test_generate_darwin_data_declarations \
+            scripts.tests.test_generate_swift_c_declarations \
             -v
           "$PYTHON" -m unittest discover \
             -s pluginsdk/python/tests -v
@@ -537,6 +538,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("MobileIOSNative.MissingProtocolRegistrationCannotProduceStandaloneBodies",
                    "NeverDMobileTests"),
+                  ("ObjCCallHints.SwiftDeclaredAllocationABIsPreservePointersSizesAndEffects",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.SwiftDeclaredABIsRejectOtherConventionsAndUnprovedImports",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameworkAndCompilerDataKeepExactExportIdentities",
@@ -907,9 +912,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 326,
-              ("macOS", "macos-patch"): 346,
-              ("Windows", "windows-focused"): 322,
+              ("Linux", "linux-semantic"): 328,
+              ("macOS", "macos-patch"): 349,
+              ("Windows", "windows-focused"): 324,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -922,6 +927,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledSystemDataPreservesRuntimeSingletonIdentity",
                       "ObjCRuntimeSource.RecompiledIndirectFieldsPreserveRuntimeOffsetsAndOwnership",
                       "ObjCRuntimeSource.RecompiledProtocolReferencesPreserveRegisteredIdentity",
+                      "ObjCRuntimeSource.RecompiledSwiftAllocationPreservesAlignmentMetadataAndDestruction",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",

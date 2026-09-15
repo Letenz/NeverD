@@ -1,5 +1,18 @@
 # Third-Party Notices
 
+## Swift runtime ABI declarations
+
+`lib/loader/Swift/SwiftCDeclarations.inc` derives fixed C ABI declarations
+from Swift's `include/swift/Runtime/RuntimeFunctions.def`, revision
+`9215272a4725957dfabdd14e1ca76c0dfa4a3003`.
+
+Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors.
+The applicable Apache 2.0 license with Runtime Library Exception is included
+in [LICENSES/Swift-Runtime-ABI.txt](LICENSES/Swift-Runtime-ABI.txt).
+NeverD's generator extracts pointer and size signatures and explicit
+nonreturning declarations, as recorded in the generated file. No Swift
+runtime implementation is included.
+
 ## zlib
 
 Mobile ZIP extraction links zlib for DEFLATE and CRC-32. CMake uses an installed

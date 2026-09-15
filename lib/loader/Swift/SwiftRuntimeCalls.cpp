@@ -7,7 +7,57 @@
 
 #include "llvm/ADT/StringRef.h"
 
+#include <algorithm>
+#include <iterator>
+
 namespace neverd {
+namespace {
+struct SwiftCDeclaration {
+  const char *Name;
+  const char *Signature;
+  bool DoesNotReturn;
+};
+#include "SwiftCDeclarations.inc"
+
+bool declaredCABI(llvm::StringRef Name, SourceCallTypeHint &Hint) {
+  const auto *Found = std::lower_bound(
+      std::begin(SwiftCDeclarations), std::end(SwiftCDeclarations), Name,
+      [](const SwiftCDeclaration &Row, llvm::StringRef Value) {
+        return llvm::StringRef(Row.Name) < Value;
+      });
+  if (Found == std::end(SwiftCDeclarations) || Name != Found->Name)
+    return false;
+  const auto Type = [](char Encoding) -> TypeRef {
+    switch (Encoding) {
+    case 'v':
+      return NdType::makeVoid();
+    case 'p':
+      return NdType::makePtr(NdType::makeVoid());
+    case 'z':
+      return NdType::makeInt(8, false);
+    default:
+      return {};
+    }
+  };
+  llvm::StringRef Encoding(Found->Signature);
+  if (Encoding.empty() || Encoding.size() > 17)
+    return false;
+  auto &Signature = Hint.Signature;
+  Signature.ReturnType = Type(Encoding.front());
+  if (!Signature.ReturnType)
+    return false;
+  Signature.Parameters.clear();
+  for (char Code : Encoding.drop_front()) {
+    const auto Parameter = Type(Code);
+    if (!Parameter || Parameter->Kind == NdTypeKind::Void)
+      return false;
+    Signature.Parameters.push_back(
+        {"arg" + std::to_string(Signature.Parameters.size()), Parameter});
+  }
+  Hint.DoesNotReturn = Found->DoesNotReturn;
+  return !Hint.DoesNotReturn || Signature.ReturnType->Kind == NdTypeKind::Void;
+}
+} // namespace
 
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
@@ -110,7 +160,7 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   } else if (Name == "swift_endAccess") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"scratch", Pointer}};
-  } else {
+  } else if (!declaredCABI(Name, Result)) {
     return std::nullopt;
   }
   std::string Diagnostic;

@@ -473,6 +473,87 @@ TEST(ObjCCallHints, SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity) {
   }
 }
 
+TEST(ObjCCallHints,
+     SwiftDeclaredAllocationABIsPreservePointersSizesAndEffects) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Encoding] :
+         {std::pair{"swift_allocObject", "ppzz"},
+          std::pair{"swift_deallocUninitializedObject", "vpzz"},
+          std::pair{"swift_slowAlloc", "pzz"},
+          std::pair{"swift_slowDealloc", "vpzz"},
+          std::pair{"swift_projectBox", "pp"},
+          std::pair{"swift_arrayDestroy", "vpzp"}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + std::string(Name), Architecture);
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+      EXPECT_EQ(Hint.TargetName, Name);
+      EXPECT_FALSE(Hint.DoesNotReturn);
+      EXPECT_TRUE(Hint.BorrowedByteInputs.empty());
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+                Encoding[0] == 'v' ? NdTypeKind::Void : NdTypeKind::Ptr);
+      const llvm::StringRef Arguments(Encoding + 1);
+      ASSERT_EQ(Call.Args.size(), Arguments.size());
+      for (size_t I = 0; I < Arguments.size(); ++I) {
+        EXPECT_EQ(Call.Args[I].Size, 8U);
+        EXPECT_EQ(Call.Args[I].RegOff,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        const auto Type = Hint.Signature.Parameters[I].Type;
+        EXPECT_EQ(Type->Kind,
+                  Arguments[I] == 'p' ? NdTypeKind::Ptr : NdTypeKind::Int);
+        if (Arguments[I] == 'z')
+          EXPECT_FALSE(Type->IsSigned);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftDeclaredABIsRejectOtherConventionsAndUnprovedImports) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"_swift_allocBox", "_swift_allocObject_suffix", "swift_allocObject",
+          "_swift_retainDirect", "_swift_dynamicCast", "_malloc",
+          "_objc_msgSend"}) {
+      auto Image = runtimeImage(Name, Architecture);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Name;
+    }
+    for (unsigned Case = 0; Case < 6; ++Case) {
+      auto Image = runtimeImage("_swift_allocObject", Architecture);
+      switch (Case) {
+      case 0:
+        Image.ImportPtrSlots.clear();
+        break;
+      case 1:
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+        break;
+      case 2:
+        Image.DyldBindSlots[0x2180].Addend = 8;
+        break;
+      case 3:
+        Image.DyldBindSlots[0x2180].WeakImport = true;
+        break;
+      case 4:
+        Image.IsRelocatable = true;
+        break;
+      case 5:
+        Image.Format = BinaryFormat::ELF;
+        break;
+      }
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Case;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftOnceKeepsCallbackContextAndVoidResult) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = runtimeImage("_swift_once", Architecture);

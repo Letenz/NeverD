@@ -60,6 +60,7 @@ enum class RuntimeFixture {
   SystemData,
   IndirectFields,
   ProtocolReferences,
+  SwiftAllocation,
   Graphics,
   DarwinDeclarations
 };
@@ -73,6 +74,7 @@ void verifyRuntime(bool Chained,
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
+  const bool SwiftAllocation = FixtureKind == RuntimeFixture::SwiftAllocation;
   const bool ProtocolReferences =
       FixtureKind == RuntimeFixture::ProtocolReferences;
   const bool IndirectFields = FixtureKind == RuntimeFixture::IndirectFields;
@@ -107,6 +109,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants    ? "ObjCScalarConstants.m"
                         : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
                         : StoredStrings      ? "ObjCStoredStrings.m"
+                        : SwiftAllocation    ? "ObjCSwiftAllocation.m"
                         : ProtocolReferences ? "ObjCProtocolReferences.m"
                         : IndirectFields     ? "ObjCIndirectFields.m"
                         : SystemData         ? "ObjCSystemData.m"
@@ -126,6 +129,7 @@ void verifyRuntime(bool Chained,
                         : ScalarConstants  ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals    ? "ObjCSwiftLiteralStringsHarness.m"
                         : StoredStrings    ? "ObjCStoredStringsHarness.m"
+                        : SwiftAllocation  ? "ObjCSwiftAllocationHarness.m"
                         : ProtocolReferences ? "ObjCProtocolReferencesHarness.m"
                         : IndirectFields     ? "ObjCIndirectFieldsHarness.m"
                         : SystemData         ? "ObjCSystemDataHarness.m"
@@ -172,7 +176,7 @@ void verifyRuntime(bool Chained,
     Compile.push_back("-Wl,-no_fixup_chains");
   if (NativePointers)
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
-  if (SwiftCalls || SwiftStrings || DiagnosticReports)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -182,7 +186,7 @@ void verifyRuntime(bool Chained,
   if (Profiled)
     Compile.push_back("-fprofile-instr-generate=" +
                       (Work / "counters.profraw").string());
-  if (SwiftLiterals) {
+  if (SwiftLiterals || SwiftAllocation) {
     const auto Base = (Work / "literal-base.o").string();
     ASSERT_NO_FATAL_FAILURE(
         run({Compiler, "-arch", HostArch, "-O2", "-fobjc-arc", "-c",
@@ -194,8 +198,12 @@ void verifyRuntime(bool Chained,
                HostArch + "-apple-macosx13.0",
                "-emit-library",
                "-import-objc-header",
-               (Fixtures / "ObjCSwiftLiteralStrings.h").string(),
-               (Fixtures / "ObjCSwiftLiteralStrings.swift").string(),
+               (Fixtures / (SwiftAllocation ? "ObjCSwiftAllocation.h"
+                                            : "ObjCSwiftLiteralStrings.h"))
+                   .string(),
+               (Fixtures / (SwiftAllocation ? "ObjCSwiftAllocation.swift"
+                                            : "ObjCSwiftLiteralStrings.swift"))
+                   .string(),
                Base,
                "-o",
                Original};
@@ -222,6 +230,7 @@ void verifyRuntime(bool Chained,
                              : ScalarConstants    ? 6U
                              : SwiftLiterals      ? 3U
                              : StoredStrings      ? 4U
+                             : SwiftAllocation    ? 4U
                              : ProtocolReferences ? 4U
                              : IndirectFields     ? 5U
                              : SystemData         ? 9U
@@ -327,6 +336,10 @@ void verifyRuntime(bool Chained,
                  "falseObject",      "contextSaveName",
                  "gifDictionaryKey", "searchableItemIdentifier",
                  "colorSpaceName"};
+  if (SwiftAllocation)
+    Remaining = {
+        "allocateRaw:alignment:", "freeRaw:size:alignment:",
+        "allocateObject:size:alignment:", "freeUninitialized:size:alignment:"};
   if (ProtocolReferences)
     Remaining = {"valueProtocol", "rootProtocol", "sameValueProtocol",
                  "sameRootProtocol"};
@@ -372,6 +385,7 @@ void verifyRuntime(bool Chained,
                   : ScalarConstants    ? "NDScalarConstants"
                   : SwiftLiterals      ? "NDSwiftLiteralStrings"
                   : StoredStrings      ? "NDStoredStrings"
+                  : SwiftAllocation    ? "NDSwiftAllocation"
                   : ProtocolReferences ? "NDProtocolReferences"
                   : IndirectFields     ? "NDIndirectFields"
                   : SystemData         ? "NDSystemData"
@@ -535,7 +549,7 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Compile.insert(Compile.end() - 2,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
-  if (SwiftCalls || SwiftStrings || DiagnosticReports)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -600,6 +614,8 @@ void verifyRuntime(bool Chained,
                         "pass\nidentical-objects=0\n"
       : SystemData    ? "system-data=9216\nsingletons=pass\nframework-identity="
                         "pass\nlifetime=pass\n"
+      : SwiftAllocation    ? "swift-allocation=4096\nalignment=pass\nmemory="
+                             "pass\nmetadata=pass\ndestruction=pass\n"
       : ProtocolReferences ? "protocol-references=8192\nregistered-identity="
                              "pass\nconformance=pass\n"
       : IndirectFields ? "indirect-fields=6144\nobject-identity=pass\nlifetime="
@@ -1003,5 +1019,18 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledSwiftAllocationPreservesAlignmentMetadataAndDestruction) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SwiftAllocation));
+  }
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C and Swift runtimes";
 #endif
 }
