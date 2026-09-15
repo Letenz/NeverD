@@ -137,7 +137,10 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
       return false;
     if (IsFPReg(V) || IsLRReg(V))
       return true;
-    return V.Kind == MedVar::Reg && TRI.isCalleeSaveReg(V.RegOff);
+    // Preservation is a byte-range property: AArch64 saves D8-D15, while
+    // their Q-register upper halves remain volatile. Share the ABI predicate
+    // used by call liveness instead of the integer-only register list.
+    return V.Kind == MedVar::Reg && TRI.isCallPreserved(V.RegOff, V.Size);
   };
 
   Func.Body.erase(

@@ -474,20 +474,26 @@ TEST(SourceABI, BitCastRejectsMismatchedWidthsAndDistinguishesTargetTypes) {
   EXPECT_TRUE(RoundTrip->structuralEq(*Bits));
 }
 
-HighFunc scalarFloatFunction(Arch Architecture, uint16_t Width, bool Add) {
+HighFunc scalarFloatFunction(Arch Architecture, uint16_t Width, bool Add,
+                             bool Fused = false) {
+  const unsigned InputCount = Fused ? 3 : Add ? 2 : 1;
   MedFunc Func;
   Func.Name = std::string(Architecture == Arch::X64 ? "x64_" : "a64_") +
-              (Width == 4 ? "f32_" : "f64_") + (Add ? "add" : "identity");
+              (Width == 4 ? "f32_" : "f64_") +
+              (Fused ? "fma"
+               : Add ? "add"
+                     : "identity");
   auto Hint = declaration(NdType::makeFloat(Width));
   Hint.Parameters.push_back({"arg0", NdType::makeFloat(Width)});
-  if (Add)
-    Hint.Parameters.push_back({"arg1", NdType::makeFloat(Width)});
+  for (unsigned I = 1; I < InputCount; ++I)
+    Hint.Parameters.push_back(
+        {"arg" + std::to_string(I), NdType::makeFloat(Width)});
   Func.SourceTypeHint = Hint;
   const auto &TRI = getTargetRegInfo(Architecture);
   MedBlock Block;
   Block.Id = 0;
   std::vector<MedVar> Incoming;
-  for (unsigned I = 0; I != (Add ? 2U : 1U); ++I) {
+  for (unsigned I = 0; I != InputCount; ++I) {
     MedVar Parameter;
     Parameter.Kind = MedVar::Reg;
     Parameter.TheArch = Architecture;
@@ -501,8 +507,8 @@ HighFunc scalarFloatFunction(Arch Architecture, uint16_t Width, bool Add) {
     Block.Ops.push_back(Marker);
     Incoming.push_back(Parameter);
   }
-  if (Add) {
-    for (unsigned I = 0; I != 2; ++I) {
+  if (Add || Fused) {
+    for (unsigned I = 0; I != InputCount; ++I) {
       MedOp Slice;
       Slice.Opcode = NdOp::SUBBYTES;
       Slice.Output.Kind = MedVar::Temp;
@@ -513,17 +519,17 @@ HighFunc scalarFloatFunction(Arch Architecture, uint16_t Width, bool Add) {
       Block.Ops.push_back(Slice);
     }
     MedOp Sum;
-    Sum.Opcode = NdOp::FLOAT_ADD;
+    Sum.Opcode = Fused ? NdOp::FLOAT_FMA : NdOp::FLOAT_ADD;
     Sum.Output.Kind = MedVar::Temp;
-    Sum.Output.Id = 32;
+    Sum.Output.Id = 36;
     Sum.Output.Size = Width;
-    Sum.addInput(Block.Ops[2].Output);
-    Sum.addInput(Block.Ops[3].Output);
+    for (unsigned I = 0; I < InputCount; ++I)
+      Sum.addInput(Block.Ops[InputCount + I].Output);
     Block.Ops.push_back(Sum);
     MedOp Widen;
     Widen.Opcode = NdOp::INT_ZEXT;
     Widen.Output.Kind = MedVar::Reg;
-    Widen.Output.Id = 33;
+    Widen.Output.Id = 37;
     Widen.Output.Size = 16;
     Widen.Output.RegOff = TRI.FPReturnReg;
     Widen.addInput(Sum.Output);
@@ -551,7 +557,7 @@ HighFunc scalarFloatFunction(Arch Architecture, uint16_t Width, bool Add) {
   return High;
 }
 
-void executeC(const std::string &Source) {
+void executeC(const std::string &Source, bool Math = false) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -581,6 +587,11 @@ void executeC(const std::string &Source) {
     llvm::SmallVector<llvm::StringRef, 16> Arguments{
         Compiler,   "-std=c11", Optimization, "-Werror=return-type",
         SourcePath, "-o",       BinaryPath};
+    (void)Math;
+#ifndef _WIN32
+    if (Math)
+      Arguments.push_back("-lm");
+#endif
     std::string Error;
     int Status = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
                                            Redirects, 30, 0, &Error);
@@ -894,6 +905,80 @@ TEST(SourceABI, NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits) {
       }
     }
   }
+}
+
+TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Mutation);
+      MedFunc M;
+      M.Name = "unknown_arithmetic";
+      M.ReturnType = NdType::makeInt(8, false);
+      MedOp Arithmetic;
+      Arithmetic.Opcode = Mutation == 0 ? NdOp::FLOAT_MIN : NdOp::FLOAT_FMA;
+      Arithmetic.Output.Kind = MedVar::Reg;
+      Arithmetic.Output.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+      Arithmetic.Output.Id = 30;
+      Arithmetic.Output.Size = Mutation == 2 ? 2 : 8;
+      Arithmetic.Output.SSAVer = 1;
+      Arithmetic.addInput(MedVar::makeConst(1, 8));
+      Arithmetic.addInput(MedVar::makeConst(2, Mutation == 3 ? 4 : 8));
+      if (Mutation >= 2)
+        Arithmetic.addInput(MedVar::makeConst(3, 8));
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Return.addInput(Arithmetic.Output);
+      MedBlock Block;
+      Block.Id = 0;
+      Block.Ops = {Arithmetic, Return};
+      M.Blocks.push_back(std::move(Block));
+      const auto High = MedToHighConverter().convert(M, Architecture);
+      const auto HasUnknown = [](const auto &Self,
+                                 const ExprPtr &Expression) -> bool {
+        if (!Expression)
+          return false;
+        if (Expression->Kind == ExprKind::Undef)
+          return true;
+        for (const auto &Operand : Expression->Operands)
+          if (Self(Self, Operand))
+            return true;
+        return false;
+      };
+      bool Unknown = false;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        Unknown |= HasUnknown(HasUnknown, Statement.RetVal);
+      });
+      EXPECT_TRUE(Unknown);
+    }
+}
+
+TEST(SourceABI, FusedMultiplyAddPreservesSingleRoundingAndAllOperands) {
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  std::string Checks;
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    std::vector<HighFunc> Functions;
+    for (uint16_t Width : {4, 8})
+      Functions.push_back(
+          scalarFloatFunction(Architecture, Width, false, true));
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    const std::string Prefix = Architecture == Arch::X64 ? "x64_" : "a64_";
+    Checks += "if (" + Prefix +
+              "f32_fma(0, 0, 0x1.000002p0f, 0x1.fffffcp-1f, -1.0f) != "
+              "-0x1p-46f) return 1;\n";
+    Checks += "if (" + Prefix +
+              "f64_fma(0, 0, 0x1.0000000000001p0, 0x1.ffffffffffffep-1, -1.0) "
+              "!= -0x1p-104) return 2;\n";
+    Checks += "if (" + Prefix +
+              "f32_fma(0, 0, -7.5f, 2.0f, 4.25f) != -10.75f) return 3;\n";
+    Checks += "if (" + Prefix +
+              "f64_fma(0, 0, -7.5, 2.0, 4.25) != -10.75) return 4;\n";
+  }
+  OS.flush();
+  executeC(Source + "\nint main(void) {\n" + Checks + "return 0;\n}\n", true);
 }
 
 TEST(SourceABI,

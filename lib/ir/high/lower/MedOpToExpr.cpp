@@ -18,6 +18,22 @@
 namespace neverd {
 
 ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
+  if (Op.Opcode == NdOp::FLOAT_FMA) {
+    if (Op.NumInputs != 3 || (Op.Output.Size != 4 && Op.Output.Size != 8))
+      return HighExpr::makeUndef(Op.Output.Size);
+    auto Value = std::make_shared<HighExpr>();
+    Value->Kind = ExprKind::BinOp;
+    Value->Op = Op.Opcode;
+    Value->Type = NdType::makeFloat(Op.Output.Size);
+    for (unsigned I = 0; I < 3; ++I) {
+      if (Op.Inputs[I].Size != Op.Output.Size)
+        return HighExpr::makeUndef(Op.Output.Size);
+      Value->Operands.push_back(sourceFloatValue(Op.Inputs[I], Op.Output.Size));
+    }
+    // Keep the single-rounding operation intact; its machine result is a
+    // scalar bit pattern just like the other explicit floating operations.
+    return HighExpr::makeBitCast(Value, NdType::makeInt(Op.Output.Size, false));
+  }
   if (CurMed && CurMed->SourceTypeHint &&
       CurMed->SourceTypeHint->HasExplicitABI) {
     auto FloatBits = [&](ExprPtr Value) {
@@ -299,7 +315,9 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
   default:
     break;
   }
-  return HighExpr::makeConst(0, 0);
+  // An unimplemented or malformed operation has no known result. Propagate
+  // that fact to source validation instead of manufacturing a numeric zero.
+  return HighExpr::makeUndef(Op.Output.Size);
 }
 
 } // namespace neverd

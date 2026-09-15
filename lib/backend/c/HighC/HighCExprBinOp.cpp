@@ -11,6 +11,8 @@
 
 #include "HighCWriter.h"
 
+#include "llvm/Support/ErrorHandling.h"
+
 namespace neverd {
 
 namespace {
@@ -60,6 +62,27 @@ int getOpPrecedence(NdOp Op) {
 } // anonymous namespace
 
 std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
+  if (E.Op == NdOp::FLOAT_FMA) {
+    if (E.Operands.size() != 3 || !E.Type ||
+        E.Type->Kind != NdTypeKind::Float ||
+        (E.Type->Size != 4 && E.Type->Size != 8))
+      llvm::report_fatal_error(
+          "HighC cannot render an invalid fused multiply-add");
+    std::string Result =
+        E.Type->Size == 4 ? "__builtin_fmaf(" : "__builtin_fma(";
+    for (unsigned I = 0; I < 3; ++I) {
+      const auto &Operand = E.Operands[I];
+      if (!Operand || !Operand->Type ||
+          Operand->Type->Kind != NdTypeKind::Float ||
+          Operand->Type->Size != E.Type->Size)
+        llvm::report_fatal_error(
+            "HighC fused multiply-add has incompatible operands");
+      if (I)
+        Result += ", ";
+      Result += "(" + typeToC(E.Type) + ")(" + exprStr(*Operand) + ")";
+    }
+    return Result + ")";
+  }
   if (E.Op == NdOp::SELECT && E.Operands.size() == 3) {
     return "(" + exprStr(*E.Operands[0]) + " ? " + exprStr(*E.Operands[1]) +
            " : " + exprStr(*E.Operands[2]) + ")";

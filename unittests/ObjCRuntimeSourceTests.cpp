@@ -61,6 +61,7 @@ enum class RuntimeFixture {
   IndirectFields,
   ProtocolReferences,
   SwiftAllocation,
+  FloatingSaves,
   Graphics,
   DarwinDeclarations
 };
@@ -75,6 +76,7 @@ void verifyRuntime(bool Chained,
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
   const bool SwiftAllocation = FixtureKind == RuntimeFixture::SwiftAllocation;
+  const bool FloatingSaves = FixtureKind == RuntimeFixture::FloatingSaves;
   const bool ProtocolReferences =
       FixtureKind == RuntimeFixture::ProtocolReferences;
   const bool IndirectFields = FixtureKind == RuntimeFixture::IndirectFields;
@@ -105,6 +107,7 @@ void verifyRuntime(bool Chained,
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
+                        : FloatingSaves      ? "ObjCFloatingSaves.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
                         : ScalarConstants    ? "ObjCScalarConstants.m"
                         : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
@@ -125,6 +128,7 @@ void verifyRuntime(bool Chained,
                         : Associations       ? "ObjCAssociations.m"
                                              : "ObjCARC.m";
   const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
+                        : FloatingSaves    ? "ObjCFloatingSavesHarness.m"
                         : CoreData         ? "ObjCCoreDataCallsHarness.m"
                         : ScalarConstants  ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals    ? "ObjCSwiftLiteralStringsHarness.m"
@@ -226,6 +230,7 @@ void verifyRuntime(bool Chained,
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
+                             : FloatingSaves      ? 2U
                              : CoreData           ? 3U
                              : ScalarConstants    ? 6U
                              : SwiftLiterals      ? 3U
@@ -340,6 +345,8 @@ void verifyRuntime(bool Chained,
     Remaining = {
         "allocateRaw:alignment:", "freeRaw:size:alignment:",
         "allocateObject:size:alignment:", "freeUninitialized:size:alignment:"};
+  if (FloatingSaves)
+    Remaining = {"sumSine:cosine:", "weighted:bias:"};
   if (ProtocolReferences)
     Remaining = {"valueProtocol", "rootProtocol", "sameValueProtocol",
                  "sameRootProtocol"};
@@ -383,6 +390,7 @@ void verifyRuntime(bool Chained,
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
+                  : FloatingSaves      ? "NDFloatingSaves"
                   : SwiftLiterals      ? "NDSwiftLiteralStrings"
                   : StoredStrings      ? "NDStoredStrings"
                   : SwiftAllocation    ? "NDSwiftAllocation"
@@ -605,6 +613,7 @@ void verifyRuntime(bool Chained,
       read(Work / "recovered.out"),
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
+      : FloatingSaves    ? "floating-saves=4096\nvalues-across-calls=pass\n"
       : CoreData
           ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
             "nil-context=pass\n"
@@ -1032,5 +1041,15 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C and Swift runtimes";
+#endif
+}
+
+TEST(ObjCRuntimeSource, RecompiledFloatingValuesSurviveRuntimeCalls) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::FloatingSaves));
+#else
+  GTEST_SKIP() << "Objective-C runtime source execution requires macOS";
 #endif
 }

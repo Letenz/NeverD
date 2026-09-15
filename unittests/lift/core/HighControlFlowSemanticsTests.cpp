@@ -1918,8 +1918,13 @@ TEST(HighControlFlowSemantics,
   for (Arch Architecture : {Arch::AArch64, Arch::X64, Arch::ARM, Arch::X86}) {
     const auto &TRI = getTargetRegInfo(Architecture);
     ASSERT_FALSE(TRI.CalleeSaveRegs.empty());
+    std::vector<uint64_t> Registers(TRI.CalleeSaveRegs.begin(),
+                                    TRI.CalleeSaveRegs.end());
+    for (unsigned Index : {7U, 8U, 15U})
+      if (Index < TRI.VecRegCount)
+        Registers.push_back(TRI.VecRegBase + Index * TRI.VecRegStride);
     for (bool Computed : {false, true})
-      for (uint64_t Register : TRI.CalleeSaveRegs) {
+      for (uint64_t Register : Registers) {
         SCOPED_TRACE(static_cast<int>(Architecture));
         SCOPED_TRACE(Register);
         MedFunc M;

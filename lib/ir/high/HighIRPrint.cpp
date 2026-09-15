@@ -102,6 +102,9 @@ std::string HighExpr::str() const {
   case ExprKind::Undef:
     return "undef";
   case ExprKind::BinOp:
+    if (Op == NdOp::FLOAT_FMA && Operands.size() == 3)
+      return "fma(" + Operands[0]->str() + ", " + Operands[1]->str() + ", " +
+             Operands[2]->str() + ")";
     if (Op == NdOp::SELECT && Operands.size() == 3)
       return "(" + Operands[0]->str() + " ? " + Operands[1]->str() + " : " +
              Operands[2]->str() + ")";
