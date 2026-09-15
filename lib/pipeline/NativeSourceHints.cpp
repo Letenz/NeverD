@@ -22,8 +22,13 @@ bool integerCarrier(const TypeRef &Type) {
           (Type->Kind == NdTypeKind::Ptr && Type->Size == 8 && Type->Pointee));
 }
 
+bool scalarCarrier(const TypeRef &Type) {
+  return integerCarrier(Type) || (Type && Type->Kind == NdTypeKind::Float &&
+                                  (Type->Size == 4 || Type->Size == 8));
+}
+
 bool sameScalar(const TypeRef &A, const TypeRef &B) {
-  return integerCarrier(A) && integerCarrier(B) && A->Kind == B->Kind &&
+  return scalarCarrier(A) && scalarCarrier(B) && A->Kind == B->Kind &&
          A->Size == B->Size && A->IsSigned == B->IsSigned;
 }
 
@@ -119,8 +124,10 @@ bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
 // PHIs merge physical state, and calls or partial writes invalidate it until
 // a complete result is computed again.
 bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
-                        uint16_t Width,
+                        const SourceABIValueLocation &Location,
                         const std::optional<MedVar> &IncomingParameter) {
+  const auto ReturnRegister = Location.RegisterOffset;
+  const auto Width = Location.ValueBytes;
   const size_t Count = Function.Blocks.size();
   if (!Count || Count > 16384)
     return false;
@@ -229,15 +236,15 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
       const auto &Out = Op.Output;
       if (!Seed && (Op.Opcode != NdOp::SUBBYTES || OpIndex < CallResultEnd) &&
           Out.Kind == MedVar::Reg && Out.Size &&
-          (Out.RegOff <= TRI.IntReturnReg
-               ? TRI.IntReturnReg - Out.RegOff < Out.Size
-               : Out.RegOff - TRI.IntReturnReg < Width)) {
+          (Out.RegOff <= ReturnRegister
+               ? ReturnRegister - Out.RegOff < Out.Size
+               : Out.RegOff - ReturnRegister < Width)) {
         const bool StackRestore =
             Architecture == Arch::X64 && Op.Opcode == NdOp::LOAD &&
             Op.NumInputs == 1 && Op.Inputs[0].Kind == MedVar::Reg &&
             Op.Inputs[0].RegOff == TRI.StackPointer;
-        Fact = Out.RegOff == TRI.IntReturnReg && Out.Size >= Width &&
-               !StackRestore;
+        Fact =
+            Out.RegOff == ReturnRegister && Out.Size >= Width && !StackRestore;
       }
       if (Op.Opcode == NdOp::RETURN)
         Returns.emplace_back(I, Fact);
@@ -326,9 +333,14 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   Hint.Architecture = Image.Arch;
   Hint.HasExplicitABI = true;
   Hint.ReturnType = Med.ReturnType;
-  Hint.ReturnLocation.Kind = SourceABICarrierKind::IntegerRegister;
-  Hint.ReturnLocation.RegisterOffset = TRI.IntReturnReg;
+  const bool FloatingReturn = Hint.ReturnType->Kind == NdTypeKind::Float;
+  Hint.ReturnLocation.Kind = FloatingReturn
+                                 ? SourceABICarrierKind::FloatingRegister
+                                 : SourceABICarrierKind::IntegerRegister;
+  Hint.ReturnLocation.RegisterOffset =
+      FloatingReturn ? TRI.FPReturnReg : TRI.IntReturnReg;
   Hint.ReturnLocation.ValueBytes = Hint.ReturnType->Size;
+  const auto EntryBytes = observedMedSourceEntryBytes(Med, Hint);
   std::set<uint64_t> ParameterRegisters;
   std::set<uint64_t> AuxiliaryRegisters;
   std::set<int> StackSlots;
@@ -341,8 +353,13 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     if (Parameter.Id < 0)
       continue;
     const auto &Type = Med.TypedParams[Index].Type;
-    if (Parameter.Kind != MedVar::Param || !integerCarrier(Type) ||
-        Type->Size != Parameter.Size)
+    const bool Floating =
+        std::find(TRI.FPParamRegs.begin(), TRI.FPParamRegs.end(),
+                  Parameter.RegOff) != TRI.FPParamRegs.end();
+    if (Parameter.Kind != MedVar::Param || !Type ||
+        Type->Size != Parameter.Size ||
+        (!scalarCarrier(Type) &&
+         !(Floating && Type->Kind == NdTypeKind::Int && Type->Size == 16)))
       return Reject("native parameter lacks a scalar machine carrier");
     SourceParameterTypeHint Source;
     Source.Name = "native_arg" + std::to_string(Hint.Parameters.size());
@@ -353,8 +370,8 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
       // parameter index. A narrow SUBBYTES use can represent several packed
       // arm64 values in one slot, so it requires a separate range analysis.
       const int RegisterCount = static_cast<int>(TRI.IntParamRegs.size());
-      if (Parameter.Size != 8 || Parameter.Id < RegisterCount ||
-          Parameter.Id >= RegisterCount + 512)
+      if (Type->Kind == NdTypeKind::Float || Parameter.Size != 8 ||
+          Parameter.Id < RegisterCount || Parameter.Id >= RegisterCount + 512)
         return Reject("native stack parameter has no complete slot evidence");
       Source.Location.Kind = SourceABICarrierKind::Stack;
       Source.Location.EntryStackOffset =
@@ -364,16 +381,43 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
         return Reject("native stack parameters overlap");
     } else {
       if (!ParameterRegisters.insert(Parameter.RegOff).second)
-        return Reject("native parameter register is ambiguous or non-integer");
-      if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
-                    Parameter.RegOff) == TRI.IntParamRegs.end()) {
-        if (Parameter.Size != 8)
-          return Reject("native auxiliary parameter requires a complete word");
-        AuxiliaryRegisters.insert(Parameter.RegOff);
+        return Reject("native parameter register is ambiguous");
+      if (Floating) {
+        uint16_t Width = Parameter.Size;
+        if (Width == 16) {
+          if (!EntryBytes || !EntryBytes->count(Parameter.RegOff))
+            return Reject("native floating parameter has no entry-byte proof");
+          const auto Bytes = EntryBytes->at(Parameter.RegOff);
+          if (!Bytes || (Bytes & ~uint64_t(0xFF)))
+            return Reject(
+                "native floating parameter observes non-scalar lanes");
+          Width = Bytes & ~uint64_t(0xF) ? 8 : 4;
+        }
+        if ((Type->Kind != NdTypeKind::Int &&
+             Type->Kind != NdTypeKind::Float) ||
+            (Width != 4 && Width != 8))
+          return Reject("native floating parameter lacks a scalar lane");
+        // Generic IR may describe comparison or bit-copy inputs as integers.
+        // The source carrier preserves those bits in the observed FP lane;
+        // it does not change the generic operation's numeric interpretation.
+        Source.Type = NdType::makeFloat(Width);
+        Source.Location.ValueBytes = Width;
+        Source.Location.Kind = SourceABICarrierKind::FloatingRegister;
+      } else {
+        if (Type->Kind == NdTypeKind::Float)
+          return Reject(
+              "native floating parameter has no FP register evidence");
+        if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
+                      Parameter.RegOff) == TRI.IntParamRegs.end()) {
+          if (Parameter.Size != 8)
+            return Reject(
+                "native auxiliary parameter requires a complete word");
+          AuxiliaryRegisters.insert(Parameter.RegOff);
+        }
+        Source.Location.Kind = SourceABICarrierKind::IntegerRegister;
       }
-      Source.Location.Kind = SourceABICarrierKind::IntegerRegister;
       Source.Location.RegisterOffset = Parameter.RegOff;
-      if (Parameter.RegOff == TRI.IntReturnReg &&
+      if (Parameter.RegOff == Hint.ReturnLocation.RegisterOffset &&
           Parameter.Size >= Hint.ReturnType->Size)
         IncomingReturnParameter = Parameter;
     }
@@ -424,7 +468,7 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   }
   if (!HasReturn)
     return Reject("native function has no machine return");
-  if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnType->Size,
+  if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
                           IncomingReturnParameter))
     return Reject("native result has no complete defined carrier on every "
                   "return path");

@@ -56,6 +56,14 @@ observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
 
+The shared MedIR source-entry analysis owns observable byte masks for physical
+register inputs. Native helper inference uses these masks to represent proven
+low float/double lanes without claiming original source types or a rewriting
+ABI. HighIR separately narrows a source-local CONCAT only when all definitions
+construct the same scalar prefix and all reads explicitly select that prefix.
+Only effect-free upper expressions are discarded; lower expressions and their
+control-flow positions remain unchanged. Unknown lanes are never filled in.
+
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 
 Source-call discovery uses a bounded forward fixed point for register facts.

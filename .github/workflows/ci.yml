@@ -287,6 +287,10 @@ jobs:
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighSourceRanges.ExhaustedBudgetsDiscardTheWholeQueryBatch",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceScalarLocals.NarrowsEveryDefinitionWithoutMovingLowEffects",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceScalarLocals.RetainsUpperReadsEscapesEffectsAndIncompleteProofs",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighPrivateFrameStores.DiscardsUnreadPaddingAndPreservesBranchEntry",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighPrivateFrameStores.KeepsReadsEscapesEffectsAndUnprovenRanges",
@@ -574,6 +578,12 @@ jobs:
                   ("HighCSourceCalls.CallbackDeclaratorsPreserveArgumentsAndReturnTypes",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.RuntimeCallbackPreservesPredicateAndContextOperands",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.FloatingLanesPreserveScalarParametersAndResults",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.FloatingReturnPathsRequireCompleteDefinedLanes",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.FloatingParametersRequireBoundedScalarEntryBytes",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.TypedRecordCallResultsDefineTheNativeReturnCarrier",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
@@ -1277,14 +1287,15 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 509,
-              ("macOS", "macos-patch"): 561,
-              ("Windows", "windows-focused"): 505,
+              ("Linux", "linux-semantic"): 514,
+              ("macOS", "macos-patch"): 567,
+              ("Windows", "windows-focused"): 510,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
                       "ObjCRuntimeSource.SwiftIntegerRuntimeCallsPreserveCastsAndRetainCounts",
+                      "ObjCRuntimeSource.NativeFloatingHelpersPreserveLanesAndMemoryEffects",
                       "ObjCRuntimeSource.NativeRecordMembersPreserveScalarResultsAndEffects",
                       "ObjCRuntimeSource.SwiftRuntimeRecordResultsPreserveBoxesAndMetadata",
                       "ObjCRuntimeSource.RuntimeIvarOffsetsPreserveSwiftPropertiesAndOpaqueFields",

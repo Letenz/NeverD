@@ -507,6 +507,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   iterativeDCE(Func, Entries);
 
   elimUnreadPrivateFrameStores(Func, TargetArch);
+  narrowSourceConcatLocals(Func);
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 14: var rename (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");

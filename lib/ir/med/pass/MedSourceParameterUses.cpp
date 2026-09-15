@@ -26,9 +26,9 @@ struct ValueUses {
 };
 } // namespace
 
-std::optional<std::set<uint64_t>>
-observedMedSourceEntryRegisters(const MedFunc &Function,
-                                const SourceFunctionTypeHint &Hint) {
+std::optional<std::map<uint64_t, uint64_t>>
+observedMedSourceEntryBytes(const MedFunc &Function,
+                            const SourceFunctionTypeHint &Hint) {
   std::string Error;
   if (Function.Blocks.empty() || !Hint.HasExplicitABI ||
       !validateSourceABI(Hint, Error))
@@ -168,7 +168,7 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
     if (Clobber.PreservedPrefixSize)
       Need(Clobber.PreservedInput, Mask(Clobber.PreservedPrefixSize));
   size_t Remaining = 262144;
-  std::set<uint64_t> Result;
+  std::map<uint64_t, uint64_t> Result;
   // A generic parameter with no graph occurrence has no dead-byte proof.
   // Keep that original evidence, rather than treating an absent graph as a
   // certificate that the incoming carrier is irrelevant.
@@ -179,7 +179,7 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
           return (V.Kind == MedVar::Reg || V.Kind == MedVar::Param) &&
                  V.RegOff == Parameter.RegOff;
         }))
-      Result.insert(Parameter.RegOff);
+      Result[Parameter.RegOff] |= Mask(Parameter.Size);
   while (Valid && !Pending.empty() && Remaining--) {
     const auto Key = Pending.front();
     Pending.pop_front();
@@ -203,7 +203,7 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
     if (!N.Definition) {
       if ((N.Value.Kind == MedVar::Reg && N.Value.SSAVer == 0) ||
           (N.Value.Kind == MedVar::Param && N.Value.RegOff != kNoParamReg))
-        Result.insert(N.Value.RegOff);
+        Result[N.Value.RegOff] |= Bytes;
       else if (N.Value.Kind != MedVar::Param && N.Value.Kind != MedVar::Stack)
         Valid = false;
       continue;
@@ -214,9 +214,13 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
       Need(Op.Inputs[1], Bytes);
       Need(Op.Inputs[0],
            Op.Inputs[1].Size < 64 ? Bytes >> Op.Inputs[1].Size : 0);
-    } else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
-               Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal < 64 &&
-               Op.Inputs[1].ConstVal + Op.Output.Size <= Op.Inputs[0].Size) {
+    } else if (Op.Opcode == NdOp::SUBBYTES) {
+      if (Op.NumInputs != 2 || !Op.Inputs[1].isConst() ||
+          Op.Inputs[1].ConstVal >= 64 ||
+          Op.Inputs[1].ConstVal + Op.Output.Size > Op.Inputs[0].Size) {
+        Valid = false;
+        continue;
+      }
       Need(Op.Inputs[0], Bytes << Op.Inputs[1].ConstVal);
     } else if ((Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||
                 Op.Opcode == NdOp::INT_SEXT) &&
@@ -235,6 +239,18 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
   }
   return Valid && Pending.empty() ? std::optional(std::move(Result))
                                   : std::nullopt;
+}
+
+std::optional<std::set<uint64_t>>
+observedMedSourceEntryRegisters(const MedFunc &Function,
+                                const SourceFunctionTypeHint &Hint) {
+  const auto Bytes = observedMedSourceEntryBytes(Function, Hint);
+  if (!Bytes)
+    return std::nullopt;
+  std::set<uint64_t> Registers;
+  for (const auto &[Register, Mask] : *Bytes)
+    Registers.insert(Register);
+  return Registers;
 }
 
 std::vector<bool> inferMedSourcePointerParameters(const MedFunc &Function) {

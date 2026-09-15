@@ -4,6 +4,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
@@ -94,6 +95,175 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
     EXPECT_EQ(Hint->ReturnLocation.ValueBytes, 4U);
     EXPECT_EQ(Fixture.Med.ReturnValueEvidence, MedReturnValueEvidence::Unknown);
   }
+}
+
+struct NativeFloatingFixture : NativeFixture {
+  NativeFloatingFixture(Arch Architecture, unsigned Width, bool Wide = false)
+      : NativeFixture(Architecture) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    Med.ReturnType = High.ReturnType = NdType::makeFloat(Width);
+    for (unsigned I = 0; I < 2; ++I) {
+      Med.Params[I].RegOff = TRI.FPParamRegs[I];
+      Med.Params[I].Size = Wide ? 16 : Width;
+      Med.TypedParams[I].Type = High.Params[I].Type =
+          NdType::makeInt(Med.Params[I].Size);
+    }
+    auto &Ops = Med.Blocks[0].Ops;
+    auto Sum = Ops.front();
+    auto Return = Ops.back();
+    Sum.Opcode = NdOp::FLOAT_ADD;
+    Sum.Output.RegOff = TRI.FPReturnReg;
+    Sum.Output.Size = Width;
+    Sum.Inputs[0] = Med.Params[0];
+    Sum.Inputs[1] = Med.Params[1];
+    Ops.clear();
+    if (Wide) {
+      for (unsigned I = 0; I < 2; ++I) {
+        MedOp Extract;
+        Extract.Opcode = NdOp::SUBBYTES;
+        Extract.Output = Sum.Output;
+        Extract.Output.Kind = MedVar::Temp;
+        Extract.Output.Id = 20 + I;
+        Extract.addInput(Med.Params[I]);
+        Extract.addInput(MedVar::makeConst(0, 8));
+        Ops.push_back(Extract);
+        Sum.Inputs[I] = Extract.Output;
+      }
+      Sum.Output.Kind = MedVar::Temp;
+      Ops.push_back(Sum);
+      auto Upper = Ops.front();
+      Upper.Output.Id = 22;
+      Upper.Output.Size = 16 - Width;
+      Upper.Inputs[1].ConstVal = Width;
+      Ops.push_back(Upper);
+      MedOp Join;
+      Join.Opcode = NdOp::CONCAT;
+      Join.Output = Sum.Output;
+      Join.Output.Kind = MedVar::Reg;
+      Join.Output.Id = 23;
+      Join.Output.Size = 16;
+      Join.addInput(Upper.Output);
+      Join.addInput(Sum.Output);
+      Ops.push_back(Join);
+    } else {
+      Ops.push_back(Sum);
+    }
+    Ops.push_back(Return);
+  }
+};
+
+TEST(NativeSourceHints, FloatingLanesPreserveScalarParametersAndResults) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Width : {4U, 8U})
+      for (bool Wide : {false, true}) {
+        NativeFloatingFixture Fixture(Architecture, Width, Wide);
+        std::string Error;
+        const auto Hint = Fixture.infer(Error);
+        ASSERT_TRUE(Hint) << Error;
+        EXPECT_EQ(Hint->ReturnLocation.Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+                  getTargetRegInfo(Architecture).FPReturnReg);
+        EXPECT_EQ(Hint->ReturnLocation.ValueBytes, Width);
+        ASSERT_EQ(Hint->Parameters.size(), 2U);
+        const auto Bytes = observedMedSourceEntryBytes(Fixture.Med, *Hint);
+        ASSERT_TRUE(Bytes);
+        for (unsigned I = 0; I < 2; ++I) {
+          EXPECT_EQ(Bytes->at(getTargetRegInfo(Architecture).FPParamRegs[I]),
+                    (uint64_t(1) << Width) - 1);
+          EXPECT_EQ(Hint->Parameters[I].Type->Kind, NdTypeKind::Float);
+          EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset,
+                    getTargetRegInfo(Architecture).FPParamRegs[I]);
+          EXPECT_EQ(Hint->Parameters[I].Location.ValueBytes, Width);
+          EXPECT_EQ(Fixture.Med.TypedParams[I].Type->Kind, NdTypeKind::Int);
+          EXPECT_EQ(Fixture.Med.Params[I].Size, Wide ? 16 : Width);
+        }
+        EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                  MedReturnValueEvidence::Unknown);
+      }
+}
+
+TEST(NativeSourceHints, FloatingReturnPathsRequireCompleteDefinedLanes) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      NativeFloatingFixture Fixture(Architecture, 8);
+      auto &Ops = Fixture.Med.Blocks[0].Ops;
+      switch (Mutation) {
+      case 0:
+        Ops[0].Output.Size = 4;
+        break;
+      case 1:
+        Ops[0].Output.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+        Fixture.Med.Params[0].RegOff =
+            getTargetRegInfo(Architecture).FPParamRegs[2];
+        Ops[0].Inputs[0] = Fixture.Med.Params[0];
+        break;
+      case 2:
+        Ops[0].Output.RegOff = getTargetRegInfo(Architecture).FPParamRegs[1];
+        Fixture.Med.Params[0].RegOff =
+            getTargetRegInfo(Architecture).FPParamRegs[2];
+        Ops[0].Inputs[0] = Fixture.Med.Params[0];
+        break;
+      case 3: {
+        MedOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.addInput(MedVar::makeConst(0x1080, 8));
+        auto Hint = std::make_shared<SourceCallTypeHint>();
+        Hint->Signature.ReturnType = NdType::makeVoid();
+        std::string Error;
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        Call.SourceCallHint = std::move(Hint);
+        Ops.insert(Ops.end() - 1, Call);
+        break;
+      }
+      case 4: {
+        const auto Return = Ops.back();
+        Fixture.Med.Blocks.emplace_back();
+        Fixture.Med.Blocks.back().Id = 1;
+        Fixture.Med.Blocks.back().Ops = {Return};
+        break;
+      }
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.infer(Error)) << Mutation << ": " << Error;
+    }
+}
+
+TEST(NativeSourceHints, FloatingParametersRequireBoundedScalarEntryBytes) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      NativeFloatingFixture Fixture(Architecture, 8, true);
+      auto &Ops = Fixture.Med.Blocks[0].Ops;
+      switch (Mutation) {
+      case 0: {
+        MedOp Store;
+        Store.Opcode = NdOp::STORE;
+        Store.addInput(MedVar::makeConst(0x1080, 8));
+        Store.addInput(Fixture.Med.Params[0]);
+        Ops.insert(Ops.end() - 1, Store);
+        break;
+      }
+      case 1:
+        Ops[0].Inputs[1].ConstVal = 8;
+        break;
+      case 2:
+        Fixture.Med.Params[0].RegOff =
+            getTargetRegInfo(Architecture).IntParamRegs[0];
+        break;
+      case 3:
+        Fixture.Med.Params[0].RegOff = Fixture.Med.Params[1].RegOff;
+        break;
+      case 4:
+        Fixture.Med.TypedParams[0].Type = NdType::makePtr(NdType::makeVoid());
+        break;
+      case 5:
+        Ops[0].Inputs[0].Size = 4;
+        break;
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.infer(Error)) << Mutation << ": " << Error;
+    }
 }
 
 struct NativeRecordResultFixture : NativeFixture {

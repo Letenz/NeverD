@@ -8,6 +8,7 @@
 /// Dead store elimination passes for HighIR:
 ///   - Consecutive dead store elimination (same-destination rewrites)
 ///   - Private frame byte liveness (unobserved stores and integer tails)
+///   - Source-local CONCAT values with unobserved upper bytes
 ///
 /// See also:
 ///   HighDCE.cpp         — main DCE orchestration, iterative liveness DCE
@@ -35,7 +36,7 @@ namespace {
 // Only remove or slice values whose evaluation cannot read memory, trap or
 // call another function. Unknown bits may be discarded only when their exact
 // private bytes have no reads; this never supplies a replacement bit value.
-bool discardableFrameValue(const ExprPtr &Root, size_t &Budget) {
+bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
   std::unordered_set<const HighExpr *> Seen;
   while (!Pending.empty()) {
@@ -47,6 +48,7 @@ bool discardableFrameValue(const ExprPtr &Root, size_t &Budget) {
       continue;
     --Budget;
     if (!E->Type || !E->Type->Size || E->IntrinsicId != Intrinsic::None ||
+        !E->IntrinsicOutputs.empty() ||
         E->MemoryOrdering != NdMemoryOrdering::None ||
         E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return false;
@@ -118,6 +120,145 @@ ExprPtr frameValuePrefix(ExprPtr Value, uint16_t Bytes) {
 }
 } // namespace
 
+// A source-local merge can retain dead upper vector lanes on every incoming
+// edge. Narrow only when every definition constructs the same scalar prefix
+// and every read explicitly selects that prefix. No CFG path or evaluation
+// moves: each definition keeps its low expression and its original location.
+void narrowSourceConcatLocals(HighFunc &Func) {
+  std::string Error;
+  if (!Func.SourceTypeHint || !validateSourceABI(*Func.SourceTypeHint, Error) ||
+      Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
+    return;
+  size_t Budget = 100000;
+  auto Plain = [](const HighExpr &E) {
+    return E.IntrinsicId == Intrinsic::None && E.IntrinsicOutputs.empty() &&
+           E.MemoryOrdering == NdMemoryOrdering::None &&
+           E.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  };
+  struct Candidate {
+    uint16_t Bytes = 0;
+    bool Valid = true;
+    std::vector<HighStmt *> Definitions;
+    std::vector<ExprPtr *> Uses;
+  };
+  VarKeyMap<Candidate> Candidates;
+  std::vector<std::pair<HighStmt *, unsigned>> Pending;
+  for (auto &S : Func.Body)
+    Pending.emplace_back(&S, 0);
+  std::vector<HighStmt *> Statements;
+  for (size_t I = 0; I < Pending.size(); ++I) {
+    auto [S, Depth] = Pending[I];
+    if (!Budget-- || Depth > 128)
+      return;
+    Statements.push_back(S);
+    auto Add = [&](std::vector<HighStmt> &Body) {
+      for (auto &Child : Body)
+        Pending.emplace_back(&Child, Depth + 1);
+    };
+    Add(S->Body);
+    Add(S->ElseBody);
+    Add(S->DefaultBody);
+    for (auto &C : S->Cases)
+      Add(C.Body);
+    for (auto &Body : S->EHClauseBodies)
+      Add(Body);
+    if (S->Kind != StmtKind::Assign || !S->Dst || S->Dst->Kind != ExprKind::Var)
+      continue;
+    auto &C = Candidates[varKey(S->Dst->Var)];
+    const auto &D = S->Dst;
+    const auto &V = S->Val;
+    const bool Shape =
+        Plain(*D) && D->Operands.empty() && D->Var.Id >= 0 &&
+        (D->Var.Kind == MedVar::Reg || D->Var.Kind == MedVar::Temp) &&
+        D->Type && D->Type->Kind == NdTypeKind::Int && D->Type->Size == 16 &&
+        D->Var.Size == 16 && D->Var.RenameTag < 0 && V && Plain(*V) &&
+        V->Kind == ExprKind::BinOp && V->Op == NdOp::CONCAT && V->Type &&
+        V->Type->Kind == NdTypeKind::Int && V->Type->Size == 16 &&
+        V->Operands.size() == 2 && V->Operands[0] && V->Operands[1] &&
+        V->Operands[0]->Type && V->Operands[1]->Type &&
+        V->Operands[1]->Type->Kind == NdTypeKind::Int &&
+        (V->Operands[1]->Type->Size == 4 || V->Operands[1]->Type->Size == 8) &&
+        V->Operands[0]->Type->Size + V->Operands[1]->Type->Size == 16 &&
+        S->MemoryOrdering == NdMemoryOrdering::None &&
+        S->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+    if (!Shape || !discardableIntegerValue(V->Operands[0], Budget)) {
+      C.Valid = false;
+      continue;
+    }
+    const auto Width = V->Operands[1]->Type->Size;
+    C.Valid &= !C.Bytes || C.Bytes == Width;
+    C.Bytes = Width;
+    C.Definitions.push_back(S);
+  }
+  struct Use {
+    ExprPtr *Slot;
+    const HighExpr *Parent;
+    unsigned Operand, Depth;
+  };
+  std::vector<Use> Uses;
+  // Keep scanned DAG nodes alive while definitions and shared leaf slots
+  // are replaced, including uses inside another candidate's discarded tail.
+  std::vector<ExprPtr> Roots;
+  for (auto *S : Statements)
+    forEachExpr(*S, [&](ExprPtr &E) {
+      if (!(S->Kind == StmtKind::Assign && &E == &S->Dst)) {
+        Roots.push_back(E);
+        Uses.push_back({&E, nullptr, 0, 0});
+      }
+    });
+  for (size_t I = 0; I < Uses.size(); ++I) {
+    auto [Slot, Parent, Operand, Depth] = Uses[I];
+    const auto &E = *Slot;
+    if (!Budget-- || Depth > 128 || !E)
+      return;
+    for (const auto &Output : E->IntrinsicOutputs)
+      if (auto It = Candidates.find(varKey(Output)); It != Candidates.end())
+        It->second.Valid = false;
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      if (auto It = Candidates.find(varKey(E->Var)); It != Candidates.end()) {
+        auto &C = It->second;
+        const bool Prefix =
+            Parent && Plain(*Parent) && Operand == 0 && Parent->Type &&
+            Parent->Type->Kind == NdTypeKind::Int && Parent->Type->Size &&
+            Parent->Type->Size <= C.Bytes &&
+            ((Parent->Kind == ExprKind::Cast && Parent->Operands.size() == 1 &&
+              Parent->CastTo && Parent->CastTo->Kind == NdTypeKind::Int &&
+              Parent->CastTo->Size == Parent->Type->Size) ||
+             (Parent->Kind == ExprKind::BinOp && Parent->Op == NdOp::SUBBYTES &&
+              Parent->Operands.size() == 2 && Parent->Operands[1] &&
+              Parent->Operands[1]->Kind == ExprKind::Const &&
+              Plain(*Parent->Operands[1]) &&
+              Parent->Operands[1]->Operands.empty() &&
+              Parent->Operands[1]->ConstVal == 0));
+        C.Valid &= Prefix && Plain(*E) && E->Operands.empty() && E->Type &&
+                   E->Type->Kind == NdTypeKind::Int && E->Type->Size == 16 &&
+                   E->Var.Size == 16 && E->Var.RenameTag < 0 &&
+                   (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp);
+        C.Uses.push_back(Slot);
+      }
+    }
+    for (unsigned J = 0; J < E->Operands.size(); ++J)
+      Uses.push_back({&E->Operands[J], E.get(), J, Depth + 1});
+  }
+  if (!Budget)
+    return;
+  for (auto &[Key, C] : Candidates) {
+    if (!C.Valid || !C.Bytes || C.Definitions.empty() || C.Uses.empty())
+      continue;
+    const auto Narrow = [&](ExprPtr &E) {
+      E = std::make_shared<HighExpr>(*E);
+      E->Type = NdType::makeInt(C.Bytes, false);
+      E->Var.Size = C.Bytes;
+    };
+    for (auto *Slot : C.Uses)
+      Narrow(*Slot);
+    for (auto *S : C.Definitions) {
+      Narrow(S->Dst);
+      S->Val = S->Val->Operands[1];
+    }
+  }
+}
+
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
   if (Func.FrameSize <= 0 || Architecture == Arch::Unknown ||
       Func.StructuredExceptionRegions || Func.UnstructuredExceptionRegions)
@@ -184,7 +325,7 @@ void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture) {
         S.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       if (const auto At = Address(S.StoreAddr, S.StoreVal->Type->Size)) {
         PrivateStore = true;
-        if (discardableFrameValue(S.StoreVal, Budget))
+        if (discardableIntegerValue(S.StoreVal, Budget))
           Candidates.push_back({&S, *At, S.StoreVal->Type->Size});
       }
     }
