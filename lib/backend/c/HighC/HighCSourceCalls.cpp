@@ -114,6 +114,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
       Hint.CallKind == Kind::RuntimeAssociationKey ||
       Hint.CallKind == Kind::RuntimeConstantString ||
+      Hint.CallKind == Kind::RuntimeConstantObject ||
       Hint.CallKind == Kind::RuntimeBorrowedBytes ||
       Hint.CallKind == Kind::DarwinRuntimeGlobalAddress ||
       Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
@@ -156,10 +157,13 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Value = "neverd_borrowed_bytes_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_" +
               std::to_string(Hint.ByteCount) + "_address()";
-    } else if (Hint.CallKind == Kind::RuntimeConstantString) {
+    } else if (Hint.CallKind == Kind::RuntimeConstantString ||
+               Hint.CallKind == Kind::RuntimeConstantObject) {
       if (!Hint.TargetAddress)
-        return bad("constant string has no object identity");
-      Value = "neverd_objc_constant_string_" +
+        return bad("constant literal has no object identity");
+      Value = std::string(Hint.CallKind == Kind::RuntimeConstantString
+                              ? "neverd_objc_constant_string_"
+                              : "neverd_objc_constant_object_") +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
       if (!Hint.TargetAddress)

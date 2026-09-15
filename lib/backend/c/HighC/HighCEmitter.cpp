@@ -650,10 +650,16 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 llvm::utohexstr(Hint.TargetAddress, true) + "_" +
                 std::to_string(Hint.ByteCount) + "_address");
         } else if (Hint.CallKind ==
-                   SourceCallTypeHint::Kind::RuntimeConstantString) {
+                       SourceCallTypeHint::Kind::RuntimeConstantString ||
+                   Hint.CallKind ==
+                       SourceCallTypeHint::Kind::RuntimeConstantObject) {
           if (Hint.TargetAddress)
             SourceObjectAddressHelpers.insert(
-                "neverd_objc_constant_string_" +
+                std::string(
+                    Hint.CallKind ==
+                            SourceCallTypeHint::Kind::RuntimeConstantString
+                        ? "neverd_objc_constant_string_"
+                        : "neverd_objc_constant_object_") +
                 llvm::utohexstr(Hint.TargetAddress, true) + "_address");
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::RuntimeProfileCounterStorage) {

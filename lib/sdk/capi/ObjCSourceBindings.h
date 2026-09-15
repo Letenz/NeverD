@@ -3,7 +3,7 @@
 
 #include "../../loader/ObjC/ObjCRuntimeData.h"
 #include "BorrowedByteSources.h"
-#include "ObjCConstantStringSources.h"
+#include "ObjCConstantObjectSources.h"
 #include "ObjCProfileStorage.h"
 #include "ObjCSourceProjection.h"
 
@@ -30,6 +30,7 @@ struct ObjCSourceBindingResult {
   std::set<va_t> AssociationKeys;
   std::set<va_t> ProfileCounterSections;
   std::set<va_t> ConstantStrings;
+  std::set<va_t> ConstantObjects;
   std::set<BorrowedByteRange> BorrowedBytes;
   SourceProjectionDiagnostics Diagnostics{};
 };
@@ -415,12 +416,17 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       const auto Address = constantAddress(*Original);
       auto Hint =
           Address ? constantStringSourceHint(Image, *Address) : std::nullopt;
+      if (!Hint && Address)
+        Hint = constantObjectSourceHint(Image, *Address);
       if (Hint) {
+        (Hint->CallKind == SourceCallTypeHint::Kind::RuntimeConstantString
+             ? Result.ConstantStrings
+             : Result.ConstantObjects)
+            .insert(*Address);
         *Expression = *HighExpr::makeCall({}, 0, {});
         Expression->Type = Original->Type;
         Expression->SourceCallHint =
             std::make_shared<SourceCallTypeHint>(std::move(*Hint));
-        Result.ConstantStrings.insert(*Address);
         return Expression;
       }
     }
@@ -449,12 +455,17 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         const auto Target = readImmutableImagePointer(Image, *Address);
         auto Hint = Target ? constantStringSourceHint(Image, *Target, *Address)
                            : std::nullopt;
+        if (!Hint && Target)
+          Hint = constantObjectSourceHint(Image, *Target, *Address);
         if (Hint) {
+          (Hint->CallKind == SourceCallTypeHint::Kind::RuntimeConstantString
+               ? Result.ConstantStrings
+               : Result.ConstantObjects)
+              .insert(*Target);
           *Expression = *HighExpr::makeCall({}, 0, {});
           Expression->Type = Original->Type;
           Expression->SourceCallHint =
               std::make_shared<SourceCallTypeHint>(std::move(*Hint));
-          Result.ConstantStrings.insert(*Target);
           return Expression;
         }
       }
@@ -770,8 +781,18 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
   if (Binding.ImmutablePointerSlot &&
-      Binding.CallKind != SourceCallTypeHint::Kind::RuntimeConstantString)
+      Binding.CallKind != SourceCallTypeHint::Kind::RuntimeConstantString &&
+      Binding.CallKind != SourceCallTypeHint::Kind::RuntimeConstantObject)
     return false;
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeConstantObject) {
+    const auto Expected = constantObjectSourceHint(
+        Image, Binding.TargetAddress, Binding.ImmutablePointerSlot);
+    return Expected && !Expression.IsIndirectCall &&
+           Binding.TargetName.empty() && Binding.Selector.empty() &&
+           Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
+           !Binding.ByteCount && Binding.BorrowedByteInputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeConstantString) {
     const auto Expected = constantStringSourceHint(
         Image, Binding.TargetAddress, Binding.ImmutablePointerSlot);

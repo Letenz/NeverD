@@ -22,20 +22,10 @@ bool uniqueMapping(const BinaryImage &Image, va_t Address, uint64_t Size) {
 
 std::optional<ObjCConstantString>
 readObjCConstantString(const BinaryImage &Image, va_t Address) {
-  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 ||
-      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Image.MachOChainedFixupsAmbiguous)
-    return std::nullopt;
-  // Plain C storage does not provide arm64e's authenticated Objective-C isa.
-  if (Image.Arch == Arch::AArch64 && Image.Raw.size() >= 32 &&
-      llvm::support::endian::read32le(Image.Raw.data()) ==
-          llvm::MachO::MH_MAGIC_64 &&
-      (llvm::support::endian::read32le(Image.Raw.data() + 8) & 0x00ffffff) ==
-          llvm::MachO::CPU_SUBTYPE_ARM64E)
+  const objc::RuntimeData Data(Image);
+  if (!Data.supportsPlainObjectPointers())
     return std::nullopt;
   const auto *Section = Image.getSectionFor(Address);
-  const objc::RuntimeData Data(Image);
   if (!Section || Section->Name != "__cfstring" ||
       (Section->SegmentName != "__DATA" &&
        Section->SegmentName != "__DATA_CONST") ||

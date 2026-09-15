@@ -70,6 +70,7 @@ add_neverd_component_library(NeverDLoader
   ObjC/ObjCMetadataJSON.cpp
   ObjC/ObjCStorage.cpp
   ObjC/ObjCConstantStrings.cpp
+  ObjC/ObjCConstantObjects.cpp
   ReadOnlyBytes.cpp
   ObjC/ObjCEncoding.cpp
   ObjC/ObjCBlocks.cpp

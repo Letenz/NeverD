@@ -46,6 +46,7 @@ enum class RuntimeFixture {
   Associations,
   SwiftCalls,
   ConstantStrings,
+  ConstantObjects,
   UnfairLocks,
   SwiftStrings,
   DiagnosticReports,
@@ -138,6 +139,7 @@ void verifyRuntime(bool Chained,
   const bool NativePointers = FixtureKind == RuntimeFixture::NativePointers;
   const bool ConstantStrings =
       FixtureKind == RuntimeFixture::ConstantStrings || NativePointers;
+  const bool ConstantObjects = FixtureKind == RuntimeFixture::ConstantObjects;
   const bool UnfairLocks = FixtureKind == RuntimeFixture::UnfairLocks;
   const bool Protocols = FixtureKind == RuntimeFixture::Protocols;
   llvm::SmallString<128> Directory;
@@ -184,6 +186,7 @@ void verifyRuntime(bool Chained,
                         : DiagnosticReports  ? "ObjCDiagnosticReports.m"
                         : SwiftStrings       ? "ObjCSwiftString.m"
                         : UnfairLocks        ? "ObjCUnfairLocks.m"
+                        : ConstantObjects    ? "ObjCConstantObjects.m"
                         : ConstantStrings    ? "ObjCConstantStrings.m"
                         : SwiftCalls         ? "ObjCSwiftRuntime.m"
                         : Associations       ? "ObjCAssociations.m"
@@ -223,6 +226,7 @@ void verifyRuntime(bool Chained,
                         : DiagnosticReports  ? "ObjCDiagnosticReportsHarness.m"
                         : SwiftStrings       ? "ObjCSwiftStringHarness.m"
                         : UnfairLocks        ? "ObjCUnfairLocksHarness.m"
+                        : ConstantObjects    ? "ObjCConstantObjectsHarness.m"
                         : ConstantStrings    ? "ObjCConstantStringsHarness.m"
                         : SwiftCalls         ? "ObjCSwiftRuntimeHarness.m"
                         : Associations       ? "ObjCAssociationsHarness.m"
@@ -402,6 +406,7 @@ void verifyRuntime(bool Chained,
                              : Protocols          ? 6U
                              : DiagnosticReports  ? 5U
                              : SwiftStrings       ? 2U
+                             : ConstantObjects    ? 5U
                              : ConstantStrings    ? 12U
                              : SwiftCalls         ? 9U
                                                   : 7U);
@@ -506,6 +511,9 @@ void verifyRuntime(bool Chained,
                  "objectType:",
                  "begin:scratch:flags:",
                  "end:"};
+  if (ConstantObjects)
+    Remaining = {"words", "nested", "signedNumber", "unsignedNumber",
+                 "mapping"};
   if (ConstantStrings)
     Remaining = {"ascii",         "alias",          "unicode", "embedded",
                  "empty",         "first",          "second",  "indirectASCII",
@@ -664,6 +672,7 @@ void verifyRuntime(bool Chained,
                   : DiagnosticReports  ? "NDDiagnosticReports"
                   : SwiftStrings       ? "NDSwiftString"
                   : UnfairLocks        ? "NDUnfairLocks"
+                  : ConstantObjects    ? "NDConstantObjects"
                   : ConstantStrings    ? "NDConstantStrings"
                   : SwiftCalls         ? "NDSwiftRuntimeCalls"
                                        : "NDARCBox") +
@@ -802,6 +811,7 @@ void verifyRuntime(bool Chained,
     EXPECT_FALSE(IdentityHelpers.empty());
   else
     EXPECT_EQ(IdentityHelpers.size(), (Associations       ? 2U
+                                       : ConstantObjects  ? 13U
                                        : ConstantStrings  ? 6U
                                        : Foundation       ? 6U
                                        : SwiftLiterals    ? 2U
@@ -986,6 +996,8 @@ void verifyRuntime(bool Chained,
       : SwiftStrings    ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
       : UnfairLocks     ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
                           "concurrency=pass\n"
+      : ConstantObjects ? "constant-object-checks=32768\ncontents-and-aliases="
+                          "pass\nconcurrent-initialization=pass\n"
       : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
                           "pass\nlifetime=pass\n"
       : SwiftCalls
@@ -1042,6 +1054,19 @@ TEST(ObjCRuntimeSource,
   }
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledConstantObjectsPreserveGraphsAndConcurrentIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained ? "default fixups" : "classic fixups");
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ConstantObjects));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }
 

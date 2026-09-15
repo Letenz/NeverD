@@ -298,6 +298,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       std::set<va_t> AssociationKeys;
       std::set<va_t> ProfileSections;
       std::set<va_t> ConstantStrings;
+      std::set<va_t> ConstantObjects;
       std::set<BorrowedByteRange> BorrowedBytes;
       for (va_t Entry : Included) {
         const auto &Keys = Projections.at(Entry).AssociationKeys;
@@ -306,14 +307,16 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         ProfileSections.insert(Sections.begin(), Sections.end());
         const auto &Strings = Projections.at(Entry).ConstantStrings;
         ConstantStrings.insert(Strings.begin(), Strings.end());
+        const auto &Objects = Projections.at(Entry).ConstantObjects;
+        ConstantObjects.insert(Objects.begin(), Objects.end());
         const auto &Bytes = Projections.at(Entry).BorrowedBytes;
         BorrowedBytes.insert(Bytes.begin(), Bytes.end());
       }
       std::set<std::string> SharedIdentityFunctions;
       std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
           AssociationKeys, SharedIdentityFunctions);
-      IdentityHelpers += renderObjCConstantStringHelpers(
-          S->Img, ConstantStrings, SharedIdentityFunctions);
+      IdentityHelpers += renderObjCConstantObjectHelpers(
+          S->Img, ConstantObjects, ConstantStrings, SharedIdentityFunctions);
       IdentityHelpers += renderBorrowedByteHelpers(S->Img, BorrowedBytes,
                                                    SharedIdentityFunctions);
       std::set<std::string> SharedStorageFunctions;

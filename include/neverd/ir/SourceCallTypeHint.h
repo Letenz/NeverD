@@ -96,7 +96,9 @@ struct SourceCallTypeHint {
     /// the platform object's identity; it does not copy or fold its contents.
     DarwinRuntimeGlobalAddress,
     /// A protocol reference slot resolved to a validated local declaration.
-    RuntimeProtocol
+    RuntimeProtocol,
+    /// A validated immutable Darwin literal object graph with shared identity.
+    RuntimeConstantObject
   };
   Kind CallKind = Kind::Native;
   /// The bound source routine has a noreturn contract. Runtime bindings must
@@ -146,7 +148,7 @@ struct SourceCallTypeHint {
   std::optional<ObjCReceiverTypeHint> Receiver;
   /// Only RuntimeBorrowedBytes uses this exact byte extent at TargetAddress.
   uint32_t ByteCount = 0;
-  /// Only RuntimeConstantString: the immutable relocated slot whose loaded
+  /// Constant strings/objects: the immutable relocated slot whose loaded
   /// value supplied TargetAddress. Revalidate it against the current image.
   va_t ImmutablePointerSlot = 0;
 };

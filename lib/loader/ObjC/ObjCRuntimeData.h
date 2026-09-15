@@ -18,6 +18,20 @@ class RuntimeData {
 public:
   explicit RuntimeData(const BinaryImage &Image) : Image(Image) {}
 
+  bool supportsPlainObjectPointers() const {
+    if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+        Image.Bits != Bitness::Bits64 ||
+        (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+        Image.MachOChainedFixupsAmbiguous)
+      return false;
+    // Plain C object storage cannot reproduce authenticated arm64e isa fields.
+    return Image.Arch != Arch::AArch64 || Image.Raw.size() < 32 ||
+           llvm::support::endian::read32le(Image.Raw.data()) !=
+               llvm::MachO::MH_MAGIC_64 ||
+           (llvm::support::endian::read32le(Image.Raw.data() + 8) &
+            0x00ffffff) != llvm::MachO::CPU_SUBTYPE_ARM64E;
+  }
+
   const uint8_t *bytes(va_t VA, uint64_t Size) const {
     const auto *Section = Image.getSectionFor(VA);
     const auto *Segment = Image.getSegmentFor(VA);
