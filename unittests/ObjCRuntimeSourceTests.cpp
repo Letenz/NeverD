@@ -74,6 +74,7 @@ enum class RuntimeFixture {
   FramePadding,
   FrameSelectors,
   NativeReturnPaths,
+  IncomingResults,
   SwiftTypeLookup,
   ReadOnlyTables,
   ScalarConstants,
@@ -109,6 +110,7 @@ void verifyRuntime(bool Chained,
   const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
+  const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
   const bool FramePadding = FixtureKind == RuntimeFixture::FramePadding;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
@@ -170,6 +172,7 @@ void verifyRuntime(bool Chained,
                         : CRecords           ? "ObjCCRecordCalls.m"
                         : SwiftTypeLookup    ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
+                        : IncomingResults    ? "ObjCIncomingResults.m"
                         : FramePadding       ? "ObjCFramePadding.m"
                         : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
@@ -214,6 +217,7 @@ void verifyRuntime(bool Chained,
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
+                        : IncomingResults   ? "ObjCIncomingResultsHarness.m"
                         : FramePadding      ? "ObjCFramePaddingHarness.m"
                         : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
@@ -291,6 +295,8 @@ void verifyRuntime(bool Chained,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (NativeReturnPaths)
     Compile.push_back((Fixtures / "ObjCNativeReturnPaths.S").string());
+  if (IncomingResults)
+    Compile.push_back((Fixtures / "ObjCIncomingResults.S").string());
   if (ReceiverFields)
     Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
@@ -405,6 +411,7 @@ void verifyRuntime(bool Chained,
                              : CRecords           ? CRecordMethods
                              : SwiftTypeLookup    ? 1U
                              : NativeReturnPaths  ? 1U
+                             : IncomingResults    ? 2U
                              : FramePadding       ? 5U
                              : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
@@ -486,6 +493,8 @@ void verifyRuntime(bool Chained,
     Remaining = {"lookup:length:"};
   if (NativeReturnPaths)
     Remaining = {"adjusted:choose:output:"};
+  if (IncomingResults)
+    Remaining = {"word:flags:", "word:memory:"};
   if (ReadOnlyTables)
     Remaining = {
         "actionForKind:", "shortForKind:", "maskedForKind:", "doubleForKind:"};
@@ -684,6 +693,7 @@ void verifyRuntime(bool Chained,
                   : CRecords           ? "NDCCRecords"
                   : SwiftTypeLookup    ? "NDSwiftTypeLookup"
                   : NativeReturnPaths  ? "NDNativeReturnPaths"
+                  : IncomingResults    ? "NDIncomingResults"
                   : FramePadding       ? "NDFramePadding"
                   : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
@@ -978,8 +988,10 @@ void verifyRuntime(bool Chained,
                           "pass\nbyte-length=pass\n"
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
-      : ReadOnlyTables ? "read-only-table-cases=32768\ninteger-bits=pass\n"
-                         "floating-bits=pass\nindex-bounds=pass\n"
+      : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
+                          "memory-input=pass\n"
+      : ReadOnlyTables  ? "read-only-table-cases=32768\ninteger-bits=pass\n"
+                          "floating-bits=pass\nindex-bounds=pass\n"
       : FramePadding ? "frame-padding-cases=16384\nscalar-values=pass\ngetter-"
                        "effects=pass\n"
       : FrameSelectors
@@ -1688,6 +1700,16 @@ TEST(ObjCRuntimeSource,
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::ReadOnlyTables));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, IncomingNativeResultsPreserveWordBitsAndMemoryReads) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::IncomingResults));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

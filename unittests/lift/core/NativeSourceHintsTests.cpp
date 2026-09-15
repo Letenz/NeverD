@@ -221,6 +221,9 @@ TEST(NativeSourceHints, ComputedReturnsMergeAcrossEveryPathAndBlockOrder) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool Complete : {false, true}) {
       NativeFixture Fixture(Architecture);
+      // Isolate computed results from the separately proven entry carrier.
+      Fixture.Med.Params[0].Id = -1;
+      Fixture.Med.Blocks[0].Ops[0].Inputs[0] = MedVar::makeConst(3, 4);
       returnDiamond(Fixture);
       if (!Complete)
         Fixture.Med.Blocks[2].Ops.clear();
@@ -242,6 +245,8 @@ TEST(NativeSourceHints, ReturnLoopsRequireComputationOnTheirEntryPath) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool Seeded : {false, true}) {
       NativeFixture Fixture(Architecture);
+      Fixture.Med.Params[0].Id = -1;
+      Fixture.Med.Blocks[0].Ops[0].Inputs[0] = MedVar::makeConst(3, 4);
       returnDiamond(Fixture);
       auto &Blocks = Fixture.Med.Blocks;
       // Entry -> header -> body -> header, or header -> return. Computing
@@ -310,7 +315,7 @@ TEST(NativeSourceHints, ReturnPathsInvalidateCallsAndPartialCarrierWrites) {
   }
 }
 
-TEST(NativeSourceHints, ReturnPathsRejectInputPassthroughAndEpilogueRestores) {
+TEST(NativeSourceHints, ReturnPathsRejectUnobservedInputAndEpilogueRestores) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     NativeFixture Fixture(Architecture);
     returnDiamond(Fixture);
@@ -332,6 +337,146 @@ TEST(NativeSourceHints, ReturnPathsRejectInputPassthroughAndEpilogueRestores) {
   Restore.Inputs[0].RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   std::string Error;
   EXPECT_FALSE(Fixture.infer(Error));
+}
+
+TEST(NativeSourceHints, ObservedIncomingResultsKeepExactWidthsAndLocations) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (uint16_t Width : {1, 2, 4, 8}) {
+      NativeFixture Fixture(Architecture);
+      Fixture.Med.ReturnType = Fixture.High.ReturnType = NdType::makeInt(Width);
+      for (unsigned I = 0; I < 2; ++I) {
+        Fixture.Med.Params[I].Size = Width;
+        Fixture.Med.TypedParams[I].Type = Fixture.High.Params[I].Type =
+            NdType::makeInt(Width);
+        Fixture.Med.Blocks[0].Ops[0].Inputs[I] = Fixture.Med.Params[I];
+      }
+      Fixture.Med.Blocks[0].Ops[0].Output.Size = Width;
+      returnDiamond(Fixture);
+      Fixture.Med.Blocks[2].Ops.clear();
+      const auto Blocks = Fixture.Med.Blocks;
+      std::array<unsigned, 4> Order{0, 1, 2, 3};
+      do {
+        for (unsigned I = 0; I < 4; ++I)
+          Fixture.Med.Blocks[I] = Blocks[Order[I]];
+        std::string Error;
+        const auto Hint = Fixture.infer(Error);
+        const auto &TRI = getTargetRegInfo(Architecture);
+        EXPECT_EQ(bool(Hint), TRI.IntParamRegs[0] == TRI.IntReturnReg) << Error;
+        if (Hint) {
+          EXPECT_EQ(Hint->ReturnLocation.ValueBytes, Width);
+          EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset,
+                    TRI.IntReturnReg);
+          EXPECT_EQ(Hint->Parameters[0].Location.ValueBytes, Width);
+        }
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+}
+
+TEST(NativeSourceHints, IncomingResultsRejectUnobservedNarrowAndLaterVersions) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    NativeFixture Fixture;
+    returnDiamond(Fixture);
+    Fixture.Med.Blocks[2].Ops.clear();
+    auto &Use = Fixture.Med.Blocks[1].Ops[0].Inputs[0];
+    if (Mutation == 0)
+      Use = MedVar::makeConst(3, 4);
+    if (Mutation == 1)
+      Use.Size = 2;
+    if (Mutation == 2) {
+      Use.Kind = MedVar::Reg;
+      Use.SSAVer = 1;
+    }
+    if (Mutation == 3) {
+      Fixture.Med.Params[0].Size = 2;
+      Fixture.Med.TypedParams[0].Type = Fixture.High.Params[0].Type =
+          NdType::makeInt(2);
+      Use = Fixture.Med.Params[0];
+    }
+    if (Mutation == 4) {
+      // A matching parameter listed only in an unreachable component does
+      // not make the actual entry register an observed input.
+      Fixture.Med.Blocks[0].Succs = {2};
+      Fixture.Med.Blocks[1].Preds.clear();
+    }
+    if (Mutation == 5 || Mutation == 6) {
+      Use.Kind = MedVar::Reg;
+      Use.Id = 60;
+      Use.SSAVer = 0;
+      // An ordinary definition or a PHI may own the first SSA version.
+      // Neither is evidence that the parameter's incoming bytes were used.
+      if (Mutation == 5) {
+        MedOp Internal;
+        Internal.Opcode = NdOp::COPY;
+        Internal.Output = Use;
+        Internal.addInput(MedVar::makeConst(42, 4));
+        auto &Ops = Fixture.Med.Blocks[1].Ops;
+        Ops.insert(Ops.begin(), Internal);
+      } else {
+        PhiNode Phi;
+        Phi.Output = Use;
+        Phi.Args = {{0, MedVar::makeConst(42, 4)}};
+        Fixture.Med.Blocks[1].Phis.push_back(std::move(Phi));
+      }
+    }
+    std::string Error;
+    EXPECT_FALSE(Fixture.infer(Error)) << Mutation;
+  }
+}
+
+TEST(NativeSourceHints, IncomingResultFactsInvalidateNarrowedSelfCopies) {
+  for (uint16_t WriteWidth : {2, 4}) {
+    NativeFixture Fixture;
+    returnDiamond(Fixture);
+    auto &Ops = Fixture.Med.Blocks[2].Ops;
+    MedOp Copy = Ops.front();
+    Copy.Opcode = NdOp::COPY;
+    Copy.NumInputs = 1;
+    Copy.Inputs[0] = Copy.Output;
+    Copy.Output.Size = WriteWidth;
+    Ops = {Copy};
+    std::string Error;
+    EXPECT_EQ(bool(Fixture.infer(Error)), WriteWidth == 4) << Error;
+  }
+}
+
+TEST(NativeSourceHints, IncomingResultBackedgesMeetInitialAndClobberedStates) {
+  for (bool Clobber : {false, true}) {
+    NativeFixture Fixture;
+    const auto Return = Fixture.Med.Blocks[0].Ops.back();
+    MedOp Observe;
+    Observe.Opcode = NdOp::COPY;
+    Observe.Output.Kind = MedVar::Temp;
+    Observe.Output.Id = 50;
+    Observe.Output.Size = 4;
+    Observe.addInput(Fixture.Med.Params[0]);
+    Fixture.Med.Blocks.resize(3);
+    for (unsigned I = 0; I < 3; ++I) {
+      Fixture.Med.Blocks[I].Id = I;
+      Fixture.Med.Blocks[I].StartAddr = Fixture.Med.Entry + I * 16;
+    }
+    auto &Blocks = Fixture.Med.Blocks;
+    Blocks[0].Ops = {Observe};
+    Blocks[0].Preds = {1};
+    Blocks[0].Succs = {1, 2};
+    Blocks[1].Preds = {0};
+    Blocks[1].Succs = {0};
+    Blocks[2].Preds = {0};
+    Blocks[2].Ops = {Return};
+    if (Clobber) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x1020, 8));
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->Signature.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(
+          assignDarwinScalarSourceABI(Hint->Signature, Arch::AArch64, Error));
+      Call.SourceCallHint = std::move(Hint);
+      Blocks[1].Ops = {Call};
+    }
+    std::string Error;
+    EXPECT_EQ(bool(Fixture.infer(Error)), !Clobber) << Error;
+  }
 }
 
 TEST(NativeSourceHints, ReturnProofRejectsMalformedOrUnboundedControlFlow) {

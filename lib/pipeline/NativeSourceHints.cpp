@@ -9,6 +9,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace neverd {
 namespace {
@@ -25,12 +26,13 @@ bool sameScalar(const TypeRef &A, const TypeRef &B) {
          A->Size == B->Size && A->IsSigned == B->IsSigned;
 }
 
-// This proves a computed machine carrier, not an original return declaration.
-// PHIs merge physical register state; they do not create a value on a path
-// whose incoming return register is still unknown. Calls and partial writes
-// also invalidate the proof until a complete result is computed again.
-bool computedReturnPaths(const MedFunc &Function, Arch Architecture,
-                         uint16_t Width) {
+// This proves a defined machine carrier, not an original return declaration.
+// An observed full-width parameter can supply the initial register value.
+// PHIs merge physical state, and calls or partial writes invalidate it until
+// a complete result is computed again.
+bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
+                        uint16_t Width,
+                        const std::optional<MedVar> &IncomingParameter) {
   const size_t Count = Function.Blocks.size();
   if (!Count || Count > 16384)
     return false;
@@ -83,17 +85,49 @@ bool computedReturnPaths(const MedFunc &Function, Arch Architecture,
         Visit.push_back(Successor);
       }
   const auto &TRI = getTargetRegInfo(Architecture);
+  // Nonconstant MedVar equality is kind/id/version. Version zero alone is
+  // not an entry identity: an internal definition can receive that version.
+  using ValueKey = std::tuple<MedVar::VarKind, int, int>;
+  std::set<ValueKey> Definitions, IncomingUses;
+  auto Define = [&](const MedVar &Value) {
+    if (IncomingParameter && Value.Size &&
+        (Value.Kind == MedVar::Reg || Value.Kind == MedVar::Param))
+      Definitions.emplace(Value.Kind, Value.Id, Value.SSAVer);
+  };
   std::vector<std::optional<bool>> Transfer(Count);
   std::vector<std::pair<size_t, std::optional<bool>>> Returns;
   for (size_t I = 0; I < Count; ++I) {
     auto &Fact = Transfer[I];
+    if (IncomingParameter)
+      for (const auto &Phi : Function.Blocks[I].Phis) {
+        if (!Remaining--)
+          return false;
+        Define(Phi.Output);
+      }
     for (const auto &Op : Function.Blocks[I].Ops) {
       if (!Remaining--)
         return false;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
         Fact = false;
       const bool Seed = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-                        Op.Output == Op.Inputs[0];
+                        Op.Output == Op.Inputs[0] &&
+                        Op.Output.Size == Op.Inputs[0].Size;
+      if (!Seed)
+        Define(Op.Output);
+      // Params alone do not prove that a generic ABI placeholder was read.
+      // Only actual reachable uses of the entry version can supply this
+      // initial fact; SSA seeds, return markers and PHIs cannot invent it.
+      if (IncomingParameter && Reachable[I] && !Seed &&
+          Op.Opcode != NdOp::RETURN)
+        for (unsigned J = 0; J < Op.NumInputs; ++J) {
+          if (!Remaining--)
+            return false;
+          const auto &Input = Op.Inputs[J];
+          if (((Input.Kind == MedVar::Reg && Input.SSAVer == 0) ||
+               (Input.Kind == MedVar::Param && Input == *IncomingParameter)) &&
+              Input.RegOff == IncomingParameter->RegOff && Input.Size >= Width)
+            IncomingUses.emplace(Input.Kind, Input.Id, Input.SSAVer);
+        }
       const auto &Out = Op.Output;
       if (!Seed && Op.Opcode != NdOp::SUBBYTES && Out.Kind == MedVar::Reg &&
           Out.Size &&
@@ -111,15 +145,18 @@ bool computedReturnPaths(const MedFunc &Function, Arch Architecture,
         Returns.emplace_back(I, Fact);
     }
   }
-  // Greatest fixed point of definite computation. Only inherited facts can
+  const bool ObservedIncoming =
+      std::any_of(IncomingUses.begin(), IncomingUses.end(),
+                  [&](const ValueKey &Key) { return !Definitions.count(Key); });
+  // Greatest fixed point of definite availability. Only inherited facts can
   // fall from true to false; a local complete write establishes its own fact.
-  // Entry and disconnected components start without an incoming result, so
-  // an unseeded cycle cannot prove itself by its backedge.
+  // Entry needs its observed parameter; disconnected components have no
+  // initial result. Backedges must agree with the initial entry fact too.
   std::vector<bool> Outgoing(Count);
   std::deque<size_t> Unknown;
   for (size_t I = 0; I < Count; ++I) {
-    Outgoing[I] =
-        Transfer[I].value_or(I != *Entry && Reachable[I] && !Preds[I].empty());
+    Outgoing[I] = Transfer[I].value_or(
+        Reachable[I] && (I == *Entry ? ObservedIncoming : !Preds[I].empty()));
     if (!Outgoing[I])
       Unknown.push_back(I);
   }
@@ -139,7 +176,7 @@ bool computedReturnPaths(const MedFunc &Function, Arch Architecture,
   std::vector<bool> Incoming(Count);
   for (size_t I = 0; I < Count; ++I)
     Incoming[I] =
-        I != *Entry && Reachable[I] && !Preds[I].empty() &&
+        Reachable[I] && (I == *Entry ? ObservedIncoming : !Preds[I].empty()) &&
         std::all_of(Preds[I].begin(), Preds[I].end(),
                     [&](size_t Predecessor) { return Outgoing[Predecessor]; });
   for (const auto &[I, Fact] : Returns)
@@ -194,6 +231,7 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   Hint.ReturnLocation.ValueBytes = Hint.ReturnType->Size;
   std::set<uint64_t> ParameterRegisters;
   std::set<int> StackSlots;
+  std::optional<MedVar> IncomingReturnParameter;
   for (size_t Index = 0; Index < Med.Params.size(); ++Index) {
     const auto &Parameter = Med.Params[Index];
     // Generic ABI recovery fills unused register gaps with Id=-1. Such a
@@ -230,6 +268,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
         return Reject("native parameter register is ambiguous or non-integer");
       Source.Location.Kind = SourceABICarrierKind::IntegerRegister;
       Source.Location.RegisterOffset = Parameter.RegOff;
+      if (Parameter.RegOff == TRI.IntReturnReg &&
+          Parameter.Size >= Hint.ReturnType->Size)
+        IncomingReturnParameter = Parameter;
     }
     Hint.Parameters.push_back(std::move(Source));
   }
@@ -278,8 +319,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   }
   if (!HasReturn)
     return Reject("native function has no machine return");
-  if (!computedReturnPaths(Med, Image.Arch, Hint.ReturnType->Size))
-    return Reject("native result has no complete computed carrier on every "
+  if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnType->Size,
+                          IncomingReturnParameter))
+    return Reject("native result has no complete defined carrier on every "
                   "return path");
   const auto PointerParameters = inferMedSourcePointerParameters(Med);
   size_t SourceIndex = 0;
