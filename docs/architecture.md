@@ -128,6 +128,8 @@ different origins. HighIR symbolic simplification keeps address identities
 opaque; source binding uses the shared numeric-operand classification and still
 requires relocation bindings for memory and pointer consumers.
 
+MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
+
 | User route | Representation path | Exit |
 |------------|---------------------|------|
 | Low/Med dump | Binary -> LowIR, optionally -> MedIR | Diagnostic text |

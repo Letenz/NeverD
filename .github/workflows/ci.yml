@@ -445,6 +445,20 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("AdjacentCalls.ProvenNoReturnTargetKeepsDecodedCallInsteadOfGetPCPush",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.SeededCyclesConvergeIndependentlyOfTraversalOrder",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.UnknownAndUnseededArmsInvalidateProvisionalFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.EqualBitsRetainWidthProvenanceAndOwnerIdentity",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.IncompleteEdgesAndDuplicateDefinitionsSupplyNoFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.EffectsAndOperandRolesSurviveConstantTransport",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.BudgetExhaustionLeavesAllOperandsUnchanged",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MedConstantPropagation.LowConversionPreservesOneValueAcrossLoopDefinitions",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.SwiftMetadataCallsRevalidateDeclarationAndConvention",
@@ -1089,9 +1103,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 415,
-              ("macOS", "macos-patch"): 451,
-              ("Windows", "windows-focused"): 411,
+              ("Linux", "linux-semantic"): 422,
+              ("macOS", "macos-patch"): 459,
+              ("Windows", "windows-focused"): 418,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1118,6 +1132,7 @@ jobs:
                       "ObjCRuntimeSource.FixedCRecordsPreserveValuesAndBitmapEffects",
                       "ObjCRuntimeSource.SystemCallsPreserveFileAttributesObjectsAndDigests",
                       "ObjCRuntimeSource.SwiftMetadataCallsPreserveIdentityAndResponseState",
+                      "ObjCRuntimeSource.InvariantLoopValuesPreserveClassChecksAndGetterEffects",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

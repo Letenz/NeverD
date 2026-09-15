@@ -67,6 +67,7 @@ enum class RuntimeFixture {
   CRecords,
   SystemCalls,
   MetadataCalls,
+  InvariantLoops,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -96,6 +97,7 @@ void verifyRuntime(bool Chained,
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
+  const bool InvariantLoops = FixtureKind == RuntimeFixture::InvariantLoops;
   const bool MetadataCalls = FixtureKind == RuntimeFixture::MetadataCalls;
   const bool SystemCalls = FixtureKind == RuntimeFixture::SystemCalls;
   const bool CRecords = FixtureKind == RuntimeFixture::CRecords;
@@ -149,6 +151,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : InvariantLoops     ? "ObjCInvariantLoops.m"
                         : MetadataCalls      ? "ObjCMetadataCalls.m"
                         : SystemCalls        ? "ObjCSystemCalls.m"
                         : SavedScalars       ? "ObjCSavedScalars.m"
@@ -184,6 +187,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : InvariantLoops    ? "ObjCInvariantLoopsHarness.m"
                         : MetadataCalls     ? "ObjCMetadataCallsHarness.m"
                         : SystemCalls       ? "ObjCSystemCallsHarness.m"
                         : SavedScalars      ? "ObjCSavedScalarsHarness.m"
@@ -361,6 +365,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : InvariantLoops     ? 2U
                              : MetadataCalls      ? 8U
                              : SystemCalls        ? 11U
                              : ReceiverFields     ? 4U
@@ -425,6 +430,8 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (InvariantLoops)
+    Remaining = {"nestedNumbers:", "nestedStrings:"};
   if (MetadataCalls)
     Remaining = {"url:",     "date:",      "characterSet:", "dateComponents:",
                  "request:", "indexPath:", "locale:",       "notification:"};
@@ -603,6 +610,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : InvariantLoops     ? "NDInvariantLoops"
                   : MetadataCalls      ? "NDMetadataCalls"
                   : SystemCalls        ? "NDSystemCalls"
                   : DynamicProperties  ? "NDPropertyDriver"
@@ -868,6 +876,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : InvariantLoops
+          ? "loop-method-cases=2048\nprobe-checks=2048\nprobe-reads=2048\n"
       : MetadataCalls ? "metadata-responses=4096\nmetadata-identity="
                         "pass\ncomplete-state=pass\n"
       : SystemCalls
@@ -1402,6 +1412,17 @@ TEST(ObjCRuntimeSource, WordRecordsPreserveBitsPointersCallsAndStackArguments) {
         verifyRuntime(Chained, RuntimeFixture::WordRecords));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     InvariantLoopValuesPreserveClassChecksAndGetterEffects) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::InvariantLoops));
+#else
+  GTEST_SKIP() << "Requires the Darwin Objective-C runtime";
 #endif
 }
 

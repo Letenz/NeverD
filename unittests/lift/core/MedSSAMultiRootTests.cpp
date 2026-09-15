@@ -72,7 +72,9 @@ TEST(MedSSAMultiRoot, MergesDefinitionsFromIndependentSourcesAtAJoin) {
   ASSERT_EQ(Phi.Args.size(), 2u);
   EXPECT_EQ(Phi.Args[0].first, 0);
   EXPECT_EQ(Phi.Args[1].first, 1);
-  EXPECT_NE(Phi.Args[0].second.SSAVer, Phi.Args[1].second.SSAVer);
+  EXPECT_EQ(Phi.Args[0].second, MedVar::makeConst(EntryValue, TRI.PointerSize));
+  EXPECT_EQ(Phi.Args[1].second,
+            MedVar::makeConst(ResumeValue, TRI.PointerSize));
 
   ASSERT_FALSE(MedJoin.Ops.empty());
   const MedOp &MedReturn = MedJoin.Ops.back();
@@ -114,8 +116,7 @@ TEST(MedSSAMultiRoot, DoesNotInventADownstreamRootFromBlockOrder) {
   LowOp DownstreamReturn;
   DownstreamReturn.Opcode = NdOp::RETURN;
   DownstreamReturn.Addr = DownstreamVA;
-  DownstreamReturn.addInput(
-      NdVar::reg(TRI.IntReturnReg, TRI.PointerSize));
+  DownstreamReturn.addInput(NdVar::reg(TRI.IntReturnReg, TRI.PointerSize));
   Downstream.Ops.push_back(DownstreamReturn);
 
   LowBlock &Source = Low.Blocks[2];

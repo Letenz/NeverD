@@ -19,6 +19,7 @@ add_neverd_component_library(NeverDIRMed
   lower/LowToMedX86.cpp
   lower/LowToMedX86CrossBlock.cpp
   pass/MedCFGSimplify.cpp
+  pass/MedConstantPropagation.cpp
   pass/MedDCE.cpp
   pass/MedDisplay.cpp
   pass/MedNoReturn.cpp

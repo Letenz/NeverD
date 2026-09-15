@@ -13,6 +13,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedConstantPropagation.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <map>
@@ -22,6 +23,7 @@
 namespace neverd {
 
 void LowToMedConverter::propagate(MedFunc &Func) {
+  propagateInvariantConstants(Func);
   // Key by (Kind, Id, SSAVer): the MedVar Id space is shared across kinds, and
   // a stack Param's Id (its argument index, e.g. arg6) overlaps with the small
   // allocVarId() ids handed to registers/temps.  Ignoring Kind lets a Param
