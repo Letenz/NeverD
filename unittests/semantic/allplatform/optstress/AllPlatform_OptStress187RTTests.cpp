@@ -93,7 +93,7 @@ static std::vector<RoundTripTC> makeOptStress187TC(const char *prefix, const cha
 // clang-format on
 
 static const std::vector<RoundTripTC> kX64 =
-    withForbiddenSwitch(makeOptStress187TC("x64o187", "long"), {"_divsigma"});
+    makeOptStress187TC("x64o187", "long");
 static const std::vector<RoundTripTC> kX86 =
     makeOptStress187TC("x86o187", "int");
 static const std::vector<RoundTripTC> kA64 =

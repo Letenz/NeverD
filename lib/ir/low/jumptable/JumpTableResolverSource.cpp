@@ -736,6 +736,13 @@ bool CFGBuilder::tryCrossInstrRelativeTable(const BinaryImage &Img,
   // the 4-byte absolute-vs-PIC-relative ambiguity — a PIC switch table carries
   // no relocations on its entries.
   uint32_t RelocRun = countCodePtrRelocRun(Img, TableAddr, LoadWidth);
+  if (const uint64_t ObjectSize = Img.dataObjectSizeAt(TableAddr);
+      ObjectSize != 0 && LoadWidth != 0 && ObjectSize % LoadWidth == 0) {
+    const uint64_t Slots = ObjectSize / LoadWidth;
+    if (Slots >= limits::kMinJumpTableEntries && Slots < RelocRun &&
+        Slots <= limits::kMaxJumpTableEntries)
+      RelocRun = static_cast<uint32_t>(Slots);
+  }
 
   // A stack-table source proof is not complete until its exact initializer
   // occurrences have also been reconciled with the independently published
