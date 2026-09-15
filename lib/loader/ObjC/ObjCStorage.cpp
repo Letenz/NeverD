@@ -42,6 +42,7 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
     return false;
   Remaining -= *Count;
   std::set<std::string> Names;
+  std::set<va_t> OffsetSlots;
   std::vector<ObjCIvar> Ivars;
   for (uint32_t Index = 0; Index < *Count; ++Index) {
     const va_t Record = *List + 8 + uint64_t(Index) * *EntrySize;
@@ -57,24 +58,33 @@ bool readIvars(ObjCClass &Class, const objc::RuntimeData &Data,
     if (OffsetBytes)
       Offset = OffsetWidth == 8 ? llvm::support::endian::read64le(OffsetBytes)
                                 : llvm::support::endian::read32le(OffsetBytes);
+    const bool RuntimeOffset = !Offset && AllowEmptyType && OffsetWidth == 8 &&
+                               OffsetSlot &&
+                               Data.runtimeOffsetSlot(*OffsetSlot);
     auto Name = NameSlot ? Data.string(*NameSlot) : std::nullopt;
     auto Type = TypeSlot && *TypeSlot ? Data.string(*TypeSlot, AllowEmptyType)
                                       : std::nullopt;
-    if (!Offset || !Name || !Type || !Align || !Width || !*Width ||
-        !Names.insert(*Name).second || *Offset < *Start ||
-        !rangeInBounds(*Offset, *Width, *Size) ||
+    if ((!Offset && !RuntimeOffset) || !Name || !Type || !Align || !Width ||
+        (!*Width && !AllowEmptyType) || *Width > (1U << 24) ||
+        !Names.insert(*Name).second || !OffsetSlot ||
+        !OffsetSlots.insert(*OffsetSlot).second ||
+        (Offset &&
+         (*Offset < *Start || !rangeInBounds(*Offset, *Width, *Size))) ||
         (*Align > 16 && *Align != std::numeric_limits<uint32_t>::max()))
       return false;
     const uint32_t Alignment =
         *Align == std::numeric_limits<uint32_t>::max() ? 8 : 1U << *Align;
-    if (*Offset % Alignment)
+    if (Offset && *Offset % Alignment)
       return false;
     for (const auto &Other : Ivars)
-      if (*Offset < uint64_t(Other.Offset) + Other.Size &&
-          Other.Offset < uint64_t(*Offset) + *Width)
+      if (Offset && Other.Offset && *Width && Other.Size &&
+          *Offset < uint64_t(*Other.Offset) + Other.Size &&
+          *Other.Offset < uint64_t(*Offset) + *Width)
         return false;
-    Ivars.push_back({*Name, *Type, Record, *OffsetSlot,
-                     static_cast<uint32_t>(*Offset), *Width, Alignment});
+    Ivars.push_back(
+        {*Name, *Type, Record, *OffsetSlot,
+         Offset ? std::optional(static_cast<uint32_t>(*Offset)) : std::nullopt,
+         *Width, Alignment});
   }
   Class.Ivars = std::move(Ivars);
   return true;
@@ -186,7 +196,12 @@ void parseObjCStorage(BinaryImage &Image) {
       diagnostic(Image, "Objective-C instance storage layout is incomplete");
       continue;
     }
-    Class.IvarStatus = "recovered";
+    Class.IvarStatus = std::all_of(Class.Ivars.begin(), Class.Ivars.end(),
+                                   [](const ObjCIvar &Ivar) {
+                                     return Ivar.Offset && Ivar.Size;
+                                   })
+                           ? "recovered"
+                           : "runtime";
     for (const auto &Ivar : Class.Ivars) {
       Publish({ObjCSourceReference::Kind::IvarOffset, Ivar.OffsetAddress,
                OffsetWidth, Ivar.Name, Class.Name});

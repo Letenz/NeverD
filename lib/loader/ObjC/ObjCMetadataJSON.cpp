@@ -36,7 +36,8 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
       Ivars.push_back(llvm::json::Object{
           {"name", jsonSafeText(Ivar.Name)},
           {"type_encoding", jsonSafeText(Ivar.TypeEncoding)},
-          {"offset", static_cast<int64_t>(Ivar.Offset)},
+          {"offset", Ivar.Offset ? llvm::json::Value(*Ivar.Offset)
+                                 : llvm::json::Value(nullptr)},
           {"size", static_cast<int64_t>(Ivar.Size)},
           {"alignment", static_cast<int64_t>(Ivar.Alignment)}});
     Classes.push_back(llvm::json::Object{

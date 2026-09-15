@@ -3520,6 +3520,32 @@ TEST(ObjCCallHints, ReceiverFieldsRequireMatchingMetadataAndReferenceSlots) {
   }
 }
 
+TEST(ObjCCallHints,
+     RuntimeIvarTypesRequireSlotsWithoutInventingLiteralOffsets) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverFieldImage(Architecture);
+    auto &Class = Image.ObjCClasses.front();
+    Class.IvarStatus = "runtime";
+    Class.Ivars.front().Offset.reset();
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    EXPECT_TRUE(objcReceiverIvarTypeHint(Image, *Root, 0x2300));
+    EXPECT_FALSE(objcReceiverFieldTypeHint(Image, *Root, 8));
+    const auto Hints = buildObjCSourceCallHints(
+        Image, receiverFieldCaller(Architecture, true));
+    ASSERT_EQ(Hints.size(), 1U);
+    auto Expression = receiverCallExpression(Hints.begin()->second);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    auto Forged =
+        std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+    Forged->Receiver->Steps.front().ByteOffset = 8;
+    Expression->SourceCallHint = Forged;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    Class.Ivars.front().Size = 0;
+    EXPECT_FALSE(objcReceiverIvarTypeHint(Image, *Root, 0x2300));
+  }
+}
+
 TEST(ObjCCallHints, ReceiverFieldProofsRevalidateEveryStepAfterReload) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     const auto Image = receiverFieldImage(Architecture);

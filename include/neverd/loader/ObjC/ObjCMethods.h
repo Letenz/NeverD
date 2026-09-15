@@ -13,7 +13,10 @@ struct ObjCIvar {
   std::string TypeEncoding;
   va_t MetadataAddress = 0;
   va_t OffsetAddress = 0;
-  uint32_t Offset = 0;
+  /// Missing when the runtime initializes the offset slot after loading.
+  /// The metadata identity remains useful without a static instance layout.
+  std::optional<uint32_t> Offset;
+  /// Zero denotes a runtime-sized field, not an empty storage range.
   uint32_t Size = 0;
   uint32_t Alignment = 0;
 };

@@ -77,6 +77,7 @@ enum class RuntimeFixture {
   IncomingResults,
   NativeContext,
   AuxiliaryInputs,
+  RuntimeIvars,
   SwiftTypeLookup,
   SwiftIntegerRuntime,
   ReadOnlyTables,
@@ -118,6 +119,7 @@ void verifyRuntime(bool Chained,
   const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
   const bool NativeContext = FixtureKind == RuntimeFixture::NativeContext;
   const bool AuxiliaryInputs = FixtureKind == RuntimeFixture::AuxiliaryInputs;
+  const bool RuntimeIvars = FixtureKind == RuntimeFixture::RuntimeIvars;
   const bool FramePadding = FixtureKind == RuntimeFixture::FramePadding;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
@@ -181,6 +183,7 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup     ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths   ? "ObjCNativeReturnPaths.m"
                         : IncomingResults     ? "ObjCIncomingResults.m"
+                        : RuntimeIvars        ? "ObjCRuntimeIvars.swift"
                         : AuxiliaryInputs     ? "ObjCNativeAuxiliaryInputs.m"
                         : NativeContext       ? "ObjCNativeContext.m"
                         : FramePadding        ? "ObjCFramePadding.m"
@@ -230,6 +233,7 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : IncomingResults   ? "ObjCIncomingResultsHarness.m"
+                        : RuntimeIvars      ? "ObjCRuntimeIvarsHarness.m"
                         : AuxiliaryInputs ? "ObjCNativeAuxiliaryInputsHarness.m"
                         : NativeContext   ? "ObjCNativeContextHarness.m"
                         : FramePadding    ? "ObjCFramePaddingHarness.m"
@@ -324,7 +328,7 @@ void verifyRuntime(bool Chained,
   if (NativePointers)
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
-      SwiftTypeLookup || SwiftIntegerRuntime)
+      SwiftTypeLookup || SwiftIntegerRuntime || RuntimeIvars)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -353,6 +357,20 @@ void verifyRuntime(bool Chained,
                                             : "ObjCSwiftLiteralStrings.swift"))
                    .string(),
                Base,
+               "-o",
+               Original};
+    if (!Chained)
+      Compile.insert(Compile.end(), {"-Xlinker", "-no_fixup_chains"});
+  }
+  if (RuntimeIvars) {
+    Compile = {"/usr/bin/swiftc",
+               "-O",
+               "-emit-library",
+               "-module-name",
+               "RuntimeIvars",
+               "-target",
+               HostArch + "-apple-macosx13.0",
+               (Fixtures / Fixture).string(),
                "-o",
                Original};
     if (!Chained)
@@ -431,6 +449,7 @@ void verifyRuntime(bool Chained,
                              : SwiftTypeLookup     ? 1U
                              : NativeReturnPaths   ? 1U
                              : IncomingResults     ? 2U
+                             : RuntimeIvars        ? 4U
                              : AuxiliaryInputs     ? 2U
                              : NativeContext       ? 2U
                              : FramePadding        ? 5U
@@ -522,6 +541,8 @@ void verifyRuntime(bool Chained,
     Remaining = {"word:context:", "contextWord:"};
   if (AuxiliaryInputs)
     Remaining = {"fillWithWord:buffer:", "addWord:buffer:"};
+  if (RuntimeIvars)
+    Remaining = {"word", "setWord:"};
   if (ReadOnlyTables)
     Remaining = {
         "actionForKind:", "shortForKind:", "maskedForKind:", "doubleForKind:"};
@@ -722,6 +743,7 @@ void verifyRuntime(bool Chained,
                   : SwiftTypeLookup     ? "NDSwiftTypeLookup"
                   : NativeReturnPaths   ? "NDNativeReturnPaths"
                   : IncomingResults     ? "NDIncomingResults"
+                  : RuntimeIvars        ? "NDRuntimeIvars"
                   : AuxiliaryInputs     ? "NDNativeAuxiliaryInputs"
                   : NativeContext       ? "NDNativeContext"
                   : FramePadding        ? "NDFramePadding"
@@ -771,6 +793,8 @@ void verifyRuntime(bool Chained,
     ASSERT_NE(Method, nullptr);
     auto Selector = Method->getString("selector");
     ASSERT_TRUE(Selector);
+    if (RuntimeIvars && (*Selector == "init" || *Selector == ".cxx_destruct"))
+      continue; // This fixture replaces only the two scalar property methods.
     if (RejectedConstantUses.erase(Selector->str())) {
       EXPECT_EQ(Method->getString("status"), "unrecovered");
       const auto Reason = Method->getString("reason");
@@ -942,7 +966,7 @@ void verifyRuntime(bool Chained,
     Compile.insert(Compile.end() - 2,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
-      SwiftTypeLookup || SwiftIntegerRuntime)
+      SwiftTypeLookup || SwiftIntegerRuntime || RuntimeIvars)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -1022,6 +1046,8 @@ void verifyRuntime(bool Chained,
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
                           "memory-input=pass\n"
+      : RuntimeIvars    ? "runtime-ivar-cases=16384\nproperty-bits=pass\n"
+                          "resilient-field=pass\n"
       : AuxiliaryInputs ? "native-auxiliary-cases=16384\nresult-buffers=pass\n"
                           "scalar-results=pass\n"
       : NativeContext   ? "native-context-cases=16384\ncontext-bits=pass\n"
@@ -1776,6 +1802,17 @@ TEST(ObjCRuntimeSource, AuxiliaryNativeInputsPreserveBuffersAndScalarResults) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::AuxiliaryInputs));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RuntimeIvarOffsetsPreserveSwiftPropertiesAndOpaqueFields) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::RuntimeIvars));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

@@ -256,7 +256,8 @@ const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
       }
     if (!Class)
       break; // No external layout is invented beyond the recorded lineage.
-    if (Class->IvarStatus != "recovered" ||
+    if ((Class->IvarStatus != "recovered" &&
+         !(BySlot && Class->IvarStatus == "runtime")) ||
         (Class->RootClass ? Class->InheritanceStatus != "root" ||
                                 !Class->SuperclassName.empty()
                           : Class->InheritanceStatus != "resolved" ||
@@ -265,15 +266,18 @@ const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
     for (const auto &Ivar : Class->Ivars) {
       if (!Remaining--)
         return nullptr;
-      const bool Match = BySlot ? Ivar.OffsetAddress == Key
-                                : Key < uint64_t(Ivar.Offset) + Ivar.Size &&
-                                      Ivar.Offset < Key + 8;
+      const bool Match =
+          BySlot ? Ivar.OffsetAddress == Key
+                 : Ivar.Offset && Key < uint64_t(*Ivar.Offset) + Ivar.Size &&
+                       *Ivar.Offset < Key + 8;
       if (!Match)
         continue;
       if (Result || !Ivar.MetadataAddress || !Ivar.OffsetAddress ||
           Ivar.Size != 8 || (!BySlot && Ivar.Offset != Key) ||
-          Ivar.Offset < Class->InstanceStart ||
-          !rangeInBounds(Ivar.Offset, Ivar.Size, Class->InstanceSize))
+          (!Ivar.Offset && Class->IvarStatus != "runtime") ||
+          (Ivar.Offset &&
+           (*Ivar.Offset < Class->InstanceStart ||
+            !rangeInBounds(*Ivar.Offset, Ivar.Size, Class->InstanceSize))))
         return nullptr;
       const auto Ref = Image.ObjCSourceReferences.find(Ivar.OffsetAddress);
       if (Ref == Image.ObjCSourceReferences.end() ||

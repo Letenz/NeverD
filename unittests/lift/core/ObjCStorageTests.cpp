@@ -1,6 +1,7 @@
 #include "../../../lib/sdk/capi/ObjCSourceBindings.h"
 #include "gtest/gtest.h"
 
+#include "neverd/loader/ObjC/ObjCMetadataJSON.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 
 #include "llvm/Support/Endian.h"
@@ -63,7 +64,147 @@ struct StorageImage {
     string(0x1540, "opaque");
     string(0x1560, "");
   }
+
+  void runtimeOffsets() {
+    Image.Segments[0].Size += 16;
+    Section Slots;
+    Slots.Name = "__common";
+    Slots.VA = 0x2000;
+    Slots.Size = 16;
+    Slots.Type = llvm::MachO::S_ZEROFILL;
+    Slots.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Sections.push_back(Slots);
+    pointer(0x1308, 0x2000);
+    pointer(0x1328, 0x2008);
+    word(0x1344, 0); // A resilient field has no static width.
+  }
 };
+
+TEST(ObjCStorage, RuntimeSwiftOffsetsRetainIdentityWithoutInventingLayout) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    StorageImage Fixture;
+    Fixture.Image.Arch = Architecture;
+    Fixture.runtimeOffsets();
+    // The segment's file range can include page padding over zero-fill
+    // sections. Those bytes do not establish an initialized ivar offset.
+    Fixture.Image.Segments[0].FileSz += 16;
+    Fixture.Image.Segments[0].Data.resize(0x1010, 0xa5);
+    parseObjCStorage(Fixture.Image);
+    const auto &Class = Fixture.Image.ObjCClasses.front();
+    ASSERT_EQ(Class.IvarStatus, "runtime");
+    ASSERT_EQ(Class.Ivars.size(), 2U);
+    EXPECT_FALSE(Class.Ivars[0].Offset);
+    EXPECT_FALSE(Class.Ivars[1].Offset);
+    EXPECT_EQ(Class.Ivars[0].Size, 8U);
+    EXPECT_EQ(Class.Ivars[1].Size, 0U);
+    const auto JSON = objcMetadataJSON(Fixture.Image);
+    const auto *Classes = JSON.getArray("classes");
+    ASSERT_NE(Classes, nullptr);
+    const auto *Fields = Classes->front().getAsObject()->getArray("ivars");
+    ASSERT_NE(Fields, nullptr);
+    ASSERT_EQ(Fields->size(), 2U);
+    for (const auto &Field : *Fields)
+      EXPECT_TRUE(Field.getAsObject()->get("offset")->getAsNull());
+    for (unsigned Width : {4U, 8U}) {
+      HighFunc Function;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2000, 8),
+                                         NdType::makeInt(Width));
+      Function.Body.push_back(Return);
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Fixture.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto &Expression = *Bound.Function.Body[0].RetVal;
+      ASSERT_TRUE(Expression.SourceCallHint);
+      EXPECT_EQ(Expression.SourceCallHint->CallKind,
+                SourceCallTypeHint::Kind::RuntimeIvarOffset);
+      EXPECT_EQ(Expression.SourceCallHint->OwnerClass, "StoredValues");
+      EXPECT_EQ(Expression.SourceCallHint->TargetName, "first");
+      EXPECT_TRUE(sdk::objcSourceCallBound(Expression, Fixture.Image, {}));
+      auto Changed = Fixture.Image;
+      Changed.ObjCSourceReferences.at(0x2000).Name = "opaque";
+      EXPECT_FALSE(sdk::objcSourceCallBound(Expression, Changed, {}));
+    }
+  }
+}
+
+TEST(ObjCStorage, RuntimeOffsetIdentitiesRejectMalformedAndAmbiguousStorage) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 20; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      StorageImage F;
+      F.Image.Arch = Architecture;
+      F.runtimeOffsets();
+      auto &Slot = F.Image.Sections.back();
+      switch (Mutation) {
+      case 0:
+        F.pointer(0x1120, 0x1200);
+        break;
+      case 1:
+        Slot.Flags = SegmentFlags::Readable;
+        break;
+      case 2:
+        Slot.Flags = SegmentFlags::Writable;
+        break;
+      case 3:
+        Slot.Flags = Slot.Flags | SegmentFlags::Executable;
+        break;
+      case 4:
+        Slot.Type = llvm::MachO::S_THREAD_LOCAL_ZEROFILL;
+        break;
+      case 5:
+        Slot.FileSz = 8;
+        break;
+      case 6:
+        Slot.Size = 8;
+        break;
+      case 7:
+        F.Image.Segments[0].Size -= 8;
+        break;
+      case 8:
+        F.Image.Segments[0].Flags = SegmentFlags::Readable;
+        break;
+      case 9:
+        F.pointer(0x1308, 0x2001);
+        break;
+      case 10:
+        F.pointer(0x1328, 0x2000);
+        break;
+      case 11:
+        F.pointer(0x1330, 0x1500);
+        break;
+      case 12:
+        F.Image.Sections[0].FileSz = 0x320;
+        break;
+      case 13:
+        F.Image.Sections.push_back(Slot);
+        break;
+      case 14:
+        F.Image.Segments.push_back(F.Image.Segments[0]);
+        break;
+      case 15:
+        F.Image.ImportPtrSlots[0x2000] = "_foreign";
+        break;
+      case 16:
+        F.Image.DataPtrRelocSlots.insert(0x1fff);
+        break;
+      case 17:
+        F.pointer(0x1308, 0x1400);
+        F.pointer(0x1400, UINT64_MAX);
+        break;
+      case 18:
+        F.word(0x1324, UINT32_MAX);
+        break;
+      case 19:
+        F.word(0x1320, 17);
+        break;
+      }
+      parseObjCStorage(F.Image);
+      EXPECT_EQ(F.Image.ObjCClasses.front().IvarStatus, "unresolved");
+      EXPECT_TRUE(F.Image.ObjCClasses.front().Ivars.empty());
+      EXPECT_TRUE(F.Image.ObjCSourceReferences.empty());
+    }
+}
 
 TEST(ObjCStorage, StableSwiftPreservesWideOffsetsAndAbsentFieldTypes) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {

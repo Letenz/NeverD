@@ -53,6 +53,47 @@ public:
     return Image.readVA(VA, Size);
   }
 
+  /// Identify a runtime-written offset slot without inventing its value.
+  /// This is storage ownership evidence, never a readable byte snapshot.
+  bool runtimeOffsetSlot(va_t VA) const {
+    constexpr uint64_t Width = 8;
+    if (!VA || VA % Width || Width > InvalidVA - VA ||
+        !supportsPlainObjectPointers())
+      return false;
+    const auto *Section = Image.getSectionFor(VA);
+    const auto *Segment = Image.getSegmentFor(VA);
+    if (!Section || !Segment || !Section->isReadable() ||
+        !Section->isWritable() || Section->isExecutable() ||
+        !Segment->isReadable() || !Segment->isWritable() ||
+        Segment->isExecutable() || Section->FileSz ||
+        (Section->Type & llvm::MachO::SECTION_TYPE) !=
+            llvm::MachO::S_ZEROFILL ||
+        Section->VA < Segment->VA || Section->Size > InvalidVA - Section->VA ||
+        Segment->Size > InvalidVA - Segment->VA ||
+        !rangeInBounds(Section->VA - Segment->VA, Section->Size,
+                       Segment->Size) ||
+        !rangeInBounds(VA - Section->VA, Width, Section->Size) ||
+        !rangeInBounds(VA - Segment->VA, Width, Segment->Size))
+      return false;
+    auto Overlaps = [&](va_t Start, uint64_t Size) {
+      return Size && (Start <= VA ? VA - Start < Size : Start - VA < Width);
+    };
+    for (const auto &Other : Image.Sections)
+      if (&Other != Section && Overlaps(Other.VA, Other.Size))
+        return false;
+    for (const auto &Other : Image.Segments)
+      if (&Other != Segment && Overlaps(Other.VA, Other.Size))
+        return false;
+    for (va_t Slot = VA >= 7 ? VA - 7 : 0; Slot < VA + Width; ++Slot)
+      if (Image.hasPointerStorageProvenanceAt(Slot) ||
+          Image.MachOResolvedChainedPointerSlots.count(Slot) ||
+          Image.ImportPtrSlots.count(Slot) ||
+          Image.ImportStorageSlots.count(Slot) ||
+          Image.DyldBindSlots.count(Slot))
+        return false;
+    return true;
+  }
+
   std::optional<uint32_t> u32(va_t VA) const {
     const auto *Data = bytes(VA, 4);
     return Data ? std::optional(llvm::support::endian::read32le(Data))

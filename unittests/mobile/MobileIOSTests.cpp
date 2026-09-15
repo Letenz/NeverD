@@ -788,15 +788,16 @@ TEST(MobileIOSNative, UnavailableSuperclassDeclarationCannotRecoverScalarBody) {
 }
 
 TEST(MobileIOSNative, NativeBackendReasonSurvivesDeclarationAndLayoutFailure) {
-  for (bool layout_failure : {false, true})
+  for (unsigned failure_kind : {0U, 1U, 2U})
     for (bool native_recovered : {false, true}) {
-      SCOPED_TRACE(layout_failure);
+      const bool layout_failure = failure_kind != 0;
+      SCOPED_TRACE(failure_kind);
       SCOPED_TRACE(native_recovered);
       auto [batch, metadata] = objcDiagnosticFixture();
       auto &cls = *metadata.getArray("classes")->front().getAsObject();
       auto &native = *batch.getArray("methods")->front().getAsObject();
       if (layout_failure) {
-        cls["ivar_status"] = "unrecovered";
+        cls["ivar_status"] = failure_kind == 2 ? "runtime" : "unrecovered";
         native["instance_layout_classes"] = Array{"Calculator"};
       } else
         unavailableObjCDeclaration(metadata);
