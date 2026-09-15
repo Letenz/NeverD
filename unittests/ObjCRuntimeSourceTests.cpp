@@ -57,6 +57,7 @@ enum class RuntimeFixture {
   DynamicProperties,
   ReceiverTypes,
   ReceiverFields,
+  ReceiverAliases,
   AggregateRecords,
   ScalarConstants,
   SwiftLiterals,
@@ -80,6 +81,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::DynamicProperties;
   const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
   const bool ReceiverFields = FixtureKind == RuntimeFixture::ReceiverFields;
+  const bool ReceiverAliases = FixtureKind == RuntimeFixture::ReceiverAliases;
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
@@ -121,6 +123,7 @@ void verifyRuntime(bool Chained,
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
                         : AggregateRecords   ? "ObjCAggregateRecords.m"
+                        : ReceiverAliases    ? "ObjCReceiverAliases.m"
                         : ReceiverFields     ? "ObjCReceiverFields.m"
                         : ReceiverTypes      ? "ObjCReceiverTypes.m"
                         : DynamicProperties  ? "ObjCDynamicProperties.m"
@@ -147,6 +150,7 @@ void verifyRuntime(bool Chained,
                         : Equality          ? "ObjCEqualityHarness.m"
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
                         : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
+                        : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
                         : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
                         : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
@@ -182,6 +186,11 @@ void verifyRuntime(bool Chained,
                                    "-dynamiclib", "-framework",
                                    "Foundation",  (Fixtures / Fixture).string(),
                                    "-o",          Original};
+  if (ReceiverAliases) {
+    auto Flag = std::find(Compile.begin(), Compile.end(), "-fobjc-arc");
+    ASSERT_NE(Flag, Compile.end());
+    *Flag = "-fno-objc-arc";
+  }
   if (ManualBlocks) {
     ASSERT_TRUE(BlockLifetimes);
     auto Flag = std::find(Compile.begin(), Compile.end(), "-fobjc-arc");
@@ -298,6 +307,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : ReceiverAliases    ? 5U
                              : AggregateRecords   ? 8U
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
@@ -328,6 +338,10 @@ void verifyRuntime(bool Chained,
         "NDPointerReceiver-sharedValue", "NDPointerReceiver-readOwnValue",
         "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
         "NDTypedError-declaredCode"};
+  if (ReceiverAliases)
+    Remaining = {"NDAliasError-retainedCode", "NDAliasError-autoreleasedCode",
+                 "NDAliasError-retainAutoreleasedCode",
+                 "NDAliasError-claimedCode", "NDAliasOther-code"};
   if (AggregateRecords)
     Remaining = {
         "pair:",         "quad:",   "rotate:", "throughCall:",
@@ -503,7 +517,7 @@ void verifyRuntime(bool Chained,
                   : SwiftCalls         ? "NDSwiftRuntimeCalls"
                                        : "NDARCBox") +
       "\");\n";
-  if (ReceiverTypes || ReceiverFields)
+  if (ReceiverTypes || ReceiverFields || ReceiverAliases)
     Install = "static void installRecovered(void) {\nClass cls;\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
@@ -520,7 +534,7 @@ void verifyRuntime(bool Chained,
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
     std::string Identity = Selector->str();
-    if (ReceiverTypes || ReceiverFields) {
+    if (ReceiverTypes || ReceiverFields || ReceiverAliases) {
       const auto Class = Method->getString("class_name");
       const auto ClassMethod = Method->getBoolean("class_method");
       ASSERT_TRUE(Class && ClassMethod);
@@ -724,6 +738,8 @@ void verifyRuntime(bool Chained,
       : FloatingSaves    ? "floating-saves=4096\nvalues-across-calls=pass\n"
       : AggregateRecords ? "record-checks=8192\nrecord-bits=pass\nrecord-calls="
                            "pass\nrecord-stack=pass\n"
+      : ReceiverAliases
+          ? "receiver-aliases=5120\nlifetime-checks=1024\nidentity=pass\n"
       : ReceiverFields
           ? "receiver-fields=4096\nnested-types=pass\nnil-dispatch=pass\n"
       : ReceiverTypes ? "receiver-checks=5120\nclass-instance-abi=pass\nsdk-"
@@ -1219,5 +1235,16 @@ TEST(ObjCRuntimeSource,
         verifyRuntime(Chained, RuntimeFixture::AggregateRecords));
 #else
   GTEST_SKIP() << "Requires the Darwin ARM64 homogeneous record ABI";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RuntimeReceiverAliasesPreserveValuesAndObjectLifetimes) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ReceiverAliases));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }

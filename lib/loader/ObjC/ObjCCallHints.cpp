@@ -188,16 +188,19 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCRuntime;
   const auto Object = NdType::makePtr(NdType::makeVoid());
   const auto Slot = NdType::makePtr(Object);
-  if (Canonical == "objc_retain" || Canonical == "objc_autorelease" ||
+  // These ARC runtime contracts return their argument, including nil.
+  // https://clang.llvm.org/docs/AutomaticReferenceCounting.html#runtime-support
+  const bool ReturnsArgument =
+      Canonical == "objc_retain" || Canonical == "objc_autorelease" ||
       Canonical == "objc_autoreleaseReturnValue" ||
       Canonical == "objc_retainAutorelease" ||
       Canonical == "objc_retainAutoreleaseReturnValue" ||
       Canonical == "objc_retainAutoreleasedReturnValue" ||
-      Canonical == "objc_unsafeClaimAutoreleasedReturnValue" ||
-      Canonical == "objc_retainBlock" || Canonical == "objc_alloc" ||
-      Canonical == "objc_allocWithZone" || Canonical == "objc_alloc_init" ||
-      Canonical == "objc_opt_new" || Canonical == "objc_opt_self" ||
-      Canonical == "objc_opt_class") {
+      Canonical == "objc_unsafeClaimAutoreleasedReturnValue";
+  if (ReturnsArgument || Canonical == "objc_retainBlock" ||
+      Canonical == "objc_alloc" || Canonical == "objc_allocWithZone" ||
+      Canonical == "objc_alloc_init" || Canonical == "objc_opt_new" ||
+      Canonical == "objc_opt_self" || Canonical == "objc_opt_class") {
     Signature.ReturnType = Object;
     Signature.Parameters = {{"object", Object}};
   } else if (Canonical == "objc_release" ||
@@ -263,6 +266,10 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (ArgumentRegister)
     Signature.Parameters[0].Location.RegisterOffset =
         a64reg::X0 + *ArgumentRegister * 8;
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (ReturnsArgument && Bind != Image.DyldBindSlots.end() &&
+      Bind->second.Module == "/usr/lib/libobjc.A.dylib")
+    Result.ReturnedArgument = 0;
   return Result;
 }
 
@@ -427,8 +434,27 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             }
           }
           if (Runtime) {
-            BlockHints.emplace(Op.Addr, std::move(*Runtime));
+            std::optional<Value> ReturnedReceiver;
+            const auto &Signature = Runtime->Signature;
+            const auto &Return = Signature.ReturnLocation;
+            if (Runtime->ReturnedArgument &&
+                *Runtime->ReturnedArgument < Signature.Parameters.size()) {
+              const auto &Argument =
+                  Signature.Parameters[*Runtime->ReturnedArgument].Location;
+              if (Argument.Kind == SourceABICarrierKind::IntegerRegister &&
+                  Argument.ValueBytes == 8 &&
+                  Return.Kind == SourceABICarrierKind::IntegerRegister &&
+                  Return.ValueBytes == 8) {
+                auto Input = Read(NdVar::reg(Argument.RegisterOffset, 8));
+                if (Input && receiver(*Input))
+                  ReturnedReceiver = std::move(Input);
+              }
+            }
             Clobber(true);
+            if (ReturnedReceiver)
+              Values.emplace(key(NdVar::reg(Return.RegisterOffset, 8)),
+                             std::move(*ReturnedReceiver));
+            BlockHints.emplace(Op.Addr, std::move(*Runtime));
             continue;
           }
         }

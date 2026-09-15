@@ -571,3 +571,5 @@ lifters et backends sans rapport ne doivent pas être modifiés uniquement pour
 uniformiser un refactoring large.
 
 Les déclarations de structures conservent la disposition des champs séparément de la classification ABI. Darwin ARM64 accepte les structures imbriquées contenant un à quatre champs float ou double homogènes ; si les registres flottants sont épuisés, tout l’argument passe sur la pile. MedIR lie chaque composante physique avant SSA, HighIR reconstitue un seul paramètre ou résultat logique et le C vérifie la disposition. Les types mixtes, les autres architectures et les composantes incomplètes restent refusés ; ces indications ne permettent pas la réécriture du binaire.
+
+Les catalogues des appels du runtime ne déclarent `ReturnedArgument` que pour des imports exacts dont le résultat est le pointeur de l’argument initial. L’analyse du récepteur lit l’argument physique déclaré avant les invalidations normales de l’ABI, puis rétablit uniquement son type prouvé sur le résultat. Le SDK revalide cet effet ; les appels, les effets de propriété et les accès mémoire restent présents.

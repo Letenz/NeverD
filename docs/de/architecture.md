@@ -569,3 +569,5 @@ sollen nicht nur für ein einheitliches Erscheinungsbild eines großen
 Refactorings geändert werden.
 
 Quelldeklarationen von Strukturen bewahren das Feldlayout getrennt von der ABI-Klassifikation. Darwin ARM64 unterstützt verschachtelte Strukturen mit ein bis vier gleichartigen float- oder double-Feldern; bei erschöpften FP-Registern liegt das gesamte Argument auf dem Stack. MedIR bindet jede physische Komponente vor SSA, HighIR rekonstruiert einen logischen Parameter oder Rückgabewert, und C prüft das Layout. Gemischte Typen, andere Architekturen und unvollständige Komponenten bleiben ausdrücklich unzulässig; diese Hinweise erlauben kein Umschreiben von Binärdateien.
+
+Laufzeitkataloge dürfen `ReturnedArgument` nur für exakt identifizierte Importe deklarieren, deren Ergebnis der ursprüngliche Argumentzeiger ist. Die Empfängeranalyse liest das deklarierte physische Argument vor dem regulären ABI-Registerverlust und stellt danach nur dessen belegten Empfängertyp am Ergebnis wieder her. Das SDK prüft diesen Effekt erneut; Aufrufe, Besitzwirkungen und Speicherzugriffe bleiben erhalten.

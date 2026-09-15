@@ -97,6 +97,10 @@ struct SourceCallTypeHint {
   /// The bound source routine has a noreturn contract. Runtime bindings must
   /// revalidate this effect against their authoritative catalog.
   bool DoesNotReturn = false;
+  /// The result is exactly this argument's pointer value. This does not
+  /// remove call effects or establish memory immutability. Runtime bindings
+  /// must revalidate the identity contract against the imported routine.
+  std::optional<unsigned> ReturnedArgument;
   SourceFunctionTypeHint Signature;
   va_t TargetAddress = 0;
   std::string TargetName;

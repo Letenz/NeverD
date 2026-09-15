@@ -3350,3 +3350,257 @@ TEST(ObjCCallHints,
     }
   }
 }
+
+namespace {
+void receiverRuntimeImport(BinaryImage &Image, llvm::StringRef Name) {
+  Image.ImportPtrSlots[0x2188] = "_" + Name.str();
+  Image.DyldBindSlots[0x2188] = {Image.ImportPtrSlots.at(0x2188), 0,
+                                 "/usr/lib/libobjc.A.dylib", false};
+}
+
+LowFunc receiverRuntimeCaller(Arch Architecture) {
+  auto Function = receiverCaller(Architecture);
+  const auto &TRI = getTargetRegInfo(Architecture);
+  auto &Ops = Function.Blocks.front().Ops;
+  for (auto &Op : Ops)
+    Op.Addr += 0x40;
+  Ops.insert(Ops.begin(),
+             operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                       {NdVar::reg(TRI.IntReturnReg, 8)}, 0x123c));
+  Ops.insert(Ops.begin(),
+             operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x1200));
+  return Function;
+}
+} // namespace
+
+TEST(ObjCCallHints, RuntimeReturnIdentityRequiresExactCatalogAndImport) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"objc_retain", "objc_autorelease", "objc_autoreleaseReturnValue",
+          "objc_retainAutorelease", "objc_retainAutoreleaseReturnValue",
+          "objc_retainAutoreleasedReturnValue",
+          "objc_unsafeClaimAutoreleasedReturnValue"}) {
+      auto Image = receiverImage(Architecture);
+      receiverRuntimeImport(Image, Name);
+      const auto Hint = objcRuntimeSourceCallHint(Image, 0x2188);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->ReturnedArgument, 0U);
+      auto Call = HighExpr::makeCall(Name, 0, {HighExpr::makeConst(0, 8)});
+      Call->Type = Hint->Signature.ReturnType;
+      const auto Binding = std::make_shared<SourceCallTypeHint>(*Hint);
+      Call->SourceCallHint = Binding;
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Binding->ReturnedArgument = 1;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Binding->ReturnedArgument.reset();
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Binding->ReturnedArgument = 0;
+      for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DyldBindSlots[0x2188].Module = "/tmp/libobjc.A.dylib";
+        if (Mutation == 1)
+          Changed.DyldBindSlots.clear();
+        if (Mutation == 2)
+          Changed.DyldBindSlots[0x2188].WeakImport = true;
+        if (Mutation == 3)
+          Changed.DyldBindSlots[0x2188].Addend = 8;
+        if (Mutation == 4)
+          Changed.DyldBindSlots[0x2188].Name = "_objc_retainBlock";
+        if (Mutation == 5)
+          Changed.ConflictingImportStorageSlots.insert(0x2188);
+        const auto Other = objcRuntimeSourceCallHint(Changed, 0x2188);
+        EXPECT_TRUE(!Other || !Other->ReturnedArgument) << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {})) << Mutation;
+        EXPECT_EQ(buildObjCSourceCallHints(Changed,
+                                           receiverRuntimeCaller(Architecture))
+                      .count(0x1244),
+                  0U)
+            << Mutation;
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeReturnIdentityPreservesReceiverTypeAndCallEffects) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"objc_retain", "objc_autorelease", "objc_autoreleaseReturnValue",
+          "objc_retainAutorelease", "objc_retainAutoreleaseReturnValue",
+          "objc_retainAutoreleasedReturnValue",
+          "objc_unsafeClaimAutoreleasedReturnValue"}) {
+      auto Image = receiverImage(Architecture);
+      receiverRuntimeImport(Image, Name);
+      const auto Hints =
+          buildObjCSourceCallHints(Image, receiverRuntimeCaller(Architecture));
+      ASSERT_EQ(Hints.size(), 2U) << Name;
+      EXPECT_EQ(Hints.at(0x1200).TargetName, Name);
+      EXPECT_EQ(Hints.at(0x1200).ReturnedArgument, 0U);
+      ASSERT_TRUE(Hints.at(0x1244).Receiver);
+      EXPECT_EQ(*Hints.at(0x1244).Receiver,
+                *objcMethodReceiverTypeHint(Image, 0x1200));
+      EXPECT_TRUE(sdk::objcSourceCallBound(
+          *receiverCallExpression(Hints.at(0x1244)), Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeReturnIdentityUsesTheDeclaredArgumentRegister) {
+  for (unsigned Register : {0U, 1U, 15U, 19U, 28U}) {
+    auto Image = receiverImage(Arch::AArch64);
+    receiverRuntimeImport(Image, "objc_retain_x" + std::to_string(Register));
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Argument = NdVar::reg(Self.Offset + Register * 8, 8);
+    for (bool Partial : {false, true}) {
+      auto Function = receiverRuntimeCaller(Image.Arch);
+      auto &Ops = Function.Blocks.front().Ops;
+      Ops.insert(Ops.begin(), operation(NdOp::COPY, Argument, {Self}, 0x1200));
+      if (Partial)
+        Ops.insert(Ops.begin() + 1,
+                   operation(NdOp::COPY, NdVar::reg(Argument.Offset, 4),
+                             {NdVar::cst(0, 4)}, 0x1200));
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Hints.count(0x1200), 1U);
+      EXPECT_EQ(
+          Hints.at(0x1200).Signature.Parameters[0].Location.RegisterOffset,
+          Argument.Offset);
+      EXPECT_EQ(Hints.count(0x1244), !Partial) << Register;
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeReturnIdentityRejectsUnknownAndNonIdentityValues) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name :
+         {"objc_retainBlock", "objc_alloc", "objc_allocWithZone",
+          "objc_alloc_init", "objc_opt_new", "objc_opt_self", "objc_opt_class",
+          "objc_loadWeak", "objc_loadWeakRetained", "objc_storeWeak",
+          "objc_initWeak", "objc_release"}) {
+      auto Image = receiverImage(Architecture);
+      receiverRuntimeImport(Image, Name);
+      const auto Hint = objcRuntimeSourceCallHint(Image, 0x2188);
+      ASSERT_TRUE(Hint) << Name;
+      EXPECT_FALSE(Hint->ReturnedArgument);
+      EXPECT_EQ(
+          buildObjCSourceCallHints(Image, receiverRuntimeCaller(Architecture))
+              .count(0x1244),
+          0U)
+          << Name;
+    }
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      receiverRuntimeImport(Image, "objc_retain");
+      auto Function = receiverRuntimeCaller(Architecture);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      if (Mutation == 0)
+        Image.ObjCMethods.front().Implementation = 0x1600;
+      if (Mutation == 1)
+        Ops.insert(Ops.begin(),
+                   operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 4),
+                             {NdVar::cst(0, 4)}));
+      if (Mutation == 2)
+        Ops.insert(Ops.begin(),
+                   operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[0], 8),
+                             {NdVar::cst(0x2100, 8)}));
+      if (Mutation == 3)
+        Ops.insert(Ops.begin(),
+                   operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                             {NdVar::cst(0x2100, 8)}));
+      if (Mutation == 4)
+        Ops.insert(Ops.begin() + 1,
+                   operation(NdOp::COPY, NdVar::reg(TRI.IntReturnReg, 4),
+                             {NdVar::cst(0, 4)}, 0x1230));
+      EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1244), 0U)
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeReturnIdentityRetainsCompleteFieldProvenance) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Dynamic : {false, true}) {
+      auto Image = receiverFieldImage(Architecture);
+      receiverRuntimeImport(Image, "objc_retain");
+      auto Function = receiverFieldCaller(Architecture, Dynamic, true);
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      Ops.insert(Ops.end() - 2, operation(NdOp::INDIR_CALL, {},
+                                          {NdVar::cst(0x2188, 8)}, 0x1220));
+      Ops.insert(Ops.end() - 2,
+                 operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                           {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1224));
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Hints.size(), 2U);
+      ASSERT_TRUE(Hints.at(0x1230).Receiver);
+      EXPECT_EQ(Hints.at(0x1230).Receiver->IvarLoads.size(), 2U);
+      EXPECT_TRUE(sdk::objcSourceCallBound(
+          *receiverCallExpression(Hints.at(0x1230)), Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, RuntimeReturnIdentityConvergesAcrossJoinsAndBackedges) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Saved = NdVar::reg(TRI.CalleeSaveRegs.front(), 8);
+    for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+      auto Image = receiverImage(Architecture);
+      receiverRuntimeImport(Image, "objc_retain");
+      LowFunc Function;
+      Function.Entry = 0x1200;
+      LowBlock Entry;
+      Entry.Id = 0;
+      Entry.StartAddr = 0x1200;
+      Entry.Succs = {1, 2};
+      Entry.Ops = {operation(NdOp::COPY, Saved, {Self})};
+      LowBlock Left;
+      Left.Id = 1;
+      Left.StartAddr = 0x1300;
+      Left.Preds = {0};
+      Left.Succs = {3};
+      Left.Ops = {
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x1300),
+          operation(NdOp::COPY, Self, {NdVar::reg(TRI.IntReturnReg, 8)},
+                    0x1304)};
+      LowBlock Right = Left;
+      Right.Id = 2;
+      Right.StartAddr = 0x1400;
+      for (auto &Op : Right.Ops)
+        Op.Addr += 0x100;
+      // A full copy and a runtime identity result must meet as the same fact.
+      Right.Ops = {operation(NdOp::COPY, Self, {Saved}, 0x1400)};
+      if (Mutation == 1)
+        Right.Ops.front() =
+            operation(NdOp::COPY, Self, {NdVar::cst(0, 8)}, 0x1400);
+      if (Mutation == 2)
+        Function.ModuleAnalysisRoots.insert(Right.StartAddr);
+      auto Join = receiverCaller(Architecture).Blocks.front();
+      Join.Id = 3;
+      Join.StartAddr = 0x1500;
+      Join.Preds = {1, 2};
+      for (auto &Op : Join.Ops)
+        Op.Addr += 0x300;
+      if (Mutation == 3) {
+        Join.Succs = {1};
+        Left.Preds.push_back(3);
+        // The message result on the backedge has no receiver provenance.
+        // It must revoke the provisional first-iteration runtime identity.
+        Right.Succs = {1};
+        Left.Preds.push_back(2);
+        Join.Preds = {1};
+      }
+      const std::vector<LowBlock> Blocks{Entry, Left, Right, Join};
+      std::array<unsigned, 4> Order{0, 1, 2, 3};
+      do {
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1504), Mutation == 0) << Mutation;
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+  }
+}

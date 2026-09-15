@@ -610,3 +610,5 @@ for the 12-cell backend grid. See the [testing guide](testing.md) for commands.
 Keep edits narrow. Files that define a representation may change with their
 transforms, but unrelated loaders, lifters, and backends should not be modified
 solely to make a broad refactor appear uniform.
+
+Runtime call catalogs may declare `ReturnedArgument` only for exact imported routines whose result is the original argument pointer. Receiver analysis reads the declared physical argument before applying normal ABI clobbers, then restores only its proven receiver type on the result. The SDK revalidates this effect; it never removes the call, its ownership effects or memory accesses.
