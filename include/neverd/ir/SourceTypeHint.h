@@ -56,9 +56,13 @@ struct SourceFunctionTypeHint {
     ObjCSDK,
     /// A fixed C ABI from compiler-derived declarations and exact library
     /// export evidence. The loader revalidates the actual import identity.
-    DarwinSDK
+    DarwinSDK,
+    /// A compiler-observed Swift SDK declaration with exact export evidence.
+    SwiftSDK
   };
+  enum class ConventionKind : uint8_t { C, Swift };
   OriginKind Origin = OriginKind::ObjCRuntime;
+  ConventionKind Convention = ConventionKind::C;
   TypeRef ReturnType;
   std::vector<SourceParameterTypeHint> Parameters;
   Arch Architecture = Arch::Unknown;

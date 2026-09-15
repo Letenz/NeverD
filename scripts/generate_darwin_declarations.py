@@ -83,7 +83,7 @@ def export_index(documents, target):
     return result
 
 
-def load_exports(sdk, extra_frameworks=()):
+def load_exports(sdk, extra_frameworks=(), targets=("arm64-macos", "x86_64-macos")):
     import yaml
 
     class TBDLoader(yaml.SafeLoader):
@@ -108,7 +108,7 @@ def load_exports(sdk, extra_frameworks=()):
     documents = []
     for path in paths:
         documents.extend(yaml.load_all(path.read_text(), Loader=TBDLoader))
-    return [export_index(documents, target) for target in ("arm64-macos", "x86_64-macos")]
+    return [export_index(documents, target) for target in targets]
 
 
 def render(profiles, exports, version, compiler):

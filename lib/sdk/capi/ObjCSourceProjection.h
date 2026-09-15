@@ -39,7 +39,8 @@ inline bool sameLocation(const SourceABIValueLocation &Left,
 
 inline bool sameHint(const SourceFunctionTypeHint &Left,
                      const SourceFunctionTypeHint &Right) {
-  if (Left.Origin != Right.Origin || Left.Architecture != Right.Architecture ||
+  if (Left.Origin != Right.Origin || Left.Convention != Right.Convention ||
+      Left.Architecture != Right.Architecture ||
       Left.HasExplicitABI != Right.HasExplicitABI ||
       (Left.HasExplicitABI &&
        !sameLocation(Left.ReturnLocation, Right.ReturnLocation)) ||

@@ -1089,6 +1089,67 @@ TEST(ObjCSourceBindings, RuntimeCallsRevalidateImportedSignatureAndRegister) {
   EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {}));
 }
 
+TEST(ObjCSourceBindings, SwiftMetadataCallsRevalidateDeclarationAndConvention) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    Fixture F;
+    F.Image.Arch = Architecture;
+    constexpr va_t Slot = 0x10e0;
+    const std::string Symbol = "_$s10Foundation3URLVMa";
+    F.Image.ImportPtrSlots[Slot] = Symbol;
+    ASSERT_TRUE(F.Image.recordDyldBindSlot(
+        Slot, Symbol, 0,
+        "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+    const auto Hint = swiftRuntimeSourceCallHint(F.Image, Slot);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Hint->Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_EQ(Hint->Signature.ReturnComponents.size(), 2U);
+    auto Call = HighExpr::makeCall(Symbol, Slot, {HighExpr::makeConst(0, 8)});
+    Call->Type = Hint->Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    ASSERT_TRUE(objcSourceCallBound(*Call, F.Image, {}));
+    for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+      auto Bad = std::make_shared<SourceCallTypeHint>(*Hint);
+      if (Mutation == 0)
+        Bad->Signature.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      else if (Mutation == 1)
+        Bad->Signature.ReturnComponents.pop_back();
+      else if (Mutation == 2)
+        Bad->Signature.Origin =
+            SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+      else
+        Bad->Signature.Parameters[0].Location.RegisterOffset += 8;
+      Call->SourceCallHint = Bad;
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {})) << Mutation;
+    }
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    const auto Bind = F.Image.DyldBindSlots.at(Slot);
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      F.Image.DyldBindSlots[Slot] = Bind;
+      F.Image.ImportPtrSlots[Slot] = Symbol;
+      if (Mutation == 0)
+        F.Image.DyldBindSlots[Slot].Module =
+            "/tmp/Foundation.framework/Foundation";
+      else if (Mutation == 1)
+        F.Image.DyldBindSlots[Slot].Addend = 1;
+      else if (Mutation == 2)
+        F.Image.DyldBindSlots[Slot].WeakImport = true;
+      else if (Mutation == 3)
+        F.Image.DyldBindSlots.erase(Slot);
+      else {
+        const std::string Unknown =
+            Mutation == 4 ? Symbol + ".fake" : "_$s4Test3BoxVMa";
+        F.Image.ImportPtrSlots[Slot] = Unknown;
+        F.Image.DyldBindSlots[Slot].Name = Unknown;
+      }
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(F.Image, Slot)) << Mutation;
+      EXPECT_FALSE(objcSourceCallBound(*Call, F.Image, {})) << Mutation;
+    }
+  }
+}
+
 TEST(ObjCSourceBindings, FixedCRecordsRevalidateExportsTypesAndCarriers) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool Floating : {false, true}) {

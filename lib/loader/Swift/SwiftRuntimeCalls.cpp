@@ -19,6 +19,40 @@ struct SwiftCDeclaration {
 };
 #include "SwiftCDeclarations.inc"
 
+struct SwiftMetadataDeclaration {
+  const char *Name;
+  const char *AArch64Modules;
+  const char *X64Modules;
+};
+constexpr SwiftMetadataDeclaration SwiftMetadataDeclarations[] = {
+#include "SwiftMetadataDeclarations.inc"
+};
+
+bool declaredMetadataABI(const BinaryImage &Image, va_t Slot,
+                         SourceCallTypeHint &Hint) {
+  const auto Found =
+      std::lower_bound(std::begin(SwiftMetadataDeclarations),
+                       std::end(SwiftMetadataDeclarations), Hint.TargetName,
+                       [](const auto &Row, llvm::StringRef Name) {
+                         return llvm::StringRef(Row.Name) < Name;
+                       });
+  const auto Bind = Image.DyldBindSlots.find(Slot);
+  if (Found == std::end(SwiftMetadataDeclarations) ||
+      Hint.TargetName != Found->Name || Bind == Image.DyldBindSlots.end() ||
+      !darwinExportModuleMatches(Image.Arch == Arch::AArch64
+                                     ? Found->AArch64Modules
+                                     : Found->X64Modules,
+                                 Bind->second.Module))
+    return false;
+  auto &Signature = Hint.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
+  Signature.ReturnType = NdType::makeStruct(
+      {NdType::makePtr(NdType::makeVoid()), NdType::makeInt(8, false)});
+  Signature.Parameters = {{"request", NdType::makeInt(8, false)}};
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+}
+
 bool declaredCABI(llvm::StringRef Name, SourceCallTypeHint &Hint) {
   const auto *Found = std::lower_bound(
       std::begin(SwiftCDeclarations), std::end(SwiftCDeclarations), Name,
@@ -72,6 +106,8 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   Result.CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
   Result.TargetAddress = ImportSlot;
   Result.TargetName = Name.str();
+  if (declaredMetadataABI(Image, ImportSlot, Result))
+    return Result;
   auto &Signature = Result.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
   const auto Pointer = NdType::makePtr(NdType::makeVoid());

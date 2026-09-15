@@ -33,18 +33,6 @@ constexpr DataDeclaration DataDeclarations[] = {
 #include "DarwinSourceDataDeclarations.inc"
 };
 
-bool exportsFrom(llvm::StringRef Modules, llvm::StringRef Module) {
-  if (Module.empty())
-    return false;
-  while (!Modules.empty()) {
-    const auto [Current, Remaining] = Modules.split('|');
-    if (Current == Module)
-      return true;
-    Modules = Remaining;
-  }
-  return false;
-}
-
 using Index =
     std::map<std::string, std::optional<SourceFunctionTypeHint>, std::less<>>;
 Index signatures(Arch Architecture) {
@@ -80,9 +68,9 @@ darwinDeclaredSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
       std::begin(Declarations), std::end(Declarations), *Import,
       [](const Declaration &D, llvm::StringRef Name) { return D.Name < Name; });
   if (D == std::end(Declarations) || D->Name != *Import ||
-      !exportsFrom(Image.Arch == Arch::AArch64 ? D->AArch64Modules
-                                               : D->X64Modules,
-                   Bind->second.Module))
+      !darwinExportModuleMatches(Image.Arch == Arch::AArch64 ? D->AArch64Modules
+                                                             : D->X64Modules,
+                                 Bind->second.Module))
     return std::nullopt;
   static const auto Arm = signatures(Arch::AArch64);
   static const auto Intel = signatures(Arch::X64);
@@ -112,9 +100,9 @@ darwinDeclaredSourceGlobalAddressHint(const BinaryImage &Image,
         return D.Name < Name;
       });
   if (D == std::end(DataDeclarations) || D->Name != *Import ||
-      !exportsFrom(Image.Arch == Arch::AArch64 ? D->AArch64Modules
-                                               : D->X64Modules,
-                   Bind->second.Module))
+      !darwinExportModuleMatches(Image.Arch == Arch::AArch64 ? D->AArch64Modules
+                                                             : D->X64Modules,
+                                 Bind->second.Module))
     return std::nullopt;
   // Only non-TLS external storage with a declaration common to both platform
   // profiles is eligible. Bind the address; subsequent loads and stores still
@@ -155,9 +143,10 @@ darwinNonEscapingBlockSignature(const BinaryImage &Image, va_t ImportSlot,
   for (const auto &D : Declarations) {
     if (D.Name != Call->TargetName || D.Parameter != Parameter)
       continue;
-    if (Result || !exportsFrom(Image.Arch == Arch::AArch64 ? D.AArch64Modules
-                                                           : D.X64Modules,
-                               Bind->second.Module))
+    if (Result || !darwinExportModuleMatches(Image.Arch == Arch::AArch64
+                                                 ? D.AArch64Modules
+                                                 : D.X64Modules,
+                                             Bind->second.Module))
       return std::nullopt;
     const auto Parent = parseObjCFunctionEncoding(
         Image.Arch == Arch::AArch64 ? D.AArch64 : D.X64);
@@ -202,9 +191,10 @@ darwinRuntimeFormatDeclaration(const BinaryImage &Image, va_t ImportSlot) {
   for (const auto &D : Formats) {
     if (D.Name != Import->drop_front())
       continue;
-    if (Result || !exportsFrom(Image.Arch == Arch::AArch64 ? D.AArch64Modules
-                                                           : D.X64Modules,
-                               Bind->second.Module))
+    if (Result || !darwinExportModuleMatches(Image.Arch == Arch::AArch64
+                                                 ? D.AArch64Modules
+                                                 : D.X64Modules,
+                                             Bind->second.Module))
       return std::nullopt;
     auto Signature = parseObjCFunctionEncoding(
         Image.Arch == Arch::AArch64 ? D.AArch64 : D.X64);

@@ -5,6 +5,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <stdexcept>
+
 namespace neverd {
 namespace {
 std::string quotedRuntimeName(llvm::StringRef Name) {
@@ -72,6 +74,17 @@ std::optional<std::string> sourceValue(llvm::StringRef Text,
 }
 } // namespace
 
+llvm::StringRef HighCWriter::sourceConventionAttribute(
+    SourceFunctionTypeHint::ConventionKind Convention) {
+  switch (Convention) {
+  case SourceFunctionTypeHint::ConventionKind::C:
+    return "";
+  case SourceFunctionTypeHint::ConventionKind::Swift:
+    return "__attribute__((swiftcall)) ";
+  }
+  throw std::invalid_argument("Unsupported source calling convention");
+}
+
 const HighFunc *
 HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
                                   llvm::StringRef Name) const {
@@ -91,6 +104,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       E.MemoryOrdering != NdMemoryOrdering::None)
     return bad("incompatible operation effects");
   const auto &Signature = Hint.Signature;
+  if ((Hint.CallKind == Kind::SwiftStringBridge ||
+       Hint.CallKind == Kind::SwiftStringFromNSString) &&
+      Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+    return bad("Swift string call has the wrong calling convention");
   if (Hint.CallKind == Kind::NativeAddress ||
       Hint.CallKind == Kind::RuntimeBlockIsa ||
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
@@ -111,6 +128,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
           Hint.TargetAddress ? sourceCallDefinition(Hint, {}) : nullptr;
       if (!Definition)
         return bad("native address has no recovered definition");
+      if (Definition->SourceTypeHint &&
+          Definition->SourceTypeHint->Convention !=
+              SourceFunctionTypeHint::ConventionKind::C)
+        return bad("unsupported native callback calling convention");
       Value = "&" + functionIdentifier(*Definition);
     } else if (Hint.CallKind == Kind::DarwinRuntimeGlobalAddress) {
       if (Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK) {
@@ -302,7 +323,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       return bad("conflicting native declarations");
     if (Definition) {
       const auto &Function = *Definition;
-      if (!equalSourceTypes(Function.ReturnType, Signature.ReturnType) ||
+      const auto Convention = Function.SourceTypeHint
+                                  ? Function.SourceTypeHint->Convention
+                                  : SourceFunctionTypeHint::ConventionKind::C;
+      if (Convention != Signature.Convention ||
+          !equalSourceTypes(Function.ReturnType, Signature.ReturnType) ||
           Function.Params.size() != Signature.Parameters.size())
         return bad("native definition disagrees with the call declaration");
       for (size_t I = 0; I < Function.Params.size(); ++I)

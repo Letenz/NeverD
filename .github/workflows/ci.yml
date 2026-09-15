@@ -156,6 +156,7 @@ jobs:
             scripts.tests.test_generate_darwin_declarations \
             scripts.tests.test_generate_darwin_data_declarations \
             scripts.tests.test_generate_swift_c_declarations \
+            scripts.tests.test_generate_swift_metadata_declarations \
             -v
           "$PYTHON" -m unittest discover \
             -s pluginsdk/python/tests -v
@@ -441,6 +442,12 @@ jobs:
                   ("ObjCCallHints.DarwinLocksKeepPointerAndBooleanCarriersWithSDKDeclarations",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.DarwinLocksRejectUnprovenImportsAndNonzeroAddends",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.SwiftMetadataCallsRevalidateDeclarationAndConvention",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("HighCSourceCalls.SwiftConventionSurvivesDefinitionsAndRejectsConflicts",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.NarrowReturnExtensionRequiresAnExplicitDarwinArm64Carrier",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
@@ -1080,9 +1087,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 411,
-              ("macOS", "macos-patch"): 446,
-              ("Windows", "windows-focused"): 407,
+              ("Linux", "linux-semantic"): 414,
+              ("macOS", "macos-patch"): 450,
+              ("Windows", "windows-focused"): 410,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1108,6 +1115,7 @@ jobs:
                       "ObjCRuntimeSource.PredicateFormatsPreserveValuesAndQuotedPlaceholders",
                       "ObjCRuntimeSource.FixedCRecordsPreserveValuesAndBitmapEffects",
                       "ObjCRuntimeSource.SystemCallsPreserveFileAttributesObjectsAndDigests",
+                      "ObjCRuntimeSource.SwiftMetadataCallsPreserveIdentityAndResponseState",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

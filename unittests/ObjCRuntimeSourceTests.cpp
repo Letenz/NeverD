@@ -66,6 +66,7 @@ enum class RuntimeFixture {
   PredicateFormats,
   CRecords,
   SystemCalls,
+  MetadataCalls,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -95,6 +96,7 @@ void verifyRuntime(bool Chained,
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
+  const bool MetadataCalls = FixtureKind == RuntimeFixture::MetadataCalls;
   const bool SystemCalls = FixtureKind == RuntimeFixture::SystemCalls;
   const bool CRecords = FixtureKind == RuntimeFixture::CRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
@@ -147,6 +149,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : MetadataCalls      ? "ObjCMetadataCalls.m"
                         : SystemCalls        ? "ObjCSystemCalls.m"
                         : SavedScalars       ? "ObjCSavedScalars.m"
                         : ReceiverResults    ? "ObjCReceiverResults.m"
@@ -181,6 +184,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : MetadataCalls     ? "ObjCMetadataCallsHarness.m"
                         : SystemCalls       ? "ObjCSystemCallsHarness.m"
                         : SavedScalars      ? "ObjCSavedScalarsHarness.m"
                         : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
@@ -357,6 +361,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : MetadataCalls      ? 8U
                              : SystemCalls        ? 11U
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
@@ -420,6 +425,9 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (MetadataCalls)
+    Remaining = {"url:",     "date:",      "characterSet:", "dateComponents:",
+                 "request:", "indexPath:", "locale:",       "notification:"};
   if (SystemCalls)
     Remaining = {"setAttribute:name:bytes:length:",
                  "getAttribute:name:bytes:length:",
@@ -595,6 +603,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : MetadataCalls      ? "NDMetadataCalls"
                   : SystemCalls        ? "NDSystemCalls"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
@@ -799,6 +808,15 @@ void verifyRuntime(bool Chained,
             Work / "compile-swift-words"));
     Compile.insert(Compile.end() - 2, {"-lswiftFoundation", Words});
   }
+  if (MetadataCalls) {
+    const auto Oracle = (Work / "metadata-oracle.dylib").string();
+    ASSERT_NO_FATAL_FAILURE(
+        run({"/usr/bin/swiftc", "-O", "-target", HostArch + "-apple-macosx13.0",
+             "-emit-library", (Fixtures / "ObjCMetadataOracle.swift").string(),
+             "-o", Oracle},
+            Work / "compile-metadata-oracle"));
+    Compile.insert(Compile.end() - 2, Oracle);
+  }
   if (Protocols) {
     const auto Probe = (Work / "stack-failure-probe.dylib").string();
     ASSERT_NO_FATAL_FAILURE(
@@ -850,6 +868,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : MetadataCalls ? "metadata-responses=4096\nmetadata-identity="
+                        "pass\ncomplete-state=pass\n"
       : SystemCalls
           ? "system-c-cases=512\nextended-attribute-roundtrips=512\n"
             "log-decisions=512\nasl-roundtrips=512\nsha256-vectors=512\n"
@@ -1382,6 +1402,16 @@ TEST(ObjCRuntimeSource, WordRecordsPreserveBitsPointersCallsAndStackArguments) {
         verifyRuntime(Chained, RuntimeFixture::WordRecords));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SwiftMetadataCallsPreserveIdentityAndResponseState) {
+#if defined(__APPLE__)
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::MetadataCalls));
+#else
+  GTEST_SKIP() << "Requires the Darwin Objective-C and Swift runtimes";
 #endif
 }
 

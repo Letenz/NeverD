@@ -1249,6 +1249,8 @@ objcBlockSourceCallBound(const HighExpr &Expression,
     auto Invoke = Plan.InvokeHints.find(Binding.TargetAddress);
     return Function != Functions.end() && Invoke != Plan.InvokeHints.end() &&
            Function->second->SourceTypeHint &&
+           Function->second->SourceTypeHint->Convention ==
+               SourceFunctionTypeHint::ConventionKind::C &&
            objc_projection_detail::sameHint(*Function->second->SourceTypeHint,
                                             Invoke->second);
   }

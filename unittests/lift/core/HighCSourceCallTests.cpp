@@ -977,3 +977,49 @@ int main(void) {
   EXPECT_NE(emit({With, Fixed}).find("conflicting native declarations"),
             std::string::npos);
 }
+
+TEST(HighCSourceCalls, SwiftConventionSurvivesDefinitionsAndRejectsConflicts) {
+  const auto Word = NdType::makeInt(8, false);
+  auto Hint = native("swift_identity", Word, {Word});
+  std::string Error;
+  ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint.Signature, Arch::X64, Error));
+  auto Identity = returning("swift_identity", parameter(0, Word), {Word});
+  Identity.SourceTypeHint = Hint.Signature;
+  Identity.Entry = 0x1234;
+  auto Forward = returning("forward_identity",
+                           call(Hint, Word, {parameter(0, Word)}), {Word});
+  for (const auto &Functions :
+       {std::vector{Forward, Identity}, std::vector{Identity, Forward}}) {
+    const auto Source = emit(Functions);
+    EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    EXPECT_NE(Source.find("__attribute__((swiftcall)) uint64_t swift_identity"),
+              std::string::npos)
+        << Source;
+    compileAndRun(Source + R"(
+int main(void) {
+  for (uint64_t i=0; i<4096; ++i) {
+    uint64_t value=UINT64_C(0xfedcba9876543210)^i;
+    if (forward_identity(value)!=value) return 1;
+  }
+  return 0;
+})");
+  }
+  auto Ordinary = Hint;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Ordinary.Signature, Arch::X64, Error));
+  auto Wrong = returning("wrong_identity",
+                         call(Ordinary, Word, {parameter(0, Word)}), {Word});
+  for (const auto &Functions :
+       {std::vector{Forward, Wrong}, std::vector{Wrong, Forward},
+        std::vector{Identity, Wrong}})
+    EXPECT_NE(emit(Functions).find("conflicting native declarations"),
+              std::string::npos);
+
+  auto Address =
+      native("swift_identity", NdType::makePtr(NdType::makeVoid()), {});
+  Address.CallKind = SourceCallTypeHint::Kind::NativeAddress;
+  Address.TargetAddress = Identity.Entry;
+  auto Get = returning("callback", call(Address, Address.Signature.ReturnType));
+  EXPECT_NE(emit({Identity, Get})
+                .find("unsupported native callback calling convention"),
+            std::string::npos);
+}

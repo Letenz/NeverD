@@ -46,7 +46,7 @@ swiftStringSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   // The 128-bit carrier transports both String words without interpreting
   // tagged storage, claiming a source struct layout, or changing ownership.
   std::string Diagnostic;
-  if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
+  if (!assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic))
     return std::nullopt;
   return Result;
 }

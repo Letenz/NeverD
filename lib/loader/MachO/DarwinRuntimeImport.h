@@ -4,6 +4,20 @@
 #include "neverd/loader/BinaryImage.h"
 
 namespace neverd {
+/// Match an exact install name or an alias explicitly present in an SDK row.
+inline bool darwinExportModuleMatches(llvm::StringRef Modules,
+                                      llvm::StringRef Module) {
+  if (Module.empty())
+    return false;
+  while (!Modules.empty()) {
+    const auto [Current, Remaining] = Modules.split('|');
+    if (Current == Module)
+      return true;
+    Modules = Remaining;
+  }
+  return false;
+}
+
 /// A source call must name one exact, non-weak runtime import. Preserve the
 /// original linker spelling for the runtime-specific ABI catalog to match.
 inline std::optional<llvm::StringRef>

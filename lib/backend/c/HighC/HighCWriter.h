@@ -40,6 +40,8 @@ namespace neverd {
 /// HighCExprBinOp.cpp (binary operator rendering).
 class HighCWriter {
 public:
+  static llvm::StringRef
+  sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
       : OS(OS), Opts(Opts), Dbg(Dbg),

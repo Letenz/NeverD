@@ -554,7 +554,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                 SourceNativeSignatures.emplace(Name.str(), Declaration);
             auto TypeSpelling = [](const SourceNativeDeclaration &D) {
               const auto &Signature = *D.Signature;
-              std::string Result = typeToC(Signature.ReturnType) + "(";
+              std::string Result =
+                  sourceConventionAttribute(Signature.Convention).str() +
+                  typeToC(Signature.ReturnType) + "(";
               const auto Count =
                   D.VariadicFixedCount.value_or(Signature.Parameters.size());
               if (Count > Signature.Parameters.size())
@@ -750,12 +752,18 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   if (NeedsSwiftStringBridge)
     OS << "extern void *neverd_swift_string_to_nsstring(uint64_t, void *) "
           "__asm__(\"_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF\") "
-          "__attribute__((swiftcall));\n";
+       << sourceConventionAttribute(
+              SourceFunctionTypeHint::ConventionKind::Swift)
+              .rtrim()
+       << ";\n";
   if (NeedsSwiftStringFromNSString)
     OS << "extern unsigned __int128 neverd_nsstring_to_swift_string(void *) "
           "__asm__(\"_$sSS10FoundationE36_"
           "unconditionallyBridgeFromObjectiveCySSSo8NSStringCSgFZ\") "
-          "__attribute__((swiftcall));\n";
+       << sourceConventionAttribute(
+              SourceFunctionTypeHint::ConventionKind::Swift)
+              .rtrim()
+       << ";\n";
   for (const auto &Name : SourceBlockIsaNames)
     OS << "extern void *" << Name << "[];\n";
   for (const auto &Name : SourceObjectAddressHelpers)
@@ -778,8 +786,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     runAnalysisPasses(Function);
     const auto ReturnType =
         InferredVoid ? NdType::makeVoid() : Function.ReturnType;
-    if (typeToC(ReturnType) != typeToC(Signature->ReturnType))
+    const auto Convention = Function.SourceTypeHint
+                                ? Function.SourceTypeHint->Convention
+                                : SourceFunctionTypeHint::ConventionKind::C;
+    if (typeToC(ReturnType) != typeToC(Signature->ReturnType) ||
+        Convention != Signature->Convention)
       ConflictingSourceNativeSignatures.insert(Name);
+    OS << sourceConventionAttribute(Convention);
     if (Function.DoesNotReturn)
       OS << "_Noreturn ";
     std::string Declarator = functionIdentifier(Function) + "(";
@@ -807,6 +820,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     }
     if (Function->Params.empty())
       Declarator += "void";
+    if (Function->SourceTypeHint)
+      OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
     OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
   }
 
@@ -854,6 +869,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       else if (Signature.Parameters.empty())
         Declarator += "void";
       OS << "extern ";
+      OS << sourceConventionAttribute(Signature.Convention);
       if (auto Effect = SourceCallTermination.find(Name);
           Effect != SourceCallTermination.end() && Effect->second)
         OS << "__attribute__((noreturn)) ";

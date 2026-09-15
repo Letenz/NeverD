@@ -85,6 +85,69 @@ TEST(SourceABI, DarwinIntegerPairResultRequiresBothReturnRegisters) {
   }
 }
 
+TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    for (const auto &Result :
+         {Pointer, NdType::makeInt(16, false),
+          NdType::makeStruct({Pointer, NdType::makeInt(8)})}) {
+      for (size_t Count = 0; Count <= TRI.IntParamRegs.size(); ++Count) {
+        SourceFunctionTypeHint Hint;
+        Hint.ReturnType = Result;
+        Hint.Parameters.assign(Count, {"word", NdType::makeInt(8, false)});
+        std::string Error;
+        ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error))
+            << Error;
+        EXPECT_EQ(Hint.Convention,
+                  SourceFunctionTypeHint::ConventionKind::Swift);
+        EXPECT_TRUE(validateSourceABI(Hint, Error));
+        for (size_t I = 0; I < Count; ++I)
+          EXPECT_EQ(Hint.Parameters[I].Location.RegisterOffset,
+                    TRI.IntParamRegs[I]);
+        if (Result->Size == 16) {
+          ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
+          for (size_t I = 0; I < 2; ++I)
+            EXPECT_EQ(Hint.ReturnComponents[I].RegisterOffset,
+                      TRI.IntReturnRegs[I]);
+        }
+        auto Invalid = Hint;
+        Invalid.Convention =
+            static_cast<SourceFunctionTypeHint::ConventionKind>(255);
+        EXPECT_FALSE(validateSourceABI(Invalid, Error));
+        if (Count) {
+          Invalid = Hint;
+          Invalid.Parameters[0].Location = {SourceABICarrierKind::Stack, 0, 8,
+                                            8};
+          EXPECT_FALSE(validateSourceABI(Invalid, Error));
+          Invalid = Hint;
+          Invalid.Parameters[0].Location.RegisterOffset =
+              TRI.IntParamRegs.back();
+          EXPECT_FALSE(validateSourceABI(Invalid, Error));
+        }
+        Invalid = Hint;
+        Invalid.Parameters.push_back({"extra", Pointer});
+        if (Count == TRI.IntParamRegs.size())
+          EXPECT_FALSE(
+              assignDarwinSwiftSourceABI(Invalid, Architecture, Error));
+        ASSERT_TRUE(assignDarwinFixedSourceABI(Hint, Architecture, Error));
+        EXPECT_EQ(Hint.Convention, SourceFunctionTypeHint::ConventionKind::C);
+      }
+    }
+    for (const auto &Unsupported :
+         {NdType::makeInt(4), NdType::makeFloat(8),
+          NdType::makeStruct({Pointer, Pointer, Pointer})}) {
+      SourceFunctionTypeHint Hint;
+      Hint.ReturnType = Unsupported;
+      std::string Error;
+      EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, Architecture, Error));
+      Hint.ReturnType = NdType::makeVoid();
+      Hint.Parameters = {{"unsupported", Unsupported}};
+      EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, Architecture, Error));
+    }
+  }
+}
+
 TEST(SourceABI, SourceReturnComponentsNeverBecomeRewriteABIEvidence) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     BinaryImage Image;

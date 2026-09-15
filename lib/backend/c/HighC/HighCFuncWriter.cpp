@@ -553,6 +553,8 @@ void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
 
   if (Func.DoesNotReturn)
     OS << "_Noreturn ";
+  if (Func.SourceTypeHint)
+    OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
   std::string Declarator = FName + "(";
   for (size_t I = 0; I < Func.Params.size(); ++I) {
     if (I > 0)
@@ -637,6 +639,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (Func.DoesNotReturn)
     OS << "_Noreturn ";
+  if (Func.SourceTypeHint)
+    OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
   std::string Declarator = FName + "(";
   for (size_t I = 0; I < Func.Params.size(); ++I) {
     if (I > 0)

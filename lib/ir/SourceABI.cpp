@@ -76,6 +76,27 @@ bool fail(std::string &Diagnostic, const char *Message) {
   Diagnostic = Message;
   return false;
 }
+
+bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
+  if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
+    return false;
+  const auto Word = [](const TypeRef &T) {
+    return scalarType(T) && T->Size == 8 && T->Kind != NdTypeKind::Float;
+  };
+  if (!Hint.ReturnType ||
+      Hint.Parameters.size() >
+          getTargetRegInfo(Architecture).IntParamRegs.size() ||
+      !std::all_of(Hint.Parameters.begin(), Hint.Parameters.end(),
+                   [&](const auto &P) { return Word(P.Type); }))
+    return false;
+  if (Word(Hint.ReturnType) || Hint.ReturnType->Kind == NdTypeKind::Void ||
+      (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16))
+    return true;
+  const auto Members = sourceAggregateMembers(Hint.ReturnType);
+  return !Members.empty() && Members.size() <= 2 &&
+         std::all_of(Members.begin(), Members.end(),
+                     [&](const auto &M) { return Word(M.Type); });
+}
 } // namespace
 
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
@@ -136,12 +157,25 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint) {
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                        std::string &Diagnostic) {
   Diagnostic.clear();
-  if (!Hint.HasExplicitABI ||
+  if ((Hint.Convention != SourceFunctionTypeHint::ConventionKind::C &&
+       Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift) ||
+      !Hint.HasExplicitABI ||
       (Hint.Architecture != Arch::AArch64 && Hint.Architecture != Arch::X64) ||
       Hint.Parameters.size() > 64 || !Hint.ReturnType)
     return fail(Diagnostic,
                 "Source ABI requires an explicit arm64/x86_64 layout");
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
+  if (Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift) {
+    if (!swiftFixedShape(Hint, Hint.Architecture))
+      return fail(Diagnostic, "Unsupported fixed Swift source ABI shape");
+    for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+      const auto &P = Hint.Parameters[I];
+      if (!P.Components.empty() ||
+          P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+          P.Location.RegisterOffset != TRI.IntParamRegs[I])
+        return fail(Diagnostic, "Unsupported fixed Swift argument carrier");
+    }
+  }
   auto IntegerRegister = [&](uint64_t Offset) {
     if (TRI.isFrameOrLinkReg(Offset))
       return false;
@@ -393,6 +427,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
         Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size < 4;
   }
   Hint.Architecture = Architecture;
+  Hint.Convention = SourceFunctionTypeHint::ConventionKind::C;
   Hint.HasExplicitABI = true;
   return validateSourceABI(Hint, Diagnostic);
 }
@@ -407,6 +442,16 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
 bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic) {
   return assignDarwinSourceABI(Hint, Architecture, Diagnostic, true);
+}
+
+bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
+                                std::string &Diagnostic) {
+  if (!swiftFixedShape(Hint, Architecture))
+    return fail(Diagnostic, "Unsupported fixed Swift source ABI shape");
+  if (!assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic))
+    return false;
+  Hint.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+  return validateSourceABI(Hint, Diagnostic);
 }
 
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
