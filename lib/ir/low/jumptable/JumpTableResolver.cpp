@@ -144,10 +144,17 @@ std::set<va_t> CFGBuilder::jumpTableProofRoots(
       Info.PhysicalCapacity != 0 && Info.RelocAbsolute) {
     const uint64_t PhysicalStride =
         Info.EntryStride != 0 ? Info.EntryStride : Info.EntrySize;
+    const uint64_t ObjectSize = CurrentImg->dataObjectSizeAt(Info.BaseAddr);
+    const bool SizedMatchesCapacity =
+        ObjectSize != 0 && ObjectSize >= Info.EntrySize &&
+        (ObjectSize - Info.EntrySize) % PhysicalStride == 0 &&
+        1 + (ObjectSize - Info.EntrySize) / PhysicalStride ==
+            Info.PhysicalCapacity;
     if (PhysicalStride >= Info.EntrySize &&
-        codePtrRelocRunHasExactBoundary(*CurrentImg, Info.BaseAddr,
-                                        PhysicalStride, Info.PhysicalCapacity,
-                                        DecodedTableAnchors))
+        (SizedMatchesCapacity ||
+         codePtrRelocRunHasExactBoundary(*CurrentImg, Info.BaseAddr,
+                                         PhysicalStride, Info.PhysicalCapacity,
+                                         DecodedTableAnchors)))
       CandidateStorage.push_back(
           JumpTableStorageRange{Info.BaseAddr, Info.EntrySize, PhysicalStride,
                                 Info.PhysicalCapacity});
@@ -967,6 +974,23 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // for one resolveJumpTable invocation: Rec and Insns are not mutated here.
   auto budgetedJumpTableProofRoots =
       [&](const JumpTableInfo &Candidate) -> std::optional<std::set<va_t>> {
+    // exactI386ModelZeroReaches already computed proposal roots that include
+    // sibling GOTOFF tables in this function.  Reuse that set for index and
+    // consumer-audit proofs; recomputing from this candidate's storage alone
+    // would restore the sibling's case labels as CFG roots and pollute the
+    // peeled dispatch.
+    if (CurrentImg && CurrentImg->Arch == Arch::X86 && CurrentImg->isELF() &&
+        CurrentImg->getPointerSize() == 4 && Candidate.HasBaseAddr &&
+        Candidate.RelocAbsolute) {
+      for (bool Audit : {ActiveJumpTableConsumerAudit, false}) {
+        const auto ProposalRootKey = detail::makeI386GOTOFFProposalRootCacheKey(
+            ActiveJumpTableCandidateAddr, Candidate.BaseAddr,
+            ActiveJumpTableCandidateDependencyRank, Audit);
+        const auto Cached = I386GOTOFFProposalRootCache.find(ProposalRootKey);
+        if (Cached != I386GOTOFFProposalRootCache.end() && Cached->second)
+          return Cached->second;
+      }
+    }
     size_t StorageCount = Candidate.StorageRanges.size();
     size_t SuppressibleSlotCount = Candidate.SuppressibleRelocationSlots.size();
     if (StorageCount == 0 && Candidate.HasBaseAddr &&
@@ -3586,9 +3610,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
             Img.mappedObjectOwnerEnd(Candidate.BaseAddr);
         const uint64_t DataObjectSize =
             Img.dataObjectSizeAt(Candidate.BaseAddr);
-        if (DataObjectSize == 0 &&
-            (!PhysicalRawAbsCodePtrRunComplete ||
-             PhysicalRawAbsCodePtrRun > Candidate.PhysicalCapacity))
+        // An incomplete raw relocation run cannot use an interior anchor as
+        // the object end.  A complete run that is longer than PhysicalCapacity
+        // is the adjacent-table case: boundCodePtrRunByNextAnchor already
+        // capped this candidate at a sibling GOTOFF/lea base, and that cap is
+        // the exact object when no sized symbol exists.
+        if (DataObjectSize == 0 && !PhysicalRawAbsCodePtrRunComplete)
           AllowAnchorBoundary = false;
         if (DataObjectSize != 0) {
           // A sized symbol is the narrowest available object identity.  It is
@@ -3834,19 +3861,42 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       return {};
     Info.AuthenticatedMaskCoordinates = MaskCoordinates;
     Info.AuthenticatedMaskKnownOneWitnesses = std::move(MaskKnownOneWitnesses);
-    // The next-anchor cap is a runtime-domain heuristic: another reachable
-    // consumer may name an interior relocation without ending the physical
-    // table object.  For storage ownership, use the uncapped relocation run
-    // only when its end is independently equal to the mapped object/section
-    // boundary.  This keeps exact physical capacity separate from both the
-    // mask domain and consumer-specific suppression permissions.
+    // Storage ownership prefers a sized symbol or a next-anchor cap that
+    // lands on an exact sibling-table base.  The mapped section owner may
+    // continue into an adjacent table and is only used when neither exact
+    // prefix exists.
     const uint32_t ExactAbsoluteStorageSlots = [&] {
       if (Info.EntrySize == 0 || PhysicalEntryStride < Info.EntrySize ||
           RawAbsCodePtrRun == 0)
         return uint32_t{0};
-      if (!consumeCandidateProducts(
-              {{Img.Segments.size(), 4}, {Img.Sections.size(), 8}, {1, 10}}))
+      if (!consumeCandidateProducts({{Img.Segments.size(), 4},
+                                     {Img.Sections.size(), 8},
+                                     {Img.Symbols.size(), 1},
+                                     {1, 10}}))
         return uint32_t{0};
+      // A sized symbol at the table base, or a next-anchor cap on an
+      // unsized adjacent GOTOFF/PIC run, is the physical object.  The
+      // mapped section owner often continues into a sibling table and
+      // must not replace that exact prefix.
+      const uint64_t ObjectSize = Img.dataObjectSizeAt(Info.BaseAddr);
+      if (ObjectSize != 0) {
+        if (ObjectSize >= Info.EntrySize &&
+            (ObjectSize - Info.EntrySize) % PhysicalEntryStride == 0) {
+          const uint64_t SizedSlots =
+              (ObjectSize - Info.EntrySize) / PhysicalEntryStride + 1;
+          if (SizedSlots == Info.PhysicalCapacity &&
+              SizedSlots <= std::numeric_limits<uint32_t>::max())
+            return Info.PhysicalCapacity;
+        }
+      } else if (Info.PhysicalCapacity >= limits::kMinJumpTableEntries &&
+                 Info.PhysicalCapacity < RawAbsCodePtrRun) {
+        if (!consumeExactBoundaryInventory(Img, DecodedTableAnchors.size()))
+          return uint32_t{0};
+        if (codePtrRelocRunHasExactBoundary(
+                Img, Info.BaseAddr, PhysicalEntryStride, Info.PhysicalCapacity,
+                DecodedTableAnchors))
+          return Info.PhysicalCapacity;
+      }
       if (const std::optional<va_t> OwnerEnd =
               Img.mappedObjectOwnerEnd(Info.BaseAddr);
           OwnerEnd && *OwnerEnd >= Info.BaseAddr + Info.EntrySize) {

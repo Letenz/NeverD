@@ -291,6 +291,10 @@ static fs::path i386GOTPCModelObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotpc_model.o";
 }
 
+static fs::path i386GOTOFFForcepeelObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_forcepeel.o";
+}
+
 static fs::path i386GOTOFFStackGroupObj() {
   return fs::path(TEST_OBJ_DIR) / "test_i386_gotoff_stack_group.o";
 }
@@ -608,6 +612,162 @@ TEST_F(JTE_X86_32, GOTOFFPeeledLoopKeepsPerDispatchDomains) {
   EXPECT_EQ(Dispatches, (std::set<neverd::va_t>{First->Addr, Loop->Addr}));
   EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
   EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+}
+
+TEST_F(JTE_X86_32, GOTOFFPeeledDecKeepsOddKnownOneDomain) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTOFFForcepeelObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  const auto *Function = Image.findSymbol("jt_i386_gotoff_peeled_dec");
+  const auto *Branch = Image.findSymbol("jt_i386_gotoff_peeled_dec_branch");
+  const auto *Storage = Image.findSymbol("jt_i386_gotoff_peeled_dec_table");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(Branch, nullptr);
+  ASSERT_NE(Storage, nullptr);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const auto Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  ASSERT_EQ(Low.JumpTables.size(), 1u);
+  const auto &Table = Low.JumpTables.front();
+  EXPECT_EQ(Table.InsnAddr, Branch->Addr);
+  EXPECT_EQ(Table.BaseAddr, Storage->Addr);
+  EXPECT_EQ(Table.SlotIndices, (std::vector<uint32_t>{0, 2, 4, 6}));
+  EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+}
+
+TEST_F(JTE_X86_32, GOTOFFPeeledDecTwoKeepsDistinctTableDomains) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTOFFForcepeelObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  const auto *Function = Image.findSymbol("jt_i386_gotoff_peeled_dec_two");
+  const auto *First =
+      Image.findSymbol("jt_i386_gotoff_peeled_dec_two_first_branch");
+  const auto *Loop =
+      Image.findSymbol("jt_i386_gotoff_peeled_dec_two_loop_branch");
+  const auto *FirstTab =
+      Image.findSymbol("jt_i386_gotoff_peeled_dec_two_first");
+  const auto *SecondTab =
+      Image.findSymbol("jt_i386_gotoff_peeled_dec_two_second");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(First, nullptr);
+  ASSERT_NE(Loop, nullptr);
+  ASSERT_NE(FirstTab, nullptr);
+  ASSERT_NE(SecondTab, nullptr);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const auto Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+  std::string Dump;
+  llvm::raw_string_ostream OS(Dump);
+  OS << "tables=" << Low.JumpTables.size()
+     << " graph=" << Builder.i386GOTOFFGraphQueryIssuedForTesting()
+     << " firstTab=" << llvm::utohexstr(FirstTab->Addr)
+     << " sz=" << FirstTab->Size
+     << " secondTab=" << llvm::utohexstr(SecondTab->Addr)
+     << " sz=" << SecondTab->Size << "\nGOTOFF:";
+  for (const auto &[VA, Field] : Image.DataAddressRelocOperands)
+    if (VA >= Function->Addr && VA < Function->Addr + Function->Size)
+      OS << " f=" << llvm::utohexstr(VA)
+         << " t=" << llvm::utohexstr(Field.TargetVA)
+         << " o=" << llvm::utohexstr(Field.TargetOwnerVA) << ";";
+  OS << "\n";
+  ASSERT_EQ(Low.JumpTables.size(), 2u) << Dump;
+  for (const auto &Table : Low.JumpTables) {
+    if (Table.InsnAddr == First->Addr) {
+      EXPECT_EQ(Table.BaseAddr, FirstTab->Addr);
+      EXPECT_EQ(Table.SlotIndices, (std::vector<uint32_t>{0, 2, 4, 6}));
+    } else {
+      EXPECT_EQ(Table.InsnAddr, Loop->Addr);
+      EXPECT_EQ(Table.BaseAddr, SecondTab->Addr);
+      EXPECT_EQ(Table.SlotIndices,
+                (std::vector<uint32_t>{0, 1, 2, 3, 4, 5, 6, 7}));
+    }
+  }
+  EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+}
+
+TEST_F(JTE_X86_32, AnonAdjacentGOTOFFPeeledDecKeepsPerDispatchDomains) {
+  auto ImageOrErr = neverd::loadBinary(i386GOTOFFForcepeelObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const auto &Image = *ImageOrErr;
+  const auto *Function = Image.findSymbol("jt_i386_gotoff_forcepeel_anon");
+  const auto *First =
+      Image.findSymbol("jt_i386_gotoff_forcepeel_anon_first_branch");
+  const auto *Loop =
+      Image.findSymbol("jt_i386_gotoff_forcepeel_anon_loop_branch");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(First, nullptr);
+  ASSERT_NE(Loop, nullptr);
+
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  neverd::CFGBuilder Builder;
+  const auto Low =
+      Builder.build(Image, Decoder, Function->Addr, Function->Name);
+
+  std::string Dump;
+  llvm::raw_string_ostream OS(Dump);
+  OS << "tables=" << Low.JumpTables.size()
+     << " models=" << Low.RelocatedInstructionScalarModelOccurrences.size()
+     << " graph=" << Builder.i386GOTOFFGraphQueryIssuedForTesting()
+     << " budget-exh="
+     << Builder.i386GOTOFFGraphQueryBudgetExhaustedForTesting() << " group="
+     << Builder.jumpTableGroupLifecycleStateForTesting().LastProof.Stage
+     << " indir-call=" << lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL)
+     << "\n";
+  OS << "CodePtr:";
+  for (auto VA : Image.CodePtrRelocSlots)
+    OS << " " << llvm::utohexstr(VA);
+  OS << "\nAnchors:";
+  for (auto VA : Image.RelCodeTableAnchors)
+    OS << " " << llvm::utohexstr(VA);
+  OS << "\nGOTOFF:";
+  for (const auto &[VA, Field] : Image.DataAddressRelocOperands)
+    if (VA >= Function->Addr && VA < Function->Addr + Function->Size)
+      OS << " f=" << llvm::utohexstr(VA)
+         << " t=" << llvm::utohexstr(Field.TargetVA)
+         << " o=" << llvm::utohexstr(Field.TargetOwnerVA) << ";";
+  OS << "\n";
+  for (const auto &Table : Low.JumpTables)
+    OS << "  JT insn=" << llvm::utohexstr(Table.InsnAddr)
+       << " base=" << llvm::utohexstr(Table.BaseAddr)
+       << " n=" << Table.Targets.size() << " slots=" << Table.SlotIndices.size()
+       << "\n";
+
+  ASSERT_EQ(Low.JumpTables.size(), 2u) << Dump;
+  std::set<neverd::va_t> Dispatches;
+  std::set<neverd::va_t> Bases;
+  for (const auto &Table : Low.JumpTables) {
+    EXPECT_TRUE(Dispatches.insert(Table.InsnAddr).second);
+    Bases.insert(Table.BaseAddr);
+    EXPECT_TRUE(Table.HasDispatchSlotMap);
+    ASSERT_EQ(Table.Targets.size(), Table.SlotIndices.size());
+    for (size_t I = 0; I < Table.Targets.size(); ++I) {
+      const uint8_t *Bytes =
+          Image.readVA(Table.BaseAddr + 4 * Table.SlotIndices[I], 4);
+      ASSERT_NE(Bytes, nullptr);
+      const uint32_t Target = uint32_t{Bytes[0]} | uint32_t{Bytes[1]} << 8 |
+                              uint32_t{Bytes[2]} << 16 |
+                              uint32_t{Bytes[3]} << 24;
+      EXPECT_EQ(Table.Targets[I], Target);
+    }
+    if (Table.InsnAddr == First->Addr) {
+      EXPECT_EQ(Table.SlotIndices, (std::vector<uint32_t>{0, 2, 4, 6}));
+    } else {
+      EXPECT_EQ(Table.InsnAddr, Loop->Addr);
+      EXPECT_EQ(Table.SlotIndices,
+                (std::vector<uint32_t>{0, 1, 2, 3, 4, 5, 6, 7}));
+    }
+  }
+  EXPECT_EQ(Dispatches, (std::set<neverd::va_t>{First->Addr, Loop->Addr}));
+  EXPECT_EQ(Bases.size(), 2u);
+  EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL)) << Dump;
 }
 
 TEST_F(JTE_X86_32, GOTOFFStackLoopKeepsDistinctTableDomains) {

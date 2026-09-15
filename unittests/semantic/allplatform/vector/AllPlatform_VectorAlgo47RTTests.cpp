@@ -103,8 +103,8 @@ static std::vector<RoundTripTC> makeVec47TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64Vec47 = withForbiddenSwitch(
-    makeVec47TC("x64v47", "long", 2, "-mssse3"), {"_vecsw"});
+static const std::vector<RoundTripTC> kX64Vec47 =
+    makeVec47TC("x64v47", "long", 2, "-mssse3");
 static const std::vector<RoundTripTC> kA64Vec47 =
     makeVec47TC("a64v47", "long", 2, "");
 static const std::vector<RoundTripTC> kARM32Vec47 =
