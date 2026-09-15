@@ -3,6 +3,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
+#include "neverd/lift/AArch64Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -24,6 +25,57 @@ bool integerCarrier(const TypeRef &Type) {
 bool sameScalar(const TypeRef &A, const TypeRef &B) {
   return integerCarrier(A) && integerCarrier(B) && A->Kind == B->Kind &&
          A->Size == B->Size && A->IsSigned == B->IsSigned;
+}
+
+// These are internal source parameters, not a guessed external convention.
+// Use MedIR's observable entry-byte analysis, and independently require native
+// reads without any writes to preserved non-frame registers. In particular,
+// outlined helpers with hidden register outputs cannot gain a scalar binding
+// from their context reads. An unavailable proof leaves the ordinary candidate
+// unchanged; its body still has to pass complete source validation.
+std::vector<uint64_t>
+readOnlyContextRegisters(const LowFunc *Low, const MedFunc &Med,
+                         const SourceFunctionTypeHint &Hint) {
+  if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
+      Low->Blocks.size() > 16384)
+    return {};
+  const auto Observed = observedMedSourceEntryRegisters(Med, Hint);
+  if (!Observed)
+    return {};
+  const auto &TRI = getTargetRegInfo(Hint.Architecture);
+  auto IntegerContext = [&](uint64_t Register) {
+    return !TRI.isFrameOrLinkReg(Register) &&
+           TRI.isCallPreserved(Register, 8) &&
+           (Hint.Architecture == Arch::AArch64
+                ? Register <= a64reg::X28 && Register % 8 == 0
+                : TRI.isGeneralReg(Register));
+  };
+  const auto Preserved = TRI.callPreservedRanges(BinaryFormat::MachO);
+  size_t Remaining = 262144;
+  std::set<uint64_t> Reads;
+  for (const auto &Block : Low->Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Remaining-- || Op.NumInputs > 6)
+        return {};
+      const auto &Output = Op.Output;
+      if (Output.isReg() && Output.Size &&
+          !(TRI.isFrameOrLinkReg(Output.Offset) && Output.Size <= 8))
+        for (const auto &Range : Preserved)
+          if (!TRI.isFrameOrLinkReg(Range.Offset) &&
+              (Output.Offset <= Range.Offset
+                   ? Range.Offset - Output.Offset < Output.Size
+                   : Output.Offset - Range.Offset < Range.Bytes))
+            return {};
+      for (unsigned I = 0; I < Op.NumInputs; ++I) {
+        if (!Remaining--)
+          return {};
+        const auto &Input = Op.Inputs[I];
+        if (Input.isReg() && Input.Size == 8 && IntegerContext(Input.Offset) &&
+            Observed->count(Input.Offset))
+          Reads.insert(Input.Offset);
+      }
+    }
+  return {Reads.begin(), Reads.end()};
 }
 
 // This proves a defined machine carrier, not an original return declaration.
@@ -186,9 +238,11 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
 }
 } // namespace
 
-std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
-    const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
-    const PipelineFunctionAudit &Audit, std::string &Diagnostic) {
+std::optional<SourceFunctionTypeHint>
+inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
+                          const HighFunc &High,
+                          const PipelineFunctionAudit &Audit,
+                          std::string &Diagnostic, const LowFunc *Low) {
   Diagnostic.clear();
   auto Reject =
       [&](const char *Reason) -> std::optional<SourceFunctionTypeHint> {
@@ -332,6 +386,14 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     if (PointerParameters[Index] && Parameter.Type->Kind == NdTypeKind::Int)
       Parameter.Type = NdType::makePtr(NdType::makeVoid());
   }
+  if (!validateSourceABI(Hint, Diagnostic))
+    return std::nullopt;
+  for (uint64_t Register : readOnlyContextRegisters(Low, Med, Hint))
+    if (!ParameterRegisters.count(Register))
+      Hint.Parameters.push_back(
+          {"native_arg" + std::to_string(Hint.Parameters.size()),
+           NdType::makeInt(8),
+           {SourceABICarrierKind::IntegerRegister, Register, 0, 8}});
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
   return Hint;

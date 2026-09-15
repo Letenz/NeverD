@@ -7,6 +7,7 @@
 
 namespace neverd {
 struct BinaryImage;
+struct LowFunc;
 struct MedFunc;
 struct HighFunc;
 struct PipelineFunctionAudit;
@@ -28,8 +29,14 @@ struct PipelineFunctionAudit;
 /// Complete integer inputs forwarded to known pointer parameters can refine
 /// the source candidate through conflict-free COPY/PHI uses. Physical carriers
 /// remain unchanged; this does not modify generic lifting or rewrite types.
+/// When Low is supplied from the same pipeline, observed preserved integer
+/// entry registers can become explicit context parameters if the native body
+/// never writes preserved registers other than its frame/link registers.
+/// Both callers and definitions must use the resulting source projection;
+/// these parameters do not describe an external C or Swift calling convention.
 std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
-    const PipelineFunctionAudit &Audit, std::string &Diagnostic);
+    const PipelineFunctionAudit &Audit, std::string &Diagnostic,
+    const LowFunc *Low = nullptr);
 } // namespace neverd
 #endif

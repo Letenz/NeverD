@@ -94,6 +94,155 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
   }
 }
 
+struct NativeContextFixture : NativeFixture {
+  LowFunc Low;
+  MedVar Context;
+
+  explicit NativeContextFixture(Arch Architecture, uint64_t Register)
+      : NativeFixture(Architecture) {
+    Med.Params[1].Id = -1;
+    Context.Kind = MedVar::Reg;
+    Context.Id = 200;
+    Context.RegOff = Register;
+    Context.Size = 8;
+    Context.TheArch = Architecture;
+    MedOp Load;
+    Load.Opcode = NdOp::LOAD;
+    Load.Output = Context;
+    Load.Output.Kind = MedVar::Temp;
+    Load.Output.Id = 201;
+    Load.Output.Size = 4;
+    Load.addInput(Context);
+    Med.Blocks[0].Ops[0].Inputs[1] = Load.Output;
+    Med.Blocks[0].Ops.insert(Med.Blocks[0].Ops.begin(), Load);
+    Low.Entry = Med.Entry;
+    Low.Blocks.emplace_back();
+    Low.Blocks[0].Id = 0;
+    LowOp NativeLoad;
+    NativeLoad.Opcode = NdOp::LOAD;
+    NativeLoad.Output = NdVar::tmp(TmpBase, 4);
+    NativeLoad.addInput(NdVar::reg(Register, 8));
+    Low.Blocks[0].Ops.push_back(NativeLoad);
+  }
+
+  std::optional<SourceFunctionTypeHint> inferContext(std::string &Error) const {
+    return inferNativeSourceTypeHint(Image, Med, High, Audit, Error, &Low);
+  }
+};
+
+TEST(NativeSourceHints, ReadOnlyContextsRetainObservedPreservedRegisters) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    unsigned Checked = 0;
+    for (uint64_t Register : TRI.CalleeSaveRegs) {
+      if (TRI.isFrameOrLinkReg(Register) || TRI.isVectorReg(Register))
+        continue;
+      NativeContextFixture Fixture(Architecture, Register);
+      std::string Error;
+      auto Hint = Fixture.inferContext(Error);
+      ASSERT_TRUE(Hint) << Error;
+      ASSERT_EQ(Hint->Parameters.size(), 2U) << Register;
+      EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset,
+                TRI.IntParamRegs[0]);
+      EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, Register);
+      EXPECT_EQ(Hint->Parameters[1].Location.ValueBytes, 8U);
+      EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::C);
+      EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                MedReturnValueEvidence::Unknown);
+      auto WithoutNativeProof = Fixture.infer(Error);
+      ASSERT_TRUE(WithoutNativeProof) << Error;
+      EXPECT_EQ(WithoutNativeProof->Parameters.size(), 1U);
+      ++Checked;
+    }
+    EXPECT_GT(Checked, 0U);
+  }
+}
+
+TEST(NativeSourceHints, ContextProofRejectsClobbersAndIncompleteNativeReads) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto ContextRegister = *std::find_if(
+        TRI.CalleeSaveRegs.begin(), TRI.CalleeSaveRegs.end(), [&](uint64_t R) {
+          return !TRI.isFrameOrLinkReg(R) && !TRI.isVectorReg(R);
+        });
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      NativeContextFixture Fixture(Architecture, ContextRegister);
+      auto &Ops = Fixture.Low.Blocks[0].Ops;
+      if (Mutation < 3) {
+        LowOp Write;
+        Write.Opcode = NdOp::COPY;
+        const auto Offset =
+            Mutation == 2 ? ContextRegister + 1 : ContextRegister;
+        Write.Output = NdVar::reg(Offset, Mutation ? 1 : 8);
+        Write.addInput(NdVar::cst(0, Write.Output.Size));
+        Ops.push_back(Write);
+      } else if (Mutation == 3) {
+        ++Fixture.Low.Entry;
+      } else if (Mutation == 4) {
+        Ops[0].Inputs[0] = NdVar::cst(0, 8);
+      } else if (Mutation == 5) {
+        Ops[0].Inputs[0].Size = 4;
+      } else if (Mutation == 6) {
+        Fixture.Low.Blocks.resize(16385);
+      } else if (Mutation == 7) {
+        Ops[0].NumInputs = 7;
+      } else {
+        LowOp Write;
+        Write.Opcode = NdOp::COPY;
+        auto Other = std::find_if(TRI.CalleeSaveRegs.begin(),
+                                  TRI.CalleeSaveRegs.end(), [&](uint64_t R) {
+                                    return R != ContextRegister &&
+                                           !TRI.isFrameOrLinkReg(R) &&
+                                           !TRI.isVectorReg(R);
+                                  });
+        ASSERT_NE(Other, TRI.CalleeSaveRegs.end());
+        Write.Output = NdVar::reg(*Other, 8);
+        Write.addInput(NdVar::cst(0, 8));
+        Ops.push_back(Write);
+      }
+      std::string Error;
+      auto Hint = Fixture.inferContext(Error);
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->Parameters.size(), 1U) << Mutation;
+    }
+  }
+}
+
+TEST(NativeSourceHints, ContextDemandExcludesSeedsAndInternalDefinitions) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Register = *std::find_if(
+        TRI.CalleeSaveRegs.begin(), TRI.CalleeSaveRegs.end(), [&](uint64_t R) {
+          return !TRI.isFrameOrLinkReg(R) && !TRI.isVectorReg(R);
+        });
+    for (unsigned Mutation = 0; Mutation < 3; ++Mutation) {
+      NativeContextFixture Fixture(Architecture, Register);
+      if (Mutation == 0) {
+        auto &Load = Fixture.Med.Blocks[0].Ops[0];
+        Load.Opcode = NdOp::COPY;
+        Load.Output = Fixture.Context;
+        Fixture.Med.Blocks[0].Ops[1].Inputs[1] = MedVar::makeConst(7, 4);
+      } else if (Mutation == 1) {
+        MedOp Define;
+        Define.Opcode = NdOp::COPY;
+        Define.Output = Fixture.Context;
+        Define.addInput(MedVar::makeConst(0, 8));
+        Fixture.Med.Blocks[0].Ops.insert(Fixture.Med.Blocks[0].Ops.begin(),
+                                         Define);
+      } else {
+        PhiNode Phi;
+        Phi.Output = Fixture.Context;
+        Phi.Args = {{0, MedVar::makeConst(0, 8)}};
+        Fixture.Med.Blocks[0].Phis.push_back(Phi);
+      }
+      std::string Error;
+      auto Hint = Fixture.inferContext(Error);
+      ASSERT_TRUE(Hint) << Error;
+      EXPECT_EQ(Hint->Parameters.size(), 1U) << Mutation;
+    }
+  }
+}
+
 TEST(NativeSourceHints, OmittedUnusedArgumentDoesNotShiftPhysicalRegister) {
   NativeFixture Fixture;
   Fixture.Med.Params[0].Id = -1;

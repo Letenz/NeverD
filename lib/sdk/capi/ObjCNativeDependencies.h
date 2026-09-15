@@ -95,9 +95,12 @@ inline size_t inferObjCNativeDependencies(
     const BinaryImage &Image, const PipelineResult &Result,
     PipelineOptions &Options, std::map<va_t, std::string> &Diagnostics) {
   const auto Targets = walkObjCNativeDependencies(Image, Result);
+  std::map<va_t, const LowFunc *> Low;
   std::map<va_t, const MedFunc *> Med;
   std::map<va_t, const HighFunc *> High;
   std::map<va_t, const PipelineFunctionAudit *> Audits;
+  for (const auto &Function : Result.LowFuncs)
+    Low.emplace(Function.Entry, &Function);
   for (const auto &Function : Result.MedFuncs)
     Med.emplace(Function.Entry, &Function);
   for (const auto &Function : Result.HighFuncs)
@@ -109,16 +112,19 @@ inline size_t inferObjCNativeDependencies(
     if (Options.SourceTypeHints.count(Target))
       continue;
     const auto M = Med.find(Target);
+    const auto L = Low.find(Target);
     const auto H = High.find(Target);
     const auto A = Audits.find(Target);
-    if (M == Med.end() || H == High.end() || A == Audits.end()) {
+    if (L == Low.end() || M == Med.end() || H == High.end() ||
+        A == Audits.end()) {
       Diagnostics[Target] = "native callee has no complete pipeline evidence";
       continue;
     }
     if (M->second->SourceTypeHint || H->second->SourceTypeHint)
       continue;
-    auto Hint = inferNativeSourceTypeHint(Image, *M->second, *H->second,
-                                          *A->second, Diagnostics[Target]);
+    auto Hint =
+        inferNativeSourceTypeHint(Image, *M->second, *H->second, *A->second,
+                                  Diagnostics[Target], L->second);
     if (Hint) {
       Options.SourceTypeHints.emplace(Target, std::move(*Hint));
       ++Added;

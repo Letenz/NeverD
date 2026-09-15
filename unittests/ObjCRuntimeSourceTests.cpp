@@ -75,6 +75,7 @@ enum class RuntimeFixture {
   FrameSelectors,
   NativeReturnPaths,
   IncomingResults,
+  NativeContext,
   SwiftTypeLookup,
   ReadOnlyTables,
   ScalarConstants,
@@ -111,6 +112,7 @@ void verifyRuntime(bool Chained,
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
+  const bool NativeContext = FixtureKind == RuntimeFixture::NativeContext;
   const bool FramePadding = FixtureKind == RuntimeFixture::FramePadding;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
@@ -173,6 +175,7 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup    ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
                         : IncomingResults    ? "ObjCIncomingResults.m"
+                        : NativeContext      ? "ObjCNativeContext.m"
                         : FramePadding       ? "ObjCFramePadding.m"
                         : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
@@ -218,6 +221,7 @@ void verifyRuntime(bool Chained,
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : IncomingResults   ? "ObjCIncomingResultsHarness.m"
+                        : NativeContext     ? "ObjCNativeContextHarness.m"
                         : FramePadding      ? "ObjCFramePaddingHarness.m"
                         : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
@@ -297,6 +301,8 @@ void verifyRuntime(bool Chained,
     Compile.push_back((Fixtures / "ObjCNativeReturnPaths.S").string());
   if (IncomingResults)
     Compile.push_back((Fixtures / "ObjCIncomingResults.S").string());
+  if (NativeContext)
+    Compile.push_back((Fixtures / "ObjCNativeContext.S").string());
   if (ReceiverFields)
     Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
@@ -412,6 +418,7 @@ void verifyRuntime(bool Chained,
                              : SwiftTypeLookup    ? 1U
                              : NativeReturnPaths  ? 1U
                              : IncomingResults    ? 2U
+                             : NativeContext      ? 2U
                              : FramePadding       ? 5U
                              : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
@@ -495,6 +502,8 @@ void verifyRuntime(bool Chained,
     Remaining = {"adjusted:choose:output:"};
   if (IncomingResults)
     Remaining = {"word:flags:", "word:memory:"};
+  if (NativeContext)
+    Remaining = {"word:context:", "contextWord:"};
   if (ReadOnlyTables)
     Remaining = {
         "actionForKind:", "shortForKind:", "maskedForKind:", "doubleForKind:"};
@@ -694,6 +703,7 @@ void verifyRuntime(bool Chained,
                   : SwiftTypeLookup    ? "NDSwiftTypeLookup"
                   : NativeReturnPaths  ? "NDNativeReturnPaths"
                   : IncomingResults    ? "NDIncomingResults"
+                  : NativeContext      ? "NDNativeContext"
                   : FramePadding       ? "NDFramePadding"
                   : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
@@ -989,6 +999,8 @@ void verifyRuntime(bool Chained,
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
+                          "memory-input=pass\n"
+      : NativeContext   ? "native-context-cases=16384\ncontext-bits=pass\n"
                           "memory-input=pass\n"
       : ReadOnlyTables  ? "read-only-table-cases=32768\ninteger-bits=pass\n"
                           "floating-bits=pass\nindex-bounds=pass\n"
@@ -1710,6 +1722,16 @@ TEST(ObjCRuntimeSource, IncomingNativeResultsPreserveWordBitsAndMemoryReads) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::IncomingResults));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, NativeContextParametersPreserveRegisterInputsAndBits) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::NativeContext));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif
