@@ -875,6 +875,14 @@ jobs:
                    "NeverDPipelineOutcomeTests"),
                   ("PipelineStageTrace.KeepsLiftBranchAndItsNativeDefinition",
                    "NeverDPipelineOutcomeTests"),
+                  ("HighControlFlowSemantics.ConditionalLoopExitExecutesUnlabeledEdgeCopies",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.LoopHeaderHasOneEntryForExternalBackedges",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.LoopExitRequiresExactContinuationIdentity",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.OuterLoopTransfersKeepTheirNestedLoopScope",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.JumpTableSuccessorsKeepCallsStoresAndPhiEdges",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.JumpTableLoopEdgesPreserveParallelPhiSnapshots",
@@ -1125,9 +1133,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 433,
-              ("macOS", "macos-patch"): 471,
-              ("Windows", "windows-focused"): 429,
+              ("Linux", "linux-semantic"): 437,
+              ("macOS", "macos-patch"): 476,
+              ("Windows", "windows-focused"): 433,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1156,6 +1164,7 @@ jobs:
                       "ObjCRuntimeSource.SwiftMetadataCallsPreserveIdentityAndResponseState",
                       "ObjCRuntimeSource.InvariantLoopValuesPreserveClassChecksAndGetterEffects",
                       "ObjCRuntimeSource.SwitchSuccessorsPreserveStoresCallsAndSharedExits",
+                      "ObjCRuntimeSource.LoopContinuationsPreserveExitCopiesAndStores",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

@@ -2090,6 +2090,173 @@ TEST(HighControlFlowSemantics, TypedViewsStillReferenceTheirVariable) {
       EXPECT_NO_THROW({ EXPECT_EQ(execute(F, 0), 16u); });
     }
 }
+
+// Preserve the CFG while varying the presence of compiler-generated edge
+// statements. Their source address is not a valid loop exit identity.
+TEST(HighControlFlowSemantics, ConditionalLoopExitExecutesUnlabeledEdgeCopies) {
+  for (bool Unlabeled : {false, true}) {
+    HighFunc F;
+    F.Entry = 0x1000;
+    auto Add = assign(0x1100, 1, 0);
+    Add.Val =
+        HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(3, 8));
+    auto Decrement = assign(0x1104, 0, 0);
+    Decrement.Val =
+        HighExpr::makeBinop(NdOp::INT_SUB, local(0), HighExpr::makeConst(1, 8));
+    auto Latch = conditional(0x1108, 0x1100);
+    Latch.Body.front().Addr = 0;
+    auto Copy = assign(Unlabeled ? 0 : 0x1200, 2, 0);
+    Copy.Val = local(1);
+    Copy.IsPhiCopy = true;
+    F.Body = {assign(0x1000, 1, 0),    Add, Decrement, Latch, Copy,
+              result(0x1204, local(2))};
+    MedFunc Med;
+    Med.Entry = F.Entry;
+    Med.Blocks.resize(3);
+    for (int I = 0; I < 3; ++I) {
+      Med.Blocks[I].Id = I;
+      Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    }
+    Med.Blocks[0].Succs = {1};
+    Med.Blocks[1].Succs = {1, 2};
+    for (const auto &S : F.Body) {
+      if (!S.Addr)
+        continue;
+      MedOp Op;
+      Op.Addr = S.Addr;
+      Med.Blocks[(S.Addr - 0x1000) / 0x100].Ops.push_back(Op);
+    }
+    for (unsigned Count = 1; Count <= 8; ++Count)
+      ASSERT_EQ(execute(F, Count, true), Count * 3u);
+    detectAndConvertLoops(F, {}, Med, false);
+    for (unsigned Count = 1; Count <= 8; ++Count) {
+      SCOPED_TRACE(Unlabeled);
+      EXPECT_EQ(execute(F, Count, true), Count * 3u);
+    }
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Goto) {
+        EXPECT_NE(S.GotoTarget, 0u);
+        EXPECT_NE(S.GotoTarget, InvalidVA);
+      }
+    });
+  }
+}
+
+TEST(HighControlFlowSemantics, LoopHeaderHasOneEntryForExternalBackedges) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  auto Split = conditional(0x1104, 0x1300);
+  Split.Body.front().Addr = 0;
+  auto Latch = conditional(0x1200, 0x1100);
+  Latch.Body.front().Addr = 0;
+  F.Body = {assign(0x1000, 1, 0),
+            assign(0x1100, 1, 7),
+            Split,
+            Latch,
+            jump(0x1204, 0x1400),
+            jump(0x1300, 0x1100),
+            result(0x1400, local(1))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(5);
+  for (int I = 0; I < 5; ++I) {
+    Med.Blocks[I].Id = I;
+    Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+  }
+  Med.Blocks[0].Succs = {1};
+  Med.Blocks[1].Succs = {2, 3};
+  Med.Blocks[2].Succs = {1, 4};
+  Med.Blocks[3].Succs = {1};
+  for (const auto &S : F.Body) {
+    MedOp Op;
+    Op.Addr = S.Addr;
+    Med.Blocks[(S.Addr - 0x1000) / 0x100].Ops.push_back(Op);
+  }
+  ASSERT_TRUE(buildHighSourceFlowGraph(F).Diagnostics.Complete);
+  detectAndConvertLoops(F, {}, Med, false);
+  size_t Entries = 0, Loops = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Entries += S.Addr == 0x1100;
+    Loops += S.Kind == StmtKind::While;
+  });
+  EXPECT_EQ(Loops, 1u);
+  EXPECT_EQ(Entries, 1u);
+  const auto Graph = buildHighSourceFlowGraph(F);
+  for (const auto &Item : Graph.Diagnostics.Items)
+    ADD_FAILURE() << Item.Reason << " at " << Item.RelatedAddress;
+  EXPECT_TRUE(Graph.Diagnostics.Complete);
+}
+
+TEST(HighControlFlowSemantics, LoopExitRequiresExactContinuationIdentity) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  auto Exit = conditional(0x1104, 0x1300);
+  Exit.Body.front().Addr = 0;
+  F.Body = {assign(0x1000, 1, 0),
+            assign(0x1100, 1, 7),
+            Exit,
+            assign(0x1200, 0, 1),
+            jump(0x1204, 0x1100),
+            result(0x1308, HighExpr::makeConst(99, 8)),
+            result(0x1300, HighExpr::makeConst(42, 8))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(5);
+  for (int I = 0; I < 5; ++I)
+    Med.Blocks[I].Id = I;
+  const int Owners[] = {0, 1, 1, 2, 2, 3, 4};
+  for (size_t I = 0; I < F.Body.size(); ++I) {
+    auto &Block = Med.Blocks[Owners[I]];
+    if (!Block.StartAddr)
+      Block.StartAddr = F.Body[I].Addr;
+    MedOp Op;
+    Op.Addr = F.Body[I].Addr;
+    Block.Ops.push_back(Op);
+  }
+  Med.Blocks[0].Succs = {1};
+  Med.Blocks[1].Succs = {2, 4};
+  Med.Blocks[2].Succs = {1};
+  for (unsigned Input : {0, 1, 19})
+    ASSERT_EQ(execute(F, Input, true), 42u);
+  detectAndConvertLoops(F, {}, Med, false);
+  for (unsigned Input : {0, 1, 19})
+    EXPECT_EQ(execute(F, Input, true), 42u);
+}
+
+TEST(HighControlFlowSemantics, OuterLoopTransfersKeepTheirNestedLoopScope) {
+  HighFunc F;
+  F.Entry = 0x1000;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::While;
+  Inner.Addr = 0x1104;
+  Inner.Cond = HighExpr::makeConst(1, 1);
+  Inner.Body = {jump(0x1108, 0x1300)};
+  F.Body = {assign(0x1000, 1, 0), assign(0x1100, 1, 7), Inner,
+            jump(0x1200, 0x1100), result(0x1300, local(1))};
+  MedFunc Med;
+  Med.Entry = F.Entry;
+  Med.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    Med.Blocks[I].Id = I;
+    Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+  }
+  Med.Blocks[0].Succs = {1};
+  Med.Blocks[1].Succs = {2, 3};
+  Med.Blocks[2].Succs = {1};
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    MedOp Op;
+    Op.Addr = S.Addr;
+    Med.Blocks[(S.Addr - 0x1000) / 0x100].Ops.push_back(Op);
+  });
+  ASSERT_EQ(execute(F, 0, true), 7u);
+  detectAndConvertLoops(F, {}, Med, false);
+  EXPECT_EQ(execute(F, 0, true), 7u);
+  size_t Transfers = 0;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    Transfers += S.Kind == StmtKind::Goto && S.GotoTarget == 0x1300;
+  });
+  EXPECT_EQ(Transfers, 1u);
+}
 } // namespace
 
 TEST(HighControlFlowSemantics,

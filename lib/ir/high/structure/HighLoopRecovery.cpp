@@ -158,7 +158,7 @@ public:
 } // namespace
 
 void detectAndConvertLoops(HighFunc &Func,
-                           const std::unordered_map<va_t, int> &AddrToBlock,
+                           const std::unordered_map<va_t, int> &,
                            const MedFunc &Med, bool IsMega) {
   NaturalLoopEvidence Evidence(Med);
   AddrMap AM;
@@ -240,17 +240,16 @@ void detectAndConvertLoops(HighFunc &Func,
       if (LatchCond) {
         WhileCond = HighExpr::makeConst(1, 1);
 
-        va_t ExitAddr = (static_cast<size_t>(I) + 1 < Func.Body.size())
-                            ? Func.Body[static_cast<size_t>(I) + 1].Addr
-                            : 0;
         HighStmt ExitCheck;
         ExitCheck.Kind = StmtKind::If;
         ExitCheck.Addr = Func.Body[I].Addr;
         ExitCheck.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, LatchCond);
-        HighStmt ExitGoto;
-        ExitGoto.Kind = StmtKind::Goto;
-        ExitGoto.GotoTarget = ExitAddr;
-        ExitCheck.Body.push_back(ExitGoto);
+        HighStmt Exit;
+        Exit.Kind = StmtKind::Break;
+        // The untaken latch edge continues after this loop, including any
+        // edge copies or explicit transfer. A generated statement there may
+        // have no native address; it must not become a fabricated goto label.
+        ExitCheck.Body.push_back(std::move(Exit));
         LoopBody.push_back(ExitCheck);
         LoopBody.insert(LoopBody.end(), LatchCopies.begin(), LatchCopies.end());
       } else if (!LoopBody.empty() && LoopBody[0].Kind == StmtKind::If &&
@@ -290,44 +289,11 @@ void detectAndConvertLoops(HighFunc &Func,
 
       HighStmt WhileStmt;
       WhileStmt.Kind = StmtKind::While;
-      WhileStmt.Addr = Func.Body[HeaderIdx].Addr;
+      // Only a hoisted header test transfers its native entry to the loop.
+      // An always-true wrapper is synthetic: the first body statement keeps
+      // its exact label, including for another backedge outside this region.
+      WhileStmt.Addr = LoopExitTarget ? Func.Body[HeaderIdx].Addr : 0;
       WhileStmt.LoopHeaderAddr = Target;
-
-      if (LatchCond) {
-        for (size_t K = 0; K < HeaderIdx; ++K) {
-          auto &S = Func.Body[K];
-          if (S.Kind != StmtKind::Goto)
-            continue;
-          va_t GotoDest = S.GotoTarget;
-          if (GotoDest == 0 || GotoDest == InvalidVA)
-            continue;
-          va_t LoopStart = Func.Body[HeaderIdx].Addr;
-          va_t LoopEnd = Func.Body[I].Addr;
-          if (GotoDest >= LoopStart && GotoDest <= LoopEnd) {
-            WhileStmt.LoopHeaderAddr = GotoDest;
-            break;
-          }
-        }
-        if (WhileStmt.LoopHeaderAddr == Target) {
-          for (size_t K = 0; K < HeaderIdx; ++K) {
-            auto &S = Func.Body[K];
-            if (S.Kind != StmtKind::If)
-              continue;
-            for (auto &InnerStmt : S.Body) {
-              if (InnerStmt.Kind != StmtKind::Goto)
-                continue;
-              va_t GotoDest = InnerStmt.GotoTarget;
-              va_t LoopStart = Func.Body[HeaderIdx].Addr;
-              va_t LoopEnd = Func.Body[I].Addr;
-              if (GotoDest >= LoopStart && GotoDest <= LoopEnd) {
-                WhileStmt.LoopHeaderAddr = GotoDest;
-                goto FoundEntry;
-              }
-            }
-          }
-        FoundEntry:;
-        }
-      }
       WhileStmt.Cond = WhileCond;
 
       // Edge copies already have predecessor snapshots and exact branch
@@ -337,7 +303,8 @@ void detectAndConvertLoops(HighFunc &Func,
       WhileStmt.Body = std::move(LoopBody);
 
       va_t LoopExitAddr = 0;
-      if (static_cast<size_t>(I) + 1 < Func.Body.size())
+      if (static_cast<size_t>(I) + 1 < Func.Body.size() &&
+          !Func.Body[static_cast<size_t>(I) + 1].IsPhiCopy)
         LoopExitAddr = Func.Body[static_cast<size_t>(I) + 1].Addr;
 
       auto IsExit = [&](va_t GT) -> bool {
@@ -345,16 +312,6 @@ void detectAndConvertLoops(HighFunc &Func,
           return false;
         if (LoopExitAddr != 0 && GT == LoopExitAddr)
           return true;
-        if (LoopExitAddr != 0 && GT < LoopExitAddr && LoopExitAddr - GT <= 16) {
-          auto AIt = AddrToBlock.find(GT);
-          if (AIt != AddrToBlock.end()) {
-            auto EIt = AddrToBlock.find(LoopExitAddr);
-            if (EIt != AddrToBlock.end() && AIt->second == EIt->second)
-              return true;
-          }
-          if (GT > Func.Body[HeaderIdx].Addr)
-            return true;
-        }
         return false;
       };
 
@@ -376,10 +333,11 @@ void detectAndConvertLoops(HighFunc &Func,
             else if (GotoDest == Hdr)
               S.Body[0].Kind = StmtKind::Continue;
           }
-          if (!S.Body.empty())
+          if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse ||
+              S.Kind == StmtKind::Block) {
             ConvertLoopGotos(S.Body, Hdr);
-          if (!S.ElseBody.empty())
             ConvertLoopGotos(S.ElseBody, Hdr);
+          }
         }
       };
       ConvertLoopGotos(WhileStmt.Body, Target);

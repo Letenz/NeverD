@@ -69,6 +69,7 @@ enum class RuntimeFixture {
   MetadataCalls,
   InvariantLoops,
   SwitchEffects,
+  LoopEdges,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -99,6 +100,7 @@ void verifyRuntime(bool Chained,
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
+  const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
   const bool InvariantLoops = FixtureKind == RuntimeFixture::InvariantLoops;
   const bool MetadataCalls = FixtureKind == RuntimeFixture::MetadataCalls;
   const bool SystemCalls = FixtureKind == RuntimeFixture::SystemCalls;
@@ -153,6 +155,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : LoopEdges          ? "ObjCLoopEdges.m"
                         : SwitchEffects      ? "ObjCSwitchEffects.m"
                         : InvariantLoops     ? "ObjCInvariantLoops.m"
                         : MetadataCalls      ? "ObjCMetadataCalls.m"
@@ -190,6 +193,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : LoopEdges         ? "ObjCLoopEdgesHarness.m"
                         : SwitchEffects     ? "ObjCSwitchEffectsHarness.m"
                         : InvariantLoops    ? "ObjCInvariantLoopsHarness.m"
                         : MetadataCalls     ? "ObjCMetadataCallsHarness.m"
@@ -371,6 +375,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : LoopEdges          ? 1U
                              : SwitchEffects      ? 1U
                              : InvariantLoops     ? 2U
                              : MetadataCalls      ? 8U
@@ -443,6 +448,8 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (LoopEdges)
+    Remaining = {"fold:seed:output:"};
   if (SwitchEffects)
     Remaining = {"choose:object:output:"};
   if (InvariantLoops)
@@ -626,6 +633,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : LoopEdges          ? "NDLoopEdges"
                   : SwitchEffects      ? "NDSwitchEffects"
                   : InvariantLoops     ? "NDInvariantLoops"
                   : MetadataCalls      ? "NDMetadataCalls"
@@ -906,6 +914,7 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : LoopEdges ? "loop-cases=65536\nreturns-and-stores=pass\n"
       : SwitchEffects
           ? "switch-cases=5632\nhash-effects=2816\nshared-targets=pass\n"
       : InvariantLoops
@@ -1532,6 +1541,15 @@ TEST(ObjCRuntimeSource, SwitchSuccessorsPreserveStoresCallsAndSharedExits) {
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::SwitchEffects));
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, LoopContinuationsPreserveExitCopiesAndStores) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::LoopEdges));
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C runtime";
 #endif
