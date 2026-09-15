@@ -73,6 +73,7 @@ enum class RuntimeFixture {
   LoopEdges,
   FrameSelectors,
   NativeReturnPaths,
+  SwiftTypeLookup,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -103,6 +104,7 @@ void verifyRuntime(bool Chained,
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
+  const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
@@ -162,6 +164,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : SwiftTypeLookup    ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
                         : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
@@ -203,6 +206,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
@@ -287,7 +291,8 @@ void verifyRuntime(bool Chained,
     Compile.push_back((Fixtures / "ObjCConstantStringStorage.m").string());
   if (NativePointers)
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
-  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
+      SwiftTypeLookup)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -390,6 +395,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : SwiftTypeLookup    ? 1U
                              : NativeReturnPaths  ? 1U
                              : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
@@ -466,6 +472,8 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (SwiftTypeLookup)
+    Remaining = {"lookup:length:"};
   if (NativeReturnPaths)
     Remaining = {"adjusted:choose:output:"};
   if (FrameSelectors)
@@ -658,6 +666,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : SwiftTypeLookup    ? "NDSwiftTypeLookup"
                   : NativeReturnPaths  ? "NDNativeReturnPaths"
                   : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
@@ -872,7 +881,8 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Compile.insert(Compile.end() - 2,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
-  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation)
+  if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
+      SwiftTypeLookup)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -944,6 +954,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : SwiftTypeLookup ? "swift-type-lookup-cases=20480\nmetadata-identity="
+                          "pass\nbyte-length=pass\n"
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : FrameSelectors
@@ -1621,5 +1633,16 @@ TEST(ObjCRuntimeSource, NativeReturnPathsPreserveBranchResultsAndStores) {
         verifyRuntime(Chained, RuntimeFixture::NativeReturnPaths));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     SwiftFixedRuntimeCallsPreserveMetadataIdentityAndByteLength) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SwiftTypeLookup));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C and Swift runtimes";
 #endif
 }

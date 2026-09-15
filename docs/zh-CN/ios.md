@@ -211,7 +211,7 @@ Swift 导出使用正常 mobile 流程由内置签名解析器生成的结构化
 
 已验证的本地协议引用槽通过 `objc_getProtocol` 保持已注册协议的身份。批量结果中的 `runtime_protocols` 依赖清单包含原生被调函数的需求。名称冲突、声明不完整、导入槽和未解析重定位仍不绑定。独立导出会报告缺少协议注册，不会生成可能取得空协议对象的方法体。
 
-Swift 运行时 C ABI 目录从固定版本的上游声明文件生成。它只接受 Swift 模块中无条件声明、采用普通 C 调用约定且使用已知指针表示和指针宽度无符号长度的固定签名。未知整数类型、多返回值、特殊 Swift 调用约定及冲突声明仍不支持。运行时调用保留分配、初始化和析构副作用，现有回调与有界字节读取契约保留专用类型。可用 `scripts/generate_swift_c_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新生成，追加 `--check` 校验已提交目录。生成事实附带版本、内容哈希与第三方声明。
+Swift 运行时 ABI 目录从固定版本的上游声明生成，并保留 C 或 Swift 调用约定。已知指针和指针宽度的无符号类型组成固定标量签名。Swift 调用必须有精确、非弱的 libswiftCore 导入；支持的两类版本化元数据可用性不允许弱导入。特殊参数寄存器、未知表示、多返回值、未支持的可用性类别及冲突声明仍被排除。尤其 swift_willThrow 需要编译器另行添加的 swiftself/swifterror 属性，声明 DSL 并未包含这些属性。调用保留副作用及既有回调、字节契约。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新生成，追加 `--check` 校验目录。声明事实附有版本、内容哈希和第三方说明。
 
 存储字段元数据区分已知字节布局与未知语言类型。稳定 ABI 的 Swift 类即使在 arm64 上也使用指针宽度的字段偏移变量；未公开的字段可能具有空的 Objective-C 类型编码。NeverD 保留类型缺失这一事实，同时验证偏移、大小、对齐和重叠。恢复的 C 函数体通过运行时 ivar 查询获取偏移。字段类型不可用时，仍不会生成需要虚构类型的类声明。
 

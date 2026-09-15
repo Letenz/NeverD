@@ -569,6 +569,114 @@ TEST(ObjCCallHints, SwiftDeclaredABIsRejectOtherConventionsAndUnprovedImports) {
   }
 }
 
+TEST(ObjCCallHints,
+     SwiftFixedRuntimeDeclarationsPreserveConventionAndArguments) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Encoding] :
+         std::vector<std::pair<const char *, const char *>>{
+             {"_swift_allocateMetadataPack", "ppz"},
+             {"_swift_allocateWitnessTablePack", "ppz"},
+             {"_swift_errorInMain", "vp"},
+             {"_swift_getAssociatedConformanceWitness", "pppppp"},
+             {"_swift_getAssociatedConformanceWitnessRelative", "pppppp"},
+             {"_swift_getTupleTypeLayout", "vppzp"},
+             {"_swift_getTupleTypeLayout2", "zppp"},
+             {"_swift_getTypeByMangledNameInContext", "ppzpp"},
+             {"_swift_getTypeByMangledNameInContext2", "ppzpp"},
+             {"_swift_getTypeByMangledNameInContextInMetadataState", "pzpzpp"},
+             {"_swift_getTypeByMangledNameInContextInMetadataState2", "pzpzpp"},
+             {"_swift_unexpectedError", "vp"},
+             {"_swift_updatePureObjCClassMetadata", "ppzzp"}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage(Name, Architecture);
+      auto &Bind = Image.DyldBindSlots[0x2180];
+      Bind.Name = Name;
+      Bind.Module = "/usr/lib/swift/libswiftCore.dylib";
+      const auto Med = convert(Image, caller(Architecture));
+      ASSERT_EQ(Med.CallInfos.size(), 1U);
+      const auto &Call = Med.CallInfos.front();
+      ASSERT_TRUE(Call.SourceCallHint);
+      const auto &Hint = *Call.SourceCallHint;
+      EXPECT_EQ(Hint.Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      EXPECT_EQ(Hint.Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+      EXPECT_EQ(Hint.DoesNotReturn,
+                llvm::StringRef(Name) == "_swift_unexpectedError");
+      EXPECT_TRUE(Hint.BorrowedByteInputs.empty());
+      EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+                Encoding[0] == 'v'   ? NdTypeKind::Void
+                : Encoding[0] == 'z' ? NdTypeKind::Int
+                                     : NdTypeKind::Ptr);
+      const llvm::StringRef Arguments(Encoding + 1);
+      ASSERT_EQ(Call.Args.size(), Arguments.size());
+      for (size_t I = 0; I < Arguments.size(); ++I) {
+        EXPECT_EQ(Call.Args[I].Size, 8U);
+        EXPECT_EQ(Call.Args[I].RegOff,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        EXPECT_EQ(Hint.Signature.Parameters[I].Type->Kind,
+                  Arguments[I] == 'p' ? NdTypeKind::Ptr : NdTypeKind::Int);
+      }
+      MedToHighConverter Converter;
+      Converter.setBinaryImage(&Image);
+      const auto High = Converter.convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      auto Forged = *Expression;
+      auto Changed =
+          std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+      Changed->Signature.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      Forged.SourceCallHint = std::move(Changed);
+      EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftFixedRuntimeImportsRequireExactStrongProvider) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      auto Image =
+          runtimeImage("_swift_getTypeByMangledNameInContext2", Architecture);
+      auto &Bind = Image.DyldBindSlots[0x2180];
+      Bind.Name = Image.ImportPtrSlots.at(0x2180);
+      Bind.Module = "/usr/lib/swift/libswiftCore.dylib";
+      if (Mutation == 0)
+        Image.DyldBindSlots.clear();
+      if (Mutation == 1)
+        Bind.Module = "libswiftCore.dylib";
+      if (Mutation == 2)
+        Bind.Module = "/tmp/libswiftCore.dylib";
+      if (Mutation == 3)
+        Bind.WeakImport = true;
+      if (Mutation == 4)
+        Bind.Addend = 8;
+      if (Mutation == 5)
+        Bind.Name += "_suffix";
+      if (Mutation == 6)
+        Image.ConflictingImportStorageSlots.insert(0x2180);
+      if (Mutation == 7)
+        Image.IsRelocatable = true;
+      if (Mutation == 8)
+        Image.Format = BinaryFormat::ELF;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Name :
+         {"_swift_willThrow", "_swift_allocBox", "_swift_makeBoxUnique",
+          "_swift_retainDirect", "_swift_task_getCurrent",
+          "_swift_getTypeByMangledNameInContext2_suffix"}) {
+      auto Image = runtimeImage(Name, Architecture);
+      Image.DyldBindSlots[0x2180].Name = Name;
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Name;
+    }
+}
+
 TEST(ObjCCallHints, SwiftOnceKeepsCallbackContextAndVoidResult) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = runtimeImage("_swift_once", Architecture);

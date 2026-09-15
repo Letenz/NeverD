@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.generate_swift_c_declarations import declarations, render
+from scripts.generate_swift_runtime_declarations import declarations, render
 
 
 def record(name='swift_allocate', module='Swift', cc='C_CC',
@@ -11,18 +11,18 @@ def record(name='swift_allocate', module='Swift', cc='C_CC',
             'UNKNOWN_MEMEFFECTS)\n')
 
 
-class SwiftCDeclarationTests(unittest.TestCase):
+class SwiftRuntimeDeclarationTests(unittest.TestCase):
     def test_fixed_pointer_size_facts_are_deterministic(self):
         source = record() + record('swift_free', returns='RETURNS(VoidTy)',
                                     args='ARGS(RefCountedPtrTy, SizeTy, SizeTy)')
         facts = declarations(source)
-        self.assertEqual(facts, {'swift_allocate': ('ppz', False),
-                                 'swift_free': ('vpzz', False)})
+        self.assertEqual(facts, {'swift_allocate': ('ppz', False, False),
+                                 'swift_free': ('vpzz', False, False)})
         self.assertEqual(render(facts, '0' * 64),
                          render(declarations(source + source), '0' * 64))
 
-    def test_non_c_abi_unknown_representations_and_module_cannot_bind(self):
-        cases = [dict(cc='SwiftCC'), dict(cc='SwiftDirectRR_CC'),
+    def test_unsupported_abi_representations_and_module_cannot_bind(self):
+        cases = [dict(cc='SwiftTailCC'), dict(cc='SwiftDirectRR_CC'),
                  dict(module='objc2'), dict(module='stdlib'),
                  dict(availability='SwiftRuntime53'), dict(args='NO_ARGS'),
                  dict(args='ARGS(Int32Ty)'), dict(args='ARGS(ObjCBoolTy)'),
@@ -45,7 +45,7 @@ class SwiftCDeclarationTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(declarations(source), {})
                 self.assertEqual(declarations(source + record('swift_visible')),
-                                 {'swift_visible': ('ppz', False)})
+                                 {'swift_visible': ('ppz', False, False)})
 
     def test_conflicting_alternatives_veto_in_both_orders(self):
         changed = record(returns='RETURNS(VoidTy)')
@@ -56,7 +56,40 @@ class SwiftCDeclarationTests(unittest.TestCase):
         self.assertEqual(declarations(record(attrs='ATTRS(NoUnwind, NoReturn)')), {})
         self.assertEqual(declarations(record(returns='RETURNS(VoidTy)',
                                               attrs='ATTRS(NoUnwind, NoReturn)')),
-                         {'swift_allocate': ('vpz', True)})
+                         {'swift_allocate': ('vpz', True, False)})
+
+    def test_fixed_swift_signatures_keep_their_calling_convention(self):
+        for availability in ('AlwaysAvailable', 'SignedDescriptorAvailability',
+                             'GetTypesInAbstractMetadataStateAvailability'):
+            source = record(cc='SwiftCC', availability=availability)
+            self.assertEqual(declarations(source),
+                             {'swift_allocate': ('ppz', False, True)})
+            self.assertEqual(declarations(source + record()), {})
+            self.assertEqual(declarations(record() + source), {})
+        self.assertEqual(declarations(record(cc='SwiftCC', returns='RETURNS(VoidTy)',
+                                              attrs='ATTRS(NoReturn)')),
+                         {'swift_allocate': ('vpz', True, True)})
+
+    def test_custom_parameter_abi_cannot_be_hidden_by_a_scalar_record(self):
+        for cc in ('C_CC', 'SwiftCC'):
+            source = record(name='swift_willThrow', cc=cc)
+            self.assertEqual(declarations(source), {})
+            self.assertEqual(declarations(source + record()),
+                             {'swift_allocate': ('ppz', False, False)})
+
+    def test_swift_attributes_availability_and_register_budget_are_closed(self):
+        for change in [dict(attrs='ATTRS(SwiftSelf)'),
+                       dict(attrs='ATTRS(SwiftError)'), dict(attrs='NO_ATTRS'),
+                       dict(availability='NewAvailability'),
+                       dict(availability='DifferentiationAvailability'),
+                       dict(args='ARGS(' + ','.join(['PtrTy'] * 9) + ')'),
+                       dict(returns='RETURNS(PtrTy, PtrTy)')]:
+            with self.subTest(change=change):
+                invalid = record(cc='SwiftCC', **change)
+                self.assertEqual(declarations(invalid), {})
+                self.assertEqual(declarations(record(cc='SwiftCC') + invalid), {})
+        self.assertTrue(declarations(record(cc='SwiftCC',
+                                            args='ARGS(' + ','.join(['PtrTy'] * 8) + ')')))
 
     def test_incomplete_or_exhausted_input_cannot_publish_partial_facts(self):
         for source in ('FUNCTION(', record() + '\n#if A', '#endif',

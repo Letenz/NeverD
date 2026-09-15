@@ -12,12 +12,13 @@
 
 namespace neverd {
 namespace {
-struct SwiftCDeclaration {
+struct SwiftRuntimeDeclaration {
   const char *Name;
   const char *Signature;
   bool DoesNotReturn;
+  bool UsesSwiftConvention;
 };
-#include "SwiftCDeclarations.inc"
+#include "SwiftRuntimeDeclarations.inc"
 
 struct SwiftMetadataDeclaration {
   const char *Name;
@@ -53,14 +54,24 @@ bool declaredMetadataABI(const BinaryImage &Image, va_t Slot,
   return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
 }
 
-bool declaredCABI(llvm::StringRef Name, SourceCallTypeHint &Hint) {
+bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
+                      SourceCallTypeHint &Hint) {
   const auto *Found = std::lower_bound(
-      std::begin(SwiftCDeclarations), std::end(SwiftCDeclarations), Name,
-      [](const SwiftCDeclaration &Row, llvm::StringRef Value) {
+      std::begin(SwiftRuntimeDeclarations), std::end(SwiftRuntimeDeclarations),
+      Name, [](const SwiftRuntimeDeclaration &Row, llvm::StringRef Value) {
         return llvm::StringRef(Row.Name) < Value;
       });
-  if (Found == std::end(SwiftCDeclarations) || Name != Found->Name)
+  if (Found == std::end(SwiftRuntimeDeclarations) || Name != Found->Name)
     return false;
+  if (Found->UsesSwiftConvention) {
+    // Versioned runtime entries carry the same fixed ABI when strongly
+    // imported from their declared provider. A weak or absent import cannot
+    // establish availability; a same-named user function supplies no evidence.
+    const auto Bind = Image.DyldBindSlots.find(Slot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib")
+      return false;
+  }
   const auto Type = [](char Encoding) -> TypeRef {
     switch (Encoding) {
     case 'v':
@@ -88,6 +99,9 @@ bool declaredCABI(llvm::StringRef Name, SourceCallTypeHint &Hint) {
     Signature.Parameters.push_back(
         {"arg" + std::to_string(Signature.Parameters.size()), Parameter});
   }
+  Signature.Convention = Found->UsesSwiftConvention
+                             ? SourceFunctionTypeHint::ConventionKind::Swift
+                             : SourceFunctionTypeHint::ConventionKind::C;
   Hint.DoesNotReturn = Found->DoesNotReturn;
   return !Hint.DoesNotReturn || Signature.ReturnType->Kind == NdTypeKind::Void;
 }
@@ -196,11 +210,15 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   } else if (Name == "swift_endAccess") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"scratch", Pointer}};
-  } else if (!declaredCABI(Name, Result)) {
+  } else if (!declaredFixedABI(Image, ImportSlot, Name, Result)) {
     return std::nullopt;
   }
   std::string Diagnostic;
-  if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
+  const bool Assigned =
+      Signature.Convention == SourceFunctionTypeHint::ConventionKind::Swift
+          ? assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic)
+          : assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic);
+  if (!Assigned)
     return std::nullopt;
   return Result;
 }

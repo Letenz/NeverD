@@ -207,7 +207,7 @@ Swift 匯出使用正常 mobile 流程由內建簽名解析器產生的結構化
 
 已驗證的本地協定引用槽透過 `objc_getProtocol` 保持已註冊協定的身分。批次結果中的 `runtime_protocols` 相依清單包含原生被呼叫函式的需求。名稱衝突、宣告不完整、匯入槽及未解析重定位仍不綁定。獨立匯出會回報缺少協定註冊，不會產生可能取得空協定物件的方法本體。
 
-Swift 執行階段 C ABI 目錄由固定版本的上游宣告檔產生。只接受 Swift 模組中無條件宣告、採用一般 C 呼叫慣例且使用已知指標表示與指標寬度無號長度的固定簽章。未知整數型別、多回傳值、特殊 Swift 呼叫慣例及衝突宣告仍不支援。執行階段呼叫保留配置、初始化和解構副作用，既有回呼與有界位元組讀取契約保留專用型別。使用 `scripts/generate_swift_c_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新產生，附加 `--check` 驗證已提交目錄。產生的事實附有版本、內容雜湊與第三方聲明。
+Swift 執行階段 ABI 目錄從固定版本的上游宣告產生，並保留 C 或 Swift 呼叫慣例。已知指標和指標寬度的無號型別組成固定純量簽章。Swift 呼叫必須有精確、非弱的 libswiftCore 匯入；支援的兩類版本化中繼資料可用性不允許弱匯入。特殊參數暫存器、未知表示、多回傳值、未支援的可用性類別及衝突宣告仍被排除。尤其 swift_willThrow 需要編譯器另行加入的 swiftself/swifterror 屬性，宣告 DSL 並未包含這些屬性。呼叫保留副作用及既有回呼、位元組契約。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新產生，附加 `--check` 驗證目錄。宣告事實附有版本、內容雜湊與第三方說明。
 
 儲存欄位中繼資料區分已知位元組配置與未知語言型別。穩定 ABI 的 Swift 類別即使在 arm64 上也使用指標寬度的欄位偏移變數；未公開的欄位可能具有空的 Objective-C 型別編碼。NeverD 保留型別缺失的事實，同時驗證偏移、大小、對齊與重疊。還原的 C 函式主體透過執行時期 ivar 查詢取得偏移。欄位型別不可用時，仍不會產生需要虛構型別的類別宣告。
 

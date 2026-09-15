@@ -8,8 +8,9 @@
 namespace neverd {
 struct BinaryImage;
 
-/// Bind a nonconflicting Mach-O import slot to a known C-ABI runtime entry.
-/// A symbol spelling alone never authenticates a local function or a veneer.
+/// Bind a nonconflicting Mach-O import slot to a declared fixed C or Swift
+/// runtime ABI. A symbol spelling alone never authenticates a local function or
+/// a veneer.
 std::optional<SourceCallTypeHint>
 swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
