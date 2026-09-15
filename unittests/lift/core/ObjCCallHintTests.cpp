@@ -1398,6 +1398,262 @@ TEST(ObjCCallHints, InlinedColdArgumentsKeepTheirBranchEntryAndRuntimeCall) {
   }
 }
 
+namespace {
+uint64_t preservedFactRegister(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  for (auto Register : TRI.CalleeSaveRegs)
+    if (!TRI.isFrameOrLinkReg(Register) && TRI.isCallPreserved(Register, 8))
+      return Register;
+  ADD_FAILURE() << "The Darwin ABI requires a preserved integer register";
+  return 0;
+}
+
+LowFunc callFactDiamond(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Carrier = NdVar::reg(preservedFactRegister(Architecture), 8);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Blocks.resize(4);
+  for (unsigned I = 0; I < 4; ++I) {
+    auto &Block = Function.Blocks[I];
+    Block.Id = I;
+    Block.StartAddr = 0x1200 + I * 16;
+    Block.EndAddr = Block.StartAddr + 12;
+  }
+  Function.Blocks[0].Succs = {1, 2};
+  Function.Blocks[0].Ops = {
+      operation(NdOp::COPY, Carrier, {NdVar::cst(0x2100, 8)})};
+  for (unsigned I : {1U, 2U}) {
+    Function.Blocks[I].Preds = {0};
+    Function.Blocks[I].Succs = {3};
+  }
+  auto &Join = Function.Blocks[3];
+  Join.Preds = {1, 2};
+  Join.Ops = {
+      operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8), {Carrier},
+                0x1230),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1234),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 4)}, 0x1238)};
+  return Function;
+}
+} // namespace
+
+TEST(ObjCCallHints, EqualPredecessorFactsBindRegardlessOfBlockOrder) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Image = image(Architecture);
+    auto Base = callFactDiamond(Architecture);
+    // One path recomputes the same address instead of forwarding its identity.
+    const auto Carrier = NdVar::reg(preservedFactRegister(Architecture), 8);
+    Base.Blocks[1].Ops = {
+        operation(NdOp::INT_ADD, Carrier,
+                  {NdVar::cst(0x2000, 8), NdVar::cst(0x100, 8)}, 0x1210)};
+    std::vector<unsigned> Order{0, 1, 2, 3};
+    do {
+      auto Function = Base;
+      for (unsigned I = 0; I < 4; ++I)
+        Function.Blocks[I] = Base.Blocks[Order[I]];
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      ASSERT_EQ(Hints.size(), 1U);
+      EXPECT_EQ(Hints.at(0x1234).Selector, "scale:");
+      EXPECT_EQ(Hints.at(0x1234).Signature.Parameters.size(), 3U);
+    } while (std::next_permutation(Order.begin(), Order.end()));
+    const auto Med = convert(Image, Base);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+    EXPECT_EQ(Med.CallInfos[0].Args.size(), 3U);
+  }
+}
+
+TEST(ObjCCallHints, ConflictingMissingAndOverlappingIncomingFactsStayUnknown) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      auto Function = callFactDiamond(Architecture);
+      const auto Register = preservedFactRegister(Architecture);
+      Function.Blocks[2].Ops = {operation(
+          NdOp::COPY, NdVar::reg(Register, Case == 2 ? 4 : 8),
+          {Case == 1
+               ? NdVar::reg(getTargetRegInfo(Architecture).IntParamRegs[2], 8)
+               : NdVar::cst(0x2110, Case == 2 ? 4 : 8)},
+          0x1220)};
+      EXPECT_TRUE(
+          buildObjCSourceCallHints(image(Architecture), Function).empty());
+    }
+}
+
+TEST(ObjCCallHints, JoinedSelectorsRetainNamesAndImportsRetainSlots) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Import : {false, true})
+      for (bool Conflict : {false, true}) {
+        auto Image = image(Architecture);
+        Image.ObjCSourceReferences[0x2110] = Image.ObjCSourceReferences[0x2100];
+        Image.ObjCSourceReferences[0x2110].Name =
+            Conflict ? "different:" : "scale:";
+        Image.ImportPtrSlots[0x2200] = "_objc_msgSend";
+        auto Function = callFactDiamond(Architecture);
+        const auto Carrier = NdVar::reg(preservedFactRegister(Architecture), 8);
+        Function.Blocks[0].Ops[0] = operation(
+            NdOp::LOAD, Carrier, {NdVar::cst(Import ? 0x2180 : 0x2100, 8)});
+        Function.Blocks[2].Ops = {operation(
+            NdOp::LOAD, Carrier,
+            {NdVar::cst(Import ? (Conflict ? 0x2200 : 0x2180) : 0x2110, 8)},
+            0x1220)};
+        auto &Ops = Function.Blocks[3].Ops;
+        if (Import) {
+          Ops[0].Inputs[0] = NdVar::cst(0x2100, 8);
+          Ops[1].Inputs[0] = Carrier;
+        } else {
+          Ops[0].Opcode = NdOp::COPY;
+        }
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1234), Conflict ? 0U : 1U);
+      }
+}
+
+TEST(ObjCCallHints, LoopBackedgesRevokeProvisionalBindingsBeforePublication) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Change : {false, true}) {
+      auto Function = callFactDiamond(Architecture);
+      // Entry -> header -> body -> header. The first header visit sees only
+      // the entry fact; the body can invalidate it on a later iteration.
+      Function.Blocks[0].Succs = {3};
+      Function.Blocks[3].Preds = {0, 1};
+      Function.Blocks[3].Succs = {1};
+      Function.Blocks[3].Ops.pop_back();
+      Function.Blocks[1].Preds = {3};
+      Function.Blocks[1].Succs = {3};
+      Function.Blocks[2].Preds.clear();
+      Function.Blocks[2].Succs.clear();
+      if (Change)
+        Function.Blocks[1].Ops = {operation(
+            NdOp::COPY, NdVar::reg(preservedFactRegister(Architecture), 8),
+            {NdVar::cst(0x2110, 8)}, 0x1210)};
+      const auto Hints =
+          buildObjCSourceCallHints(image(Architecture), Function);
+      EXPECT_EQ(Hints.size(), Change ? 0U : 1U);
+    }
+}
+
+TEST(ObjCCallHints, IndependentAndExceptionalEntriesEraseInheritedFacts) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 5; ++Case) {
+      auto Function = callFactDiamond(Architecture);
+      if (Case == 0)
+        Function.ModuleAnalysisRoots.insert(0x1230);
+      else if (Case == 1)
+        Function.Entry = 0x1230;
+      else if (Case == 2)
+        Function.Blocks[3].ExceptionalPreds.emplace_back();
+      else if (Case == 3)
+        Function.OrdinaryModuleAnalysisRoots.insert(0x1230);
+      else {
+        auto &Edge = Function.Blocks[1].ExceptionalSuccs.emplace_back();
+        Edge.BlockId = 3;
+      }
+      EXPECT_TRUE(
+          buildObjCSourceCallHints(image(Architecture), Function).empty());
+    }
+}
+
+TEST(ObjCCallHints, CallsPreserveOnlyProvenABIViewsAcrossJoins) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      const bool Known = Case == 1;
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] =
+          Known ? "_objc_release" : "_unmodeled_call";
+      auto Function = callFactDiamond(Architecture);
+      Function.Blocks[1].Ops = {
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2200, 8)}, 0x1210)};
+      if (Case == 2)
+        Function.Blocks[1].Ops[0].Opcode = NdOp::INTRINSIC;
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      EXPECT_EQ(Hints.count(0x1234), Known ? 1U : 0U);
+    }
+}
+
+TEST(ObjCCallHints, InstructionTemporariesNeverBecomeCrossBlockFacts) {
+  auto Function = callFactDiamond(Arch::AArch64);
+  const auto Temporary = NdVar::tmp(77, 8);
+  Function.Blocks[0].Ops[0].Output = Temporary;
+  Function.Blocks[3].Ops[0].Inputs[0] = Temporary;
+  EXPECT_TRUE(buildObjCSourceCallHints(image(), Function).empty());
+}
+
+TEST(ObjCCallHints, MalformedEdgesAndDuplicateCallSitesDoNotSupplyBindings) {
+  for (unsigned Case = 0; Case < 5; ++Case) {
+    auto Function = callFactDiamond(Arch::AArch64);
+    if (Case == 0)
+      Function.Blocks[3].Preds.push_back(77);
+    else if (Case == 1)
+      Function.Blocks[0].Succs.pop_back();
+    else if (Case == 2)
+      Function.Blocks[0].Succs.push_back(77);
+    else if (Case == 3)
+      Function.Blocks[2].Id = 1;
+    else
+      Function.Blocks[3].Ops.insert(Function.Blocks[3].Ops.begin() + 2,
+                                    Function.Blocks[3].Ops[1]);
+    EXPECT_TRUE(buildObjCSourceCallHints(image(), Function).empty());
+  }
+}
+
+TEST(ObjCCallHints, LongReorderedChainsUseAnIterativeProof) {
+  auto Function = callFactDiamond(Arch::AArch64);
+  auto Entry = Function.Blocks.front();
+  auto Exit = Function.Blocks.back();
+  Function.Blocks.clear();
+  Entry.Succs = {1};
+  Function.Blocks.push_back(Entry);
+  for (unsigned I = 1; I < 512; ++I) {
+    LowBlock Block;
+    Block.Id = I;
+    Block.StartAddr = 0x2000 + I * 4;
+    Block.Preds = {int(I - 1)};
+    Block.Succs = {int(I + 1)};
+    Function.Blocks.push_back(Block);
+  }
+  Exit.Id = 512;
+  Exit.Preds = {511};
+  Function.Blocks.push_back(Exit);
+  std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+  const auto Hints = buildObjCSourceCallHints(image(), Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.at(0x1234).Selector, "scale:");
+  Function.Blocks.resize(16385);
+  for (size_t I = 0; I < Function.Blocks.size(); ++I)
+    Function.Blocks[I].Id = I;
+  EXPECT_TRUE(buildObjCSourceCallHints(image(), Function).empty());
+}
+
+TEST(ObjCCallHints, FactBudgetNeverPublishesAnEarlierPartialBinding) {
+  auto Function = caller();
+  // A binding discovered before an oversized instruction must not escape a
+  // failed proof. The temporary facts share one instruction's lifetime.
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops.pop_back();
+  for (unsigned I = 0; I < 4097; ++I)
+    Ops.push_back(operation(NdOp::COPY, NdVar::tmp(I * 8, 8),
+                            {NdVar::cst(I, 8)}, 0x1300));
+  Ops.push_back(operation(NdOp::RETURN, {}, {}, 0x1304));
+  EXPECT_TRUE(buildObjCSourceCallHints(image(), Function).empty());
+}
+
+TEST(ObjCCallHints, UnresolvedFormatImportsDoNotInheritMessageDispatch) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.Segments.front().Flags = SegmentFlags::Readable;
+    Image.ImportPtrSlots[0x2180] = "_NSLog";
+    ASSERT_TRUE(Image.recordDyldBindSlot(
+        0x2180, "_NSLog", 0,
+        "/System/Library/Frameworks/Foundation.framework/Foundation", false));
+    ASSERT_TRUE(darwinRuntimeFormatDeclaration(Image, 0x2180));
+    auto Function = callFactDiamond(Architecture);
+    // The format argument is unknown. A selector-shaped value reaching the
+    // second register does not change the identity of the imported callee.
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+  }
+}
+
 TEST(ObjCCallHints, RuntimeVoidAndWeakSignaturesDoNotInventResults) {
   auto Image = runtimeImage("_objc_storeStrong");
   const auto Hints = buildObjCSourceCallHints(Image, caller());

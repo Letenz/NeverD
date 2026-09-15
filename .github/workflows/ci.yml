@@ -804,6 +804,28 @@ jobs:
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighCSourceCalls.ConditionalDefaultPreservesResultsAndCallCounts",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.EqualPredecessorFactsBindRegardlessOfBlockOrder",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ConflictingMissingAndOverlappingIncomingFactsStayUnknown",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.JoinedSelectorsRetainNamesAndImportsRetainSlots",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.LoopBackedgesRevokeProvisionalBindingsBeforePublication",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.IndependentAndExceptionalEntriesEraseInheritedFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.CallsPreserveOnlyProvenABIViewsAcrossJoins",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.InstructionTemporariesNeverBecomeCrossBlockFacts",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.MalformedEdgesAndDuplicateCallSitesDoNotSupplyBindings",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.UnresolvedFormatImportsDoNotInheritMessageDispatch",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FactBudgetNeverPublishesAnEarlierPartialBinding",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.LongReorderedChainsUseAnIterativeProof",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCProperties.DynamicAccessorsCarryTypesWithoutInventingMethods",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCProperties.OptionalPropertyFlagsRetainTheAccessorContract",
@@ -950,9 +972,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 347,
-              ("macOS", "macos-patch"): 371,
-              ("Windows", "windows-focused"): 343,
+              ("Linux", "linux-semantic"): 358,
+              ("macOS", "macos-patch"): 382,
+              ("Windows", "windows-focused"): 354,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

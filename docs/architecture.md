@@ -58,6 +58,14 @@ result type. This identity does not merge independent loads or calls.
 
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 
+Source-call discovery uses a bounded forward fixed point for register facts.
+At ordinary joins, a selector, import slot or numeric address survives only
+when every reached predecessor agrees. Entry roles and exceptional entries
+start unknown. Call bindings are published only after backedges converge;
+physical alias writes, unknown calls and instruction-local temporaries cannot
+carry stale facts into a later block. Invalid edges or exhausted work budgets
+reject the proof.
+
 Objective-C property metadata supplies accessor declarations independently of
 method implementations, including dynamic, readonly and custom accessors.
 The loader checks the class, category or protocol record layout and derives

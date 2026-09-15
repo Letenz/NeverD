@@ -16,6 +16,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <deque>
 #include <optional>
 #include <tuple>
 
@@ -136,6 +137,10 @@ struct Value {
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
   std::string Name;
+  bool operator==(const Value &Other) const {
+    return std::tie(TheKind, Number, Name) ==
+           std::tie(Other.TheKind, Other.Number, Other.Name);
+  }
 };
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
@@ -269,31 +274,58 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return Result;
   const auto &TRI = getTargetRegInfo(Image.Arch);
+  const size_t Count = Function.Blocks.size();
+  if (Count > 16384)
+    return {};
   std::map<int, size_t> BlockIndices;
   for (size_t I = 0; I < Function.Blocks.size(); ++I)
     if (!BlockIndices.emplace(Function.Blocks[I].Id, I).second)
       return {};
-  std::map<size_t, std::map<Key, Value>> Exits;
-  std::set<size_t> Active;
-  std::function<void(size_t, unsigned)> Analyze = [&](size_t Index,
-                                                      unsigned Depth) {
-    if (Exits.count(Index) || Depth > 128 || !Active.insert(Index).second)
-      return;
-    const auto &Block = Function.Blocks[Index];
-    std::map<Key, Value> Values;
-    // A unique incoming edge preserves the predecessor's proven constants,
-    // including a tail jump into an inline import veneer. Joins, entry edges
-    // and cycles start unknown; this is not a speculative merge of registers.
-    if (Block.StartAddr != Function.Entry && Block.Preds.size() == 1 &&
-        Block.ExceptionalPreds.empty()) {
-      const auto Parent = BlockIndices.find(Block.Preds.front());
-      if (Parent != BlockIndices.end() &&
-          llvm::is_contained(Function.Blocks[Parent->second].Succs, Block.Id)) {
-        Analyze(Parent->second, Depth + 1);
-        if (auto Out = Exits.find(Parent->second); Out != Exits.end())
-          Values = Out->second;
-      }
+  // Only reciprocal ordinary edges carry machine-state facts. Explicit
+  // entry roles and exceptional entries contribute an unknown incoming state.
+  // Unvisited predecessors are the dataflow bottom, not an unknown value;
+  // later backedges can invalidate provisional facts before publication.
+  std::vector<std::vector<size_t>> Parents(Count), Children(Count);
+  std::vector<bool> Roots(Count), Queued(Count);
+  std::map<va_t, unsigned> CallOccurrences;
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Function.Blocks[I];
+    Roots[I] = Block.StartAddr == Function.Entry || Block.Preds.empty() ||
+               Function.ModuleAnalysisRoots.count(Block.StartAddr) ||
+               Function.OrdinaryModuleAnalysisRoots.count(Block.StartAddr) ||
+               !Block.ExceptionalPreds.empty();
+    for (int Parent : Block.Preds) {
+      const auto Found = BlockIndices.find(Parent);
+      if (Found == BlockIndices.end() ||
+          !Function.Blocks[Found->second].hasSucc(Block.Id))
+        return {};
+      Parents[I].push_back(Found->second);
     }
+    for (int Child : Block.Succs) {
+      const auto Found = BlockIndices.find(Child);
+      if (Found == BlockIndices.end() ||
+          !llvm::is_contained(Function.Blocks[Found->second].Preds, Block.Id))
+        return {};
+      Children[I].push_back(Found->second);
+    }
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        ++CallOccurrences[Op.Addr];
+  }
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Edge : Block.ExceptionalSuccs) {
+      if (Edge.BlockId < 0)
+        continue; // An unwind outside this function has no local successor.
+      const auto Found = BlockIndices.find(Edge.BlockId);
+      if (Found == BlockIndices.end())
+        return {};
+      Roots[Found->second] = true;
+    }
+  using Facts = std::map<Key, Value>;
+  using Hints = std::map<va_t, SourceCallTypeHint>;
+  auto Transfer = [&](size_t Index, Facts Values,
+                      Hints &BlockHints) -> std::optional<Facts> {
+    const auto &Block = Function.Blocks[Index];
     va_t PreviousAddress = InvalidVA;
     auto Read = [&](const NdVar &V) -> std::optional<Value> {
       if (V.Space == VnodeSpace::CONST)
@@ -321,7 +353,15 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             ++It;
         PreviousAddress = Op.Addr;
       }
+      if (Op.Opcode == NdOp::INTRINSIC) {
+        Clobber(false);
+        continue;
+      }
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+        if (CallOccurrences.at(Op.Addr) != 1) {
+          Clobber(false);
+          continue;
+        }
         std::optional<Dispatch> Target;
         auto V = Op.NumInputs ? Read(Op.Inputs[0]) : std::nullopt;
         if (V && V->TheKind == Value::Kind::Import)
@@ -362,10 +402,18 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             }
           }
           if (Runtime) {
-            Result.emplace(Op.Addr, std::move(*Runtime));
+            BlockHints.emplace(Op.Addr, std::move(*Runtime));
             Clobber(true);
             continue;
           }
+        }
+        // A known import whose format contract is unresolved is still that
+        // C routine. Selector-shaped register contents cannot turn it into
+        // Objective-C message dispatch.
+        if (Target && Target->Name != "objc_msgSend" &&
+            Target->Name != "objc_msgSendSuper2") {
+          Clobber(false);
+          continue;
         }
         if (Target && Target->Selector.empty()) {
           NdVar Selector;
@@ -389,7 +437,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Hint.TargetName = Target->Name;
             Hint.Selector = Target->Selector;
             Hint.SelectorReferenceAddress = Target->SelectorSlot;
-            Result.emplace(Op.Addr, std::move(Hint));
+            BlockHints.emplace(Op.Addr, std::move(Hint));
           } else if (Target->Name == "objc_msgSend") {
             const auto Declaration =
                 objcSelectorFormatDeclaration(Image, Target->Selector);
@@ -410,14 +458,14 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                 Hint->TargetAddress =
                     V && V->TheKind == Value::Kind::Number ? V->Number : 0;
                 Hint->SelectorReferenceAddress = Target->SelectorSlot;
-                Result.emplace(Op.Addr, std::move(*Hint));
+                BlockHints.emplace(Op.Addr, std::move(*Hint));
               }
             }
           }
         }
         // Only a bound Darwin ABI establishes which physical views survive.
         // Unknown calls may use another convention and invalidate every fact.
-        Clobber(Result.count(Op.Addr) != 0);
+        Clobber(BlockHints.count(Op.Addr) != 0);
         continue;
       }
       std::optional<Value> Out;
@@ -463,13 +511,72 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           Values.emplace(key(Op.Output), std::move(*Out));
         } else if (Op.Output.Size == 8)
           Values.emplace(key(Op.Output), std::move(*Out));
+        if (Values.size() > 4096)
+          return std::nullopt;
       }
     }
-    Exits.emplace(Index, std::move(Values));
-    Active.erase(Index);
+    for (auto It = Values.begin(); It != Values.end();)
+      if (std::get<0>(It->first) == VnodeSpace::TEMP)
+        It = Values.erase(It);
+      else
+        ++It;
+    return Values;
   };
-  for (size_t I = 0; I < Function.Blocks.size(); ++I)
-    Analyze(I, 0);
+  std::vector<std::optional<Facts>> Exits(Count);
+  std::vector<Hints> Bindings(Count);
+  std::deque<size_t> Work;
+  for (size_t I = 0; I < Count; ++I)
+    if (Roots[I]) {
+      Work.push_back(I);
+      Queued[I] = true;
+    }
+  size_t Remaining = 1048576;
+  while (!Work.empty()) {
+    const auto Index = Work.front();
+    Work.pop_front();
+    Queued[Index] = false;
+    const auto Cost = std::max(size_t(1), Function.Blocks[Index].Ops.size());
+    if (Cost > Remaining)
+      return {}; // Never publish a partially converged proof.
+    Remaining -= Cost;
+    Facts Incoming;
+    bool Initialized = Roots[Index];
+    if (!Roots[Index])
+      for (size_t Parent : Parents[Index]) {
+        if (!Exits[Parent])
+          continue;
+        if (!Initialized) {
+          Incoming = *Exits[Parent];
+          Initialized = true;
+        } else {
+          for (auto It = Incoming.begin(); It != Incoming.end();) {
+            const auto Found = Exits[Parent]->find(It->first);
+            if (Found == Exits[Parent]->end() || !(It->second == Found->second))
+              It = Incoming.erase(It);
+            else
+              ++It;
+          }
+        }
+      }
+    if (!Initialized)
+      continue;
+    Bindings[Index].clear();
+    auto Out = Transfer(Index, std::move(Incoming), Bindings[Index]);
+    if (!Out)
+      return {};
+    if (Exits[Index] && *Exits[Index] == *Out)
+      continue;
+    Exits[Index] = std::move(Out);
+    for (size_t Child : Children[Index])
+      if (!Queued[Child]) {
+        Queued[Child] = true;
+        Work.push_back(Child);
+      }
+  }
+  for (auto &Block : Bindings)
+    for (auto &[Address, Hint] : Block)
+      if (CallOccurrences[Address] == 1)
+        Result.emplace(Address, std::move(Hint));
   return Result;
 }
 } // namespace neverd
