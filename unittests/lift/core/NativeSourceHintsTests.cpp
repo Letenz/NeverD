@@ -96,6 +96,155 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
   }
 }
 
+struct NativeRecordResultFixture : NativeFixture {
+  explicit NativeRecordResultFixture(Arch Architecture, bool Swift = false)
+      : NativeFixture(Architecture) {
+    Med.Params.clear();
+    Med.TypedParams.clear();
+    High.Params.clear();
+    Med.ReturnType = High.ReturnType = NdType::makeInt(8, false);
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Hint->Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+    Hint->Signature.ReturnType = NdType::makeStruct(
+        {NdType::makePtr(NdType::makeVoid()), NdType::makeInt(8, false)});
+    std::string Error;
+    const bool Assigned =
+        Swift
+            ? assignDarwinSwiftSourceABI(Hint->Signature, Architecture, Error)
+            : assignDarwinFixedSourceABI(Hint->Signature, Architecture, Error);
+    EXPECT_TRUE(Assigned) << Error;
+    MedOp Call;
+    Call.Opcode = NdOp::CALL;
+    Call.Output.Kind = MedVar::Temp;
+    Call.Output.Id = 100;
+    Call.Output.SSAVer = 1;
+    Call.Output.Size = 16;
+    Call.Output.TheArch = Architecture;
+    Call.SourceCallHint = Hint;
+    Call.addInput(MedVar::makeConst(0x1080, 8));
+    const auto Return = Med.Blocks[0].Ops.back();
+    Med.Blocks[0].Ops = {Call};
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (unsigned I = 0; I < 2; ++I) {
+      MedOp Extract;
+      Extract.Opcode = NdOp::SUBBYTES;
+      Extract.Output = Call.Output;
+      Extract.Output.Kind = MedVar::Reg;
+      Extract.Output.Id = 101 + I;
+      Extract.Output.Size = 8;
+      Extract.Output.RegOff = TRI.IntReturnRegs[I];
+      Extract.addInput(Call.Output);
+      Extract.addInput(MedVar::makeConst(I * 8, 8));
+      Med.Blocks[0].Ops.push_back(Extract);
+    }
+    Med.Blocks[0].Ops.push_back(Return);
+  }
+};
+
+TEST(NativeSourceHints, TypedRecordCallResultsDefineTheNativeReturnCarrier) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Swift : {false, true})
+      for (bool SeparateReturn : {false, true}) {
+        NativeRecordResultFixture Fixture(Architecture, Swift);
+        if (SeparateReturn) {
+          const auto Return = Fixture.Med.Blocks[0].Ops.back();
+          Fixture.Med.Blocks[0].Ops.pop_back();
+          Fixture.Med.Blocks[0].Succs = {1};
+          Fixture.Med.Blocks.emplace_back();
+          Fixture.Med.Blocks[1].Id = 1;
+          Fixture.Med.Blocks[1].Preds = {0};
+          Fixture.Med.Blocks[1].Ops = {Return};
+        }
+        std::string Error;
+        const auto Hint = Fixture.infer(Error);
+        ASSERT_TRUE(Hint) << Error;
+        EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntReturnReg);
+        EXPECT_EQ(Hint->ReturnLocation.ValueBytes, 8U);
+        EXPECT_TRUE(Hint->Parameters.empty());
+        EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                  MedReturnValueEvidence::Unknown);
+      }
+}
+
+TEST(NativeSourceHints, RecordResultDefinitionsRequireTheCompleteCallPrefix) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 15; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      NativeRecordResultFixture Fixture(Architecture);
+      auto &Ops = Fixture.Med.Blocks[0].Ops;
+      switch (Mutation) {
+      case 0:
+        Ops.erase(Ops.begin() + 2);
+        break;
+      case 1:
+        std::swap(Ops[1], Ops[2]);
+        break;
+      case 2:
+        Ops[1].Inputs[1].ConstVal = 8;
+        break;
+      case 3:
+        ++Ops[1].Inputs[0].Id;
+        break;
+      case 4:
+        ++Ops[1].Inputs[0].SSAVer;
+        break;
+      case 5:
+        Ops[1].Inputs[0].Size = 8;
+        break;
+      case 6:
+        Ops[1].Output.Size = 4;
+        break;
+      case 7:
+        Ops[2].Output.Size = 4;
+        break;
+      case 8:
+        Ops[1].Output.RegOff = getTargetRegInfo(Architecture).IntReturnRegs[1];
+        break;
+      case 9:
+        Ops[0].Output.Size = 8;
+        break;
+      case 10:
+        Ops[0].SourceCallHint.reset();
+        break;
+      case 11: {
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*Ops[0].SourceCallHint);
+        Hint->Signature.ReturnComponents.pop_back();
+        Ops[0].SourceCallHint = std::move(Hint);
+        break;
+      }
+      case 12: {
+        auto Copy = Ops[1];
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output = Ops[0].Output;
+        Copy.Output.Id = 200;
+        Copy.NumInputs = 1;
+        Ops.insert(Ops.begin() + 2, Copy);
+        break;
+      }
+      case 13: {
+        auto Clobber = Ops[0];
+        auto Hint = std::make_shared<SourceCallTypeHint>();
+        Hint->Signature.ReturnType = NdType::makeVoid();
+        std::string Error;
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error));
+        Clobber.SourceCallHint = std::move(Hint);
+        Clobber.Output = {};
+        Ops.insert(Ops.end() - 1, Clobber);
+        break;
+      }
+      case 14:
+        Ops[2].Inputs[1].ConstVal = 0;
+        break;
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.infer(Error)) << Error;
+    }
+}
+
 struct NativeContextFixture : NativeFixture {
   LowFunc Low;
   MedVar Context;

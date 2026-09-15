@@ -82,6 +82,38 @@ std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
   return {Reads.begin(), Reads.end()};
 }
 
+// Typed two-word calls materialize their physical results through SUBBYTES.
+// Authenticate the complete lowering prefix before treating those extracts
+// as register definitions; ordinary SUBBYTES operations are only views.
+bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
+                              Arch Architecture) {
+  const auto &Call = Ops[Index];
+  if (Ops.size() - Index < 3 || !Call.SourceCallHint ||
+      Call.Output.Kind != MedVar::Temp || Call.Output.Id < 0 ||
+      Call.Output.Size != 16)
+    return false;
+  const auto &Signature = Call.SourceCallHint->Signature;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (!Signature.HasExplicitABI || Signature.Architecture != Architecture ||
+      !Signature.ReturnType || Signature.ReturnType->Size != 16 ||
+      Signature.ReturnComponents.size() != 2 || TRI.IntReturnRegs.size() < 2)
+    return false;
+  for (unsigned I = 0; I < 2; ++I) {
+    const auto &Location = Signature.ReturnComponents[I];
+    const auto &Extract = Ops[Index + I + 1];
+    if (Location.Kind != SourceABICarrierKind::IntegerRegister ||
+        Location.RegisterOffset != TRI.IntReturnRegs[I] ||
+        Location.ValueBytes != 8 || Extract.Opcode != NdOp::SUBBYTES ||
+        Extract.NumInputs != 2 || Extract.Output.Kind != MedVar::Reg ||
+        Extract.Output.RegOff != Location.RegisterOffset ||
+        Extract.Output.Size != 8 || Extract.Inputs[0] != Call.Output ||
+        Extract.Inputs[0].Size != 16 || !Extract.Inputs[1].isConst() ||
+        Extract.Inputs[1].ConstVal != I * 8U)
+      return false;
+  }
+  return true;
+}
+
 // This proves a defined machine carrier, not an original return declaration.
 // An observed full-width parameter can supply the initial register value.
 // PHIs merge physical state, and calls or partial writes invalidate it until
@@ -160,11 +192,21 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
           return false;
         Define(Phi.Output);
       }
-    for (const auto &Op : Function.Blocks[I].Ops) {
+    const auto &Ops = Function.Blocks[I].Ops;
+    size_t CallResultEnd = 0;
+    for (size_t OpIndex = 0; OpIndex < Ops.size(); ++OpIndex) {
+      const auto &Op = Ops[OpIndex];
       if (!Remaining--)
         return false;
-      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         Fact = false;
+        if (Remaining < 2)
+          return false;
+        Remaining -= 2;
+        CallResultEnd = completeCallResultPrefix(Ops, OpIndex, Architecture)
+                            ? OpIndex + 3
+                            : 0;
+      }
       const bool Seed = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
                         Op.Output == Op.Inputs[0] &&
                         Op.Output.Size == Op.Inputs[0].Size;
@@ -185,8 +227,8 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
             IncomingUses.emplace(Input.Kind, Input.Id, Input.SSAVer);
         }
       const auto &Out = Op.Output;
-      if (!Seed && Op.Opcode != NdOp::SUBBYTES && Out.Kind == MedVar::Reg &&
-          Out.Size &&
+      if (!Seed && (Op.Opcode != NdOp::SUBBYTES || OpIndex < CallResultEnd) &&
+          Out.Kind == MedVar::Reg && Out.Size &&
           (Out.RegOff <= TRI.IntReturnReg
                ? TRI.IntReturnReg - Out.RegOff < Out.Size
                : Out.RegOff - TRI.IntReturnReg < Width)) {

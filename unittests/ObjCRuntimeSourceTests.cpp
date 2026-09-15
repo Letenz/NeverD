@@ -81,6 +81,7 @@ enum class RuntimeFixture {
   SwiftTypeLookup,
   SwiftIntegerRuntime,
   SwiftRecordRuntime,
+  NativeRecords,
   ReadOnlyTables,
   ScalarConstants,
   SwiftLiterals,
@@ -113,6 +114,7 @@ void verifyRuntime(bool Chained,
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
   const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
+  const bool NativeRecords = FixtureKind == RuntimeFixture::NativeRecords;
   const bool SwiftRecordRuntime =
       FixtureKind == RuntimeFixture::SwiftRecordRuntime;
   const bool SwiftIntegerRuntime =
@@ -182,6 +184,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords         ? "ObjCWordRecords.m"
                         : PredicateFormats    ? "ObjCPredicateFormats.m"
                         : CRecords            ? "ObjCCRecordCalls.m"
+                        : NativeRecords       ? "ObjCNativeRecordResults.m"
                         : SwiftRecordRuntime  ? "ObjCSwiftRecordRuntime.m"
                         : SwiftIntegerRuntime ? "ObjCSwiftIntegerRuntime.m"
                         : SwiftTypeLookup     ? "ObjCSwiftTypeLookup.m"
@@ -224,14 +227,15 @@ void verifyRuntime(bool Chained,
                         : SwiftCalls          ? "ObjCSwiftRuntime.m"
                         : Associations        ? "ObjCAssociations.m"
                                               : "ObjCARC.m";
-  const char *Harness = DarwinDeclarations   ? "ObjCDarwinDeclarationsHarness.m"
-                        : Equality           ? "ObjCEqualityHarness.m"
-                        : FloatingSaves      ? "ObjCFloatingSavesHarness.m"
-                        : SharedFrameworks   ? "ObjCSharedFrameworksHarness.m"
-                        : AggregateRecords   ? "ObjCAggregateRecordsHarness.m"
-                        : WordRecords        ? "ObjCWordRecordsHarness.m"
-                        : PredicateFormats   ? "ObjCPredicateFormatsHarness.m"
-                        : CRecords           ? "ObjCCRecordCallsHarness.m"
+  const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
+                        : Equality         ? "ObjCEqualityHarness.m"
+                        : FloatingSaves    ? "ObjCFloatingSavesHarness.m"
+                        : SharedFrameworks ? "ObjCSharedFrameworksHarness.m"
+                        : AggregateRecords ? "ObjCAggregateRecordsHarness.m"
+                        : WordRecords      ? "ObjCWordRecordsHarness.m"
+                        : PredicateFormats ? "ObjCPredicateFormatsHarness.m"
+                        : CRecords         ? "ObjCCRecordCallsHarness.m"
+                        : NativeRecords    ? "ObjCNativeRecordResultsHarness.m"
                         : SwiftRecordRuntime ? "ObjCSwiftRecordRuntimeHarness.m"
                         : SwiftIntegerRuntime
                             ? "ObjCSwiftIntegerRuntimeHarness.m"
@@ -334,7 +338,7 @@ void verifyRuntime(bool Chained,
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      RuntimeIvars)
+      NativeRecords || RuntimeIvars)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -451,6 +455,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords         ? 11U
                              : PredicateFormats    ? 8U
                              : CRecords            ? CRecordMethods
+                             : NativeRecords       ? 2U
                              : SwiftRecordRuntime  ? 2U
                              : SwiftIntegerRuntime ? 2U
                              : SwiftTypeLookup     ? 1U
@@ -538,6 +543,8 @@ void verifyRuntime(bool Chained,
                  "find:needle:"};
   if (SwiftTypeLookup)
     Remaining = {"lookup:length:"};
+  if (NativeRecords)
+    Remaining = {"newBox:value:storage:", "metadataState:request:result:"};
   if (SwiftRecordRuntime)
     Remaining = {"newBox:value:storage:", "metadataState:request:result:"};
   if (SwiftIntegerRuntime)
@@ -748,6 +755,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords         ? "NDWordRecords"
                   : PredicateFormats    ? "NDPredicateFormats"
                   : CRecords            ? "NDCCRecords"
+                  : NativeRecords       ? "NDNativeRecordResults"
                   : SwiftRecordRuntime  ? "NDSwiftRecordRuntime"
                   : SwiftIntegerRuntime ? "NDSwiftIntegerRuntime"
                   : SwiftTypeLookup     ? "NDSwiftTypeLookup"
@@ -977,7 +985,7 @@ void verifyRuntime(bool Chained,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      RuntimeIvars)
+      NativeRecords || RuntimeIvars)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -1051,6 +1059,8 @@ void verifyRuntime(bool Chained,
             "pass\nrecord-stack=pass\n"
       : SwiftTypeLookup    ? "swift-type-lookup-cases=20480\nmetadata-identity="
                              "pass\nbyte-length=pass\n"
+      : NativeRecords      ? "native-record-result-cases=16384\nbox-storage="
+                             "pass\nmetadata-response=pass\n"
       : SwiftRecordRuntime ? "swift-record-runtime-cases=16384\nbox-storage="
                              "pass\nmetadata-response=pass\n"
       : SwiftIntegerRuntime ? "runtime-integer-cases=4096\ncast-results="
@@ -1836,6 +1846,16 @@ TEST(ObjCRuntimeSource, SwiftRuntimeRecordResultsPreserveBoxesAndMetadata) {
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::SwiftRecordRuntime));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, NativeRecordMembersPreserveScalarResultsAndEffects) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::NativeRecords));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

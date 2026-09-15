@@ -575,6 +575,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.RuntimeCallbackPreservesPredicateAndContextOperands",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.TypedRecordCallResultsDefineTheNativeReturnCarrier",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.RecordResultDefinitionsRequireTheCompleteCallPrefix",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SwiftRuntimeRecordResultsKeepBothDeclaredCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.SwiftRuntimeRecordResultsRevalidateShapeAndImport",
@@ -1273,14 +1277,15 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 507,
-              ("macOS", "macos-patch"): 558,
-              ("Windows", "windows-focused"): 503,
+              ("Linux", "linux-semantic"): 509,
+              ("macOS", "macos-patch"): 561,
+              ("Windows", "windows-focused"): 505,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
                       "ObjCRuntimeSource.SwiftIntegerRuntimeCallsPreserveCastsAndRetainCounts",
+                      "ObjCRuntimeSource.NativeRecordMembersPreserveScalarResultsAndEffects",
                       "ObjCRuntimeSource.SwiftRuntimeRecordResultsPreserveBoxesAndMetadata",
                       "ObjCRuntimeSource.RuntimeIvarOffsetsPreserveSwiftPropertiesAndOpaqueFields",
                       "ObjCRuntimeSource.AuxiliaryNativeInputsPreserveBuffersAndScalarResults",
