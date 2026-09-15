@@ -50,7 +50,9 @@ struct SourceCallTypeHint {
     SwiftStringFromNSString,
     /// Address loaded from an exact Darwin runtime data import. This binds
     /// the platform object's identity; it does not copy or fold its contents.
-    DarwinRuntimeGlobalAddress
+    DarwinRuntimeGlobalAddress,
+    /// A protocol reference slot resolved to a validated local declaration.
+    RuntimeProtocol
   };
   Kind CallKind = Kind::Native;
   /// The bound source routine has a noreturn contract. Runtime bindings must

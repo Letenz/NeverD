@@ -59,6 +59,7 @@ enum class RuntimeFixture {
   StoredStrings,
   SystemData,
   IndirectFields,
+  ProtocolReferences,
   Graphics,
   DarwinDeclarations
 };
@@ -72,6 +73,8 @@ void verifyRuntime(bool Chained,
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
+  const bool ProtocolReferences =
+      FixtureKind == RuntimeFixture::ProtocolReferences;
   const bool IndirectFields = FixtureKind == RuntimeFixture::IndirectFields;
   const bool SystemData = FixtureKind == RuntimeFixture::SystemData;
   const std::vector<std::string> SystemDataFrameworks{
@@ -99,42 +102,44 @@ void verifyRuntime(bool Chained,
     std::filesystem::remove_all(Work, Error);
   });
   const std::filesystem::path Fixtures(NEVERD_MOBILE_FIXTURE_DIR);
-  const char *Fixture = DarwinDeclarations  ? "ObjCDarwinDeclarations.m"
-                        : CoreData          ? "ObjCCoreDataCalls.m"
-                        : ScalarConstants   ? "ObjCScalarConstants.m"
-                        : SwiftLiterals     ? "ObjCSwiftLiteralStrings.m"
-                        : StoredStrings     ? "ObjCStoredStrings.m"
-                        : IndirectFields    ? "ObjCIndirectFields.m"
-                        : SystemData        ? "ObjCSystemData.m"
-                        : Graphics          ? "ObjCGraphicsCalls.m"
-                        : BlockLifetimes    ? "ObjCBlockLifetimes.m"
-                        : Foundation        ? "ObjCFoundationCalls.m"
-                        : Protocols         ? "ObjCProtocols.m"
-                        : DiagnosticReports ? "ObjCDiagnosticReports.m"
-                        : SwiftStrings      ? "ObjCSwiftString.m"
-                        : UnfairLocks       ? "ObjCUnfairLocks.m"
-                        : ConstantStrings   ? "ObjCConstantStrings.m"
-                        : SwiftCalls        ? "ObjCSwiftRuntime.m"
-                        : Associations      ? "ObjCAssociations.m"
-                                            : "ObjCARC.m";
-  const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
-                        : CoreData          ? "ObjCCoreDataCallsHarness.m"
-                        : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
-                        : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
-                        : StoredStrings     ? "ObjCStoredStringsHarness.m"
-                        : IndirectFields    ? "ObjCIndirectFieldsHarness.m"
-                        : SystemData        ? "ObjCSystemDataHarness.m"
-                        : Graphics          ? "ObjCGraphicsCallsHarness.m"
-                        : BlockLifetimes    ? "ObjCBlockLifetimesHarness.m"
-                        : Foundation        ? "ObjCFoundationCallsHarness.m"
-                        : Protocols         ? "ObjCProtocolsHarness.m"
-                        : DiagnosticReports ? "ObjCDiagnosticReportsHarness.m"
-                        : SwiftStrings      ? "ObjCSwiftStringHarness.m"
-                        : UnfairLocks       ? "ObjCUnfairLocksHarness.m"
-                        : ConstantStrings   ? "ObjCConstantStringsHarness.m"
-                        : SwiftCalls        ? "ObjCSwiftRuntimeHarness.m"
-                        : Associations      ? "ObjCAssociationsHarness.m"
-                                            : "ObjCARCHarness.m";
+  const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
+                        : CoreData           ? "ObjCCoreDataCalls.m"
+                        : ScalarConstants    ? "ObjCScalarConstants.m"
+                        : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
+                        : StoredStrings      ? "ObjCStoredStrings.m"
+                        : ProtocolReferences ? "ObjCProtocolReferences.m"
+                        : IndirectFields     ? "ObjCIndirectFields.m"
+                        : SystemData         ? "ObjCSystemData.m"
+                        : Graphics           ? "ObjCGraphicsCalls.m"
+                        : BlockLifetimes     ? "ObjCBlockLifetimes.m"
+                        : Foundation         ? "ObjCFoundationCalls.m"
+                        : Protocols          ? "ObjCProtocols.m"
+                        : DiagnosticReports  ? "ObjCDiagnosticReports.m"
+                        : SwiftStrings       ? "ObjCSwiftString.m"
+                        : UnfairLocks        ? "ObjCUnfairLocks.m"
+                        : ConstantStrings    ? "ObjCConstantStrings.m"
+                        : SwiftCalls         ? "ObjCSwiftRuntime.m"
+                        : Associations       ? "ObjCAssociations.m"
+                                             : "ObjCARC.m";
+  const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
+                        : CoreData         ? "ObjCCoreDataCallsHarness.m"
+                        : ScalarConstants  ? "ObjCScalarConstantsHarness.m"
+                        : SwiftLiterals    ? "ObjCSwiftLiteralStringsHarness.m"
+                        : StoredStrings    ? "ObjCStoredStringsHarness.m"
+                        : ProtocolReferences ? "ObjCProtocolReferencesHarness.m"
+                        : IndirectFields     ? "ObjCIndirectFieldsHarness.m"
+                        : SystemData         ? "ObjCSystemDataHarness.m"
+                        : Graphics           ? "ObjCGraphicsCallsHarness.m"
+                        : BlockLifetimes     ? "ObjCBlockLifetimesHarness.m"
+                        : Foundation         ? "ObjCFoundationCallsHarness.m"
+                        : Protocols          ? "ObjCProtocolsHarness.m"
+                        : DiagnosticReports  ? "ObjCDiagnosticReportsHarness.m"
+                        : SwiftStrings       ? "ObjCSwiftStringHarness.m"
+                        : UnfairLocks        ? "ObjCUnfairLocksHarness.m"
+                        : ConstantStrings    ? "ObjCConstantStringsHarness.m"
+                        : SwiftCalls         ? "ObjCSwiftRuntimeHarness.m"
+                        : Associations       ? "ObjCAssociationsHarness.m"
+                                             : "ObjCARCHarness.m";
   const auto Original = (Work / "original.dylib").string();
   const std::string Compiler = NEVERD_TEST_CLANG;
 #if defined(__aarch64__) || defined(__arm64__)
@@ -212,21 +217,22 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
-  ASSERT_EQ(Methods->size(), DarwinDeclarations  ? 19U
-                             : CoreData          ? 3U
-                             : ScalarConstants   ? 6U
-                             : SwiftLiterals     ? 3U
-                             : StoredStrings     ? 4U
-                             : IndirectFields    ? 5U
-                             : SystemData        ? 9U
-                             : Graphics          ? 6U
-                             : BlockLifetimes    ? (ManualBlocks ? 6U : 5U)
-                             : Foundation        ? 13U
-                             : Protocols         ? 6U
-                             : DiagnosticReports ? 5U
-                             : SwiftStrings      ? 2U
-                             : SwiftCalls        ? 9U
-                                                 : 7U);
+  ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
+                             : CoreData           ? 3U
+                             : ScalarConstants    ? 6U
+                             : SwiftLiterals      ? 3U
+                             : StoredStrings      ? 4U
+                             : ProtocolReferences ? 4U
+                             : IndirectFields     ? 5U
+                             : SystemData         ? 9U
+                             : Graphics           ? 6U
+                             : BlockLifetimes     ? (ManualBlocks ? 6U : 5U)
+                             : Foundation         ? 13U
+                             : Protocols          ? 6U
+                             : DiagnosticReports  ? 5U
+                             : SwiftStrings       ? 2U
+                             : SwiftCalls         ? 9U
+                                                  : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
                                   ".cxx_destruct"};
@@ -321,6 +327,9 @@ void verifyRuntime(bool Chained,
                  "falseObject",      "contextSaveName",
                  "gifDictionaryKey", "searchableItemIdentifier",
                  "colorSpaceName"};
+  if (ProtocolReferences)
+    Remaining = {"valueProtocol", "rootProtocol", "sameValueProtocol",
+                 "sameRootProtocol"};
   if (IndirectFields)
     Remaining = {"first", "second", "setFirst:", "setSecond:", ".cxx_destruct"};
   if (StoredStrings)
@@ -355,26 +364,28 @@ void verifyRuntime(bool Chained,
   if (ManualBlocks)
     Remaining.insert("holderForBlock:");
   std::string Declarations;
-  std::string Install = "static void installRecovered(void) {\n"
-                        "Class cls = objc_getClass(\"" +
-                        std::string(DarwinDeclarations ? "NDDarwinDeclarations"
-                                    : CoreData         ? "NDCoreDataCalls"
-                                    : ScalarConstants  ? "NDScalarConstants"
-                                    : SwiftLiterals    ? "NDSwiftLiteralStrings"
-                                    : StoredStrings    ? "NDStoredStrings"
-                                    : IndirectFields   ? "NDIndirectFields"
-                                    : SystemData       ? "NDSystemData"
-                                    : Graphics         ? "NDGraphicsCalls"
-                                    : BlockLifetimes   ? "NDBlockFactory"
-                                    : Foundation       ? "NDFoundationCalls"
-                                    : Protocols        ? "NDProtocolCalls"
-                                    : DiagnosticReports ? "NDDiagnosticReports"
-                                    : SwiftStrings      ? "NDSwiftString"
-                                    : UnfairLocks       ? "NDUnfairLocks"
-                                    : ConstantStrings   ? "NDConstantStrings"
-                                    : SwiftCalls        ? "NDSwiftRuntimeCalls"
-                                                        : "NDARCBox") +
-                        "\");\n";
+  std::string Install =
+      "static void installRecovered(void) {\n"
+      "Class cls = objc_getClass(\"" +
+      std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
+                  : CoreData           ? "NDCoreDataCalls"
+                  : ScalarConstants    ? "NDScalarConstants"
+                  : SwiftLiterals      ? "NDSwiftLiteralStrings"
+                  : StoredStrings      ? "NDStoredStrings"
+                  : ProtocolReferences ? "NDProtocolReferences"
+                  : IndirectFields     ? "NDIndirectFields"
+                  : SystemData         ? "NDSystemData"
+                  : Graphics           ? "NDGraphicsCalls"
+                  : BlockLifetimes     ? "NDBlockFactory"
+                  : Foundation         ? "NDFoundationCalls"
+                  : Protocols          ? "NDProtocolCalls"
+                  : DiagnosticReports  ? "NDDiagnosticReports"
+                  : SwiftStrings       ? "NDSwiftString"
+                  : UnfairLocks        ? "NDUnfairLocks"
+                  : ConstantStrings    ? "NDConstantStrings"
+                  : SwiftCalls         ? "NDSwiftRuntimeCalls"
+                                       : "NDARCBox") +
+      "\");\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
   std::map<std::string, std::string> BlockHelpers;
@@ -589,6 +600,8 @@ void verifyRuntime(bool Chained,
                         "pass\nidentical-objects=0\n"
       : SystemData    ? "system-data=9216\nsingletons=pass\nframework-identity="
                         "pass\nlifetime=pass\n"
+      : ProtocolReferences ? "protocol-references=8192\nregistered-identity="
+                             "pass\nconformance=pass\n"
       : IndirectFields ? "indirect-fields=6144\nobject-identity=pass\nlifetime="
                          "pass\ndestroyed=2048\n"
       : StoredStrings
@@ -974,6 +987,19 @@ TEST(ObjCRuntimeSource,
     SCOPED_TRACE(Chained);
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::IndirectFields));
+  }
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     RecompiledProtocolReferencesPreserveRegisteredIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ProtocolReferences));
   }
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C runtime";

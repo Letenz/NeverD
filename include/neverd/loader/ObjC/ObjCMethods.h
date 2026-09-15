@@ -32,7 +32,7 @@ struct ObjCClass {
 };
 
 struct ObjCSourceReference {
-  enum class Kind { Selector, Class, Metaclass, IvarOffset };
+  enum class Kind { Selector, Class, Metaclass, IvarOffset, Protocol };
   Kind TheKind = Kind::Selector;
   va_t Address = 0;
   uint16_t Size = 8;

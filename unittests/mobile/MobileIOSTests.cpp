@@ -923,6 +923,30 @@ TEST(MobileIOSNative, NativeBackendSummaryRemainsSecondaryAfterClassClosure) {
             std::string::npos);
 }
 
+TEST(MobileIOSNative,
+     MissingProtocolRegistrationCannotProduceStandaloneBodies) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    auto [batch, metadata] = objcFixture("return arg0 + arg1;", true);
+    auto &native = *batch.getArray("methods")->front().getAsObject();
+    if (Case == 0)
+      native["runtime_protocols"] = Array{"ValueProtocol"};
+    else if (Case == 1)
+      native["runtime_protocols"] = "ValueProtocol";
+    else if (Case == 2)
+      native["runtime_protocols"] = Array{7};
+    else
+      native["runtime_protocols"] = Array{};
+    Budget budget;
+    const auto result = objcSources(batch, metadata, 8, budget);
+    EXPECT_EQ(number(result.coverage, "recovered_method_count"),
+              Case == 3 ? 1 : 0);
+    if (Case != 3) {
+      const auto &row = object(array(result.coverage, "methods")[0], "method");
+      EXPECT_NE(str(row, "reason").find("protocol"), std::string::npos);
+    }
+  }
+}
+
 TEST(MobileIOSNative, AmbiguousNativeOrRuntimeRowsCannotPublishBackendSummary) {
   for (unsigned duplicate : {0U, 1U, 2U, 3U}) {
     SCOPED_TRACE(duplicate);

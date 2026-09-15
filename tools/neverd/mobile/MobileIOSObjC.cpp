@@ -1306,6 +1306,18 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
               throw Error("invalid native diagnostics");
           row["diagnostics"] = Array(*d);
         }
+        // Batch C can run against registered original protocols. Standalone
+        // export currently has no protocol declaration/registration emitter.
+        if (auto *protocols = native.getArray("runtime_protocols")) {
+          for (const auto &protocol : *protocols)
+            if (!protocol.getAsString() || protocol.getAsString()->empty())
+              throw Error("invalid runtime protocol dependency");
+          if (!protocols->empty())
+            throw Error(
+                "required runtime protocol registration is unavailable: " +
+                protocols->front().getAsString()->str());
+        } else if (native.get("runtime_protocols"))
+          throw Error("invalid runtime protocol dependency inventory");
         std::vector<std::string> deps;
         std::set<std::string> required_classes;
         if (inv.classes.count(name))

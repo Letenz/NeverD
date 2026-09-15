@@ -162,7 +162,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   const bool RuntimeReference = Hint.CallKind == Kind::RuntimeSelector ||
                                 Hint.CallKind == Kind::RuntimeClass ||
                                 Hint.CallKind == Kind::RuntimeMetaclass ||
-                                Hint.CallKind == Kind::RuntimeIvarOffset;
+                                Hint.CallKind == Kind::RuntimeIvarOffset ||
+                                Hint.CallKind == Kind::RuntimeProtocol;
   if (RuntimeReference) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
         Hint.TargetName.empty() ||
@@ -186,9 +187,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
           Signature.ReturnType->Kind != NdTypeKind::Ptr)
         return bad("runtime reference has a non-pointer type");
       const char *Function =
-          Hint.CallKind == Kind::RuntimeSelector ? "sel_registerName"
-          : Hint.CallKind == Kind::RuntimeClass  ? "objc_getClass"
-                                                 : "objc_getMetaClass";
+          Hint.CallKind == Kind::RuntimeSelector   ? "sel_registerName"
+          : Hint.CallKind == Kind::RuntimeProtocol ? "objc_getProtocol"
+          : Hint.CallKind == Kind::RuntimeClass    ? "objc_getClass"
+                                                   : "objc_getMetaClass";
       Value = std::string(Function) + "(" + Name + ")";
     }
     auto Result = sourceValue(Value, Signature.ReturnType, E.Type);

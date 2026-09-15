@@ -26,6 +26,7 @@ struct ObjCSourceBindingResult {
   std::string Limitation;
   std::set<va_t> Dependencies;
   std::set<std::string> InstanceLayoutClasses;
+  std::set<std::string> RuntimeProtocols;
   std::set<va_t> AssociationKeys;
   std::set<va_t> ProfileCounterSections;
   std::set<va_t> ConstantStrings;
@@ -224,6 +225,8 @@ inline SourceCallTypeHint::Kind runtimeKind(ObjCSourceReference::Kind Kind) {
     return K::RuntimeMetaclass;
   case ObjCSourceReference::Kind::IvarOffset:
     return K::RuntimeIvarOffset;
+  case ObjCSourceReference::Kind::Protocol:
+    return K::RuntimeProtocol;
   }
   return K::Native;
 }
@@ -309,7 +312,8 @@ inline const HighExpr *swiftLiteralStorageHelper(const ExprPtr &Value) {
 inline bool isRuntimeReference(SourceCallTypeHint::Kind Kind) {
   using K = SourceCallTypeHint::Kind;
   return Kind == K::RuntimeSelector || Kind == K::RuntimeClass ||
-         Kind == K::RuntimeMetaclass || Kind == K::RuntimeIvarOffset;
+         Kind == K::RuntimeMetaclass || Kind == K::RuntimeIvarOffset ||
+         Kind == K::RuntimeProtocol;
 }
 
 } // namespace objc_binding_detail
@@ -448,6 +452,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           Binding->OwnerClass = Reference.ClassName;
           if (Ivar)
             Result.InstanceLayoutClasses.insert(Reference.ClassName);
+          if (Reference.TheKind == ObjCSourceReference::Kind::Protocol)
+            Result.RuntimeProtocols.insert(Reference.Name);
           auto &Hint = Binding->Signature;
           Hint.Architecture = Image.Arch;
           Hint.HasExplicitABI = true;

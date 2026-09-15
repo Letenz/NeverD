@@ -335,9 +335,12 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
               {"name", Parameter.Name}, {"type", typeToC(Parameter.Type)}});
         Row["status"] = "recovered";
         std::set<std::string> LayoutClasses;
+        std::set<std::string> RuntimeProtocols;
         for (va_t Entry : Included) {
           const auto &Classes = Projections.at(Entry).InstanceLayoutClasses;
           LayoutClasses.insert(Classes.begin(), Classes.end());
+          const auto &Protocols = Projections.at(Entry).RuntimeProtocols;
+          RuntimeProtocols.insert(Protocols.begin(), Protocols.end());
         }
         if (!Method.IsClassMethod && Method.ClassAddress)
           LayoutClasses.insert(Method.ClassName);
@@ -345,6 +348,12 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         for (const auto &ClassName : LayoutClasses)
           Layouts.push_back(ClassName);
         Row["instance_layout_classes"] = std::move(Layouts);
+        if (!RuntimeProtocols.empty()) {
+          llvm::json::Array Protocols;
+          for (const auto &Name : RuntimeProtocols)
+            Protocols.push_back(Name);
+          Row["runtime_protocols"] = std::move(Protocols);
+        }
         Row["return_type"] = typeToC(Projection.ReturnType);
         Row["parameters"] = std::move(Parameters);
         Row["function_name"] = Projection.Name;

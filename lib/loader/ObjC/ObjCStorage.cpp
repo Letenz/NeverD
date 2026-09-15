@@ -192,10 +192,32 @@ void parseObjCStorage(BinaryImage &Image) {
                OffsetWidth, Ivar.Name, Class.Name});
     }
   }
+  std::map<va_t, std::string> Protocols;
+  std::set<std::string> ProtocolNames, AmbiguousProtocols;
+  for (const auto &Protocol : Image.ObjCProtocols) {
+    if (!Remaining) {
+      Protocols.clear();
+      diagnostic(Image,
+                 "Objective-C protocol identities exceed the record limit");
+      break;
+    }
+    --Remaining;
+    if (!ProtocolNames.insert(Protocol.Name).second ||
+        Protocol.Status != "recovered" || Protocol.Name.empty())
+      AmbiguousProtocols.insert(Protocol.Name);
+    if (Protocol.Status == "recovered") {
+      auto [It, Inserted] = Protocols.emplace(Protocol.Address, Protocol.Name);
+      if (!Inserted) {
+        AmbiguousProtocols.insert(It->second);
+        AmbiguousProtocols.insert(Protocol.Name);
+      }
+    }
+  }
   for (const auto &Section : Image.Sections) {
     if (Section.Name != "__objc_selrefs" &&
         Section.Name != "__objc_classrefs" &&
-        Section.Name != "__objc_superrefs")
+        Section.Name != "__objc_superrefs" &&
+        Section.Name != "__objc_protorefs")
       continue;
     if (Section.Size % 8 || Section.Size / 8 > Remaining ||
         Image.getSectionFor(Section.VA) != &Section ||
@@ -205,7 +227,23 @@ void parseObjCStorage(BinaryImage &Image) {
     }
     Remaining -= Section.Size / 8;
     for (uint64_t Offset = 0; Offset < Section.Size; Offset += 8) {
-      auto Reference = readReference(Image, Data, Section, Section.VA + Offset);
+      const auto Slot = Section.VA + Offset;
+      if (Section.Name == "__objc_protorefs") {
+        const auto Address = Data.localPointer(Slot);
+        const auto Found = Address ? Protocols.find(*Address) : Protocols.end();
+        if (Slot % 8 || Section.isExecutable() || !Image.getSegmentFor(Slot) ||
+            Image.getSegmentFor(Slot)->isExecutable() || !Address ||
+            Found == Protocols.end() ||
+            AmbiguousProtocols.count(Found->second)) {
+          diagnostic(Image,
+                     "Objective-C protocol reference identity is unresolved");
+          continue;
+        }
+        Publish(
+            {ObjCSourceReference::Kind::Protocol, Slot, 8, Found->second, {}});
+        continue;
+      }
+      auto Reference = readReference(Image, Data, Section, Slot);
       if (Reference)
         Publish(std::move(*Reference));
       else

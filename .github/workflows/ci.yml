@@ -533,6 +533,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceInputs.SnapshotRequiresExactTargetABIStorageAndArgumentOrder",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCStorage.ProtocolSlotsRequireCompleteUniqueLocalRuntimeDeclarations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("MobileIOSNative.MissingProtocolRegistrationCannotProduceStandaloneBodies",
+                   "NeverDMobileTests"),
                   ("ObjCCallHints.SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameworkAndCompilerDataKeepExactExportIdentities",
@@ -903,9 +907,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 324,
-              ("macOS", "macos-patch"): 343,
-              ("Windows", "windows-focused"): 320,
+              ("Linux", "linux-semantic"): 326,
+              ("macOS", "macos-patch"): 346,
+              ("Windows", "windows-focused"): 322,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -917,6 +921,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledStoredStringsPreserveCollectionsAndIdentity",
                       "ObjCRuntimeSource.RecompiledSystemDataPreservesRuntimeSingletonIdentity",
                       "ObjCRuntimeSource.RecompiledIndirectFieldsPreserveRuntimeOffsetsAndOwnership",
+                      "ObjCRuntimeSource.RecompiledProtocolReferencesPreserveRegisteredIdentity",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
                       "ObjCRuntimeSource.RecompiledDarwinDeclarationsPreserveIdentitySynchronizationAndScalars",
                       "ObjCRuntimeSource.RecompiledFrameworkCallsPreserveValuesAndObjectIdentity",

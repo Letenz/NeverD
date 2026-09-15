@@ -96,6 +96,93 @@ TEST(ObjCStorage, StableSwiftPreservesWideOffsetsAndAbsentFieldTypes) {
   }
 }
 
+TEST(ObjCStorage, ProtocolSlotsRequireCompleteUniqueLocalRuntimeDeclarations) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Case = 0; Case < 11; ++Case) {
+      SCOPED_TRACE(Case);
+      StorageImage F;
+      F.Image.Arch = Architecture;
+      F.Image.Sections[0].Size = F.Image.Sections[0].FileSz = 0x800;
+      Section References;
+      References.Name = "__objc_protorefs";
+      References.VA = References.FileOff = 0x1800;
+      References.Size = References.FileSz = 8;
+      References.Flags = SegmentFlags::Readable;
+      F.Image.Sections.push_back(References);
+      ObjCProtocol Protocol;
+      Protocol.Address = 0x1700;
+      Protocol.Name = "ValueProtocol";
+      Protocol.Status = "recovered";
+      F.Image.ObjCProtocols.push_back(Protocol);
+      F.pointer(0x1800, 0x1700);
+      switch (Case) {
+      case 0:
+        break;
+      case 1:
+        F.Image.ObjCProtocols[0].Status = "invalid_metadata";
+        break;
+      case 2:
+        F.Image.ObjCProtocols[0].Status = "invalid_inheritance";
+        break;
+      case 3:
+        F.Image.ObjCProtocols.clear();
+        break;
+      case 4:
+        Protocol.Address += 8;
+        F.Image.ObjCProtocols.push_back(Protocol);
+        break;
+      case 5:
+        Protocol.Name = "Other";
+        F.Image.ObjCProtocols.push_back(Protocol);
+        break;
+      case 6:
+        F.Image.MachOHasChainedFixups = true;
+        break;
+      case 7:
+        F.Image.ImportPtrSlots[0x1800] = "_OBJC_PROTOCOL_$_ValueProtocol";
+        break;
+      case 8:
+        F.Image.ConflictingImportStorageSlots.insert(0x1800);
+        break;
+      case 9:
+        F.Image.Sections.back().FileSz = 4;
+        break;
+      case 10:
+        F.Image.Sections.back().Flags =
+            SegmentFlags::Readable | SegmentFlags::Executable;
+        break;
+      }
+      parseObjCStorage(F.Image);
+      const auto Found = F.Image.ObjCSourceReferences.find(0x1800);
+      if (Case) {
+        EXPECT_EQ(Found, F.Image.ObjCSourceReferences.end());
+        continue;
+      }
+      ASSERT_NE(Found, F.Image.ObjCSourceReferences.end());
+      EXPECT_EQ(Found->second.TheKind, ObjCSourceReference::Kind::Protocol);
+      EXPECT_EQ(Found->second.Name, "ValueProtocol");
+      HighFunc Function;
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x1800, 8),
+                                         NdType::makePtr(NdType::makeVoid()));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_TRUE(Bound.Function.Body[0].RetVal->SourceCallHint);
+      EXPECT_EQ(Bound.RuntimeProtocols, std::set<std::string>{"ValueProtocol"});
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal,
+                                           F.Image, {}));
+      auto Hint = std::make_shared<SourceCallTypeHint>(
+          *Bound.Function.Body[0].RetVal->SourceCallHint);
+      Hint->TargetName = "Other";
+      Bound.Function.Body[0].RetVal->SourceCallHint = Hint;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Bound.Function.Body[0].RetVal,
+                                            F.Image, {}));
+    }
+  }
+}
+
 TEST(ObjCStorage, ImportedClassSlotsDoNotRequireAClassReferenceSection) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (bool Metaclass : {false, true}) {
