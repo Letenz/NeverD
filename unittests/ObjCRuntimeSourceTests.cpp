@@ -54,6 +54,7 @@ enum class RuntimeFixture {
   Foundation,
   BlockLifetimes,
   CoreData,
+  DynamicProperties,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -72,6 +73,8 @@ void verifyRuntime(bool Chained,
                    bool Profiled = false, bool ManualBlocks = false) {
   const bool DarwinDeclarations =
       FixtureKind == RuntimeFixture::DarwinDeclarations;
+  const bool DynamicProperties =
+      FixtureKind == RuntimeFixture::DynamicProperties;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -111,6 +114,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
+                        : DynamicProperties  ? "ObjCDynamicProperties.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
                         : ScalarConstants    ? "ObjCScalarConstants.m"
                         : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
@@ -130,14 +134,15 @@ void verifyRuntime(bool Chained,
                         : SwiftCalls         ? "ObjCSwiftRuntime.m"
                         : Associations       ? "ObjCAssociations.m"
                                              : "ObjCARC.m";
-  const char *Harness = DarwinDeclarations ? "ObjCDarwinDeclarationsHarness.m"
-                        : Equality         ? "ObjCEqualityHarness.m"
-                        : FloatingSaves    ? "ObjCFloatingSavesHarness.m"
-                        : CoreData         ? "ObjCCoreDataCallsHarness.m"
-                        : ScalarConstants  ? "ObjCScalarConstantsHarness.m"
-                        : SwiftLiterals    ? "ObjCSwiftLiteralStringsHarness.m"
-                        : StoredStrings    ? "ObjCStoredStringsHarness.m"
-                        : SwiftAllocation  ? "ObjCSwiftAllocationHarness.m"
+  const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
+                        : Equality          ? "ObjCEqualityHarness.m"
+                        : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
+                        : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
+                        : CoreData          ? "ObjCCoreDataCallsHarness.m"
+                        : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
+                        : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
+                        : StoredStrings     ? "ObjCStoredStringsHarness.m"
+                        : SwiftAllocation   ? "ObjCSwiftAllocationHarness.m"
                         : ProtocolReferences ? "ObjCProtocolReferencesHarness.m"
                         : IndirectFields     ? "ObjCIndirectFieldsHarness.m"
                         : SystemData         ? "ObjCSystemDataHarness.m"
@@ -175,7 +180,7 @@ void verifyRuntime(bool Chained,
   if (SystemData)
     Compile.insert(Compile.end(), SystemDataFrameworks.begin(),
                    SystemDataFrameworks.end());
-  if (CoreData)
+  if (CoreData || DynamicProperties)
     Compile.insert(Compile.end(), {"-framework", "CoreData"});
   if (Graphics)
     Compile.insert(Compile.end(),
@@ -233,6 +238,19 @@ void verifyRuntime(bool Chained,
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
+  if (DynamicProperties) {
+    const auto *Metadata = Object->getObject("objc_metadata");
+    ASSERT_NE(Metadata, nullptr);
+    const auto *Properties = Metadata->getArray("properties");
+    ASSERT_NE(Properties, nullptr);
+    EXPECT_TRUE(std::any_of(
+        Properties->begin(), Properties->end(), [](const auto &Value) {
+          const auto *Property = Value.getAsObject();
+          return Property && Property->getString("name") == "ndOptionalValue" &&
+                 Property->getBoolean("optional").value_or(false) &&
+                 Property->getString("status") == "supported";
+        }));
+  }
   if (Equality && HostArch == "x86_64") {
     // This SDK catalog has conflicting x86-64 isEqual: return declarations.
     // Without that call contract the source cannot prove the subsequent
@@ -266,6 +284,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : DynamicProperties  ? 6U
                              : CoreData           ? 3U
                              : ScalarConstants    ? 6U
                              : SwiftLiterals      ? 3U
@@ -360,6 +379,10 @@ void verifyRuntime(bool Chained,
                  "formatWide:small:",
                  "logObject:count:fraction:",
                  "logEmpty"};
+  if (DynamicProperties)
+    Remaining = {
+        "eventCount:", "setEventCount:record:", "weight:", "setWeight:record:",
+        "label:",      "setLabel:record:"};
   if (CoreData)
     Remaining = {
         "fetchFromContext:request:error:", "countInContext:request:error:",
@@ -426,6 +449,7 @@ void verifyRuntime(bool Chained,
       "static void installRecovered(void) {\n"
       "Class cls = objc_getClass(\"" +
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
+                  : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
                   : Equality           ? "NDEquality"
@@ -591,7 +615,7 @@ void verifyRuntime(bool Chained,
   if (SystemData)
     Compile.insert(Compile.end() - 2, SystemDataFrameworks.begin(),
                    SystemDataFrameworks.end());
-  if (CoreData)
+  if (CoreData || DynamicProperties)
     Compile.insert(Compile.end() - 2, {"-framework", "CoreData"});
   if (Graphics)
     Compile.insert(Compile.end() - 2,
@@ -653,7 +677,9 @@ void verifyRuntime(bool Chained,
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
       : Equality ? "equality-cases=4096\nshort-circuit=pass\nownership=pass\n"
-      : FloatingSaves ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : FloatingSaves     ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : DynamicProperties ? "dynamic-property-checks=6144\nscalar-widths="
+                            "pass\nobject-identity=pass\n"
       : CoreData
           ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
             "nil-context=pass\n"
@@ -1101,5 +1127,15 @@ TEST(ObjCRuntimeSource,
     ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Equality));
 #else
   GTEST_SKIP() << "Objective-C runtime source execution requires macOS";
+#endif
+}
+
+TEST(ObjCRuntimeSource, DynamicPropertyAccessorsExecuteAgainstCoreData) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::DynamicProperties));
+#else
+  GTEST_SKIP() << "Requires macOS CoreData and Objective-C runtime";
 #endif
 }

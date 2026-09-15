@@ -1,6 +1,7 @@
 #include "ObjCProtocols.h"
 
 #include "ObjCMethodLists.h"
+#include "ObjCProperties.h"
 #include "ObjCRuntimeData.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -135,6 +136,17 @@ class ProtocolReader {
     bool Valid = inheritance(Protocol);
     for (unsigned Kind = 0; Kind < 4; ++Kind)
       Valid = methods(Protocol, Kind) && Valid;
+    ObjCProperty Owner;
+    Owner.Owner = ObjCProperty::OwnerKind::Protocol;
+    Owner.OwnerAddress = Address;
+    Owner.OwnerName = Protocol.Name;
+    Valid =
+        readPropertyList(Image, Address + 56, Owner, MethodsRemaining) && Valid;
+    if (*Size >= 96) {
+      Owner.IsClassProperty = true;
+      Valid = readPropertyList(Image, Address + 88, Owner, MethodsRemaining) &&
+              Valid;
+    }
     if (!Valid)
       diagnostic(
           "Objective-C protocol declarations or inheritance are incomplete");
@@ -176,6 +188,15 @@ class ProtocolReader {
             Method.Status = Protocol.Status;
         }
     }
+    for (auto &Property : Image.ObjCProperties)
+      if (Property.Owner == ObjCProperty::OwnerKind::Protocol) {
+        const auto &Protocol = Protocols.at(Property.OwnerAddress);
+        if (Protocol.Status != "recovered") {
+          Property.GetterTypeHint.reset();
+          Property.SetterTypeHint.reset();
+          Property.Status = Protocol.Status;
+        }
+      }
   }
 
 public:

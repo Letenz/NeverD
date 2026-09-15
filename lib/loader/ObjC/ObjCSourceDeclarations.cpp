@@ -147,6 +147,18 @@ selectorSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
     for (const auto &Method : Protocol.Methods)
       if (!Include(Method))
         return std::nullopt;
+  for (const auto &Property : Image.ObjCProperties) {
+    for (const auto &[Name, Hint] :
+         {std::pair{&Property.Getter, &Property.GetterTypeHint},
+          std::pair{&Property.Setter, &Property.SetterTypeHint}}) {
+      if (Name->empty() || *Name != Selector)
+        continue;
+      if (!*Hint || (Result && !mergeSignature(*Result, **Hint)))
+        return std::nullopt;
+      if (!Result)
+        Result = **Hint;
+    }
+  }
   if (const auto *Catalog = frameworkDeclarations(Image.Arch))
     for (const auto &[Name, Framework] : *Catalog) {
       if (!usesFramework(Image, Framework))

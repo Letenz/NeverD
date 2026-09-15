@@ -51,6 +51,15 @@ HighIR 的 `HighSourceFlow` 统一管理输出语句的控制流边、局部变�
 
 Block 使用方的逃逸分析也使用这张图，以有界不动点分析跨分支和循环传播指针身份及私有栈槽信息。合流保留可能的上下文地址，只有完整覆盖才能清除。未知跳转、异常控制流和证明预算耗尽都会拒绝绑定。
 
+Objective-C 属性元数据提供独立于方法实现的访问器声明，支持动态属性、只读属性和自定义访问器。
+加载器验证类、分类或协议记录的布局，再通过共享编码解析器和 Darwin ABI 层生成标量或指针签名。
+调用绑定要求所有匹配的属性、方法、协议及已启用 SDK 声明一致；属性记录不会创建原生函数，
+也不会增加运行时方法总数。64 位记录布局依据
+[Apple 运行时 ABI](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h)，
+分类中可选的类属性字段还需要
+[镜像布局标志](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-abi.h) 才能读取。
+不支持的属性编码和损坏的属性列表会保留明确诊断。
+
 ## IR 表示与路径
 
 | 表示 | 用途 | 主要定义与转换 |

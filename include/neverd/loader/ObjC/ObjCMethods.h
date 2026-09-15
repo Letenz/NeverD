@@ -77,6 +77,28 @@ struct ObjCProtocol {
   std::vector<ObjCProtocolMethod> Methods;
 };
 
+/// A compiler declaration of accessors, including properties whose methods
+/// are supplied dynamically. This record never supplies an implementation.
+struct ObjCProperty {
+  enum class OwnerKind { Class, Category, Protocol };
+  OwnerKind Owner = OwnerKind::Class;
+  va_t OwnerAddress = 0;
+  va_t MetadataAddress = 0;
+  std::string OwnerName;
+  std::string ClassName;
+  std::string Name;
+  std::string Attributes;
+  std::string TypeEncoding;
+  std::string Getter;
+  std::string Setter;
+  bool IsClassProperty = false;
+  bool ReadOnly = false;
+  bool IsOptional = false;
+  std::string Status = "invalid_metadata";
+  std::optional<SourceFunctionTypeHint> GetterTypeHint;
+  std::optional<SourceFunctionTypeHint> SetterTypeHint;
+};
+
 /// Read bounded Objective-C runtime records from the loader's resolved image.
 /// Unsupported/malformed metadata is diagnosed and never applied as a type
 /// hint. Valid executable IMPs become function discovery seeds. The operation

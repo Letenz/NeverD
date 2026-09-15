@@ -1,6 +1,7 @@
 #include "neverd/loader/ObjC/ObjCMethods.h"
 
 #include "ObjCMethodLists.h"
+#include "ObjCProperties.h"
 #include "ObjCProtocols.h"
 #include "ObjCRuntimeData.h"
 
@@ -178,6 +179,14 @@ class RuntimeReader {
     methodList(Class, *List, ClassMethod);
   }
 
+  void properties(const ObjCClass &Class, va_t RO, bool ClassProperty) {
+    ObjCProperty Owner;
+    Owner.OwnerAddress = Class.Address;
+    Owner.OwnerName = Owner.ClassName = Class.Name;
+    Owner.IsClassProperty = ClassProperty;
+    objc::readPropertyList(Img, RO + 64, Owner, Remaining);
+  }
+
   void readClass(va_t VA) {
     auto RO = classRO(VA);
     auto Name = className(VA);
@@ -209,12 +218,14 @@ class RuntimeReader {
                                   : "unresolved";
     Img.ObjCClasses.push_back(Class);
     methods(Class, *RO, false);
+    properties(Class, *RO, false);
     auto Meta = pointer(VA);
     if (Meta && *Meta) {
       auto MetaRO = classRO(*Meta);
-      if (MetaRO && (u32(*MetaRO).value_or(0) & 1))
+      if (MetaRO && (u32(*MetaRO).value_or(0) & 1)) {
         methods(Class, *MetaRO, true);
-      else
+        properties(Class, *MetaRO, true);
+      } else
         diagnostic("Objective-C metaclass is unavailable");
     }
   }
@@ -297,6 +308,16 @@ class RuntimeReader {
       Img.ObjCMethods[I].CategoryName = *Name;
       Img.ObjCMethods[I].CategoryAddress = VA;
     }
+    ObjCProperty PropertyOwner;
+    PropertyOwner.Owner = ObjCProperty::OwnerKind::Category;
+    PropertyOwner.OwnerAddress = VA;
+    PropertyOwner.OwnerName = *Name;
+    PropertyOwner.ClassName = Owner.Name;
+    objc::readPropertyList(Img, VA + 40, PropertyOwner, Remaining);
+    if (objc::hasCategoryClassProperties(Img)) {
+      PropertyOwner.IsClassProperty = true;
+      objc::readPropertyList(Img, VA + 48, PropertyOwner, Remaining);
+    }
   }
 
 public:
@@ -377,6 +398,7 @@ void parseObjCMethods(BinaryImage &Img) {
   Img.ObjCClasses.clear();
   Img.ObjCMethods.clear();
   Img.ObjCProtocols.clear();
+  Img.ObjCProperties.clear();
   Img.ObjCMetadataDiagnostics.clear();
   if (!Img.isMachO())
     return;

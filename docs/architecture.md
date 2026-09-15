@@ -58,6 +58,18 @@ result type. This identity does not merge independent loads or calls.
 
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 
+Objective-C property metadata supplies accessor declarations independently of
+method implementations, including dynamic, readonly and custom accessors.
+The loader checks the class, category or protocol record layout and derives
+scalar/pointer signatures through the shared encoding parser and Darwin ABI.
+Call binding requires agreement with all matching property, method, protocol
+and active SDK declarations. Property records never create native functions
+or increase the runtime method inventory. The 64-bit record layout follows
+[Apple's runtime ABI](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-runtime-new.h);
+optional category class properties require the
+[image layout flag](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-abi.h).
+Unsupported property encodings and malformed lists remain explicit diagnostics.
+
 ## IR representations and routes
 
 | Representation | Purpose | Primary definitions and transformations |

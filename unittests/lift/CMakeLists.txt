@@ -109,6 +109,7 @@ add_neverd_unittest(NeverDLiftTests
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
   core/ObjCProtocolTests.cpp
+  core/ObjCPropertyTests.cpp
   core/SourceABITests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
@@ -921,6 +922,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCCategoryTests.cpp
   core/SourceABITests.cpp
   core/ObjCProtocolTests.cpp
+  core/ObjCPropertyTests.cpp
   core/NativeSourceHintsTests.cpp
   core/ObjCStorageTests.cpp
   core/ObjCCallHintTests.cpp

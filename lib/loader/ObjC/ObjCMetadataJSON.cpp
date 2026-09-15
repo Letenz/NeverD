@@ -97,21 +97,43 @@ llvm::json::Object objcMetadataJSON(const BinaryImage &Image) {
                            {"adopted_protocols", std::move(Adopted)},
                            {"methods", std::move(Methods)}});
   }
+  llvm::json::Array Properties;
+  for (const auto &Property : Image.ObjCProperties)
+    Properties.push_back(llvm::json::Object{
+        {"name", jsonSafeText(Property.Name)},
+        {"attributes", jsonSafeText(Property.Attributes)},
+        {"type_encoding", jsonSafeText(Property.TypeEncoding)},
+        {"metadata_address", addressText(Property.MetadataAddress)},
+        {"owner_address", addressText(Property.OwnerAddress)},
+        {"owner_name", jsonSafeText(Property.OwnerName)},
+        {"owner_kind",
+         Property.Owner == ObjCProperty::OwnerKind::Class      ? "class"
+         : Property.Owner == ObjCProperty::OwnerKind::Category ? "category"
+                                                               : "protocol"},
+        {"class_name", jsonSafeText(Property.ClassName)},
+        {"class_property", Property.IsClassProperty},
+        {"readonly", Property.ReadOnly},
+        {"optional", Property.IsOptional},
+        {"getter", jsonSafeText(Property.Getter)},
+        {"setter", jsonSafeText(Property.Setter)},
+        {"status", Property.Status}});
   llvm::json::Array Limitations;
-  Limitations.push_back("Runtime metadata does not recover properties, class "
-                        "protocol conformance, or "
+  Limitations.push_back("Runtime metadata does not recover class "
+                        "protocol conformance or "
                         "dynamically registered classes.");
   for (const std::string &Diagnostic : Image.ObjCMetadataDiagnostics)
     Limitations.push_back(jsonSafeText(Diagnostic));
-  const char *Status = !Image.ObjCMetadataDiagnostics.empty() ? "partial"
-                       : Image.ObjCClasses.empty() &&
-                               Image.ObjCProtocols.empty() && Categories.empty()
-                           ? "section-absent"
-                           : "recovered";
+  const char *Status =
+      !Image.ObjCMetadataDiagnostics.empty() ? "partial"
+      : Image.ObjCClasses.empty() && Image.ObjCProtocols.empty() &&
+              Categories.empty() && Image.ObjCProperties.empty()
+          ? "section-absent"
+          : "recovered";
   return llvm::json::Object{{"status", Status},
                             {"classes", std::move(Classes)},
                             {"categories", std::move(Categories)},
                             {"protocols", std::move(Protocols)},
+                            {"properties", std::move(Properties)},
                             {"limitations", std::move(Limitations)}};
 }
 
