@@ -1123,3 +1123,174 @@ TEST(HighCSourceCalls, DeadPhiCleanupKeepsUnprovenNestedEntriesAmbiguous) {
     EXPECT_EQ(Entries, 2u);
   }
 }
+
+TEST(HighCSourceCalls, PartialIntegerCarriersPreserveExactMemoryWidths) {
+  for (unsigned Bytes : {3U, 5U, 6U, 7U}) {
+    const auto Integer = NdType::makeInt(8, false);
+    const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
+    const auto Partial = NdType::makeInt(Bytes, false);
+    auto Truncated = std::make_shared<HighExpr>();
+    Truncated->Kind = ExprKind::Cast;
+    Truncated->Type = Truncated->CastTo = Partial;
+    Truncated->Operands = {parameter(1, Integer)};
+    auto Loaded = HighExpr::makeLoad(parameter(0, Pointer), Partial);
+    auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Loaded);
+    Extended->Type = Integer;
+    auto Function = returning("partial_memory", Extended, {Pointer, Integer});
+    Function.SourceTypeHint =
+        native("partial_memory", Integer, {Pointer, Integer}).Signature;
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = parameter(0, Pointer);
+    Store.StoreVal = Truncated;
+    Function.Body.insert(Function.Body.begin(), Store);
+    auto SignedLoad =
+        HighExpr::makeLoad(parameter(0, Pointer), NdType::makeInt(Bytes));
+    auto SignedExtended = HighExpr::makeUnary(NdOp::INT_SEXT, SignedLoad);
+    SignedExtended->Type = NdType::makeInt(8);
+    auto Signed = returning("partial_signed", SignedExtended, {Pointer});
+    Signed.SourceTypeHint =
+        native("partial_signed", NdType::makeInt(8), {Pointer}).Signature;
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, Loaded,
+                                   HighExpr::makeConst(1, Bytes));
+    Sum->Type = Partial;
+    auto SumExtended = HighExpr::makeUnary(NdOp::INT_ZEXT, Sum);
+    SumExtended->Type = Integer;
+    auto Add = returning("partial_increment", SumExtended, {Pointer});
+    Add.SourceTypeHint =
+        native("partial_increment", Integer, {Pointer}).Signature;
+    std::vector<HighFunc> Functions{Function, Signed, Add};
+    for (const auto &[Name, Op] :
+         {std::pair{"partial_signed_add", NdOp::INT_ADD},
+          std::pair{"partial_signed_sub", NdOp::INT_SUB},
+          std::pair{"partial_signed_mul", NdOp::INT_MULT}}) {
+      auto Value =
+          HighExpr::makeBinop(Op, SignedLoad, HighExpr::makeConst(37, Bytes));
+      Value->Type = NdType::makeInt(Bytes);
+      auto Bits = HighExpr::makeUnary(NdOp::INT_ZEXT, Value);
+      Bits->Type = Integer;
+      auto Arithmetic = returning(Name, Bits, {Pointer});
+      Arithmetic.SourceTypeHint = native(Name, Integer, {Pointer}).Signature;
+      Functions.push_back(std::move(Arithmetic));
+    }
+    compileAndRun(emit(Functions) + "\n#define BYTES " + std::to_string(Bytes) +
+                  R"(
+int main(void) {
+    uint64_t mask = (UINT64_C(1) << (BYTES * 8)) - 1;
+    uint64_t state = UINT64_C(0x1be927fa8046d5c3);
+    for (unsigned i = 0; i < 4096; ++i) {
+        state = state * UINT64_C(6364136223846793005) + 1;
+        uint64_t input = i == 0 ? mask : i == 1 ? 0 : state;
+        unsigned char memory[16];
+        for (unsigned j = 0; j < sizeof(memory); ++j) memory[j] = 0xa5;
+        if (partial_memory(memory + 1, input) != (input & mask)) return 1;
+        for (unsigned j = 0; j < BYTES; ++j)
+            if (memory[j + 1] != ((input >> (j * 8)) & 255)) return 2;
+        if (memory[0] != 0xa5) return 3;
+        for (unsigned j = BYTES + 1; j < sizeof(memory); ++j)
+            if (memory[j] != 0xa5) return 4;
+        uint64_t bits = input & mask;
+        int64_t expected = (bits & (UINT64_C(1) << (BYTES * 8 - 1)))
+                            ? -(int64_t)((mask + 1) - bits) : (int64_t)bits;
+        if (partial_signed(memory + 1) != expected) return 5;
+        if (partial_increment(memory + 1) != ((bits + 1) & mask)) return 6;
+        if (partial_signed_add(memory + 1) != ((bits + 37) & mask)) return 7;
+        if (partial_signed_sub(memory + 1) != ((bits - 37) & mask)) return 8;
+        if (partial_signed_mul(memory + 1) != ((bits * 37) & mask)) return 9;
+    }
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, PartialIntegerCarriersPreserveWideValuesAndShiftBounds) {
+  for (unsigned Bytes : {3U, 5U, 6U, 7U, 9U, 10U, 11U, 12U, 13U, 14U, 15U}) {
+    const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
+    const auto CountType = NdType::makeInt(8, false);
+    const auto Partial = NdType::makeInt(Bytes, false);
+    std::vector<HighFunc> Functions;
+    for (const auto &[Name, Op] :
+         {std::pair{"partial_left", NdOp::INT_LEFT},
+          std::pair{"partial_right", NdOp::INT_RIGHT},
+          std::pair{"partial_arithmetic", NdOp::INT_ASHR}}) {
+      auto Loaded = HighExpr::makeLoad(parameter(0, Pointer), Partial);
+      auto Shifted = HighExpr::makeBinop(Op, Loaded, parameter(2, CountType));
+      Shifted->Type = Partial;
+      auto Function = returning(Name, HighExpr::makeConst(0, 4),
+                                {Pointer, Pointer, CountType});
+      Function.SourceTypeHint =
+          native(Name, NdType::makeInt(4), {Pointer, Pointer, CountType})
+              .Signature;
+      HighStmt Store;
+      Store.Kind = StmtKind::Store;
+      Store.StoreAddr = parameter(1, Pointer);
+      Store.StoreVal = Shifted;
+      Function.Body.insert(Function.Body.begin(), Store);
+      Functions.push_back(std::move(Function));
+    }
+    compileAndRun(emit(Functions) + "\n#define BYTES " + std::to_string(Bytes) +
+                  R"(
+int main(void) {
+    unsigned char input[BYTES], output[BYTES + 2];
+    uint64_t state = UINT64_C(0x9813ae24abf20c85);
+    for (unsigned round = 0; round < 8; ++round) {
+        for (unsigned i = 0; i < BYTES; ++i) {
+            state = state * UINT64_C(6364136223846793005) + 1;
+            input[i] = state >> 56;
+        }
+        for (unsigned count = 0; count <= BYTES * 8 + 1; ++count) {
+            for (unsigned op = 0; op < 3; ++op) {
+                memset(output, 0xa5, sizeof(output));
+                if (op == 0) partial_left(input, output + 1, count);
+                if (op == 1) partial_right(input, output + 1, count);
+                if (op == 2) partial_arithmetic(input, output + 1, count);
+                if (output[0] != 0xa5 || output[BYTES + 1] != 0xa5) return 1;
+                for (unsigned bit = 0; bit < BYTES * 8; ++bit) {
+                    int source = op == 0 ? (int)bit - (int)count : bit + count;
+                    unsigned expected = source >= 0 && source < BYTES * 8
+                      ? (input[source / 8] >> (source % 8)) & 1
+                      : op == 2 && (input[BYTES - 1] & 128) ? 1 : 0;
+                    if (((output[1 + bit / 8] >> (bit % 8)) & 1) != expected)
+                        return 2;
+                }
+            }
+        }
+    }
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
+  EXPECT_THROW(typeToC(NdType::makeInt(17)), std::invalid_argument);
+  const auto Partial = NdType::makeInt(3, false);
+  const auto Pointer = NdType::makePtr(NdType::makeInt(1, false));
+  auto Load = HighExpr::makeLoad(parameter(0, Pointer), Partial);
+  Load->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  auto Function = returning("partial_atomic_load", Load, {Pointer});
+  EXPECT_DEATH(emit({Function}),
+               "atomic access requires a supported machine width");
+  for (NdOp Op : {NdOp::ATOMIC_ADD, NdOp::ATOMIC_XCHG, NdOp::ATOMIC_CMPXCHG}) {
+    auto Atomic = HighExpr::makeBinop(Op, parameter(0, Pointer),
+                                      HighExpr::makeConst(1, 3));
+    Atomic->Type = Partial;
+    Atomic->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+    if (Op == NdOp::ATOMIC_CMPXCHG)
+      Atomic->Operands.push_back(HighExpr::makeConst(2, 3));
+    Function = returning("partial_atomic_update", Atomic, {Pointer});
+    EXPECT_DEATH(emit({Function}),
+                 "atomic access requires a supported machine width");
+  }
+  Function =
+      returning("partial_atomic_store", HighExpr::makeConst(0, 4), {Pointer});
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = parameter(0, Pointer);
+  Store.StoreVal = HighExpr::makeConst(1, 3);
+  Store.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Function.Body.insert(Function.Body.begin(), Store);
+  EXPECT_DEATH(emit({Function}),
+               "atomic access requires a supported machine width");
+}

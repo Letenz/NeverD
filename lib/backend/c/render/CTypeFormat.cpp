@@ -62,6 +62,16 @@ std::string escapeCString(llvm::StringRef Str) {
 }
 
 namespace {
+std::string extendedIntegerType(unsigned Bytes, bool Signed) {
+  if (Bytes == 32 || Bytes == 64)
+    return std::string(Signed ? "int" : "uint") + std::to_string(Bytes * 8) +
+           "_t";
+  if (Bytes == 0 || Bytes > 16)
+    throw std::invalid_argument("C integer exceeds the supported bit width");
+  return std::string(Signed ? "" : "unsigned ") + "_BitInt(" +
+         std::to_string(Bytes * 8) + ")";
+}
+
 bool containsFunction(const TypeRef &Type) {
   auto Current = Type;
   for (unsigned Depth = 0; Current && Depth <= 16; ++Depth) {
@@ -121,7 +131,7 @@ std::string typeToC(const TypeRef &Ty) {
       case 16:
         return "__int128";
       default:
-        return "int" + std::to_string(Ty->Size * 8) + "_t";
+        return extendedIntegerType(Ty->Size, true);
       }
     } else {
       switch (Ty->Size) {
@@ -136,7 +146,7 @@ std::string typeToC(const TypeRef &Ty) {
       case 16:
         return "unsigned __int128";
       default:
-        return "uint" + std::to_string(Ty->Size * 8) + "_t";
+        return extendedIntegerType(Ty->Size, false);
       }
     }
   case NdTypeKind::Float:
@@ -178,7 +188,7 @@ std::string typeToC(const TypeRef &Ty) {
       case 16:
         return "unsigned __int128";
       default:
-        return "uint" + std::to_string(Ty->Size * 8) + "_t";
+        return extendedIntegerType(Ty->Size, false);
       }
     }
     return "uint32_t";

@@ -891,6 +891,24 @@ jobs:
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.SharedMergeDoesNotHideAnotherFalseArmEntry",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighCSourceCalls.PartialIntegerCarriersPreserveExactMemoryWidths",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("HighCSourceCalls.PartialIntegerCarriersPreserveWideValuesAndShiftBounds",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("HighCSourceCalls.PartialIntegerAtomicsRejectWidenedMemoryAccess",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.PrivateFrameSelectorSurvivesADeclaredCall",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameSelectorsRejectEscapesOverwritesAndUnknownCalls",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameSelectorJoinsRequireEveryIncomingStore",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.PossibleFrameEscapesSurviveJoinsAndPartialAliases",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameSlotsExcludeOutgoingArgumentsAndDeallocatedStorage",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.FrameBackedgesRevokeProvisionalSpillBindings",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.DeadPhiCleanupPreservesConditionalEntryAndCallEffects",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.DeadPhiCleanupKeepsUnprovenNestedEntriesAmbiguous",
@@ -1137,9 +1155,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 439,
-              ("macOS", "macos-patch"): 478,
-              ("Windows", "windows-focused"): 435,
+              ("Linux", "linux-semantic"): 448,
+              ("macOS", "macos-patch"): 488,
+              ("Windows", "windows-focused"): 444,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1169,6 +1187,7 @@ jobs:
                       "ObjCRuntimeSource.InvariantLoopValuesPreserveClassChecksAndGetterEffects",
                       "ObjCRuntimeSource.SwitchSuccessorsPreserveStoresCallsAndSharedExits",
                       "ObjCRuntimeSource.LoopContinuationsPreserveExitCopiesAndStores",
+                      "ObjCRuntimeSource.PrivateFrameSelectorsPreserveStringsAndIdentity",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

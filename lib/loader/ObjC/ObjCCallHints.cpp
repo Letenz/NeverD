@@ -139,7 +139,8 @@ struct Value {
     Import,
     Receiver,
     IvarOffset,
-    FieldAddress
+    FieldAddress,
+    Frame
   };
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
@@ -152,6 +153,88 @@ struct Value {
 };
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
+
+constexpr int64_t FrameOffsetLimit = 1048576;
+
+std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
+  const auto Delta = static_cast<int64_t>(Amount);
+  if (Delta < -FrameOffsetLimit || Delta > FrameOffsetLimit)
+    return std::nullopt;
+  const auto Offset =
+      static_cast<int64_t>(Base.Number) + (Subtract ? -Delta : Delta);
+  if (Offset < -FrameOffsetLimit || Offset > FrameOffsetLimit)
+    return std::nullopt;
+  Base.Number = static_cast<uint64_t>(Offset);
+  return Base;
+}
+
+struct CallFacts {
+  std::map<Key, Value> Values;
+  std::map<std::pair<int64_t, unsigned>, Value> FrameSlots;
+  // Exact values are must facts. Pointer-derived bytes are may facts: a
+  // conflicting predecessor or partial alias must not erase a possible escape.
+  std::set<std::pair<VnodeSpace, uint64_t>> FrameBytes;
+  bool FrameEscaped = false;
+
+  bool operator==(const CallFacts &) const = default;
+
+  bool mayBeFrame(const NdVar &V) const {
+    if (!V.Size || V.isConst())
+      return false;
+    const auto It = FrameBytes.lower_bound({V.Space, V.Offset});
+    return It != FrameBytes.end() && It->first == V.Space &&
+           It->second - V.Offset < V.Size;
+  }
+
+  bool writeFrameBytes(const NdVar &V, bool Tainted) {
+    if (!V.Size)
+      return true;
+    if (V.Offset > InvalidVA - V.Size || V.Size > 4096)
+      return false;
+    FrameBytes.erase(FrameBytes.lower_bound({V.Space, V.Offset}),
+                     FrameBytes.lower_bound({V.Space, V.Offset + V.Size}));
+    if (Tainted)
+      for (unsigned I = 0; I < V.Size; ++I)
+        FrameBytes.emplace(V.Space, V.Offset + I);
+    return FrameBytes.size() <= 4096;
+  }
+
+  void escapeFrame() {
+    FrameEscaped = true;
+    FrameSlots.clear();
+  }
+
+  void invalidateFrameRange(int64_t Offset, unsigned Size) {
+    for (auto It = FrameSlots.begin(); It != FrameSlots.end();)
+      if (It->first.first < Offset + Size &&
+          Offset < It->first.first + It->first.second)
+        It = FrameSlots.erase(It);
+      else
+        ++It;
+  }
+
+  void merge(const CallFacts &Other) {
+    for (auto It = Values.begin(); It != Values.end();) {
+      const auto Found = Other.Values.find(It->first);
+      if (Found == Other.Values.end() || !(It->second == Found->second))
+        It = Values.erase(It);
+      else
+        ++It;
+    }
+    FrameBytes.insert(Other.FrameBytes.begin(), Other.FrameBytes.end());
+    if (FrameEscaped || Other.FrameEscaped) {
+      escapeFrame();
+      return;
+    }
+    for (auto It = FrameSlots.begin(); It != FrameSlots.end();) {
+      const auto Found = Other.FrameSlots.find(It->first);
+      if (Found == Other.FrameSlots.end() || !(It->second == Found->second))
+        It = FrameSlots.erase(It);
+      else
+        ++It;
+    }
+  }
+};
 
 std::optional<ObjCReceiverTypeHint> receiver(const Value &V) {
   return V.TheKind == Value::Kind::Receiver ? V.Object : std::nullopt;
@@ -355,21 +438,42 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       Roots[Found->second] = true;
       ExceptionalRoots[Found->second] = true;
     }
-  using Facts = std::map<Key, Value>;
+  using Facts = CallFacts;
   using Hints = std::map<va_t, SourceCallTypeHint>;
   Facts EntryFacts;
   if (llvm::count_if(Function.Blocks, [&](const auto &Block) {
         return Block.StartAddr == Function.Entry;
-      }) == 1)
+      }) == 1) {
+    const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+    EntryFacts.Values.emplace(key(Stack), Value{Value::Kind::Frame, 0, {}});
+    EntryFacts.writeFrameBytes(Stack, true);
     if (const auto Receiver = objcMethodReceiverTypeHint(Image, Function.Entry))
-      EntryFacts.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
-                         Value{Value::Kind::Receiver, 0, {}, *Receiver});
+      EntryFacts.Values.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
+                                Value{Value::Kind::Receiver, 0, {}, *Receiver});
+  }
+  // Enumerate preserved physical bytes through the authoritative ABI policy.
+  // This retains upper bytes of partial integer aliases and only the preserved
+  // prefix of a vector register. A balanced declared call also preserves SP.
+  std::set<uint64_t> PreservedBytes;
+  auto AddPreserved = [&](uint64_t Register) {
+    const auto Size =
+        TRI.callPreservedPrefixSize(Register, TRI.maxRegisterWidth(Register));
+    for (unsigned I = 0; I < Size; ++I)
+      PreservedBytes.insert(Register + I);
+  };
+  for (auto Register : TRI.CalleeSaveRegs)
+    AddPreserved(Register);
+  for (unsigned I = 0; I < TRI.VecRegCount; ++I)
+    AddPreserved(TRI.VecRegBase + I * TRI.VecRegStride);
+  for (unsigned I = 0; I < 8; ++I)
+    PreservedBytes.insert(TRI.StackPointer + I);
   using ReceiverKey =
       std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
                  std::vector<ObjCReceiverTypeHint::TypeStep>, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
-  auto Transfer = [&](size_t Index, Facts Values,
+  auto Transfer = [&](size_t Index, Facts State,
                       Hints &BlockHints) -> std::optional<Facts> {
+    auto &Values = State.Values;
     const auto &Block = Function.Blocks[Index];
     va_t PreviousAddress = InvalidVA;
     auto Read = [&](const NdVar &V) -> std::optional<Value> {
@@ -379,15 +483,65 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       return It == Values.end() ? std::nullopt
                                 : std::optional<Value>(It->second);
     };
-    auto Clobber = [&](bool KnownABI) {
+    auto Clobber = [&](const SourceFunctionTypeHint *Signature) {
+      const bool KnownABI = Signature && Signature->HasExplicitABI;
+      if (!KnownABI) {
+        State.escapeFrame();
+      } else {
+        int64_t ArgumentBytes = 0;
+        const int64_t ReturnAddressBytes = Image.Arch == Arch::X64 ? 8 : 0;
+        auto CheckArgument = [&](const SourceABIValueLocation &Location) {
+          if (Location.Kind == SourceABICarrierKind::IntegerRegister ||
+              Location.Kind == SourceABICarrierKind::FloatingRegister) {
+            if (State.mayBeFrame(
+                    NdVar::reg(Location.RegisterOffset, Location.ValueBytes)))
+              State.escapeFrame();
+          } else if (Location.Kind == SourceABICarrierKind::Stack) {
+            const int64_t Begin =
+                Location.EntryStackOffset - ReturnAddressBytes;
+            if (Begin < 0 || Begin > 4096 || Location.ValueBytes > 4096 - Begin)
+              State.escapeFrame();
+            else
+              ArgumentBytes =
+                  std::max(ArgumentBytes, Begin + Location.ValueBytes);
+          }
+        };
+        for (const auto &Parameter : Signature->Parameters) {
+          CheckArgument(Parameter.Location);
+          for (const auto &Component : Parameter.Components)
+            CheckArgument(Component);
+        }
+        const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+        if (!Stack || Stack->TheKind != Value::Kind::Frame) {
+          State.FrameSlots.clear();
+        } else {
+          // Exclude outgoing argument storage and its alignment padding. The
+          // callee may also overwrite everything below the current call SP.
+          const auto Begin = static_cast<int64_t>(Stack->Number) +
+                             ((ArgumentBytes + 15) & -int64_t(16));
+          for (auto It = State.FrameSlots.begin();
+               It != State.FrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.FrameSlots.erase(It);
+            else
+              ++It;
+        }
+      }
       for (auto It = Values.begin(); It != Values.end();) {
         const auto &[Space, Offset, Size] = It->first;
         if (!KnownABI || Space != VnodeSpace::REG ||
-            !TRI.isCallPreserved(Offset, Size))
+            (!(Offset == TRI.StackPointer && Size == 8) &&
+             !TRI.isCallPreserved(Offset, Size)))
           It = Values.erase(It);
         else
           ++It;
       }
+      for (auto It = State.FrameBytes.begin(); It != State.FrameBytes.end();)
+        if (!KnownABI || It->first != VnodeSpace::REG ||
+            !PreservedBytes.count(It->second))
+          It = State.FrameBytes.erase(It);
+        else
+          ++It;
     };
     for (const auto &Op : Block.Ops) {
       if (Op.Addr != PreviousAddress) {
@@ -396,15 +550,20 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             It = Values.erase(It);
           else
             ++It;
+        for (auto It = State.FrameBytes.begin(); It != State.FrameBytes.end();)
+          if (It->first == VnodeSpace::TEMP)
+            It = State.FrameBytes.erase(It);
+          else
+            ++It;
         PreviousAddress = Op.Addr;
       }
       if (Op.Opcode == NdOp::INTRINSIC) {
-        Clobber(false);
+        Clobber(nullptr);
         continue;
       }
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         if (CallOccurrences.at(Op.Addr) != 1) {
-          Clobber(false);
+          Clobber(nullptr);
           continue;
         }
         std::optional<Dispatch> Target;
@@ -485,7 +644,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                       Value{Value::Kind::Receiver, 0, {}, std::move(Type)};
               }
             }
-            Clobber(true);
+            Clobber(&Signature);
             if (ReturnedReceiver)
               Values.emplace(key(NdVar::reg(Return.RegisterOffset, 8)),
                              std::move(*ReturnedReceiver));
@@ -498,7 +657,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         // Objective-C message dispatch.
         if (Target && Target->Name != "objc_msgSend" &&
             Target->Name != "objc_msgSendSuper2") {
-          Clobber(false);
+          Clobber(nullptr);
           continue;
         }
         if (Target && Target->Selector.empty()) {
@@ -578,7 +737,7 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Bound->second.Receiver)
           ReturnedReceiver = objcReceiverCallResultTypeHint(
               Image, *Bound->second.Receiver, Bound->second.Selector);
-        Clobber(Bound != BlockHints.end());
+        Clobber(Bound != BlockHints.end() ? &Bound->second.Signature : nullptr);
         if (ReturnedReceiver) {
           const auto &Location = Bound->second.Signature.ReturnLocation;
           if (Location.Kind == SourceABICarrierKind::IntegerRegister &&
@@ -590,6 +749,44 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         }
         continue;
       }
+      const bool PlainMemory =
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      if (Op.Opcode == NdOp::STORE) {
+        if (Op.NumInputs == 2 && State.mayBeFrame(Op.Inputs[1]))
+          State.escapeFrame();
+        const auto Address = Op.NumInputs == 2 && PlainMemory
+                                 ? Read(Op.Inputs[0])
+                                 : std::nullopt;
+        const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+        if (!Address || Address->TheKind != Value::Kind::Frame || !Stack ||
+            Stack->TheKind != Value::Kind::Frame) {
+          State.FrameSlots.clear();
+        } else if (!State.FrameEscaped) {
+          const auto Offset = static_cast<int64_t>(Address->Number);
+          const auto Size = Op.Inputs[1].Size;
+          State.invalidateFrameRange(Offset, Size);
+          const auto Stored = Read(Op.Inputs[1]);
+          if (Stored && Size && Size <= 8 &&
+              Offset >= static_cast<int64_t>(Stack->Number) &&
+              Offset <= -static_cast<int64_t>(Size))
+            State.FrameSlots[{Offset, Size}] = *Stored;
+        }
+        if (State.FrameSlots.size() > 4096)
+          return std::nullopt;
+        continue;
+      }
+      if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
+        State.FrameSlots.clear();
+        for (unsigned I = 1; I < Op.NumInputs; ++I)
+          if (State.mayBeFrame(Op.Inputs[I]))
+            State.escapeFrame();
+      }
+      bool FrameDerived = false;
+      if (Op.Opcode != NdOp::LOAD)
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          FrameDerived |= State.mayBeFrame(Op.Inputs[I]);
       std::optional<Value> Out;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
         Out = Read(Op.Inputs[0]);
@@ -608,8 +805,17 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                  Op.NumInputs == 2) {
         auto A = Read(Op.Inputs[0]);
         auto B = Read(Op.Inputs[1]);
-        if (A && B && A->TheKind == Value::Kind::Number &&
-            B->TheKind == Value::Kind::Number)
+        if (A && B && Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
+            Op.Inputs[1].Size == 8 &&
+            ((A->TheKind == Value::Kind::Frame &&
+              B->TheKind == Value::Kind::Number) ||
+             (Op.Opcode == NdOp::INT_ADD && B->TheKind == Value::Kind::Frame &&
+              A->TheKind == Value::Kind::Number))) {
+          if (B->TheKind == Value::Kind::Frame)
+            std::swap(A, B);
+          Out = adjustedFrame(*A, B->Number, Op.Opcode == NdOp::INT_SUB);
+        } else if (A && B && A->TheKind == Value::Kind::Number &&
+                   B->TheKind == Value::Kind::Number)
           Out = Value{Value::Kind::Number,
                       Op.Opcode == NdOp::INT_ADD ? A->Number + B->Number
                                                  : A->Number - B->Number,
@@ -631,8 +837,14 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         }
       } else if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
         auto Address = Read(Op.Inputs[0]);
-        if (Address && Address->TheKind == Value::Kind::FieldAddress &&
-            Op.Output.Size == 8 && Address->Object)
+        if (Address && Address->TheKind == Value::Kind::Frame && PlainMemory &&
+            !State.FrameEscaped) {
+          const auto Found = State.FrameSlots.find(
+              {static_cast<int64_t>(Address->Number), Op.Output.Size});
+          if (Found != State.FrameSlots.end())
+            Out = Found->second;
+        } else if (Address && Address->TheKind == Value::Kind::FieldAddress &&
+                   Op.Output.Size == 8 && Address->Object)
           Out = Value{Value::Kind::Receiver, 0, {}, Address->Object};
         else if (Address && Address->TheKind == Value::Kind::Receiver &&
                  Op.Output.Size == 8) {
@@ -673,6 +885,8 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       }
       if (!Op.Output.Size)
         continue;
+      if (!State.writeFrameBytes(Op.Output, FrameDerived))
+        return std::nullopt;
       // Kill all overlapping physical aliases, not just the queried width.
       for (auto It = Values.begin(); It != Values.end();)
         if (std::get<0>(It->first) == Op.Output.Space &&
@@ -694,13 +908,33 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         if (Values.size() > 4096)
           return std::nullopt;
       }
+      if (Op.Output.isReg() && Op.Output.Offset < TRI.StackPointer + 8 &&
+          TRI.StackPointer < Op.Output.Offset + Op.Output.Size) {
+        const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+        if (!Stack || Stack->TheKind != Value::Kind::Frame) {
+          State.FrameSlots.clear();
+        } else {
+          const auto Begin = static_cast<int64_t>(Stack->Number);
+          for (auto It = State.FrameSlots.begin();
+               It != State.FrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.FrameSlots.erase(It);
+            else
+              ++It;
+        }
+      }
     }
     for (auto It = Values.begin(); It != Values.end();)
       if (std::get<0>(It->first) == VnodeSpace::TEMP)
         It = Values.erase(It);
       else
         ++It;
-    return Values;
+    for (auto It = State.FrameBytes.begin(); It != State.FrameBytes.end();)
+      if (It->first == VnodeSpace::TEMP)
+        It = State.FrameBytes.erase(It);
+      else
+        ++It;
+    return State;
   };
   std::vector<std::optional<Facts>> Exits(Count);
   std::vector<Hints> Bindings(Count);
@@ -731,17 +965,13 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         Incoming = *Exits[Parent];
         Initialized = true;
       } else {
-        for (auto It = Incoming.begin(); It != Incoming.end();) {
-          const auto Found = Exits[Parent]->find(It->first);
-          if (Found == Exits[Parent]->end() || !(It->second == Found->second))
-            It = Incoming.erase(It);
-          else
-            ++It;
-        }
+        Incoming.merge(*Exits[Parent]);
       }
     }
     if (!Initialized)
       continue;
+    if (Incoming.FrameBytes.size() > 4096)
+      return {};
     Bindings[Index].clear();
     auto Out = Transfer(Index, std::move(Incoming), Bindings[Index]);
     if (!Out)

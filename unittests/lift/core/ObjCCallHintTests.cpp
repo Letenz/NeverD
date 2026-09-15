@@ -4036,3 +4036,245 @@ TEST(ObjCCallHints, SharedFrameworkReceiverHierarchyKeepsConflictingEvidence) {
     EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
   }
 }
+
+namespace {
+LowFunc frameSelectorCaller(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+  const auto Frame = NdVar::reg(TRI.FramePointer, 8);
+  const auto Selector = NdVar::reg(TRI.IntParamRegs[1], 8);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1260;
+  Block.Ops = {
+      operation(NdOp::INT_SUB, Stack, {Stack, NdVar::cst(64, 8)}, 0x1200),
+      operation(NdOp::COPY, Frame, {Stack}, 0x1204),
+      operation(NdOp::LOAD, Selector, {NdVar::cst(0x2100, 8)}, 0x1208),
+      operation(NdOp::INT_ADD, NdVar::tmp(0, 8), {Frame, NdVar::cst(16, 8)},
+                0x120c),
+      operation(NdOp::STORE, {}, {NdVar::tmp(0, 8), Selector}, 0x120c),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2200, 8)}, 0x1240),
+      operation(NdOp::INT_ADD, NdVar::tmp(0, 8), {Frame, NdVar::cst(16, 8)},
+                0x1248),
+      operation(NdOp::LOAD, Selector, {NdVar::tmp(0, 8)}, 0x1248),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1250),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 4)}, 0x1258)};
+  Function.Blocks.push_back(std::move(Block));
+  return Function;
+}
+} // namespace
+
+TEST(ObjCCallHints, PrivateFrameSelectorSurvivesADeclaredCall) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ImportPtrSlots[0x2200] = "_objc_retain";
+    const auto Function = frameSelectorCaller(Architecture);
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_EQ(Hints.size(), 2U);
+    EXPECT_EQ(Hints.at(0x1250).Selector, "scale:");
+    const auto Med = convert(Image, Function);
+    ASSERT_EQ(Med.CallInfos.size(), 2U);
+    EXPECT_TRUE(Med.CallInfos.back().SourceCallHint);
+  }
+}
+
+TEST(ObjCCallHints, FrameSelectorsRejectEscapesOverwritesAndUnknownCalls) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 8; ++Case) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_retain";
+      auto Function = frameSelectorCaller(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Frame = NdVar::reg(TRI.FramePointer, 8);
+      if (Case == 0) {
+        Ops[5].Inputs[0] = NdVar::cst(0x2210, 8);
+      } else if (Case == 1) {
+        Ops.insert(Ops.begin() + 5,
+                   operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                             {Frame}, 0x1230));
+      } else if (Case == 2) {
+        Ops.insert(Ops.begin() + 5,
+                   {operation(NdOp::INT_ADD, NdVar::tmp(0, 8),
+                              {Frame, NdVar::cst(19, 8)}, 0x1230),
+                    operation(NdOp::STORE, {},
+                              {NdVar::tmp(0, 8), NdVar::cst(0, 1)}, 0x1230)});
+      } else if (Case == 3) {
+        Ops[4].MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      } else if (Case == 4) {
+        Ops.insert(
+            Ops.begin() + 5,
+            operation(NdOp::STORE, {},
+                      {NdVar::reg(TRI.IntParamRegs[0], 8), NdVar::cst(0, 8)},
+                      0x1230));
+      } else {
+        const auto Opcode = Case == 5   ? NdOp::ATOMIC_XCHG
+                            : Case == 6 ? NdOp::ATOMIC_ADD
+                                        : NdOp::ATOMIC_CMPXCHG;
+        auto Atomic = operation(Opcode, NdVar::tmp(1, 8),
+                                {NdVar::tmp(0, 8), NdVar::cst(0, 8)}, 0x1230);
+        Atomic.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+        if (Case == 7) {
+          Atomic.NumInputs = 3;
+          Atomic.Inputs[2] = NdVar::cst(1, 8);
+        }
+        Ops.insert(Ops.begin() + 5,
+                   {operation(NdOp::INT_ADD, NdVar::tmp(0, 8),
+                              {Frame, NdVar::cst(16, 8)}, 0x1230),
+                    Atomic});
+      }
+      EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1250))
+          << "case " << Case;
+    }
+}
+
+TEST(ObjCCallHints, FrameSelectorJoinsRequireEveryIncomingStore) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_retain";
+      const auto Base = frameSelectorCaller(Architecture);
+      const auto &Ops = Base.Blocks.front().Ops;
+      std::vector<LowBlock> Blocks(4);
+      for (unsigned I = 0; I < 4; ++I) {
+        Blocks[I].Id = I;
+        Blocks[I].StartAddr = 0x1200 + I * 16;
+        Blocks[I].EndAddr = Blocks[I].StartAddr + 16;
+      }
+      Blocks[0].Ops.assign(Ops.begin(), Ops.begin() + 3);
+      Blocks[0].Succs = {1, 2};
+      for (unsigned I : {1U, 2U}) {
+        Blocks[I].Preds = {0};
+        Blocks[I].Succs = {3};
+        Blocks[I].Ops.assign(Ops.begin() + 3, Ops.begin() + 5);
+        for (auto &Op : Blocks[I].Ops)
+          Op.Addr = Blocks[I].StartAddr;
+      }
+      if (Case == 1)
+        Blocks[2].Ops.clear();
+      else if (Case == 2)
+        Blocks[2].Ops.back().Inputs[1] = NdVar::cst(7, 8);
+      Blocks[3].Preds = {1, 2};
+      Blocks[3].Ops.assign(Ops.begin() + 5, Ops.end());
+      std::vector<unsigned> Order{0, 1, 2, 3};
+      do {
+        auto Function = Base;
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1250), Case == 0 ? 1U : 0U) << Case;
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+}
+
+TEST(ObjCCallHints, PossibleFrameEscapesSurviveJoinsAndPartialAliases) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool FullOverwrite : {false, true}) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_retain";
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Carrier = NdVar::reg(preservedFactRegister(Architecture), 8);
+      auto Function = frameSelectorCaller(Architecture);
+      const auto Ops = Function.Blocks.front().Ops;
+      Function.Blocks.resize(4);
+      for (unsigned I = 0; I < 4; ++I) {
+        Function.Blocks[I].Id = I;
+        Function.Blocks[I].StartAddr = 0x1200 + I * 16;
+        Function.Blocks[I].EndAddr = Function.Blocks[I].StartAddr + 16;
+      }
+      auto &Entry = Function.Blocks[0];
+      Entry.Ops.assign(Ops.begin(), Ops.begin() + 5);
+      Entry.Succs = {1, 2};
+      auto &Left = Function.Blocks[1];
+      Left.Preds = {0};
+      Left.Succs = {3};
+      Left.Ops = {operation(NdOp::COPY, Carrier,
+                            {NdVar::reg(TRI.FramePointer, 8)}, 0x1210),
+                  operation(NdOp::INT_XOR, Carrier, {Carrier, NdVar::cst(1, 8)},
+                            0x1214),
+                  operation(NdOp::COPY,
+                            NdVar::reg(Carrier.Offset, FullOverwrite ? 8 : 1),
+                            {NdVar::cst(0, FullOverwrite ? 8 : 1)}, 0x1218)};
+      auto &Right = Function.Blocks[2];
+      Right.Preds = {0};
+      Right.Succs = {3};
+      Right.Ops = {operation(NdOp::COPY, Carrier, {NdVar::cst(0, 8)}, 0x1220)};
+      auto &Join = Function.Blocks[3];
+      Join.Preds = {1, 2};
+      Join.Ops.assign(Ops.begin() + 5, Ops.end());
+      Join.Ops.insert(Join.Ops.begin(),
+                      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                                {Carrier}, 0x1230));
+      const auto Blocks = Function.Blocks;
+      std::vector<unsigned> Order{0, 1, 2, 3};
+      do {
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Hints = buildObjCSourceCallHints(Image, Function);
+        EXPECT_EQ(Hints.count(0x1250), FullOverwrite ? 1U : 0U);
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+}
+
+TEST(ObjCCallHints, FrameSlotsExcludeOutgoingArgumentsAndDeallocatedStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Case = 0; Case < 3; ++Case) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_retain";
+      auto Function = frameSelectorCaller(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      const auto Stack =
+          NdVar::reg(getTargetRegInfo(Architecture).StackPointer, 8);
+      if (Case == 1) {
+        Image.ObjCMethods.front().TypeHint = signature(Architecture, 16);
+        Ops[5].Inputs[0] = NdVar::cst(0x2180, 8);
+      } else if (Case == 2) {
+        Ops.insert(Ops.begin() + 5,
+                   {operation(NdOp::INT_ADD, Stack, {Stack, NdVar::cst(64, 8)},
+                              0x1230),
+                    operation(NdOp::INT_SUB, Stack, {Stack, NdVar::cst(64, 8)},
+                              0x1234)});
+      }
+      EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1250),
+                Case == 0 ? 1U : 0U)
+          << Case;
+    }
+}
+
+TEST(ObjCCallHints, FrameBackedgesRevokeProvisionalSpillBindings) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Overwrite : {false, true}) {
+      auto Image = image(Architecture);
+      Image.ImportPtrSlots[0x2200] = "_objc_retain";
+      auto Function = frameSelectorCaller(Architecture);
+      const auto Ops = Function.Blocks.front().Ops;
+      Function.Blocks.front().Ops.assign(Ops.begin(), Ops.begin() + 5);
+      Function.Blocks.front().Succs = {1};
+      LowBlock Loop;
+      Loop.Id = 1;
+      Loop.StartAddr = 0x1240;
+      Loop.EndAddr = 0x1260;
+      Loop.Preds = {0, 1};
+      Loop.Succs = {1};
+      Loop.Ops.assign(Ops.begin() + 5, Ops.end() - 1);
+      if (Overwrite) {
+        const auto Frame =
+            NdVar::reg(getTargetRegInfo(Architecture).FramePointer, 8);
+        Loop.Ops.push_back(operation(NdOp::INT_ADD, NdVar::tmp(0, 8),
+                                     {Frame, NdVar::cst(16, 8)}, 0x1258));
+        Loop.Ops.push_back(operation(
+            NdOp::STORE, {}, {NdVar::tmp(0, 8), NdVar::cst(0, 8)}, 0x1258));
+      }
+      Function.Blocks.push_back(Loop);
+      EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1250),
+                Overwrite ? 0U : 1U);
+      std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+      EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1250),
+                Overwrite ? 0U : 1U);
+    }
+}

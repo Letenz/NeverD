@@ -156,6 +156,7 @@ public:
   std::map<std::string, bool> SourceCallTermination;
   std::set<std::string> ConflictingSourceNativeSignatures;
   std::map<std::string, unsigned> MemoryTypes;
+  std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
       AtomicLoadTypes;

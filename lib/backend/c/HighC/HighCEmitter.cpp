@@ -33,6 +33,20 @@ namespace neverd {
 
 namespace {
 
+unsigned partialIntegerBytes(const TypeRef &Type) {
+  if (!Type ||
+      (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Unknown))
+    return 0;
+  const unsigned Size = Type->Size;
+  return Size && (Size & (Size - 1)) ? Size : 0;
+}
+
+void validateAtomicIntegerWidth(const TypeRef &Type) {
+  if (partialIntegerBytes(Type))
+    llvm::report_fatal_error(
+        "HighC atomic access requires a supported machine width");
+}
+
 const char *memoryOrderingName(NdMemoryOrdering Ordering) {
   switch (Ordering) {
   case NdMemoryOrdering::None:
@@ -213,6 +227,7 @@ std::string HighCWriter::memoryTypeName(const TypeRef &Ty) const {
 
 void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
+  PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
   AtomicStoreTypes.clear();
@@ -224,6 +239,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   const bool ProjectsScalarWideIntegers =
       Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64;
   auto CollectWideType = [&](const TypeRef &Type) {
+    if (const unsigned Bytes = partialIntegerBytes(Type))
+      PartialIntegerBytes.emplace(typeToC(Type), Bytes);
     Has256BitInteger |= ProjectsScalarWideIntegers && Type &&
                         Type->Kind == NdTypeKind::Int && Type->Size == 32;
     Has512BitInteger |= ProjectsScalarWideIntegers && Type &&
@@ -234,6 +251,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (!Seen.insert(&E).second)
       return;
     CollectWideType(E.Type);
+    CollectWideType(E.CastTo);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
       HasSegmentedMemory = true;
@@ -327,45 +345,82 @@ void HighCWriter::writeMemoryHelpers() {
           "spaces\"\n"
           "#endif\n\n";
 
-  for (const auto &[Type, Index] : MemoryTypes) {
-    OS << "static inline " << Type << " neverd_mem_load_" << Index
-       << "(uintptr_t address) {\n"
-       << "    " << Type << " value;\n"
-       << "    memcpy(&value, (const void *)address, sizeof(value));\n"
-       << "    return value;\n"
-       << "}\n\n"
-       << "static inline " << Type << " neverd_mem_store_" << Index
-       << "(uintptr_t address, " << Type << " value) {\n"
-       << "    memcpy((void *)address, &value, sizeof(value));\n"
-       << "    return value;\n"
-       << "}\n\n";
-  }
-
+  auto WriteHelpers = [&](const std::string &Type, unsigned Index,
+                          NdMemoryAddressSpace AddressSpace) {
+    const auto ReadPtr =
+        AddressSpace == NdMemoryAddressSpace::Default
+            ? "(const void *)address"
+            : memoryPointerCast(Type, "address", AddressSpace, true);
+    const auto WritePtr =
+        AddressSpace == NdMemoryAddressSpace::Default
+            ? "(void *)address"
+            : memoryPointerCast(Type, "address", AddressSpace, false);
+    const auto Partial = PartialIntegerBytes.find(Type);
+    const bool ExactBytes = Partial != PartialIntegerBytes.end();
+    const auto Copy = AddressSpace == NdMemoryAddressSpace::Default
+                          ? "memcpy"
+                          : "__builtin_memcpy";
+    const auto LoadName =
+        memoryHelperName("load", Index, NdMemoryOrdering::None, AddressSpace);
+    const auto StoreName =
+        memoryHelperName("store", Index, NdMemoryOrdering::None, AddressSpace);
+    // A bit-precise integer can have object padding. Assemble its numeric
+    // value from exactly the IR bytes instead of copying sizeof(_BitInt(N)).
+    // The generated C uses its target's native memory byte order, just as the
+    // ordinary scalar helpers do, without depending on bit-integer layout.
+    auto WriteByteIndex = [&](unsigned Bytes) {
+      OS << "#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__\n"
+         << "        unsigned shift = i * 8;\n"
+         << "#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__\n"
+         << "        unsigned shift = (" << Bytes << " - 1 - i) * 8;\n"
+         << "#else\n#error \"unsupported target byte order\"\n#endif\n";
+    };
+    OS << "static inline " << Type << " " << LoadName
+       << "(uintptr_t address) {\n";
+    if (ExactBytes) {
+      const unsigned Bytes = Partial->second;
+      const auto Unsigned = typeToC(NdType::makeInt(Bytes, false));
+      OS << "    unsigned char bytes[" << Bytes << "];\n"
+         << "    " << Copy << "(bytes, " << ReadPtr << ", " << Bytes << ");\n"
+         << "    " << Unsigned << " bits = 0;\n"
+         << "    for (unsigned i = 0; i < " << Bytes << "; ++i) {\n";
+      WriteByteIndex(Bytes);
+      OS << "        bits |= (" << Unsigned << ")bytes[i] << shift;\n"
+         << "    }\n"
+         << "    return __builtin_bit_cast(" << Type << ", bits);\n";
+    } else {
+      OS << "    " << Type << " value;\n"
+         << "    " << Copy << "(&value, " << ReadPtr << ", sizeof(value));\n"
+         << "    return value;\n";
+    }
+    OS << "}\n\nstatic inline " << Type << " " << StoreName
+       << "(uintptr_t address, " << Type << " value) {\n";
+    if (ExactBytes) {
+      const unsigned Bytes = Partial->second;
+      const auto Unsigned = typeToC(NdType::makeInt(Bytes, false));
+      OS << "    unsigned char bytes[" << Bytes << "];\n"
+         << "    " << Unsigned << " bits = (" << Unsigned << ")value;\n"
+         << "    for (unsigned i = 0; i < " << Bytes << "; ++i) {\n";
+      WriteByteIndex(Bytes);
+      OS << "        bytes[i] = (unsigned char)(bits >> shift);\n"
+         << "    }\n"
+         << "    " << Copy << "(" << WritePtr << ", bytes, " << Bytes << ");\n";
+    } else {
+      OS << "    " << Copy << "(" << WritePtr << ", &value, sizeof(value));\n";
+    }
+    OS << "    return value;\n}\n\n";
+  };
+  for (const auto &[Type, Index] : MemoryTypes)
+    WriteHelpers(Type, Index, NdMemoryAddressSpace::Default);
   for (const auto &[Type, AddressSpace] : SegmentedMemoryTypes) {
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-    const unsigned Index = MemoryTypes.at(Type);
-    const std::string LoadName =
-        memoryHelperName("load", Index, NdMemoryOrdering::None, AddressSpace);
-    const std::string StoreName =
-        memoryHelperName("store", Index, NdMemoryOrdering::None, AddressSpace);
-    const std::string ReadPtr =
-        memoryPointerCast(Type, "address", AddressSpace, true);
-    const std::string WritePtr =
-        memoryPointerCast(Type, "address", AddressSpace, false);
-    OS << "static inline " << Type << " " << LoadName
-       << "(uintptr_t address) {\n"
-       << "    " << Type << " value;\n"
-       << "    __builtin_memcpy(&value, " << ReadPtr << ", sizeof(value));\n"
-       << "    return value;\n"
-       << "}\n\n"
-       << "static inline " << Type << " " << StoreName << "(uintptr_t address, "
-       << Type << " value) {\n"
-       << "    __builtin_memcpy(" << WritePtr << ", &value, sizeof(value));\n"
-       << "    return value;\n"
-       << "}\n\n";
+    WriteHelpers(Type, MemoryTypes.at(Type), AddressSpace);
   }
 
   for (const auto &[Type, Ordering, AddressSpace] : AtomicLoadTypes) {
+    if (PartialIntegerBytes.count(Type))
+      llvm::report_fatal_error(
+          "HighC atomic access requires a supported machine width");
     validateAtomicLoadOrdering(Ordering);
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
     unsigned Index = MemoryTypes.at(Type);
@@ -379,6 +434,9 @@ void HighCWriter::writeMemoryHelpers() {
   }
 
   for (const auto &[Type, Ordering, AddressSpace] : AtomicStoreTypes) {
+    if (PartialIntegerBytes.count(Type))
+      llvm::report_fatal_error(
+          "HighC atomic access requires a supported machine width");
     validateAtomicStoreOrdering(Ordering);
     validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
     unsigned Index = MemoryTypes.at(Type);
@@ -437,6 +495,7 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                 NdMemoryAddressSpace AddressSpace) const {
   if (Ordering == NdMemoryOrdering::None)
     llvm::report_fatal_error("atomic exchange requires memory ordering");
+  validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
@@ -450,6 +509,7 @@ HighCWriter::atomicFetchAddExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                 NdMemoryAddressSpace AddressSpace) const {
   if (Ordering == NdMemoryOrdering::None)
     llvm::report_fatal_error("atomic fetch-add requires memory ordering");
+  validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
   return "__atomic_fetch_add(" +
@@ -464,6 +524,7 @@ std::string HighCWriter::atomicCompareExchangeExpr(
   if (Ordering == NdMemoryOrdering::None)
     llvm::report_fatal_error(
         "atomic compare-exchange requires memory ordering");
+  validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
   return "({ " + Type + " neverd_expected = (" + Type + ")(" + Expected.str() +

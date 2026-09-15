@@ -70,6 +70,7 @@ enum class RuntimeFixture {
   InvariantLoops,
   SwitchEffects,
   LoopEdges,
+  FrameSelectors,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -100,6 +101,7 @@ void verifyRuntime(bool Chained,
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
+  const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
   const bool InvariantLoops = FixtureKind == RuntimeFixture::InvariantLoops;
   const bool MetadataCalls = FixtureKind == RuntimeFixture::MetadataCalls;
@@ -155,6 +157,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
                         : SwitchEffects      ? "ObjCSwitchEffects.m"
                         : InvariantLoops     ? "ObjCInvariantLoops.m"
@@ -193,6 +196,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
                         : SwitchEffects     ? "ObjCSwitchEffectsHarness.m"
                         : InvariantLoops    ? "ObjCInvariantLoopsHarness.m"
@@ -375,6 +379,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
                              : SwitchEffects      ? 1U
                              : InvariantLoops     ? 2U
@@ -448,6 +453,8 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (FrameSelectors)
+    Remaining = {"removing:from:"};
   if (LoopEdges)
     Remaining = {"fold:seed:output:"};
   if (SwitchEffects)
@@ -633,6 +640,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
                   : SwitchEffects      ? "NDSwitchEffects"
                   : InvariantLoops     ? "NDInvariantLoops"
@@ -798,6 +806,7 @@ void verifyRuntime(bool Chained,
                                        : Foundation       ? 6U
                                        : SwiftLiterals    ? 2U
                                        : StoredStrings    ? 4U
+                                       : FrameSelectors   ? 1U
                                        : PredicateFormats ? 8U
                                                           : 0U) +
                                           StorageNames.size());
@@ -914,6 +923,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : FrameSelectors
+          ? "frame-selector-cases=20480\nstrings-and-identity=pass\n"
       : LoopEdges ? "loop-cases=65536\nreturns-and-stores=pass\n"
       : SwitchEffects
           ? "switch-cases=5632\nhash-effects=2816\nshared-targets=pass\n"
@@ -1550,6 +1561,16 @@ TEST(ObjCRuntimeSource, LoopContinuationsPreserveExitCopiesAndStores) {
 #ifdef __APPLE__
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::LoopEdges));
+#else
+  GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, PrivateFrameSelectorsPreserveStringsAndIdentity) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::FrameSelectors));
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C runtime";
 #endif

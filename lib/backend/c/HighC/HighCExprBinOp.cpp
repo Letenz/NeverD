@@ -108,8 +108,7 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
       E.Type && E.Type->Kind == NdTypeKind::Int) {
     const uint16_t Size = E.Type->Size;
     const auto IntegerWidth = [](uint16_t Width) {
-      return Width == 1 || Width == 2 || Width == 4 || Width == 8 ||
-             Width == 16;
+      return Width >= 1 && Width <= 16;
     };
     if (IntegerWidth(Size) && E.Operands[0]->Type && E.Operands[1]->Type &&
         E.Operands[0]->Type->Kind == NdTypeKind::Int &&
@@ -168,7 +167,7 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
   case NdOp::INT_RIGHT:
   case NdOp::INT_ASHR: {
     const uint16_t Size = E.Operands[0]->Type ? E.Operands[0]->Type->Size : 0;
-    if (Size != 1 && Size != 2 && Size != 4 && Size != 8 && Size != 16)
+    if (Size == 0 || Size > 16)
       break;
     const bool Arithmetic = E.Op == NdOp::INT_ASHR;
     const auto SourceType = typeToC(NdType::makeInt(Size, Arithmetic));
@@ -198,7 +197,7 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
   }
   case NdOp::INT_LEFT: {
     const uint16_t Size = E.Type ? E.Type->Size : 0;
-    if (Size != 1 && Size != 2 && Size != 4 && Size != 8 && Size != 16)
+    if (Size == 0 || Size > 16)
       break;
     const uint16_t SourceSize =
         E.Operands[0]->Type ? E.Operands[0]->Type->Size : Size;
