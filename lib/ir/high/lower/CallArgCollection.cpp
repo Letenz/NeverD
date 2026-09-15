@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -31,7 +32,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   const auto &Ops = CurBlock.Ops;
   if (CallIdx < Ops.size() && Ops[CallIdx].SourceCallHint) {
     const auto &Call = Ops[CallIdx];
-    const size_t Count = Call.SourceCallHint->Signature.Parameters.size();
+    const auto &Signature = Call.SourceCallHint->Signature;
+    const auto Bindings = sourceABIParameters(Signature);
+    const size_t Count = Signature.HasExplicitABI ? Bindings.size()
+                                                  : Signature.Parameters.size();
+    if (!Signature.HasExplicitABI &&
+        std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                    [](const auto &P) { return !P.Components.empty(); }))
+      return {};
     // These operands are the reaching SSA values bound before liveness and
     // register cleanup. A second register scan loses forwarded arguments,
     // independent FP carriers, and values supplied by a selector veneer.
@@ -39,8 +47,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
       return {};
     std::vector<ExprPtr> Arguments;
     Arguments.reserve(Count);
-    for (size_t Index = 0; Index < Count; ++Index)
-      Arguments.push_back(medvarToExpr(Call.Inputs[Index + 1]));
+    size_t Index = 0;
+    for (const auto &P : Signature.Parameters) {
+      if (P.Components.empty()) {
+        Arguments.push_back(medvarToExpr(Call.Inputs[++Index]));
+      } else {
+        std::vector<ExprPtr> Leaves;
+        for (const auto &Part : P.Components)
+          Leaves.push_back(
+              sourceFloatValue(Call.Inputs[++Index], Part.ValueBytes));
+        Arguments.push_back(HighExpr::makeRecord(P.Type, std::move(Leaves)));
+      }
+    }
     return Arguments;
   }
   constexpr int MaxArgs = 8;

@@ -19,6 +19,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/support/Diagnostic.h"
@@ -288,6 +289,19 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
   return It->second;
 }
 
+TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
+  if (Op.SourceCallHint) {
+    const auto &Signature = Op.SourceCallHint->Signature;
+    std::string Error;
+    if (Signature.ReturnType &&
+        Signature.ReturnType->Kind == NdTypeKind::Struct &&
+        Signature.ReturnType->Size == Op.Output.Size &&
+        validateSourceABI(Signature, Error))
+      return Signature.ReturnType;
+  }
+  return NdType::makeInt(Op.Output.Size, false);
+}
+
 ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   if (V.isConst()) {
     return HighExpr::makeConst(V.ConstVal, V.Size, V.Provenance,
@@ -295,20 +309,25 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   }
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
-    const auto Type = CurMed->TypedParams[Index].Type;
-    Parameter.Size = Type->Size;
-    if (CurMed->SourceTypeHint->HasExplicitABI &&
-        Index < CurMed->SourceTypeHint->Parameters.size()) {
-      const auto &Location = CurMed->SourceTypeHint->Parameters[Index].Location;
-      // MedIR uses RegOff == kNoParamReg to distinguish logical stack
-      // arguments during register recovery. RegOff and StackOff share storage;
-      // only the source-level expression carries the checked entry-SP offset.
-      if (Location.Kind == SourceABICarrierKind::Stack)
-        Parameter.StackOff = Location.EntryStackOffset;
-    }
-    auto Value = HighExpr::makeVar(Parameter, Type);
-    if (Type->Kind == NdTypeKind::Float)
-      return HighExpr::makeBitCast(Value, NdType::makeInt(Type->Size, false));
+    const auto &Bindings = SourceParameters;
+    if (Index >= Bindings.size())
+      return HighExpr::makeUndef(V.Size);
+    const auto &Binding = Bindings[Index];
+    const auto &Declared =
+        CurMed->SourceTypeHint->Parameters[Binding.ParameterIndex];
+    Parameter.Id = static_cast<int>(Binding.ParameterIndex);
+    Parameter.Size = Declared.Type->Size;
+    if (!Declared.Components.empty())
+      Parameter.RegOff = 0; // Logical record, not any one of its carriers.
+    else if (Binding.Location.Kind == SourceABICarrierKind::Stack)
+      Parameter.StackOff = Binding.Location.EntryStackOffset;
+    auto Value = HighExpr::makeVar(Parameter, Declared.Type);
+    if (!Declared.Components.empty())
+      Value = HighExpr::makeRecordField(Value, Binding.ByteOffset,
+                                        Binding.Type->Size);
+    if (Binding.Type->Kind == NdTypeKind::Float)
+      return HighExpr::makeBitCast(Value,
+                                   NdType::makeInt(Binding.Type->Size, false));
     return Value;
   };
   if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
@@ -330,6 +349,10 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       return HighExpr::makeVar(Param, Type);
     }
   }
+
+  if (auto It = SourceRecordValues.find(varKey(V));
+      It != SourceRecordValues.end() && V.Size == It->second->Size)
+    return HighExpr::makeVar(V, It->second);
 
   if (CurMed) {
     if (const MedCallClobber *Clobber = findCallClobber(*CurMed, V)) {
@@ -370,6 +393,11 @@ ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
   if (!Value->Type || ByteOffset > Value->Type->Size ||
       Bytes > Value->Type->Size - ByteOffset)
     return HighExpr::makeUndef(Bytes);
+  if (Value->Type->Kind == NdTypeKind::Struct)
+    return HighExpr::makeBitCast(
+        HighExpr::makeRecordField(Value, static_cast<uint16_t>(ByteOffset),
+                                  Bytes),
+        NdType::makeInt(Bytes, false));
   if (Value->Kind == ExprKind::BinOp && Value->Operands.size() >= 2) {
     if (Value->Op == NdOp::CONCAT && Value->Operands[1] &&
         Value->Operands[1]->Type) {
@@ -448,6 +476,15 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
 void MedToHighConverter::buildExpressions(const MedFunc &Med) {
   UseCount.clear();
   DefExpr.clear();
+  SourceRecordValues.clear();
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          Op.Output.Size) {
+        const auto Type = sourceCallResultType(Op);
+        if (Type->Kind == NdTypeKind::Struct)
+          SourceRecordValues.emplace(varKey(Op.Output), Type);
+      }
   CallOutputs.clear();
   PhiOutputVars.clear();
   MemoryReadOutputs.clear();
@@ -530,6 +567,9 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   auto TStart = std::chrono::steady_clock::now();
   TargetArch = TheArch;
   CurMed = &Med;
+  SourceParameters = Med.SourceTypeHint
+                         ? sourceABIParameters(*Med.SourceTypeHint)
+                         : std::vector<SourceABIParameter>{};
   HighFunc Func;
   Func.Entry = Med.Entry;
   Func.FrameSize = Med.FrameSize;
@@ -552,20 +592,24 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   auto PtrParamRegOffs = detectPtrParamRegs(Med);
   const auto &TRI = getTargetRegInfo(TheArch);
 
-  for (size_t PI = 0; PI < Med.Params.size(); ++PI) {
-    auto &MP = Med.Params[PI];
-    HighParam HP;
-    HP.Name = "arg" + std::to_string(PI);
-    if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
-      HP.Name = Med.TypedParams[PI].Name;
-      HP.Type = Med.TypedParams[PI].Type;
-    } else if (PtrParamRegOffs.count(MP.RegOff) &&
-               !TRI.isFrameOrLinkReg(MP.RegOff))
-      HP.Type = NdType::makePtr();
-    else
-      HP.Type = NdType::makeInt(MP.Size);
-    Func.Params.push_back(HP);
-  }
+  if (Med.SourceTypeHint) {
+    for (const auto &P : Med.SourceTypeHint->Parameters)
+      Func.Params.push_back({P.Name, P.Type});
+  } else
+    for (size_t PI = 0; PI < Med.Params.size(); ++PI) {
+      auto &MP = Med.Params[PI];
+      HighParam HP;
+      HP.Name = "arg" + std::to_string(PI);
+      if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
+        HP.Name = Med.TypedParams[PI].Name;
+        HP.Type = Med.TypedParams[PI].Type;
+      } else if (PtrParamRegOffs.count(MP.RegOff) &&
+                 !TRI.isFrameOrLinkReg(MP.RegOff))
+        HP.Type = NdType::makePtr();
+      else
+        HP.Type = NdType::makeInt(MP.Size);
+      Func.Params.push_back(HP);
+    }
 
   auto TExpr = std::chrono::steady_clock::now();
   buildExpressions(Med);

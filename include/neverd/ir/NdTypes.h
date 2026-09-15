@@ -44,6 +44,12 @@ struct NdType {
   uint32_t ArrayCount = 0;
   std::shared_ptr<NdType> ElemType;
 
+  /// Natural record layout for source projection. Member names are not
+  /// recovered; the ordered types and byte offsets define structural identity.
+  std::vector<std::shared_ptr<NdType>> Fields;
+  std::vector<uint16_t> FieldOffsets;
+  uint16_t Alignment = 0;
+
   /// For Func
   std::shared_ptr<NdType> RetType;
   std::vector<std::shared_ptr<NdType>> ParamTypes;
@@ -74,6 +80,10 @@ struct NdType {
     T->Pointee = Pt ? Pt : makeInt(1, false);
     return T;
   }
+  /// Construct a bounded naturally aligned record. Unsupported, cyclic or
+  /// malformed member layouts return null rather than guessing padding.
+  static std::shared_ptr<NdType>
+  makeStruct(std::vector<std::shared_ptr<NdType>> Fields);
   /// A fixed ordinary C function type. Calling-convention-specific source
   /// declarations require separate ABI evidence and must not use this type.
   static std::shared_ptr<NdType>

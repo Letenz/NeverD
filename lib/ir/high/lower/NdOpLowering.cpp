@@ -136,13 +136,17 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   auto CallExpr = HighExpr::makeCall(Callee, Target, std::move(Args));
   CallExpr->SourceCallHint = CurOp.SourceCallHint;
   if (CurOp.SourceCallHint && CurOp.Output.Size)
-    CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
+    CallExpr->Type = sourceCallResultType(CurOp);
 
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Addr = CurOp.Addr;
-    S.Dst = HighExpr::makeVar(CurOp.Output);
+    S.Dst = HighExpr::makeVar(CurOp.Output,
+                              CallExpr->Type &&
+                                      CallExpr->Type->Kind == NdTypeKind::Struct
+                                  ? CallExpr->Type
+                                  : nullptr);
     S.Val = CallExpr;
     Func.Body.push_back(std::move(S));
   } else {

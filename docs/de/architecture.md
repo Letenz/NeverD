@@ -567,3 +567,5 @@ Halten Sie Änderungen eng. Dateien, die eine Darstellung definieren, dürfen si
 mit ihren Transformationen ändern; unbeteiligte Loader, Lifter und Backends
 sollen nicht nur für ein einheitliches Erscheinungsbild eines großen
 Refactorings geändert werden.
+
+Quelldeklarationen von Strukturen bewahren das Feldlayout getrennt von der ABI-Klassifikation. Darwin ARM64 unterstützt verschachtelte Strukturen mit ein bis vier gleichartigen float- oder double-Feldern; bei erschöpften FP-Registern liegt das gesamte Argument auf dem Stack. MedIR bindet jede physische Komponente vor SSA, HighIR rekonstruiert einen logischen Parameter oder Rückgabewert, und C prüft das Layout. Gemischte Typen, andere Architekturen und unvollständige Komponenten bleiben ausdrücklich unzulässig; diese Hinweise erlauben kein Umschreiben von Binärdateien.

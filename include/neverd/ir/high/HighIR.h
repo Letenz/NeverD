@@ -74,7 +74,9 @@ enum class ExprKind : uint8_t {
   /// Reinterpret the bits of Operands[0] as Type. Both scalar types have the
   /// same byte size; this never performs an integer/floating numeric
   /// conversion.
-  BitCast
+  BitCast,
+  /// One naturally laid-out source record, with one operand per direct field.
+  Record
 };
 
 struct HighExpr {
@@ -122,6 +124,12 @@ struct HighExpr {
   static std::shared_ptr<HighExpr> makeUndef(uint16_t Size);
   static std::shared_ptr<HighExpr> makeBitCast(std::shared_ptr<HighExpr> Value,
                                                TypeRef Type);
+  static std::shared_ptr<HighExpr>
+  makeRecord(TypeRef Type, std::vector<std::shared_ptr<HighExpr>> Leaves);
+  /// Select one complete leaf by layout offset. A partial field is unknown.
+  static std::shared_ptr<HighExpr>
+  makeRecordField(std::shared_ptr<HighExpr> Record, uint16_t Offset,
+                  uint16_t Bytes);
   static std::shared_ptr<HighExpr>
   makeBinop(NdOp Op, std::shared_ptr<HighExpr> L, std::shared_ptr<HighExpr> R);
   static std::shared_ptr<HighExpr> makeUnary(NdOp Op,

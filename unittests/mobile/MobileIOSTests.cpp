@@ -732,11 +732,14 @@ TEST(MobileIOSNative, OpaquePointeesUseTheLoaderTypeGrammar) {
   EXPECT_EQ(objcTypes("v40@0:8r^^{Image=}16^@\"NSObject\"24^rQ32"),
             (std::vector<std::string>{"void", "id", "SEL", "void * *", "id *",
                                       "unsigned long long *"}));
+  // Native C projection can describe records without inventing their original
+  // Objective-C typedef names. The wrapper/header grammar remains scalar.
+  EXPECT_TRUE(neverd::parseObjCMethodEncoding("value:", "q32@0:8{Image=dd}16"));
+  EXPECT_TRUE(objcTypes("q32@0:8{Image=dd}16").empty());
   for (const auto &type :
-       {std::string("{Image=dd}"), std::string("^{Image="),
-        std::string("^{=i}"), std::string("^{Image=\"bad\\name\"i}"),
-        std::string("^[i]"), std::string("^?"),
-        std::string(18, '^') + "{Image=}"}) {
+       {std::string("^{Image="), std::string("^{=i}"),
+        std::string("^{Image=\"bad\\name\"i}"), std::string("^[i]"),
+        std::string("^?"), std::string(18, '^') + "{Image=}"}) {
     const std::string encoding = "q24@0:8" + type + "16";
     EXPECT_FALSE(neverd::parseObjCMethodEncoding("value:", encoding));
     EXPECT_TRUE(objcTypes(encoding).empty());

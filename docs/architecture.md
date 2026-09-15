@@ -78,6 +78,15 @@ optional category class properties require the
 [image layout flag](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-abi.h).
 Unsupported property encodings and malformed lists remain explicit diagnostics.
 
+Source record declarations preserve natural field layout independently of ABI
+classification. The source ABI layer assigns Darwin ARM64 homogeneous floating
+records with one to four float or double leaves, including nested records and
+whole-record stack arguments after the FP bank is exhausted. MedIR binds each
+physical member before SSA; HighIR reconstructs one logical record parameter,
+call argument or result. Structural C declarations include layout assertions.
+Mixed records, unsupported architectures and incomplete component lists remain
+explicitly unsupported. Source record carriers never authorize binary rewriting.
+
 Objective-C receiver facts distinguish method-entry self from an exact class
 reference. All metadata records sharing an entry must agree before self is
 seeded. Full-width copies and ABI-preserved registers carry the fact through

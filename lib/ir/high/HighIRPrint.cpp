@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -146,6 +147,16 @@ std::string HighExpr::str() const {
     if (!Operands.empty() && CastTo)
       return "(" + CastTo->str() + ")" + Operands[0]->str();
     return "?cast?";
+  case ExprKind::Record: {
+    std::string Result = "record{";
+    for (const auto &Field : Operands)
+      Result += (Field ? Field->str() : "?") + ",";
+    return Result + "}";
+  }
+  case ExprKind::Field:
+    return Operands.size() == 1
+               ? Operands[0]->str() + ".field_" + std::to_string(ConstVal)
+               : "?field?";
   case ExprKind::BitCast:
     if (Operands.size() == 1 && Type)
       return "bitcast<" + Type->str() + ">(" + Operands[0]->str() + ")";
@@ -173,7 +184,15 @@ bool HighExpr::structuralEq(const HighExpr &Other) const {
     return false;
   if (MemoryAddressSpace != Other.MemoryAddressSpace)
     return false;
+  if ((Kind == ExprKind::Record || Kind == ExprKind::Field ||
+       (Type && Type->Kind == NdTypeKind::Struct)) &&
+      !equalSourceTypes(Type, Other.Type))
+    return false;
   switch (Kind) {
+  case ExprKind::Field:
+    if (ConstVal != Other.ConstVal)
+      return false;
+    break;
   case ExprKind::Var:
     return Var == Other.Var;
   case ExprKind::Const:

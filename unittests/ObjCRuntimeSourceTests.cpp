@@ -57,6 +57,7 @@ enum class RuntimeFixture {
   DynamicProperties,
   ReceiverTypes,
   ReceiverFields,
+  AggregateRecords,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -79,6 +80,7 @@ void verifyRuntime(bool Chained,
       FixtureKind == RuntimeFixture::DynamicProperties;
   const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
   const bool ReceiverFields = FixtureKind == RuntimeFixture::ReceiverFields;
+  const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -118,6 +120,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
+                        : AggregateRecords   ? "ObjCAggregateRecords.m"
                         : ReceiverFields     ? "ObjCReceiverFields.m"
                         : ReceiverTypes      ? "ObjCReceiverTypes.m"
                         : DynamicProperties  ? "ObjCDynamicProperties.m"
@@ -143,6 +146,7 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : Equality          ? "ObjCEqualityHarness.m"
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
+                        : AggregateRecords  ? "ObjCAggregateRecordsHarness.m"
                         : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
                         : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
@@ -294,6 +298,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : AggregateRecords   ? 8U
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
@@ -323,6 +328,10 @@ void verifyRuntime(bool Chained,
         "NDPointerReceiver-sharedValue", "NDPointerReceiver-readOwnValue",
         "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
         "NDTypedError-declaredCode"};
+  if (AggregateRecords)
+    Remaining = {
+        "pair:",         "quad:",   "rotate:", "throughCall:",
+        "scale:factor:", "floats:", "triple:", "stackA:b:c:d:e:f:g:pair:tail:"};
   if (ReceiverFields)
     Remaining = {"NDFieldOwner-errorCode", "NDFieldOwner-nestedErrorCode",
                  "NDFieldOwner-errorCodeAfterCall:", "NDFieldUnrelated-code"};
@@ -471,6 +480,7 @@ void verifyRuntime(bool Chained,
       "static void installRecovered(void) {\n"
       "Class cls = objc_getClass(\"" +
       std::string(DarwinDeclarations   ? "NDDarwinDeclarations"
+                  : AggregateRecords   ? "NDRecords"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
@@ -711,7 +721,9 @@ void verifyRuntime(bool Chained,
       DarwinDeclarations ? "darwin-declarations=2048\nlocked-updates="
                            "8192\nsynchronized-updates=8192\n"
       : Equality ? "equality-cases=4096\nshort-circuit=pass\nownership=pass\n"
-      : FloatingSaves ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : FloatingSaves    ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : AggregateRecords ? "record-checks=8192\nrecord-bits=pass\nrecord-calls="
+                           "pass\nrecord-stack=pass\n"
       : ReceiverFields
           ? "receiver-fields=4096\nnested-types=pass\nnil-dispatch=pass\n"
       : ReceiverTypes ? "receiver-checks=5120\nclass-instance-abi=pass\nsdk-"
@@ -1196,5 +1208,16 @@ TEST(ObjCRuntimeSource, TypedReceiverFieldsPreserveNestedAndNilObjectCalls) {
         verifyRuntime(Chained, RuntimeFixture::ReceiverFields));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     HomogeneousRecordsPreserveFieldsCallsAndStackArguments) {
+#if defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::AggregateRecords));
+#else
+  GTEST_SKIP() << "Requires the Darwin ARM64 homogeneous record ABI";
 #endif
 }

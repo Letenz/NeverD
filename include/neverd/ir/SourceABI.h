@@ -10,6 +10,28 @@ namespace neverd {
 /// equal, even when both references identify the same object.
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right);
 
+struct SourceAggregateMember {
+  TypeRef Type;
+  uint16_t ByteOffset = 0;
+};
+
+/// Flatten a validated homogeneous floating record with at most four leaves.
+/// Nested records retain their declared layout; padding and mixed types fail.
+std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
+
+struct SourceABIParameter {
+  size_t ParameterIndex = 0;
+  uint16_t ByteOffset = 0;
+  std::string Name;
+  TypeRef Type;
+  SourceABIValueLocation Location;
+};
+
+/// Physical parameters of a validated signature, in source member order.
+/// An invalid signature returns no bindings, never a partial prefix.
+std::vector<SourceABIParameter>
+sourceABIParameters(const SourceFunctionTypeHint &Hint);
+
 /// Assign Darwin's ordinary fixed scalar calling convention, including a
 /// 128-bit integer result in two registers (parameters remain at most 64 bits).
 /// This describes
@@ -26,16 +48,16 @@ bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
                                    unsigned FixedCount, Arch Architecture,
                                    std::string &Diagnostic);
 
-/// Assign Darwin's fixed scalar Objective-C ABI. Integer and FP registers are
+/// Assign Darwin's fixed Objective-C ABI. Integer and FP registers are
 /// allocated independently; overflowing values use the entry-SP stack area.
+/// ARM64 additionally supports naturally laid-out homogeneous floating records.
 /// This is source projection metadata, never authenticated rewrite evidence.
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                std::string &Diagnostic);
 
-/// Validate an explicit scalar register/stack description and integer-pair
-/// results, including Swift
-/// source hints whose receiver is in a dedicated register. This validates the
-/// description's shape; it does not authenticate its origin or truth.
+/// Validate explicit scalar and record register/stack descriptions, including
+/// Swift source hints whose receiver is in a dedicated register. This validates
+/// the description's shape; it does not authenticate its origin or truth.
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                        std::string &Diagnostic);
 

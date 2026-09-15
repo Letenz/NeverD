@@ -99,10 +99,9 @@ std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
   return Encoding.str();
 }
 
-// Deliberately small source-projection grammar. It preserves scalar widths
-// and signedness, but does not invent aggregate or callable block/Swift ABI
-// rules.
-TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &I,
+// Declaration syntax and natural record layout are independent of physical
+// calling conventions. SourceABI must separately accept each value carrier.
+TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
                             unsigned Depth) {
   if (Depth > 16 || Encoding.size() > 4096)
     return nullptr;
@@ -156,6 +155,30 @@ TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &I,
         return nullptr;
     }
     return NdType::makePtr(NdType::makeVoid());
+  case '{': {
+    const auto Name = I;
+    while (I < Encoding.size() && Encoding[I] != '=') {
+      const char Byte = Encoding[I++];
+      if (Byte < 0x21 || Byte > 0x7e ||
+          llvm::StringRef("{}()[]\"\\").contains(Byte))
+        return nullptr;
+    }
+    if (I == Name || I >= Encoding.size())
+      return nullptr;
+    ++I;
+    std::vector<TypeRef> Fields;
+    while (I < Encoding.size() && Encoding[I] != '}') {
+      if (Fields.size() >= 64 || (Encoding[I] == '"' && !quoted(Encoding, I)))
+        return nullptr;
+      auto Field = parseObjCSourceType(Encoding, I, Depth + 1);
+      if (!Field)
+        return nullptr;
+      Fields.push_back(std::move(Field));
+    }
+    if (I >= Encoding.size() || Encoding[I++] != '}')
+      return nullptr;
+    return NdType::makeStruct(std::move(Fields));
+  }
   case '^': {
     auto Start = I;
     while (Start < Encoding.size() &&
@@ -167,12 +190,18 @@ TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &I,
         return nullptr;
       return NdType::makePtr(NdType::makeVoid());
     }
-    auto Pointee = parseObjCScalarType(Encoding, I, Depth + 1);
+    auto Pointee = parseObjCSourceType(Encoding, I, Depth + 1);
     return Pointee ? NdType::makePtr(Pointee) : nullptr;
   }
   default:
     return nullptr;
   }
+}
+
+TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &Offset,
+                            unsigned Depth) {
+  auto Type = parseObjCSourceType(Encoding, Offset, Depth);
+  return Type && Type->Kind != NdTypeKind::Struct ? Type : nullptr;
 }
 
 std::optional<SourceFunctionTypeHint>
@@ -181,7 +210,7 @@ parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
     return std::nullopt;
   size_t I = 0;
   SourceFunctionTypeHint Hint;
-  Hint.ReturnType = parseObjCScalarType(Encoding, I);
+  Hint.ReturnType = parseObjCSourceType(Encoding, I);
   if (!Hint.ReturnType || !digits(Encoding, I, false))
     return std::nullopt;
   std::vector<char> Codes;
@@ -193,7 +222,7 @@ parseObjCMethodEncoding(llvm::StringRef Selector, llvm::StringRef Encoding) {
     Codes.push_back(Encoding.substr(Start).starts_with("@?") ? '?'
                     : Start < Encoding.size()                ? Encoding[Start]
                                                              : '\0');
-    auto Type = parseObjCScalarType(Encoding, I);
+    auto Type = parseObjCSourceType(Encoding, I);
     if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, false))
       return std::nullopt;
     const auto Index = Hint.Parameters.size();
@@ -216,11 +245,11 @@ parseObjCFunctionEncoding(llvm::StringRef Encoding) {
     return std::nullopt;
   size_t I = 0;
   SourceFunctionTypeHint Hint;
-  Hint.ReturnType = parseObjCScalarType(Encoding, I);
+  Hint.ReturnType = parseObjCSourceType(Encoding, I);
   if (!Hint.ReturnType || !digits(Encoding, I, true))
     return std::nullopt;
   while (I < Encoding.size() && Hint.Parameters.size() < 64) {
-    auto Type = parseObjCScalarType(Encoding, I);
+    auto Type = parseObjCSourceType(Encoding, I);
     if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, true))
       return std::nullopt;
     Hint.Parameters.push_back(

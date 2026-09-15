@@ -30,6 +30,9 @@ struct SourceParameterTypeHint {
   std::string Name;
   TypeRef Type;
   SourceABIValueLocation Location;
+  /// Record members in increasing byte order. Location is empty when these
+  /// components are present; the source parameter remains one logical value.
+  std::vector<SourceABIValueLocation> Components;
 };
 
 /// A runtime declaration or observed native machine signature for source
@@ -61,9 +64,8 @@ struct SourceFunctionTypeHint {
   Arch Architecture = Arch::Unknown;
   bool HasExplicitABI = false;
   SourceABIValueLocation ReturnLocation;
-  /// A 128-bit integer carrier returned in two canonical integer registers,
-  /// ordered from low to high bits. ReturnLocation must be empty when these
-  /// components are present. This transports bits, not a source struct type.
+  /// An integer pair or a supported record returned in multiple registers,
+  /// ordered by source byte offset. ReturnLocation is empty in this case.
   std::vector<SourceABIValueLocation> ReturnComponents;
 };
 

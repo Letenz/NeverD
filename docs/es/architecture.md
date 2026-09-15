@@ -561,3 +561,5 @@ para la cuadrícula de 12 celdas. Consulte la [guía de pruebas](testing.md).
 Mantenga los cambios estrechos. Los archivos que definen una representación
 pueden cambiar con sus transformaciones, pero loaders, lifters y backends no
 relacionados no deben modificarse solo para uniformar un refactor amplio.
+
+Las declaraciones de estructuras conservan la disposición de campos separada de la clasificación ABI. Darwin ARM64 admite estructuras anidadas con entre uno y cuatro campos float o double homogéneos; al agotarse los registros flotantes, todo el argumento pasa a la pila. MedIR vincula cada componente físico antes de SSA, HighIR reconstruye un parámetro o resultado lógico y C comprueba la disposición. Se rechazan los tipos mixtos, otras arquitecturas y componentes incompletos; estas indicaciones no autorizan reescribir binarios.

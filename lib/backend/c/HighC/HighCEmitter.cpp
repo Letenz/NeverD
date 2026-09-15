@@ -878,6 +878,52 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   prepareFunctionIdentifiers(Funcs);
   collectMemoryTypes(Funcs);
   writeIncludes(Funcs);
+  std::set<std::string> Records;
+  std::function<void(const TypeRef &)> RecordType = [&](const TypeRef &Type) {
+    if (!Type || Type->Kind != NdTypeKind::Struct)
+      return;
+    const auto Name = typeToC(Type);
+    if (!Records.insert(Name).second)
+      return;
+    for (const auto &Field : Type->Fields)
+      RecordType(Field);
+    const auto Guard =
+        "NEVERD_SOURCE_" + llvm::StringRef(Name).drop_front(7).upper();
+    OS << "#ifndef " << Guard << "\n#define " << Guard << "\n"
+       << Name << " {\n";
+    for (size_t I = 0; I < Type->Fields.size(); ++I)
+      OS << "    "
+         << declarationToC(Type->Fields[I], "field_" + std::to_string(I))
+         << ";\n";
+    OS << "};\n_Static_assert(sizeof(" << Name << ") == " << Type->Size
+       << ", \"source record size\");\n_Static_assert(_Alignof(" << Name
+       << ") == " << Type->Alignment << ", \"source record alignment\");\n";
+    for (size_t I = 0; I < Type->Fields.size(); ++I)
+      OS << "_Static_assert(__builtin_offsetof(" << Name << ", field_" << I
+         << ") == " << Type->FieldOffsets[I]
+         << ", \"source record offset\");\n";
+    OS << "#endif\n";
+  };
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E || !Seen.insert(E.get()).second)
+      return;
+    RecordType(E->Type);
+    if (E->SourceCallHint) {
+      RecordType(E->SourceCallHint->Signature.ReturnType);
+      for (const auto &P : E->SourceCallHint->Signature.Parameters)
+        RecordType(P.Type);
+    }
+    for (const auto &Child : E->Operands)
+      Visit(Child);
+  };
+  for (const auto &Func : Funcs) {
+    RecordType(Func.ReturnType);
+    for (const auto &P : Func.Params)
+      RecordType(P.Type);
+    walkStmts(Func.Body,
+              [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
+  }
   writeMemoryHelpers();
   writeForwardDecls(Funcs);
 

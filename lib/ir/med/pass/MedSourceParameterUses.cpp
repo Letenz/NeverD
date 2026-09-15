@@ -99,16 +99,18 @@ std::vector<bool> inferMedSourcePointerParameters(const MedFunc &Function) {
         continue;
       }
       std::string Error;
+      const auto Parameters =
+          Op.SourceCallHint ? sourceABIParameters(Op.SourceCallHint->Signature)
+                            : std::vector<SourceABIParameter>{};
       const bool BoundCall =
           (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           Op.SourceCallHint &&
           validateSourceABI(Op.SourceCallHint->Signature, Error) &&
-          Op.NumInputs == Op.SourceCallHint->Signature.Parameters.size() + 1;
+          Op.NumInputs == Parameters.size() + 1;
       for (unsigned Index = 0; Index < Op.NumInputs; ++Index) {
         unsigned Role = Scalar;
         if (BoundCall && Index) {
-          const auto &Type =
-              Op.SourceCallHint->Signature.Parameters[Index - 1].Type;
+          const auto &Type = Parameters[Index - 1].Type;
           if (Type->Kind == NdTypeKind::Ptr && Type->Size == 8)
             Role = Pointer;
         }

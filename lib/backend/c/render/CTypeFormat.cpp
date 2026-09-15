@@ -18,6 +18,7 @@
 #include "llvm/IR/Type.h"
 
 #include <cctype>
+#include <functional>
 #include <stdexcept>
 #include <string>
 
@@ -148,6 +149,19 @@ std::string typeToC(const TypeRef &Ty) {
       return typeToC(Ty->Pointee) + "*";
     }
     return "void*";
+  case NdTypeKind::Struct: {
+    if (sourceAggregateMembers(Ty).empty())
+      throw std::invalid_argument("C record has no supported source layout");
+    std::function<std::string(const TypeRef &)> Code = [&](const TypeRef &T) {
+      if (T->Kind == NdTypeKind::Float)
+        return std::string(T->Size == 4 ? "f" : "d");
+      std::string Result = "r" + std::to_string(T->Fields.size());
+      for (const auto &Field : T->Fields)
+        Result += "_" + Code(Field);
+      return Result + "_e";
+    };
+    return "struct nd_record_" + Code(Ty);
+  }
   case NdTypeKind::Array:
     return typeToC(Ty->ElemType) + "*";
   case NdTypeKind::Unknown:

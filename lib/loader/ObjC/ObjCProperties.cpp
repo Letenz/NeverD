@@ -123,7 +123,7 @@ void accessorHints(ObjCProperty &Property, Arch Architecture) {
   if (!Valid)
     return;
   size_t Offset = 0;
-  auto Type = parseObjCScalarType(Property.TypeEncoding, Offset);
+  auto Type = parseObjCSourceType(Property.TypeEncoding, Offset);
   if (!Type || Type->Kind == NdTypeKind::Void ||
       Offset != Property.TypeEncoding.size()) {
     Property.Status = "unsupported_encoding";

@@ -685,17 +685,18 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
     return;
   }
 
+  const auto Parameters = sourceABIParameters(Hint);
   auto RegisterParameter = [&](uint64_t Register) -> int {
-    for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
-      const auto &L = Hint.Parameters[I].Location;
+    for (size_t I = 0; I < Parameters.size(); ++I) {
+      const auto &L = Parameters[I].Location;
       if (L.Kind != SourceABICarrierKind::Stack && L.RegisterOffset == Register)
         return static_cast<int>(I);
     }
     return -1;
   };
   auto StackParameter = [&](int64_t Offset, uint16_t Bytes) -> int {
-    for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
-      const auto &L = Hint.Parameters[I].Location;
+    for (size_t I = 0; I < Parameters.size(); ++I) {
+      const auto &L = Parameters[I].Location;
       if (L.Kind == SourceABICarrierKind::Stack &&
           Offset >= L.EntryStackOffset &&
           Offset - L.EntryStackOffset + Bytes <= L.ValueBytes)
@@ -730,8 +731,8 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
         if (Old.Kind != MedVar::Param)
           continue;
         if (Func.SourceParametersBound) {
-          Valid &= Old.Id >= 0 &&
-                   static_cast<size_t>(Old.Id) < Hint.Parameters.size();
+          Valid &=
+              Old.Id >= 0 && static_cast<size_t>(Old.Id) < Parameters.size();
           continue;
         }
         int Index = -1;
@@ -754,7 +755,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
           Valid = false;
           continue;
         }
-        const auto &L = Hint.Parameters[Index].Location;
+        const auto &L = Parameters[Index].Location;
         MedVar Parameter = Old;
         Parameter.Id = Index;
         Parameter.RegOff = L.Kind == SourceABICarrierKind::Stack
@@ -837,8 +838,8 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
 
   std::vector<MedVar> BoundParams;
   std::vector<MedTypedParam> BoundTypes;
-  for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
-    const auto &Declared = Hint.Parameters[I];
+  for (size_t I = 0; I < Parameters.size(); ++I) {
+    const auto &Declared = Parameters[I];
     MedVar Param;
     Param.Kind = MedVar::Param;
     Param.Id = -1; // An unused argument still occupies its declared position.

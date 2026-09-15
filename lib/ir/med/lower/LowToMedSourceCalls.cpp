@@ -72,7 +72,13 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
       if (Op.Opcode == NdOp::RETURN && EntrySignature &&
-          !EntrySignature->ReturnComponents.empty()) {
+          EntrySignature->ReturnType->Kind == NdTypeKind::Struct) {
+        Op.NumInputs = 0;
+        for (const auto &Piece : EntrySignature->ReturnComponents)
+          Op.addInput(ndVarToMedVar(
+              NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes)));
+      } else if (Op.Opcode == NdOp::RETURN && EntrySignature &&
+                 !EntrySignature->ReturnComponents.empty()) {
         // Publish both physical dependencies before SSA. They are separate
         // registers, not one contiguous register-bank slice (notably RAX/RDX).
         MedOp Result;
@@ -123,22 +129,24 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         continue;
       }
       const auto &Signature = Hint->Signature;
+      const auto Parameters = sourceABIParameters(Signature);
       const bool HasStack =
-          std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
-                      [](const SourceParameterTypeHint &P) {
+          std::any_of(Parameters.begin(), Parameters.end(),
+                      [](const SourceABIParameter &P) {
                         return P.Location.Kind == SourceABICarrierKind::Stack;
                       });
       std::optional<int64_t> Bias = 0;
       if (HasStack && TargetArch == Arch::X64)
         Bias = returnAddressBias(Image, Op.Addr);
-      if (!Bias || Signature.Parameters.size() > 64) {
+      if (!Bias || Parameters.size() > 64) {
         Ops.push_back(std::move(Op));
         continue;
       }
-      for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
-        const auto &Location = Signature.Parameters[I].Location;
+      for (size_t I = 0; I < Parameters.size(); ++I) {
+        const auto &Location = Parameters[I].Location;
         MedVar Argument;
-        if (I == 1 && Hint->SelectorReferenceAddress) {
+        if (Parameters[I].ParameterIndex == 1 &&
+            Hint->SelectorReferenceAddress) {
           MedOp Load;
           Load.Opcode = NdOp::LOAD;
           Load.Addr = Op.Addr;

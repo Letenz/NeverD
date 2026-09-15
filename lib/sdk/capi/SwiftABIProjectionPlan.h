@@ -49,7 +49,14 @@ inline void type(std::string &Key, const TypeRef &Type, unsigned Depth = 0) {
   number(Key, Type->IsSigned);
   if (Type->Kind == NdTypeKind::Ptr)
     type(Key, Type->Pointee, Depth + 1);
-  else if (Type->Kind == NdTypeKind::Func) {
+  else if (Type->Kind == NdTypeKind::Struct) {
+    number(Key, Type->Alignment);
+    number(Key, Type->Fields.size());
+    for (size_t I = 0; I < Type->Fields.size(); ++I) {
+      number(Key, Type->FieldOffsets[I]);
+      type(Key, Type->Fields[I], Depth + 1);
+    }
+  } else if (Type->Kind == NdTypeKind::Func) {
     type(Key, Type->RetType, Depth + 1);
     number(Key, Type->ParamTypes.size());
     for (const auto &Parameter : Type->ParamTypes)
@@ -82,6 +89,9 @@ inline std::string key(const SourceFunctionTypeHint &Hint) {
     Key += Parameter.Name;
     type(Key, Parameter.Type);
     location(Key, Parameter.Location);
+    number(Key, Parameter.Components.size());
+    for (const auto &Component : Parameter.Components)
+      location(Key, Component);
   }
   return Key;
 }

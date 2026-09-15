@@ -8,6 +8,11 @@
 #include <optional>
 
 namespace neverd {
+/// Decode a source scalar or naturally aligned record declaration. ABI
+/// classification is separate; opaque and unsupported value layouts fail.
+TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &Offset,
+                            unsigned Depth = 0);
+
 /// Decode one bounded scalar Objective-C encoding at Offset. The @? encoding
 /// describes a block object pointer only; its invoke prototype requires an
 /// independently validated block descriptor signature. Aggregates passed by

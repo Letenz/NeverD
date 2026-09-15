@@ -447,6 +447,22 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.CallbackTypesKeepTheirSignaturesAndRejectMalformedGraphs",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.RecordLayoutPreservesNestedMembersAndRejectsMalformedGraphs",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.RecordEncodingSeparatesShapeFromPhysicalABI",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.FloatingMembersUseIndependentContiguousRegisters",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.ExhaustedFloatingBankKeepsWholeRecordOnStack",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.ValidationRejectsIncompleteAliasedAndStaleCarriers",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.EntryReturnsKeepEveryDeclaredFloatingDependency",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.CallsReconstructLogicalRecordsFromPhysicalOperands",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceAggregate.FieldIdentityIncludesPositionAndCompleteRecordShape",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.DarwinIntegerPairResultRequiresBothReturnRegisters",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.IntegerPairCallsPreserveBothWordsThroughSSAAndReturns",
@@ -1015,9 +1031,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 379,
-              ("macOS", "macos-patch"): 405,
-              ("Windows", "windows-focused"): 375,
+              ("Linux", "linux-semantic"): 387,
+              ("macOS", "macos-patch"): 414,
+              ("Windows", "windows-focused"): 383,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1034,6 +1050,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledFloatingValuesSurviveRuntimeCalls",
                       "ObjCRuntimeSource.EqualityProjectionPreservesOwnershipOrRejectsMissingCallEvidence",
                       "ObjCRuntimeSource.TypedReceiverFieldsPreserveNestedAndNilObjectCalls",
+                      "ObjCRuntimeSource.HomogeneousRecordsPreserveFieldsCallsAndStackArguments",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

@@ -15,6 +15,7 @@
 #define NEVERD_IR_HIGH_MEDTOHIGH_H
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedIR.h"
 
@@ -128,7 +129,10 @@ private:
                                      const ExprPtr &TargetExpr);
 
   VarKeyMap<int> UseCount;
+  TypeRef sourceCallResultType(const MedOp &Op) const;
   VarKeyMap<ExprPtr> DefExpr;
+  VarKeyMap<TypeRef> SourceRecordValues;
+  std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;
   /// A native read is evaluated at its statement, then used as an SSA value.

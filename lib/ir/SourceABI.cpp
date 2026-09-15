@@ -27,6 +27,20 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
   case NdTypeKind::Ptr:
     return Left->Size == 8 &&
            equalTypes(Left->Pointee, Right->Pointee, Depth + 1, Remaining);
+  case NdTypeKind::Struct: {
+    const auto Layout = NdType::makeStruct(Left->Fields);
+    if (!Layout || Left->Size != Layout->Size || Right->Size != Layout->Size ||
+        Left->Alignment != Layout->Alignment ||
+        Right->Alignment != Layout->Alignment ||
+        Left->FieldOffsets != Layout->FieldOffsets ||
+        Right->FieldOffsets != Layout->FieldOffsets ||
+        Left->Fields.size() != Right->Fields.size())
+      return false;
+    for (size_t I = 0; I < Left->Fields.size(); ++I)
+      if (!equalTypes(Left->Fields[I], Right->Fields[I], Depth + 1, Remaining))
+        return false;
+    return true;
+  }
   case NdTypeKind::Func:
     if (Left->Size != 0 || !Left->RetType || !Right->RetType ||
         Left->RetType->Kind == NdTypeKind::Func ||
@@ -67,6 +81,52 @@ bool fail(std::string &Diagnostic, const char *Message) {
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
   unsigned Remaining = 4096;
   return equalTypes(Left, Right, 0, Remaining);
+}
+
+std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
+  if (!Type || Type->Kind != NdTypeKind::Struct ||
+      !equalSourceTypes(Type, Type))
+    return {};
+  std::vector<SourceAggregateMember> Pending{{Type, 0}}, Result;
+  while (!Pending.empty()) {
+    auto Member = std::move(Pending.back());
+    Pending.pop_back();
+    if (Member.Type->Kind == NdTypeKind::Struct) {
+      for (size_t I = Member.Type->Fields.size(); I-- > 0;)
+        Pending.push_back(
+            {Member.Type->Fields[I],
+             uint16_t(Member.ByteOffset + Member.Type->FieldOffsets[I])});
+    } else {
+      if (Member.Type->Kind != NdTypeKind::Float || Result.size() >= 4 ||
+          Member.ByteOffset != Result.size() * Member.Type->Size ||
+          (!Result.empty() && Result.front().Type->Size != Member.Type->Size))
+        return {};
+      Result.push_back(std::move(Member));
+    }
+  }
+  if (Result.empty() || Result.size() * Result.front().Type->Size != Type->Size)
+    return {};
+  return Result;
+}
+
+std::vector<SourceABIParameter>
+sourceABIParameters(const SourceFunctionTypeHint &Hint) {
+  std::string Error;
+  if (!validateSourceABI(Hint, Error))
+    return {};
+  std::vector<SourceABIParameter> Result;
+  for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+    const auto &P = Hint.Parameters[I];
+    if (P.Components.empty())
+      Result.push_back({I, 0, P.Name, P.Type, P.Location});
+    else {
+      const auto Members = sourceAggregateMembers(P.Type);
+      for (size_t J = 0; J < Members.size(); ++J)
+        Result.push_back({I, Members[J].ByteOffset, P.Name, Members[J].Type,
+                          P.Components[J]});
+    }
+  }
+  return Result;
 }
 
 bool validateSourceABI(const SourceFunctionTypeHint &Hint,
@@ -121,7 +181,44 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
            Location.RegisterOffset == 0 && Location.EntryStackOffset == 0 &&
            Location.ValueBytes == 0 && !Location.ExtendTo32Bits;
   };
-  if (!Hint.ReturnComponents.empty()) {
+  auto AggregateLocations =
+      [&](const TypeRef &Type, const std::vector<SourceABIValueLocation> &Parts,
+          bool IsReturn) {
+        const auto Members = sourceAggregateMembers(Type);
+        if (Hint.Architecture != Arch::AArch64 || Members.empty() ||
+            Parts.size() != Members.size())
+          return false;
+        const auto Start =
+            std::find(TRI.FPParamRegs.begin(), TRI.FPParamRegs.end(),
+                      Parts.front().RegisterOffset);
+        const bool Stack = Parts.front().Kind == SourceABICarrierKind::Stack;
+        if (Stack) {
+          if (IsReturn || Parts.front().EntryStackOffset % Type->Alignment)
+            return false;
+        } else if (Start == TRI.FPParamRegs.end() ||
+                   size_t(TRI.FPParamRegs.end() - Start) < Parts.size() ||
+                   (IsReturn && Start != TRI.FPParamRegs.begin())) {
+          return false;
+        }
+        for (size_t I = 0; I < Parts.size(); ++I) {
+          const auto &Part = Parts[I];
+          if (!ValidLocation(Members[I].Type, Part, false) ||
+              Part.ExtendTo32Bits ||
+              (Stack ? Part.Kind != SourceABICarrierKind::Stack ||
+                           Part.EntryStackOffset !=
+                               Parts.front().EntryStackOffset +
+                                   Members[I].ByteOffset
+                     : Part.Kind != SourceABICarrierKind::FloatingRegister ||
+                           Part.RegisterOffset != Start[I]))
+            return false;
+        }
+        return true;
+      };
+  if (Hint.ReturnType->Kind == NdTypeKind::Struct) {
+    if (!EmptyLocation(Hint.ReturnLocation) ||
+        !AggregateLocations(Hint.ReturnType, Hint.ReturnComponents, true))
+      return fail(Diagnostic, "Unsupported source record return carriers");
+  } else if (!Hint.ReturnComponents.empty()) {
     if (Hint.ReturnType->Kind != NdTypeKind::Int ||
         Hint.ReturnType->Size != 16 || Hint.ReturnComponents.size() != 2 ||
         !EmptyLocation(Hint.ReturnLocation) || TRI.IntReturnRegs.size() < 2)
@@ -143,29 +240,43 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
   }
   std::set<std::pair<SourceABICarrierKind, uint64_t>> Registers;
   std::vector<std::pair<int64_t, int64_t>> StackRanges;
+  size_t PhysicalCount = 0;
   for (const auto &Parameter : Hint.Parameters) {
-    if (!ValidLocation(Parameter.Type, Parameter.Location, false))
+    if (!Parameter.Components.empty()) {
+      if (!EmptyLocation(Parameter.Location) ||
+          !AggregateLocations(Parameter.Type, Parameter.Components, false))
+        return fail(Diagnostic, "Unsupported source record parameter carriers");
+    } else if (!ValidLocation(Parameter.Type, Parameter.Location, false)) {
       return fail(Diagnostic, "Unsupported source parameter carrier");
-    if (Parameter.Location.Kind == SourceABICarrierKind::Stack) {
-      const int64_t Begin = Parameter.Location.EntryStackOffset;
-      const int64_t End = Begin + Parameter.Location.ValueBytes;
-      for (const auto &[OtherBegin, OtherEnd] : StackRanges)
-        if (Begin < OtherEnd && OtherBegin < End)
-          return fail(Diagnostic,
-                      "Overlapping source stack parameter locations");
-      StackRanges.emplace_back(Begin, End);
-    } else if (!Registers
-                    .emplace(Parameter.Location.Kind,
-                             Parameter.Location.RegisterOffset)
-                    .second) {
-      return fail(Diagnostic, "Source parameters share one physical register");
+    }
+    const auto Locations = Parameter.Components.empty()
+                               ? std::vector{Parameter.Location}
+                               : Parameter.Components;
+    PhysicalCount += Locations.size();
+    if (PhysicalCount > 64)
+      return fail(Diagnostic, "Source parameter carrier budget exceeded");
+    for (const auto &Location : Locations) {
+      if (Location.Kind == SourceABICarrierKind::Stack) {
+        const int64_t Begin = Location.EntryStackOffset;
+        const int64_t End = Begin + Location.ValueBytes;
+        for (const auto &[OtherBegin, OtherEnd] : StackRanges)
+          if (Begin < OtherEnd && OtherBegin < End)
+            return fail(Diagnostic,
+                        "Overlapping source stack parameter locations");
+        StackRanges.emplace_back(Begin, End);
+      } else if (!Registers.emplace(Location.Kind, Location.RegisterOffset)
+                      .second) {
+        return fail(Diagnostic,
+                    "Source parameters share one physical register");
+      }
     }
   }
   return true;
 }
 
-bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
-                                 Arch Architecture, std::string &Diagnostic) {
+namespace {
+bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
+                                std::string &Diagnostic, bool Records) {
   Diagnostic.clear();
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
       !Hint.ReturnType || Hint.Parameters.size() > 64)
@@ -175,6 +286,32 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
   size_t FloatIndex = 0;
   int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
   for (auto &Parameter : Hint.Parameters) {
+    Parameter.Components.clear();
+    if (Records && Parameter.Type &&
+        Parameter.Type->Kind == NdTypeKind::Struct) {
+      const auto Members = sourceAggregateMembers(Parameter.Type);
+      if (Architecture != Arch::AArch64 || Members.empty())
+        return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
+      Parameter.Location = {};
+      const bool Stack = FloatIndex + Members.size() > TRI.FPParamRegs.size();
+      if (Stack) {
+        FloatIndex = TRI.FPParamRegs.size();
+        const int64_t Alignment = Parameter.Type->Alignment;
+        StackOffset = (StackOffset + Alignment - 1) & -Alignment;
+      }
+      for (const auto &Member : Members) {
+        Parameter.Components.push_back(
+            Stack ? SourceABIValueLocation{SourceABICarrierKind::Stack, 0,
+                                           StackOffset + Member.ByteOffset,
+                                           Member.Type->Size}
+                  : SourceABIValueLocation{
+                        SourceABICarrierKind::FloatingRegister,
+                        TRI.FPParamRegs[FloatIndex++], 0, Member.Type->Size});
+      }
+      if (Stack)
+        StackOffset += Parameter.Type->Size;
+      continue;
+    }
     if (!scalarType(Parameter.Type))
       return fail(Diagnostic,
                   "Darwin source ABI currently supports scalar values");
@@ -201,8 +338,16 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
   }
   Hint.ReturnLocation = {};
   Hint.ReturnComponents.clear();
-  if (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16 &&
-      TRI.IntReturnRegs.size() >= 2) {
+  if (Records && Hint.ReturnType->Kind == NdTypeKind::Struct) {
+    const auto Members = sourceAggregateMembers(Hint.ReturnType);
+    if (Architecture != Arch::AArch64 || Members.empty())
+      return fail(Diagnostic, "Unsupported Darwin record return ABI");
+    for (size_t I = 0; I < Members.size(); ++I)
+      Hint.ReturnComponents.push_back({SourceABICarrierKind::FloatingRegister,
+                                       TRI.FPParamRegs[I], 0,
+                                       Members[I].Type->Size});
+  } else if (Hint.ReturnType->Kind == NdTypeKind::Int &&
+             Hint.ReturnType->Size == 16 && TRI.IntReturnRegs.size() >= 2) {
     for (size_t I = 0; I != 2; ++I)
       Hint.ReturnComponents.push_back(
           {SourceABICarrierKind::IntegerRegister, TRI.IntReturnRegs[I], 0, 8});
@@ -227,13 +372,20 @@ bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
   return validateSourceABI(Hint, Diagnostic);
 }
 
+} // namespace
+
+bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
+                                 Arch Architecture, std::string &Diagnostic) {
+  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic, false);
+}
+
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                std::string &Diagnostic) {
   if ((Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCRuntime &&
        Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK) ||
       Hint.Parameters.size() < 2)
     return fail(Diagnostic, "Unsupported Objective-C source ABI");
-  return assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic);
+  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic, true);
 }
 
 bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,

@@ -13,6 +13,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -302,13 +303,29 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       return "&" + varName(Operand.Var);
     return "&" + exprStr(*E.Operands[0], 99);
   }
+  case ExprKind::Record: {
+    if (!E.Type || sourceAggregateMembers(E.Type).empty() ||
+        E.Operands.size() != E.Type->Fields.size())
+      llvm::report_fatal_error("HighC cannot render an invalid source record");
+    std::string Result = "(" + typeToC(E.Type) + "){";
+    for (size_t I = 0; I < E.Operands.size(); ++I) {
+      if (!E.Operands[I] ||
+          !equalSourceTypes(E.Type->Fields[I], E.Operands[I]->Type))
+        llvm::report_fatal_error("HighC source record field type disagrees");
+      if (I)
+        Result += ", ";
+      Result += exprStr(*E.Operands[I]);
+    }
+    return Result + "}";
+  }
   case ExprKind::Field:
-    if (E.Operands.empty())
-      return "/* bad field */";
-    if (E.ConstVal != 0)
-      return "(" + exprStr(*E.Operands[0]) + ").field_" +
-             std::to_string(E.ConstVal);
-    return exprStr(*E.Operands[0]);
+    if (E.Operands.size() != 1 || !E.Operands[0] || !E.Operands[0]->Type ||
+        E.Operands[0]->Type->Kind != NdTypeKind::Struct ||
+        E.ConstVal >= E.Operands[0]->Type->Fields.size() ||
+        !equalSourceTypes(E.Type, E.Operands[0]->Type->Fields[E.ConstVal]))
+      llvm::report_fatal_error("HighC cannot render an invalid source field");
+    return "(" + exprStr(*E.Operands[0]) + ").field_" +
+           std::to_string(E.ConstVal);
   default:
     return "/* unknown expr */";
   }

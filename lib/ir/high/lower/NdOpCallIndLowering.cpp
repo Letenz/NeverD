@@ -205,9 +205,12 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
   if (CurOp.SourceCallHint)
     Call->CallAddr = CurOp.SourceCallHint->TargetAddress;
   if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
-    Call->Type = NdType::makeInt(CurOp.Output.Size, false);
+    Call->Type = sourceCallResultType(CurOp);
     S.Kind = StmtKind::Assign;
-    S.Dst = HighExpr::makeVar(CurOp.Output);
+    S.Dst = HighExpr::makeVar(CurOp.Output, Call->Type && Call->Type->Kind ==
+                                                              NdTypeKind::Struct
+                                                ? Call->Type
+                                                : nullptr);
     S.Val = Call;
   }
   CallOutputs.insert({CurOp.Output.Id, CurOp.Output.SSAVer});

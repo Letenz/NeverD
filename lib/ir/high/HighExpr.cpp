@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -89,6 +90,59 @@ ExprPtr HighExpr::makeBitCast(ExprPtr Value, TypeRef Type) {
   E->Type = std::move(Type);
   E->Operands.push_back(std::move(Value));
   return E;
+}
+
+ExprPtr HighExpr::makeRecord(TypeRef Type, std::vector<ExprPtr> Leaves) {
+  const auto Members = sourceAggregateMembers(Type);
+  if (Members.empty() || Members.size() != Leaves.size())
+    return makeUndef(Type ? Type->Size : 0);
+  for (size_t I = 0; I < Members.size(); ++I)
+    if (!Leaves[I] || !equalSourceTypes(Members[I].Type, Leaves[I]->Type))
+      return makeUndef(Type->Size);
+  size_t Index = 0;
+  std::function<ExprPtr(const TypeRef &)> Build = [&](const TypeRef &T) {
+    if (T->Kind != NdTypeKind::Struct)
+      return Leaves[Index++];
+    auto E = std::make_shared<HighExpr>();
+    E->Kind = ExprKind::Record;
+    E->Type = T;
+    for (const auto &Field : T->Fields)
+      E->Operands.push_back(Build(Field));
+    return E;
+  };
+  return Build(Type);
+}
+
+ExprPtr HighExpr::makeRecordField(ExprPtr Record, uint16_t Offset,
+                                  uint16_t Bytes) {
+  if (!Record || sourceAggregateMembers(Record->Type).empty())
+    return makeUndef(Bytes);
+  while (Record->Type->Kind == NdTypeKind::Struct) {
+    const auto &T = Record->Type;
+    size_t Index = 0;
+    for (; Index < T->Fields.size(); ++Index)
+      if (Offset >= T->FieldOffsets[Index] &&
+          Offset - T->FieldOffsets[Index] + Bytes <= T->Fields[Index]->Size)
+        break;
+    if (Index == T->Fields.size())
+      return makeUndef(Bytes);
+    Offset -= T->FieldOffsets[Index];
+    if (Record->Kind == ExprKind::Record &&
+        Record->Operands.size() == T->Fields.size()) {
+      if (!Record->Operands[Index] ||
+          !equalSourceTypes(Record->Operands[Index]->Type, T->Fields[Index]))
+        return makeUndef(Bytes);
+      Record = Record->Operands[Index];
+    } else {
+      auto E = std::make_shared<HighExpr>();
+      E->Kind = ExprKind::Field;
+      E->Type = T->Fields[Index];
+      E->ConstVal = Index;
+      E->Operands.push_back(std::move(Record));
+      Record = std::move(E);
+    }
+  }
+  return !Offset && Record->Type->Size == Bytes ? Record : makeUndef(Bytes);
 }
 
 ExprPtr HighExpr::makeBinop(NdOp Op, ExprPtr LHS, ExprPtr RHS) {

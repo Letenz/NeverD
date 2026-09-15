@@ -382,9 +382,8 @@ TEST(ObjCProtocols, OpaquePointeesRequireCompleteBoundedTypeSyntax) {
   EXPECT_TRUE(
       parseObjCMethodEncoding("countByEnumeratingWithState:objects:count:",
                               "Q40@0:8^{?=Q^@^Q[5Q]}16^@24Q32"));
-  for (const auto *Encoding :
-       {"Q24@0:8", "Q24@0:8@16Q24", "Q24@?0:8@16", "Q24@0@8@16",
-        "Q24@0:8{S=Q}16", "Q24@0:8^{S=Q16"})
+  for (const auto *Encoding : {"Q24@0:8", "Q24@0:8@16Q24", "Q24@?0:8@16",
+                               "Q24@0@8@16", "Q24@0:8^{S=Q16"})
     EXPECT_FALSE(parseObjCMethodEncoding("measure:", Encoding)) << Encoding;
 }
 } // namespace

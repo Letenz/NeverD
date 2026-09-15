@@ -51,6 +51,9 @@ std::string bad(llvm::StringRef Reason) {
 std::optional<std::string> sourceValue(llvm::StringRef Text,
                                        const TypeRef &Carrier,
                                        const TypeRef &Source) {
+  if (Carrier && Source && Carrier->Kind == NdTypeKind::Struct &&
+      Source->Kind == NdTypeKind::Struct && equalSourceTypes(Carrier, Source))
+    return Text.str();
   if (integerPair(Carrier) && integerPair(Source))
     return "(" + typeToC(Source) + ")(" + Text.str() + ")";
   if (!scalar(Carrier) || !scalar(Source) || Carrier->Size != Source->Size)
@@ -214,10 +217,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                           validateSourceABI(Signature, ABIDiagnostic);
   if (!Signature.ReturnType ||
       (Signature.ReturnType->Kind != NdTypeKind::Void &&
-       !scalar(Signature.ReturnType) && !PairResult))
+       !scalar(Signature.ReturnType) && !PairResult &&
+       sourceAggregateMembers(Signature.ReturnType).empty()))
     return bad("unsupported result type");
   for (const auto &Parameter : Signature.Parameters)
-    if (!scalar(Parameter.Type))
+    if (!scalar(Parameter.Type) &&
+        sourceAggregateMembers(Parameter.Type).empty())
       return bad("unsupported parameter type");
   const bool Block = Hint.CallKind == Kind::BlockInvoke;
   if (Block &&

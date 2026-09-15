@@ -111,6 +111,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
   core/SourceABITests.cpp
+  core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
   core/ObjCCallHintTests.cpp
@@ -921,6 +922,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCCategoryTests.cpp
   core/SourceABITests.cpp
+  core/SourceAggregateTests.cpp
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
   core/NativeSourceHintsTests.cpp

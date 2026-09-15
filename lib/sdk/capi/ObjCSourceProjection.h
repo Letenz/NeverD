@@ -50,7 +50,14 @@ inline bool sameHint(const SourceFunctionTypeHint &Left,
   for (size_t I = 0; I < Left.ReturnComponents.size(); ++I)
     if (!sameLocation(Left.ReturnComponents[I], Right.ReturnComponents[I]))
       return false;
-  for (size_t Index = 0; Index < Left.Parameters.size(); ++Index)
+  for (size_t Index = 0; Index < Left.Parameters.size(); ++Index) {
+    const auto &L = Left.Parameters[Index].Components;
+    const auto &R = Right.Parameters[Index].Components;
+    if (L.size() != R.size())
+      return false;
+    for (size_t J = 0; J < L.size(); ++J)
+      if (!sameLocation(L[J], R[J]))
+        return false;
     if (Left.Parameters[Index].Name != Right.Parameters[Index].Name ||
         !equalSourceTypes(Left.Parameters[Index].Type,
                           Right.Parameters[Index].Type) ||
@@ -58,6 +65,7 @@ inline bool sameHint(const SourceFunctionTypeHint &Left,
          !sameLocation(Left.Parameters[Index].Location,
                        Right.Parameters[Index].Location)))
       return false;
+  }
   return true;
 }
 
@@ -287,7 +295,15 @@ inline void collectSourceBodyDiagnostics(
                           Address, Expression);
         else if (Hint.HasExplicitABI) {
           const auto &Location = Hint.Parameters[Variable.Id].Location;
-          if (Location.Kind == SourceABICarrierKind::Stack) {
+          if (!Hint.Parameters[Variable.Id].Components.empty()) {
+            if (Variable.RegOff != 0 ||
+                Variable.Size != Hint.Parameters[Variable.Id].Type->Size ||
+                !equalSourceTypes(Expression->Type,
+                                  Hint.Parameters[Variable.Id].Type))
+              Diagnostics.add(SourceProjectionIssue::ParameterBinding,
+                              "method record parameter has no logical binding",
+                              Address, Expression);
+          } else if (Location.Kind == SourceABICarrierKind::Stack) {
             if (Variable.StackOff != Location.EntryStackOffset)
               Diagnostics.add(
                   SourceProjectionIssue::ParameterBinding,

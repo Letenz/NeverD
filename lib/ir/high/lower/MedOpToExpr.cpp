@@ -18,6 +18,10 @@
 namespace neverd {
 
 ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
+  if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+      Op.Inputs[1].isConst() && SourceRecordValues.count(varKey(Op.Inputs[0])))
+    return sourceBitSlice(medvarToExpr(Op.Inputs[0]), Op.Inputs[1].ConstVal,
+                          Op.Output.Size);
   if (Op.Opcode == NdOp::FLOAT_FMA) {
     if (Op.NumInputs != 3 || (Op.Output.Size != 4 && Op.Output.Size != 8))
       return HighExpr::makeUndef(Op.Output.Size);

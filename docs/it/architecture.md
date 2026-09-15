@@ -561,3 +561,5 @@ per la griglia di 12 celle. Consulta la [guida ai test](testing.md).
 Mantieni le modifiche ristrette. I file che definiscono una rappresentazione
 possono cambiare con le relative trasformazioni, ma loader, lifter e backend non
 correlati non vanno modificati solo per uniformare un refactoring ampio.
+
+Le dichiarazioni di strutture conservano la disposizione dei campi separata dalla classificazione ABI. Darwin ARM64 supporta strutture annidate con da uno a quattro campi float o double omogenei; esauriti i registri in virgola mobile, l’intero argomento passa sullo stack. MedIR associa ogni componente fisico prima di SSA, HighIR ricostruisce un parametro o risultato logico e il C verifica la disposizione. Tipi misti, altre architetture e componenti incompleti restano rifiutati; queste indicazioni non autorizzano la riscrittura dei binari.

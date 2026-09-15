@@ -569,3 +569,5 @@ Gardez les modifications étroites. Les fichiers qui définissent une
 représentation peuvent évoluer avec leurs transformations, mais les loaders,
 lifters et backends sans rapport ne doivent pas être modifiés uniquement pour
 uniformiser un refactoring large.
+
+Les déclarations de structures conservent la disposition des champs séparément de la classification ABI. Darwin ARM64 accepte les structures imbriquées contenant un à quatre champs float ou double homogènes ; si les registres flottants sont épuisés, tout l’argument passe sur la pile. MedIR lie chaque composante physique avant SSA, HighIR reconstitue un seul paramètre ou résultat logique et le C vérifie la disposition. Les types mixtes, les autres architectures et les composantes incomplètes restent refusés ; ces indications ne permettent pas la réécriture du binaire.
