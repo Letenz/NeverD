@@ -106,13 +106,39 @@ class SwiftRuntimeDeclarationTests(unittest.TestCase):
                        dict(availability='NewAvailability'),
                        dict(availability='DifferentiationAvailability'),
                        dict(args='ARGS(' + ','.join(['PtrTy'] * 9) + ')'),
-                       dict(returns='RETURNS(PtrTy, PtrTy)')]:
+                       dict(returns='RETURNS(PtrTy, PtrTy, PtrTy)')]:
             with self.subTest(change=change):
                 invalid = record(cc='SwiftCC', **change)
                 self.assertEqual(declarations(invalid), {})
                 self.assertEqual(declarations(record(cc='SwiftCC') + invalid), {})
         self.assertTrue(declarations(record(cc='SwiftCC',
                                             args='ARGS(' + ','.join(['PtrTy'] * 8) + ')')))
+
+    def test_swift_record_results_preserve_declared_member_order(self):
+        for returns, encoding in [('RETURNS(RefCountedPtrTy, OpaquePtrTy)', '(pp)'),
+                                  ('RETURNS(PtrTy, SizeTy)', '(pz)'),
+                                  ('RETURNS(SizeTy, PtrTy)', '(zp)'),
+                                  ('RETURNS(SizeTy, SizeTy)', '(zz)'),
+                                  ('RETURNS(TypeMetadataResponseTy)', '(pz)')]:
+            source = record(cc='SwiftCC', returns=returns)
+            self.assertEqual(declarations(source),
+                             {'swift_allocate': (encoding + 'pz', False, True)})
+            self.assertEqual(declarations(source + source), declarations(source))
+            self.assertEqual(declarations(source + record(cc='SwiftCC')), {})
+            self.assertEqual(declarations(record(cc='SwiftCC') + source), {})
+
+    def test_named_result_layout_cannot_become_an_argument_or_c_result(self):
+        for change in [dict(args='ARGS(TypeMetadataResponseTy)'),
+                       dict(returns='RETURNS(TypeMetadataResponseTy, PtrTy)'),
+                       dict(returns='RETURNS(UnknownResponseTy)'),
+                       dict(returns='RETURNS(PtrTy, Int32Ty)'),
+                       dict(returns='RETURNS(VoidTy, PtrTy)'),
+                       dict(returns='RETURNS(PtrTy, Int1Ty)'),
+                       dict(returns='RETURNS(PtrTy, PtrTy)', attrs='ATTRS(NoReturn)')]:
+            for cc in ['C_CC', 'SwiftCC']:
+                with self.subTest(cc=cc, change=change):
+                    self.assertEqual(declarations(record(cc=cc, **change)), {})
+        self.assertEqual(declarations(record(returns='RETURNS(TypeMetadataResponseTy)')), {})
 
     def test_incomplete_or_exhausted_input_cannot_publish_partial_facts(self):
         for source in ('FUNCTION(', record() + '\n#if A', '#endif',

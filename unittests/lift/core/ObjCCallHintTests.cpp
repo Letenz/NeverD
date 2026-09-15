@@ -633,6 +633,98 @@ TEST(ObjCCallHints,
   }
 }
 
+TEST(ObjCCallHints, SwiftRuntimeRecordResultsKeepBothDeclaredCarriers) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &[Name, Arguments] :
+         {std::pair{"_swift_allocBox", "p"},
+          std::pair{"_swift_makeBoxUnique", "ppz"},
+          std::pair{"_swift_checkMetadataState", "zp"},
+          std::pair{"_swift_getAssociatedTypeWitness", "zpppp"},
+          std::pair{"_swift_getAssociatedTypeWitnessRelative", "zpppp"},
+          std::pair{"_swift_getBorrowTypeMetadata", "zp"},
+          std::pair{"_swift_getForeignTypeMetadata", "zp"},
+          std::pair{"_swift_getGenericMetadata", "zpp"},
+          std::pair{"_swift_getSingletonMetadata", "zp"},
+          std::pair{"_swift_getTupleTypeMetadata", "zzppp"},
+          std::pair{"_swift_getTupleTypeMetadata2", "zpppp"},
+          std::pair{"_swift_getTupleTypeMetadata3", "zppppp"}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage(Name, Architecture);
+      Image.DyldBindSlots[0x2180].Name = Name;
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      EXPECT_TRUE(Hint->BorrowedByteInputs.empty());
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      const auto Members = sourceAggregateMembers(Signature.ReturnType);
+      ASSERT_EQ(Members.size(), 2U);
+      ASSERT_EQ(Signature.ReturnComponents.size(), 2U);
+      const bool Box = llvm::StringRef(Name).contains("Box");
+      const auto &TRI = getTargetRegInfo(Architecture);
+      for (unsigned I = 0; I < 2; ++I) {
+        EXPECT_EQ(Members[I].ByteOffset, I * 8U);
+        EXPECT_EQ(Members[I].Type->Size, 8U);
+        EXPECT_EQ(Members[I].Type->Kind,
+                  !I || Box ? NdTypeKind::Ptr : NdTypeKind::Int);
+        EXPECT_EQ(Signature.ReturnComponents[I].RegisterOffset,
+                  TRI.IntReturnRegs[I]);
+        EXPECT_EQ(Signature.ReturnComponents[I].ValueBytes, 8U);
+      }
+      ASSERT_EQ(Signature.Parameters.size(), llvm::StringRef(Arguments).size());
+      for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
+        EXPECT_EQ(Signature.Parameters[I].Type->Kind,
+                  Arguments[I] == 'p' ? NdTypeKind::Ptr : NdTypeKind::Int);
+        EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                  TRI.IntParamRegs[I]);
+      }
+    }
+}
+
+TEST(ObjCCallHints, SwiftRuntimeRecordResultsRevalidateShapeAndImport) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Name : {"_swift_allocBox", "_swift_checkMetadataState"}) {
+      auto Image = runtimeImage(Name, Architecture);
+      Image.DyldBindSlots[0x2180].Name = Name;
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+      const auto &TRI = getTargetRegInfo(Architecture);
+      auto Low = caller(Architecture);
+      Low.Blocks[0].Ops.insert(
+          Low.Blocks[0].Ops.begin() + 1,
+          operation(NdOp::COPY, NdVar::reg(TRI.IntReturnReg, 8),
+                    {NdVar::reg(TRI.IntReturnRegs[1], 8)}, 0x1204));
+      const auto Med = convert(Image, Low);
+      const auto High = MedToHighConverter().convert(Med, Architecture);
+      const auto *Expression = sourceCall(High);
+      ASSERT_NE(Expression, nullptr);
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+        auto Changed = *Expression;
+        auto Wrong =
+            std::make_shared<SourceCallTypeHint>(*Changed.SourceCallHint);
+        if (Mutation == 0)
+          Wrong->Signature.ReturnComponents.pop_back();
+        else if (Mutation == 1)
+          std::swap(Wrong->Signature.ReturnComponents[0],
+                    Wrong->Signature.ReturnComponents[1]);
+        else if (Mutation == 2)
+          Wrong->Signature.ReturnType = NdType::makeInt(16, false);
+        else if (Mutation == 3)
+          Wrong->Signature.Convention =
+              SourceFunctionTypeHint::ConventionKind::C;
+        else
+          Wrong->TargetName += "_suffix";
+        Changed.SourceCallHint = std::move(Wrong);
+        EXPECT_FALSE(sdk::objcSourceCallBound(Changed, Image, {})) << Mutation;
+      }
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    }
+}
+
 TEST(ObjCCallHints, SwiftCIntegerDeclarationsPreserveWordAndBooleanCarriers) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const auto &[Name, Encoding] :
@@ -745,7 +837,7 @@ TEST(ObjCCallHints, SwiftFixedRuntimeImportsRequireExactStrongProvider) {
 TEST(ObjCCallHints, SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const char *Name :
-         {"_swift_willThrow", "_swift_allocBox", "_swift_makeBoxUnique",
+         {"_swift_willThrow", "_swift_allocError", "_swift_allocBoxTyped",
           "_swift_retainDirect", "_swift_task_getCurrent",
           "_swift_getTypeByMangledNameInContext2_suffix"}) {
       auto Image = runtimeImage(Name, Architecture);

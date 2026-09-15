@@ -219,7 +219,9 @@ Swift 导出使用正常 mobile 流程由内置签名解析器生成的结构化
 
 已验证的本地协议引用槽通过 `objc_getProtocol` 保持已注册协议的身份。批量结果中的 `runtime_protocols` 依赖清单包含原生被调函数的需求。名称冲突、声明不完整、导入槽和未解析重定位仍不绑定。独立导出会报告缺少协议注册，不会生成可能取得空协议对象的方法体。
 
-Swift 运行时 ABI 目录从固定版本的上游声明生成，并保留 C 或 Swift 调用约定。已知指针和指针宽度的无符号类型组成固定标量签名。Swift 调用必须有精确、非弱的 libswiftCore 导入；支持的两类版本化元数据可用性不允许弱导入。特殊参数寄存器、未知表示、多返回值、未支持的可用性类别及冲突声明仍被排除。尤其 swift_willThrow 需要编译器另行添加的 swiftself/swifterror 属性，声明 DSL 并未包含这些属性。调用保留副作用及既有回调、字节契约。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新生成，追加 `--check` 校验目录。声明事实附有版本、内容哈希和第三方说明。
+Swift 运行时 ABI 目录从固定版本的上游声明生成，并保留 C 或 Swift 调用约定。已知指针和指针宽度的无符号类型组成固定标量签名。Swift 调用必须有精确、非弱的 libswiftCore 导入；支持的两类版本化元数据可用性不允许弱导入。特殊参数寄存器、未知表示、未支持的可用性类别及冲突声明仍被排除。尤其 swift_willThrow 需要编译器另行添加的 swiftself/swifterror 属性，声明 DSL 并未包含这些属性。调用保留副作用及既有回调、字节契约。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新生成，追加 `--check` 校验目录。声明事实附有版本、内容哈希和第三方说明。
+
+固定 Swift 运行时声明也保留双字返回值：两个指针，或声明规定的元数据指针与状态字。共享 ABI 层分配两个返回寄存器，源码校验重新核对顺序、类型和精确导入。Box 分配与元数据查询仍执行真实运行时调用；聚合参数、未知布局和隐藏上下文仍不支持。
 
 固定 C 运行时目录还保留 32 位整数载体及明确零扩展的布尔结果。布尔结果使用完整的无符号字节；这不提供布尔参数的扩展约定。更窄的未知表示及采用 Swift 调用约定的 32 位声明仍不纳入。运行时测试覆盖成功与失败的类型转换、准确的计数式保留及对象析构；调用和所有权效果始终保留。
 

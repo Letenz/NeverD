@@ -12,7 +12,11 @@ in [LICENSES/Swift-Runtime-ABI.txt](LICENSES/Swift-Runtime-ABI.txt).
 NeverD's generator extracts pointer, size, 32-bit integer and explicitly
 zero-extended Boolean result carriers, together with explicit
 nonreturning declarations, as recorded in the generated file. No Swift
-runtime implementation is included. The fixed Swift subset excludes the custom
+runtime implementation is included. Two-word Swift results retain their
+declared members. The metadata response layout comes from
+[`IRGenModule.cpp:295-298`](https://github.com/swiftlang/swift/blob/9215272a4725957dfabdd14e1ca76c0dfa4a3003/lib/IRGen/IRGenModule.cpp#L295)
+and [`Metadata.h:99-113`](https://github.com/swiftlang/swift/blob/9215272a4725957dfabdd14e1ca76c0dfa4a3003/include/swift/ABI/Metadata.h#L99)
+at the same revision. The fixed Swift subset excludes the custom
 parameter attributes assigned to `swift_willThrow` by
 [`IRGenModule.cpp`](https://github.com/swiftlang/swift/blob/9215272a4725957dfabdd14e1ca76c0dfa4a3003/lib/IRGen/IRGenModule.cpp#L1127).
 

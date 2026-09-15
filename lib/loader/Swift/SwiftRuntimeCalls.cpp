@@ -91,14 +91,27 @@ bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
     }
   };
   llvm::StringRef Encoding(Found->Signature);
-  if (Encoding.empty() || Encoding.size() > 17)
+  if (Encoding.empty() || Encoding.size() > 20)
     return false;
   auto &Signature = Hint.Signature;
-  Signature.ReturnType = Type(Encoding.front());
+  if (Encoding.consume_front("(")) {
+    // The catalog records only complete, explicitly declared two-word
+    // Swift results. Their physical carriers belong to the shared ABI layer.
+    if (!Found->UsesSwiftConvention || Encoding.size() < 3 ||
+        Encoding[2] != ')' || (Encoding[0] != 'p' && Encoding[0] != 'z') ||
+        (Encoding[1] != 'p' && Encoding[1] != 'z'))
+      return false;
+    Signature.ReturnType =
+        NdType::makeStruct({Type(Encoding[0]), Type(Encoding[1])});
+    Encoding = Encoding.drop_front(3);
+  } else {
+    Signature.ReturnType = Type(Encoding.front());
+    Encoding = Encoding.drop_front();
+  }
   if (!Signature.ReturnType)
     return false;
   Signature.Parameters.clear();
-  for (char Code : Encoding.drop_front()) {
+  for (char Code : Encoding) {
     const auto Parameter = Type(Code);
     if (!Parameter || Parameter->Kind == NdTypeKind::Void)
       return false;

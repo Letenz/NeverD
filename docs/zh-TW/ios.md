@@ -215,7 +215,9 @@ Swift 匯出使用正常 mobile 流程由內建簽名解析器產生的結構化
 
 已驗證的本地協定引用槽透過 `objc_getProtocol` 保持已註冊協定的身分。批次結果中的 `runtime_protocols` 相依清單包含原生被呼叫函式的需求。名稱衝突、宣告不完整、匯入槽及未解析重定位仍不綁定。獨立匯出會回報缺少協定註冊，不會產生可能取得空協定物件的方法本體。
 
-Swift 執行階段 ABI 目錄從固定版本的上游宣告產生，並保留 C 或 Swift 呼叫慣例。已知指標和指標寬度的無號型別組成固定純量簽章。Swift 呼叫必須有精確、非弱的 libswiftCore 匯入；支援的兩類版本化中繼資料可用性不允許弱匯入。特殊參數暫存器、未知表示、多回傳值、未支援的可用性類別及衝突宣告仍被排除。尤其 swift_willThrow 需要編譯器另行加入的 swiftself/swifterror 屬性，宣告 DSL 並未包含這些屬性。呼叫保留副作用及既有回呼、位元組契約。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新產生，附加 `--check` 驗證目錄。宣告事實附有版本、內容雜湊與第三方說明。
+Swift 執行階段 ABI 目錄從固定版本的上游宣告產生，並保留 C 或 Swift 呼叫慣例。已知指標和指標寬度的無號型別組成固定純量簽章。Swift 呼叫必須有精確、非弱的 libswiftCore 匯入；支援的兩類版本化中繼資料可用性不允許弱匯入。特殊參數暫存器、未知表示、未支援的可用性類別及衝突宣告仍被排除。尤其 swift_willThrow 需要編譯器另行加入的 swiftself/swifterror 屬性，宣告 DSL 並未包含這些屬性。呼叫保留副作用及既有回呼、位元組契約。用 `scripts/generate_swift_runtime_declarations.py --input RuntimeFunctions.def --source-sha256 <pinned-hash>` 重新產生，附加 `--check` 驗證目錄。宣告事實附有版本、內容雜湊與第三方說明。
+
+固定 Swift 執行階段宣告也保留雙字回傳值：兩個指標，或宣告規定的中繼資料指標與狀態字。共用 ABI 層分配兩個回傳暫存器，原始碼驗證重新核對順序、型別和精確匯入。Box 配置與中繼資料查詢仍執行真實執行階段呼叫；聚合參數、未知配置和隱藏上下文仍不支援。
 
 固定 C 執行階段目錄也保留 32 位元整數載體及明確零擴充的布林結果。布林結果使用完整的無號位元組；這不提供布林參數的擴充約定。更窄的未知表示及採用 Swift 呼叫約定的 32 位元宣告仍不納入。執行階段測試涵蓋成功與失敗的型別轉換、準確的計數式保留及物件解構；呼叫與所有權效果始終保留。
 

@@ -3,12 +3,15 @@
 // ABI facts derived from Swift RuntimeFunctions.def:
 // https://github.com/swiftlang/swift/blob/9215272a4725957dfabdd14e1ca76c0dfa4a3003/include/swift/Runtime/RuntimeFunctions.def
 // SHA256: f0bd275c8f6a9a1ec038c41c79a2b5e06ea6e7b6988f907263c0c1613f12707c
+// Metadata response layout: lib/IRGen/IRGenModule.cpp:295-298 and
+// include/swift/ABI/Metadata.h:99-113 at the same revision.
 // Copyright (c) 2014 - 2017 Apple Inc. and the Swift project authors.
 // Apache-2.0 WITH Swift-exception; see LICENSES/Swift-Runtime-ABI.txt.
-// Changes: extract fixed scalar C and Swift ABI declarations, 2026-09-16.
+// Changes: extract scalar C and fixed one/two-word Swift ABI facts, 2026-09-16.
 // Implementations and runtime effect assumptions are not included.
 static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {
     {"_swift_debug_verifyTypeLayoutAttribute", "vpppzp", false, false},
+    {"swift_allocBox", "(pp)p", false, true},
     {"swift_allocEmptyBox", "p", false, false},
     {"swift_allocObject", "ppzz", false, false},
     {"swift_allocateGenericClassMetadata", "pppp", false, false},
@@ -29,6 +32,7 @@ static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {
     {"swift_bridgeObjectRelease_n", "vpu", false, false},
     {"swift_bridgeObjectRetain", "pp", false, false},
     {"swift_bridgeObjectRetain_n", "ppu", false, false},
+    {"swift_checkMetadataState", "(pz)zp", false, true},
     {"swift_conformsToProtocol", "ppp", false, false},
     {"swift_copyKeyPathTrivialIndices", "vppz", false, false},
     {"swift_copyPOD", "pppp", false, false},
@@ -92,15 +96,20 @@ static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {
     {"swift_errorRetain", "pp", false, false},
     {"swift_getAssociatedConformanceWitness", "pppppp", false, true},
     {"swift_getAssociatedConformanceWitnessRelative", "pppppp", false, true},
+    {"swift_getAssociatedTypeWitness", "(pz)zpppp", false, true},
+    {"swift_getAssociatedTypeWitnessRelative", "(pz)zpppp", false, true},
+    {"swift_getBorrowTypeMetadata", "(pz)zp", false, true},
     {"swift_getEnumCaseMultiPayload", "upp", false, false},
     {"swift_getErrorValue", "vppp", false, false},
     {"swift_getExistentialMetatypeMetadata", "pp", false, false},
+    {"swift_getForeignTypeMetadata", "(pz)zp", false, true},
     {"swift_getFunctionTypeMetadata", "pzppp", false, false},
     {"swift_getFunctionTypeMetadata0", "pzp", false, false},
     {"swift_getFunctionTypeMetadata1", "pzpp", false, false},
     {"swift_getFunctionTypeMetadata2", "pzppp", false, false},
     {"swift_getFunctionTypeMetadata3", "pzpppp", false, false},
     {"swift_getFunctionTypeMetadataDifferentiable", "pzzppp", false, false},
+    {"swift_getGenericMetadata", "(pz)zpp", false, true},
     {"swift_getInitializedObjCClass", "pp", false, false},
     {"swift_getKeyPath", "ppp", false, false},
     {"swift_getMetatypeMetadata", "pp", false, false},
@@ -108,8 +117,12 @@ static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {
     {"swift_getObjCClassFromObject", "pp", false, false},
     {"swift_getObjCClassMetadata", "pp", false, false},
     {"swift_getObjectType", "pp", false, false},
+    {"swift_getSingletonMetadata", "(pz)zp", false, true},
     {"swift_getTupleTypeLayout", "vppzp", false, true},
     {"swift_getTupleTypeLayout2", "zppp", false, true},
+    {"swift_getTupleTypeMetadata", "(pz)zzppp", false, true},
+    {"swift_getTupleTypeMetadata2", "(pz)zpppp", false, true},
+    {"swift_getTupleTypeMetadata3", "(pz)zppppp", false, true},
     {"swift_getTypeByMangledNameInContext", "ppzpp", false, true},
     {"swift_getTypeByMangledNameInContext2", "ppzpp", false, true},
     {"swift_getTypeByMangledNameInContextInMetadataState", "pzpzpp", false, true},
@@ -135,6 +148,7 @@ static constexpr SwiftRuntimeDeclaration SwiftRuntimeDeclarations[] = {
     {"swift_isUniquelyReferenced_native", "bp", false, false},
     {"swift_isUniquelyReferenced_nonNull_native", "bp", false, false},
     {"swift_lookUpClassMethod", "pppp", false, false},
+    {"swift_makeBoxUnique", "(pp)ppz", false, true},
     {"swift_nonatomic_bridgeObjectRelease", "vp", false, false},
     {"swift_nonatomic_bridgeObjectRelease_n", "vpu", false, false},
     {"swift_nonatomic_bridgeObjectRetain", "pp", false, false},
