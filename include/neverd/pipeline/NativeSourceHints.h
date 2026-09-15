@@ -18,10 +18,11 @@ struct PipelineFunctionAudit;
 /// a body-completeness certificate, or evidence of semantic equivalence.
 ///
 /// Unknown calls, floating/vector ABI ambiguity, variadics, partial stack
-/// slots, and results without a concrete in-block carrier definition fail
-/// closed. The final source body and dependency closure must still pass
-/// projection validation after the second run. No symbol names participate in
-/// inference.
+/// slots, and results without a complete computed carrier on every return
+/// path fail closed. The bounded CFG proof merges predecessor facts, rejects
+/// unseeded backedges, and invalidates clobbered results. The
+/// final source body and dependency closure must still pass projection
+/// validation after the second run. No symbol names participate in inference.
 /// Complete integer inputs forwarded to known pointer parameters can refine
 /// the source candidate through conflict-free COPY/PHI uses. Physical carriers
 /// remain unchanged; this does not modify generic lifting or rewrite types.

@@ -543,6 +543,16 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCStorage.UnprovenEmptyTypesAndTruncatedWideOffsetsRemainRejected",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.ComputedReturnsMergeAcrossEveryPathAndBlockOrder",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.ReturnLoopsRequireComputationOnTheirEntryPath",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.ReturnPathsInvalidateCallsAndPartialCarrierWrites",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.ReturnPathsRejectInputPassthroughAndEpilogueRestores",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("NativeSourceHints.ReturnProofRejectsMalformedOrUnboundedControlFlow",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.PointerUsesFollowWholeValuesWithoutChangingMachineTypes",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("NativeSourceHints.ConflictingOrPartialUsesCannotInventPointerParameters",
@@ -1171,13 +1181,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 456,
-              ("macOS", "macos-patch"): 497,
-              ("Windows", "windows-focused"): 452,
+              ("Linux", "linux-semantic"): 461,
+              ("macOS", "macos-patch"): 503,
+              ("Windows", "windows-focused"): 457,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.NativeReturnPathsPreserveBranchResultsAndStores",
                       "ObjCRuntimeSource.RecompiledFrameworkFetchesPreserveContextObjects",
                       "ObjCRuntimeSource.RecompiledImmutableScalarsPreserveFloatingBitPatterns",
                       "ObjCRuntimeSource.RecompiledGraphicsCallsPreserveValuesAndImageIdentity",

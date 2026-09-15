@@ -6,6 +6,8 @@
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
+#include <deque>
+#include <map>
 #include <set>
 
 namespace neverd {
@@ -21,6 +23,129 @@ bool integerCarrier(const TypeRef &Type) {
 bool sameScalar(const TypeRef &A, const TypeRef &B) {
   return integerCarrier(A) && integerCarrier(B) && A->Kind == B->Kind &&
          A->Size == B->Size && A->IsSigned == B->IsSigned;
+}
+
+// This proves a computed machine carrier, not an original return declaration.
+// PHIs merge physical register state; they do not create a value on a path
+// whose incoming return register is still unknown. Calls and partial writes
+// also invalidate the proof until a complete result is computed again.
+bool computedReturnPaths(const MedFunc &Function, Arch Architecture,
+                         uint16_t Width) {
+  const size_t Count = Function.Blocks.size();
+  if (!Count || Count > 16384)
+    return false;
+  size_t Remaining = 262144;
+  std::map<int, size_t> Index;
+  std::optional<size_t> Entry;
+  bool HasAddresses = false;
+  for (size_t I = 0; I < Count; ++I) {
+    const auto &Block = Function.Blocks[I];
+    if (Block.Id < 0 || !Index.emplace(Block.Id, I).second)
+      return false;
+    HasAddresses |= Block.StartAddr != 0;
+    if (Block.StartAddr == Function.Entry) {
+      if (Entry)
+        return false;
+      Entry = I;
+    }
+  }
+  if (!Entry && !HasAddresses && Index.count(0))
+    Entry = Index.at(0);
+  if (!Entry)
+    return false;
+  std::vector<std::set<size_t>> Preds(Count), Succs(Count);
+  for (size_t I = 0; I < Count; ++I)
+    for (int Successor : Function.Blocks[I].Succs) {
+      const auto Found = Index.find(Successor);
+      if (!Remaining-- || Found == Index.end() ||
+          !Succs[I].insert(Found->second).second)
+        return false;
+      Preds[Found->second].insert(I);
+    }
+  for (size_t I = 0; I < Count; ++I) {
+    std::set<size_t> Declared;
+    for (int Predecessor : Function.Blocks[I].Preds) {
+      const auto Found = Index.find(Predecessor);
+      if (!Remaining-- || Found == Index.end() ||
+          !Declared.insert(Found->second).second)
+        return false;
+    }
+    if (Declared != Preds[I])
+      return false;
+  }
+  std::vector<bool> Reachable(Count);
+  std::vector<size_t> Visit{*Entry};
+  Reachable[*Entry] = true;
+  for (size_t I = 0; I < Visit.size(); ++I)
+    for (size_t Successor : Succs[Visit[I]])
+      if (!Reachable[Successor]) {
+        Reachable[Successor] = true;
+        Visit.push_back(Successor);
+      }
+  const auto &TRI = getTargetRegInfo(Architecture);
+  std::vector<std::optional<bool>> Transfer(Count);
+  std::vector<std::pair<size_t, std::optional<bool>>> Returns;
+  for (size_t I = 0; I < Count; ++I) {
+    auto &Fact = Transfer[I];
+    for (const auto &Op : Function.Blocks[I].Ops) {
+      if (!Remaining--)
+        return false;
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        Fact = false;
+      const bool Seed = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                        Op.Output == Op.Inputs[0];
+      const auto &Out = Op.Output;
+      if (!Seed && Op.Opcode != NdOp::SUBBYTES && Out.Kind == MedVar::Reg &&
+          Out.Size &&
+          (Out.RegOff <= TRI.IntReturnReg
+               ? TRI.IntReturnReg - Out.RegOff < Out.Size
+               : Out.RegOff - TRI.IntReturnReg < Width)) {
+        const bool StackRestore =
+            Architecture == Arch::X64 && Op.Opcode == NdOp::LOAD &&
+            Op.NumInputs == 1 && Op.Inputs[0].Kind == MedVar::Reg &&
+            Op.Inputs[0].RegOff == TRI.StackPointer;
+        Fact = Out.RegOff == TRI.IntReturnReg && Out.Size >= Width &&
+               !StackRestore;
+      }
+      if (Op.Opcode == NdOp::RETURN)
+        Returns.emplace_back(I, Fact);
+    }
+  }
+  // Greatest fixed point of definite computation. Only inherited facts can
+  // fall from true to false; a local complete write establishes its own fact.
+  // Entry and disconnected components start without an incoming result, so
+  // an unseeded cycle cannot prove itself by its backedge.
+  std::vector<bool> Outgoing(Count);
+  std::deque<size_t> Unknown;
+  for (size_t I = 0; I < Count; ++I) {
+    Outgoing[I] =
+        Transfer[I].value_or(I != *Entry && Reachable[I] && !Preds[I].empty());
+    if (!Outgoing[I])
+      Unknown.push_back(I);
+  }
+  while (!Unknown.empty()) {
+    const size_t I = Unknown.front();
+    Unknown.pop_front();
+    for (size_t Successor : Succs[I]) {
+      if (!Remaining--)
+        return false;
+      if (!Transfer[Successor] && Outgoing[Successor]) {
+        Outgoing[Successor] = false;
+        Unknown.push_back(Successor);
+      }
+    }
+  }
+  // Compute each meet once even when a malformed block has many returns.
+  std::vector<bool> Incoming(Count);
+  for (size_t I = 0; I < Count; ++I)
+    Incoming[I] =
+        I != *Entry && Reachable[I] && !Preds[I].empty() &&
+        std::all_of(Preds[I].begin(), Preds[I].end(),
+                    [&](size_t Predecessor) { return Outgoing[Predecessor]; });
+  for (const auto &[I, Fact] : Returns)
+    if (!Fact.value_or(Incoming[I]))
+      return false;
+  return !Returns.empty();
 }
 } // namespace
 
@@ -118,7 +243,6 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   for (const auto &Block : Med.Blocks) {
     if (!Block.ExceptionalSuccs.empty() || !Block.ExceptionalPreds.empty())
       return Reject("native exception-dependent parameters are unsupported");
-    const MedOp *ReturnDefinition = nullptr;
     for (const auto &Op : Block.Ops) {
       if (Op.Opcode == NdOp::INTRINSIC)
         return Reject("native intrinsic requires explicit scalar ABI evidence");
@@ -129,7 +253,6 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
             Op.NumInputs != Op.SourceCallHint->Signature.Parameters.size() + 1)
           return Reject(
               "native function calls a target without a source binding");
-        ReturnDefinition = nullptr;
       }
       for (uint8_t I = 0; I < Op.NumInputs; ++I) {
         const auto &Input = Op.Inputs[I];
@@ -146,25 +269,7 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
               Op.Inputs[1].ConstVal != 0 || Op.Output.Size != 8)))
           return Reject("native stack slot is partial or has an unknown range");
       }
-      const bool SelfCopy = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
-                            Op.Output == Op.Inputs[0];
-      if (!SelfCopy && Op.Opcode != NdOp::SUBBYTES &&
-          Op.Output.Kind == MedVar::Reg &&
-          Op.Output.RegOff == TRI.IntReturnReg && Op.Output.Size)
-        ReturnDefinition = &Op;
-      if (Op.Opcode == NdOp::RETURN) {
-        HasReturn = true;
-        if (!ReturnDefinition ||
-            ReturnDefinition->Output.Size < Hint.ReturnType->Size)
-          return Reject(
-              "native result has no in-block computed register value");
-        // A stack-pop into RAX is cleanup, not evidence of a source result.
-        if (Image.Arch == Arch::X64 && ReturnDefinition->Opcode == NdOp::LOAD &&
-            ReturnDefinition->NumInputs == 1 &&
-            ReturnDefinition->Inputs[0].Kind == MedVar::Reg &&
-            ReturnDefinition->Inputs[0].RegOff == TRI.StackPointer)
-          return Reject("native result is an epilogue register restore");
-      }
+      HasReturn |= Op.Opcode == NdOp::RETURN;
     }
     for (const auto &Phi : Block.Phis)
       for (const auto &[Predecessor, Input] : Phi.Args)
@@ -173,6 +278,9 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
   }
   if (!HasReturn)
     return Reject("native function has no machine return");
+  if (!computedReturnPaths(Med, Image.Arch, Hint.ReturnType->Size))
+    return Reject("native result has no complete computed carrier on every "
+                  "return path");
   const auto PointerParameters = inferMedSourcePointerParameters(Med);
   size_t SourceIndex = 0;
   for (size_t Index = 0; Index < Med.Params.size(); ++Index) {

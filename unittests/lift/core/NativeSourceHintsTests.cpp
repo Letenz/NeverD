@@ -8,6 +8,9 @@
 #include "neverd/pipeline/NativeSourceHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include <algorithm>
+#include <array>
+
 using namespace neverd;
 
 namespace {
@@ -188,6 +191,179 @@ TEST(NativeSourceHints, EachReturnRequiresComputedCarrierNotStaleLiveIn) {
     }
     std::string Error;
     EXPECT_FALSE(Fixture.infer(Error)) << Mutation;
+  }
+}
+
+// The source hint consumes already verified MedIR. These graphs isolate the
+// all-path carrier proof; the runtime fixture exercises real lifting and SSA.
+void returnDiamond(NativeFixture &Fixture) {
+  const auto Compute = Fixture.Med.Blocks[0].Ops.front();
+  const auto Return = Fixture.Med.Blocks[0].Ops.back();
+  Fixture.Med.Blocks.resize(4);
+  for (unsigned I = 0; I < 4; ++I) {
+    auto &Block = Fixture.Med.Blocks[I];
+    Block.Id = I;
+    Block.StartAddr = Fixture.Med.Entry + I * 16;
+    Block.Ops.clear();
+  }
+  auto &Blocks = Fixture.Med.Blocks;
+  Blocks[0].Succs = {1, 2};
+  for (unsigned I : {1U, 2U}) {
+    Blocks[I].Preds = {0};
+    Blocks[I].Succs = {3};
+    Blocks[I].Ops = {Compute};
+  }
+  Blocks[3].Preds = {1, 2};
+  Blocks[3].Ops = {Return};
+}
+
+TEST(NativeSourceHints, ComputedReturnsMergeAcrossEveryPathAndBlockOrder) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Complete : {false, true}) {
+      NativeFixture Fixture(Architecture);
+      returnDiamond(Fixture);
+      if (!Complete)
+        Fixture.Med.Blocks[2].Ops.clear();
+      const auto Blocks = Fixture.Med.Blocks;
+      std::array<unsigned, 4> Order{0, 1, 2, 3};
+      do {
+        for (unsigned I = 0; I < 4; ++I)
+          Fixture.Med.Blocks[I] = Blocks[Order[I]];
+        std::string Error;
+        EXPECT_EQ(bool(Fixture.infer(Error)), Complete) << Error;
+        EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                  MedReturnValueEvidence::Unknown);
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
+  }
+}
+
+TEST(NativeSourceHints, ReturnLoopsRequireComputationOnTheirEntryPath) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Seeded : {false, true}) {
+      NativeFixture Fixture(Architecture);
+      returnDiamond(Fixture);
+      auto &Blocks = Fixture.Med.Blocks;
+      // Entry -> header -> body -> header, or header -> return. Computing
+      // only in the body cannot prove a result on the zero-trip path.
+      if (Seeded)
+        Blocks[0].Ops = Blocks[2].Ops;
+      Blocks[0].Succs = {1};
+      Blocks[1].Ops.clear();
+      Blocks[1].Preds = {0, 2};
+      Blocks[1].Succs = {2, 3};
+      Blocks[2].Preds = {1};
+      Blocks[2].Succs = {1};
+      Blocks[3].Preds = {1};
+      std::string Error;
+      EXPECT_EQ(bool(Fixture.infer(Error)), Seeded) << Error;
+      // A disconnected cycle cannot establish its own incoming fact either.
+      Blocks[0].Succs.clear();
+      Blocks[1].Preds = {2};
+      EXPECT_FALSE(Fixture.infer(Error));
+    }
+  }
+}
+
+TEST(NativeSourceHints, ReturnPathsInvalidateCallsAndPartialCarrierWrites) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      NativeFixture Fixture(Architecture);
+      returnDiamond(Fixture);
+      auto &Ops = Fixture.Med.Blocks[2].Ops;
+      MedOp Overwrite = Ops.front();
+      Overwrite.Opcode = NdOp::COPY;
+      Overwrite.NumInputs = 1;
+      Overwrite.Inputs[0] = MedVar::makeConst(7, 4);
+      if (Mutation == 0)
+        Overwrite.Output.Size = 2;
+      if (Mutation == 1) {
+        ++Overwrite.Output.RegOff;
+        Overwrite.Output.Size = 1;
+      }
+      if (Mutation == 2) {
+        Overwrite.Opcode = NdOp::CALL;
+        Overwrite.Output = {};
+        Overwrite.Inputs[0] = MedVar::makeConst(0x1020, 8);
+        auto Hint = std::make_shared<SourceCallTypeHint>();
+        Hint->Signature.ReturnType = NdType::makeVoid();
+        std::string Error;
+        ASSERT_TRUE(
+            assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error))
+            << Error;
+        Overwrite.SourceCallHint = std::move(Hint);
+      }
+      if (Mutation == 3)
+        Overwrite.Inputs[0] = Overwrite.Output; // SSA seed, not a write.
+      if (Mutation == 4) {
+        Overwrite.Opcode = NdOp::SUBBYTES; // Register view, not a write.
+        Overwrite.Output.Size = 1;
+        Overwrite.addInput(MedVar::makeConst(0, 4));
+      }
+      Ops.push_back(Overwrite);
+      std::string Error;
+      EXPECT_EQ(bool(Fixture.infer(Error)), Mutation >= 3) << Mutation << Error;
+      // A subsequent complete computation reestablishes the carrier.
+      Ops.push_back(Ops.front());
+      EXPECT_TRUE(Fixture.infer(Error)) << Mutation << Error;
+    }
+  }
+}
+
+TEST(NativeSourceHints, ReturnPathsRejectInputPassthroughAndEpilogueRestores) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    returnDiamond(Fixture);
+    for (unsigned I : {1U, 2U}) {
+      auto &Op = Fixture.Med.Blocks[I].Ops.front();
+      Op.Opcode = NdOp::COPY;
+      Op.NumInputs = 1;
+      Op.Inputs[0] = Op.Output;
+    }
+    std::string Error;
+    EXPECT_FALSE(Fixture.infer(Error));
+  }
+  NativeFixture Fixture(Arch::X64);
+  returnDiamond(Fixture);
+  auto &Restore = Fixture.Med.Blocks[2].Ops.front();
+  Restore.Opcode = NdOp::LOAD;
+  Restore.NumInputs = 1;
+  Restore.Inputs[0] = Restore.Output;
+  Restore.Inputs[0].RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  std::string Error;
+  EXPECT_FALSE(Fixture.infer(Error));
+}
+
+TEST(NativeSourceHints, ReturnProofRejectsMalformedOrUnboundedControlFlow) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
+      NativeFixture Fixture(Architecture);
+      returnDiamond(Fixture);
+      auto &Blocks = Fixture.Med.Blocks;
+      if (Mutation == 0)
+        Blocks[0].Succs.push_back(99);
+      if (Mutation == 1)
+        Blocks[0].Succs.push_back(1);
+      if (Mutation == 2)
+        Blocks[1].Preds.push_back(0);
+      if (Mutation == 3)
+        Blocks[1].Preds.clear();
+      if (Mutation == 4)
+        Blocks[1].Id = Blocks[0].Id;
+      if (Mutation == 5)
+        Blocks[0].Id = -1;
+      if (Mutation == 6)
+        Blocks[1].StartAddr = Fixture.Med.Entry;
+      if (Mutation == 7)
+        Blocks[0].StartAddr += 4;
+      if (Mutation == 8)
+        Blocks.resize(16385);
+      if (Mutation == 9)
+        Blocks[1].Ops.resize(262144, Blocks[1].Ops.front());
+      std::string Error;
+      EXPECT_FALSE(Fixture.infer(Error)) << Mutation;
+      EXPECT_FALSE(Error.empty()) << Mutation;
+    }
   }
 }
 

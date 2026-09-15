@@ -72,6 +72,7 @@ enum class RuntimeFixture {
   SwitchEffects,
   LoopEdges,
   FrameSelectors,
+  NativeReturnPaths,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -102,6 +103,8 @@ void verifyRuntime(bool Chained,
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
   const bool SwitchEffects = FixtureKind == RuntimeFixture::SwitchEffects;
+  const bool NativeReturnPaths =
+      FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
   const bool InvariantLoops = FixtureKind == RuntimeFixture::InvariantLoops;
@@ -159,6 +162,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
                         : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
                         : SwitchEffects      ? "ObjCSwitchEffects.m"
@@ -199,6 +203,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
                         : SwitchEffects     ? "ObjCSwitchEffectsHarness.m"
@@ -272,6 +277,8 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Compile.insert(Compile.end(),
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
+  if (NativeReturnPaths)
+    Compile.push_back((Fixtures / "ObjCNativeReturnPaths.S").string());
   if (ReceiverFields)
     Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
@@ -383,6 +390,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : NativeReturnPaths  ? 1U
                              : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
                              : SwitchEffects      ? 1U
@@ -458,6 +466,8 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (NativeReturnPaths)
+    Remaining = {"adjusted:choose:output:"};
   if (FrameSelectors)
     Remaining = {"removing:from:"};
   if (LoopEdges)
@@ -648,6 +658,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : NativeReturnPaths  ? "NDNativeReturnPaths"
                   : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
                   : SwitchEffects      ? "NDSwitchEffects"
@@ -933,6 +944,8 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : NativeReturnPaths
+          ? "native-return-cases=16384\nreturns-and-stores=pass\n"
       : FrameSelectors
           ? "frame-selector-cases=20480\nstrings-and-identity=pass\n"
       : LoopEdges ? "loop-cases=65536\nreturns-and-stores=pass\n"
@@ -1598,5 +1611,15 @@ TEST(ObjCRuntimeSource, PrivateFrameSelectorsPreserveStringsAndIdentity) {
         verifyRuntime(Chained, RuntimeFixture::FrameSelectors));
 #else
   GTEST_SKIP() << "requires the Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, NativeReturnPathsPreserveBranchResultsAndStores) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::NativeReturnPaths));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif
 }
