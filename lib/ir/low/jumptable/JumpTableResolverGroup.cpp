@@ -274,6 +274,8 @@ bool CFGBuilder::copyGuardedGroupProofSnapshot(
   Scratch.RelocatedInstructionScalarModelOccurrences =
       RelocatedInstructionScalarModelOccurrences;
   Scratch.CurrentImg = CurrentImg;
+  // This immutable image index carries no candidate or sibling proof state.
+  Scratch.ExecutableCodeOwners = ExecutableCodeOwners;
   Scratch.CurrentFuncEntry = CurrentFuncEntry;
   Scratch.CurrentFuncRange = CurrentFuncRange;
   Scratch.AuthoritativeCurrentFuncRange = AuthoritativeCurrentFuncRange;

@@ -33,6 +33,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -86,13 +87,6 @@ std::optional<va_t> exactImmutableDataSpanOwner(const BinaryImage &Img,
 /// constant-folding and path-emulation fallbacks.  Defined in
 /// JumpTableResolverFold.cpp.
 std::vector<uint64_t> callPreservedRegs(const BinaryImage &Img);
-
-/// True when exception/unwind metadata links \p Target's cold/chained range
-/// to the exact primary function at \p FunctionEntry.  Shared by ordinary
-/// switch-target validation and opaque mixed-table identity classification so
-/// the two paths cannot drift on out-of-line local fragments.
-bool isExplicitlyOwnedFunctionFragment(const BinaryImage &Img,
-                                       va_t FunctionEntry, va_t Target);
 
 namespace detail {
 

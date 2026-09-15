@@ -1040,14 +1040,13 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
           orderedLookupWork(Img.VerifiedFunctionEntries.size());
       const size_t ImportStubLookup =
           orderedLookupWork(Img.ImportStubIndices.size());
-      const size_t FragmentLookup =
-          orderedLookupWork(Img.ExceptionMetadata.Functions.size());
-      if (FragmentLookup > (std::numeric_limits<size_t>::max() - 3) / 2) {
+      const auto FragmentWork =
+          explicitFunctionFragmentLookupWork(Img, ExecutableCodeOwners);
+      if (!FragmentWork) {
         *CandidateEvidenceBudget = 0;
         Complete = false;
         return false;
       }
-      const size_t FragmentWorkPerEntry = FragmentLookup * 2 + 3;
       // readVA, executable-owner/range validation, function-entry exclusion,
       // and explicit fragment ownership all traverse loader inventories.  Pay
       // their worst-case envelope before the first slot read so exhaustion
@@ -1064,9 +1063,7 @@ bool CFGBuilder::tryTwoTableSelect(const BinaryImage &Img,
           !consumeFactorProduct({TargetCount, RuntimeEntryLookup, 2}) ||
           !consumeFactorProduct({TargetCount, VerifiedEntryLookup}) ||
           !consumeFactorProduct({TargetCount, KnownEntryLookup}) ||
-          !consumeFactorProduct({TargetCount,
-                                 Img.ExceptionMetadata.Functions.size(),
-                                 FragmentWorkPerEntry}) ||
+          !consumeFactorProduct({TargetCount, *FragmentWork}) ||
           !consumeProduct(TargetCount, 3) || !consumeWork(2))
         return false;
 

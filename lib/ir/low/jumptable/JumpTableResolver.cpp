@@ -1742,12 +1742,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     const size_t ImportStubLookup =
         orderedLookupWork(Img.ImportStubIndices.size());
     const size_t InsnLookup = orderedLookupWork(Insns.size());
-    const size_t FragmentLookup =
-        orderedLookupWork(Img.ExceptionMetadata.Functions.size());
-    const size_t FragmentWorkPerEntry =
-        FragmentLookup <= (std::numeric_limits<size_t>::max() - 3) / 2
-            ? FragmentLookup * 2 + 3
-            : std::numeric_limits<size_t>::max();
+    const auto FragmentWork =
+        explicitFunctionFragmentLookupWork(Img, ExecutableCodeOwners);
+    if (!FragmentWork) {
+      consumeCandidateEvidence(std::numeric_limits<size_t>::max());
+      return false;
+    }
     return consumeCandidateFactorProduct(
                {ExpectedTargets, ValidationPasses, 16}) &&
            consumeCandidateFactorProduct(
@@ -1757,9 +1757,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
            consumeCandidateFactorProduct(
                {ExpectedTargets, ValidationPasses, Img.Sections.size(), 8}) &&
            consumeCandidateFactorProduct(
-               {ExpectedTargets, ValidationPasses,
-                Img.ExceptionMetadata.Functions.size(),
-                FragmentWorkPerEntry}) &&
+               {ExpectedTargets, ValidationPasses, *FragmentWork}) &&
            consumeCandidateFactorProduct({ExpectedTargets, ValidationPasses,
                                           Img.ImportStubRanges.size(), 3}) &&
            consumeCandidateFactorProduct(
@@ -1931,8 +1929,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       const bool InAuthoritativeBody =
           Target > AuthoritativeCurrentFuncRange->first &&
           Target < AuthoritativeCurrentFuncRange->second;
-      const bool IsOwnedFragment =
-          isExplicitlyOwnedFunctionFragment(Img, CurrentFuncEntry, Target);
+      const bool IsOwnedFragment = isExplicitlyOwnedFunctionFragment(
+          Img, CurrentFuncEntry, Target, ExecutableCodeOwners);
       const bool IsCallableEntry =
           Target == CurrentFuncEntry ||
           (KnownFuncEntries && KnownFuncEntries->count(Target)) ||

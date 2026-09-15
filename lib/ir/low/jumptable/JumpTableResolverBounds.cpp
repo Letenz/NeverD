@@ -1039,12 +1039,12 @@ uint32_t CFGBuilder::inferBoundsFromMask(
         orderedEvidenceLookupWork(CurrentImg->VerifiedFunctionEntries.size());
     const size_t ImportStubLookup =
         orderedEvidenceLookupWork(CurrentImg->ImportStubIndices.size());
-    const size_t FragmentLookup = orderedEvidenceLookupWork(
-        CurrentImg->ExceptionMetadata.Functions.size());
-    const size_t FragmentWorkPerEntry =
-        FragmentLookup <= (std::numeric_limits<size_t>::max() - 3) / 2
-            ? FragmentLookup * 2 + 3
-            : std::numeric_limits<size_t>::max();
+    const auto FragmentWork =
+        explicitFunctionFragmentLookupWork(*CurrentImg, ExecutableCodeOwners);
+    if (!FragmentWork) {
+      consumeBudget(*EvidenceBudget, std::numeric_limits<size_t>::max());
+      return 0;
+    }
     if (SearchPasses != 0 &&
         Upper > std::numeric_limits<size_t>::max() / SearchPasses) {
       consumeBudget(*EvidenceBudget, std::numeric_limits<size_t>::max());
@@ -1058,10 +1058,7 @@ uint32_t CFGBuilder::inferBoundsFromMask(
             {TargetReadUpperBound, CurrentImg->Segments.size(), 16}) ||
         !consumeBudgetFactorProduct(
             {TargetReadUpperBound, CurrentImg->Sections.size(), 8}) ||
-        !consumeBudgetFactorProduct(
-            {TargetReadUpperBound,
-             CurrentImg->ExceptionMetadata.Functions.size(),
-             FragmentWorkPerEntry}) ||
+        !consumeBudgetFactorProduct({TargetReadUpperBound, *FragmentWork}) ||
         !consumeBudgetFactorProduct(
             {TargetReadUpperBound, CurrentImg->ImportStubRanges.size(), 3}) ||
         !consumeBudgetFactorProduct(
@@ -4467,12 +4464,12 @@ bool CFGBuilder::inferBoundsFromModulo(
           orderedEvidenceLookupWork(CurrentImg->VerifiedFunctionEntries.size());
       const size_t ImportStubLookup =
           orderedEvidenceLookupWork(CurrentImg->ImportStubIndices.size());
-      const size_t FragmentLookup = orderedEvidenceLookupWork(
-          CurrentImg->ExceptionMetadata.Functions.size());
-      const size_t FragmentWorkPerEntry =
-          FragmentLookup <= (std::numeric_limits<size_t>::max() - 3) / 2
-              ? FragmentLookup * 2 + 3
-              : std::numeric_limits<size_t>::max();
+      const auto FragmentWork =
+          explicitFunctionFragmentLookupWork(*CurrentImg, ExecutableCodeOwners);
+      if (!FragmentWork) {
+        consumeFixedPointEvidence(std::numeric_limits<size_t>::max());
+        return false;
+      }
       if (SearchPasses != 0 &&
           Upper > std::numeric_limits<size_t>::max() / SearchPasses) {
         consumeFixedPointEvidence(std::numeric_limits<size_t>::max());
@@ -4487,9 +4484,7 @@ bool CFGBuilder::inferBoundsFromModulo(
           !consumeFixedPointFactorProduct(
               {TargetReadUpperBound, CurrentImg->Sections.size(), 8}) ||
           !consumeFixedPointFactorProduct(
-              {TargetReadUpperBound,
-               CurrentImg->ExceptionMetadata.Functions.size(),
-               FragmentWorkPerEntry}) ||
+              {TargetReadUpperBound, *FragmentWork}) ||
           !consumeFixedPointFactorProduct(
               {TargetReadUpperBound, CurrentImg->ImportStubRanges.size(), 3}) ||
           !consumeFixedPointFactorProduct(

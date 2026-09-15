@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <limits>
+#include <set>
 
 namespace neverd {
 namespace {
@@ -59,6 +61,34 @@ void visitFunctionMetadataRanges(const BinaryImage &Image, Visitor Visit) {
       Visit(Sym.Addr, Sym.Addr + Sym.Size);
 }
 
+template <typename Visitor>
+void visitFunctionFragments(const BinaryImage &Image, std::optional<va_t> Owner,
+                            Visitor Visit) {
+  const auto &Functions = Image.ExceptionMetadata.Functions;
+  std::set<va_t> Primaries;
+  for (const auto &Function : Functions)
+    if (Function.Kind == RuntimeFunctionKind::Primary &&
+        (!Owner || Function.CodeRange.Begin == *Owner))
+      Primaries.insert(Function.CodeRange.Begin);
+  if (Primaries.empty())
+    return;
+  for (const auto &Fragment : Functions) {
+    if (Fragment.Kind == RuntimeFunctionKind::Primary ||
+        Fragment.CodeRange.Begin >= Fragment.CodeRange.End)
+      continue;
+    if (Fragment.PrimaryFunctionIndex &&
+        *Fragment.PrimaryFunctionIndex < Functions.size()) {
+      const auto &Primary = Functions[*Fragment.PrimaryFunctionIndex];
+      if (Primary.Kind == RuntimeFunctionKind::Primary &&
+          (!Owner || Primary.CodeRange.Begin == *Owner))
+        Visit(Primary.CodeRange.Begin, Fragment.CodeRange);
+    }
+    if (Fragment.ChainedPrimaryRange &&
+        Primaries.count(Fragment.ChainedPrimaryRange->Begin))
+      Visit(Fragment.ChainedPrimaryRange->Begin, Fragment.CodeRange);
+  }
+}
+
 } // namespace
 
 ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
@@ -89,10 +119,80 @@ ExecutableCodeOwnerIndex::ExecutableCodeOwnerIndex(const BinaryImage &Image)
     FunctionMetadataEnds.emplace_back(Start, End);
   });
   std::sort(FunctionMetadataEnds.begin(), FunctionMetadataEnds.end());
-  FunctionMetadataEnds.erase(
-      std::unique(FunctionMetadataEnds.begin(), FunctionMetadataEnds.end(),
-                  [](const auto &A, const auto &B) { return A.first == B.first; }),
-      FunctionMetadataEnds.end());
+  FunctionMetadataEnds.erase(std::unique(FunctionMetadataEnds.begin(),
+                                         FunctionMetadataEnds.end(),
+                                         [](const auto &A, const auto &B) {
+                                           return A.first == B.first;
+                                         }),
+                             FunctionMetadataEnds.end());
+
+  visitFunctionFragments(Image, std::nullopt, [&](va_t Owner, auto Range) {
+    FunctionFragments.emplace_back(Owner, Range.Begin, Range.End);
+  });
+  std::sort(FunctionFragments.begin(), FunctionFragments.end());
+  size_t Count = 0;
+  for (const auto &[Owner, Begin, End] : FunctionFragments) {
+    if (Count != 0 && Owner == std::get<0>(FunctionFragments[Count - 1]) &&
+        Begin <= std::get<2>(FunctionFragments[Count - 1])) {
+      auto &PreviousEnd = std::get<2>(FunctionFragments[Count - 1]);
+      PreviousEnd = std::max(PreviousEnd, End);
+    } else {
+      FunctionFragments[Count++] = {Owner, Begin, End};
+    }
+  }
+  FunctionFragments.resize(Count);
+}
+
+std::optional<size_t>
+ExecutableCodeOwnerIndex::fragmentLookupWork(const BinaryImage &Image) const {
+  if (this->Image != &Image)
+    return std::nullopt;
+  // Each binary-search comparison checks two address fields. Include the
+  // image identity, endpoint lookup and final owner/range comparisons.
+  size_t Work = 8;
+  for (size_t N = FunctionFragments.size(); N != 0; N /= 2)
+    Work += 4;
+  return Work;
+}
+
+bool ExecutableCodeOwnerIndex::ownsFunctionFragment(va_t Entry,
+                                                    va_t Target) const {
+  const auto Key = std::pair{Entry, Target};
+  auto It = std::upper_bound(FunctionFragments.begin(), FunctionFragments.end(),
+                             Key, [](auto Address, const auto &Range) {
+                               return Address < std::pair{std::get<0>(Range),
+                                                          std::get<1>(Range)};
+                             });
+  return It != FunctionFragments.begin() && std::get<0>(*--It) == Entry &&
+         Target < std::get<2>(*It);
+}
+
+bool isExplicitlyOwnedFunctionFragment(const BinaryImage &Image,
+                                       va_t FunctionEntry, va_t Target,
+                                       const ExecutableCodeOwnerIndex *Index) {
+  if (Index && Index->Image == &Image)
+    return Index->ownsFunctionFragment(FunctionEntry, Target);
+  bool Found = false;
+  visitFunctionFragments(Image, FunctionEntry, [&](va_t, auto Range) {
+    Found |= Range.contains(Target);
+  });
+  return Found;
+}
+
+std::optional<size_t>
+explicitFunctionFragmentLookupWork(const BinaryImage &Image,
+                                   const ExecutableCodeOwnerIndex *Index) {
+  if (Index)
+    if (auto Work = Index->fragmentLookupWork(Image))
+      return Work;
+  const size_t Count = Image.ExceptionMetadata.Functions.size();
+  size_t Lookup = 1;
+  for (size_t N = Count; N > 1; N = N / 2 + N % 2)
+    ++Lookup;
+  const size_t PerEntry = Lookup * 2 + 3;
+  if (Count > std::numeric_limits<size_t>::max() / PerEntry)
+    return std::nullopt;
+  return Count * PerEntry;
 }
 
 va_t ExecutableCodeOwnerIndex::getFunctionMetadataEnd(va_t Entry) const {

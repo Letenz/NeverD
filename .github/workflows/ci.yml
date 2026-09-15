@@ -459,6 +459,14 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("MedConstantPropagation.LowConversionPreservesOneValueAcrossLoopDefinitions",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("JumpTableTargetOwners.IndexesFragmentOwnershipForLargeCompactDispatch",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("JumpTableTargetOwners.FragmentsKeepExactPrimaryRelationships",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("JumpTableTargetOwners.NewImageOperationsObserveChangedFragmentOwners",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("JumpTableTargetOwners.IndexedTargetsRejectIndependentFunctionEntries",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.SwiftMetadataCallsRevalidateDeclarationAndConvention",
@@ -1103,9 +1111,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 422,
-              ("macOS", "macos-patch"): 459,
-              ("Windows", "windows-focused"): 418,
+              ("Linux", "linux-semantic"): 426,
+              ("macOS", "macos-patch"): 463,
+              ("Windows", "windows-focused"): 422,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

@@ -38,33 +38,6 @@
 
 namespace neverd {
 
-bool isExplicitlyOwnedFunctionFragment(const BinaryImage &Img,
-                                       va_t FunctionEntry, va_t Target) {
-  const auto &Functions = Img.ExceptionMetadata.Functions;
-  std::set<size_t> Primaries;
-  for (size_t I = 0; I < Functions.size(); ++I) {
-    const ExceptionFunction &Function = Functions[I];
-    if (Function.Kind == RuntimeFunctionKind::Primary &&
-        Function.CodeRange.Begin == FunctionEntry)
-      Primaries.insert(I);
-  }
-  if (Primaries.empty())
-    return false;
-
-  for (const ExceptionFunction &Fragment : Functions) {
-    if (Fragment.Kind == RuntimeFunctionKind::Primary ||
-        !Fragment.CodeRange.contains(Target))
-      continue;
-    if (Fragment.PrimaryFunctionIndex &&
-        Primaries.count(*Fragment.PrimaryFunctionIndex))
-      return true;
-    if (Fragment.ChainedPrimaryRange &&
-        Fragment.ChainedPrimaryRange->Begin == FunctionEntry)
-      return true;
-  }
-  return false;
-}
-
 //===----------------------------------------------------------------------===//
 // isValidTarget — sanity check a resolved target address
 //===----------------------------------------------------------------------===//
@@ -107,7 +80,8 @@ bool CFGBuilder::isValidTarget(const BinaryImage &Img, va_t Target,
   if (CurrentFuncRange &&
       (Target < CurrentFuncRange->first ||
        Target >= CurrentFuncRange->second) &&
-      !isExplicitlyOwnedFunctionFragment(Img, FuncEntry, Target))
+      !isExplicitlyOwnedFunctionFragment(Img, FuncEntry, Target,
+                                         ExecutableCodeOwners))
     return false;
 
   return true;

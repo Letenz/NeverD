@@ -115,6 +115,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
+  core/JumpTableTargetOwnerTests.cpp
   core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
@@ -928,6 +929,7 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
   core/MedConstantPropagationTests.cpp
+  core/JumpTableTargetOwnerTests.cpp
   core/SourceAggregateTests.cpp
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
