@@ -272,13 +272,13 @@ TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
   }
 }
 
-TEST(ObjCCallHints, FrameworkVariadicAndAggregateCallsRemainUnbound) {
+TEST(ObjCCallHints, FrameworkVariadicAndUnsupportedRecordsRemainUnbound) {
   auto Image = image();
   Image.ObjCMethods.clear();
   Image.DynInfo.NeededLibs = {
       "/System/Library/Frameworks/Foundation.framework/Foundation"};
   for (llvm::StringRef Selector :
-       {"stringWithFormat:", "rangeOfString:", "neverdUnknownSelector:"}) {
+       {"stringWithFormat:", "decimalValue", "neverdUnknownSelector:"}) {
     SCOPED_TRACE(Selector.str());
     Image.ObjCSourceReferences.at(0x2100).Name = Selector.str();
     EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
@@ -291,6 +291,20 @@ TEST(ObjCCallHints, FrameworkVariadicAndAggregateCallsRemainUnbound) {
   Prefix.TypeHint = signature(Image.Arch);
   Image.ObjCMethods.push_back(Prefix);
   EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    Image.Arch = A;
+    const auto Range = objcSelectorSourceTypeHint(Image, "rangeOfString:");
+    ASSERT_TRUE(Range);
+    ASSERT_EQ(Range->ReturnType->Kind, NdTypeKind::Struct);
+    ASSERT_EQ(Range->ReturnComponents.size(), 2U);
+    const auto &TRI = getTargetRegInfo(A);
+    for (unsigned I = 0; I < 2; ++I) {
+      EXPECT_EQ(Range->ReturnComponents[I].Kind,
+                SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(Range->ReturnComponents[I].RegisterOffset,
+                TRI.IntReturnRegs[I]);
+    }
+  }
 }
 
 TEST(ObjCCallHints, FrameworkABIIsArchitectureSpecificAndRevalidated) {

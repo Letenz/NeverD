@@ -88,8 +88,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     std::vector<ExprPtr> Leaves;
     if (CurOp.NumInputs == Members.size())
       for (size_t I = 0; I < Members.size(); ++I)
-        Leaves.push_back(
-            sourceFloatValue(CurOp.Inputs[I], Members[I].Type->Size));
+        Leaves.push_back(sourceScalarValue(CurOp.Inputs[I], Members[I].Type));
     S.RetVal = HighExpr::makeRecord(Func.ReturnType, std::move(Leaves));
     Func.Body.push_back(std::move(S));
     return;

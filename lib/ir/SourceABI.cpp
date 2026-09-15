@@ -97,9 +97,13 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
             {Member.Type->Fields[I],
              uint16_t(Member.ByteOffset + Member.Type->FieldOffsets[I])});
     } else {
-      if (Member.Type->Kind != NdTypeKind::Float || Result.size() >= 4 ||
+      const bool Floating = Member.Type->Kind == NdTypeKind::Float;
+      if (!scalarType(Member.Type) || (!Floating && Member.Type->Size != 8) ||
+          Result.size() >= (Floating ? 4U : 2U) ||
           Member.ByteOffset != Result.size() * Member.Type->Size ||
-          (!Result.empty() && Result.front().Type->Size != Member.Type->Size))
+          (!Result.empty() &&
+           (Result.front().Type->Size != Member.Type->Size ||
+            (Result.front().Type->Kind == NdTypeKind::Float) != Floating)))
         return {};
       Result.push_back(std::move(Member));
     }
@@ -181,39 +185,44 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
            Location.RegisterOffset == 0 && Location.EntryStackOffset == 0 &&
            Location.ValueBytes == 0 && !Location.ExtendTo32Bits;
   };
-  auto AggregateLocations =
-      [&](const TypeRef &Type, const std::vector<SourceABIValueLocation> &Parts,
-          bool IsReturn) {
-        const auto Members = sourceAggregateMembers(Type);
-        if (Hint.Architecture != Arch::AArch64 || Members.empty() ||
-            Parts.size() != Members.size())
-          return false;
-        const auto Start =
-            std::find(TRI.FPParamRegs.begin(), TRI.FPParamRegs.end(),
-                      Parts.front().RegisterOffset);
-        const bool Stack = Parts.front().Kind == SourceABICarrierKind::Stack;
-        if (Stack) {
-          if (IsReturn || Parts.front().EntryStackOffset % Type->Alignment)
-            return false;
-        } else if (Start == TRI.FPParamRegs.end() ||
-                   size_t(TRI.FPParamRegs.end() - Start) < Parts.size() ||
-                   (IsReturn && Start != TRI.FPParamRegs.begin())) {
-          return false;
-        }
-        for (size_t I = 0; I < Parts.size(); ++I) {
-          const auto &Part = Parts[I];
-          if (!ValidLocation(Members[I].Type, Part, false) ||
-              Part.ExtendTo32Bits ||
-              (Stack ? Part.Kind != SourceABICarrierKind::Stack ||
-                           Part.EntryStackOffset !=
-                               Parts.front().EntryStackOffset +
-                                   Members[I].ByteOffset
-                     : Part.Kind != SourceABICarrierKind::FloatingRegister ||
-                           Part.RegisterOffset != Start[I]))
-            return false;
-        }
-        return true;
-      };
+  auto AggregateLocations = [&](const TypeRef &Type,
+                                const std::vector<SourceABIValueLocation>
+                                    &Parts,
+                                bool IsReturn) {
+    const auto Members = sourceAggregateMembers(Type);
+    if (Members.empty() || Parts.size() != Members.size())
+      return false;
+    const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+    if (Floating && Hint.Architecture != Arch::AArch64)
+      return false;
+    const auto Bank = Floating   ? TRI.FPParamRegs
+                      : IsReturn ? TRI.IntReturnRegs
+                                 : TRI.IntParamRegs;
+    const auto Start =
+        std::find(Bank.begin(), Bank.end(), Parts.front().RegisterOffset);
+    const bool Stack = Parts.front().Kind == SourceABICarrierKind::Stack;
+    if (Stack) {
+      if (IsReturn || Parts.front().EntryStackOffset % Type->Alignment)
+        return false;
+    } else if (Start == Bank.end() ||
+               size_t(Bank.end() - Start) < Parts.size() ||
+               (IsReturn && Start != Bank.begin())) {
+      return false;
+    }
+    for (size_t I = 0; I < Parts.size(); ++I) {
+      const auto &Part = Parts[I];
+      if (!ValidLocation(Members[I].Type, Part, false) || Part.ExtendTo32Bits ||
+          (Stack ? Part.Kind != SourceABICarrierKind::Stack ||
+                       Part.EntryStackOffset != Parts.front().EntryStackOffset +
+                                                    Members[I].ByteOffset
+                 : Part.Kind != (Floating
+                                     ? SourceABICarrierKind::FloatingRegister
+                                     : SourceABICarrierKind::IntegerRegister) ||
+                       Part.RegisterOffset != Start[I]))
+        return false;
+    }
+    return true;
+  };
   if (Hint.ReturnType->Kind == NdTypeKind::Struct) {
     if (!EmptyLocation(Hint.ReturnLocation) ||
         !AggregateLocations(Hint.ReturnType, Hint.ReturnComponents, true))
@@ -290,12 +299,21 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (Records && Parameter.Type &&
         Parameter.Type->Kind == NdTypeKind::Struct) {
       const auto Members = sourceAggregateMembers(Parameter.Type);
-      if (Architecture != Arch::AArch64 || Members.empty())
+      if (Members.empty())
+        return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
+      const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+      if (Floating && Architecture != Arch::AArch64)
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       Parameter.Location = {};
-      const bool Stack = FloatIndex + Members.size() > TRI.FPParamRegs.size();
+      auto &Index = Floating ? FloatIndex : IntegerIndex;
+      const auto Bank = Floating ? TRI.FPParamRegs : TRI.IntParamRegs;
+      const bool Stack = Index + Members.size() > Bank.size();
       if (Stack) {
-        FloatIndex = TRI.FPParamRegs.size();
+        // AAPCS64 exhausts the bank when the whole record cannot fit. SysV
+        // rolls back this argument's allocation, leaving registers for later
+        // scalars or smaller records.
+        if (Architecture == Arch::AArch64)
+          Index = Bank.size();
         const int64_t Alignment = Parameter.Type->Alignment;
         StackOffset = (StackOffset + Alignment - 1) & -Alignment;
       }
@@ -305,8 +323,9 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                            StackOffset + Member.ByteOffset,
                                            Member.Type->Size}
                   : SourceABIValueLocation{
-                        SourceABICarrierKind::FloatingRegister,
-                        TRI.FPParamRegs[FloatIndex++], 0, Member.Type->Size});
+                        Floating ? SourceABICarrierKind::FloatingRegister
+                                 : SourceABICarrierKind::IntegerRegister,
+                        Bank[Index++], 0, Member.Type->Size});
       }
       if (Stack)
         StackOffset += Parameter.Type->Size;
@@ -340,12 +359,18 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
   Hint.ReturnComponents.clear();
   if (Records && Hint.ReturnType->Kind == NdTypeKind::Struct) {
     const auto Members = sourceAggregateMembers(Hint.ReturnType);
-    if (Architecture != Arch::AArch64 || Members.empty())
+    if (Members.empty())
+      return fail(Diagnostic, "Unsupported Darwin record return ABI");
+    const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+    const auto Bank = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
+    if ((Floating && Architecture != Arch::AArch64) ||
+        Members.size() > Bank.size())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
     for (size_t I = 0; I < Members.size(); ++I)
-      Hint.ReturnComponents.push_back({SourceABICarrierKind::FloatingRegister,
-                                       TRI.FPParamRegs[I], 0,
-                                       Members[I].Type->Size});
+      Hint.ReturnComponents.push_back(
+          {Floating ? SourceABICarrierKind::FloatingRegister
+                    : SourceABICarrierKind::IntegerRegister,
+           Bank[I], 0, Members[I].Type->Size});
   } else if (Hint.ReturnType->Kind == NdTypeKind::Int &&
              Hint.ReturnType->Size == 16 && TRI.IntReturnRegs.size() >= 2) {
     for (size_t I = 0; I != 2; ++I)

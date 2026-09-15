@@ -85,6 +85,7 @@ private:
   ExprPtr sourceBitSlice(const ExprPtr &Value, uint64_t ByteOffset,
                          uint16_t Bytes, unsigned Depth = 0);
   ExprPtr sourceFloatValue(const MedVar &Value, uint16_t Bytes);
+  ExprPtr sourceScalarValue(const MedVar &Value, const TypeRef &Type);
   ExprPtr inlineableDefinition(VarKey Key) const;
   ExprPtr forceInlineExpr(const ExprPtr &E);
 

@@ -136,6 +136,149 @@ TEST(SourceAggregate, ExhaustedFloatingBankKeepsWholeRecordOnStack) {
   }
 }
 
+TEST(SourceAggregate, WordRecordsPreserveTypedMembersAndIntegerCarriers) {
+  const auto Signed = NdType::makeInt(8, true);
+  const auto Unsigned = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Unsigned);
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (auto First : {Signed, Unsigned, Pointer})
+      for (auto Second : {Signed, Unsigned, Pointer})
+        for (unsigned Count : {1U, 2U}) {
+          const auto Record = NdType::makeStruct(
+              Count == 1
+                  ? std::vector<TypeRef>{First}
+                  : std::vector<TypeRef>{NdType::makeStruct({First}), Second});
+          auto H = declaration(Record);
+          H.Parameters.insert(H.Parameters.begin() + 2,
+                              {"float", NdType::makeFloat(8)});
+          H.Parameters.push_back({"tail", Unsigned});
+          std::string Error;
+          ASSERT_TRUE(assignDarwinObjCSourceABI(H, A, Error)) << Error;
+          const auto &TRI = getTargetRegInfo(A);
+          ASSERT_EQ(H.ReturnComponents.size(), Count);
+          ASSERT_EQ(H.Parameters[3].Components.size(), Count);
+          const auto Physical = sourceABIParameters(H);
+          ASSERT_EQ(Physical.size(), Count + 4);
+          for (unsigned I = 0; I < Count; ++I) {
+            EXPECT_EQ(H.ReturnComponents[I].Kind,
+                      SourceABICarrierKind::IntegerRegister);
+            EXPECT_EQ(H.ReturnComponents[I].RegisterOffset,
+                      TRI.IntReturnRegs[I]);
+            EXPECT_EQ(H.Parameters[3].Components[I].RegisterOffset,
+                      TRI.IntParamRegs[I + 2]);
+            EXPECT_EQ(Physical[I + 3].ParameterIndex, 3U);
+            EXPECT_EQ(Physical[I + 3].ByteOffset, I * 8);
+            EXPECT_TRUE(equalSourceTypes(Physical[I + 3].Type,
+                                         I == 0 ? First : Second));
+          }
+          EXPECT_EQ(H.Parameters[2].Location.RegisterOffset,
+                    TRI.FPParamRegs[0]);
+          EXPECT_EQ(H.Parameters[4].Location.RegisterOffset,
+                    TRI.IntParamRegs[Count + 2]);
+        }
+  for (auto Bad : {NdType::makeStruct({Unsigned, Unsigned, Unsigned}),
+                   NdType::makeStruct({Unsigned, NdType::makeFloat(8)}),
+                   NdType::makeStruct({NdType::makeInt(4), NdType::makeInt(4)}),
+                   NdType::makeStruct({NdType::makeInt(1), Pointer})}) {
+    EXPECT_TRUE(sourceAggregateMembers(Bad).empty());
+    for (Arch A : {Arch::AArch64, Arch::X64}) {
+      auto H = declaration(Bad);
+      std::string Error;
+      EXPECT_FALSE(assignDarwinObjCSourceABI(H, A, Error));
+    }
+  }
+}
+
+TEST(SourceAggregate, WordRecordSpillsKeepArchitectureSpecificBankState) {
+  const auto Word = NdType::makeInt(8, false);
+  for (Arch A : {Arch::AArch64, Arch::X64})
+    for (unsigned Available : {0U, 1U, 2U}) {
+      const auto &TRI = getTargetRegInfo(A);
+      const size_t Prefix = TRI.IntParamRegs.size() - Available;
+      auto H = declaration(NdType::makeStruct({Word, Word}));
+      H.Parameters.insert(H.Parameters.begin() + 2, Prefix - 2,
+                          {"leading", Word});
+      H.Parameters.push_back({"single", NdType::makeStruct({Word})});
+      H.Parameters.push_back({"tail", Word});
+      H.Parameters.push_back({"floating", NdType::makeFloat(8)});
+      std::string Error;
+      ASSERT_TRUE(assignDarwinObjCSourceABI(H, A, Error)) << Error;
+      const auto &Record = H.Parameters[Prefix];
+      const bool Stack = Available < 2;
+      const int64_t StackBase = A == Arch::X64 ? 8 : 0;
+      ASSERT_EQ(Record.Components.size(), 2U);
+      for (unsigned I = 0; I < 2; ++I) {
+        EXPECT_EQ(Record.Components[I].Kind,
+                  Stack ? SourceABICarrierKind::Stack
+                        : SourceABICarrierKind::IntegerRegister);
+        if (Stack)
+          EXPECT_EQ(Record.Components[I].EntryStackOffset, StackBase + I * 8);
+        else
+          EXPECT_EQ(Record.Components[I].RegisterOffset,
+                    TRI.IntParamRegs[Prefix + I]);
+      }
+      const auto &Single = H.Parameters[Prefix + 1].Components.front();
+      if (A == Arch::X64 && Available == 1) {
+        EXPECT_EQ(Single.Kind, SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(Single.RegisterOffset, TRI.IntParamRegs.back());
+      } else {
+        EXPECT_EQ(Single.Kind, SourceABICarrierKind::Stack);
+        EXPECT_EQ(Single.EntryStackOffset, StackBase + (Stack ? 16 : 0));
+      }
+      EXPECT_EQ(H.Parameters[Prefix + 2].Location.Kind,
+                SourceABICarrierKind::Stack);
+      EXPECT_EQ(H.Parameters[Prefix + 2].Location.EntryStackOffset,
+                Single.Kind == SourceABICarrierKind::Stack
+                    ? Single.EntryStackOffset + 8
+                    : StackBase + 16);
+      EXPECT_EQ(H.Parameters.back().Location.RegisterOffset,
+                TRI.FPParamRegs.front());
+    }
+}
+
+TEST(SourceAggregate, WordRecordValidationRejectsIncompleteAndWrongBanks) {
+  for (Arch A : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(A);
+    auto H = declaration(NdType::makeStruct(
+        {NdType::makeInt(8), NdType::makePtr(NdType::makeVoid())}));
+    std::string Error;
+    ASSERT_TRUE(assignDarwinObjCSourceABI(H, A, Error));
+    for (unsigned I = 0; I < 8; ++I) {
+      auto Bad = H;
+      switch (I) {
+      case 0:
+        Bad.ReturnComponents.pop_back();
+        break;
+      case 1:
+        Bad.ReturnComponents[1] = Bad.ReturnComponents[0];
+        break;
+      case 2:
+        Bad.ReturnComponents[0].RegisterOffset = TRI.IntParamRegs.back();
+        break;
+      case 3:
+        Bad.ReturnComponents[1].Kind = SourceABICarrierKind::FloatingRegister;
+        Bad.ReturnComponents[1].RegisterOffset = TRI.FPParamRegs[1];
+        break;
+      case 4:
+        Bad.Parameters[2].Components[1].ValueBytes = 4;
+        break;
+      case 5:
+        Bad.Parameters[2].Components[1] = {SourceABICarrierKind::Stack, 0, 8,
+                                           8};
+        break;
+      case 6:
+        Bad.Parameters[2].Components[0].ExtendTo32Bits = true;
+        break;
+      case 7:
+        Bad.Parameters[2].Components[1] = Bad.Parameters[2].Components[0];
+        break;
+      }
+      EXPECT_FALSE(validateSourceABI(Bad, Error)) << I;
+      EXPECT_TRUE(sourceABIParameters(Bad).empty()) << I;
+    }
+  }
+}
+
 TEST(SourceAggregate, ValidationRejectsIncompleteAliasedAndStaleCarriers) {
   auto H = declaration(quad());
   std::string Error;

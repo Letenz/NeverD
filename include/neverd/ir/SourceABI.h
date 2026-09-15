@@ -15,8 +15,9 @@ struct SourceAggregateMember {
   uint16_t ByteOffset = 0;
 };
 
-/// Flatten a validated homogeneous floating record with at most four leaves.
-/// Nested records retain their declared layout; padding and mixed types fail.
+/// Flatten a validated record: one to four homogeneous floating leaves, or
+/// one to two 64-bit integer/pointer leaves. Nested records retain their
+/// declared layout; padding, packed fields and mixed register classes fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
 struct SourceABIParameter {
@@ -51,6 +52,7 @@ bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,
 /// Assign Darwin's fixed Objective-C ABI. Integer and FP registers are
 /// allocated independently; overflowing values use the entry-SP stack area.
 /// ARM64 additionally supports naturally laid-out homogeneous floating records.
+/// Both architectures support records of one or two 64-bit integers/pointers.
 /// This is source projection metadata, never authenticated rewrite evidence.
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                std::string &Diagnostic);

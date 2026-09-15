@@ -84,8 +84,12 @@ records with one to four float or double leaves, including nested records and
 whole-record stack arguments after the FP bank is exhausted. MedIR binds each
 physical member before SSA; HighIR reconstructs one logical record parameter,
 call argument or result. Structural C declarations include layout assertions.
-Mixed records, unsupported architectures and incomplete component lists remain
-explicitly unsupported. Source record carriers never authorize binary rewriting.
+Darwin ARM64 and x86_64 also support nested records containing one or two
+64-bit integers or pointers. When the whole record spills, ARM64 exhausts the
+integer bank; x86_64 leaves unused registers available to later arguments.
+Padding, packed fields, mixed floating/integer classes and incomplete components
+remain explicitly unsupported. Source record carriers never authorize binary
+rewriting.
 
 Objective-C receiver facts distinguish method-entry self from an exact class
 reference. All metadata records sharing an entry must agree before self is

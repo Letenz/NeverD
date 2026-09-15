@@ -439,10 +439,15 @@ ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
 
 ExprPtr MedToHighConverter::sourceFloatValue(const MedVar &Value,
                                              uint16_t Bytes) {
-  auto Bits = sourceBitSlice(medvarToExpr(Value), 0, Bytes);
-  if (Bits->Type && Bits->Type->Kind == NdTypeKind::Float)
+  return sourceScalarValue(Value, NdType::makeFloat(Bytes));
+}
+
+ExprPtr MedToHighConverter::sourceScalarValue(const MedVar &Value,
+                                              const TypeRef &Type) {
+  auto Bits = sourceBitSlice(medvarToExpr(Value), 0, Type->Size);
+  if (equalSourceTypes(Bits->Type, Type))
     return Bits;
-  return HighExpr::makeBitCast(Bits, NdType::makeFloat(Bytes));
+  return HighExpr::makeBitCast(Bits, Type);
 }
 
 ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {

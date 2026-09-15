@@ -53,9 +53,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
         Arguments.push_back(medvarToExpr(Call.Inputs[++Index]));
       } else {
         std::vector<ExprPtr> Leaves;
-        for (const auto &Part : P.Components)
+        for (const auto &Member : sourceAggregateMembers(P.Type))
           Leaves.push_back(
-              sourceFloatValue(Call.Inputs[++Index], Part.ValueBytes));
+              sourceScalarValue(Call.Inputs[++Index], Member.Type));
         Arguments.push_back(HighExpr::makeRecord(P.Type, std::move(Leaves)));
       }
     }
