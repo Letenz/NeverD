@@ -22,6 +22,7 @@ namespace neverd {
 void coalesceBranchEntryStatements(HighFunc &Func);
 void eliminateUnusedValues(std::vector<HighStmt> &);
 void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
+void foldStructuredContinuations(HighFunc &, const MedFunc * = nullptr);
 } // namespace neverd
 
 namespace {
@@ -243,6 +244,132 @@ int main(void) {
     return 0;
 }
 )");
+}
+
+TEST(HighCSourceCalls, ConditionalRunsPreserveSharedLoopPhiContinuations) {
+  const auto Integer = NdType::makeInt(8);
+  for (unsigned Mode = 0; Mode < 5; ++Mode)
+    for (va_t EdgeAddress : {va_t(0), va_t(0x2108), va_t(0x2180)}) {
+      SCOPED_TRACE(EdgeAddress);
+      SCOPED_TRACE(Mode);
+      auto Local = [&](int Id) {
+        MedVar V;
+        V.Kind = MedVar::Temp;
+        V.Id = Id;
+        V.Size = 8;
+        return HighExpr::makeVar(V, Integer);
+      };
+      auto Assign = [](va_t Address, ExprPtr Destination, ExprPtr Value) {
+        HighStmt S;
+        S.Kind = StmtKind::Assign;
+        S.Addr = Address;
+        S.Dst = std::move(Destination);
+        S.Val = std::move(Value);
+        return S;
+      };
+      auto Jump = [](va_t Target) {
+        HighStmt S;
+        S.Kind = StmtKind::Goto;
+        S.GotoTarget = Target;
+        return S;
+      };
+      const auto Accumulator = Local(10), Count = Local(11), Result = Local(12);
+      auto Function =
+          returning("shared_loop_phi", Result, {Integer, Integer, Integer});
+      Function.Entry = 0x1000;
+      auto Return = Function.Body.back();
+      Return.Addr = 0x2200;
+      HighStmt Choose;
+      Choose.Kind = StmtKind::If;
+      Choose.Addr = Function.Entry;
+      Choose.Cond = parameter(0, Integer);
+      Choose.Body = {Jump(0x2000)};
+      HighStmt Loop;
+      Loop.Kind = StmtKind::While;
+      Loop.LoopHeaderAddr = 0x2100;
+      Loop.Cond = Mode == 1 ? parameter(0, Integer)
+                            : HighExpr::makeConst(Mode == 3 ? 0 : 1, 1);
+      HighStmt Stop;
+      Stop.Kind = StmtKind::If;
+      Stop.Addr = 0x2108;
+      Stop.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, Count,
+                                      HighExpr::makeConst(0, 8));
+      HighStmt Break;
+      Break.Kind = StmtKind::Break;
+      Stop.Body = {Break};
+      Loop.Body = {Assign(0x2100, Accumulator,
+                          HighExpr::makeBinop(NdOp::INT_ADD, Accumulator,
+                                              HighExpr::makeConst(3, 8))),
+                   Assign(0x2104, Count,
+                          HighExpr::makeBinop(NdOp::INT_SUB, Count,
+                                              HighExpr::makeConst(1, 8))),
+                   Stop};
+      if (Mode == 2)
+        Loop.Body.insert(
+            Loop.Body.begin(),
+            Assign(0x20f0, Accumulator,
+                   HighExpr::makeBinop(NdOp::INT_ADD, Accumulator,
+                                       HighExpr::makeConst(100, 8))));
+      auto Phi = Assign(EdgeAddress, Result, Accumulator);
+      Phi.IsPhiCopy = true;
+      Function.Body = {Assign(0, Count, parameter(1, Integer)),
+                       Choose,
+                       Assign(0x1004, Accumulator, HighExpr::makeConst(1, 8)),
+                       Jump(0x2100),
+                       Assign(0x2000, Accumulator, HighExpr::makeConst(7, 8)),
+                       Loop,
+                       Phi,
+                       Return};
+      if (Mode == 4) {
+        HighStmt Initialize;
+        Initialize.Kind = StmtKind::IfElse;
+        Initialize.Cond = parameter(0, Integer);
+        Initialize.Body = {
+            Assign(0x2000, Accumulator, HighExpr::makeConst(7, 8))};
+        Initialize.ElseBody = {
+            Assign(0x2004, Accumulator, HighExpr::makeConst(1, 8))};
+        HighStmt Enter;
+        Enter.Kind = StmtKind::IfElse;
+        Enter.Addr = 0x1000;
+        Enter.Cond = parameter(2, Integer);
+        Enter.Body = {Assign(0, Count, parameter(1, Integer)), Initialize,
+                      Jump(0x2100)};
+        auto EarlyReturn = Return;
+        EarlyReturn.Addr = 0x1800;
+        EarlyReturn.RetVal = HighExpr::makeConst(0, 8);
+        Function.Body = {Enter, EarlyReturn, Loop, Phi, Return};
+      }
+      for (bool Structured : {false, true}) {
+        SCOPED_TRACE(Structured);
+        if (Structured) {
+          structureIfElse(Function, 6);
+          foldStructuredContinuations(Function);
+        }
+        coalesceBranchEntryStatements(Function);
+        EXPECT_TRUE(analyzeHighSourceFlow(Function, true).Complete);
+        if (Structured && (Mode == 0 || Mode == 4))
+          walkStmts(Function.Body, [](const HighStmt &S) {
+            EXPECT_NE(S.Kind, StmtKind::Goto);
+          });
+        compileAndRun("#define TEST_LOOP_MODE " + std::to_string(Mode) + "\n" +
+                      emit({Function}) + R"(
+int main(void) {
+    for (int selected = 0; selected < 2; ++selected)
+        for (int count = 1; count < 100; ++count)
+            for (int enter = 0; enter < 2; ++enter) {
+                int64_t expected = (selected ? 7 : 1) + count * 3;
+                if (TEST_LOOP_MODE == 1 && !selected) expected = 4;
+                if (TEST_LOOP_MODE == 2)
+                    expected += 100 * (count - (selected ? 0 : 1));
+                if (TEST_LOOP_MODE == 3) expected = selected ? 7 : 4;
+                if (TEST_LOOP_MODE == 4 && !enter) expected = 0;
+                if (shared_loop_phi(selected, count, enter) != expected) return 1;
+            }
+    return 0;
+}
+)");
+      }
+    }
 }
 
 TEST(HighCSourceCalls, SharedNativeEntryExecutesCallAndPhiExactlyOnce) {

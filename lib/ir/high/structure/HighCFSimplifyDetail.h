@@ -32,12 +32,30 @@ struct AddrMap {
   std::vector<std::pair<va_t, size_t>> Sorted;
   bool SortedValid = false;
 
+  /// A synthetic always-true loop executes its first instruction immediately.
+  /// It can share that continuation without acquiring another emitted label.
+  /// A conditional loop or any prefix before the header is not equivalent.
+  static va_t entryAddress(const HighStmt &S) {
+    if (S.Addr)
+      return S.Addr;
+    if (S.Kind == StmtKind::While && S.LoopHeaderAddr &&
+        S.LoopHeaderAddr != InvalidVA && S.Cond &&
+        S.Cond->Kind == ExprKind::Const && S.Cond->ConstVal &&
+        S.Cond->Operands.empty() &&
+        S.Cond->MemoryOrdering == NdMemoryOrdering::None &&
+        S.Cond->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+        !S.Body.empty() && !S.Body.front().IsPhiCopy &&
+        S.Body.front().Addr == S.LoopHeaderAddr)
+      return S.LoopHeaderAddr;
+    return 0;
+  }
+
   void rebuild(const std::vector<HighStmt> &Stmts) {
     Idx.clear();
     Idx.reserve(Stmts.size());
     for (size_t I = 0; I < Stmts.size(); ++I)
-      if (Stmts[I].Addr != 0)
-        Idx.try_emplace(Stmts[I].Addr, I);
+      if (const va_t Address = entryAddress(Stmts[I]))
+        Idx.try_emplace(Address, I);
     SortedValid = false;
   }
 

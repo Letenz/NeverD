@@ -16,6 +16,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
 
 #include <algorithm>
 #include <map>
@@ -717,12 +718,14 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
   };
   std::vector<Rewrite> Rewrites;
   bool Valid = true;
+  const auto Observed = observedMedSourceEntryRegisters(Func, Hint);
   bool HasGenericStack = false;
   for (const auto &P : Func.Params)
     HasGenericStack |= P.RegOff == kNoParamReg;
   for (const auto &P : Func.Params)
     if (P.Id >= 0 && P.RegOff != kNoParamReg &&
-        RegisterParameter(P.RegOff) < 0 && !HasGenericStack)
+        RegisterParameter(P.RegOff) < 0 && !HasGenericStack &&
+        (!Observed || Observed->count(P.RegOff)))
       Valid = false;
   for (auto &Block : Func.Blocks) {
     for (auto &Op : Block.Ops) {
@@ -817,6 +820,8 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
           !UsedRegisters.count({Op.Output.Id, Op.Output.SSAVer}))
         continue;
       const auto Register = Op.Output.RegOff;
+      if (Observed && !Observed->count(Register))
+        continue;
       if ((TRI.regToArgIdx(Register) >= 0 ||
            std::find(TRI.FPParamRegs.begin(), TRI.FPParamRegs.end(),
                      Register) != TRI.FPParamRegs.end()) &&

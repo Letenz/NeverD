@@ -467,6 +467,10 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("JumpTableTargetOwners.IndexedTargetsRejectIndependentFunctionEntries",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.PartialFPRegisterPreservationDoesNotInventArguments",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("SourceABI.EntryByteDemandsKeepPhiEffectsAndRejectIncompleteGraphs",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.SwiftMetadataCallsRevalidateDeclarationAndConvention",
@@ -909,6 +913,8 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.FrameBackedgesRevokeProvisionalSpillBindings",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("HighCSourceCalls.ConditionalRunsPreserveSharedLoopPhiContinuations",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.DeadPhiCleanupPreservesConditionalEntryAndCallEffects",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("HighCSourceCalls.DeadPhiCleanupKeepsUnprovenNestedEntriesAmbiguous",
@@ -1155,9 +1161,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 448,
-              ("macOS", "macos-patch"): 488,
-              ("Windows", "windows-focused"): 444,
+              ("Linux", "linux-semantic"): 451,
+              ("macOS", "macos-patch"): 491,
+              ("Windows", "windows-focused"): 447,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

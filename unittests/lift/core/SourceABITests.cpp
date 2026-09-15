@@ -7,6 +7,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
@@ -693,6 +694,192 @@ void executeC(const std::string &Source, bool Math = false) {
     EXPECT_EQ(Status, 0) << Error
                          << (Errors ? (*Errors)->getBuffer().str() : "") << '\n'
                          << Source;
+  }
+}
+
+TEST(SourceABI, PartialFPRegisterPreservationDoesNotInventArguments) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (bool ObserveUpper : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(ObserveUpper);
+      SourceFunctionTypeHint Hint;
+      Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      Hint.ReturnType = NdType::makeFloat(8);
+      Hint.Parameters = {{"integer", NdType::makeInt(8)},
+                         {"floating", NdType::makeFloat(8)},
+                         {"output", NdType::makePtr(NdType::makeInt(8))}};
+      std::string Error;
+      ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+      LowFunc Low;
+      Low.Entry = 0x1200;
+      Low.Name = "partial_fp";
+      LowBlock Block;
+      Block.Id = 0;
+      Block.StartAddr = Low.Entry;
+      Block.EndAddr = Low.Entry + 4;
+      auto Add = [&](NdOp Opcode, NdVar Output,
+                     std::initializer_list<NdVar> Inputs) {
+        LowOp Op;
+        Op.Opcode = Opcode;
+        Op.Addr = Low.Entry;
+        Op.Output = Output;
+        for (const auto &Input : Inputs)
+          Op.addInput(Input);
+        Block.Ops.push_back(Op);
+      };
+      const auto Return = NdVar::reg(TRI.FPReturnReg, 16);
+      const auto Scratch = NdVar::reg(TRI.FPParamRegs[2], 16);
+      Add(NdOp::FLOAT_INT2FLOAT, NdVar::tmp(0, 8),
+          {NdVar::reg(Hint.Parameters[0].Location.RegisterOffset, 8)});
+      Add(NdOp::SUBBYTES, NdVar::tmp(1, 8), {Scratch, NdVar::cst(8, 4)});
+      Add(NdOp::CONCAT, Scratch, {NdVar::tmp(1, 8), NdVar::tmp(0, 8)});
+      Add(NdOp::SUBBYTES, NdVar::tmp(2, 8), {Scratch, NdVar::cst(0, 4)});
+      Add(NdOp::SUBBYTES, NdVar::tmp(3, 8), {Return, NdVar::cst(0, 4)});
+      Add(NdOp::FLOAT_ADD, NdVar::tmp(4, 8),
+          {NdVar::tmp(3, 8), NdVar::tmp(2, 8)});
+      Add(NdOp::SUBBYTES, NdVar::tmp(5, 8), {Return, NdVar::cst(8, 4)});
+      Add(NdOp::CONCAT, Return, {NdVar::tmp(5, 8), NdVar::tmp(4, 8)});
+      if (ObserveUpper)
+        Add(NdOp::STORE, {},
+            {NdVar::reg(Hint.Parameters[2].Location.RegisterOffset, 8),
+             NdVar::tmp(1, 8)});
+      Add(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 8)});
+      Low.Blocks.push_back(Block);
+      std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Hint}};
+      LowToMedConverter Converter;
+      Converter.setSourceCalleeTypeHints(&Hints);
+      auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+      Med.SourceTypeHint = Hint;
+      inferMedTypes(Med, Architecture);
+      if (ObserveUpper) {
+        EXPECT_FALSE(Med.SourceTypeHint);
+        continue;
+      }
+      EXPECT_TRUE(Med.SourceTypeHint);
+      if (!Med.SourceTypeHint)
+        continue;
+      auto High = MedToHighConverter().convert(Med, Architecture);
+      ASSERT_TRUE(High.SourceTypeHint);
+      EXPECT_EQ(High.Params.size(), Hint.Parameters.size());
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+      executeC(Source + R"(
+int main(void) {
+    for (int64_t i = -512; i < 512; ++i) {
+        int64_t output = 1234;
+        double input = (double)i * 0.25;
+        if (partial_fp(i, input, &output) != (double)i + input) return 1;
+        if (output != 1234) return 2;
+    }
+    return 0;
+}
+)");
+    }
+  }
+}
+
+TEST(SourceABI, EntryByteDemandsKeepPhiEffectsAndRejectIncompleteGraphs) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    SourceFunctionTypeHint Hint;
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.ReturnType = NdType::makeInt(8);
+    Hint.Parameters = {{"condition", NdType::makeInt(8)},
+                       {"output", NdType::makePtr(NdType::makeInt(8))}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+    auto Variable = [&](int Id, unsigned Size,
+                        uint64_t Register = kNoParamReg) {
+      MedVar V;
+      V.Kind = Register == kNoParamReg ? MedVar::Temp : MedVar::Reg;
+      V.Id = Id;
+      V.Size = Size;
+      V.RegOff = Register;
+      V.TheArch = Architecture;
+      return V;
+    };
+    auto Operation = [](NdOp Opcode, MedVar Output,
+                        std::initializer_list<MedVar> Inputs) {
+      MedOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    const auto Unknown = Variable(10, 16, TRI.FPParamRegs[2]);
+    const auto Pointer =
+        Variable(11, 8, Hint.Parameters[1].Location.RegisterOffset);
+    const auto Condition =
+        Variable(12, 8, Hint.Parameters[0].Location.RegisterOffset);
+    auto Returned = Variable(30, 8, TRI.IntReturnReg);
+    Returned.SSAVer = 1;
+    for (unsigned Case = 0; Case < 5; ++Case) {
+      MedFunc Function;
+      Function.Entry = 0x1000;
+      Function.Blocks.resize(4);
+      for (unsigned I = 0; I < 4; ++I) {
+        Function.Blocks[I].Id = I;
+        Function.Blocks[I].StartAddr = 0x1000 + I * 16;
+      }
+      auto &Entry = Function.Blocks[0];
+      Entry.Succs = {1, 2};
+      Entry.Ops = {Operation(NdOp::COPY, Unknown, {Unknown}),
+                   Operation(NdOp::COPY, Pointer, {Pointer}),
+                   Operation(NdOp::COPY, Condition, {Condition}),
+                   Operation(NdOp::COND_BR, {},
+                             {MedVar::makeConst(0x1020, 8), Condition})};
+      auto &Left = Function.Blocks[1];
+      Left.Preds = {0};
+      Left.Succs = {3};
+      Left.Ops = {Operation(NdOp::SUBBYTES, Variable(20, 8),
+                            {Unknown, MedVar::makeConst(8, 4)}),
+                  Operation(NdOp::CONCAT, Variable(21, 16),
+                            {Variable(20, 8), MedVar::makeConst(7, 8)})};
+      auto &Right = Function.Blocks[2];
+      Right.Preds = {0};
+      Right.Succs = {3};
+      Right.Ops = {
+          Operation(NdOp::CONCAT, Variable(22, 16),
+                    {MedVar::makeConst(0, 8), MedVar::makeConst(9, 8)})};
+      auto &Join = Function.Blocks[3];
+      Join.Preds = {1, 2};
+      PhiNode Phi;
+      Phi.Output = Variable(23, 16);
+      Phi.Args = {{1, Variable(21, 16)}, {2, Variable(22, 16)}};
+      Join.Phis.push_back(Phi);
+      Join.Ops = {Operation(NdOp::SUBBYTES, Returned,
+                            {Phi.Output, MedVar::makeConst(0, 4)}),
+                  Operation(NdOp::RETURN, {}, {Returned})};
+      if (Case == 1) {
+        Join.Ops.insert(
+            Join.Ops.begin(),
+            {Operation(NdOp::SUBBYTES, Variable(24, 8),
+                       {Phi.Output, MedVar::makeConst(8, 4)}),
+             Operation(NdOp::STORE, {}, {Pointer, Variable(24, 8)})});
+      } else if (Case == 2) {
+        Join.Phis[0].Args[1].second = Variable(99, 16);
+      } else if (Case == 3) {
+        Left.Ops.push_back(Left.Ops.back());
+      } else if (Case == 4) {
+        Join.Ops.pop_back();
+      }
+      const auto Blocks = Function.Blocks;
+      std::vector<unsigned> Order{0, 1, 2, 3};
+      do {
+        Function.Blocks.clear();
+        for (auto Index : Order)
+          Function.Blocks.push_back(Blocks[Index]);
+        const auto Observed = observedMedSourceEntryRegisters(Function, Hint);
+        EXPECT_EQ(bool(Observed), Case < 2);
+        if (Observed)
+          EXPECT_EQ(Observed->count(Unknown.RegOff), Case == 1 ? 1U : 0U);
+      } while (std::next_permutation(Order.begin(), Order.end()));
+    }
   }
 }
 

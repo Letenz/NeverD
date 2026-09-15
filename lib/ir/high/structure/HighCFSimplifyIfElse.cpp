@@ -66,7 +66,7 @@ class ContinuationFolder {
   }
 
   bool exactContinuation(const HighStmt &S, va_t Target) const {
-    if (!Target || Target == InvalidVA || S.Addr != Target)
+    if (!Target || Target == InvalidVA || AddrMap::entryAddress(S) != Target)
       return false;
     if (uniqueAddress(Target))
       return true;
@@ -77,7 +77,7 @@ class ContinuationFolder {
         !plainValue(S.Cond) || S.Cond->Kind != ExprKind::Const ||
         !S.Cond->ConstVal)
       return false;
-    size_t PrefixOwners = 1;
+    size_t PrefixOwners = S.Addr == Target ? 1 : 0;
     for (const auto &Inner : S.Body) {
       if (Inner.Addr != Target)
         break;
@@ -88,7 +88,8 @@ class ContinuationFolder {
       ++PrefixOwners;
     }
     auto It = Owners.find(Target);
-    return PrefixOwners > 1 && It != Owners.end() && It->second == PrefixOwners;
+    return PrefixOwners != 0 && It != Owners.end() &&
+           It->second == PrefixOwners;
   }
 
   bool ownsReturn(const HighStmt &Owner, const HighStmt &Return,
@@ -355,7 +356,8 @@ collectStmtsForTarget(const std::vector<HighStmt> &Body, AddrMap &AM,
   Result.Start = StartIdx;
   for (size_t K = StartIdx; K < Body.size(); ++K) {
     auto &S = Body[K];
-    if (Merge != 0 && S.Addr != 0 && S.Addr >= Merge)
+    const va_t Entry = AddrMap::entryAddress(S);
+    if (Merge != 0 && Entry != 0 && Entry >= Merge)
       break;
     Result.End = K + 1;
     if (S.Kind == StmtKind::Return || S.Kind == StmtKind::Goto)
@@ -619,8 +621,9 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
         // transfer and its target. Keep that transfer unless the next emitted
         // statement is exactly the target; never fall through the intervening
         // code merely because both arms agree where to jump.
-        const bool TargetFollows = Else.GotoIdx + 1 < Func.Body.size() &&
-                                   Func.Body[Else.GotoIdx + 1].Addr == IfTarget;
+        const bool TargetFollows =
+            Else.GotoIdx + 1 < Func.Body.size() &&
+            AddrMap::entryAddress(Func.Body[Else.GotoIdx + 1]) == IfTarget;
         if (TakenCopies.empty()) {
           Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
           Stmt.Body.clear();
@@ -678,10 +681,16 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
 
       // A run stopped at the merge still has a fallthrough successor. Moving
       // it must preserve that edge even when the merge is not adjacent to I.
+      // PHI copies belong to the fallthrough edge, not to an instruction
+      // entry. Their address can be the loop latch still inside the moved run;
+      // naming it would reenter the latch or create a second label for it.
       const bool NeedsSuccessor =
           !endsWithTransfer(Func.Body[IfResult.End - 1]);
-      if (NeedsSuccessor && (IfResult.End == Func.Body.size() ||
-                             Func.Body[IfResult.End].Addr == 0)) {
+      const va_t Successor =
+          IfResult.End < Func.Body.size()
+              ? AddrMap::entryAddress(Func.Body[IfResult.End])
+              : 0;
+      if (NeedsSuccessor && (!Successor || Func.Body[IfResult.End].IsPhiCopy)) {
         Changed |= FoldSharedTail();
         continue;
       }
@@ -705,7 +714,7 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
       if (NeedsSuccessor) {
         HighStmt Transfer;
         Transfer.Kind = StmtKind::Goto;
-        Transfer.GotoTarget = Func.Body[IfResult.End].Addr;
+        Transfer.GotoTarget = Successor;
         LiveTargets.insert(Transfer.GotoTarget);
         IfBody.push_back(std::move(Transfer));
       }

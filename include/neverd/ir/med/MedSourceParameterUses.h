@@ -1,10 +1,21 @@
 #ifndef NEVERD_IR_MED_MEDSOURCEPARAMETERUSES_H
 #define NEVERD_IR_MED_MEDSOURCEPARAMETERUSES_H
 
+#include <cstdint>
+#include <optional>
+#include <set>
 #include <vector>
 
 namespace neverd {
 struct MedFunc;
+struct SourceFunctionTypeHint;
+
+/// Entry registers whose bytes can reach observable effects or a declared
+/// source return carrier. Unknown/over-budget graphs return no proof. This
+/// does not remove operations or establish a machine rewriting ABI.
+std::optional<std::set<uint64_t>>
+observedMedSourceEntryRegisters(const MedFunc &Function,
+                                const SourceFunctionTypeHint &Hint);
 
 /// Identify complete pointer-sized inputs forwarded to source-bound pointer
 /// parameters through COPY/PHI values, without conflicting scalar uses. The
