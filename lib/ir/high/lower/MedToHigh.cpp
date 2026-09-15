@@ -328,6 +328,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     if (Binding.Type->Kind == NdTypeKind::Float)
       return HighExpr::makeBitCast(Value,
                                    NdType::makeInt(Binding.Type->Size, false));
+    if (Binding.Location.ExtendTo32Bits && V.Size > Binding.Type->Size) {
+      // Keep the logical parameter type while exposing only the carrier bytes
+      // established by its source ABI. Wider machine reads still have an
+      // unknown suffix, which sourceBitSlice preserves through saved copies.
+      Value = HighExpr::makeUnary(
+          Binding.Type->IsSigned ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Value);
+      Value->Type = NdType::makeInt(std::min<uint16_t>(4, V.Size), false);
+    }
     return Value;
   };
   if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&

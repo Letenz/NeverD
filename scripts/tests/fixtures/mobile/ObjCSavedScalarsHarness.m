@@ -8,6 +8,11 @@
 @property(nonatomic) unsigned char byte;
 @property(nonatomic) unsigned short word;
 @property(nonatomic) int integer;
+- (int)promoteByte:(unsigned char)value;
+- (int)promoteSignedByte:(signed char)value;
+- (int)promoteWord:(unsigned short)value;
+- (int)promoteSignedWord:(short)value;
+- (NSUInteger)branchForFlag:(BOOL)value;
 @end
 static NSUInteger calls;
 static NSUInteger observedHash(id object, SEL selector) {
@@ -37,20 +42,37 @@ int main(void) {
       int integer;
       memcpy(&integer, &bits, sizeof(integer));
       object.flag = flag;
-      if (object.flag != flag || calls != 4 * i + 1)
+      if (object.flag != flag || calls != 9 * i + 1)
         return 2;
       object.byte = byte;
-      if (object.byte != byte || calls != 4 * i + 2)
+      if (object.byte != byte || calls != 9 * i + 2)
         return 3;
       object.word = word;
-      if (object.word != word || calls != 4 * i + 3)
+      if (object.word != word || calls != 9 * i + 3)
         return 4;
       object.integer = integer;
-      if (object.integer != integer || calls != 4 * i + 4)
+      if (object.integer != integer || calls != 9 * i + 4)
         return 5;
+      signed char signedByte;
+      short signedWord;
+      memcpy(&signedByte, &byte, sizeof(signedByte));
+      memcpy(&signedWord, &word, sizeof(signedWord));
+      if ([object promoteByte:byte] != (int)byte || calls != 9 * i + 5)
+        return 6;
+      if ([object promoteSignedByte:signedByte] != (int)signedByte ||
+          calls != 9 * i + 6)
+        return 7;
+      if ([object promoteWord:word] != (int)word || calls != 9 * i + 7)
+        return 8;
+      if ([object promoteSignedWord:signedWord] != (int)signedWord ||
+          calls != 9 * i + 8)
+        return 9;
+      if ([object branchForFlag:flag] != (flag ? 13U : 7U) ||
+          calls != 9 * i + 9)
+        return 10;
     }
     [object release];
-    puts("scalar-cases=262144\ncall-effects=262144\nknown-bytes=pass");
+    puts("scalar-cases=589824\ncall-effects=589824\nknown-bytes=pass");
   }
   return 0;
 }

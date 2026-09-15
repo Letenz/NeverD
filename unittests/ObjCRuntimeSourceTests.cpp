@@ -358,7 +358,7 @@ void verifyRuntime(bool Chained,
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
                              : SharedFrameworks   ? 11U
-                             : SavedScalars       ? 8U
+                             : SavedScalars       ? 13U
                              : ReceiverResults    ? 8U
                              : ReceiverAliases    ? 5U
                              : AggregateRecords   ? 8U
@@ -403,8 +403,13 @@ void verifyRuntime(bool Chained,
                  "describe:text:", "descriptionOf:",  "request:content:",
                  "type:",          "extensionOf:"};
   if (SavedScalars)
-    Remaining = {"flag", "setFlag:", "byte",    "setByte:",
-                 "word", "setWord:", "integer", "setInteger:"};
+    Remaining = {"flag",          "setFlag:",
+                 "byte",          "setByte:",
+                 "word",          "setWord:",
+                 "integer",       "setInteger:",
+                 "promoteByte:",  "promoteSignedByte:",
+                 "promoteWord:",  "promoteSignedWord:",
+                 "branchForFlag:"};
   if (ReceiverResults)
     Remaining = {"NDResultValue-duration",         "NDResultValue-setDuration:",
                  "NDResultValue+factoryDuration:", "NDResultOwner-error",
@@ -891,7 +896,7 @@ void verifyRuntime(bool Chained,
       : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
                            "pass\nobject-identity=pass\n"
       : SavedScalars
-          ? "scalar-cases=262144\ncall-effects=262144\nknown-bytes=pass\n"
+          ? "scalar-cases=589824\ncall-effects=589824\nknown-bytes=pass\n"
       : ReceiverResults
           ? "receiver-results=5120\nlifetime-checks=1024\nidentity=pass\n"
       : ReceiverAliases

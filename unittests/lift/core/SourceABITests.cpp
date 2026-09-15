@@ -372,6 +372,30 @@ TEST(SourceABI, NarrowReturnExtensionRequiresAnExplicitDarwinArm64Carrier) {
   EXPECT_FALSE(validateSourceABI(Hint, Error));
 }
 
+TEST(SourceABI, NarrowParameterExtensionRequiresAnIntegerRegisterCarrier) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (uint16_t Bytes : {1, 2, 4, 8}) {
+      for (bool Signed : {false, true}) {
+        SourceFunctionTypeHint Hint;
+        Hint.ReturnType = NdType::makeVoid();
+        Hint.Parameters.assign(10, {"value", NdType::makeInt(Bytes, Signed)});
+        std::string Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+        for (auto &Parameter : Hint.Parameters) {
+          const bool Extended =
+              Bytes < 4 &&
+              Parameter.Location.Kind == SourceABICarrierKind::IntegerRegister;
+          EXPECT_EQ(Parameter.Location.ExtendTo32Bits, Extended);
+          auto Bad = Hint;
+          const auto Index = &Parameter - Hint.Parameters.data();
+          Bad.Parameters[Index].Location.ExtendTo32Bits = true;
+          EXPECT_EQ(validateSourceABI(Bad, Error), Extended);
+        }
+      }
+    }
+  }
+}
+
 TEST(SourceABI, ExplicitSwiftReceiverCanUseDedicatedCalleeSavedRegister) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     SourceFunctionTypeHint Hint;
@@ -970,6 +994,65 @@ TEST(SourceABI, NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits) {
   }
 }
 
+TEST(SourceABI, NarrowParameterCallArgumentsKeepDeclaredWidths) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (uint16_t Bytes : {1, 2}) {
+      for (bool Signed : {false, true}) {
+        SourceFunctionTypeHint Hint;
+        Hint.ReturnType = NdType::makeInt(8, true);
+        Hint.Parameters = {{"value", NdType::makeInt(Bytes, Signed)}};
+        std::string Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+        LowFunc Low;
+        Low.Entry = 0x1200;
+        Low.Name = "forward_narrow";
+        LowBlock Block;
+        Block.Id = 0;
+        Block.StartAddr = Low.Entry;
+        Block.EndAddr = Low.Entry + 8;
+        LowOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.Addr = Low.Entry;
+        Call.addInput(NdVar::cst(0x1100, 8));
+        Block.Ops.push_back(Call);
+        LowOp Return;
+        Return.Opcode = NdOp::RETURN;
+        Return.Addr = Low.Entry + 4;
+        Return.addInput(
+            NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8));
+        Block.Ops.push_back(Return);
+        Low.Blocks.push_back(Block);
+        std::map<va_t, SourceFunctionTypeHint> Hints{{0x1100, Hint},
+                                                     {Low.Entry, Hint}};
+        LowToMedConverter Converter;
+        Converter.setSourceCallHintsEnabled(true);
+        Converter.setSourceCalleeTypeHints(&Hints);
+        auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+        recoverCallAbi(Med, Architecture, {});
+        Med.SourceTypeHint = Hint;
+        inferMedTypes(Med, Architecture);
+        const auto High = MedToHighConverter().convert(Med, Architecture);
+        std::string Source;
+        llvm::raw_string_ostream OS(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Architecture;
+        ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+        ASSERT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+        const auto Type = std::string(Signed ? "int" : "uint") +
+                          std::to_string(Bytes * 8) + "_t";
+        Source += "\nstatic unsigned calls;\nint64_t sub_1100(" + Type +
+                  " value) { ++calls; return (int64_t)value - 17; }\n"
+                  "int main(void) { for (uint32_t i=0;i!=65536;++i) {\n" +
+                  Type + " value=(" + Type +
+                  ")i;\n"
+                  "if (forward_narrow(value) != (int64_t)value-17 || "
+                  "calls != i+1) return 1; } return 0; }\n";
+        ASSERT_NO_FATAL_FAILURE(executeC(Source));
+      }
+    }
+  }
+}
+
 TEST(SourceABI, NarrowParametersPreserveKnownBytesThroughWideCopies) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
@@ -1004,21 +1087,21 @@ TEST(SourceABI, NarrowParametersPreserveKnownBytesThroughWideCopies) {
           Slice.Addr = 0x1208;
           Slice.Output = NdVar::reg(TRI.IntReturnReg, Mode == 4 ? 8 : 4);
           Slice.addInput(Mode == 2 ? Argument : Saved);
-          Slice.addInput(NdVar::cst(Mode == 3 ? Bytes : 0, 4));
+          Slice.addInput(NdVar::cst(Mode == 3 ? 4 : 0, 4));
           Block.Ops.push_back(Slice);
           LowOp Return;
           Return.Opcode = NdOp::RETURN;
           Return.Addr = 0x120c;
           Return.addInput(NdVar::reg(TRI.IntReturnReg, Mode == 4   ? 8
                                                        : Mode == 3 ? 1
-                                                                   : Bytes));
+                                                                   : 4));
           Block.Ops.push_back(Return);
           Low.Blocks.push_back(Block);
           SourceFunctionTypeHint Entry, Callee;
           Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
           Entry.ReturnType = NdType::makeInt(Mode == 4   ? 8
                                              : Mode == 3 ? 1
-                                                         : Bytes,
+                                                         : 4,
                                              Signed);
           Entry.Parameters = {{"value", NdType::makeInt(Bytes, Signed)}};
           Callee.ReturnType = NdType::makeVoid();

@@ -20,9 +20,11 @@ struct SourceABIValueLocation {
   uint64_t RegisterOffset = 0;
   int64_t EntryStackOffset = 0;
   uint16_t ValueBytes = 0;
-  // Darwin arm64 integer results narrower than 32 bits are sign/zero-extended
-  // to W0 according to their declared signedness. This is explicit ABI
-  // evidence; an observed native low-byte result does not imply extension.
+  // Darwin integer register parameters, and arm64 integer results, narrower
+  // than 32 bits are sign/zero-extended to 32 bits by their declared
+  // signedness. This is explicit ABI evidence, not an inference from an
+  // observed low lane; it does not define the high 32 bits or any stack
+  // padding.
   bool ExtendTo32Bits = false;
 };
 

@@ -192,7 +192,8 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     if (!scalarType(Type) || Location.ValueBytes != Type->Size)
       return false;
     if (Location.ExtendTo32Bits &&
-        (!IsReturn || Hint.Architecture != Arch::AArch64 ||
+        ((IsReturn && Hint.Architecture != Arch::AArch64) ||
+         Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
          Location.Kind != SourceABICarrierKind::IntegerRegister ||
          Type->Kind != NdTypeKind::Int || Type->Size >= 4))
       return false;
@@ -378,6 +379,10 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       Location.Kind = Floating ? SourceABICarrierKind::FloatingRegister
                                : SourceABICarrierKind::IntegerRegister;
       Location.RegisterOffset = Bank[Index++];
+      // Both Darwin ABIs require callers to extend narrow integer register
+      // arguments to 32 bits. Stack arguments retain their own storage width.
+      Location.ExtendTo32Bits =
+          Parameter.Type->Kind == NdTypeKind::Int && Parameter.Type->Size < 4;
     } else {
       // Apple arm64 packs fixed stack scalars at natural alignment. x86_64
       // Darwin uses eight-byte argument slots, above the pushed return address.
