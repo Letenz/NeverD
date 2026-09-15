@@ -119,6 +119,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighSourceRangeTests.cpp
   core/ObjCCallHintTests.cpp
   core/ObjCCategoryTests.cpp
   core/ObjCStorageTests.cpp
@@ -958,6 +959,7 @@ target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
 add_neverd_unittest(NeverDHighControlFlowTests
   core/HighControlFlowSemanticsTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
   LINK_COMPONENTS
   BackendC

@@ -104,6 +104,12 @@ readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
   return std::vector<uint8_t>(Bytes, Bytes + Size);
 }
 
+bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
+                              uint16_t Width) {
+  return Bits && Width == (Image.is64Bit() ? 8 : 4) &&
+         Image.getSectionFor(Bits);
+}
+
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address) {
   if (!supportedImage(Image) || !Image.DataPtrRelocSlots.count(Address) ||

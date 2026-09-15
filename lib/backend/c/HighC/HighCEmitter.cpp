@@ -643,7 +643,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               Name == "_NSConcreteGlobalBlock")
             SourceBlockIsaNames.insert(Name.str());
         } else if (Hint.CallKind ==
-                   SourceCallTypeHint::Kind::RuntimeBorrowedBytes) {
+                       SourceCallTypeHint::Kind::RuntimeBorrowedBytes ||
+                   Hint.CallKind ==
+                       SourceCallTypeHint::Kind::RuntimeReadOnlyBytes) {
           if (Hint.TargetAddress)
             SourceObjectAddressHelpers.insert(
                 "neverd_borrowed_bytes_" +

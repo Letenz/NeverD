@@ -150,13 +150,15 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
                                ? Binding.Limitation
                                : BlockBinding.Limitation;
       if (Reason.empty()) {
+        const auto ReadOnlyHelpers =
+            readOnlyScalarSourceHelpers(Binding.Function, S->Img);
         const auto Audit = Audits.find(Entry);
         Reason = sourceBodyLimitation(
             Binding.Function, *Func->SourceTypeHint,
             Audit == Audits.end() ? nullptr : Audit->second,
             [&](const HighExpr &Expression) {
               return objcSourceCallBound(Expression, S->Img, Functions,
-                                         &ProfileStorage) ||
+                                         &ProfileStorage, &ReadOnlyHelpers) ||
                      objcBlockSourceCallBound(Expression, BlockSource,
                                               BlockPlan, Functions);
             });
@@ -213,9 +215,11 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         auto It = Audits.find(Method.Implementation);
         const auto &Projection = Projections.at(Method.Implementation);
         const auto *Audit = It == Audits.end() ? nullptr : It->second;
+        const auto ReadOnlyHelpers =
+            readOnlyScalarSourceHelpers(Projection.Function, S->Img);
         auto CallAllowed = [&](const HighExpr &Expression) {
           return objcSourceCallBound(Expression, S->Img, Functions,
-                                     &ProfileStorage) ||
+                                     &ProfileStorage, &ReadOnlyHelpers) ||
                  objcBlockSourceCallBound(Expression, BlockSource, BlockPlan,
                                           Functions);
         };

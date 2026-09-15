@@ -75,6 +75,7 @@ enum class RuntimeFixture {
   FrameSelectors,
   NativeReturnPaths,
   SwiftTypeLookup,
+  ReadOnlyTables,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -116,6 +117,7 @@ void verifyRuntime(bool Chained,
   const bool SystemCalls = FixtureKind == RuntimeFixture::SystemCalls;
   const bool CRecords = FixtureKind == RuntimeFixture::CRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
+  const bool ReadOnlyTables = FixtureKind == RuntimeFixture::ReadOnlyTables;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
   const bool StoredStrings = FixtureKind == RuntimeFixture::StoredStrings;
@@ -182,6 +184,7 @@ void verifyRuntime(bool Chained,
                         : ReceiverTypes      ? "ObjCReceiverTypes.m"
                         : DynamicProperties  ? "ObjCDynamicProperties.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
+                        : ReadOnlyTables     ? "ObjCReadOnlyTables.m"
                         : ScalarConstants    ? "ObjCScalarConstants.m"
                         : SwiftLiterals      ? "ObjCSwiftLiteralStrings.m"
                         : StoredStrings      ? "ObjCStoredStrings.m"
@@ -225,6 +228,7 @@ void verifyRuntime(bool Chained,
                         : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
+                        : ReadOnlyTables    ? "ObjCReadOnlyTablesHarness.m"
                         : ScalarConstants   ? "ObjCScalarConstantsHarness.m"
                         : SwiftLiterals     ? "ObjCSwiftLiteralStringsHarness.m"
                         : StoredStrings     ? "ObjCStoredStringsHarness.m"
@@ -412,6 +416,7 @@ void verifyRuntime(bool Chained,
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
                              : CoreData           ? 3U
+                             : ReadOnlyTables     ? 4U
                              : ScalarConstants    ? 6U
                              : SwiftLiterals      ? 3U
                              : StoredStrings      ? 4U
@@ -481,6 +486,9 @@ void verifyRuntime(bool Chained,
     Remaining = {"lookup:length:"};
   if (NativeReturnPaths)
     Remaining = {"adjusted:choose:output:"};
+  if (ReadOnlyTables)
+    Remaining = {
+        "actionForKind:", "shortForKind:", "maskedForKind:", "doubleForKind:"};
   if (FramePadding)
     Remaining = {"key", "horizontal", "vertical",
                  "setHorizontal:", "setVertical:"};
@@ -685,6 +693,7 @@ void verifyRuntime(bool Chained,
                   : SystemCalls        ? "NDSystemCalls"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
+                  : ReadOnlyTables     ? "NDReadOnlyTables"
                   : ScalarConstants    ? "NDScalarConstants"
                   : Equality           ? "NDEquality"
                   : FloatingSaves      ? "NDFloatingSaves"
@@ -845,6 +854,7 @@ void verifyRuntime(bool Chained,
                                        : Foundation       ? 6U
                                        : SwiftLiterals    ? 2U
                                        : StoredStrings    ? 4U
+                                       : ReadOnlyTables   ? 4U
                                        : FramePadding     ? 1U
                                        : FrameSelectors   ? 1U
                                        : PredicateFormats ? 8U
@@ -968,6 +978,8 @@ void verifyRuntime(bool Chained,
                           "pass\nbyte-length=pass\n"
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
+      : ReadOnlyTables ? "read-only-table-cases=32768\ninteger-bits=pass\n"
+                         "floating-bits=pass\nindex-bounds=pass\n"
       : FramePadding ? "frame-padding-cases=16384\nscalar-values=pass\ngetter-"
                        "effects=pass\n"
       : FrameSelectors
@@ -1665,6 +1677,17 @@ TEST(ObjCRuntimeSource,
   for (const bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::FramePadding));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     ReadOnlyTablesPreserveIntegerFloatingBitsAndIndexBounds) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ReadOnlyTables));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif

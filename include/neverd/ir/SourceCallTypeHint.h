@@ -98,7 +98,10 @@ struct SourceCallTypeHint {
     /// A protocol reference slot resolved to a validated local declaration.
     RuntimeProtocol,
     /// A validated immutable Darwin literal object graph with shared identity.
-    RuntimeConstantObject
+    RuntimeConstantObject,
+    /// Immutable scalar table bytes, confined to proven indexed source loads.
+    /// Bounds and every helper occurrence must be revalidated in the caller.
+    RuntimeReadOnlyBytes
   };
   Kind CallKind = Kind::Native;
   /// The bound source routine has a noreturn contract. Runtime bindings must
@@ -146,7 +149,7 @@ struct SourceCallTypeHint {
   std::optional<FormatArguments> Format;
   /// Restricts declaration agreement using revalidated receiver provenance.
   std::optional<ObjCReceiverTypeHint> Receiver;
-  /// Only RuntimeBorrowedBytes uses this exact byte extent at TargetAddress.
+  /// RuntimeBorrowedBytes/RuntimeReadOnlyBytes extent at TargetAddress.
   uint32_t ByteCount = 0;
   /// Constant strings/objects: the immutable relocated slot whose loaded
   /// value supplied TargetAddress. Revalidate it against the current image.

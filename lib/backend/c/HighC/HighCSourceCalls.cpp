@@ -116,6 +116,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeConstantString ||
       Hint.CallKind == Kind::RuntimeConstantObject ||
       Hint.CallKind == Kind::RuntimeBorrowedBytes ||
+      Hint.CallKind == Kind::RuntimeReadOnlyBytes ||
       Hint.CallKind == Kind::DarwinRuntimeGlobalAddress ||
       Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
@@ -151,7 +152,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (Name != "_NSConcreteStackBlock" && Name != "_NSConcreteGlobalBlock")
         return bad("unknown concrete block class");
       Value = Name.str();
-    } else if (Hint.CallKind == Kind::RuntimeBorrowedBytes) {
+    } else if (Hint.CallKind == Kind::RuntimeBorrowedBytes ||
+               Hint.CallKind == Kind::RuntimeReadOnlyBytes) {
       if (!Hint.TargetAddress || Hint.ByteCount > 1024 * 1024)
         return bad("borrowed bytes have no bounded source extent");
       Value = "neverd_borrowed_bytes_" +

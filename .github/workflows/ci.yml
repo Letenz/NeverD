@@ -263,6 +263,30 @@ jobs:
           expected = tuple(
               TestRecord(name, frozenset(owners))
               for name, *owners in (
+                  ("HighSourceRanges.UnsignedGuardBoundsAgreeWithEveryByteInput",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.IntegerComparisonResultsKeepTheirNativeCarrierWidth",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.CompoundPredicatesPreserveEveryShortCircuitArm",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.WrappedIndicesMasksAndWidthsKeepTheirOwnBounds",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.EveryEmittedWriteInvalidatesTheMatchingLocal",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.UnguardedEntriesAndSharedExpressionsCannotBorrowFacts",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.LoopGuardsAreRecheckedAfterEachIndexWrite",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.SignedGuardsEffectsEscapesAndIncompleteFlowGiveNoProof",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.EffectfulBooleanOperandsInvalidateEarlierGuardFacts",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.TrailingLoopQueriesUseEveryConditionEntry",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.WritesWithinTheQueryStatementInvalidateEntryFacts",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighSourceRanges.ExhaustedBudgetsDiscardTheWholeQueryBatch",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighPrivateFrameStores.DiscardsUnreadPaddingAndPreservesBranchEntry",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighPrivateFrameStores.KeepsReadsEscapesEffectsAndUnprovenRanges",
@@ -861,6 +885,14 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.NumericMasksKeepOccurrenceProvenanceThroughHighIR",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ReadOnlyTablesBindEveryBoundedScalarLoadOccurrence",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ReadOnlyTablesRejectUnprovenRangesStorageAndUses",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ReadOnlyTablePublicationRechecksFlowBytesAndEscapes",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ScalarPointerAmbiguityRequiresWidthAndSectionOwnership",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ImmutableScalarsPreserveWidthSignAndFloatingBits",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ImmutableScalarsRejectUnprovedStorageAndAddressUses",
@@ -1203,13 +1235,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 472,
-              ("macOS", "macos-patch"): 516,
-              ("Windows", "windows-focused"): 468,
+              ("Linux", "linux-semantic"): 488,
+              ("macOS", "macos-patch"): 533,
+              ("Windows", "windows-focused"): 484,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.ReadOnlyTablesPreserveIntegerFloatingBitsAndIndexBounds",
                       "ObjCRuntimeSource.PrivateFramePaddingPreservesScalarValuesAndGetterEffects",
                       "ObjCRuntimeSource.SwiftFixedRuntimeCallsPreserveMetadataIdentityAndByteLength",
                       "ObjCRuntimeSource.NativeReturnPathsPreserveBranchResultsAndStores",

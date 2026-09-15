@@ -294,6 +294,190 @@ struct Fixture {
 };
 } // namespace
 
+namespace {
+Fixture readonlyTableFixture(uint16_t Width = 8) {
+  Fixture F;
+  F.Image.ObjCSourceReferences.clear();
+  F.Function.ReturnType = NdType::makeInt(Width, false);
+  MedVar V;
+  V.Kind = MedVar::Param;
+  V.Size = 4;
+  auto Index = HighExpr::makeVar(V, NdType::makeInt(4, false));
+  auto Guard =
+      HighExpr::makeBinop(NdOp::INT_LESS, Index, HighExpr::makeConst(3, 4));
+  Guard->Type = NdType::makeInt(4, false);
+  auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, Index);
+  Wide->Type = NdType::makeInt(8, false);
+  auto Offset =
+      HighExpr::makeBinop(NdOp::INT_MULT, Wide, HighExpr::makeConst(Width, 8));
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD,
+                                     HighExpr::makeConst(0x1040, 8), Offset);
+  HighStmt Load;
+  Load.Kind = StmtKind::Return;
+  Load.RetVal = HighExpr::makeLoad(Address, NdType::makeInt(Width, false));
+  HighStmt Other;
+  Other.Kind = StmtKind::Return;
+  Other.RetVal = HighExpr::makeConst(0, Width);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Cond = Guard;
+  Branch.Body = {Load};
+  Branch.ElseBody = {Other};
+  F.Function.Body = {Branch};
+  const uint64_t Values[] = {7, 99, 253};
+  for (unsigned I = 0; I < 3; ++I)
+    for (unsigned B = 0; B < Width; ++B)
+      F.Image.Segments[0].Data[0x40 + I * Width + B] = Values[I] >> (B * 8);
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, ReadOnlyTablesBindEveryBoundedScalarLoadOccurrence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (uint16_t Width : {1, 2, 4, 8}) {
+      auto F = readonlyTableFixture(Width);
+      F.Image.Arch = Architecture;
+      const auto Original = F.Function.Body[0].Body[0].RetVal;
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_EQ(Bound.BorrowedBytes.size(), 1U);
+      EXPECT_EQ(Bound.BorrowedBytes.begin()->first, 0x1040U);
+      EXPECT_EQ(Bound.BorrowedBytes.begin()->second, Width * 3U);
+      const auto &Load = Bound.Function.Body[0].Body[0].RetVal;
+      EXPECT_EQ(Load->Kind, ExprKind::Load);
+      EXPECT_EQ(Load->Type->Size, Width);
+      const auto &Helper = Load->Operands[0]->Operands[0];
+      ASSERT_TRUE(Helper->SourceCallHint);
+      EXPECT_EQ(Helper->SourceCallHint->CallKind,
+                SourceCallTypeHint::Kind::RuntimeReadOnlyBytes);
+      const auto Allowed = readOnlyScalarSourceHelpers(Bound.Function, F.Image);
+      ASSERT_EQ(Allowed.size(), 1U);
+      EXPECT_TRUE(objcSourceCallBound(*Helper, F.Image, {}, nullptr, &Allowed));
+      EXPECT_FALSE(objcSourceCallBound(*Helper, F.Image, {}));
+      EXPECT_EQ(Original->Operands[0]->Operands[0]->Kind, ExprKind::Const);
+    }
+}
+
+TEST(ObjCSourceBindings, ReadOnlyTablesRejectUnprovenRangesStorageAndUses) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+      auto F = readonlyTableFixture();
+      F.Image.Arch = Architecture;
+      auto &Branch = F.Function.Body[0];
+      auto &Load = Branch.Body[0].RetVal;
+      auto &Offset = Load->Operands[0]->Operands[1];
+      if (Mutation == 0)
+        Branch.Cond = HighExpr::makeConst(1, 1);
+      if (Mutation == 1)
+        Branch.Cond->Op = NdOp::INT_SLESS;
+      if (Mutation == 2)
+        F.Image.Sections[0].Flags =
+            SegmentFlags::Readable | SegmentFlags::Writable;
+      if (Mutation == 3)
+        F.Image.Sections.push_back(F.Image.Sections[0]);
+      if (Mutation == 4)
+        F.Image.Sections[0].FileSz = 0x47;
+      if (Mutation == 5)
+        F.Image.DataPtrRelocSlots.insert(0x1048);
+      if (Mutation == 6)
+        Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Mutation == 7)
+        Load->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Mutation == 8)
+        Offset->Operands[1] = HighExpr::makeConst(65537, 8);
+      if (Mutation == 9)
+        llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x48,
+                                         0x1080);
+      if (Mutation == 10)
+        F.Function.UnstructuredExceptionRegions = 1;
+      if (Mutation == 11)
+        F.Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+      if (Mutation == 12)
+        F.Function.Body.push_back(Branch.Body[0]);
+      if (Mutation == 13) {
+        HighStmt Overwrite;
+        Overwrite.Kind = StmtKind::Assign;
+        Overwrite.Dst = Offset->Operands[0]->Operands[0];
+        Overwrite.Val = HighExpr::makeConst(99, 4);
+        HighStmt Loop;
+        Loop.Kind = StmtKind::DoWhile;
+        Loop.Cond = Load;
+        Loop.Body = {Overwrite};
+        Branch.Body = {Loop};
+      }
+      const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+      EXPECT_FALSE(Bound.Limitation.empty()) << Mutation;
+      EXPECT_TRUE(Bound.BorrowedBytes.empty()) << Mutation;
+    }
+}
+
+TEST(ObjCSourceBindings, ReadOnlyTablePublicationRechecksFlowBytesAndEscapes) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    auto F = readonlyTableFixture();
+    auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty());
+    auto &Branch = Bound.Function.Body[0];
+    const auto &Load = Branch.Body[0].RetVal;
+    const auto Helper = Load->Operands[0]->Operands[0];
+    ASSERT_EQ(readOnlyScalarSourceHelpers(Bound.Function, F.Image).size(), 1U);
+    if (Mutation == 0)
+      Branch.Cond = HighExpr::makeConst(1, 1);
+    if (Mutation == 1) {
+      HighStmt Escape;
+      Escape.Kind = StmtKind::Return;
+      Escape.RetVal = Helper;
+      Bound.Function.Body.push_back(Escape);
+    }
+    if (Mutation == 2)
+      F.Image.Segments[0].Flags =
+          SegmentFlags::Readable | SegmentFlags::Writable;
+    if (Mutation == 3)
+      F.Image.DataPtrRelocSlots.insert(0x1048);
+    if (Mutation == 4 || Mutation == 5) {
+      auto Changed =
+          std::make_shared<SourceCallTypeHint>(*Helper->SourceCallHint);
+      Changed->ByteCount = Mutation == 4 ? 8 : 65537;
+      Helper->SourceCallHint = std::move(Changed);
+    }
+    if (Mutation == 6)
+      Load->Operands[0]->Operands[1]->Operands[1] =
+          HighExpr::makeConst(4096, 8);
+    const auto Allowed = readOnlyScalarSourceHelpers(Bound.Function, F.Image);
+    EXPECT_TRUE(Allowed.empty()) << Mutation;
+    EXPECT_FALSE(objcSourceCallBound(*Helper, F.Image, {}, nullptr, &Allowed))
+        << Mutation;
+  }
+}
+
+TEST(ObjCSourceBindings,
+     ScalarPointerAmbiguityRequiresWidthAndSectionOwnership) {
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    auto F = readonlyTableFixture(Width);
+    EXPECT_EQ(isImagePointerBitPattern(F.Image, 0x1040, Width), Width == 8);
+    EXPECT_FALSE(isImagePointerBitPattern(F.Image, 0, Width));
+    F.Image.Sections[0].VA += 0x20;
+    F.Image.Sections[0].FileOff += 0x20;
+    F.Image.Sections[0].Size -= 0x20;
+    F.Image.Sections[0].FileSz -= 0x20;
+    EXPECT_FALSE(isImagePointerBitPattern(F.Image, 0x1010, Width));
+    EXPECT_TRUE(F.Image.getSegmentFor(0x1010));
+    EXPECT_FALSE(F.Image.getSectionFor(0x1010));
+  }
+  for (uint16_t Width : {2, 4}) {
+    auto F = readonlyTableFixture(Width);
+    llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                     0x1040);
+    F.Function.Body = {F.Function.Body[0].Body[0]};
+    F.Function.Body[0].RetVal = HighExpr::makeLoad(
+        HighExpr::makeConst(0x1040, 8), NdType::makeInt(Width, false));
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty());
+    const auto &Value = Bound.Function.Body[0].RetVal;
+    ASSERT_EQ(Value->Kind, ExprKind::BitCast);
+    EXPECT_EQ(Value->Operands[0]->ConstVal, 0x1040U);
+  }
+}
+
 TEST(ObjCSourceBindings, ImmutableScalarsPreserveWidthSignAndFloatingBits) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &Type :

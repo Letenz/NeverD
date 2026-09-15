@@ -78,7 +78,9 @@ class SourceFlow {
   struct Node {
     std::vector<size_t> Next, Previous, Uses, Writes;
     std::vector<std::optional<Predicate>> EdgeFacts;
+    std::vector<std::optional<bool>> EdgeTruth;
     const HighStmt *Statement = nullptr;
+    const HighStmt *ExpressionStatement = nullptr;
     ExprPtr Test;
     bool PhiCopy = false;
     std::optional<size_t> Definition;
@@ -121,7 +123,8 @@ class SourceFlow {
     return Nodes.size() - 1;
   }
   void edge(size_t From, size_t To,
-            std::optional<Predicate> Fact = std::nullopt) {
+            std::optional<Predicate> Fact = std::nullopt,
+            std::optional<bool> Truth = std::nullopt) {
     CurrentAddress = Nodes[From].Address;
     spend();
     if (To == NoNode)
@@ -132,6 +135,7 @@ class SourceFlow {
     ++EdgeCount;
     Nodes[From].Next.push_back(To);
     Nodes[From].EdgeFacts.push_back(Fact);
+    Nodes[From].EdgeTruth.push_back(Truth);
     Nodes[To].Previous.push_back(From);
   }
   size_t local(const MedVar &Variable) {
@@ -298,11 +302,11 @@ class SourceFlow {
     auto Known = truth(Condition);
     auto Fact = predicate(Condition);
     if (!Known || *Known)
-      edge(Index, Yes, Fact);
+      edge(Index, Yes, Fact, true);
     if (Fact)
       Fact->Nonzero = !Fact->Nonzero;
     if (!Known || !*Known)
-      edge(Index, No, Fact);
+      edge(Index, No, Fact, false);
   }
 
   size_t block(const std::vector<HighStmt> &Body, size_t Next, Control Scope,
@@ -320,6 +324,7 @@ class SourceFlow {
     const size_t Index = node();
     Nodes[Index].Address = Statement.Addr;
     Nodes[Index].Statement = &Statement;
+    Nodes[Index].ExpressionStatement = &Statement;
     if (Statement.Addr && Statement.Addr != InvalidVA) {
       auto [It, Fresh] = Labels.emplace(Statement.Addr, Index);
       if (!Fresh)
@@ -404,6 +409,8 @@ class SourceFlow {
       // normal back edge evaluate its trailing condition first.
       const size_t Test = node();
       Nodes[Test].Address = Statement.Addr;
+      Nodes[Index].ExpressionStatement = nullptr;
+      Nodes[Test].ExpressionStatement = &Statement;
       const size_t Body = block(Statement.Body, Test, {Next, Test}, Depth + 1);
       edge(Index, Body);
       branch(Test, Statement.Cond, Body, Next);
@@ -525,6 +532,7 @@ class SourceFlow {
       Refined.back().Next.clear();
       Refined.back().Previous.clear();
       Refined.back().EdgeFacts.clear();
+      Refined.back().EdgeTruth.clear();
       States.push_back({Original, Known, Nonzero});
       return Index;
     };
@@ -558,6 +566,7 @@ class SourceFlow {
             throw ExpansionLimit{};
           const size_t Target = Add(Original.Next[E], NextKnown, NextNonzero);
           Refined[I].Next.push_back(Target);
+          Refined[I].EdgeTruth.push_back(Original.EdgeTruth[E]);
           Refined[Target].Previous.push_back(I);
         }
       }
@@ -571,6 +580,182 @@ class SourceFlow {
       // the original conservative analysis when a partition budget is reached.
       return Entry;
     }
+  }
+
+  static uint64_t integerMask(unsigned Bytes) {
+    return Bytes == 8 ? UINT64_MAX : (uint64_t{1} << (Bytes * 8)) - 1;
+  }
+
+  std::optional<uint64_t> indexRange(const ExprPtr &Value,
+                                     std::set<size_t> &Dependencies,
+                                     unsigned Depth = 0) {
+    spend();
+    if (!Value || Depth > 32 || !Value->Type ||
+        Value->Type->Kind != NdTypeKind::Int || !Value->Type->Size ||
+        Value->Type->Size > 8 || Value->IntrinsicId != Intrinsic::None ||
+        !Value->IntrinsicOutputs.empty() ||
+        Value->MemoryOrdering != NdMemoryOrdering::None ||
+        Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return std::nullopt;
+    const uint64_t Mask = integerMask(Value->Type->Size);
+    if (Value->Kind == ExprKind::Const && Value->Operands.empty() &&
+        Value->ConstVal <= Mask)
+      return Value->ConstVal;
+    if (Value->Kind == ExprKind::Var && scalarLocal(Value) &&
+        !highSourceFrameBase(Function, Value->Var)) {
+      const auto Local = local(Value->Var);
+      if (AddressTaken.count(Local))
+        return std::nullopt;
+      Dependencies.insert(Local);
+      return Mask;
+    }
+    if ((Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::UnaryOp) &&
+        Value->Operands.size() == 1) {
+      const auto Input =
+          indexRange(Value->Operands[0], Dependencies, Depth + 1);
+      if (!Input)
+        return std::nullopt;
+      const auto InputBytes = Value->Operands[0]->Type->Size;
+      if (Value->Kind == ExprKind::Cast) {
+        if (!Value->CastTo || Value->CastTo->Kind != NdTypeKind::Int ||
+            Value->CastTo->Size != Value->Type->Size ||
+            InputBytes != Value->Type->Size)
+          return std::nullopt;
+        return Input;
+      }
+      if (Value->Type->Size < InputBytes)
+        return std::nullopt;
+      if (Value->Op == NdOp::INT_ZEXT)
+        return Input;
+      if (Value->Op == NdOp::INT_SEXT)
+        return *Input < (uint64_t{1} << (InputBytes * 8 - 1)) ? *Input : Mask;
+      return std::nullopt;
+    }
+    if (Value->Kind != ExprKind::BinOp || Value->Operands.size() != 2)
+      return std::nullopt;
+    const auto Left = indexRange(Value->Operands[0], Dependencies, Depth + 1);
+    const auto Right = indexRange(Value->Operands[1], Dependencies, Depth + 1);
+    if (!Left || !Right || Value->Operands[0]->Type->Size != Value->Type->Size)
+      return std::nullopt;
+    if (Value->Op == NdOp::INT_LEFT || Value->Op == NdOp::INT_RIGHT) {
+      if (Value->Operands[1]->Kind != ExprKind::Const ||
+          *Right >= Value->Type->Size * 8U)
+        return std::nullopt;
+      if (Value->Op == NdOp::INT_RIGHT)
+        return *Left >> *Right;
+      return *Left <= (Mask >> *Right) ? *Left << *Right : Mask;
+    }
+    if (Value->Operands[1]->Type->Size != Value->Type->Size)
+      return std::nullopt;
+    switch (Value->Op) {
+    case NdOp::INT_AND:
+      return std::min(*Left, *Right);
+    case NdOp::INT_ADD:
+      return *Left <= Mask - *Right ? *Left + *Right : Mask;
+    case NdOp::INT_MULT:
+      return !*Right || *Left <= Mask / *Right ? *Left * *Right : Mask;
+    case NdOp::INT_SUB:
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+      return Mask;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  bool purePredicate(const ExprPtr &Test, unsigned Depth = 0) {
+    spend();
+    if (!Test || Depth > 32 || !Test->Type ||
+        Test->Type->Kind != NdTypeKind::Int || !Test->Type->Size ||
+        Test->Type->Size > 8 || Test->IntrinsicId != Intrinsic::None ||
+        !Test->IntrinsicOutputs.empty() ||
+        Test->MemoryOrdering != NdMemoryOrdering::None ||
+        Test->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    if (Test->Kind == ExprKind::UnaryOp && Test->Op == NdOp::BOOL_NOT &&
+        Test->Operands.size() == 1)
+      return purePredicate(Test->Operands[0], Depth + 1);
+    if (Test->Kind == ExprKind::BinOp && Test->Operands.size() == 2) {
+      if (Test->Op == NdOp::BOOL_AND || Test->Op == NdOp::BOOL_OR)
+        return purePredicate(Test->Operands[0], Depth + 1) &&
+               purePredicate(Test->Operands[1], Depth + 1);
+      if (Test->Op == NdOp::INT_LESS || Test->Op == NdOp::INT_LESSEQUAL ||
+          Test->Op == NdOp::INT_EQUAL || Test->Op == NdOp::INT_NOTEQUAL ||
+          Test->Op == NdOp::INT_SLESS || Test->Op == NdOp::INT_SLESSEQUAL) {
+        std::set<size_t> Unused;
+        return bool(indexRange(Test->Operands[0], Unused)) &&
+               bool(indexRange(Test->Operands[1], Unused));
+      }
+    }
+    std::set<size_t> Unused;
+    return bool(indexRange(Test, Unused));
+  }
+
+  // Intersections constrain both predicates. Unions retain every feasible
+  // arm; no claim about a short-circuited operand can suppress another arm.
+  std::optional<uint64_t> constrainPredicate(const ExprPtr &Test, bool Truth,
+                                             const ExprPtr &Index,
+                                             uint64_t Upper) {
+    spend();
+    if (Test->Kind == ExprKind::Const)
+      return bool(Test->ConstVal) == Truth ? std::optional<uint64_t>(Upper)
+                                           : std::nullopt;
+    if (Test->Kind == ExprKind::UnaryOp && Test->Op == NdOp::BOOL_NOT)
+      return constrainPredicate(Test->Operands[0], !Truth, Index, Upper);
+    if (Test->Kind != ExprKind::BinOp)
+      return Upper;
+    if (Test->Op == NdOp::BOOL_AND || Test->Op == NdOp::BOOL_OR) {
+      const bool Intersect = (Test->Op == NdOp::BOOL_AND) == Truth;
+      const auto Left =
+          constrainPredicate(Test->Operands[0], Truth, Index, Upper);
+      if (Intersect)
+        return Left ? constrainPredicate(Test->Operands[1], Truth, Index, *Left)
+                    : std::nullopt;
+      const auto Right =
+          constrainPredicate(Test->Operands[1], Truth, Index, Upper);
+      return Left && Right ? std::optional<uint64_t>(std::max(*Left, *Right))
+             : Left        ? Left
+                           : Right;
+    }
+    if (Test->Op != NdOp::INT_LESS && Test->Op != NdOp::INT_LESSEQUAL &&
+        Test->Op != NdOp::INT_EQUAL && Test->Op != NdOp::INT_NOTEQUAL)
+      return Upper;
+    for (unsigned Side = 0; Side < 2; ++Side) {
+      const auto &Value = Test->Operands[Side];
+      const auto &Constant = Test->Operands[1 - Side];
+      if (Constant->Kind != ExprKind::Const ||
+          Constant->Type->Size != Index->Type->Size ||
+          !Value->structuralEq(*Index))
+        continue;
+      const auto Limit = Constant->ConstVal;
+      if (Test->Op == NdOp::INT_EQUAL || Test->Op == NdOp::INT_NOTEQUAL) {
+        if ((Test->Op == NdOp::INT_EQUAL) == Truth)
+          return Limit <= Upper ? std::optional<uint64_t>(Limit) : std::nullopt;
+        if (Upper == Limit)
+          return Upper ? std::optional<uint64_t>(Upper - 1) : std::nullopt;
+        return Upper;
+      }
+      const bool Inclusive = Test->Op == NdOp::INT_LESSEQUAL;
+      const bool UpperEdge = Side == 0 ? Truth : !Truth;
+      const bool StrictUpper = Side == 0 ? !Inclusive : Inclusive;
+      if (UpperEdge) {
+        if (StrictUpper && !Limit)
+          return std::nullopt;
+        return std::min(Upper, Limit - unsigned(StrictUpper));
+      }
+      const bool StrictLower = !StrictUpper;
+      if (StrictLower ? Upper <= Limit : Upper < Limit)
+        return std::nullopt;
+    }
+    return Upper;
+  }
+
+  // Edge truth survives predicate refinement. Effectful compound conditions
+  // cannot carry a fact about a value that one of their operands might change.
+  std::optional<uint64_t> constrainIndex(const ExprPtr &Test, bool Truth,
+                                         const ExprPtr &Index, uint64_t Upper) {
+    return purePredicate(Test) ? constrainPredicate(Test, Truth, Index, Upper)
+                               : std::optional<uint64_t>(Upper);
   }
 
   void deadPhiCopies(const std::vector<bool> &Reachable, size_t Words) {
@@ -785,6 +970,78 @@ public:
              std::set<const HighStmt *> *DeadCopies = nullptr)
       : Function(Function), Diagnostics(Diagnostics), DeadCopies(DeadCopies) {}
 
+  void bounds(const std::vector<HighSourceUnsignedRangeQuery> &Queries,
+              std::vector<std::optional<uint64_t>> &Result) {
+    try {
+      if (Queries.empty() || Queries.size() > 128 ||
+          Function.StructuredExceptionRegions ||
+          Function.UnstructuredExceptionRegions)
+        return;
+      const auto Entry = build();
+      if (!Entry || !Diagnostics.Complete || !Diagnostics.Items.empty())
+        return;
+      for (size_t Q = 0; Q < Queries.size(); ++Q) {
+        const auto &[Statement, Value] = Queries[Q];
+        std::set<size_t> Dependencies;
+        const auto Initial = indexRange(Value, Dependencies);
+        if (!Statement || !Initial)
+          continue;
+        spend(Nodes.size());
+        std::vector<std::optional<uint64_t>> Incoming(Nodes.size());
+        std::vector<bool> Queued(Nodes.size());
+        std::vector<size_t> Pending{*Entry};
+        Incoming[*Entry] = *Initial;
+        Queued[*Entry] = true;
+        while (!Pending.empty()) {
+          spend();
+          const auto I = Pending.back();
+          Pending.pop_back();
+          Queued[I] = false;
+          auto Upper = *Incoming[I];
+          for (auto Written : Nodes[I].Writes) {
+            spend();
+            if (Dependencies.count(Written))
+              Upper = *Initial;
+          }
+          for (size_t E = 0; E < Nodes[I].Next.size(); ++E) {
+            spend();
+            auto NextUpper = std::optional<uint64_t>(Upper);
+            if (auto Truth = Nodes[I].EdgeTruth[E])
+              NextUpper = constrainIndex(Nodes[I].Test, *Truth, Value, Upper);
+            if (!NextUpper)
+              continue;
+            const auto Next = Nodes[I].Next[E];
+            if (!Incoming[Next] || *Incoming[Next] < *NextUpper) {
+              Incoming[Next] = *NextUpper;
+              if (!Queued[Next]) {
+                Queued[Next] = true;
+                Pending.push_back(Next);
+              }
+            }
+          }
+        }
+        for (size_t I = 0; I < Nodes.size(); ++I) {
+          spend();
+          if (Nodes[I].ExpressionStatement == Statement && Incoming[I]) {
+            auto Upper = *Incoming[I];
+            // A query describes an occurrence within a statement, not an
+            // evaluation order among its expressions. A write in that same
+            // statement can precede the queried read.
+            for (auto Written : Nodes[I].Writes) {
+              spend();
+              if (Dependencies.count(Written))
+                Upper = *Initial;
+            }
+            Result[Q] = Result[Q] ? std::max(*Result[Q], Upper) : Upper;
+          }
+        }
+      }
+    } catch (const Failure &) {
+      // A partial set of proofs must not survive exhaustion or malformed IR.
+      std::fill(Result.begin(), Result.end(), std::nullopt);
+    }
+  }
+
   void graph(HighSourceFlowGraph &Result) {
     try {
       const auto Entry = build();
@@ -814,6 +1071,14 @@ public:
 HighSourceFlowGraph buildHighSourceFlowGraph(const HighFunc &Function) {
   HighSourceFlowGraph Result;
   SourceFlow(Function, Result.Diagnostics).graph(Result);
+  return Result;
+}
+std::vector<std::optional<uint64_t>> highSourceUnsignedUpperBounds(
+    const HighFunc &Function,
+    const std::vector<HighSourceUnsignedRangeQuery> &Queries) {
+  std::vector<std::optional<uint64_t>> Result(Queries.size());
+  HighSourceFlowReport Diagnostics;
+  SourceFlow(Function, Diagnostics).bounds(Queries, Result);
   return Result;
 }
 HighSourceFlowReport analyzeHighSourceFlow(const HighFunc &Function,

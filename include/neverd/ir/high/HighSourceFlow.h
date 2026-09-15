@@ -58,6 +58,18 @@ struct HighSourceFlowGraph {
 HighSourceFlowGraph buildHighSourceFlowGraph(const HighFunc &Function);
 HighSourceFlowReport analyzeHighSourceFlow(const HighFunc &Function,
                                            bool NeedsReturn);
+struct HighSourceUnsignedRangeQuery {
+  const HighStmt *Statement = nullptr;
+  ExprPtr Value;
+};
+/// Upper bounds on pure integer values occurring in a source statement.
+/// Every reaching context contributes. Writes, including within the queried
+/// statement, and address-taken locals
+/// invalidate guard facts; unsupported expressions, incomplete flow and budget
+/// exhaustion supply no bound. Results borrow no persistent expression state.
+std::vector<std::optional<uint64_t>> highSourceUnsignedUpperBounds(
+    const HighFunc &Function,
+    const std::vector<HighSourceUnsignedRangeQuery> &Queries);
 /// Remove side-effect-free PHI copies whose values cannot be observed on any
 /// feasible emitted path. Unknown control flow or exhausted analysis budgets
 /// leave the function unchanged. Retains addresses used as source labels.

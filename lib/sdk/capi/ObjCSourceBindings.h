@@ -5,6 +5,7 @@
 #include "BorrowedByteSources.h"
 #include "ObjCConstantObjectSources.h"
 #include "ObjCProfileStorage.h"
+#include "ObjCReadOnlyScalarSources.h"
 #include "ObjCSourceProjection.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -336,6 +337,7 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
     ProfileStorage = &*LocalStorage;
   }
   const auto ClassObjects = classObjectIdentities(Image);
+  const auto ScalarLoads = readOnlyScalarLoadPlans(Function, Image);
   // Contextual bindings create temporary input nodes. Retain those nodes for
   // the lifetime of their memoized copies so allocator address reuse cannot
   // make a later argument borrow an earlier argument's binding.
@@ -517,13 +519,32 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           // Reproduce a scalar value, never an original image pointer. The
           // byte reader excludes mutable, overlapping and relocated storage;
           // mapped values remain subject to ordinary address binding.
-          if (!Image.getSegmentFor(Bits)) {
+          if (!isImagePointerBitPattern(Image, Bits, Type->Size)) {
             auto Value = HighExpr::makeConst(Bits, Type->Size,
                                              ConstantAddressProvenance::Scalar);
             Value->Type = NdType::makeInt(Type->Size, false);
             *Expression = *HighExpr::makeBitCast(Value, Type);
             return Expression;
           }
+        }
+      }
+    }
+    if (Original->Kind == ExprKind::Load && !AddressContext && !MemoryAddress) {
+      if (const auto Found = ScalarLoads.find(Original.get());
+          Found != ScalarLoads.end()) {
+        const auto &Plan = Found->second;
+        auto Hint = borrowedByteSourceHint(Image, {Plan.Base, Plan.Extent});
+        if (Hint) {
+          Hint->CallKind = SourceCallTypeHint::Kind::RuntimeReadOnlyBytes;
+          auto Base = HighExpr::makeCall({}, 0, {});
+          Base->Type = NdType::makeInt(8, false);
+          Base->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Expression->Operands = {HighExpr::makeBinop(
+              NdOp::INT_ADD, Base,
+              Copy(Plan.Offset, Depth + 1, false, false, false))};
+          Result.BorrowedBytes.insert({Plan.Base, Plan.Extent});
+          return Expression;
         }
       }
     }
@@ -744,10 +765,11 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
   return Result;
 }
 
-inline bool
-objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
-                    const std::map<va_t, const HighFunc *> &Functions,
-                    const ObjCProfileStorage *ProfileStorage = nullptr) {
+inline bool objcSourceCallBound(
+    const HighExpr &Expression, const BinaryImage &Image,
+    const std::map<va_t, const HighFunc *> &Functions,
+    const ObjCProfileStorage *ProfileStorage = nullptr,
+    const std::set<const HighExpr *> *ReadOnlyHelpers = nullptr) {
   using namespace objc_binding_detail;
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
       Expression.IntrinsicId != Intrinsic::None ||
@@ -800,7 +822,13 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
-  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeBorrowedBytes) {
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeReadOnlyBytes &&
+      (!ReadOnlyHelpers || !ReadOnlyHelpers->count(&Expression) ||
+       Expression.IsIndirectCall || Expression.CallAddr ||
+       !Expression.CallTarget.empty() || !Expression.IntrinsicOutputs.empty()))
+    return false;
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeBorrowedBytes ||
+      Binding.CallKind == SourceCallTypeHint::Kind::RuntimeReadOnlyBytes) {
     const auto Expected = borrowedByteSourceHint(
         Image, {Binding.TargetAddress, Binding.ByteCount});
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
