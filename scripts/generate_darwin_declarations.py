@@ -5,6 +5,7 @@ Generation requires the SDK's libclang and PyYAML. The generated catalog is
 self-contained and carries no SDK implementation or build-time dependency.
 Declarations must agree between macOS and iOS preprocessing environments;
 exports and reexports establish which exact library may supply each symbol.
+Public inputs include Foundation, graphics, file attributes, logging and digests.
 """
 import argparse
 import ctypes
@@ -144,7 +145,9 @@ def main():
         source.write_text(
             "#import <Foundation/Foundation.h>\n#include <objc/runtime.h>\n"
             "#include <objc/objc-sync.h>\n#include <pthread.h>\n"
-            "#include <dispatch/dispatch.h>\n" +
+            "#include <dispatch/dispatch.h>\n#include <sys/xattr.h>\n"
+            "#include <os/log.h>\n#include <asl.h>\n"
+            "#include <CommonCrypto/CommonDigest.h>\n" +
             "".join(f"#import <{name}/{name}.h>\n" for name in frameworks))
         profiles = [clang.extract(source, sdk, target) for target in TARGETS]
     version = json.loads((sdk / "SDKSettings.json").read_text())["Version"]

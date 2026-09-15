@@ -2315,6 +2315,65 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
   }
 }
 
+TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &[Name, Widths] :
+         std::vector<std::pair<std::string, std::vector<unsigned>>>{
+             {"getxattr", {8, 8, 8, 8, 4, 4}},
+             {"setxattr", {8, 8, 8, 8, 4, 4}},
+             {"listxattr", {8, 8, 8, 4}},
+             {"removexattr", {8, 8, 4}},
+             {"os_log_type_enabled", {8, 1}},
+             {"asl_get", {8, 8}},
+             {"asl_set", {8, 8, 8}},
+             {"CC_SHA256", {8, 4, 8}},
+             {"CC_SHA256_Init", {8}},
+             {"CC_SHA256_Update", {8, 8, 4}},
+             {"CC_SHA256_Final", {8, 8}}}) {
+      SCOPED_TRACE(Name);
+      auto Image = runtimeImage("_" + Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {"_" + Name, 0,
+                                     "/usr/lib/libSystem.B.dylib", false};
+      auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), Widths.size());
+      for (size_t I = 0; I < Widths.size(); ++I) {
+        EXPECT_EQ(Hint->Signature.Parameters[I].Type->Size, Widths[I]);
+        EXPECT_EQ(Hint->Signature.Parameters[I].Location.ValueBytes, Widths[I]);
+      }
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      if (Name == "getxattr" || Name == "listxattr") {
+        EXPECT_EQ(Hint->Signature.ReturnType->Size, 8);
+        EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+      }
+      if (Name == "os_log_type_enabled") {
+        EXPECT_EQ(Hint->Signature.ReturnType->Size, 1);
+        EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+        EXPECT_FALSE(Hint->Signature.Parameters[1].Type->IsSigned);
+      }
+      if (Name == "CC_SHA256_Init")
+        EXPECT_EQ(Hint->Signature.Parameters[0].Type->Pointee->Kind,
+                  NdTypeKind::Void);
+      if (Name == "asl_get" || Name == "CC_SHA256")
+        EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+      Image.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      Image.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Image.DyldBindSlots[0x2180].Addend = 0;
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+    }
+    auto Variadic = runtimeImage("_asl_log", Architecture);
+    Variadic.DyldBindSlots[0x2180] = {"_asl_log", 0,
+                                      "/usr/lib/libSystem.B.dylib", false};
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Variadic, 0x2180));
+  }
+}
+
 TEST(ObjCCallHints, GraphicsDeclarationsPreserveOpaquePointersAndExactExports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Framework, Kind] :

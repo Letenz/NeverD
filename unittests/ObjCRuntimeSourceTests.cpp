@@ -65,6 +65,7 @@ enum class RuntimeFixture {
   WordRecords,
   PredicateFormats,
   CRecords,
+  SystemCalls,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -94,6 +95,7 @@ void verifyRuntime(bool Chained,
   const bool AggregateRecords = FixtureKind == RuntimeFixture::AggregateRecords;
   const bool WordRecords = FixtureKind == RuntimeFixture::WordRecords;
   const bool PredicateFormats = FixtureKind == RuntimeFixture::PredicateFormats;
+  const bool SystemCalls = FixtureKind == RuntimeFixture::SystemCalls;
   const bool CRecords = FixtureKind == RuntimeFixture::CRecords;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
@@ -145,6 +147,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords        ? "ObjCWordRecords.m"
                         : PredicateFormats   ? "ObjCPredicateFormats.m"
                         : CRecords           ? "ObjCCRecordCalls.m"
+                        : SystemCalls        ? "ObjCSystemCalls.m"
                         : SavedScalars       ? "ObjCSavedScalars.m"
                         : ReceiverResults    ? "ObjCReceiverResults.m"
                         : ReceiverAliases    ? "ObjCReceiverAliases.m"
@@ -178,6 +181,7 @@ void verifyRuntime(bool Chained,
                         : WordRecords       ? "ObjCWordRecordsHarness.m"
                         : PredicateFormats  ? "ObjCPredicateFormatsHarness.m"
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
+                        : SystemCalls       ? "ObjCSystemCallsHarness.m"
                         : SavedScalars      ? "ObjCSavedScalarsHarness.m"
                         : ReceiverResults   ? "ObjCReceiverResultsHarness.m"
                         : ReceiverAliases   ? "ObjCReceiverAliasesHarness.m"
@@ -353,6 +357,7 @@ void verifyRuntime(bool Chained,
                              : WordRecords        ? 11U
                              : PredicateFormats   ? 8U
                              : CRecords           ? CRecordMethods
+                             : SystemCalls        ? 11U
                              : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
@@ -415,6 +420,18 @@ void verifyRuntime(bool Chained,
                  "five:b:c:d:e:pair:tail:",
                  "subarray:range:",
                  "find:needle:"};
+  if (SystemCalls)
+    Remaining = {"setAttribute:name:bytes:length:",
+                 "getAttribute:name:bytes:length:",
+                 "listAttributes:bytes:length:",
+                 "removeAttribute:name:",
+                 "logEnabled:type:",
+                 "setMessage:key:value:",
+                 "messageValue:key:",
+                 "digest:length:output:",
+                 "initializeDigest:",
+                 "updateDigest:bytes:length:",
+                 "finishDigest:output:"};
   if (CRecords) {
     Remaining = {"unionRange:with:", "intersection:with:"};
     if (HostArch == "arm64")
@@ -578,6 +595,7 @@ void verifyRuntime(bool Chained,
                   : WordRecords        ? "NDWordRecords"
                   : PredicateFormats   ? "NDPredicateFormats"
                   : CRecords           ? "NDCCRecords"
+                  : SystemCalls        ? "NDSystemCalls"
                   : DynamicProperties  ? "NDPropertyDriver"
                   : CoreData           ? "NDCoreDataCalls"
                   : ScalarConstants    ? "NDScalarConstants"
@@ -832,6 +850,9 @@ void verifyRuntime(bool Chained,
       : WordRecords
           ? "word-record-checks=45056\ncall-effects=4096\nrecord-bits="
             "pass\nrecord-stack=pass\n"
+      : SystemCalls
+          ? "system-c-cases=512\nextended-attribute-roundtrips=512\n"
+            "log-decisions=512\nasl-roundtrips=512\nsha256-vectors=512\n"
       : CRecords
           ? (HostArch == "arm64" ? "c-record-checks=8192\nbitmap-effects=1024\n"
                                  : "c-record-checks=2048\n")
@@ -1361,6 +1382,16 @@ TEST(ObjCRuntimeSource, WordRecordsPreserveBitsPointersCallsAndStackArguments) {
         verifyRuntime(Chained, RuntimeFixture::WordRecords));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SystemCallsPreserveFileAttributesObjectsAndDigests) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::SystemCalls));
+#else
+  GTEST_SKIP() << "Requires Darwin system libraries";
 #endif
 }
 
