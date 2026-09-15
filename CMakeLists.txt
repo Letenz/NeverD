@@ -117,7 +117,9 @@ if(TARGET capstone)
             "$<$<NOT:$<CONFIG:Debug>>:/O2>")
     else()
         target_compile_options(capstone PRIVATE
-            "$<$<NOT:$<CONFIG:Debug>>:-O3;-fomit-frame-pointer>")
+            "$<$<NOT:$<CONFIG:Debug>>:-O3;-fomit-frame-pointer>"
+            # glibc/clang 21 treat strchr(const char*) as returning const char*.
+            "-Wno-error=incompatible-pointer-types-discards-qualifiers")
     endif()
     target_compile_definitions(capstone PRIVATE
         "$<$<NOT:$<CONFIG:Debug>>:NDEBUG>")
