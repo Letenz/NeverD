@@ -194,4 +194,188 @@ TEST(HighPrivateFrameStores, KeepsReadsEscapesEffectsAndUnprovenRanges) {
     }
   }
 }
+
+ExprPtr paddedInteger() {
+  auto Unknown = std::make_shared<HighExpr>();
+  Unknown->Kind = ExprKind::Undef;
+  Unknown->Type = NdType::makeInt(4, false);
+  auto Value = HighExpr::makeBinop(NdOp::CONCAT, Unknown,
+                                   HighExpr::makeConst(0x12345678, 4));
+  Value->Type = NdType::makeInt(8, false);
+  return Value;
+}
+
+TEST(HighPrivateFrameStores, TrimsOnlyUnobservedIntegerTailBytes) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    auto Function = privateFrameStore(Architecture);
+    auto &Store = Function.Body[0];
+    Store.StoreVal = paddedInteger();
+    Function.Body[1].RetVal =
+        HighExpr::makeLoad(Store.StoreAddr, NdType::makeInt(4, false));
+    elimUnreadPrivateFrameStores(Function, Architecture);
+    ASSERT_EQ(Store.Kind, StmtKind::Store);
+    ASSERT_EQ(Store.StoreVal->Kind, ExprKind::Const);
+    EXPECT_EQ(Store.StoreVal->Type->Size, 4U);
+    EXPECT_EQ(Store.StoreVal->ConstVal, 0x12345678U);
+    EXPECT_EQ(Store.Addr, 0x1010U);
+    EXPECT_EQ(Function.Body[1].RetVal->Type->Size, 4U);
+  }
+}
+
+TEST(HighPrivateFrameStores, PromotedScalarsDiscardOnlyUnobservedUnknownBits) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (auto Extension : {NdOp::INT_ZEXT, NdOp::INT_SEXT}) {
+      auto Function = privateFrameStore(Architecture);
+      auto &Store = Function.Body[0];
+      auto Unknown = std::make_shared<HighExpr>();
+      Unknown->Kind = ExprKind::Undef;
+      Unknown->Type = NdType::makeInt(8, false);
+      auto Upper = HighExpr::makeBinop(NdOp::SUBBYTES, Unknown,
+                                       HighExpr::makeConst(4, 4));
+      Upper->Type = NdType::makeInt(4, false);
+      auto Promoted = HighExpr::makeUnary(Extension, variable(7, 1));
+      Promoted->Type = NdType::makeInt(4, Extension == NdOp::INT_SEXT);
+      Store.StoreVal = HighExpr::makeBinop(NdOp::CONCAT, Upper, Promoted);
+      Store.StoreVal->Type = NdType::makeInt(8, false);
+      Function.Body[1].RetVal =
+          HighExpr::makeLoad(Store.StoreAddr, NdType::makeInt(4));
+      elimUnreadPrivateFrameStores(Function, Architecture);
+      EXPECT_EQ(Store.Kind, StmtKind::Store);
+      EXPECT_EQ(Store.StoreVal, Promoted);
+      EXPECT_EQ(Store.StoreVal->Op, Extension);
+      EXPECT_EQ(Store.StoreVal->Operands[0]->Var.SSAVer, 7);
+    }
+  }
+}
+
+TEST(HighPrivateFrameStores, ByteReadsUniteAcrossBranchesAndOverlappingRanges) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Byte : {3U, 4U, 6U, 7U}) {
+      auto Function = privateFrameStore(Architecture);
+      auto &Store = Function.Body[0];
+      Store.StoreVal = paddedInteger();
+      auto &Branch = Function.Body[1];
+      Branch = {};
+      Branch.Kind = StmtKind::If;
+      Branch.Cond = HighExpr::makeConst(1, 1);
+      Branch.Body = {returning(
+          HighExpr::makeLoad(Store.StoreAddr, NdType::makeInt(4, false)))};
+      auto LastByte = HighExpr::makeBinop(
+          NdOp::INT_ADD, Store.StoreAddr,
+          HighExpr::makeConst(Byte,
+                              getTargetRegInfo(Architecture).PointerSize));
+      Branch.ElseBody = {
+          returning(HighExpr::makeLoad(LastByte, NdType::makeInt(1, false)))};
+      elimUnreadPrivateFrameStores(Function, Architecture);
+      ASSERT_EQ(Store.Kind, StmtKind::Store);
+      EXPECT_EQ(Store.StoreVal->Type->Size, Byte + 1);
+      EXPECT_EQ(Branch.Body.size(), 1U);
+      EXPECT_EQ(Branch.ElseBody.size(), 1U);
+    }
+    auto Function = privateFrameStore(Architecture);
+    auto &Store = Function.Body[0];
+    Store.StoreVal = paddedInteger();
+    auto Disjoint = HighExpr::makeBinop(
+        NdOp::INT_ADD, Store.StoreAddr,
+        HighExpr::makeConst(8, getTargetRegInfo(Architecture).PointerSize));
+    Function.Body[1].RetVal = HighExpr::makeLoad(Disjoint, NdType::makeInt(8));
+    elimUnreadPrivateFrameStores(Function, Architecture);
+    EXPECT_EQ(Store.Kind, StmtKind::Block);
+    EXPECT_EQ(Function.Body[1].RetVal->Kind, ExprKind::Load);
+  }
+}
+
+TEST(HighPrivateFrameStores, FrameAliasesRequireAnImmutableEntryPrefix) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      auto Function = privateFrameStore(Architecture);
+      auto Alias = variable(9, getTargetRegInfo(Architecture).PointerSize);
+      Alias->Var.TheArch = Architecture;
+      auto Definition = assign(Alias, Function.Body[0].StoreAddr);
+      Function.Body[0].StoreAddr = Alias;
+      Function.Body[0].StoreVal = paddedInteger();
+      Function.Body[1].RetVal = HighExpr::makeLoad(Alias, NdType::makeInt(4));
+      Function.Body.insert(Function.Body.begin(), Definition);
+      if (Mutation == 1)
+        Function.Body.push_back(Definition);
+      if (Mutation == 2) {
+        Function.Body[0] = {};
+        Function.Body[0].Kind = StmtKind::If;
+        Function.Body[0].Cond = HighExpr::makeConst(1, 1);
+        Function.Body[0].Body = {Definition};
+      }
+      if (Mutation == 3)
+        Function.Body.back().RetVal = Alias;
+      if (Mutation == 4) {
+        Function.Body[0].Dst = variable(9, 2);
+        Function.Body[0].Dst->Var.TheArch = Architecture;
+      }
+      if (Mutation == 5)
+        Function.Body[0].MemoryOrdering =
+            NdMemoryOrdering::SequentiallyConsistent;
+      if (Mutation == 6) {
+        auto PartialAlias = std::make_shared<HighExpr>(*Alias);
+        PartialAlias->Var.Size = 2;
+        Function.Body.back().RetVal =
+            HighExpr::makeLoad(PartialAlias, NdType::makeInt(4));
+      }
+      elimUnreadPrivateFrameStores(Function, Architecture);
+      EXPECT_EQ(Function.Body[1].StoreVal->Type->Size, Mutation ? 8U : 4U)
+          << Mutation;
+    }
+  }
+}
+
+TEST(HighPrivateFrameStores,
+     TrimmingPreservesEscapesOrderedReadsAndValueEffects) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      auto Function = privateFrameStore(Architecture);
+      auto &Store = Function.Body[0];
+      Store.StoreVal = paddedInteger();
+      auto Read = HighExpr::makeLoad(Store.StoreAddr, NdType::makeInt(4));
+      Function.Body[1].RetVal = Read;
+      if (Mutation == 0)
+        Read->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      if (Mutation == 1)
+        Store.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      if (Mutation == 2)
+        Function.Body[1].RetVal =
+            HighExpr::makeCall("escape", 0x3000, {Store.StoreAddr});
+      if (Mutation == 3)
+        Store.StoreVal->Operands[0] = HighExpr::makeLoad(
+            HighExpr::makeConst(0x9000, 8), NdType::makeInt(4));
+      if (Mutation == 4) {
+        Store.StoreVal->Operands[0] =
+            HighExpr::makeBinop(NdOp::INT_DIV, HighExpr::makeConst(3, 4),
+                                HighExpr::makeConst(0, 4));
+        Store.StoreVal->Operands[0]->Type = NdType::makeInt(4);
+      }
+      if (Mutation == 5)
+        Store.StoreVal->Operands.pop_back();
+      if (Mutation == 6)
+        Store.StoreVal->Type = NdType::makeInt(7);
+      elimUnreadPrivateFrameStores(Function, Architecture);
+      EXPECT_EQ(Store.Kind, StmtKind::Store) << Mutation;
+      EXPECT_EQ(Store.StoreVal->Type->Size, Mutation == 6 ? 7U : 8U)
+          << Mutation;
+    }
+  }
+}
+
+TEST(HighPrivateFrameStores, ExhaustedByteReadProofLeavesEveryStoreUnchanged) {
+  auto Function = privateFrameStore(Arch::AArch64);
+  Function.FrameSize = 131072;
+  Function.Body[0].StoreVal = paddedInteger();
+  auto Base = Function.Body[0].StoreAddr->Operands[0]->Operands[0];
+  for (unsigned I = 0; I < 2; ++I) {
+    auto At = HighExpr::makeBinop(NdOp::INT_SUB, Base,
+                                  HighExpr::makeConst(65536 + I * 65536, 8));
+    Function.Body.push_back(assign(
+        variable(10 + I), HighExpr::makeLoad(At, NdType::makeInt(65535))));
+  }
+  elimUnreadPrivateFrameStores(Function, Arch::AArch64);
+  EXPECT_EQ(Function.Body[0].Kind, StmtKind::Store);
+  EXPECT_EQ(Function.Body[0].StoreVal->Type->Size, 8U);
+}
 } // namespace

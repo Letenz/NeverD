@@ -6,10 +6,12 @@
 #include "llvm/Support/MathExtras.h"
 namespace neverd::high_detail {
 /// A bounded arithmetic offset from the synthetic entry stack pointer.
-/// The caller must separately check the access width and private frame bounds.
+/// The caller must separately check the access width and private frame bounds,
+/// and prove that any supplied alias has one dominating immutable definition.
 inline std::optional<int64_t>
 frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
-                   size_t &Budget, unsigned Depth = 0) {
+                   size_t &Budget, unsigned Depth = 0,
+                   const VarKeyMap<ExprPtr> *Aliases = nullptr) {
   const auto &TRI = getTargetRegInfo(Architecture);
   if (!E || !E->Type || E->Type->Size != TRI.PointerSize ||
       E->MemoryOrdering != NdMemoryOrdering::None ||
@@ -20,6 +22,12 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
   if (E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize &&
       isSyntheticEntryStackPointer(E->Var, Func, Architecture))
     return 0;
+  if (Aliases && E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize) {
+    const auto Alias = Aliases->find(varKey(E->Var));
+    if (Alias != Aliases->end())
+      return frameAddressOffset(Alias->second, Func, Architecture, Budget,
+                                Depth + 1, Aliases);
+  }
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
       !E->Operands[1] || E->Operands[1]->Kind != ExprKind::Const ||
       !E->Operands[1]->Type || !E->Operands[1]->Type->Size ||
@@ -29,8 +37,8 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
            (UINT64_C(1) << (E->Operands[1]->Type->Size * 8))) ||
       (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
     return std::nullopt;
-  const auto Base =
-      frameAddressOffset(E->Operands[0], Func, Architecture, Budget, Depth + 1);
+  const auto Base = frameAddressOffset(E->Operands[0], Func, Architecture,
+                                       Budget, Depth + 1, Aliases);
   if (!Base)
     return std::nullopt;
   const int64_t Delta = TRI.PointerSize == 4

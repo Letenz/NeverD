@@ -263,6 +263,22 @@ jobs:
           expected = tuple(
               TestRecord(name, frozenset(owners))
               for name, *owners in (
+                  ("HighPrivateFrameStores.DiscardsUnreadPaddingAndPreservesBranchEntry",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.KeepsReadsEscapesEffectsAndUnprovenRanges",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.TrimsOnlyUnobservedIntegerTailBytes",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.PromotedScalarsDiscardOnlyUnobservedUnknownBits",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.ByteReadsUniteAcrossBranchesAndOverlappingRanges",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.FrameAliasesRequireAnImmutableEntryPrefix",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.TrimmingPreservesEscapesOrderedReadsAndValueEffects",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighPrivateFrameStores.ExhaustedByteReadProofLeavesEveryStoreUnchanged",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("DarwinUnwindSymbols.PromotesAllAliasesAfterSymbolVectorGrowth",
                    "NeverDLanguageEHTests"),
                   ("DarwinUnwindSymbols.ReusesNewSymbolForLaterSameAddressFDE",
@@ -1187,13 +1203,14 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 464,
-              ("macOS", "macos-patch"): 507,
-              ("Windows", "windows-focused"): 460,
+              ("Linux", "linux-semantic"): 472,
+              ("macOS", "macos-patch"): 516,
+              ("Windows", "windows-focused"): 468,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
                   for name in (
+                      "ObjCRuntimeSource.PrivateFramePaddingPreservesScalarValuesAndGetterEffects",
                       "ObjCRuntimeSource.SwiftFixedRuntimeCallsPreserveMetadataIdentityAndByteLength",
                       "ObjCRuntimeSource.NativeReturnPathsPreserveBranchResultsAndStores",
                       "ObjCRuntimeSource.RecompiledFrameworkFetchesPreserveContextObjects",

@@ -71,6 +71,7 @@ enum class RuntimeFixture {
   InvariantLoops,
   SwitchEffects,
   LoopEdges,
+  FramePadding,
   FrameSelectors,
   NativeReturnPaths,
   SwiftTypeLookup,
@@ -107,6 +108,7 @@ void verifyRuntime(bool Chained,
   const bool SwiftTypeLookup = FixtureKind == RuntimeFixture::SwiftTypeLookup;
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
+  const bool FramePadding = FixtureKind == RuntimeFixture::FramePadding;
   const bool FrameSelectors = FixtureKind == RuntimeFixture::FrameSelectors;
   const bool LoopEdges = FixtureKind == RuntimeFixture::LoopEdges;
   const bool InvariantLoops = FixtureKind == RuntimeFixture::InvariantLoops;
@@ -166,6 +168,7 @@ void verifyRuntime(bool Chained,
                         : CRecords           ? "ObjCCRecordCalls.m"
                         : SwiftTypeLookup    ? "ObjCSwiftTypeLookup.m"
                         : NativeReturnPaths  ? "ObjCNativeReturnPaths.m"
+                        : FramePadding       ? "ObjCFramePadding.m"
                         : FrameSelectors     ? "ObjCFrameSelectors.m"
                         : LoopEdges          ? "ObjCLoopEdges.m"
                         : SwitchEffects      ? "ObjCSwitchEffects.m"
@@ -208,6 +211,7 @@ void verifyRuntime(bool Chained,
                         : CRecords          ? "ObjCCRecordCallsHarness.m"
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
+                        : FramePadding      ? "ObjCFramePaddingHarness.m"
                         : FrameSelectors    ? "ObjCFrameSelectorsHarness.m"
                         : LoopEdges         ? "ObjCLoopEdgesHarness.m"
                         : SwitchEffects     ? "ObjCSwitchEffectsHarness.m"
@@ -397,6 +401,7 @@ void verifyRuntime(bool Chained,
                              : CRecords           ? CRecordMethods
                              : SwiftTypeLookup    ? 1U
                              : NativeReturnPaths  ? 1U
+                             : FramePadding       ? 5U
                              : FrameSelectors     ? 1U
                              : LoopEdges          ? 1U
                              : SwitchEffects      ? 1U
@@ -476,6 +481,9 @@ void verifyRuntime(bool Chained,
     Remaining = {"lookup:length:"};
   if (NativeReturnPaths)
     Remaining = {"adjusted:choose:output:"};
+  if (FramePadding)
+    Remaining = {"key", "horizontal", "vertical",
+                 "setHorizontal:", "setVertical:"};
   if (FrameSelectors)
     Remaining = {"removing:from:"};
   if (LoopEdges)
@@ -668,6 +676,7 @@ void verifyRuntime(bool Chained,
                   : CRecords           ? "NDCCRecords"
                   : SwiftTypeLookup    ? "NDSwiftTypeLookup"
                   : NativeReturnPaths  ? "NDNativeReturnPaths"
+                  : FramePadding       ? "NDFramePadding"
                   : FrameSelectors     ? "NDFrameSelectors"
                   : LoopEdges          ? "NDLoopEdges"
                   : SwitchEffects      ? "NDSwitchEffects"
@@ -836,6 +845,7 @@ void verifyRuntime(bool Chained,
                                        : Foundation       ? 6U
                                        : SwiftLiterals    ? 2U
                                        : StoredStrings    ? 4U
+                                       : FramePadding     ? 1U
                                        : FrameSelectors   ? 1U
                                        : PredicateFormats ? 8U
                                                           : 0U) +
@@ -958,6 +968,8 @@ void verifyRuntime(bool Chained,
                           "pass\nbyte-length=pass\n"
       : NativeReturnPaths
           ? "native-return-cases=16384\nreturns-and-stores=pass\n"
+      : FramePadding ? "frame-padding-cases=16384\nscalar-values=pass\ngetter-"
+                       "effects=pass\n"
       : FrameSelectors
           ? "frame-selector-cases=20480\nstrings-and-identity=pass\n"
       : LoopEdges ? "loop-cases=65536\nreturns-and-stores=pass\n"
@@ -1644,5 +1656,16 @@ TEST(ObjCRuntimeSource,
         verifyRuntime(Chained, RuntimeFixture::SwiftTypeLookup));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C and Swift runtimes";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     PrivateFramePaddingPreservesScalarValuesAndGetterEffects) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::FramePadding));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
 #endif
 }
