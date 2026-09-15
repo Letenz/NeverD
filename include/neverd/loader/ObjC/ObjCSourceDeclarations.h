@@ -35,6 +35,17 @@ objcMethodReceiverTypeHint(const BinaryImage &Image, va_t Entry);
 bool objcReceiverTypeHintValid(const BinaryImage &Image,
                                const ObjCReceiverTypeHint &Receiver);
 
+/// Extend a receiver proof by loading a declared object field. An exact
+/// offset reference or a complete byte offset must identify one field in its
+/// recorded class lineage; partial and ambiguous field accesses are rejected.
+std::optional<ObjCReceiverTypeHint>
+objcReceiverIvarTypeHint(const BinaryImage &Image,
+                         const ObjCReceiverTypeHint &Receiver, va_t OffsetSlot);
+std::optional<ObjCReceiverTypeHint>
+objcReceiverFieldTypeHint(const BinaryImage &Image,
+                          const ObjCReceiverTypeHint &Receiver,
+                          uint64_t Offset);
+
 struct ObjCFormatDeclaration {
   SourceFunctionTypeHint Signature;
   unsigned FormatParameter = 0;

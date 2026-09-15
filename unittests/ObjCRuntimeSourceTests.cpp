@@ -56,6 +56,7 @@ enum class RuntimeFixture {
   CoreData,
   DynamicProperties,
   ReceiverTypes,
+  ReceiverFields,
   ScalarConstants,
   SwiftLiterals,
   StoredStrings,
@@ -77,6 +78,7 @@ void verifyRuntime(bool Chained,
   const bool DynamicProperties =
       FixtureKind == RuntimeFixture::DynamicProperties;
   const bool ReceiverTypes = FixtureKind == RuntimeFixture::ReceiverTypes;
+  const bool ReceiverFields = FixtureKind == RuntimeFixture::ReceiverFields;
   const bool CoreData = FixtureKind == RuntimeFixture::CoreData;
   const bool ScalarConstants = FixtureKind == RuntimeFixture::ScalarConstants;
   const bool SwiftLiterals = FixtureKind == RuntimeFixture::SwiftLiterals;
@@ -116,6 +118,7 @@ void verifyRuntime(bool Chained,
   const char *Fixture = DarwinDeclarations   ? "ObjCDarwinDeclarations.m"
                         : Equality           ? "ObjCEquality.m"
                         : FloatingSaves      ? "ObjCFloatingSaves.m"
+                        : ReceiverFields     ? "ObjCReceiverFields.m"
                         : ReceiverTypes      ? "ObjCReceiverTypes.m"
                         : DynamicProperties  ? "ObjCDynamicProperties.m"
                         : CoreData           ? "ObjCCoreDataCalls.m"
@@ -140,6 +143,7 @@ void verifyRuntime(bool Chained,
   const char *Harness = DarwinDeclarations  ? "ObjCDarwinDeclarationsHarness.m"
                         : Equality          ? "ObjCEqualityHarness.m"
                         : FloatingSaves     ? "ObjCFloatingSavesHarness.m"
+                        : ReceiverFields    ? "ObjCReceiverFieldsHarness.m"
                         : ReceiverTypes     ? "ObjCReceiverTypesHarness.m"
                         : DynamicProperties ? "ObjCDynamicPropertiesHarness.m"
                         : CoreData          ? "ObjCCoreDataCallsHarness.m"
@@ -189,6 +193,8 @@ void verifyRuntime(bool Chained,
   if (Graphics)
     Compile.insert(Compile.end(),
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
+  if (ReceiverFields)
+    Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
   if (NativePointers)
@@ -288,6 +294,7 @@ void verifyRuntime(bool Chained,
   ASSERT_EQ(Methods->size(), DarwinDeclarations   ? 19U
                              : Equality           ? 6U
                              : FloatingSaves      ? 2U
+                             : ReceiverFields     ? 4U
                              : ReceiverTypes      ? 9U
                              : DynamicProperties  ? 6U
                              : CoreData           ? 3U
@@ -316,6 +323,9 @@ void verifyRuntime(bool Chained,
         "NDPointerReceiver-sharedValue", "NDPointerReceiver-readOwnValue",
         "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
         "NDTypedError-declaredCode"};
+  if (ReceiverFields)
+    Remaining = {"NDFieldOwner-errorCode", "NDFieldOwner-nestedErrorCode",
+                 "NDFieldOwner-errorCodeAfterCall:", "NDFieldUnrelated-code"};
   if (Associations)
     Remaining = {"objectForKey:",
                  "storeObject:forKey:policy:",
@@ -483,7 +493,7 @@ void verifyRuntime(bool Chained,
                   : SwiftCalls         ? "NDSwiftRuntimeCalls"
                                        : "NDARCBox") +
       "\");\n";
-  if (ReceiverTypes)
+  if (ReceiverTypes || ReceiverFields)
     Install = "static void installRecovered(void) {\nClass cls;\n";
   std::vector<std::string> Sources;
   std::map<std::string, std::string> IdentityHelpers;
@@ -500,7 +510,7 @@ void verifyRuntime(bool Chained,
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
     std::string Identity = Selector->str();
-    if (ReceiverTypes) {
+    if (ReceiverTypes || ReceiverFields) {
       const auto Class = Method->getString("class_name");
       const auto ClassMethod = Method->getBoolean("class_method");
       ASSERT_TRUE(Class && ClassMethod);
@@ -702,6 +712,8 @@ void verifyRuntime(bool Chained,
                            "8192\nsynchronized-updates=8192\n"
       : Equality ? "equality-cases=4096\nshort-circuit=pass\nownership=pass\n"
       : FloatingSaves ? "floating-saves=4096\nvalues-across-calls=pass\n"
+      : ReceiverFields
+          ? "receiver-fields=4096\nnested-types=pass\nnil-dispatch=pass\n"
       : ReceiverTypes ? "receiver-checks=5120\nclass-instance-abi=pass\nsdk-"
                         "inheritance=pass\n"
       : DynamicProperties ? "dynamic-property-checks=6144\nscalar-widths="
@@ -1172,6 +1184,16 @@ TEST(ObjCRuntimeSource,
   for (bool Chained : {false, true})
     ASSERT_NO_FATAL_FAILURE(
         verifyRuntime(Chained, RuntimeFixture::ReceiverTypes));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, TypedReceiverFieldsPreserveNestedAndNilObjectCalls) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::ReceiverFields));
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif

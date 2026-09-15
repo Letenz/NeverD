@@ -137,31 +137,24 @@ struct Value {
     Number,
     Selector,
     Import,
-    InstanceSelf,
-    ClassSelf,
-    ClassReference
+    Receiver,
+    IvarOffset,
+    FieldAddress
   };
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
   std::string Name;
+  std::optional<ObjCReceiverTypeHint> Object;
   bool operator==(const Value &Other) const {
-    return std::tie(TheKind, Number, Name) ==
-           std::tie(Other.TheKind, Other.Number, Other.Name);
+    return std::tie(TheKind, Number, Name, Object) ==
+           std::tie(Other.TheKind, Other.Number, Other.Name, Other.Object);
   }
 };
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
 
 std::optional<ObjCReceiverTypeHint> receiver(const Value &V) {
-  if (V.TheKind != Value::Kind::InstanceSelf &&
-      V.TheKind != Value::Kind::ClassSelf &&
-      V.TheKind != Value::Kind::ClassReference)
-    return std::nullopt;
-  return ObjCReceiverTypeHint{
-      V.TheKind == Value::Kind::ClassReference
-          ? ObjCReceiverTypeHint::OriginKind::ClassReference
-          : ObjCReceiverTypeHint::OriginKind::MethodEntry,
-      V.Number, V.Name, V.TheKind != Value::Kind::InstanceSelf};
+  return V.TheKind == Value::Kind::Receiver ? V.Object : std::nullopt;
 }
 } // namespace
 
@@ -350,13 +343,11 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       }) == 1)
     if (const auto Receiver = objcMethodReceiverTypeHint(Image, Function.Entry))
       EntryFacts.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
-                         Value{Receiver->IsClassMethod
-                                   ? Value::Kind::ClassSelf
-                                   : Value::Kind::InstanceSelf,
-                               Receiver->Address, Receiver->ClassName});
-  std::map<std::tuple<Value::Kind, uint64_t, std::string, std::string>,
-           ObjCReceiverDeclaration>
-      ReceiverDeclarations;
+                         Value{Value::Kind::Receiver, 0, {}, *Receiver});
+  using ReceiverKey =
+      std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
+                 std::vector<ObjCReceiverTypeHint::IvarAccess>, std::string>;
+  std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts Values,
                       Hints &BlockHints) -> std::optional<Facts> {
     const auto &Block = Function.Blocks[Index];
@@ -465,8 +456,10 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           if (Self && Target->Name == "objc_msgSend")
             Receiver = receiver(*Self);
           if (Receiver) {
-            auto [It, Inserted] = ReceiverDeclarations.try_emplace(std::tuple{
-                Self->TheKind, Self->Number, Self->Name, Target->Selector});
+            auto [It, Inserted] = ReceiverDeclarations.try_emplace(
+                std::tuple{Receiver->Origin, Receiver->Address,
+                           Receiver->ClassName, Receiver->IsClassMethod,
+                           Receiver->IvarLoads, Target->Selector});
             if (Inserted)
               It->second = objcReceiverSourceTypeHint(Image, Target->Selector,
                                                       *Receiver);
@@ -524,8 +517,19 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       std::optional<Value> Out;
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
         Out = Read(Op.Inputs[0]);
-      else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
-               Op.NumInputs == 2) {
+      else if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
+               Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
+               Op.Output.Size == 8) {
+        const auto Input = Read(Op.Inputs[0]);
+        // Validated runtime field offsets are bounded by the instance layout.
+        // Preserve the identity only for the exact 32-bit offset carrier.
+        if (Input && Input->TheKind == Value::Kind::IvarOffset) {
+          const auto Ref = Image.ObjCSourceReferences.find(Input->Number);
+          if (Ref != Image.ObjCSourceReferences.end() && Ref->second.Size == 4)
+            Out = Input;
+        }
+      } else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+                 Op.NumInputs == 2) {
         auto A = Read(Op.Inputs[0]);
         auto B = Read(Op.Inputs[1]);
         if (A && B && A->TheKind == Value::Kind::Number &&
@@ -534,24 +538,61 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                       Op.Opcode == NdOp::INT_ADD ? A->Number + B->Number
                                                  : A->Number - B->Number,
                       {}};
-      } else if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 &&
-                 Op.Output.Size == 8) {
+        else if (A && B && Op.Opcode == NdOp::INT_ADD && Op.Output.Size == 8 &&
+                 Op.Inputs[0].Size == 8 && Op.Inputs[1].Size == 8) {
+          if (B->TheKind == Value::Kind::Receiver)
+            std::swap(A, B);
+          const auto Base = receiver(*A);
+          const auto Field =
+              !Base ? std::nullopt
+              : B->TheKind == Value::Kind::Number
+                  ? objcReceiverFieldTypeHint(Image, *Base, B->Number)
+              : B->TheKind == Value::Kind::IvarOffset
+                  ? objcReceiverIvarTypeHint(Image, *Base, B->Number)
+                  : std::nullopt;
+          if (Field)
+            Out = Value{Value::Kind::FieldAddress, 0, {}, *Field};
+        }
+      } else if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
         auto Address = Read(Op.Inputs[0]);
-        if (Address && Address->TheKind == Value::Kind::Number) {
+        if (Address && Address->TheKind == Value::Kind::FieldAddress &&
+            Op.Output.Size == 8 && Address->Object)
+          Out = Value{Value::Kind::Receiver, 0, {}, Address->Object};
+        else if (Address && Address->TheKind == Value::Kind::Receiver &&
+                 Op.Output.Size == 8) {
+          const auto Field =
+              objcReceiverFieldTypeHint(Image, *Address->Object, 0);
+          if (Field)
+            Out = Value{Value::Kind::Receiver, 0, {}, *Field};
+        } else if (Address && Address->TheKind == Value::Kind::Number) {
           auto Ref = Image.ObjCSourceReferences.find(Address->Number);
           if (Ref != Image.ObjCSourceReferences.end() &&
-              Ref->second.TheKind == ObjCSourceReference::Kind::Selector &&
-              Ref->second.Size == 8)
-            Out = Value{Value::Kind::Selector, 0, Ref->second.Name};
-          else if (Ref != Image.ObjCSourceReferences.end() &&
-                   Ref->second.TheKind == ObjCSourceReference::Kind::Class &&
-                   Ref->second.Size == 8 &&
-                   Ref->second.Address == Address->Number &&
-                   !Ref->second.Name.empty())
-            Out = Value{Value::Kind::ClassReference, Address->Number,
-                        Ref->second.Name};
-          else if (auto Name = importAt(Image, Address->Number); !Name.empty())
-            Out = Value{Value::Kind::Import, Address->Number, std::move(Name)};
+              Ref->second.Address == Address->Number &&
+              Ref->second.TheKind == ObjCSourceReference::Kind::IvarOffset &&
+              (Ref->second.Size == 4 || Ref->second.Size == 8) &&
+              Op.Output.Size == Ref->second.Size)
+            Out = Value{Value::Kind::IvarOffset, Address->Number, {}};
+          else if (Op.Output.Size == 8) {
+            if (Ref != Image.ObjCSourceReferences.end() &&
+                Ref->second.TheKind == ObjCSourceReference::Kind::Selector &&
+                Ref->second.Size == 8)
+              Out = Value{Value::Kind::Selector, 0, Ref->second.Name};
+            else if (Ref != Image.ObjCSourceReferences.end() &&
+                     Ref->second.TheKind == ObjCSourceReference::Kind::Class &&
+                     Ref->second.Size == 8 &&
+                     Ref->second.Address == Address->Number &&
+                     !Ref->second.Name.empty())
+              Out = Value{Value::Kind::Receiver,
+                          0,
+                          {},
+                          ObjCReceiverTypeHint{
+                              ObjCReceiverTypeHint::OriginKind::ClassReference,
+                              Address->Number, Ref->second.Name, true}};
+            else if (auto Name = importAt(Image, Address->Number);
+                     !Name.empty())
+              Out =
+                  Value{Value::Kind::Import, Address->Number, std::move(Name)};
+          }
         }
       }
       if (!Op.Output.Size)
@@ -569,7 +610,10 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           if (Op.Output.Size < 8)
             Out->Number &= (uint64_t(1) << (Op.Output.Size * 8)) - 1;
           Values.emplace(key(Op.Output), std::move(*Out));
-        } else if (Op.Output.Size == 8)
+        } else if (Op.Output.Size == 8 ||
+                   (Out->TheKind == Value::Kind::IvarOffset &&
+                    Op.Output.Size == 4 &&
+                    Image.ObjCSourceReferences.at(Out->Number).Size == 4))
           Values.emplace(key(Op.Output), std::move(*Out));
         if (Values.size() > 4096)
           return std::nullopt;

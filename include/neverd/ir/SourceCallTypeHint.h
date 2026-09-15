@@ -4,6 +4,8 @@
 #include "neverd/Common.h"
 #include "neverd/ir/SourceTypeHint.h"
 
+#include <tuple>
+
 namespace neverd {
 
 /// Source receiver provenance carried through full-width machine copies.
@@ -13,8 +15,34 @@ struct ObjCReceiverTypeHint {
   enum class OriginKind { MethodEntry, ClassReference };
   OriginKind Origin = OriginKind::MethodEntry;
   va_t Address = 0;
+  /// Root receiver's declared class, before any field loads.
   std::string ClassName;
   bool IsClassMethod = false;
+  struct IvarAccess {
+    va_t OffsetSlot = 0;
+    /// Present only for a literal byte offset in the machine access. A
+    /// runtime offset load may follow layout changes; a literal cannot.
+    std::optional<uint32_t> ByteOffset;
+    uint16_t OffsetWidth = 0;
+    bool operator==(const IvarAccess &Other) const {
+      return std::tie(OffsetSlot, ByteOffset, OffsetWidth) ==
+             std::tie(Other.OffsetSlot, Other.ByteOffset, Other.OffsetWidth);
+    }
+    bool operator<(const IvarAccess &Other) const {
+      return std::tie(OffsetSlot, ByteOffset, OffsetWidth) <
+             std::tie(Other.OffsetSlot, Other.ByteOffset, Other.OffsetWidth);
+    }
+  };
+  /// Exact runtime ivar-offset slots, in load order from the root receiver.
+  /// Each step must name a declared object field in the current class lineage.
+  /// This bounded path records type provenance, not loaded object identity.
+  std::vector<IvarAccess> IvarLoads;
+
+  bool operator==(const ObjCReceiverTypeHint &Other) const {
+    return Origin == Other.Origin && Address == Other.Address &&
+           ClassName == Other.ClassName &&
+           IsClassMethod == Other.IsClassMethod && IvarLoads == Other.IvarLoads;
+  }
 };
 
 /// A source projection binding, never authenticated ABI or safety evidence.

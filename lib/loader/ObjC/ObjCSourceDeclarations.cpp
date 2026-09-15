@@ -213,8 +213,9 @@ objcMethodReceiverTypeHint(const BinaryImage &Image, va_t Entry) {
   return Result;
 }
 
-bool objcReceiverTypeHintValid(const BinaryImage &Image,
-                               const ObjCReceiverTypeHint &Receiver) {
+namespace {
+bool validReceiverRoot(const BinaryImage &Image,
+                       const ObjCReceiverTypeHint &Receiver) {
   if (!Receiver.Address || Receiver.ClassName.empty() ||
       Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
@@ -238,11 +239,129 @@ bool objcReceiverTypeHintValid(const BinaryImage &Image,
   return false;
 }
 
+const ObjCIvar *receiverIvar(const BinaryImage &Image, std::string ClassName,
+                             uint64_t Key, bool BySlot) {
+  const ObjCIvar *Result = nullptr;
+  std::set<std::string> Visited;
+  size_t Remaining = 4096;
+  while (!ClassName.empty()) {
+    if (Visited.size() >= 64 || !Visited.insert(ClassName).second)
+      return nullptr;
+    const ObjCClass *Class = nullptr;
+    for (const auto &Candidate : Image.ObjCClasses)
+      if (Candidate.Name == ClassName) {
+        if (Class)
+          return nullptr;
+        Class = &Candidate;
+      }
+    if (!Class)
+      break; // No external layout is invented beyond the recorded lineage.
+    if (Class->IvarStatus != "recovered" ||
+        (Class->RootClass ? Class->InheritanceStatus != "root" ||
+                                !Class->SuperclassName.empty()
+                          : Class->InheritanceStatus != "resolved" ||
+                                Class->SuperclassName.empty()))
+      return nullptr;
+    for (const auto &Ivar : Class->Ivars) {
+      if (!Remaining--)
+        return nullptr;
+      const bool Match = BySlot ? Ivar.OffsetAddress == Key
+                                : Key < uint64_t(Ivar.Offset) + Ivar.Size &&
+                                      Ivar.Offset < Key + 8;
+      if (!Match)
+        continue;
+      if (Result || !Ivar.MetadataAddress || !Ivar.OffsetAddress ||
+          Ivar.Size != 8 || (!BySlot && Ivar.Offset != Key) ||
+          Ivar.Offset < Class->InstanceStart ||
+          !rangeInBounds(Ivar.Offset, Ivar.Size, Class->InstanceSize))
+        return nullptr;
+      const auto Ref = Image.ObjCSourceReferences.find(Ivar.OffsetAddress);
+      if (Ref == Image.ObjCSourceReferences.end() ||
+          Ref->second.Address != Ivar.OffsetAddress ||
+          Ref->second.TheKind != ObjCSourceReference::Kind::IvarOffset ||
+          (Ref->second.Size != 4 && Ref->second.Size != 8) ||
+          Ref->second.Name != Ivar.Name ||
+          Ref->second.ClassName != Class->Name ||
+          !objcEncodedObjectClass(Ivar.TypeEncoding))
+        return nullptr;
+      Result = &Ivar;
+    }
+    ClassName = Class->SuperclassName;
+  }
+  return Result;
+}
+
+struct ReceiverType {
+  std::string ClassName;
+  bool IsClassMethod = false;
+};
+
+std::optional<ReceiverType> receiverType(const BinaryImage &Image,
+                                         const ObjCReceiverTypeHint &Receiver) {
+  if (Receiver.IvarLoads.size() > 8 || !validReceiverRoot(Image, Receiver))
+    return std::nullopt;
+  ReceiverType Result{Receiver.ClassName, Receiver.IsClassMethod};
+  for (const auto &Access : Receiver.IvarLoads) {
+    if (Result.IsClassMethod)
+      return std::nullopt;
+    const auto *Ivar =
+        receiverIvar(Image, Result.ClassName, Access.OffsetSlot, true);
+    if (!Ivar || (Access.ByteOffset && *Access.ByteOffset != Ivar->Offset) ||
+        Image.ObjCSourceReferences.at(Access.OffsetSlot).Size !=
+            Access.OffsetWidth)
+      return std::nullopt;
+    const auto ClassName = objcEncodedObjectClass(Ivar->TypeEncoding);
+    if (!ClassName)
+      return std::nullopt;
+    Result.ClassName = *ClassName;
+  }
+  return Result;
+}
+
+std::optional<ObjCReceiverTypeHint>
+fieldReceiver(const BinaryImage &Image, const ObjCReceiverTypeHint &Receiver,
+              uint64_t Key, bool BySlot) {
+  const auto Type = receiverType(Image, Receiver);
+  if (!Type || Type->IsClassMethod || Receiver.IvarLoads.size() >= 8 ||
+      (!BySlot && Key > UINT32_MAX))
+    return std::nullopt;
+  const auto *Ivar = receiverIvar(Image, Type->ClassName, Key, BySlot);
+  if (!Ivar)
+    return std::nullopt;
+  auto Result = Receiver;
+  Result.IvarLoads.push_back(
+      {Ivar->OffsetAddress,
+       BySlot ? std::nullopt : std::optional<uint32_t>(Key),
+       Image.ObjCSourceReferences.at(Ivar->OffsetAddress).Size});
+  return Result;
+}
+} // namespace
+
+bool objcReceiverTypeHintValid(const BinaryImage &Image,
+                               const ObjCReceiverTypeHint &Receiver) {
+  return receiverType(Image, Receiver).has_value();
+}
+
+std::optional<ObjCReceiverTypeHint>
+objcReceiverIvarTypeHint(const BinaryImage &Image,
+                         const ObjCReceiverTypeHint &Receiver,
+                         va_t OffsetSlot) {
+  return fieldReceiver(Image, Receiver, OffsetSlot, true);
+}
+
+std::optional<ObjCReceiverTypeHint>
+objcReceiverFieldTypeHint(const BinaryImage &Image,
+                          const ObjCReceiverTypeHint &Receiver,
+                          uint64_t Offset) {
+  return fieldReceiver(Image, Receiver, Offset, false);
+}
+
 ObjCReceiverDeclaration
 objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
                            const ObjCReceiverTypeHint &Receiver) {
   ObjCReceiverDeclaration Result;
-  if (!objcReceiverTypeHintValid(Image, Receiver))
+  const auto Type = receiverType(Image, Receiver);
+  if (!Type)
     return {true, std::nullopt};
   bool Complete = true;
   bool KnownScope = true;
@@ -275,7 +394,7 @@ objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
     Active.insert(Key);
     const auto &[Protocol, Name] = Key;
     const auto SDK = objc::sdkReceiverDeclarations(
-        Image, Name, Protocol, Receiver.IsClassMethod, Selector);
+        Image, Name, Protocol, Type->IsClassMethod, Selector);
     Complete &= SDK.Complete;
     std::optional<std::string> Superclass = SDK.Superclass;
     std::set<Owner> Parents;
@@ -291,7 +410,7 @@ objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
         Present = true;
         Complete &= Declaration.Status == "recovered";
         for (const auto &Method : Declaration.Methods)
-          if (Method.IsClassMethod == Receiver.IsClassMethod &&
+          if (Method.IsClassMethod == Type->IsClassMethod &&
               Method.Selector == Selector)
             Include(Method.TypeHint);
         for (va_t Address : Declaration.AdoptedProtocols) {
@@ -326,7 +445,7 @@ objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
       }
       for (const auto &Method : Image.ObjCMethods)
         if (Method.ClassName == Name &&
-            Method.IsClassMethod == Receiver.IsClassMethod &&
+            Method.IsClassMethod == Type->IsClassMethod &&
             Method.Selector == Selector)
           Include(Method.TypeHint);
       if (!Superclass)
@@ -338,7 +457,7 @@ objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
       const bool IsProtocol =
           Property.Owner == ObjCProperty::OwnerKind::Protocol;
       if (IsProtocol != Protocol ||
-          Property.IsClassProperty != Receiver.IsClassMethod ||
+          Property.IsClassProperty != Type->IsClassMethod ||
           (Protocol ? Property.OwnerName : Property.ClassName) != Name)
         continue;
       if (!Property.Getter.empty() && Property.Getter == Selector)
@@ -356,9 +475,10 @@ objcReceiverSourceTypeHint(const BinaryImage &Image, llvm::StringRef Selector,
   };
   // Entry self is a base-class constraint. Known subclass declarations still
   // participate, whereas loading an exact class object fixes class dispatch.
-  std::set<std::string> Classes{Receiver.ClassName};
-  std::vector<std::string> Work{Receiver.ClassName};
-  if (Receiver.Origin == ObjCReceiverTypeHint::OriginKind::MethodEntry)
+  std::set<std::string> Classes{Type->ClassName};
+  std::vector<std::string> Work{Type->ClassName};
+  if (Receiver.Origin == ObjCReceiverTypeHint::OriginKind::MethodEntry ||
+      !Receiver.IvarLoads.empty())
     while (!Work.empty()) {
       auto Name = std::move(Work.back());
       Work.pop_back();

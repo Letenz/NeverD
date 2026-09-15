@@ -80,6 +80,25 @@ bool skipPointeeType(llvm::StringRef Encoding, size_t &I, unsigned Depth) {
 }
 } // namespace
 
+std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
+  if (Encoding.size() > 4096)
+    return std::nullopt;
+  while (!Encoding.empty() &&
+         llvm::StringRef("rnNoORV").contains(Encoding.front()))
+    Encoding = Encoding.drop_front();
+  if (!Encoding.consume_front("@\"") || !Encoding.consume_back("\"") ||
+      Encoding.empty())
+    return std::nullopt;
+  auto Letter = [](char C) {
+    return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_';
+  };
+  if (!Letter(Encoding.front()) ||
+      !std::all_of(Encoding.begin(), Encoding.end(),
+                   [&](char C) { return Letter(C) || (C >= '0' && C <= '9'); }))
+    return std::nullopt;
+  return Encoding.str();
+}
+
 // Deliberately small source-projection grammar. It preserves scalar widths
 // and signedness, but does not invent aggregate or callable block/Swift ABI
 // rules.

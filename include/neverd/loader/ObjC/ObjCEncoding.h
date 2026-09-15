@@ -15,6 +15,10 @@ namespace neverd {
 TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &Offset,
                             unsigned Depth = 0);
 
+/// A complete, explicitly named object class encoding. Bare id, block,
+/// protocol-qualified and other pointer encodings do not establish this fact.
+std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding);
+
 /// Decode a complete fixed method declaration, including hidden parameters
 /// and selector arity. Runtime encodings do not establish a variadic tail.
 /// Physical locations are assigned separately by the authoritative source ABI.

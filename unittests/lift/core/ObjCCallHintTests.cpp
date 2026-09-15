@@ -9,6 +9,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCEncoding.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
 
 #include "llvm/Support/Endian.h"
@@ -3065,6 +3066,287 @@ TEST(ObjCCallHints,
       EXPECT_FALSE(Rejected.Signature);
       EXPECT_TRUE(buildObjCSourceCallHints(Image, receiverCaller(Architecture))
                       .empty());
+    }
+  }
+}
+
+namespace {
+BinaryImage receiverFieldImage(Arch Architecture) {
+  auto Image = receiverImage(Architecture);
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ObjCMethods.front().Selector = "readCode";
+  Image.ObjCMethods.front().TypeHint = signature(Architecture, 0);
+  Image.ObjCMethods.back().Selector = "code";
+  Image.ObjCMethods.back().TypeHint->Parameters.resize(2);
+  Image.ObjCSourceReferences.at(0x2100).Name = "code";
+  auto &Class = Image.ObjCClasses.front();
+  Class.IvarStatus = "recovered";
+  Class.InstanceStart = 8;
+  Class.InstanceSize = 32;
+  Class.Ivars = {{"_error", "@\"NSError\"", 0x2500, 0x2300, 8, 8, 8},
+                 {"_next", "@\"First\"", 0x2520, 0x2308, 16, 8, 8},
+                 {"_other", "@\"NSError\"", 0x2540, 0x2310, 24, 8, 8}};
+  for (const auto &Ivar : Class.Ivars)
+    Image.ObjCSourceReferences[Ivar.OffsetAddress] = {
+        ObjCSourceReference::Kind::IvarOffset, Ivar.OffsetAddress,
+        static_cast<uint16_t>(Architecture == Arch::AArch64 ? 4 : 8), Ivar.Name,
+        Class.Name};
+  return Image;
+}
+
+LowFunc receiverFieldCaller(Arch Architecture, bool Dynamic,
+                            bool Nested = false) {
+  auto Function = receiverCaller(Architecture);
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops.clear();
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+  const auto Address = NdVar::reg(TRI.IntParamRegs[2], 8);
+  const auto Offset = NdVar::reg(TRI.IntParamRegs[3], 8);
+  auto Field = [&](uint64_t ByteOffset, va_t Slot, va_t PC) {
+    if (Dynamic) {
+      const auto Width = Architecture == Arch::AArch64 ? 4 : 8;
+      Ops.push_back(operation(NdOp::LOAD, NdVar::reg(Offset.Offset, Width),
+                              {NdVar::cst(Slot, 8)}, PC));
+      if (Width == 4)
+        Ops.push_back(operation(NdOp::INT_SEXT, Offset,
+                                {NdVar::reg(Offset.Offset, 4)}, PC));
+    }
+    Ops.push_back(operation(
+        NdOp::INT_ADD, Address,
+        {Self, Dynamic ? Offset : NdVar::cst(ByteOffset, 8)}, PC + 4));
+    Ops.push_back(operation(NdOp::LOAD, Self, {Address}, PC + 4));
+  };
+  if (Nested)
+    Field(16, 0x2308, 0x1200);
+  Field(8, 0x2300, 0x1210);
+  Ops.push_back(operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                          {NdVar::cst(0x2100, 8)}, 0x122c));
+  Ops.push_back(
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1230));
+  return Function;
+}
+} // namespace
+
+TEST(ObjCCallHints, ReceiverFieldsPreserveExactObjectTypesAcrossNestedLoads) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool Dynamic : {false, true}) {
+      for (const bool Nested : {false, true}) {
+        auto Image = receiverFieldImage(Architecture);
+        EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "code"));
+        const auto Hints = buildObjCSourceCallHints(
+            Image, receiverFieldCaller(Architecture, Dynamic, Nested));
+        ASSERT_EQ(Hints.size(), 1U)
+            << static_cast<int>(Architecture) << Dynamic << Nested;
+        const auto &Hint = Hints.at(0x1230);
+        ASSERT_TRUE(Hint.Receiver);
+        EXPECT_EQ(Hint.Receiver->ClassName, "First");
+        const std::vector<va_t> Expected =
+            Nested ? std::vector<va_t>{0x2308, 0x2300}
+                   : std::vector<va_t>{0x2300};
+        std::vector<va_t> Actual;
+        for (const auto &Access : Hint.Receiver->IvarLoads) {
+          Actual.push_back(Access.OffsetSlot);
+          EXPECT_EQ(Access.ByteOffset.has_value(), !Dynamic);
+          EXPECT_EQ(Access.OffsetWidth,
+                    Architecture == Arch::AArch64 ? 4U : 8U);
+        }
+        EXPECT_EQ(Actual, Expected);
+        EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Hint.Signature.ReturnType->Size, 8U);
+        EXPECT_TRUE(Hint.Signature.ReturnType->IsSigned);
+        EXPECT_TRUE(
+            sdk::objcSourceCallBound(*receiverCallExpression(Hint), Image, {}));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFieldsFollowRecordedSuperclassStorage) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverFieldImage(Architecture);
+    auto Base = Image.ObjCClasses.front();
+    Base.Name = "Base";
+    for (auto &[Address, Ref] : Image.ObjCSourceReferences)
+      if (Ref.TheKind == ObjCSourceReference::Kind::IvarOffset)
+        Ref.ClassName = Base.Name;
+    auto &Child = Image.ObjCClasses.front();
+    Child.RootClass = false;
+    Child.InheritanceStatus = "resolved";
+    Child.SuperclassName = Base.Name;
+    Child.InstanceStart = 32;
+    Child.InstanceSize = 40;
+    Child.Ivars.clear();
+    Image.ObjCClasses.push_back(Base);
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    const auto Field = objcReceiverFieldTypeHint(Image, *Root, 8);
+    ASSERT_TRUE(Field);
+    EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "code", *Field).Signature);
+    Image.ObjCClasses.back().RootClass = false;
+    Image.ObjCClasses.back().InheritanceStatus = "resolved";
+    Image.ObjCClasses.back().SuperclassName = "First";
+    EXPECT_FALSE(objcReceiverFieldTypeHint(Image, *Root, 8));
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFieldsRejectPartialUnknownAndNonObjectAccesses) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Image = receiverFieldImage(Architecture);
+      auto Function = receiverFieldCaller(Architecture, false);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      if (Mutation <= 2)
+        Function.Blocks.front().Ops.front().Inputs[1] =
+            NdVar::cst(Mutation == 0   ? 7
+                       : Mutation == 1 ? 9
+                                       : UINT64_MAX,
+                       8);
+      else if (Mutation == 3)
+        Function.Blocks.front().Ops[1].Output.Size = 4;
+      else if (Mutation == 4)
+        Function.Blocks.front().Ops.front().Inputs[0] =
+            NdVar::reg(TRI.IntParamRegs[4], 8);
+      else if (Mutation == 5)
+        Image.ObjCClasses.front().Ivars.front().TypeEncoding = "@";
+      else if (Mutation == 6)
+        Image.ObjCClasses.front().Ivars.front().TypeEncoding = "@?";
+      else
+        Image.ObjCClasses.front().Ivars.front().TypeEncoding = "^@\"NSError\"";
+      EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty())
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFieldsRequireMatchingMetadataAndReferenceSlots) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+      auto Image = receiverFieldImage(Architecture);
+      auto &Class = Image.ObjCClasses.front();
+      auto &Ivar = Class.Ivars.front();
+      auto &Ref = Image.ObjCSourceReferences.at(0x2300);
+      if (Mutation == 0)
+        Ref.Address += 1;
+      else if (Mutation == 1)
+        Ref.ClassName = "Other";
+      else if (Mutation == 2)
+        Ref.Name = "_next";
+      else if (Mutation == 3)
+        Ref.Size = 2;
+      else if (Mutation == 4)
+        Ref.TheKind = ObjCSourceReference::Kind::Class;
+      else if (Mutation == 5)
+        Ivar.MetadataAddress = 0;
+      else if (Mutation == 6)
+        Ivar.Size = 4;
+      else if (Mutation == 7)
+        Class.InstanceSize = 12;
+      else if (Mutation == 8)
+        Class.IvarStatus = "unresolved";
+      else if (Mutation == 9)
+        Class.Ivars.push_back(Ivar);
+      else
+        Image.ObjCClasses.push_back(Class);
+      const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Root);
+      EXPECT_FALSE(objcReceiverIvarTypeHint(Image, *Root, 0x2300)) << Mutation;
+      EXPECT_FALSE(objcReceiverFieldTypeHint(Image, *Root, 8)) << Mutation;
+      EXPECT_TRUE(buildObjCSourceCallHints(
+                      Image, receiverFieldCaller(Architecture, true))
+                      .empty())
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFieldProofsRevalidateEveryStepAfterReload) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto Image = receiverFieldImage(Architecture);
+    const auto Hints = buildObjCSourceCallHints(
+        Image, receiverFieldCaller(Architecture, true, true));
+    ASSERT_EQ(Hints.size(), 1U);
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Changed = Image;
+      auto Expression = receiverCallExpression(Hints.at(0x1230));
+      auto Binding =
+          std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+      Expression->SourceCallHint = Binding;
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+      if (Mutation == 0)
+        Binding->Receiver->IvarLoads.front().OffsetSlot += 1;
+      else if (Mutation == 1)
+        Binding->Receiver->IvarLoads.back().OffsetSlot = 0x2308;
+      else if (Mutation == 2)
+        Binding->Receiver->IvarLoads.resize(9, {0x2308, std::nullopt, 4});
+      else if (Mutation == 3)
+        Changed.ObjCClasses.front().Ivars[1].TypeEncoding = "@\"Other\"";
+      else if (Mutation == 4)
+        Changed.ObjCClasses.front().Ivars.front().TypeEncoding = "q";
+      else if (Mutation == 5)
+        Changed.ObjCClasses.front().IvarStatus = "unresolved";
+      else if (Mutation == 6)
+        Changed.ObjCSourceReferences.erase(0x2300);
+      else
+        Changed.DynInfo.NeededLibs.clear();
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}))
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReceiverFieldPathsHaveABoundedDepth) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverFieldImage(Architecture);
+    auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    for (unsigned Depth = 0; Depth != 8; ++Depth) {
+      Receiver = objcReceiverIvarTypeHint(Image, *Receiver, 0x2308);
+      ASSERT_TRUE(Receiver);
+      EXPECT_EQ(Receiver->IvarLoads.size(), Depth + 1U);
+      EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Receiver));
+    }
+    EXPECT_FALSE(objcReceiverIvarTypeHint(Image, *Receiver, 0x2300));
+    Receiver->IvarLoads.push_back({0x2300, std::nullopt, 4});
+    EXPECT_FALSE(objcReceiverTypeHintValid(Image, *Receiver));
+  }
+}
+
+TEST(ObjCCallHints, ReceiverObjectEncodingsRequireAnExplicitCompleteClass) {
+  for (const auto *Encoding :
+       {"@\"NSError\"", "r@\"NSError\"", "n@\"NSError\""})
+    EXPECT_EQ(objcEncodedObjectClass(Encoding),
+              std::optional<std::string>("NSError"));
+  EXPECT_EQ(objcEncodedObjectClass("@\"_TtC4Test4Node\""),
+            std::optional<std::string>("_TtC4Test4Node"));
+  for (const auto *Encoding :
+       {"@", "@?", "^@\"NSError\"", "@\"\"", "@\"<NSCopying>\"",
+        "@\"NSError<NSCopying>\"", "@\"1Invalid\"", "@\"NSError\"0",
+        "@\"NSError", "@\"NS Error\""})
+    EXPECT_FALSE(objcEncodedObjectClass(Encoding)) << Encoding;
+  EXPECT_FALSE(objcEncodedObjectClass("@\"" + std::string(4096, 'A') + "\""));
+}
+
+TEST(ObjCCallHints,
+     ReceiverFieldsKeepConstantOffsetsDistinctFromRuntimeReferences) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool Dynamic : {false, true}) {
+      auto Image = receiverFieldImage(Architecture);
+      const auto Hints = buildObjCSourceCallHints(
+          Image, receiverFieldCaller(Architecture, Dynamic));
+      ASSERT_EQ(Hints.size(), 1U);
+      const auto Expression = receiverCallExpression(Hints.at(0x1230));
+      ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      auto &Fields = Image.ObjCClasses.front().Ivars;
+      // The offset slot still names _error, while byte offset 8 now contains
+      // a different receiver type. Only the runtime slot follows this move.
+      std::swap(Fields[0].Offset, Fields[2].Offset);
+      Fields[2].TypeEncoding = "@\"Other\"";
+      EXPECT_EQ(sdk::objcSourceCallBound(*Expression, Image, {}), Dynamic);
+      Image.ObjCSourceReferences.at(0x2300).Size =
+          Architecture == Arch::AArch64 ? 8 : 4;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
     }
   }
 }

@@ -90,6 +90,16 @@ against the current image before publishing source. These facts neither select
 an IMP nor authorize binary rewriting.
 Missing external hierarchy requires selector-wide agreement instead of a receiver-specific signature; explicit unsupported or conflicting declarations remain negative evidence.
 
+Declared object ivars extend a receiver proof through at most eight full-width
+loads. Each step records its runtime offset slot, carrier width and any literal
+byte offset used by the machine access. A literal must still match the current
+layout; a runtime offset reference can follow a moved field. The loader checks
+the recorded class lineage and exact field declaration. Partial accesses, bare
+id, blocks, protocol-only types, ambiguous storage and unknown pointer bases do
+not provide class facts. Source validation repeats the entire path against the
+current image. These facts describe declared types, not object identity or
+permission to remove memory operations.
+
 ## IR representations and routes
 
 | Representation | Purpose | Primary definitions and transformations |

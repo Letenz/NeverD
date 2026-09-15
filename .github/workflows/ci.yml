@@ -813,6 +813,22 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.MissingExternalHierarchyRequiresGlobalDeclarationAgreement",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldsKeepConstantOffsetsDistinctFromRuntimeReferences",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldsPreserveExactObjectTypesAcrossNestedLoads",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldsFollowRecordedSuperclassStorage",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldsRejectPartialUnknownAndNonObjectAccesses",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldsRequireMatchingMetadataAndReferenceSlots",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldProofsRevalidateEveryStepAfterReload",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverFieldPathsHaveABoundedDepth",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCCallHints.ReceiverObjectEncodingsRequireAnExplicitCompleteClass",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.ReceiverDeclarationsSeparateOwnersAndDispatchRoles",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCCallHints.ReceiverSDKInheritanceRequiresCurrentFrameworkIdentity",
@@ -999,9 +1015,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 371,
-              ("macOS", "macos-patch"): 396,
-              ("Windows", "windows-focused"): 367,
+              ("Linux", "linux-semantic"): 379,
+              ("macOS", "macos-patch"): 405,
+              ("Windows", "windows-focused"): 375,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1017,6 +1033,7 @@ jobs:
                       "ObjCRuntimeSource.RecompiledSwiftAllocationPreservesAlignmentMetadataAndDestruction",
                       "ObjCRuntimeSource.RecompiledFloatingValuesSurviveRuntimeCalls",
                       "ObjCRuntimeSource.EqualityProjectionPreservesOwnershipOrRejectsMissingCallEvidence",
+                      "ObjCRuntimeSource.TypedReceiverFieldsPreserveNestedAndNilObjectCalls",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",
