@@ -875,6 +875,10 @@ jobs:
                    "NeverDPipelineOutcomeTests"),
                   ("PipelineStageTrace.KeepsLiftBranchAndItsNativeDefinition",
                    "NeverDPipelineOutcomeTests"),
+                  ("HighControlFlowSemantics.JumpTableSuccessorsKeepCallsStoresAndPhiEdges",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
+                  ("HighControlFlowSemantics.JumpTableLoopEdgesPreserveParallelPhiSnapshots",
+                   "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.ConditionalDefaultKeepsItsExclusivePath",
                    "NeverDLiftTests", "NeverDHighControlFlowTests"),
                   ("HighControlFlowSemantics.SharedMergeDoesNotHideAnotherFalseArmEntry",
@@ -1121,9 +1125,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 431,
-              ("macOS", "macos-patch"): 468,
-              ("Windows", "windows-focused"): 427,
+              ("Linux", "linux-semantic"): 433,
+              ("macOS", "macos-patch"): 471,
+              ("Windows", "windows-focused"): 429,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))
@@ -1151,6 +1155,7 @@ jobs:
                       "ObjCRuntimeSource.SystemCallsPreserveFileAttributesObjectsAndDigests",
                       "ObjCRuntimeSource.SwiftMetadataCallsPreserveIdentityAndResponseState",
                       "ObjCRuntimeSource.InvariantLoopValuesPreserveClassChecksAndGetterEffects",
+                      "ObjCRuntimeSource.SwitchSuccessorsPreserveStoresCallsAndSharedExits",
                       "ObjCRuntimeSource.ReceiverDeclarationsPreserveClassInstanceAndInheritedABI",
                       "ObjCRuntimeSource.DynamicPropertyAccessorsExecuteAgainstCoreData",
                       "ObjCRuntimeSource.RecompiledBlocksPreserveEscapingCapturesAndOwnershipHelpers",

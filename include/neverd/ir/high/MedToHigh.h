@@ -148,7 +148,6 @@ private:
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   std::vector<JumpTable> JumpTables;
-  std::set<int> JtConsumedBlocks;
   int NextHighTempId = 0;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;

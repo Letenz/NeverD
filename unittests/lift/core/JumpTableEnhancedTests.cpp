@@ -2792,10 +2792,18 @@ TEST_F(JTE_X86_64, MaskedSelectorKeepsTheExactPostAndValue) {
   const std::string::size_type SwitchEnd = HighBody.find('\n', Switch);
   const std::string SwitchLine = HighBody.substr(Switch, SwitchEnd - Switch);
   EXPECT_NE(SwitchLine.find("arg0 & 7"), std::string::npos) << HighBody;
-  EXPECT_NE(HighBody.find("case 0:\n      return (i64)0x1838"),
-            std::string::npos)
-      << "x=8 must route through mask value 0 to case0\n"
+  const auto CaseZero = HighBody.find("case 0:");
+  ASSERT_NE(CaseZero, std::string::npos) << HighBody;
+  auto Return = llvm::StringRef(HighBody).drop_front(CaseZero + 7).ltrim();
+  ASSERT_TRUE(Return.consume_front("return ")) << HighBody;
+  // Ordinary return lowering can omit a redundant widening cast on this
+  // positive constant. Check the routed value independently of that spelling.
+  Return.consume_front("(i64)");
+  uint64_t Value = 0;
+  ASSERT_FALSE(Return.take_front(Return.find(';')).getAsInteger(0, Value))
       << HighBody;
+  EXPECT_EQ(Value, 0x1838U) << "x=8 must route through mask value 0 to case0\n"
+                            << HighBody;
 }
 
 TEST_F(JTE_X86_64, TwoTableSelectorUsesExactCompositeOccurrences) {

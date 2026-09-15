@@ -87,7 +87,8 @@ void MedToHighConverter::insertPhiCopies(
   size_t BranchIndex = Func.Body.size();
   for (size_t I = Func.Body.size(); I > BlkBodyStart; --I)
     if (Func.Body[I - 1].Kind == StmtKind::Goto ||
-        Func.Body[I - 1].Kind == StmtKind::If) {
+        Func.Body[I - 1].Kind == StmtKind::If ||
+        Func.Body[I - 1].Kind == StmtKind::Switch) {
       BranchIndex = I - 1;
       break;
     }
@@ -103,6 +104,29 @@ void MedToHighConverter::insertPhiCopies(
       Target = TargetBlock.Ops.front().Addr;
     if (BranchIndex < Func.Body.size()) {
       auto &Branch = Func.Body[BranchIndex];
+      if (Branch.Kind == StmtKind::Switch) {
+        auto Insert = [&](std::vector<HighStmt> &Body) {
+          if (!Body.empty() && Body.back().Kind == StmtKind::Goto &&
+              Body.back().GotoTarget == Target) {
+            Body.insert(Body.end() - 1, Copies.begin(), Copies.end());
+            return true;
+          }
+          return false;
+        };
+        bool Found = Insert(Branch.DefaultBody);
+        for (auto &Case : Branch.Cases)
+          Found |= Insert(Case.Body);
+        if (!Found) {
+          // A CFG edge with no dispatch binding cannot execute its PHIs on
+          // an arbitrary case. Retain an explicit unresolved transfer so
+          // source validation rejects the incomplete switch.
+          HighStmt Unresolved;
+          Unresolved.Kind = StmtKind::Goto;
+          Unresolved.GotoTarget = InvalidVA;
+          Branch.DefaultBody = {std::move(Unresolved)};
+        }
+        continue;
+      }
       if (Branch.Kind == StmtKind::If && !Branch.Body.empty() &&
           Branch.Body.back().Kind == StmtKind::Goto &&
           Branch.Body.back().GotoTarget == Target) {
@@ -135,8 +159,6 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       for (auto &[PredId, Arg] : Phi.Args)
         PhiCopies[{PredId, Block.Id}].push_back({Phi.Output, Arg});
 
-  JtConsumedBlocks.clear();
-
   VarKeySet PhiArgVars;
   for (auto &Block : Med.Blocks)
     for (auto &Phi : Block.Phis)
@@ -147,8 +169,6 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
   std::vector<std::pair<size_t, va_t>> MissingEntries;
 
   for (int BlkIdx = 0; BlkIdx < static_cast<int>(Med.Blocks.size()); ++BlkIdx) {
-    if (JtConsumedBlocks.count(BlkIdx))
-      continue;
     auto &CurBlock = Med.Blocks[BlkIdx];
     size_t BlkBodyStart = Func.Body.size();
     std::set<size_t> IntrinsicSkip;
@@ -220,10 +240,7 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
             Other = Successor;
           }
         }
-        int Next = BlkIdx + 1;
-        while (Next < static_cast<int>(Med.Blocks.size()) &&
-               JtConsumedBlocks.count(Next))
-          ++Next;
+        const int Next = BlkIdx + 1;
         if (Complete && Taken >= 0 && Other >= 0 && Other != Next) {
           const auto &Target = Med.Blocks[Other];
           HighStmt Transfer;

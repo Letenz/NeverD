@@ -68,7 +68,8 @@ HighStmt result(va_t Address, ExprPtr Value) {
 // An independent bounded interpreter checks observable branch results,
 // including a missing shared return. It does not prescribe an attractive output
 // shape.
-std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
+std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
+                                bool RequireExactTargets = false) {
   std::map<VarKey, uint64_t> Values{{{0, 0}, Condition}, {{0, -1}, Condition}};
   std::map<uint64_t, uint64_t> Memory;
   std::function<uint64_t(const ExprPtr &)> Value = [&](const ExprPtr &E) {
@@ -213,7 +214,13 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition) {
       continue;
     }
     auto I = std::find_if(F.Body.begin(), F.Body.end(),
-                          [&](const auto &S) { return S.Addr >= R.Target; });
+                          [&](const auto &S) { return S.Addr == R.Target; });
+    // Handwritten pass inputs can identify a removed instruction inside an
+    // address range. Complete lowering must instead preserve an exact entry,
+    // including when blocks are emitted in a different physical order.
+    if (I == F.Body.end() && !RequireExactTargets)
+      I = std::find_if(F.Body.begin(), F.Body.end(),
+                       [&](const auto &S) { return S.Addr >= R.Target; });
     if (I == F.Body.end())
       return {};
     Position = I - F.Body.begin();
@@ -2146,4 +2153,151 @@ TEST(HighControlFlowSemantics,
           EXPECT_EQ(execute(High, Value), (Value + unsigned(Computed)) * 2);
       }
   }
+}
+
+TEST(HighControlFlowSemantics, JumpTableSuccessorsKeepCallsStoresAndPhiEdges) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Reverse);
+      MedFunc M;
+      M.Entry = 0x1000;
+      M.Name = "dispatch_effects";
+      M.ReturnType = NdType::makeInt(8, false);
+      auto Input = machineValue(0, Architecture);
+      Input.Kind = MedVar::Param;
+      Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+      M.Params = {Input};
+      auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+      M.Blocks.resize(4);
+      for (int I = 0; I < 4; ++I) {
+        M.Blocks[I].Id = I;
+        M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+        M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+      }
+      M.Blocks[0].Succs = {1, 2};
+      M.Blocks[0].Ops = {operation(NdOp::INDIR_BR, 0x1000, {}, {Input})};
+      M.SwitchSelectorPlans[0x1000] = {};
+      M.SwitchSelectorPlans[0x1000].Selector = Input;
+      M.SwitchSelectorPlans[0x1000].ResultSize = 8;
+      auto First = machineValue(1, Architecture);
+      auto Second = machineValue(2, Architecture);
+      First.Kind = Second.Kind = MedVar::Reg;
+      First.RegOff = Second.RegOff =
+          getTargetRegInfo(Architecture).IntReturnReg;
+      First.SSAVer = 1;
+      Second.SSAVer = 2;
+      for (int I = 1; I < 3; ++I) {
+        auto &B = M.Blocks[I];
+        B.Preds = {0};
+        B.Succs = {3};
+        auto Incoming = machineValue(10 + I, Architecture);
+        B.Phis = {{Incoming, {{0, C(I == 1 ? 17 : 23)}}}};
+        auto Call =
+            operation(NdOp::CALL, B.StartAddr + 4, I == 1 ? First : Second,
+                      {C(0x2000), C(0), C(0x8000)});
+        auto Hint = std::make_shared<SourceCallTypeHint>();
+        Hint->TargetAddress = 0x2000;
+        Hint->Signature.ReturnType = M.ReturnType;
+        Hint->Signature.Parameters = {
+            {"unused", M.ReturnType, {}},
+            {"address", NdType::makePtr(M.ReturnType), {}}};
+        std::string Diagnostic;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Hint->Signature, Architecture,
+                                                Diagnostic))
+            << Diagnostic;
+        Call.SourceCallHint = Hint;
+        B.Ops = {operation(NdOp::STORE, B.StartAddr, {}, {C(0x8000), Incoming}),
+                 Call,
+                 operation(NdOp::BRANCH, B.StartAddr + 8, {}, {C(0x1300)})};
+      }
+      auto Joined = machineValue(3, Architecture);
+      auto Return = machineValue(4, Architecture);
+      Return.Kind = MedVar::Reg;
+      Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+      Return.SSAVer = 3;
+      M.Blocks[3].Preds = {1, 2};
+      M.Blocks[3].Phis = {{Joined, {{1, First}, {2, Second}}}};
+      M.Blocks[3].Ops = {
+          operation(NdOp::INT_ADD, 0x1300, Return, {Joined, C(100)}),
+          operation(NdOp::RETURN, 0x1304, {}, {Return})};
+      if (Reverse) {
+        std::swap(M.Blocks[1], M.Blocks[2]);
+        auto Remap = [](int Id) { return Id == 1 ? 2 : Id == 2 ? 1 : Id; };
+        for (auto &B : M.Blocks) {
+          B.Id = Remap(B.Id);
+          for (auto &Id : B.Preds)
+            Id = Remap(Id);
+          for (auto &Id : B.Succs)
+            Id = Remap(Id);
+          for (auto &Phi : B.Phis)
+            for (auto &[Id, Value] : Phi.Args)
+              Id = Remap(Id);
+        }
+      }
+      JumpTable Table;
+      Table.InsnAddr = 0x1000;
+      Table.Targets = {0x1100, 0x1200, 0x1100};
+      Table.CaseLabels = {0, 1, 2};
+      const std::map<va_t, std::string> Names{{0x2000, "observe"}};
+      MedToHighConverter Converter;
+      Converter.setJumpTables({Table});
+      Converter.setFuncNames(&Names);
+      const auto High = Converter.convert(M, Architecture);
+      unsigned Stores = 0, Calls = 0;
+      walkStmts(High.Body, [&](const HighStmt &S) {
+        Stores += S.Kind == StmtKind::Store;
+        forEachExpr(S, [&](const ExprPtr &E) {
+          if (E->Kind == ExprKind::Call) {
+            ++Calls;
+            EXPECT_EQ(E->Operands.size(), 2U);
+            EXPECT_TRUE(E->SourceCallHint);
+          }
+        });
+      });
+      EXPECT_EQ(Stores, 2U);
+      EXPECT_EQ(Calls, 2U);
+      EXPECT_TRUE(buildHighSourceFlowGraph(High).Diagnostics.Complete);
+      for (unsigned Selector : {0U, 1U, 2U}) {
+        SCOPED_TRACE(Selector);
+        EXPECT_NO_THROW(EXPECT_EQ(execute(High, Selector, true),
+                                  Selector == 1 ? 123U : 117U));
+      }
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Reverse : {false, true}) {
+      auto Med = loopFunction(Architecture, true, Reverse);
+      auto &Loop = Med.Blocks[1];
+      auto &Terminator = Loop.Ops.back();
+      auto Selector = Terminator.Inputs[1];
+      Terminator.Opcode = NdOp::INDIR_BR;
+      Terminator.Inputs[0] = Selector;
+      Terminator.NumInputs = 1;
+      Med.SwitchSelectorPlans[Terminator.Addr] = {};
+      Med.SwitchSelectorPlans[Terminator.Addr].Selector = Selector;
+      Med.SwitchSelectorPlans[Terminator.Addr].ResultSize = Selector.Size;
+      JumpTable Table;
+      Table.InsnAddr = Terminator.Addr;
+      Table.Targets = {0x1200, 0x1100};
+      Table.CaseLabels = {0, 1};
+      MedToHighConverter Converter;
+      Converter.setJumpTables({Table});
+      const auto High = Converter.convert(Med, Architecture);
+      EXPECT_TRUE(buildHighSourceFlowGraph(High).Diagnostics.Complete);
+      for (unsigned Count = 1; Count <= 8; ++Count) {
+        SCOPED_TRACE(Count);
+        EXPECT_NO_THROW(
+            EXPECT_EQ(execute(High, Count, true), Count % 2 ? 102U : 201U));
+      }
+      // The loop successor's PHIs cannot be assigned to some other case if
+      // its dispatch edge is missing. Incomplete metadata stays unsupported.
+      Table.Targets[1] = 0x1200;
+      Converter.setJumpTables({Table});
+      const auto Incomplete = Converter.convert(Med, Architecture);
+      EXPECT_FALSE(buildHighSourceFlowGraph(Incomplete).Diagnostics.Complete);
+    }
 }

@@ -274,12 +274,6 @@ bool MedToHighConverter::lowerSwitchFromJumpTable(HighFunc &Func,
   if (!CaseBits)
     return false;
 
-  std::map<va_t, int> TargetBlock;
-  for (auto &MB : Med.Blocks) {
-    if (!MB.Ops.empty())
-      TargetBlock[MB.Ops.front().Addr] = MB.Id;
-  }
-
   va_t BoundsCheckTarget = 0;
   for (auto PredId : CurBlock.Preds) {
     if (PredId < 0 || PredId >= static_cast<int>(Med.Blocks.size()))
@@ -310,37 +304,13 @@ bool MedToHighConverter::lowerSwitchFromJumpTable(HighFunc &Func,
   SW.Addr = CurOp.Addr;
   SW.SwitchExpr = SwitchVar;
   for (size_t K = 0; K < JT.Targets.size(); ++K) {
-    auto TIt = TargetBlock.find(JT.Targets[K]);
-    std::vector<HighStmt> CaseBody;
-    if (TIt != TargetBlock.end() && TIt->second >= 0 &&
-        TIt->second < static_cast<int>(Med.Blocks.size())) {
-      JtConsumedBlocks.insert(TIt->second);
-      auto &CaseBlk = Med.Blocks[TIt->second];
-      for (auto &COp : CaseBlk.Ops) {
-        if (COp.Opcode == NdOp::RETURN) {
-          HighStmt RS;
-          RS.Kind = StmtKind::Return;
-          RS.Addr = COp.Addr;
-          if (COp.NumInputs >= 1)
-            RS.RetVal = medvarToExpr(COp.Inputs[0]);
-          CaseBody.push_back(std::move(RS));
-        } else if (COp.Output.Id >= 0 && COp.Output.Size > 0 &&
-                   COp.Output.Kind == MedVar::Reg && COp.Output.RegOff == 0) {
-          HighStmt AS;
-          AS.Kind = StmtKind::Assign;
-          AS.Addr = COp.Addr;
-          AS.Dst = HighExpr::makeVar(COp.Output);
-          AS.Val = medOpToExpr(COp);
-          CaseBody.push_back(std::move(AS));
-        }
-      }
-    }
-    if (CaseBody.empty()) {
-      HighStmt GS;
-      GS.Kind = StmtKind::Goto;
-      GS.GotoTarget = JT.Targets[K];
-      CaseBody.push_back(GS);
-    }
+    // Dispatch owns the edge, not the successor's statements. A target can
+    // also be reached by another case, a bounds guard or a loop. Its ordinary
+    // block lowering must run once, preserving calls, stores, PHIs and exits.
+    HighStmt Transfer;
+    Transfer.Kind = StmtKind::Goto;
+    Transfer.GotoTarget = JT.Targets[K];
+    std::vector<HighStmt> CaseBody{std::move(Transfer)};
 
     if (static_cast<int>(K) == DefaultCaseIdx) {
       SW.DefaultBody = std::move(CaseBody);
