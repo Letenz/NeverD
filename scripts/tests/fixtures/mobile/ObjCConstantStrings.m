@@ -28,6 +28,11 @@ static struct {
   second __attribute__((section("__DATA,__cfstring"))) = {
       __CFConstantStringClassReference, 0x7d0, wideBytes, 4};
 
+extern NSString *const NDConstantASCII;
+extern NSString *const NDConstantAlias;
+extern NSString *const NDConstantUnicode;
+extern NSString *NDMutableString;
+
 @interface NDConstantStrings : NSObject
 - (NSString *)ascii;
 - (NSString *)alias;
@@ -36,9 +41,29 @@ static struct {
 - (NSString *)empty;
 - (NSString *)first;
 - (NSString *)second;
+- (NSString *)indirectASCII;
+- (NSString *)indirectAlias;
+- (NSString *)indirectUnicode;
+- (NSString *)mutableValue;
+- (const void *)slotAddress;
 @end
 
 @implementation NDConstantStrings
+- (NSString *)indirectASCII {
+  return NDConstantASCII;
+}
+- (NSString *)indirectAlias {
+  return NDConstantAlias;
+}
+- (NSString *)indirectUnicode {
+  return NDConstantUnicode;
+}
+- (NSString *)mutableValue {
+  return NDMutableString;
+}
+- (const void *)slotAddress {
+  return &NDConstantASCII;
+}
 - (NSString *)ascii {
 #ifdef NEVERD_NATIVE_POINTERS
   return (__bridge_transfer NSString *)(void *)NDForwardPointer(

@@ -440,6 +440,24 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           return Expression;
         }
       }
+      // A relocated immutable slot supplies an object value, never a source
+      // identity for the storage address. Keep the slot proof for validation.
+      if (Address && !NumericOperand && !MemoryAddress &&
+          Original->Type->Size == 8 &&
+          (Original->Type->Kind == NdTypeKind::Int ||
+           Original->Type->Kind == NdTypeKind::Ptr)) {
+        const auto Target = readImmutableImagePointer(Image, *Address);
+        auto Hint = Target ? constantStringSourceHint(Image, *Target, *Address)
+                           : std::nullopt;
+        if (Hint) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Result.ConstantStrings.insert(*Target);
+          return Expression;
+        }
+      }
       auto Found = Address ? Image.ObjCSourceReferences.find(*Address)
                            : Image.ObjCSourceReferences.end();
       if (Found != Image.ObjCSourceReferences.end()) {
@@ -751,9 +769,12 @@ objcSourceCallBound(const HighExpr &Expression, const BinaryImage &Image,
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
+  if (Binding.ImmutablePointerSlot &&
+      Binding.CallKind != SourceCallTypeHint::Kind::RuntimeConstantString)
+    return false;
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeConstantString) {
-    const auto Expected =
-        constantStringSourceHint(Image, Binding.TargetAddress);
+    const auto Expected = constantStringSourceHint(
+        Image, Binding.TargetAddress, Binding.ImmutablePointerSlot);
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);

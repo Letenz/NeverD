@@ -797,6 +797,12 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.FormattedLowCallsReadDarwinStackArgumentsBeforeSSA",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ImmutablePointerLoadsShareTheTargetObjectIdentity",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ImmutablePointerLoadsRejectIncompleteAndStaleProofs",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
+                  ("ObjCSourceBindings.ImmutablePointerProofAppliesOnlyToOrdinaryFullLoads",
+                   "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsKeepBytesUnicodeAndObjectIdentity",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.ConstantStringsRejectUnprovedRecordsAndContents",
@@ -1115,9 +1121,9 @@ jobs:
           )
           runner_os = os.environ["RUNNER_OS"]
           expected_count = {
-              ("Linux", "linux-semantic"): 428,
-              ("macOS", "macos-patch"): 465,
-              ("Windows", "windows-focused"): 424,
+              ("Linux", "linux-semantic"): 431,
+              ("macOS", "macos-patch"): 468,
+              ("Windows", "windows-focused"): 427,
           }[(runner_os, os.environ["TEST_PROFILE"])]
           if runner_os == "macOS":
               expected += tuple(TestRecord(name, frozenset({"NeverDObjCRuntimeSourceTests"}))

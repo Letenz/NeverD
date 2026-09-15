@@ -260,6 +260,8 @@ void verifyRuntime(bool Chained,
     Compile.push_back((Fixtures / "ObjCReceiverFieldStorage.m").string());
   if (!Chained)
     Compile.push_back("-Wl,-no_fixup_chains");
+  if (ConstantStrings)
+    Compile.push_back((Fixtures / "ObjCConstantStringStorage.m").string());
   if (NativePointers)
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation)
@@ -385,6 +387,7 @@ void verifyRuntime(bool Chained,
                              : Protocols          ? 6U
                              : DiagnosticReports  ? 5U
                              : SwiftStrings       ? 2U
+                             : ConstantStrings    ? 12U
                              : SwiftCalls         ? 9U
                                                   : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
@@ -483,8 +486,9 @@ void verifyRuntime(bool Chained,
                  "begin:scratch:flags:",
                  "end:"};
   if (ConstantStrings)
-    Remaining = {"ascii", "alias", "unicode", "embedded",
-                 "empty", "first", "second"};
+    Remaining = {"ascii",         "alias",          "unicode", "embedded",
+                 "empty",         "first",          "second",  "indirectASCII",
+                 "indirectAlias", "indirectUnicode"};
   if (UnfairLocks)
     Remaining = {"add:",   "value",       "tryAdd:",       "lock",
                  "unlock", "assertOwner", "assertNotOwner"};
@@ -646,13 +650,25 @@ void verifyRuntime(bool Chained,
   std::map<std::string, std::string> IdentityHelpers;
   std::map<std::string, std::string> BlockHelpers;
   unsigned RepeatedBlockHelpers = 0;
+  std::set<std::string> RejectedConstantUses =
+      ConstantStrings ? std::set<std::string>{"mutableValue", "slotAddress"}
+                      : std::set<std::string>{};
   std::string NativeHelper;
   std::set<std::string> StorageNames;
   for (const auto &Value : *Methods) {
     const auto *Method = Value.getAsObject();
     ASSERT_NE(Method, nullptr);
-    ASSERT_EQ(Method->getString("status"), "recovered") << Raw.get();
     auto Selector = Method->getString("selector");
+    ASSERT_TRUE(Selector);
+    if (RejectedConstantUses.erase(Selector->str())) {
+      EXPECT_EQ(Method->getString("status"), "unrecovered");
+      const auto Reason = Method->getString("reason");
+      ASSERT_TRUE(Reason);
+      EXPECT_NE(Reason->find("image address"), llvm::StringRef::npos)
+          << Reason->str();
+      continue;
+    }
+    ASSERT_EQ(Method->getString("status"), "recovered") << Raw.get();
     auto Name = Method->getString("function_name");
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
@@ -754,6 +770,7 @@ void verifyRuntime(bool Chained,
                Selector->str() + "\"))));\n";
   }
   ASSERT_TRUE(Remaining.empty());
+  EXPECT_TRUE(RejectedConstantUses.empty());
   if (BlockLifetimes)
     EXPECT_GE(RepeatedBlockHelpers, 2U);
   EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);

@@ -282,6 +282,9 @@ struct Segment {
   uint64_t FileSz = 0;
   SegmentFlags Flags = SegmentFlags::None;
   std::vector<uint8_t> Data;
+  /// Loader guarantee that this mapping becomes read-only after fixups.
+  /// Flags retain the original mapping permissions.
+  bool ReadOnlyAfterRelocations = false;
 
   bool isExecutable() const { return hasFlag(Flags, SegmentFlags::Executable); }
   bool isWritable() const { return hasFlag(Flags, SegmentFlags::Writable); }

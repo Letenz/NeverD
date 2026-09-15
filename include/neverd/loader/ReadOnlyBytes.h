@@ -14,5 +14,12 @@ struct BinaryImage;
 /// this routine establishes neither pointer identity nor ownership/lifetime.
 std::optional<std::vector<uint8_t>>
 readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
+
+/// Read a full-width resolved data pointer from uniquely mapped immutable
+/// storage. The relocation must identify the current target's owning range.
+/// This proves the loaded value only, not a binding for the slot's address or
+/// permission to copy the target object.
+std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
+                                              va_t Address);
 } // namespace neverd
 #endif

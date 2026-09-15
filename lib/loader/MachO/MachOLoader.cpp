@@ -205,7 +205,8 @@ MachOLoader::load(const std::filesystem::path &Path) {
   };
 
   auto AddSegment = [&](const char *Name, uint64_t VMAddr, uint64_t VMSize,
-                        uint64_t FileOff, uint64_t FileSz, uint32_t Prot) {
+                        uint64_t FileOff, uint64_t FileSz, uint32_t Prot,
+                        uint32_t Flags) {
     if (VMSize > InvalidVA - VMAddr) {
       InvalidAddressRange = true;
       return;
@@ -230,6 +231,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
     Seg.FileOff = FileOff;
     Seg.FileSz = MappedFileSz;
     Seg.Flags = machoProtToNd(Prot);
+    Seg.ReadOnlyAfterRelocations = (Flags & SG_READ_ONLY) != 0;
     if (MappedFileSz > 0) {
       Seg.Data.assign(BasePtr + FileOff, BasePtr + FileOff + MappedFileSz);
       // vmsize is untrusted; only zero-fill up to the cap (see
@@ -248,7 +250,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
     if (LC.C.cmd == LC_SEGMENT_64 && Is64) {
       auto SegCmd = Obj.getSegment64LoadCommand(LC);
       AddSegment(SegCmd.segname, SegCmd.vmaddr, SegCmd.vmsize, SegCmd.fileoff,
-                 SegCmd.filesize, SegCmd.initprot);
+                 SegCmd.filesize, SegCmd.initprot, SegCmd.flags);
       for (uint32_t SI = 0; SI < SegCmd.nsects; ++SI) {
         auto S = Obj.getSection64(LC, SI);
         AddSection(S.sectname, S.segname, S.addr, S.size, S.offset, S.align,
@@ -259,7 +261,7 @@ MachOLoader::load(const std::filesystem::path &Path) {
     if (LC.C.cmd == LC_SEGMENT && !Is64) {
       auto SegCmd = Obj.getSegmentLoadCommand(LC);
       AddSegment(SegCmd.segname, SegCmd.vmaddr, SegCmd.vmsize, SegCmd.fileoff,
-                 SegCmd.filesize, SegCmd.initprot);
+                 SegCmd.filesize, SegCmd.initprot, SegCmd.flags);
       for (uint32_t SI = 0; SI < SegCmd.nsects; ++SI) {
         auto S = Obj.getSection(LC, SI);
         AddSection(S.sectname, S.segname, S.addr, S.size, S.offset, S.align,

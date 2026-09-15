@@ -3,6 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+extern NSString *const NDConstantASCII;
+extern NSString *const NDConstantAlias;
+extern NSString *const NDConstantUnicode;
+extern NSString *NDMutableString;
+
 @interface NDConstantStrings : NSObject
 - (NSString *)ascii;
 - (NSString *)alias;
@@ -11,6 +16,11 @@
 - (NSString *)empty;
 - (NSString *)first;
 - (NSString *)second;
+- (NSString *)indirectASCII;
+- (NSString *)indirectAlias;
+- (NSString *)indirectUnicode;
+- (NSString *)mutableValue;
+- (const void *)slotAddress;
 @end
 
 #ifdef NEVERD_RECOVERED_ARC
@@ -34,6 +44,12 @@ int main(void) {
     for (unsigned round = 0; round < 128; ++round) {
       check([[calls ascii] isEqualToString:@"sites\n\"quoted\""]);
       check([calls ascii] == [calls alias]);
+      check([calls ascii] == [calls indirectASCII]);
+      check([calls indirectASCII] == [calls indirectAlias]);
+      check([calls unicode] == [calls indirectUnicode]);
+      NDMutableString = round & 1 ? @"odd" : @"even";
+      check([calls mutableValue] == NDMutableString);
+      check([calls slotAddress] == &NDConstantASCII);
       check([[calls unicode] isEqualToString:@"百科😀"]);
       check([[calls unicode] length] == 4);
       check([[calls embedded] length] == 3);
@@ -44,7 +60,8 @@ int main(void) {
       check([[calls first] isEqual:[calls second]]);
       for (NSString *value in @[
              [calls ascii], [calls unicode], [calls embedded], [calls empty],
-             [calls first], [calls second]
+             [calls first], [calls second], [calls indirectASCII],
+             [calls indirectAlias], [calls indirectUnicode]
            ]) {
         check(object_getClass(value) == object_getClass(@"literal"));
         check([value retain] == value);

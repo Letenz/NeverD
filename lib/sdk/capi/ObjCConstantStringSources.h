@@ -5,6 +5,7 @@
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -13,12 +14,16 @@
 
 namespace neverd::sdk {
 inline std::optional<SourceCallTypeHint>
-constantStringSourceHint(const BinaryImage &Image, va_t Address) {
-  if (!readObjCConstantString(Image, Address))
+constantStringSourceHint(const BinaryImage &Image, va_t Address,
+                         va_t PointerSlot = 0) {
+  if ((PointerSlot &&
+       readImmutableImagePointer(Image, PointerSlot) != Address) ||
+      !readObjCConstantString(Image, Address))
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::RuntimeConstantString;
   Hint.TargetAddress = Address;
+  Hint.ImmutablePointerSlot = PointerSlot;
   Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   std::string Reason;
   if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))

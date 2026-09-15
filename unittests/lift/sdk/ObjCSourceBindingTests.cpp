@@ -680,6 +680,179 @@ struct ConstantStringFixture {
 };
 } // namespace
 
+namespace {
+ConstantStringFixture immutablePointerFixture(Arch Architecture, bool Chained) {
+  ConstantStringFixture F;
+  F.Image.Arch = Architecture;
+  F.Image.MachOHasChainedFixups = Chained;
+  F.Image.MachOResolvedChainedPointerSlots = {0x2000, 0x2010, 0x2020,
+                                              0x2030, 0x3000, 0x3008};
+  Segment Slots;
+  // Deliberately unrelated names: the loader flag, not spelling, is proof.
+  Slots.Name = "pointer_storage";
+  Slots.VA = Slots.FileOff = 0x3000;
+  Slots.Size = Slots.FileSz = 32;
+  Slots.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Slots.ReadOnlyAfterRelocations = true;
+  Slots.Data.resize(32);
+  llvm::support::endian::write64le(Slots.Data.data(), 0x2020);
+  llvm::support::endian::write64le(Slots.Data.data() + 8, 0x2020);
+  Slots.Data[16] = 42;
+  F.Image.Segments.push_back(Slots);
+  Section Section;
+  Section.Name = "pointers";
+  Section.SegmentName = Slots.Name;
+  Section.VA = Section.FileOff = Slots.VA;
+  Section.Size = Section.FileSz = Slots.Size;
+  Section.Flags = Slots.Flags;
+  F.Image.Sections.push_back(Section);
+  F.Image.DataPtrRelocSlots = {0x3000, 0x3008};
+  F.Image.DataPtrRelocTargetOwners = {{0x3000, 0x2000}, {0x3008, 0x2000}};
+  F.Function.Body[0].RetVal = HighExpr::makeLoad(
+      HighExpr::makeConst(0x3000, 8), NdType::makePtr(NdType::makeVoid()));
+  return F;
+}
+} // namespace
+
+TEST(ObjCSourceBindings, ImmutablePointerLoadsShareTheTargetObjectIdentity) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (bool Chained : {false, true}) {
+      auto F = immutablePointerFixture(Architecture, Chained);
+      EXPECT_EQ(readImmutableImagePointer(F.Image, 0x3000), 0x2020U);
+      EXPECT_FALSE(readImmutableImageBytes(F.Image, 0x3000, 8));
+      const auto Scalar = readImmutableImageBytes(F.Image, 0x3010, 8);
+      ASSERT_TRUE(Scalar);
+      EXPECT_EQ((*Scalar)[0], 42U);
+      for (bool Reversed : {false, true}) {
+        F.Function.Body.resize(1);
+        for (auto Address : {0x3000U, 0x3008U, 0x2020U}) {
+          HighStmt Return;
+          Return.Kind = StmtKind::Return;
+          Return.RetVal = HighExpr::makeConst(Address, 8);
+          if (Address != 0x2020)
+            Return.RetVal =
+                HighExpr::makeLoad(Return.RetVal, NdType::makeInt(8));
+          F.Function.Body.push_back(Return);
+        }
+        if (Reversed)
+          std::reverse(F.Function.Body.begin(), F.Function.Body.end());
+        const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+        ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+        EXPECT_EQ(Bound.ConstantStrings, std::set<va_t>{0x2020});
+        for (const auto &Statement : Bound.Function.Body) {
+          ASSERT_TRUE(Statement.RetVal->SourceCallHint);
+          EXPECT_EQ(Statement.RetVal->SourceCallHint->TargetAddress, 0x2020U);
+          EXPECT_TRUE(objcSourceCallBound(*Statement.RetVal, F.Image, {}));
+        }
+        EXPECT_EQ(F.Function.Body[1].RetVal->Kind, ExprKind::Load);
+      }
+    }
+}
+
+TEST(ObjCSourceBindings, ImmutablePointerLoadsRejectIncompleteAndStaleProofs) {
+  using Mutation = std::function<void(BinaryImage &)>;
+  const std::vector<Mutation> Mutations = {
+      [](auto &I) { I.Segments[2].ReadOnlyAfterRelocations = false; },
+      [](auto &I) {
+        I.Segments[2].ReadOnlyAfterRelocations = false;
+        I.Segments[2].Name = I.Sections[3].SegmentName = "__DATA_CONST";
+      },
+      [](auto &I) { I.Format = BinaryFormat::ELF; },
+      [](auto &I) { I.IsRelocatable = true; },
+      [](auto &I) { I.Bits = Bitness::Bits32; },
+      [](auto &I) { I.MachOChainedFixupsAmbiguous = true; },
+      [](auto &I) { I.MachOResolvedChainedPointerSlots.erase(0x3000); },
+      [](auto &I) { I.DataPtrRelocSlots.erase(0x3000); },
+      [](auto &I) { I.DataPtrRelocTargetOwners.erase(0x3000); },
+      [](auto &I) { I.DataPtrRelocTargetOwners[0x3000] = 0x2020; },
+      [](auto &I) { I.DataPtrRelocTargetOwners[0x3000] = 0x1000; },
+      [](auto &I) { I.DataPtrRelocSlots.insert(0x2ff9); },
+      [](auto &I) { I.DataPtrRelocSlots.insert(0x3007); },
+      [](auto &I) { I.MachOResolvedChainedPointerSlots.insert(0x3001); },
+      [](auto &I) { I.CodePtrRelocSlots.insert(0x3000); },
+      [](auto &I) { I.RelDataPtrRelocSlots.insert(0x3000); },
+      [](auto &I) { I.RelCodeRelocSlots.insert(0x3000); },
+      [](auto &I) { I.ConflictingImportStorageSlots.insert(0x3000); },
+      [](auto &I) { I.ImportPtrSlots[0x3000] = "_other"; },
+      [](auto &I) { I.ImportStorageSlots[0x3000] = {}; },
+      [](auto &I) { I.DyldBindSlots[0x3000] = {}; },
+      [](auto &I) { I.ObjCSourceReferences[0x3000] = {}; },
+      [](auto &I) { I.DataAddressRelocOperands[0x3000] = {}; },
+      [](auto &I) { I.CodeAddressRelocOperands[0x3000] = {}; },
+      [](auto &I) { I.Relocations.push_back({0x3000}); },
+      [](auto &I) { I.BaseRelocations.push_back({0x3000}); },
+      [](auto &I) { I.Sections[3].Flags = SegmentFlags::None; },
+      [](auto &I) { I.Segments[2].Flags = SegmentFlags::None; },
+      [](auto &I) { I.Sections[3].FileSz = 7; },
+      [](auto &I) { I.Segments[2].FileSz = 7; },
+      [](auto &I) { I.Segments[2].Data.resize(7); },
+      [](auto &I) { I.Sections[3].FileOff++; },
+      [](auto &I) { I.Sections[3].Type = llvm::MachO::S_ZEROFILL; },
+      [](auto &I) {
+        I.Sections[3].Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+      },
+      [](auto &I) { I.Sections.push_back(I.Sections[3]); },
+      [](auto &I) { I.Segments.push_back(I.Segments[2]); },
+      [](auto &I) { I.Sections.push_back(I.Sections[0]); },
+      [](auto &I) { I.Segments.push_back(I.Segments[0]); },
+      [](auto &I) { I.Segments[2].Data[0] = 0x40; },
+      [](auto &I) { I.Segments[2].Data[0] = 0x21; },
+      [](auto &I) { I.Segments[0].Data[40] = 0; },
+      [](auto &I) {
+        I.Raw.resize(32);
+        llvm::support::endian::write32le(I.Raw.data(),
+                                         llvm::MachO::MH_MAGIC_64);
+        llvm::support::endian::write32le(I.Raw.data() + 8,
+                                         llvm::MachO::CPU_SUBTYPE_ARM64E);
+      },
+  };
+  for (size_t Index = 0; Index < Mutations.size(); ++Index) {
+    SCOPED_TRACE(Index);
+    auto F = immutablePointerFixture(Arch::AArch64, true);
+    const auto Before = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Before.Limitation.empty());
+    Mutations[Index](F.Image);
+    // Projection may encounter a different runtime-reference binding or
+    // defer an unmapped address to source validation. Neither can authorize
+    // the constant object supplied by this immutable-pointer proof.
+    EXPECT_TRUE(
+        bindObjCSourceReferences(F.Function, F.Image).ConstantStrings.empty());
+    EXPECT_FALSE(
+        objcSourceCallBound(*Before.Function.Body[0].RetVal, F.Image, {}));
+  }
+  auto F = immutablePointerFixture(Arch::X64, false);
+  const auto Before = bindObjCSourceReferences(F.Function, F.Image);
+  // A new valid target in the same owner range must invalidate the old hint.
+  llvm::support::endian::write64le(F.Image.Segments[2].Data.data(), 0x2000);
+  EXPECT_FALSE(
+      objcSourceCallBound(*Before.Function.Body[0].RetVal, F.Image, {}));
+  const auto After = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_TRUE(After.Limitation.empty());
+  EXPECT_EQ(After.ConstantStrings, std::set<va_t>{0x2000});
+}
+
+TEST(ObjCSourceBindings, ImmutablePointerProofAppliesOnlyToOrdinaryFullLoads) {
+  for (unsigned Variant = 0; Variant < 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = immutablePointerFixture(Arch::AArch64, true);
+    auto &Load = F.Function.Body[0].RetVal;
+    if (Variant == 0)
+      Load = Load->Operands[0];
+    if (Variant == 1)
+      Load->Type = NdType::makeInt(4);
+    if (Variant == 2)
+      Load->Type = NdType::makeFloat(8);
+    if (Variant == 3)
+      Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Variant == 4)
+      Load->MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+    if (Variant == 5)
+      Load = HighExpr::makeLoad(Load, NdType::makeInt(8));
+    EXPECT_FALSE(
+        bindObjCSourceReferences(F.Function, F.Image).Limitation.empty());
+  }
+}
+
 TEST(ObjCSourceBindings, ConstantStringsKeepBytesUnicodeAndObjectIdentity) {
   ConstantStringFixture F;
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
