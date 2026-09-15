@@ -1848,90 +1848,108 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   // condition or shift/mask control does not anchor the selected scalar.
   // Exact frame reload sources are followed so an SSA PHI whose backedge is
   // carried through a spill slot remains one scalar SCC.
-  std::function<bool(const MedVar &, const Key &, int, std::set<Key> &)>
-      scalarValueReaches = [&](const MedVar &Start, const Key &Target,
-                               int Depth, std::set<Key> &Seen) -> bool {
+  //
+  // Memoize per (node, target).  Erasing the path-local Seen set on unwind
+  // re-explored every PHI/SELECT diamond, which is exponential in a
+  // vector-reduction DAG (x64v52_redsw8 hung in this walk).  A visiting
+  // mark treats a back-edge as "not a finite reaching path"; a completed
+  // miss or hit is reused.  Exhaustion is fail-closed.
+  std::map<std::pair<Key, Key>, uint8_t> ScalarReachState;
+  int RemainingScalarReachNodes = 8192;
+  std::function<bool(const MedVar &, const Key &, int)> scalarValueReaches =
+      [&](const MedVar &Start, const Key &Target, int Depth) -> bool {
     if (Depth > 128 || Start.isConst())
       return false;
     const Key StartKey = keyOf(Start);
     if (StartKey == Target)
       return true;
-    if (!Seen.insert(StartKey).second)
+    const auto MemoKey = std::make_pair(StartKey, Target);
+    if (auto It = ScalarReachState.find(MemoKey);
+        It != ScalarReachState.end()) {
+      return It->second == 3;
+    }
+    // Bound unique (node, target) pairs, not every DAG edge.  Memo hits must
+    // not consume the allowance, and a budget abort must not be cached as a
+    // completed miss (that turned 16-way high-half switches into unproved
+    // table offsets).
+    if (RemainingScalarReachNodes-- <= 0)
       return false;
-    struct SeenScope {
-      std::set<Key> &Values;
-      Key Value;
-      ~SeenScope() { Values.erase(Value); }
-    } Scope{Seen, StartKey};
+    ScalarReachState.emplace(MemoKey, 1);
+    bool Reaches = false;
+    auto explore = [&](const MedVar &Next) {
+      if (!Reaches)
+        Reaches = scalarValueReaches(Next, Target, Depth + 1);
+    };
     if (const PhiNode *Phi = lookupPhi(Start)) {
       for (const auto &[Pred, Arg] : Phi->Args)
         if (classifyPhiIncomingEdge(*Phi, Pred) ==
-                PhiEdgeFeasibility::ProvenFeasible &&
-            scalarValueReaches(Arg, Target, Depth + 1, Seen))
-          return true;
-      return false;
+            PhiEdgeFeasibility::ProvenFeasible)
+          explore(Arg);
+    } else if (const MedOp *Def = lookupDef(Start);
+               Def && Def->NumInputs >= 1) {
+      if (auto Forwarded = pointerPreservingInput(*Def)) {
+        explore(*Forwarded);
+      } else if (Def->Opcode == NdOp::LOAD) {
+        if (Def->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          std::vector<MedVar> Sources;
+          if (collectFrameReloadSources(*Def, Sources) && !Sources.empty())
+            for (const MedVar &Source : Sources)
+              explore(Source);
+        }
+      } else if (Def->Opcode == NdOp::SELECT && Def->NumInputs >= 3) {
+        explore(Def->Inputs[1]);
+        explore(Def->Inputs[2]);
+      } else {
+        MedVar Cond, ArmT, ArmF;
+        if (Def->Opcode == NdOp::INT_OR &&
+            isMaskedSelectOr(*Def, Cond, ArmT, ArmF)) {
+          explore(ArmT);
+          explore(ArmF);
+        } else {
+          switch (Def->Opcode) {
+          case NdOp::COPY:
+          case NdOp::INT_ZEXT:
+          case NdOp::INT_SEXT:
+          case NdOp::SUBBYTES:
+          case NdOp::INT_ADD:
+          case NdOp::INT_SUB:
+          case NdOp::INT_MULT:
+          case NdOp::INT_DIV:
+          case NdOp::INT_SDIV:
+          case NdOp::INT_REM:
+          case NdOp::INT_SREM:
+          case NdOp::INT_LEFT:
+          case NdOp::INT_RIGHT:
+          case NdOp::INT_ASHR:
+          case NdOp::INT_AND:
+          case NdOp::INT_OR:
+          case NdOp::INT_XOR:
+          case NdOp::INT_NEG2:
+          case NdOp::INT_NEGATE:
+          case NdOp::INT_NOT:
+          case NdOp::CONCAT:
+            for (uint8_t I = 0; I < Def->NumInputs; ++I)
+              explore(Def->Inputs[I]);
+            break;
+          default:
+            break;
+          }
+        }
+      }
     }
-    const MedOp *Def = lookupDef(Start);
-    if (!Def || Def->NumInputs < 1)
-      return false;
-    if (auto Forwarded = pointerPreservingInput(*Def))
-      return scalarValueReaches(*Forwarded, Target, Depth + 1, Seen);
-    if (Def->Opcode == NdOp::LOAD) {
-      if (Def->MemoryAddressSpace != NdMemoryAddressSpace::Default)
-        return false;
-      std::vector<MedVar> Sources;
-      if (!collectFrameReloadSources(*Def, Sources) || Sources.empty())
-        return false;
-      for (const MedVar &Source : Sources)
-        if (scalarValueReaches(Source, Target, Depth + 1, Seen))
-          return true;
-      return false;
-    }
-    if (Def->Opcode == NdOp::SELECT && Def->NumInputs >= 3)
-      return scalarValueReaches(Def->Inputs[1], Target, Depth + 1, Seen) ||
-             scalarValueReaches(Def->Inputs[2], Target, Depth + 1, Seen);
-    if (Def->Opcode == NdOp::INT_OR) {
-      MedVar Cond, ArmT, ArmF;
-      if (isMaskedSelectOr(*Def, Cond, ArmT, ArmF))
-        return scalarValueReaches(ArmT, Target, Depth + 1, Seen) ||
-               scalarValueReaches(ArmF, Target, Depth + 1, Seen);
-    }
-    switch (Def->Opcode) {
-    case NdOp::COPY:
-    case NdOp::INT_ZEXT:
-    case NdOp::INT_SEXT:
-    case NdOp::SUBBYTES:
-    case NdOp::INT_ADD:
-    case NdOp::INT_SUB:
-    case NdOp::INT_MULT:
-    case NdOp::INT_DIV:
-    case NdOp::INT_SDIV:
-    case NdOp::INT_REM:
-    case NdOp::INT_SREM:
-    case NdOp::INT_LEFT:
-    case NdOp::INT_RIGHT:
-    case NdOp::INT_ASHR:
-    case NdOp::INT_AND:
-    case NdOp::INT_OR:
-    case NdOp::INT_XOR:
-    case NdOp::INT_NEG2:
-    case NdOp::INT_NEGATE:
-    case NdOp::INT_NOT:
-    case NdOp::CONCAT:
-      for (uint8_t I = 0; I < Def->NumInputs; ++I)
-        if (scalarValueReaches(Def->Inputs[I], Target, Depth + 1, Seen))
-          return true;
-      return false;
-    default:
-      return false;
-    }
+    if (Reaches)
+      ScalarReachState[MemoKey] = 3;
+    else if (RemainingScalarReachNodes > 0)
+      ScalarReachState[MemoKey] = 2;
+    else
+      ScalarReachState.erase(MemoKey);
+    return Reaches;
   };
   std::function<bool(const MedVar &, const std::set<Key> &)>
       reachesAnchoredPhi =
           [&](const MedVar &Start, const std::set<Key> &AnchoredPhis) {
             for (const Key &Anchor : AnchoredPhis) {
-              std::set<Key> Seen;
-              if (scalarValueReaches(Start, Anchor, 0, Seen))
+              if (scalarValueReaches(Start, Anchor, 0))
                 return true;
             }
             return false;
@@ -2037,8 +2055,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     std::set<Key> Seen;
     int Budget = 8192;
     auto reachesRoot = [&](const MedVar &Value) {
-      std::set<Key> Path;
-      return scalarValueReaches(Value, RootKey, 0, Path);
+      return scalarValueReaches(Value, RootKey, 0);
     };
     auto inspectValueArms = [&](const std::vector<MedVar> &Arms,
                                 bool &FoundInitializer) {
@@ -2253,10 +2270,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         SawPotential = true;
         Arms.push_back(
             {NestedPred, NestedArg,
-             ([&] {
-               std::set<Key> Path;
-               return scalarValueReaches(NestedArg, keyOf(Start), 0, Path);
-             }()) ||
+             scalarValueReaches(NestedArg, keyOf(Start), 0) ||
                  phiIncomingClosesFeasibleControlCycle(*Nested, NestedPred)});
       }
       if (!SawPotential)

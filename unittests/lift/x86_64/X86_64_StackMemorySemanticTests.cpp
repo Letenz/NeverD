@@ -215,4 +215,58 @@ INSTANTIATE_TEST_SUITE_P(OperandWidths, X86FlagsStackSemantics,
                                          FlagsStackCase{Arch::X64, false, 8},
                                          FlagsStackCase{Arch::X86, true, 2},
                                          FlagsStackCase{Arch::X86, false, 4}));
+
+TEST(X86StackMemorySemantics, EnterWWritesOnlyBpAndKeepsPointerWidthRsp) {
+  Machine M;
+  const uint64_t OrigRbp = UINT64_C(0xaaaabbbbccccdddd);
+  M.reg(x86reg::RSP, InitialSp);
+  M.reg(x86reg::RBP, OrigRbp);
+  M.run(Arch::X64, {0x66, 0xc8, 16, 0, 1});
+  EXPECT_EQ(M.getReg(x86reg::RSP), InitialSp - 2 - 2 - 16);
+  EXPECT_EQ(M.getReg(x86reg::RBP),
+            (OrigRbp & ~UINT64_C(0xffff)) | ((InitialSp - 2) & 0xffff));
+}
+
+TEST(X86StackMemorySemantics, EnterDefaultUsesPointerWidth) {
+  Machine M;
+  const uint64_t OrigRbp = UINT64_C(0xaaaabbbbccccdddd);
+  M.reg(x86reg::RSP, InitialSp);
+  M.reg(x86reg::RBP, OrigRbp);
+  M.run(Arch::X64, {0xc8, 16, 0, 1});
+  EXPECT_EQ(M.getReg(x86reg::RSP), InitialSp - 8 - 8 - 16);
+  EXPECT_EQ(M.getReg(x86reg::RBP), InitialSp - 8);
+}
+
+TEST(X86StackMemorySemantics, LeaveWPopsTwoBytesIntoBp) {
+  Machine M;
+  const uint64_t Frame = UINT64_C(0x1111222233337300);
+  M.reg(x86reg::RSP, InitialSp);
+  M.reg(x86reg::RBP, Frame);
+  M.memory(Frame, UINT64_C(0xbeef), 2);
+  M.run(Arch::X64, {0x66, 0xc9});
+  EXPECT_EQ(M.getReg(x86reg::RSP), Frame + 2);
+  EXPECT_EQ(M.getReg(x86reg::RBP), (Frame & ~UINT64_C(0xffff)) | 0xbeef);
+}
+
+TEST(X86StackMemorySemantics, LeaveDefaultPopsPointerWidth) {
+  Machine M;
+  const uint64_t Frame = UINT64_C(0x1111222233337300);
+  M.reg(x86reg::RSP, InitialSp);
+  M.reg(x86reg::RBP, Frame);
+  M.memory(Frame, UINT64_C(0xaaaabbbbccccdddd));
+  M.run(Arch::X64, {0xc9});
+  EXPECT_EQ(M.getReg(x86reg::RSP), Frame + 8);
+  EXPECT_EQ(M.getReg(x86reg::RBP), UINT64_C(0xaaaabbbbccccdddd));
+}
+
+TEST(X86StackMemorySemantics, EnterWOnX86WritesOnlyBp) {
+  Machine M;
+  const uint64_t OrigEbp = UINT64_C(0xaaaabbbb);
+  M.reg(x86reg::RSP, InitialSp);
+  M.reg(x86reg::RBP, OrigEbp);
+  M.run(Arch::X86, {0x66, 0xc8, 0, 0, 1});
+  EXPECT_EQ(M.getReg(x86reg::RSP, 4), InitialSp - 2 - 2);
+  EXPECT_EQ(M.getReg(x86reg::RBP, 4),
+            (OrigEbp & ~UINT64_C(0xffff)) | ((InitialSp - 2) & 0xffff));
+}
 } // namespace

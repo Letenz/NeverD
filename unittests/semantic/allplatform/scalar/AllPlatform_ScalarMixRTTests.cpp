@@ -11,8 +11,8 @@
 // plus sdiv/udiv.  i386 in particular has the thinnest algorithm-level coverage
 // (most AllPlatform batches only run x64/a64/arm32), and its AL/AX partial
 // registers are exactly where sub-register aliasing bugs hid before -- so these
-// run on all four targets to flag any i386-specific lowering gap.  Each folds to
-// an exact integer return.
+// run on all four targets to flag any i386-specific lowering gap.  Each folds
+// to an exact integer return.
 //
 //===----------------------------------------------------------------------===//
 
@@ -111,7 +111,8 @@ static std::vector<RoundTripTC> makeScalarMix(const char *prefix) {
   };
 }
 
-static const std::vector<RoundTripTC> kX64SM   = makeScalarMix("x64sm");
+static const std::vector<RoundTripTC> kX64SM =
+    withForbiddenSwitch(makeScalarMix("x64sm"), {"_crc8"});
 static const std::vector<RoundTripTC> kX86SM   = makeScalarMix("x86sm");
 static const std::vector<RoundTripTC> kA64SM   = makeScalarMix("a64sm");
 static const std::vector<RoundTripTC> kARM32SM = makeScalarMix("armsm");

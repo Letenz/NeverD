@@ -13,14 +13,16 @@
 //
 //   * bsearch  - binary search of computed keys over a sorted rodata array.
 //   * heapify  - build a max-heap in a stack array, sift-down, fold.
-//   * hashtbl  - open-addressing (linear-probe) insert + lookup in a stack array.
-//   * dijkstra - shortest paths over a rodata adjacency matrix (stack dist/seen).
+//   * hashtbl  - open-addressing (linear-probe) insert + lookup in a stack
+//   array.
+//   * dijkstra - shortest paths over a rodata adjacency matrix (stack
+//   dist/seen).
 //   * trie     - prefix-tree walk over a rodata node array (index-linked).
 //   * merge    - merge two sorted rodata arrays into a stack array, fold.
 //
-// All integer, arrays filled with computed values (never memset/memcpy), indices
-// bounded, fold to one return, no float / 64-bit divide helper.  All four
-// targets, -O2.
+// All integer, arrays filled with computed values (never memset/memcpy),
+// indices bounded, fold to one return, no float / 64-bit divide helper.  All
+// four targets, -O2.
 //
 //===----------------------------------------------------------------------===//
 
@@ -153,12 +155,18 @@ static std::vector<RoundTripTC> makeOptStress58TC(const char *prefix, const char
 }
 // clang-format on
 
-static const std::vector<RoundTripTC> kX64 = makeOptStress58TC("x64o58", "long");
+static const std::vector<RoundTripTC> kX64 =
+    withForbiddenSwitch(makeOptStress58TC("x64o58", "long"), {"_trie"});
 static const std::vector<RoundTripTC> kX86 = makeOptStress58TC("x86o58", "int");
-static const std::vector<RoundTripTC> kA64 = makeOptStress58TC("a64o58", "long");
+static const std::vector<RoundTripTC> kA64 =
+    makeOptStress58TC("a64o58", "long");
 static const std::vector<RoundTripTC> kARM = makeOptStress58TC("armo58", "int");
 
-INSTANTIATE_TEST_SUITE_P(OptStress58, X64OptStress58RT, ::testing::ValuesIn(kX64), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress58, X86OptStress58RT, ::testing::ValuesIn(kX86), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress58, A64OptStress58RT, ::testing::ValuesIn(kA64), rtTCName);
-INSTANTIATE_TEST_SUITE_P(OptStress58, ARM32OptStress58RT, ::testing::ValuesIn(kARM), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress58, X64OptStress58RT,
+                         ::testing::ValuesIn(kX64), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress58, X86OptStress58RT,
+                         ::testing::ValuesIn(kX86), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress58, A64OptStress58RT,
+                         ::testing::ValuesIn(kA64), rtTCName);
+INSTANTIATE_TEST_SUITE_P(OptStress58, ARM32OptStress58RT,
+                         ::testing::ValuesIn(kARM), rtTCName);

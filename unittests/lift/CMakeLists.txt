@@ -52,6 +52,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_LoopTests.cpp
   x86_32/X86_32_MiscTests.cpp
   x86_32/X86_32_MulDivTests.cpp
+  x86_32/X86_32_NativeHostModeTests.cpp
   x86_32/X86_32_PipelineE2ETests.cpp
   x86_32/X86_32_RotateTests.cpp
   x86_32/X86_32_SetccTests.cpp
@@ -92,6 +93,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEMiscTests.cpp
   x86_64/X86_64_StackMovTests.cpp
   x86_64/X86_64_StackMemorySemanticTests.cpp
+  x86_64/X86_64_NativeHostModeTests.cpp
   x86_64/X86_64_StringOpsTests.cpp
   x86_64/X86_64_X87FPUTests.cpp
   x86_64/X86_64_EVEXCompareTests.cpp

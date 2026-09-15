@@ -1,4 +1,5 @@
-//===- AllPlatform_VectorAlgo24RTTests.cpp - FP/rodata/PHI kernels -*- C++ -*-===//
+//===- AllPlatform_VectorAlgo24RTTests.cpp - FP/rodata/PHI kernels -*- C++
+//-*-===//
 //
 // NeverD Decompiler
 //
@@ -21,7 +22,8 @@ class A64VectorAlgo24RT : public SemanticRoundTripFixture,
 TEST_P(A64VectorAlgo24RT, Verify) { roundTripAArch64(GetParam()); }
 
 class ARM32VectorAlgo24RT : public SemanticRoundTripFixture,
-                            public ::testing::WithParamInterface<RoundTripTC> {};
+                            public ::testing::WithParamInterface<RoundTripTC> {
+};
 TEST_P(ARM32VectorAlgo24RT, Verify) { roundTripARM32(GetParam()); }
 
 // clang-format off
@@ -136,7 +138,8 @@ static std::vector<RoundTripTC> makeVA24TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64 = makeVA24TC("x64v24", "long", 2, "");
+static const std::vector<RoundTripTC> kX64 =
+    withForbiddenSwitch(makeVA24TC("x64v24", "long", 2, ""), {"_descidx"});
 static const std::vector<RoundTripTC> kA64 = makeVA24TC("a64v24", "long", 2, "");
 static const std::vector<RoundTripTC> kARM = makeVA24TC("armv24", "int", 2, "");
 

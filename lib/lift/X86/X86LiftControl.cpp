@@ -22,6 +22,22 @@ namespace neverd {
 
 namespace {
 
+/// Stack-pointer width in long/protected mode (SS.B=1).  16-bit stack
+/// addressing is not modelled.
+uint16_t stackPointerSize(Arch TargetArch) {
+  return TargetArch == Arch::X64 ? 8 : 4;
+}
+
+/// Operand size for ENTER/LEAVE's BP push/pop.  Intel: a 66H prefix selects
+/// 16-bit operation; 32-bit ENTER/LEAVE cannot be encoded in 64-bit mode.
+/// Host CPU measurements: RSP arithmetic stays pointer-width; only BP data
+/// and the stack displacement per push/pop shrink to 2 bytes.
+uint16_t stackOperandSize(Arch TargetArch, const cs_x86 &X86) {
+  if (X86.prefix[2] == 0x66)
+    return 2;
+  return stackPointerSize(TargetArch);
+}
+
 enum class ApxConditionalKind { Compare, Test };
 
 struct ApxConditionalEncoding {
@@ -1104,15 +1120,19 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
   }
 
   // --- LEAVE ---
+  // StackAddressSize copies the full RBP into RSP; OperandSize then pops BP.
+  // LEAVEW is therefore `mov rsp, rbp; pop bp`, not a 16-bit SP:=BP merge.
   case X86_INS_LEAVE: {
-    uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
+    uint16_t PtrSize = stackPointerSize(TargetArch);
+    uint16_t DataSize = stackOperandSize(TargetArch, X86);
     NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
-    NdVar Rbp = NdVar::reg(x86reg::RBP, PtrSize);
-    S.emit(NdOp::COPY, Rsp, {Rbp});
-    NdVar Val = S.makeTemp(PtrSize);
+    NdVar RbpWide = NdVar::reg(x86reg::RBP, PtrSize);
+    NdVar RbpData = NdVar::reg(x86reg::RBP, DataSize);
+    S.emit(NdOp::COPY, Rsp, {RbpWide});
+    NdVar Val = S.makeTemp(DataSize);
     S.emit(NdOp::LOAD, Val, {Rsp});
-    S.emit(NdOp::COPY, Rbp, {Val});
-    S.emit(NdOp::INT_ADD, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
+    S.emit(NdOp::COPY, RbpData, {Val});
+    S.emit(NdOp::INT_ADD, Rsp, {Rsp, NdVar::scalar(DataSize, PtrSize)});
     break;
   }
 
@@ -1454,35 +1474,52 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
   // The nesting level was previously ignored, which dropped the Push(FrameTemp)
   // (and, for level >= 2, the display copies) for nested frames.
   case X86_INS_ENTER: {
-    uint16_t PtrSize = (TargetArch == Arch::X64) ? 8 : 4;
+    uint16_t PtrSize = stackPointerSize(TargetArch);
+    uint16_t DataSize = stackOperandSize(TargetArch, X86);
     NdVar Rsp = NdVar::reg(x86reg::RSP, PtrSize);
-    NdVar Rbp = NdVar::reg(x86reg::RBP, PtrSize);
+    NdVar RbpData = NdVar::reg(x86reg::RBP, DataSize);
+    NdVar RbpWide = NdVar::reg(x86reg::RBP, PtrSize);
     uint64_t AllocSz =
         (X86.op_count >= 1) ? static_cast<uint64_t>(X86.operands[0].imm) : 0;
     uint64_t Level = (X86.op_count >= 2)
                          ? (static_cast<uint64_t>(X86.operands[1].imm) % 32)
                          : 0;
-    // Push(RBP)
-    S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
-    S.emit(NdOp::STORE, {}, {Rsp, Rbp});
+    // Push(BP) at OperandSize; RSP stays pointer-width.
+    S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(DataSize, PtrSize)});
+    S.emit(NdOp::STORE, {}, {Rsp, RbpData});
     // FrameTemp = RSP
     NdVar FrameTemp = S.makeTemp(PtrSize);
     S.emit(NdOp::COPY, FrameTemp, {Rsp});
     if (Level > 0) {
-      // Display copy: FOR i = 1 TO level-1: RBP -= PtrSize; Push([RBP]).
+      // Display copy: FOR i = 1 TO level-1: BP -= OperandSize; Push([RBP]).
+      // The address is the full RBP after a DataSize write to BP, so a 16-bit
+      // subtract preserves RBP's high bits (no 64-bit borrow).
       for (uint64_t I = 1; I < Level; ++I) {
-        S.emit(NdOp::INT_SUB, Rbp, {Rbp, NdVar::scalar(PtrSize, PtrSize)});
-        NdVar Disp = S.makeTemp(PtrSize);
-        S.emit(NdOp::LOAD, Disp, {Rbp});
-        S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
+        S.emit(NdOp::INT_SUB, RbpData,
+               {RbpData, NdVar::scalar(DataSize, DataSize)});
+        NdVar Disp = S.makeTemp(DataSize);
+        S.emit(NdOp::LOAD, Disp, {RbpWide});
+        S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(DataSize, PtrSize)});
         S.emit(NdOp::STORE, {}, {Rsp, Disp});
       }
-      // Push(FrameTemp)
-      S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(PtrSize, PtrSize)});
-      S.emit(NdOp::STORE, {}, {Rsp, FrameTemp});
+      // Push(FrameTemp) truncated to OperandSize.
+      NdVar FramePush = FrameTemp;
+      if (FramePush.Size != DataSize) {
+        NdVar Narrow = S.makeTemp(DataSize);
+        S.emit(NdOp::SUBBYTES, Narrow, {FramePush, NdVar::cst(0, 4)});
+        FramePush = Narrow;
+      }
+      S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(DataSize, PtrSize)});
+      S.emit(NdOp::STORE, {}, {Rsp, FramePush});
     }
-    // RBP = FrameTemp
-    S.emit(NdOp::COPY, Rbp, {FrameTemp});
+    // BP = FrameTemp (OperandSize write; high RBP bits survive ENTERW).
+    if (DataSize == PtrSize) {
+      S.emit(NdOp::COPY, RbpWide, {FrameTemp});
+    } else {
+      NdVar Low = S.makeTemp(DataSize);
+      S.emit(NdOp::SUBBYTES, Low, {FrameTemp, NdVar::cst(0, 4)});
+      S.emit(NdOp::COPY, RbpData, {Low});
+    }
     // RSP -= imm16
     if (AllocSz)
       S.emit(NdOp::INT_SUB, Rsp, {Rsp, NdVar::scalar(AllocSz, PtrSize)});

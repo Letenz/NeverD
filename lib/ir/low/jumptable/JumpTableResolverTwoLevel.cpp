@@ -1319,6 +1319,38 @@ bool CFGBuilder::tryTwoLevelIndexTable(const BinaryImage &Img,
     return false;
   }
 
+  // A compiler index table for an M-entry address table stores only slot
+  // numbers in [0, M).  Computed-goto bytecode (`op = pg[pc]; if (op > N)
+  // op = N; goto *lab[op]`) has the same load/clamp/pointer-table shape but
+  // the program bytes are not jmptab indices.  Claiming two-level here would
+  // block the absolute pointer-table recovery of lab[].  When the exact
+  // outer object is known and any slot is >= M, this is not a two-level
+  // index table.
+  if (!consumeProducts({{Img.Symbols.size(), 3},
+                        {Img.Segments.size(), 4},
+                        {Img.Sections.size(), 8}}))
+    return false;
+  const uint64_t ExactIdxSize = Img.dataObjectSizeAt(IdxTab);
+  if (ExactIdxSize >= W1 && ExactIdxSize % W1 == 0 &&
+      ExactIdxSize / W1 >= limits::kMinJumpTableEntries &&
+      ExactIdxSize / W1 <= limits::kMaxJumpTableEntries) {
+    const uint32_t IdxSlots = static_cast<uint32_t>(ExactIdxSize / W1);
+    if (!consumeEvidence(IdxSlots))
+      return false;
+    bool AllSlotsInRange = true;
+    for (uint32_t I = 0; I < IdxSlots && AllSlotsInRange; ++I) {
+      const uint8_t *Bytes = Img.readVA(IdxTab + uint64_t(I) * W1, W1);
+      if (!Bytes)
+        return false;
+      uint64_t Slot = 0;
+      for (uint16_t B = 0; B < W1; ++B)
+        Slot |= uint64_t(Bytes[B]) << (8 * B);
+      AllSlotsInRange = Slot < M;
+    }
+    if (!AllSlotsInRange)
+      return false;
+  }
+
   // The two chained physical tables, narrow outer LOAD and relocation-backed
   // inner address table are a distinguishing composite shape.  From here a
   // failed outer-domain or occurrence certificate must not fall through to a

@@ -9,25 +9,26 @@
 //   * i64-ELEMENT vector reduction — PADDQ (x86-64), .2d (AArch64), or VADD.i64
 //     D-register PAIRS (ARM32, the #532 bug① / b49d8f6 mixed-half machinery).
 //   * the HIGH 32 bits of the reduced i64 used as the dispatch selector —
-//     `(unsigned)(sum>>32)&7` lives in the high pair half (EDX-equiv / upper D),
-//     exactly the #533 OptStress336 "high-half selector" story but sourced from a
-//     VECTOR horizontal reduction rather than a scalar loop accumulator.
+//     `(unsigned)(sum>>32)&7` lives in the high pair half (EDX-equiv / upper
+//     D), exactly the #533 OptStress336 "high-half selector" story but sourced
+//     from a VECTOR horizontal reduction rather than a scalar loop accumulator.
 //   * a switch JUMP TABLE reached straight off the reduction epilogue (#534
 //     VectorAlgo52 / #532 bug② jump-table-base folding past vector intrinsics).
 //
-// VectorAlgo52 fed a 32-bit/byte reduction (low bits) into a switch; OptStress336
-// fed a scalar i64 high half into a switch.  Nothing has fed the HIGH half of a
-// VECTOR-reduced i64 into a jump table — so the resolver must trace the index
-// back through both the i64 horizontal-reduction extract AND the high-half pick.
+// VectorAlgo52 fed a 32-bit/byte reduction (low bits) into a switch;
+// OptStress336 fed a scalar i64 high half into a switch.  Nothing has fed the
+// HIGH half of a VECTOR-reduced i64 into a jump table — so the resolver must
+// trace the index back through both the i64 horizontal-reduction extract AND
+// the high-half pick.
 //
-// Each kernel threads a loop-carried u64 accumulator through the switch arms and
-// mutates the source array per outer iteration (touching high bits) so successive
-// reductions and selected arms differ; folds both i64 halves into one return so a
-// dropped/duplicated high word surfaces.  i64 fill is composed from two u32
-// halves; all i64 math is add/sub/xor/and + CONSTANT shifts (no i64 multiply,
-// divide, or variable shift) so ARM32 stays libcall-free.  x64 uses -msse4.2;
-// a64/arm32 use the default NEON baseline.  Three targets (i386 skipped: no
-// native i64 SIMD, matching VectorAlgo45-52).
+// Each kernel threads a loop-carried u64 accumulator through the switch arms
+// and mutates the source array per outer iteration (touching high bits) so
+// successive reductions and selected arms differ; folds both i64 halves into
+// one return so a dropped/duplicated high word surfaces.  i64 fill is composed
+// from two u32 halves; all i64 math is add/sub/xor/and + CONSTANT shifts (no
+// i64 multiply, divide, or variable shift) so ARM32 stays libcall-free.  x64
+// uses -msse4.2; a64/arm32 use the default NEON baseline.  Three targets (i386
+// skipped: no native i64 SIMD, matching VectorAlgo45-52).
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,7 +43,8 @@ class A64VectorAlgo53RT : public SemanticRoundTripFixture,
 TEST_P(A64VectorAlgo53RT, Verify) { roundTripAArch64(GetParam()); }
 
 class ARM32VectorAlgo53RT : public SemanticRoundTripFixture,
-                            public ::testing::WithParamInterface<RoundTripTC> {};
+                            public ::testing::WithParamInterface<RoundTripTC> {
+};
 TEST_P(ARM32VectorAlgo53RT, Verify) { roundTripARM32(GetParam()); }
 
 // clang-format off
@@ -167,8 +169,9 @@ static std::vector<RoundTripTC> makeVec53TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64Vec53 =
-    makeVec53TC("x64v53", "long", 2, "-msse4.2");
+static const std::vector<RoundTripTC> kX64Vec53 = withForbiddenSwitch(
+    makeVec53TC("x64v53", "long", 2, "-msse4.2"),
+    {"_r64hi", "_r64dense", "_r64xor", "_r64imm"});
 static const std::vector<RoundTripTC> kA64Vec53 =
     makeVec53TC("a64v53", "long", 2, "");
 static const std::vector<RoundTripTC> kARM32Vec53 =

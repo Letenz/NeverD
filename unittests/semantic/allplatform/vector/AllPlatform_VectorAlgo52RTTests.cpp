@@ -5,29 +5,34 @@
 //===----------------------------------------------------------------------===//
 //
 // Fifty-second batch of clang -O2 vector probes targeting a data path no prior
-// batch has driven: the SCALAR result of an auto-vectorized HORIZONTAL REDUCTION
-// is immediately consumed as a SWITCH selector, so a jump-table dispatch block
-// is reached right after the vector reduction epilogue (PSADBW/PHADDW/PSHUFD
-// extract on x86, ADDV/UADDLV on a64, VPADD/VPADAL on arm32).  This is the
-// intersection of two recently-fragile mechanisms:
-//   * #532 bug②: a vectorized loop body stalled `NdOpEmulator` so the jump-table
-//                base `lea` could not be folded (INTRINSIC non-stall fix).  Here
-//                the vector intrinsics dominate the dispatch block, re-exercising
-//                that folding path with the reduced value ALSO feeding the index.
-//   * #530/#533: jump-table index normalization — the switch selector is derived
+// batch has driven: the SCALAR result of an auto-vectorized HORIZONTAL
+// REDUCTION is immediately consumed as a SWITCH selector, so a jump-table
+// dispatch block is reached right after the vector reduction epilogue
+// (PSADBW/PHADDW/PSHUFD extract on x86, ADDV/UADDLV on a64, VPADD/VPADAL on
+// arm32).  This is the intersection of two recently-fragile mechanisms:
+//   * #532 bug②: a vectorized loop body stalled `NdOpEmulator` so the
+//   jump-table
+//                base `lea` could not be folded (INTRINSIC non-stall fix). Here
+//                the vector intrinsics dominate the dispatch block,
+//                re-exercising that folding path with the reduced value ALSO
+//                feeding the index.
+//   * #530/#533: jump-table index normalization — the switch selector is
+//   derived
 //                from a reduction result (`sum & 7`, `(sum>>2)&15`), so the
 //                resolver must anchor the table while the index traces back
-//                through the horizontal-reduction extract, not a plain register.
+//                through the horizontal-reduction extract, not a plain
+//                register.
 //
-// VectorAlgo50 `_sadmin` fed a vector reduction into a min/argmin BRANCH; nothing
-// has fed one into a multi-way SWITCH (jump table).  Each kernel wraps the
-// reduce-then-dispatch in an outer loop with a loop-carried u32 accumulator and
-// mutates the source buffer per iteration so successive reductions (and thus the
-// selected arm) differ.  All accumulators are u32 (sums ≤ 255·256), shifts are
-// constant, no i64 divide → i386/ARM32 would be libcall-free, but i386 is skipped
-// (matching VectorAlgo45-51).  Each kernel folds to one exact integer for a
-// bit-exact original-vs-lifted compare; inputs are LCG-seeded from the argument.
-// x64 uses -mssse3 (PSADBW/PHADDW); a64/arm32 use the default NEON baseline.
+// VectorAlgo50 `_sadmin` fed a vector reduction into a min/argmin BRANCH;
+// nothing has fed one into a multi-way SWITCH (jump table).  Each kernel wraps
+// the reduce-then-dispatch in an outer loop with a loop-carried u32 accumulator
+// and mutates the source buffer per iteration so successive reductions (and
+// thus the selected arm) differ.  All accumulators are u32 (sums ≤ 255·256),
+// shifts are constant, no i64 divide → i386/ARM32 would be libcall-free, but
+// i386 is skipped (matching VectorAlgo45-51).  Each kernel folds to one exact
+// integer for a bit-exact original-vs-lifted compare; inputs are LCG-seeded
+// from the argument. x64 uses -mssse3 (PSADBW/PHADDW); a64/arm32 use the
+// default NEON baseline.
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,7 +47,8 @@ class A64VectorAlgo52RT : public SemanticRoundTripFixture,
 TEST_P(A64VectorAlgo52RT, Verify) { roundTripAArch64(GetParam()); }
 
 class ARM32VectorAlgo52RT : public SemanticRoundTripFixture,
-                            public ::testing::WithParamInterface<RoundTripTC> {};
+                            public ::testing::WithParamInterface<RoundTripTC> {
+};
 TEST_P(ARM32VectorAlgo52RT, Verify) { roundTripARM32(GetParam()); }
 
 // clang-format off
@@ -167,8 +173,9 @@ static std::vector<RoundTripTC> makeVec52TC(const char *prefix, const char *T,
   };
 }
 
-static const std::vector<RoundTripTC> kX64Vec52 =
-    makeVec52TC("x64v52", "long", 2, "-mssse3");
+static const std::vector<RoundTripTC> kX64Vec52 = withForbiddenSwitch(
+    makeVec52TC("x64v52", "long", 2, "-mssse3"),
+    {"_redsw8", "_redsw16", "_redsad", "_redcnt"});
 static const std::vector<RoundTripTC> kA64Vec52 =
     makeVec52TC("a64v52", "long", 2, "");
 static const std::vector<RoundTripTC> kARM32Vec52 =

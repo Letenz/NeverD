@@ -1252,11 +1252,13 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     CandidateEvidenceShapeClaimed |=
         Info.CompositeShapeClaimed || !TwoTableAnalysisComplete;
     CandidateEvidenceAnalysisIncomplete |= !TwoTableAnalysisComplete;
-    if (!TwoTableAnalysisComplete)
+    if (!TwoTableAnalysisComplete) {
       return {};
+    }
     if (Info.CompositeShapeClaimed &&
-        (!Recovered || !HasOccurrenceMetadata(Info)))
+        (!Recovered || !HasOccurrenceMetadata(Info))) {
       return {};
+    }
     if (!Recovered)
       Info = JumpTableInfo{};
   }
@@ -1276,8 +1278,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
     CandidateEvidenceShapeClaimed |= Info.CompositeShapeClaimed;
     CandidateEvidenceAnalysisIncomplete |= Info.IncompleteGuardDomain;
     if (Info.CompositeShapeClaimed &&
-        (!Recovered || !HasOccurrenceMetadata(Info)))
+        (!Recovered || !HasOccurrenceMetadata(Info))) {
       return {};
+    }
     if (!Recovered)
       Info = JumpTableInfo{};
   }
@@ -3341,6 +3344,8 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
                           CandidateProposalStageActive &&
                               ProvisionalRelativeEdgeTemplate.has_value());
   }
+  if (!Info.IndexDomainAuthenticated)
+    inferBoundsFromBitTestClamp(Img, Rec, Info);
   // A candidate-local least-fixed-point round can prove a larger numeric
   // domain before the corresponding destinations exist in this immutable
   // graph.  The resolver records exactly those targets for the outer bounded
@@ -3460,8 +3465,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   };
   const std::optional<bool> InitialGraphGrowth = SuspendForPendingGraphGrowth(
       /*RetainNoGrowthProposal=*/!CertifiedSiblingRuntimeStorage);
-  if (!InitialGraphGrowth || *InitialGraphGrowth)
+  if (!InitialGraphGrowth || *InitialGraphGrowth) {
     return {};
+  }
 
   // If a normalization offset is present and the guard bound looks
   // like it was applied to the original (pre-normalization) variable,
@@ -3540,8 +3546,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   const std::optional<bool> MaskGraphGrowth = SuspendForPendingGraphGrowth(
       /*RetainNoGrowthProposal=*/
       !ExactFiniteRelativeSingletonTargetValue.has_value());
-  if (!MaskGraphGrowth || *MaskGraphGrowth)
+  if (!MaskGraphGrowth || *MaskGraphGrowth) {
     return {};
+  }
   // Use the same exact owner and storage-envelope proof at both boundaries.
   // A complete query may have no identity; exhaustion remains a failure.
   auto ProveExactPhysicalStorage =
@@ -4119,10 +4126,12 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
 
   if (Info.MaxEntries == 0 || Info.MaxEntries > limits::kMaxJumpTableEntries)
     Info.MaxEntries = 0;
-  if (!JumpTableProofContextComplete && RequestedCompleteJumpTableProof)
+  if (!JumpTableProofContextComplete && RequestedCompleteJumpTableProof) {
     return {};
-  if (Info.PreScaledIndex && Info.RuntimeSlotIndices.empty())
+  }
+  if (Info.PreScaledIndex && Info.RuntimeSlotIndices.empty()) {
     return {};
+  }
   // Static bytes and relocation runs establish only physical capacity.  Every
   // multi-target publication must also carry a complete proof of the exact
   // runtime selector domain.  In particular, neither the legacy unbounded
@@ -4153,8 +4162,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // out of final ownership and suppression, then revalidates both certificates
   // on the refined root set below.
   if (Info.RuntimeSlotIndices.empty()) {
-    if (!Info.HasBaseAddr || Info.EntrySize == 0)
+    if (!Info.HasBaseAddr || Info.EntrySize == 0) {
       return {};
+    }
     const uint64_t PhysicalStride =
         Info.EntryStride != 0 ? Info.EntryStride : Info.EntrySize;
     if (PhysicalStride < Info.EntrySize)
@@ -4169,8 +4179,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
             Info.MaxEntries, Img.Segments.size(), Img.Sections.size(),
             orderedLookupWork(Img.CodePtrRelocSlots.size()),
             ProtectedLookupWork);
-    if (!SuppressionWork || !consumeCandidateEvidence(*SuppressionWork))
+    if (!SuppressionWork || !consumeCandidateEvidence(*SuppressionWork)) {
       return {};
+    }
 
     std::vector<JumpTableStorageRange> ExactStorage;
     std::vector<va_t> ExactSuppressibleSlots;
@@ -4239,11 +4250,19 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Check.IndexDomainAuthenticated = false;
       Check.IncompleteGuardDomain = false;
       Check.SemanticGuardDomainAmbiguous = false;
-      const bool GuardRevalidated =
+      bool GuardRevalidated =
           provePreciseGuard(Check, AuthenticatedGuardUsesDefinedOccurrenceRoots,
                             TargetRoleEdgeOverrides);
+      if (!GuardRevalidated ||
+          Check.MaxEntries != Info.AuthenticatedGuardBound) {
+        Check.MaxEntries = 0;
+        Check.IndexDomainAuthenticated = false;
+        Check.AuthenticatedGuardBound = 0;
+        GuardRevalidated = inferBoundsFromBitTestClamp(Img, Rec, Check) &&
+                           Check.MaxEntries == Info.AuthenticatedGuardBound;
+      }
       CandidateEvidenceAnalysisIncomplete |= Check.IncompleteGuardDomain;
-      if (!GuardRevalidated || Check.MaxEntries != Info.AuthenticatedGuardBound)
+      if (!GuardRevalidated)
         return false;
       Revalidated = true;
     }
