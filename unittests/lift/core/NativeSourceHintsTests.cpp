@@ -172,7 +172,7 @@ TEST(NativeSourceHints,
 TEST(NativeSourceHints,
      CompilerRTPlatformVersionHelperRejectsContradictoryEvidence) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
-    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
       auto Fixture = compilerRTPlatformVersionFixture(Architecture);
       auto &Symbol = Fixture.Image.Symbols.back();
       auto Call = std::make_shared<SourceCallTypeHint>(
@@ -181,28 +181,31 @@ TEST(NativeSourceHints,
       if (Mutation == 0)
         Symbol.IsFunc = false;
       if (Mutation == 1)
-        Symbol.Addr += 4;
-      if (Mutation == 2)
         Fixture.Image.Symbols.push_back(Symbol);
-      if (Mutation == 3)
+      if (Mutation == 2)
         Call->WeakImport = false;
-      if (Mutation == 4)
+      if (Mutation == 3)
         Call->TargetName = "_different";
-      if (Mutation == 5)
+      if (Mutation == 4)
         Call->CallKind = SourceCallTypeHint::Kind::Native;
-      if (Mutation == 6)
+      if (Mutation == 5)
         Call->Signature.ReturnType = NdType::makeInt(4, false);
       std::string Error;
       EXPECT_FALSE(Fixture.infer(Error)) << Mutation;
       EXPECT_FALSE(Error.empty()) << Mutation;
     }
 
-    auto Unrelated = compilerRTPlatformVersionFixture(Architecture);
-    Unrelated.Image.Symbols.back().Name = "unrelated_local_helper";
-    std::string Error;
-    const auto Generic = Unrelated.infer(Error);
-    ASSERT_TRUE(Generic) << Error;
-    EXPECT_EQ(Generic->ReturnType->Size, 8U);
+    for (unsigned Mutation = 0; Mutation < 2; ++Mutation) {
+      auto Unrelated = compilerRTPlatformVersionFixture(Architecture);
+      if (Mutation == 0)
+        Unrelated.Image.Symbols.back().Name = "unrelated_local_helper";
+      else
+        Unrelated.Image.Symbols.back().Addr += 4;
+      std::string Error;
+      const auto Generic = Unrelated.infer(Error);
+      ASSERT_TRUE(Generic) << Mutation << ": " << Error;
+      EXPECT_EQ(Generic->ReturnType->Size, 8U) << Mutation;
+    }
   }
 }
 

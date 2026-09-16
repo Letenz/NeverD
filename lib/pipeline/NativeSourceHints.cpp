@@ -388,14 +388,18 @@ compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
                                   std::string &Diagnostic) {
   constexpr llvm::StringLiteral SymbolName = "___isPlatformVersionAtLeast";
   size_t MatchingSymbols = 0;
+  bool EntryMatches = false;
   bool SymbolValid = true;
   for (const auto &Symbol : Image.Symbols) {
     if (Symbol.Name != SymbolName)
       continue;
     ++MatchingSymbols;
-    SymbolValid &= Symbol.IsFunc && Symbol.Addr == Med.Entry;
+    if (Symbol.Addr == Med.Entry) {
+      EntryMatches = true;
+      SymbolValid &= Symbol.IsFunc;
+    }
   }
-  if (!MatchingSymbols)
+  if (!EntryMatches)
     return {};
   ExactNativeContract Result;
   Result.Recognized = true;
