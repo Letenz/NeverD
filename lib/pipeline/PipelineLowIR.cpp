@@ -2914,12 +2914,6 @@ void Pipeline::buildLowIR(
   const std::vector<bool> RebuildAll(Total, true);
   bool ArbitrationStable = false;
   bool PreserveAllRelocationSlots = false;
-  // Patch and LLVM-lift must rebuild every CFG when module table evidence is
-  // exhausted so relocation suppression stays fail-closed.  Structured
-  // decompile keeps the first-pass CFGs: a tens-of-thousands-function image
-  // otherwise repeats the whole LowIR stage for a budget that cannot scale
-  // with CodePtrRelocSlots.
-  const bool RebuildUncertainJumpTables = Opts.PatchMode || Opts.LiftMode;
   const size_t MaxArbitrationPasses = limits::kMaxJumpTableEvidenceWork + 1;
   for (size_t Pass = 0; Pass < MaxArbitrationPasses; ++Pass) {
     ModuleJumpTableArbitration Discovered = collectModuleJumpTableArbitration(
@@ -2971,8 +2965,7 @@ void Pipeline::buildLowIR(
 
     rebuildFunctions(Rebuild);
   }
-  if ((!ArbitrationStable || PreserveAllRelocationSlots) &&
-      RebuildUncertainJumpTables) {
+  if (!ArbitrationStable || PreserveAllRelocationSlots) {
     // A budget/iteration failure is uncertainty, not absence of consumers.
     // Disable relocation suppression module-wide and rebuild every candidate
     // once so the public CFG and LLVM mirror agree on the same fail-closed
@@ -3090,12 +3083,7 @@ void Pipeline::buildLowIR(
   // roots, rebuild the baseline under the new monotone protection set, and
   // compute the least fixed point again.  No provisional code reference is
   // published to BinaryImage during these rounds.
-  // Structured decompile keeps the first-pass CFGs: the continuation least
-  // fixed point can rebuild every function many times on a large image.
   bool ContinuationAndArbitrationStable = false;
-  if (!RebuildUncertainJumpTables) {
-    ContinuationAndArbitrationStable = true;
-  } else
   for (size_t Pass = 0; Pass < limits::kMaxMultiStageRetries; ++Pass) {
     if (!closeEHContinuations()) {
       ContinuationAndArbitrationStable = true;
@@ -3111,8 +3099,7 @@ void Pipeline::buildLowIR(
       UnsafeJumpTableBranches.insert(Discovered.UnsafeBranches.begin(),
                                      Discovered.UnsafeBranches.end());
       PreservePotentialJumpTableBranches = true;
-      if (RebuildUncertainJumpTables)
-        rebuildFunctions(RebuildAll);
+      rebuildFunctions(RebuildAll);
       ContinuationAndArbitrationStable = true;
       break;
     }

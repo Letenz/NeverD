@@ -49,12 +49,19 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
     OS << "const ";
   if ((Clause.Adjectives & kCxxCatchVolatile) != 0)
     OS << "volatile ";
-  if (!Clause.TypeName.empty() && isCIdentifier(Clause.TypeName))
+  if (!Clause.TypeName.empty() && isCIdentifier(Clause.TypeName)) {
     OS << Clause.TypeName;
-  else if (!Clause.TypeName.empty())
-    OS << "/* " << Clause.TypeName << " */";
-  else
+    if (Clause.TypeDescriptorVA)
+      OS << " /* type @ 0x" << llvm::utohexstr(Clause.TypeDescriptorVA)
+         << " */";
+  } else if (!Clause.TypeName.empty()) {
+    OS << "/* " << Clause.TypeName;
+    if (Clause.TypeDescriptorVA)
+      OS << "; type @ 0x" << llvm::utohexstr(Clause.TypeDescriptorVA);
+    OS << " */";
+  } else {
     OS << "/* type @ 0x" << llvm::utohexstr(Clause.TypeDescriptorVA) << " */";
+  }
   if ((Clause.Adjectives & kCxxCatchReference) != 0)
     OS << " &";
 }
@@ -126,18 +133,25 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
           Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
-          if (isParamCopy(*Stmt.Val)) {
-            if (auto Src = copyForwardSource(*Stmt.Val)) {
-              CopyForward[*Slot] = *Src;
-              Analysis.DeadVars.insert(*Slot);
-              break;
-            }
-          }
+          if (CopyForward.count(*Slot))
+            break;
           if (isCompilerEHConstant(*Stmt.Val))
             break;
-          CopyForward.erase(*Slot);
           emitIndent(Indent);
-          OS << *Slot << " = " << exprStr(*Stmt.Val) << ";\n";
+          OS << *Slot << " = ";
+          TypeRef ProjectedDestType = Stmt.Dst->Type;
+          if (auto Disp = frameDisplacement(*Stmt.Dst->Operands[0])) {
+            auto ProjectedSlot = FrameSlots.find(*Disp);
+            if (ProjectedSlot != FrameSlots.end() && ProjectedSlot->second.Type)
+              ProjectedDestType = ProjectedSlot->second.Type;
+          }
+          if (ProjectedDestType &&
+              ProjectedDestType->Kind == NdTypeKind::Ptr)
+            OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+               << exprStr(*Stmt.Val) << ")";
+          else
+            OS << exprStr(*Stmt.Val);
+          OS << ";\n";
           break;
         }
       if (auto VA = constAddress(*Stmt.Dst->Operands[0])) {
@@ -148,21 +162,22 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         }
       }
       emitIndent(Indent);
+      std::string Value = exprStr(*Stmt.Val);
+      if (Stmt.Dst->Type && Stmt.Val->Type &&
+          Stmt.Dst->Type->Kind == NdTypeKind::Int &&
+          Stmt.Val->Type->Kind == NdTypeKind::Ptr)
+        Value = "(" + typeToC(Stmt.Dst->Type) + ")(uintptr_t)(" + Value + ")";
       OS << memoryStoreExpr(Stmt.Dst->Type, exprStr(*Stmt.Dst->Operands[0]),
-                            exprStr(*Stmt.Val), Stmt.Dst->MemoryOrdering,
+                            Value, Stmt.Dst->MemoryOrdering,
                             Stmt.Dst->MemoryAddressSpace)
          << ";\n";
       break;
     }
-    if ((Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
+    if (Stmt.Dst->Kind == ExprKind::Var &&
         isCopyForwardDestination(Stmt.Dst->Var)) {
       const std::string DstName = varName(Stmt.Dst->Var);
-      if (auto Src = copyForwardSource(*Stmt.Val)) {
-        CopyForward[DstName] = *Src;
-        Analysis.DeadVars.insert(DstName);
+      if (CopyForward.count(DstName))
         break;
-      }
-      CopyForward.erase(DstName);
     }
     emitIndent(Indent);
     if (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) {
@@ -170,7 +185,23 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       // projection of typed pointer parameters.
       OS << varName(Stmt.Dst->Var) << " = ";
       auto DeclaredType = declaredParamType(Stmt.Dst->Var);
+      if (!DeclaredType)
+        DeclaredType = Stmt.Dst->Type;
+      TypeRef ProjectedValueType = Stmt.Val->Type;
+      if (Stmt.Val->Kind == ExprKind::Load && !Stmt.Val->Operands.empty() &&
+          Stmt.Val->Operands[0]) {
+        if (auto Disp = frameDisplacement(*Stmt.Val->Operands[0])) {
+          auto Slot = FrameSlots.find(*Disp);
+          if (Slot != FrameSlots.end() && Slot->second.Type)
+            ProjectedValueType = Slot->second.Type;
+        }
+      }
       if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr)
+        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)("
+           << exprStr(*Stmt.Val) << ")";
+      else if (DeclaredType && ProjectedValueType &&
+               DeclaredType->Kind == NdTypeKind::Int &&
+               ProjectedValueType->Kind == NdTypeKind::Ptr)
         OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)("
            << exprStr(*Stmt.Val) << ")";
       else
@@ -192,16 +223,23 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
       if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
-        if (isParamCopy(*Stmt.StoreVal)) {
-          if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
-            CopyForward[*Slot] = *Src;
-            Analysis.DeadVars.insert(*Slot);
-            break;
-          }
-        }
-        CopyForward.erase(*Slot);
+        if (CopyForward.count(*Slot))
+          break;
         emitIndent(Indent);
-        OS << *Slot << " = " << exprStr(*Stmt.StoreVal) << ";\n";
+        OS << *Slot << " = ";
+        TypeRef ProjectedDestType = Stmt.StoreVal->Type;
+        if (auto Disp = frameDisplacement(*Stmt.StoreAddr)) {
+          auto ProjectedSlot = FrameSlots.find(*Disp);
+          if (ProjectedSlot != FrameSlots.end() && ProjectedSlot->second.Type)
+            ProjectedDestType = ProjectedSlot->second.Type;
+        }
+        if (ProjectedDestType &&
+            ProjectedDestType->Kind == NdTypeKind::Ptr)
+          OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
+             << exprStr(*Stmt.StoreVal) << ")";
+        else
+          OS << exprStr(*Stmt.StoreVal);
+        OS << ";\n";
         break;
       }
     if (auto VA = constAddress(*Stmt.StoreAddr)) {
@@ -567,10 +605,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent) {
   va_t LastLabel = InvalidVA;
   for (auto &S : Stmts) {
+    bool EmittedLabel = false;
     if (S.Addr != 0 && S.Addr != InvalidVA && GotoTargets.count(S.Addr) &&
         S.Addr != LastLabel) {
       OS << "L_" + llvm::utohexstr(S.Addr) + ":\n";
       LastLabel = S.Addr;
+      EmittedLabel = true;
+    }
+    if (EmittedLabel && Analysis.DeadStmts.count(&S)) {
+      emitIndent(Indent);
+      OS << ";\n";
+      continue;
     }
     writeStmt(S, Indent);
   }
@@ -624,6 +669,19 @@ bool HighCWriter::isCompilerEHConstant(const HighExpr &Val) const {
 }
 
 void HighCWriter::collectCopyForward(const HighFunc &Func) {
+  std::map<std::string, std::string> Candidates;
+  std::set<std::string> Invalid;
+  auto RecordWrite = [&](const std::string &Name,
+                         std::optional<std::string> Source) {
+    if (Invalid.count(Name))
+      return;
+    if (!Source || *Source == Name || Candidates.count(Name)) {
+      Candidates.erase(Name);
+      Invalid.insert(Name);
+      return;
+    }
+    Candidates.emplace(Name, std::move(*Source));
+  };
   std::function<void(const std::vector<HighStmt> &, bool)> Walk;
   Walk = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
     const bool Saved = InEHClauseBody;
@@ -635,43 +693,23 @@ void HighCWriter::collectCopyForward(const HighFunc &Func) {
               Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
               Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
             if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
-              if (isParamCopy(*Stmt.Val)) {
-                if (auto Src = copyForwardSource(*Stmt.Val)) {
-                  CopyForward[*Slot] = *Src;
-                  Analysis.DeadVars.insert(*Slot);
-                } else {
-                  CopyForward.erase(*Slot);
-                }
-              } else {
-                CopyForward.erase(*Slot);
-              }
+              RecordWrite(*Slot, isParamCopy(*Stmt.Val)
+                                     ? copyForwardSource(*Stmt.Val)
+                                     : std::nullopt);
             }
-          } else if ((Stmt.Dst->Kind == ExprKind::Var ||
-                      Stmt.Dst->Kind == ExprKind::Phi) &&
+          } else if (Stmt.Dst->Kind == ExprKind::Var &&
                      isCopyForwardDestination(Stmt.Dst->Var)) {
             const std::string DstName = varName(Stmt.Dst->Var);
-            if (auto Src = copyForwardSource(*Stmt.Val)) {
-              CopyForward[DstName] = *Src;
-              Analysis.DeadVars.insert(DstName);
-            } else {
-              CopyForward.erase(DstName);
-            }
+            RecordWrite(DstName, copyForwardSource(*Stmt.Val));
           }
         } else if (Stmt.Kind == StmtKind::Store && Stmt.StoreAddr &&
                    Stmt.StoreVal &&
                    Stmt.MemoryOrdering == NdMemoryOrdering::None &&
                    Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
           if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
-            if (isParamCopy(*Stmt.StoreVal)) {
-              if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
-                CopyForward[*Slot] = *Src;
-                Analysis.DeadVars.insert(*Slot);
-              } else {
-                CopyForward.erase(*Slot);
-              }
-            } else {
-              CopyForward.erase(*Slot);
-            }
+            RecordWrite(*Slot, isParamCopy(*Stmt.StoreVal)
+                                   ? copyForwardSource(*Stmt.StoreVal)
+                                   : std::nullopt);
           }
         }
       }
@@ -686,6 +724,78 @@ void HighCWriter::collectCopyForward(const HighFunc &Func) {
     InEHClauseBody = Saved;
   };
   Walk(Func.Body, false);
+
+  // A projected frame slot can only disappear when every remaining use reads
+  // its value.  Taking the slot's address needs the actual C object and its
+  // initializing store; substituting loads alone would otherwise leave an
+  // uninitialized (or, before declaration recovery, undeclared) var_mXX.
+  auto InvalidateName = [&](const std::string &Name) {
+    Candidates.erase(Name);
+    Invalid.insert(Name);
+  };
+  std::function<void(const HighExpr &, bool)> FindEscapes;
+  FindEscapes = [&](const HighExpr &Expr, bool IsMemoryAddress) {
+    if (Expr.Kind == ExprKind::Addr && !Expr.Operands.empty() &&
+        Expr.Operands[0]) {
+      const HighExpr &Operand = *Expr.Operands[0];
+      if (Operand.Kind == ExprKind::Load && !Operand.Operands.empty() &&
+          Operand.Operands[0]) {
+        if (auto Slot = namedFrameSlot(*Operand.Operands[0]))
+          InvalidateName(*Slot);
+      } else if (Operand.Kind == ExprKind::Var ||
+                 Operand.Kind == ExprKind::Phi) {
+        InvalidateName(varName(Operand.Var));
+      }
+      return;
+    }
+    if (auto Slot = namedFrameSlot(Expr)) {
+      if (!IsMemoryAddress)
+        InvalidateName(*Slot);
+      return;
+    }
+    if (Expr.Kind == ExprKind::Load && !Expr.Operands.empty()) {
+      if (Expr.Operands[0])
+        FindEscapes(*Expr.Operands[0], true);
+      for (size_t I = 1; I < Expr.Operands.size(); ++I)
+        if (Expr.Operands[I])
+          FindEscapes(*Expr.Operands[I], false);
+      return;
+    }
+    if (Expr.Kind == ExprKind::Store && !Expr.Operands.empty()) {
+      if (Expr.Operands[0])
+        FindEscapes(*Expr.Operands[0], true);
+      for (size_t I = 1; I < Expr.Operands.size(); ++I)
+        if (Expr.Operands[I])
+          FindEscapes(*Expr.Operands[I], false);
+      return;
+    }
+    for (const ExprPtr &Operand : Expr.Operands)
+      if (Operand)
+        FindEscapes(*Operand, false);
+  };
+  walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+    if (Analysis.DeadStmts.count(&Stmt))
+      return;
+    if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
+        Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty() &&
+        Stmt.Dst->Operands[0])
+      FindEscapes(*Stmt.Dst->Operands[0], true);
+    if (Stmt.Val)
+      FindEscapes(*Stmt.Val, false);
+    if (Stmt.Cond)
+      FindEscapes(*Stmt.Cond, false);
+    if (Stmt.RetVal)
+      FindEscapes(*Stmt.RetVal, false);
+    if (Stmt.StoreAddr)
+      FindEscapes(*Stmt.StoreAddr, true);
+    if (Stmt.StoreVal)
+      FindEscapes(*Stmt.StoreVal, false);
+    if (Stmt.CallExpr)
+      FindEscapes(*Stmt.CallExpr, false);
+    if (Stmt.SwitchExpr)
+      FindEscapes(*Stmt.SwitchExpr, false);
+  });
+  CopyForward = std::move(Candidates);
 }
 
 void HighCWriter::collectGotoTargets(const std::vector<HighStmt> &Stmts) {

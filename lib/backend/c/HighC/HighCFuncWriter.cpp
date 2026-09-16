@@ -330,7 +330,13 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       if (S.Kind != StmtKind::Store || !S.StoreAddr || !S.StoreVal)
         return;
       std::string Addr = exprStr(*S.StoreAddr);
-      if (Analysis.StoreFwd.count(Addr))
+      bool Forwarded = Analysis.StoreFwd.count(Addr) != 0;
+      if (!Forwarded) {
+        auto Key = Analysis.AddressKeys.find(S.StoreAddr.get());
+        Forwarded = Key != Analysis.AddressKeys.end() &&
+                    Analysis.StoreFwdByAddressKey.count(Key->second) != 0;
+      }
+      if (Forwarded)
         collectUsedVarsExpr(*S.StoreVal, UsedVars, VarFn);
     });
   }
@@ -347,8 +353,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     if (UsedVars.find(Name) == UsedVars.end() &&
         UsedVars.find(Local.Name) == UsedVars.end())
       continue;
-    if (Analysis.DeadVars.count(Name) || Analysis.DeadVars.count(Local.Name))
-      continue;
+    // A name that remains in a live expression must be declared even when an
+    // earlier dead assignment used the same projected name. Dead statements
+    // have already been excluded from UsedVars above; suppressing the name as
+    // well would leave the surviving use as an undeclared C identifier.
     DeclaredNames.insert(Name);
     emitIndent(1);
     TypeRef Ty = Local.Type;
@@ -367,8 +375,6 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
 
   for (auto &[Name, Ty] : UsedVars) {
     if (DeclaredNames.count(Name))
-      continue;
-    if (Analysis.DeadVars.count(Name))
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
@@ -719,9 +725,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CurrentFunc = &Func;
   CopyForward.clear();
   ParamDisplayNames.clear();
+  Analysis = {};
   runAnalysisPasses(Func);
   collectNamedFrameSlots(Func);
-  collectCopyForward(Func);
   {
     const std::vector<size_t> Indices = emittedParamIndices(Func);
     if (Indices.size() != Func.Params.size())
@@ -889,8 +895,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
        << FrameBaseOffset << ");\n";
   }
   for (const auto &[Disp, Slot] : FrameSlots) {
-    if (ParamNames.count(Slot.Name) || Analysis.DeadVars.count(Slot.Name) ||
-        CopyForward.count(Slot.Name))
+    if (ParamNames.count(Slot.Name))
       continue;
     ParamNames.insert(Slot.Name);
     emitIndent(1);

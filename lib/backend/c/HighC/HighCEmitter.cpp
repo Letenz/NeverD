@@ -17,6 +17,7 @@
 #include "HighCWriter.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -178,6 +179,54 @@ void HighCWriter::prepareFunctionIdentifiers(
   DefinedFuncs.clear();
   DefinedFunctionsByAddress.clear();
 
+  // Imported runtime veneers are ordinary discovered functions, and can
+  // therefore carry the same source spelling as the external API they jump
+  // to.  Give the linked API first choice of that spelling so the veneer gets
+  // a distinct C identifier instead of recursively calling itself.
+  std::set<std::string> LinkedRuntimeNames;
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &Expr) {
+    if (!Expr || !Seen.insert(Expr.get()).second)
+      return;
+    if (Expr->SourceCallHint) {
+      const auto &Hint = *Expr->SourceCallHint;
+      using Kind = SourceCallTypeHint::Kind;
+      std::string Name;
+      if (Hint.CallKind == Kind::ObjCRuntimeCall ||
+          Hint.CallKind == Kind::SwiftRuntimeCall)
+        Name = Hint.TargetName;
+      else if (Hint.CallKind == Kind::DarwinRuntimeCall) {
+        if (Hint.Signature.Origin ==
+            SourceFunctionTypeHint::OriginKind::DarwinSDK)
+          Name = "neverd_darwin_" + Hint.TargetName;
+        else
+          Name = Hint.TargetName;
+      }
+      if (!Name.empty())
+        LinkedRuntimeNames.insert(std::move(Name));
+    }
+    for (const auto &Child : Expr->Operands)
+      Visit(Child);
+  };
+  for (const auto &Func : Funcs)
+    walkStmts(Func.Body,
+              [&](const HighStmt &Stmt) { forEachExpr(Stmt, Visit); });
+  for (const auto &Name : LinkedRuntimeNames) {
+    llvm::StringRef RenderedName(Name);
+    // Darwin's underscored C runtime APIs already carry their source-level
+    // underscore.  Other Mach-O imports have one platform decoration removed
+    // before reaching the source-call layer.
+    const bool ExactDarwinName =
+        Name == "__stack_chk_fail" ||
+        llvm::StringRef(Name).starts_with("_Block_");
+    if (!ExactDarwinName)
+      RenderedName.consume_front("_");
+    const auto Identifier =
+        GlobalIdentifierAllocator.allocate(RenderedName, "nd_external");
+    ExternalFunctionIdentifiers.emplace(Name, Identifier);
+    ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
+  }
+
   for (const HighFunc &Func : Funcs) {
     if (Func.Name.empty())
       continue;
@@ -273,10 +322,19 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (E.Kind == ExprKind::Load) {
       std::string Type = memoryTypeName(E.Type);
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
-      const bool NeedsHelper =
-          E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-          E.MemoryOrdering != NdMemoryOrdering::None;
-      if (NeedsHelper)
+      const bool OrdinaryMemory =
+          E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          E.MemoryOrdering == NdMemoryOrdering::None;
+      const TypeRef AddressType =
+          !E.Operands.empty() && E.Operands[0] ? E.Operands[0]->Type : nullptr;
+      const bool DirectTypedLoad =
+          OrdinaryMemory && partialIntegerBytes(E.Type) == 0 && AddressType &&
+          AddressType->Kind == NdTypeKind::Ptr && AddressType->Pointee &&
+          equalSourceTypes(AddressType->Pointee, E.Type);
+      // Frame projection can later fall back to synthetic byte storage when
+      // an address escapes.  Collect its load helper conservatively now so
+      // that the fallback never references a helper omitted from the prefix.
+      if (!DirectTypedLoad)
         Names.insert(Type);
       if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
@@ -287,6 +345,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       std::string Type = memoryTypeName(E.Operands[1]->Type);
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
       const bool NeedsHelper =
+          partialIntegerBytes(E.Operands[1]->Type) != 0 ||
           E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
           E.MemoryOrdering != NdMemoryOrdering::None;
       if (NeedsHelper)
@@ -302,6 +361,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   };
 
   for (const HighFunc &Func : Funcs) {
+    CurrentFunc = &Func;
+    collectNamedFrameSlots(Func);
     CollectWideType(Func.ReturnType);
     for (const HighParam &Param : Func.Params)
       CollectWideType(Param.Type);
@@ -324,6 +385,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         std::string Type = memoryTypeName(Stmt.StoreVal->Type);
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
         const bool NeedsHelper =
+            partialIntegerBytes(Stmt.StoreVal->Type) != 0 ||
             Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
             Stmt.MemoryOrdering != NdMemoryOrdering::None;
         if (NeedsHelper)
@@ -339,8 +401,11 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         const std::string Type = memoryTypeName(Stmt.Dst->Type);
         validateMemoryAddressSpaceForC(Stmt.Dst->MemoryAddressSpace,
                                        Opts.TheArch);
-        if (Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-            Stmt.Dst->MemoryOrdering != NdMemoryOrdering::None)
+        const bool NeedsHelper =
+            partialIntegerBytes(Stmt.Dst->Type) != 0 ||
+            Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            Stmt.Dst->MemoryOrdering != NdMemoryOrdering::None;
+        if (NeedsHelper)
           Names.insert(Type);
         if (Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default)
           SegmentedMemoryTypes.insert({Type, Stmt.Dst->MemoryAddressSpace});
@@ -354,6 +419,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       });
     });
   }
+  CurrentFunc = nullptr;
+  FrameSlots.clear();
 
   MemoryTypes.clear();
   unsigned Index = 0;
@@ -480,9 +547,6 @@ HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                             NdMemoryAddressSpace AddressSpace) const {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
-  if (Ordering == NdMemoryOrdering::None &&
-      AddressSpace == NdMemoryAddressSpace::Default)
-    return "(*(" + Type + " *)(" + Addr.str() + "))";
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
@@ -503,7 +567,8 @@ HighCWriter::memoryStoreExpr(const TypeRef &Ty, llvm::StringRef Addr,
                                 ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
                                 : Val.str();
   if (Ordering == NdMemoryOrdering::None &&
-      AddressSpace == NdMemoryAddressSpace::Default)
+      AddressSpace == NdMemoryAddressSpace::Default &&
+      partialIntegerBytes(Ty) == 0)
     return "(*(" + Type + " *)(" + Addr.str() + ") = " + Value + ")";
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
@@ -585,7 +650,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
           if (Hint.Signature.Origin ==
-              SourceFunctionTypeHint::OriginKind::DarwinSDK) {
+                  SourceFunctionTypeHint::OriginKind::DarwinSDK ||
+              Hint.Signature.Origin ==
+                  SourceFunctionTypeHint::OriginKind::SwiftRuntime) {
             if (!SourceRuntimeDataIdentifiers.count(Hint.TargetName))
               SourceRuntimeDataIdentifiers.emplace(
                   Hint.TargetName,
@@ -704,6 +771,18 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           if (Hint.TargetAddress)
             SourceObjectAddressHelpers.insert(
                 "neverd_objc_association_key_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeStaticIdentity) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_static_identity_" +
+                llvm::utohexstr(Hint.TargetAddress, true) + "_address");
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
+          if (Hint.TargetAddress)
+            SourceObjectAddressHelpers.insert(
+                "neverd_local_storage_" +
                 llvm::utohexstr(Hint.TargetAddress, true) + "_address");
         } else if (Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeBlockDescriptor ||
@@ -872,6 +951,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // module. Declare its actual recovered function signature before any body.
   std::set<const HighFunc *> Prototyped;
   for (const auto &[Name, Declaration] : SourceNativeSignatures) {
+    if (SourceRuntimeLinkNames.count(Name))
+      continue;
     const auto *Signature = Declaration.Signature;
     auto Definition = DefinedFuncs.find(Name);
     if (Definition == DefinedFuncs.end() ||
@@ -927,7 +1008,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   }
 
   for (auto &Name : CallTargets) {
-    if (DefinedFuncs.count(Name))
+    if (DefinedFuncs.count(Name) && !SourceRuntimeLinkNames.count(Name))
       continue;
     if (libc::isKnownFunction(Name))
       continue;
@@ -946,8 +1027,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   for (const std::string &Name : ExternFuncs) {
     llvm::StringRef RenderedName(Name);
     RenderedName.consume_front("_");
+    const auto Existing = ExternalFunctionIdentifiers.find(Name);
     std::string Identifier =
-        GlobalIdentifierAllocator.allocate(RenderedName, "nd_external");
+        Existing == ExternalFunctionIdentifiers.end()
+            ? GlobalIdentifierAllocator.allocate(RenderedName, "nd_external")
+            : Existing->second;
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
     ExternalFunctionIdentifiers.try_emplace(RenderedName.str(), Identifier);
     auto SourceSignature = SourceNativeSignatures.find(Name);

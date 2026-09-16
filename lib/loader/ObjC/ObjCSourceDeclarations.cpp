@@ -81,6 +81,7 @@ FrameworkCatalog buildFrameworkDeclarations(Arch Architecture) {
     const char *X64;
   } Frameworks[] = {
 #include "ObjCFrameworkDeclarations.inc"
+#include "ObjCIOSFrameworkDeclarations.inc"
   };
   for (const auto &D : Frameworks) {
     auto &Framework = Result[D.Framework];

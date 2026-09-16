@@ -99,6 +99,7 @@ bool hasImmutableReachingStores(const HighCAnalysisState &State,
 void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
                             VarNameFn VarFn, ExprStrFn ExprFn) {
   State.StoreFwd.clear();
+  State.StoreFwdByAddressKey.clear();
   State.StoreFwdDeps.clear();
   State.ForwardedAddressDeps.clear();
   if (!hasImmutableReachingStores(State, Func, VarFn, ExprFn))
@@ -404,8 +405,10 @@ void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
   for (const auto &[Addr, _] : State.StoreFwd) {
     auto KeyIt = AddrToKey.find(Addr);
     auto DepIt = State.StoreFwdDeps.find(Addr);
-    if (KeyIt != AddrToKey.end() && DepIt != State.StoreFwdDeps.end())
+    if (KeyIt != AddrToKey.end() && DepIt != State.StoreFwdDeps.end()) {
       State.ForwardedAddressDeps[KeyIt->second] = DepIt->second;
+      State.StoreFwdByAddressKey[KeyIt->second] = State.StoreFwd.at(Addr);
+    }
   }
 
   for (auto &[Addr, _] : State.StoreFwd) {

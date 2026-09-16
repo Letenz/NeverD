@@ -133,7 +133,7 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
     if (Param.Type && Param.Type->Kind == NdTypeKind::Ptr)
       continue;
     if (AddrParams.count(static_cast<int>(I)))
-      Param.Type = NdType::makePtr(NdType::makeInt(1, false));
+      Param.Type = NdType::makePtr();
   }
 
   for (auto &Local : Func.Locals) {

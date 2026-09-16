@@ -361,18 +361,46 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Name == "swift_nonatomic_bridgeObjectRelease") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Pointer}};
+  // RuntimeFunctions.def instantiates this exact C-ABI storage family for
+  // native and unknown-object weak/unowned references. Keep explicit names so
+  // private suffix variants cannot acquire a public runtime contract.
   } else if (Name == "swift_weakInit" || Name == "swift_weakAssign" ||
              Name == "swift_unknownObjectWeakInit" ||
-             Name == "swift_unknownObjectWeakAssign") {
+             Name == "swift_unknownObjectWeakAssign" ||
+             Name == "swift_unownedInit" || Name == "swift_unownedAssign" ||
+             Name == "swift_unknownObjectUnownedInit" ||
+             Name == "swift_unknownObjectUnownedAssign") {
     Signature.ReturnType = Pointer;
     Signature.Parameters = {{"reference", Pointer}, {"object", Pointer}};
+  } else if (Name == "swift_weakCopyInit" || Name == "swift_weakTakeInit" ||
+             Name == "swift_weakCopyAssign" || Name == "swift_weakTakeAssign" ||
+             Name == "swift_unknownObjectWeakCopyInit" ||
+             Name == "swift_unknownObjectWeakTakeInit" ||
+             Name == "swift_unknownObjectWeakCopyAssign" ||
+             Name == "swift_unknownObjectWeakTakeAssign" ||
+             Name == "swift_unownedCopyInit" ||
+             Name == "swift_unownedTakeInit" ||
+             Name == "swift_unownedCopyAssign" ||
+             Name == "swift_unownedTakeAssign" ||
+             Name == "swift_unknownObjectUnownedCopyInit" ||
+             Name == "swift_unknownObjectUnownedTakeInit" ||
+             Name == "swift_unknownObjectUnownedCopyAssign" ||
+             Name == "swift_unknownObjectUnownedTakeAssign") {
+    Signature.ReturnType = Pointer;
+    Signature.Parameters = {{"destination", Pointer}, {"source", Pointer}};
   } else if (Name == "swift_weakLoadStrong" || Name == "swift_weakTakeStrong" ||
              Name == "swift_unknownObjectWeakLoadStrong" ||
-             Name == "swift_unknownObjectWeakTakeStrong") {
+             Name == "swift_unknownObjectWeakTakeStrong" ||
+             Name == "swift_unownedLoadStrong" ||
+             Name == "swift_unownedTakeStrong" ||
+             Name == "swift_unknownObjectUnownedLoadStrong" ||
+             Name == "swift_unknownObjectUnownedTakeStrong") {
     Signature.ReturnType = Pointer;
     Signature.Parameters = {{"reference", Pointer}};
   } else if (Name == "swift_weakDestroy" ||
-             Name == "swift_unknownObjectWeakDestroy") {
+             Name == "swift_unknownObjectWeakDestroy" ||
+             Name == "swift_unownedDestroy" ||
+             Name == "swift_unknownObjectUnownedDestroy") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"reference", Pointer}};
   } else if (Name == "swift_once") {

@@ -621,7 +621,11 @@ TEST(ObjCCallHints, SwiftCRuntimeCallsKeepExactCarriersAndImportIdentity) {
     for (const auto &[Name, Count, ReturnsPointer] :
          {std::tuple{"swift_unknownObjectWeakLoadStrong", 1U, true},
           std::tuple{"swift_unknownObjectWeakAssign", 2U, true},
+          std::tuple{"swift_unknownObjectWeakCopyAssign", 2U, true},
           std::tuple{"swift_unknownObjectWeakDestroy", 1U, false},
+          std::tuple{"swift_unknownObjectUnownedInit", 2U, true},
+          std::tuple{"swift_unknownObjectUnownedLoadStrong", 1U, true},
+          std::tuple{"swift_unknownObjectUnownedDestroy", 1U, false},
           std::tuple{"swift_getObjectType", 1U, true},
           std::tuple{"swift_bridgeObjectRetain", 1U, true},
           std::tuple{"swift_bridgeObjectRelease", 1U, false},
@@ -3136,7 +3140,9 @@ TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
 
 TEST(ObjCCallHints, FrameworkAndCompilerDataKeepExactExportIdentities) {
   const std::pair<const char *, const char *> Declarations[] = {
+      {"__NSArray0__", "CoreFoundation"},
       {"__NSArray0__struct", "CoreFoundation"},
+      {"__NSDictionary0__", "CoreFoundation"},
       {"__NSDictionary0__struct", "CoreFoundation"},
       {"__kCFBooleanTrue", "CoreFoundation"},
       {"__kCFBooleanFalse", "CoreFoundation"},
@@ -3165,6 +3171,139 @@ TEST(ObjCCallHints, FrameworkAndCompilerDataKeepExactExportIdentities) {
         Image.DyldBindSlots[0x2180].Module =
             "/System/Library/Frameworks/UIKit.framework/UIKit";
         EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180));
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, MobileSDKDataKeepsExactUIKitStorageIdentities) {
+  constexpr llvm::StringLiteral Module =
+      "/System/Library/Frameworks/UIKit.framework/UIKit";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (llvm::StringRef Name :
+         {"UIApplicationDidReceiveMemoryWarningNotification",
+          "UIAccessibilityTraitButton", "UIEdgeInsetsZero",
+          "UIViewNoIntrinsicMetric"}) {
+      SCOPED_TRACE(Name.str());
+      auto Image = runtimeImage(("_" + Name).str(), Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          ("_" + Name).str(), 0, Module.str(), false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding);
+      EXPECT_EQ(Binding->TargetName, Name);
+      EXPECT_EQ(Binding->CallKind,
+                SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress);
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+
+      HighFunc Function;
+      Function.Name = "uikit_external_storage";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      EXPECT_NE(Source.find("extern unsigned char neverd_darwin_data_" +
+                            Name.str() + "[] __asm__(\"_" + Name.str() +
+                            "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+      for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DyldBindSlots[0x2180].Module += ".impostor";
+        if (Mutation == 1)
+          Changed.DyldBindSlots[0x2180].WeakImport = true;
+        if (Mutation == 2)
+          Changed.DyldBindSlots[0x2180].Addend = 8;
+        if (Mutation == 3)
+          Changed.DyldBindSlots.clear();
+        if (Mutation == 4) {
+          Changed.ImportPtrSlots[0x2180] += "Suffix";
+          Changed.DyldBindSlots[0x2180].Name = Changed.ImportPtrSlots[0x2180];
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Mutation;
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactEmptyCollectionStorageIdentity) {
+  constexpr llvm::StringLiteral Module = "/usr/lib/swift/libswiftCore.dylib";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Import : {"__swiftEmptyArrayStorage",
+                               "__swiftEmptyDictionarySingleton",
+                               "__swiftEmptySetSingleton"}) {
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Module.str(), false};
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      ASSERT_TRUE(Binding) << Import;
+      EXPECT_EQ(Binding->TargetName, llvm::StringRef(Import).drop_front())
+          << Import;
+      EXPECT_EQ(Binding->CallKind,
+                SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress);
+      EXPECT_EQ(Binding->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+
+      HighFunc Function;
+      Function.Name = "empty_collection_storage";
+      Function.ReturnType = NdType::makeInt(8);
+      HighStmt Return;
+      Return.Kind = StmtKind::Return;
+      Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                         NdType::makeInt(8));
+      Function.Body = {Return};
+      const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      const auto *Address = sourceCall(Bound.Function);
+      ASSERT_NE(Address, nullptr);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+      const auto SourceName = llvm::StringRef(Import).drop_front().str();
+      EXPECT_NE(Source.find("extern unsigned char neverd_darwin_data_" +
+                            SourceName + "[] __asm__(\"_" + SourceName +
+                            "\");"),
+                std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+      EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+      for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DyldBindSlots[0x2180].Module += ".impostor";
+        if (Mutation == 1)
+          Changed.DyldBindSlots[0x2180].WeakImport = true;
+        if (Mutation == 2)
+          Changed.DyldBindSlots[0x2180].Addend = 8;
+        if (Mutation == 3)
+          Changed.DyldBindSlots.clear();
+        if (Mutation == 4) {
+          Changed.ImportPtrSlots[0x2180] += "Suffix";
+          Changed.DyldBindSlots[0x2180].Name =
+              Changed.ImportPtrSlots[0x2180];
+        }
+        EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Import << " " << Mutation;
       }
     }
   }
@@ -4647,6 +4786,42 @@ TEST(ObjCCallHints, SharedFrameworkDeclarationsKeepExactProviderAndScalarABI) {
                                               Changed, {}));
       }
     }
+  }
+}
+
+TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
+  constexpr auto Module = "/System/Library/Frameworks/UIKit.framework/UIKit";
+  const struct {
+    const char *Selector;
+    NdTypeKind ReturnKind;
+    unsigned Parameters;
+  } Cases[] = {
+      {"CGImage", NdTypeKind::Ptr, 2},
+      {"dismissViewControllerAnimated:completion:", NdTypeKind::Void, 4},
+      {"setActivityIndicatorViewStyle:", NdTypeKind::Void, 3},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Selector);
+    auto Image = image(Arch::AArch64);
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {Module};
+    const auto Hint = objcSelectorSourceTypeHint(Image, Case.Selector);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+    EXPECT_EQ(Hint->ReturnType->Kind, Case.ReturnKind);
+    EXPECT_EQ(Hint->Parameters.size(), Case.Parameters);
+
+    auto Changed = Image;
+    Changed.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit"};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Case.Selector));
+    Changed.DynInfo.NeededLibs = {"/tmp/UIKit.framework/UIKit"};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Case.Selector));
+
+    auto Unsupported = image(Arch::X64);
+    Unsupported.ObjCMethods.clear();
+    Unsupported.DynInfo.NeededLibs = {Module};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Case.Selector));
   }
 }
 

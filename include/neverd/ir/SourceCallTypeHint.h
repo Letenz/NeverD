@@ -73,6 +73,13 @@ struct SourceCallTypeHint {
     /// TargetAddress identifies the original key; rebuilt methods share one
     /// opaque storage identity. This does not bind readable image contents.
     RuntimeAssociationKey,
+    /// A loader-authenticated self-referential writable pointer slot. The
+    /// original value is the slot's own address, so source rebuilds one shared
+    /// opaque identity instead of retaining either original image address.
+    RuntimeStaticIdentity,
+    /// Exact scalar storage rooted at a uniquely named writable data symbol.
+    /// ByteCount is the authenticated access extent rebuilt across methods.
+    RuntimeLocalStorageAddress,
     /// Base of a rebuilt numeric profiling-counter section. The SDK proves
     /// storage extents and permits only bounded, unordered memory accesses.
     RuntimeProfileCounterStorage,

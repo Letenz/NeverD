@@ -65,17 +65,66 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
 std::optional<SourceCallTypeHint>
 darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
-  if (!Import || *Import != "___stack_chk_guard")
+  if (!Import)
+    return std::nullopt;
+
+  // These UIKit constants are public external storage, rather than functions
+  // or implementation-owned objects. The command-line-tools SDK used to
+  // generate DarwinSourceDataDeclarations.inc has no UIKit headers or binary,
+  // so retain the same exact symbol/provider proof here.
+  // https://developer.apple.com/documentation/uikit/uiapplicationdidreceivememorywarningnotification
+  llvm::StringRef UIKitData;
+  for (llvm::StringRef Name :
+       {"UIApplicationDidReceiveMemoryWarningNotification",
+        "UIAccessibilityTraitButton", "UIEdgeInsetsZero",
+        "UIViewNoIntrinsicMetric"})
+    if (Import->starts_with("_") && Import->drop_front() == Name)
+      UIKitData = Name;
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  const bool UIKitStorage =
+      !UIKitData.empty() && Bind != Image.DyldBindSlots.end() &&
+      darwinExportModuleMatches(
+          "/System/Library/Frameworks/UIKit.framework/UIKit",
+          Bind->second.Module);
+  // Swift's inlinable collection implementations take these singletons'
+  // addresses, making their external storage identities part of the
+  // stdlib/runtime ABI. Apple Swift 6.1.2 emits all three as external globals.
+  // https://github.com/swiftlang/swift/blob/main/stdlib/public/core/ContiguousArrayBuffer.swift
+  // https://github.com/swiftlang/swift/blob/main/stdlib/public/core/Dictionary.swift
+  // https://github.com/swiftlang/swift/blob/main/stdlib/public/core/Set.swift
+  llvm::StringRef SwiftEmptyCollection;
+  if (*Import == "__swiftEmptyArrayStorage")
+    SwiftEmptyCollection = "_swiftEmptyArrayStorage";
+  else if (*Import == "__swiftEmptyDictionarySingleton")
+    SwiftEmptyCollection = "_swiftEmptyDictionarySingleton";
+  else if (*Import == "__swiftEmptySetSingleton")
+    SwiftEmptyCollection = "_swiftEmptySetSingleton";
+  const bool SwiftEmptyStorage =
+      !SwiftEmptyCollection.empty() && Bind != Image.DyldBindSlots.end() &&
+      darwinExportModuleMatches("/usr/lib/swift/libswiftCore.dylib",
+                                Bind->second.Module);
+  if (!UIKitStorage && !SwiftEmptyStorage && *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
-  // Darwin exports long __stack_chk_guard[8]. Bind its address and preserve
-  // every native memory access; a guard is not a constant or private storage.
-  // https://github.com/apple-oss-distributions/Libc/blob/main/sys/OpenBSD/stack_protector.c
+
   SourceCallTypeHint Result;
   Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress;
   Result.TargetAddress = ImportSlot;
-  Result.TargetName = "__stack_chk_guard";
-  Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
-  Result.Signature.ReturnType = NdType::makePtr(NdType::makeInt(8, true));
+  if (UIKitStorage) {
+    Result.TargetName = UIKitData.str();
+    Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  } else if (SwiftEmptyStorage) {
+    Result.TargetName = SwiftEmptyCollection.str();
+    Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+    Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  } else {
+    // Darwin exports long __stack_chk_guard[8]. Bind its address and preserve
+    // every native memory access; a guard is not a constant or private storage.
+    // https://github.com/apple-oss-distributions/Libc/blob/main/sys/OpenBSD/stack_protector.c
+    Result.TargetName = "__stack_chk_guard";
+    Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+    Result.Signature.ReturnType = NdType::makePtr(NdType::makeInt(8, true));
+  }
   std::string Diagnostic;
   if (!assignDarwinScalarSourceABI(Result.Signature, Image.Arch, Diagnostic))
     return std::nullopt;

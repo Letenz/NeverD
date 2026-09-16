@@ -197,7 +197,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
     // Preserve linker/dynamic-loader import veneers.  Loaders register section
     // ranges (ELF PLT, Mach-O stubs/helper), while architecture scanners map
     // exact COFF/ELF thunks back to their Import without changing IATAddr.
-    if (Opts.PatchMode && Img.isImportStubAt(Entry)) {
+    if ((Opts.PatchMode || Opts.LiftMode) && Img.isImportStubAt(Entry)) {
       Audit.Disposition = PipelineFunctionDisposition::SkippedImportStub;
       Result.FunctionAudits.push_back(std::move(Audit));
       continue;

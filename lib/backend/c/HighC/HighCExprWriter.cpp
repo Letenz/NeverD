@@ -408,6 +408,12 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       auto Fwd = Analysis.StoreFwd.find(Addr);
       if (Fwd != Analysis.StoreFwd.end())
         return "(" + typeToC(E.Type) + ")(" + Fwd->second + ")";
+      auto Key = Analysis.AddressKeys.find(E.Operands[0].get());
+      if (Key != Analysis.AddressKeys.end()) {
+        auto Stable = Analysis.StoreFwdByAddressKey.find(Key->second);
+        if (Stable != Analysis.StoreFwdByAddressKey.end())
+          return "(" + typeToC(E.Type) + ")(" + Stable->second + ")";
+      }
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return copyForwardName(*Slot);
       if (auto VA = constAddress(*E.Operands[0])) {
@@ -417,6 +423,14 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
         if (auto Name = imageObjectName(*VA))
           return *Name;
       }
+      const TypeRef &AddressType = E.Operands[0]->Type;
+      if (AddressType && AddressType->Kind == NdTypeKind::Ptr &&
+          AddressType->Pointee && E.Type &&
+          (E.Type->Kind != NdTypeKind::Int || E.Type->Size == 1 ||
+           E.Type->Size == 2 || E.Type->Size == 4 || E.Type->Size == 8 ||
+           E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64) &&
+          equalSourceTypes(AddressType->Pointee, E.Type))
+        return "(*(" + memoryTypeName(E.Type) + " *)(" + Addr + "))";
     }
     return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace);
   }
@@ -732,6 +746,9 @@ std::string HighCWriter::invertCondStr(const HighExpr &E) {
 bool HighCWriter::stmtsEffectivelyEmpty(
     const std::vector<HighStmt> &Stmts) const {
   for (const HighStmt &Stmt : Stmts) {
+    if (Stmt.Addr != 0 && Stmt.Addr != InvalidVA &&
+        GotoTargets.count(Stmt.Addr))
+      return false;
     if (Analysis.DeadStmts.count(&Stmt))
       continue;
     if (Stmt.Kind == StmtKind::Nop)
