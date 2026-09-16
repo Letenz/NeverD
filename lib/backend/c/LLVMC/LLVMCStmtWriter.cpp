@@ -22,6 +22,31 @@ namespace neverd {
 
 void LLVMCWriter::emitIndent(int N) { emitCIndent(OS, N); }
 
+void LLVMCWriter::writePhiCopies(llvm::BasicBlock &From, llvm::BasicBlock &To,
+                                 int Indent) {
+  std::vector<std::pair<llvm::PHINode *, std::string>> Copies;
+  for (auto &Phi : To.phis())
+    if (!Phi.use_empty() && !Analysis.DeadFrameStores.count(&Phi))
+      Copies.emplace_back(&Phi, freshVar("phi_edge"));
+  if (Copies.empty())
+    return;
+  emitIndent(Indent);
+  OS << "{\n";
+  // SSA edge updates are simultaneous. Materialize every source before any
+  // destination is overwritten, including loop PHIs that exchange two values.
+  for (auto &[Phi, Temp] : Copies) {
+    emitIndent(Indent + 1);
+    OS << typeToCLLVM(Phi->getType()) << " " << Temp << " = "
+       << valueStr(Phi->getIncomingValueForBlock(&From)) << ";\n";
+  }
+  for (auto &[Phi, Temp] : Copies) {
+    emitIndent(Indent + 1);
+    OS << getName(Phi) << " = " << Temp << ";\n";
+  }
+  emitIndent(Indent);
+  OS << "}\n";
+}
+
 void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   if (llvm::isa<llvm::DbgInfoIntrinsic>(&Inst))
     return;
@@ -118,6 +143,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   }
 
   if (auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(&Inst)) {
+    writePhiCopies(*Br->getParent(), *Br->getSuccessor(0), Indent);
     emitIndent(Indent);
     OS << "goto " << blockLabel(Br->getSuccessor(0)) << ";\n";
     return;
@@ -125,9 +151,17 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 
   if (auto *Br = llvm::dyn_cast<llvm::CondBrInst>(&Inst)) {
     emitIndent(Indent);
-    OS << "if (" << valueStr(Br->getCondition()) << ") goto "
-       << blockLabel(Br->getSuccessor(0)) << "; else goto "
-       << blockLabel(Br->getSuccessor(1)) << ";\n";
+    OS << "if (" << valueStr(Br->getCondition()) << ") {\n";
+    writePhiCopies(*Br->getParent(), *Br->getSuccessor(0), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(Br->getSuccessor(0)) << ";\n";
+    emitIndent(Indent);
+    OS << "} else {\n";
+    writePhiCopies(*Br->getParent(), *Br->getSuccessor(1), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(Br->getSuccessor(1)) << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
     return;
   }
 
@@ -141,11 +175,16 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     OS << "switch (" << valueStr(SW->getCondition()) << ") {\n";
     for (auto &C : SW->cases()) {
       emitIndent(Indent);
-      OS << "case " << C.getCaseValue()->getSExtValue() << ": goto "
-         << blockLabel(C.getCaseSuccessor()) << ";\n";
+      OS << "case " << C.getCaseValue()->getSExtValue() << ":\n";
+      writePhiCopies(*SW->getParent(), *C.getCaseSuccessor(), Indent + 1);
+      emitIndent(Indent + 1);
+      OS << "goto " << blockLabel(C.getCaseSuccessor()) << ";\n";
     }
     emitIndent(Indent);
-    OS << "default: goto " << blockLabel(SW->getDefaultDest()) << ";\n";
+    OS << "default:\n";
+    writePhiCopies(*SW->getParent(), *SW->getDefaultDest(), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(SW->getDefaultDest()) << ";\n";
     emitIndent(Indent);
     OS << "}\n";
     return;

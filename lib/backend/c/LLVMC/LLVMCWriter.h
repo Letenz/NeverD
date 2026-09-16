@@ -90,6 +90,7 @@ public:
   void writeGEP(llvm::GetElementPtrInst &GEP, const std::string &Name,
                 int Indent);
   void writeReturn(llvm::ReturnInst &Ret, int Indent);
+  void writePhiCopies(llvm::BasicBlock &From, llvm::BasicBlock &To, int Indent);
   void emitIndent(int N);
 
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
