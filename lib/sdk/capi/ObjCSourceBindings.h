@@ -190,7 +190,8 @@ inline const Symbol *uniqueWritableDataSymbol(const BinaryImage &Image,
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Image.MachOChainedFixupsAmbiguous || !Address || !Width || Width > 16 ||
+      Image.MachOChainedFixupsAmbiguous || !Address || !Width ||
+      Width > 1024 * 1024 ||
       Width > InvalidVA - Address)
     return nullptr;
   const auto *Section = Image.getSectionFor(Address);
@@ -283,6 +284,38 @@ localStorageHint(const BinaryImage &Image, va_t Address, uint64_t Width) {
   if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
     return std::nullopt;
   return Hint;
+}
+
+/// Bind a direct scalar access inside named writable storage to the symbol's
+/// base helper. Mach-O nlist entries commonly omit data-object sizes, so the
+/// access itself proves only the required prefix. Keeping that prefix rooted
+/// at the nearest exact symbol preserves aliases between independently
+/// emitted field accesses without treating the distance to the next symbol as
+/// an object extent.
+inline std::optional<SourceCallTypeHint>
+localStorageAccessHint(const BinaryImage &Image, va_t Address,
+                       uint64_t Width) {
+  if (auto Exact = localStorageHint(Image, Address, Width))
+    return Exact;
+  if (!Address || !Width || Width > InvalidVA - Address)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const Symbol *Base = nullptr;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.IsFunc || Symbol.Name.empty() || Symbol.Addr >= Address ||
+        llvm::StringRef(Symbol.Name).starts_with(kAutoFuncPrefix) ||
+        Image.getSectionFor(Symbol.Addr) != Section)
+      continue;
+    if (!Base || Symbol.Addr > Base->Addr)
+      Base = &Symbol;
+  }
+  if (!Base || Width > 1024 * 1024 ||
+      Address - Base->Addr > 1024 * 1024 - Width)
+    return std::nullopt;
+  const uint64_t Extent = Address - Base->Addr + Width;
+  if (Base->Size && Extent > Base->Size)
+    return std::nullopt;
+  return localStorageHint(Image, Base->Addr, Extent);
 }
 
 inline bool localStorageAccessTypeSupported(const TypeRef &Type) {
@@ -688,16 +721,17 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         !localStorageAccessTypeSupported(Type))
       return false;
     const auto Address = constantAddress(*Operand);
-    const auto Base = Address ? ProfileStorage->sectionFor(*Address, Type->Size)
+    auto Base = Address ? ProfileStorage->sectionFor(*Address, Type->Size)
                               : std::nullopt;
     auto Hint = Base ? profileStorageHint(Image.Arch, *Base) : std::nullopt;
     if (!Hint) {
-      Hint = Address ? localStorageHint(Image, *Address, Type->Size)
+      Hint = Address ? localStorageAccessHint(Image, *Address, Type->Size)
                      : std::nullopt;
       if (!Hint)
         return false;
-      Result.LocalStorageExtents[*Address] =
-          std::max<uint64_t>(Result.LocalStorageExtents[*Address], Type->Size);
+      Base = Hint->TargetAddress;
+      Result.LocalStorageExtents[*Base] = std::max<uint64_t>(
+          Result.LocalStorageExtents[*Base], Hint->ByteCount);
     }
     auto Bound = HighExpr::makeCall({}, 0, {});
     Bound->Type = NdType::makeInt(8, false);

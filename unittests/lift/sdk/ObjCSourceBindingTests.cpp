@@ -2135,6 +2135,72 @@ TEST(ObjCSourceBindings, NamedWritableScalarsUseSharedRebuiltStorage) {
 }
 
 TEST(ObjCSourceBindings,
+     NamedWritableAggregateFieldsShareOneRebuiltStorage) {
+  Fixture F;
+  constexpr va_t Base = 0x1020;
+  F.Image.ObjCSourceReferences.clear();
+  F.Image.Segments[0].Flags =
+      SegmentFlags::Readable | SegmentFlags::Writable;
+  F.Image.Sections[0].Flags = F.Image.Segments[0].Flags;
+  F.Image.Symbols.push_back({"_MergedGlobals", Base, 0, false});
+  F.Image.Symbols.push_back({"_nextStorage", Base + 0x20, 0, false});
+  llvm::support::endian::write32le(
+      F.Image.Segments[0].Data.data() + Base + 4 - 0x1000, 17);
+  llvm::support::endian::write32le(
+      F.Image.Segments[0].Data.data() + Base + 20 - 0x1000, 29);
+  const auto Field = [](va_t Address) {
+    return HighExpr::makeLoad(
+        HighExpr::makeConst(Address, 8,
+                            ConstantAddressProvenance::DataAddress),
+        NdType::makeInt(4, false));
+  };
+  F.Function.ReturnType = NdType::makeInt(4, false);
+  F.Function.Body[0].RetVal = HighExpr::makeBinop(
+      NdOp::INT_ADD, Field(Base + 4), Field(Base + 20));
+
+  const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  EXPECT_EQ(Result.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Base, 24}}));
+  const auto &LeftAddress =
+      Result.Function.Body[0].RetVal->Operands[0]->Operands[0];
+  const auto &RightAddress =
+      Result.Function.Body[0].RetVal->Operands[1]->Operands[0];
+  for (const auto &Address : {LeftAddress, RightAddress}) {
+    ASSERT_EQ(Address->Kind, ExprKind::BinOp);
+    ASSERT_EQ(Address->Operands.size(), 2U);
+    ASSERT_TRUE(Address->Operands[0]->SourceCallHint);
+    EXPECT_EQ(Address->Operands[0]->SourceCallHint->TargetAddress, Base);
+    EXPECT_TRUE(objcSourceCallBound(*Address->Operands[0], F.Image, {}));
+  }
+  EXPECT_EQ(LeftAddress->Operands[0]->SourceCallHint->ByteCount, 8U);
+  EXPECT_EQ(RightAddress->Operands[0]->SourceCallHint->ByteCount, 24U);
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCLocalStorageHelpers(
+      F.Image, Result.LocalStorageExtents, Helpers);
+  EXPECT_EQ(Helpers,
+            std::set<std::string>{"neverd_local_storage_1020_address"});
+  EXPECT_NE(Source.find("storage[24]"), std::string::npos);
+  EXPECT_NE(Source.find("[4] = 17"), std::string::npos);
+  EXPECT_NE(Source.find("[20] = 29"), std::string::npos);
+
+  auto Split = F.Image;
+  Split.Symbols.push_back({"_intervening", Base + 22, 0, false});
+  const auto Rejected = bindObjCSourceReferences(F.Function, Split);
+  EXPECT_FALSE(Rejected.Limitation.empty());
+  EXPECT_EQ(Rejected.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Base, 8}}));
+
+  auto Relocated = F.Image;
+  Relocated.DataPtrRelocSlots.insert(Base + 16);
+  const auto PointerRejected =
+      bindObjCSourceReferences(F.Function, Relocated);
+  EXPECT_FALSE(PointerRejected.Limitation.empty());
+  EXPECT_EQ(PointerRejected.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Base, 8}}));
+}
+
+TEST(ObjCSourceBindings,
      SwiftBeginAccessUsesTypedOrMemoryAccessProvedLocalStorage) {
   Fixture F;
   constexpr va_t Address = 0x1040;
