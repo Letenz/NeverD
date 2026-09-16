@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <cstdint>
 #include <set>
 #include <string>
 
@@ -124,6 +125,18 @@ canonicalizeCProjectionIdentifier(llvm::StringRef Raw,
   if (isCProjectionKeyword(Result) || Result.front() == '_')
     Result.insert(0, "nd_");
   return Result;
+}
+
+/// Unnamed image data in C: `g_<hex VA>`.  The C type is already in the
+/// declaration (`int32_t g_1400050E0`), so IDA listing dummy names
+/// (`byte_`/`word_`/`dword_`/`qword_`) would only repeat width and go stale
+/// if the object is later a struct, an array, or a different access size.
+/// HighC emits a tentative definition so standalone C can link; LLVMC emits
+/// `extern` for LLVM `external global`.
+inline constexpr llvm::StringLiteral kSyntheticGlobalPrefix("g_");
+
+inline std::string makeSyntheticGlobalName(uint64_t Addr) {
+  return (kSyntheticGlobalPrefix + llvm::utohexstr(Addr)).str();
 }
 
 class CProjectionIdentifierAllocator {

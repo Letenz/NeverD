@@ -9,6 +9,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/DebugInfo/CodeView/CodeView.h"
+#include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
@@ -26,7 +27,9 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -148,7 +151,19 @@ struct ProcRec {
   uint16_t Segment = 0;
   uint32_t Offset = 0;
   uint32_t Size = 0;
+  uint32_t TypeIndex = 0;
   std::string Name;
+};
+
+struct BpRelRec {
+  int32_t Offset = 0;
+  uint32_t TypeIndex = 0;
+  std::string Name;
+};
+
+struct TypeLeaf {
+  uint16_t Kind = 0;
+  llvm::ArrayRef<uint8_t> Data;
 };
 
 bool parseLengthPrefixed(llvm::ArrayRef<uint8_t> Rec, uint32_t NameOff,
@@ -162,10 +177,293 @@ bool parseLengthPrefixed(llvm::ArrayRef<uint8_t> Rec, uint32_t NameOff,
   return !Name.empty();
 }
 
+int32_t readI32(llvm::ArrayRef<uint8_t> Bytes, uint32_t Off) {
+  return static_cast<int32_t>(
+      llvm::support::endian::read32le(Bytes.data() + Off));
+}
+
+DebugCallConv debugCallConv(uint8_t Call) {
+  using CC = llvm::codeview::CallingConvention;
+  switch (static_cast<CC>(Call)) {
+  case CC::NearC:
+  case CC::FarC:
+    return DebugCallConv::Cdecl;
+  case CC::NearStdCall:
+  case CC::FarStdCall:
+    return DebugCallConv::Stdcall;
+  case CC::ThisCall:
+    return DebugCallConv::Thiscall;
+  case CC::NearFast:
+  case CC::FarFast:
+    return DebugCallConv::Fastcall;
+  default:
+    return DebugCallConv::Unknown;
+  }
+}
+
+uint16_t pointerBytes(Bitness Bits) {
+  return Bits == Bitness::Bits64 ? 8 : 4;
+}
+
+TypeRef pointerTo(TypeRef Pointee, uint16_t Size) {
+  auto Ptr = NdType::makePtr(Pointee ? Pointee : NdType::makeVoid());
+  Ptr->Size = Size;
+  return Ptr;
+}
+
+TypeRef primitiveType(uint32_t Index, uint16_t PtrSize) {
+  using llvm::codeview::SimpleTypeKind;
+  using llvm::codeview::SimpleTypeMode;
+  using llvm::codeview::TypeIndex;
+  if (Index >= TypeIndex::FirstNonSimpleIndex)
+    return {};
+  const auto Kind =
+      static_cast<SimpleTypeKind>(Index & TypeIndex::SimpleKindMask);
+  const auto Mode = static_cast<SimpleTypeMode>(Index & 0x700);
+  TypeRef Base;
+  switch (Kind) {
+  case SimpleTypeKind::Void:
+    Base = NdType::makeVoid();
+    break;
+  case SimpleTypeKind::HResult:
+  case SimpleTypeKind::Int32Long:
+  case SimpleTypeKind::Int32:
+    Base = NdType::makeInt(4, true);
+    break;
+  case SimpleTypeKind::UInt32Long:
+  case SimpleTypeKind::UInt32:
+    Base = NdType::makeInt(4, false);
+    break;
+  case SimpleTypeKind::SignedCharacter:
+  case SimpleTypeKind::SByte:
+  case SimpleTypeKind::NarrowCharacter:
+    Base = NdType::makeInt(1, true);
+    break;
+  case SimpleTypeKind::UnsignedCharacter:
+  case SimpleTypeKind::Byte:
+  case SimpleTypeKind::Boolean8:
+    Base = NdType::makeInt(1, false);
+    break;
+  case SimpleTypeKind::Int16Short:
+  case SimpleTypeKind::Int16:
+  case SimpleTypeKind::WideCharacter:
+    Base = NdType::makeInt(2, true);
+    break;
+  case SimpleTypeKind::UInt16Short:
+  case SimpleTypeKind::UInt16:
+  case SimpleTypeKind::Boolean16:
+    Base = NdType::makeInt(2, false);
+    break;
+  case SimpleTypeKind::Int64Quad:
+  case SimpleTypeKind::Int64:
+    Base = NdType::makeInt(8, true);
+    break;
+  case SimpleTypeKind::UInt64Quad:
+  case SimpleTypeKind::UInt64:
+  case SimpleTypeKind::Boolean64:
+    Base = NdType::makeInt(8, false);
+    break;
+  case SimpleTypeKind::Float32:
+    Base = NdType::makeFloat(4);
+    break;
+  case SimpleTypeKind::Float64:
+    Base = NdType::makeFloat(8);
+    break;
+  case SimpleTypeKind::Float80:
+    Base = NdType::makeFloat(10);
+    break;
+  default:
+    return {};
+  }
+  if (Mode == SimpleTypeMode::Direct)
+    return Base;
+  uint16_t Size = PtrSize;
+  if (Mode == SimpleTypeMode::NearPointer64)
+    Size = 8;
+  else if (Mode == SimpleTypeMode::NearPointer128)
+    Size = 16;
+  else if (Mode == SimpleTypeMode::NearPointer ||
+           Mode == SimpleTypeMode::FarPointer ||
+           Mode == SimpleTypeMode::HugePointer)
+    Size = 2;
+  return pointerTo(Base, Size);
+}
+
+struct TypeStore {
+  std::map<uint32_t, TypeLeaf> Records;
+  uint16_t PtrSize = 4;
+
+  TypeRef resolve(uint32_t Index, int Depth = 0) const {
+    if (Depth > 32)
+      return {};
+    if (Index < llvm::codeview::TypeIndex::FirstNonSimpleIndex)
+      return primitiveType(Index, PtrSize);
+    const auto It = Records.find(Index);
+    if (It == Records.end())
+      return {};
+    const TypeLeaf &Leaf = It->second;
+    using LK = llvm::codeview::TypeLeafKind;
+    const llvm::ArrayRef<uint8_t> D = Leaf.Data;
+    switch (Leaf.Kind) {
+    case LK::LF_MODIFIER:
+      if (D.size() < 4)
+        return {};
+      return resolve(llvm::support::endian::read32le(D.data()), Depth + 1);
+    case LK::LF_POINTER:
+      if (D.size() < 4)
+        return {};
+      return pointerTo(
+          resolve(llvm::support::endian::read32le(D.data()), Depth + 1),
+          PtrSize);
+    case LK::LF_CLASS:
+    case LK::LF_STRUCTURE:
+    case LK::LF_UNION:
+    case LK::LF_ENUM:
+      return NdType::makeInt(4, true);
+    default:
+      return {};
+    }
+  }
+
+  struct ProcType {
+    TypeRef Return;
+    DebugCallConv CallConv = DebugCallConv::Unknown;
+    std::vector<TypeRef> Args;
+    TypeRef ThisType;
+  };
+
+  std::optional<ProcType> procedure(uint32_t Index) const {
+    if (Index < llvm::codeview::TypeIndex::FirstNonSimpleIndex)
+      return std::nullopt;
+    const auto It = Records.find(Index);
+    if (It == Records.end())
+      return std::nullopt;
+    const TypeLeaf &Leaf = It->second;
+    const llvm::ArrayRef<uint8_t> D = Leaf.Data;
+    using LK = llvm::codeview::TypeLeafKind;
+    ProcType Out;
+    uint32_t ArgList = 0;
+    uint16_t Argc = 0;
+    if (Leaf.Kind == LK::LF_PROCEDURE) {
+      if (D.size() < 12)
+        return std::nullopt;
+      Out.Return = resolve(llvm::support::endian::read32le(D.data()));
+      Out.CallConv = debugCallConv(D[4]);
+      Argc = llvm::support::endian::read16le(D.data() + 6);
+      ArgList = llvm::support::endian::read32le(D.data() + 8);
+    } else if (Leaf.Kind == LK::LF_MFUNCTION) {
+      if (D.size() < 24)
+        return std::nullopt;
+      Out.Return = resolve(llvm::support::endian::read32le(D.data()));
+      Out.ThisType = resolve(llvm::support::endian::read32le(D.data() + 8));
+      Out.CallConv = debugCallConv(D[12]);
+      Argc = llvm::support::endian::read16le(D.data() + 14);
+      ArgList = llvm::support::endian::read32le(D.data() + 16);
+    } else {
+      return std::nullopt;
+    }
+    const auto ArgIt = Records.find(ArgList);
+    if (ArgIt != Records.end() && ArgIt->second.Kind == LK::LF_ARGLIST &&
+        ArgIt->second.Data.size() >= 4) {
+      const uint32_t N =
+          llvm::support::endian::read32le(ArgIt->second.Data.data());
+      const uint32_t Limit = std::min<uint32_t>(N, Argc);
+      for (uint32_t I = 0; I < Limit; ++I) {
+        const uint32_t Off = 4 + I * 4;
+        if (Off + 4 > ArgIt->second.Data.size())
+          break;
+        const uint32_t TI =
+            llvm::support::endian::read32le(ArgIt->second.Data.data() + Off);
+        if (TI == 0)
+          continue;
+        TypeRef T = resolve(TI);
+        Out.Args.push_back(T ? T : NdType::makeInt(4, true));
+      }
+    }
+    return Out;
+  }
+};
+
+llvm::Expected<TypeStore> parseTpi(const std::vector<uint8_t> &Bytes,
+                                   uint16_t PtrSize) {
+  TypeStore Store;
+  Store.PtrSize = PtrSize;
+  if (Bytes.empty())
+    return Store;
+  if (Bytes.size() < 16)
+    return pdb20Error("TPI stream is truncated");
+  const uint32_t Version = read32(Bytes, 0);
+  uint32_t HeaderLen = 0;
+  uint32_t TypeMin = 0;
+  uint32_t TypeMax = 0;
+  uint32_t DataLen = 0;
+  // Ghidra TypeProgramInterfaceParser: TI50/TI70/TI80 use the 800 header
+  // (header length is a field).  TI20/40/41 use the 16-bit 200 header.
+  switch (Version) {
+  case 19961031: // TI50
+  case 19990903: // TI70
+  case 20040203: // TI80
+    if (Bytes.size() < 20)
+      return pdb20Error("TPI 800 header is truncated");
+    HeaderLen = read32(Bytes, 4);
+    TypeMin = read32(Bytes, 8);
+    TypeMax = read32(Bytes, 12);
+    DataLen = read32(Bytes, 16);
+    break;
+  case 19951204: // TI42
+  case 19960307: // TI50DEP
+    if (Bytes.size() < 18)
+      return pdb20Error("TPI 500 header is truncated");
+    HeaderLen = 20;
+    TypeMin = read32(Bytes, 4);
+    TypeMax = read32(Bytes, 8);
+    DataLen = read32(Bytes, 12);
+    break;
+  case 920924:
+  case 19950410:
+  case 19951122:
+    HeaderLen = 16;
+    TypeMin = llvm::support::endian::read16le(Bytes.data() + 4);
+    TypeMax = llvm::support::endian::read16le(Bytes.data() + 6);
+    DataLen = read32(Bytes, 8);
+    break;
+  default:
+    return pdb20Error("unknown TPI version");
+  }
+  if (HeaderLen < 16 || HeaderLen > Bytes.size() ||
+      static_cast<uint64_t>(HeaderLen) + DataLen > Bytes.size() ||
+      TypeMax < TypeMin)
+    return pdb20Error("TPI header is malformed");
+  uint32_t Off = HeaderLen;
+  const uint32_t End = HeaderLen + DataLen;
+  uint32_t TI = TypeMin;
+  while (Off + 4 <= End && TI < TypeMax) {
+    const uint16_t Len =
+        llvm::support::endian::read16le(Bytes.data() + Off);
+    const uint16_t Kind =
+        llvm::support::endian::read16le(Bytes.data() + Off + 2);
+    if (Len < 2 || Off + 2u + Len > End)
+      return pdb20Error("TPI record overruns the type stream");
+    TypeLeaf Leaf;
+    Leaf.Kind = Kind;
+    Leaf.Data = llvm::ArrayRef<uint8_t>(Bytes.data() + Off + 4, Len - 2);
+    Store.Records.emplace(TI, Leaf);
+    Off += 2u + Len;
+    ++TI;
+  }
+  if (TI != TypeMax)
+    return pdb20Error("TPI record count does not match the header");
+  return Store;
+}
+
 void walkSymbols(llvm::ArrayRef<uint8_t> Bytes, uint32_t Start, uint32_t Limit,
-                 std::vector<ProcRec> &Out, bool PublicsAsFunctions) {
+                 std::vector<ProcRec> &Out,
+                 std::map<uint64_t, std::vector<BpRelRec>> *Locals,
+                 bool PublicsAsFunctions) {
   uint32_t Off = Start;
   const uint32_t End = std::min<uint32_t>(Limit, Bytes.size());
+  uint64_t CurrentKey = 0;
+  bool InProc = false;
   while (Off + 4 <= End) {
     const uint16_t Len =
         llvm::support::endian::read16le(Bytes.data() + Off);
@@ -180,10 +478,24 @@ void walkSymbols(llvm::ArrayRef<uint8_t> Bytes, uint32_t Start, uint32_t Limit,
         Rec.size() >= 36) {
       ProcRec P;
       P.Size = llvm::support::endian::read32le(Rec.data() + 12);
+      P.TypeIndex = llvm::support::endian::read32le(Rec.data() + 24);
       P.Offset = llvm::support::endian::read32le(Rec.data() + 28);
       P.Segment = llvm::support::endian::read16le(Rec.data() + 32);
-      if (parseLengthPrefixed(Rec, 35, P.Name))
+      if (parseLengthPrefixed(Rec, 35, P.Name)) {
+        CurrentKey = (static_cast<uint64_t>(P.Segment) << 32) | P.Offset;
+        InProc = true;
         Out.push_back(std::move(P));
+      }
+    } else if (Kind == static_cast<uint16_t>(SK::S_END)) {
+      InProc = false;
+    } else if (Locals && InProc &&
+               Kind == static_cast<uint16_t>(SK::S_BPREL32_ST) &&
+               Rec.size() >= 9) {
+      BpRelRec B;
+      B.Offset = readI32(Rec, 0);
+      B.TypeIndex = llvm::support::endian::read32le(Rec.data() + 4);
+      if (parseLengthPrefixed(Rec, 8, B.Name))
+        (*Locals)[CurrentKey].push_back(std::move(B));
     } else if (PublicsAsFunctions &&
                Kind == static_cast<uint16_t>(SK::S_PUB32_ST) &&
                Rec.size() >= 11) {
@@ -318,7 +630,16 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
   if (!ModsOr)
     return ModsOr.takeError();
 
+  auto TpiOr = readIndexedStream(File, llvm::pdb::StreamTPI);
+  if (!TpiOr)
+    return TpiOr.takeError();
+  auto TypesOr = parseTpi(*TpiOr, pointerBytes(Image.Bits));
+  if (!TypesOr)
+    return TypesOr.takeError();
+  const TypeStore &Types = *TypesOr;
+
   std::vector<ProcRec> Procs;
+  std::map<uint64_t, std::vector<BpRelRec>> BpRels;
   for (const ModuleRec &Mod : *ModsOr) {
     if (Mod.Stream <= 0 || Mod.SymBytes < 8)
       continue;
@@ -327,7 +648,7 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
       return ModStream.takeError();
     if (ModStream->size() < 4 || read32(*ModStream, 0) != 2)
       continue;
-    walkSymbols(*ModStream, 4, Mod.SymBytes, Procs, false);
+    walkSymbols(*ModStream, 4, Mod.SymBytes, Procs, &BpRels, false);
   }
 
   const uint16_t SymRecs = Header.SymRecordStreamIndex;
@@ -335,22 +656,74 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
     auto Gsym = readIndexedStream(File, SymRecs);
     if (!Gsym)
       return Gsym.takeError();
-    walkSymbols(*Gsym, 0, static_cast<uint32_t>(Gsym->size()), Procs, true);
+    walkSymbols(*Gsym, 0, static_cast<uint32_t>(Gsym->size()), Procs, nullptr,
+                true);
   }
 
   auto Ctx = std::unique_ptr<PDBDebugContext>(new PDBDebugContext());
   pdb_loader_detail::FunctionNameRegistry Names;
+  std::map<va_t, uint32_t> Sizes;
+  std::map<va_t, uint32_t> TypeIndices;
+  std::set<va_t> AmbiguousSizes;
   std::set<va_t> Addresses;
+  auto ResolveVA = [&](uint16_t Seg, uint32_t Off) -> va_t {
+    if (Seg == 0 || Seg > Image.Sections.size())
+      return 0;
+    const Section &Owner = Image.Sections[Seg - 1];
+    if (Off >= Owner.Size)
+      return 0;
+    return Owner.VA + Off;
+  };
   for (const ProcRec &P : Procs) {
-    if (P.Segment == 0 || P.Segment > Image.Sections.size())
+    const va_t VA = ResolveVA(P.Segment, P.Offset);
+    if (VA == 0)
       continue;
-    const Section &Owner = Image.Sections[P.Segment - 1];
-    if (P.Offset >= Owner.Size)
-      continue;
-    const va_t VA = Owner.VA + P.Offset;
     Addresses.insert(VA);
     Names.observe(VA, P.Name);
+    if (P.Size != 0) {
+      auto [It, Inserted] = Sizes.emplace(VA, P.Size);
+      if (!Inserted && It->second != P.Size)
+        AmbiguousSizes.insert(VA);
+    }
+    if (P.TypeIndex != 0)
+      TypeIndices.emplace(VA, P.TypeIndex);
   }
+
+  std::map<va_t, std::map<int64_t, VariableSym>> Locals;
+  bool AnyTypedLocal = false;
+  bool AnyTypedSignature = false;
+  std::map<uint64_t, va_t> KeyToVA;
+  for (const ProcRec &P : Procs) {
+    const va_t VA = ResolveVA(P.Segment, P.Offset);
+    if (VA == 0)
+      continue;
+    KeyToVA[(static_cast<uint64_t>(P.Segment) << 32) | P.Offset] = VA;
+  }
+
+  std::map<va_t, std::vector<VariableSym>> ParamsByFunc;
+  for (const auto &[Key, Relocs] : BpRels) {
+    const auto VAIt = KeyToVA.find(Key);
+    if (VAIt == KeyToVA.end())
+      continue;
+    const va_t VA = VAIt->second;
+    for (const BpRelRec &B : Relocs) {
+      VariableSym VS;
+      VS.Name = B.Name;
+      VS.StackOffset = B.Offset;
+      VS.Type = Types.resolve(B.TypeIndex);
+      VS.IsParam = B.Offset >= 8;
+      if (!VS.Type)
+        continue;
+      AnyTypedLocal = true;
+      auto &Slot = Locals[VA];
+      auto [It, Inserted] = Slot.emplace(B.Offset, VS);
+      if (!Inserted && It->second.Name != VS.Name)
+        Slot.erase(It);
+      else if (VS.IsParam)
+        ParamsByFunc[VA].push_back(VS);
+    }
+  }
+
   std::vector<FunctionSym> Functions;
   for (const va_t VA : Addresses) {
     const std::optional<std::string> Name = Names.name(VA);
@@ -359,9 +732,45 @@ loadPdb20DebugContext(const std::filesystem::path &PdbPath,
     FunctionSym FS;
     FS.Addr = VA;
     FS.Name = *Name;
+    if (!AmbiguousSizes.count(VA)) {
+      const auto SizeIt = Sizes.find(VA);
+      if (SizeIt != Sizes.end())
+        FS.Size = SizeIt->second;
+    }
+    const auto TypeIt = TypeIndices.find(VA);
+    std::optional<TypeStore::ProcType> Proc;
+    if (TypeIt != TypeIndices.end())
+      Proc = Types.procedure(TypeIt->second);
+    if (Proc) {
+      FS.CallConv = Proc->CallConv;
+      FS.ReturnType = Proc->Return;
+      AnyTypedSignature = AnyTypedSignature || static_cast<bool>(Proc->Return);
+      if (FS.CallConv == DebugCallConv::Thiscall && Proc->ThisType)
+        FS.Params.emplace_back("this", Proc->ThisType);
+    }
+    auto ParamIt = ParamsByFunc.find(VA);
+    if (ParamIt != ParamsByFunc.end()) {
+      std::sort(ParamIt->second.begin(), ParamIt->second.end(),
+                [](const VariableSym &A, const VariableSym &B) {
+                  return A.StackOffset < B.StackOffset;
+                });
+      size_t Idx = 0;
+      for (const VariableSym &P : ParamIt->second) {
+        TypeRef Ty = P.Type;
+        if (Proc && Idx < Proc->Args.size() && Proc->Args[Idx])
+          Ty = Proc->Args[Idx];
+        FS.Params.emplace_back(P.Name, Ty);
+        ++Idx;
+      }
+    } else if (Proc) {
+      for (size_t I = 0; I < Proc->Args.size(); ++I)
+        FS.Params.emplace_back("arg" + std::to_string(I), Proc->Args[I]);
+    }
     Functions.push_back(std::move(FS));
   }
-  Ctx->commitFunctions(std::move(Functions), true);
+
+  Ctx->commitDebugFacts(std::move(Functions), std::move(Locals), true,
+                        AnyTypedSignature, AnyTypedLocal);
   return Ctx;
 }
 

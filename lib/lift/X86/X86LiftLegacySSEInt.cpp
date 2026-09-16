@@ -392,7 +392,20 @@ bool liftLegacySSEInt(X86Lifter &L, X86Lifter::LiftState &S,
     if (X86.op_count < 2)
       break;
     NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
+    NdVar Src;
+    // Capstone leaves MMX memory operands at size 0; load the destination
+    // width so unpack of `mm, m64` matches `mm, mm`.
+    if (X86.operands[1].type == X86_OP_MEM &&
+        (X86.operands[1].size == 0 ||
+         X86.operands[1].size != Dst.Size) &&
+        Dst.Size != 0) {
+      const NdVar Address = S.computeEA(X86.operands[1]);
+      Src = S.makeTemp(Dst.Size);
+      S.emit(NdOp::LOAD, Src, {Address}, NdMemoryOrdering::None,
+             X86Lifter::LiftState::memoryAddressSpace(X86.operands[1]));
+    } else {
+      Src = L.operandRead(S, X86.operands[1]);
+    }
     uint16_t ElementSize = 0;
     bool HighHalf = false;
     switch (InsnId) {

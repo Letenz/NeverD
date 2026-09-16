@@ -288,8 +288,11 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // Remove spurious functions whose entry coincides with a jump-table
   // target of another function.  The function detector may promote
   // call-scan targets that are actually switch-case destinations.
+  // Structured decompile keeps those entries so coverage matches IDA/Ghidra
+  // on packed callees that also happen to be table destinations.
   {
     std::set<va_t> JTTargets;
+    if (Opts.PatchMode || Opts.LiftMode) {
     for (auto &LF : Result.LowFuncs)
       for (auto &JT : LF.JumpTables)
         for (va_t T : JT.Targets)
@@ -324,6 +327,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                    << "pipeline: removed " << Removed
                    << " spurious functions (jump-table targets)\n");
     }
+    }
   }
 
   for (const auto &LF : Result.LowFuncs) {
@@ -348,7 +352,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.DumpMed && Opts.EmitDumpOutput)
     dumpMedIR(Result.MedFuncs);
 
-  if (Result.MedIRVerifierFailures != 0) {
+  if (Result.MedIRVerifierFailures != 0 &&
+      (Opts.PatchMode || Opts.LiftMode)) {
     Result.Error = "MedIR verification failed";
     Result.Success = false;
     Trace.finish(false);

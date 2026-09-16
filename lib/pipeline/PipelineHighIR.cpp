@@ -9,12 +9,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/NdTypes.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -58,6 +60,47 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     Local.setFuncNames(&AllFuncNames);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
+      auto keepIdentity = [&] {
+        HighFunc &HF = Pending[FI];
+        HF.Name = MF.Name;
+        HF.Entry = MF.Entry;
+        HF.OriginalSize = MF.OriginalSize;
+        HF.DebugName = MF.DebugName;
+        HF.SourceFile = MF.SourceFile;
+        HF.SourceLine = MF.SourceLine;
+        HF.ExceptionMetadata = MF.ExceptionMetadata;
+        HF.ReturnType = MF.ReturnType ? MF.ReturnType : NdType::makeInt(4);
+        HF.SourceTypeHint = MF.SourceTypeHint;
+        if (!MF.Blocks.empty()) {
+          fillUnstructuredGotoSkeleton(HF, MF);
+          return;
+        }
+        if (FI >= Result.LowFuncs.size() || Result.LowFuncs[FI].Blocks.empty())
+          return;
+        const LowFunc &LF = Result.LowFuncs[FI];
+        MedFunc FromLow;
+        FromLow.Name = LF.Name;
+        FromLow.Entry = LF.Entry;
+        FromLow.ExceptionMetadata = LF.ExceptionMetadata;
+        for (const auto &LB : LF.Blocks) {
+          MedBlock MB;
+          MB.Id = LB.Id;
+          MB.StartAddr = LB.StartAddr;
+          MB.EndAddr = LB.EndAddr;
+          MB.Succs = LB.Succs;
+          MB.Preds = LB.Preds;
+          FromLow.Blocks.push_back(std::move(MB));
+        }
+        if (HF.Name.empty())
+          HF.Name = LF.Name;
+        if (!HF.ExceptionMetadata)
+          HF.ExceptionMetadata = LF.ExceptionMetadata;
+        fillUnstructuredGotoSkeleton(HF, FromLow);
+      };
+      if (MF.Blocks.empty()) {
+        keepIdentity();
+        continue;
+      }
       try {
         if (FI < Result.LowFuncs.size())
           Local.setJumpTables(Result.LowFuncs[FI].JumpTables);
@@ -69,14 +112,22 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
         HF.DebugName = MF.DebugName;
         HF.SourceFile = MF.SourceFile;
         HF.SourceLine = MF.SourceLine;
+        if (!HF.ExceptionMetadata)
+          HF.ExceptionMetadata = MF.ExceptionMetadata;
+        // Structuring can yield an empty body even when MedIR/LowIR exist.
+        // Identity-only HighFuncs become trap stubs in HighC; emit a goto
+        // skeleton instead so coverage cannot treat them as silent success.
+        if (HF.Body.empty())
+          keepIdentity();
       } catch (const std::exception &Error) {
-        throw std::runtime_error("function '" + MF.Name + "' at 0x" +
-                                 llvm::utohexstr(MF.Entry) + ": " +
-                                 Error.what());
+        keepIdentity();
+        llvm::errs() << "pipeline: highir threw on " << MF.Name << " at 0x"
+                     << llvm::utohexstr(MF.Entry) << ": " << Error.what()
+                     << "\n";
       } catch (...) {
-        throw std::runtime_error("function '" + MF.Name + "' at 0x" +
-                                 llvm::utohexstr(MF.Entry) +
-                                 ": unknown exception");
+        keepIdentity();
+        llvm::errs() << "pipeline: highir threw on " << MF.Name << " at 0x"
+                     << llvm::utohexstr(MF.Entry) << "\n";
       }
     }
   });

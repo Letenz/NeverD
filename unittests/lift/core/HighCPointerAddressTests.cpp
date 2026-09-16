@@ -7,9 +7,17 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/Common.h"
+#include "neverd/debug/DebugContext.h"
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -93,9 +101,9 @@ TEST(HighCPointerAddresses, CastsPointerReturnsAfterMachineArithmetic) {
   auto Identity = pointerFunction("identity", Func.ReturnType);
   returnValue(Identity, parameter(0));
   const std::string IdentitySource = emitFunctions({Identity});
-  EXPECT_NE(
-      IdentitySource.find("return (int32_t*)(uintptr_t)((uintptr_t)arg0);"),
-      std::string::npos)
+  EXPECT_NE(IdentitySource.find("return arg0;"), std::string::npos)
+      << IdentitySource;
+  EXPECT_EQ(IdentitySource.find("(uintptr_t)arg0"), std::string::npos)
       << IdentitySource;
 }
 
@@ -120,7 +128,7 @@ TEST(HighCPointerAddresses, PreservesParameterLvaluesAndAddressOf) {
   Addr->Operands.push_back(parameter(0));
   returnValue(Address, Addr);
   const std::string AddressSource = emitFunctions({Address});
-  EXPECT_NE(AddressSource.find("(uintptr_t)(&arg0)"), std::string::npos)
+  EXPECT_NE(AddressSource.find("return &arg0;"), std::string::npos)
       << AddressSource;
   EXPECT_EQ(AddressSource.find("&(uintptr_t)"), std::string::npos)
       << AddressSource;
@@ -301,6 +309,327 @@ int main(void) {
             0)
       << Error << "\n"
       << Source;
+}
+
+TEST(HighCPointerAddresses, BytePointersKeepCPointerArithmetic) {
+  auto Func = pointerFunction("byte_load", NdType::makeInt(1, false));
+  Func.Params[0].Type = NdType::makePtr(NdType::makeInt(1, false));
+  returnValue(Func, HighExpr::makeLoad(
+                        HighExpr::makeBinop(NdOp::INT_ADD,
+                                            parameter(0, Func.Params[0].Type),
+                                            parameter(1)),
+                        Func.ReturnType));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("uint8_t* arg0"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uintptr_t)arg0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(uint8_t *)(arg0 +"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, FrameSlotsRenderAsNamedLocalsAndAddressOf) {
+  const auto I32 = NdType::makeInt(4);
+  HighFunc Func;
+  Func.Name = "frame_slot";
+  Func.FrameSize = 16;
+  Func.ReturnType = NdType::makePtr(I32);
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.Size = 8;
+  SP.TheArch = Arch::X64;
+  SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  auto SlotAddr = HighExpr::makeBinop(
+      NdOp::INT_SUB, HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+      HighExpr::makeConst(8, 8));
+  HighStmt Init;
+  Init.Kind = StmtKind::Store;
+  Init.StoreAddr = SlotAddr;
+  Init.StoreVal = HighExpr::makeConst(7, 4);
+  Func.Body.push_back(std::move(Init));
+  auto Addr = std::make_shared<HighExpr>();
+  Addr->Kind = ExprKind::Addr;
+  Addr->Type = Func.ReturnType;
+  Addr->Operands.push_back(HighExpr::makeLoad(SlotAddr, I32));
+  returnValue(Func, Addr);
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("int32_t var_m8;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("var_m8 = 7;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return &var_m8;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("stack_storage"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("neverd_mem_"), std::string::npos) << Source;
+}
+
+BinaryImage makeImageObjectFixture(va_t Addr, std::vector<uint8_t> Bytes,
+                                   bool Writable) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Segment Seg;
+  Seg.Name = Writable ? ".data" : ".rdata";
+  Seg.VA = Addr;
+  Seg.Size = Bytes.size();
+  Seg.Flags = SegmentFlags::Readable;
+  if (Writable)
+    Seg.Flags = Seg.Flags | SegmentFlags::Writable;
+  Seg.Data = std::move(Bytes);
+  Img.Segments.push_back(std::move(Seg));
+  return Img;
+}
+
+TEST(HighCPointerAddresses, FoldsReadonlyImageIntegerLoad) {
+  BinaryImage Img =
+      makeImageObjectFixture(0x140003260, {0x01, 0x10, 0x42, 0xE0}, false);
+  HighFunc Func;
+  Func.Name = "load_code";
+  Func.ReturnType = NdType::makeInt(4, false);
+  returnValue(Func, HighExpr::makeLoad(HighExpr::makeConst(0x140003260, 8),
+                                       Func.ReturnType));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("0xE0421001"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("0x140003260"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, NamesWritableImageDataStore) {
+  BinaryImage Img =
+      makeImageObjectFixture(0x1400050E0, {0, 0, 0, 0}, true);
+  HighFunc Func;
+  Func.Name = "store_sink";
+  Func.ReturnType = NdType::makeVoid();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(0x1400050E0, 8);
+  Store.StoreVal = HighExpr::makeConst(41, 4);
+  Store.StoreVal->Type = NdType::makeInt(4, true);
+  Func.Body.push_back(std::move(Store));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("int32_t g_1400050E0;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("g_1400050E0 = 41;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("*(int32_t *)(0x1400050E0)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, NamesWritableNdDataGlobal) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-data", Context);
+  llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
+  auto *GV = new llvm::GlobalVariable(
+      Module, I32, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
+      nullptr, makeNdDataSymbol(0x1400050E0));
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
+  llvm::Function *Function = llvm::Function::Create(
+      FnTy, llvm::GlobalValue::ExternalLinkage, "store_sink", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateStore(llvm::ConstantInt::get(I32, 41), GV);
+  Builder.CreateRetVoid();
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("g_1400050E0"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern uint32_t g_1400050E0;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("data_1400050E0"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("dword_"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, DeclaresAssignedTempsAndUnusedCallResults) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-locals", Context);
+  llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {I32}, false);
+  llvm::Function *Function = llvm::Function::Create(
+      FnTy, llvm::GlobalValue::ExternalLinkage, "probe_like", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Value *Code = Builder.CreateAdd(
+      Function->getArg(0), llvm::ConstantInt::get(I32, 0xE0421001), "t22");
+  llvm::FunctionType *RaiseTy = llvm::FunctionType::get(
+      I64, {I32, I32, I32, I64}, false);
+  llvm::Function *Raise = llvm::Function::Create(
+      RaiseTy, llvm::GlobalValue::ExternalLinkage, "RaiseException", Module);
+  Builder.CreateCall(Raise,
+                     {Code, llvm::ConstantInt::get(I32, 0),
+                      llvm::ConstantInt::get(I32, 0),
+                      llvm::ConstantInt::get(I64, 0)},
+                     "v36");
+  Builder.CreateMul(Function->getArg(0), llvm::ConstantInt::get(I32, 3),
+                    "dead_flag");
+  Builder.CreateRet(Code);
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.EmitIncludes = false;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find("uint32_t t22"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint64_t v36"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint32_t dead_flag"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("RaiseException"), std::string::npos) << Source;
+  const size_t DeadAssign = Source.find("dead_flag");
+  ASSERT_NE(DeadAssign, std::string::npos) << Source;
+  EXPECT_NE(Source.find(" = ", DeadAssign), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, UsesDebugDataObjectName) {
+  BinaryImage Img =
+      makeImageObjectFixture(0x1400050E0, {0, 0, 0, 0}, true);
+  class NamedDataDbg : public NullDebugContext {
+  public:
+    std::vector<DataObjectSym> allDataObjects() const override {
+      return {{"ProbeSink", 0x1400050E0, 4, false}};
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  HighFunc Func;
+  Func.Name = "store_sink";
+  Func.ReturnType = NdType::makeVoid();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(0x1400050E0, 8);
+  Store.StoreVal = HighExpr::makeConst(41, 4);
+  Store.StoreVal->Type = NdType::makeInt(4, true);
+  Func.Body.push_back(std::move(Store));
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
+  OS.flush();
+  EXPECT_NE(Source.find("int32_t ProbeSink;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("ProbeSink = 41;"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, DeclaresAssignedTempsAndUnusedCallResults) {
+  HighFunc Func;
+  Func.Name = "probe_like";
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"arg0", NdType::makeInt(4)}};
+
+  MedVar Temp;
+  Temp.Kind = MedVar::Temp;
+  Temp.Id = 22;
+  Temp.SSAVer = 1;
+  Temp.Size = 4;
+  Temp.TheArch = Arch::X64;
+
+  MedVar CallDest;
+  CallDest.Kind = MedVar::Reg;
+  CallDest.Id = 36;
+  CallDest.SSAVer = 0;
+  CallDest.Size = 8;
+  CallDest.TheArch = Arch::X64;
+
+  MedVar PhiDest;
+  PhiDest.Kind = MedVar::Reg;
+  PhiDest.Id = 3;
+  PhiDest.SSAVer = 0;
+  PhiDest.Size = 8;
+  PhiDest.TheArch = Arch::X64;
+
+  HighStmt LoadCode;
+  LoadCode.Kind = StmtKind::Assign;
+  LoadCode.Dst = HighExpr::makeVar(Temp, NdType::makeInt(4, false));
+  LoadCode.Val = HighExpr::makeConst(0xE0421001, 4);
+
+  HighStmt Call;
+  Call.Kind = StmtKind::Assign;
+  Call.Dst = HighExpr::makeVar(CallDest, NdType::makeInt(8));
+  Call.Val = HighExpr::makeCall(
+      "RaiseException", 0,
+      {HighExpr::makeVar(Temp, NdType::makeInt(4, false)),
+       HighExpr::makeConst(0, 4), HighExpr::makeConst(0, 4),
+       HighExpr::makeConst(0, 8)});
+  Call.Val->Type = NdType::makeInt(8);
+
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  Branch.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL,
+                                    parameter(0, NdType::makeInt(4)),
+                                    HighExpr::makeConst(7, 4));
+  Branch.Body.push_back(std::move(LoadCode));
+  Branch.Body.push_back(std::move(Call));
+  Func.Body.push_back(std::move(Branch));
+
+  HighStmt PhiAssign;
+  PhiAssign.Kind = StmtKind::Assign;
+  PhiAssign.Dst = HighExpr::makeVar(PhiDest, NdType::makeInt(8));
+  PhiAssign.Dst->Kind = ExprKind::Phi;
+  PhiAssign.Val = HighExpr::makeConst(41, 8);
+  Func.Body.push_back(std::move(PhiAssign));
+
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeVar(PhiDest, NdType::makeInt(4));
+  Ret.RetVal->Kind = ExprKind::Phi;
+  Func.Body.push_back(std::move(Ret));
+
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("t22_1;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("v36_0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("v3_0;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("t22_1 = "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("v36_0 = RaiseException"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, DeclaresFrameSlotAfterParamHomeOverwrite) {
+  HighFunc Func;
+  Func.Name = "home_then_write";
+  Func.ReturnType = NdType::makeInt(4);
+  Func.Params = {{"arg0", NdType::makeInt(4)}};
+  Func.FrameSize = 16;
+  MedVar SP;
+  SP.Kind = MedVar::Reg;
+  SP.Size = 8;
+  SP.TheArch = Arch::X64;
+  SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  auto SlotAddr = HighExpr::makeBinop(
+      NdOp::INT_SUB, HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+      HighExpr::makeConst(8, 8));
+  HighStmt Spill;
+  Spill.Kind = StmtKind::Store;
+  Spill.StoreAddr = SlotAddr;
+  Spill.StoreVal = parameter(0, NdType::makeInt(4));
+  Func.Body.push_back(std::move(Spill));
+  HighStmt Overwrite;
+  Overwrite.Kind = StmtKind::Store;
+  Overwrite.StoreAddr = SlotAddr;
+  Overwrite.StoreVal = HighExpr::makeConst(41, 4);
+  Overwrite.StoreVal->Type = NdType::makeInt(4, true);
+  Func.Body.push_back(std::move(Overwrite));
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeLoad(SlotAddr, NdType::makeInt(4));
+  Func.Body.push_back(std::move(Ret));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("var_m8;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("var_m8 = 41;"), std::string::npos) << Source;
 }
 
 } // namespace

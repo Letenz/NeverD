@@ -77,7 +77,7 @@ struct NdType {
     auto T = std::make_shared<NdType>();
     T->Kind = NdTypeKind::Ptr;
     T->Size = 8;
-    T->Pointee = Pt ? Pt : makeInt(1, false);
+    T->Pointee = Pt ? Pt : makeVoid();
     return T;
   }
   /// Construct a bounded naturally aligned record. Unsupported, cyclic or

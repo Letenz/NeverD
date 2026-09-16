@@ -552,7 +552,6 @@ TEST_F(PatchCOFF_X64, ReconstructsNativeFH3StateGraph) {
   for (const CxxIPState &State : GeneratedCxx->Cxx->IPMap)
     EXPECT_TRUE(Injected->contains(State.IP) ||
                 State.IP == GeneratedCxx->CodeRange.End);
-
 }
 
 TEST_F(PatchCOFF_X64, ReconstructsBoundedNativeFH4StateGraph) {
@@ -1051,7 +1050,8 @@ TEST_F(PatchCOFF_X64, ReconstructsBoundedNativeTypedFH4StateGraph) {
                     std::istreambuf_iterator<char>());
   EXPECT_NE(HighC.find("personality=__CxxFrameHandler4"), std::string::npos);
   EXPECT_NE(HighC.find("cxx.try[0]"), std::string::npos);
-  EXPECT_NE(HighC.find("type_descriptor@0x"), std::string::npos);
+  EXPECT_NE(HighC.find("type @ 0x"), std::string::npos);
+  EXPECT_NE(HighC.find("catch ("), std::string::npos);
 
   auto Patch = patchBinary(PE);
   ASSERT_EQ(Patch.exitCode, 0) << Patch.err;

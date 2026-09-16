@@ -80,6 +80,62 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
   for (auto &S : Func.Body)
     ScanStmt(S);
 
+  std::set<int> AddrParams;
+  auto Unwrap = [](const HighExpr *E) -> const HighExpr * {
+    unsigned Depth = 0;
+    while (E && !E->Operands.empty() && Depth++ < 8 &&
+           (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+            E->Kind == ExprKind::UnaryOp))
+      E = E->Operands[0].get();
+    return E;
+  };
+  auto NoteAddress = [&](const ExprPtr &Addr) {
+    const HighExpr *E = Unwrap(Addr.get());
+    if (!E)
+      return;
+    if (E->Kind == ExprKind::Var && E->Var.Kind == MedVar::Param)
+      AddrParams.insert(E->Var.Id);
+    if (E->Kind == ExprKind::BinOp &&
+        (E->Op == NdOp::INT_ADD || E->Op == NdOp::INT_SUB)) {
+      for (const ExprPtr &Op : E->Operands) {
+        const HighExpr *Leaf = Unwrap(Op.get());
+        if (Leaf && Leaf->Kind == ExprKind::Var &&
+            Leaf->Var.Kind == MedVar::Param)
+          AddrParams.insert(Leaf->Var.Id);
+      }
+    }
+  };
+  std::function<void(const HighStmt &)> NoteStmt = [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Store)
+      NoteAddress(S.StoreAddr);
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Load &&
+        !S.Dst->Operands.empty())
+      NoteAddress(S.Dst->Operands[0]);
+    if (S.Val && S.Val->Kind == ExprKind::Load && !S.Val->Operands.empty())
+      NoteAddress(S.Val->Operands[0]);
+    for (const HighStmt &Inner : S.Body)
+      NoteStmt(Inner);
+    for (const HighStmt &Inner : S.ElseBody)
+      NoteStmt(Inner);
+    for (const SwitchCase &Case : S.Cases)
+      for (const HighStmt &Inner : Case.Body)
+        NoteStmt(Inner);
+    for (const HighStmt &Inner : S.DefaultBody)
+      NoteStmt(Inner);
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      for (const HighStmt &Inner : ClauseBody)
+        NoteStmt(Inner);
+  };
+  for (const HighStmt &S : Func.Body)
+    NoteStmt(S);
+  for (size_t I = 0; I < Func.Params.size(); ++I) {
+    HighParam &Param = Func.Params[I];
+    if (Param.Type && Param.Type->Kind == NdTypeKind::Ptr)
+      continue;
+    if (AddrParams.count(static_cast<int>(I)))
+      Param.Type = NdType::makePtr(NdType::makeInt(1, false));
+  }
+
   for (auto &Local : Func.Locals) {
     if (FloatStackOffs.count(Local.StackOff)) {
       uint16_t Sz = Local.Type ? Local.Type->Size : 4;
@@ -175,6 +231,50 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
   for (uint64_t Reg : SegmentOffsetRegs)
     PtrRegs.erase(Reg);
   return PtrRegs;
+}
+
+std::set<int> detectPtrParamIds(const MedFunc &Med) {
+  std::map<std::pair<int, int>, const MedOp *> DefMap;
+  for (const MedBlock &Blk : Med.Blocks)
+    for (const MedOp &Op : Blk.Ops)
+      if (Op.Output.Id >= 0 && Op.Output.Size > 0)
+        DefMap[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
+
+  std::set<int> PtrParams;
+  auto recordAddressParams = [&](const MedVar &AddrVar) {
+    if (AddrVar.Kind == MedVar::Param && AddrVar.SSAVer == 0)
+      PtrParams.insert(AddrVar.Id);
+    if (AddrVar.Kind != MedVar::Temp || AddrVar.Id < 0)
+      return;
+    auto DIt = DefMap.find({AddrVar.Id, AddrVar.SSAVer});
+    if (DIt == DefMap.end() || DIt->second->NumInputs < 1)
+      return;
+    const MedOp &Def = *DIt->second;
+    if (Def.Opcode != NdOp::INT_ADD && Def.Opcode != NdOp::COPY)
+      return;
+    for (uint8_t I = 0; I < Def.NumInputs; ++I)
+      if (Def.Inputs[I].Kind == MedVar::Param && Def.Inputs[I].SSAVer == 0)
+        PtrParams.insert(Def.Inputs[I].Id);
+  };
+  for (const MedBlock &Blk : Med.Blocks) {
+    for (const MedOp &Op : Blk.Ops) {
+      const MedVar *MemoryAddress = nullptr;
+      if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+           Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+           Op.Opcode == NdOp::ATOMIC_CMPXCHG) &&
+          Op.NumInputs >= 1)
+        MemoryAddress = &Op.Inputs[0];
+      else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs >= 2 &&
+               Op.Inputs[0].isConst() &&
+               intrinsicSupportsMemoryAddressSpace(
+                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+        MemoryAddress = &Op.Inputs[1];
+      if (MemoryAddress &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+        recordAddressParams(*MemoryAddress);
+    }
+  }
+  return PtrParams;
 }
 
 } // namespace neverd

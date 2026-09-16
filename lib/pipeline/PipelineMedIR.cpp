@@ -13,6 +13,7 @@
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Common.h"
+#include "neverd/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
@@ -113,11 +114,35 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         auto Hint = SourceHints.find(MF.Entry);
         if (Hint != SourceHints.end())
           MF.SourceTypeHint = *Hint->second;
-        inferMedTypes(MF, Img.Arch);
+        size_t MedOps = 0;
+        for (const auto &Block : MF.Blocks)
+          MedOps += Block.Ops.size();
+        if (MF.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
+            MedOps <= static_cast<size_t>(limits::kMaxSSANodes))
+          inferMedTypes(MF, Img.Arch);
       } catch (...) {
         syncWarning() << "pipeline: low->med threw on "
                       << Result.LowFuncs[I].Name << "\n";
-        Result.MedFuncs[I] = MedFunc{};
+        const LowFunc &LF = Result.LowFuncs[I];
+        MedFunc Fallback;
+        Fallback.Name = LF.Name;
+        Fallback.Entry = LF.Entry;
+        Fallback.OriginalSize = LF.OriginalSize;
+        Fallback.DebugName = LF.DebugName;
+        Fallback.SourceFile = LF.SourceFile;
+        Fallback.SourceLine = LF.SourceLine;
+        Fallback.ExceptionMetadata = LF.ExceptionMetadata;
+        Fallback.JumpTables = LF.JumpTables;
+        for (const auto &LB : LF.Blocks) {
+          MedBlock MB;
+          MB.Id = LB.Id;
+          MB.StartAddr = LB.StartAddr;
+          MB.EndAddr = LB.EndAddr;
+          MB.Succs = LB.Succs;
+          MB.Preds = LB.Preds;
+          Fallback.Blocks.push_back(std::move(MB));
+        }
+        Result.MedFuncs[I] = std::move(Fallback);
       }
     }
   });

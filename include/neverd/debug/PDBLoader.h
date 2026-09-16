@@ -101,15 +101,21 @@ public:
   std::optional<SourceLoc> sourceLocation(va_t Addr) const override;
   std::vector<FunctionSym> allFunctions() const override;
   bool hasInfo() const override;
+  bool hasAuthenticatedFunctionSignatures() const override;
+  bool hasAuthenticatedObjectExtents() const override;
 
   bool hasAuthenticatedImageIdentity() const;
-  /// Phase A never authorizes exact object metadata; identity-authenticated
-  /// function names remain a separate, names-only capability.
+  /// RSDS Phase A never authorizes exact object metadata.  A PDB 2.00 JG
+  /// companion that parsed TPI and S_BPREL32_ST without stream malformation
+  /// may authorize extents for that image only.
   bool hasExactObjectMetadataPrerequisites() const;
 
 private:
   PDBDebugContext();
   void commitFunctions(std::vector<FunctionSym> Functions, bool Authenticated);
+  void commitDebugFacts(std::vector<FunctionSym> Functions,
+                        std::map<va_t, std::map<int64_t, VariableSym>> Locals,
+                        bool Authenticated, bool Signatures, bool Extents);
   friend llvm::Expected<std::unique_ptr<PDBDebugContext>>
   loadPdb20DebugContext(const std::filesystem::path &PdbPath,
                         const BinaryImage &Image);

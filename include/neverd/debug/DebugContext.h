@@ -31,6 +31,17 @@ struct SourceLoc {
   uint32_t Col = 0;
 };
 
+/// Source calling convention recovered from authenticated debug information.
+/// This is independent of MedIR::CallingConv, which remains an ABI-recovery
+/// result and must not be guessed from a pretty-print attribute.
+enum class DebugCallConv : uint8_t {
+  Unknown,
+  Cdecl,
+  Stdcall,
+  Thiscall,
+  Fastcall,
+};
+
 struct FunctionSym {
   std::string Name;
   va_t Addr = 0;
@@ -38,6 +49,7 @@ struct FunctionSym {
   SourceLoc DeclLoc;
   TypeRef ReturnType;
   std::vector<std::pair<std::string, TypeRef>> Params;
+  DebugCallConv CallConv = DebugCallConv::Unknown;
 
   bool contains(va_t Address) const {
     return Address >= Addr && Address - Addr < Size;

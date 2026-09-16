@@ -273,6 +273,28 @@ const MedCallClobber *findCallClobber(const MedFunc &Func, const MedVar &V) {
 
 } // anonymous namespace
 
+void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med) {
+  Func.Body.clear();
+  for (const auto &Block : Med.Blocks) {
+    HighStmt Mark;
+    Mark.Kind = StmtKind::Nop;
+    Mark.Addr = Block.StartAddr;
+    Func.Body.push_back(Mark);
+    if (!Block.Succs.empty() && Block.Succs[0] >= 0 &&
+        static_cast<size_t>(Block.Succs[0]) < Med.Blocks.size()) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      const size_t Succ = static_cast<size_t>(Block.Succs[0]);
+      Jump.GotoTarget = Med.Blocks[Succ].StartAddr;
+      Func.Body.push_back(Jump);
+    } else {
+      HighStmt Ret;
+      Ret.Kind = StmtKind::Return;
+      Func.Body.push_back(Ret);
+    }
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // MedToHighConverter — expression helpers
 //===----------------------------------------------------------------------===//
@@ -611,6 +633,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   }
 
   auto PtrParamRegOffs = detectPtrParamRegs(Med);
+  auto PtrParamIds = detectPtrParamIds(Med);
   const auto &TRI = getTargetRegInfo(TheArch);
 
   if (Med.SourceTypeHint) {
@@ -624,13 +647,24 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
       if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
         HP.Name = Med.TypedParams[PI].Name;
         HP.Type = Med.TypedParams[PI].Type;
-      } else if (PtrParamRegOffs.count(MP.RegOff) &&
-                 !TRI.isFrameOrLinkReg(MP.RegOff))
-        HP.Type = NdType::makePtr();
+      } else if ((PtrParamRegOffs.count(MP.RegOff) &&
+                  MP.RegOff != kNoParamReg &&
+                  !TRI.isFrameOrLinkReg(MP.RegOff)) ||
+                 PtrParamIds.count(MP.Id) || PtrParamIds.count(static_cast<int>(PI)))
+        HP.Type = NdType::makePtr(NdType::makeInt(1, false));
       else
         HP.Type = NdType::makeInt(MP.Size);
       Func.Params.push_back(HP);
     }
+
+  size_t MedOps = 0;
+  for (const auto &Block : Med.Blocks)
+    MedOps += Block.Ops.size();
+  if (Med.Blocks.size() > limits::kMaxStructurableMedBlocks ||
+      MedOps > limits::kMaxStructurableMedOps) {
+    fillUnstructuredGotoSkeleton(Func, Med);
+    return Func;
+  }
 
   auto TExpr = std::chrono::steady_clock::now();
   buildExpressions(Med);
@@ -661,10 +695,13 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
 
   auto TDceStart = std::chrono::steady_clock::now();
   Trace.high(Func, "before-dce");
+  // Nest handler/filter bodies into try clauses before DCE.  Those blocks are
+  // entered by the personality, so ordinary reachability would delete them
+  // and leave empty __except/__catch arms.
+  structureExceptionRegions(Func, Med);
   eliminateDeadStmts(Func);
   Trace.high(Func, "after-dce");
   foldStructuredContinuations(Func, &Med);
-  structureExceptionRegions(Func, Med);
   coalesceBranchEntryStatements(Func);
   eliminateHighDeadPhiCopies(Func);
   Trace.high(Func, "after-exceptions");

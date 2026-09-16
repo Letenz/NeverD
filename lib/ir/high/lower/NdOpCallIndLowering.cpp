@@ -16,6 +16,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringExtras.h"
 
@@ -27,25 +28,52 @@ namespace neverd {
 
 /// Strategy 1: the lifter already resolved the IAT slot address, so the
 /// INDIR_CALL input is a constant that maps directly to a known function name.
+static bool tryResolveNamedAddress(va_t Addr,
+                                   const std::map<va_t, std::string> *FuncNames,
+                                   const BinaryImage *Image,
+                                   MedToHighConverter::CallIndTarget &Out) {
+  if (FuncNames) {
+    auto It = FuncNames->find(Addr);
+    if (It != FuncNames->end()) {
+      Out.Name = It->second;
+      Out.IsIndirect = false;
+      return true;
+    }
+  }
+  if (Image) {
+    if (const Import *Imp = Image->findImportAt(Addr);
+        Imp && !Imp->Name.empty()) {
+      Out.Name = Imp->Name;
+      Out.IsIndirect = false;
+      return true;
+    }
+    std::string FnName = Image->getFunctionNameAt(Addr);
+    if (!FnName.empty() && FnName.find(kAutoFuncPrefix) != 0) {
+      Out.Name = FnName;
+      Out.IsIndirect = false;
+      return true;
+    }
+  }
+  return false;
+}
+
 static bool tryResolveConstTarget(const MedOp &CurOp,
                                   const std::map<va_t, std::string> *FuncNames,
+                                  const BinaryImage *Image,
                                   MedToHighConverter::CallIndTarget &Out) {
-  if (!FuncNames || CurOp.NumInputs < 1 || !CurOp.Inputs[0].isConst())
+  if (CurOp.NumInputs < 1 || !CurOp.Inputs[0].isConst())
     return false;
-  auto It = FuncNames->find(CurOp.Inputs[0].ConstVal);
-  if (It == FuncNames->end())
-    return false;
-  Out.Name = It->second;
-  Out.IsIndirect = false;
-  return true;
+  return tryResolveNamedAddress(CurOp.Inputs[0].ConstVal, FuncNames, Image,
+                                Out);
 }
 
 /// Strategy 2: trace through LOAD (and optional INT_ADD for RIP-relative
 /// addressing) to find a known import address.
 static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
                                  const std::map<va_t, std::string> *FuncNames,
+                                 const BinaryImage *Image,
                                  MedToHighConverter::CallIndTarget &Out) {
-  if (!FuncNames || CurOp.NumInputs < 1)
+  if (CurOp.NumInputs < 1)
     return false;
 
   auto &TVar = CurOp.Inputs[0];
@@ -57,14 +85,9 @@ static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
 
     // Direct constant load address.
     auto &Addr = BOp.Inputs[0];
-    if (Addr.isConst()) {
-      auto It = FuncNames->find(Addr.ConstVal);
-      if (It != FuncNames->end()) {
-        Out.Name = It->second;
-        Out.IsIndirect = false;
-        return true;
-      }
-    }
+    if (Addr.isConst() &&
+        tryResolveNamedAddress(Addr.ConstVal, FuncNames, Image, Out))
+      return true;
 
     // RIP-relative pattern: INT_ADD rip, disp -> LOAD -> INDIR_CALL.
     for (auto &AOp : CurBlock.Ops) {
@@ -74,12 +97,9 @@ static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
       for (uint8_t KI = 0; KI < AOp.NumInputs; ++KI) {
         if (!AOp.Inputs[KI].isConst())
           continue;
-        auto It = FuncNames->find(AOp.Inputs[KI].ConstVal);
-        if (It != FuncNames->end()) {
-          Out.Name = It->second;
-          Out.IsIndirect = false;
+        if (tryResolveNamedAddress(AOp.Inputs[KI].ConstVal, FuncNames, Image,
+                                   Out))
           return true;
-        }
       }
     }
     break;
@@ -163,9 +183,9 @@ MedToHighConverter::CallIndTarget MedToHighConverter::resolveCallIndTarget(
     const MedBlock &CurBlock, const MedOp &CurOp, const ExprPtr &TargetExpr) {
   CallIndTarget Result;
 
-  if (tryResolveConstTarget(CurOp, FuncNames, Result))
+  if (tryResolveConstTarget(CurOp, FuncNames, Image, Result))
     return Result;
-  if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Result))
+  if (tryResolveLoadTarget(CurOp, CurBlock, FuncNames, Image, Result))
     return Result;
   if (tryResolveRegTarget(TargetExpr, TargetArch, Result))
     return Result;

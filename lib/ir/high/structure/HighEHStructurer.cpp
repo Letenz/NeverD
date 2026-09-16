@@ -15,9 +15,15 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/loader/BinaryImage.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <iterator>
 #include <map>
@@ -31,6 +37,56 @@ namespace neverd {
 namespace {
 
 enum class RangeClass : uint8_t { Unknown, Inside, Outside, Crossing };
+
+bool isCIdentifier(llvm::StringRef Name) {
+  if (Name.empty() ||
+      (!std::isalpha(static_cast<unsigned char>(Name.front())) &&
+       Name.front() != '_'))
+    return false;
+  return llvm::all_of(Name, [](char Ch) {
+    return std::isalnum(static_cast<unsigned char>(Ch)) || Ch == '_';
+  });
+}
+
+/// Read MSVC `TypeDescriptor::{void *vftable; void *spare; char name[]}`.
+std::string readMSVCTypeDescriptorName(const BinaryImage *Img,
+                                       va_t DescriptorVA) {
+  if (!Img || !DescriptorVA)
+    return {};
+  const size_t PointerSize = Img->is64Bit() ? 8 : 4;
+  if (DescriptorVA > InvalidVA - 2 * PointerSize)
+    return {};
+  const va_t NameVA = DescriptorVA + 2 * PointerSize;
+  std::string Name;
+  for (size_t I = 0; I < limits::kMaxMsvcTypeDescriptorNameBytes; ++I) {
+    if (I > InvalidVA - NameVA)
+      return {};
+    const uint8_t *Byte = Img->readVA(NameVA + I, 1);
+    if (!Byte)
+      return {};
+    if (*Byte == 0)
+      break;
+    Name.push_back(static_cast<char>(*Byte));
+  }
+  if (Name.empty())
+    return {};
+  llvm::StringRef Mangled(Name);
+  if (Mangled.starts_with(".?A") && Mangled.size() > 4) {
+    llvm::StringRef Rest = Mangled.drop_front(4);
+    const size_t At = Rest.find('@');
+    if (At != llvm::StringRef::npos)
+      Rest = Rest.take_front(At);
+    if (isCIdentifier(Rest))
+      return Rest.str();
+  }
+  return Name;
+}
+
+void fillCxxCatchType(HighEHClause &Clause, const BinaryImage *Img) {
+  if (!Clause.TypeName.empty() || !Clause.TypeDescriptorVA)
+    return;
+  Clause.TypeName = readMSVCTypeDescriptorName(Img, Clause.TypeDescriptorVA);
+}
 
 struct AddressFootprint {
   bool HasInside = false;
@@ -218,7 +274,90 @@ void addSEHCandidates(const ExceptionFunction &EH, Arch TargetArch,
   }
 }
 
-void addCxxCandidates(const ExceptionFunction &EH,
+void addRegistrationCandidates(const ExceptionFunction &EH,
+                               std::vector<RegionCandidate> &Candidates,
+                               unsigned &Rejected) {
+  if (!EH.Registration)
+    return;
+  const RegistrationChainInfo &Chain = *EH.Registration;
+  if (Chain.Scopes.empty())
+    return;
+  if (Chain.TryLevelStores.empty()) {
+    Rejected += static_cast<unsigned>(Chain.Scopes.size());
+    return;
+  }
+
+  struct Interval {
+    va_t Begin = 0;
+    va_t End = 0;
+  };
+  std::vector<std::vector<Interval>> PerScope(Chain.Scopes.size());
+  int32_t Level = Chain.SeededTryLevel.value_or(-1);
+  va_t Cursor = EH.CodeRange.Begin;
+  auto Flush = [&](va_t End) {
+    if (End <= Cursor)
+      return;
+    int32_t Walk = Level;
+    for (size_t Step = 0; Step < Chain.Scopes.size(); ++Step) {
+      if (Walk < 0 || static_cast<size_t>(Walk) >= Chain.Scopes.size())
+        break;
+      PerScope[static_cast<size_t>(Walk)].push_back({Cursor, End});
+      Walk = Chain.Scopes[static_cast<size_t>(Walk)].EnclosingLevel;
+    }
+  };
+  for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
+    va_t Cut = Store.EndVA;
+    if (Cut < EH.CodeRange.Begin)
+      Cut = EH.CodeRange.Begin;
+    if (Cut > EH.CodeRange.End)
+      Cut = EH.CodeRange.End;
+    Flush(Cut);
+    Cursor = Cut;
+    Level = Store.Level;
+  }
+  Flush(EH.CodeRange.End);
+
+  for (size_t I = 0; I < Chain.Scopes.size(); ++I) {
+    std::vector<Interval> &Iv = PerScope[I];
+    if (Iv.empty()) {
+      ++Rejected;
+      continue;
+    }
+    std::sort(Iv.begin(), Iv.end(),
+              [](const Interval &A, const Interval &B) {
+                return A.Begin < B.Begin;
+              });
+    ExceptionAddressRange Range{Iv.front().Begin, Iv.front().End};
+    bool Contiguous = true;
+    for (size_t K = 1; K < Iv.size(); ++K) {
+      if (Iv[K].Begin <= Range.End)
+        Range.End = std::max(Range.End, Iv[K].End);
+      else {
+        Contiguous = false;
+        break;
+      }
+    }
+    if (!Contiguous || !Range.isValid()) {
+      ++Rejected;
+      continue;
+    }
+
+    const RegistrationScopeRecord &Scope = Chain.Scopes[I];
+    RegionCandidate Candidate;
+    Candidate.Kind = StmtKind::SEHTry;
+    Candidate.Range = Range;
+    Candidate.NativeRegionCount = 1;
+    HighEHClause Clause;
+    Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
+                                  : HighEHClauseKind::SEHExcept;
+    Clause.FilterOrActionVA = Scope.FilterVA;
+    Clause.HandlerVA = Scope.HandlerVA;
+    Candidate.Clauses.push_back(std::move(Clause));
+    Candidates.push_back(std::move(Candidate));
+  }
+}
+
+void addCxxCandidates(const ExceptionFunction &EH, const BinaryImage *Img,
                       std::vector<RegionCandidate> &Candidates,
                       unsigned &Rejected) {
   if (!EH.Cxx)
@@ -245,6 +384,7 @@ void addCxxCandidates(const ExceptionFunction &EH,
       Clause.CatchObjectOffset = Catch.CatchObjectOffset;
       Clause.ParentFrameOffset = Catch.ParentFrameOffset;
       Clause.ContinuationVAs = Catch.ContinuationVAs;
+      fillCxxCatchType(Clause, Img);
       Candidate.Clauses.push_back(std::move(Clause));
     }
     for (int32_t State = Try.TryLow; State <= Try.TryHigh; ++State) {
@@ -524,9 +664,9 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
 
   const MedBlock *Match = nullptr;
   for (const MedBlock &Block : Med.Blocks) {
-    if (Block.StartAddr != Target)
+    if (Target < Block.StartAddr || Target >= Block.EndAddr)
       continue;
-    if (Match)
+    if (Match && Match != &Block)
       return std::nullopt;
     Match = &Block;
   }
@@ -556,10 +696,14 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   unsigned Rejected = 0;
   if (EH.ParseStatus == ExceptionParseStatus::Complete) {
     addSEHCandidates(EH, TargetArch, Candidates, Rejected);
-    addCxxCandidates(EH, Candidates, Rejected);
+    addRegistrationCandidates(EH, Candidates, Rejected);
+    addCxxCandidates(EH, Image, Candidates, Rejected);
     addItaniumCandidates(EH, Candidates, Rejected);
   } else {
     Rejected += EH.SEH ? static_cast<unsigned>(EH.SEH->Scopes.size()) : 0;
+    Rejected +=
+        EH.Registration ? static_cast<unsigned>(EH.Registration->Scopes.size())
+                        : 0;
     Rejected += EH.Cxx ? static_cast<unsigned>(EH.Cxx->TryBlocks.size()) : 0;
     Rejected +=
         EH.Itanium ? static_cast<unsigned>(EH.Itanium->CallSites.size()) : 0;
@@ -658,9 +802,89 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         });
     if (InsertedTry != Func.Body.end())
       InsertedTry->EHClauseBodies = std::move(ClauseBodies);
+
+    // Filter thunks live in the same function as x86 registration EH but are
+    // called only by the personality.  Drop them from the C body; the except
+    // header already names the filter.
+    if (InsertedTry != Func.Body.end()) {
+      for (const HighEHClause &Clause : InsertedTry->EHClauses) {
+        if (Clause.Kind != HighEHClauseKind::SEHExcept ||
+            Clause.FilterOrActionVA == 0 ||
+            Clause.FilterOrActionVA == Clause.HandlerVA)
+          continue;
+        std::optional<ExceptionAddressRange> FilterRange =
+            uniqueHandlerBlockRange(Med, EH, Clause.FilterOrActionVA,
+                                    Candidates);
+        if (!FilterRange)
+          continue;
+        size_t FilterAt = 0;
+        std::vector<HighStmt> FilterBody;
+        extractAddressSlice(Func.Body, *FilterRange, EH.CodeRange, FilterBody,
+                            FilterAt, /*IncludeFunctionEdgeUnknown=*/false);
+      }
+    }
+
     Func.StructuredExceptionRegions += Candidate.NativeRegionCount;
   }
   Func.UnstructuredExceptionRegions += Rejected;
+
+  // x86 registration and VC6 C++ often have no IP map.  Still surface a
+  // readable try around the recovered body rather than leaving a flat listing.
+  if (Func.StructuredExceptionRegions == 0 && !Func.Body.empty() &&
+      (EH.SEH || EH.Cxx || EH.Registration)) {
+    HighStmt Try;
+    Try.Kind = (EH.Cxx && !EH.Cxx->TryBlocks.empty()) ? StmtKind::CxxTry
+                                                      : StmtKind::SEHTry;
+    Try.EHRange = EH.CodeRange;
+    Try.EHIsReducible = false;
+    Try.Body = std::move(Func.Body);
+    if (Try.Kind == StmtKind::CxxTry) {
+      for (const CxxTryBlock &Block : EH.Cxx->TryBlocks) {
+        for (const CxxCatchHandler &Catch : Block.Handlers) {
+          HighEHClause Clause;
+          Clause.Kind = HighEHClauseKind::CxxCatch;
+          Clause.HandlerVA = Catch.HandlerVA;
+          Clause.TypeDescriptorVA = Catch.TypeDescriptorVA;
+          Clause.Adjectives = Catch.Adjectives;
+          fillCxxCatchType(Clause, Image);
+          Try.EHClauses.push_back(std::move(Clause));
+          Try.EHClauseBodies.emplace_back();
+        }
+      }
+    } else if (EH.Registration) {
+      for (const RegistrationScopeRecord &Scope : EH.Registration->Scopes) {
+        HighEHClause Clause;
+        Clause.Kind = Scope.IsFinally ? HighEHClauseKind::SEHFinally
+                                      : HighEHClauseKind::SEHExcept;
+        Clause.FilterOrActionVA = Scope.FilterVA;
+        Clause.HandlerVA = Scope.HandlerVA;
+        Try.EHClauses.push_back(std::move(Clause));
+        Try.EHClauseBodies.emplace_back();
+      }
+    } else if (EH.SEH) {
+      for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+        HighEHClause Clause;
+        Clause.Kind = Scope.Kind == SEHScopeKind::Finally
+                          ? HighEHClauseKind::SEHFinally
+                          : HighEHClauseKind::SEHExcept;
+        Clause.FilterOrActionVA = Scope.FilterOrFinallyVA;
+        Clause.HandlerVA = Scope.HandlerVA;
+        Try.EHClauses.push_back(std::move(Clause));
+        Try.EHClauseBodies.emplace_back();
+      }
+    }
+    if (Try.EHClauses.empty()) {
+      HighEHClause Clause;
+      Clause.Kind = Try.Kind == StmtKind::CxxTry ? HighEHClauseKind::CxxCatch
+                                                 : HighEHClauseKind::SEHExcept;
+      Try.EHClauses.push_back(std::move(Clause));
+      Try.EHClauseBodies.emplace_back();
+    }
+    Func.Body.clear();
+    Func.Body.push_back(std::move(Try));
+    if (Func.UnstructuredExceptionRegions == 0)
+      Func.UnstructuredExceptionRegions = 1;
+  }
 }
 
 } // namespace neverd

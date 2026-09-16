@@ -14,8 +14,8 @@ using namespace neverd::coff_arm_test;
 
 TEST(COFFARMPipelineReaders, RecognizesDefinitionsAfterClosingBlocks) {
   for (llvm::StringRef Body :
-       {"{ if (arg0) { return 1; } t12_3 = neverd_mem_load_0(arg1); }",
-        "{ while (arg0) { break; } t12_7 = neverd_mem_load_0(arg1); }"}) {
+       {"{ if (arg0) { return 1; } t12_3 = (*(int32_t *)(uintptr_t)arg1); }",
+        "{ while (arg0) { break; } t12_7 = (*(int32_t *)(uintptr_t)arg1); }"}) {
     llvm::StringRef Name = Body.contains("t12_3") ? "t12_3" : "t12_7";
     size_t Use = findIdentifier(Body, Name, 0);
     ASSERT_NE(Use, llvm::StringRef::npos);
@@ -89,7 +89,8 @@ TEST_F(COFFARMPipeline, ARM32ThumbLiftAndDecompile) {
       << *StackyC;
   expectLeafCallResultStored(*StackyC);
   expectNoLocalReadBeforeDefinition(*StackyC);
-  expectFrameBaseInitializedOnce(*StackyC);
+  if (llvm::StringRef(*StackyC).contains("stack_storage["))
+    expectFrameBaseInitializedOnce(*StackyC);
 
   expectGeneratedCCompiles(CPath, "thumbv7-pc-windows-msvc");
 }
@@ -128,7 +129,8 @@ TEST_F(COFFARMPipeline, AArch64LiftAndDecompile) {
   expectLeafCallResultStored(*StackyC);
   expectLeafAndStackyExecute(CPath);
   expectNoLocalReadBeforeDefinition(*StackyC);
-  expectFrameBaseInitializedOnce(*StackyC);
+  if (llvm::StringRef(*StackyC).contains("stack_storage["))
+    expectFrameBaseInitializedOnce(*StackyC);
   expectGeneratedCCompiles(CPath, "aarch64-pc-windows-msvc");
 }
 

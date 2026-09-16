@@ -60,6 +60,8 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_StackTests.cpp
   x86_32/X86_32_StringTests.cpp
   x86_32/X86_32_X87FPUTests.cpp
+  x86_32/X86_32_DebugHighCTests.cpp
+  x86_32/X86_32_FunctionDiscoveryTests.cpp
   x86_64/X86_64_AdxMiscTests.cpp
   x86_64/X86_64_ArithTests.cpp
   x86_64/X86_64_BitOpsTests.cpp

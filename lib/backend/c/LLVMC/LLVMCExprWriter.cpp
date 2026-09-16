@@ -12,6 +12,8 @@
 
 #include "LLVMCWriter.h"
 
+#include "neverd/Common.h"
+
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
@@ -20,26 +22,17 @@
 namespace neverd {
 
 std::string LLVMCWriter::resolveNdDataName(llvm::StringRef Name) const {
-  llvm::StringRef Hex;
-  if (Name.starts_with(kNdDataPrefix))
-    Hex = Name.drop_front(kNdDataPrefix.size());
-  else if (Name.starts_with("_") &&
-           Name.drop_front(1).starts_with(kNdDataPrefix))
-    Hex = Name.drop_front(1 + kNdDataPrefix.size());
-  if (Hex.empty())
-    return {};
-
-  uint64_t Addr;
-  if (Hex.getAsInteger(16, Addr))
+  const std::optional<va_t> Addr = parseNdDataSymbol(Name);
+  if (!Addr)
     return {};
 
   if (Img) {
-    if (const auto *Sym = Img->findSymbolAt(Addr))
-      if (!Sym->Name.empty())
+    if (const auto *Sym = Img->findSymbolAt(*Addr))
+      if (!Sym->IsFunc && !Sym->Name.empty())
         return Sym->Name;
   }
 
-  return "data_" + llvm::utohexstr(Addr);
+  return makeSyntheticGlobalName(*Addr);
 }
 
 std::string LLVMCWriter::freshVar(const std::string &Hint) {
@@ -219,6 +212,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
   }
   if (auto *C = llvm::dyn_cast<llvm::Constant>(V))
     return constStr(C);
+  if (const llvm::AllocaInst *Slot = llvm::dyn_cast<llvm::AllocaInst>(V))
+    return "&" + getName(Slot);
   return getName(V);
 }
 
@@ -345,6 +340,17 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
                    Inst.getType());
   }
   if (auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&Inst)) {
+    if (const llvm::AllocaInst *Slot =
+            llvm::dyn_cast<llvm::AllocaInst>(GEP->getPointerOperand())) {
+      const std::string Local = getName(Slot);
+      if (GEP->getNumIndices() == 1) {
+        const std::string Idx = valueStr(GEP->getOperand(1));
+        return Idx == "0" ? "&" + Local
+                          : "(void*)((char*)&" + Local + " + " + Idx + ")";
+      }
+      if (GEP->getNumIndices() == 2 && valueStr(GEP->getOperand(1)) == "0")
+        return "&" + Local + "[" + valueStr(GEP->getOperand(2)) + "]";
+    }
     auto Base = valueStr(GEP->getPointerOperand());
     if (GEP->getNumIndices() == 1)
       return "(void*)((char*)" + Base + " + " + valueStr(GEP->getOperand(1)) +

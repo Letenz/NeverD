@@ -731,15 +731,20 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
         S.emit(NdOp::CALL, NdVar::reg(x86reg::RAX, PtrSize), {TargetValue});
       }
     } else if (X86.operands[0].type == X86_OP_MEM &&
-               X86.operands[0].mem.base == X86_REG_RIP &&
                X86.operands[0].mem.index == X86_REG_INVALID &&
                LiftState::memoryAddressSpace(X86.operands[0]) ==
-                   NdMemoryAddressSpace::Default) {
-      // RIP-relative indirect call: call [rip + disp].
-      // Compute the absolute address of the IAT/GOT slot. Using a
-      // constant input lets MedABIPass resolve the import name.
+                   NdMemoryAddressSpace::Default &&
+               (X86.operands[0].mem.base == X86_REG_RIP ||
+                X86.operands[0].mem.base == X86_REG_INVALID)) {
+      // Memory-indirect call through a constant slot: `call [rip+disp]` on
+      // x64, `call dword ptr [disp32]` on i386.  Both are IAT/GOT loads.
+      // A constant input lets import-name resolution see the slot rather
+      // than the last value sitting in EAX (the call is not `call eax`).
       uint64_t SlotAddr =
-          S.Addr + S.InsnSize + static_cast<uint64_t>(X86.operands[0].mem.disp);
+          X86.operands[0].mem.base == X86_REG_RIP
+              ? S.Addr + S.InsnSize +
+                    static_cast<uint64_t>(X86.operands[0].mem.disp)
+              : static_cast<uint32_t>(X86.operands[0].mem.disp);
       S.emit(NdOp::INDIR_CALL, NdVar::reg(x86reg::RAX, PtrSize),
              {NdVar::cst(SlotAddr, PtrSize)});
     } else {

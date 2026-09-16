@@ -40,6 +40,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <set>
 
 namespace neverd {
@@ -242,7 +243,11 @@ TypeRef functionReturnType(llvm::pdb::NativeSession &Session,
 
 struct PDBDebugContext::Impl {
   std::map<va_t, FunctionSym> Functions;
+  std::map<va_t, std::map<int64_t, VariableSym>> Locals;
+  std::map<va_t, std::set<int64_t>> AmbiguousLocalOffsets;
   bool ImageIdentityAuthenticated = false;
+  bool FunctionSignaturesAuthenticated = false;
+  bool ObjectExtentsAuthenticated = false;
   bool Loaded = false;
 };
 
@@ -251,10 +256,20 @@ PDBDebugContext::~PDBDebugContext() = default;
 
 void PDBDebugContext::commitFunctions(std::vector<FunctionSym> Functions,
                                       bool Authenticated) {
+  commitDebugFacts(std::move(Functions), {}, Authenticated, false, false);
+}
+
+void PDBDebugContext::commitDebugFacts(
+    std::vector<FunctionSym> Functions,
+    std::map<va_t, std::map<int64_t, VariableSym>> Locals, bool Authenticated,
+    bool Signatures, bool Extents) {
   PImpl = std::make_unique<Impl>();
   for (FunctionSym &FS : Functions)
     PImpl->Functions[FS.Addr] = std::move(FS);
+  PImpl->Locals = std::move(Locals);
   PImpl->ImageIdentityAuthenticated = Authenticated;
+  PImpl->FunctionSignaturesAuthenticated = Signatures;
+  PImpl->ObjectExtentsAuthenticated = Extents;
   PImpl->Loaded = !PImpl->Functions.empty();
 }
 
@@ -460,9 +475,21 @@ std::optional<FunctionSym> PDBDebugContext::resolveFunction(va_t Addr) const {
   return std::nullopt;
 }
 
-std::optional<VariableSym> PDBDebugContext::resolveVariable(va_t,
-                                                            int64_t) const {
-  return std::nullopt;
+std::optional<VariableSym> PDBDebugContext::resolveVariable(va_t FuncAddr,
+                                                            int64_t Offset) const {
+  if (!PImpl)
+    return std::nullopt;
+  const auto AmbIt = PImpl->AmbiguousLocalOffsets.find(FuncAddr);
+  if (AmbIt != PImpl->AmbiguousLocalOffsets.end() &&
+      AmbIt->second.count(Offset))
+    return std::nullopt;
+  const auto FuncIt = PImpl->Locals.find(FuncAddr);
+  if (FuncIt == PImpl->Locals.end())
+    return std::nullopt;
+  const auto OffIt = FuncIt->second.find(Offset);
+  if (OffIt == FuncIt->second.end())
+    return std::nullopt;
+  return OffIt->second;
 }
 
 std::optional<TypeSym> PDBDebugContext::resolveType(uint64_t) const {
@@ -489,12 +516,18 @@ bool PDBDebugContext::hasAuthenticatedImageIdentity() const {
   return PImpl && PImpl->ImageIdentityAuthenticated;
 }
 
+bool PDBDebugContext::hasAuthenticatedFunctionSignatures() const {
+  return PImpl && PImpl->FunctionSignaturesAuthenticated;
+}
+
+bool PDBDebugContext::hasAuthenticatedObjectExtents() const {
+  return PImpl && PImpl->ObjectExtentsAuthenticated;
+}
+
 bool PDBDebugContext::hasExactObjectMetadataPrerequisites() const {
-  // Phase A authenticates only the image/PDB identity chain and function
-  // names.  It deliberately cannot authorize exact object recovery until
-  // Phase B transactionally validates and consumes the owning type/data
-  // streams.
-  return false;
+  // RSDS Phase A remains names-only.  JG TPI + S_BPREL32_ST recovery is the
+  // only PDB path that currently authorizes exact locals/params.
+  return PImpl && PImpl->ObjectExtentsAuthenticated;
 }
 
 } // namespace neverd

@@ -7,6 +7,8 @@
 /// \file
 /// Declares FuncDetector, which discovers function entry points from symbol
 /// tables, exports, call-target scanning, and heuristic validation.
+/// Architecture-specific scanners live in FuncDetectorX86.cpp,
+/// FuncDetectorARM.cpp, and FuncDetectorAArch64.cpp.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -30,6 +32,12 @@ public:
 private:
   void scanCallTargets(const BinaryImage &Img, Decoder &Dec,
                        std::set<va_t> &Out);
+  /// Recover VC6 / MSVC functions that have no PDB symbol: EBP-frame
+  /// prologues at any alignment, plus 16-byte-aligned SEH / callee-saved /
+  /// stack-adjust starts.  Tagged entries skip the bounded verify walk so a
+  /// large body is not dropped for exhausting kMaxVerifyInsns.
+  void scanX86UnsymbolizedEntries(const BinaryImage &Img, Decoder &Dec,
+                                  std::set<va_t> &Out);
   /// Validate a heuristic entry.  When KeepInconclusive is true, bounded
   /// probes that exhaust their budget remain candidates for the formal audit;
   /// definite decode or mapping failures are still rejected.
@@ -37,6 +45,7 @@ private:
                             bool KeepInconclusive = false);
 
   std::set<va_t> Entries;
+  std::set<va_t> UnsymbolizedX86Entries;
 };
 
 } // namespace neverd

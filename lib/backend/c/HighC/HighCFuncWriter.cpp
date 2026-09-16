@@ -14,12 +14,16 @@
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/Limits.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
+#include <functional>
 #include <limits>
+#include <map>
+#include <optional>
 
 namespace neverd {
 
@@ -34,6 +38,28 @@ uint64_t checkedStackAdd(uint64_t Left, uint64_t Right) {
 uint64_t checkedStackAlign(uint64_t Size) {
   constexpr uint64_t Mask = kSyntheticStackAlignment - 1;
   return checkedStackAdd(Size, Mask) & ~Mask;
+}
+
+llvm::StringRef debugCallConvAttribute(DebugCallConv CC) {
+  switch (CC) {
+  case DebugCallConv::Cdecl:
+    return "__attribute__((cdecl)) ";
+  case DebugCallConv::Stdcall:
+    return "__attribute__((stdcall)) ";
+  case DebugCallConv::Thiscall:
+    return "__attribute__((thiscall)) ";
+  case DebugCallConv::Fastcall:
+    return "__attribute__((fastcall)) ";
+  case DebugCallConv::Unknown:
+    return "";
+  }
+  return "";
+}
+
+std::optional<FunctionSym> debugFunction(DebugContext *Dbg, va_t Entry) {
+  if (!Dbg)
+    return std::nullopt;
+  return Dbg->resolveFunction(Entry);
 }
 
 bool isWindowsLanguagePersonality(ExceptionPersonality Personality) {
@@ -165,20 +191,6 @@ std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
     Result += Feature;
   }
   return Result;
-}
-
-void writeCommentedLine(llvm::raw_ostream &OS, llvm::StringRef Line) {
-  OS << "// ";
-  for (unsigned char Ch : Line.bytes()) {
-    if (Ch == '\r' || Ch == '\0' || (Ch < 0x20 && Ch != '\t'))
-      OS << ' ';
-    else
-      OS << static_cast<char>(Ch);
-  }
-  // A trailing space prevents a hostile final backslash (or trigraph that an
-  // older preprocessor turns into one) from splicing the active trap stub into
-  // the comment during translation phase two.
-  OS << " \n";
 }
 
 } // anonymous namespace
@@ -325,18 +337,31 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
 
   std::set<std::string> DeclaredNames(ParamNames);
   for (auto &Local : Func.Locals) {
-    if (DeclaredNames.count(Local.Name))
+    MedVar StackVar;
+    StackVar.Kind = MedVar::Stack;
+    StackVar.StackOff = Local.StackOff;
+    StackVar.Size = Local.Type ? Local.Type->Size : 0;
+    const std::string Name = varName(StackVar);
+    if (DeclaredNames.count(Name))
       continue;
-    if (UsedVars.find(Local.Name) == UsedVars.end())
+    if (UsedVars.find(Name) == UsedVars.end() &&
+        UsedVars.find(Local.Name) == UsedVars.end())
       continue;
-    if (Analysis.DeadVars.count(Local.Name))
+    if (Analysis.DeadVars.count(Name) || Analysis.DeadVars.count(Local.Name))
       continue;
-    DeclaredNames.insert(Local.Name);
+    DeclaredNames.insert(Name);
     emitIndent(1);
-    auto ExplicitTy = ExplicitDeclarations.find(Local.Name);
-    OS << (ExplicitTy == ExplicitDeclarations.end()
-               ? declarationToC(Local.Type, Local.Name)
-               : ExplicitTy->second)
+    TypeRef Ty = Local.Type;
+    if (Dbg && CurrentFunc) {
+      if (auto Var = Dbg->resolveVariable(CurrentFunc->Entry, Local.StackOff);
+          Var && Var->Type)
+        Ty = Var->Type;
+    }
+    auto ExplicitTy = ExplicitDeclarations.find(Name);
+    if (ExplicitTy == ExplicitDeclarations.end())
+      ExplicitTy = ExplicitDeclarations.find(Local.Name);
+    OS << (ExplicitTy == ExplicitDeclarations.end() ? declarationToC(Ty, Name)
+                                                    : ExplicitTy->second)
        << ";\n";
   }
 
@@ -357,7 +382,7 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
 }
 
 void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
-  if (!Func.ExceptionMetadata)
+  if (!Opts.EmitComments || !Func.ExceptionMetadata)
     return;
   const ExceptionFunction &EH = *Func.ExceptionMetadata;
   OS << "/* neverd.exception: encoding="
@@ -521,72 +546,197 @@ void HighCWriter::writeFunction(const HighFunc &Func) {
 
 void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
   if (Opts.EmitComments) {
-    std::string Listing;
-    llvm::raw_string_ostream ListingOS(Listing);
-    HighCWriter ListingWriter(ListingOS, Opts, Dbg,
-                              /*GuardAnalysisOnlyFunctions=*/false);
-    ListingWriter.DefinedFuncs = DefinedFuncs;
-    ListingWriter.ExternFuncs = ExternFuncs;
-    ListingWriter.GlobalIdentifierAllocator = GlobalIdentifierAllocator;
-    ListingWriter.FunctionIdentifiers = FunctionIdentifiers;
-    ListingWriter.FunctionIdentifiersBySourceName =
-        FunctionIdentifiersBySourceName;
-    ListingWriter.ExternalFunctionIdentifiers = ExternalFunctionIdentifiers;
-    ListingWriter.collectMemoryTypes({Func});
-    ListingWriter.writeFunction(Func);
-    ListingOS.flush();
+    OS << "/* neverd.analysis-only: recovered Windows SEH/C++ as readable C. "
+          "*/\n";
+  }
+  writeFunctionProjection(Func);
+}
 
-    OS << "/* neverd.analysis-only: Windows EH semantics are not projected "
-          "as executable C; the active definition traps. */\n";
-    llvm::StringRef Remaining(Listing);
-    while (!Remaining.empty()) {
-      auto [Line, Rest] = Remaining.split('\n');
-      writeCommentedLine(OS, Line);
-      Remaining = Rest;
+void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
+  FrameSlots.clear();
+  FrameAliases.clear();
+  const bool SavedHandler = InEHClauseBody;
+  std::function<void(const std::vector<HighStmt> &, bool)> WalkAliases;
+  WalkAliases = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
+    const bool Saved = InEHClauseBody;
+    InEHClauseBody = InHandler;
+    for (const HighStmt &S : Stmts) {
+      if (!Analysis.DeadStmts.count(&S) && S.Kind == StmtKind::Assign &&
+          S.Dst && S.Val && S.Dst->Kind == ExprKind::Var &&
+          S.Dst->Var.Kind != MedVar::Param) {
+        if (const auto Disp = frameDisplacement(*S.Val)) {
+          const std::string Name = varName(S.Dst->Var);
+          auto It = FrameAliases.find(Name);
+          if (It == FrameAliases.end() || It->second != *Disp) {
+            FrameAliases[Name] = *Disp;
+          }
+        }
+      }
+      WalkAliases(S.Body, InHandler);
+      WalkAliases(S.ElseBody, InHandler);
+      for (const auto &C : S.Cases)
+        WalkAliases(C.Body, InHandler);
+      WalkAliases(S.DefaultBody, InHandler);
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        WalkAliases(ClauseBody, true);
     }
+    InEHClauseBody = Saved;
+  };
+  bool Grew = true;
+  unsigned Guard = 0;
+  while (Grew && Guard++ < limits::kMaxFrameAliasFixedPoint) {
+    const auto Before = FrameAliases;
+    WalkAliases(Func.Body, false);
+    Grew = FrameAliases != Before;
   }
+  auto Note = [&](const HighExpr *Addr, const TypeRef &Ty) {
+    if (!Addr)
+      return;
+    const auto Disp = frameDisplacement(*Addr);
+    if (!Disp)
+      return;
+    NamedFrameSlot &Slot = FrameSlots[*Disp];
+    if (Slot.Name.empty()) {
+      const uint64_t Mag =
+          static_cast<uint64_t>(*Disp < 0 ? -*Disp : *Disp);
+      Slot.Name = (*Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Mag);
+      if (Dbg) {
+        if (auto Var = Dbg->resolveVariable(Func.Entry, *Disp);
+            Var && !Var->Name.empty())
+          Slot.Name = Var->Name;
+      }
+    }
+    if (Ty && (!Slot.Type || Ty->Size > Slot.Type->Size))
+      Slot.Type = Ty;
+  };
+  std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty())
+      Note(E.Operands[0].get(), E.Type);
+    if (E.Kind == ExprKind::Store && E.Operands.size() >= 2)
+      Note(E.Operands[0].get(), E.Operands[1] ? E.Operands[1]->Type : nullptr);
+    if (E.Kind == ExprKind::Addr && !E.Operands.empty() && E.Operands[0] &&
+        E.Operands[0]->Kind == ExprKind::Load &&
+        !E.Operands[0]->Operands.empty())
+      Note(E.Operands[0]->Operands[0].get(), E.Operands[0]->Type);
+    for (const ExprPtr &Op : E.Operands)
+      if (Op)
+        Walk(*Op);
+  };
+  std::function<void(const std::vector<HighStmt> &, bool)> WalkNotes;
+  WalkNotes = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
+    const bool Saved = InEHClauseBody;
+    InEHClauseBody = InHandler;
+    for (const HighStmt &S : Stmts) {
+      if (!Analysis.DeadStmts.count(&S)) {
+        if (S.Kind == StmtKind::Store && S.StoreAddr)
+          Note(S.StoreAddr.get(), S.StoreVal ? S.StoreVal->Type : nullptr);
+        if (S.Kind == StmtKind::Assign && S.Dst &&
+            S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty())
+          Note(S.Dst->Operands[0].get(), S.Dst->Type);
+        forEachExpr(S, [&](const ExprPtr &E) {
+          if (E)
+            Walk(*E);
+        });
+      }
+      WalkNotes(S.Body, InHandler);
+      WalkNotes(S.ElseBody, InHandler);
+      for (const auto &C : S.Cases)
+        WalkNotes(C.Body, InHandler);
+      WalkNotes(S.DefaultBody, InHandler);
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        WalkNotes(ClauseBody, true);
+    }
+    InEHClauseBody = Saved;
+  };
+  WalkNotes(Func.Body, false);
+  InEHClauseBody = SavedHandler;
+  for (auto &[Disp, Slot] : FrameSlots)
+    if (!Slot.Type)
+      Slot.Type = NdType::makeInt(4);
+}
 
-  const auto ReturnType = Func.ReturnType;
-  std::string FName = functionIdentifier(Func);
+size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
+  return emittedParamIndices(Func).size();
+}
 
-  CProjectionIdentifierAllocator ParameterIdentifiers;
-
-  if (Func.DoesNotReturn)
-    OS << "_Noreturn ";
-  if (Func.SourceTypeHint)
-    OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
-  std::string Declarator = FName + "(";
-  for (size_t I = 0; I < Func.Params.size(); ++I) {
-    if (I > 0)
-      Declarator += ", ";
-    Declarator += declarationToC(
-        Func.Params[I].Type,
-        ParameterIdentifiers.allocate(Func.Params[I].Name, "nd_arg"));
+std::vector<size_t>
+HighCWriter::emittedParamIndices(const HighFunc &Func) const {
+  std::vector<size_t> All;
+  const auto DebugFn = debugFunction(Dbg, Func.Entry);
+  const size_t N = Func.Params.size();
+  if (DebugFn && !DebugFn->Params.empty()) {
+    const size_t Count = std::min(N, DebugFn->Params.size());
+    All.resize(Count);
+    for (size_t I = 0; I < Count; ++I)
+      All[I] = I;
+    return All;
   }
-  if (Func.Params.empty())
-    Declarator += "void";
-  OS << declarationToC(ReturnType, Declarator + ")") << " {\n"
-     << "    __builtin_trap();\n"
-     << "}\n";
+  if (Func.SourceTypeHint) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+    return All;
+  }
+  std::set<int> Used;
+  std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
+    if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+        E.Var.Kind == MedVar::Param)
+      Used.insert(E.Var.Id);
+    for (const ExprPtr &Op : E.Operands)
+      if (Op)
+        Walk(*Op);
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        Walk(*E);
+    });
+  });
+  size_t Unused = 0;
+  for (size_t I = 0; I < N; ++I)
+    if (!Used.count(static_cast<int>(I)))
+      ++Unused;
+  if (Unused < limits::kMinUnusedParamsToCompact || Used.empty()) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+    return All;
+  }
+  std::vector<int> Order(Used.begin(), Used.end());
+  std::sort(Order.begin(), Order.end());
+  for (int Id : Order)
+    if (Id >= 0 && static_cast<size_t>(Id) < N)
+      All.push_back(static_cast<size_t>(Id));
+  if (All.empty()) {
+    All.resize(N);
+    for (size_t I = 0; I < N; ++I)
+      All[I] = I;
+  }
+  return All;
 }
 
 void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CurrentFunc = &Func;
+  CopyForward.clear();
+  ParamDisplayNames.clear();
   runAnalysisPasses(Func);
+  collectNamedFrameSlots(Func);
+  collectCopyForward(Func);
+  {
+    const std::vector<size_t> Indices = emittedParamIndices(Func);
+    if (Indices.size() != Func.Params.size())
+      for (size_t I = 0; I < Indices.size(); ++I)
+        ParamDisplayNames[static_cast<int>(Indices[I])] =
+            "arg" + std::to_string(I);
+  }
 
   bool NeedsFrameStorage = false;
-  auto VisitFrameUses = [&](auto &&Self, const HighExpr &Expr,
-                            bool IsValue) -> void {
+  auto VisitFrameUses = [&](auto &&Self, const HighExpr &Expr) -> void {
     if (NeedsFrameStorage)
       return;
-    if (Expr.Kind == ExprKind::Addr && !Expr.Operands.empty() &&
-        Expr.Operands[0] && Expr.Operands[0]->Kind == ExprKind::Load) {
-      for (const ExprPtr &AddressOperand : Expr.Operands[0]->Operands)
-        if (AddressOperand)
-          Self(Self, *AddressOperand, true);
+    if (isNamedFrameMemory(Expr))
       return;
-    }
-    if (IsValue && Expr.Kind == ExprKind::Load && !Expr.Operands.empty()) {
+    if (Expr.Kind == ExprKind::Load && !Expr.Operands.empty()) {
       std::string Addr = exprStr(*Expr.Operands[0]);
       auto FwdIt = Analysis.StoreFwd.find(Addr);
       if (FwdIt != Analysis.StoreFwd.end()) {
@@ -602,27 +752,61 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     }
     for (const ExprPtr &Operand : Expr.Operands)
       if (Operand)
-        Self(Self, *Operand, true);
+        Self(Self, *Operand);
   };
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     if (NeedsFrameStorage || Analysis.DeadStmts.count(&Stmt) ||
         (InferredVoid && Stmt.Kind == StmtKind::Return))
       return;
+    if (Stmt.Kind == StmtKind::Assign && Stmt.Dst && Stmt.Val &&
+        Stmt.Dst->Kind == ExprKind::Var &&
+        Stmt.Dst->Var.Kind != MedVar::Param && frameDisplacement(*Stmt.Val))
+      return;
+    if (Stmt.Kind == StmtKind::Store && Stmt.StoreAddr &&
+        namedFrameSlot(*Stmt.StoreAddr)) {
+      if (Stmt.StoreVal)
+        VisitFrameUses(VisitFrameUses, *Stmt.StoreVal);
+      return;
+    }
     if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
-        Stmt.Dst->Kind == ExprKind::Load)
-      VisitFrameUses(VisitFrameUses, *Stmt.Dst, false);
+        Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty() &&
+        namedFrameSlot(*Stmt.Dst->Operands[0])) {
+      if (Stmt.Val)
+        VisitFrameUses(VisitFrameUses, *Stmt.Val);
+      return;
+    }
+    if (Stmt.Kind == StmtKind::Assign && Stmt.Dst)
+      VisitFrameUses(VisitFrameUses, *Stmt.Dst);
     forEachRhsExpr(Stmt, [&](const ExprPtr &Expr) {
       if (Expr)
-        VisitFrameUses(VisitFrameUses, *Expr, true);
+        VisitFrameUses(VisitFrameUses, *Expr);
     });
   });
+  if (NeedsFrameStorage) {
+    FrameSlots.clear();
+    FrameAliases.clear();
+  } else {
+    walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind != StmtKind::Assign || !Stmt.Dst || !Stmt.Val ||
+          Stmt.Dst->Kind != ExprKind::Var ||
+          Stmt.Dst->Var.Kind == MedVar::Param || !frameDisplacement(*Stmt.Val))
+        return;
+      Analysis.DeadStmts.insert(&Stmt);
+      Analysis.DeadVars.insert(varName(Stmt.Dst->Var));
+    });
+  }
 
   const auto ReturnType = InferredVoid ? NdType::makeVoid() : FuncReturnType;
 
   std::string FName = functionIdentifier(Func);
 
+  if (EmitFunctionWrapper && Func.Entry)
+    OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
+
   if (Opts.EmitComments && !Func.DebugName.empty() &&
       Func.DebugName != Func.Name) {
+    if (!EmitFunctionWrapper)
+      emitIndent(1);
     OS << "/* " << Func.DebugName;
     if (!Func.SourceFile.empty())
       OS << " @ " << Func.SourceFile << ":" << Func.SourceLine;
@@ -631,25 +815,57 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   writeExceptionAnnotation(Func);
 
-  if (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) {
-    const std::string TargetFeatures = x86CIntrinsicTargetFeatures(Func);
-    if (!TargetFeatures.empty())
-      OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
-  }
+  if (EmitFunctionWrapper) {
+    if (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) {
+      const std::string TargetFeatures = x86CIntrinsicTargetFeatures(Func);
+      if (!TargetFeatures.empty())
+        OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
+    }
 
-  if (Func.DoesNotReturn)
-    OS << "_Noreturn ";
-  if (Func.SourceTypeHint)
-    OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
-  std::string Declarator = FName + "(";
-  for (size_t I = 0; I < Func.Params.size(); ++I) {
-    if (I > 0)
-      Declarator += ", ";
-    Declarator += declarationToC(Func.Params[I].Type, Func.Params[I].Name);
+    if (Func.DoesNotReturn)
+      OS << "_Noreturn ";
+    const auto DebugFn = debugFunction(Dbg, Func.Entry);
+    if (DebugFn && DebugFn->CallConv != DebugCallConv::Unknown)
+      OS << debugCallConvAttribute(DebugFn->CallConv);
+    else if (Func.SourceTypeHint)
+      OS << sourceConventionAttribute(Func.SourceTypeHint->Convention);
+    CProjectionIdentifierAllocator ParameterIdentifiers;
+    std::string Declarator = FName + "(";
+    const std::vector<size_t> ParamIndices = emittedParamIndices(Func);
+    for (size_t I = 0; I < ParamIndices.size(); ++I) {
+      if (I > 0)
+        Declarator += ", ";
+      const size_t PI = ParamIndices[I];
+      TypeRef Ty = Func.Params[PI].Type;
+      std::string Name = Func.Params[PI].Name;
+      if (auto It = ParamDisplayNames.find(static_cast<int>(PI));
+          It != ParamDisplayNames.end())
+        Name = It->second;
+      if (DebugFn && PI < DebugFn->Params.size()) {
+        if (DebugFn->Params[PI].second)
+          Ty = DebugFn->Params[PI].second;
+        if (!DebugFn->Params[PI].first.empty())
+          Name = DebugFn->Params[PI].first;
+      }
+      Declarator +=
+          declarationToC(Ty, ParameterIdentifiers.allocate(Name, "nd_arg"));
+    }
+    if (ParamIndices.empty())
+      Declarator += "void";
+    OS << declarationToC(ReturnType, Declarator + ")") << " {\n";
   }
-  if (Func.Params.empty())
-    Declarator += "void";
-  OS << declarationToC(ReturnType, Declarator + ")") << " {\n";
+  if (Func.Body.empty()) {
+    // Conversion produced no statements.  An empty `{ }` looks like a
+    // successful leaf; trap instead so coverage cannot treat this as a body.
+    emitIndent(1);
+    OS << "/* neverd: no structured body */\n";
+    if (EmitFunctionWrapper) {
+      emitIndent(1);
+      OS << "__builtin_trap();\n";
+      OS << "}\n";
+    }
+    return;
+  }
 
   std::set<std::string> ParamNames;
   for (auto &P : Func.Params)
@@ -672,10 +888,19 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     OS << "const uintptr_t frame_base = (uintptr_t)(stack_storage + "
        << FrameBaseOffset << ");\n";
   }
+  for (const auto &[Disp, Slot] : FrameSlots) {
+    if (ParamNames.count(Slot.Name) || Analysis.DeadVars.count(Slot.Name) ||
+        CopyForward.count(Slot.Name))
+      continue;
+    ParamNames.insert(Slot.Name);
+    emitIndent(1);
+    OS << declarationToC(Slot.Type, Slot.Name) << ";\n";
+  }
   emitLocalDecls(Func, ParamNames);
 
   writeStmts(Func.Body, 1);
-  OS << "}\n";
+  if (EmitFunctionWrapper)
+    OS << "}\n";
 }
 
 } // namespace neverd

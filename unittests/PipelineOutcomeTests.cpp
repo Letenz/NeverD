@@ -248,6 +248,64 @@ TEST(PipelineOutcome, RealHighIRConversionPreservesValidEmptyBodies) {
   EXPECT_TRUE(Result.HighFuncs.front().Body.empty());
 }
 
+TEST(PipelineOutcome, HighIRSkeletonsWhenConvertYieldsEmptyBody) {
+  PipelineResult Result;
+  MedFunc Source = sourceFunction(0x401000, "empty_struct");
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = 0x401000;
+  Source.Blocks.push_back(Block);
+  Result.MedFuncs.push_back(std::move(Source));
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  ASSERT_TRUE(pipeline_detail::runHighIRStage(Result, [&] {
+    PipelineTestPeer::buildHighIR(Image, Result);
+  })) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  EXPECT_FALSE(Result.HighFuncs.front().Body.empty())
+      << "non-empty MedIR must not become an empty HighFunc body";
+}
+
+TEST(PipelineOutcome, HighIRFallsBackToLowIRGotoSkeleton) {
+  PipelineResult Result;
+  Result.MedFuncs.push_back(sourceFunction(0x401000, "from_low"));
+  LowFunc LF;
+  LF.Name = "from_low";
+  LF.Entry = 0x401000;
+  LowBlock B0;
+  B0.Id = 0;
+  B0.StartAddr = 0x401000;
+  B0.Succs = {1};
+  LowBlock B1;
+  B1.Id = 1;
+  B1.StartAddr = 0x401010;
+  LF.Blocks = {B0, B1};
+  Result.LowFuncs.push_back(std::move(LF));
+  BinaryImage Image;
+  Image.Arch = Arch::X86;
+  ASSERT_TRUE(pipeline_detail::runHighIRStage(Result, [&] {
+    PipelineTestPeer::buildHighIR(Image, Result);
+  })) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  const HighFunc &HF = Result.HighFuncs.front();
+  EXPECT_EQ(HF.Entry, 0x401000u);
+  EXPECT_EQ(HF.Name, "from_low");
+  const bool HasGoto =
+      std::any_of(HF.Body.begin(), HF.Body.end(),
+                  [](const HighStmt &S) { return S.Kind == StmtKind::Goto; });
+  EXPECT_TRUE(HasGoto)
+      << "empty keepIdentity must not survive when LowIR exists";
+
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Image.Arch;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Stream, Options));
+  EXPECT_NE(Source.find("goto L_"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("no structured body"), std::string::npos) << Source;
+}
+
 TEST(PipelineOutcome,
      RealWeightedHighIRConversionPublishesEverySourceFunction) {
   for (unsigned Count : {1u, 3u}) {

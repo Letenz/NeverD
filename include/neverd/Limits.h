@@ -336,8 +336,25 @@ constexpr int kMaxExprDepth = 500;
 /// Maximum SSA nodes to process in a single function.
 constexpr int kMaxSSANodes = 10000;
 
+/// Skip HighIR control-flow structuring when MedIR exceeds this many blocks.
+/// Flattened or obfuscated functions stay as goto skeletons.
+constexpr size_t kMaxStructurableMedBlocks = 1024;
+
+/// Skip HighIR structuring when MedIR exceeds this many ops.  Twice the
+/// per-function SSA budget: structuring is cheaper to attempt than to finish
+/// on a megafunction, while Med type inference still uses \c kMaxSSANodes.
+constexpr size_t kMaxStructurableMedOps =
+    static_cast<size_t>(kMaxSSANodes) * 2u;
+
 /// Maximum estimated stack frame size.
 constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
+
+/// Recovered call arguments (register + stack) in HighIR when no source ABI
+/// signature is bound.
+constexpr int kMaxRecoveredCallArgs = 8;
+
+/// How many stores before a call to scan for stack-passed arguments.
+constexpr int kCallArgStoreScanWindow = 12;
 
 //===----------------------------------------------------------------------===//
 // Backend / code generation
@@ -454,6 +471,29 @@ constexpr size_t kMinParallelVerify = 512;
 /// Threshold below which integer constants are printed in decimal
 /// rather than hexadecimal in decompiled C output.
 constexpr uint64_t kDecimalConstThreshold = 4096;
+
+/// Bytes to read from MSVC `TypeDescriptor::name[]` (RTTI).
+constexpr size_t kMaxMsvcTypeDescriptorNameBytes = 256;
+
+/// Copy-forward / frame-alias name chain walks in HighC.
+constexpr unsigned kMaxCopyForwardAliasDepth = 8;
+
+/// Unwrap Cast/ZExt/SExt when matching a frame address or copy source.
+constexpr unsigned kMaxIntegerViewUnwrapDepth = 8;
+
+/// Walk INT_ADD/INT_SUB when recovering a frame displacement.
+constexpr unsigned kMaxFrameDisplacementDepth = 32;
+
+/// Fixed-point iterations when growing HighC frame aliases.
+constexpr unsigned kMaxFrameAliasFixedPoint = 64;
+
+/// Compact unused HighC parameters only when at least this many are unused.
+/// A lower threshold drops trailing ABI arguments such as `identity(values, 0)`.
+constexpr unsigned kMinUnusedParamsToCompact = 4;
+
+/// Nesting at which HighC expression printing is truncated.  Separate from
+/// \c kMaxExprDepth, which bounds IR inlining rather than C text.
+constexpr int kMaxCExprPrintDepth = 200;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;

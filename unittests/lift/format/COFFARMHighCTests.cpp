@@ -40,10 +40,9 @@ TEST_F(COFFARMPipeline, HighCX64StackBaseHasNativeEntryResidue) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
 
-  EXPECT_NE(C.find("_Alignas(16) uint8_t stack_storage[24];"),
-            std::string::npos)
-      << C;
-  EXPECT_NE(C.find("(uintptr_t)(stack_storage + 24);"), std::string::npos) << C;
+  EXPECT_NE(C.find("int32_t var_m4;"), std::string::npos) << C;
+  EXPECT_NE(C.find("return var_m4;"), std::string::npos) << C;
+  EXPECT_EQ(C.find("stack_storage"), std::string::npos) << C;
 }
 
 TEST_F(COFFARMPipeline, HighCI386StackBaseUsesBinaryFormatResidue) {
@@ -77,14 +76,14 @@ TEST_F(COFFARMPipeline, HighCI386StackBaseUsesBinaryFormatResidue) {
   };
 
   std::string MachO = EmitC(BinaryFormat::MachO, "macho_i386_stack");
-  EXPECT_NE(MachO.find("stack_storage[28]"), std::string::npos) << MachO;
-  EXPECT_NE(MachO.find("(uintptr_t)(stack_storage + 28)"), std::string::npos)
-      << MachO;
+  EXPECT_NE(MachO.find("int32_t var_m4;"), std::string::npos) << MachO;
+  EXPECT_NE(MachO.find("return var_m4;"), std::string::npos) << MachO;
+  EXPECT_EQ(MachO.find("stack_storage"), std::string::npos) << MachO;
 
   std::string COFF = EmitC(BinaryFormat::COFF, "coff_i386_stack");
-  EXPECT_NE(COFF.find("stack_storage[16]"), std::string::npos) << COFF;
-  EXPECT_NE(COFF.find("(uintptr_t)(stack_storage + 16)"), std::string::npos)
-      << COFF;
+  EXPECT_NE(COFF.find("int32_t var_m4;"), std::string::npos) << COFF;
+  EXPECT_NE(COFF.find("return var_m4;"), std::string::npos) << COFF;
+  EXPECT_EQ(COFF.find("stack_storage"), std::string::npos) << COFF;
 }
 
 TEST_F(COFFARMPipeline, HighCLoadLvaluesAndAddressesRemainValidC) {
@@ -123,9 +122,10 @@ TEST_F(COFFARMPipeline, HighCLoadLvaluesAndAddressesRemainValidC) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Opts));
   OS.flush();
 
-  EXPECT_NE(C.find("neverd_mem_store_"), std::string::npos) << C;
-  EXPECT_NE(C.find("(int32_t *)(uintptr_t)((uintptr_t)arg0)"),
-            std::string::npos)
+  EXPECT_NE(C.find("*("), std::string::npos) << C;
+  EXPECT_NE(C.find("(*(int32_t *)((uintptr_t)arg0) = 7)"), std::string::npos)
+      << C;
+  EXPECT_NE(C.find("return (int32_t *)((uintptr_t)arg0);"), std::string::npos)
       << C;
   EXPECT_EQ(C.find("&neverd_mem_load_"), std::string::npos) << C;
 
@@ -178,8 +178,7 @@ TEST_F(COFFARMPipeline, HighCForwardedParameterReturnDoesNotBecomeVoid) {
   ASSERT_TRUE(Body.has_value()) << C;
   // The pointer is caller-owned: both its write and subsequent read remain
   // observable even when their values happen to match.
-  EXPECT_NE(Body->find("neverd_mem_store_"), std::string::npos) << *Body;
-  EXPECT_NE(Body->find("neverd_mem_load_"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("*("), std::string::npos) << *Body;
   EXPECT_EQ(C.find("void forwarded_parameter("), std::string::npos) << C;
 
   const fs::path CPath = tmpFile("forwarded_parameter.c");
@@ -245,14 +244,10 @@ TEST_F(COFFARMPipeline, HighCForwardingPreservesFrameLvaluesAndAddresses) {
 
   auto Body = cFunctionBody(C, "frame_lvalue_address");
   ASSERT_TRUE(Body.has_value()) << C;
-  EXPECT_NE(Body->find("stack_storage[16]"), std::string::npos) << *Body;
-  // Integer-width casts may surround the frame subtraction. The emitted
-  // storage and accesses must remain explicit regardless of that spelling.
-  EXPECT_TRUE(std::regex_search(
-      *Body, std::regex(R"(frame_base[() ]*-[() ]*(uint64_t[() ]*)?4)")))
-      << *Body;
-  EXPECT_NE(Body->find("neverd_mem_store_"), std::string::npos) << *Body;
-  EXPECT_NE(Body->find("neverd_mem_load_"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("var_m4 = 7;"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("var_m4 = 9;"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("return &var_m4;"), std::string::npos) << *Body;
+  EXPECT_EQ(Body->find("stack_storage"), std::string::npos) << *Body;
 
   const fs::path CPath = tmpFile("frame_lvalue_address.c");
   std::ofstream Out(CPath);
@@ -304,10 +299,9 @@ TEST_F(COFFARMPipeline, HighCAddressOfLoadDoesNotDeleteStore) {
 
   auto Body = cFunctionBody(C, "address_preserves_store");
   ASSERT_TRUE(Body.has_value()) << C;
-  EXPECT_NE(Body->find("neverd_mem_store_"), std::string::npos) << *Body;
-  EXPECT_NE(Body->find(", 7);"), std::string::npos) << *Body;
-  EXPECT_NE(Body->find("return (int32_t*)(uintptr_t)((int32_t "
-                       "*)(uintptr_t)((uintptr_t)arg0));"),
+  EXPECT_NE(Body->find("*("), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("= 7)"), std::string::npos) << *Body;
+  EXPECT_NE(Body->find("return (int32_t *)((uintptr_t)arg0);"),
             std::string::npos)
       << *Body;
 

@@ -29,6 +29,8 @@ Intrinsic intrinsicId(const MedOp &Op);
 std::string intrinsicName(const MedOp &Op);
 uint16_t inferReturnSize(const MedFunc &Med);
 std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med);
+/// Stack-passed parameter ids (`MedVar::Param`) used as memory addresses.
+std::set<int> detectPtrParamIds(const MedFunc &Med);
 
 /// Rewrite expressions by what they compute rather than by how they are
 /// written, replacing each with the shortest equivalent the symbolic engine
@@ -51,6 +53,11 @@ void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 /// Fold shared branch continuations after dead assignments have been removed.
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
+
+/// Emit a label-per-block goto/return skeleton.  Used when structuring would
+/// exceed SSA limits, or when conversion fails and identity alone would leave
+/// an empty HighFunc that HighC can only trap.
+void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 
 class MedToHighConverter {
 public:

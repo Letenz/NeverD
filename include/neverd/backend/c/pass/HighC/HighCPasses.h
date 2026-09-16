@@ -25,6 +25,10 @@ namespace neverd {
 using VarNameFn = std::function<std::string(const MedVar &)>;
 using ExprStrFn = std::function<std::string(const HighExpr &)>;
 
+inline bool isNamedValueExpr(const HighExpr &E) {
+  return E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi;
+}
+
 struct HighCAnalysisState {
   std::set<const HighStmt *> DeadStmts;
   std::set<std::string> DeadVars;

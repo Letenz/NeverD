@@ -11,6 +11,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -127,6 +128,37 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
       diagnose(F, ExceptionParseStatus::Partial,
                "x86 registration record installs a handler with no "
                "recoverable table");
+    }
+
+    // MSVC plants the filter thunk and except body immediately after the
+    // protected region and often labels them as functions.  Those labels clip
+    // CodeRange at the filter, so the handler is never a CFG root.  Grow the
+    // range through contiguous thunks so it covers the rest of the C function,
+    // stopping at the next function that is not one of this record's thunks.
+    {
+      std::set<va_t> Thunks;
+      for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
+        if (Scope.FilterVA)
+          Thunks.insert(Scope.FilterVA);
+        if (Scope.HandlerVA)
+          Thunks.insert(Scope.HandlerVA);
+      }
+      bool Grew = true;
+      for (unsigned Guard = 0; Grew && Guard < 16; ++Guard) {
+        Grew = false;
+        for (va_t Addr : Thunks) {
+          if (!registration_detail::isExecutableAddress(Img, Addr) ||
+              Addr < F.CodeRange.Begin || Addr > F.CodeRange.End)
+            continue;
+          auto Range = Functions.find(Img, Addr);
+          if (!Range || Range->Begin < F.CodeRange.Begin)
+            continue;
+          if (Range->End > F.CodeRange.End) {
+            F.CodeRange.End = Range->End;
+            Grew = true;
+          }
+        }
+      }
     }
 
     if (Chain.SeededTryLevel)

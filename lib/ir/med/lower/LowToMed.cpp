@@ -13,6 +13,7 @@
 
 #include "neverd/ir/med/LowToMed.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <exception>
 #include <functional>
 #include <map>
 #include <set>
@@ -397,6 +399,20 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   // pre-call value. buildSsa then creates the loop-carried high-half PHI for a
   // threaded i64 accumulator.  No-op unless the pipeline set the i64-callee set
   // (only known after whole-program return-type inference).
+  size_t CopiedOps = 0;
+  for (const auto &Block : Func.Blocks)
+    CopiedOps += Block.Ops.size();
+  if (Low.DecodedInstructionCount >
+          static_cast<uint64_t>(limits::kMaxSSANodes) ||
+      CopiedOps > static_cast<size_t>(limits::kMaxSSANodes)) {
+    LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: skipping SSA for "
+                            << Func.Name << " insns="
+                            << Low.DecodedInstructionCount << " ops="
+                            << CopiedOps << "\n");
+    return Func;
+  }
+
+  try {
   bindSourceCalls(Func, Low, Fmt);
   modelKnownWideCallReturns(Func);
   debugVerifyMedFunc(Func, "modelKnownWideCallReturns");
@@ -579,6 +595,15 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: " << Func.Blocks.size()
                           << " blocks, " << Func.Params.size() << " params, "
                           << Func.Locals.size() << " locals\n");
+  } catch (const std::exception &) {
+    LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: SSA/rewrite threw; keeping "
+                               "copied blocks for "
+                            << Func.Name << "\n");
+  } catch (...) {
+    LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: SSA/rewrite threw; keeping "
+                               "copied blocks for "
+                            << Func.Name << "\n");
+  }
   return Func;
 }
 
