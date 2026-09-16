@@ -106,6 +106,28 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppppp"},
+    {"$sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_"
+     "GSo12NSDictionaryCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppppp"},
+    {"$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppp"},
+    {"$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArrayC"
+     "SgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "ppp"},
     {"$ss018_bridgeAnyObjectToB0yypyXlSgF",
      "/usr/lib/swift/libswiftCore.dylib", "vIp"},
     {"$ss27_bridgeAnythingToObjectiveCyyXlxlF",

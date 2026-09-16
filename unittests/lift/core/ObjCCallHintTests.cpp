@@ -411,7 +411,9 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
     IndirectFromObjC,
     ContextToObjC,
     DataFromObjC,
-    DataToObjC
+    DataToObjC,
+    GenericArray,
+    GenericDictionary
   };
   struct Bridge {
     const char *Name;
@@ -452,6 +454,16 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
        "unconditionallyBridgeFromObjectiveCyACSo07NS"
        "IndexC0CSgFZ",
        Shape::IndirectFromObjC},
+      {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
+       Shape::GenericDictionary},
+      {"$sSD10FoundationE36_unconditionallyBridgeFromObjectiveCySDyxq_"
+       "GSo12NSDictionaryCSgFZ",
+       Shape::GenericDictionary},
+      {"$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
+       Shape::GenericArray},
+      {"$sSa10FoundationE36_unconditionallyBridgeFromObjectiveCySayxGSo7NSArray"
+       "CSgFZ",
+       Shape::GenericArray},
   };
   constexpr llvm::StringLiteral Provider =
       "/System/Library/Frameworks/Foundation.framework/Foundation";
@@ -511,6 +523,20 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
         EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
                   TRI.IntParamRegs[1]);
         break;
+      case Shape::GenericArray:
+      case Shape::GenericDictionary: {
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        const size_t Count = Bridge.TheShape == Shape::GenericArray ? 2 : 4;
+        ASSERT_EQ(Signature.Parameters.size(), Count);
+        for (size_t I = 0; I < Count; ++I) {
+          EXPECT_EQ(Signature.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+          EXPECT_EQ(Signature.Parameters[I].TheRole,
+                    SourceParameterTypeHint::Role::Ordinary);
+          EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                    TRI.IntParamRegs[I]);
+        }
+        break;
+      }
       }
 
       std::vector<ExprPtr> Arguments;
