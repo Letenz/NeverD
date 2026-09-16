@@ -13,7 +13,10 @@
 
 #include "LLVMCWriter.h"
 
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+
+#include <stdexcept>
 
 namespace neverd {
 
@@ -28,6 +31,28 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     return;
 
   auto Name = Inst.getType()->isVoidTy() ? "" : getName(&Inst);
+
+  if (auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(&Inst)) {
+    if (Freeze->use_empty())
+      return;
+    auto *Value = Freeze->getOperand(0);
+    auto *Ty = Value->getType();
+    if (Ty->isIntegerTy() || Ty->isPointerTy() || Ty->isFloatingPointTy()) {
+      // Explicit undef/poison permits an arbitrary stable choice. Copying a
+      // possibly-poison expression into C could instead introduce undefined
+      // behavior before freeze has a chance to define its result.
+      bool ChooseZero = llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value);
+      if (ChooseZero || llvm::isGuaranteedNotToBeUndefOrPoison(
+                            Value, nullptr, Freeze, &Dominators)) {
+        emitIndent(Indent);
+        OS << Name << " = " << (ChooseZero ? "0" : valueStr(Value)) << ";\n";
+        return;
+      }
+    }
+    if (GuardAnalysisOnlyFunctions)
+      throw std::runtime_error("C freeze operand is not proved defined: " +
+                               Name);
+  }
 
   if (Inst.isBinaryOp()) {
     auto LHS = valueStr(Inst.getOperand(0));

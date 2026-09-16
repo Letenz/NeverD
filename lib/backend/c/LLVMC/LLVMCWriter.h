@@ -29,6 +29,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/CFG.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InlineAsm.h"
@@ -123,6 +124,7 @@ public:
   bool HasCIntrinsics = false;
   std::set<std::string> IntrinsicMappedNames;
   LLVMCAnalysisState Analysis;
+  llvm::DominatorTree Dominators;
   std::map<const llvm::Value *, std::string> InlineCache;
   bool InferredVoid = false;
 };

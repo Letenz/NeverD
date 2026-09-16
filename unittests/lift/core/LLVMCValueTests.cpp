@@ -136,4 +136,83 @@ TEST(LLVMCValues, ConstantsWiderThanTheCarrierAreRejected) {
                std::runtime_error);
 }
 
+TEST(LLVMCValues, FreezeMaterializesAStableValueForSingleAndRepeatedUses) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("freeze-values", Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Pointer = llvm::PointerType::getUnqual(Context);
+  auto *Signature = llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                            {I64, Pointer, Pointer}, false);
+  const char *Names[] = {"freeze_single", "freeze_multiple", "freeze_undef",
+                         "freeze_poison"};
+  for (unsigned Variant = 0; Variant < 4; ++Variant) {
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, Names[Variant], Module);
+    Function->getArg(0)->addAttr(llvm::Attribute::NoUndef);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    llvm::Value *Input = Function->getArg(0);
+    if (Variant == 2)
+      Input = llvm::UndefValue::get(I64);
+    if (Variant == 3)
+      Input = llvm::PoisonValue::get(I64);
+    auto *Frozen = Builder.CreateFreeze(Input);
+    Builder.CreateStore(Frozen, Function->getArg(1));
+    if (Variant != 0)
+      Builder.CreateStore(Frozen, Function->getArg(2));
+    Builder.CreateRetVoid();
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  compileAndRun(Source + R"(
+int main(void) {
+  uint64_t value = UINT64_C(0xfedcba9876543210);
+  for (unsigned i = 0; i < 64; ++i) {
+    value ^= value << 13;
+    value ^= value >> 7;
+    value ^= value << 17;
+    uint64_t first = 0, second = 17;
+    freeze_single(value, &first, &second);
+    if (first != value || second != 17) return 1;
+    freeze_multiple(value, &first, &second);
+    if (first != value || second != value) return 2;
+    freeze_undef(value, &first, &second);
+    if (first != second) return 3;
+    freeze_poison(value, &first, &second);
+    if (first != second) return 4;
+  }
+  return 0;
+}
+)");
+}
+
+TEST(LLVMCValues, FreezeRejectsUnprovedPoisonInEitherUseCount) {
+  for (bool SingleUse : {false, true}) {
+    SCOPED_TRACE(SingleUse);
+    llvm::LLVMContext Context;
+    llvm::Module Module("unsafe-freeze", Context);
+    auto *I64 = llvm::Type::getInt64Ty(Context);
+    auto *Pointer = llvm::PointerType::getUnqual(Context);
+    auto *Signature = llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                              {I64, I64, Pointer}, false);
+    auto *Function = llvm::Function::Create(
+        Signature, llvm::GlobalValue::ExternalLinkage, "unsafe_freeze", Module);
+    Function->getArg(0)->addAttr(llvm::Attribute::NoUndef);
+    Function->getArg(1)->addAttr(llvm::Attribute::NoUndef);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Frozen = Builder.CreateFreeze(
+        Builder.CreateShl(Function->getArg(0), Function->getArg(1)));
+    Builder.CreateStore(SingleUse ? Frozen : Builder.CreateAdd(Frozen, Frozen),
+                        Function->getArg(2));
+    Builder.CreateRetVoid();
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+                 std::runtime_error);
+  }
+}
+
 } // namespace
