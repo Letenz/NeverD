@@ -2162,6 +2162,7 @@ TEST(ObjCSourceBindings,
   ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
   EXPECT_EQ(Result.LocalStorageExtents,
             (std::map<va_t, uint64_t>{{Base, 24}}));
+  EXPECT_TRUE(Result.ProfileCounterSections.empty());
   const auto &LeftAddress =
       Result.Function.Body[0].RetVal->Operands[0]->Operands[0];
   const auto &RightAddress =

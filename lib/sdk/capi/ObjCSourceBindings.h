@@ -721,8 +721,10 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         !localStorageAccessTypeSupported(Type))
       return false;
     const auto Address = constantAddress(*Operand);
-    auto Base = Address ? ProfileStorage->sectionFor(*Address, Type->Size)
-                              : std::nullopt;
+    const auto ProfileBase =
+        Address ? ProfileStorage->sectionFor(*Address, Type->Size)
+                : std::nullopt;
+    auto Base = ProfileBase;
     auto Hint = Base ? profileStorageHint(Image.Arch, *Base) : std::nullopt;
     if (!Hint) {
       Hint = Address ? localStorageAccessHint(Image, *Address, Type->Size)
@@ -742,8 +744,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
             ? Bound
             : HighExpr::makeBinop(NdOp::INT_ADD, Bound,
                                   HighExpr::makeConst(*Address - *Base, 8));
-    if (Base)
-      Result.ProfileCounterSections.insert(*Base);
+    if (ProfileBase)
+      Result.ProfileCounterSections.insert(*ProfileBase);
     return true;
   };
   std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool, bool)> Copy;
