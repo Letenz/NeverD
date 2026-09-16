@@ -232,15 +232,15 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     if (CurMedFunc) {
       const AddressProvenanceVarKey OutputKey =
           addressProvenanceVarKey(Op.Output);
-      auto GetPc = std::find_if(
-          CurMedFunc->I386GetPcModels.begin(),
-          CurMedFunc->I386GetPcModels.end(),
-          [&](const MedI386GetPcModel &Model) {
-            return addressProvenanceVarKey(Model.Output) == OutputKey;
-          });
+      auto GetPc = std::find_if(CurMedFunc->I386GetPcModels.begin(),
+                                CurMedFunc->I386GetPcModels.end(),
+                                [&](const MedI386GetPcModel &Model) {
+                                  return addressProvenanceVarKey(
+                                             Model.Output) == OutputKey;
+                                });
       if (GetPc != CurMedFunc->I386GetPcModels.end()) {
-        Result = llvm::ConstantInt::get(sizeToType(Op.Output.Size),
-                                        GetPc->PCValue);
+        Result =
+            llvm::ConstantInt::get(sizeToType(Op.Output.Size), GetPc->PCValue);
         break;
       }
     }
@@ -871,6 +871,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                       "segmentptr");
     }
     auto *LI = Builder.CreateLoad(ValTy, Ptr, "ld");
+    // A machine address does not inherit the accessed type's ABI alignment.
+    // Keep ordinary accesses byte-aligned; atomic requirements remain below.
+    LI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Release ||
           Op.MemoryOrdering == NdMemoryOrdering::AcquireRelease)
@@ -1072,6 +1075,7 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Val = Builder.CreatePtrToInt(Sym, Val->getType());
     }
     auto *SI = Builder.CreateStore(Val, Ptr);
+    SI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Acquire ||
           Op.MemoryOrdering == NdMemoryOrdering::AcquireRelease)
