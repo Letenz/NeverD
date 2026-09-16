@@ -287,10 +287,27 @@ uint64_t TargetRegInfo::indirectResultReg() const {
 
 llvm::ArrayRef<uint64_t>
 TargetRegInfo::integerParamRegs(BinaryFormat Format) const {
-  if (TheArch == Arch::X64 && Format == BinaryFormat::COFF &&
-      !Win64ParamRegs.empty())
-    return Win64ParamRegs;
-  return IntParamRegs;
+  return integerArgumentLayout(Format == BinaryFormat::COFF).Registers;
+}
+
+int IntegerArgumentLayout::registerIndex(uint64_t RegOff) const {
+  for (size_t I = 0; I < Registers.size(); ++I)
+    if (Registers[I] == RegOff)
+      return static_cast<int>(I);
+  return -1;
+}
+
+IntegerArgumentLayout TargetRegInfo::integerArgumentLayout(bool IsWin64) const {
+  const bool Win64 = TheArch == Arch::X64 && IsWin64 && !Win64ParamRegs.empty();
+  IntegerArgumentLayout Layout;
+  Layout.Registers = Win64 ? Win64ParamRegs : IntParamRegs;
+  Layout.SlotBytes = PointerSize;
+  Layout.CallStackBase =
+      Win64 ? int64_t(Layout.Registers.size()) * PointerSize : 0;
+  Layout.EntryStackBase =
+      Layout.CallStackBase +
+      ((TheArch == Arch::X64 || TheArch == Arch::X86) ? PointerSize : 0);
+  return Layout;
 }
 
 int TargetRegInfo::regToArgIdx(uint64_t RegOff) const {
@@ -306,10 +323,10 @@ int TargetRegInfo::regToArgIdx(uint64_t RegOff) const {
 }
 
 int TargetRegInfo::regToArgIdx(uint64_t RegOff, bool IsWin64) const {
-  if (IsWin64 && !Win64ParamRegs.empty()) {
-    for (size_t I = 0; I < Win64ParamRegs.size(); ++I)
-      if (Win64ParamRegs[I] == RegOff)
-        return static_cast<int>(I);
+  if (TheArch == Arch::X64 && IsWin64 && !Win64ParamRegs.empty()) {
+    int Idx = integerArgumentLayout(IsWin64).registerIndex(RegOff);
+    if (Idx >= 0)
+      return Idx;
     for (size_t I = 0; I < FPParamRegs.size() && I < Win64ParamRegs.size(); ++I)
       if (FPParamRegs[I] == RegOff)
         return static_cast<int>(I);

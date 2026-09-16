@@ -35,17 +35,12 @@ namespace neverd {
 
 static llvm::ArrayRef<uint64_t> integerParamRegs(const TargetRegInfo &TRI,
                                                  bool IsWin64) {
-  return IsWin64 && !TRI.Win64ParamRegs.empty() ? TRI.Win64ParamRegs
-                                                : TRI.IntParamRegs;
+  return TRI.integerArgumentLayout(IsWin64).Registers;
 }
 
 static int integerArgIndex(const TargetRegInfo &TRI, uint64_t RegOff,
                            bool IsWin64) {
-  llvm::ArrayRef<uint64_t> Regs = integerParamRegs(TRI, IsWin64);
-  for (size_t I = 0; I < Regs.size(); ++I)
-    if (Regs[I] == RegOff)
-      return static_cast<int>(I);
-  return -1;
+  return TRI.integerArgumentLayout(IsWin64).registerIndex(RegOff);
 }
 
 // Address = Base + Offset modulo the original address width. Offset owns the

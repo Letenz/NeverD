@@ -708,8 +708,10 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
   // Generic stack recovery uses pointer-sized slots and can place multiple
   // Apple arm64 scalar arguments in one slot. Rebind each actual byte range,
   // never the old slot index as if it were a source argument index.
-  const int RegisterCount = static_cast<int>(TRI.IntParamRegs.size());
-  const int64_t StackBase = TheArch == Arch::X64 ? 8 : 0;
+  const auto IntegerLayout =
+      TRI.integerArgumentLayout(Func.CC == CallingConv::Win64);
+  const int RegisterCount = static_cast<int>(IntegerLayout.Registers.size());
+  const int64_t StackBase = IntegerLayout.EntryStackBase;
   struct Rewrite {
     MedOp *Op;
     uint8_t Input;
@@ -745,7 +747,8 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
         if (Old.RegOff != kNoParamReg) {
           Index = RegisterParameter(Old.RegOff);
         } else if (Old.Id >= RegisterCount && Old.Id <= RegisterCount + 512) {
-          Offset = StackBase + static_cast<int64_t>(Old.Id - RegisterCount) * 8;
+          Offset = StackBase + static_cast<int64_t>(Old.Id - RegisterCount) *
+                                   IntegerLayout.SlotBytes;
           if (K == 0 && Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
               Op.Inputs[1].isConst() && Op.Inputs[1].ConstVal <= 8) {
             Offset += static_cast<int64_t>(Op.Inputs[1].ConstVal);

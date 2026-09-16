@@ -3674,4 +3674,123 @@ TEST(LowToMedSelectorOccurrence,
   EXPECT_EQ(It->second.Selector.Size, 8u);
 }
 
+MedFunc convertIntegerStackInput(Arch A, BinaryFormat Format, int64_t Offset,
+                                 unsigned Bytes, bool Spill, bool Mutable) {
+  const auto &TRI = getTargetRegInfo(A);
+  auto Regs = TRI.integerParamRegs(Format);
+  LowFunc Low;
+  Low.Entry = 0x9100;
+  Low.Name = "integer_stack_input";
+  Low.Blocks.resize(1);
+  auto &B = Low.Blocks.front();
+  B.Id = 0;
+  B.StartAddr = Low.Entry;
+  const unsigned W = TRI.PointerSize;
+  const auto SP = NdVar::reg(TRI.StackPointer, W);
+  unsigned Next = 1;
+  auto Emit = [&](NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    Op.Addr = Low.Entry + B.Ops.size();
+    for (auto Input : Inputs)
+      Op.addInput(Input);
+    B.Ops.push_back(Op);
+  };
+  Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(0x38, W)});
+  const auto Local = NdVar::tmp(Next++, W);
+  if (Spill) {
+    Emit(NdOp::INT_ADD, Local, {SP, NdVar::cst(0x18, W)});
+    Emit(NdOp::STORE, {}, {Local, NdVar::reg(Regs.front(), W)});
+  }
+  const auto Address = NdVar::tmp(Next++, W);
+  Emit(NdOp::INT_ADD, Address, {SP, NdVar::cst(Offset + 0x38, W)});
+  auto Value = NdVar::tmp(Next++, Bytes);
+  Emit(NdOp::LOAD, Value, {Address});
+  if (Mutable) {
+    const auto Updated = NdVar::tmp(Next++, Bytes);
+    Emit(NdOp::INT_ADD, Updated, {Value, NdVar::cst(17, Bytes)});
+    Emit(NdOp::STORE, {}, {Address, Updated});
+    Value = NdVar::tmp(Next++, Bytes);
+    Emit(NdOp::LOAD, Value, {Address});
+  }
+  if (Spill) {
+    const auto Reload = NdVar::tmp(Next++, W);
+    Emit(NdOp::LOAD, Reload, {Local});
+    const auto Sum = NdVar::tmp(Next++, W);
+    Emit(NdOp::INT_ADD, Sum, {Reload, Value});
+    Value = Sum;
+  }
+  Emit(NdOp::COPY, NdVar::reg(TRI.IntReturnReg, Value.Size), {Value});
+  Emit(NdOp::INT_ADD, SP, {SP, NdVar::cst(0x38, W)});
+  Emit(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, Value.Size)});
+  B.EndAddr = Low.Entry + B.Ops.size();
+  return LowToMedConverter().convert(Low, A, Format);
+}
+
+TEST(LowToMedIntegerStackABI, ConventionOwnsRegisterPrefixAndEntryOffset) {
+  struct Case {
+    Arch A;
+    BinaryFormat Format;
+    int64_t FirstOffset;
+    unsigned RegisterCount;
+  };
+  for (auto C : {Case{Arch::X64, BinaryFormat::COFF, 40, 4},
+                 Case{Arch::X64, BinaryFormat::ELF, 8, 6},
+                 Case{Arch::AArch64, BinaryFormat::ELF, 0, 8},
+                 Case{Arch::ARM, BinaryFormat::ELF, 0, 4}})
+    for (bool Spill : {false, true})
+      for (unsigned Slot : {0u, 1u}) {
+        SCOPED_TRACE(testing::Message() << int(C.A) << ':' << int(C.Format)
+                                        << ':' << Spill << ':' << Slot);
+        const auto &TRI = getTargetRegInfo(C.A);
+        auto Med = convertIntegerStackInput(
+            C.A, C.Format, C.FirstOffset + Slot * TRI.PointerSize,
+            TRI.PointerSize, Spill, false);
+        ASSERT_EQ(Med.Params.size(), C.RegisterCount + Slot + 1);
+        auto Regs = TRI.integerParamRegs(C.Format);
+        for (unsigned I = 0; I < C.RegisterCount; ++I)
+          EXPECT_EQ(Med.Params[I].RegOff, Regs[I]);
+        const auto &Last = Med.Params.back();
+        EXPECT_EQ(Last.Id, C.RegisterCount + Slot);
+        EXPECT_EQ(Last.RegOff, kNoParamReg);
+        EXPECT_TRUE(Med.MutableStackParamHomes.empty());
+        EXPECT_TRUE(verifyMedFunc(Med, "integer-stack-abi"));
+      }
+}
+
+TEST(LowToMedIntegerStackABI, Win64HomeAreaIsNotAnIncomingStackParameter) {
+  for (int64_t Offset : {8, 16, 24, 32}) {
+    auto Med = convertIntegerStackInput(Arch::X64, BinaryFormat::COFF, Offset,
+                                        8, false, false);
+    for (const auto &P : Med.Params)
+      EXPECT_NE(P.RegOff, kNoParamReg) << Offset;
+  }
+}
+
+TEST(LowToMedIntegerStackABI, Win64SubslotRetainsTheFifthParameterIdentity) {
+  auto Med = convertIntegerStackInput(Arch::X64, BinaryFormat::COFF, 43, 2,
+                                      false, false);
+  ASSERT_EQ(Med.Params.size(), 5u);
+  bool SawSlice = false;
+  for (const auto &B : Med.Blocks)
+    for (const auto &Op : B.Ops)
+      if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+          Op.Inputs[0].Kind == MedVar::Param) {
+        EXPECT_EQ(Op.Inputs[0].Id, 4);
+        EXPECT_EQ(Op.Inputs[1].ConstVal, 3u);
+        SawSlice = true;
+      }
+  EXPECT_TRUE(SawSlice);
+}
+
+TEST(LowToMedIntegerStackABI, Win64MutableHomeUsesThePhysicalEntryOffset) {
+  auto Med = convertIntegerStackInput(Arch::X64, BinaryFormat::COFF, 40, 8,
+                                      false, true);
+  ASSERT_EQ(Med.Params.size(), 5u);
+  EXPECT_EQ(Med.MutableStackParamHomes,
+            (std::vector<std::pair<int, int64_t>>{{4, 40}}));
+}
+
 } // namespace

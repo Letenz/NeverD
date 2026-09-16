@@ -320,14 +320,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
   const auto &TRI = getTargetRegInfo(TheArch);
   const AbiSpillContext SpillContext{Func, TRI, FrameLocalLeafCallees};
   const bool IsWin64 = TheArch == Arch::X64 && Func.CC == CallingConv::Win64;
-  const llvm::ArrayRef<uint64_t> IntParamRegs =
-      IsWin64 && !TRI.Win64ParamRegs.empty() ? TRI.Win64ParamRegs
-                                             : TRI.IntParamRegs;
+  const auto IntegerLayout = TRI.integerArgumentLayout(IsWin64);
+  const auto IntParamRegs = IntegerLayout.Registers;
   auto regToIntArgIdx = [&](uint64_t RegOff) {
-    for (size_t I = 0; I < IntParamRegs.size(); ++I)
-      if (IntParamRegs[I] == RegOff)
-        return static_cast<int>(I);
-    return -1;
+    return IntegerLayout.registerIndex(RegOff);
   };
 
   // isFPArgReg deliberately names only the ABI argument bank (v0-v7 /
@@ -782,14 +778,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
             Prev.MemoryAddressSpace == NdMemoryAddressSpace::Default)
           if (auto Rel = CallRelativeStackOffset(Prev.Inputs[0]);
               Rel && *Rel >= 0) {
-            if (IsWin64 && *Rel < static_cast<int64_t>(IntParamRegs.size() *
-                                                       TRI.PointerSize))
+            if (*Rel < IntegerLayout.CallStackBase)
               continue;
             HasStackArg = true;
-            const int64_t FirstStackOff =
-                IsWin64 ? static_cast<int64_t>(IntParamRegs.size() *
-                                               TRI.PointerSize)
-                        : 0;
+            const int64_t FirstStackOff = IntegerLayout.CallStackBase;
             if (*Rel == FirstStackOff &&
                 !(Prev.Inputs[1].Kind == MedVar::Reg &&
                   TRI.isFrameOrLinkReg(Prev.Inputs[1].RegOff)))
@@ -1061,15 +1053,10 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           continue;
         const int64_t StackOff = *RelativeOffset;
 
-        int SlotSize = TRI.PointerSize;
-        int64_t SlotOff = StackOff;
-        if (IsWin64) {
-          const int64_t ShadowBytes =
-              static_cast<int64_t>(IntParamRegs.size() * TRI.PointerSize);
-          if (SlotOff < ShadowBytes)
-            continue;
-          SlotOff -= ShadowBytes;
-        }
+        int SlotSize = IntegerLayout.SlotBytes;
+        if (StackOff < IntegerLayout.CallStackBase)
+          continue;
+        int64_t SlotOff = StackOff - IntegerLayout.CallStackBase;
         const int NumRegArgSlots = static_cast<int>(IntParamRegs.size());
         // The argument index of the first stack slot [call_sp + 0]:
         //  - i386 cdecl: arg FirstStackSlot (every argument is stack-passed).
@@ -2158,9 +2145,8 @@ void finalizeVariadicCallees(std::vector<MedFunc> &Funcs, Arch TheArch,
     int MaxId = 0;
     const bool CalleeIsWin64 =
         TheArch == Arch::X64 && Callee.CC == CallingConv::Win64;
-    const llvm::ArrayRef<uint64_t> CalleeIntParamRegs =
-        CalleeIsWin64 && !TRI.Win64ParamRegs.empty() ? TRI.Win64ParamRegs
-                                                     : TRI.IntParamRegs;
+    const auto CalleeIntParamRegs =
+        TRI.integerArgumentLayout(CalleeIsWin64).Registers;
     for (const auto &P : Callee.Params) {
       if (P.RegOff != kNoParamReg &&
           std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),

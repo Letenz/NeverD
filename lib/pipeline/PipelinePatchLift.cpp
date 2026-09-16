@@ -144,7 +144,9 @@ static void propagateForwardedCallArities(
       if (P.RegOff != kNoParamReg && TRI.isFPArgReg(P.RegOff)) {
         FPRegs.push_back(P.RegOff);
       } else if (P.RegOff != kNoParamReg) {
-        const int ArgIdx = TRI.regToArgIdx(P.RegOff);
+        const int ArgIdx =
+            TRI.integerArgumentLayout(Probe.CC == CallingConv::Win64)
+                .registerIndex(P.RegOff);
         MaxRegIdx = std::max(MaxRegIdx, ArgIdx);
         MaxIdx = std::max(MaxIdx, ArgIdx);
       } else if (P.Kind == MedVar::Param) {
@@ -322,6 +324,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     };
     for (const auto &MF : Result.MedFuncs) {
       int MaxRegIdx = -1, MaxIdx = -1;
+      const auto IntegerLayout =
+          TRI.integerArgumentLayout(MF.CC == CallingConv::Win64);
       // The exact FP-argument register offsets, in ABI order.  ARM `float` args
       // land in the single-width S registers (s0,s1,..) and `double` args in
       // the D registers (d0,d1,..); recording the layout lets the caller
@@ -339,9 +343,9 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
           // Floating-point/vector argument register: counted separately.
           FPRegs.push_back(P.RegOff);
         } else if (P.RegOff != kNoParamReg) {
-          if (int Idx = TRI.regToArgIdx(P.RegOff); Idx > MaxRegIdx)
+          if (int Idx = IntegerLayout.registerIndex(P.RegOff); Idx > MaxRegIdx)
             MaxRegIdx = Idx;
-          MaxIdx = std::max(MaxIdx, TRI.regToArgIdx(P.RegOff));
+          MaxIdx = std::max(MaxIdx, IntegerLayout.registerIndex(P.RegOff));
         } else if (P.Kind == MedVar::Param) {
           // Stack parameter (detectStackParams / detectCdeclStackParams): its
           // Id is the argument index.
@@ -469,8 +473,9 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
           continue; // nothing to inherit
         int NFp =
             std::min<int>(FpArgs, static_cast<int>(TRI.FPParamRegs.size()));
-        int NInt =
-            std::min<int>(IntArgs, static_cast<int>(TRI.IntParamRegs.size()));
+        const auto IntegerRegs =
+            TRI.integerArgumentLayout(MF.CC == CallingConv::Win64).Registers;
+        int NInt = std::min<int>(IntArgs, static_cast<int>(IntegerRegs.size()));
         // Every forwarded argument register must be live-in (genuine forwarder,
         // not a function that computes the callee's arguments locally).  The
         // forwarding CALL itself is excluded: its output is the integer return
@@ -494,7 +499,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
           if (regWrittenInF(TRI.FPParamRegs[K]))
             AllLiveIn = false;
         for (int K = 0; K < NInt && AllLiveIn; ++K)
-          if (regWrittenInF(TRI.IntParamRegs[K]))
+          if (regWrittenInF(IntegerRegs[K]))
             AllLiveIn = false;
         if (!AllLiveIn)
           continue;
