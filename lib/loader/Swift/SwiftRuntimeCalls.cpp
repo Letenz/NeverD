@@ -106,6 +106,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    {"$ss018_bridgeAnyObjectToB0yypyXlSgF",
+     "/usr/lib/swift/libswiftCore.dylib", "vIp"},
+    {"$ss27_bridgeAnythingToObjectiveCyyXlxlF",
+     "/usr/lib/swift/libswiftCore.dylib", "ppp"},
 };
 
 bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
