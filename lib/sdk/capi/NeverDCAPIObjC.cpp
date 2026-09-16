@@ -110,6 +110,11 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     COptions.TheArch = S->Img.Arch;
     COptions.Format = S->Img.Format;
     COptions.EmitComments = false;
+    // Each method source is one complete translation unit. The mobile source
+    // assembler parses those units and validates shared definitions before it
+    // combines them, so record macro guards are unnecessary and would weaken
+    // its deliberately macro-free parsing boundary.
+    COptions.EmitRecordGuards = false;
     COptions.UseDebugNames = false;
     HighCEmitter Emitter;
     std::string NativeSource;

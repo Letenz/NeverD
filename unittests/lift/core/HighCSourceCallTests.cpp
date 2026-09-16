@@ -129,6 +129,103 @@ void compileAndRun(const std::string &Source) {
   ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
 }
 
+TEST(HighCSourceCalls, SwiftValueWitnessDestroyReloadsRuntimeTableEntry) {
+  const auto Hint = swiftValueWitnessSourceCallHint(
+      Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::Destroy);
+  ASSERT_TRUE(Hint);
+  auto Destroy =
+      HighExpr::makeCall("indirect_call", 0,
+                         {parameter(0, Hint->Signature.Parameters[0].Type),
+                          parameter(1, Hint->Signature.Parameters[1].Type)});
+  Destroy->IsIndirectCall = true;
+  Destroy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+  HighFunc Function;
+  Function.Name = "destroy_value";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"value", Hint->Signature.Parameters[0].Type},
+                     {"metadata", Hint->Signature.Parameters[1].Type}};
+  Function.SourceTypeHint = Hint->Signature;
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr = Destroy;
+  Function.Body = {Call};
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("__attribute__((swiftcall))"), std::string::npos);
+  EXPECT_NE(Source.find("sizeof(void *)))[1]"), std::string::npos);
+  compileAndRun(Source + R"(
+static void *expected_metadata;
+static unsigned calls;
+static void __attribute__((swiftcall)) witness(void *value, void *metadata) {
+    if (metadata != expected_metadata) __builtin_trap();
+    ++*(unsigned *)value;
+    ++calls;
+}
+int main(void) {
+    void *table[2] = {0, (void *)&witness};
+    void *metadata_words[2] = {table, 0};
+    expected_metadata = &metadata_words[1];
+    unsigned value = 41;
+    destroy_value(&value, expected_metadata);
+    return value == 42 && calls == 1 ? 0 : 1;
+}
+)");
+
+  auto Forged = *Hint;
+  Forged.TargetName = "other";
+  Destroy->SourceCallHint =
+      std::make_shared<const SourceCallTypeHint>(std::move(Forged));
+  EXPECT_NE(emit({Function}, false)
+                .find("bad source call: invalid Swift value-witness binding"),
+            std::string::npos);
+}
+
+TEST(HighCSourceCalls,
+     SwiftValueWitnessInitializeWithCopyReturnsRuntimeDestination) {
+  const auto Hint = swiftValueWitnessSourceCallHint(
+      Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
+  ASSERT_TRUE(Hint);
+  auto Copy =
+      HighExpr::makeCall("indirect_call", 0,
+                         {parameter(0, Hint->Signature.Parameters[0].Type),
+                          parameter(1, Hint->Signature.Parameters[1].Type),
+                          parameter(2, Hint->Signature.Parameters[2].Type)});
+  Copy->IsIndirectCall = true;
+  // HighIR retains the integer machine carrier even though the source ABI
+  // gives the same return register a pointer type.
+  Copy->Type = NdType::makeInt(8);
+  Copy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+  HighFunc Function;
+  Function.Name = "copy_value";
+  Function.ReturnType = Copy->Type;
+  Function.Params = {{"destination", Hint->Signature.Parameters[0].Type},
+                     {"source", Hint->Signature.Parameters[1].Type},
+                     {"metadata", Hint->Signature.Parameters[2].Type}};
+  Function.SourceTypeHint = Hint->Signature;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Copy;
+  Function.Body = {Return};
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("sizeof(void *)))[2]"), std::string::npos);
+  compileAndRun(Source + R"(
+static void *expected_metadata;
+static void *__attribute__((swiftcall))
+witness_copy(void *destination, void *source, void *metadata) {
+    if (metadata != expected_metadata) __builtin_trap();
+    *(unsigned *)destination = *(unsigned *)source;
+    return destination;
+}
+int main(void) {
+    void *table[3] = {0, 0, (void *)&witness_copy};
+    void *metadata_words[2] = {table, 0};
+    expected_metadata = &metadata_words[1];
+    unsigned source = 73, destination = 0;
+    uintptr_t result = copy_value(&destination, &source, expected_metadata);
+    return (void *)result == &destination && destination == source ? 0 : 1;
+}
+)");
+}
+
 TEST(HighCSourceCalls, GuardedPhiCleanupKeepsTargetLabelsExecutable) {
   const auto Integer = NdType::makeInt(4);
   MedVar Variable;

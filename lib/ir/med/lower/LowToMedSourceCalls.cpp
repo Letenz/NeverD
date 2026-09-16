@@ -4,6 +4,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/Swift/SwiftValueWitnessCalls.h"
 
 #include <algorithm>
 #include <optional>
@@ -46,6 +47,14 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     return;
   auto Hints = Image ? buildObjCSourceCallHints(*Image, Low)
                      : std::map<va_t, SourceCallTypeHint>();
+  if (Image) {
+    auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
+    for (auto &[Address, Hint] : SwiftHints) {
+      auto [It, Inserted] = Hints.emplace(Address, std::move(Hint));
+      if (!Inserted)
+        Hints.erase(It);
+    }
+  }
   const SourceFunctionTypeHint *EntrySignature = nullptr;
   if (SourceCalleeTypeHints)
     if (auto It = SourceCalleeTypeHints->find(Low.Entry);

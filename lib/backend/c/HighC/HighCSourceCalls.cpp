@@ -104,6 +104,52 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       E.MemoryOrdering != NdMemoryOrdering::None)
     return bad("incompatible operation effects");
   const auto &Signature = Hint.Signature;
+  if (Hint.ValueWitness && Hint.CallKind != Kind::SwiftValueWitness)
+    return bad("value-witness operation belongs to another binding kind");
+  if (Hint.CallKind == Kind::SwiftValueWitness) {
+    if (!isSwiftValueWitnessSourceCallHint(Hint, Opts.TheArch) ||
+        !E.IsIndirectCall || E.CallAddr || !Hint.ValueWitness ||
+        E.Operands.size() != Signature.Parameters.size())
+      return bad("invalid Swift value-witness binding");
+    std::vector<std::string> Arguments;
+    for (size_t I = 0; I < E.Operands.size(); ++I) {
+      if (!E.Operands[I])
+        return bad("missing Swift value-witness argument");
+      auto Argument = sourceValue(exprStr(*E.Operands[I]), E.Operands[I]->Type,
+                                  Signature.Parameters[I].Type);
+      if (!Argument)
+        return bad("Swift value-witness argument carrier disagrees with ABI");
+      Arguments.push_back(std::move(*Argument));
+    }
+    const auto Slot = swiftValueWitnessSlot(*Hint.ValueWitness);
+    if (!Slot)
+      return bad("unsupported Swift value-witness operation");
+    std::string Prototype =
+        Signature.ReturnType->Kind == NdTypeKind::Void ? "void" : "void *";
+    Prototype += " (__attribute__((swiftcall)) *)(";
+    for (size_t I = 0; I < Arguments.size(); ++I) {
+      if (I)
+        Prototype += ", ";
+      Prototype += "void *";
+    }
+    const std::string Metadata = Arguments.back();
+    const std::string Target =
+        "((" + Prototype + "))((void **)*(void **)((char *)(uintptr_t)(" +
+        Metadata + ") - sizeof(void *)))[" + std::to_string(*Slot) + "])";
+    std::string Call = Target + "(";
+    for (size_t I = 0; I < Arguments.size(); ++I) {
+      if (I)
+        Call += ", ";
+      Call += Arguments[I];
+    }
+    Call += ")";
+    if (Signature.ReturnType->Kind == NdTypeKind::Void)
+      return Call;
+    auto Result = sourceValue(Call, Signature.ReturnType, E.Type);
+    return Result
+               ? *Result
+               : bad("Swift value-witness result carrier disagrees with ABI");
+  }
   if ((Hint.CallKind == Kind::SwiftStringBridge ||
        Hint.CallKind == Kind::SwiftStringFromNSString) &&
       Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift)

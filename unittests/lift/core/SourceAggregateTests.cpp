@@ -445,6 +445,15 @@ TEST(SourceAggregate, EntryReturnsKeepEveryDeclaredFloatingDependency) {
   OS.flush();
   EXPECT_EQ(C.find("uint256_t"), std::string::npos) << C;
   EXPECT_NE(C.find(".field_1"), std::string::npos) << C;
+  EXPECT_NE(C.find("#ifndef NEVERD_SOURCE_"), std::string::npos) << C;
+
+  C.clear();
+  Options.EmitRecordGuards = false;
+  ASSERT_TRUE(HighCEmitter().emit({H}, OS, Options));
+  OS.flush();
+  EXPECT_EQ(C.find("#ifndef NEVERD_SOURCE_"), std::string::npos) << C;
+  EXPECT_NE(C.find("struct nd_record_"), std::string::npos) << C;
+  EXPECT_NE(C.find("_Static_assert(sizeof("), std::string::npos) << C;
 }
 TEST(SourceAggregate, CallsReconstructLogicalRecordsFromPhysicalOperands) {
   auto M = convertRecord(true);

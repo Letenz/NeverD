@@ -9,6 +9,15 @@
 
 namespace neverd {
 namespace {
+bool sameLocation(const SourceABIValueLocation &Left,
+                  const SourceABIValueLocation &Right) {
+  return Left.Kind == Right.Kind &&
+         Left.RegisterOffset == Right.RegisterOffset &&
+         Left.EntryStackOffset == Right.EntryStackOffset &&
+         Left.ValueBytes == Right.ValueBytes &&
+         Left.ExtendTo32Bits == Right.ExtendTo32Bits;
+}
+
 bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
                 unsigned &Remaining) {
   if (!Remaining || !Left || !Right || Depth > 16 ||
@@ -98,6 +107,34 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
                      [&](const auto &M) { return Word(M.Type); });
 }
 } // namespace
+
+bool equalSourceABIs(const SourceFunctionTypeHint &Left,
+                     const SourceFunctionTypeHint &Right) {
+  if (Left.Origin != Right.Origin || Left.Convention != Right.Convention ||
+      Left.Architecture != Right.Architecture ||
+      Left.HasExplicitABI != Right.HasExplicitABI ||
+      (Left.HasExplicitABI &&
+       !sameLocation(Left.ReturnLocation, Right.ReturnLocation)) ||
+      !equalSourceTypes(Left.ReturnType, Right.ReturnType) ||
+      Left.ReturnComponents.size() != Right.ReturnComponents.size() ||
+      Left.Parameters.size() != Right.Parameters.size())
+    return false;
+  for (size_t I = 0; I < Left.ReturnComponents.size(); ++I)
+    if (!sameLocation(Left.ReturnComponents[I], Right.ReturnComponents[I]))
+      return false;
+  for (size_t I = 0; I < Left.Parameters.size(); ++I) {
+    const auto &L = Left.Parameters[I];
+    const auto &R = Right.Parameters[I];
+    if (L.Name != R.Name || !equalSourceTypes(L.Type, R.Type) ||
+        (Left.HasExplicitABI && !sameLocation(L.Location, R.Location)) ||
+        L.Components.size() != R.Components.size())
+      return false;
+    for (size_t J = 0; J < L.Components.size(); ++J)
+      if (!sameLocation(L.Components[J], R.Components[J]))
+        return false;
+  }
+  return true;
+}
 
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right) {
   unsigned Remaining = 4096;
@@ -457,6 +494,61 @@ bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     return false;
   Hint.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
   return validateSourceABI(Hint, Diagnostic);
+}
+
+std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
+    Arch Architecture, SourceCallTypeHint::SwiftValueWitnessKind Operation) {
+  SourceCallTypeHint Result;
+  Result.CallKind = SourceCallTypeHint::Kind::SwiftValueWitness;
+  Result.ValueWitness = Operation;
+  auto &Signature = Result.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  switch (Operation) {
+  case SourceCallTypeHint::SwiftValueWitnessKind::Destroy:
+    Result.TargetName = "destroy";
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"value", Pointer}, {"metadata", Pointer}};
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
+    Result.TargetName = "initializeWithCopy";
+    Signature.ReturnType = Pointer;
+    Signature.Parameters = {
+        {"destination", Pointer}, {"source", Pointer}, {"metadata", Pointer}};
+    break;
+  }
+  std::string Diagnostic;
+  if (!assignDarwinSwiftSourceABI(Signature, Architecture, Diagnostic))
+    return std::nullopt;
+  return Result;
+}
+
+std::optional<unsigned>
+swiftValueWitnessSlot(SourceCallTypeHint::SwiftValueWitnessKind Operation) {
+  switch (Operation) {
+  case SourceCallTypeHint::SwiftValueWitnessKind::Destroy:
+    return 1;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
+    return 2;
+  }
+  return std::nullopt;
+}
+
+bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
+                                       Arch Architecture) {
+  if (!Hint.ValueWitness)
+    return false;
+  const auto Expected =
+      swiftValueWitnessSourceCallHint(Architecture, *Hint.ValueWitness);
+  return Expected &&
+         Hint.CallKind == SourceCallTypeHint::Kind::SwiftValueWitness &&
+         Hint.TargetAddress == 0 && Hint.TargetName == Expected->TargetName &&
+         Hint.Selector.empty() && Hint.OwnerClass.empty() &&
+         Hint.SelectorReferenceAddress == 0 && !Hint.DoesNotReturn &&
+         !Hint.ReturnedArgument && !Hint.RuntimeObjCResultType &&
+         Hint.BorrowedByteInputs.empty() && !Hint.Format && !Hint.Receiver &&
+         Hint.ByteCount == 0 && Hint.ImmutablePointerSlot == 0 &&
+         equalSourceABIs(Hint.Signature, Expected->Signature);
 }
 
 bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,

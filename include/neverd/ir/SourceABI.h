@@ -1,7 +1,9 @@
 #ifndef NEVERD_IR_SOURCEABI_H
 #define NEVERD_IR_SOURCEABI_H
 
-#include "neverd/ir/SourceTypeHint.h"
+#include "neverd/ir/SourceCallTypeHint.h"
+
+#include <optional>
 
 namespace neverd {
 
@@ -9,6 +11,12 @@ namespace neverd {
 /// signatures. Malformed, cyclic, and excessively deep types never compare
 /// equal, even when both references identify the same object.
 bool equalSourceTypes(const TypeRef &Left, const TypeRef &Right);
+
+/// Compare complete source ABI descriptions, including every logical type and
+/// every declared physical carrier. This compares declarations; it does not
+/// authenticate where either declaration came from.
+bool equalSourceABIs(const SourceFunctionTypeHint &Left,
+                     const SourceFunctionTypeHint &Right);
 
 struct SourceAggregateMember {
   TypeRef Type;
@@ -54,6 +62,21 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// asynchronous calls, floating records and stack arguments are unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
+
+/// Canonical ABI for a supported required Swift value-witness operation. This
+/// describes the stable table entry and its physical carriers; a loader must
+/// separately prove the matching lookup through the same metadata argument.
+std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
+    Arch Architecture, SourceCallTypeHint::SwiftValueWitnessKind Operation);
+
+/// Stable required-table index for a supported value-witness operation.
+std::optional<unsigned>
+swiftValueWitnessSlot(SourceCallTypeHint::SwiftValueWitnessKind Operation);
+
+/// Revalidate a complete canonical value-witness binding. Extra names,
+/// addresses, effects, receiver facts, and data identities are rejected.
+bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
+                                       Arch Architecture);
 
 /// Assign a call's complete promoted scalar arguments, with a named prefix
 /// and an ellipsis. Darwin arm64 puts the unnamed values in eight-byte stack

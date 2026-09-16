@@ -19,6 +19,11 @@ namespace neverd {
 struct CEmitterOptions {
   bool EmitIncludes = true;
   bool EmitComments = true;
+  /// Wrap record declarations in stable preprocessor guards so independently
+  /// emitted translation units can be concatenated. A consumer that parses one
+  /// complete unit and performs its own cross-unit deduplication can disable
+  /// the guards without changing the declarations themselves.
+  bool EmitRecordGuards = true;
   bool UseDebugNames = true;
   Arch TheArch = Arch::X64;
   BinaryFormat Format = BinaryFormat::Unknown;

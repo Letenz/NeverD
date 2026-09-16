@@ -96,6 +96,16 @@ physical alias writes, unknown calls and instruction-local temporaries cannot
 carry stale facts into a later block. Invalid edges or exhausted work budgets
 reject the proof.
 
+Required Swift value-witness operations have a separate symbol-independent call
+proof. A bounded backward trace must show that the indirect target is loaded
+from the operation's required `metadata[-1][slot]` entry and that the same
+metadata value occupies its canonical Swift argument carrier. The supported
+operations are `destroy` and `initializeWithCopy`. Every predecessor must agree,
+and malformed CFG edges, partial writes, ordered loads, call clobbers or
+exhausted budgets reject the binding. Generated C repeats the table lookup
+through the live metadata; it never retains the witness address from the
+analyzed image.
+
 Objective-C property metadata supplies accessor declarations independently of
 method implementations, including dynamic, readonly and custom accessors.
 The loader checks the class, category or protocol record layout and derives

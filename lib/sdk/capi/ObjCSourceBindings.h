@@ -789,6 +789,9 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::ObjCMessage &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
+  if (Binding.ValueWitness &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftValueWitness)
+    return false;
   std::string Reason;
   // Only catalogued runtime calls currently establish source noreturn
   // effects. A native function flag or a forged reference hint cannot.
@@ -879,6 +882,9 @@ inline bool objcSourceCallBound(
            objc_projection_detail::sameHint(Hint,
                                             *Found->second->SourceTypeHint);
   }
+  if (Binding.CallKind == SourceCallTypeHint::Kind::SwiftValueWitness)
+    return Expression.IsIndirectCall && Expression.CallAddr == 0 &&
+           isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
   if (Binding.Format) {
     const auto &Format = *Binding.Format;
     const bool Message =

@@ -79,6 +79,11 @@ struct SourceCallTypeHint {
     /// A Swift runtime import with an explicitly declared ordinary C ABI.
     /// Swift calling conventions and register-specialized entries are excluded.
     SwiftRuntimeCall,
+    /// A required Swift value-witness entry reached through exact runtime
+    /// metadata. The machine proof binds the operation's canonical table slot
+    /// and metadata argument; source emission repeats that lookup instead of
+    /// retaining an address from the original image.
+    SwiftValueWitness,
     /// A verified Darwin constant-string object with one rebuilt identity.
     RuntimeConstantString,
     /// A fixed Darwin platform C ABI emitted against its public SDK header.
@@ -104,6 +109,9 @@ struct SourceCallTypeHint {
     RuntimeReadOnlyBytes
   };
   Kind CallKind = Kind::Native;
+  enum class SwiftValueWitnessKind { Destroy, InitializeWithCopy };
+  /// Present only for a dynamically loaded required Swift value witness.
+  std::optional<SwiftValueWitnessKind> ValueWitness;
   /// The bound source routine has a noreturn contract. Runtime bindings must
   /// revalidate this effect against their authoritative catalog.
   bool DoesNotReturn = false;

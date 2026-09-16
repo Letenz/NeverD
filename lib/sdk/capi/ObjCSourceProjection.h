@@ -28,46 +28,9 @@
 namespace neverd::sdk {
 namespace objc_projection_detail {
 
-inline bool sameLocation(const SourceABIValueLocation &Left,
-                         const SourceABIValueLocation &Right) {
-  return Left.Kind == Right.Kind &&
-         Left.RegisterOffset == Right.RegisterOffset &&
-         Left.EntryStackOffset == Right.EntryStackOffset &&
-         Left.ValueBytes == Right.ValueBytes &&
-         Left.ExtendTo32Bits == Right.ExtendTo32Bits;
-}
-
 inline bool sameHint(const SourceFunctionTypeHint &Left,
                      const SourceFunctionTypeHint &Right) {
-  if (Left.Origin != Right.Origin || Left.Convention != Right.Convention ||
-      Left.Architecture != Right.Architecture ||
-      Left.HasExplicitABI != Right.HasExplicitABI ||
-      (Left.HasExplicitABI &&
-       !sameLocation(Left.ReturnLocation, Right.ReturnLocation)) ||
-      !equalSourceTypes(Left.ReturnType, Right.ReturnType) ||
-      Left.ReturnComponents.size() != Right.ReturnComponents.size() ||
-      Left.Parameters.size() != Right.Parameters.size())
-    return false;
-  for (size_t I = 0; I < Left.ReturnComponents.size(); ++I)
-    if (!sameLocation(Left.ReturnComponents[I], Right.ReturnComponents[I]))
-      return false;
-  for (size_t Index = 0; Index < Left.Parameters.size(); ++Index) {
-    const auto &L = Left.Parameters[Index].Components;
-    const auto &R = Right.Parameters[Index].Components;
-    if (L.size() != R.size())
-      return false;
-    for (size_t J = 0; J < L.size(); ++J)
-      if (!sameLocation(L[J], R[J]))
-        return false;
-    if (Left.Parameters[Index].Name != Right.Parameters[Index].Name ||
-        !equalSourceTypes(Left.Parameters[Index].Type,
-                          Right.Parameters[Index].Type) ||
-        (Left.HasExplicitABI &&
-         !sameLocation(Left.Parameters[Index].Location,
-                       Right.Parameters[Index].Location)))
-      return false;
-  }
-  return true;
+  return equalSourceABIs(Left, Right);
 }
 
 inline bool isPlainUnwind(const ExceptionFunction &Metadata) {

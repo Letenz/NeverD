@@ -80,6 +80,43 @@ struct EntryInputFixture {
   }
 };
 
+TEST(ObjCSourceBindings, SwiftValueWitnessRequiresCanonicalIndirectCall) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  const std::map<va_t, const HighFunc *> Functions;
+  for (const auto Operation :
+       {SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
+        SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy}) {
+    const auto Hint = swiftValueWitnessSourceCallHint(Image.Arch, Operation);
+    ASSERT_TRUE(Hint);
+    std::vector<ExprPtr> Arguments;
+    for (const auto &Parameter : Hint->Signature.Parameters) {
+      auto Argument = HighExpr::makeConst(0, 8);
+      Argument->Type = Parameter.Type;
+      Arguments.push_back(std::move(Argument));
+    }
+    auto Call = HighExpr::makeCall("indirect_call", 0, std::move(Arguments));
+    Call->IsIndirectCall = true;
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(objcSourceCallBound(*Call, Image, Functions));
+    Call->IsIndirectCall = false;
+    EXPECT_FALSE(objcSourceCallBound(*Call, Image, Functions));
+    Call->IsIndirectCall = true;
+    auto Forged = *Hint;
+    Forged.Signature.Parameters.back().Location.RegisterOffset += 8;
+    Call->SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(std::move(Forged));
+    EXPECT_FALSE(objcSourceCallBound(*Call, Image, Functions));
+    Forged = *Hint;
+    Forged.CallKind = SourceCallTypeHint::Kind::Native;
+    Call->SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(std::move(Forged));
+    EXPECT_FALSE(objcSourceCallBound(*Call, Image, Functions));
+  }
+}
+
 TEST(ObjCSourceInputs, EntrySnapshotUsesRuntimeOffsetWithoutChangingNativeABI) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Width : {4U, 8U}) {

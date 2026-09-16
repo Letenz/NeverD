@@ -132,6 +132,7 @@ add_neverd_unittest(NeverDLiftTests
   core/LowZeroIdiomTests.cpp
   ../backend/HighSwiftEmitterTests.cpp
   ../loader/SwiftMetadataTests.cpp
+  ../loader/SwiftValueWitnessCallTests.cpp
   ../loader/SwiftRuntimeSourceTests.cpp
   core/HighCPointerAddressTests.cpp
   core/HighCIntegerWidthTests.cpp

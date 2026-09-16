@@ -679,6 +679,44 @@ TEST(MobileIOSNative, DirectParameterReturnIsAUseNotADeclaration) {
                    "recovered_method_count"),
             1);
 }
+TEST(MobileIOSNative, AcceptsRecordDeclarationsWithoutMacroGuards) {
+  Budget b;
+  auto [batch, metadata] = objcFixture("return arg0 + arg1;");
+  auto &method = *batch.getArray("methods")->front().getAsObject();
+  const std::string body = requiredString(method, "source");
+  method["source"] =
+      "#include <stdint.h>\nstruct nd_record_z_child { int64_t field_0; "
+      "};\n_Static_assert(sizeof(struct nd_record_z_child) == 8, \"source "
+      "record size\");\n"
+      "_Static_assert(_Alignof(struct nd_record_z_child) == 8, \"source record "
+      "alignment\");\n"
+      "_Static_assert(__builtin_offsetof(struct nd_record_z_child, field_0) == "
+      "0, \"source record offset\");\n"
+      "struct nd_record_a_parent { struct nd_record_z_child field_0; int64_t "
+      "field_1; };\n_Static_assert(sizeof(struct nd_record_a_parent) == 16, "
+      "\"source record size\");\n"
+      "_Static_assert(_Alignof(struct nd_record_a_parent) == 8, \"source "
+      "record "
+      "alignment\");\n"
+      "_Static_assert(__builtin_offsetof(struct nd_record_a_parent, field_0) "
+      "== "
+      "0, \"source record offset\");\n"
+      "_Static_assert(__builtin_offsetof(struct nd_record_a_parent, field_1) "
+      "== "
+      "8, \"source record offset\");\n" +
+      body;
+  const auto result = objcSources(batch, metadata, 8, b);
+  EXPECT_EQ(number(result.coverage, "recovered_method_count"), 1);
+  EXPECT_LT(result.source.find("struct nd_record_z_child"),
+            result.source.find("struct nd_record_a_parent"));
+
+  method["source"] = "#ifndef NEVERD_SOURCE_PAIR\n#define "
+                     "NEVERD_SOURCE_PAIR\n" +
+                     requiredString(method, "source") + "#endif\n";
+  EXPECT_EQ(number(objcSources(batch, metadata, 8, b).coverage,
+                   "recovered_method_count"),
+            0);
+}
 TEST(MobileIOSNative, RejectsObjCPrototypeAndWrongIdentity) {
   Budget b;
   auto [batch, metadata] = objcFixture();

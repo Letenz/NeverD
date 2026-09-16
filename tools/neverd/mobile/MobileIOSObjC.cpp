@@ -188,6 +188,10 @@ struct Definition {
   std::string name;
   size_t start, name_index, po, pc, bo, bc;
 };
+struct RecordDefinition {
+  std::string name, source;
+  size_t start, end, start_token, end_token;
+};
 std::vector<Definition> definitions(const std::vector<Token> &t,
                                     const std::vector<size_t> &m) {
   std::vector<Definition> out;
@@ -750,6 +754,8 @@ std::string rewrite(std::string_view source,
 struct Rendered {
   std::string method, support;
   std::map<std::string, std::string> externals;
+  std::map<std::string, std::string> records;
+  std::vector<std::string> recordOrder;
   std::map<std::string, std::pair<std::string, std::string>> shared;
   std::map<std::string, std::string> sharedDefinitions;
 };
@@ -794,6 +800,105 @@ Rendered render(const Object &native, const Object &runtime,
   auto t = tokens(source);
   auto match = pairs(t);
   auto defs = definitions(t, match);
+  std::map<size_t, size_t> functionBodies;
+  for (const auto &definition : defs)
+    functionBodies.emplace(definition.bo, definition.bc);
+  std::vector<RecordDefinition> records;
+  std::set<std::string> recordNames;
+  auto normalized = [&](size_t begin, size_t end) {
+    std::string result;
+    for (size_t i = begin; i < end; ++i)
+      result += t[i].text;
+    return result;
+  };
+  auto numericAssertion = [&](size_t &position, const std::string &prefix,
+                              const std::string &suffix) {
+    const size_t begin = position;
+    while (position < t.size() && t[position].text != ";")
+      ++position;
+    if (position == t.size())
+      return false;
+    const std::string statement = normalized(begin, position);
+    if (!llvm::StringRef(statement).starts_with(prefix) ||
+        !llvm::StringRef(statement).ends_with(suffix) ||
+        statement.size() <= prefix.size() + suffix.size())
+      return false;
+    const auto value = llvm::StringRef(statement).slice(
+        prefix.size(), statement.size() - suffix.size());
+    if (!llvm::all_of(value, [](unsigned char c) { return std::isdigit(c); }))
+      return false;
+    ++position;
+    return true;
+  };
+  for (size_t i = 0; i + 3 < t.size();) {
+    if (auto body = functionBodies.find(i); body != functionBodies.end()) {
+      i = body->second + 1;
+      continue;
+    }
+    if (t[i].kind || t[i].text != "struct" || t[i + 1].kind ||
+        !llvm::StringRef(t[i + 1].text).starts_with("nd_record_") ||
+        !safe(t[i + 1].text) || t[i + 2].text != "{") {
+      ++i;
+      continue;
+    }
+    const auto name = t[i + 1].text;
+    const size_t close = match[i + 2];
+    if (close == t.size() || close + 1 >= t.size() ||
+        t[close + 1].text != ";" || !recordNames.insert(name).second)
+      throw Error("invalid generated C record declaration");
+    std::vector<std::string> fields;
+    for (size_t field = i + 3; field < close;) {
+      size_t end = field;
+      while (end < close && t[end].text != ";")
+        ++end;
+      if (end == close || end == field || t[end - 1].kind ||
+          t[end - 1].text != "field_" + std::to_string(fields.size()))
+        throw Error("invalid generated C record field");
+      for (size_t token = field; token + 1 < end; ++token)
+        if (t[token].kind ||
+            (!identifier(t[token].text) && t[token].text != "*"))
+          throw Error("invalid generated C record field type");
+      if (t[field].text == "struct") {
+        if (end - field != 3 || !recordNames.count(t[field + 1].text))
+          throw Error("invalid generated nested C record type");
+      } else {
+        std::string type;
+        for (size_t token = field; token + 1 < end; ++token) {
+          if (!type.empty())
+            type += ' ';
+          type += t[token].text;
+        }
+        try {
+          (void)abi(type, ptr);
+        } catch (const Error &) {
+          throw Error("invalid generated C record field type");
+        }
+      }
+      fields.push_back(t[end - 1].text);
+      field = end + 1;
+    }
+    if (fields.empty())
+      throw Error("invalid empty generated C record");
+    size_t end = close + 2;
+    const std::string stem = "_Static_assert(";
+    if (!numericAssertion(end, stem + "sizeof(struct" + name + ")==",
+                          ",\"source record size\")") ||
+        !numericAssertion(end, stem + "_Alignof(struct" + name + ")==",
+                          ",\"source record alignment\")"))
+      throw Error("invalid generated C record layout assertion");
+    for (const auto &field : fields)
+      if (!numericAssertion(end,
+                            stem + "__builtin_offsetof(struct" + name + "," +
+                                field + ")==",
+                            ",\"source record offset\")"))
+        throw Error("invalid generated C record offset assertion");
+    const size_t startOffset = t[i].start;
+    const size_t endOffset = t[end - 1].end;
+    records.push_back({name,
+                       source.substr(startOffset, endOffset - startOffset),
+                       startOffset, endOffset, i, end - 1});
+    i = end;
+  }
   const Definition *target = nullptr;
   std::set<std::string> defined;
   for (const auto &d : defs) {
@@ -951,8 +1056,16 @@ Rendered render(const Object &native, const Object &runtime,
       }
     }
   }
-  std::string support;
-  size_t cursor = 0;
+  struct Edit {
+    size_t start, end;
+    std::string replacement;
+  };
+  std::vector<Edit> edits;
+  for (const auto &record : records) {
+    out.records.emplace(record.name, record.source);
+    out.recordOrder.push_back(record.name);
+    edits.push_back({record.start, record.end, {}});
+  }
   for (const auto &f : defs)
     if (sharednames.count(f.name)) {
       auto start = t[f.start].start, end = t[f.bc].end;
@@ -961,9 +1074,21 @@ Rendered render(const Object &native, const Object &runtime,
           ";";
       auto full = source.substr(start, end - start);
       out.shared[f.name] = {rewrite(proto, rename), rewrite(full, rename)};
-      support += source.substr(cursor, start - cursor) + proto;
-      cursor = end;
+      edits.push_back({start, end, proto});
     }
+  std::sort(edits.begin(), edits.end(),
+            [](const Edit &left, const Edit &right) {
+              return left.start < right.start;
+            });
+  std::string support;
+  size_t cursor = 0;
+  for (const auto &edit : edits) {
+    if (edit.start < cursor || edit.end < edit.start ||
+        edit.end > source.size())
+      throw Error("overlapping generated C support definitions");
+    support += source.substr(cursor, edit.start - cursor) + edit.replacement;
+    cursor = edit.end;
+  }
   support += source.substr(cursor);
   out.support = rewrite(support, rename);
   std::vector<std::string> args;
@@ -985,7 +1110,14 @@ Rendered render(const Object &native, const Object &runtime,
                             t[d.bo].end, t[d.bc].start - t[d.bo].end),
                         rename) +
                 "\n}\n";
+  std::map<size_t, size_t> recordRanges;
+  for (const auto &record : records)
+    recordRanges.emplace(record.start_token, record.end_token);
   for (size_t i = 0; i < t.size();) {
+    if (auto record = recordRanges.find(i); record != recordRanges.end()) {
+      i = record->second + 1;
+      continue;
+    }
     if (t[i].kind == 2) {
       ++i;
       continue;
@@ -1368,10 +1500,12 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
       coverage.push_back(std::move(row));
     }
   std::map<std::string, std::vector<std::pair<size_t, std::string>>> external,
-      shared;
+      records, shared;
   for (const auto &c : candidates) {
     for (const auto &[name, spelling] : c.render.externals)
       external[name].push_back({c.row, spelling});
+    for (const auto &[name, definition] : c.render.records)
+      records[name].push_back({c.row, definition});
     for (const auto &[name, def] : c.render.sharedDefinitions)
       shared[name].push_back({c.row, def});
   }
@@ -1392,6 +1526,7 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
     }
   };
   conflicts(external, "conflicting external declarations across methods");
+  conflicts(records, "conflicting record definitions across methods");
   conflicts(shared, "conflicting shared storage function definitions");
   auto shells = closeClassDefinitions(
       inv, declarations, str(metadata, "status") == "recovered", errors,
@@ -1402,18 +1537,31 @@ SourceResult objcSources(const Object &batch, const Object &metadata,
                        objcHeader(metadata, ptr);
   std::map<std::pair<std::string, std::string>, std::vector<std::string>>
       methods;
+  std::map<std::string, std::string> recordout;
+  std::vector<std::string> recordorder;
   std::map<std::string, std::pair<std::string, std::string>> sharedout;
+  std::string supportout;
   uint64_t recovered = 0;
   for (const auto &c : candidates) {
     const auto &r = *coverage[c.row].getAsObject();
     if (str(r, "status") != "recovered")
       continue;
     ++recovered;
-    source += c.render.support + "\n";
+    for (const auto &name : c.render.recordOrder) {
+      const auto [position, inserted] =
+          recordout.emplace(name, c.render.records.at(name));
+      (void)position;
+      if (inserted)
+        recordorder.push_back(name);
+    }
+    supportout += c.render.support + "\n";
     methods[{str(r, "class_name"), str(r, "category_name")}].push_back(
         c.render.method);
     sharedout.insert(c.render.shared.begin(), c.render.shared.end());
   }
+  for (const auto &name : recordorder)
+    source += recordout.at(name) + "\n";
+  source += supportout;
   for (const auto &[name, def] : sharedout)
     source += def.first + "\n";
   for (const auto &[name, def] : sharedout)

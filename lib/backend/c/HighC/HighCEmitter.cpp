@@ -573,6 +573,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         } else if (Hint.CallKind ==
                    SourceCallTypeHint::Kind::SwiftStringFromNSString) {
           NeedsSwiftStringFromNSString = true;
+        } else if (Hint.CallKind ==
+                   SourceCallTypeHint::Kind::SwiftValueWitness) {
+          // The expression reloads the required witness from its runtime
+          // metadata argument and therefore needs no linked declaration.
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
                    Hint.CallKind ==
@@ -972,10 +976,12 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
       return;
     for (const auto &Field : Type->Fields)
       RecordType(Field);
-    const auto Guard =
-        "NEVERD_SOURCE_" + llvm::StringRef(Name).drop_front(7).upper();
-    OS << "#ifndef " << Guard << "\n#define " << Guard << "\n"
-       << Name << " {\n";
+    std::string Guard;
+    if (Opts.EmitRecordGuards) {
+      Guard = "NEVERD_SOURCE_" + llvm::StringRef(Name).drop_front(7).upper();
+      OS << "#ifndef " << Guard << "\n#define " << Guard << "\n";
+    }
+    OS << Name << " {\n";
     for (size_t I = 0; I < Type->Fields.size(); ++I)
       OS << "    "
          << declarationToC(Type->Fields[I], "field_" + std::to_string(I))
@@ -987,7 +993,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
       OS << "_Static_assert(__builtin_offsetof(" << Name << ", field_" << I
          << ") == " << Type->FieldOffsets[I]
          << ", \"source record offset\");\n";
-    OS << "#endif\n";
+    if (Opts.EmitRecordGuards)
+      OS << "#endif\n";
   };
   std::set<const HighExpr *> Seen;
   std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
