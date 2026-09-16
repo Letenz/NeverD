@@ -1073,6 +1073,16 @@ target_include_directories(NeverDLLVMCVoidAnalysisTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
+  core/MedLLVMMemoryAlignmentTests.cpp
+  LINK_COMPONENTS BackendLLVM
+)
+
+target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
 # Keeps HighIR store-to-load forwarding resource bounds independently runnable
 # without relinking the aggregate lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDHighCStoreForwardingTests
