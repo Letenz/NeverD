@@ -62,6 +62,22 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    {"$s10Foundation13URLComponentsV19_bridgeToObjectiveCSo15NSURLComponentsCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation14DateComponentsV36_unconditionallyBridgeFromObjectiveCyAC"
+     "So06NSDateC0CSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pp"},
     {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -91,6 +107,17 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "pC"},
     {"$s10Foundation4DateV36_"
      "unconditionallyBridgeFromObjectiveCyACSo6NSDateCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation6LocaleV19_bridgeToObjectiveCSo8NSLocaleCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation6LocaleV36_unconditionallyBridgeFromObjectiveCyACSo8NSLocale"
+     "CSgFZ",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",

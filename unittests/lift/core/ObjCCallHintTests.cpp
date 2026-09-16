@@ -412,6 +412,7 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
     ContextToObjC,
     DataFromObjC,
     DataToObjC,
+    ObjectToObject,
     GenericArray,
     GenericDictionary
   };
@@ -433,6 +434,14 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
        "unconditionallyBridgeFromObjectiveCyACSo"
        "14NSNotificationCSgFZ",
        Shape::IndirectFromObjC},
+      {"$s10Foundation13URLComponentsV19_bridgeToObjectiveCSo15NSURLComponentsC"
+       "yF",
+       Shape::ContextToObjC},
+      {"$s10Foundation14DateComponentsV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo06NSDateC0CSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF",
+       Shape::ObjectToObject},
       {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
        Shape::ContextToObjC},
       {"$s10Foundation3URLV36_"
@@ -447,6 +456,11 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
        Shape::ContextToObjC},
       {"$s10Foundation4DateV36_"
        "unconditionallyBridgeFromObjectiveCyACSo6NSDateCSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation6LocaleV19_bridgeToObjectiveCSo8NSLocaleCyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation6LocaleV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo8NSLocaleCSgFZ",
        Shape::IndirectFromObjC},
       {"$s10Foundation9IndexPathV19_bridgeToObjectiveCSo07NSIndexC0CyF",
        Shape::ContextToObjC},
@@ -522,6 +536,15 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
                   TRI.IntParamRegs[0]);
         EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
                   TRI.IntParamRegs[1]);
+        break;
+      case Shape::ObjectToObject:
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        ASSERT_EQ(Signature.Parameters.size(), 1U);
+        EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.Parameters[0].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
         break;
       case Shape::GenericArray:
       case Shape::GenericDictionary: {
