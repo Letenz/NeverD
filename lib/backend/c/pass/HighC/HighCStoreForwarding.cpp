@@ -11,6 +11,7 @@
 
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/Limits.h"
 
 #include <algorithm>
 
@@ -48,7 +49,7 @@ bool hasImmutableReachingStores(const HighCAnalysisState &State,
   };
   std::function<bool(const HighExpr &, unsigned)> CheckValue =
       [&](const HighExpr &Expr, unsigned Depth) {
-        if (Depth > 128 || Expr.Kind == ExprKind::Call ||
+        if (Depth > limits::kMaxHighCMemoryWalkDepth || Expr.Kind == ExprKind::Call ||
             Expr.Kind == ExprKind::Addr || Expr.Kind == ExprKind::Store)
           return false;
         if (Expr.Kind == ExprKind::Load)
@@ -221,8 +222,10 @@ void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
   // dependency order and stop inlining at a finite per-expression budget.  A
   // rejected candidate is deliberately absent from StoreFwd, so its original
   // store and every load from it remain an executable memory boundary.
-  constexpr size_t MaxForwardedExpressionBytes = 16 * 1024;
-  constexpr size_t MaxTotalForwardedBytes = 16 * 1024;
+  constexpr size_t MaxForwardedExpressionBytes =
+      limits::kMaxHighCForwardedExpressionBytes;
+  constexpr size_t MaxTotalForwardedBytes =
+      limits::kMaxHighCForwardedExpressionBytes;
   constexpr size_t MaxDependencyWalkNodes = MaxForwardedExpressionBytes;
 
   std::map<std::string, std::vector<std::string>> DirectDeps;

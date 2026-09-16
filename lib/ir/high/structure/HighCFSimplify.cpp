@@ -19,6 +19,7 @@
 
 #include "HighCFSimplifyDetail.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -291,7 +292,7 @@ static void mergeConsecutiveCondBlocks(std::vector<HighStmt> &Stmts) {
 
 void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
                                              const MedFunc &Med) {
-  const bool IsMega = Func.Body.size() > 4000;
+  const bool IsMega = Func.Body.size() > limits::kMaxStructuredHighStmts;
 
   std::unordered_map<va_t, int> AddrToBlock;
   AddrToBlock.reserve(Med.Blocks.size());
@@ -304,7 +305,11 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   if (!IsMega)
     recoverSwitchStatements(Func);
 
-  int IfElseMaxPasses = IsMega ? 0 : (Med.Blocks.size() > 500) ? 3 : 10;
+  int IfElseMaxPasses =
+      IsMega ? 0
+             : (Med.Blocks.size() > limits::kMaxIfElseStructuringBlocks)
+                   ? limits::kIfElseLargeCfgPasses
+                   : limits::kIfElseStructuringPasses;
   structureIfElse(Func, IfElseMaxPasses, &Med);
 
   removeTrivialGotos(Func.Body);

@@ -1,5 +1,6 @@
 #include "HighCWriter.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCObjC.h"
 
@@ -200,7 +201,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Value = Name.str();
     } else if (Hint.CallKind == Kind::RuntimeBorrowedBytes ||
                Hint.CallKind == Kind::RuntimeReadOnlyBytes) {
-      if (!Hint.TargetAddress || Hint.ByteCount > 1024 * 1024)
+      if (!Hint.TargetAddress ||
+          Hint.ByteCount > limits::kMaxSourceCallBorrowedBytes)
         return bad("borrowed bytes have no bounded source extent");
       Value = "neverd_borrowed_bytes_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_" +

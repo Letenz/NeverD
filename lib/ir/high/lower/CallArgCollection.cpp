@@ -104,7 +104,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
         std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
                     [](const auto &P) { return !P.Components.empty(); }))
       return {};
-    if (Count > 64 || Call.NumInputs != Count + 1)
+    if (Count > static_cast<size_t>(limits::kMaxBoundSourceCallArgs) ||
+        Call.NumInputs != Count + 1)
       return {};
     std::vector<ExprPtr> Arguments;
     Arguments.reserve(Count);
@@ -123,7 +124,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     return Arguments;
   }
 
-  const int MaxArgs = limits::kMaxRecoveredCallArgs;
+  const int MaxArgs = limits::kMaxCallArgs;
   std::vector<ExprPtr> Found(MaxArgs);
 
   const auto &TRI = getTargetRegInfo(TargetArch);

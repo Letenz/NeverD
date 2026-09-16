@@ -11,6 +11,7 @@
 
 #include "neverd/backend/c/render/CTypeFormat.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -74,7 +75,8 @@ std::string extendedIntegerType(unsigned Bytes, bool Signed) {
 
 bool containsFunction(const TypeRef &Type) {
   auto Current = Type;
-  for (unsigned Depth = 0; Current && Depth <= 16; ++Depth) {
+  for (unsigned Depth = 0; Current && Depth <= limits::kMaxCPointerNesting;
+       ++Depth) {
     if (Current->Kind == NdTypeKind::Func)
       return true;
     if (Current->Kind != NdTypeKind::Ptr)

@@ -1,5 +1,6 @@
 #include "neverd/ir/SourceABI.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/lift/AArch64Regs.h"
 
@@ -351,7 +352,7 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
                                ? std::vector{Parameter.Location}
                                : Parameter.Components;
     PhysicalCount += Locations.size();
-    if (PhysicalCount > 64)
+    if (PhysicalCount > static_cast<size_t>(limits::kMaxBoundSourceCallArgs))
       return fail(Diagnostic, "Source parameter carrier budget exceeded");
     for (const auto &Location : Locations) {
       if (Location.Kind == SourceABICarrierKind::Stack) {

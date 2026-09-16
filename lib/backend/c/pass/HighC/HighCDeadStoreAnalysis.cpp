@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
+#include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -90,7 +91,7 @@ int64_t signedConstant(const HighExpr &Expr) {
 std::optional<ReducedAddr> reduceAddr(const HighExpr &Expr,
                                       const std::vector<ExprDef> &Defs,
                                       int64_t Offset = 0, int Depth = 0) {
-  if (Depth > 128)
+  if (Depth > limits::kMaxHighCMemoryWalkDepth)
     return std::nullopt;
   if (Expr.Kind == ExprKind::Var) {
     if (const HighExpr *Def = findUniqueDef(Defs, Expr.Var))
@@ -204,7 +205,7 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
   };
   std::function<bool(const HighExpr &, uint16_t, unsigned)> FullWidth =
       [&](const HighExpr &Expr, uint16_t Width, unsigned Depth) {
-        if (Depth > 128 || !Expr.Type || Expr.Type->Size != Width)
+        if (Depth > limits::kMaxHighCMemoryWalkDepth || !Expr.Type || Expr.Type->Size != Width)
           return false;
         if (Expr.Kind == ExprKind::Var) {
           if (Expr.Var.Size != Width)
@@ -236,7 +237,7 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
   };
   std::function<bool(const HighExpr &, unsigned)> CheckValue =
       [&](const HighExpr &Expr, unsigned Depth) {
-        if (Depth > 128 || Expr.Kind == ExprKind::Call ||
+        if (Depth > limits::kMaxHighCMemoryWalkDepth || Expr.Kind == ExprKind::Call ||
             Expr.Kind == ExprKind::Addr || Expr.Kind == ExprKind::Store ||
             Expr.MemoryOrdering != NdMemoryOrdering::None ||
             Expr.MemoryAddressSpace != NdMemoryAddressSpace::Default)

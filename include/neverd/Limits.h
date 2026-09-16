@@ -349,10 +349,6 @@ constexpr size_t kMaxStructurableMedOps =
 /// Maximum estimated stack frame size.
 constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 
-/// Recovered call arguments (register + stack) in HighIR when no source ABI
-/// signature is bound.
-constexpr int kMaxRecoveredCallArgs = 8;
-
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 
@@ -422,6 +418,9 @@ constexpr int kVarRenameIdBase = 50000;
 /// slots: 32 slots covers up to ~16 double arguments.  Functions taking more
 /// arguments than this are rare; the cap bounds the recovery scans.
 constexpr int kMaxCallArgs = 32;
+
+/// Bound source-ABI signatures (explicit components, not recovered scans).
+constexpr int kMaxBoundSourceCallArgs = 64;
 
 //===----------------------------------------------------------------------===//
 // Variadic (...) ABI recovery
@@ -494,6 +493,32 @@ constexpr unsigned kMinUnusedParamsToCompact = 4;
 /// Nesting at which HighC expression printing is truncated.  Separate from
 /// \c kMaxExprDepth, which bounds IR inlining rather than C text.
 constexpr int kMaxCExprPrintDepth = 200;
+
+/// Pointer-chain walk when asking whether a C type contains a function.
+constexpr unsigned kMaxCPointerNesting = 16;
+
+/// HighC dead-store / store-forward expression walks.
+constexpr unsigned kMaxHighCMemoryWalkDepth = 128;
+
+/// Per-expression and aggregate byte budget when inlining forwarded stores
+/// into C text (the writer serializes DAGs as trees).
+constexpr size_t kMaxHighCForwardedExpressionBytes = 16 * 1024;
+
+/// Borrowed/read-only runtime byte blobs named in HighC source calls.
+constexpr uint32_t kMaxSourceCallBorrowedBytes = 1024 * 1024;
+
+/// Skip aggressive if/else folding above this MedIR block count.
+constexpr size_t kMaxIfElseStructuringBlocks = 500;
+
+/// HighIR statement count above which loop/if structuring is treated as mega.
+constexpr size_t kMaxStructuredHighStmts = 4000;
+
+/// if/else folding passes for ordinary vs large CFGs.
+constexpr int kIfElseStructuringPasses = 10;
+constexpr int kIfElseLargeCfgPasses = 3;
+
+/// x86 registration-chain prologue helper expansion fixed point.
+constexpr unsigned kMaxRegistrationEHFixedPoint = 16;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;
