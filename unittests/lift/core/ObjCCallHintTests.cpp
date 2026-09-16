@@ -3136,6 +3136,58 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
   }
 }
 
+TEST(ObjCCallHints, DispatchOnceFPreservesExactCallbackPrototypeAndExport) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Module : {"/usr/lib/libSystem.B.dylib",
+                               "/usr/lib/system/libdispatch.dylib"}) {
+      auto Image = runtimeImage("_dispatch_once_f", Architecture);
+      Image.DyldBindSlots[0x2180] = {"_dispatch_once_f", 0, Module, false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->TargetName, "dispatch_once_f");
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 3U);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Pointee->Kind,
+                NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Pointee->Size, 8U);
+      EXPECT_EQ(Hint->Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+      const auto Callback = Hint->Signature.Parameters[2].Type;
+      ASSERT_EQ(Callback->Kind, NdTypeKind::Ptr);
+      ASSERT_TRUE(Callback->Pointee);
+      EXPECT_EQ(Callback->Pointee->Kind, NdTypeKind::Func);
+      EXPECT_EQ(Callback->Pointee->RetType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Callback->Pointee->ParamTypes.size(), 1U);
+      EXPECT_EQ(Callback->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
+      for (const auto &Parameter : Hint->Signature.Parameters)
+        EXPECT_EQ(Parameter.Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+    }
+
+    auto Image = runtimeImage("_dispatch_once_f", Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        "_dispatch_once_f", 0, "/usr/lib/libSystem.B.dylib", false};
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Addend = 1;
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 3)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 4)
+        Changed.ImportPtrSlots[0x2180] = "_dispatch_async_f";
+      if (Mutation == 5)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Widths] :

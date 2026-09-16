@@ -18,6 +18,38 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (!Name.consume_front("_"))
     return std::nullopt;
 
+  // dispatch_once_f has a fixed callback contract that the generated Clang
+  // encoding can only spell as the intentionally unsupported opaque `^?`.
+  // Preserve the complete public prototype here rather than accepting unknown
+  // callback signatures throughout the declaration parser.
+  if (Name == "dispatch_once_f") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        !darwinExportModuleMatches(
+            "/usr/lib/libSystem.B.dylib|/usr/lib/system/libdispatch.dylib",
+            Bind->second.Module))
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = Name.str();
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Signature.ReturnType = NdType::makeVoid();
+    const auto Context = NdType::makePtr(NdType::makeVoid());
+    const auto Callback = NdType::makePtr(
+        NdType::makeFunc(NdType::makeVoid(), {Context}));
+    Signature.Parameters = {
+        {"predicate", NdType::makePtr(NdType::makeInt(8, true))},
+        {"context", Context},
+        {"function", Callback},
+    };
+    std::string Diagnostic;
+    if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
+
   // The public lock routines use one pointer to stable, opaque lock storage.
   // Call the real platform implementation, including its ownership checks.
   // https://github.com/apple-oss-distributions/libplatform/blob/main/include/os/lock.h
