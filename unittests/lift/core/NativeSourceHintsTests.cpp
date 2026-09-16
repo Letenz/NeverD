@@ -97,6 +97,115 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
   }
 }
 
+NativeFixture compilerRTPlatformVersionFixture(Arch Architecture) {
+  NativeFixture Fixture(Architecture);
+  const auto &TRI = getTargetRegInfo(Architecture);
+  Fixture.Med.ReturnType = Fixture.High.ReturnType = NdType::makeInt(8);
+  Fixture.Med.Blocks[0].Ops[0].Output.Size = 8;
+  Fixture.High.Body[0].RetVal = HighExpr::makeConst(1, 8);
+  for (unsigned Index = 2; Index < 4; ++Index) {
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = Index;
+    Parameter.RegOff = TRI.IntParamRegs[Index];
+    Parameter.Size = 4;
+    Parameter.TheArch = Architecture;
+    Fixture.Med.Params.push_back(Parameter);
+    Fixture.Med.TypedParams.push_back(
+        {"arg" + std::to_string(Index), NdType::makeInt(4)});
+    Fixture.High.Params.push_back(
+        {"arg" + std::to_string(Index), NdType::makeInt(4)});
+  }
+  SourceCallTypeHint Availability;
+  Availability.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Availability.WeakImport = true;
+  Availability.TargetAddress = 0x1080;
+  Availability.TargetName = "_availability_version_check";
+  Availability.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  Availability.Signature.ReturnType = NdType::makeInt(1, false);
+  Availability.Signature.Parameters = {
+      {"count", NdType::makeInt(4, false)},
+      {"versions", NdType::makePtr(NdType::makeVoid())},
+  };
+  std::string Error;
+  EXPECT_TRUE(
+      assignDarwinFixedSourceABI(Availability.Signature, Architecture, Error))
+      << Error;
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.SourceCallHint =
+      std::make_shared<const SourceCallTypeHint>(std::move(Availability));
+  Call.addInput(MedVar::makeConst(0x1080, 8));
+  Call.addInput(MedVar::makeConst(1, 4));
+  Call.addInput(MedVar::makeConst(0x10a0, 8));
+  Fixture.Med.Blocks[0].Ops.insert(Fixture.Med.Blocks[0].Ops.begin(), Call);
+  Fixture.Audit.DecodedInstructions = Fixture.Audit.LiftedInstructions = 3;
+  Fixture.Image.Symbols.push_back(
+      {"___isPlatformVersionAtLeast", Fixture.Med.Entry, 0x80, true});
+  return Fixture;
+}
+
+TEST(NativeSourceHints,
+     CompilerRTPlatformVersionHelperUsesExactNarrowContract) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Fixture = compilerRTPlatformVersionFixture(Architecture);
+    std::string Error;
+    const auto Hint = Fixture.infer(Error);
+    ASSERT_TRUE(Hint) << Error;
+    ASSERT_TRUE(Hint->ReturnType);
+    EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->ReturnType->Size, 4U);
+    EXPECT_TRUE(Hint->ReturnType->IsSigned);
+    ASSERT_EQ(Hint->Parameters.size(), 4U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (size_t I = 0; I < Hint->Parameters.size(); ++I) {
+      EXPECT_EQ(Hint->Parameters[I].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Parameters[I].Type->Size, 4U);
+      EXPECT_FALSE(Hint->Parameters[I].Type->IsSigned);
+      EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+      EXPECT_EQ(Hint->Parameters[I].Location.ValueBytes, 4U);
+    }
+  }
+}
+
+TEST(NativeSourceHints,
+     CompilerRTPlatformVersionHelperRejectsContradictoryEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      auto Fixture = compilerRTPlatformVersionFixture(Architecture);
+      auto &Symbol = Fixture.Image.Symbols.back();
+      auto Call = std::make_shared<SourceCallTypeHint>(
+          *Fixture.Med.Blocks[0].Ops[0].SourceCallHint);
+      Fixture.Med.Blocks[0].Ops[0].SourceCallHint = Call;
+      if (Mutation == 0)
+        Symbol.IsFunc = false;
+      if (Mutation == 1)
+        Symbol.Addr += 4;
+      if (Mutation == 2)
+        Fixture.Image.Symbols.push_back(Symbol);
+      if (Mutation == 3)
+        Call->WeakImport = false;
+      if (Mutation == 4)
+        Call->TargetName = "_different";
+      if (Mutation == 5)
+        Call->CallKind = SourceCallTypeHint::Kind::Native;
+      if (Mutation == 6)
+        Call->Signature.ReturnType = NdType::makeInt(4, false);
+      std::string Error;
+      EXPECT_FALSE(Fixture.infer(Error)) << Mutation;
+      EXPECT_FALSE(Error.empty()) << Mutation;
+    }
+
+    auto Unrelated = compilerRTPlatformVersionFixture(Architecture);
+    Unrelated.Image.Symbols.back().Name = "unrelated_local_helper";
+    std::string Error;
+    const auto Generic = Unrelated.infer(Error);
+    ASSERT_TRUE(Generic) << Error;
+    EXPECT_EQ(Generic->ReturnType->Size, 8U);
+  }
+}
+
 struct NativeVoidFixture : NativeFixture {
   LowFunc Low;
   NativeVoidFixture(Arch Architecture, bool Indirect = false)
