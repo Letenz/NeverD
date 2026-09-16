@@ -560,12 +560,34 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
   auto isLiveInReg = [](const MedVar &V) {
     return V.Kind == MedVar::Reg && V.Id >= 0 && V.SSAVer == 0;
   };
-  std::set<uint64_t> PtrParamRegOffs;
-  std::set<uint64_t> SegmentOffsetParamRegOffs;
+  // Stack Params all use kNoParamReg, so that sentinel cannot own a role.
+  // Match the recovered slot identity instead; a narrow lane is not an address
+  // carrier. Version-zero register matching retains the existing live-in rule.
+  auto parameterIndex = [&](const MedVar &V) -> std::optional<size_t> {
+    if (!isLiveInReg(V) && V.Kind != MedVar::Param)
+      return std::nullopt;
+    std::optional<size_t> Index;
+    for (size_t I = 0; I < Func.Params.size(); ++I) {
+      const auto &P = Func.Params[I];
+      bool Matches = P.RegOff != kNoParamReg
+                         ? P.RegOff == V.RegOff
+                         : V.Kind == MedVar::Param && V.RegOff == kNoParamReg &&
+                               P.Id == V.Id && V.Size == TRI.PointerSize &&
+                               P.Size == TRI.PointerSize;
+      if (!Matches)
+        continue;
+      if (Index)
+        return std::nullopt;
+      Index = I;
+    }
+    return Index;
+  };
+  std::set<size_t> PtrParameters;
+  std::set<size_t> SegmentOffsetParameters;
   auto recordAddressLiveIns = [&](const MedVar &AddrVar,
-                                  std::set<uint64_t> &Roles) {
-    if (isLiveInReg(AddrVar))
-      Roles.insert(AddrVar.RegOff);
+                                  std::set<size_t> &Roles) {
+    if (auto Index = parameterIndex(AddrVar))
+      Roles.insert(*Index);
     if (AddrVar.Kind != MedVar::Temp || AddrVar.Id < 0)
       return;
     auto Dit = DefMap.find({AddrVar.Id, AddrVar.SSAVer});
@@ -573,14 +595,15 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
         Dit->second->NumInputs < 2)
       return;
     for (uint8_t I = 0; I < Dit->second->NumInputs; ++I)
-      if (isLiveInReg(Dit->second->Inputs[I]))
-        Roles.insert(Dit->second->Inputs[I].RegOff);
+      if (auto Index = parameterIndex(Dit->second->Inputs[I]))
+        Roles.insert(*Index);
   };
   for (const auto &Blk : Func.Blocks) {
     for (const auto &Op : Blk.Ops) {
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
-        if (Op.NumInputs >= 1 && isLiveInReg(Op.Inputs[0]))
-          PtrParamRegOffs.insert(Op.Inputs[0].RegOff);
+        if (Op.NumInputs >= 1)
+          if (auto Index = parameterIndex(Op.Inputs[0]))
+            PtrParameters.insert(*Index);
       }
       const MedVar *MemoryAddress = nullptr;
       if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
@@ -599,8 +622,8 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
         recordAddressLiveIns(*MemoryAddress,
                              Op.MemoryAddressSpace ==
                                      NdMemoryAddressSpace::Default
-                                 ? PtrParamRegOffs
-                                 : SegmentOffsetParamRegOffs);
+                                 ? PtrParameters
+                                 : SegmentOffsetParameters);
       }
     }
   }
@@ -610,8 +633,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
     const auto &MP = Func.Params[PI];
     MedTypedParam TP;
     TP.Name = "arg" + std::to_string(PI);
-    if (PtrParamRegOffs.count(MP.RegOff) &&
-        !SegmentOffsetParamRegOffs.count(MP.RegOff) &&
+    if (PtrParameters.count(PI) && !SegmentOffsetParameters.count(PI) &&
         !TRI.isFrameOrLinkReg(MP.RegOff))
       TP.Type = NdType::makePtr();
     else

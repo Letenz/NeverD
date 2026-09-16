@@ -3674,4 +3674,43 @@ TEST(LowToMedSelectorOccurrence,
   EXPECT_EQ(It->second.Selector.Size, 8u);
 }
 
+TEST(MedParamTypes, StackPointerRolesUseSlotIdentityAndAddressSpace) {
+  for (unsigned Mode = 0; Mode < 4; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.CC = CallingConv::Win64;
+    Func.Entry = 0x9700;
+    Func.Name = "stack_parameter_pointer";
+    Func.Blocks.resize(1);
+    Func.Blocks[0].Id = 0;
+    for (int Id : {4, 5}) {
+      MedVar Param;
+      Param.Kind = MedVar::Param;
+      Param.Id = Id;
+      Param.RegOff = kNoParamReg;
+      Param.Size = 8;
+      Param.TheArch = Arch::X64;
+      Func.Params.push_back(Param);
+    }
+    auto Pointer = Func.Params[0];
+    if (Mode == 3)
+      Pointer.Size = 4;
+    auto Address = Pointer;
+    if (Mode == 1) {
+      Address = temp(10, 1, 8, Arch::X64);
+      Func.Blocks[0].Ops.push_back(
+          binary(NdOp::INT_ADD, Address, Pointer, MedVar::makeConst(8, 8)));
+    }
+    auto Load = unary(NdOp::LOAD, temp(11, 1, 8, Arch::X64), Address);
+    if (Mode == 2)
+      Load.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+    Func.Blocks[0].Ops.push_back(Load);
+    inferMedTypes(Func, Arch::X64);
+    ASSERT_EQ(Func.TypedParams.size(), 2u);
+    EXPECT_EQ(Func.TypedParams[0].Type->Kind,
+              Mode < 2 ? NdTypeKind::Ptr : NdTypeKind::Int);
+    EXPECT_EQ(Func.TypedParams[1].Type->Kind, NdTypeKind::Int);
+  }
+}
+
 } // namespace
