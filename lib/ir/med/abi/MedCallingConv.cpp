@@ -721,15 +721,16 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
     return;
   const auto &TRI = getTargetRegInfo(TargetArch);
   const uint64_t SpOff = TRI.StackPointer;
-  const int MaxRegArgs = static_cast<int>(TRI.IntParamRegs.size());
-  const int Slot = TRI.PointerSize;
+  const auto Layout = TRI.integerArgumentLayout(Func.CC == CallingConv::Win64);
+  const auto ParamRegs = Layout.Registers;
+  const int MaxRegArgs = static_cast<int>(ParamRegs.size());
+  const int Slot = Layout.SlotBytes;
   if (MaxRegArgs <= 0 || Slot <= 0)
     return;
 
-  // x86-64 `call` pushes a return address into [entry_sp]; the first stack
-  // argument sits one slot above it.  AArch64/ARM keep the return address in
-  // LR, so the first stack argument is at [entry_sp + 0].
-  const int64_t Base = (TargetArch == Arch::X64) ? Slot : 0;
+  // Entry coordinates include the hardware return address and, for Win64,
+  // the four home slots. Home bytes are not additional incoming arguments.
+  const int64_t Base = Layout.EntryStackBase;
 
   // Count the leading integer parameter registers already recovered.  A stack
   // argument implies every register slot is a real argument and the stack
@@ -740,7 +741,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
   int Leading = 0;
   for (int I = 0; I < MaxRegArgs && I < static_cast<int>(Func.Params.size());
        ++I) {
-    if (Func.Params[I].RegOff != TRI.IntParamRegs[I])
+    if (Func.Params[I].RegOff != ParamRegs[I])
       break;
     ++Leading;
   }
@@ -907,7 +908,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
   if (Leading != MaxRegArgs) {
     bool HasRegParam = false;
     for (const auto &P : Func.Params)
-      if (P.RegOff != kNoParamReg && TRI.regToArgIdx(P.RegOff) >= 0) {
+      if (P.RegOff != kNoParamReg && Layout.registerIndex(P.RegOff) >= 0) {
         HasRegParam = true;
         break;
       }
@@ -920,7 +921,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
         MedVar P;
         P.Kind = MedVar::Param;
         P.Id = I;
-        P.RegOff = TRI.IntParamRegs[I];
+        P.RegOff = ParamRegs[I];
         P.Size = TRI.FullRegWidth;
         P.TheArch = TargetArch;
         RegParams.push_back(P);
@@ -940,7 +941,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
         MedVar P;
         P.Kind = MedVar::Param;
         P.Id = -1;
-        P.RegOff = TRI.IntParamRegs[I];
+        P.RegOff = ParamRegs[I];
         P.Size = TRI.FullRegWidth;
         P.TheArch = TargetArch;
         Pad.push_back(P);
@@ -1211,8 +1212,9 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
 
   // --- Build the ordered parameter register list ---
   std::vector<uint64_t> ParamRegs;
+  const auto IntegerRegs = TRI.integerArgumentLayout(IsWin64).Registers;
   if (IsWin64) {
-    ParamRegs.assign(TRI.Win64ParamRegs.begin(), TRI.Win64ParamRegs.end());
+    ParamRegs.assign(IntegerRegs.begin(), IntegerRegs.end());
     for (uint64_t R : TRI.FPParamRegs)
       if (ParamRegs.size() < TRI.Win64ParamRegs.size() + 4)
         ParamRegs.push_back(R);
@@ -1223,7 +1225,7 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // detectRegisterParams synthesize bogus integer placeholders up to the FP
     // index (so a `double f(double,double)` would become N integer placeholders
     // + two FP params).  The FP registers are detected separately below.
-    ParamRegs.assign(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end());
+    ParamRegs.assign(IntegerRegs.begin(), IntegerRegs.end());
   }
 
   // --- Detect register-passed parameters ---

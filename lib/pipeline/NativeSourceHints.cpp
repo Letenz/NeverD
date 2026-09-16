@@ -401,6 +401,8 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     return Reject("native scalar parameter or return types are incomplete");
 
   const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto IntegerLayout =
+      TRI.integerArgumentLayout(Med.CC == CallingConv::Win64);
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Architecture = Image.Arch;
@@ -442,14 +444,15 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
       // This is the generic stack recovery contract, not an inferred C
       // parameter index. A narrow SUBBYTES use can represent several packed
       // arm64 values in one slot, so it requires a separate range analysis.
-      const int RegisterCount = static_cast<int>(TRI.IntParamRegs.size());
+      const int RegisterCount =
+          static_cast<int>(IntegerLayout.Registers.size());
       if (Type->Kind == NdTypeKind::Float || Parameter.Size != 8 ||
           Parameter.Id < RegisterCount || Parameter.Id >= RegisterCount + 512)
         return Reject("native stack parameter has no complete slot evidence");
       Source.Location.Kind = SourceABICarrierKind::Stack;
       Source.Location.EntryStackOffset =
-          (Image.Arch == Arch::X64 ? 8 : 0) +
-          int64_t(Parameter.Id - RegisterCount) * 8;
+          IntegerLayout.EntryStackBase +
+          int64_t(Parameter.Id - RegisterCount) * IntegerLayout.SlotBytes;
       if (!StackSlots.insert(Parameter.Id).second)
         return Reject("native stack parameters overlap");
     } else {
@@ -480,8 +483,7 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
         if (Type->Kind == NdTypeKind::Float)
           return Reject(
               "native floating parameter has no FP register evidence");
-        if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
-                      Parameter.RegOff) == TRI.IntParamRegs.end()) {
+        if (IntegerLayout.registerIndex(Parameter.RegOff) < 0) {
           if (Parameter.Size != 8)
             return Reject(
                 "native auxiliary parameter requires a complete word");
