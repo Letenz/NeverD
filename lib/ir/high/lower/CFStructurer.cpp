@@ -39,11 +39,10 @@ void MedToHighConverter::insertPhiCopies(
       return Copies;
     VarKeySet Destinations;
     for (const auto &[Output, Argument] : It->second)
-      if (Output.Kind != MedVar::Flag)
-        Destinations.insert(varKey(Output));
+      Destinations.insert(varKey(Output));
     std::vector<HighStmt> Writes;
     for (const auto &[Output, Argument] : It->second) {
-      if (Output.Kind == MedVar::Flag || Output == Argument)
+      if (Output == Argument)
         continue;
       HighStmt Copy;
       Copy.Kind = StmtKind::Assign;

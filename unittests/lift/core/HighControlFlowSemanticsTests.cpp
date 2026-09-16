@@ -1267,6 +1267,64 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   return O;
 }
 
+TEST(HighControlFlowSemantics, FlagPhisKeepTheirReachingDefinitions) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "flag_phi";
+    Med.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = TRI.IntParamRegs[0];
+    Med.Params = {Input};
+    auto Incoming = machineValue(1, Architecture);
+    Incoming.Kind = MedVar::Flag;
+    Incoming.Size = 1;
+    Incoming.RegOff = TRI.FlagZF;
+    auto Joined = Incoming;
+    Joined.SSAVer = 1;
+    auto TrueReturn = machineValue(2, Architecture);
+    TrueReturn.Kind = MedVar::Reg;
+    TrueReturn.RegOff = TRI.IntReturnReg;
+    auto FalseReturn = TrueReturn;
+    FalseReturn.Id = 3;
+    FalseReturn.SSAVer = 1;
+    auto C = [](uint64_t Value) { return MedVar::makeConst(Value, 8); };
+
+    Med.Blocks.resize(4);
+    for (int I = 0; I != 4; ++I) {
+      Med.Blocks[I].Id = I;
+      Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      Med.Blocks[I].EndAddr = Med.Blocks[I].StartAddr + 0x10;
+    }
+    Med.Blocks[0].Succs = {1};
+    Med.Blocks[0].Ops = {
+        operation(NdOp::INT_EQUAL, 0x1000, Incoming, {Input, C(0)}),
+        operation(NdOp::BRANCH, 0x1004, {}, {C(0x1100)})};
+    Med.Blocks[1].Preds = {0};
+    Med.Blocks[1].Succs = {2, 3};
+    Med.Blocks[1].Phis = {{Joined, {{0, Incoming}}}};
+    Med.Blocks[1].Ops = {
+        operation(NdOp::COND_BR, 0x1100, {}, {C(0x1200), Joined})};
+    Med.Blocks[2].Preds = {1};
+    Med.Blocks[2].Ops = {
+        operation(NdOp::COPY, 0x1200, TrueReturn, {C(1)}),
+        operation(NdOp::RETURN, 0x1204, {}, {TrueReturn})};
+    Med.Blocks[3].Preds = {1};
+    Med.Blocks[3].Ops = {
+        operation(NdOp::COPY, 0x1300, FalseReturn, {C(0)}),
+        operation(NdOp::RETURN, 0x1304, {}, {FalseReturn})};
+
+    const auto Function = MedToHighConverter().convert(Med, Architecture);
+    const auto Flow = analyzeHighSourceFlow(Function, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    EXPECT_EQ(execute(Function, 0), 1U);
+    EXPECT_EQ(execute(Function, 7), 0U);
+  }
+}
+
 TEST(HighControlFlowSemantics, ConditionalFalseEdgeKeepsNonlexicalSuccessor) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     MedFunc Med;
