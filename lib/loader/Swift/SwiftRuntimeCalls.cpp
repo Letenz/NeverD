@@ -155,6 +155,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "ppp"},
+    {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
+    {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "zC"},
     {"$ss018_bridgeAnyObjectToB0yypyXlSgF",
      "/usr/lib/swift/libswiftCore.dylib", "vIp"},
     {"$ss27_bridgeAnythingToObjectiveCyyXlxlF",
@@ -183,6 +187,8 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     Signature.ReturnType = NdType::makeInt(16, false);
   else if (Encoding.consume_front("p"))
     Signature.ReturnType = Pointer;
+  else if (Encoding.consume_front("z"))
+    Signature.ReturnType = Word;
   else if (Encoding.consume_front("v"))
     Signature.ReturnType = NdType::makeVoid();
   else

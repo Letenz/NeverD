@@ -706,6 +706,61 @@ TEST(ObjCCallHints, StdlibAnyBridgesKeepCompilerObservedSwiftABI) {
     }
 }
 
+TEST(ObjCCallHints, DispatchSemaphoreMethodsKeepCompilerObservedSwiftABI) {
+  struct Method {
+    const char *Name;
+    bool ReturnsWord;
+  };
+  const Method Methods[] = {
+      {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF", false},
+      {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF", true},
+  };
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswiftDispatch.dylib";
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &Method : Methods) {
+      SCOPED_TRACE(std::string(Method.Name) + ":" +
+                   std::to_string(static_cast<int>(Architecture)));
+      const std::string Import = "_" + std::string(Method.Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+      EXPECT_EQ(Hint->TargetName, Method.Name);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      EXPECT_EQ(Signature.ReturnType->Kind,
+                Method.ReturnsWord ? NdTypeKind::Int : NdTypeKind::Void);
+      if (Method.ReturnsWord)
+        EXPECT_EQ(Signature.ReturnType->Size, 8U);
+      ASSERT_EQ(Signature.Parameters.size(), 1U);
+      EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[0].TheRole,
+                SourceParameterTypeHint::Role::SwiftContext);
+      EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+        auto Wrong = Image;
+        if (Mutation == 0)
+          Wrong.DyldBindSlots[0x2180].Module =
+              "/tmp/libswiftDispatch.dylib";
+        else if (Mutation == 1)
+          Wrong.DyldBindSlots[0x2180].Addend = 1;
+        else if (Mutation == 2)
+          Wrong.DyldBindSlots[0x2180].WeakImport = true;
+        else
+          Wrong.DyldBindSlots.erase(0x2180);
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+      }
+    }
+}
+
 TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image =
