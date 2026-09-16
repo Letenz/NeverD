@@ -24,6 +24,12 @@ namespace neverd {
 namespace {
 
 std::string importAt(const BinaryImage &Image, va_t Slot) {
+  // The one catalogued optional Darwin call must retain weak linkage. The
+  // ordinary import-name path below intentionally rejects every weak import,
+  // so recognize this exact contract before entering that strong-only path.
+  if (const auto Weak = darwinRuntimeSourceCallHint(Image, Slot);
+      Weak && Weak->WeakImport)
+    return Weak->TargetName;
   const auto Import = darwinRuntimeImport(Image, Slot);
   if (!Import)
     return {};

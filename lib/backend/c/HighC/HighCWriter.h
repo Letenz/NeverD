@@ -179,6 +179,7 @@ public:
   struct SourceNativeDeclaration {
     const SourceFunctionTypeHint *Signature;
     std::optional<unsigned> VariadicFixedCount;
+    bool WeakImport = false;
   };
   std::map<std::string, SourceNativeDeclaration> SourceNativeSignatures;
   std::map<std::string, std::string> SourceRuntimeLinkNames;

@@ -3188,6 +3188,65 @@ TEST(ObjCCallHints, DispatchOnceFPreservesExactCallbackPrototypeAndExport) {
   }
 }
 
+TEST(ObjCCallHints, AvailabilityCheckPreservesExactWeakImportAndABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("__availability_version_check", Architecture);
+    Image.DyldBindSlots[0x2180] = {"__availability_version_check", 0,
+                                   "/usr/lib/libSystem.B.dylib", true};
+    const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_TRUE(Hint->WeakImport);
+    EXPECT_EQ(Hint->TargetName, "_availability_version_check");
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinSDK);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.ReturnType->Size, 1U);
+    EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Type->Size, 4U);
+    EXPECT_FALSE(Hint->Signature.Parameters[0].Type->IsSigned);
+    EXPECT_EQ(Hint->Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    auto Call = HighExpr::makeCall(
+        Hint->TargetName, Hint->TargetAddress,
+        {HighExpr::makeConst(1, 4), HighExpr::makeConst(0x2000, 8)});
+    Call->Type = NdType::makeInt(1, false);
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Forged = std::make_shared<SourceCallTypeHint>(*Hint);
+    Forged->WeakImport = false;
+    Call->SourceCallHint = Forged;
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+
+    const auto Med = convert(Image, caller(Architecture));
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+    const auto &Veneer = *Med.CallInfos[0].SourceCallHint;
+    EXPECT_TRUE(Veneer.WeakImport);
+    EXPECT_EQ(Veneer.TargetAddress, 0x2180U);
+    EXPECT_EQ(Veneer.TargetName, "_availability_version_check");
+
+    for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].WeakImport = false;
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].Addend = 1;
+      if (Mutation == 3)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 4)
+        Changed.ImportPtrSlots[0x2180] = "__other_version_check";
+      if (Mutation == 5)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      if (Mutation == 6)
+        Changed.ImportStorageSlots[0x2180] = {"__availability_version_check",
+                                              1};
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Widths] :

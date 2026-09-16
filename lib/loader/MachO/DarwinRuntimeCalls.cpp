@@ -9,8 +9,56 @@
 #include "llvm/ADT/StringRef.h"
 
 namespace neverd {
+namespace {
+std::optional<llvm::StringRef> darwinWeakRuntimeImport(const BinaryImage &Image,
+                                                       va_t Slot) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      Image.ConflictingImportStorageSlots.count(Slot))
+    return std::nullopt;
+  const auto Import = Image.ImportPtrSlots.find(Slot);
+  const auto Bind = Image.DyldBindSlots.find(Slot);
+  if (Import == Image.ImportPtrSlots.end() ||
+      Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Name != Import->second || Bind->second.Addend ||
+      !Bind->second.WeakImport)
+    return std::nullopt;
+  if (auto I = Image.ImportStorageSlots.find(Slot);
+      I != Image.ImportStorageSlots.end() &&
+      (I->second.Name != Import->second || I->second.Addend))
+    return std::nullopt;
+  return Import->second;
+}
+} // namespace
+
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
+  // compiler-rt probes this optional libSystem entry before calling it. Keep
+  // the exact weak linkage and fixed ABI so the recovered guard remains valid.
+  if (const auto Weak = darwinWeakRuntimeImport(Image, ImportSlot);
+      Weak && *Weak == "__availability_version_check") {
+    const auto &Bind = Image.DyldBindSlots.at(ImportSlot);
+    if (!darwinExportModuleMatches("/usr/lib/libSystem.B.dylib", Bind.Module))
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.WeakImport = true;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = "_availability_version_check";
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Signature.ReturnType = NdType::makeInt(1, false);
+    Signature.Parameters = {
+        {"count", NdType::makeInt(4, false)},
+        {"versions", NdType::makePtr(NdType::makeVoid())},
+    };
+    std::string Diagnostic;
+    if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
+
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import)
     return std::nullopt;

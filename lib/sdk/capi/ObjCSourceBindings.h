@@ -69,6 +69,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                                   const SourceCallTypeHint &Expected) {
   return Binding.CallKind == Expected.CallKind &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
+         Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
          Binding.RuntimeObjCResultType == Expected.RuntimeObjCResultType &&
          Binding.TargetName == Expected.TargetName &&
@@ -1241,6 +1242,9 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringBridge &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringFromNSString &&
+      Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
+    return false;
+  if (Binding.WeakImport &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||

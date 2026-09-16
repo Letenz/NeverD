@@ -119,6 +119,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       E.MemoryOrdering != NdMemoryOrdering::None)
     return bad("incompatible operation effects");
   const auto &Signature = Hint.Signature;
+  if (Hint.WeakImport &&
+      (Hint.CallKind != Kind::DarwinRuntimeCall ||
+       Signature.Origin != SourceFunctionTypeHint::OriginKind::DarwinSDK))
+    return bad("weak import belongs to another binding kind");
   if (Hint.ValueWitness && Hint.CallKind != Kind::SwiftValueWitness)
     return bad("value-witness operation belongs to another binding kind");
   if (Hint.CallKind == Kind::SwiftValueWitness) {

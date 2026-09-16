@@ -182,6 +182,16 @@ struct NativeVoidFixture : NativeFixture {
     NativeCall->NumInputs = 0;
     NativeCall->addInput(NdVar::reg(TRI.IntReturnReg, 8));
   }
+
+  void useNativeVoidCallee() {
+    auto Hint = std::make_shared<SourceCallTypeHint>(
+        *Med.Blocks[0].Ops[0].SourceCallHint);
+    Hint->CallKind = SourceCallTypeHint::Kind::Native;
+    Hint->TargetAddress = 0x1080;
+    Hint->TargetName = "native_void_callee";
+    Hint->Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Med.Blocks[0].Ops[0].SourceCallHint = std::move(Hint);
+  }
 };
 
 TEST(NativeSourceHints, VoidTailForwardersNeverSupplyAnUnprovenResult) {
@@ -222,6 +232,23 @@ TEST(NativeSourceHints, VoidTailForwardersNeverSupplyAnUnprovenResult) {
           NdVar::reg(getTargetRegInfo(Architecture).StackPointer, 8));
       EXPECT_FALSE(Compatibility.inferVoid(Error));
     }
+}
+
+TEST(NativeSourceHints, VoidContractsPropagateAcrossExactNativeCallees) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeVoidFixture Fixture(Architecture);
+    Fixture.useNativeVoidCallee();
+    std::string Error;
+    const auto Hint = Fixture.inferVoid(Error);
+    ASSERT_TRUE(Hint) << Error;
+    EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+
+    auto Forged = std::make_shared<SourceCallTypeHint>(
+        *Fixture.Med.Blocks[0].Ops[0].SourceCallHint);
+    Forged->TargetAddress += 4;
+    Fixture.Med.Blocks[0].Ops[0].SourceCallHint = std::move(Forged);
+    EXPECT_FALSE(Fixture.inferVoid(Error));
+  }
 }
 
 TEST(NativeSourceHints,

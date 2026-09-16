@@ -158,13 +158,21 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
                                  (Binding.CallKind == Kind::ObjCRuntimeCall ||
                                   Binding.CallKind == Kind::SwiftRuntimeCall ||
                                   Binding.CallKind == Kind::DarwinRuntimeCall);
+      const bool StaticNative =
+          Op.Inputs[0].isConst() && Binding.CallKind == Kind::Native &&
+          Binding.TargetAddress == Op.Inputs[0].ConstVal &&
+          Binding.TargetAddress != Med.Entry &&
+          Image.isCodeAddress(Binding.TargetAddress) &&
+          Binding.Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+          Binding.Signature.HasExplicitABI;
       const bool DynamicWitness =
           Op.Opcode == NdOp::INDIR_CALL && !Op.Inputs[0].isConst() &&
           Binding.ValueWitness ==
               SourceCallTypeHint::SwiftValueWitnessKind::Destroy &&
           isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
-      if ((!StaticRuntime && !DynamicWitness) || Binding.DoesNotReturn ||
-          !Binding.Signature.ReturnType ||
+      if ((!StaticRuntime && !StaticNative && !DynamicWitness) ||
+          Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
           Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
           !Image.isCodeAddress(Op.Addr) ||
           !Calls

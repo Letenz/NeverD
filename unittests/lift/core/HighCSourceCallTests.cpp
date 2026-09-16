@@ -1234,6 +1234,40 @@ int main(void) {
             std::string::npos);
 }
 
+TEST(HighCSourceCalls, DarwinWeakImportsRemainOptionalInDeclarations) {
+  const auto U8 = NdType::makeInt(1, false);
+  const auto U32 = NdType::makeInt(4, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Hint = native("_availability_version_check", U8, {U32, Pointer});
+  Hint.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  Hint.WeakImport = true;
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Hint.Signature, Arch::X64, Error));
+  auto Function =
+      returning("check_version",
+                call(Hint, U8, {parameter(0, U32), parameter(1, Pointer)}),
+                {U32, Pointer});
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("extern __attribute__((weak_import)) uint8_t "),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("__asm__(\"__availability_version_check\")"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+
+  auto Forged = Hint;
+  Forged.CallKind = SourceCallTypeHint::Kind::Native;
+  auto Bad =
+      returning("forged_weak",
+                call(Forged, U8, {parameter(0, U32), parameter(1, Pointer)}),
+                {U32, Pointer});
+  EXPECT_NE(
+      emit({Bad}, false).find("weak import belongs to another binding kind"),
+      std::string::npos);
+}
+
 TEST(HighCSourceCalls, SwiftConventionSurvivesDefinitionsAndRejectsConflicts) {
   const auto Word = NdType::makeInt(8, false);
   auto Hint = native("swift_identity", Word, {Word});

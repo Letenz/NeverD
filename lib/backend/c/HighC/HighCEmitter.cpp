@@ -705,9 +705,10 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
             }
             Targets.insert(Name.str());
             const SourceNativeDeclaration Declaration{
-                &Hint.Signature, Hint.Format
-                                     ? std::optional(Hint.Format->FixedCount)
-                                     : std::nullopt};
+                &Hint.Signature,
+                Hint.Format ? std::optional(Hint.Format->FixedCount)
+                            : std::nullopt,
+                Hint.WeakImport};
             auto [It, Added] =
                 SourceNativeSignatures.emplace(Name.str(), Declaration);
             auto TypeSpelling = [](const SourceNativeDeclaration &D) {
@@ -715,6 +716,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
               std::string Result =
                   sourceConventionAttribute(Signature.Convention).str() +
                   typeToC(Signature.ReturnType) + "(";
+              if (D.WeakImport)
+                Result += "weak_import,";
               const auto Count =
                   D.VariadicFixedCount.value_or(Signature.Parameters.size());
               if (Count > Signature.Parameters.size())
@@ -1054,6 +1057,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       else if (Signature.Parameters.empty())
         Declarator += "void";
       OS << "extern ";
+      if (Declaration.WeakImport)
+        OS << "__attribute__((weak_import)) ";
       OS << sourceConventionAttribute(Signature.Convention);
       if (auto Effect = SourceCallTermination.find(Name);
           Effect != SourceCallTermination.end() && Effect->second)
