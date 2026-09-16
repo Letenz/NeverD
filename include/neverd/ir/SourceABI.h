@@ -60,8 +60,9 @@ bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 /// Assign a fixed Darwin swiftcc declaration with integer/pointer scalar
 /// arguments and a scalar or one/two-word result. Arguments use the declared
 /// narrow width and may continue on the stack after the integer register bank.
-/// Hidden contexts, errors, asynchronous calls and floating values are
-/// unsupported.
+/// One declared swift_indirect_result and one swift_context pointer may use
+/// their dedicated registers without consuming that bank. Error results,
+/// asynchronous contexts and floating values are unsupported.
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic);
 

@@ -215,6 +215,56 @@ TEST(SourceABI, SwiftScalarArgumentsKeepNarrowAndStackCarriers) {
   }
 }
 
+TEST(SourceABI, SwiftSpecialParametersUseDedicatedRegistersWithoutBankSlots) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeVoid();
+    Hint.Parameters = {
+        {"result", Pointer}, {"object", Pointer}, {"self", Pointer}};
+    Hint.Parameters[0].TheRole =
+        SourceParameterTypeHint::Role::SwiftIndirectResult;
+    Hint.Parameters[2].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Hint.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                            : TRI.IntReturnReg);
+    EXPECT_EQ(Hint.Parameters[1].Location.RegisterOffset,
+              TRI.IntParamRegs.front());
+    EXPECT_EQ(Hint.Parameters[2].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      auto Bad = Hint;
+      if (Mutation == 0)
+        Bad.Convention = SourceFunctionTypeHint::ConventionKind::C;
+      else if (Mutation == 1)
+        Bad.Parameters[0].Type = NdType::makeInt(8, false);
+      else if (Mutation == 2)
+        std::swap(Bad.Parameters[0], Bad.Parameters[1]);
+      else if (Mutation == 3)
+        Bad.ReturnType = Pointer;
+      else if (Mutation == 4)
+        Bad.Parameters[1].TheRole =
+            SourceParameterTypeHint::Role::SwiftIndirectResult;
+      else if (Mutation == 5)
+        Bad.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+      else if (Mutation == 6)
+        Bad.Parameters[0].Location.RegisterOffset = TRI.IntParamRegs.front();
+      else if (Mutation == 7)
+        Bad.Parameters[2].Location.RegisterOffset = TRI.IntParamRegs.front();
+      else
+        Bad.Parameters[2].TheRole =
+            static_cast<SourceParameterTypeHint::Role>(255);
+      EXPECT_FALSE(validateSourceABI(Bad, Error)) << Mutation;
+    }
+    EXPECT_FALSE(assignDarwinFixedSourceABI(Hint, Architecture, Error));
+  }
+}
+
 TEST(SourceABI, SourceReturnComponentsNeverBecomeRewriteABIEvidence) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     BinaryImage Image;

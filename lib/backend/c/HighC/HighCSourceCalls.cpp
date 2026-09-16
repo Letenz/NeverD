@@ -86,6 +86,20 @@ llvm::StringRef HighCWriter::sourceConventionAttribute(
   throw std::invalid_argument("Unsupported source calling convention");
 }
 
+std::string
+HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
+  std::string Result = typeToC(Parameter.Type);
+  switch (Parameter.TheRole) {
+  case SourceParameterTypeHint::Role::Ordinary:
+    return Result;
+  case SourceParameterTypeHint::Role::SwiftIndirectResult:
+    return Result + " __attribute__((swift_indirect_result))";
+  case SourceParameterTypeHint::Role::SwiftContext:
+    return Result + " __attribute__((swift_context))";
+  }
+  throw std::invalid_argument("Unsupported source parameter role");
+}
+
 const HighFunc *
 HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
                                   llvm::StringRef Name) const {

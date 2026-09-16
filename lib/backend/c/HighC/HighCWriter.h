@@ -43,6 +43,8 @@ class HighCWriter {
 public:
   static llvm::StringRef
   sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
+  static std::string
+  sourceParameterType(const SourceParameterTypeHint &Parameter);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
       : OS(OS), Opts(Opts), Dbg(Dbg),

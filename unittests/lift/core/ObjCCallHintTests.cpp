@@ -7,6 +7,8 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCEncoding.h"
@@ -403,6 +405,186 @@ BinaryImage runtimeImage(llvm::StringRef Name,
   return Image;
 }
 } // namespace
+
+TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
+  enum class Shape {
+    IndirectFromObjC,
+    ContextToObjC,
+    DataFromObjC,
+    DataToObjC
+  };
+  struct Bridge {
+    const char *Name;
+    Shape TheShape;
+  };
+  const Bridge Bridges[] = {
+      {"$s10Foundation10URLRequestV19_bridgeToObjectiveCSo12NSURLRequestCyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation10URLRequestV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo12"
+       "NSURLRequestCSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation12NotificationV19_"
+       "bridgeToObjectiveCSo14NSNotificationCyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation12NotificationV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo"
+       "14NSNotificationCSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation3URLV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF",
+       Shape::DataToObjC},
+      {"$s10Foundation4DataV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ",
+       Shape::DataFromObjC},
+      {"$s10Foundation4DateV19_bridgeToObjectiveCSo6NSDateCyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation4DateV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo6NSDateCSgFZ",
+       Shape::IndirectFromObjC},
+      {"$s10Foundation9IndexPathV19_bridgeToObjectiveCSo07NSIndexC0CyF",
+       Shape::ContextToObjC},
+      {"$s10Foundation9IndexPathV36_"
+       "unconditionallyBridgeFromObjectiveCyACSo07NS"
+       "IndexC0CSgFZ",
+       Shape::IndirectFromObjC},
+  };
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &Bridge : Bridges) {
+      SCOPED_TRACE(std::string(Bridge.Name) + ":" +
+                   std::to_string(static_cast<int>(Architecture)));
+      const std::string Import = "_" + std::string(Bridge.Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+      EXPECT_EQ(Hint->TargetName, Bridge.Name);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      switch (Bridge.TheShape) {
+      case Shape::IndirectFromObjC:
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+        ASSERT_EQ(Signature.Parameters.size(), 2U);
+        EXPECT_EQ(Signature.Parameters[0].TheRole,
+                  SourceParameterTypeHint::Role::SwiftIndirectResult);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                                : TRI.IntReturnReg);
+        EXPECT_EQ(Signature.Parameters[1].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+        break;
+      case Shape::ContextToObjC:
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        ASSERT_EQ(Signature.Parameters.size(), 1U);
+        EXPECT_EQ(Signature.Parameters[0].TheRole,
+                  SourceParameterTypeHint::Role::SwiftContext);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+        break;
+      case Shape::DataFromObjC:
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Signature.ReturnType->Size, 16U);
+        ASSERT_EQ(Signature.ReturnComponents.size(), 2U);
+        ASSERT_EQ(Signature.Parameters.size(), 1U);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+        break;
+      case Shape::DataToObjC:
+        EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+        ASSERT_EQ(Signature.Parameters.size(), 2U);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+        EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+                  TRI.IntParamRegs[1]);
+        break;
+      }
+
+      std::vector<ExprPtr> Arguments;
+      for (const auto &Parameter : Signature.Parameters)
+        Arguments.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+      auto Call = HighExpr::makeCall("untrusted_name", 0x2180, Arguments);
+      Call->Type = Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      auto Changed = std::make_shared<SourceCallTypeHint>(*Hint);
+      Changed->Signature.Parameters[0].TheRole =
+          Changed->Signature.Parameters[0].TheRole ==
+                  SourceParameterTypeHint::Role::Ordinary
+              ? SourceParameterTypeHint::Role::SwiftContext
+              : SourceParameterTypeHint::Role::Ordinary;
+      Call->SourceCallHint = std::move(Changed);
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+
+      HighFunc Function;
+      Function.Name = "bridge_wrapper";
+      Function.ReturnType = Signature.ReturnType;
+      HighStmt Statement;
+      if (Signature.ReturnType->Kind == NdTypeKind::Void) {
+        Statement.Kind = StmtKind::Call;
+        Statement.CallExpr = Call;
+      } else {
+        Statement.Kind = StmtKind::Return;
+        Statement.RetVal = Call;
+      }
+      Function.Body = {Statement};
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+      EXPECT_NE(Source.find("__attribute__((swiftcall))"), std::string::npos)
+          << Source;
+      EXPECT_NE(Source.find("__asm__(\"" + Import + "\")"), std::string::npos)
+          << Source;
+      EXPECT_EQ(Source.find("__attribute__((swift_indirect_result))") !=
+                    std::string::npos,
+                Bridge.TheShape == Shape::IndirectFromObjC)
+          << Source;
+      EXPECT_EQ(Source.find("__attribute__((swift_context))") !=
+                    std::string::npos,
+                Bridge.TheShape == Shape::ContextToObjC)
+          << Source;
+
+      for (llvm::StringRef Alias :
+           {"/System/Library/Frameworks/Foundation.framework/Versions/C/"
+            "Foundation",
+            "/usr/lib/swift/libswiftFoundation.dylib"}) {
+        auto Aliased = Image;
+        Aliased.DyldBindSlots[0x2180].Module = Alias.str();
+        EXPECT_TRUE(swiftRuntimeSourceCallHint(Aliased, 0x2180)) << Alias.str();
+      }
+      for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+        auto Wrong = Image;
+        if (Mutation == 0)
+          Wrong.DyldBindSlots[0x2180].Module =
+              "/tmp/Foundation.framework/Foundation";
+        else if (Mutation == 1)
+          Wrong.DyldBindSlots[0x2180].Addend = 1;
+        else if (Mutation == 2)
+          Wrong.DyldBindSlots[0x2180].WeakImport = true;
+        else
+          Wrong.DyldBindSlots.erase(0x2180);
+        EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+      }
+    }
+  }
+}
 
 TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {

@@ -29,6 +29,127 @@ constexpr SwiftMetadataDeclaration SwiftMetadataDeclarations[] = {
 #include "SwiftMetadataDeclarations.inc"
 };
 
+struct SwiftSDKDeclaration {
+  const char *Name;
+  const char *Modules;
+  const char *Signature;
+};
+
+// Compiler-observed public Foundation bridge entry points. The compact
+// signature alphabet records only physical scalar carriers: p is a pointer,
+// z is an unsigned word, I is swift_indirect_result, and C is swift_context.
+// A parenthesized pair is returned in the two integer result registers.
+constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
+    {"$s10Foundation10URLRequestV19_bridgeToObjectiveCSo12NSURLRequestCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation10URLRequestV36_unconditionallyBridgeFromObjectiveCyACSo12"
+     "NSURLRequestCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation12NotificationV19_bridgeToObjectiveCSo14NSNotificationCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation12NotificationV36_unconditionallyBridgeFromObjectiveCyACSo"
+     "14NSNotificationCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation3URLV36_"
+     "unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation4DataV19_bridgeToObjectiveCSo6NSDataCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pzz"},
+    {"$s10Foundation4DataV36_"
+     "unconditionallyBridgeFromObjectiveCyACSo6NSDataCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)p"},
+    {"$s10Foundation4DateV19_bridgeToObjectiveCSo6NSDateCyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation4DateV36_"
+     "unconditionallyBridgeFromObjectiveCyACSo6NSDateCSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+    {"$s10Foundation9IndexPathV19_bridgeToObjectiveCSo07NSIndexC0CyF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pC"},
+    {"$s10Foundation9IndexPathV36_unconditionallyBridgeFromObjectiveCyACSo07NS"
+     "IndexC0CSgFZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIp"},
+};
+
+bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
+                    SourceCallTypeHint &Hint) {
+  const auto Found = std::lower_bound(
+      std::begin(SwiftSDKDeclarations), std::end(SwiftSDKDeclarations),
+      Hint.TargetName, [](const auto &Row, llvm::StringRef Name) {
+        return llvm::StringRef(Row.Name) < Name;
+      });
+  const auto Bind = Image.DyldBindSlots.find(Slot);
+  if (Found == std::end(SwiftSDKDeclarations) ||
+      Hint.TargetName != Found->Name || Bind == Image.DyldBindSlots.end() ||
+      !darwinExportModuleMatches(Found->Modules, Bind->second.Module))
+    return false;
+
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto &Signature = Hint.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
+  llvm::StringRef Encoding(Found->Signature);
+  if (Encoding.consume_front("(zz)"))
+    Signature.ReturnType = NdType::makeInt(16, false);
+  else if (Encoding.consume_front("p"))
+    Signature.ReturnType = Pointer;
+  else if (Encoding.consume_front("v"))
+    Signature.ReturnType = NdType::makeVoid();
+  else
+    return false;
+  for (char Code : Encoding) {
+    SourceParameterTypeHint Parameter;
+    Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());
+    Parameter.Type = Code == 'z' ? Word : Pointer;
+    if (Code == 'I')
+      Parameter.TheRole = SourceParameterTypeHint::Role::SwiftIndirectResult;
+    else if (Code == 'C')
+      Parameter.TheRole = SourceParameterTypeHint::Role::SwiftContext;
+    else if (Code != 'p' && Code != 'z')
+      return false;
+    Signature.Parameters.push_back(std::move(Parameter));
+  }
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+}
+
 bool declaredMetadataABI(const BinaryImage &Image, va_t Slot,
                          SourceCallTypeHint &Hint) {
   const auto Found =
@@ -181,6 +302,8 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (declaredMetadataABI(Image, ImportSlot, Result))
     return Result;
   auto &Signature = Result.Signature;
+  if (declaredSDKABI(Image, ImportSlot, Result))
+    return Result;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
   if (declaredStdlibABI(Image, ImportSlot, Name, Result))
     return Result;

@@ -29,12 +29,22 @@ struct SourceABIValueLocation {
 };
 
 struct SourceParameterTypeHint {
+  enum class Role : uint8_t {
+    Ordinary,
+    /// Caller-owned result storage in Swift's dedicated indirect-result
+    /// register. The emitted declaration uses swift_indirect_result.
+    SwiftIndirectResult,
+    /// Swift self/context in its dedicated register. The emitted declaration
+    /// uses swift_context; this is not an ordinary integer argument.
+    SwiftContext
+  };
   std::string Name;
   TypeRef Type;
   SourceABIValueLocation Location;
   /// Record members in increasing byte order. Location is empty when these
   /// components are present; the source parameter remains one logical value.
   std::vector<SourceABIValueLocation> Components;
+  Role TheRole = Role::Ordinary;
 };
 
 /// A runtime declaration or observed native machine signature for source
