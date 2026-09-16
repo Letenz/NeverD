@@ -141,7 +141,6 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
       Low->Blocks.size() > 16384)
     return false;
-  using CallKey = std::pair<va_t, va_t>;
   NativeSourceCalls Calls;
   size_t Remaining = 262144;
   for (const auto &Block : Med.Blocks)
@@ -150,35 +149,47 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
         return false;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (!Op.NumInputs || !Op.Inputs[0].isConst() || !Op.SourceCallHint)
+      if (Op.OriginSeq < 0 || !Op.NumInputs || Op.Inputs[0].Size != 8 ||
+          !Op.SourceCallHint)
         return false;
       const auto &Binding = *Op.SourceCallHint;
       using Kind = SourceCallTypeHint::Kind;
-      if ((Binding.CallKind != Kind::ObjCRuntimeCall &&
-           Binding.CallKind != Kind::SwiftRuntimeCall &&
-           Binding.CallKind != Kind::DarwinRuntimeCall) ||
-          Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
+      const bool StaticRuntime = Op.Inputs[0].isConst() &&
+                                 (Binding.CallKind == Kind::ObjCRuntimeCall ||
+                                  Binding.CallKind == Kind::SwiftRuntimeCall ||
+                                  Binding.CallKind == Kind::DarwinRuntimeCall);
+      const bool DynamicWitness =
+          Op.Opcode == NdOp::INDIR_CALL && !Op.Inputs[0].isConst() &&
+          Binding.ValueWitness ==
+              SourceCallTypeHint::SwiftValueWitnessKind::Destroy &&
+          isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
+      if ((!StaticRuntime && !DynamicWitness) || Binding.DoesNotReturn ||
+          !Binding.Signature.ReturnType ||
           Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
           !Image.isCodeAddress(Op.Addr) ||
           !Calls
-               .emplace(CallKey{Op.Addr, Op.Inputs[0].ConstVal},
+               .emplace(NativeSourceCallKey{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                            Op.Inputs[0].isConst()
+                                                ? std::optional<va_t>(
+                                                      Op.Inputs[0].ConstVal)
+                                                : std::nullopt},
                         &Binding.Signature)
                .second)
         return false;
     }
   if (Calls.empty())
     return false;
-  std::set<CallKey> NativeCalls;
+  std::set<NativeSourceCallKey> NativeCalls;
   for (const auto &Block : Low->Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Remaining-- || Op.NumInputs > 6)
         return false;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst())
+      const auto Key = nativeSourceCallKey(Op);
+      if (!Key)
         return false;
-      const CallKey Key{Op.Addr, Op.Inputs[0].Offset};
-      if (!Calls.count(Key) || !NativeCalls.insert(Key).second)
+      if (!Calls.count(*Key) || !NativeCalls.insert(*Key).second)
         return false;
     }
   return NativeCalls.size() == Calls.size() &&

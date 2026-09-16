@@ -10,6 +10,20 @@
 #include <set>
 
 namespace neverd {
+std::optional<NativeSourceCallKey> nativeSourceCallKey(const LowOp &Operation) {
+  if ((Operation.Opcode != NdOp::CALL &&
+       Operation.Opcode != NdOp::INDIR_CALL) ||
+      Operation.Seq < 0 || Operation.NumInputs != 1 ||
+      Operation.Inputs[0].Size != 8 ||
+      (Operation.Opcode == NdOp::CALL && !Operation.Inputs[0].isConst()))
+    return std::nullopt;
+  return NativeSourceCallKey{
+      Operation.Addr, Operation.Seq, Operation.Opcode,
+      Operation.Inputs[0].isConst()
+          ? std::optional<va_t>(Operation.Inputs[0].Offset)
+          : std::nullopt};
+}
+
 namespace {
 constexpr int64_t MaxFrame = 1 << 20;
 constexpr size_t MaxFacts = 4096;
@@ -156,11 +170,15 @@ public:
         return false;
       Remaining -= Cost;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-        if (Op.NumInputs != 1 || !Op.Inputs[0].isConst())
+        const auto Key = nativeSourceCallKey(Op);
+        if (!Key)
           return false;
-        const auto Found = Calls.find({Op.Addr, Op.Inputs[0].Offset});
+        const auto Found = Calls.find(*Key);
         if (Found == Calls.end() || !Found->second)
           return false;
+        for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
+          if (Read(Op.Inputs[0], I).MayBeFrame)
+            return false;
         const auto &Signature = *Found->second;
         const bool Tail = Index + 1 < Block.Ops.size() &&
                           Block.Ops[Index + 1].Opcode == NdOp::RETURN &&
@@ -467,7 +485,7 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
   std::optional<size_t> Entry;
   bool HasAddresses = false;
   std::vector<std::set<size_t>> Preds(Count), Succs(Count);
-  std::set<std::pair<va_t, va_t>> NativeCalls;
+  std::set<NativeSourceCallKey> NativeCalls;
   for (size_t I = 0; I < Count; ++I) {
     const auto &Block = Function.Blocks[I];
     if (Block.Id < 0 || !Blocks.emplace(Block.Id, I).second ||
@@ -514,13 +532,12 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
             return false;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
-          Index + 1 >= Block.Ops.size() ||
+      const auto Key = nativeSourceCallKey(Op);
+      if (!Key || Index + 1 >= Block.Ops.size() ||
           Block.Ops[Index + 1].Opcode != NdOp::RETURN ||
           Block.Ops[Index + 1].Addr != Op.Addr)
         return false;
-      const auto Key = std::pair{Op.Addr, Op.Inputs[0].Offset};
-      if (!Calls.count(Key) || !NativeCalls.insert(Key).second)
+      if (!Calls.count(*Key) || !NativeCalls.insert(*Key).second)
         return false;
     }
   }
@@ -564,10 +581,15 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
           AnyTaint |= Tainted(Input, J);
       }
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-        const auto Key = std::pair{Op.Addr, Op.Inputs[0].Offset};
-        const auto Found = Calls.find(Key);
+        const auto Key = nativeSourceCallKey(Op);
+        if (!Key)
+          return false;
+        const auto Found = Calls.find(*Key);
         if (Found == Calls.end())
           return false;
+        for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
+          if (Tainted(Op.Inputs[0], I))
+            return false;
         for (const auto &Parameter : Found->second->Parameters) {
           const auto &Location = Parameter.Location;
           if ((Location.Kind != SourceABICarrierKind::IntegerRegister &&

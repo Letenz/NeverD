@@ -66,12 +66,16 @@ control-flow positions remain unchanged. Unknown lanes are never filled in.
 
 An internal void summary for a native cleanup forwarder does not assert an
 original void prototype. It contributes no result carrier. Calls must match
-validated external void declarations. A bounded LowIR fixed point tracks exact
-incoming register bytes and private stack spills, requiring restored preserved
-registers, stack pointer and link register at every exit. The frameless
-immediate-tail shape instead proves that those registers are never written and
-uses a bounded byte-taint fixed point to reject stack-derived call arguments or
-stored values. Partial writes,
+validated external void declarations or a canonical dynamically loaded Swift
+value-witness destroy declaration. MedIR and LowIR must agree on the exact
+instruction address and operation sequence, direct or indirect call form, and
+static target when one exists. A bounded LowIR fixed point tracks exact incoming
+register bytes and private stack spills, requiring restored preserved registers,
+stack pointer and link register at every exit. The frameless source-bound tail
+shape instead proves that those registers are never written and uses a bounded
+byte-taint fixed point to reject stack-derived call targets, arguments or stored
+values.
+Partial writes,
 implicit zero extensions, call clobbers and overlapping stores invalidate the
 affected identities. Unknown stores invalidate spill facts; frame-address spills
 and call arguments are rejected. Unallocated stack bytes cannot survive a call.

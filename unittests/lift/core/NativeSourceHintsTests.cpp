@@ -115,6 +115,7 @@ struct NativeVoidFixture : NativeFixture {
     MedOp Call;
     Call.Opcode = Indirect ? NdOp::INDIR_CALL : NdOp::CALL;
     Call.Addr = 0x1010;
+    Call.OriginSeq = 7;
     Call.SourceCallHint = Hint;
     Call.addInput(MedVar::makeConst(0x1080, 8));
     Call.addInput(Med.Params[0]);
@@ -127,6 +128,7 @@ struct NativeVoidFixture : NativeFixture {
     LowOp NativeCall;
     NativeCall.Opcode = Call.Opcode;
     NativeCall.Addr = Call.Addr;
+    NativeCall.Seq = Call.OriginSeq;
     NativeCall.Output =
         NdVar::reg(getTargetRegInfo(Architecture).IntReturnReg, 8);
     NativeCall.addInput(NdVar::cst(0x1080, 8));
@@ -137,6 +139,48 @@ struct NativeVoidFixture : NativeFixture {
   }
   std::optional<SourceFunctionTypeHint> inferVoid(std::string &Error) const {
     return inferNativeSourceTypeHint(Image, Med, High, Audit, Error, &Low);
+  }
+
+  void useValueWitnessDestroy() {
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    auto Hint = swiftValueWitnessSourceCallHint(
+        Image.Arch, SourceCallTypeHint::SwiftValueWitnessKind::Destroy);
+    ASSERT_TRUE(Hint);
+    auto &Call = Med.Blocks[0].Ops[0];
+    ASSERT_TRUE(Call.Opcode == NdOp::CALL || Call.Opcode == NdOp::INDIR_CALL);
+    MedVar Target;
+    Target.Kind = MedVar::Reg;
+    Target.Id = 20;
+    Target.SSAVer = 1;
+    Target.Size = 8;
+    Target.TheArch = Image.Arch;
+    Target.RegOff = TRI.IntReturnReg;
+    Med.Params[1].Id = 1;
+    Med.Params[1].Size = 8;
+    Med.TypedParams[0].Type = High.Params[0].Type =
+        NdType::makePtr(NdType::makeVoid());
+    Med.TypedParams[1].Type = High.Params[1].Type =
+        NdType::makePtr(NdType::makeVoid());
+    Call.Opcode = NdOp::INDIR_CALL;
+    Call.SourceCallHint =
+        std::make_shared<const SourceCallTypeHint>(std::move(*Hint));
+    Call.NumInputs = 0;
+    Call.addInput(Target);
+    Call.addInput(Med.Params[0]);
+    Call.addInput(Med.Params[1]);
+
+    LowOp *NativeCall = nullptr;
+    for (auto &Block : Low.Blocks)
+      for (auto &Operation : Block.Ops)
+        if (Operation.Opcode == NdOp::CALL ||
+            Operation.Opcode == NdOp::INDIR_CALL) {
+          ASSERT_EQ(NativeCall, nullptr);
+          NativeCall = &Operation;
+        }
+    ASSERT_NE(NativeCall, nullptr);
+    NativeCall->Opcode = NdOp::INDIR_CALL;
+    NativeCall->NumInputs = 0;
+    NativeCall->addInput(NdVar::reg(TRI.IntReturnReg, 8));
   }
 };
 
@@ -260,6 +304,79 @@ TEST(NativeSourceHints,
     }
 }
 
+TEST(NativeSourceHints,
+     CanonicalDynamicValueWitnessDestroyHasAnExactVoidCallIdentity) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeVoidFixture Leaf(Architecture);
+    Leaf.useValueWitnessDestroy();
+    std::string Error;
+    const auto LeafHint = Leaf.inferVoid(Error);
+    ASSERT_TRUE(LeafHint) << Error;
+    EXPECT_EQ(LeafHint->ReturnType->Kind, NdTypeKind::Void);
+  }
+}
+
+TEST(NativeSourceHints,
+     DynamicVoidCallIdentityRejectsForgeryMismatchAndFrameTargets) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 9; ++Mutation) {
+      NativeVoidFixture Fixture(Architecture);
+      Fixture.useValueWitnessDestroy();
+      auto &MedCall = Fixture.Med.Blocks[0].Ops[0];
+      auto &LowCall = Fixture.Low.Blocks[0].Ops[0];
+      const auto &TRI = getTargetRegInfo(Architecture);
+      switch (Mutation) {
+      case 0: {
+        auto Hint =
+            std::make_shared<SourceCallTypeHint>(*MedCall.SourceCallHint);
+        Hint->TargetName += "_forged";
+        MedCall.SourceCallHint = std::move(Hint);
+        break;
+      }
+      case 1: {
+        auto Hint = swiftValueWitnessSourceCallHint(
+            Architecture,
+            SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
+        ASSERT_TRUE(Hint);
+        MedCall.SourceCallHint =
+            std::make_shared<const SourceCallTypeHint>(std::move(*Hint));
+        break;
+      }
+      case 2:
+        MedCall.Opcode = NdOp::CALL;
+        break;
+      case 3:
+        LowCall.Opcode = NdOp::CALL;
+        break;
+      case 4:
+        LowCall.Inputs[0] = NdVar::cst(0x1080, 8);
+        break;
+      case 5:
+        MedCall.Inputs[0] = MedVar::makeConst(0x1080, 8);
+        break;
+      case 6: {
+        LowOp Derive;
+        Derive.Opcode = NdOp::COPY;
+        Derive.Addr = 0x1008;
+        Derive.Output = NdVar::reg(TRI.IntReturnReg, 8);
+        Derive.addInput(NdVar::reg(TRI.StackPointer, 8));
+        Fixture.Low.Blocks[0].Ops.insert(Fixture.Low.Blocks[0].Ops.begin(),
+                                         std::move(Derive));
+        break;
+      }
+      case 7:
+        LowCall.Inputs[0].Size = 4;
+        break;
+      case 8:
+        ++LowCall.Seq;
+        break;
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.inferVoid(Error))
+          << unsigned(Architecture) << ": " << Mutation << ": " << Error;
+    }
+}
+
 struct NativeVoidFrameFixture : NativeVoidFixture {
   Arch Architecture;
   std::vector<uint64_t> Saved;
@@ -359,6 +476,18 @@ struct NativeVoidFrameFixture : NativeVoidFixture {
     return StackWrite;
   }
 };
+
+TEST(NativeSourceHints,
+     CanonicalDynamicValueWitnessDestroyRestoresFramedState) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeVoidFrameFixture Fixture(Architecture);
+    Fixture.useValueWitnessDestroy();
+    std::string Error;
+    const auto Hint = Fixture.inferVoid(Error);
+    ASSERT_TRUE(Hint) << Error;
+    EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  }
+}
 
 TEST(NativeSourceHints, VoidFramesRestoreEntryBytesAcrossBranchesAndLoops) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})

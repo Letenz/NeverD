@@ -5,12 +5,31 @@
 #include "neverd/ir/low/LowIR.h"
 
 #include <map>
+#include <optional>
+#include <tuple>
 #include <utility>
 
 namespace neverd {
 
+struct NativeSourceCallKey {
+  va_t Instruction = 0;
+  int Sequence = -1;
+  NdOp Opcode = NdOp::CALL;
+  std::optional<va_t> StaticTarget;
+
+  bool operator<(const NativeSourceCallKey &Other) const {
+    return std::tie(Instruction, Sequence, Opcode, StaticTarget) <
+           std::tie(Other.Instruction, Other.Sequence, Other.Opcode,
+                    Other.StaticTarget);
+  }
+};
+
 using NativeSourceCalls =
-    std::map<std::pair<va_t, va_t>, const SourceFunctionTypeHint *>;
+    std::map<NativeSourceCallKey, const SourceFunctionTypeHint *>;
+
+/// Identify one exact LowIR call occurrence. Direct calls require a static
+/// target; indirect calls retain it only when the machine operand is constant.
+std::optional<NativeSourceCallKey> nativeSourceCallKey(const LowOp &Operation);
 
 /// Prove that every exit restores the incoming Darwin preserved registers,
 /// stack pointer and link register. Calls must already have validated source
@@ -23,7 +42,7 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
 
 /// Prove the narrower frameless tail-call shape without requiring a synthetic
 /// frame reconstruction. The function may not write any preserved, frame,
-/// stack, or link register; every native call must be an immediate tail call.
+/// stack, or link register; every native call must be a source-bound tail call.
 /// A bounded byte-taint proof additionally rejects passing or storing a value
 /// derived from the incoming stack pointer. This preserves the established
 /// leaf contract while closing frame-address escape through caller-save
