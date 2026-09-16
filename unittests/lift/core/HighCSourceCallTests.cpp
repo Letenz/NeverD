@@ -1007,6 +1007,26 @@ TEST(HighCSourceCalls, NativeTargetAddressSurvivesProjectionRenaming) {
   compileAndRun(Source + "int main(void) { return invoke(-37) != -37; }\n");
 }
 
+TEST(HighCSourceCalls, NativeTargetAddressesDisambiguateRepeatedSymbols) {
+  const auto I32 = NdType::makeInt(4);
+  auto First = returning("OUTLINED_FUNCTION_0", parameter(0, I32), {I32});
+  First.Entry = 0x1400;
+  auto Second = returning("OUTLINED_FUNCTION_0", parameter(0, I32), {I32});
+  Second.Entry = 0x1500;
+  auto Hint = native("OUTLINED_FUNCTION_0", I32, {I32});
+  Hint.TargetAddress = Second.Entry;
+  auto Caller =
+      returning("invoke_second", call(Hint, I32, {parameter(0, I32)}), {I32});
+  Caller.Entry = 0x1300;
+  const auto Source = emit({Caller, First, Second});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("OUTLINED_FUNCTION_0_2((int32_t)(arg0))"),
+            std::string::npos)
+      << Source;
+  compileAndRun(Source +
+                "int main(void) { return invoke_second(-37) != -37; }\n");
+}
+
 TEST(HighCSourceCalls,
      TypedBlockDispatchExecutesCapturedIntegerAndMixedFloatValues) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());

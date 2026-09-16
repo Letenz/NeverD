@@ -108,7 +108,11 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
     return It == DefinedFunctionsByAddress.end() ? nullptr : It->second;
   }
   auto It = DefinedFuncs.find(Name.str());
-  return It == DefinedFuncs.end() ? nullptr : It->second;
+  if (It != DefinedFuncs.end())
+    return It->second;
+  auto Identifier = DefinedFunctionsByIdentifier.find(Name.str());
+  return Identifier == DefinedFunctionsByIdentifier.end() ? nullptr
+                                                          : Identifier->second;
 }
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
@@ -403,7 +407,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         DefinedFuncs.count(Name))
       return bad("native target address disagrees with the source definition");
     if (Definition)
-      Name = Definition->Name;
+      Name = functionIdentifier(*Definition);
     llvm::StringRef NormalizedName(Name);
     NormalizedName.consume_front("_");
     if (ConflictingSourceNativeSignatures.count(NormalizedName.str()))

@@ -156,6 +156,7 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;

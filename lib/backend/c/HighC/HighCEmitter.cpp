@@ -177,6 +177,7 @@ void HighCWriter::prepareFunctionIdentifiers(
   FunctionIdentifiersBySourceName.clear();
   ExternalFunctionIdentifiers.clear();
   DefinedFuncs.clear();
+  DefinedFunctionsByIdentifier.clear();
   DefinedFunctionsByAddress.clear();
 
   // Imported runtime veneers are ordinary discovered functions, and can
@@ -244,6 +245,7 @@ void HighCWriter::prepareFunctionIdentifiers(
     std::string Identifier =
         GlobalIdentifierAllocator.allocate(RenderedName, "nd_function");
     FunctionIdentifiers.emplace(&Func, Identifier);
+    DefinedFunctionsByIdentifier.emplace(Identifier, &Func);
     FunctionIdentifiersBySourceName.try_emplace(SourceName.str(), Identifier);
     FunctionIdentifiersBySourceName.try_emplace(RenderedName.str(), Identifier);
   }
@@ -683,14 +685,16 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           // names, avoiding conflicting SDK typedefs or libc header prototypes.
           const std::string DeclaredName =
               DeclaredC ? "neverd_darwin_" + Hint.TargetName : "";
-          llvm::StringRef Name = Runtime || Ex.CallTarget.empty()
-                                     ? Hint.TargetName
-                                     : Ex.CallTarget;
+          std::string ResolvedName = Runtime || Ex.CallTarget.empty()
+                                         ? Hint.TargetName
+                                         : Ex.CallTarget;
           if (DeclaredC)
-            Name = DeclaredName;
+            ResolvedName = DeclaredName;
           if (!Runtime)
-            if (const auto *Definition = sourceCallDefinition(Hint, Name))
-              Name = Definition->Name;
+            if (const auto *Definition =
+                    sourceCallDefinition(Hint, ResolvedName))
+              ResolvedName = functionIdentifier(*Definition);
+          llvm::StringRef Name(ResolvedName);
           Name.consume_front("_");
           if (!Name.empty()) {
             if (Runtime) {
@@ -957,8 +961,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     if (SourceRuntimeLinkNames.count(Name))
       continue;
     const auto *Signature = Declaration.Signature;
-    auto Definition = DefinedFuncs.find(Name);
-    if (Definition == DefinedFuncs.end() ||
+    auto Definition = DefinedFunctionsByIdentifier.find(Name);
+    if (Definition == DefinedFunctionsByIdentifier.end() ||
         !Prototyped.insert(Definition->second).second)
       continue;
     const auto &Function = *Definition->second;
@@ -1011,7 +1015,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   }
 
   for (auto &Name : CallTargets) {
-    if (DefinedFuncs.count(Name) && !SourceRuntimeLinkNames.count(Name))
+    if ((DefinedFuncs.count(Name) ||
+         DefinedFunctionsByIdentifier.count(Name)) &&
+        !SourceRuntimeLinkNames.count(Name))
       continue;
     if (libc::isKnownFunction(Name))
       continue;
