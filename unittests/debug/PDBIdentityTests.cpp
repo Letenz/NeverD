@@ -29,6 +29,7 @@
 #include <array>
 #include <cstring>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <vector>
@@ -294,6 +295,35 @@ TEST(CodeViewPayloadResolver, RequiresRVAAndRawToNameTheSameFileOffset) {
   ASSERT_TRUE(static_cast<bool>(ExactOffset))
       << llvm::toString(ExactOffset.takeError());
   EXPECT_EQ(ExactOffset->data(), File.data() + 0x30);
+}
+
+TEST(CodeViewPayloadResolver, AcceptsUnmappedFileOverlayWhenRVAIsZero) {
+  const coff_loader::detail::RawBackedSectionRange Section{
+      /*RVA=*/0x1000, /*VirtualSize=*/0x80, /*FileOffset=*/0x20,
+      /*RawSize=*/0x80};
+  std::vector<uint8_t> File(0xb0, 0x5a);
+  std::fill(File.begin() + 0xa0, File.end(), 0xc3);
+
+  auto Overlay = coff_loader::detail::resolveCodeViewPayload(
+      File, llvm::ArrayRef(Section), /*RVA=*/0,
+      /*RawFileOffset=*/0xa0, /*Size=*/0x10);
+  ASSERT_TRUE(static_cast<bool>(Overlay))
+      << llvm::toString(Overlay.takeError());
+  EXPECT_EQ(Overlay->data(), File.data() + 0xa0);
+  EXPECT_EQ(Overlay->size(), 0x10u);
+}
+
+TEST(CodeViewPayloadResolver, RejectsOverlayThatCrossesASection) {
+  const coff_loader::detail::RawBackedSectionRange Section{
+      /*RVA=*/0x1000, /*VirtualSize=*/0x80, /*FileOffset=*/0x20,
+      /*RawSize=*/0x80};
+  std::vector<uint8_t> File(0xb0, 0x5a);
+
+  auto Crosses = coff_loader::detail::resolveCodeViewPayload(
+      File, llvm::ArrayRef(Section), /*RVA=*/0,
+      /*RawFileOffset=*/0x90, /*Size=*/0x20);
+  EXPECT_FALSE(static_cast<bool>(Crosses));
+  llvm::consumeError(Crosses.takeError());
 }
 
 TEST(PDBSymbolRecordIndex, AcceptsOnlyExactRecordStarts) {
@@ -568,7 +598,8 @@ std::vector<uint8_t> writeJgPdb(llvm::ArrayRef<std::vector<uint8_t>> Streams,
 }
 
 std::vector<uint8_t> makeLegacyProcStream(llvm::StringRef Name, uint32_t Offset,
-                                          uint16_t Segment, uint32_t Size) {
+                                          uint16_t Segment, uint32_t Size,
+                                          uint32_t TypeIndex = 0) {
   std::vector<uint8_t> Payload;
   appendU32(Payload, 0);
   appendU32(Payload, 0);
@@ -576,7 +607,7 @@ std::vector<uint8_t> makeLegacyProcStream(llvm::StringRef Name, uint32_t Offset,
   appendU32(Payload, Size);
   appendU32(Payload, 0);
   appendU32(Payload, 0);
-  appendU32(Payload, 0);
+  appendU32(Payload, TypeIndex);
   appendU32(Payload, Offset);
   appendU16(Payload, Segment);
   Payload.push_back(0);
@@ -638,6 +669,118 @@ std::vector<uint8_t> makeLegacyInfo(uint32_t Signature, uint32_t Age) {
   appendU32(Info, Signature);
   appendU32(Info, Age);
   return Info;
+}
+
+std::vector<uint8_t> makeCvRecord(uint16_t Kind, llvm::ArrayRef<uint8_t> Payload) {
+  std::vector<uint8_t> Rec;
+  appendU16(Rec, static_cast<uint16_t>(Payload.size() + 2));
+  appendU16(Rec, Kind);
+  Rec.insert(Rec.end(), Payload.begin(), Payload.end());
+  return Rec;
+}
+
+std::vector<uint8_t> makeTpi800(const std::vector<std::vector<uint8_t>> &Records,
+                               uint32_t TypeMin = 0x1000) {
+  std::vector<uint8_t> Data;
+  for (const auto &Record : Records)
+    Data.insert(Data.end(), Record.begin(), Record.end());
+  std::vector<uint8_t> Tpi(56, 0);
+  const uint32_t Version = 19961031;
+  const uint32_t HeaderLen = 56;
+  const uint32_t TypeMax =
+      TypeMin + static_cast<uint32_t>(Records.size());
+  const uint32_t DataLen = static_cast<uint32_t>(Data.size());
+  std::memcpy(Tpi.data(), &Version, 4);
+  std::memcpy(Tpi.data() + 4, &HeaderLen, 4);
+  std::memcpy(Tpi.data() + 8, &TypeMin, 4);
+  std::memcpy(Tpi.data() + 12, &TypeMax, 4);
+  std::memcpy(Tpi.data() + 16, &DataLen, 4);
+  Tpi.insert(Tpi.end(), Data.begin(), Data.end());
+  return Tpi;
+}
+
+std::vector<uint8_t> makeArgList(std::initializer_list<uint32_t> Types) {
+  std::vector<uint8_t> Payload;
+  appendU32(Payload, static_cast<uint32_t>(Types.size()));
+  for (uint32_t Type : Types)
+    appendU32(Payload, Type);
+  return makeCvRecord(static_cast<uint16_t>(llvm::codeview::LF_ARGLIST),
+                      Payload);
+}
+
+std::vector<uint8_t> makeProcedure(uint32_t Return, uint8_t Call, uint16_t Argc,
+                                   uint32_t ArgList) {
+  std::vector<uint8_t> Payload;
+  appendU32(Payload, Return);
+  Payload.push_back(Call);
+  Payload.push_back(0);
+  appendU16(Payload, Argc);
+  appendU32(Payload, ArgList);
+  return makeCvRecord(static_cast<uint16_t>(llvm::codeview::LF_PROCEDURE),
+                      Payload);
+}
+
+std::vector<uint8_t> makeMemberFunction(uint32_t Return, uint32_t Class,
+                                        uint32_t This, uint8_t Call,
+                                        uint16_t Argc, uint32_t ArgList) {
+  std::vector<uint8_t> Payload;
+  appendU32(Payload, Return);
+  appendU32(Payload, Class);
+  appendU32(Payload, This);
+  Payload.push_back(Call);
+  Payload.push_back(0);
+  appendU16(Payload, Argc);
+  appendU32(Payload, ArgList);
+  appendU32(Payload, 0);
+  return makeCvRecord(static_cast<uint16_t>(llvm::codeview::LF_MFUNCTION),
+                      Payload);
+}
+
+std::vector<uint8_t> makeBpRel(int32_t Offset, uint32_t Type,
+                               llvm::StringRef Name) {
+  std::vector<uint8_t> Payload;
+  appendU32(Payload, static_cast<uint32_t>(Offset));
+  appendU32(Payload, Type);
+  Payload.push_back(static_cast<uint8_t>(Name.size()));
+  Payload.insert(Payload.end(), Name.begin(), Name.end());
+  return makeCvRecord(
+      static_cast<uint16_t>(llvm::codeview::SymbolKind::S_BPREL32_ST), Payload);
+}
+
+std::vector<uint8_t> makeEnd() {
+  return makeCvRecord(static_cast<uint16_t>(llvm::codeview::SymbolKind::S_END),
+                      {});
+}
+
+BinaryImage makeX86PeImage(uint32_t Signature, uint32_t Age, uint32_t Chars) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::COFF;
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  Image.Base = 0x400000;
+  Image.IsRelocatable = false;
+  Image.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  Image.DynInfo.CodeViewPDBIdentity = makeNB10Identity(Signature, Age);
+  Section Text;
+  Text.Name = ".text";
+  Text.VA = 0x401000;
+  Text.Size = 0x1000;
+  Text.FileOff = 0x400;
+  Text.FileSz = 0x200;
+  Text.Type = Chars;
+  Image.Sections.push_back(Text);
+  return Image;
+}
+
+std::filesystem::path writePdb(const std::vector<uint8_t> &Bytes,
+                               ScratchDir &Dir) {
+  const std::filesystem::path Path = Dir.path("legacy.pdb");
+  std::error_code EC;
+  llvm::raw_fd_ostream Out(Path.string(), EC, llvm::sys::fs::OF_None);
+  EXPECT_FALSE(EC) << EC.message();
+  Out.write(reinterpret_cast<const char *>(Bytes.data()),
+            static_cast<size_t>(Bytes.size()));
+  return Path;
 }
 
 TEST(PDBIdentityDiscovery, AutoSearchSkipsMismatchAndUsesLaterMatchingPDB) {
@@ -749,7 +892,7 @@ TEST(PDB20IdentityIntegration, MatchingNB10LoadsLengthPrefixedProcName) {
   ASSERT_TRUE(Fn.has_value());
   EXPECT_EQ(Fn->Name, "legacy_target");
   EXPECT_EQ(Fn->Addr, 0x401100u);
-  EXPECT_EQ(Fn->Size, 0u);
+  EXPECT_EQ(Fn->Size, 0x20u);
 }
 
 TEST(PDB20IdentityIntegration, SignatureOrAgeMismatchRejectsTheCompanion) {
@@ -796,6 +939,126 @@ TEST(PDB20IdentityIntegration, SignatureOrAgeMismatchRejectsTheCompanion) {
   const std::string Error = llvm::toString(ContextOr.takeError());
   EXPECT_NE(Error.find("signature/age does not match"), std::string::npos)
       << Error;
+}
+
+TEST(PDB20IdentityIntegration, StdcallParamsLocalsAndExtentReachDebugContext) {
+  constexpr uint32_t Signature = 0x11223344;
+  constexpr uint32_t Age = 1;
+  constexpr uint32_t Chars = 0x60000020;
+  constexpr uint32_t Int32 = 0x74;
+  const std::vector<uint8_t> ArgList = makeArgList({Int32, Int32});
+  const std::vector<uint8_t> ProcType = makeProcedure(
+      Int32, /*stdcall=*/0x07, 2, /*ArgList=*/0x1000);
+  const std::vector<uint8_t> Tpi = makeTpi800({ArgList, ProcType});
+
+  auto Module = makeLegacyProcStream("legacy_target", 0x100, 1, 0x20, 0x1001);
+  const auto Left = makeBpRel(8, Int32, "left");
+  const auto Right = makeBpRel(12, Int32, "right");
+  const auto Scratch = makeBpRel(-4, Int32, "scratch");
+  const auto End = makeEnd();
+  Module.insert(Module.end(), Left.begin(), Left.end());
+  Module.insert(Module.end(), Right.begin(), Right.end());
+  Module.insert(Module.end(), Scratch.begin(), Scratch.end());
+  Module.insert(Module.end(), End.begin(), End.end());
+
+  std::vector<std::vector<uint8_t>> Streams(6);
+  Streams[1] = makeLegacyInfo(Signature, Age);
+  Streams[2] = Tpi;
+  Streams[3] = makeLegacyDbi(Age, /*ModuleStream=*/5,
+                             static_cast<uint32_t>(Module.size()),
+                             /*SectionStream=*/4);
+  Streams[4] =
+      makeLegacySectionHdr(".text", 0x1000, 0x1000, 0x200, 0x400, Chars);
+  Streams[5] = Module;
+
+  ScratchDir Dir;
+  const std::filesystem::path PdbPath = writePdb(writeJgPdb(Streams), Dir);
+  BinaryImage Image = makeX86PeImage(Signature, Age, Chars);
+
+  auto ContextOr = PDBDebugContext::load(PdbPath, Image);
+  ASSERT_TRUE(static_cast<bool>(ContextOr))
+      << llvm::toString(ContextOr.takeError());
+  EXPECT_TRUE((*ContextOr)->hasAuthenticatedImageIdentity());
+  EXPECT_TRUE((*ContextOr)->hasAuthenticatedFunctionSignatures());
+  EXPECT_TRUE((*ContextOr)->hasAuthenticatedObjectExtents());
+  EXPECT_TRUE((*ContextOr)->hasExactObjectMetadataPrerequisites());
+
+  auto Fn = (*ContextOr)->resolveFunction(0x401100);
+  ASSERT_TRUE(Fn.has_value());
+  EXPECT_EQ(Fn->Name, "legacy_target");
+  EXPECT_EQ(Fn->Size, 0x20u);
+  EXPECT_EQ(Fn->CallConv, DebugCallConv::Stdcall);
+  ASSERT_EQ(Fn->Params.size(), 2u);
+  EXPECT_EQ(Fn->Params[0].first, "left");
+  EXPECT_EQ(Fn->Params[1].first, "right");
+  ASSERT_TRUE(Fn->ReturnType);
+  EXPECT_EQ(Fn->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Fn->ReturnType->Size, 4);
+
+  auto Local = (*ContextOr)->resolveVariable(0x401100, -4);
+  ASSERT_TRUE(Local.has_value());
+  EXPECT_EQ(Local->Name, "scratch");
+  EXPECT_FALSE(Local->IsParam);
+  auto Param = (*ContextOr)->resolveVariable(0x401100, 8);
+  ASSERT_TRUE(Param.has_value());
+  EXPECT_EQ(Param->Name, "left");
+  EXPECT_TRUE(Param->IsParam);
+}
+
+TEST(PDB20IdentityIntegration, ThiscallPublishesThisAndCdecl) {
+  constexpr uint32_t Signature = 0xaabbccdd;
+  constexpr uint32_t Age = 1;
+  constexpr uint32_t Chars = 0x60000020;
+  constexpr uint32_t Int32 = 0x74;
+  constexpr uint32_t IntPtr = 0x0474;
+  const std::vector<uint8_t> ArgList = makeArgList({Int32});
+  const std::vector<uint8_t> Method = makeMemberFunction(
+      Int32, /*Class=*/Int32, IntPtr, /*thiscall=*/0x0b, 1, 0x1000);
+  const std::vector<uint8_t> CdeclProc =
+      makeProcedure(Int32, /*cdecl=*/0x00, 1, 0x1000);
+  const std::vector<uint8_t> Tpi = makeTpi800({ArgList, Method, CdeclProc});
+
+  auto MethodMod =
+      makeLegacyProcStream("method_target", 0x100, 1, 0x30, 0x1001);
+  const auto ThisArg = makeBpRel(8, Int32, "count");
+  MethodMod.insert(MethodMod.end(), ThisArg.begin(), ThisArg.end());
+  const auto End = makeEnd();
+  MethodMod.insert(MethodMod.end(), End.begin(), End.end());
+
+  // Sequential S_GPROC32_ST records in one module stream.
+  auto Module = MethodMod;
+  const auto CdeclBytes =
+      makeLegacyProcStream("cdecl_target", 0x200, 1, 0x10, 0x1002);
+  // Strip the module-stream version dword from the second helper.
+  Module.insert(Module.end(), CdeclBytes.begin() + 4, CdeclBytes.end());
+  Module.insert(Module.end(), End.begin(), End.end());
+
+  std::vector<std::vector<uint8_t>> Streams(6);
+  Streams[1] = makeLegacyInfo(Signature, Age);
+  Streams[2] = Tpi;
+  Streams[3] = makeLegacyDbi(Age, 5, static_cast<uint32_t>(Module.size()), 4);
+  Streams[4] =
+      makeLegacySectionHdr(".text", 0x1000, 0x1000, 0x200, 0x400, Chars);
+  Streams[5] = Module;
+
+  ScratchDir Dir;
+  const std::filesystem::path PdbPath = writePdb(writeJgPdb(Streams), Dir);
+  BinaryImage Image = makeX86PeImage(Signature, Age, Chars);
+
+  auto ContextOr = PDBDebugContext::load(PdbPath, Image);
+  ASSERT_TRUE(static_cast<bool>(ContextOr))
+      << llvm::toString(ContextOr.takeError());
+  auto MethodFn = (*ContextOr)->resolveFunction(0x401100);
+  ASSERT_TRUE(MethodFn.has_value());
+  EXPECT_EQ(MethodFn->Name, "method_target");
+  EXPECT_EQ(MethodFn->CallConv, DebugCallConv::Thiscall);
+  ASSERT_GE(MethodFn->Params.size(), 1u);
+  EXPECT_EQ(MethodFn->Params[0].first, "this");
+
+  auto CdeclFn = (*ContextOr)->resolveFunction(0x401200);
+  ASSERT_TRUE(CdeclFn.has_value());
+  EXPECT_EQ(CdeclFn->Name, "cdecl_target");
+  EXPECT_EQ(CdeclFn->CallConv, DebugCallConv::Cdecl);
 }
 
 } // namespace

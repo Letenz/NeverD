@@ -1060,6 +1060,18 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
     while (true) {
       if (ExploredAddrs.count(Cur))
         break;
+      // Fallthrough or a queued edge into another function's entry belongs to
+      // that function.  Following it here fuses callees into a multi-hundred-
+      // thousand-op CFG and leaves the real PDB symbol as an empty HighC stub.
+      if (Cur != CurrentFuncEntry && KnownFuncEntries &&
+          KnownFuncEntries->count(Cur) != 0)
+        break;
+      if (KnownFuncEntries) {
+        const auto NextEntry =
+            KnownFuncEntries->upper_bound(CurrentFuncEntry);
+        if (NextEntry != KnownFuncEntries->end() && Cur >= *NextEntry)
+          break;
+      }
       // An actual graph extension invalidates every generation-local replay
       // and positive ambiguity shadow.  Pending exact query identities remain
       // fail-closed carry, but only a fresh query on this immutable graph may

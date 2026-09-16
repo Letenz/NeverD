@@ -160,6 +160,7 @@ llvm::Expected<uint64_t> resolveUniqueRawFileRange(
     return codeViewRangeError("raw range is outside the file");
 
   const detail::RawBackedSectionRange *Owner = nullptr;
+  bool CrossesOwner = false;
   for (const detail::RawBackedSectionRange &Section : Sections) {
     if (Section.RawSize == 0)
       continue;
@@ -167,17 +168,24 @@ llvm::Expected<uint64_t> resolveUniqueRawFileRange(
     const uint64_t SectionEnd = SectionBegin + Section.RawSize;
     if (RequestedBegin >= SectionEnd || SectionBegin >= RequestedEnd)
       continue;
+    if (RequestedBegin < SectionBegin || RequestedEnd > SectionEnd) {
+      CrossesOwner = true;
+      continue;
+    }
     if (Owner)
       return codeViewRangeError("raw range has overlapping section owners");
     Owner = &Section;
   }
+  if (CrossesOwner)
+    return codeViewRangeError("raw range crosses its section boundary");
   if (!Owner)
-    return codeViewRangeError("raw range has no section owner");
+    // VC6 / PDB 2.00 often stores the CodeView NB10 blob in the PE overlay
+    // immediately after the last section, with AddressOfRawData left zero.
+    // A range that shares no bytes with any section and fits in the file is
+    // that overlay, not a missing owner.
+    return RequestedBegin;
 
   const uint64_t OwnerBegin = Owner->FileOffset;
-  const uint64_t OwnerEnd = OwnerBegin + Owner->RawSize;
-  if (RequestedBegin < OwnerBegin || RequestedEnd > OwnerEnd)
-    return codeViewRangeError("raw range crosses its section boundary");
   const uint64_t Delta = RequestedBegin - OwnerBegin;
   if (Delta + Size > Owner->VirtualSize)
     return codeViewRangeError("raw range crosses the section virtual tail");

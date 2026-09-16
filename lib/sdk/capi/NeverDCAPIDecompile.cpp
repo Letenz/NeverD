@@ -229,6 +229,7 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   CEmitterOptions Opts;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.Format;
+  Opts.Image = &S->Img;
   HighCEmitter Emitter;
   Emitter.emit(Single, OS, Opts);
 
@@ -666,6 +667,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.Format;
+    COpts.Image = &R.Img;
     HighCEmitter Emitter;
     Emitter.emit(R.Result.HighFuncs, OS, COpts, R.Dbg.get());
   }

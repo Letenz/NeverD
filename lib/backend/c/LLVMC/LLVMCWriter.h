@@ -75,6 +75,9 @@ public:
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
+  void writeExceptionAnnotation(const llvm::Function &Fn);
+  bool functionHasWindowsEHPads(const llvm::Function &Fn) const;
+  bool functionIsCxxEH(const llvm::Function &Fn) const;
 
   bool isSimpleEntry(const llvm::BasicBlock *BB, const llvm::Function &Fn) {
     return BB == &Fn.getEntryBlock() && !ReferencedBlocks.count(BB);
@@ -83,13 +86,21 @@ public:
   //--- Instruction rendering (LLVMCStmtWriter.cpp) ---
   void writeInstruction(llvm::Instruction &Inst, int Indent);
   void writeCall(llvm::CallInst &Call, const std::string &Name, int Indent);
-  bool writeIntrinsicCall(llvm::CallInst &Call, int Indent);
+  void writeCallLike(llvm::CallBase &Call, const std::string &Name, int Indent);
+  bool writeIntrinsicCall(llvm::CallBase &Call, int Indent);
   bool writeInlineAsmCall(llvm::CallInst &Call, const std::string &Name,
                           int Indent);
   void writeGEP(llvm::GetElementPtrInst &GEP, const std::string &Name,
                 int Indent);
   void writeReturn(llvm::ReturnInst &Ret, int Indent);
+  void writeInvoke(llvm::InvokeInst &Invoke, const std::string &Name,
+                   int Indent);
+  void writeCatchSwitch(llvm::CatchSwitchInst &CS, int Indent);
+  void writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent);
+  std::string windowsEHFilterExpr(const llvm::CatchSwitchInst &CS);
+  std::string windowsCxxCatchType(const llvm::CatchPadInst &Pad);
   void emitIndent(int N);
+  const llvm::AllocaInst *asAllocaPointer(const llvm::Value *V) const;
 
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
   std::string resolveNdDataName(llvm::StringRef Name) const;
@@ -112,6 +123,9 @@ public:
   DebugContext *Dbg;
   const BinaryImage *Img;
   bool GuardAnalysisOnlyFunctions;
+  /// When false, emit recovered statements without a C wrapper so analysis-only
+  /// functions can nest the listing inside `#if 0` of the trap stub.
+  bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
 
@@ -125,6 +139,8 @@ public:
   LLVMCAnalysisState Analysis;
   std::map<const llvm::Value *, std::string> InlineCache;
   bool InferredVoid = false;
+  int EHTryDepth = 0;
+  bool EHWrapIsCxx = false;
 };
 
 } // namespace neverd

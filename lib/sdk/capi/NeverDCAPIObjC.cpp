@@ -109,6 +109,7 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     CEmitterOptions COptions;
     COptions.TheArch = S->Img.Arch;
     COptions.Format = S->Img.Format;
+    COptions.Image = &S->Img;
     COptions.EmitComments = false;
     // Each method source is one complete translation unit. The mobile source
     // assembler parses those units and validates shared definitions before it

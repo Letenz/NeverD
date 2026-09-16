@@ -26,6 +26,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -53,6 +54,13 @@ public:
   std::string functionIdentifier(const HighFunc &Func) const;
   std::string functionIdentifier(llvm::StringRef SourceName) const;
   void collectMemoryTypes(const std::vector<HighFunc> &Funcs);
+  void collectImageObjects(const std::vector<HighFunc> &Funcs);
+  void writeImageObjects();
+  std::optional<va_t> constAddress(const HighExpr &E) const;
+  std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
+  std::optional<std::string> imageObjectName(va_t Addr) const;
+  bool isImageDataAddress(va_t Addr) const;
+  void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written);
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -94,10 +102,15 @@ public:
   void writeExceptionAnnotation(const HighFunc &Func);
   void emitLocalDecls(const HighFunc &Func,
                       const std::set<std::string> &ParamNames);
+  void collectNamedFrameSlots(const HighFunc &Func);
+  size_t emittedParamCount(const HighFunc &Func) const;
+  std::vector<size_t> emittedParamIndices(const HighFunc &Func) const;
 
   //--- Statement rendering (HighCStmtWriter.cpp) ---
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent);
+  void writeTryBody(const std::vector<HighStmt> &Stmts, int Indent);
+  bool isCompilerEHConstant(const HighExpr &Val) const;
   void emitIndent(int Indent);
   void collectGotoTargets(const std::vector<HighStmt> &Stmts);
 
@@ -108,12 +121,24 @@ public:
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,
                                        llvm::StringRef Name) const;
-  std::string varName(const MedVar &V);
+  std::string varName(const MedVar &V) const;
   TypeRef declaredParamType(const MedVar &V) const;
+  bool pointerNeedsIntegerView(const TypeRef &Ty) const;
+  const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
+  std::optional<std::string> namedFrameSlot(const HighExpr &E) const;
+  bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val);
   std::string formatReturnExpr(const HighExpr &Expr);
   std::string collapseHiLo(const HighExpr &Expr);
   std::string unwrapCastVar(const HighExpr &E);
+  std::string invertCondStr(const HighExpr &E);
+  std::string copyForwardName(const std::string &Name) const;
+  bool isCopyForwardDestination(const MedVar &V) const;
+  bool isParamCopy(const HighExpr &E) const;
+  std::optional<std::string> copyForwardSource(const HighExpr &E);
+  bool stmtsEffectivelyEmpty(const std::vector<HighStmt> &Stmts) const;
+  void collectCopyForward(const HighFunc &Func);
 
   //--- Binary expression rendering (HighCExprBinOp.cpp) ---
   std::string renderBinOp(const HighExpr &E, int ParentPrec);
@@ -123,6 +148,9 @@ public:
   CEmitterOptions Opts;
   DebugContext *Dbg;
   bool GuardAnalysisOnlyFunctions;
+  /// When false, emit recovered locals and statements without a C wrapper.
+  /// Analysis-only functions nest that listing inside `#if 0` of the trap stub.
+  bool EmitFunctionWrapper = true;
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
@@ -170,6 +198,22 @@ public:
   bool InferredVoid = false;
   TypeRef FuncReturnType;
   const HighFunc *CurrentFunc = nullptr;
+
+  struct NamedFrameSlot {
+    std::string Name;
+    TypeRef Type;
+  };
+  std::map<int64_t, NamedFrameSlot> FrameSlots;
+  std::map<std::string, int64_t> FrameAliases;
+  std::map<std::string, std::string> CopyForward;
+  std::map<int, std::string> ParamDisplayNames;
+  bool InEHClauseBody = false;
+
+  struct ImageObject {
+    std::string Name;
+    TypeRef Type;
+  };
+  std::map<va_t, ImageObject> ImageObjects;
 
   std::vector<HiLoPair> HiLoPairs;
 };

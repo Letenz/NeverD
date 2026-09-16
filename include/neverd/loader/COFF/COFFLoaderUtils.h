@@ -50,6 +50,8 @@ resolveUniqueRawBackedFileOffset(llvm::ArrayRef<RawBackedSectionRange> Sections,
 /// Resolve one CodeView payload.  If the debug entry supplies both an RVA and
 /// PointerToRawData, they must resolve to the exact same file offset; equal
 /// bytes at two different offsets are not the same artifact occurrence.
+/// AddressOfRawData may be zero: PointerToRawData may then name a file-overlay
+/// blob that is not mapped by any section, which VC6 NB10 records use.
 llvm::Expected<llvm::ArrayRef<uint8_t>>
 resolveCodeViewPayload(llvm::ArrayRef<uint8_t> FileData,
                        llvm::ArrayRef<RawBackedSectionRange> Sections,

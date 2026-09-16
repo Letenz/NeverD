@@ -5,6 +5,9 @@ add_neverd_component_library(NeverDIRHigh
   HighSourceInputs.cpp
   lower/CFStructurer.cpp
   lower/CallArgCollection.cpp
+  lower/CallArgCollectionX86.cpp
+  lower/CallArgCollectionARM.cpp
+  lower/CallArgCollectionAArch64.cpp
   lower/MedOpToExpr.cpp
   lower/MedToHigh.cpp
   lower/NdOpCallIndLowering.cpp

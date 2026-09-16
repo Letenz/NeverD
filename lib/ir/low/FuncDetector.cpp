@@ -14,13 +14,15 @@
 
 #include "neverd/ir/low/FuncDetector.h"
 
+#include "FuncDetectorDetail.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/libc/LibCNames.h"
-#include "neverd/lift/AArch64Lifter.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/Debug.h"
@@ -111,6 +113,7 @@ bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
 std::vector<std::pair<va_t, std::string>>
 FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   Entries.clear();
+  UnsymbolizedX86Entries.clear();
   std::vector<std::pair<va_t, std::string>> Results;
   std::set<va_t> VerifiedCandidates;
 
@@ -154,6 +157,23 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     }
   }
 
+  std::set<va_t> ExceptionEntries;
+  std::set<va_t> ExceptionThunks;
+  for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions) {
+    if (EH.Kind == RuntimeFunctionKind::Primary && EH.CodeRange.isValid() &&
+        EH.CodeRange.Begin != 0 &&
+        Img.hasExecutableCodeOwnerAt(EH.CodeRange.Begin))
+      ExceptionEntries.insert(EH.CodeRange.Begin);
+    if (!EH.Registration)
+      continue;
+    for (const RegistrationScopeRecord &Scope : EH.Registration->Scopes) {
+      if (Scope.FilterVA && Scope.FilterVA != EH.CodeRange.Begin)
+        ExceptionThunks.insert(Scope.FilterVA);
+      if (Scope.HandlerVA && Scope.HandlerVA != EH.CodeRange.Begin)
+        ExceptionThunks.insert(Scope.HandlerVA);
+    }
+  }
+
   for (const auto &Sym : Img.Symbols) {
     if (!Sym.IsFunc)
       continue;
@@ -165,10 +185,19 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       continue;
     if (SkipAddrs.count(Sym.Addr))
       continue;
+    if (ExceptionThunks.count(Sym.Addr) && !ExceptionEntries.count(Sym.Addr))
+      continue;
     if (Img.hasExecutableCodeOwnerAt(Sym.Addr)) {
       Entries.insert(Sym.Addr);
       Results.push_back({Sym.Addr, Sym.Name});
     }
+  }
+
+  for (va_t Addr : ExceptionEntries) {
+    if (Entries.count(Addr) || SkipAddrs.count(Addr))
+      continue;
+    Entries.insert(Addr);
+    Results.push_back({Addr, Img.getFunctionNameAt(Addr)});
   }
 
   // A linked Mach-O nlist symbol has no size field, but adjacent function
@@ -208,6 +237,10 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   // decide whether it is a complete function entry.  In particular, a
   // relocation-backed jump-table target inside a known function remains
   // rejected as an interior block rather than being promoted to a function.
+  const bool IsX86LinkedCOFF = Img.Arch == Arch::X86 &&
+                               Img.Format == BinaryFormat::COFF &&
+                               !Img.IsRelocatable;
+  std::set<va_t> RelocationCodeTargets;
   const uint32_t PointerSize = Img.getPointerSize();
   if (PointerSize != 0)
     for (va_t Slot : Img.CodePtrRelocSlots) {
@@ -216,25 +249,39 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
         continue;
       const va_t Target = normalizeCodeAddress(readPtr(Bytes, Img.is64Bit()),
                                                Img.Arch, Img.Mode);
-      if (Img.hasExecutableCodeOwnerAt(Target) && !IsMachOLocalLabel(Target))
+      if (Img.hasExecutableCodeOwnerAt(Target) && !IsMachOLocalLabel(Target)) {
         Entries.insert(Target);
+        RelocationCodeTargets.insert(Target);
+      }
     }
 
   std::set<va_t> DirectCallTargets;
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
+    if (IsX86LinkedCOFF)
+      scanX86UnsymbolizedEntries(Img, Dec, Entries);
   }
+
+  for (va_t Thunk : ExceptionThunks)
+    if (!ExceptionEntries.count(Thunk))
+      Entries.erase(Thunk);
 
   auto IsCoveredMachODirectCallTarget = [&](va_t Addr) {
     return Img.Format == BinaryFormat::MachO &&
            DirectCallTargets.count(Addr) != 0;
+  };
+  auto IsX86LinkedCallOrRelocTarget = [&](va_t Addr) {
+    return IsX86LinkedCOFF && (DirectCallTargets.count(Addr) != 0 ||
+                               RelocationCodeTargets.count(Addr) != 0);
   };
 
   std::set<va_t> Already;
   for (auto &[A, _] : Results)
     Already.insert(A);
   for (va_t Addr : Entries) {
+    if (ExceptionThunks.count(Addr) && !ExceptionEntries.count(Addr))
+      continue;
     if (Already.insert(Addr).second)
       Results.push_back(
           {Addr, (kAutoFuncPrefix + llvm::utohexstr(Addr)).str()});
@@ -264,6 +311,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
 
   if (Img.Entry != 0) {
     std::set<va_t> Trusted{Img.Entry};
+    Trusted.insert(ExceptionEntries.begin(), ExceptionEntries.end());
     // PE exports are untyped: executable-section data can legally appear in
     // the export directory alongside functions.  A COFF export is therefore
     // trusted only when unwind/function-symbol metadata below also identifies
@@ -298,6 +346,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     // inside a known code range but not at its start is dropped.  Mach-O
     // direct-call targets are instead verified: compact-unwind ranges can
     // cover unsymbolized leaf callees on every supported architecture.
+    // Linked x86 PE call and reloc targets are verified the same way: a VC6
+    // .text KnownCodeRange (or a coarse unwind span) is not one function.
     // Untyped COFF exports are always verified because they can be either
     // callable aliases or data.  Only the remaining candidates need the
     // The trial decode dominates only when the scan produced many untrusted
@@ -310,7 +360,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     std::vector<size_t> NeedVerify;
     for (size_t I = 0; I < N; ++I) {
       va_t Addr = Results[I].first;
-      if (Trusted.count(Addr))
+      if (Trusted.count(Addr) || UnsymbolizedX86Entries.count(Addr) ||
+          IsX86LinkedCallOrRelocTarget(Addr))
         Keep[I] = 1;
       else if (UntypedCOFFExports.count(Addr) ||
                IsCoveredMachODirectCallTarget(Addr) ||
@@ -327,10 +378,13 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     // and stays single-threaded, avoiding pointless thread-spawn overhead.
     auto verifyIdx = [&](Decoder &LocalDec, size_t I) {
       const va_t Addr = Results[I].first;
-      Keep[I] = verifyFunctionDecode(Img, LocalDec, Addr,
-                                     UntypedCOFFExports.count(Addr) != 0)
-                    ? 1
-                    : 0;
+      Keep[I] =
+          verifyFunctionDecode(Img, LocalDec, Addr,
+                               UntypedCOFFExports.count(Addr) != 0 ||
+                                   UnsymbolizedX86Entries.count(Addr) != 0 ||
+                                   IsX86LinkedCallOrRelocTarget(Addr))
+              ? 1
+              : 0;
     };
     if (NeedVerify.size() < limits::kMinParallelVerify) {
       // Most targets classify the initial linear probe from the instruction id
@@ -393,11 +447,13 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       };
       // A sized function symbol ordinarily claims its whole [Addr, Addr+Size)
       // extent.  An explicit function symbol at an interior address is stronger
-      // evidence, however, as is a Mach-O direct-call target that survived the
+      // evidence, as is a Mach-O direct-call target that survived the
       // verification pass above: compact-unwind coverage ranges may span leaf
-      // functions that have no unwind row of their own.  Preserve those starts
-      // while still dropping scan/export-only candidates such as an ARM
-      // embedded constant pool ($d) decoded as a bogus `sub_XXXX`.
+      // functions that have no unwind row of their own.  x86 linked
+      // CALL/HIGHLOW targets inside that extent are still interior blocks —
+      // typically the immediate of `push imm32` / a 5-byte jmp landing — and
+      // must not split the owning function into an empty named stub plus
+      // `sub_XXXX`.
       std::vector<std::pair<va_t, std::string>> Filtered;
       Filtered.reserve(Results.size());
       for (auto &R : Results) {
@@ -595,73 +651,6 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
 // Call-target scanning
 //===----------------------------------------------------------------------===//
 
-// AArch64 is fixed 4-byte width and 4-byte aligned, so direct-call (BL)
-// discovery does not need a full capstone decode of every position: read each
-// aligned 32-bit word and classify it with a single mask+shift.  This visits
-// exactly the aligned instruction addresses the capstone-based sweep would
-// (real code is 4-aligned), at a fraction of the cost, and shares the BL
-// encoding knowledge with the lifter's directCallTarget.
-static void scanSegmentCallsAArch64(const BinaryImage &Img, const Segment *Seg,
-                                    va_t Start, va_t End, std::set<va_t> &Out) {
-  va_t Cur = (Start + 3) & ~static_cast<va_t>(3);
-  const uint8_t *Data = Seg->Data.data();
-  const size_t DataSize = Seg->Data.size();
-  while (Cur <= End && End - Cur >= 4) {
-    size_t Off = static_cast<size_t>(Cur - Seg->VA);
-    if (Off + 4 > DataSize)
-      break;
-    if (!Img.hasExecutableCodeOwnerRange(Cur, 4)) {
-      Cur += 4;
-      continue;
-    }
-    const uint8_t *P = Data + Off;
-    uint32_t Word = static_cast<uint32_t>(P[0]) |
-                    (static_cast<uint32_t>(P[1]) << 8) |
-                    (static_cast<uint32_t>(P[2]) << 16) |
-                    (static_cast<uint32_t>(P[3]) << 24);
-    va_t Tgt = AArch64Lifter::decodeBranchLinkTarget(Word, Cur);
-    if (Tgt != InvalidVA) {
-      if (Img.hasExecutableCodeOwnerAt(Tgt))
-        Out.insert(Tgt);
-    }
-    Cur += 4;
-  }
-}
-
-static void scanSegmentCalls(const BinaryImage &Img, Decoder &Dec,
-                             const Segment *Seg, va_t Start, va_t End,
-                             std::set<va_t> &Out) {
-  if (Img.Arch == Arch::AArch64) {
-    scanSegmentCallsAArch64(Img, Seg, Start, End, Out);
-    return;
-  }
-
-  va_t Cur = Start;
-  while (Cur < End) {
-    size_t Off = static_cast<size_t>(Cur - Seg->VA);
-    if (Off >= Seg->Data.size())
-      break;
-    DecodedInsn DI;
-    const size_t Remain =
-        static_cast<size_t>(std::min<va_t>(Seg->Data.size() - Off, End - Cur));
-    int Sz = Dec.decodeOne(Seg->Data.data() + Off, Remain, Cur, DI);
-    if (Sz == 0) {
-      Cur++;
-      continue;
-    }
-    if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
-      Cur += Sz;
-      continue;
-    }
-    va_t Tgt = Dec.directCallTarget(DI);
-    if (Tgt != InvalidVA) {
-      if (Img.hasExecutableCodeOwnerAt(Tgt))
-        Out.insert(Tgt);
-    }
-    Cur += Sz;
-  }
-}
-
 void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
                                    std::set<va_t> &Out) {
   struct ScanChunk {
@@ -724,7 +713,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
 
   if (Chunks.size() <= 1) {
     for (auto &[Seg, Start, End] : Chunks)
-      scanSegmentCalls(Img, Dec, Seg, Start, End, Out);
+      func_detect_detail::scanSegmentCalls(Img, Dec, Seg, Start, End, Out);
     return;
   }
 
@@ -742,7 +731,8 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
       if (CI >= Chunks.size())
         break;
       auto &[Seg, Start, End] = Chunks[CI];
-      scanSegmentCalls(Img, LocalDec, Seg, Start, End, LocalEntries);
+      func_detect_detail::scanSegmentCalls(Img, LocalDec, Seg, Start, End,
+                                           LocalEntries);
     }
 
     std::lock_guard<std::mutex> Lk(Mtx);

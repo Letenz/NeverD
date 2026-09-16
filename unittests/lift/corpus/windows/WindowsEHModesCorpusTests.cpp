@@ -148,15 +148,7 @@ std::vector<StringRef> guardedAnalysisBlocks(StringRef Output) {
     if (Begin == StringRef::npos)
       break;
     const size_t Next = Output.find(Marker, Begin + Marker.size());
-    const size_t Trap = Output.find("__builtin_trap();", Begin);
-    if (Trap == StringRef::npos || (Next != StringRef::npos && Trap >= Next)) {
-      Cursor = Next == StringRef::npos ? Output.size() : Next;
-      continue;
-    }
-    const size_t ClosingBrace = Output.find("\n}\n", Trap);
-    const size_t End = ClosingBrace == StringRef::npos
-                           ? Output.size()
-                           : ClosingBrace + StringRef("\n}\n").size();
+    const size_t End = Next == StringRef::npos ? Output.size() : Next;
     Blocks.push_back(Output.slice(Begin, End));
     Cursor = End;
   }
@@ -222,7 +214,7 @@ TEST(WindowsEHModesCorpus,
         return Block.contains("neverd.exception") &&
                Block.contains("highir.structured_regions=") &&
                Block.contains("fallback_regions=") &&
-               Block.contains("__builtin_trap();") &&
+               (Block.contains("__try") || Block.contains("try {")) &&
                containsEveryToken(Block, RequiredTokens);
       });
       std::string TokenList;

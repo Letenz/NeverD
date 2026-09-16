@@ -120,11 +120,25 @@ inline void expectLeafCallResultStored(llvm::StringRef Body) {
     Rest = Remaining;
     Line = Line.trim();
     llvm::StringRef RHS;
-    if (Line.starts_with("*(")) {
+    if (Line.contains("*(") && Line.contains("=")) {
+      size_t StoreEquals = Line.rfind('=');
+      size_t Semicolon = Line.rfind(';');
+      if (StoreEquals == llvm::StringRef::npos ||
+          Semicolon == llvm::StringRef::npos || StoreEquals >= Semicolon)
+        continue;
+      RHS = Line.slice(StoreEquals + 1, Semicolon).trim();
+      if (RHS.ends_with(")"))
+        RHS = RHS.drop_back().trim();
+    } else if (Line.contains("=") && !Line.starts_with("if") &&
+               !Line.starts_with("return") && !Line.starts_with("while") &&
+               !Line.starts_with("for")) {
       size_t StoreEquals = Line.find('=');
       size_t Semicolon = Line.rfind(';');
       if (StoreEquals == llvm::StringRef::npos ||
           Semicolon == llvm::StringRef::npos || StoreEquals >= Semicolon)
+        continue;
+      llvm::StringRef Dest = Line.slice(0, StoreEquals).trim();
+      if (!Dest.starts_with("var_"))
         continue;
       RHS = Line.slice(StoreEquals + 1, Semicolon).trim();
     } else if (Line.starts_with("neverd_mem_store_")) {

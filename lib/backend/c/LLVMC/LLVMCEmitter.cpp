@@ -17,6 +17,8 @@
 
 #include "LLVMCWriter.h"
 
+#include "neverd/Common.h"
+
 #define DEBUG_TYPE "neverd-llvmc-emitter"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
@@ -132,47 +134,37 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
     if (RawName.empty())
       continue;
 
-    if (!GV.hasInitializer()) {
-      llvm::StringRef SRef(RawName);
-      llvm::StringRef Hex;
-      if (SRef.starts_with(kNdDataPrefix))
-        Hex = SRef.drop_front(kNdDataPrefix.size());
-      else if (SRef.starts_with("_") &&
-               SRef.drop_front(1).starts_with(kNdDataPrefix))
-        Hex = SRef.drop_front(1 + kNdDataPrefix.size());
-      if (!Hex.empty()) {
-        uint64_t Addr;
-        if (!Hex.getAsInteger(16, Addr)) {
-          std::string Resolved = resolveNdDataName(RawName);
-          auto *VTy = GV.getValueType();
-          const char *CTy = "uint8_t";
-          if (VTy->isIntegerTy(16))
-            CTy = "uint16_t";
-          else if (VTy->isIntegerTy(32))
-            CTy = "uint32_t";
-          else if (VTy->isIntegerTy(64))
-            CTy = "uint64_t";
-          OS << "extern " << CTy << " " << Resolved << "; /* 0x"
-             << llvm::utohexstr(Addr) << " */\n";
-        }
+    std::string Name = resolveNdDataName(RawName);
+    if (Name.empty()) {
+      std::string Identifier = RawName;
+      if (Identifier[0] == '_')
+        Identifier.erase(0, 1);
+      for (char Ch : Identifier) {
+        if (std::isalnum(static_cast<unsigned char>(Ch)) || Ch == '_')
+          Name += Ch;
+        else
+          Name += '_';
       }
+      if (Name.empty())
+        Name = "g_";
+      else if (std::isdigit(static_cast<unsigned char>(Name[0])))
+        Name = "g_" + Name;
+    } else if (!GV.hasInitializer()) {
+      auto *VTy = GV.getValueType();
+      const char *CTy = "uint8_t";
+      if (VTy->isIntegerTy(16))
+        CTy = "uint16_t";
+      else if (VTy->isIntegerTy(32))
+        CTy = "uint32_t";
+      else if (VTy->isIntegerTy(64))
+        CTy = "uint64_t";
+      OS << "extern " << CTy << " " << Name << "; /* 0x"
+         << llvm::utohexstr(*parseNdDataSymbol(RawName)) << " */\n";
       continue;
     }
 
-    std::string Identifier = RawName;
-    if (Identifier[0] == '_')
-      Identifier.erase(0, 1);
-    std::string Name;
-    for (char Ch : Identifier) {
-      if (std::isalnum(static_cast<unsigned char>(Ch)) || Ch == '_')
-        Name += Ch;
-      else
-        Name += '_';
-    }
-    if (Name.empty())
-      Name = "g_";
-    else if (std::isdigit(static_cast<unsigned char>(Name[0])))
-      Name = "g_" + Name;
+    if (!GV.hasInitializer())
+      continue;
 
     auto *Init = GV.getInitializer();
 

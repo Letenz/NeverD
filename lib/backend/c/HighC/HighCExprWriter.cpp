@@ -15,13 +15,17 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <cstdint>
+
 namespace neverd {
 
-std::string HighCWriter::varName(const MedVar &V) {
+std::string HighCWriter::varName(const MedVar &V) const {
   if (CurrentFunc &&
       isSyntheticEntryStackPointer(V, *CurrentFunc, Opts.TheArch))
     return "frame_base";
@@ -29,12 +33,30 @@ std::string HighCWriter::varName(const MedVar &V) {
     return "v" + std::to_string(V.RenameTag);
   switch (V.Kind) {
   case MedVar::Stack:
+    if (Dbg && CurrentFunc) {
+      const int64_t Candidates[] = {V.StackOff, V.StackOff + 4, V.StackOff - 4};
+      for (int64_t Off : Candidates) {
+        if (auto Var = Dbg->resolveVariable(CurrentFunc->Entry, Off);
+            Var && !Var->Name.empty())
+          return Var->Name;
+      }
+    }
     return "var_" + llvm::utohexstr(static_cast<uint64_t>(
                         V.StackOff < 0 ? -V.StackOff : V.StackOff));
   case MedVar::Param:
-    if (CurrentFunc && CurrentFunc->SourceTypeHint && V.Id >= 0 &&
-        static_cast<size_t>(V.Id) < CurrentFunc->Params.size())
-      return CurrentFunc->Params[V.Id].Name;
+    if (Dbg && CurrentFunc) {
+      if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
+          FS && V.Id >= 0 &&
+          static_cast<size_t>(V.Id) < FS->Params.size() &&
+          !FS->Params[static_cast<size_t>(V.Id)].first.empty())
+        return FS->Params[static_cast<size_t>(V.Id)].first;
+    }
+    if (auto It = ParamDisplayNames.find(V.Id); It != ParamDisplayNames.end())
+      return It->second;
+    if (CurrentFunc && V.Id >= 0 &&
+        static_cast<size_t>(V.Id) < CurrentFunc->Params.size() &&
+        !CurrentFunc->Params[static_cast<size_t>(V.Id)].Name.empty())
+      return CurrentFunc->Params[static_cast<size_t>(V.Id)].Name;
     return "arg" + std::to_string(V.Id);
   case MedVar::RetVal:
     return "retval";
@@ -221,6 +243,126 @@ TypeRef HighCWriter::declaredParamType(const MedVar &V) const {
   return CurrentFunc->Params[V.Id].Type;
 }
 
+bool HighCWriter::pointerNeedsIntegerView(const TypeRef &Ty) const {
+  if (!Ty || Ty->Kind != NdTypeKind::Ptr)
+    return false;
+  // HighIR address math is in bytes.  A C byte pointer already has scale 1, so
+  // `p + n` matches the IR.  Wider pointees would scale and must be viewed as
+  // integers first; void* cannot be added at all.
+  const TypeRef &Pointee = Ty->Pointee;
+  return !Pointee || Pointee->Kind != NdTypeKind::Int || Pointee->Size != 1;
+}
+
+const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
+  unsigned Depth = 0;
+  while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth &&
+         !E->Operands.empty() && E->Operands[0]) {
+    if (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) {
+      E = E->Operands[0].get();
+      continue;
+    }
+    if (E->Kind == ExprKind::UnaryOp &&
+        (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) {
+      E = E->Operands[0].get();
+      continue;
+    }
+    break;
+  }
+  return E;
+}
+
+std::optional<int64_t>
+HighCWriter::frameDisplacement(const HighExpr &E) const {
+  if (!CurrentFunc)
+    return std::nullopt;
+  const HighExpr *Cur = unwrapIntegerView(&E);
+  int64_t Acc = 0;
+  unsigned Depth = 0;
+  while (Cur && Depth++ < limits::kMaxFrameDisplacementDepth) {
+    Cur = unwrapIntegerView(Cur);
+    if (!Cur)
+      return std::nullopt;
+    if (Cur->Kind == ExprKind::Var) {
+      if (isSyntheticEntryStackPointer(Cur->Var, *CurrentFunc, Opts.TheArch)) {
+        // x64 SEH handlers are exceptional entries: LowIR models their RSP as
+        // the function-entry value, but the unwinder has already established
+        // the allocated frame.  Rebase onto a slot the try body already named.
+        if (CurrentFunc->FrameSize > 0) {
+          const int64_t Rebased = Acc - CurrentFunc->FrameSize;
+          if (InEHClauseBody)
+            return Rebased;
+          if (CurrentFunc->ExceptionMetadata && FrameSlots.count(Rebased) &&
+              !FrameSlots.count(Acc))
+            return Rebased;
+        }
+        return Acc;
+      }
+      auto Alias = FrameAliases.find(varName(Cur->Var));
+      if (Alias != FrameAliases.end())
+        return Acc + Alias->second;
+      if (CurrentFunc->ExceptionMetadata &&
+          Cur->Var.Kind == MedVar::Reg && Cur->Var.RenameTag < 0 &&
+          Cur->Var.RegOff == getTargetRegInfo(Opts.TheArch).FramePointer) {
+        const int64_t Slot =
+            static_cast<int64_t>(getTargetRegInfo(Opts.TheArch).PointerSize);
+        const int64_t Order[3] = {Acc - Slot, Acc, Acc + Slot};
+        for (int64_t Adj : Order)
+          if (FrameSlots.count(Adj))
+            return Adj;
+        return Acc;
+      }
+    }
+    if (Cur->Kind != ExprKind::BinOp || Cur->Operands.size() != 2 ||
+        !Cur->Operands[0] || !Cur->Operands[1] ||
+        (Cur->Op != NdOp::INT_ADD && Cur->Op != NdOp::INT_SUB))
+      return std::nullopt;
+    const HighExpr *LHS = unwrapIntegerView(Cur->Operands[0].get());
+    const HighExpr *RHS = unwrapIntegerView(Cur->Operands[1].get());
+    if (!LHS || !RHS)
+      return std::nullopt;
+    const HighExpr *Base = nullptr;
+    const HighExpr *Imm = nullptr;
+    const bool Subtract = Cur->Op == NdOp::INT_SUB;
+    if (RHS->Kind == ExprKind::Const) {
+      Base = LHS;
+      Imm = RHS;
+    } else if (!Subtract && LHS->Kind == ExprKind::Const) {
+      Base = RHS;
+      Imm = LHS;
+    } else
+      return std::nullopt;
+    int64_t Delta = static_cast<int64_t>(Imm->ConstVal);
+    if (Imm->Type && Imm->Type->Size == 4)
+      Delta = static_cast<int32_t>(Imm->ConstVal);
+    Acc += Subtract ? -Delta : Delta;
+    Cur = Base;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string>
+HighCWriter::namedFrameSlot(const HighExpr &E) const {
+  const auto Disp = frameDisplacement(E);
+  if (!Disp)
+    return std::nullopt;
+  const auto It = FrameSlots.find(*Disp);
+  if (It == FrameSlots.end())
+    return std::nullopt;
+  return It->second.Name;
+}
+
+bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
+  if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
+      !E.Operands.empty() && E.Operands[0] && namedFrameSlot(*E.Operands[0]))
+    return true;
+  if (E.Kind == ExprKind::Addr && !E.Operands.empty() && E.Operands[0] &&
+      E.Operands[0]->Kind == ExprKind::Load &&
+      !E.Operands[0]->Operands.empty() && E.Operands[0]->Operands[0] &&
+      namedFrameSlot(*E.Operands[0]->Operands[0]))
+    return true;
+  return false;
+}
+
 std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
   static thread_local int Depth = 0;
   struct Guard {
@@ -229,7 +371,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     ~Guard() { --D; }
   };
   Guard G(Depth);
-  if (Depth > 200)
+  if (Depth > limits::kMaxCExprPrintDepth)
     return "(0 /* truncated: expr too deep */)";
 
   switch (E.Kind) {
@@ -241,9 +383,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     // prevent C's element-scaled pointer arithmetic.  Consult the declaration
     // because a machine-width expression can retain its original integer type.
     auto DeclaredType = declaredParamType(E.Var);
-    if (DeclaredType && DeclaredType->Kind == NdTypeKind::Ptr)
-      return "(uintptr_t)" + varName(E.Var);
-    return varName(E.Var);
+    std::string Name = copyForwardName(varName(E.Var));
+    if (pointerNeedsIntegerView(DeclaredType))
+      return "(uintptr_t)" + Name;
+    return Name;
   }
   case ExprKind::Const:
     return constStr(E.ConstVal);
@@ -251,6 +394,8 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     return "((" + typeToC(E.Type) +
            ")0 /* caller-saved register clobbered by call: unknown */)";
   case ExprKind::BinOp:
+    if (auto Slot = namedFrameSlot(E))
+      return "(uintptr_t)&" + *Slot;
     return renderBinOp(E, ParentPrec);
   case ExprKind::UnaryOp:
     return renderUnaryOp(E, ParentPrec);
@@ -263,6 +408,15 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       auto Fwd = Analysis.StoreFwd.find(Addr);
       if (Fwd != Analysis.StoreFwd.end())
         return "(" + typeToC(E.Type) + ")(" + Fwd->second + ")";
+      if (auto Slot = namedFrameSlot(*E.Operands[0]))
+        return copyForwardName(*Slot);
+      if (auto VA = constAddress(*E.Operands[0])) {
+        const uint16_t Size = E.Type ? E.Type->Size : 0;
+        if (auto Imm = foldReadonlyScalar(*VA, Size))
+          return constStr(*Imm);
+        if (auto Name = imageObjectName(*VA))
+          return *Name;
+      }
     }
     return memoryLoadExpr(E.Type, Addr, E.MemoryOrdering, E.MemoryAddressSpace);
   }
@@ -271,6 +425,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       return "/* bad store */";
     std::string Addr = exprStr(*E.Operands[0]);
     std::string Val = exprStr(*E.Operands[1]);
+    if (E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      if (auto Slot = namedFrameSlot(*E.Operands[0]))
+        return *Slot + " = " + Val;
     return memoryStoreExpr(E.Operands[1]->Type, Addr, Val, E.MemoryOrdering,
                            E.MemoryAddressSpace);
   }
@@ -286,17 +444,28 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     if (E.Operands.size() != 1 || !E.Operands[0] || !E.Type ||
         !E.Operands[0]->Type || E.Type->Size != E.Operands[0]->Type->Size)
       llvm::report_fatal_error("HighC cannot render an invalid bit cast");
+    const HighExpr &Src = *E.Operands[0];
+    if (E.Type->Kind == NdTypeKind::Int && Src.Type->Kind == NdTypeKind::Int) {
+      if (E.Type->IsSigned == Src.Type->IsSigned)
+        return exprStr(Src, ParentPrec);
+      return "(" + typeToC(E.Type) + ")" + exprStr(Src, 99);
+    }
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
     return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" +
-           typeToC(E.Operands[0]->Type) + ")(" + exprStr(*E.Operands[0]) + "))";
+           typeToC(Src.Type) + ")(" + exprStr(Src) + "))";
   }
   case ExprKind::Addr: {
     if (E.Operands.empty())
       return "/* bad addr */";
     const HighExpr &Operand = *E.Operands[0];
     if (Operand.Kind == ExprKind::Load && !Operand.Operands.empty()) {
-      return "(" + typeToC(Operand.Type) + " *)(uintptr_t)(" +
+      if (auto Slot = namedFrameSlot(*Operand.Operands[0]))
+        return "&" + *Slot;
+      if (auto VA = constAddress(*Operand.Operands[0]))
+        if (auto Name = imageObjectName(*VA))
+          return "&" + *Name;
+      return "(" + typeToC(Operand.Type) + " *)(" +
              exprStr(*Operand.Operands[0]) + ")";
     }
     if (Operand.Kind == ExprKind::Var || Operand.Kind == ExprKind::Phi)
@@ -363,9 +532,17 @@ std::string HighCWriter::collapseHiLo(const HighExpr &Expr) {
 }
 
 std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
-  if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Ptr)
+  if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Ptr) {
+    if (Expr.Kind == ExprKind::Var) {
+      auto Declared = declaredParamType(Expr.Var);
+      if (Declared && equalSourceTypes(Declared, FuncReturnType))
+        return varName(Expr.Var);
+    }
+    if (Expr.Type && equalSourceTypes(Expr.Type, FuncReturnType))
+      return exprStr(Expr);
     return "(" + typeToC(FuncReturnType) + ")(uintptr_t)(" + exprStr(Expr) +
            ")";
+  }
 
   auto HiLo = collapseHiLo(Expr);
   if (!HiLo.empty())
@@ -408,6 +585,160 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   }
 
   return exprStr(Expr);
+}
+
+std::string HighCWriter::copyForwardName(const std::string &Name) const {
+  std::string Cur = Name;
+  for (unsigned Depth = 0; Depth < limits::kMaxCopyForwardAliasDepth; ++Depth) {
+    auto It = CopyForward.find(Cur);
+    if (It == CopyForward.end())
+      return Cur;
+    Cur = It->second;
+  }
+  return Cur;
+}
+
+bool HighCWriter::isCopyForwardDestination(const MedVar &V) const {
+  return V.Kind == MedVar::Temp || V.RenameTag >= 0;
+}
+
+std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
+  const HighExpr *Cur = unwrapIntegerView(&E);
+  if (Cur && Cur->Kind == ExprKind::Const)
+    return Cur->ConstVal;
+  return std::nullopt;
+}
+
+bool HighCWriter::isImageDataAddress(va_t Addr) const {
+  if (!Opts.Image || Addr == 0 || Addr == InvalidVA)
+    return false;
+  if (Opts.Image->findImportAt(Addr))
+    return false;
+  const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+  if (!Seg || !Seg->isReadable())
+    return false;
+  // Instruction bytes are not data objects.  Read-only constants live in
+  // .rdata / .rodata (readable, not writable, not executable).
+  if (Seg->isExecutable() && !Seg->isWritable())
+    return false;
+  return true;
+}
+
+std::optional<uint64_t> HighCWriter::foldReadonlyScalar(va_t Addr,
+                                                        uint16_t Size) const {
+  if (!isImageDataAddress(Addr) || !Opts.Image)
+    return std::nullopt;
+  const Segment *Seg = Opts.Image->getSegmentFor(Addr);
+  if (!Seg || Seg->isWritable())
+    return std::nullopt;
+  if (Size != 1 && Size != 2 && Size != 4 && Size != 8)
+    return std::nullopt;
+  const uint8_t *Bytes = Opts.Image->readVA(Addr, Size);
+  if (!Bytes)
+    return std::nullopt;
+  switch (Size) {
+  case 1:
+    return Bytes[0];
+  case 2:
+    return readLE<uint16_t>(Bytes);
+  case 4:
+    return readLE<uint32_t>(Bytes);
+  case 8:
+    return readLE<uint64_t>(Bytes);
+  default:
+    return std::nullopt;
+  }
+}
+
+std::optional<std::string> HighCWriter::imageObjectName(va_t Addr) const {
+  auto It = ImageObjects.find(Addr);
+  if (It == ImageObjects.end())
+    return std::nullopt;
+  return It->second.Name;
+}
+
+void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written) {
+  if (!isImageDataAddress(Addr))
+    return;
+  ImageObject &Obj = ImageObjects[Addr];
+  if (Obj.Name.empty()) {
+    std::string Raw;
+    if (Dbg) {
+      for (const DataObjectSym &Data : Dbg->allDataObjects()) {
+        if (Data.Addr == Addr && !Data.Name.empty()) {
+          Raw = Data.Name;
+          break;
+        }
+      }
+    }
+    if (Raw.empty() && Opts.Image) {
+      if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
+          Sym && !Sym->IsFunc && !Sym->Name.empty() &&
+          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0)
+        Raw = stripLeadingUnderscores(Sym->Name).str();
+    }
+    if (!Raw.empty())
+      Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+  }
+  if (Ty && (!Obj.Type || Ty->Size > Obj.Type->Size))
+    Obj.Type = Ty;
+  if (!Obj.Type)
+    Obj.Type = NdType::makeInt(4);
+  (void)Written;
+}
+
+bool HighCWriter::isParamCopy(const HighExpr &E) const {
+  const HighExpr *Cur = unwrapIntegerView(&E);
+  return Cur && (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi) &&
+         Cur->Var.Kind == MedVar::Param;
+}
+
+std::optional<std::string>
+HighCWriter::copyForwardSource(const HighExpr &E) {
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
+    return copyForwardName(varName(E.Var));
+  if (E.Kind == ExprKind::Load && !E.Operands.empty())
+    if (auto Slot = namedFrameSlot(*E.Operands[0]))
+      return copyForwardName(*Slot);
+  return std::nullopt;
+}
+
+std::string HighCWriter::invertCondStr(const HighExpr &E) {
+  if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::BOOL_NOT &&
+      !E.Operands.empty() && E.Operands[0])
+    return exprStr(*E.Operands[0]);
+  if (E.Kind == ExprKind::BinOp && E.Operands.size() == 2 && E.Operands[0] &&
+      E.Operands[1]) {
+    NdOp Inv = NdOp::NOP;
+    switch (E.Op) {
+    case NdOp::INT_EQUAL:
+      Inv = NdOp::INT_NOTEQUAL;
+      break;
+    case NdOp::INT_NOTEQUAL:
+      Inv = NdOp::INT_EQUAL;
+      break;
+    default:
+      break;
+    }
+    if (Inv != NdOp::NOP) {
+      HighExpr Flipped = E;
+      Flipped.Op = Inv;
+      return exprStr(Flipped);
+    }
+  }
+  return "!(" + exprStr(E) + ")";
+}
+
+bool HighCWriter::stmtsEffectivelyEmpty(
+    const std::vector<HighStmt> &Stmts) const {
+  for (const HighStmt &Stmt : Stmts) {
+    if (Analysis.DeadStmts.count(&Stmt))
+      continue;
+    if (Stmt.Kind == StmtKind::Nop)
+      continue;
+    return false;
+  }
+  return true;
 }
 
 } // namespace neverd

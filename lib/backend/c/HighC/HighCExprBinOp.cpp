@@ -131,9 +131,8 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
                                                    : " * ";
       const auto Value = "(" + Unsigned + ")(" + Operand(E.Operands[0]) +
                          Symbol + Operand(E.Operands[1]) + ")";
-      return E.Type->IsSigned
-                 ? "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")"
-                 : "(" + Value + ")";
+      return E.Type->IsSigned ? "(" + typeToC(E.Type) + ")" + Value
+                              : "(" + Value + ")";
     }
   }
 

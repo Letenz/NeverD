@@ -15,9 +15,14 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/loader/ExceptionCommon.h"
+#include "neverd/loader/ExceptionEncoding.h"
+#include "neverd/loader/ExceptionPersonality.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/EHPersonalities.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/GlobalIFunc.h"
@@ -94,17 +99,6 @@ bool metadataReferencesFunction(
     if (metadataReferencesFunction(Operand.get(), Fn, Visited))
       return true;
   return false;
-}
-
-void writeCommentedLine(llvm::raw_ostream &OS, llvm::StringRef Line) {
-  OS << "// ";
-  for (unsigned char Ch : Line.bytes()) {
-    if (Ch == '\r' || Ch == '\0' || (Ch < 0x20 && Ch != '\t'))
-      OS << ' ';
-    else
-      OS << static_cast<char>(Ch);
-  }
-  OS << " \n";
 }
 
 } // anonymous namespace
@@ -222,11 +216,83 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
         continue;
       if (llvm::isa<llvm::ExtractValueInst>(&Inst))
         continue;
+      if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchPadInst,
+                    llvm::CleanupPadInst, llvm::CatchReturnInst,
+                    llvm::CleanupReturnInst, llvm::InvokeInst>(&Inst))
+        continue;
       if (Analysis.IntrinsicStructVals.count(&Inst))
         continue;
       Analysis.Inlinable.insert(&Inst);
     }
   }
+}
+
+bool LLVMCWriter::functionHasWindowsEHPads(const llvm::Function &Fn) const {
+  for (const llvm::BasicBlock &BB : Fn) {
+    const llvm::Instruction *Term = BB.getTerminator();
+    if (Term && llvm::isa<llvm::CatchSwitchInst, llvm::CatchReturnInst,
+                          llvm::CleanupReturnInst>(Term))
+      return true;
+    for (const llvm::Instruction &Inst : BB)
+      if (llvm::isa<llvm::CatchPadInst, llvm::CleanupPadInst>(&Inst))
+        return true;
+  }
+  return false;
+}
+
+bool LLVMCWriter::functionIsCxxEH(const llvm::Function &Fn) const {
+  if (!Fn.hasPersonalityFn())
+    return false;
+  switch (llvm::classifyEHPersonality(Fn.getPersonalityFn())) {
+  case llvm::EHPersonality::MSVC_CXX:
+    return true;
+  default:
+    break;
+  }
+  if (const auto *GV =
+          llvm::dyn_cast<llvm::GlobalValue>(Fn.getPersonalityFn()->stripPointerCasts())) {
+    llvm::StringRef Name = GV->getName();
+    return Name.contains("CxxFrameHandler") || Name.contains("CxxFrame");
+  }
+  return false;
+}
+
+void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
+  if (!Opts.EmitComments)
+    return;
+  const llvm::MDNode *Payload = Fn.getMetadata(windows_eh_md::FunctionAttachment);
+  if (!Payload)
+    Payload = Fn.getMetadata(windows_eh_md::NativeAttachment);
+  if (!Payload)
+    return;
+  auto MdU64 = [&](unsigned Index) -> uint64_t {
+    if (Index >= Payload->getNumOperands())
+      return 0;
+    if (const auto *C =
+            llvm::dyn_cast<llvm::ConstantAsMetadata>(Payload->getOperand(Index)))
+      if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(C->getValue()))
+        return CI->getZExtValue();
+    return 0;
+  };
+  auto MdStr = [&](unsigned Index) -> std::string {
+    if (Index >= Payload->getNumOperands())
+      return {};
+    if (const auto *S = llvm::dyn_cast<llvm::MDString>(Payload->getOperand(Index)))
+      return S->getString().str();
+    return {};
+  };
+  OS << "/* neverd.exception: encoding="
+     << getExceptionEncodingName(
+            static_cast<ExceptionEncoding>(MdU64(windows_eh_md::Encoding)))
+     << ", status="
+     << getExceptionParseStatusName(
+            static_cast<ExceptionParseStatus>(MdU64(windows_eh_md::ParseStatus)))
+     << ", personality=" << MdStr(windows_eh_md::PersonalityName) << "\n";
+  OS << " * code=[0x" << llvm::utohexstr(MdU64(windows_eh_md::CodeBegin))
+     << ", 0x" << llvm::utohexstr(MdU64(windows_eh_md::CodeEnd)) << ")";
+  if (uint64_t Unwind = MdU64(windows_eh_md::UnwindInfoVA))
+    OS << ", unwind=0x" << llvm::utohexstr(Unwind);
+  OS << " */\n";
 }
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
@@ -235,6 +301,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   UsedNames.clear();
   BlockLabels.clear();
   ReferencedBlocks.clear();
+  EHTryDepth = 0;
+  EHWrapIsCxx = false;
 
   scanReferencedBlocks(Fn);
   analyzeIntrinsicStructs(Analysis, Fn);
@@ -251,11 +319,15 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
   std::set<const llvm::Value *> NeedsDecl;
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy())
-        continue;
-      if (Inst.use_empty() && !llvm::isa<llvm::CallInst>(&Inst))
+      // writeInstruction still emits `name = ...` for unused non-calls
+      // (they are not inlinable when use_empty).  Skip only values that
+      // the statement writer does not assign.
+      if (Inst.getType()->isVoidTy() || Inst.getType()->isTokenTy())
         continue;
       if (llvm::isa<llvm::AllocaInst>(&Inst))
+        continue;
+      if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchPadInst,
+                    llvm::CleanupPadInst>(&Inst))
         continue;
       if (Analysis.IntrinsicStructVals.count(&Inst))
         continue;
@@ -266,9 +338,11 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         continue;
       if (Analysis.DeadFrameStores.count(&Inst))
         continue;
-      if (InferredVoid && llvm::isa<llvm::CallInst>(&Inst) &&
-          !isCallResultLive(Analysis, llvm::cast<llvm::CallInst>(&Inst)))
-        continue;
+      if (InferredVoid) {
+        if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
+          if (!isCallResultLive(Analysis, CI))
+            continue;
+      }
       NeedsDecl.insert(&Inst);
     }
   }
@@ -311,87 +385,67 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
 
 void LLVMCWriter::writeAnalysisOnlyFunction(llvm::Function &Fn) {
   if (Opts.EmitComments) {
-    std::string Listing;
-    llvm::raw_string_ostream ListingOS(Listing);
-    LLVMCWriter ListingWriter(ListingOS, Opts, Dbg, Img,
-                              /*GuardAnalysisOnlyFunctions=*/false);
-    ListingWriter.GlobalIdentifierAllocator = GlobalIdentifierAllocator;
-    ListingWriter.FunctionIdentifiers = FunctionIdentifiers;
-    ListingWriter.writeFunction(Fn);
-    ListingOS.flush();
-
-    OS << "/* neverd.analysis-only: Windows EH semantics are not projected "
-          "as executable C; the active definition traps. */\n";
-    llvm::StringRef Remaining(Listing);
-    while (!Remaining.empty()) {
-      auto [Line, Rest] = Remaining.split('\n');
-      writeCommentedLine(OS, Line);
-      Remaining = Rest;
-    }
+    OS << "/* neverd.analysis-only: recovered Windows SEH/C++ as readable C. "
+          "*/\n";
   }
-
-  std::string FName = functionIdentifier(Fn);
-  llvm::FunctionType *FuncTy = Fn.getFunctionType();
-  OS << typeToCLLVM(FuncTy->getReturnType()) << " " << FName << "(";
-  CProjectionIdentifierAllocator ParameterIdentifiers;
-  unsigned ParamIdx = 0;
-  for (llvm::Argument &Arg : Fn.args()) {
-    if (ParamIdx > 0)
-      OS << ", ";
-    std::string ParamName = "arg" + std::to_string(ParamIdx);
-    if (Arg.hasName()) {
-      std::string Raw = Arg.getName().str();
-      if (!Raw.empty() && Raw != ParamName)
-        ParamName = std::move(Raw);
-    }
-    OS << typeToCLLVM(Arg.getType()) << " "
-       << ParameterIdentifiers.allocate(ParamName, "nd_arg");
-    ++ParamIdx;
-  }
-  if (Fn.isVarArg()) {
-    if (ParamIdx != 0)
-      OS << ", ...";
-  } else if (ParamIdx == 0) {
-    OS << "void";
-  }
-  OS << ") {\n"
-     << "    __builtin_trap();\n"
-     << "}\n";
+  writeFunctionProjection(Fn);
 }
 
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   setupFunction(Fn);
 
   std::string FName = functionIdentifier(Fn);
+  writeExceptionAnnotation(Fn);
 
-  auto *FuncTy = Fn.getFunctionType();
-  std::string RetStr =
-      InferredVoid ? "void" : typeToCLLVM(FuncTy->getReturnType());
-  OS << RetStr << " " << FName << "(";
-
-  unsigned ParamIdx = 0;
-  for (auto &Arg : Fn.args()) {
-    if (ParamIdx > 0)
-      OS << ", ";
-    std::string ParamName = "arg" + std::to_string(ParamIdx);
-    if (Arg.hasName()) {
-      std::string Raw = Arg.getName().str();
-      if (!Raw.empty() && Raw != "arg" + std::to_string(ParamIdx))
-        ParamName = Raw;
-    }
+  CProjectionIdentifierAllocator ParameterIdentifiers;
+  auto BindParam = [&](llvm::Argument &Arg, unsigned ParamIdx) {
+    std::string Raw = Arg.hasName() ? Arg.getName().str() : std::string{};
+    if (Raw.empty())
+      Raw = "arg" + std::to_string(ParamIdx);
+    std::string ParamName = ParameterIdentifiers.allocate(Raw, "nd_arg");
     ValNames[&Arg] = ParamName;
     UsedNames.insert(ParamName);
-    OS << typeToCLLVM(Arg.getType()) << " " << ParamName;
-    ++ParamIdx;
+    return ParamName;
+  };
+
+  if (EmitFunctionWrapper) {
+    auto *FuncTy = Fn.getFunctionType();
+    std::string RetStr =
+        InferredVoid ? "void" : typeToCLLVM(FuncTy->getReturnType());
+    OS << RetStr << " " << FName << "(";
+
+    unsigned ParamIdx = 0;
+    for (auto &Arg : Fn.args()) {
+      if (ParamIdx > 0)
+        OS << ", ";
+      OS << typeToCLLVM(Arg.getType()) << " " << BindParam(Arg, ParamIdx);
+      ++ParamIdx;
+    }
+    if (Fn.isVarArg() && ParamIdx != 0) {
+      if (ParamIdx > 0)
+        OS << ", ";
+      OS << "...";
+    }
+    OS << ") {\n";
+  } else {
+    unsigned ParamIdx = 0;
+    for (auto &Arg : Fn.args()) {
+      BindParam(Arg, ParamIdx);
+      ++ParamIdx;
+    }
   }
-  if (Fn.isVarArg() && ParamIdx != 0) {
-    if (ParamIdx > 0)
-      OS << ", ";
-    OS << "...";
-  }
-  OS << ") {\n";
 
   emitFunctionDecls(Fn);
+
+  const bool WrapEH =
+      (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Fn)) ||
+      functionHasWindowsEHPads(Fn);
+  EHWrapIsCxx = functionIsCxxEH(Fn);
+  if (WrapEH) {
+    emitIndent(1);
+    OS << (EHWrapIsCxx ? "try {\n" : "__try {\n");
+    EHTryDepth = 1;
+  }
 
   for (auto &BB : Fn) {
     if (!isSimpleEntry(&BB, Fn))
@@ -400,11 +454,25 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
     for (auto &Inst : BB) {
       if (llvm::isa<llvm::AllocaInst>(&Inst))
         continue;
-      writeInstruction(Inst, 1);
+      writeInstruction(Inst, 1 + EHTryDepth);
     }
   }
 
-  OS << "}\n";
+  if (WrapEH && EHTryDepth > 0) {
+    emitIndent(1);
+    if (EHWrapIsCxx)
+      OS << "} catch (...) {\n";
+    else
+      OS << "} __except (EXCEPTION_EXECUTE_HANDLER) {\n";
+    emitIndent(2);
+    OS << "/* recovered handler labels remain in the protected body */\n";
+    emitIndent(1);
+    OS << "}\n";
+    EHTryDepth = 0;
+  }
+
+  if (EmitFunctionWrapper)
+    OS << "}\n";
 }
 
 } // namespace neverd

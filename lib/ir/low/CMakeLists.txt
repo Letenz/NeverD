@@ -10,6 +10,9 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilderX86Fpu.cpp
   CircleRange.cpp
   FuncDetector.cpp
+  FuncDetectorX86.cpp
+  FuncDetectorARM.cpp
+  FuncDetectorAArch64.cpp
   NdOpEmulator.cpp
   NdOpEmulatorExec.cpp
   NdOpEmulatorFloatConvert.cpp

@@ -247,8 +247,13 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
                         Type->Kind == NdTypeKind::Int && Type->Size == 64;
   };
   std::set<const HighExpr *> Seen;
+  bool HideEHRuntimeMemory = false;
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (!Seen.insert(&E).second)
+      return;
+    if (HideEHRuntimeMemory &&
+        (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
+         E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
@@ -267,8 +272,12 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Load) {
       std::string Type = memoryTypeName(E.Type);
-      Names.insert(Type);
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
+      const bool NeedsHelper =
+          E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          E.MemoryOrdering != NdMemoryOrdering::None;
+      if (NeedsHelper)
+        Names.insert(Type);
       if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
       if (E.MemoryOrdering != NdMemoryOrdering::None)
@@ -276,8 +285,12 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Store && E.Operands.size() >= 2) {
       std::string Type = memoryTypeName(E.Operands[1]->Type);
-      Names.insert(Type);
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
+      const bool NeedsHelper =
+          E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          E.MemoryOrdering != NdMemoryOrdering::None;
+      if (NeedsHelper)
+        Names.insert(Type);
       if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
       if (E.MemoryOrdering != NdMemoryOrdering::None)
@@ -292,12 +305,15 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     CollectWideType(Func.ReturnType);
     for (const HighParam &Param : Func.Params)
       CollectWideType(Param.Type);
-    if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Func))
-      continue;
     for (const HighLocal &Local : Func.Locals)
       CollectWideType(Local.Type);
+    HideEHRuntimeMemory = Func.ExceptionMetadata.has_value();
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+        if (HideEHRuntimeMemory &&
+            (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
+             Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
+          return;
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
         HasSegmentedMemory = true;
         if (Stmt.Kind != StmtKind::Store)
@@ -306,8 +322,12 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       }
       if (Stmt.Kind == StmtKind::Store && Stmt.StoreVal) {
         std::string Type = memoryTypeName(Stmt.StoreVal->Type);
-        Names.insert(Type);
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
+        const bool NeedsHelper =
+            Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            Stmt.MemoryOrdering != NdMemoryOrdering::None;
+        if (NeedsHelper)
+          Names.insert(Type);
         if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           SegmentedMemoryTypes.insert({Type, Stmt.MemoryAddressSpace});
         if (Stmt.MemoryOrdering != NdMemoryOrdering::None)
@@ -319,6 +339,9 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         const std::string Type = memoryTypeName(Stmt.Dst->Type);
         validateMemoryAddressSpaceForC(Stmt.Dst->MemoryAddressSpace,
                                        Opts.TheArch);
+        if (Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            Stmt.Dst->MemoryOrdering != NdMemoryOrdering::None)
+          Names.insert(Type);
         if (Stmt.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default)
           SegmentedMemoryTypes.insert({Type, Stmt.Dst->MemoryAddressSpace});
         if (Stmt.Dst->MemoryOrdering != NdMemoryOrdering::None)
@@ -457,6 +480,9 @@ HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                             NdMemoryAddressSpace AddressSpace) const {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
+  if (Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default)
+    return "(*(" + Type + " *)(" + Addr.str() + "))";
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
@@ -473,18 +499,18 @@ HighCWriter::memoryStoreExpr(const TypeRef &Ty, llvm::StringRef Addr,
                              NdMemoryAddressSpace AddressSpace) const {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
+  const std::string Value = Ty && Ty->Kind == NdTypeKind::Ptr
+                                ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
+                                : Val.str();
+  if (Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default)
+    return "(*(" + Type + " *)(" + Addr.str() + ") = " + Value + ")";
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory store type was not collected");
   unsigned Index = It->second;
   if (Ordering != NdMemoryOrdering::None)
     validateAtomicStoreOrdering(Ordering);
-  // exprStr projects pointer parameters to their machine-sized address bits.
-  // Convert those bits back to the helper's declared value type at this typed
-  // boundary, including ordered stores and stores expressed as assignments.
-  const std::string Value = Ty && Ty->Kind == NdTypeKind::Ptr
-                                ? "(" + Type + ")(uintptr_t)(" + Val.str() + ")"
-                                : Val.str();
   return memoryHelperName("store", Index, Ordering, AddressSpace) +
          "((uintptr_t)(" + Addr.str() + "), " + Value + ")";
 }
@@ -869,12 +895,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     if (Function.DoesNotReturn)
       OS << "_Noreturn ";
     std::string Declarator = functionIdentifier(Function) + "(";
-    for (size_t I = 0; I < Function.Params.size(); ++I) {
+    const size_t ParamCount = emittedParamCount(Function);
+    for (size_t I = 0; I < ParamCount; ++I) {
       if (I)
         Declarator += ", ";
       Declarator += typeToC(Function.Params[I].Type);
     }
-    if (Function.Params.empty())
+    if (ParamCount == 0)
       Declarator += "void";
     OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
   }
@@ -886,12 +913,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(*Function))
       continue;
     std::string Declarator = functionIdentifier(*Function) + "(";
-    for (size_t I = 0; I < Function->Params.size(); ++I) {
+    const size_t ParamCount = emittedParamCount(*Function);
+    for (size_t I = 0; I < ParamCount; ++I) {
       if (I)
         Declarator += ", ";
       Declarator += typeToC(Function->Params[I].Type);
     }
-    if (Function->Params.empty())
+    if (ParamCount == 0)
       Declarator += "void";
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
@@ -963,6 +991,62 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     OS << "\n";
 }
 
+void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
+  ImageObjects.clear();
+  if (!Opts.Image)
+    return;
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0]) {
+      if (auto VA = constAddress(*E.Operands[0])) {
+        const uint16_t Size = E.Type ? E.Type->Size : 0;
+        if (!foldReadonlyScalar(*VA, Size))
+          noteImageObject(*VA, E.Type, false);
+      }
+    }
+    if (E.Kind == ExprKind::Store && E.Operands.size() >= 2 && E.Operands[0]) {
+      if (auto VA = constAddress(*E.Operands[0]))
+        noteImageObject(*VA, E.Operands[1] ? E.Operands[1]->Type : nullptr,
+                        true);
+    }
+    if (E.Kind == ExprKind::Addr && !E.Operands.empty() && E.Operands[0] &&
+        E.Operands[0]->Kind == ExprKind::Load &&
+        !E.Operands[0]->Operands.empty() && E.Operands[0]->Operands[0]) {
+      if (auto VA = constAddress(*E.Operands[0]->Operands[0]))
+        noteImageObject(*VA, E.Operands[0]->Type, false);
+    }
+    for (const ExprPtr &Op : E.Operands)
+      if (Op)
+        Visit(*Op);
+  };
+  for (const HighFunc &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind == StmtKind::Store && S.StoreAddr) {
+        if (auto VA = constAddress(*S.StoreAddr))
+          noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true);
+      }
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (E)
+          Visit(*E);
+      });
+    });
+}
+
+void HighCWriter::writeImageObjects() {
+  if (ImageObjects.empty())
+    return;
+  for (auto &[Addr, Obj] : ImageObjects) {
+    if (Obj.Name.empty())
+      Obj.Name = GlobalIdentifierAllocator.allocate(
+          makeSyntheticGlobalName(Addr), "g");
+    if (Opts.EmitComments)
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
+    // Tentative definition so standalone HighC can link.  LLVMC keeps
+    // `extern` because it projects LLVM `external global`.
+    OS << declarationToC(Obj.Type, Obj.Name) << ";\n";
+  }
+  OS << "\n";
+}
+
 void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   prepareFunctionIdentifiers(Funcs);
   collectMemoryTypes(Funcs);
@@ -1018,6 +1102,8 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   }
   writeMemoryHelpers();
   writeForwardDecls(Funcs);
+  collectImageObjects(Funcs);
+  writeImageObjects();
 
   for (size_t I = 0; I < Funcs.size(); ++I) {
     if (Funcs[I].Name.empty())

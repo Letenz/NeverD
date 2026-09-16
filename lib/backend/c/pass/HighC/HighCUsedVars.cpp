@@ -37,7 +37,7 @@ void collectUsedVarsExpr(const HighExpr &Expr,
                          std::map<std::string, TypeRef> &Vars,
                          VarNameFn VarFn) {
   walkExprNodes(Expr, [&](const HighExpr &E) {
-    if (E.Kind == ExprKind::Var) {
+    if (isNamedValueExpr(E)) {
       std::string Name = VarFn(E.Var);
       if (Vars.find(Name) == Vars.end())
         Vars[Name] = E.Type;
@@ -63,6 +63,8 @@ void collectUsedVars(const std::vector<HighStmt> &Stmts,
     for (auto &C : S.Cases)
       collectUsedVars(C.Body, Vars, VarFn);
     collectUsedVars(S.DefaultBody, Vars, VarFn);
+    for (auto &ClauseBody : S.EHClauseBodies)
+      collectUsedVars(ClauseBody, Vars, VarFn);
   }
 }
 

@@ -124,8 +124,9 @@ TEST_F(PatchCOFF_ARM32, EntryTrampolineBranchesIntoAppendedExecSection) {
   va_t Target = Insn.Raw->detail->arm.operands[0].imm;
 
   auto NewText = std::find_if(
-      Img.Sections.begin(), Img.Sections.end(),
-      [](const Section &S) { return S.Name == kNdTextSection && S.isExecutable(); });
+      Img.Sections.begin(), Img.Sections.end(), [](const Section &S) {
+        return S.Name == kNdTextSection && S.isExecutable();
+      });
   ASSERT_NE(NewText, Img.Sections.end());
   EXPECT_TRUE(NewText->contains(Target))
       << "Thumb b.w target 0x" << std::hex << Target
@@ -205,8 +206,7 @@ TEST_F(PatchCOFF_ARM32, InstallerSkipsTwoByteFunctionWithoutTouchingSentinel) {
 
 TEST_F(PatchCOFF_ARM32,
        ReconstructsNativeCatchAllSEHWithTaggedScopeTableAndRelifts) {
-  const auto PE =
-      fs::path(TEST_OBJ_DIR) / "test_patch_coff_arm_seh.exe";
+  const auto PE = fs::path(TEST_OBJ_DIR) / "test_patch_coff_arm_seh.exe";
   if (!fs::exists(PE))
     GTEST_SKIP() << "ARM32 SEH PE executable not built (lld-link not "
                     "available)";
@@ -293,17 +293,16 @@ TEST_F(PatchCOFF_ARM32,
   ASSERT_FALSE(GeneratedSEH->GSCookie.has_value());
   ASSERT_TRUE(GeneratedSEH->SEH.has_value());
   ASSERT_EQ(GeneratedSEH->SEH->Scopes.size(), 1u);
-  const SEHScopeRecord &GeneratedScope =
-      GeneratedSEH->SEH->Scopes.front();
+  const SEHScopeRecord &GeneratedScope = GeneratedSEH->SEH->Scopes.front();
   EXPECT_EQ(GeneratedScope.Kind, SEHScopeKind::CatchAll);
   EXPECT_TRUE(GeneratedSEH->CodeRange.contains(GeneratedScope.GuardedRange));
   EXPECT_TRUE(GeneratedSEH->CodeRange.contains(GeneratedScope.HandlerVA));
   EXPECT_FALSE(GeneratedScope.GuardedRange.contains(GeneratedScope.HandlerVA));
 
   const WindowsEHNativeSourceClassification GeneratedClassification =
-      classifyWindowsEHNativeSource(
-          *GeneratedSEH, Arch::ARM, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(*GeneratedSEH, Arch::ARM,
+                                    BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_TRUE(GeneratedClassification.canPatchOutput())
       << getWindowsEHNativeSourceReasonName(GeneratedClassification.Reason);
 
@@ -337,20 +336,20 @@ TEST_F(PatchCOFF_ARM32,
   EXPECT_EQ(Patched.Base + (RawHandler & ~uint32_t(1)),
             GeneratedScope.HandlerVA);
 
-  llvm::Error Validation = validatePatchedCOFFImage(
-      PatchedBytes, Arch::ARM,
-      /*RequireGeneratedExceptionDirectory=*/true);
+  llvm::Error Validation =
+      validatePatchedCOFFImage(PatchedBytes, Arch::ARM,
+                               /*RequireGeneratedExceptionDirectory=*/true);
   EXPECT_FALSE(static_cast<bool>(Validation))
       << llvm::toString(std::move(Validation));
 
   auto ExpectUntaggedScopeRejected = [&](size_t WordIndex) {
     std::vector<uint8_t> Tampered = PatchedBytes;
-    uint8_t *Word = Tampered.data() + *HandlerDataOffset +
-                    WordIndex * sizeof(uint32_t);
+    uint8_t *Word =
+        Tampered.data() + *HandlerDataOffset + WordIndex * sizeof(uint32_t);
     writeLE<uint32_t>(Word, readLE<uint32_t>(Word) & ~uint32_t(1));
-    llvm::Error Result = validatePatchedCOFFImage(
-        Tampered, Arch::ARM,
-        /*RequireGeneratedExceptionDirectory=*/true);
+    llvm::Error Result =
+        validatePatchedCOFFImage(Tampered, Arch::ARM,
+                                 /*RequireGeneratedExceptionDirectory=*/true);
     ASSERT_TRUE(static_cast<bool>(Result));
     const std::string Message = llvm::toString(std::move(Result));
     EXPECT_NE(Message.find("Thumb"), std::string::npos) << Message;
@@ -510,9 +509,9 @@ TEST_F(PatchCOFF_AArch64,
   EXPECT_TRUE(Injected->contains(GeneratedScope.ContinuationVA));
 
   const WindowsEHNativeSourceClassification GeneratedClassification =
-      classifyWindowsEHNativeSource(
-          *GeneratedSEH, Arch::AArch64, BinaryFormat::COFF,
-          WindowsEHNativeCapability::OutputPatch);
+      classifyWindowsEHNativeSource(*GeneratedSEH, Arch::AArch64,
+                                    BinaryFormat::COFF,
+                                    WindowsEHNativeCapability::OutputPatch);
   EXPECT_TRUE(GeneratedClassification.canPatchOutput());
   EXPECT_EQ(GeneratedClassification.Reason,
             WindowsEHNativeSourceReason::Eligible);
@@ -524,21 +523,19 @@ TEST_F(PatchCOFF_AArch64,
   const uint64_t OriginalEntryOffset =
       OriginalSEH->CodeRange.Begin - OriginalCode->VA;
   ASSERT_LE(OriginalEntryOffset, OriginalCode->Data.size());
-  ASSERT_GE(OriginalCode->Data.size() - OriginalEntryOffset,
-            sizeof(uint32_t));
+  ASSERT_GE(OriginalCode->Data.size() - OriginalEntryOffset, sizeof(uint32_t));
   Decoder Decoder;
   ASSERT_TRUE(Decoder.init(Arch::AArch64));
   DecodedInsn Branch{};
   ASSERT_EQ(Decoder.decodeOne(OriginalCode->Data.data() + OriginalEntryOffset,
-                              sizeof(uint32_t),
-                              OriginalSEH->CodeRange.Begin, Branch),
+                              sizeof(uint32_t), OriginalSEH->CodeRange.Begin,
+                              Branch),
             sizeof(uint32_t));
   ASSERT_STREQ(Branch.Raw->mnemonic, "b");
   ASSERT_NE(Branch.Raw->detail, nullptr);
   ASSERT_EQ(Branch.Raw->detail->aarch64.op_count, 1u);
   ASSERT_EQ(Branch.Raw->detail->aarch64.operands[0].type, AARCH64_OP_IMM);
-  EXPECT_EQ(static_cast<va_t>(
-                Branch.Raw->detail->aarch64.operands[0].imm),
+  EXPECT_EQ(static_cast<va_t>(Branch.Raw->detail->aarch64.operands[0].imm),
             GeneratedSEH->CodeRange.Begin);
 
   std::ifstream PatchedInput(PatchedFile, std::ios::binary);
@@ -570,8 +567,8 @@ TEST_F(PatchCOFF_AArch64,
       static_cast<uint32_t>(GeneratedSEH->CodeRange.End - Patched.Base);
   ASSERT_LE(GeneratedScope.GuardedRange.Begin - Patched.Base,
             std::numeric_limits<uint32_t>::max());
-  const uint32_t GuardBeginRVA = static_cast<uint32_t>(
-      GeneratedScope.GuardedRange.Begin - Patched.Base);
+  const uint32_t GuardBeginRVA =
+      static_cast<uint32_t>(GeneratedScope.GuardedRange.Begin - Patched.Base);
 
   auto ExpectTamperedTableRejected = [&](llvm::StringRef Case,
                                          uint32_t FieldOffset, uint32_t Value,
@@ -580,12 +577,11 @@ TEST_F(PatchCOFF_AArch64,
     std::vector<uint8_t> TamperedBytes = PatchedBytes;
     ASSERT_LE(*HandlerDataFileOffset + FieldOffset,
               TamperedBytes.size() - sizeof(uint32_t));
-    writeLE<uint32_t>(TamperedBytes.data() + *HandlerDataFileOffset +
-                          FieldOffset,
-                      Value);
-    llvm::Error Validation = validatePatchedCOFFImage(
-        TamperedBytes, Arch::AArch64,
-        /*RequireGeneratedExceptionDirectory=*/true);
+    writeLE<uint32_t>(
+        TamperedBytes.data() + *HandlerDataFileOffset + FieldOffset, Value);
+    llvm::Error Validation =
+        validatePatchedCOFFImage(TamperedBytes, Arch::AArch64,
+                                 /*RequireGeneratedExceptionDirectory=*/true);
     ASSERT_TRUE(static_cast<bool>(Validation));
     const std::string Message = llvm::toString(std::move(Validation));
     EXPECT_NE(Message.find(Expected), std::string::npos) << Message;
@@ -625,9 +621,9 @@ TEST_F(PatchCOFF_AArch64,
   static_assert(TamperedSectionName.size() <= kCOFFNameSize);
   std::copy(TamperedSectionName.begin(), TamperedSectionName.end(),
             GeneratedSection->Name);
-  llvm::Error RenamedSectionValidation = validatePatchedCOFFImage(
-      RenamedSectionBytes, Arch::AArch64,
-      /*RequireGeneratedExceptionDirectory=*/true);
+  llvm::Error RenamedSectionValidation =
+      validatePatchedCOFFImage(RenamedSectionBytes, Arch::AArch64,
+                               /*RequireGeneratedExceptionDirectory=*/true);
   ASSERT_TRUE(static_cast<bool>(RenamedSectionValidation));
   const std::string RenamedSectionMessage =
       llvm::toString(std::move(RenamedSectionValidation));
@@ -707,7 +703,8 @@ TEST_F(PatchCOFF_AArch64, ReconstructsBoundedNativeFH3GroupAndRelifts) {
   EXPECT_NE(HighC.find("personality=__CxxFrameHandler3"), std::string::npos);
   EXPECT_NE(HighC.find("cxx.try[0]"), std::string::npos);
   EXPECT_NE(HighC.find("catch[1]"), std::string::npos);
-  EXPECT_NE(HighC.find("type_descriptor@0x"), std::string::npos);
+  EXPECT_NE(HighC.find("type @ 0x"), std::string::npos);
+  EXPECT_NE(HighC.find("catch ("), std::string::npos);
 
   const auto Patch = patchBinary(PE);
   ASSERT_EQ(Patch.exitCode, 0) << Patch.err;
@@ -866,8 +863,9 @@ TEST_F(PatchCOFF_AArch64, EntryTrampolineBranchesIntoAppendedExecSection) {
   va_t Target = Insn.Raw->detail->aarch64.operands[0].imm;
 
   auto NewText = std::find_if(
-      Img.Sections.begin(), Img.Sections.end(),
-      [](const Section &S) { return S.Name == kNdTextSection && S.isExecutable(); });
+      Img.Sections.begin(), Img.Sections.end(), [](const Section &S) {
+        return S.Name == kNdTextSection && S.isExecutable();
+      });
   ASSERT_NE(NewText, Img.Sections.end());
   EXPECT_TRUE(NewText->contains(Target))
       << "AArch64 b target 0x" << std::hex << Target

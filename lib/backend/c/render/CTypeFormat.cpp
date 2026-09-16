@@ -152,13 +152,9 @@ std::string typeToC(const TypeRef &Ty) {
   case NdTypeKind::Float:
     return Ty->Size == 4 ? "float" : "double";
   case NdTypeKind::Ptr:
-    if (Ty->Pointee) {
-      if (Ty->Pointee->Kind == NdTypeKind::Int && Ty->Pointee->Size == 1 &&
-          !Ty->Pointee->IsSigned)
-        return "void*";
-      return typeToC(Ty->Pointee) + "*";
-    }
-    return "void*";
+    if (!Ty->Pointee || Ty->Pointee->Kind == NdTypeKind::Void)
+      return "void*";
+    return typeToC(Ty->Pointee) + "*";
   case NdTypeKind::Struct: {
     if (sourceAggregateMembers(Ty).empty())
       throw std::invalid_argument("C record has no supported source layout");

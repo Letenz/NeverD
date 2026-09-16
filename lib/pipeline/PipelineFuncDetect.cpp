@@ -16,6 +16,9 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include <algorithm>
+#include <set>
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
@@ -154,8 +157,31 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
   LLVM_DEBUG(llvm::dbgs() << "pipeline: detected " << FuncEntries.size()
                           << " functions\n");
 
-  if (Dbg && Dbg->hasInfo())
+  if (Dbg && Dbg->hasInfo()) {
     mergeDebugSymbols(FuncEntries, *Dbg);
+    std::vector<std::pair<va_t, va_t>> DebugRanges;
+    std::set<va_t> DebugStarts;
+    for (const auto &DF : Dbg->allFunctions()) {
+      DebugStarts.insert(DF.Addr);
+      if (DF.Size == 0 || DF.Size > InvalidVA - DF.Addr)
+        continue;
+      DebugRanges.push_back({DF.Addr, DF.Addr + DF.Size});
+    }
+    if (!DebugRanges.empty()) {
+      FuncEntries.erase(
+          std::remove_if(
+              FuncEntries.begin(), FuncEntries.end(),
+              [&](const std::pair<va_t, std::string> &Entry) {
+                if (DebugStarts.count(Entry.first))
+                  return false;
+                for (const auto &[Start, End] : DebugRanges)
+                  if (Entry.first > Start && Entry.first < End)
+                    return true;
+                return false;
+              }),
+          FuncEntries.end());
+    }
+  }
 
   Result.FunctionAudits.clear();
   Result.FunctionAudits.reserve(FuncEntries.size());
@@ -171,7 +197,7 @@ Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
     // Preserve linker/dynamic-loader import veneers.  Loaders register section
     // ranges (ELF PLT, Mach-O stubs/helper), while architecture scanners map
     // exact COFF/ELF thunks back to their Import without changing IATAddr.
-    if (Img.isImportStubAt(Entry)) {
+    if (Opts.PatchMode && Img.isImportStubAt(Entry)) {
       Audit.Disposition = PipelineFunctionDisposition::SkippedImportStub;
       Result.FunctionAudits.push_back(std::move(Audit));
       continue;
