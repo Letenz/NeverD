@@ -8,6 +8,8 @@
 
 #include "COFFRegistrationEHDetail.h"
 
+#include "neverd/Limits.h"
+
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
@@ -144,7 +146,8 @@ void parseX86RegistrationExceptions(BinaryImage &Img) {
           Thunks.insert(Scope.HandlerVA);
       }
       bool Grew = true;
-      for (unsigned Guard = 0; Grew && Guard < 16; ++Guard) {
+      for (unsigned Guard = 0; Grew && Guard < limits::kMaxRegistrationEHFixedPoint;
+           ++Guard) {
         Grew = false;
         for (va_t Addr : Thunks) {
           if (!registration_detail::isExecutableAddress(Img, Addr) ||
