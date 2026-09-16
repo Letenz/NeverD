@@ -13,6 +13,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
+#include "neverd/loader/Swift/SwiftMetadata.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 
@@ -203,8 +204,12 @@ inline const Symbol *uniqueWritableDataSymbol(const BinaryImage &Image,
     return nullptr;
   const Symbol *Found = nullptr;
   for (const auto &Symbol : Image.Symbols) {
-    if (Symbol.Addr != Address || Symbol.IsFunc || Symbol.Name.empty() ||
+    if (Symbol.IsFunc || Symbol.Name.empty() ||
         llvm::StringRef(Symbol.Name).starts_with(kAutoFuncPrefix))
+      continue;
+    if (Symbol.Addr > Address && Symbol.Addr < Address + Width)
+      return nullptr;
+    if (Symbol.Addr != Address)
       continue;
     if (Found || (Symbol.Size && Width > Symbol.Size))
       return nullptr;
@@ -409,25 +414,130 @@ classObjectIdentities(const BinaryImage &Image) {
 
 inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
                                                unsigned Depth) {
-  if (Depth > 32 || !Expression.Type || Expression.Type->Size != 8)
+  const auto Integer = [&](const auto &Self, const HighExpr &E,
+                           unsigned CurrentDepth) -> std::optional<uint64_t> {
+    if (CurrentDepth > 128 || !E.Type || !E.Type->Size || E.Type->Size > 8 ||
+        (E.Type->Kind != NdTypeKind::Int &&
+         E.Type->Kind != NdTypeKind::Ptr))
+      return std::nullopt;
+    const auto Mask = [](uint16_t Bytes) {
+      return Bytes == 8 ? UINT64_MAX
+                        : (UINT64_C(1) << (Bytes * 8)) - 1;
+    };
+    const auto Normalize = [&](uint64_t Value) {
+      return Value & Mask(E.Type->Size);
+    };
+    if (E.Kind == ExprKind::Const)
+      return Normalize(E.ConstVal);
+    if ((E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) &&
+        E.Operands.size() == 1 && E.Operands[0] && E.Operands[0]->Type) {
+      const auto Value = Self(Self, *E.Operands[0], CurrentDepth + 1);
+      if (!Value ||
+          (E.Kind == ExprKind::BitCast &&
+           E.Operands[0]->Type->Size != E.Type->Size))
+        return std::nullopt;
+      uint64_t Result = *Value & Mask(E.Operands[0]->Type->Size);
+      if (E.Kind == ExprKind::Cast && E.Type->Size > E.Operands[0]->Type->Size &&
+          E.Operands[0]->Type->IsSigned) {
+        const unsigned Bits = E.Operands[0]->Type->Size * 8;
+        if (Result & (UINT64_C(1) << (Bits - 1)))
+          Result |= ~Mask(E.Operands[0]->Type->Size);
+      }
+      return Normalize(Result);
+    }
+    if (E.Kind == ExprKind::UnaryOp && E.Operands.size() == 1 &&
+        E.Operands[0] && E.Operands[0]->Type) {
+      const auto Value = Self(Self, *E.Operands[0], CurrentDepth + 1);
+      if (!Value)
+        return std::nullopt;
+      uint64_t Result = *Value & Mask(E.Operands[0]->Type->Size);
+      if (E.Op == NdOp::INT_SEXT &&
+          E.Type->Size >= E.Operands[0]->Type->Size) {
+        const unsigned Bits = E.Operands[0]->Type->Size * 8;
+        if (Result & (UINT64_C(1) << (Bits - 1)))
+          Result |= ~Mask(E.Operands[0]->Type->Size);
+      } else if (E.Op != NdOp::INT_ZEXT && E.Op != NdOp::INT_NOT &&
+                 E.Op != NdOp::INT_NEGATE) {
+        return std::nullopt;
+      }
+      if (E.Op == NdOp::INT_NOT)
+        Result = ~Result;
+      if (E.Op == NdOp::INT_NEGATE)
+        Result = uint64_t(0) - Result;
+      return Normalize(Result);
+    }
+    if (E.Kind != ExprKind::BinOp || E.Operands.size() != 2 ||
+        !E.Operands[0] || !E.Operands[1] || !E.Operands[0]->Type ||
+        !E.Operands[1]->Type)
+      return std::nullopt;
+    const auto Left = Self(Self, *E.Operands[0], CurrentDepth + 1);
+    const auto Right = Self(Self, *E.Operands[1], CurrentDepth + 1);
+    if (!Left || !Right)
+      return std::nullopt;
+    uint64_t Result = 0;
+    switch (E.Op) {
+    case NdOp::INT_ADD:
+      Result = *Left + *Right;
+      break;
+    case NdOp::INT_SUB:
+      Result = *Left - *Right;
+      break;
+    case NdOp::INT_MULT:
+      Result = *Left * *Right;
+      break;
+    case NdOp::INT_AND:
+      Result = *Left & *Right;
+      break;
+    case NdOp::INT_OR:
+      Result = *Left | *Right;
+      break;
+    case NdOp::INT_XOR:
+      Result = *Left ^ *Right;
+      break;
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR: {
+      const unsigned Bits = E.Operands[0]->Type->Size * 8;
+      if (*Right >= Bits)
+        return std::nullopt;
+      const uint64_t Input = *Left & Mask(E.Operands[0]->Type->Size);
+      if (E.Op == NdOp::INT_LEFT)
+        Result = Input << *Right;
+      else if (E.Op == NdOp::INT_RIGHT)
+        Result = Input >> *Right;
+      else if (!*Right)
+        Result = Input;
+      else {
+        Result = Input >> *Right;
+        if (Input & (UINT64_C(1) << (Bits - 1)))
+          Result |= UINT64_MAX << (Bits - *Right);
+      }
+      break;
+    }
+    case NdOp::CONCAT: {
+      const unsigned LowBits = E.Operands[1]->Type->Size * 8;
+      if (E.Type->Size != E.Operands[0]->Type->Size +
+                              E.Operands[1]->Type->Size ||
+          LowBits >= 64)
+        return std::nullopt;
+      Result = (*Left << LowBits) | *Right;
+      break;
+    }
+    case NdOp::SUBBYTES: {
+      if (*Right > E.Operands[0]->Type->Size ||
+          E.Type->Size > E.Operands[0]->Type->Size - *Right)
+        return std::nullopt;
+      Result = *Left >> (*Right * 8);
+      break;
+    }
+    default:
+      return std::nullopt;
+    }
+    return Normalize(Result);
+  };
+  if (Depth > 128 || !Expression.Type || Expression.Type->Size != 8)
     return std::nullopt;
-  if (Expression.Kind == ExprKind::Const)
-    return Expression.ConstVal;
-  if (Expression.Kind == ExprKind::Cast && Expression.Operands.size() == 1 &&
-      Expression.Operands[0])
-    return constantAddress(*Expression.Operands[0], Depth + 1);
-  if (Expression.Kind != ExprKind::BinOp || Expression.Operands.size() != 2 ||
-      !Expression.Operands[0] || !Expression.Operands[1])
-    return std::nullopt;
-  auto Left = constantAddress(*Expression.Operands[0], Depth + 1);
-  auto Right = constantAddress(*Expression.Operands[1], Depth + 1);
-  if (!Left || !Right)
-    return std::nullopt;
-  if (Expression.Op == NdOp::INT_ADD)
-    return *Left + *Right;
-  if (Expression.Op == NdOp::INT_SUB)
-    return *Left - *Right;
-  return std::nullopt;
+  return Integer(Integer, Expression, Depth);
 }
 
 inline SourceCallTypeHint::Kind runtimeKind(ObjCSourceReference::Kind Kind) {
@@ -901,8 +1011,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       }
       // swift_beginAccess marks an address for the exclusivity runtime but
       // does not describe its pointee type. Rebuild this operand only when an
-      // actual load/store in the same function independently proves the exact
-      // named local storage and access width.
+      // actual load/store in the same function or an exact Swift scalar
+      // storage symbol independently proves the access width.
       if (Index == 0 && Operand && Expression->Kind == ExprKind::Call &&
           Expression->SourceCallHint &&
           Expression->SourceCallHint->CallKind ==
@@ -914,13 +1024,19 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
         const auto Extent =
             Address ? DirectLocalStorage.find(*Address)
                     : DirectLocalStorage.end();
+        std::optional<uint64_t> Width;
+        if (Extent != DirectLocalStorage.end())
+          Width = Extent->second;
+        else if (Address)
+          if (const auto *Symbol = uniqueWritableDataSymbol(Image, *Address, 1))
+            Width = swiftStaticScalarStorageWidth(Symbol->Name);
         auto Hint =
             Expected && runtimeBindingMatches(*Expression->SourceCallHint,
                                               *Expected) &&
                     Expression->Operands.size() ==
                         Expected->Signature.Parameters.size() &&
-                    Extent != DirectLocalStorage.end()
-                ? localStorageHint(Image, *Address, Extent->second)
+                    Width
+                ? localStorageHint(Image, *Address, *Width)
                 : std::nullopt;
         if (Hint) {
           auto Storage = HighExpr::makeCall({}, 0, {});
@@ -928,10 +1044,14 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           Storage->SourceCallHint =
               std::make_shared<SourceCallTypeHint>(std::move(*Hint));
           Result.LocalStorageExtents[*Address] = std::max<uint64_t>(
-              Result.LocalStorageExtents[*Address], Extent->second);
+              Result.LocalStorageExtents[*Address], *Width);
           Operand = std::move(Storage);
           continue;
         }
+        if (Address && Image.getSectionFor(*Address))
+          Fail("Swift exclusivity marker retains an unproved image-data "
+               "address",
+               Operand.get());
       }
       // The public unfair-lock routines consume one four-byte opaque lock
       // object. Bind only their exact first argument and keep the platform

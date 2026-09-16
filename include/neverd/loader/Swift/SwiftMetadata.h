@@ -4,6 +4,9 @@
 #define NEVERD_LOADER_SWIFT_SWIFTMETADATA_H
 #include "neverd/loader/Swift/SwiftMethods.h"
 
+#include "llvm/ADT/StringRef.h"
+
+#include <optional>
 #include <string>
 #include <vector>
 namespace neverd {
@@ -23,5 +26,11 @@ struct SwiftRecoveredType {
 /// Read only bounded file-backed descriptors and individually resolved slots.
 /// Generic/resilient or incomplete layouts remain explicit unrecovered rows.
 std::vector<SwiftRecoveredType> recoverSwiftTypes(const BinaryImage &Image);
+
+/// Return the exact byte width encoded by a bounded Swift static-property
+/// storage symbol when its type is a standard-library scalar. Accessor and
+/// unrelated manglings are rejected rather than classified by suffix text.
+std::optional<uint64_t>
+swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol);
 } // namespace neverd
 #endif

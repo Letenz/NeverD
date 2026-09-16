@@ -2135,7 +2135,7 @@ TEST(ObjCSourceBindings, NamedWritableScalarsUseSharedRebuiltStorage) {
 }
 
 TEST(ObjCSourceBindings,
-     SwiftBeginAccessUsesTheExactStorageProvedByItsMemoryAccess) {
+     SwiftBeginAccessUsesTypedOrMemoryAccessProvedLocalStorage) {
   Fixture F;
   constexpr va_t Address = 0x1040;
   constexpr va_t Slot = 0x10e0;
@@ -2143,7 +2143,8 @@ TEST(ObjCSourceBindings,
   F.Image.Segments[0].Flags =
       SegmentFlags::Readable | SegmentFlags::Writable;
   F.Image.Sections[0].Flags = F.Image.Segments[0].Flags;
-  F.Image.Symbols.push_back({"_$s4Test7enabledSbvpZ", Address, 1, false});
+  F.Image.Symbols.push_back(
+      {"_$s4Test3BoxC7enabledSbvpZ", Address, 1, false});
   F.Image.Segments[0].Data[Address - 0x1000] = 1;
   F.Image.ImportPtrSlots[Slot] = "_swift_beginAccess";
   ASSERT_TRUE(F.Image.recordDyldBindSlot(
@@ -2195,14 +2196,84 @@ TEST(ObjCSourceBindings,
   EXPECT_EQ(Rejected.Function.Body[0].CallExpr->Operands[0]->Kind,
             ExprKind::Const);
 
-  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
-  F.Function.ReturnType = NdType::makeVoid();
-  F.Function.Body = {Access};
-  const auto Unproved = bindObjCSourceReferences(F.Function, F.Image);
-  EXPECT_FALSE(Unproved.Limitation.empty());
-  EXPECT_TRUE(Unproved.LocalStorageExtents.empty());
-  EXPECT_EQ(Unproved.Function.Body[0].CallExpr->Operands[0]->Kind,
-            ExprKind::Const);
+  const auto RebuiltAddress = [] {
+    ExprPtr Result = HighExpr::makeConst((Address >> 56) & 0xff, 1);
+    for (int Shift = 48, Width = 2; Shift >= 0; Shift -= 8, ++Width) {
+      Result = HighExpr::makeBinop(
+          NdOp::CONCAT, Result,
+          HighExpr::makeConst((Address >> Shift) & 0xff, 1));
+      Result->Type = NdType::makeInt(Width, false);
+    }
+    return Result;
+  };
+  const auto MarkerFunction = [&](ExprPtr AddressExpression) {
+    auto MarkerCall = HighExpr::makeCall(
+        "swift_beginAccess", Slot,
+        {std::move(AddressExpression), HighExpr::makeConst(0, 8),
+         HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8)});
+    MarkerCall->Type = NdType::makeVoid();
+    MarkerCall->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    HighStmt Marker;
+    Marker.Kind = StmtKind::ExprStmt;
+    Marker.CallExpr = std::move(MarkerCall);
+    HighFunc Function;
+    Function.ReturnType = NdType::makeVoid();
+    Function.Body = {std::move(Marker)};
+    return Function;
+  };
+  const auto Typed =
+      bindObjCSourceReferences(MarkerFunction(RebuiltAddress()), F.Image);
+  ASSERT_TRUE(Typed.Limitation.empty()) << Typed.Limitation;
+  EXPECT_EQ(Typed.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Address, 1}}));
+  ASSERT_TRUE(Typed.Function.Body[0].CallExpr->Operands[0]->SourceCallHint);
+  EXPECT_EQ(Typed.Function.Body[0]
+                .CallExpr->Operands[0]
+                ->SourceCallHint->ByteCount,
+            1U);
+
+  auto InvalidShift = HighExpr::makeBinop(
+      NdOp::INT_LEFT,
+      HighExpr::makeConst(Address, 8,
+                         ConstantAddressProvenance::DataAddress),
+      HighExpr::makeConst(64, 8));
+  InvalidShift->Type = NdType::makeInt(8, false);
+  const auto UnboundedShift = bindObjCSourceReferences(
+      MarkerFunction(std::move(InvalidShift)), F.Image);
+  EXPECT_FALSE(UnboundedShift.Limitation.empty());
+  EXPECT_TRUE(UnboundedShift.LocalStorageExtents.empty());
+
+  for (const char *Name :
+       {"_untypedStorage", "_$s4Test3BoxC5valueSSvpZ",
+        "_$s4Test3BoxC7enabledSbvgZ"}) {
+    SCOPED_TRACE(Name);
+    const auto Symbol = llvm::find_if(F.Image.Symbols, [](const auto &S) {
+      return S.Addr == Address && !S.IsFunc;
+    });
+    ASSERT_NE(Symbol, F.Image.Symbols.end());
+    Symbol->Name = Name;
+    EXPECT_FALSE(swiftStaticScalarStorageWidth(Symbol->Name));
+    const auto Function = MarkerFunction(RebuiltAddress());
+    EXPECT_TRUE(objc_binding_detail::directLocalStorageAccessExtents(
+                    Function, F.Image)
+                    .empty());
+    const auto Unproved = bindObjCSourceReferences(Function, F.Image);
+    EXPECT_FALSE(Unproved.Limitation.empty());
+    EXPECT_TRUE(Unproved.LocalStorageExtents.empty());
+    EXPECT_EQ(Unproved.Function.Body[0].CallExpr->Operands[0]->Kind,
+              ExprKind::BinOp);
+  }
+
+  const auto Symbol = llvm::find_if(F.Image.Symbols, [](const auto &S) {
+    return S.Addr == Address && !S.IsFunc;
+  });
+  ASSERT_NE(Symbol, F.Image.Symbols.end());
+  Symbol->Name = "_$s4Test3BoxC5countSivpZ";
+  F.Image.Symbols.push_back({"_nextStorage", Address + 4, 1, false});
+  const auto Overlapping = bindObjCSourceReferences(
+      MarkerFunction(RebuiltAddress()), F.Image);
+  EXPECT_FALSE(Overlapping.Limitation.empty());
+  EXPECT_TRUE(Overlapping.LocalStorageExtents.empty());
 }
 
 TEST(ObjCSourceBindings, UnfairLocksBindExactNamedFourByteStorage) {
