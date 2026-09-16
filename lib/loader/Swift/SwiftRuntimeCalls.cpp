@@ -54,6 +54,45 @@ bool declaredMetadataABI(const BinaryImage &Image, va_t Slot,
   return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
 }
 
+bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
+                       llvm::StringRef Name, SourceCallTypeHint &Hint) {
+  constexpr llvm::StringLiteral AssertionFailure =
+      "$ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_"
+      "SSAHSus6UInt32VtF";
+  const auto Bind = Image.DyldBindSlots.find(Slot);
+  if (Name != AssertionFailure || Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib")
+    return false;
+
+  auto &Signature = Hint.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
+  const auto Word = NdType::makeInt(8, false);
+  const auto Byte = NdType::makeInt(1, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  Signature.ReturnType = NdType::makeVoid();
+  // Compiler IR lowers the two StaticString values to (i64, i64, i8), the
+  // String value to (i64, ptr), followed by UInt and UInt32. This is a fixed
+  // transport declaration; it does not expose or reconstruct either layout.
+  Signature.Parameters = {{"message_address", Word},
+                          {"message_count", Word},
+                          {"message_flags", Byte},
+                          {"detail_bits", Word},
+                          {"detail_storage", Pointer},
+                          {"file_address", Word},
+                          {"file_count", Word},
+                          {"file_flags", Byte},
+                          {"line", Word},
+                          {"flags", NdType::makeInt(4, false)}};
+  // Both StaticString byte ranges are read synchronously and the call never
+  // returns. Rebuild their immutable contents rather than preserving image
+  // addresses; String remains an opaque two-word value with its ownership.
+  Hint.BorrowedByteInputs = {{0, 1}, {5, 6}};
+  Hint.SwiftStringInputs = {{3, 4}};
+  Hint.DoesNotReturn = true;
+  std::string Diagnostic;
+  return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+}
+
 bool declaredFixedABI(const BinaryImage &Image, va_t Slot, llvm::StringRef Name,
                       SourceCallTypeHint &Hint) {
   const auto *Found = std::lower_bound(
@@ -143,6 +182,8 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     return Result;
   auto &Signature = Result.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  if (declaredStdlibABI(Image, ImportSlot, Name, Result))
+    return Result;
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
   const bool ReportInFile =
       Name == "_swift_stdlib_reportFatalErrorInFile" ||

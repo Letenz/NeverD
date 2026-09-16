@@ -22,6 +22,14 @@ swiftStringSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   if (!FromNSString &&
       *Import != "_$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF")
     return std::nullopt;
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  if (Bind == Image.DyldBindSlots.end() ||
+      !darwinExportModuleMatches(
+          "/System/Library/Frameworks/Foundation.framework/Foundation|"
+          "/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation|/usr/lib/swift/libswiftFoundation.dylib",
+          Bind->second.Module))
+    return std::nullopt;
   SourceCallTypeHint Result;
   Result.CallKind = FromNSString
                         ? SourceCallTypeHint::Kind::SwiftStringFromNSString
@@ -38,6 +46,7 @@ swiftStringSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     Signature.ReturnType = Pointer;
     Signature.Parameters = {{"word", NdType::makeInt(8, false)},
                             {"storage", Pointer}};
+    Result.SwiftStringInputs = {{0, 1}};
   }
   // These exact Darwin swiftcc entries carry ptr(i64, ptr) and {i64, ptr}(ptr),
   // without swiftself, swifterror or async context. Their integer register
@@ -52,20 +61,8 @@ swiftStringSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
 }
 
 std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
-                                                     va_t ImportSlot,
                                                      uint64_t CountAndFlags,
                                                      uint64_t Storage) {
-  const auto Call = swiftStringSourceCallHint(Image, ImportSlot);
-  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
-  if (!Call || Call->CallKind != SourceCallTypeHint::Kind::SwiftStringBridge ||
-      Bind == Image.DyldBindSlots.end())
-    return std::nullopt;
-  const auto &Module = Bind->second.Module;
-  if (Module != "/System/Library/Frameworks/Foundation.framework/Foundation" &&
-      Module != "/System/Library/Frameworks/Foundation.framework/Versions/C/"
-                "Foundation" &&
-      Module != "/usr/lib/swift/libswiftFoundation.dylib")
-    return std::nullopt;
   // Darwin's stable String representation stores a literal's UTF-8 address
   // with a bias and an immortal discriminator. Preserve the existing flags
   // and runtime bridge; reconstruct only the immutable byte storage.

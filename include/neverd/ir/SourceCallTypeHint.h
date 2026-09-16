@@ -76,8 +76,9 @@ struct SourceCallTypeHint {
     /// Base of a rebuilt numeric profiling-counter section. The SDK proves
     /// storage extents and permits only bounded, unordered memory accesses.
     RuntimeProfileCounterStorage,
-    /// A Swift runtime import with an explicitly declared ordinary C ABI.
-    /// Swift calling conventions and register-specialized entries are excluded.
+    /// A Swift runtime or standard-library import with an explicitly declared
+    /// fixed C or Swift ABI. Hidden contexts and register-specialized entries
+    /// are excluded.
     SwiftRuntimeCall,
     /// A required Swift value-witness entry reached through exact runtime
     /// metadata. The machine proof binds the operation's canonical table slot
@@ -143,6 +144,11 @@ struct SourceCallTypeHint {
   /// reads at most that nonnegative count, never writes/retains the pointer,
   /// and does not observe its identity. These are call effects, not ABI types.
   std::vector<std::pair<unsigned, unsigned>> BorrowedByteInputs;
+  /// Pairs of count/flags and storage parameter indices that carry an opaque
+  /// Swift String value. A canonical runtime declaration may use this only to
+  /// rebuild proven immortal literal storage; ownership and dynamic values
+  /// remain unchanged.
+  std::vector<std::pair<unsigned, unsigned>> SwiftStringInputs;
   enum class FormatSyntax { NSString, Predicate };
   /// Proven actual arguments of a declared format call. Signature contains
   /// every supplied value at its physical location; only FixedCount values

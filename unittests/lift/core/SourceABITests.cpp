@@ -86,14 +86,14 @@ TEST(SourceABI, DarwinIntegerPairResultRequiresBothReturnRegisters) {
   }
 }
 
-TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers) {
+TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledResults) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
     const auto Pointer = NdType::makePtr(NdType::makeVoid());
     for (const auto &Result :
          {Pointer, NdType::makeInt(16, false),
           NdType::makeStruct({Pointer, NdType::makeInt(8)})}) {
-      for (size_t Count = 0; Count <= TRI.IntParamRegs.size(); ++Count) {
+      for (size_t Count = 0; Count <= TRI.IntParamRegs.size() + 2; ++Count) {
         SourceFunctionTypeHint Hint;
         Hint.ReturnType = Result;
         Hint.Parameters.assign(Count, {"word", NdType::makeInt(8, false)});
@@ -103,9 +103,14 @@ TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers) {
         EXPECT_EQ(Hint.Convention,
                   SourceFunctionTypeHint::ConventionKind::Swift);
         EXPECT_TRUE(validateSourceABI(Hint, Error));
-        for (size_t I = 0; I < Count; ++I)
-          EXPECT_EQ(Hint.Parameters[I].Location.RegisterOffset,
-                    TRI.IntParamRegs[I]);
+        for (size_t I = 0; I < Count; ++I) {
+          const auto &Location = Hint.Parameters[I].Location;
+          EXPECT_EQ(Location.Kind, I < TRI.IntParamRegs.size()
+                                       ? SourceABICarrierKind::IntegerRegister
+                                       : SourceABICarrierKind::Stack);
+          if (I < TRI.IntParamRegs.size())
+            EXPECT_EQ(Location.RegisterOffset, TRI.IntParamRegs[I]);
+        }
         if (Result->Size == 16) {
           ASSERT_EQ(Hint.ReturnComponents.size(), 2U);
           for (size_t I = 0; I < 2; ++I)
@@ -126,11 +131,6 @@ TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers) {
               TRI.IntParamRegs.back();
           EXPECT_FALSE(validateSourceABI(Invalid, Error));
         }
-        Invalid = Hint;
-        Invalid.Parameters.push_back({"extra", Pointer});
-        if (Count == TRI.IntParamRegs.size())
-          EXPECT_FALSE(
-              assignDarwinSwiftSourceABI(Invalid, Architecture, Error));
         ASSERT_TRUE(assignDarwinFixedSourceABI(Hint, Architecture, Error));
         EXPECT_EQ(Hint.Convention, SourceFunctionTypeHint::ConventionKind::C);
       }
@@ -142,9 +142,75 @@ TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers) {
       Hint.ReturnType = Unsupported;
       std::string Error;
       EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, Architecture, Error));
+    }
+    for (const auto &Unsupported :
+         {NdType::makeFloat(8),
+          NdType::makeStruct({Pointer, Pointer, Pointer})}) {
+      SourceFunctionTypeHint Hint;
+      std::string Error;
       Hint.ReturnType = NdType::makeVoid();
       Hint.Parameters = {{"unsupported", Unsupported}};
       EXPECT_FALSE(assignDarwinSwiftSourceABI(Hint, Architecture, Error));
+    }
+  }
+}
+
+TEST(SourceABI, SwiftScalarArgumentsKeepNarrowAndStackCarriers) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Word = NdType::makeInt(8, false);
+    const auto Byte = NdType::makeInt(1, false);
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeVoid();
+    Hint.Parameters = {{"a0", Word},
+                       {"a1", Word},
+                       {"a2", Byte},
+                       {"a3", Word},
+                       {"a4", NdType::makePtr(NdType::makeVoid())},
+                       {"a5", Word},
+                       {"a6", Word},
+                       {"a7", Byte},
+                       {"a8", Word},
+                       {"a9", NdType::makeInt(4, false)}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Hint, Architecture, Error)) << Error;
+    ASSERT_TRUE(validateSourceABI(Hint, Error)) << Error;
+    int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
+    for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+      const auto &Parameter = Hint.Parameters[I];
+      const auto &Location = Parameter.Location;
+      EXPECT_EQ(Location.ValueBytes, Parameter.Type->Size) << I;
+      if (I < TRI.IntParamRegs.size()) {
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::IntegerRegister) << I;
+        EXPECT_EQ(Location.RegisterOffset, TRI.IntParamRegs[I]) << I;
+        EXPECT_EQ(Location.ExtendTo32Bits,
+                  Parameter.Type->Kind == NdTypeKind::Int &&
+                      Parameter.Type->Size < 4)
+            << I;
+      } else {
+        const int64_t Alignment =
+            Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
+        StackOffset = (StackOffset + Alignment - 1) & -Alignment;
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::Stack) << I;
+        EXPECT_EQ(Location.EntryStackOffset, StackOffset) << I;
+        EXPECT_FALSE(Location.ExtendTo32Bits) << I;
+        StackOffset += Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
+      }
+    }
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Invalid = Hint;
+      if (Mutation == 0)
+        ++Invalid.Parameters[2].Location.ValueBytes;
+      else if (Mutation == 1)
+        Invalid.Parameters[2].Location.ExtendTo32Bits = false;
+      else if (Mutation == 2)
+        ++Invalid.Parameters.back().Location.EntryStackOffset;
+      else if (Mutation == 3)
+        Invalid.Parameters.back().Location.Kind =
+            SourceABICarrierKind::IntegerRegister;
+      else
+        Invalid.Parameters[0].Type = NdType::makeFloat(8);
+      EXPECT_FALSE(validateSourceABI(Invalid, Error)) << Mutation;
     }
   }
 }

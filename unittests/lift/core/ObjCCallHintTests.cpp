@@ -633,6 +633,161 @@ TEST(ObjCCallHints,
   }
 }
 
+TEST(ObjCCallHints,
+     SwiftAssertionFailureKeepsExactTerminalABIAndImportIdentity) {
+  const std::string Import =
+      "_$ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_"
+      "SSAHSus6UInt32VtF";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0,
+                                   "/usr/lib/swift/libswiftCore.dylib", false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Import.substr(1));
+    EXPECT_TRUE(Hint->DoesNotReturn);
+    EXPECT_EQ(Hint->BorrowedByteInputs,
+              (std::vector<std::pair<unsigned, unsigned>>{{0, 1}, {5, 6}}));
+    EXPECT_EQ(Hint->SwiftStringInputs,
+              (std::vector<std::pair<unsigned, unsigned>>{{3, 4}}));
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 10U);
+    EXPECT_EQ(Signature.Parameters[2].Type->Size, 1U);
+    EXPECT_EQ(Signature.Parameters[4].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[7].Type->Size, 1U);
+    EXPECT_EQ(Signature.Parameters[9].Type->Size, 4U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
+    for (size_t I = 0; I < Signature.Parameters.size(); ++I) {
+      const auto &Parameter = Signature.Parameters[I];
+      const auto &Location = Parameter.Location;
+      EXPECT_EQ(Location.ValueBytes, Parameter.Type->Size) << I;
+      if (I < TRI.IntParamRegs.size()) {
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::IntegerRegister) << I;
+        EXPECT_EQ(Location.RegisterOffset, TRI.IntParamRegs[I]) << I;
+      } else {
+        const int64_t Alignment =
+            Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
+        StackOffset = (StackOffset + Alignment - 1) & -Alignment;
+        EXPECT_EQ(Location.Kind, SourceABICarrierKind::Stack) << I;
+        EXPECT_EQ(Location.EntryStackOffset, StackOffset) << I;
+        StackOffset += Architecture == Arch::AArch64 ? Parameter.Type->Size : 8;
+      }
+    }
+
+    std::vector<ExprPtr> Arguments;
+    for (const auto &Parameter : Signature.Parameters)
+      Arguments.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+    auto Call = HighExpr::makeCall("untrusted_name", 0x1100, Arguments);
+    Call->Type = NdType::makeVoid();
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    HighStmt Statement;
+    Statement.Kind = StmtKind::Call;
+    Statement.CallExpr = Call;
+    HighFunc Function;
+    Function.Entry = 0x1200;
+    Function.Name = "assertion_wrapper";
+    Function.ReturnType = NdType::makeVoid();
+    Function.Body = {Statement};
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+    EXPECT_NE(Source.find("__attribute__((swiftcall))"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("__attribute__((noreturn))"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("__asm__(\"" + Import + "\")"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("uint8_t"), std::string::npos) << Source;
+
+    const std::string Fatal = "Fatal error";
+    const std::string Detail = "not implemented";
+    const std::string File = "Example.swift";
+    const auto Store = [&](va_t Address, llvm::StringRef Bytes) {
+      auto At = Image.Segments[0].Data.begin() + (Address - 0x1000);
+      std::copy(Bytes.begin(), Bytes.end(), At);
+      At[Bytes.size()] = 0;
+    };
+    Store(0x2200, Fatal);
+    Store(0x2280, Detail);
+    Store(0x22c0, File);
+    const auto WidenedCount = [](uint32_t Value) -> ExprPtr {
+      auto Signed =
+          HighExpr::makeUnary(NdOp::INT_SEXT, HighExpr::makeConst(Value, 4));
+      Signed->Type = NdType::makeInt(8, true);
+      auto Unsigned = std::make_shared<HighExpr>();
+      Unsigned->Kind = ExprKind::Cast;
+      Unsigned->Type = Unsigned->CastTo = NdType::makeInt(8, false);
+      Unsigned->Operands = {std::move(Signed)};
+      return Unsigned;
+    };
+    std::vector<ExprPtr> LiteralArguments{
+        HighExpr::makeConst(0x2200, 8, ConstantAddressProvenance::DataAddress),
+        WidenedCount(Fatal.size()),
+        HighExpr::makeConst(2, 1),
+        HighExpr::makeConst(UINT64_C(0xd000000000000000) | Detail.size(), 8),
+        HighExpr::makeConst(UINT64_C(0x8000000000000000) | (0x2280 - 32), 8,
+                            ConstantAddressProvenance::DataAddress),
+        HighExpr::makeConst(0x22c0, 8, ConstantAddressProvenance::DataAddress),
+        WidenedCount(File.size()),
+        HighExpr::makeConst(2, 1),
+        HighExpr::makeConst(7, 8),
+        HighExpr::makeConst(0, 4)};
+    auto LiteralCall =
+        HighExpr::makeCall("untrusted_name", 0x1100, LiteralArguments);
+    LiteralCall->Type = NdType::makeVoid();
+    LiteralCall->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    HighStmt LiteralStatement;
+    LiteralStatement.Kind = StmtKind::Call;
+    LiteralStatement.CallExpr = LiteralCall;
+    HighFunc LiteralFunction;
+    LiteralFunction.Entry = 0x1300;
+    LiteralFunction.Name = "literal_assertion_wrapper";
+    LiteralFunction.ReturnType = NdType::makeVoid();
+    LiteralFunction.Body = {LiteralStatement};
+    auto Bound = sdk::bindObjCSourceReferences(LiteralFunction, Image);
+    EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_EQ(Bound.BorrowedBytes.size(), 3U);
+    ASSERT_TRUE(Bound.Function.Body[0].CallExpr);
+    EXPECT_TRUE(
+        sdk::objcSourceCallBound(*Bound.Function.Body[0].CallExpr, Image, {}));
+
+    for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+      auto WrongCall = *Call;
+      auto Wrong = std::make_shared<SourceCallTypeHint>(*Hint);
+      if (Mutation == 0)
+        Wrong->DoesNotReturn = false;
+      else if (Mutation == 1)
+        Wrong->TargetName += "_suffix";
+      else if (Mutation == 2)
+        Wrong->Signature.Parameters[2].Type = NdType::makeInt(8, false);
+      else if (Mutation == 3)
+        ++Wrong->Signature.Parameters.back().Location.EntryStackOffset;
+      else if (Mutation == 4)
+        Wrong->Signature.Origin =
+            SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+      else if (Mutation == 5)
+        Wrong->BorrowedByteInputs.pop_back();
+      else
+        Wrong->SwiftStringInputs.clear();
+      WrongCall.SourceCallHint = std::move(Wrong);
+      EXPECT_FALSE(sdk::objcSourceCallBound(WrongCall, Image, {})) << Mutation;
+    }
+    Image.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  }
+}
+
 TEST(ObjCCallHints, SwiftRuntimeRecordResultsKeepBothDeclaredCarriers) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const auto &[Name, Arguments] :
@@ -1023,6 +1178,22 @@ TEST(ObjCCallHints, BorrowedBytesRequireTheBoundedConsumerOccurrence) {
   EXPECT_FALSE(
       sdk::bindObjCSourceReferences(Function, Image).Limitation.empty());
   Count->ConstVal = 5;
+  auto ZeroExtended =
+      HighExpr::makeUnary(NdOp::INT_ZEXT, HighExpr::makeConst(5, 2));
+  ZeroExtended->Type = NdType::makeInt(8, false);
+  Call->Operands[1] = ZeroExtended;
+  EXPECT_TRUE(
+      sdk::bindObjCSourceReferences(Function, Image).Limitation.empty());
+  auto Negative =
+      HighExpr::makeUnary(NdOp::INT_SEXT, HighExpr::makeConst(UINT32_MAX, 4));
+  Negative->Type = NdType::makeInt(8, true);
+  Call->Operands[1] = Negative;
+  EXPECT_FALSE(
+      sdk::bindObjCSourceReferences(Function, Image).Limitation.empty());
+  Call->Operands[1] = HighExpr::makeConst(1024 * 1024 + 1, 8);
+  EXPECT_FALSE(
+      sdk::bindObjCSourceReferences(Function, Image).Limitation.empty());
+  Call->Operands[1] = Count;
   HighStmt Return;
   Return.Kind = StmtKind::Return;
   Return.RetVal = Address;
@@ -1105,6 +1276,9 @@ TEST(ObjCCallHints,
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
     auto Image = runtimeImage(Name, Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        Name, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+        false};
     const auto Med = convert(Image, caller(Architecture));
     ASSERT_EQ(Med.CallInfos.size(), 1U);
     const auto &Call = Med.CallInfos.front();
@@ -1178,6 +1352,9 @@ TEST(ObjCCallHints, NSStringBridgePreservesBothResultWordsAndExactImport) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);
     auto Image = runtimeImage(Name, Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        Name, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+        false};
     auto Low = caller(Architecture);
     Low.Blocks[0].Ops.insert(
         Low.Blocks[0].Ops.begin() + 1,
@@ -1243,8 +1420,11 @@ TEST(ObjCCallHints, SwiftStringBridgeRejectsOtherABIsAndUnprovenImports) {
       EXPECT_TRUE(buildObjCSourceCallHints(Image, caller(Architecture)).empty())
           << Other;
     }
-    for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
       auto Image = runtimeImage(Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          Name, 0, "/System/Library/Frameworks/Foundation.framework/Foundation",
+          false};
       if (Mutation == 0) {
         Image.ImportPtrSlots.clear();
         Image.Symbols.push_back({Name, 0x1100});
@@ -1267,6 +1447,8 @@ TEST(ObjCCallHints, SwiftStringBridgeRejectsOtherABIsAndUnprovenImports) {
         Binding.Name = Mutation == 8 ? "_different" : Name;
         Binding.Addend = Mutation == 9;
         Binding.WeakImport = Mutation == 10;
+        if (Mutation == 11)
+          Binding.Module = "/System/Library/Frameworks/AppKit.framework/AppKit";
       }
       EXPECT_TRUE(buildObjCSourceCallHints(Image, caller(Architecture)).empty())
           << Mutation;

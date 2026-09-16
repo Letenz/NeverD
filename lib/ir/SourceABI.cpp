@@ -92,11 +92,12 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   const auto Word = [](const TypeRef &T) {
     return scalarType(T) && T->Size == 8 && T->Kind != NdTypeKind::Float;
   };
-  if (!Hint.ReturnType ||
-      Hint.Parameters.size() >
-          getTargetRegInfo(Architecture).IntParamRegs.size() ||
+  const auto Scalar = [](const TypeRef &T) {
+    return scalarType(T) && T->Kind != NdTypeKind::Float;
+  };
+  if (!Hint.ReturnType || Hint.Parameters.size() > 64 ||
       !std::all_of(Hint.Parameters.begin(), Hint.Parameters.end(),
-                   [&](const auto &P) { return Word(P.Type); }))
+                   [&](const auto &P) { return Scalar(P.Type); }))
     return false;
   if (Word(Hint.ReturnType) || Hint.ReturnType->Kind == NdTypeKind::Void ||
       (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16))
@@ -205,11 +206,26 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
   if (Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift) {
     if (!swiftFixedShape(Hint, Hint.Architecture))
       return fail(Diagnostic, "Unsupported fixed Swift source ABI shape");
+    size_t IntegerIndex = 0;
+    int64_t StackOffset = Hint.Architecture == Arch::X64 ? 8 : 0;
     for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
       const auto &P = Hint.Parameters[I];
-      if (!P.Components.empty() ||
-          P.Location.Kind != SourceABICarrierKind::IntegerRegister ||
-          P.Location.RegisterOffset != TRI.IntParamRegs[I])
+      SourceABIValueLocation Expected;
+      Expected.ValueBytes = P.Type->Size;
+      if (IntegerIndex < TRI.IntParamRegs.size()) {
+        Expected.Kind = SourceABICarrierKind::IntegerRegister;
+        Expected.RegisterOffset = TRI.IntParamRegs[IntegerIndex++];
+        Expected.ExtendTo32Bits =
+            P.Type->Kind == NdTypeKind::Int && P.Type->Size < 4;
+      } else {
+        const int64_t Alignment =
+            Hint.Architecture == Arch::AArch64 ? P.Type->Size : 8;
+        StackOffset = (StackOffset + Alignment - 1) & -Alignment;
+        Expected.Kind = SourceABICarrierKind::Stack;
+        Expected.EntryStackOffset = StackOffset;
+        StackOffset += Hint.Architecture == Arch::AArch64 ? P.Type->Size : 8;
+      }
+      if (!P.Components.empty() || !sameLocation(P.Location, Expected))
         return fail(Diagnostic, "Unsupported fixed Swift argument carrier");
     }
   }
@@ -229,8 +245,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     if (!scalarType(Type) || Location.ValueBytes != Type->Size)
       return false;
     if (Location.ExtendTo32Bits &&
-        ((IsReturn && Hint.Architecture != Arch::AArch64) ||
-         Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+        ((IsReturn &&
+          (Hint.Architecture != Arch::AArch64 ||
+           Hint.Convention != SourceFunctionTypeHint::ConventionKind::C)) ||
          Location.Kind != SourceABICarrierKind::IntegerRegister ||
          Type->Kind != NdTypeKind::Int || Type->Size >= 4))
       return false;
@@ -546,8 +563,9 @@ bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
          Hint.Selector.empty() && Hint.OwnerClass.empty() &&
          Hint.SelectorReferenceAddress == 0 && !Hint.DoesNotReturn &&
          !Hint.ReturnedArgument && !Hint.RuntimeObjCResultType &&
-         Hint.BorrowedByteInputs.empty() && !Hint.Format && !Hint.Receiver &&
-         Hint.ByteCount == 0 && Hint.ImmutablePointerSlot == 0 &&
+         Hint.BorrowedByteInputs.empty() && Hint.SwiftStringInputs.empty() &&
+         !Hint.Format && !Hint.Receiver && Hint.ByteCount == 0 &&
+         Hint.ImmutablePointerSlot == 0 &&
          equalSourceABIs(Hint.Signature, Expected->Signature);
 }
 

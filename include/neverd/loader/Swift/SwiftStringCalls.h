@@ -20,11 +20,11 @@ struct SwiftLiteralString {
   uint32_t Bytes = 0;
 };
 
-/// Validate a large immortal String literal at its exact Foundation bridge
-/// consumer. The returned immutable extent includes its trailing zero. No
-/// native heap header, foreign object, or managed storage is inferred.
+/// Validate the physical bits of a large immortal String literal after the
+/// caller has authenticated an exact consumer with a declared String carrier.
+/// The returned immutable extent includes its trailing zero. No native heap
+/// header, foreign object, or managed storage is inferred.
 std::optional<SwiftLiteralString> swiftLiteralString(const BinaryImage &Image,
-                                                     va_t ImportSlot,
                                                      uint64_t CountAndFlags,
                                                      uint64_t Storage);
 

@@ -79,6 +79,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                Expected.Format->FormatParameter &&
            Binding.Format->FormatAddress == Expected.Format->FormatAddress)) &&
          Binding.BorrowedByteInputs == Expected.BorrowedByteInputs &&
+         Binding.SwiftStringInputs == Expected.SwiftStringInputs &&
          objc_projection_detail::sameHint(Binding.Signature,
                                           Expected.Signature);
 }
@@ -86,18 +87,74 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
 inline std::optional<uint32_t> constantBorrowedByteCount(const ExprPtr &Value,
                                                          const TypeRef &Type,
                                                          unsigned Depth = 0) {
-  if (!Value || !Type || Type->Kind != NdTypeKind::Int || Type->Size != 4 ||
-      !Type->IsSigned || Depth > 16)
+  if (!Value || !Type || Type->Kind != NdTypeKind::Int ||
+      (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
+       Type->Size != 8) ||
+      Depth > 16)
     return std::nullopt;
-  if (Value->Kind == ExprKind::Cast && Value->Operands.size() == 1 &&
-      Value->Type && Value->Type->Kind == NdTypeKind::Int &&
-      Value->Type->Size >= 4)
-    return constantBorrowedByteCount(Value->Operands[0], Type, Depth + 1);
-  if (Value->Kind != ExprKind::Const || !Value->Type ||
-      Value->Type->Kind != NdTypeKind::Int || Value->Type->Size < 4)
+  const auto Normalize = [](uint64_t Raw,
+                            const TypeRef &Integer) -> std::optional<uint64_t> {
+    if (!Integer || Integer->Kind != NdTypeKind::Int ||
+        (Integer->Size != 1 && Integer->Size != 2 && Integer->Size != 4 &&
+         Integer->Size != 8))
+      return std::nullopt;
+    const unsigned Bits = Integer->Size * 8;
+    const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
+    Raw &= Mask;
+    if (Integer->IsSigned && Bits < 64 && (Raw & (UINT64_C(1) << (Bits - 1))))
+      Raw |= ~Mask;
+    return Raw;
+  };
+  // Evaluate only the constant integer conversions represented explicitly in
+  // HighIR. Preserve each intermediate width so a sign extension cannot be
+  // mistaken for a large positive byte count.
+  const auto Evaluate = [&](const auto &Self, const ExprPtr &Expression,
+                            unsigned CurrentDepth) -> std::optional<uint64_t> {
+    if (!Expression || !Expression->Type || CurrentDepth > 16)
+      return std::nullopt;
+    if (Expression->Kind == ExprKind::Const)
+      return Normalize(Expression->ConstVal, Expression->Type);
+    if (Expression->Kind == ExprKind::UnaryOp &&
+        Expression->Operands.size() == 1 && Expression->Operands[0] &&
+        (Expression->Op == NdOp::INT_ZEXT ||
+         Expression->Op == NdOp::INT_SEXT)) {
+      const auto &Input = Expression->Operands[0];
+      if (!Input->Type || Input->Type->Kind != NdTypeKind::Int ||
+          (Input->Type->Size != 1 && Input->Type->Size != 2 &&
+           Input->Type->Size != 4 && Input->Type->Size != 8) ||
+          Expression->Type->Kind != NdTypeKind::Int ||
+          Expression->Type->Size < Input->Type->Size)
+        return std::nullopt;
+      const auto Inner = Self(Self, Input, CurrentDepth + 1);
+      if (!Inner)
+        return std::nullopt;
+      const unsigned InputBits = Input->Type->Size * 8;
+      const uint64_t InputMask =
+          InputBits == 64 ? UINT64_MAX : (UINT64_C(1) << InputBits) - 1;
+      uint64_t Extended = *Inner & InputMask;
+      if (Expression->Op == NdOp::INT_SEXT && InputBits < 64 &&
+          (Extended & (UINT64_C(1) << (InputBits - 1))))
+        Extended |= ~InputMask;
+      return Normalize(Extended, Expression->Type);
+    }
+    if (Expression->Kind != ExprKind::Cast ||
+        Expression->Operands.size() != 1 || !Expression->CastTo ||
+        !equalSourceTypes(Expression->Type, Expression->CastTo))
+      return std::nullopt;
+    const auto Inner = Self(Self, Expression->Operands[0], CurrentDepth + 1);
+    return Inner ? Normalize(*Inner, Expression->Type) : std::nullopt;
+  };
+  const auto ValueBits = Evaluate(Evaluate, Value, Depth);
+  const auto Declared = ValueBits ? Normalize(*ValueBits, Type) : std::nullopt;
+  if (!Declared)
     return std::nullopt;
-  const uint32_t Count = static_cast<uint32_t>(Value->ConstVal);
-  return Count <= 1024 * 1024 ? std::optional<uint32_t>(Count) : std::nullopt;
+  const unsigned Bits = Type->Size * 8;
+  const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
+  const uint64_t Count = *Declared & Mask;
+  if ((Type->IsSigned && (Count & (UINT64_C(1) << (Bits - 1)))) ||
+      Count > 1024 * 1024)
+    return std::nullopt;
+  return static_cast<uint32_t>(Count);
 }
 
 inline std::optional<SourceCallTypeHint>
@@ -587,34 +644,42 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           Expression->MemoryOrdering == NdMemoryOrdering::None &&
           !Expression->IsIndirectCall) {
         const auto &Binding = *Expression->SourceCallHint;
-        if (Index == 1 &&
-            Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge &&
-            Expression->Operands.size() == 2 && Expression->Operands[0]) {
+        if (!Binding.SwiftStringInputs.empty()) {
           const auto Expected = runtimeSourceCallHint(Image, Binding);
-          const auto Word = swiftLiteralStorageWord(Expression->Operands[0]);
-          const auto Storage = swiftLiteralStorageWord(Operand);
-          const auto Literal =
-              Expected && runtimeBindingMatches(Binding, *Expected) && Word &&
-                      Storage
-                  ? swiftLiteralString(Image, Binding.TargetAddress, *Word,
-                                       *Storage)
-                  : std::nullopt;
-          if (Literal) {
-            const BorrowedByteRange Range{Literal->Contents, Literal->Bytes};
-            auto Bytes = HighExpr::makeCall({}, 0, {});
-            Bytes->Type = NdType::makeInt(8, false);
-            Bytes->SourceCallHint = std::make_shared<SourceCallTypeHint>(
-                *borrowedByteSourceHint(Image, Range));
-            Operand = HighExpr::makeBinop(
-                NdOp::INT_OR,
-                HighExpr::makeBinop(
-                    NdOp::INT_SUB, Bytes,
-                    HighExpr::makeConst(SwiftLiteralString::StorageBias, 8,
-                                        ConstantAddressProvenance::Scalar)),
-                HighExpr::makeConst(SwiftLiteralString::ImmortalTag, 8,
-                                    ConstantAddressProvenance::Scalar));
-            Result.BorrowedBytes.insert(Range);
-            continue;
+          if (Expected && runtimeBindingMatches(Binding, *Expected) &&
+              Expression->Operands.size() ==
+                  Binding.Signature.Parameters.size()) {
+            for (const auto &[WordIndex, StorageIndex] :
+                 Expected->SwiftStringInputs) {
+              if (Index != StorageIndex ||
+                  WordIndex >= Expression->Operands.size())
+                continue;
+              const auto Word =
+                  swiftLiteralStorageWord(Expression->Operands[WordIndex]);
+              const auto Storage = swiftLiteralStorageWord(Operand);
+              const auto Literal =
+                  Word && Storage ? swiftLiteralString(Image, *Word, *Storage)
+                                  : std::nullopt;
+              if (!Literal)
+                continue;
+              const BorrowedByteRange Range{Literal->Contents, Literal->Bytes};
+              auto Bytes = HighExpr::makeCall({}, 0, {});
+              Bytes->Type = NdType::makeInt(8, false);
+              Bytes->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+                  *borrowedByteSourceHint(Image, Range));
+              Operand = HighExpr::makeBinop(
+                  NdOp::INT_OR,
+                  HighExpr::makeBinop(
+                      NdOp::INT_SUB, Bytes,
+                      HighExpr::makeConst(SwiftLiteralString::StorageBias, 8,
+                                          ConstantAddressProvenance::Scalar)),
+                  HighExpr::makeConst(SwiftLiteralString::ImmortalTag, 8,
+                                      ConstantAddressProvenance::Scalar));
+              Result.BorrowedBytes.insert(Range);
+              break;
+            }
+            if (containsBorrowedStorage(Operand))
+              continue;
           }
         }
         if (!Binding.BorrowedByteInputs.empty()) {
@@ -792,6 +857,10 @@ inline bool objcSourceCallBound(
   if (Binding.ValueWitness &&
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftValueWitness)
     return false;
+  if (!Binding.SwiftStringInputs.empty() &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+      Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringBridge)
+    return false;
   std::string Reason;
   // Only catalogued runtime calls currently establish source noreturn
   // effects. A native function flag or a forged reference hint cannot.
@@ -816,6 +885,7 @@ inline bool objcSourceCallBound(
            Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            !Binding.ByteCount && Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
   if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeConstantString) {
@@ -837,6 +907,7 @@ inline bool objcSourceCallBound(
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
            Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStringInputs.empty() &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
   if (Binding.CallKind ==
@@ -926,24 +997,31 @@ inline bool objcSourceCallBound(
       Binding.CallKind ==
           SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress) {
     const auto Expected = runtimeSourceCallHint(Image, Binding);
-    if (Binding.CallKind == SourceCallTypeHint::Kind::SwiftStringBridge &&
-        Expression.Operands.size() == 2 &&
-        containsBorrowedStorage(Expression.Operands[1])) {
-      const auto *Storage = swiftLiteralStorageHelper(Expression.Operands[1]);
-      const auto Word = swiftLiteralStorageWord(Expression.Operands[0]);
-      if (Expression.IsIndirectCall || !Storage || !Word ||
-          Storage->SourceCallHint->TargetAddress <
-              SwiftLiteralString::StorageBias ||
-          !objcSourceCallBound(*Storage, Image, Functions))
-        return false;
-      const auto &Bytes = *Storage->SourceCallHint;
-      const auto Literal = swiftLiteralString(
-          Image, Binding.TargetAddress, *Word,
-          (Bytes.TargetAddress - SwiftLiteralString::StorageBias) |
-              SwiftLiteralString::ImmortalTag);
-      if (!Literal || Literal->Contents != Bytes.TargetAddress ||
-          Literal->Bytes != Bytes.ByteCount)
-        return false;
+    if (Expected && runtimeBindingMatches(Binding, *Expected)) {
+      for (const auto &[WordIndex, StorageIndex] :
+           Expected->SwiftStringInputs) {
+        if (WordIndex >= Expression.Operands.size() ||
+            StorageIndex >= Expression.Operands.size() ||
+            !containsBorrowedStorage(Expression.Operands[StorageIndex]))
+          continue;
+        const auto *Storage =
+            swiftLiteralStorageHelper(Expression.Operands[StorageIndex]);
+        const auto Word =
+            swiftLiteralStorageWord(Expression.Operands[WordIndex]);
+        if (Expression.IsIndirectCall || !Storage || !Word ||
+            Storage->SourceCallHint->TargetAddress <
+                SwiftLiteralString::StorageBias ||
+            !objcSourceCallBound(*Storage, Image, Functions))
+          return false;
+        const auto &Bytes = *Storage->SourceCallHint;
+        const auto Literal = swiftLiteralString(
+            Image, *Word,
+            (Bytes.TargetAddress - SwiftLiteralString::StorageBias) |
+                SwiftLiteralString::ImmortalTag);
+        if (!Literal || Literal->Contents != Bytes.TargetAddress ||
+            Literal->Bytes != Bytes.ByteCount)
+          return false;
+      }
     }
     // HighIR retains the original veneer spelling in CallTarget. The source
     // emitter uses the canonical operation carried by this runtime binding.
