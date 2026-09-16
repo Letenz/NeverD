@@ -158,13 +158,32 @@ TEST(NativeSourceHints, VoidTailForwardersNeverSupplyAnUnprovenResult) {
       EXPECT_EQ(Fixture.Med.ReturnType->Kind, NdTypeKind::Int);
       EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
                 MedReturnValueEvidence::Unknown);
+
+      // Keep the established leaf subset available when the general frame
+      // proof rejects an otherwise harmless LowIR operation. The narrower
+      // proof must still carry stack-address taint through that operation to
+      // a declared call argument.
+      NativeVoidFixture Compatibility(Architecture, Indirect);
+      LowOp Intrinsic;
+      Intrinsic.Opcode = NdOp::INTRINSIC;
+      Intrinsic.Addr = 0x1004;
+      Intrinsic.Output =
+          NdVar::reg(getTargetRegInfo(Architecture).IntParamRegs[1], 8);
+      Compatibility.Low.Blocks[0].Ops.insert(
+          Compatibility.Low.Blocks[0].Ops.begin(), Intrinsic);
+      EXPECT_TRUE(Compatibility.inferVoid(Error)) << Error;
+      Compatibility.Low.Blocks[0].Ops[0].Output =
+          NdVar::reg(getTargetRegInfo(Architecture).IntParamRegs[0], 8);
+      Compatibility.Low.Blocks[0].Ops[0].addInput(
+          NdVar::reg(getTargetRegInfo(Architecture).StackPointer, 8));
+      EXPECT_FALSE(Compatibility.inferVoid(Error));
     }
 }
 
 TEST(NativeSourceHints,
      VoidTailContractsRejectHiddenOutputsAndIncompleteEvidence) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
-    for (unsigned Mutation = 0; Mutation < 14; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation < 15; ++Mutation) {
       NativeVoidFixture Fixture(Architecture);
       const auto &TRI = getTargetRegInfo(Architecture);
       auto &Ops = Fixture.Low.Blocks[0].Ops;
@@ -226,9 +245,417 @@ TEST(NativeSourceHints,
       case 13:
         Ops[0].NumInputs = 7;
         break;
+      case 14: {
+        LowOp Escape;
+        Escape.Opcode = NdOp::COPY;
+        Escape.Addr = Ops[0].Addr;
+        Escape.Output = NdVar::reg(TRI.IntParamRegs[0], 8);
+        Escape.addInput(NdVar::reg(TRI.StackPointer, 8));
+        Ops.insert(Ops.begin(), Escape);
+        break;
+      }
       }
       std::string Error;
       EXPECT_FALSE(Fixture.inferVoid(Error)) << Mutation << ": " << Error;
+    }
+}
+
+struct NativeVoidFrameFixture : NativeVoidFixture {
+  Arch Architecture;
+  std::vector<uint64_t> Saved;
+  size_t CallIndex = 0;
+  size_t RestoreIndex = 0;
+  int64_t FrameBytes;
+
+  static LowOp op(NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs, va_t Address = 0x1004) {
+    LowOp Result;
+    Result.Opcode = Opcode;
+    Result.Output = Output;
+    Result.Addr = Address;
+    for (auto Input : Inputs)
+      Result.addInput(Input);
+    return Result;
+  }
+
+  explicit NativeVoidFrameFixture(Arch Architecture)
+      : NativeVoidFixture(Architecture), Architecture(Architecture),
+        FrameBytes(Architecture == Arch::AArch64 ? 32 : 24) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    Saved = {Architecture == Arch::AArch64 ? a64reg::X19 : x86reg::RBX,
+             TRI.FramePointer};
+    if (Architecture == Arch::AArch64) {
+      Saved.push_back(TRI.LinkRegister);
+      Saved.push_back(TRI.VecRegBase + 8 * TRI.VecRegStride);
+    }
+    const auto Call = Low.Blocks[0].Ops[0];
+    auto &Ops = Low.Blocks[0].Ops;
+    const auto SP = NdVar::reg(TRI.StackPointer, 8);
+    const auto Address = NdVar::tmp(TmpBase, 8);
+    Ops = {op(NdOp::INT_SUB, SP, {SP, NdVar::cst(FrameBytes, 8)})};
+    for (size_t I = 0; I < Saved.size(); ++I) {
+      Ops.push_back(op(NdOp::INT_ADD, Address, {SP, NdVar::cst(I * 8, 8)}));
+      Ops.push_back(op(NdOp::STORE, {}, {Address, NdVar::reg(Saved[I], 8)}));
+      Ops.push_back(
+          op(NdOp::COPY, NdVar::reg(Saved[I], 8), {NdVar::cst(0, 8)}));
+    }
+    CallIndex = Ops.size();
+    Ops.push_back(Call);
+    RestoreIndex = Ops.size();
+    for (size_t I = 0; I < Saved.size(); ++I) {
+      Ops.push_back(
+          op(NdOp::INT_ADD, Address, {SP, NdVar::cst(I * 8, 8)}, 0x1020));
+      Ops.push_back(op(NdOp::LOAD, NdVar::reg(Saved[I], 8), {Address}, 0x1020));
+    }
+    Ops.push_back(
+        op(NdOp::INT_ADD, SP, {SP, NdVar::cst(FrameBytes, 8)}, 0x1020));
+    Ops.push_back(op(
+        NdOp::RETURN, {},
+        {NdVar::reg(TRI.LinkRegister ? TRI.LinkRegister : TRI.IntReturnReg, 8)},
+        0x1024));
+  }
+
+  void splitReturns(bool Loop = false) {
+    auto &First = Low.Blocks[0];
+    const std::vector<LowOp> Restore(First.Ops.begin() + RestoreIndex,
+                                     First.Ops.end());
+    First.Ops.resize(RestoreIndex);
+    First.Succs = Loop ? std::vector<int>{1} : std::vector<int>{1, 2};
+    LowBlock Left, Right;
+    Left.Id = 1;
+    Right.Id = 2;
+    Left.Preds = Loop ? std::vector<int>{0, 1} : std::vector<int>{0};
+    Right.Preds = Loop ? std::vector<int>{1} : std::vector<int>{0};
+    Left.Ops = Loop ? std::vector<LowOp>{op(NdOp::NOP, {}, {})} : Restore;
+    Right.Ops = Restore;
+    if (Loop)
+      Left.Succs = {1, 2};
+    Low.Blocks.push_back(std::move(Left));
+    Low.Blocks.push_back(std::move(Right));
+  }
+
+  size_t usePreindexedSpills() {
+    auto &Ops = Low.Blocks[0].Ops;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto SP = NdVar::reg(TRI.StackPointer, 8);
+    const auto Base = NdVar::tmp(TmpBase + 64, 8);
+    const auto Address = NdVar::tmp(TmpBase, 8);
+    std::vector<LowOp> Prologue{
+        op(NdOp::INT_SUB, Base, {SP, NdVar::cst(FrameBytes, 8)})};
+    for (size_t I = 0; I < Saved.size(); ++I) {
+      Prologue.push_back(
+          op(NdOp::INT_ADD, Address, {Base, NdVar::cst(I * 8, 8)}));
+      Prologue.push_back(
+          op(NdOp::STORE, {}, {Address, NdVar::reg(Saved[I], 8)}));
+      Prologue.push_back(
+          op(NdOp::COPY, NdVar::reg(Saved[I], 8), {NdVar::cst(0, 8)}));
+    }
+    const size_t StackWrite = Prologue.size();
+    Prologue.push_back(op(NdOp::COPY, SP, {Base}));
+    Ops.erase(Ops.begin(), Ops.begin() + CallIndex);
+    Ops.insert(Ops.begin(), Prologue.begin(), Prologue.end());
+    CallIndex = Prologue.size();
+    RestoreIndex++;
+    return StackWrite;
+  }
+};
+
+TEST(NativeSourceHints, VoidFramesRestoreEntryBytesAcrossBranchesAndLoops) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Shape = 0; Shape < 4; ++Shape) {
+      NativeVoidFrameFixture Fixture(Architecture);
+      if (Shape == 3)
+        Fixture.usePreindexedSpills();
+      else if (Shape)
+        Fixture.splitReturns(Shape == 2);
+      std::string Error;
+      const auto Hint = Fixture.inferVoid(Error);
+      ASSERT_TRUE(Hint) << unsigned(Architecture) << ": " << Shape << ": "
+                        << Error;
+      EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+      EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::None);
+      EXPECT_EQ(Fixture.Med.ReturnValueEvidence,
+                MedReturnValueEvidence::Unknown);
+    }
+}
+
+TEST(NativeSourceHints, VoidFramesRejectClobbersEscapesAndStaleSpills) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 19; ++Mutation) {
+      NativeVoidFrameFixture Fixture(Architecture);
+      auto &Ops = Fixture.Low.Blocks[0].Ops;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto SP = NdVar::reg(TRI.StackPointer, 8);
+      const auto Word = NdVar::reg(Fixture.Saved[0], 8);
+      using F = NativeVoidFrameFixture;
+      switch (Mutation) {
+      case 0:
+        Ops[Fixture.RestoreIndex + 1].Output.Size = 4;
+        break;
+      case 1:
+        Ops.insert(Ops.begin() + Fixture.CallIndex,
+                   F::op(NdOp::STORE, {}, {SP, NdVar::cst(0, 1)}));
+        break;
+      case 2:
+        Ops.insert(
+            Ops.begin() + Fixture.CallIndex,
+            F::op(NdOp::STORE, {},
+                  {NdVar::reg(TRI.IntParamRegs[0], 8), NdVar::cst(0, 8)}));
+        break;
+      case 3:
+        Ops.insert(Ops.begin() + Fixture.CallIndex,
+                   F::op(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8), {SP}));
+        break;
+      case 4:
+        Ops.insert(Ops.begin() + Fixture.CallIndex,
+                   F::op(NdOp::STORE, {}, {SP, SP}));
+        break;
+      case 5:
+        Ops[Ops.size() - 2].Inputs[1].Offset -= 8;
+        break;
+      case 6:
+        Ops[Fixture.RestoreIndex + 1] =
+            F::op(NdOp::COPY, Word, {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1020);
+        break;
+      case 7:
+        Ops[1].Inputs[1].Offset = Fixture.FrameBytes;
+        break;
+      case 8:
+        Ops[2].MemoryOrdering = NdMemoryOrdering::Acquire;
+        break;
+      case 9:
+        // The spill address is an instruction-local temporary, not a value
+        // available merely because a later instruction reuses its number.
+        Ops[2].Addr += 4;
+        break;
+      case 10: {
+        const int64_t Exposed =
+            Fixture.FrameBytes - (Architecture == Arch::X64 ? 8 : 0);
+        Ops.insert(Ops.begin() + Fixture.CallIndex,
+                   F::op(NdOp::INT_ADD, SP, {SP, NdVar::cst(Exposed, 8)}));
+        Ops.insert(
+            Ops.begin() + Fixture.RestoreIndex + 1,
+            F::op(NdOp::INT_SUB, SP, {SP, NdVar::cst(Exposed, 8)}, 0x1020));
+        break;
+      }
+      case 11:
+        Fixture.splitReturns();
+        Fixture.Low.Blocks[2].Ops[1].Output.Size = 4;
+        break;
+      case 12:
+        Fixture.splitReturns();
+        Fixture.Low.Blocks[2].Preds.clear();
+        break;
+      case 13:
+        Fixture.splitReturns(true);
+        Fixture.Low.Blocks[1].Ops = {
+            F::op(NdOp::INT_SUB, SP, {SP, NdVar::cst(8, 8)})};
+        break;
+      case 14:
+        if (Architecture == Arch::AArch64)
+          Ops.back().Inputs[0] = NdVar::reg(TRI.IntReturnReg, 8);
+        else
+          Ops.insert(Ops.end() - 1,
+                     F::op(NdOp::STORE, {}, {SP, NdVar::cst(0, 8)}, 0x1020));
+        break;
+      case 15:
+        // A four-byte constant is zero-extended by the eight-byte ADD;
+        // interpreting its high bit as a signed frame delta invents a spill.
+        Ops[0].Opcode = NdOp::INT_ADD;
+        Ops[0].Inputs[1] = NdVar::cst(uint32_t(-Fixture.FrameBytes), 4);
+        break;
+      case 16:
+        Ops.insert(
+            Ops.begin() + Fixture.CallIndex,
+            F::op(NdOp::INDIR_BR, {}, {NdVar::reg(TRI.IntParamRegs[0], 8)}));
+        break;
+      case 17:
+        // A stack address below the current SP is not allocated storage.
+        Ops[1].Inputs[1] = NdVar::cst(uint64_t(-8), 8);
+        break;
+      case 18: {
+        // A later instruction cannot retroactively allocate a stack slot.
+        const auto StackWrite = Fixture.usePreindexedSpills();
+        Ops[StackWrite].Addr += 4;
+        break;
+      }
+      }
+      std::string Error;
+      EXPECT_FALSE(Fixture.inferVoid(Error))
+          << unsigned(Architecture) << ": " << Mutation << ": " << Error;
+    }
+}
+
+TEST(NativeSourceHints, VoidFrameByteProofHonorsImplicitZeroExtensions) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeVoidFrameFixture Fixture(Architecture);
+    auto &Ops = Fixture.Low.Blocks[0].Ops;
+    // Leave the original upper bytes untouched before loading only the low
+    // word. That load implicitly clears the upper word on both architectures.
+    Ops[3] = NativeVoidFrameFixture::op(NdOp::NOP, {}, {});
+    Ops[Fixture.RestoreIndex + 1].Output.Size = 4;
+    std::string Error;
+    EXPECT_FALSE(Fixture.inferVoid(Error));
+  }
+}
+
+std::pair<HighFunc, PipelineFunctionAudit>
+nativeVoidInputCandidate(Arch Architecture) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.Architecture = Architecture;
+  Hint.HasExplicitABI = true;
+  Hint.ReturnType = NdType::makeVoid();
+  const auto Auxiliary =
+      Architecture == Arch::AArch64 ? a64reg::X8 : x86reg::RAX;
+  Hint.Parameters = {
+      {"ordinary",
+       NdType::makeInt(8),
+       {SourceABICarrierKind::IntegerRegister, TRI.IntParamRegs[0], 0, 8}},
+      {"auxiliary",
+       NdType::makeInt(8),
+       {SourceABICarrierKind::IntegerRegister, Auxiliary, 0, 8}}};
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.SourceTypeHint = Hint;
+  Function.ReturnType = Hint.ReturnType;
+  Function.Params = {{"ordinary", NdType::makeInt(8)},
+                     {"auxiliary", NdType::makeInt(8)}};
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Function.Body.push_back(Return);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = Function.Entry;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  return {std::move(Function), std::move(Audit)};
+}
+
+TEST(NativeSourceHints, RefinesOnlyUnusedAuxiliaryVoidSourceInputs) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto [Function, Audit] = nativeVoidInputCandidate(Architecture);
+    const auto Refined = refineNativeSourceTypeHint(Function, Audit);
+    ASSERT_TRUE(Refined);
+    ASSERT_EQ(Refined->Parameters.size(), 1U);
+    EXPECT_EQ(Refined->Parameters[0].Name, "ordinary");
+    EXPECT_EQ(Refined->Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    EXPECT_EQ(Function.SourceTypeHint->Parameters.size(), 2U);
+    std::string Error;
+    EXPECT_TRUE(validateSourceABI(*Refined, Error)) << Error;
+  }
+}
+
+TEST(NativeSourceHints, SourceInputRefinementRetainsUsesAndIncompleteBodies) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (unsigned Mutation = 0; Mutation < 23; ++Mutation) {
+      auto [Function, Audit] = nativeVoidInputCandidate(Architecture);
+      MedVar Input;
+      Input.Kind = MedVar::Param;
+      Input.Id = 1;
+      Input.Size = 8;
+      Input.TheArch = Architecture;
+      Input.RegOff =
+          Function.SourceTypeHint->Parameters[1].Location.RegisterOffset;
+      auto Use = HighExpr::makeVar(Input, NdType::makeInt(8));
+      HighStmt Statement;
+      Statement.Kind = StmtKind::ExprStmt;
+      Statement.Val = Use;
+      switch (Mutation) {
+      case 0:
+        Function.Body.insert(Function.Body.begin(), Statement);
+        break;
+      case 1:
+        Statement.Kind = StmtKind::Assign;
+        Statement.Dst = Use;
+        Statement.Val = HighExpr::makeConst(0, 8);
+        Function.Body.insert(Function.Body.begin(), Statement);
+        break;
+      case 2:
+        Function.Body[0].DefaultBody.push_back(Statement);
+        break;
+      case 3:
+        Function.Body[0].EHClauseBodies.push_back({Statement});
+        break;
+      case 4:
+        Function.Body[0].Cond = HighExpr::makeConst(0, 8);
+        Function.Body[0].Cond->IntrinsicOutputs.push_back(Input);
+        break;
+      case 5:
+        Input.Kind = MedVar::Reg;
+        Input.SSAVer = 2;
+        Input.RegOff += 4;
+        Input.Size = 4;
+        Function.Body[0].Cond = HighExpr::makeVar(Input, NdType::makeInt(4));
+        break;
+      case 6:
+        Input.Id = 4;
+        Function.Body[0].Cond = HighExpr::makeVar(Input, NdType::makeInt(8));
+        break;
+      case 7:
+        Function.Params[1].Type = NdType::makeInt(4);
+        break;
+      case 8:
+        Function.SourceTypeHint->Origin =
+            SourceFunctionTypeHint::OriginKind::ObjCSDK;
+        break;
+      case 9:
+        Function.Body.clear();
+        break;
+      case 10:
+        Function.StructuredExceptionRegions = 1;
+        break;
+      case 11:
+        Function.Body[0].Kind = StmtKind::Nop;
+        break;
+      case 12:
+        Function.ReturnType = NdType::makeInt(8);
+        break;
+      case 13:
+        Function.Body[0].Cond = HighExpr::makeConst(0, 8);
+        Function.Body[0].Cond->Kind = ExprKind::Undef;
+        break;
+      case 14:
+        Function.SourceTypeHint.reset();
+        break;
+      case 15: {
+        auto Expression = HighExpr::makeConst(0, 8);
+        for (unsigned I = 0; I < 130; ++I) {
+          auto Outer = std::make_shared<HighExpr>();
+          Outer->Kind = ExprKind::Cast;
+          Outer->Type = NdType::makeInt(8);
+          Outer->Operands = {Expression};
+          Expression = Outer;
+        }
+        Function.Body[0].Cond = Expression;
+        break;
+      }
+      case 16:
+        Audit.Disposition = PipelineFunctionDisposition::Candidate;
+        break;
+      case 17:
+        Audit.HasLowIR = false;
+        break;
+      case 18:
+        Audit.DecodeFailures.push_back(0x1000);
+        break;
+      case 19:
+        ++Audit.Entry;
+        break;
+      case 20:
+        Audit.TruncatedPaths.push_back(0x1000);
+        break;
+      case 21:
+        Function.Body[0].Cases.resize(65537);
+        break;
+      case 22:
+        Function.Body[0].Cond = HighExpr::makeConst(0, 8);
+        Function.Body[0].Cond->IntrinsicOutputs.resize(65537);
+        break;
+      }
+      EXPECT_FALSE(refineNativeSourceTypeHint(Function, Audit)) << Mutation;
     }
 }
 

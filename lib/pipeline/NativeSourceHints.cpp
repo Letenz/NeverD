@@ -1,5 +1,7 @@
 #include "neverd/pipeline/NativeSourceHints.h"
 
+#include "NativeSourcePreservation.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
@@ -30,6 +32,16 @@ bool scalarCarrier(const TypeRef &Type) {
 bool sameScalar(const TypeRef &A, const TypeRef &B) {
   return scalarCarrier(A) && scalarCarrier(B) && A->Kind == B->Kind &&
          A->Size == B->Size && A->IsSigned == B->IsSigned;
+}
+
+bool completeNativeAudit(va_t Entry, const PipelineFunctionAudit &Audit) {
+  return Entry == Audit.Entry &&
+         Audit.Disposition == PipelineFunctionDisposition::Accepted &&
+         Audit.HasLowIR && Audit.HasMedIR && Audit.MedIRVerified &&
+         Audit.DecodedInstructions &&
+         Audit.DecodedInstructions == Audit.LiftedInstructions &&
+         Audit.DecodeFailures.empty() &&
+         Audit.UnsupportedInstructions.empty() && Audit.TruncatedPaths.empty();
 }
 
 // These are internal source parameters, not a guessed external convention.
@@ -119,17 +131,18 @@ bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
   return true;
 }
 
-// A leaf cleanup forwarder can have no usable scalar result. An internal
-// void summary preserves its effects and deliberately supplies no result to
-// callers. Reject any hidden preserved-register or frame update: this subset
-// contains only validated external void tail calls and ordinary return paths.
-bool hasVoidTailContract(const BinaryImage &Image, const LowFunc *Low,
-                         const MedFunc &Med) {
+// A cleanup forwarder can have no usable scalar result. An internal void
+// summary preserves its effects and deliberately supplies no result to
+// callers. Framed and ordinary-call shapes require exact state restoration;
+// the established frameless tail shape uses the narrower no-write proof plus
+// byte-taint rejection of stack-derived arguments and stores.
+bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
+                            const MedFunc &Med) {
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
       Low->Blocks.size() > 16384)
     return false;
   using CallKey = std::pair<va_t, va_t>;
-  std::set<CallKey> Calls;
+  NativeSourceCalls Calls;
   size_t Remaining = 262144;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -147,44 +160,30 @@ bool hasVoidTailContract(const BinaryImage &Image, const LowFunc *Low,
           Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
           Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
           !Image.isCodeAddress(Op.Addr) ||
-          !Calls.emplace(Op.Addr, Op.Inputs[0].ConstVal).second)
+          !Calls
+               .emplace(CallKey{Op.Addr, Op.Inputs[0].ConstVal},
+                        &Binding.Signature)
+               .second)
         return false;
     }
   if (Calls.empty())
     return false;
-  const auto &TRI = getTargetRegInfo(Image.Arch);
-  const auto Preserved = TRI.callPreservedRanges(Image.Format);
   std::set<CallKey> NativeCalls;
   for (const auto &Block : Low->Blocks)
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      const auto &Op = Block.Ops[I];
+    for (const auto &Op : Block.Ops) {
       if (!Remaining-- || Op.NumInputs > 6)
-        return false;
-      const auto &Out = Op.Output;
-      const auto Overlaps = [&](uint64_t Offset, uint16_t Bytes) {
-        return Out.isReg() && Out.Size &&
-               (Out.Offset <= Offset ? Offset - Out.Offset < Out.Size
-                                     : Out.Offset - Offset < Bytes);
-      };
-      if (Overlaps(TRI.StackPointer, 8) || Overlaps(TRI.FramePointer, 8) ||
-          (TRI.LinkRegister && Overlaps(TRI.LinkRegister, 8)) ||
-          std::any_of(Preserved.begin(), Preserved.end(),
-                      [&](const auto &Range) {
-                        return Overlaps(Range.Offset, Range.Bytes);
-                      }))
         return false;
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
-          I + 1 >= Block.Ops.size() ||
-          Block.Ops[I + 1].Opcode != NdOp::RETURN ||
-          Block.Ops[I + 1].Addr != Op.Addr)
+      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst())
         return false;
       const CallKey Key{Op.Addr, Op.Inputs[0].Offset};
       if (!Calls.count(Key) || !NativeCalls.insert(Key).second)
         return false;
     }
-  return NativeCalls == Calls;
+  return NativeCalls.size() == Calls.size() &&
+         (restoresNativeSourceState(*Low, Image.Arch, Calls) ||
+          preservesNativeSourceLeafState(*Low, Image.Arch, Calls));
 }
 
 // This proves a defined machine carrier, not an original return declaration.
@@ -374,16 +373,10 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      !Image.isCodeAddress(Med.Entry) || Med.Entry != High.Entry ||
-      Med.Entry != Audit.Entry)
+      !Image.isCodeAddress(Med.Entry) || Med.Entry != High.Entry)
     return Reject(
         "native source inference requires one linked Darwin function");
-  if (Audit.Disposition != PipelineFunctionDisposition::Accepted ||
-      !Audit.HasLowIR || !Audit.HasMedIR || !Audit.MedIRVerified ||
-      !Audit.DecodedInstructions ||
-      Audit.DecodedInstructions != Audit.LiftedInstructions ||
-      !Audit.DecodeFailures.empty() || !Audit.UnsupportedInstructions.empty() ||
-      !Audit.TruncatedPaths.empty())
+  if (!completeNativeAudit(Med.Entry, Audit))
     return Reject("native source inference requires complete verified lifting");
   if (Med.SourceTypeHint || High.SourceTypeHint || Med.SourceParametersBound)
     return Reject("native function already has a source declaration");
@@ -539,7 +532,7 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     return Reject("native function has no machine return");
   if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
                           IncomingReturnParameter)) {
-    if (!hasVoidTailContract(Image, Low, Med) ||
+    if (!hasVoidRuntimeContract(Image, Low, Med) ||
         !definedReturnPaths(Med, Image.Arch, {}, std::nullopt))
       return Reject("native result has no complete defined carrier on every "
                     "return path");
@@ -572,5 +565,128 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
   return Hint;
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeSourceTypeHint(const HighFunc &Function,
+                           const PipelineFunctionAudit &Audit) {
+  if (!completeNativeAudit(Function.Entry, Audit) || !Function.SourceTypeHint ||
+      Function.Body.empty() || Function.StructuredExceptionRegions ||
+      Function.UnstructuredExceptionRegions)
+    return std::nullopt;
+  const auto &Original = *Function.SourceTypeHint;
+  std::string Error;
+  if (Original.Origin != SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      (Original.Architecture != Arch::AArch64 &&
+       Original.Architecture != Arch::X64) ||
+      !Original.HasExplicitABI || !Original.ReturnType ||
+      Original.ReturnType->Kind != NdTypeKind::Void ||
+      !equalSourceTypes(Original.ReturnType, Function.ReturnType) ||
+      Original.Parameters.size() != Function.Params.size() ||
+      Original.Parameters.size() > 64 || !validateSourceABI(Original, Error))
+    return std::nullopt;
+  const auto &TRI = getTargetRegInfo(Original.Architecture);
+  std::set<size_t> Unused;
+  for (size_t I = 0; I < Original.Parameters.size(); ++I) {
+    const auto &Parameter = Original.Parameters[I];
+    if (!equalSourceTypes(Parameter.Type, Function.Params[I].Type))
+      return std::nullopt;
+    const auto &Location = Parameter.Location;
+    if (Location.Kind == SourceABICarrierKind::IntegerRegister &&
+        std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
+                  Location.RegisterOffset) == TRI.IntParamRegs.end())
+      Unused.insert(I);
+  }
+  if (Unused.empty())
+    return std::nullopt;
+  bool Valid = true, HasReturn = false;
+  size_t Remaining = 65536;
+  auto Observe = [&](const MedVar &Value) {
+    if (Value.Kind == MedVar::Param) {
+      if (Value.Id < 0 || size_t(Value.Id) >= Function.Params.size())
+        Valid = false;
+      else
+        Unused.erase(Value.Id);
+    } else if (Value.Kind == MedVar::Reg) {
+      std::erase_if(Unused, [&](size_t I) {
+        const auto &Location = Original.Parameters[I].Location;
+        return Value.RegOff <= Location.RegisterOffset
+                   ? Location.RegisterOffset - Value.RegOff < Value.Size
+                   : Value.RegOff - Location.RegisterOffset <
+                         Location.ValueBytes;
+      });
+    }
+  };
+  const auto Scan = [&](auto &&Self, const ExprPtr &Expression,
+                        unsigned Depth) -> void {
+    if (!Valid)
+      return;
+    if (!Expression || !Remaining || Depth > 128 ||
+        Expression->Kind == ExprKind::Undef) {
+      Valid = false;
+      return;
+    }
+    --Remaining;
+    if (Expression->Kind == ExprKind::Var || Expression->Kind == ExprKind::Phi)
+      Observe(Expression->Var);
+    if (Expression->IntrinsicOutputs.size() > Remaining ||
+        Expression->Operands.size() > Remaining) {
+      Valid = false;
+      return;
+    }
+    Remaining -= Expression->IntrinsicOutputs.size();
+    for (const auto &Output : Expression->IntrinsicOutputs) {
+      Observe(Output);
+      if (!Valid)
+        return;
+    }
+    for (const auto &Operand : Expression->Operands) {
+      Self(Self, Operand, Depth + 1);
+      if (!Valid)
+        return;
+    }
+  };
+  std::vector<const HighStmt *> Pending;
+  if (Function.Body.size() > Remaining)
+    return std::nullopt;
+  for (const auto &Statement : Function.Body)
+    Pending.push_back(&Statement);
+  while (Valid && !Pending.empty()) {
+    if (!Remaining--)
+      return std::nullopt;
+    const auto &Statement = *Pending.back();
+    Pending.pop_back();
+    HasReturn |= Statement.Kind == StmtKind::Return;
+    forEachExpr(Statement,
+                [&](const ExprPtr &Expression) { Scan(Scan, Expression, 0); });
+    auto Add = [&](const std::vector<HighStmt> &Body) {
+      if (Body.size() > Remaining || Pending.size() > Remaining - Body.size()) {
+        Valid = false;
+        return;
+      }
+      for (const auto &Child : Body)
+        Pending.push_back(&Child);
+    };
+    Add(Statement.Body);
+    Add(Statement.ElseBody);
+    Add(Statement.DefaultBody);
+    if (Statement.Cases.size() > Remaining ||
+        Statement.EHClauseBodies.size() > Remaining - Statement.Cases.size()) {
+      Valid = false;
+      continue;
+    }
+    Remaining -= Statement.Cases.size() + Statement.EHClauseBodies.size();
+    for (const auto &Case : Statement.Cases)
+      Add(Case.Body);
+    for (const auto &Body : Statement.EHClauseBodies)
+      Add(Body);
+  }
+  if (!Valid || !HasReturn || Unused.empty())
+    return std::nullopt;
+  auto Refined = Original;
+  for (auto I = Unused.rbegin(); I != Unused.rend(); ++I)
+    Refined.Parameters.erase(Refined.Parameters.begin() + *I);
+  return validateSourceABI(Refined, Error) ? std::optional(std::move(Refined))
+                                           : std::nullopt;
 }
 } // namespace neverd

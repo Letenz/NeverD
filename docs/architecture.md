@@ -65,11 +65,26 @@ Only effect-free upper expressions are discarded; lower expressions and their
 control-flow positions remain unchanged. Unknown lanes are never filled in.
 
 An internal void summary for a native cleanup forwarder does not assert an
-original void prototype. It contributes no result carrier. The initial subset
-requires matched LowIR external void tail calls and rejects preserved-register
-or frame writes; the ordinary CFG and source dependency proofs still apply.
+original void prototype. It contributes no result carrier. Calls must match
+validated external void declarations. A bounded LowIR fixed point tracks exact
+incoming register bytes and private stack spills, requiring restored preserved
+registers, stack pointer and link register at every exit. The frameless
+immediate-tail shape instead proves that those registers are never written and
+uses a bounded byte-taint fixed point to reject stack-derived call arguments or
+stored values. Partial writes,
+implicit zero extensions, call clobbers and overlapping stores invalidate the
+affected identities. Unknown stores invalidate spill facts; frame-address spills
+and call arguments are rejected. Unallocated stack bytes cannot survive a call.
+The ordinary CFG and source dependency proofs still apply.
 Re-lifted callers that observe a missing result retain their unknown value and
 cannot pass source publication.
+
+After re-lifting a native void candidate, its dependency fixed point can remove
+an auxiliary register parameter with no occurrence anywhere in the resulting
+HighIR body. This uses the existing HighIR private-frame cleanup instead of
+adding another store-elimination rule. Canonical parameters and auxiliary
+reads or writes remain intact. Changed signatures require another pipeline run;
+neither an inferred signature nor its refinement certifies a publishable body.
 
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
 

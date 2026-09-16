@@ -24,10 +24,13 @@ struct PipelineFunctionAudit;
 /// its incoming value; unused placeholders, seeds and PHIs cannot. The bounded
 /// CFG proof meets the initial entry fact with backedges and invalidates
 /// calls and partial writes, including narrowed self copies.
-/// A leaf forwarding only to declared external void tail calls may instead
-/// supply a void source summary, with no usable result. This requires complete
-/// LowIR evidence and forbids preserved-register and frame writes. CFG checks
-/// still apply, and callers observing a result must fail source validation.
+/// A helper calling only declared external void routines may instead supply a
+/// void source summary, with no usable result. Complete LowIR evidence must
+/// prove preservation of incoming register bytes and frame state at every
+/// exit. Exact private spills may restore these identities after calls. A
+/// frameless immediate-tail helper uses the equivalent no-write proof and
+/// rejects stack-derived call arguments or stores. CFG checks still apply,
+/// and callers observing a result fail source validation.
 /// The final source body and dependency closure must still pass projection
 /// validation after the second run. No symbol names participate in inference.
 /// Complete integer inputs forwarded to known pointer parameters can refine
@@ -44,5 +47,15 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
     const PipelineFunctionAudit &Audit, std::string &Diagnostic,
     const LowFunc *Low = nullptr);
+
+/// Refine a re-lifted native void candidate by removing auxiliary register
+/// inputs with no occurrence in its complete HighIR body. Canonical parameters
+/// and observable auxiliary inputs remain unchanged. This reuses HighIR's
+/// existing private-frame cleanup; it does not independently discard stores.
+/// The audit must prove that this HighIR came from complete verified lifting.
+/// The returned candidate requires another pipeline run and source validation.
+std::optional<SourceFunctionTypeHint>
+refineNativeSourceTypeHint(const HighFunc &Function,
+                           const PipelineFunctionAudit &Audit);
 } // namespace neverd
 #endif

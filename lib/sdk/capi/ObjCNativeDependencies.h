@@ -109,8 +109,18 @@ inline size_t inferObjCNativeDependencies(
     Audits.emplace(Audit.Entry, &Audit);
   size_t Added = 0;
   for (va_t Target : Targets) {
-    if (Options.SourceTypeHints.count(Target))
+    if (const auto Existing = Options.SourceTypeHints.find(Target);
+        Existing != Options.SourceTypeHints.end()) {
+      const auto Found = High.find(Target);
+      const auto A = Audits.find(Target);
+      if (Found != High.end() && A != Audits.end())
+        if (auto Refined =
+                refineNativeSourceTypeHint(*Found->second, *A->second)) {
+          Existing->second = std::move(*Refined);
+          ++Added;
+        }
       continue;
+    }
     const auto M = Med.find(Target);
     const auto L = Low.find(Target);
     const auto H = High.find(Target);
