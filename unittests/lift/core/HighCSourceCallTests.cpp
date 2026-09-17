@@ -213,6 +213,58 @@ int main(void) {
 )");
 }
 
+TEST(HighCSourceCalls, ReorderedComparisonsKeepTheWideOperand) {
+  std::vector<HighFunc> Functions;
+  const auto Wide = NdType::makeInt(8, false);
+  for (const auto &[Op, Name] : {std::pair{NdOp::INT_LESS, "u_lt"},
+                                 std::pair{NdOp::INT_LESSEQUAL, "u_le"},
+                                 std::pair{NdOp::INT_SLESS, "s_lt"},
+                                 std::pair{NdOp::INT_SLESSEQUAL, "s_le"}}) {
+    auto Compare =
+        HighExpr::makeBinop(Op, HighExpr::makeConst(61, 4), parameter(0, Wide));
+    Compare->Type = NdType::makeInt(1, false);
+    Functions.push_back(returning(Name, Compare, {Wide}));
+    const auto Narrow = NdType::makeInt(4);
+    for (bool Swap : {false, true}) {
+      auto Left = parameter(0, Narrow), Right = parameter(1, Wide);
+      if (Swap)
+        std::swap(Left, Right);
+      auto Mixed = HighExpr::makeBinop(Op, Left, Right);
+      Mixed->Type = NdType::makeInt(1, false);
+      Functions.push_back(
+          returning(std::string(Name) + (Swap ? "_swap" : "_bits"), Mixed,
+                    {Narrow, Wide}));
+    }
+  }
+  compileAndRun(emit(Functions) + R"(
+int main(void) {
+    uint64_t values[] = {0, 60, 61, 62, UINT32_MAX,
+                        UINT64_C(0x100000001), UINT64_C(0x10000003d),
+                        UINT64_C(0x7fffffffffffffff),
+                        UINT64_C(0x8000000000000000), UINT64_MAX};
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+        uint64_t x = values[i];
+        if (u_lt(x) != (UINT64_C(61) < x) ||
+            u_le(x) != (UINT64_C(61) <= x) ||
+            s_lt(x) != (INT64_C(61) < (int64_t)x) ||
+            s_le(x) != (INT64_C(61) <= (int64_t)x)) return 1;
+        int32_t small[] = {0, 61, -1, INT32_MIN, INT32_MAX};
+        for (unsigned j = 0; j < sizeof(small) / sizeof(small[0]); ++j) {
+            int32_t n = small[j];
+            uint64_t z = (uint32_t)n;
+            if (u_lt_bits(n, x) != (z < x) || u_le_bits(n, x) != (z <= x) ||
+                u_lt_swap(n, x) != (x < z) || u_le_swap(n, x) != (x <= z) ||
+                s_lt_bits(n, x) != ((int64_t)z < (int64_t)x) ||
+                s_le_bits(n, x) != ((int64_t)z <= (int64_t)x) ||
+                s_lt_swap(n, x) != ((int64_t)x < (int64_t)z) ||
+                s_le_swap(n, x) != ((int64_t)x <= (int64_t)z)) return 2;
+        }
+    }
+    return 0;
+}
+)");
+}
+
 TEST(HighCSourceCalls, SwiftValueWitnessDestroyReloadsRuntimeTableEntry) {
   const auto Hint = swiftValueWitnessSourceCallHint(
       Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::Destroy);

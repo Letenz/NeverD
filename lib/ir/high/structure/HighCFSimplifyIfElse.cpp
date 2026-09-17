@@ -608,6 +608,17 @@ void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
         for (auto It = Else.FallthroughIndices.rbegin();
              It != Else.FallthroughIndices.rend(); ++It)
           Func.Body.erase(Func.Body.begin() + static_cast<long>(*It));
+        // The taken edge can skip entries owned by other branches after the
+        // return. Inverting the test does not turn those entries into its
+        // fallthrough. Keep the original transfer unless its target is next.
+        if (NextI >= Func.Body.size() ||
+            AddrMap::entryAddress(Func.Body[NextI]) != IfTarget) {
+          HighStmt Transfer;
+          Transfer.Kind = StmtKind::Goto;
+          Transfer.GotoTarget = IfTarget;
+          Func.Body.insert(Func.Body.begin() + static_cast<long>(NextI),
+                           std::move(Transfer));
+        }
         Changed = true;
         continue;
       }

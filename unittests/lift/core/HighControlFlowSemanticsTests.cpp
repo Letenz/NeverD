@@ -1533,6 +1533,25 @@ TEST(HighControlFlowSemantics, EarlyReturnMovesItsCompletePhiEdgePrefix) {
   }
 }
 
+TEST(HighControlFlowSemantics, EarlyReturnKeepsTransferPastOtherBranchEntries) {
+  HighFunc F;
+  auto First = conditional(0x1000, 0x1030);
+  First.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
+  auto Second = conditional(0x1010, 0x1040);
+  Second.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  F.Body = {First, Second, result(0x1020, HighExpr::makeConst(30, 8)),
+            result(0x1030, HighExpr::makeConst(10, 8)),
+            result(0x1040, HighExpr::makeConst(20, 8))};
+  for (unsigned Passes : {1U, 4U, 16U}) {
+    auto Structured = F;
+    structureIfElse(Structured, Passes);
+    for (uint64_t Input : {0U, 1U, 2U, 3U})
+      EXPECT_EQ(execute(Structured, Input), execute(F, Input)) << Passes;
+  }
+}
+
 TEST(HighControlFlowSemantics, MultiEntryCycleKeepsExplicitTransfers) {
   HighFunc F;
   F.Entry = 0x1000;

@@ -460,10 +460,26 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
   std::string RHS = exprStr(*E.Operands[1], MyPrec);
 
   if ((NeedsUnsignedCast || NeedsSignedCast) && E.Operands[0]->Type) {
-    auto UTy =
-        typeToC(NdType::makeInt(E.Operands[0]->Type->Size, NeedsSignedCast));
-    LHS = "(" + UTy + ")" + exprStr(*E.Operands[0], 99);
-    RHS = "(" + UTy + ")" + exprStr(*E.Operands[1], 99);
+    uint16_t Size = E.Operands[0]->Type->Size;
+    // A comparison may be inverted by swapping its operands. A narrow
+    // immediate on the left must not truncate the wider machine value.
+    const bool Comparison =
+        E.Op == NdOp::INT_LESS || E.Op == NdOp::INT_LESSEQUAL ||
+        E.Op == NdOp::INT_SLESS || E.Op == NdOp::INT_SLESSEQUAL;
+    if (Comparison && E.Operands[1]->Type)
+      Size = std::max(Size, E.Operands[1]->Type->Size);
+    auto UTy = typeToC(NdType::makeInt(Size, NeedsSignedCast));
+    auto CastOperand = [&](const ExprPtr &Operand) {
+      std::string Cast = "(" + UTy + ")";
+      // Mixed-width machine operands are zero-extended to their common
+      // width before applying the signed/unsigned comparison, as in MedLLVM.
+      if (Comparison && Operand->Type && Operand->Type->Size < Size)
+        Cast +=
+            "(" + typeToC(NdType::makeInt(Operand->Type->Size, false)) + ")";
+      return Cast + exprStr(*Operand, 99);
+    };
+    LHS = CastOperand(E.Operands[0]);
+    RHS = CastOperand(E.Operands[1]);
   }
 
   std::string Result = LHS + OpSym + RHS;
