@@ -49,6 +49,7 @@ enum ExportFormat {
   FmtExports,
   FmtStrings,
   FmtObjCMethods,
+  FmtObjCMethodsSummary,
   FmtSwiftMethods
 };
 

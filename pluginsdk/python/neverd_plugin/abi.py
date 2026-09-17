@@ -14,6 +14,10 @@ from enum import Enum, IntEnum, IntFlag
 
 SessionHandle = ctypes.c_void_p
 VirtualAddress = ctypes.c_ulonglong
+LoadProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_ulonglong,
+    ctypes.c_ulonglong, ctypes.c_char_p,
+)
 
 
 class OutputLanguage(IntEnum):
@@ -628,6 +632,8 @@ _C_TYPES: dict[str, object] = {
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
     "const void *": ctypes.c_void_p,
+    "void *": ctypes.c_void_p,
+    "neverd_load_progress_fn": LoadProgressCallback,
     "const neverd_simplify_options *": ctypes.POINTER(NeverDSimplifyOptions),
     "neverd_simplify_result *": ctypes.POINTER(NeverDSimplifyResult),
     "const neverd_synthesize_options *": ctypes.POINTER(NeverDSynthesizeOptions),
@@ -743,6 +749,11 @@ _declare(
     ["neverd_session_t", "int"],
 )
 _declare(
+    "neverd_session_set_load_progress",
+    "void",
+    ["neverd_session_t", "neverd_load_progress_fn", "void *"],
+)
+_declare(
     "neverd_session_debug_info_kind",
     "const char *",
     ["neverd_session_t"],
@@ -776,7 +787,19 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_decompile_llvm",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_objc_methods_json",
+    "const char *",
+    ["neverd_session_t", "size_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_objc_methods_summary_json",
     "const char *",
     ["neverd_session_t", "size_t"],
     ownership=Ownership.OWNED_STRING,

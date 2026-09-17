@@ -699,6 +699,9 @@ cl::opt<ExportFormat> ExportFmt(
         clEnumValN(FmtStrings, "strings", "String table (JSON)"),
         clEnumValN(FmtObjCMethods, "objc-methods",
                    "Mach-O native source and Objective-C methods (JSON)"),
+        clEnumValN(
+            FmtObjCMethodsSummary, "objc-methods-summary",
+            "Objective-C coverage and diagnostics without source text (JSON)"),
         clEnumValN(FmtSwiftMethods, "swift-methods",
                    "Mach-O Swift method source and coverage (JSON)")),
     cl::sub(ExportCmd));

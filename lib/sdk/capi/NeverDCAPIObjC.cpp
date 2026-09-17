@@ -44,10 +44,8 @@ llvm::json::Object methodIdentity(const ObjCMethod &Method) {
       {"type_encoding", jsonSafeText(Method.TypeEncoding)}};
 }
 
-} // namespace
-
-const char *neverd_objc_methods_json(neverd_session_t Sess,
-                                     size_t MaxFunctions) {
+const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
+                            bool IncludeSources) {
   auto *S = static_cast<Session *>(Sess);
   if (!S)
     return nullptr;
@@ -120,7 +118,11 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
     HighCEmitter Emitter;
     std::string NativeSource;
     llvm::raw_string_ostream NativeOS(NativeSource);
-    if (!Emitter.emit(Result.HighFuncs, NativeOS, COptions)) {
+    llvm::raw_null_ostream DiscardNative;
+    llvm::raw_ostream &NativeOutput =
+        IncludeSources ? static_cast<llvm::raw_ostream &>(NativeOS)
+                       : DiscardNative;
+    if (!Emitter.emit(Result.HighFuncs, NativeOutput, COptions)) {
       S->setError("native C source projection failed");
       Trace.finish(false);
       return nullptr;
@@ -382,7 +384,10 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         Row["return_type"] = typeToC(Projection.ReturnType);
         Row["parameters"] = std::move(Parameters);
         Row["function_name"] = Projection.Name;
-        Row["source"] = jsonSafeText(Source);
+        // Rendering and the text guard above remain publication checks in
+        // both modes. Only retaining/encoding the successful body is optional.
+        if (IncludeSources)
+          Row["source"] = jsonSafeText(Source);
         llvm::json::Array SharedFunctions;
         for (const auto &Name : SharedBlockFunctions)
           SharedFunctions.push_back(Name);
@@ -447,7 +452,6 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         {"schema_version", 1},
         {"status", "success"},
         {"pointer_size", S->Img.Bits == Bitness::Bits64 ? 8 : 4},
-        {"native_source", jsonSafeText(NativeSource)},
         {"native_function_count", static_cast<int64_t>(NativeFunctionCount)},
         {"native_dependency_graph",
          nativeSourceDependencyEvidenceJSON(NativeEvidence)},
@@ -456,6 +460,10 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         {"recovered_method_count", static_cast<int64_t>(Recovered)},
         {"methods", std::move(Methods)},
         {"limitations", std::move(Limitations)}};
+    if (IncludeSources)
+      Report["native_source"] = jsonSafeText(NativeSource);
+    else
+      Report["sources_omitted"] = true;
     std::string Text;
     llvm::raw_string_ostream OS(Text);
     OS << llvm::json::Value(std::move(Report));
@@ -472,4 +480,16 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
   }
   Trace.finish(false);
   return nullptr;
+}
+
+} // namespace
+
+const char *neverd_objc_methods_json(neverd_session_t Sess,
+                                     size_t MaxFunctions) {
+  return objcMethodsJSON(Sess, MaxFunctions, true);
+}
+
+const char *neverd_objc_methods_summary_json(neverd_session_t Sess,
+                                             size_t MaxFunctions) {
+  return objcMethodsJSON(Sess, MaxFunctions, false);
 }

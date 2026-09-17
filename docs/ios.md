@@ -63,6 +63,21 @@ The work area is monitored with up to three times the configured entry/byte budg
 
 ## Objective-C source and runtime structure
 
+For repeated coverage analysis, the following command runs the same analysis
+and publication checks as
+`--format=objc-methods`, but omits `native_source` and each method's `source`.
+The JSON adds `sources_omitted=true`; method identities, statuses, diagnostics,
+signatures, shared helper references and dependency evidence retain their full
+export meaning. Rendering checks still run, so this saves source retention,
+encoding and output rather than bypassing validation. Use the full mode to
+obtain compilable source artifacts. The corresponding C entry point is
+`neverd_objc_methods_summary_json(session, max_functions)`; free its result with
+`neverd_free_string`.
+
+```sh
+neverd export WMF --format=objc-methods-summary -o summary.json
+```
+
 The native loader binds a runtime method record, executable IMP address, and supported type encoding to explicit source ABI locations. Fixed scalar/pointer bindings include hidden `self`/`_cmd`, unused arguments, separate integer/floating register banks, and supported stack positions. Float/double bit reinterpretation is distinct from numeric conversion. Type hints are source-projection inputs, not authenticated ABI evidence or permission to patch executable code.
 
 `sources/objc.m` places actual recovered statements in `@implementation` bodies and preserves required C helpers and typed calls. Eligible call targets must have a supported source binding; unknown targets and incomplete dependency groups remain unrecovered. Missing definitions, invalid executable addresses, conflicting encodings, unsupported ABI mappings, incomplete decoding, and rejected IR cannot become recovered methods merely because a declaration is available.

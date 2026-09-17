@@ -87,6 +87,14 @@ NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
 NEVERD_API const char *neverd_objc_methods_json(neverd_session_t Sess,
                                                 size_t MaxFunctions);
 
+/// Run the same Objective-C analysis and source publication checks, omitting
+/// native_source and per-method source strings from the JSON result. All
+/// coverage, diagnostics and dependency evidence retain the full-mode meaning.
+/// The report adds sources_omitted=true. This is not a source-code artifact.
+/// Returns NULL on failure; free successful results with neverd_free_string.
+NEVERD_API const char *neverd_objc_methods_summary_json(neverd_session_t Sess,
+                                                        size_t MaxFunctions);
+
 /// Emit actual Swift bodies from structured source signature hints. The
 /// schema_version=1 input must bind each mangled symbol to its image entry.
 /// The report retains unsupported methods. NULL indicates an export failure;

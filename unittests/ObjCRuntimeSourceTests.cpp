@@ -101,7 +101,8 @@ enum class RuntimeFixture {
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
-                   bool Profiled = false, bool ManualBlocks = false) {
+                   bool Profiled = false, bool ManualBlocks = false,
+                   bool CheckSummary = false) {
   const bool DarwinDeclarations =
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool DynamicProperties =
@@ -411,6 +412,36 @@ void verifyRuntime(bool Chained,
   ASSERT_TRUE(Raw);
   auto JSON = llvm::json::parse(Raw.get());
   ASSERT_TRUE(bool(JSON));
+  if (CheckSummary) {
+    auto Compare = [&](const llvm::json::Value &Full, size_t MaxFunctions) {
+      std::unique_ptr<const char, decltype(&neverd_free_string)> SummaryRaw(
+          neverd_objc_methods_summary_json(Session.get(), MaxFunctions),
+          neverd_free_string);
+      ASSERT_TRUE(SummaryRaw);
+      auto Summary = llvm::json::parse(SummaryRaw.get());
+      ASSERT_TRUE(bool(Summary));
+      auto *SummaryObject = Summary->getAsObject();
+      ASSERT_NE(SummaryObject, nullptr);
+      EXPECT_EQ(SummaryObject->getBoolean("sources_omitted"), true);
+      SummaryObject->erase("sources_omitted");
+      auto Expected = Full;
+      Expected.getAsObject()->erase("native_source");
+      for (auto &Method : *Expected.getAsObject()->getArray("methods"))
+        Method.getAsObject()->erase("source");
+      EXPECT_TRUE(Expected == *Summary);
+    };
+    ASSERT_NO_FATAL_FAILURE(Compare(*JSON, 0));
+    // A restricted inventory must preserve unrecovered rows and incomplete
+    // diagnostics, not just parity for methods whose source was emitted.
+    std::unique_ptr<const char, decltype(&neverd_free_string)> LimitedRaw(
+        neverd_objc_methods_json(Session.get(), 1), neverd_free_string);
+    ASSERT_TRUE(LimitedRaw);
+    auto Limited = llvm::json::parse(LimitedRaw.get());
+    ASSERT_TRUE(bool(Limited));
+    ASSERT_GT(Limited->getAsObject()->getInteger("method_count"),
+              Limited->getAsObject()->getInteger("recovered_method_count"));
+    ASSERT_NO_FATAL_FAILURE(Compare(*Limited, 1));
+  }
   const auto *Object = JSON->getAsObject();
   ASSERT_NE(Object, nullptr);
   const auto *Methods = Object->getArray("methods");
@@ -1211,6 +1242,36 @@ TEST(ObjCRuntimeSource, RecompiledARCMethodsPreserveActualObjectLifetimes) {
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
+}
+
+TEST(ObjCRuntimeSource, SummaryPreservesCoverageDiagnosticsAndSharedHelpers) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(
+        Chained, RuntimeFixture::DiagnosticReports, false, false, true));
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Associations,
+                                          false, false, true));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SummaryRejectsMissingSessionsAndUnloadedImages) {
+  EXPECT_EQ(neverd_objc_methods_summary_json(nullptr, 0), nullptr);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Session(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_TRUE(Session);
+  EXPECT_EQ(neverd_objc_methods_json(Session.get(), 0), nullptr);
+  std::unique_ptr<const char, decltype(&neverd_free_string)> FullError(
+      neverd_last_error(Session.get()), neverd_free_string);
+  EXPECT_EQ(neverd_objc_methods_summary_json(Session.get(), 0), nullptr);
+  std::unique_ptr<const char, decltype(&neverd_free_string)> SummaryError(
+      neverd_last_error(Session.get()), neverd_free_string);
+  ASSERT_TRUE(FullError);
+  ASSERT_TRUE(SummaryError);
+  EXPECT_STREQ(FullError.get(), SummaryError.get());
 }
 
 TEST(ObjCRuntimeSource, RecompiledAssociatedObjectsPreserveLifetimeAndPolicy) {
