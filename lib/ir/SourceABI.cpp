@@ -120,7 +120,10 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
       return false;
     }
   }
-  if (Word(Hint.ReturnType) || Hint.ReturnType->Kind == NdTypeKind::Void ||
+  if (Word(Hint.ReturnType) ||
+      (Hint.ReturnType->Kind == NdTypeKind::Int &&
+       Hint.ReturnType->Size == 4) ||
+      Hint.ReturnType->Kind == NdTypeKind::Void ||
       (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16))
     return true;
   const auto Members = sourceAggregateMembers(Hint.ReturnType);
@@ -587,10 +590,42 @@ std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
     break;
   case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
     Result.TargetName = "initializeWithCopy";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::
+      InitializeBufferWithCopyOfBuffer:
+    Result.TargetName = "initializeBufferWithCopyOfBuffer";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy:
+    Result.TargetName = "assignWithCopy";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake:
+    Result.TargetName = "initializeWithTake";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake:
+    Result.TargetName = "assignWithTake";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload:
+    Result.TargetName = "getEnumTagSinglePayload";
+    Signature.ReturnType = NdType::makeInt(4, false);
+    Signature.Parameters = {{"value", Pointer},
+                            {"emptyCases", NdType::makeInt(4, false)},
+                            {"metadata", Pointer}};
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload:
+    Result.TargetName = "storeEnumTagSinglePayload";
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"value", Pointer},
+                            {"whichCase", NdType::makeInt(4, false)},
+                            {"emptyCases", NdType::makeInt(4, false)},
+                            {"metadata", Pointer}};
+    break;
+  default:
+    return std::nullopt;
+  }
+  if (!Signature.ReturnType) {
     Signature.ReturnType = Pointer;
     Signature.Parameters = {
         {"destination", Pointer}, {"source", Pointer}, {"metadata", Pointer}};
-    break;
   }
   std::string Diagnostic;
   if (!assignDarwinSwiftSourceABI(Signature, Architecture, Diagnostic))
@@ -600,11 +635,26 @@ std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
 
 std::optional<unsigned>
 swiftValueWitnessSlot(SourceCallTypeHint::SwiftValueWitnessKind Operation) {
+  // Required function entries precede the layout words in Swift ABI
+  // include/swift/ABI/ValueWitness.def. Optional enum witnesses are excluded.
   switch (Operation) {
+  case SourceCallTypeHint::SwiftValueWitnessKind::
+      InitializeBufferWithCopyOfBuffer:
+    return 0;
   case SourceCallTypeHint::SwiftValueWitnessKind::Destroy:
     return 1;
   case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
     return 2;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy:
+    return 3;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake:
+    return 4;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake:
+    return 5;
+  case SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload:
+    return 6;
+  case SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload:
+    return 7;
   }
   return std::nullopt;
 }

@@ -260,8 +260,15 @@ buildSwiftValueWitnessCallHints(const BinaryImage &Image,
   };
   std::vector<Witness> Witnesses;
   constexpr std::array Operations = {
+      SourceCallTypeHint::SwiftValueWitnessKind::
+          InitializeBufferWithCopyOfBuffer,
       SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
-      SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy};
+      SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy,
+      SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy,
+      SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake,
+      SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake,
+      SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload,
+      SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload};
   for (const auto Operation : Operations) {
     auto Hint = swiftValueWitnessSourceCallHint(Image.Arch, Operation);
     const auto Slot = swiftValueWitnessSlot(Operation);

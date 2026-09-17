@@ -147,13 +147,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     const auto Slot = swiftValueWitnessSlot(*Hint.ValueWitness);
     if (!Slot)
       return bad("unsupported Swift value-witness operation");
-    std::string Prototype =
-        Signature.ReturnType->Kind == NdTypeKind::Void ? "void" : "void *";
+    std::string Prototype = typeToC(Signature.ReturnType);
     Prototype += " (__attribute__((swiftcall)) *)(";
     for (size_t I = 0; I < Arguments.size(); ++I) {
       if (I)
         Prototype += ", ";
-      Prototype += "void *";
+      Prototype += sourceParameterType(Signature.Parameters[I]);
     }
     const std::string Metadata = Arguments.back();
     const std::string Target =

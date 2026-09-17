@@ -929,6 +929,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 # Run source call ABI, binding, and emitted-code checks without rebuilding the
 # complete fixture inventory during mobile decompiler development.
 add_neverd_unittest(NeverDObjCSourceCallTests
+  ../loader/SwiftValueWitnessCallTests.cpp
   core/ObjCCategoryTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp

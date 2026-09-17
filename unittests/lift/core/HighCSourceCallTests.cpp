@@ -223,33 +223,46 @@ int main(void) {
 
 TEST(HighCSourceCalls,
      SwiftValueWitnessInitializeWithCopyReturnsRuntimeDestination) {
-  const auto Hint = swiftValueWitnessSourceCallHint(
-      Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
-  ASSERT_TRUE(Hint);
-  auto Copy =
-      HighExpr::makeCall("indirect_call", 0,
-                         {parameter(0, Hint->Signature.Parameters[0].Type),
-                          parameter(1, Hint->Signature.Parameters[1].Type),
-                          parameter(2, Hint->Signature.Parameters[2].Type)});
-  Copy->IsIndirectCall = true;
-  // HighIR retains the integer machine carrier even though the source ABI
-  // gives the same return register a pointer type.
-  Copy->Type = NdType::makeInt(8);
-  Copy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
-  HighFunc Function;
-  Function.Name = "copy_value";
-  Function.ReturnType = Copy->Type;
-  Function.Params = {{"destination", Hint->Signature.Parameters[0].Type},
-                     {"source", Hint->Signature.Parameters[1].Type},
-                     {"metadata", Hint->Signature.Parameters[2].Type}};
-  Function.SourceTypeHint = Hint->Signature;
-  HighStmt Return;
-  Return.Kind = StmtKind::Return;
-  Return.RetVal = Copy;
-  Function.Body = {Return};
-  const auto Source = emit({Function});
-  EXPECT_NE(Source.find("sizeof(void *)))[2]"), std::string::npos);
-  compileAndRun(Source + R"(
+  using OperationKind = SourceCallTypeHint::SwiftValueWitnessKind;
+  const std::pair<OperationKind, unsigned> Cases[] = {
+      {OperationKind::InitializeBufferWithCopyOfBuffer, 0},
+      {OperationKind::InitializeWithCopy, 2},
+      {OperationKind::AssignWithCopy, 3},
+      {OperationKind::InitializeWithTake, 4},
+      {OperationKind::AssignWithTake, 5},
+  };
+  for (const auto &[Operation, ExpectedSlot] : Cases) {
+    const auto Hint = swiftValueWitnessSourceCallHint(Arch::X64, Operation);
+    ASSERT_TRUE(Hint);
+    auto Copy =
+        HighExpr::makeCall("indirect_call", 0,
+                           {parameter(0, Hint->Signature.Parameters[0].Type),
+                            parameter(1, Hint->Signature.Parameters[1].Type),
+                            parameter(2, Hint->Signature.Parameters[2].Type)});
+    Copy->IsIndirectCall = true;
+    // HighIR retains the integer machine carrier even though the source ABI
+    // gives the same return register a pointer type.
+    Copy->Type = NdType::makeInt(8);
+    Copy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+    HighFunc Function;
+    Function.Name = "copy_value";
+    Function.ReturnType = Copy->Type;
+    Function.Params = {{"destination", Hint->Signature.Parameters[0].Type},
+                       {"source", Hint->Signature.Parameters[1].Type},
+                       {"metadata", Hint->Signature.Parameters[2].Type}};
+    Function.SourceTypeHint = Hint->Signature;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Copy;
+    Function.Body = {Return};
+    const auto Source = emit({Function});
+    const auto Slot = swiftValueWitnessSlot(Operation);
+    ASSERT_TRUE(Slot);
+    EXPECT_EQ(*Slot, ExpectedSlot);
+    EXPECT_NE(
+        Source.find("sizeof(void *)))[" + std::to_string(ExpectedSlot) + "]"),
+        std::string::npos);
+    compileAndRun(Source + R"(
 static void *expected_metadata;
 static void *__attribute__((swiftcall))
 witness_copy(void *destination, void *source, void *metadata) {
@@ -258,12 +271,78 @@ witness_copy(void *destination, void *source, void *metadata) {
     return destination;
 }
 int main(void) {
-    void *table[3] = {0, 0, (void *)&witness_copy};
+    void *table[8] = {0};
+)" + "    table[" +
+                  std::to_string(ExpectedSlot) +
+                  "] = (void *)&witness_copy;\n" + R"(
     void *metadata_words[2] = {table, 0};
     expected_metadata = &metadata_words[1];
     unsigned source = 73, destination = 0;
     uintptr_t result = copy_value(&destination, &source, expected_metadata);
     return (void *)result == &destination && destination == source ? 0 : 1;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, SwiftSinglePayloadWitnessesPreserveUnsignedTagABI) {
+  using Operation = SourceCallTypeHint::SwiftValueWitnessKind;
+  std::vector<HighFunc> Functions;
+  for (const auto Op : {Operation::GetEnumTagSinglePayload,
+                        Operation::StoreEnumTagSinglePayload}) {
+    const auto Hint = swiftValueWitnessSourceCallHint(Arch::X64, Op);
+    ASSERT_TRUE(Hint);
+    HighFunc Function;
+    Function.Name = Hint->TargetName;
+    Function.ReturnType = Hint->Signature.ReturnType;
+    Function.SourceTypeHint = Hint->Signature;
+    std::vector<ExprPtr> Arguments;
+    for (const auto &P : Hint->Signature.Parameters) {
+      Arguments.push_back(parameter(Arguments.size(), P.Type));
+      Function.Params.push_back({P.Name, P.Type});
+    }
+    auto Call = call(*Hint, Hint->Signature.ReturnType, std::move(Arguments));
+    Call->IsIndirectCall = true;
+    HighStmt Statement;
+    if (Op == Operation::GetEnumTagSinglePayload) {
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      Statement.Kind = StmtKind::Return;
+      Statement.RetVal = Call;
+    } else {
+      Statement.Kind = StmtKind::Call;
+      Statement.CallExpr = Call;
+    }
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  compileAndRun(emit(Functions) + R"(
+static void *expected_metadata;
+static unsigned reads, writes;
+static uint32_t __attribute__((swiftcall))
+get_tag(void *value, uint32_t empty_cases, void *metadata) {
+    if (metadata != expected_metadata || empty_cases != 0x87654321u)
+        __builtin_trap();
+    ++reads;
+    return *(uint32_t *)value;
+}
+static void __attribute__((swiftcall))
+store_tag(void *value, uint32_t tag, uint32_t empty_cases, void *metadata) {
+    if (metadata != expected_metadata || empty_cases != 0x87654321u)
+        __builtin_trap();
+    ++writes;
+    *(uint32_t *)value = tag;
+}
+int main(void) {
+    void *table[8] = {0};
+    table[6] = (void *)&get_tag;
+    table[7] = (void *)&store_tag;
+    void *metadata_words[2] = {table, 0};
+    expected_metadata = &metadata_words[1];
+    uint32_t value = 0;
+    storeEnumTagSinglePayload(&value, 0xfedcba98u, 0x87654321u, expected_metadata);
+    uint32_t tag = getEnumTagSinglePayload(&value, 0x87654321u, expected_metadata);
+    return tag == 0xfedcba98u && reads == 1 && writes == 1 ? 0 : 1;
 }
 )");
 }

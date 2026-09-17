@@ -168,8 +168,6 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
           Binding.Signature.HasExplicitABI;
       const bool DynamicWitness =
           Op.Opcode == NdOp::INDIR_CALL && !Op.Inputs[0].isConst() &&
-          Binding.ValueWitness ==
-              SourceCallTypeHint::SwiftValueWitnessKind::Destroy &&
           isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
       if ((!StaticRuntime && !StaticNative && !DynamicWitness) ||
           Binding.DoesNotReturn || !Binding.Signature.ReturnType ||

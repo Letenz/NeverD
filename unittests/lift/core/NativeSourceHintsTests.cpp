@@ -295,6 +295,34 @@ struct NativeVoidFixture : NativeFixture {
     NativeCall->addInput(NdVar::reg(TRI.IntReturnReg, 8));
   }
 
+  void useValueWitnessStoreTag() {
+    useValueWitnessDestroy();
+    auto Hint = swiftValueWitnessSourceCallHint(
+        Image.Arch,
+        SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload);
+    ASSERT_TRUE(Hint);
+    auto &Call = Med.Blocks[0].Ops[0];
+    Call.SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+    const auto Target = Call.Inputs[0];
+    Call.NumInputs = 0;
+    Call.addInput(Target);
+    Med.Params.clear();
+    Med.TypedParams.clear();
+    High.Params.clear();
+    for (const auto &P : Hint->Signature.Parameters) {
+      MedVar Parameter;
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = Med.Params.size();
+      Parameter.Size = P.Type->Size;
+      Parameter.RegOff = P.Location.RegisterOffset;
+      Parameter.TheArch = Image.Arch;
+      Med.Params.push_back(Parameter);
+      Med.TypedParams.push_back({P.Name, P.Type});
+      High.Params.push_back({P.Name, P.Type});
+      Call.addInput(Parameter);
+    }
+  }
+
   void useNativeVoidCallee() {
     auto Hint = std::make_shared<SourceCallTypeHint>(
         *Med.Blocks[0].Ops[0].SourceCallHint);
@@ -452,6 +480,20 @@ TEST(NativeSourceHints,
     const auto LeafHint = Leaf.inferVoid(Error);
     ASSERT_TRUE(LeafHint) << Error;
     EXPECT_EQ(LeafHint->ReturnType->Kind, NdTypeKind::Void);
+  }
+}
+
+TEST(NativeSourceHints, CanonicalSinglePayloadStorePreservesVoidCallEffects) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeVoidFixture Fixture(Architecture);
+    Fixture.useValueWitnessStoreTag();
+    std::string Error;
+    const auto Hint = Fixture.inferVoid(Error);
+    ASSERT_TRUE(Hint) << Error;
+    EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint->Parameters.size(), 4U);
+    EXPECT_EQ(Hint->Parameters[1].Type->Size, 4U);
+    EXPECT_EQ(Hint->Parameters[2].Type->Size, 4U);
   }
 }
 

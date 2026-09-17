@@ -85,7 +85,15 @@ TEST(SwiftValueWitnessCalls, OperationsUseExactMetadataAndRequiredTableSlots) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto Operation :
          {SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
-          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy}) {
+          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy,
+          SourceCallTypeHint::SwiftValueWitnessKind::
+              InitializeBufferWithCopyOfBuffer,
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy,
+          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake,
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake,
+          SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload,
+          SourceCallTypeHint::SwiftValueWitnessKind::
+              StoreEnumTagSinglePayload}) {
       for (const bool Split : {false, true}) {
         SCOPED_TRACE(static_cast<unsigned>(Architecture));
         SCOPED_TRACE(static_cast<unsigned>(Operation));
@@ -115,10 +123,7 @@ TEST(SwiftValueWitnessCalls, OperationsUseExactMetadataAndRequiredTableSlots) {
         EXPECT_EQ(Call->NumInputs,
                   Hints.begin()->second.Signature.Parameters.size() + 1);
         EXPECT_EQ(Call->Output.Size,
-                  Operation ==
-                          SourceCallTypeHint::SwiftValueWitnessKind::Destroy
-                      ? 0U
-                      : 8U);
+                  Hints.begin()->second.Signature.ReturnType->Size);
       }
     }
   }

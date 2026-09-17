@@ -117,7 +117,16 @@ struct SourceCallTypeHint {
     RuntimeReadOnlyBytes
   };
   Kind CallKind = Kind::Native;
-  enum class SwiftValueWitnessKind { Destroy, InitializeWithCopy };
+  enum class SwiftValueWitnessKind {
+    Destroy,
+    InitializeWithCopy,
+    InitializeBufferWithCopyOfBuffer,
+    AssignWithCopy,
+    InitializeWithTake,
+    AssignWithTake,
+    GetEnumTagSinglePayload,
+    StoreEnumTagSinglePayload
+  };
   /// Present only for a dynamically loaded required Swift value witness.
   std::optional<SwiftValueWitnessKind> ValueWitness;
   /// The bound source routine has a noreturn contract. Runtime bindings must

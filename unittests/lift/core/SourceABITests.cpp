@@ -254,7 +254,7 @@ TEST(SourceABI, SwiftWordCallsKeepConventionAndRejectUnmodelledResults) {
       }
     }
     for (const auto &Unsupported :
-         {NdType::makeInt(4), NdType::makeFloat(8),
+         {NdType::makeInt(2), NdType::makeFloat(8),
           NdType::makeStruct({Pointer, Pointer, Pointer})}) {
       SourceFunctionTypeHint Hint;
       Hint.ReturnType = Unsupported;

@@ -88,7 +88,14 @@ TEST(ObjCSourceBindings, SwiftValueWitnessRequiresCanonicalIndirectCall) {
   const std::map<va_t, const HighFunc *> Functions;
   for (const auto Operation :
        {SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
-        SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy}) {
+        SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy,
+        SourceCallTypeHint::SwiftValueWitnessKind::
+            InitializeBufferWithCopyOfBuffer,
+        SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy,
+        SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake,
+        SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake,
+        SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload,
+        SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload}) {
     const auto Hint = swiftValueWitnessSourceCallHint(Image.Arch, Operation);
     ASSERT_TRUE(Hint);
     std::vector<ExprPtr> Arguments;
