@@ -27,6 +27,86 @@
 namespace {
 using namespace neverd;
 
+TEST(SourceABI, EmptyBoundCallDoesNotAcquireUnrelatedRegisterArguments) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (bool Malformed : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Malformed);
+      MedFunc Function;
+      Function.Name = "zero_argument_call";
+      MedBlock Block;
+      Block.Id = 0;
+      MedOp Write;
+      Write.Opcode = NdOp::COPY;
+      Write.Output.Kind = MedVar::Reg;
+      Write.Output.Id = 42;
+      Write.Output.RegOff = TRI.IntParamRegs.front();
+      Write.Output.Size = 8;
+      Write.Output.TheArch = Architecture;
+      Write.addInput(MedVar::makeConst(73, 8));
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->Signature.ReturnType = NdType::makeVoid();
+      std::string Error;
+      ASSERT_TRUE(
+          assignDarwinScalarSourceABI(Hint->Signature, Architecture, Error))
+          << Error;
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      if (Malformed)
+        Call.addInput(Write.Output);
+      Call.SourceCallHint = Hint;
+      MedOp Return;
+      Return.Opcode = NdOp::RETURN;
+      Block.Ops = {Write, Call, Return};
+      Function.Blocks = {Block};
+      const auto High = MedToHighConverter().convert(Function, Architecture);
+      unsigned Calls = 0;
+      walkStmts(High.Body, [&](const HighStmt &Statement) {
+        forEachExpr(Statement, [&](const ExprPtr &Expression) {
+          if (Expression && Expression->Kind == ExprKind::Call &&
+              Expression->CallAddr == 0x2000) {
+            ++Calls;
+            EXPECT_TRUE(Expression->Operands.empty());
+          }
+        });
+      });
+      EXPECT_EQ(Calls, 1U);
+    }
+  }
+}
+
+TEST(SourceABI, TerminalIntrinsicsDoNotDefineSyntheticCallResults) {
+  for (const auto [Architecture, IntrinsicId] :
+       {std::pair{Arch::AArch64, Intrinsic::Brk},
+        std::pair{Arch::X64, Intrinsic::Ud2}}) {
+    MedFunc Function;
+    Function.Name = "terminal_intrinsic";
+    MedBlock Block;
+    Block.Id = 0;
+    MedOp Trap;
+    Trap.Opcode = NdOp::INTRINSIC;
+    Trap.Output.Kind = MedVar::Temp;
+    Trap.Output.Id = 0;
+    Trap.Output.Size = 8;
+    Trap.addInput(MedVar::makeConst(static_cast<uint64_t>(IntrinsicId), 4));
+    Block.Ops = {Trap};
+    Function.Blocks = {Block};
+    const auto High = MedToHighConverter().convert(Function, Architecture);
+    unsigned Traps = 0;
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      EXPECT_NE(Statement.Kind, StmtKind::Assign);
+      if (Statement.Kind == StmtKind::Call && Statement.CallExpr &&
+          Statement.CallExpr->IntrinsicId == IntrinsicId) {
+        ++Traps;
+        EXPECT_EQ(Statement.CallExpr->Type->Kind, NdTypeKind::Void);
+      }
+    });
+    EXPECT_EQ(Traps, 1U);
+  }
+}
+
 TEST(SourceABI, DarwinIntegerPairResultRequiresBothReturnRegisters) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     SourceFunctionTypeHint Hint;

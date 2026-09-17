@@ -131,9 +131,11 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     const bool HasComponents =
         std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
                     [](const auto &P) { return !P.Components.empty(); });
-    if ((Signature.HasExplicitABI || !HasComponents) &&
-        Count <= static_cast<size_t>(limits::kMaxBoundSourceCallArgs) &&
-        Call.NumInputs == Count + 1) {
+    if ((!Signature.HasExplicitABI && HasComponents) ||
+        Count > static_cast<size_t>(limits::kMaxBoundSourceCallArgs) ||
+        Call.NumInputs != Count + 1)
+      return {};
+    {
       Hinted.reserve(Count);
       size_t Index = 0;
       for (const auto &P : Signature.Parameters) {
@@ -148,6 +150,10 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
         }
       }
     }
+    // A validated zero-argument binding is a complete result. An empty list
+    // must not select the unbound-call heuristic and acquire live registers.
+    if (Hinted.empty())
+      return Hinted;
   }
 
   const int MaxArgs = limits::kMaxCallArgs;

@@ -172,8 +172,14 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
   CallExpr->IntrinsicId = IID;
   CallExpr->MemoryOrdering = CurOp.MemoryOrdering;
   CallExpr->MemoryAddressSpace = CurOp.MemoryAddressSpace;
-  if (CurOp.Output.Size > 0)
+  // A terminating instruction has no observable return value, even when
+  // the generic intrinsic carrier contains a synthetic output temporary.
+  const bool HasResult =
+      CurOp.Output.Size > 0 && !isUnconditionalTrapIntrinsic(IID);
+  if (HasResult)
     CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
+  else if (isUnconditionalTrapIntrinsic(IID))
+    CallExpr->Type = NdType::makeVoid();
 
   uint8_t NumOut = intrinsicOutputCount(IID);
   if (NumOut > 0) {
@@ -203,7 +209,7 @@ void MedToHighConverter::lowerIntrinsic(HighFunc &Func,
     CallExpr->IntrinsicOutputs = std::move(CoOutputs);
   }
 
-  if (CurOp.Output.Id >= 0 && CurOp.Output.Size > 0) {
+  if (CurOp.Output.Id >= 0 && HasResult) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Addr = CurOp.Addr;
