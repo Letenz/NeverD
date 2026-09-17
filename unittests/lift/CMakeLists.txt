@@ -1075,6 +1075,10 @@ target_include_directories(NeverDLLVMCVoidAnalysisTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCVoidAnalysisTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 
 add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   core/MedLLVMMemoryAlignmentTests.cpp

@@ -214,6 +214,9 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
         continue;
       if (llvm::isa<llvm::PHINode>(&Inst))
         continue;
+      // Freeze must materialize one defined choice for every use count.
+      if (llvm::isa<llvm::FreezeInst>(&Inst))
+        continue;
       if (llvm::isa<llvm::ExtractValueInst>(&Inst))
         continue;
       if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchPadInst,
@@ -298,6 +301,7 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
 }
 
 void LLVMCWriter::setupFunction(llvm::Function &Fn) {
+  Dominators.recalculate(Fn);
   NextVar = 0;
   ValNames.clear();
   UsedNames.clear();
