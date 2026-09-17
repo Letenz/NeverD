@@ -361,6 +361,12 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     }
     return Value;
   };
+  // Typed MedIR parameter IDs index physical source-ABI bindings, including
+  // context registers and record leaves. Ordinary argument-register numbering
+  // must not reinterpret these IDs.
+  if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
+      V.Id >= 0 && static_cast<size_t>(V.Id) < CurMed->TypedParams.size())
+    return SourceParameter(V, static_cast<size_t>(V.Id));
   if (CurMed && V.Kind == MedVar::Param) {
     const int Slot = abiParamIndex(V);
     if (Slot >= 0) {

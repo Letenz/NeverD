@@ -332,15 +332,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           OrdinaryMemory && partialIntegerBytes(E.Type) == 0 && AddressType &&
           AddressType->Kind == NdTypeKind::Ptr && AddressType->Pointee &&
           equalSourceTypes(AddressType->Pointee, E.Type);
-      // Ordinary default-address-space loads print as `*(T *)addr` or a
-      // named frame slot.  Helpers are only required for atomics, segmented
-      // memory, or partial integer widths (including synthetic-frame fallback).
-      if (!MsvcSegmentedScalar && !DirectTypedLoad) {
-        const bool NeedsHelper =
-            !OrdinaryMemory || partialIntegerBytes(E.Type) != 0;
-        if (NeedsHelper)
-          Names.insert(Type);
-      }
+      // Raw machine addresses do not prove C alignment or effective type.
+      // Keep memcpy-based helpers for synthetic frames and untyped loads.
+      if (!MsvcSegmentedScalar && !DirectTypedLoad)
+        Names.insert(Type);
       if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
           !MsvcSegmentedScalar)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
@@ -552,10 +547,6 @@ HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                             NdMemoryAddressSpace AddressSpace) const {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
-  if (Ordering == NdMemoryOrdering::None &&
-      AddressSpace == NdMemoryAddressSpace::Default &&
-      partialIntegerBytes(Ty) == 0)
-    return "(*(" + Type + " *)(" + Addr.str() + "))";
   if (std::string Seg = renderX86MsvcSegmentedLoad(
           Opts.TheArch, Ty ? Ty->Size : 0, Addr, Ordering, AddressSpace);
       !Seg.empty())
@@ -701,12 +692,16 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                                          : Ex.CallTarget;
           if (DeclaredC)
             ResolvedName = DeclaredName;
+          bool IsDefinedIdentifier = false;
           if (!Runtime)
             if (const auto *Definition =
-                    sourceCallDefinition(Hint, ResolvedName))
+                    sourceCallDefinition(Hint, ResolvedName)) {
               ResolvedName = functionIdentifier(*Definition);
+              IsDefinedIdentifier = true;
+            }
           llvm::StringRef Name(ResolvedName);
-          Name.consume_front("_");
+          if (!IsDefinedIdentifier)
+            Name.consume_front("_");
           if (!Name.empty()) {
             if (Runtime) {
               const auto [Effect, Fresh] =

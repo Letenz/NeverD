@@ -129,6 +129,48 @@ void compileAndRun(const std::string &Source) {
   ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
 }
 
+TEST(HighCSourceCalls, ConditionalCopiesKeepTheirReachingDefinitions) {
+  const auto Integer = NdType::makeInt(8);
+  MedVar Temporary;
+  Temporary.Kind = MedVar::Temp;
+  Temporary.Id = 19;
+  Temporary.Size = 8;
+  auto Value = HighExpr::makeVar(Temporary, Integer);
+  auto Function =
+      returning("conditional_copy", Value, {Integer, Integer, Integer});
+  HighStmt Initial;
+  Initial.Kind = StmtKind::Assign;
+  Initial.Dst = Value;
+  Initial.Val = parameter(0, Integer);
+  HighStmt Replacement = Initial;
+  Replacement.Val = parameter(2, Integer);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = parameter(1, Integer);
+  Branch.Body = {Replacement};
+  Function.Body.insert(Function.Body.begin(), {Initial, Branch});
+  compileAndRun(emit({Function}) + R"(
+int main(void) {
+    return conditional_copy(17, 0, 91) == 17 &&
+           conditional_copy(17, 1, 91) == 91 ? 0 : 1;
+}
+)");
+}
+
+TEST(HighCSourceCalls, BytePointerCarriersAllowMachineBitOperations) {
+  const auto Pointer = NdType::makePtr(NdType::makeInt(1));
+  auto Shift = HighExpr::makeBinop(NdOp::INT_RIGHT, parameter(0, Pointer),
+                                   HighExpr::makeConst(4, 8));
+  Shift->Type = NdType::makeInt(8, false);
+  auto Function = returning("pointer_bits", Shift, {Pointer});
+  compileAndRun(emit({Function}) + R"(
+int main(void) {
+    int8_t bytes[64];
+    return pointer_bits(bytes) == ((uintptr_t)bytes >> 4) ? 0 : 1;
+}
+)");
+}
+
 TEST(HighCSourceCalls, SwiftValueWitnessDestroyReloadsRuntimeTableEntry) {
   const auto Hint = swiftValueWitnessSourceCallHint(
       Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::Destroy);
@@ -1533,7 +1575,8 @@ TEST(HighCSourceCalls, PointerValuesStoredThroughIntegerLoadsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("(int64_t)(uintptr_t)(value)"), std::string::npos)
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)((uintptr_t)value)"),
+            std::string::npos)
       << Source;
   compileAndRun(Source + R"(
 int main(void) {
@@ -1569,7 +1612,7 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)(value);"),
+  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
             std::string::npos)
       << Source;
   compileAndRun(Source + R"(

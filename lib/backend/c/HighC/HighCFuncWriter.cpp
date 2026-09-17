@@ -801,7 +801,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   Analysis = {};
   runAnalysisPasses(Func);
   collectNamedFrameSlots(Func);
-  collectCopyForward(Func);
+  // Copy propagation belongs to the HighIR passes, which prove reaching
+  // definitions. A function-wide textual alias map cannot represent loop
+  // backedges, branches, or a later redefinition of a printed variable.
   {
     const std::vector<size_t> Indices = emittedParamIndices(Func);
     if (Indices.size() != Func.Params.size())
@@ -810,7 +812,10 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
             "arg" + std::to_string(I);
   }
 
-  bool NeedsFrameStorage = false;
+  // Escaping frame addresses may designate a multi-field object (for example
+  // a stack Block). Separate C locals do not preserve offsets or adjacency.
+  bool NeedsFrameStorage = llvm::any_of(
+      FrameSlots, [](const auto &Entry) { return Entry.second.AddressTaken; });
   auto VisitFrameUses = [&](auto &&Self, const HighExpr &Expr) -> void {
     if (NeedsFrameStorage)
       return;

@@ -247,13 +247,9 @@ TypeRef HighCWriter::declaredParamType(const MedVar &V) const {
 }
 
 bool HighCWriter::pointerNeedsIntegerView(const TypeRef &Ty) const {
-  if (!Ty || Ty->Kind != NdTypeKind::Ptr)
-    return false;
-  // HighIR address math is in bytes.  A C byte pointer already has scale 1, so
-  // `p + n` matches the IR.  Wider pointees would scale and must be viewed as
-  // integers first; void* cannot be added at all.
-  const TypeRef &Pointee = Ty->Pointee;
-  return !Pointee || Pointee->Kind != NdTypeKind::Int || Pointee->Size != 1;
+  // Machine carriers also participate in shifts and masks. Even byte
+  // pointers, whose addition happens to have scale one, need an integer view.
+  return Ty && Ty->Kind == NdTypeKind::Ptr;
 }
 
 const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {

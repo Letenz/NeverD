@@ -130,6 +130,10 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
     NoteStmt(S);
   for (size_t I = 0; I < Func.Params.size(); ++I) {
     HighParam &Param = Func.Params[I];
+    // Address use is a heuristic, not authority to rewrite a source ABI.
+    // Native context carriers may intentionally be declared as integer bits.
+    if (Func.SourceTypeHint)
+      continue;
     if (Param.Type && Param.Type->Kind == NdTypeKind::Ptr)
       continue;
     if (AddrParams.count(static_cast<int>(I)))

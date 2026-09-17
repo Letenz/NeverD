@@ -77,6 +77,44 @@ TEST(SourceABI, EmptyBoundCallDoesNotAcquireUnrelatedRegisterArguments) {
   }
 }
 
+TEST(SourceABI, AddressUsesDoNotRewriteDeclaredIntegerParameters) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SourceFunctionTypeHint Hint;
+    Hint.ReturnType = NdType::makeInt(8);
+    Hint.Parameters = {{"address_bits", NdType::makeInt(8)}};
+    std::string Error;
+    ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Error));
+    MedFunc Function;
+    Function.Name = "read_address_bits";
+    Function.SourceTypeHint = Hint;
+    Function.ReturnType = Hint.ReturnType;
+    MedVar Address;
+    Address.Kind = MedVar::Param;
+    Address.Id = 0;
+    Address.Size = 8;
+    Address.TheArch = Architecture;
+    Address.RegOff = Hint.Parameters[0].Location.RegisterOffset;
+    Function.Params = {Address};
+    Function.TypedParams = {{"address_bits", Hint.Parameters[0].Type}};
+    MedOp Load;
+    Load.Opcode = NdOp::LOAD;
+    Load.Output.Kind = MedVar::Temp;
+    Load.Output.Id = 5;
+    Load.Output.Size = 8;
+    Load.addInput(Address);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.addInput(Load.Output);
+    MedBlock Block;
+    Block.Id = 0;
+    Block.Ops = {Load, Return};
+    Function.Blocks = {Block};
+    const auto High = MedToHighConverter().convert(Function, Architecture);
+    ASSERT_EQ(High.Params.size(), 1U);
+    EXPECT_TRUE(equalSourceTypes(High.Params[0].Type, Hint.Parameters[0].Type));
+  }
+}
+
 TEST(SourceABI, TerminalIntrinsicsDoNotDefineSyntheticCallResults) {
   for (const auto [Architecture, IntrinsicId] :
        {std::pair{Arch::AArch64, Intrinsic::Brk},
