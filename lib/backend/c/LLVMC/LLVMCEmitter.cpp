@@ -20,13 +20,25 @@
 #include "neverd/Common.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
-#define DEBUG_TYPE "neverd-llvmc-emitter"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/Scalarizer.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/LoopUtils.h"
+
+#define DEBUG_TYPE "neverd-llvmc-emitter"
 
 #include <cctype>
+#include <stdexcept>
 
 namespace neverd {
 
@@ -252,11 +264,214 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+static void lowerCIntegerReductions(llvm::Module &Mod) {
+  llvm::SmallVector<llvm::IntrinsicInst *> Work;
+  for (auto &F : Mod)
+    for (auto &BB : F)
+      for (auto &I : BB)
+        if (auto *Call = llvm::dyn_cast<llvm::IntrinsicInst>(&I))
+          switch (Call->getIntrinsicID()) {
+          case llvm::Intrinsic::vector_reduce_add:
+          case llvm::Intrinsic::vector_reduce_mul:
+          case llvm::Intrinsic::vector_reduce_and:
+          case llvm::Intrinsic::vector_reduce_or:
+          case llvm::Intrinsic::vector_reduce_xor:
+            if (llvm::isa<llvm::FixedVectorType>(
+                    Call->getArgOperand(0)->getType()))
+              Work.push_back(Call);
+            break;
+          default:
+            break;
+          }
+  for (auto *Call : Work) {
+    llvm::IRBuilder<> B(Call);
+    auto Id = Call->getIntrinsicID();
+    auto *Vector = Call->getArgOperand(0);
+    auto *Identity = llvm::getReductionIdentity(
+        Id, Vector->getType()->getScalarType(), llvm::FastMathFlags{});
+    auto *Result = llvm::getOrderedReduction(
+        B, Identity, Vector, llvm::getArithmeticReductionInstruction(Id));
+    Call->replaceAllUsesWith(Result);
+    Call->eraseFromParent();
+  }
+}
+
+// Scalarizer handles vector-to-vector casts, but not packing a vector into a
+// scalar integer. Express the pack explicitly before scalarization so the C
+// writer never sees an unassigned gather temporary.
+static llvm::Value *balancedOr(llvm::IRBuilder<> &B,
+                               llvm::SmallVector<llvm::Value *> Values) {
+  while (Values.size() > 1) {
+    llvm::SmallVector<llvm::Value *> Next;
+    for (size_t I = 0; I < Values.size(); I += 2)
+      Next.push_back(I + 1 < Values.size()
+                         ? B.CreateOr(Values[I], Values[I + 1])
+                         : Values[I]);
+    Values = std::move(Next);
+  }
+  return Values.front();
+}
+
+static void lowerIntegerVectorBitcasts(llvm::Module &Mod) {
+  llvm::SmallVector<llvm::BitCastInst *> Work;
+  for (auto &F : Mod)
+    for (auto &BB : F)
+      for (auto &I : BB)
+        if (auto *Cast = llvm::dyn_cast<llvm::BitCastInst>(&I))
+          Work.push_back(Cast);
+  for (auto *Cast : Work) {
+    auto *Vector = llvm::dyn_cast<llvm::FixedVectorType>(Cast->getSrcTy());
+    auto *Integer = llvm::dyn_cast<llvm::IntegerType>(Cast->getDestTy());
+    bool Pack = Vector && Integer;
+    if (!Pack) {
+      Vector = llvm::dyn_cast<llvm::FixedVectorType>(Cast->getDestTy());
+      Integer = llvm::dyn_cast<llvm::IntegerType>(Cast->getSrcTy());
+    }
+    if (!Vector || !Integer || !Vector->getElementType()->isIntegerTy())
+      continue;
+    unsigned Count = Vector->getNumElements();
+    unsigned Bits = Vector->getElementType()->getIntegerBitWidth();
+    if (uint64_t(Count) * Bits != Integer->getBitWidth())
+      continue;
+    llvm::IRBuilder<> B(Cast);
+    llvm::SmallVector<llvm::Value *> Parts;
+    llvm::Value *Value =
+        Pack ? static_cast<llvm::Value *>(llvm::ConstantInt::get(Integer, 0))
+             : llvm::PoisonValue::get(Vector);
+    for (unsigned Lane = 0; Lane < Count; ++Lane) {
+      unsigned Shift =
+          (Mod.getDataLayout().isLittleEndian() ? Lane : Count - Lane - 1) *
+          Bits;
+      if (Pack) {
+        auto *Part = B.CreateZExtOrTrunc(
+            B.CreateExtractElement(Cast->getOperand(0), Lane), Integer);
+        if (Shift)
+          Part = B.CreateShl(Part, llvm::ConstantInt::get(Integer, Shift));
+        Parts.push_back(Part);
+      } else {
+        auto *Part = Cast->getOperand(0);
+        if (Shift)
+          Part = B.CreateLShr(Part, llvm::ConstantInt::get(Integer, Shift));
+        Part = B.CreateZExtOrTrunc(Part, Vector->getElementType());
+        Value = B.CreateInsertElement(Value, Part, Lane);
+      }
+    }
+    if (Pack)
+      Value = balancedOr(B, std::move(Parts));
+    Cast->replaceAllUsesWith(Value);
+    Cast->eraseFromParent();
+  }
+}
+
+static bool containsVectorType(llvm::Type *Type,
+                               llvm::SmallPtrSetImpl<llvm::Type *> &Seen) {
+  if (!Seen.insert(Type).second)
+    return false;
+  if (Type->isVectorTy())
+    return true;
+  if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Type))
+    return containsVectorType(Array->getElementType(), Seen);
+  if (auto *Struct = llvm::dyn_cast<llvm::StructType>(Type)) {
+    if (Struct->isOpaque())
+      return false;
+    for (auto *Element : Struct->elements())
+      if (containsVectorType(Element, Seen))
+        return true;
+  }
+  if (auto *Function = llvm::dyn_cast<llvm::FunctionType>(Type)) {
+    if (containsVectorType(Function->getReturnType(), Seen))
+      return true;
+    for (auto *Parameter : Function->params())
+      if (containsVectorType(Parameter, Seen))
+        return true;
+  }
+  return false;
+}
+
+static bool containsVectorType(llvm::Type *Type) {
+  llvm::SmallPtrSet<llvm::Type *, 16> Seen;
+  return containsVectorType(Type, Seen);
+}
+
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
+  bool HasVectors = false;
+  if (!Only)
+    for (const auto &Global : Mod.globals())
+      HasVectors |= containsVectorType(Global.getValueType());
+  for (const auto &Function : Mod) {
+    if (Only && &Function != Only)
+      continue;
+    HasVectors |= containsVectorType(Function.getFunctionType());
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block) {
+        HasVectors |= Instruction.getType()->isVectorTy();
+        for (const auto &Operand : Instruction.operands())
+          HasVectors |= Operand->getType()->isVectorTy();
+      }
+  }
+  std::unique_ptr<llvm::Module> Projection;
+  const llvm::Function *ProjectionOnly = Only;
+  if (HasVectors) {
+    // Normalize vector operations on a clone so C emission preserves the
+    // caller's IR while the scalar writer receives explicit lane semantics.
+    llvm::ValueToValueMapTy ValueMap;
+    Projection = llvm::CloneModule(Mod, ValueMap);
+    if (Only) {
+      ProjectionOnly =
+          llvm::dyn_cast_or_null<llvm::Function>(ValueMap.lookup(Only));
+      if (!ProjectionOnly)
+        throw std::runtime_error(
+            "C projection could not map the selected function into its clone");
+    }
+    lowerCIntegerReductions(*Projection);
+    lowerIntegerVectorBitcasts(*Projection);
+    llvm::LoopAnalysisManager Loops;
+    llvm::FunctionAnalysisManager Functions;
+    llvm::CGSCCAnalysisManager CallGraph;
+    llvm::ModuleAnalysisManager Modules;
+    llvm::PassBuilder Passes;
+    Passes.registerModuleAnalyses(Modules);
+    Passes.registerCGSCCAnalyses(CallGraph);
+    Passes.registerFunctionAnalyses(Functions);
+    Passes.registerLoopAnalyses(Loops);
+    Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
+    llvm::FunctionPassManager Normalize;
+    Normalize.addPass(llvm::ScalarizerPass());
+    Normalize.addPass(llvm::DCEPass());
+    llvm::ModulePassManager Pipeline;
+    Pipeline.addPass(
+        llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
+    Pipeline.run(*Projection, Modules);
+    if (llvm::verifyModule(*Projection, &llvm::errs()))
+      return false;
+    if (!ProjectionOnly)
+      for (const auto &Global : Projection->globals())
+        if (containsVectorType(Global.getValueType()))
+          throw std::runtime_error(
+              "C projection retains an unsupported vector global");
+    for (const auto &F : *Projection) {
+      if (ProjectionOnly && &F != ProjectionOnly)
+        continue;
+      if (!ProjectionOnly && F.isDeclaration() && F.isIntrinsic())
+        continue;
+      if (containsVectorType(F.getFunctionType()))
+        throw std::runtime_error(
+            "C projection retains an unsupported vector signature");
+      for (const auto &BB : F)
+        for (const auto &I : BB)
+          if (containsVectorType(I.getType()) ||
+              llvm::any_of(I.operands(), [](const llvm::Use &Operand) {
+                return containsVectorType(Operand->getType());
+              }))
+            throw std::runtime_error(
+                "C projection retains an unsupported vector instruction");
+    }
+  }
   LLVMCWriter W(Out, Opts, Dbg, Img);
-  W.writeModule(Mod, Only);
+  W.writeModule(Projection ? *Projection : Mod,
+                Projection ? ProjectionOnly : Only);
   return true;
 }
 
