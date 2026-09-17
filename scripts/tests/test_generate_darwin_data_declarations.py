@@ -1,7 +1,8 @@
 import unittest
 from types import SimpleNamespace
 from scripts.generate_darwin_data_declarations import (
-    DataDeclarations, LITERAL_PROBES, literal_storage_declarations, render)
+    DataDeclarations, LEGACY_LITERAL_PROBES, LITERAL_PROBES,
+    legacy_literal_storage_declarations, literal_storage_declarations, render)
 
 
 class DarwinDataDeclarationTests(unittest.TestCase):
@@ -45,6 +46,23 @@ class DarwinDataDeclarationTests(unittest.TestCase):
         for duplicate in (ir, "\n@storage_0 = external global ptr #0"):
             with self.assertRaises(ValueError):
                 literal_storage_declarations(ir + "\n" + duplicate)
+
+    def test_legacy_empty_collection_loads_supply_storage_addresses(self):
+        ir = "\n".join(
+            f"@storage_{index} = external local_unnamed_addr global ptr\n"
+            f"define ptr @{probe}() {{\n"
+            f"  %value = load ptr, ptr @storage_{index}, align 8\n"
+            f"  %retained = call ptr @llvm.objc.retain(ptr %value)\n"
+            f"  ret ptr %value\n}}"
+            for index, probe in enumerate(LEGACY_LITERAL_PROBES))
+        self.assertEqual(legacy_literal_storage_declarations(ir),
+                         {f"storage_{i}": {"data"} for i in range(2)})
+        for before, after in (
+                ("external local_unnamed_addr global ptr", "global ptr null"),
+                ("load ptr, ptr @storage_0", "load ptr, ptr @missing"),
+                ("ret ptr %value", "ret ptr null")):
+            with self.subTest(after=after), self.assertRaises(ValueError):
+                legacy_literal_storage_declarations(ir.replace(before, after, 1))
 
     def test_only_external_non_tls_variables_supply_storage_addresses(self):
         clang = DataDeclarations.__new__(DataDeclarations)

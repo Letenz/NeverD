@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/FunctionDiscovery.h"
+#include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -231,6 +232,62 @@ TEST(FunctionDiscoveryAlignment,
     scanDataFuncPointers(Img);
     EXPECT_EQ(Img.Symbols.size(), 2u);
   }
+}
+
+TEST(FunctionDiscoveryAlignment,
+     MachOFunctionStartsSuppressRawMetadataPointerGuessing) {
+  BinaryImage Img;
+  Img.Arch = Arch::AArch64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::MachO;
+  Img.MachOHasFunctionStarts = true;
+
+  std::vector<uint8_t> Bytes(16, 0);
+  writeLE<uint32_t>(Bytes.data(), 0xd10083ffu);
+  writeLE<uint32_t>(Bytes.data() + 8, 0xd10083ffu);
+  Img.Segments.push_back(executableSegment(0x1000, Bytes));
+  Img.Symbols.push_back(Symbol::makeFunc(0x1000));
+
+  // Models two adjacent 32-bit relative metadata fields which, when read as
+  // one untyped 64-bit word, happen to spell an interior code address.
+  Segment Metadata;
+  Metadata.VA = 0x2000;
+  Metadata.Size = 8;
+  Metadata.Flags = SegmentFlags::Readable;
+  Metadata.Data.resize(8);
+  writeLE<uint64_t>(Metadata.Data.data(), 0x1008);
+  Img.Segments.push_back(std::move(Metadata));
+
+  scanDataFuncPointers(Img);
+
+  ASSERT_EQ(Img.Symbols.size(), 1u);
+  EXPECT_EQ(Img.Symbols.front().Addr, 0x1000u);
+}
+
+TEST(FunctionDiscoveryAlignment,
+     MachOFunctionStartsAcceptZeroBasedLinkedImages) {
+  BinaryImage Img;
+  Img.Arch = Arch::AArch64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::MachO;
+  Img.Segments.push_back(executableSegment(0, std::vector<uint8_t>(32)));
+
+  // LC_FUNCTION_STARTS deltas are relative to the Mach header VA. A linked
+  // dylib may map that header at VA zero; zero is an address here, not a
+  // missing-base sentinel.
+  std::vector<uint8_t> File(16, 0);
+  File[8] = 4;
+  File[9] = 0;
+  macho_loader::FunctionStartsInfo Info;
+  Info.DataOff = 8;
+  Info.DataSize = 2;
+
+  macho_loader::parseFunctionStarts(File.data(), File.size(), Info, 0, Img);
+
+  ASSERT_TRUE(Img.MachOHasFunctionStarts);
+  ASSERT_EQ(Img.Symbols.size(), 1u);
+  EXPECT_EQ(Img.Symbols.front().Addr, 4u);
+  EXPECT_TRUE(Img.Symbols.front().IsFunc);
 }
 
 } // namespace

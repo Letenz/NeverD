@@ -153,6 +153,18 @@ void scanDataFuncPointers(BinaryImage &Img) {
   if (PtrSize == 0)
     return;
 
+  // LC_FUNCTION_STARTS is the linked Mach-O image's format-native function
+  // identity table.  Scanning arbitrary read-only sections after it succeeds
+  // is weaker evidence and is actively ambiguous: Objective-C and Swift
+  // metadata store adjacent 32-bit relative fields which can look like an
+  // aligned 64-bit absolute code pointer when read without their schema.  Keep
+  // this heuristic for old/packed Mach-O images that lack a usable starts
+  // stream, and for formats whose data pointer tables are not described by
+  // that load command.
+  if (Img.Format == BinaryFormat::MachO && !Img.IsRelocatable &&
+      Img.MachOHasFunctionStarts)
+    return;
+
   // Sized function symbols claim their whole body just as unwind-derived code
   // ranges do.  Relocatable objects often have the former but no unwind
   // metadata; without folding those extents into Known, an absolute jump table

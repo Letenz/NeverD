@@ -14,15 +14,15 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "CallArgCollectionDetail.h"
+
+#include "neverd/Common.h"
+#include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
-#include "neverd/Common.h"
-#include "neverd/Limits.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
-
-#include "CallArgCollectionDetail.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -40,8 +40,8 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   const auto &Ops = *Scan.Ops;
   const TargetRegInfo &TRI = *Scan.TRI;
   const int64_t SlotBytes = static_cast<int64_t>(TRI.PointerSize);
-  const int StoreScanStart = std::max(
-      0, static_cast<int>(Scan.CallIdx) - limits::kCallArgStoreScanWindow);
+  const int StoreScanStart = std::max(0, static_cast<int>(Scan.CallIdx) -
+                                             limits::kCallArgStoreScanWindow);
 
   for (int J = static_cast<int>(Scan.CallIdx) - 1; J >= StoreScanStart; --J) {
     const MedOp &Prev = Ops[J];
@@ -103,12 +103,12 @@ static bool preferScannedCallArg(const ExprPtr &Scanned, const ExprPtr &Hinted,
     return true;
   if (Hinted->Kind == ExprKind::Record)
     return false;
-  const bool ScannedSlot =
-      Scanned->Kind == ExprKind::Var && Scanned->Var.Kind == MedVar::Param &&
-      Scanned->Var.Id == static_cast<int>(Slot);
-  const bool HintedSlot =
-      Hinted->Kind == ExprKind::Var && Hinted->Var.Kind == MedVar::Param &&
-      Hinted->Var.Id == static_cast<int>(Slot);
+  const bool ScannedSlot = Scanned->Kind == ExprKind::Var &&
+                           Scanned->Var.Kind == MedVar::Param &&
+                           Scanned->Var.Id == static_cast<int>(Slot);
+  const bool HintedSlot = Hinted->Kind == ExprKind::Var &&
+                          Hinted->Var.Kind == MedVar::Param &&
+                          Hinted->Var.Id == static_cast<int>(Slot);
   if (ScannedSlot)
     return true;
   if (HintedSlot)
@@ -128,9 +128,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     const auto Bindings = sourceABIParameters(Signature);
     const size_t Count = Signature.HasExplicitABI ? Bindings.size()
                                                   : Signature.Parameters.size();
-    const bool HasComponents = std::any_of(
-        Signature.Parameters.begin(), Signature.Parameters.end(),
-        [](const auto &P) { return !P.Components.empty(); });
+    const bool HasComponents =
+        std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                    [](const auto &P) { return !P.Components.empty(); });
     if ((Signature.HasExplicitABI || !HasComponents) &&
         Count <= static_cast<size_t>(limits::kMaxBoundSourceCallArgs) &&
         Call.NumInputs == Count + 1) {
@@ -188,8 +188,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     for (int K = 0; K < MaxArgs; ++K)
       if (Found[K])
         MaxRegArg = K;
-    const bool Win64 = TargetArch == Arch::X64 && Image &&
-                       Image->Format == BinaryFormat::COFF;
+    const bool Win64 =
+        TargetArch == Arch::X64 && Image && Image->Format == BinaryFormat::COFF;
     // Fill holes below the highest written slot.  Do not extend arity with
     // live-in r9 when the call only wrote rcx/rdx/r8 (GSHandlerCheckCommon).
     // A tail-call with no param-reg writes still recovers live-in args up to
@@ -209,8 +209,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
   }
 
-  const bool Win64 = TargetArch == Arch::X64 && Image &&
-                     Image->Format == BinaryFormat::COFF;
+  const bool Win64 =
+      TargetArch == Arch::X64 && Image && Image->Format == BinaryFormat::COFF;
   // Last-COPY-by-address across blocks is CFG-unsound: cookie `ror rcx`
   // would steal rcx from the mismatch path's incoming argument. Reaching
   // defs / same-block writes already recovered the live value.
@@ -377,19 +377,25 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     const auto Arity = libc::libcArityForSymbol(Name);
     if (!Arity)
       return Collected;
-    const size_t N = static_cast<size_t>(std::max(0, Arity->IntArgs));
+    const size_t N = static_cast<size_t>(std::max(0, Arity->IntArgs) +
+                                         std::max(0, Arity->FpArgs));
     if (Collected.size() > N)
       Collected.resize(N);
     return Collected;
   };
 
   if (!Hinted.empty()) {
-    for (size_t I = 0; I < Hinted.size(); ++I) {
-      const ExprPtr Scanned = I < Found.size() ? Found[I] : ExprPtr{};
-      if (call_args_detail::preferScannedCallArg(Scanned, Hinted[I], I))
-        Hinted[I] = Scanned;
+    // Source ABI operands are authoritative. Win64 may still prefer a scanned
+    // parameter copy over a clobbered CALL input; AArch64 selector stubs must
+    // not replace `_cmd` with the const-0 overwrite placeholder.
+    if (Win64) {
+      for (size_t I = 0; I < Hinted.size(); ++I) {
+        const ExprPtr Scanned = I < Found.size() ? Found[I] : ExprPtr{};
+        if (call_args_detail::preferScannedCallArg(Scanned, Hinted[I], I))
+          Hinted[I] = Scanned;
+      }
     }
-    return BoundKnownCalleeArity(std::move(Hinted));
+    return Hinted;
   }
   Args.clear();
   for (int K = 0; K < MaxArgs; ++K) {
@@ -445,8 +451,8 @@ bool MedToHighConverter::reachingRegAtBlockEntry(const MedBlock &B,
 }
 
 int MedToHighConverter::regToArgIdx(uint64_t RegOff) const {
-  const bool IsWin64 = TargetArch == Arch::X64 && Image &&
-                       Image->Format == BinaryFormat::COFF;
+  const bool IsWin64 =
+      TargetArch == Arch::X64 && Image && Image->Format == BinaryFormat::COFF;
   return getTargetRegInfo(TargetArch).regToArgIdx(RegOff, IsWin64);
 }
 

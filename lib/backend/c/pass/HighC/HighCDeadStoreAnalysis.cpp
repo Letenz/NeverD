@@ -159,7 +159,7 @@ bool matchesReducedAddr(const HighExpr &Expr, const std::vector<ExprDef> &Defs,
 void collectExprVars(const HighExpr &E, std::set<std::string> &Out,
                      VarNameFn VarFn) {
   walkExprNodes(E, [&](const HighExpr &Ex) {
-    if (isNamedValueExpr(Ex))
+    if (Ex.Kind == ExprKind::Var)
       Out.insert(VarFn(Ex.Var));
   });
 }
@@ -446,7 +446,7 @@ void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (State.DeadStmts.count(&S))
         return;
-      if (S.Kind == StmtKind::Assign && S.Dst && isNamedValueExpr(*S.Dst)) {
+      if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var) {
         if (S.Val && S.Val->Kind == ExprKind::Call &&
             S.Val->IntrinsicId != Intrinsic::None) {
           if (!S.Val->IntrinsicOutputs.empty()) {
@@ -490,7 +490,7 @@ void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (State.DeadStmts.count(&S))
       return;
-    if (S.Kind == StmtKind::Assign && S.Dst && isNamedValueExpr(*S.Dst))
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var)
       AssignedVars.insert(VarFn(S.Dst->Var));
     if (S.Kind == StmtKind::Call && S.CallExpr &&
         !S.CallExpr->IntrinsicOutputs.empty())

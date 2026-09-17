@@ -365,7 +365,13 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       if (S.Kind != StmtKind::Store || !S.StoreAddr || !S.StoreVal)
         return;
       std::string Addr = exprStr(*S.StoreAddr);
-      if (Analysis.StoreFwd.count(Addr))
+      bool Forwarded = Analysis.StoreFwd.count(Addr) != 0;
+      if (!Forwarded) {
+        auto Key = Analysis.AddressKeys.find(S.StoreAddr.get());
+        Forwarded = Key != Analysis.AddressKeys.end() &&
+                    Analysis.StoreFwdByAddressKey.count(Key->second) != 0;
+      }
+      if (Forwarded)
         collectUsedVarsExpr(*S.StoreVal, UsedVars, PrintedVarFn);
     });
   }
@@ -384,11 +390,6 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
       continue;
     if ((CopyForward.count(Name) || CopyForward.count(Local.Name)) &&
         !VisibleAssigned.count(Name) && !VisibleAssigned.count(Local.Name))
-      continue;
-    if ((Analysis.DeadVars.count(Name) ||
-         Analysis.DeadVars.count(Local.Name)) &&
-        !Analysis.AssignedVars.count(Name) &&
-        !Analysis.AssignedVars.count(Local.Name))
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
@@ -410,8 +411,6 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     if (DeclaredNames.count(Name))
       continue;
     if (CopyForward.count(Name) && !VisibleAssigned.count(Name))
-      continue;
-    if (Analysis.DeadVars.count(Name) && !Analysis.AssignedVars.count(Name))
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
@@ -799,6 +798,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   CurrentFunc = &Func;
   CopyForward.clear();
   ParamDisplayNames.clear();
+  Analysis = {};
   runAnalysisPasses(Func);
   collectNamedFrameSlots(Func);
   collectCopyForward(Func);

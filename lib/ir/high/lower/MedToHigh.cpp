@@ -719,7 +719,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
                   MP.RegOff != kNoParamReg &&
                   !TRI.isFrameOrLinkReg(MP.RegOff)) ||
                  PtrParamIds.count(MP.Id) || PtrParamIds.count(static_cast<int>(PI)))
-        HP.Type = NdType::makePtr(NdType::makeInt(1, false));
+        HP.Type = NdType::makePtr();
       else
         HP.Type = NdType::makeInt(MP.Size);
       Func.Params.push_back(HP);

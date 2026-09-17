@@ -858,6 +858,9 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                       "segmentptr");
     }
     auto *LI = Builder.CreateLoad(ValTy, Ptr, "ld");
+    // A machine address does not inherit the accessed type's ABI alignment.
+    // Keep ordinary accesses byte-aligned; atomic requirements remain below.
+    LI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Release ||
           Op.MemoryOrdering == NdMemoryOrdering::AcquireRelease)
@@ -1059,6 +1062,7 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         Val = Builder.CreatePtrToInt(Sym, Val->getType());
     }
     auto *SI = Builder.CreateStore(Val, Ptr);
+    SI->setAlignment(llvm::Align(1));
     if (Op.MemoryOrdering != NdMemoryOrdering::None) {
       if (Op.MemoryOrdering == NdMemoryOrdering::Acquire ||
           Op.MemoryOrdering == NdMemoryOrdering::AcquireRelease)

@@ -407,8 +407,10 @@ void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
   for (const auto &[Addr, _] : State.StoreFwd) {
     auto KeyIt = AddrToKey.find(Addr);
     auto DepIt = State.StoreFwdDeps.find(Addr);
-    if (KeyIt != AddrToKey.end() && DepIt != State.StoreFwdDeps.end())
+    if (KeyIt != AddrToKey.end() && DepIt != State.StoreFwdDeps.end()) {
       State.ForwardedAddressDeps[KeyIt->second] = DepIt->second;
+      State.StoreFwdByAddressKey[KeyIt->second] = State.StoreFwd.at(Addr);
+    }
   }
 
   for (auto &[Addr, _] : State.StoreFwd) {

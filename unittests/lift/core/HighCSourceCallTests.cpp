@@ -843,6 +843,37 @@ int main(void) {
 })");
 }
 
+TEST(HighCSourceCalls, RuntimeImportsDoNotBindToLiftedVeneersWithTheSameName) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Runtime = native("objc_opt_self", Pointer, {Pointer});
+  Runtime.CallKind = SourceCallTypeHint::Kind::ObjCRuntimeCall;
+  Runtime.TargetAddress = 0xc772f8;
+  auto Veneer = returning("_objc_opt_self",
+                          call(Runtime, Pointer, {parameter(0, Pointer)}),
+                          {Pointer});
+  Veneer.Entry = 0x915d3c;
+
+  const auto Source = emit({Veneer});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern void* objc_opt_self(void*);"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("void* objc_opt_self_2(void* arg0)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("objc_opt_self((void*)(uintptr_t)("),
+            std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+void *objc_opt_self(void *object) {
+  return (void *)((uintptr_t)object + 7);
+}
+int main(void) {
+  return (uintptr_t)objc_opt_self_2((void *)(uintptr_t)35) != 42;
+}
+)");
+}
+
 TEST(HighCSourceCalls, RuntimeWeakCallsUsePublicObjectStorageTypes) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto Storage = NdType::makePtr(Pointer);
@@ -974,6 +1005,26 @@ TEST(HighCSourceCalls, NativeTargetAddressSurvivesProjectionRenaming) {
   EXPECT_NE(Source.find("int32_t neverd_objc_imp_1400(int32_t);"),
             std::string::npos);
   compileAndRun(Source + "int main(void) { return invoke(-37) != -37; }\n");
+}
+
+TEST(HighCSourceCalls, NativeTargetAddressesDisambiguateRepeatedSymbols) {
+  const auto I32 = NdType::makeInt(4);
+  auto First = returning("OUTLINED_FUNCTION_0", parameter(0, I32), {I32});
+  First.Entry = 0x1400;
+  auto Second = returning("OUTLINED_FUNCTION_0", parameter(0, I32), {I32});
+  Second.Entry = 0x1500;
+  auto Hint = native("OUTLINED_FUNCTION_0", I32, {I32});
+  Hint.TargetAddress = Second.Entry;
+  auto Caller =
+      returning("invoke_second", call(Hint, I32, {parameter(0, I32)}), {I32});
+  Caller.Entry = 0x1300;
+  const auto Source = emit({Caller, First, Second});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("OUTLINED_FUNCTION_0_2((int32_t)(arg0))"),
+            std::string::npos)
+      << Source;
+  compileAndRun(Source +
+                "int main(void) { return invoke_second(-37) != -37; }\n");
 }
 
 TEST(HighCSourceCalls,
@@ -1203,6 +1254,40 @@ int main(void) {
             std::string::npos);
 }
 
+TEST(HighCSourceCalls, DarwinWeakImportsRemainOptionalInDeclarations) {
+  const auto U8 = NdType::makeInt(1, false);
+  const auto U32 = NdType::makeInt(4, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Hint = native("_availability_version_check", U8, {U32, Pointer});
+  Hint.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  Hint.WeakImport = true;
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Hint.Signature, Arch::X64, Error));
+  auto Function =
+      returning("check_version",
+                call(Hint, U8, {parameter(0, U32), parameter(1, Pointer)}),
+                {U32, Pointer});
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("extern __attribute__((weak_import)) uint8_t "),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("__asm__(\"__availability_version_check\")"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+
+  auto Forged = Hint;
+  Forged.CallKind = SourceCallTypeHint::Kind::Native;
+  auto Bad =
+      returning("forged_weak",
+                call(Forged, U8, {parameter(0, U32), parameter(1, Pointer)}),
+                {U32, Pointer});
+  EXPECT_NE(
+      emit({Bad}, false).find("weak import belongs to another binding kind"),
+      std::string::npos);
+}
+
 TEST(HighCSourceCalls, SwiftConventionSurvivesDefinitionsAndRejectsConflicts) {
   const auto Word = NdType::makeInt(8, false);
   auto Hint = native("swift_identity", Word, {Word});
@@ -1426,6 +1511,76 @@ int main(void) {
 }
 )");
   }
+}
+
+TEST(HighCSourceCalls, PointerValuesStoredThroughIntegerLoadsUsePointerBits) {
+  const auto I64 = NdType::makeInt(8);
+  const auto I64Pointer = NdType::makePtr(I64);
+  const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
+  HighFunc Function;
+  Function.Name = "store_pointer_bits";
+  Function.ReturnType = NdType::makeVoid();
+  Function.Params = {{"destination", I64Pointer}, {"value", BytePointer}};
+  Function.SourceTypeHint =
+      native(Function.Name, Function.ReturnType, {I64Pointer, BytePointer})
+          .Signature;
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeLoad(parameter(0, I64Pointer), I64);
+  Assign.Val = parameter(1, BytePointer);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Function.Body = {Assign, Return};
+
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)(value)"), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+    int object = 0;
+    int64_t bits = 0;
+    store_pointer_bits(&bits, (uint8_t *)&object);
+    return (uintptr_t)bits == (uintptr_t)&object ? 0 : 1;
+}
+)");
+}
+
+TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
+  const auto I64 = NdType::makeInt(8);
+  const auto BytePointer = NdType::makePtr(NdType::makeInt(1, false));
+  MedVar Bits;
+  Bits.Kind = MedVar::Temp;
+  Bits.Id = 17;
+  Bits.Size = 8;
+  Bits.TheArch = Arch::X64;
+  HighFunc Function;
+  Function.Name = "pointer_temp_bits";
+  Function.ReturnType = I64;
+  Function.Params = {{"value", BytePointer}};
+  Function.SourceTypeHint =
+      native(Function.Name, I64, {BytePointer}).Signature;
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeVar(Bits, I64);
+  Assign.Val = parameter(0, BytePointer);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Bits, I64);
+  Function.Body = {Assign, Return};
+
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)(value);"),
+            std::string::npos)
+      << Source;
+  compileAndRun(Source + R"(
+int main(void) {
+    int object = 0;
+    return (uintptr_t)pointer_temp_bits((uint8_t *)&object) ==
+                   (uintptr_t)&object
+               ? 0
+               : 1;
+}
+)");
 }
 
 TEST(HighCSourceCalls, PartialIntegerCarriersPreserveWideValuesAndShiftBounds) {

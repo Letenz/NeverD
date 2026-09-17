@@ -6,6 +6,7 @@
 
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/Demangle/SwiftDemangle.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -16,6 +17,76 @@
 #include <stdexcept>
 
 namespace neverd {
+
+std::optional<uint64_t>
+swiftStaticScalarStorageWidth(llvm::StringRef MangledSymbol) {
+  MangledSymbol.consume_front("_");
+  if (!MangledSymbol.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed = llvm::swiftDemangle(MangledSymbol, Options);
+  const auto Shape = [](const llvm::SwiftDemangleNode &Node, const char *Kind,
+                        size_t Children) {
+    return Node.Kind == Kind && !Node.Text && !Node.Index &&
+           Node.Children.size() == Children;
+  };
+  const auto Text = [](const llvm::SwiftDemangleNode &Node, const char *Kind,
+                       llvm::StringRef Value) {
+    return Node.Kind == Kind && Node.Text && *Node.Text == Value &&
+           !Node.Index && Node.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1))
+    return std::nullopt;
+  const auto &Static = Parsed.Root->Children[0];
+  if (!Shape(Static, "Static", 1))
+    return std::nullopt;
+  const auto &Variable = Static.Children[0];
+  if (!Shape(Variable, "Variable", 3))
+    return std::nullopt;
+  const auto &Context = Variable.Children[0];
+  if ((Context.Kind != "Class" && Context.Kind != "Structure" &&
+       Context.Kind != "Enum") ||
+      Context.Text || Context.Index || Context.Children.size() != 2 ||
+      Context.Children[0].Kind != "Module" ||
+      !Context.Children[0].Text || Context.Children[0].Index ||
+      !Context.Children[0].Children.empty() ||
+      Context.Children[1].Kind != "Identifier" ||
+      !Context.Children[1].Text || Context.Children[1].Index ||
+      !Context.Children[1].Children.empty())
+    return std::nullopt;
+  const auto &Property = Variable.Children[1];
+  if (Property.Kind != "Identifier" || !Property.Text || Property.Index ||
+      !Property.Children.empty())
+    return std::nullopt;
+  const auto &Type = Variable.Children[2];
+  if (!Shape(Type, "Type", 1))
+    return std::nullopt;
+  const auto &Nominal = Type.Children[0];
+  if (!Shape(Nominal, "Structure", 2) ||
+      !Text(Nominal.Children[0], "Module", "Swift") ||
+      Nominal.Children[1].Kind != "Identifier" ||
+      !Nominal.Children[1].Text || Nominal.Children[1].Index ||
+      !Nominal.Children[1].Children.empty())
+    return std::nullopt;
+  const llvm::StringRef Name(*Nominal.Children[1].Text);
+  if (Name == "Bool" || Name == "Int8" || Name == "UInt8")
+    return 1;
+  if (Name == "Int16" || Name == "UInt16")
+    return 2;
+  if (Name == "Int32" || Name == "UInt32" || Name == "Float")
+    return 4;
+  if (Name == "Int" || Name == "UInt" || Name == "Int64" ||
+      Name == "UInt64" || Name == "Double")
+    return 8;
+  return std::nullopt;
+}
+
 namespace {
 struct Unsupported : std::runtime_error {
   using std::runtime_error::runtime_error;

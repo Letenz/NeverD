@@ -86,6 +86,20 @@ llvm::StringRef HighCWriter::sourceConventionAttribute(
   throw std::invalid_argument("Unsupported source calling convention");
 }
 
+std::string
+HighCWriter::sourceParameterType(const SourceParameterTypeHint &Parameter) {
+  std::string Result = typeToC(Parameter.Type);
+  switch (Parameter.TheRole) {
+  case SourceParameterTypeHint::Role::Ordinary:
+    return Result;
+  case SourceParameterTypeHint::Role::SwiftIndirectResult:
+    return Result + " __attribute__((swift_indirect_result))";
+  case SourceParameterTypeHint::Role::SwiftContext:
+    return Result + " __attribute__((swift_context))";
+  }
+  throw std::invalid_argument("Unsupported source parameter role");
+}
+
 const HighFunc *
 HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
                                   llvm::StringRef Name) const {
@@ -94,7 +108,11 @@ HighCWriter::sourceCallDefinition(const SourceCallTypeHint &Hint,
     return It == DefinedFunctionsByAddress.end() ? nullptr : It->second;
   }
   auto It = DefinedFuncs.find(Name.str());
-  return It == DefinedFuncs.end() ? nullptr : It->second;
+  if (It != DefinedFuncs.end())
+    return It->second;
+  auto Identifier = DefinedFunctionsByIdentifier.find(Name.str());
+  return Identifier == DefinedFunctionsByIdentifier.end() ? nullptr
+                                                          : Identifier->second;
 }
 
 std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
@@ -105,6 +123,10 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       E.MemoryOrdering != NdMemoryOrdering::None)
     return bad("incompatible operation effects");
   const auto &Signature = Hint.Signature;
+  if (Hint.WeakImport &&
+      (Hint.CallKind != Kind::DarwinRuntimeCall ||
+       Signature.Origin != SourceFunctionTypeHint::OriginKind::DarwinSDK))
+    return bad("weak import belongs to another binding kind");
   if (Hint.ValueWitness && Hint.CallKind != Kind::SwiftValueWitness)
     return bad("value-witness operation belongs to another binding kind");
   if (Hint.CallKind == Kind::SwiftValueWitness) {
@@ -160,6 +182,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
       Hint.CallKind == Kind::RuntimeAssociationKey ||
+      Hint.CallKind == Kind::RuntimeStaticIdentity ||
+      Hint.CallKind == Kind::RuntimeLocalStorageAddress ||
       Hint.CallKind == Kind::RuntimeConstantString ||
       Hint.CallKind == Kind::RuntimeConstantObject ||
       Hint.CallKind == Kind::RuntimeBorrowedBytes ||
@@ -183,7 +207,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         return bad("unsupported native callback calling convention");
       Value = "&" + functionIdentifier(*Definition);
     } else if (Hint.CallKind == Kind::DarwinRuntimeGlobalAddress) {
-      if (Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK) {
+      if (Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK ||
+          Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::SwiftRuntime) {
         auto It = SourceRuntimeDataIdentifiers.find(Hint.TargetName);
         if (It == SourceRuntimeDataIdentifiers.end())
           return bad("unknown runtime data identity");
@@ -224,6 +250,16 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (!Hint.TargetAddress)
         return bad("association key has no source identity");
       Value = "neverd_objc_association_key_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeStaticIdentity) {
+      if (!Hint.TargetAddress)
+        return bad("static identity has no source identity");
+      Value = "neverd_static_identity_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeLocalStorageAddress) {
+      if (!Hint.TargetAddress || !Hint.ByteCount)
+        return bad("local storage has no source extent");
+      Value = "neverd_local_storage_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else {
       if (!Hint.TargetAddress)
@@ -367,10 +403,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Name = "neverd_darwin_" + Hint.TargetName;
     const auto *Definition =
         Runtime ? nullptr : sourceCallDefinition(Hint, Name);
-    if (Hint.TargetAddress && !Definition && DefinedFuncs.count(Name))
+    if (!Runtime && Hint.TargetAddress && !Definition &&
+        DefinedFuncs.count(Name))
       return bad("native target address disagrees with the source definition");
     if (Definition)
-      Name = Definition->Name;
+      Name = functionIdentifier(*Definition);
     llvm::StringRef NormalizedName(Name);
     NormalizedName.consume_front("_");
     if (ConflictingSourceNativeSignatures.count(NormalizedName.str()))
@@ -398,9 +435,16 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         (Name == "__stack_chk_fail" || Name == "_Block_copy" ||
          Name == "_Block_release" || Name == "_Block_object_assign" ||
          Name == "_Block_object_dispose");
-    if (!ExactRuntimeName)
-      Name = Definition ? functionIdentifier(*Definition)
-                        : functionIdentifier(Name);
+    if (!ExactRuntimeName) {
+      if (Runtime) {
+        const auto It = ExternalFunctionIdentifiers.find(Name);
+        Name = It == ExternalFunctionIdentifiers.end()
+                   ? functionIdentifier(Name)
+                   : It->second;
+      } else
+        Name = Definition ? functionIdentifier(*Definition)
+                          : functionIdentifier(Name);
+    }
   } else {
     std::string Prototype = "(*)(";
     const auto FixedCount =

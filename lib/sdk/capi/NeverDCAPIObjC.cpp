@@ -306,6 +306,8 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         if (BlockPlan.InvokeHints.count(Entry))
           SharedBlockFunctions.insert(objcBlockInvokeName(Entry));
       std::set<va_t> AssociationKeys;
+      std::set<va_t> StaticIdentities;
+      std::map<va_t, uint64_t> LocalStorageExtents;
       std::set<va_t> ProfileSections;
       std::set<va_t> ConstantStrings;
       std::set<va_t> ConstantObjects;
@@ -313,6 +315,12 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       for (va_t Entry : Included) {
         const auto &Keys = Projections.at(Entry).AssociationKeys;
         AssociationKeys.insert(Keys.begin(), Keys.end());
+        const auto &Identities = Projections.at(Entry).StaticIdentities;
+        StaticIdentities.insert(Identities.begin(), Identities.end());
+        for (const auto &[Address, Width] :
+             Projections.at(Entry).LocalStorageExtents)
+          LocalStorageExtents[Address] =
+              std::max(LocalStorageExtents[Address], Width);
         const auto &Sections = Projections.at(Entry).ProfileCounterSections;
         ProfileSections.insert(Sections.begin(), Sections.end());
         const auto &Strings = Projections.at(Entry).ConstantStrings;
@@ -325,13 +333,17 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
       std::set<std::string> SharedIdentityFunctions;
       std::string IdentityHelpers = renderObjCAssociationKeyHelpers(
           AssociationKeys, SharedIdentityFunctions);
+      IdentityHelpers += renderObjCStaticIdentityHelpers(
+          StaticIdentities, SharedIdentityFunctions);
       IdentityHelpers += renderObjCConstantObjectHelpers(
           S->Img, ConstantObjects, ConstantStrings, SharedIdentityFunctions);
       IdentityHelpers += renderBorrowedByteHelpers(S->Img, BorrowedBytes,
                                                    SharedIdentityFunctions);
       std::set<std::string> SharedStorageFunctions;
       const std::string StorageHelpers =
-          ProfileStorage.render(ProfileSections, SharedStorageFunctions);
+          ProfileStorage.render(ProfileSections, SharedStorageFunctions) +
+          renderObjCLocalStorageHelpers(S->Img, LocalStorageExtents,
+                                        SharedStorageFunctions);
       const bool Emitted = Emitter.emit(Unit, SourceOS, COptions);
       SourceOS << BlockHelpers << IdentityHelpers << StorageHelpers;
       if (!Emitted) {
@@ -424,6 +436,13 @@ const char *neverd_objc_methods_json(neverd_session_t Sess,
         "one definition of each shared_identity_functions helper across the "
         "participating method sources; the identities do not refer to storage "
         "in an already loaded original image.");
+    Limitations.push_back(
+        "Loader-authenticated self-pointer identities and exact scalar "
+        "accesses rooted at uniquely named writable symbols use shared "
+        "rebuilt storage. Link one definition of each listed shared identity "
+        "or storage helper across participating method sources; the storage "
+        "is initialized from the captured image and is independent of an "
+        "already loaded original image.");
     llvm::json::Object Report{
         {"schema_version", 1},
         {"status", "success"},

@@ -158,13 +158,21 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
                                  (Binding.CallKind == Kind::ObjCRuntimeCall ||
                                   Binding.CallKind == Kind::SwiftRuntimeCall ||
                                   Binding.CallKind == Kind::DarwinRuntimeCall);
+      const bool StaticNative =
+          Op.Inputs[0].isConst() && Binding.CallKind == Kind::Native &&
+          Binding.TargetAddress == Op.Inputs[0].ConstVal &&
+          Binding.TargetAddress != Med.Entry &&
+          Image.isCodeAddress(Binding.TargetAddress) &&
+          Binding.Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+          Binding.Signature.HasExplicitABI;
       const bool DynamicWitness =
           Op.Opcode == NdOp::INDIR_CALL && !Op.Inputs[0].isConst() &&
           Binding.ValueWitness ==
               SourceCallTypeHint::SwiftValueWitnessKind::Destroy &&
           isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
-      if ((!StaticRuntime && !DynamicWitness) || Binding.DoesNotReturn ||
-          !Binding.Signature.ReturnType ||
+      if ((!StaticRuntime && !StaticNative && !DynamicWitness) ||
+          Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
           Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
           !Image.isCodeAddress(Op.Addr) ||
           !Calls
@@ -368,6 +376,108 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
       return false;
   return !Returns.empty();
 }
+
+struct ExactNativeContract {
+  bool Recognized = false;
+  std::optional<SourceFunctionTypeHint> Signature;
+};
+
+ExactNativeContract
+compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
+                                  const SourceFunctionTypeHint &Observed,
+                                  std::string &Diagnostic) {
+  constexpr llvm::StringLiteral SymbolName = "___isPlatformVersionAtLeast";
+  size_t MatchingSymbols = 0;
+  bool EntryMatches = false;
+  bool SymbolValid = true;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Name != SymbolName)
+      continue;
+    ++MatchingSymbols;
+    if (Symbol.Addr == Med.Entry) {
+      EntryMatches = true;
+      SymbolValid &= Symbol.IsFunc;
+    }
+  }
+  if (!EntryMatches)
+    return {};
+  ExactNativeContract Result;
+  Result.Recognized = true;
+  auto Reject = [&](const char *Reason) {
+    Diagnostic = Reason;
+    return Result;
+  };
+  if (MatchingSymbols != 1 || !SymbolValid)
+    return Reject("compiler-rt platform helper has ambiguous symbol identity");
+
+  SourceFunctionTypeHint ExpectedAvailability;
+  ExpectedAvailability.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+  ExpectedAvailability.ReturnType = NdType::makeInt(1, false);
+  ExpectedAvailability.Parameters = {
+      {"count", NdType::makeInt(4, false)},
+      {"versions", NdType::makePtr(NdType::makeVoid())},
+  };
+  std::string ABIError;
+  if (!assignDarwinFixedSourceABI(ExpectedAvailability, Image.Arch, ABIError))
+    return Reject("compiler-rt platform helper has no supported Darwin ABI");
+
+  size_t AvailabilityCalls = 0;
+  size_t Remaining = 262144;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Operation : Block.Ops) {
+      if (!Remaining--)
+        return Reject("compiler-rt platform helper body exceeds proof budget");
+      if ((Operation.Opcode != NdOp::CALL &&
+           Operation.Opcode != NdOp::INDIR_CALL) ||
+          !Operation.SourceCallHint)
+        continue;
+      const auto &Call = *Operation.SourceCallHint;
+      if (Call.TargetName != "_availability_version_check")
+        continue;
+      if (Call.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+          !Call.WeakImport || !Call.TargetAddress || Call.DoesNotReturn ||
+          !equalSourceABIs(Call.Signature, ExpectedAvailability))
+        return Reject(
+            "compiler-rt platform helper has an invalid availability probe");
+      ++AvailabilityCalls;
+    }
+  if (AvailabilityCalls != 1)
+    return Reject(
+        "compiler-rt platform helper requires one exact availability probe");
+
+  SourceFunctionTypeHint Exact;
+  Exact.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Exact.ReturnType = NdType::makeInt(4, true);
+  Exact.Parameters = {
+      {"platform", NdType::makeInt(4, false)},
+      {"major", NdType::makeInt(4, false)},
+      {"minor", NdType::makeInt(4, false)},
+      {"subminor", NdType::makeInt(4, false)},
+  };
+  if (!assignDarwinFixedSourceABI(Exact, Image.Arch, ABIError))
+    return Reject("compiler-rt platform helper contract is unsupported");
+  if (Observed.Parameters.size() != Exact.Parameters.size() ||
+      !Observed.ReturnType || Observed.ReturnType->Kind != NdTypeKind::Int ||
+      (Observed.ReturnType->Size != 4 && Observed.ReturnType->Size != 8) ||
+      Observed.ReturnLocation.Kind != Exact.ReturnLocation.Kind ||
+      Observed.ReturnLocation.RegisterOffset !=
+          Exact.ReturnLocation.RegisterOffset)
+    return Reject(
+        "compiler-rt platform helper machine carriers disagree with contract");
+  for (size_t I = 0; I < Exact.Parameters.size(); ++I) {
+    const auto &Actual = Observed.Parameters[I];
+    const auto &Expected = Exact.Parameters[I];
+    if (!Actual.Type || Actual.Type->Kind != NdTypeKind::Int ||
+        Actual.Type->Size != 4 ||
+        Actual.Location.Kind != Expected.Location.Kind ||
+        Actual.Location.RegisterOffset != Expected.Location.RegisterOffset ||
+        Actual.Location.ValueBytes != Expected.Location.ValueBytes)
+      return Reject(
+          "compiler-rt platform helper parameters disagree with contract");
+  }
+  Result.Signature = std::move(Exact);
+  return Result;
+}
 } // namespace
 
 std::optional<SourceFunctionTypeHint>
@@ -401,6 +511,8 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     return Reject("native scalar parameter or return types are incomplete");
 
   const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto IntegerLayout =
+      TRI.integerArgumentLayout(Med.CC == CallingConv::Win64);
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Architecture = Image.Arch;
@@ -442,14 +554,15 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
       // This is the generic stack recovery contract, not an inferred C
       // parameter index. A narrow SUBBYTES use can represent several packed
       // arm64 values in one slot, so it requires a separate range analysis.
-      const int RegisterCount = static_cast<int>(TRI.IntParamRegs.size());
+      const int RegisterCount =
+          static_cast<int>(IntegerLayout.Registers.size());
       if (Type->Kind == NdTypeKind::Float || Parameter.Size != 8 ||
           Parameter.Id < RegisterCount || Parameter.Id >= RegisterCount + 512)
         return Reject("native stack parameter has no complete slot evidence");
       Source.Location.Kind = SourceABICarrierKind::Stack;
       Source.Location.EntryStackOffset =
-          (Image.Arch == Arch::X64 ? 8 : 0) +
-          int64_t(Parameter.Id - RegisterCount) * 8;
+          IntegerLayout.EntryStackBase +
+          int64_t(Parameter.Id - RegisterCount) * IntegerLayout.SlotBytes;
       if (!StackSlots.insert(Parameter.Id).second)
         return Reject("native stack parameters overlap");
     } else {
@@ -480,8 +593,7 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
         if (Type->Kind == NdTypeKind::Float)
           return Reject(
               "native floating parameter has no FP register evidence");
-        if (std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
-                      Parameter.RegOff) == TRI.IntParamRegs.end()) {
+        if (IntegerLayout.registerIndex(Parameter.RegOff) < 0) {
           if (Parameter.Size != 8)
             return Reject(
                 "native auxiliary parameter requires a complete word");
@@ -575,6 +687,9 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
            {SourceABICarrierKind::IntegerRegister, Register, 0, 8}});
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
+  auto Exact = compilerRTPlatformVersionContract(Image, Med, Hint, Diagnostic);
+  if (Exact.Recognized)
+    return Exact.Signature;
   return Hint;
 }
 

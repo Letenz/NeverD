@@ -43,6 +43,11 @@ LITERAL_PROBES = {
     "neverd_literal_false": "@NO",
 }
 
+LEGACY_LITERAL_PROBES = {
+    "neverd_legacy_literal_array": "@[]",
+    "neverd_legacy_literal_dictionary": "@{}",
+}
+
 
 def literal_storage_declarations(ir):
     """Read only direct addresses of external non-TLS data in compiler output."""
@@ -70,6 +75,35 @@ def literal_storage_declarations(ir):
     return result
 
 
+def legacy_literal_storage_declarations(ir):
+    """Read the external storage loaded by legacy empty collection literals."""
+    globals_by_name = {}
+    for name, declaration in re.findall(r"^@([A-Za-z_][A-Za-z_0-9]*) = (.*)$", ir, re.M):
+        globals_by_name.setdefault(name, []).append(declaration)
+    result = {}
+    for probe in LEGACY_LITERAL_PROBES:
+        bodies = re.findall(r"^define [^\n]*@" + probe +
+                            r"\(\)[^\n]*\{\n(.*?)^\}", ir, re.M | re.S)
+        if len(bodies) != 1:
+            raise ValueError(f"missing or ambiguous legacy literal probe: {probe}")
+        loads = re.findall(
+            r"^\s*(%[A-Za-z_0-9.]+) = load ptr, ptr @([A-Za-z_][A-Za-z_0-9]*),",
+            bodies[0], re.M)
+        returned = [(value, name) for value, name in loads
+                    if re.search(r"^\s*ret ptr " + re.escape(value) + r"\s*$",
+                                 bodies[0], re.M)]
+        if len(returned) != 1:
+            raise ValueError(f"legacy literal probe has no unique storage load: {probe}")
+        declarations = globals_by_name.get(returned[0][1], [])
+        if len(declarations) != 1 or not re.fullmatch(
+                r"external (?:local_unnamed_addr )?global ptr"
+                r"(?: #[0-9]+)?(?:, align [0-9]+)?",
+                declarations[0]):
+            raise ValueError(f"legacy literal probe does not load external data: {probe}")
+        result[returned[0][1]] = {"data"}
+    return result
+
+
 def compile_literal_storage(compiler, sdk, target):
     source = "#import <Foundation/Foundation.h>\n" + "".join(
         f"id {name}(void) {{ return {value}; }}\n"
@@ -80,6 +114,19 @@ def compile_literal_storage(compiler, sdk, target):
          "-o", "-", "-"], input=source, text=True, capture_output=True, timeout=60,
         check=True)
     return literal_storage_declarations(result.stdout)
+
+
+def compile_legacy_literal_storage(compiler, sdk, target):
+    source = "#import <Foundation/Foundation.h>\n" + "".join(
+        f"id {name}(void) {{ return {value}; }}\n"
+        for name, value in LEGACY_LITERAL_PROBES.items())
+    runtime = "macosx-10.14" if "-macos" in target else "ios-12.0"
+    result = subprocess.run(
+        [str(compiler), "-x", "objective-c", "-target", target, "-isysroot", str(sdk),
+         "-O2", "-g0", "-fobjc-arc", f"-fobjc-runtime={runtime}", "-S",
+         "-emit-llvm", "-o", "-", "-"], input=source, text=True,
+        capture_output=True, timeout=60, check=True)
+    return legacy_literal_storage_declarations(result.stdout)
 
 
 def render(profiles, exports, version, compiler, literal_compiler=None):
@@ -124,6 +171,9 @@ def main():
         profiles = [clang.extract(source, sdk, target) for target in TARGETS]
         for profile, target in zip(profiles, TARGETS):
             for name, declarations in compile_literal_storage(args.clang, sdk, target).items():
+                profile.setdefault(name, set()).update(declarations)
+            for name, declarations in compile_legacy_literal_storage(
+                    args.clang, sdk, target).items():
                 profile.setdefault(name, set()).update(declarations)
     compiler_version = subprocess.run(
         [str(args.clang), "--version"], text=True, capture_output=True,

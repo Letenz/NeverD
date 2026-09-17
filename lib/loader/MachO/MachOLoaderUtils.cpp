@@ -235,7 +235,7 @@ void parseFunctionStarts(const uint8_t *BasePtr, size_t FileSize,
                          const FunctionStartsInfo &Info, uint64_t TextVMAddr,
                          BinaryImage &Img) {
   if (Info.DataOff == 0 || Info.DataSize == 0 ||
-      !rangeInBounds(Info.DataOff, Info.DataSize, FileSize) || TextVMAddr == 0)
+      !rangeInBounds(Info.DataOff, Info.DataSize, FileSize))
     return;
 
   auto Existing = Img.getSymbolAddresses();
@@ -243,6 +243,7 @@ void parseFunctionStarts(const uint8_t *BasePtr, size_t FileSize,
   const uint8_t *End = P + Info.DataSize;
   uint64_t Addr = TextVMAddr;
   [[maybe_unused]] size_t Added = 0;
+  bool SawOwnedFunctionStart = false;
 
   while (P < End) {
     unsigned BytesRead = 0;
@@ -261,11 +262,14 @@ void parseFunctionStarts(const uint8_t *BasePtr, size_t FileSize,
     if (Img.Arch == Arch::ARM)
       FuncAddr = clearThumbBit(FuncAddr);
 
+    SawOwnedFunctionStart |= Img.hasExecutableCodeOwnerAt(FuncAddr);
+
     if (Existing.insert(FuncAddr).second) {
       Img.Symbols.push_back(Symbol::makeFunc(FuncAddr));
       ++Added;
     }
   }
+  Img.MachOHasFunctionStarts |= SawOwnedFunctionStart;
   LLVM_DEBUG(llvm::dbgs() << "macho: LC_FUNCTION_STARTS added " << Added
                           << " functions\n");
 }

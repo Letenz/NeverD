@@ -37,8 +37,8 @@ struct HighCAnalysisState {
   // the function's private frame and no frame address escapes.
   bool CanElideFrameStores = false;
   std::map<std::string, std::string> StoreFwd;
-  /// AddressKey aliases for StoreFwd so emission can look up a named frame
-  /// slot whose printed address no longer matches the analysis-time ExprFn.
+  // The semantic address key remains stable when the C writer later projects
+  // a raw frame expression as a named local.
   std::map<std::string, std::string> StoreFwdByAddressKey;
   std::map<std::string, std::set<std::string>> StoreFwdDeps;
   std::map<std::string, std::set<std::string>> ForwardedAddressDeps;

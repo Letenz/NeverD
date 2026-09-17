@@ -275,6 +275,102 @@ TEST(HighCStoreForwarding, PartialOverlapAndEscapedFramesKeepTheirStores) {
   }
 }
 
+TEST(HighCStoreForwarding,
+     AddressTakenCopyForwardSlotKeepsDeclarationAndInitialization) {
+  const auto I32 = NdType::makeInt(4);
+  const auto Pointer = NdType::makePtr(I32);
+  HighFunc Func;
+  Func.Name = "address_taken_copy";
+  Func.FrameSize = 8;
+  Func.ReturnType = Pointer;
+  Func.Params = {{"arg0", I32}};
+  Func.Body.push_back(store(frameSlot(8), makeParam(0, 4, I32)));
+  auto Address = std::make_shared<HighExpr>();
+  Address->Kind = ExprKind::Addr;
+  Address->Type = Pointer;
+  Address->Operands.push_back(HighExpr::makeLoad(frameSlot(8), I32));
+  Func.Body.push_back(ret(std::move(Address)));
+
+  const auto Body = emitBody(Func);
+  EXPECT_NE(Body.find("int32_t var_m8;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("var_m8 = arg0;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("&var_m8"), std::string::npos) << Body;
+}
+
+TEST(HighCStoreForwarding, NamedPointerFrameSlotKeepsExplicitPointerBits) {
+  const auto I32 = NdType::makeInt(4);
+  const auto Pointer = NdType::makePtr(I32);
+  HighFunc Func;
+  Func.Name = "pointer_frame_slot";
+  Func.FrameSize = 8;
+  Func.ReturnType = Pointer;
+  Func.Params = {{"arg0", Pointer}};
+  Func.Body.push_back(store(frameSlot(8), makeParam(0, 8, Pointer)));
+  Func.Body.push_back(ret(HighExpr::makeLoad(frameSlot(8), Pointer)));
+
+  const auto Body = emitBody(Func);
+  EXPECT_NE(Body.find("int32_t* var_m8;"), std::string::npos) << Body;
+  EXPECT_NE(Body.find("var_m8 = (int32_t*)(uintptr_t)((uintptr_t)arg0);"),
+            std::string::npos)
+      << Body;
+  EXPECT_NE(Body.find("return var_m8;"), std::string::npos) << Body;
+}
+
+TEST(HighCStoreForwarding,
+     NamedPointerFrameLoadAssignedToIntegerUsesPointerBits) {
+  const auto I64 = NdType::makeInt(8);
+  const auto Pointer = NdType::makePtr(NdType::makeInt(4));
+  MedVar Bits;
+  Bits.Kind = MedVar::Temp;
+  Bits.Id = 19;
+  Bits.Size = 8;
+  Bits.TheArch = Arch::X64;
+  HighFunc Func;
+  Func.Name = "pointer_frame_to_integer";
+  Func.FrameSize = 8;
+  Func.ReturnType = I64;
+  Func.Params = {{"arg0", Pointer}};
+  Func.Body.push_back(store(frameSlot(8), makeParam(0, 8, Pointer)));
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeVar(Bits, I64);
+  // The machine carrier remains an integer even though the named frame slot
+  // is projected as a pointer.
+  Assign.Val = HighExpr::makeLoad(frameSlot(8), I64);
+  Func.Body.push_back(std::move(Assign));
+  Func.Body.push_back(ret(HighExpr::makeVar(Bits, I64)));
+
+  const auto Body = emitBody(Func);
+  EXPECT_NE(Body.find("t19 = (int64_t)(uintptr_t)(var_m8);"),
+            std::string::npos)
+      << Body;
+}
+
+TEST(HighCStoreForwarding,
+     IntegerCarrierAssignedToNamedPointerFrameSlotUsesPointerBits) {
+  const auto I64 = NdType::makeInt(8);
+  const auto Pointer = NdType::makePtr(NdType::makeInt(4));
+  HighFunc Func;
+  Func.Name = "integer_to_pointer_frame";
+  Func.FrameSize = 8;
+  Func.ReturnType = Pointer;
+  Func.Params = {{"arg0", Pointer}, {"arg1", I64}};
+  // Establish the source-level slot type before the later machine-carrier
+  // update to the same bytes.
+  Func.Body.push_back(store(frameSlot(8), makeParam(0, 8, Pointer)));
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst = HighExpr::makeLoad(frameSlot(8), I64);
+  Assign.Val = makeParam(1, 8, I64);
+  Func.Body.push_back(std::move(Assign));
+  Func.Body.push_back(ret(HighExpr::makeLoad(frameSlot(8), Pointer)));
+
+  const auto Body = emitBody(Func);
+  EXPECT_NE(Body.find("var_m8 = (int32_t*)(uintptr_t)(arg1);"),
+            std::string::npos)
+      << Body;
+}
+
 TEST(HighCStoreForwarding, RequiresPrivateFullWidthAndImmutableSlots) {
   const auto I32 = NdType::makeInt(4);
   for (unsigned Variant = 0; Variant < 4; ++Variant) {

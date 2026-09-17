@@ -391,7 +391,12 @@ MachOLoader::load(const std::filesystem::path &Path) {
       const bool IsInstructions =
           (Sec.Type & (llvm::MachO::S_ATTR_PURE_INSTRUCTIONS |
                        llvm::MachO::S_ATTR_SOME_INSTRUCTIONS)) != 0;
-      Sym.IsFunc = IsInstructions && Sec.contains(SymAddr);
+      // Mach-O has no ELF-style symbol type for distinguishing functions from
+      // labels. Clang/LLVM's `.L` names are assembler-local control-flow labels
+      // inside a function and must not shorten the owning function's CFG.
+      const bool IsAssemblerLocalLabel = NameOrErr->starts_with(".L");
+      Sym.IsFunc =
+          IsInstructions && Sec.contains(SymAddr) && !IsAssemblerLocalLabel;
     }
     Img.Symbols.push_back(Sym);
 

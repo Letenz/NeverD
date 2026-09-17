@@ -73,6 +73,13 @@ struct SourceCallTypeHint {
     /// TargetAddress identifies the original key; rebuilt methods share one
     /// opaque storage identity. This does not bind readable image contents.
     RuntimeAssociationKey,
+    /// A loader-authenticated self-referential writable pointer slot. The
+    /// original value is the slot's own address, so source rebuilds one shared
+    /// opaque identity instead of retaining either original image address.
+    RuntimeStaticIdentity,
+    /// Exact scalar accesses rooted at a uniquely named writable data symbol.
+    /// ByteCount is the proven storage prefix rebuilt across methods.
+    RuntimeLocalStorageAddress,
     /// Base of a rebuilt numeric profiling-counter section. The SDK proves
     /// storage extents and permits only bounded, unordered memory accesses.
     RuntimeProfileCounterStorage,
@@ -116,6 +123,10 @@ struct SourceCallTypeHint {
   /// The bound source routine has a noreturn contract. Runtime bindings must
   /// revalidate this effect against their authoritative catalog.
   bool DoesNotReturn = false;
+  /// The imported routine may be absent at runtime. This is preserved only
+  /// for an explicitly catalogued weak Darwin import and must be emitted with
+  /// weak_import linkage so the reconstructed guard retains its meaning.
+  bool WeakImport = false;
   /// The result is exactly this argument's pointer value. This does not
   /// remove call effects or establish memory immutability. Runtime bindings
   /// must revalidate the identity contract against the imported routine.

@@ -3,6 +3,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
 #include <set>
@@ -100,6 +101,25 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
       !std::all_of(Hint.Parameters.begin(), Hint.Parameters.end(),
                    [&](const auto &P) { return Scalar(P.Type); }))
     return false;
+  unsigned IndirectResults = 0, Contexts = 0;
+  for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
+    const auto &Parameter = Hint.Parameters[I];
+    switch (Parameter.TheRole) {
+    case SourceParameterTypeHint::Role::Ordinary:
+      break;
+    case SourceParameterTypeHint::Role::SwiftIndirectResult:
+      if (I != 0 || Parameter.Type->Kind != NdTypeKind::Ptr ||
+          Hint.ReturnType->Kind != NdTypeKind::Void || ++IndirectResults != 1)
+        return false;
+      break;
+    case SourceParameterTypeHint::Role::SwiftContext:
+      if (Parameter.Type->Kind != NdTypeKind::Ptr || ++Contexts != 1)
+        return false;
+      break;
+    default:
+      return false;
+    }
+  }
   if (Word(Hint.ReturnType) || Hint.ReturnType->Kind == NdTypeKind::Void ||
       (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16))
     return true;
@@ -127,7 +147,8 @@ bool equalSourceABIs(const SourceFunctionTypeHint &Left,
   for (size_t I = 0; I < Left.Parameters.size(); ++I) {
     const auto &L = Left.Parameters[I];
     const auto &R = Right.Parameters[I];
-    if (L.Name != R.Name || !equalSourceTypes(L.Type, R.Type) ||
+    if (L.Name != R.Name || L.TheRole != R.TheRole ||
+        !equalSourceTypes(L.Type, R.Type) ||
         (Left.HasExplicitABI && !sameLocation(L.Location, R.Location)) ||
         L.Components.size() != R.Components.size())
       return false;
@@ -213,7 +234,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
       const auto &P = Hint.Parameters[I];
       SourceABIValueLocation Expected;
       Expected.ValueBytes = P.Type->Size;
-      if (IntegerIndex < TRI.IntParamRegs.size()) {
+      if (P.TheRole == SourceParameterTypeHint::Role::SwiftIndirectResult) {
+        Expected.Kind = SourceABICarrierKind::IntegerRegister;
+        Expected.RegisterOffset = Hint.Architecture == Arch::AArch64
+                                      ? TRI.indirectResultReg()
+                                      : TRI.IntReturnReg;
+      } else if (P.TheRole == SourceParameterTypeHint::Role::SwiftContext) {
+        Expected.Kind = SourceABICarrierKind::IntegerRegister;
+        Expected.RegisterOffset =
+            Hint.Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13;
+      } else if (IntegerIndex < TRI.IntParamRegs.size()) {
         Expected.Kind = SourceABICarrierKind::IntegerRegister;
         Expected.RegisterOffset = TRI.IntParamRegs[IntegerIndex++];
         Expected.ExtendTo32Bits =
@@ -341,6 +371,10 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
   std::vector<std::pair<int64_t, int64_t>> StackRanges;
   size_t PhysicalCount = 0;
   for (const auto &Parameter : Hint.Parameters) {
+    if (Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary &&
+        Hint.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
+      return fail(Diagnostic,
+                  "Swift parameter role requires the Swift convention");
     if (!Parameter.Components.empty()) {
       if (!EmptyLocation(Parameter.Location) ||
           !AggregateLocations(Parameter.Type, Parameter.Components, false))
@@ -375,7 +409,8 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
 
 namespace {
 bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
-                           std::string &Diagnostic, bool Records) {
+                           std::string &Diagnostic, bool Records,
+                           SourceFunctionTypeHint::ConventionKind Convention) {
   Diagnostic.clear();
   if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
       !Hint.ReturnType || Hint.Parameters.size() > 64)
@@ -386,6 +421,28 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
   int64_t StackOffset = Architecture == Arch::X64 ? 8 : 0;
   for (auto &Parameter : Hint.Parameters) {
     Parameter.Components.clear();
+    if (Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary) {
+      if (Convention != SourceFunctionTypeHint::ConventionKind::Swift ||
+          !Parameter.Type || Parameter.Type->Kind != NdTypeKind::Ptr)
+        return fail(Diagnostic, "Unsupported Darwin special parameter ABI");
+      Parameter.Location = {};
+      Parameter.Location.Kind = SourceABICarrierKind::IntegerRegister;
+      Parameter.Location.ValueBytes = Parameter.Type->Size;
+      switch (Parameter.TheRole) {
+      case SourceParameterTypeHint::Role::SwiftIndirectResult:
+        Parameter.Location.RegisterOffset = Architecture == Arch::AArch64
+                                                ? TRI.indirectResultReg()
+                                                : TRI.IntReturnReg;
+        break;
+      case SourceParameterTypeHint::Role::SwiftContext:
+        Parameter.Location.RegisterOffset =
+            Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13;
+        break;
+      default:
+        return fail(Diagnostic, "Unsupported Darwin special parameter ABI");
+      }
+      continue;
+    }
     if (Records && Parameter.Type &&
         Parameter.Type->Kind == NdTypeKind::Struct) {
       const auto Members = sourceAggregateMembers(Parameter.Type);
@@ -487,7 +544,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
         Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size < 4;
   }
   Hint.Architecture = Architecture;
-  Hint.Convention = SourceFunctionTypeHint::ConventionKind::C;
+  Hint.Convention = Convention;
   Hint.HasExplicitABI = true;
   return validateSourceABI(Hint, Diagnostic);
 }
@@ -496,22 +553,22 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
 
 bool assignDarwinScalarSourceABI(SourceFunctionTypeHint &Hint,
                                  Arch Architecture, std::string &Diagnostic) {
-  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, false);
+  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, false,
+                               SourceFunctionTypeHint::ConventionKind::C);
 }
 
 bool assignDarwinFixedSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic) {
-  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, true);
+  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, true,
+                               SourceFunctionTypeHint::ConventionKind::C);
 }
 
 bool assignDarwinSwiftSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                                 std::string &Diagnostic) {
   if (!swiftFixedShape(Hint, Architecture))
     return fail(Diagnostic, "Unsupported fixed Swift source ABI shape");
-  if (!assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic))
-    return false;
-  Hint.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
-  return validateSourceABI(Hint, Diagnostic);
+  return assignDarwinSourceABI(Hint, Architecture, Diagnostic, true,
+                               SourceFunctionTypeHint::ConventionKind::Swift);
 }
 
 std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(

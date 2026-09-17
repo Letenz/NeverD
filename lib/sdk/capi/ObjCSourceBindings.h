@@ -13,6 +13,7 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
+#include "neverd/loader/Swift/SwiftMetadata.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 
@@ -29,6 +30,8 @@ struct ObjCSourceBindingResult {
   std::set<std::string> InstanceLayoutClasses;
   std::set<std::string> RuntimeProtocols;
   std::set<va_t> AssociationKeys;
+  std::set<va_t> StaticIdentities;
+  std::map<va_t, uint64_t> LocalStorageExtents;
   std::set<va_t> ProfileCounterSections;
   std::set<va_t> ConstantStrings;
   std::set<va_t> ConstantObjects;
@@ -66,6 +69,7 @@ inline bool runtimeBindingMatches(const SourceCallTypeHint &Binding,
                                   const SourceCallTypeHint &Expected) {
   return Binding.CallKind == Expected.CallKind &&
          Binding.DoesNotReturn == Expected.DoesNotReturn &&
+         Binding.WeakImport == Expected.WeakImport &&
          Binding.ReturnedArgument == Expected.ReturnedArgument &&
          Binding.RuntimeObjCResultType == Expected.RuntimeObjCResultType &&
          Binding.TargetName == Expected.TargetName &&
@@ -180,6 +184,195 @@ associationKeyHint(const BinaryImage &Image, va_t Address) {
   return Hint;
 }
 
+inline const Symbol *uniqueWritableDataSymbol(const BinaryImage &Image,
+                                              va_t Address,
+                                              uint64_t Width) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      Image.MachOChainedFixupsAmbiguous || !Address || !Width ||
+      Width > 1024 * 1024 ||
+      Width > InvalidVA - Address)
+    return nullptr;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  if (!Section || !Segment || !Section->isReadable() ||
+      !Section->isWritable() || Section->isExecutable() ||
+      !Segment->isReadable() || !Segment->isWritable() ||
+      Segment->isExecutable() || Address < Section->VA ||
+      Address < Segment->VA || Width > Section->Size - (Address - Section->VA) ||
+      Width > Segment->Size - (Address - Segment->VA) ||
+      !Image.readVA(Address, Width))
+    return nullptr;
+  const Symbol *Found = nullptr;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.IsFunc || Symbol.Name.empty() ||
+        llvm::StringRef(Symbol.Name).starts_with(kAutoFuncPrefix))
+      continue;
+    if (Symbol.Addr > Address && Symbol.Addr < Address + Width)
+      return nullptr;
+    if (Symbol.Addr != Address)
+      continue;
+    if (Found || (Symbol.Size && Width > Symbol.Size))
+      return nullptr;
+    Found = &Symbol;
+  }
+  return Found;
+}
+
+inline std::optional<SourceCallTypeHint>
+staticIdentityHint(const BinaryImage &Image, va_t Address) {
+  const auto *Symbol = uniqueWritableDataSymbol(Image, Address, 8);
+  const auto Value = Symbol ? objc::RuntimeData(Image).localPointer(Address)
+                            : std::nullopt;
+  if (!Symbol || !Value || *Value != Address ||
+      !Image.MachOResolvedChainedPointerSlots.count(Address))
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeStaticIdentity;
+  Hint.TargetAddress = Address;
+  Hint.TargetName = Symbol->Name;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
+    return std::nullopt;
+  return Hint;
+}
+
+inline bool overlapsPointerStorage(const BinaryImage &Image, va_t Address,
+                                   uint64_t Width) {
+  auto Overlaps = [&](va_t Slot) {
+    constexpr uint64_t PointerWidth = 8;
+    return Slot <= Address ? Address - Slot < PointerWidth
+                           : Slot - Address < Width;
+  };
+  auto SetOverlaps = [&](const auto &Values) {
+    return std::any_of(Values.begin(), Values.end(), Overlaps);
+  };
+  auto MapOverlaps = [&](const auto &Values) {
+    return std::any_of(Values.begin(), Values.end(),
+                       [&](const auto &Item) { return Overlaps(Item.first); });
+  };
+  return SetOverlaps(Image.MachOResolvedChainedPointerSlots) ||
+         SetOverlaps(Image.CodePtrRelocSlots) ||
+         SetOverlaps(Image.DataPtrRelocSlots) ||
+         SetOverlaps(Image.RelDataPtrRelocSlots) ||
+         SetOverlaps(Image.RelCodeRelocSlots) ||
+         MapOverlaps(Image.ImportPtrSlots) ||
+         MapOverlaps(Image.ImportStorageSlots) ||
+         MapOverlaps(Image.DyldBindSlots);
+}
+
+inline std::optional<SourceCallTypeHint>
+localStorageHint(const BinaryImage &Image, va_t Address, uint64_t Width) {
+  const auto *Symbol = uniqueWritableDataSymbol(Image, Address, Width);
+  const auto *Bytes = Symbol ? Image.readVA(Address, Width) : nullptr;
+  uint64_t Bits = 0;
+  if (Bytes && Width <= 8)
+    for (uint64_t I = 0; I < Width; ++I)
+      Bits |= uint64_t(Bytes[I]) << (I * 8);
+  if (!Symbol || !Bytes || overlapsPointerStorage(Image, Address, Width) ||
+      (Width <= 8 && isImagePointerBitPattern(Image, Bits, Width)))
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeLocalStorageAddress;
+  Hint.TargetAddress = Address;
+  Hint.TargetName = Symbol->Name;
+  Hint.ByteCount = Width;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
+    return std::nullopt;
+  return Hint;
+}
+
+/// Bind a direct scalar access inside named writable storage to the symbol's
+/// base helper. Mach-O nlist entries commonly omit data-object sizes, so the
+/// access itself proves only the required prefix. Keeping that prefix rooted
+/// at the nearest exact symbol preserves aliases between independently
+/// emitted field accesses without treating the distance to the next symbol as
+/// an object extent.
+inline std::optional<SourceCallTypeHint>
+localStorageAccessHint(const BinaryImage &Image, va_t Address,
+                       uint64_t Width) {
+  if (auto Exact = localStorageHint(Image, Address, Width))
+    return Exact;
+  if (!Address || !Width || Width > InvalidVA - Address)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const Symbol *Base = nullptr;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.IsFunc || Symbol.Name.empty() || Symbol.Addr >= Address ||
+        llvm::StringRef(Symbol.Name).starts_with(kAutoFuncPrefix) ||
+        Image.getSectionFor(Symbol.Addr) != Section)
+      continue;
+    if (!Base || Symbol.Addr > Base->Addr)
+      Base = &Symbol;
+  }
+  if (!Base || Width > 1024 * 1024 ||
+      Address - Base->Addr > 1024 * 1024 - Width)
+    return std::nullopt;
+  const uint64_t Extent = Address - Base->Addr + Width;
+  if (Base->Size && Extent > Base->Size)
+    return std::nullopt;
+  return localStorageHint(Image, Base->Addr, Extent);
+}
+
+inline bool localStorageAccessTypeSupported(const TypeRef &Type) {
+  return Type &&
+         (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Float) &&
+         (Type->Kind != NdTypeKind::Float || Type->Size == 4 ||
+          Type->Size == 8) &&
+         (Type->Size == 1 || Type->Size == 2 || Type->Size == 4 ||
+          Type->Size == 8 || Type->Size == 16);
+}
+
+inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
+                                               unsigned Depth = 0);
+
+/// Prove the extent of a named local storage address from an actual memory
+/// access in this function. Swift's exclusivity marker receives the same
+/// address, but its void-pointer ABI alone does not establish a byte width.
+inline std::map<va_t, uint64_t>
+directLocalStorageAccessExtents(const HighFunc &Function,
+                                const BinaryImage &Image) {
+  std::map<va_t, uint64_t> Result;
+  auto Record = [&](const ExprPtr &Address, const TypeRef &Type,
+                    NdMemoryOrdering Ordering,
+                    NdMemoryAddressSpace AddressSpace) {
+    if (!Address || !localStorageAccessTypeSupported(Type) ||
+        Ordering != NdMemoryOrdering::None ||
+        AddressSpace != NdMemoryAddressSpace::Default)
+      return;
+    const auto Value = constantAddress(*Address);
+    if (!Value || !localStorageHint(Image, *Value, Type->Size))
+      return;
+    Result[*Value] = std::max<uint64_t>(Result[*Value], Type->Size);
+  };
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> Scan = [&](const ExprPtr &Expression) {
+    if (!Expression || !Seen.insert(Expression.get()).second)
+      return;
+    if (Expression->Kind == ExprKind::Load &&
+        Expression->Operands.size() == 1)
+      Record(Expression->Operands[0], Expression->Type,
+             Expression->MemoryOrdering, Expression->MemoryAddressSpace);
+    if (Expression->Kind == ExprKind::Store &&
+        Expression->Operands.size() == 2 && Expression->Operands[1])
+      Record(Expression->Operands[0], Expression->Operands[1]->Type,
+             Expression->MemoryOrdering, Expression->MemoryAddressSpace);
+    for (const auto &Operand : Expression->Operands)
+      Scan(Operand);
+  };
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    if (Statement.Kind == StmtKind::Store && Statement.StoreVal)
+      Record(Statement.StoreAddr, Statement.StoreVal->Type,
+             Statement.MemoryOrdering, Statement.MemoryAddressSpace);
+    forEachExpr(Statement, Scan);
+  });
+  return Result;
+}
+
 inline bool isAssociationKeyConsumer(const HighExpr &Expression,
                                      const BinaryImage &Image) {
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
@@ -254,26 +447,131 @@ classObjectIdentities(const BinaryImage &Image) {
 }
 
 inline std::optional<uint64_t> constantAddress(const HighExpr &Expression,
-                                               unsigned Depth = 0) {
-  if (Depth > 32 || !Expression.Type || Expression.Type->Size != 8)
+                                               unsigned Depth) {
+  const auto Integer = [&](const auto &Self, const HighExpr &E,
+                           unsigned CurrentDepth) -> std::optional<uint64_t> {
+    if (CurrentDepth > 128 || !E.Type || !E.Type->Size || E.Type->Size > 8 ||
+        (E.Type->Kind != NdTypeKind::Int &&
+         E.Type->Kind != NdTypeKind::Ptr))
+      return std::nullopt;
+    const auto Mask = [](uint16_t Bytes) {
+      return Bytes == 8 ? UINT64_MAX
+                        : (UINT64_C(1) << (Bytes * 8)) - 1;
+    };
+    const auto Normalize = [&](uint64_t Value) {
+      return Value & Mask(E.Type->Size);
+    };
+    if (E.Kind == ExprKind::Const)
+      return Normalize(E.ConstVal);
+    if ((E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) &&
+        E.Operands.size() == 1 && E.Operands[0] && E.Operands[0]->Type) {
+      const auto Value = Self(Self, *E.Operands[0], CurrentDepth + 1);
+      if (!Value ||
+          (E.Kind == ExprKind::BitCast &&
+           E.Operands[0]->Type->Size != E.Type->Size))
+        return std::nullopt;
+      uint64_t Result = *Value & Mask(E.Operands[0]->Type->Size);
+      if (E.Kind == ExprKind::Cast && E.Type->Size > E.Operands[0]->Type->Size &&
+          E.Operands[0]->Type->IsSigned) {
+        const unsigned Bits = E.Operands[0]->Type->Size * 8;
+        if (Result & (UINT64_C(1) << (Bits - 1)))
+          Result |= ~Mask(E.Operands[0]->Type->Size);
+      }
+      return Normalize(Result);
+    }
+    if (E.Kind == ExprKind::UnaryOp && E.Operands.size() == 1 &&
+        E.Operands[0] && E.Operands[0]->Type) {
+      const auto Value = Self(Self, *E.Operands[0], CurrentDepth + 1);
+      if (!Value)
+        return std::nullopt;
+      uint64_t Result = *Value & Mask(E.Operands[0]->Type->Size);
+      if (E.Op == NdOp::INT_SEXT &&
+          E.Type->Size >= E.Operands[0]->Type->Size) {
+        const unsigned Bits = E.Operands[0]->Type->Size * 8;
+        if (Result & (UINT64_C(1) << (Bits - 1)))
+          Result |= ~Mask(E.Operands[0]->Type->Size);
+      } else if (E.Op != NdOp::INT_ZEXT && E.Op != NdOp::INT_NOT &&
+                 E.Op != NdOp::INT_NEGATE) {
+        return std::nullopt;
+      }
+      if (E.Op == NdOp::INT_NOT)
+        Result = ~Result;
+      if (E.Op == NdOp::INT_NEGATE)
+        Result = uint64_t(0) - Result;
+      return Normalize(Result);
+    }
+    if (E.Kind != ExprKind::BinOp || E.Operands.size() != 2 ||
+        !E.Operands[0] || !E.Operands[1] || !E.Operands[0]->Type ||
+        !E.Operands[1]->Type)
+      return std::nullopt;
+    const auto Left = Self(Self, *E.Operands[0], CurrentDepth + 1);
+    const auto Right = Self(Self, *E.Operands[1], CurrentDepth + 1);
+    if (!Left || !Right)
+      return std::nullopt;
+    uint64_t Result = 0;
+    switch (E.Op) {
+    case NdOp::INT_ADD:
+      Result = *Left + *Right;
+      break;
+    case NdOp::INT_SUB:
+      Result = *Left - *Right;
+      break;
+    case NdOp::INT_MULT:
+      Result = *Left * *Right;
+      break;
+    case NdOp::INT_AND:
+      Result = *Left & *Right;
+      break;
+    case NdOp::INT_OR:
+      Result = *Left | *Right;
+      break;
+    case NdOp::INT_XOR:
+      Result = *Left ^ *Right;
+      break;
+    case NdOp::INT_LEFT:
+    case NdOp::INT_RIGHT:
+    case NdOp::INT_ASHR: {
+      const unsigned Bits = E.Operands[0]->Type->Size * 8;
+      if (*Right >= Bits)
+        return std::nullopt;
+      const uint64_t Input = *Left & Mask(E.Operands[0]->Type->Size);
+      if (E.Op == NdOp::INT_LEFT)
+        Result = Input << *Right;
+      else if (E.Op == NdOp::INT_RIGHT)
+        Result = Input >> *Right;
+      else if (!*Right)
+        Result = Input;
+      else {
+        Result = Input >> *Right;
+        if (Input & (UINT64_C(1) << (Bits - 1)))
+          Result |= UINT64_MAX << (Bits - *Right);
+      }
+      break;
+    }
+    case NdOp::CONCAT: {
+      const unsigned LowBits = E.Operands[1]->Type->Size * 8;
+      if (E.Type->Size != E.Operands[0]->Type->Size +
+                              E.Operands[1]->Type->Size ||
+          LowBits >= 64)
+        return std::nullopt;
+      Result = (*Left << LowBits) | *Right;
+      break;
+    }
+    case NdOp::SUBBYTES: {
+      if (*Right > E.Operands[0]->Type->Size ||
+          E.Type->Size > E.Operands[0]->Type->Size - *Right)
+        return std::nullopt;
+      Result = *Left >> (*Right * 8);
+      break;
+    }
+    default:
+      return std::nullopt;
+    }
+    return Normalize(Result);
+  };
+  if (Depth > 128 || !Expression.Type || Expression.Type->Size != 8)
     return std::nullopt;
-  if (Expression.Kind == ExprKind::Const)
-    return Expression.ConstVal;
-  if (Expression.Kind == ExprKind::Cast && Expression.Operands.size() == 1 &&
-      Expression.Operands[0])
-    return constantAddress(*Expression.Operands[0], Depth + 1);
-  if (Expression.Kind != ExprKind::BinOp || Expression.Operands.size() != 2 ||
-      !Expression.Operands[0] || !Expression.Operands[1])
-    return std::nullopt;
-  auto Left = constantAddress(*Expression.Operands[0], Depth + 1);
-  auto Right = constantAddress(*Expression.Operands[1], Depth + 1);
-  if (!Left || !Right)
-    return std::nullopt;
-  if (Expression.Op == NdOp::INT_ADD)
-    return *Left + *Right;
-  if (Expression.Op == NdOp::INT_SUB)
-    return *Left - *Right;
-  return std::nullopt;
+  return Integer(Integer, Expression, Depth);
 }
 
 inline SourceCallTypeHint::Kind runtimeKind(ObjCSourceReference::Kind Kind) {
@@ -387,7 +685,7 @@ inline ObjCSourceBindingResult
 bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
                          const ObjCProfileStorage *ProfileStorage = nullptr) {
   using namespace objc_binding_detail;
-  ObjCSourceBindingResult Result{Function, {}, {}, {}, {}, {}, {}};
+  ObjCSourceBindingResult Result{Function};
   std::optional<ObjCProfileStorage> LocalStorage;
   if (!ProfileStorage) {
     LocalStorage.emplace(Image);
@@ -395,6 +693,8 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
   }
   const auto ClassObjects = classObjectIdentities(Image);
   const auto ScalarLoads = readOnlyScalarLoadPlans(Function, Image);
+  const auto DirectLocalStorage =
+      directLocalStorageAccessExtents(Function, Image);
   // Contextual bindings create temporary input nodes. Retain those nodes for
   // the lifetime of their memoized copies so allocator address reuse cannot
   // make a later argument borrow an earlier argument's binding.
@@ -418,28 +718,34 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
                                NdMemoryAddressSpace AddressSpace) {
     if (!Operand || !Type || Ordering != NdMemoryOrdering::None ||
         AddressSpace != NdMemoryAddressSpace::Default ||
-        (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Float) ||
-        (Type->Kind == NdTypeKind::Float && Type->Size != 4 &&
-         Type->Size != 8) ||
-        (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
-         Type->Size != 8 && Type->Size != 16))
+        !localStorageAccessTypeSupported(Type))
       return false;
     const auto Address = constantAddress(*Operand);
-    const auto Base = Address ? ProfileStorage->sectionFor(*Address, Type->Size)
-                              : std::nullopt;
+    const auto ProfileBase =
+        Address ? ProfileStorage->sectionFor(*Address, Type->Size)
+                : std::nullopt;
+    auto Base = ProfileBase;
     auto Hint = Base ? profileStorageHint(Image.Arch, *Base) : std::nullopt;
-    if (!Hint)
-      return false;
+    if (!Hint) {
+      Hint = Address ? localStorageAccessHint(Image, *Address, Type->Size)
+                     : std::nullopt;
+      if (!Hint)
+        return false;
+      Base = Hint->TargetAddress;
+      Result.LocalStorageExtents[*Base] = std::max<uint64_t>(
+          Result.LocalStorageExtents[*Base], Hint->ByteCount);
+    }
     auto Bound = HighExpr::makeCall({}, 0, {});
     Bound->Type = NdType::makeInt(8, false);
     Bound->SourceCallHint =
         std::make_shared<SourceCallTypeHint>(std::move(*Hint));
     Operand =
-        *Address == *Base
+        !Base || *Address == *Base
             ? Bound
             : HighExpr::makeBinop(NdOp::INT_ADD, Bound,
                                   HighExpr::makeConst(*Address - *Base, 8));
-    Result.ProfileCounterSections.insert(*Base);
+    if (ProfileBase)
+      Result.ProfileCounterSections.insert(*ProfileBase);
     return true;
   };
   std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool, bool)> Copy;
@@ -497,6 +803,14 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
       if (Address && Original->Type->Size == 8 &&
           (Original->Type->Kind == NdTypeKind::Int ||
            Original->Type->Kind == NdTypeKind::Ptr)) {
+        if (auto Hint = staticIdentityHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Result.StaticIdentities.insert(*Address);
+          return Expression;
+        }
         if (auto Hint = darwinRuntimeGlobalAddressHint(Image, *Address)) {
           *Expression = *HighExpr::makeCall({}, 0, {});
           Expression->Type = Original->Type;
@@ -732,20 +1046,115 @@ bindObjCSourceReferences(const HighFunc &Function, const BinaryImage &Image,
           continue;
         }
       }
-      // A direct class-object address is already the receiver value. This is
-      // distinct from the address of a classref slot, which requires a LOAD.
-      // Keep this contextual rewrite out of Copies: the same Const node may
-      // also occur as an ordinary integer elsewhere in the expression DAG.
+      // swift_beginAccess marks an address for the exclusivity runtime but
+      // does not describe its pointee type. Rebuild this operand only when an
+      // actual load/store in the same function or an exact Swift scalar
+      // storage symbol independently proves the access width.
       if (Index == 0 && Operand && Expression->Kind == ExprKind::Call &&
           Expression->SourceCallHint &&
           Expression->SourceCallHint->CallKind ==
-              SourceCallTypeHint::Kind::ObjCMessage) {
-        const auto &Signature = Expression->SourceCallHint->Signature;
+              SourceCallTypeHint::Kind::SwiftRuntimeCall &&
+          Expression->SourceCallHint->TargetName == "swift_beginAccess") {
+        const auto Expected =
+            runtimeSourceCallHint(Image, *Expression->SourceCallHint);
+        const auto Address = constantAddress(*Operand);
+        const auto Extent =
+            Address ? DirectLocalStorage.find(*Address)
+                    : DirectLocalStorage.end();
+        std::optional<uint64_t> Width;
+        if (Extent != DirectLocalStorage.end())
+          Width = Extent->second;
+        else if (Address)
+          if (const auto *Symbol = uniqueWritableDataSymbol(Image, *Address, 1))
+            Width = swiftStaticScalarStorageWidth(Symbol->Name);
+        auto Hint =
+            Expected && runtimeBindingMatches(*Expression->SourceCallHint,
+                                              *Expected) &&
+                    Expression->Operands.size() ==
+                        Expected->Signature.Parameters.size() &&
+                    Width
+                ? localStorageHint(Image, *Address, *Width)
+                : std::nullopt;
+        if (Hint) {
+          auto Storage = HighExpr::makeCall({}, 0, {});
+          Storage->Type = Operand->Type;
+          Storage->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Result.LocalStorageExtents[*Address] = std::max<uint64_t>(
+              Result.LocalStorageExtents[*Address], *Width);
+          Operand = std::move(Storage);
+          continue;
+        }
+        if (Address && Image.getSectionFor(*Address))
+          Fail("Swift exclusivity marker retains an unproved image-data "
+               "address",
+               Operand.get());
+      }
+      // The public unfair-lock routines consume one four-byte opaque lock
+      // object. Bind only their exact first argument and keep the platform
+      // implementation responsible for lock ownership and synchronization.
+      if (Index == 0 && Operand && Expression->Kind == ExprKind::Call &&
+          Expression->SourceCallHint &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+          (Expression->SourceCallHint->TargetName == "os_unfair_lock_lock" ||
+           Expression->SourceCallHint->TargetName == "os_unfair_lock_unlock" ||
+           Expression->SourceCallHint->TargetName ==
+               "os_unfair_lock_assert_owner" ||
+           Expression->SourceCallHint->TargetName ==
+               "os_unfair_lock_assert_not_owner" ||
+           Expression->SourceCallHint->TargetName ==
+               "os_unfair_lock_trylock")) {
+        const auto Expected =
+            runtimeSourceCallHint(Image, *Expression->SourceCallHint);
+        if (!Expected ||
+            !runtimeBindingMatches(*Expression->SourceCallHint, *Expected))
+          continue;
+        const auto Address = constantAddress(*Operand);
+        auto Hint = Address ? localStorageHint(Image, *Address, 4)
+                            : std::nullopt;
+        if (Hint) {
+          auto Storage = HighExpr::makeCall({}, 0, {});
+          Storage->Type = Operand->Type;
+          Storage->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+          Result.LocalStorageExtents[*Address] =
+              std::max<uint64_t>(Result.LocalStorageExtents[*Address], 4);
+          Operand = std::move(Storage);
+          continue;
+        }
+      }
+      // A direct class-object address is already an object value. This is
+      // distinct from the address of a classref slot, which requires a LOAD.
+      // Exact Objective-C runtime calls can also consume class objects (for
+      // example objc_opt_self in a Swift class metadata accessor). Revalidate
+      // that imported runtime binding before replacing any pointer argument.
+      // Keep this contextual rewrite out of Copies: the same Const node may
+      // also occur as an ordinary integer elsewhere in the expression DAG.
+      if (Operand && Expression->Kind == ExprKind::Call &&
+          Expression->SourceCallHint) {
+        const auto &CallBinding = *Expression->SourceCallHint;
+        const auto &Signature = CallBinding.Signature;
         std::string Error;
-        if (Signature.Parameters.size() >= 2 &&
+        const bool MessageReceiver =
+            Index == 0 &&
+            CallBinding.CallKind == SourceCallTypeHint::Kind::ObjCMessage;
+        const auto ExpectedRuntime =
+            CallBinding.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall
+                ? runtimeSourceCallHint(Image, CallBinding)
+                : std::nullopt;
+        const auto RuntimeImport =
+            Image.DyldBindSlots.find(CallBinding.TargetAddress);
+        const bool RuntimeArgument =
+            ExpectedRuntime &&
+            RuntimeImport != Image.DyldBindSlots.end() &&
+            RuntimeImport->second.Module == "/usr/lib/libobjc.A.dylib" &&
+            runtimeBindingMatches(CallBinding, *ExpectedRuntime);
+        if ((MessageReceiver || RuntimeArgument) &&
+            Index < Signature.Parameters.size() &&
             Signature.Parameters.size() == Expression->Operands.size() &&
-            Signature.Parameters[0].Type &&
-            Signature.Parameters[0].Type->Kind == NdTypeKind::Ptr &&
+            Signature.Parameters[Index].Type &&
+            Signature.Parameters[Index].Type->Kind == NdTypeKind::Ptr &&
             validateSourceABI(Signature, Error)) {
           const auto Address = constantAddress(*Operand);
           const auto Object =
@@ -871,6 +1280,9 @@ inline bool objcSourceCallBound(
       Binding.CallKind != SourceCallTypeHint::Kind::SwiftStringFromNSString &&
       Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
     return false;
+  if (Binding.WeakImport &&
+      Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall)
+    return false;
   if (!validateSourceABI(Hint, Reason) || Hint.Architecture != Image.Arch ||
       Expression.Operands.size() != Hint.Parameters.size())
     return false;
@@ -927,6 +1339,22 @@ inline bool objcSourceCallBound(
     const auto Expected = associationKeyHint(Image, Binding.TargetAddress);
     return Expected && Binding.TargetName.empty() && Binding.Selector.empty() &&
            Binding.OwnerClass.empty() && !Binding.SelectorReferenceAddress &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+  if (Binding.CallKind == SourceCallTypeHint::Kind::RuntimeStaticIdentity) {
+    const auto Expected = staticIdentityHint(Image, Binding.TargetAddress);
+    return Expected && Binding.TargetName == Expected->TargetName &&
+           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+           !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+  if (Binding.CallKind ==
+      SourceCallTypeHint::Kind::RuntimeLocalStorageAddress) {
+    const auto Expected =
+        localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
+    return Expected && Binding.TargetName == Expected->TargetName &&
+           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+           !Binding.SelectorReferenceAddress &&
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
   if (isRuntimeReference(Binding.CallKind)) {
@@ -1055,6 +1483,54 @@ renderObjCAssociationKeyHelpers(const std::set<va_t> &Keys,
               "(void) {\n"
               "  static unsigned char key;\n"
               "  return (uintptr_t)&key;\n}\n";
+  }
+  return Source;
+}
+
+inline std::string
+renderObjCStaticIdentityHelpers(const std::set<va_t> &Identities,
+                                std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  for (va_t Address : Identities) {
+    const std::string Name = "neverd_static_identity_" +
+                             llvm::utohexstr(Address, true) + "_address";
+    SharedFunctions.insert(Name);
+    Source += "\nuintptr_t " + Name +
+              "(void) {\n"
+              "  static unsigned char identity;\n"
+              "  return (uintptr_t)&identity;\n}\n";
+  }
+  return Source;
+}
+
+inline std::string renderObjCLocalStorageHelpers(
+    const BinaryImage &Image, const std::map<va_t, uint64_t> &Storage,
+    std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  for (const auto &[Address, Width] : Storage) {
+    const auto *Bytes = Image.readVA(Address, Width);
+    if (!Bytes)
+      continue;
+    const std::string Name = "neverd_local_storage_" +
+                             llvm::utohexstr(Address, true) + "_address";
+    SharedFunctions.insert(Name);
+    Source += "\nuintptr_t " + Name +
+              "(void) {\n"
+              "  static _Alignas(16) unsigned char storage[" +
+              std::to_string(Width) + "] = { ";
+    bool Any = false;
+    for (uint64_t I = 0; I < Width; ++I) {
+      if (!Bytes[I])
+        continue;
+      if (Any)
+        Source += ", ";
+      Source += "[" + std::to_string(I) + "] = " +
+                std::to_string(Bytes[I]);
+      Any = true;
+    }
+    if (!Any)
+      Source += "0";
+    Source += " };\n  return (uintptr_t)storage;\n}\n";
   }
   return Source;
 }

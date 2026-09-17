@@ -43,6 +43,8 @@ class HighCWriter {
 public:
   static llvm::StringRef
   sourceConventionAttribute(SourceFunctionTypeHint::ConventionKind Convention);
+  static std::string
+  sourceParameterType(const SourceParameterTypeHint &Parameter);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
       : OS(OS), Opts(Opts), Dbg(Dbg),
@@ -158,6 +160,7 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<const HighFunc *, std::string> FunctionIdentifiers;
@@ -181,6 +184,7 @@ public:
   struct SourceNativeDeclaration {
     const SourceFunctionTypeHint *Signature;
     std::optional<unsigned> VariadicFixedCount;
+    bool WeakImport = false;
   };
   std::map<std::string, SourceNativeDeclaration> SourceNativeSignatures;
   std::map<std::string, std::string> SourceRuntimeLinkNames;

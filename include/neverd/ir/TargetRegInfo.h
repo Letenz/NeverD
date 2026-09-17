@@ -72,6 +72,18 @@ struct TargetRegisterRange {
   uint16_t Bytes = 0;
 };
 
+/// Integer carriers only; FP, aggregate and variadic classification remains
+/// with the calling-convention recovery. Stack bases are physical offsets,
+/// respectively before CALL and at the callee entry (including its return PC).
+struct IntegerArgumentLayout {
+  llvm::ArrayRef<uint64_t> Registers;
+  uint16_t SlotBytes = 0;
+  int64_t CallStackBase = 0;
+  int64_t EntryStackBase = 0;
+
+  int registerIndex(uint64_t RegOff) const;
+};
+
 struct TargetRegInfo {
   Arch TheArch = Arch::Unknown;
 
@@ -296,6 +308,10 @@ struct TargetRegInfo {
   /// Win64 (RCX, RDX, R8, R9); other formats and architectures use the
   /// architecture's ordinary integer parameter order.
   llvm::ArrayRef<uint64_t> integerParamRegs(BinaryFormat Format) const;
+
+  /// Physical integer argument layout for the function's calling convention.
+  /// IsWin64 is meaningful only on x86-64; do not select it by argument count.
+  IntegerArgumentLayout integerArgumentLayout(bool IsWin64) const;
 
   /// Map a register offset to a parameter index, or -1 if not a param reg.
   int regToArgIdx(uint64_t RegOff) const;
