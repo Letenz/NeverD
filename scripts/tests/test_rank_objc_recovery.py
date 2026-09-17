@@ -121,6 +121,43 @@ class ObjCRecoveryRankingTests(unittest.TestCase):
         self.assertEqual(mapping[1], mapping[2])
         self.assertNotEqual(mapping[2], mapping[3])
 
+    def test_cross_edges_do_not_create_cycles(self):
+        for graph in (
+            {1: {2, 3}, 2: {3}, 3: set()},
+            {1: {2, 3}, 2: {4}, 3: {4}, 4: set()},
+        ):
+            with self.subTest(graph=graph):
+                _, components = strongly_connected_components(graph, graph)
+                self.assertEqual(components, [[node] for node in sorted(graph)])
+
+    def test_all_three_node_graphs_match_mutual_reachability(self):
+        # Exhaustive directed graphs, including self edges and disconnected
+        # nodes. Reachability is an independent oracle, not a second DFS SCC.
+        nodes = range(3)
+        for mask in range(1 << 9):
+            graph = {a: {b for b in nodes if mask & (1 << (a * 3 + b))}
+                     for a in nodes}
+            reachable = {a: {a} | graph[a] for a in nodes}
+            for middle in nodes:
+                for source in nodes:
+                    if middle in reachable[source]:
+                        reachable[source].update(reachable[middle])
+            mapping, components = strongly_connected_components(nodes, graph)
+            self.assertEqual(sorted(node for group in components for node in group),
+                             list(nodes))
+            for a in nodes:
+                for b in nodes:
+                    self.assertEqual(mapping[a] == mapping[b],
+                                     b in reachable[a] and a in reachable[b],
+                                     (mask, a, b))
+
+    def test_deep_graph_does_not_use_the_python_call_stack(self):
+        graph = {node: {node + 1} for node in range(5000)}
+        graph[5000] = {2500}
+        _, components = strongly_connected_components(range(5002), graph)
+        self.assertEqual(components[:2500], [[node] for node in range(2500)])
+        self.assertEqual(components[2500:], [list(range(2500, 5001)), [5001]])
+
 
 if __name__ == "__main__":
     unittest.main()

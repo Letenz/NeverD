@@ -13,7 +13,7 @@ from collections import Counter, defaultdict, deque
 import json
 from pathlib import Path
 import re
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 
 IDENTITY_FIELDS = (
@@ -63,17 +63,22 @@ def strongly_connected_components(
         if root in visited:
             continue
         visited.add(root)
-        pending: list[tuple[int, bool]] = [(root, False)]
-        while pending:
-            node, expanded = pending.pop()
-            if expanded:
+        # Suspend each parent's iterator while visiting one child. Marking all
+        # siblings up front lets cross edges skip unfinished descendants and
+        # produces an invalid finish order even for an acyclic graph.
+        frames: list[tuple[int, Iterator[int]]] = [
+            (root, iter(sorted(children.get(root, ()))))
+        ]
+        while frames:
+            node, targets = frames[-1]
+            child = next(targets, None)
+            if child is None:
                 finish_order.append(node)
+                frames.pop()
                 continue
-            pending.append((node, True))
-            for child in sorted(children.get(node, ()), reverse=True):
-                if child not in visited:
-                    visited.add(child)
-                    pending.append((child, False))
+            if child not in visited:
+                visited.add(child)
+                frames.append((child, iter(sorted(children.get(child, ())))))
 
     components: list[list[int]] = []
     assigned: set[int] = set()
@@ -81,15 +86,15 @@ def strongly_connected_components(
         if root in assigned:
             continue
         component: list[int] = []
-        pending = [(root, False)]
+        pending = [root]
         assigned.add(root)
         while pending:
-            node, _ = pending.pop()
+            node = pending.pop()
             component.append(node)
             for parent in sorted(reverse.get(node, ()), reverse=True):
                 if parent not in assigned:
                     assigned.add(parent)
-                    pending.append((parent, False))
+                    pending.append(parent)
         components.append(sorted(component))
     components.sort(key=lambda component: component[0])
     component_by_node = {
