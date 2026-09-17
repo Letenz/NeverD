@@ -26,16 +26,21 @@ int getOpPrecedence(NdOp Op) {
   case NdOp::INT_OR:
     return 3;
   case NdOp::INT_XOR:
+  case NdOp::BOOL_XOR:
     return 4;
   case NdOp::INT_AND:
     return 5;
   case NdOp::INT_EQUAL:
   case NdOp::INT_NOTEQUAL:
+  case NdOp::FLOAT_EQUAL:
+  case NdOp::FLOAT_NOTEQUAL:
     return 6;
   case NdOp::INT_LESS:
   case NdOp::INT_LESSEQUAL:
   case NdOp::INT_SLESS:
   case NdOp::INT_SLESSEQUAL:
+  case NdOp::FLOAT_LESS:
+  case NdOp::FLOAT_LESSEQUAL:
     return 7;
   case NdOp::INT_LEFT:
   case NdOp::INT_RIGHT:

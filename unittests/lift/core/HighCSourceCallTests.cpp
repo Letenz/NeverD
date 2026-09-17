@@ -171,6 +171,48 @@ int main(void) {
 )");
 }
 
+TEST(HighCSourceCalls, NegatedFloatingComparisonsPreserveNaNsAndPrecedence) {
+  const auto Floating = NdType::makeFloat(8);
+  const auto Boolean = NdType::makeInt(1, false);
+  std::vector<HighFunc> Functions;
+  for (const auto &[Op, Name] :
+       {std::pair{NdOp::FLOAT_EQUAL, "not_equal"},
+        std::pair{NdOp::FLOAT_NOTEQUAL, "not_unequal"},
+        std::pair{NdOp::FLOAT_LESS, "not_less"},
+        std::pair{NdOp::FLOAT_LESSEQUAL, "not_less_equal"}}) {
+    auto Compare =
+        HighExpr::makeBinop(Op, parameter(0, Floating), parameter(1, Floating));
+    Compare->Type = Boolean;
+    auto Negated = HighExpr::makeUnary(NdOp::BOOL_NOT, Compare);
+    Negated->Type = Boolean;
+    Functions.push_back(returning(Name, Negated, {Floating, Floating}));
+  }
+  auto Xor = HighExpr::makeBinop(NdOp::BOOL_XOR, parameter(0, Boolean),
+                                 parameter(1, Boolean));
+  Xor->Type = Boolean;
+  auto Negated = HighExpr::makeUnary(NdOp::BOOL_NOT, Xor);
+  Negated->Type = Boolean;
+  Functions.push_back(returning("not_xor", Negated, {Boolean, Boolean}));
+  compileAndRun(emit(Functions) + R"(
+int main(void) {
+    double values[] = {0.0, -0.0, 1.0, 2.5, -2.5,
+                       __builtin_nan(""), __builtin_inf(), -__builtin_inf()};
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+        for (unsigned j = 0; j < sizeof(values) / sizeof(values[0]); ++j) {
+            double a = values[i], b = values[j];
+            if (not_equal(a, b) != !(a == b) ||
+                not_unequal(a, b) != !(a != b) ||
+                not_less(a, b) != !(a < b) ||
+                not_less_equal(a, b) != !(a <= b)) return 1;
+        }
+    for (unsigned a = 0; a < 2; ++a)
+        for (unsigned b = 0; b < 2; ++b)
+            if (not_xor(a, b) != !(a ^ b)) return 2;
+    return 0;
+}
+)");
+}
+
 TEST(HighCSourceCalls, SwiftValueWitnessDestroyReloadsRuntimeTableEntry) {
   const auto Hint = swiftValueWitnessSourceCallHint(
       Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::Destroy);
