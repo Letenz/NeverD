@@ -223,8 +223,19 @@ void executeLoop(State &state, Transport &transport) {
             value["project_id"] != engine.projectId())
           throw Error("stale_project", "Request refers to a different project");
         const auto op = value["operation"].get<std::string>();
+        engine.setLoadProgressSink(
+            [&](const char *Phase, std::uint64_t Done, std::uint64_t Total,
+                const char *Detail) {
+              transport.send(response(
+                  value, engine.revision(), engine.projectId(), "progress",
+                  {{"phase", Phase ? Phase : ""},
+                   {"done", Done},
+                   {"total", Total},
+                   {"detail", Detail ? Detail : ""}}));
+            });
         auto payload =
             engine.execute(op, value.value("payload", Json::object()));
+        engine.setLoadProgressSink({});
         result = response(value, engine.revision(), engine.projectId(), "ok",
                           std::move(payload));
       } catch (const Error &error) {

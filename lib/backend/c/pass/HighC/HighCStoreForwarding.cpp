@@ -330,7 +330,9 @@ void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
           ReadBytes <=
               (MaxTotalForwardedBytes - TotalForwardedBytes) / ReadCount) {
         TotalForwardedBytes += ReadBytes * ReadCount;
-        State.StoreFwd.emplace(Addr, std::move(Expanded));
+        State.StoreFwd.emplace(Addr, Expanded);
+        if (auto KeyIt = AddrToKey.find(Addr); KeyIt != AddrToKey.end())
+          State.StoreFwdByAddressKey.emplace(KeyIt->second, Expanded);
       }
     }
 

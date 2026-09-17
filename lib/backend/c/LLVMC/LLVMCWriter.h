@@ -57,7 +57,7 @@ public:
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions) {}
 
   //--- Module-level (LLVMCEmitter.cpp) ---
-  void writeModule(llvm::Module &Mod);
+  void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
   void writeIncludes(llvm::Module &Mod);
@@ -87,9 +87,14 @@ public:
   void writeInstruction(llvm::Instruction &Inst, int Indent);
   void writeCall(llvm::CallInst &Call, const std::string &Name, int Indent);
   void writeCallLike(llvm::CallBase &Call, const std::string &Name, int Indent);
+  void writePhiCopies(const llvm::BasicBlock *From, const llvm::BasicBlock *To,
+                      int Indent);
+  std::string resolveImportCalleeName(const llvm::Value *Callee) const;
+  bool isImportCalleeOnlyLoad(const llvm::LoadInst *LI) const;
   bool writeIntrinsicCall(llvm::CallBase &Call, int Indent);
   bool writeInlineAsmCall(llvm::CallInst &Call, const std::string &Name,
                           int Indent);
+  bool callDoesNotReturn(const llvm::CallBase &Call) const;
   void writeGEP(llvm::GetElementPtrInst &GEP, const std::string &Name,
                 int Indent);
   void writeReturn(llvm::ReturnInst &Ret, int Indent);
@@ -123,6 +128,7 @@ public:
   DebugContext *Dbg;
   const BinaryImage *Img;
   bool GuardAnalysisOnlyFunctions;
+  const llvm::Function *OnlyFunction = nullptr;
   /// When false, emit recovered statements without a C wrapper so analysis-only
   /// functions can nest the listing inside `#if 0` of the trap stub.
   bool EmitFunctionWrapper = true;
@@ -141,6 +147,10 @@ public:
   bool InferredVoid = false;
   int EHTryDepth = 0;
   bool EHWrapIsCxx = false;
+  /// True after a noreturn call (`throw`, `__fastfail`, libc abort/exit/…).
+  /// The next `return` / `unreachable` / debugtrap is the compiler's
+  /// fall-through, not source.
+  bool AfterCxxThrow = false;
 };
 
 } // namespace neverd

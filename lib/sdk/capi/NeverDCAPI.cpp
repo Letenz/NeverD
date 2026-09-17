@@ -192,13 +192,15 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Prepare the complete replacement before changing the current image, its
   // analysis, or the user's edits. An authoritative debug-file failure must
   // leave a previously loaded session usable.
-  auto Found = loadDebugInfo(Path, Image, S.DbgRequest);
+  S.LoadProgressCb.report("image", 1, 1, "binary parsed");
+  auto Found = loadDebugInfo(Path, Image, S.DbgRequest, S.LoadProgressCb);
   if (!Found.Error.empty()) {
     S.setError(Found.Error);
     return 0;
   }
   if (Found)
     applyDebugSymbols(Image, *Found.Context);
+  S.LoadProgressCb.report("ready", 1, 1, "");
 
   // Decoder::init retains its existing state on failure, so it is the final
   // preparation step before publishing the replacement.
@@ -260,6 +262,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
     return 0;
   }
 
+  S->LoadProgressCb.report("image", 0, 1, "reading binary");
   auto ImgOrErr = loadBinary(P);
   if (!ImgOrErr) {
     std::string Err;
@@ -342,6 +345,15 @@ void neverd_session_set_map_path(neverd_session_t Sess, const char *Path) {
 void neverd_session_set_debug_info_enabled(neverd_session_t Sess, int Enabled) {
   if (auto *S = toSession(Sess))
     S->DbgRequest.Enabled = Enabled != 0;
+}
+
+void neverd_session_set_load_progress(neverd_session_t Sess,
+                                      neverd_load_progress_fn Fn,
+                                      void *UserData) {
+  if (auto *S = toSession(Sess)) {
+    S->LoadProgressCb.Callback = Fn;
+    S->LoadProgressCb.User = UserData;
+  }
 }
 
 const char *neverd_session_debug_info_kind(neverd_session_t Sess) {

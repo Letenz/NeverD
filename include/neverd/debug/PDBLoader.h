@@ -53,6 +53,20 @@ const llvm::codeview::CVSymbol *
 findSymbolAtExactOffset(llvm::ArrayRef<IndexedSymbolRecord> Records,
                         uint32_t Offset);
 
+/// One S_PUB32 decoded from a contiguous symbol stream.  Name borrows from
+/// that stream; callers that keep the name must copy it.
+struct ParsedPublicSym32 {
+  bool IsFunction = false;
+  uint16_t Segment = 0;
+  uint32_t Offset = 0;
+  llvm::StringRef Name;
+};
+
+/// Decode the S_PUB32 whose record starts at \p Offset.  A GSI/address-map
+/// offset that is not an exact public-record boundary is an error.
+llvm::Error parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream, uint32_t Offset,
+                               ParsedPublicSym32 &Out);
+
 /// Sticky, order-independent policy for names supplied by independent PDB
 /// symbol streams.  A conflicting name at the same address is not a semantic
 /// identity source, regardless of which stream LLVM happens to visit first.
@@ -92,7 +106,8 @@ public:
   /// than a names-only context, because debug names affect downstream
   /// semantic classification too.
   static llvm::Expected<std::unique_ptr<PDBDebugContext>>
-  load(const std::filesystem::path &PdbPath, const BinaryImage &Image);
+  load(const std::filesystem::path &PdbPath, const BinaryImage &Image,
+       const LoadProgress &Progress = {});
 
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
   std::optional<VariableSym> resolveVariable(va_t FuncAddr,
@@ -100,6 +115,7 @@ public:
   std::optional<TypeSym> resolveType(uint64_t TypeId) const override;
   std::optional<SourceLoc> sourceLocation(va_t Addr) const override;
   std::vector<FunctionSym> allFunctions() const override;
+  std::vector<DataObjectSym> allDataObjects() const override;
   bool hasInfo() const override;
   bool hasAuthenticatedFunctionSignatures() const override;
   bool hasAuthenticatedObjectExtents() const override;

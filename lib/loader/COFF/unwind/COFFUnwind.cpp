@@ -26,6 +26,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #define DEBUG_TYPE "neverd-coff-loader"
@@ -148,14 +149,18 @@ void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
 
     {
       size_t Off = static_cast<size_t>(Addr - SegPtr->VA);
-      if (!checkPrologueAtOffset(*SegPtr, Off, Img.Arch))
+      if (AlreadySeen) {
+        // Completing a pre-existing symbol still requires a decode-shaped
+        // start so a data alias at the same VA cannot inherit pdata size.
+        if (!checkPrologueAtOffset(*SegPtr, Off, Img.Arch))
+          continue;
+        completeFunctionSizes(Img, FunctionSymbols, Addr, End - Addr);
         continue;
+      }
     }
-
-    if (AlreadySeen) {
-      completeFunctionSizes(Img, FunctionSymbols, Addr, End - Addr);
-      continue;
-    }
+    // A primary RUNTIME_FUNCTION is PE-authenticated function identity.
+    // Scan-style prologue heuristics (REX/push) miss MSVC Win64 homes such as
+    // `mov [rsp+8], ecx` (0x89) and would drop unnamed pdata entries.
     Img.Symbols.push_back(
         Symbol::makeFunc(Addr, RF.EndAddress - RF.BeginAddress));
     ++Added;
@@ -599,20 +604,33 @@ void parseARMExceptions(const COFFObjectFile &Obj, BinaryImage &Img,
 } // namespace
 
 void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
+  // Index by start VA so a 100k-entry .pdata does not scan every record for
+  // every chained entry.  Vectors keep directory order so the first match is
+  // the same record the previous nested loop selected.
+  std::unordered_map<va_t, std::vector<size_t>> ByBegin;
+  ByBegin.reserve(Info.Functions.size());
+  for (size_t J = 0; J < Info.Functions.size(); ++J) {
+    const ExceptionAddressRange &Range = Info.Functions[J].CodeRange;
+    if (Range.isValid())
+      ByBegin[Range.Begin].push_back(J);
+  }
+
   for (size_t I = 0; I < Info.Functions.size(); ++I) {
     ExceptionFunction &F = Info.Functions[I];
     if (F.Kind != RuntimeFunctionKind::Chained || !F.ChainedPrimaryRange)
       continue;
-    for (size_t J = 0; J < Info.Functions.size(); ++J) {
-      if (I == J)
-        continue;
-      const ExceptionFunction &Candidate = Info.Functions[J];
-      if (Candidate.CodeRange.Begin == F.ChainedPrimaryRange->Begin &&
-          Candidate.CodeRange.End == F.ChainedPrimaryRange->End &&
-          (F.ChainedUnwindInfoRVA == 0 ||
-           Candidate.UnwindInfoRVA == F.ChainedUnwindInfoRVA)) {
-        F.PrimaryFunctionIndex = J;
-        break;
+    const auto Found = ByBegin.find(F.ChainedPrimaryRange->Begin);
+    if (Found != ByBegin.end()) {
+      for (size_t J : Found->second) {
+        if (I == J)
+          continue;
+        const ExceptionFunction &Candidate = Info.Functions[J];
+        if (Candidate.CodeRange.End == F.ChainedPrimaryRange->End &&
+            (F.ChainedUnwindInfoRVA == 0 ||
+             Candidate.UnwindInfoRVA == F.ChainedUnwindInfoRVA)) {
+          F.PrimaryFunctionIndex = J;
+          break;
+        }
       }
     }
     if (!F.PrimaryFunctionIndex) {

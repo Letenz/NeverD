@@ -52,6 +52,14 @@ inline constexpr auto kExceptionRuntimeArity =
         {"RaiseException", {4, 0}},
         {"RtlRaiseException", {1, 0}},
         {"RtlUnwindEx", {6, 0}},
+
+        // MSVC /GS cookie helpers.  Intra-image CRT copies are not imports, so
+        // call-argument recovery would otherwise treat leftover rdx/r8/r9 as
+        // extra parameters of __security_check_cookie.
+        {"security_check_cookie", {1, 0}},
+        {"report_gsfailure", {1, 0}},
+        {"raise_securityfailure", {1, 0}},
+        {"GSHandlerCheckCommon", {3, 0}},
     });
 
 } // namespace neverd::libc

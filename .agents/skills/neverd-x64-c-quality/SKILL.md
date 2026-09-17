@@ -79,9 +79,9 @@ Put the decision in one emitter helper and keep HighC/LLVMC consistent.
 
 ## How to change it
 
-1. Dump the actual C (`neverd export --format decompile --func 0x...` or
-   `neverd decompile` / `decompile --llvm`) and diff against the MSVC
-   source. Do not argue from memory of an earlier dump.
+1. Dump the actual C (`neverd export --format decompile --func 0x...` for
+   HighC, add `--llvm` for LLVM-to-C, or `neverd decompile --llvm --func 0x...`)
+   and diff against the MSVC source. Do not argue from memory of an earlier dump.
 2. Own the rule in one layer (loader/ABI/HighIR/emitter). Do not paper over
    a wrong lift with a C special case.
 3. Add a regression next to the owner:

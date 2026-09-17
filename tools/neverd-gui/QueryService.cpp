@@ -506,6 +506,10 @@ struct QueryService::State {
       return;
     }
     const auto status = response["status"].toString();
+    if (status == "progress") {
+      emit q->loadProgress(response.value("payload").toObject());
+      return;
+    }
     if (status != "ok" && status != "error" && status != "cancelled" &&
         status != "budget_exceeded") {
       finish(job, error("invalid_response",

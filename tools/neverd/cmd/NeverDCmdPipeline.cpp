@@ -418,13 +418,53 @@ int runDecompile(neverd_session_t Sess) {
         << "--llvm cannot be combined with a dedicated source language\n";
     return 1;
   }
-  const char *Source =
-      DedicatedLanguage
-          ? neverd_decompile_all_ex(Sess, InPath, Language, NoOpt, MaxFunc)
-          : neverd_decompile_all(Sess, InPath, LlvmRoute ? 1 : 0, NoOpt,
-                                 MaxFunc);
-  if (!Source) {
+  if (!ExportFunc.empty() && DedicatedLanguage) {
+    WithColor::error() << "--func is supported only for C output\n";
+    return 1;
+  }
+  if (!ExportFunc.empty() && MaxFunc > 0) {
+    WithColor::error() << "--func cannot be combined with --max-func\n";
+    return 1;
+  }
+
+  const char *Source = nullptr;
+  if (!ExportFunc.empty()) {
+    int FuncIdx = -1;
+    uint64_t DirectAddr = 0;
+    bool HaveDirectAddr = false;
+    StringRef FuncRef(ExportFunc.getValue());
+    if (FuncRef.consume_front("0x") || FuncRef.consume_front("0X")) {
+      if (!FuncRef.empty() && !FuncRef.getAsInteger(16, DirectAddr)) {
+        HaveDirectAddr = true;
+        FuncIdx = neverd_func_find_by_addr(Sess, DirectAddr);
+      }
+    } else {
+      FuncIdx = neverd_func_find_by_name(Sess, ExportFunc.c_str());
+      if (FuncIdx < 0 && !FuncRef.empty() &&
+          !FuncRef.getAsInteger(16, DirectAddr)) {
+        HaveDirectAddr = true;
+        FuncIdx = neverd_func_find_by_addr(Sess, DirectAddr);
+      }
+    }
+    if (FuncIdx < 0 && !HaveDirectAddr) {
+      WithColor::error() << "function not found: " << ExportFunc.getValue()
+                         << "\n";
+      return 1;
+    }
+    const uint64_t Entry =
+        FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
+    Source = LlvmRoute ? neverd_decompile_llvm(Sess, Entry)
+                       : neverd_decompile(Sess, Entry);
+  } else {
+    Source =
+        DedicatedLanguage
+            ? neverd_decompile_all_ex(Sess, InPath, Language, NoOpt, MaxFunc)
+            : neverd_decompile_all(Sess, InPath, LlvmRoute ? 1 : 0, NoOpt,
+                                   MaxFunc);
+  }
+  if (!Source || Source[0] == '\0') {
     WithColor::error() << "decompile failed: " << takeLastError(Sess) << "\n";
+    neverd_free_string(Source);
     return 1;
   }
   if (!OutputFile.empty()) {

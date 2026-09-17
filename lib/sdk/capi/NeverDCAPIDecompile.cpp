@@ -195,6 +195,14 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
+  if (!S->PipeRan)
+    S->OnlyFunctionEntries.insert(FuncEntry);
+  else if (!S->OnlyFunctionEntries.empty() &&
+           !S->OnlyFunctionEntries.count(FuncEntry)) {
+    S->invalidatePipeline();
+    S->OnlyFunctionEntries = {FuncEntry};
+  }
+
   if (!S->ensurePipeline())
     return dupStr(std::string());
 
@@ -222,7 +230,18 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
     return dupStr(std::string());
   }
 
-  std::vector<HighFunc> Single = {*HF};
+  std::vector<HighFunc> Related = S->PipeResult.HighFuncs;
+  attachCxxFuncletBodies(Related);
+  const HighFunc *Attached = nullptr;
+  for (const HighFunc &Func : Related)
+    if (Func.Entry == FuncEntry) {
+      Attached = &Func;
+      break;
+    }
+  if (!Attached)
+    Attached = HF;
+
+  std::vector<HighFunc> Single = {*Attached};
   std::string Out;
   llvm::raw_string_ostream OS(Out);
 
@@ -231,8 +250,49 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   Opts.Format = S->Img.Format;
   Opts.Image = &S->Img;
   HighCEmitter Emitter;
-  Emitter.emit(Single, OS, Opts);
+  Emitter.emit(Single, OS, Opts, S->Dbg.get());
 
+  return dupStr(Out);
+}
+
+const char *neverd_decompile_llvm(neverd_session_t Sess,
+                                  neverd_va_t FuncEntry) {
+  auto *S = toSession(Sess);
+  S->clearError();
+
+  if (!S->PipeRan)
+    S->OnlyFunctionEntries.insert(FuncEntry);
+  else if (!S->OnlyFunctionEntries.empty() &&
+           !S->OnlyFunctionEntries.count(FuncEntry)) {
+    S->invalidatePipeline();
+    S->OnlyFunctionEntries = {FuncEntry};
+  }
+
+  if (!S->ensureLlvmModule())
+    return dupStr(std::string());
+
+  if (S->PipeResult.EVM) {
+    S->setError("LLVM-to-C route is not supported for EVM; use the "
+                "dedicated C backend");
+    return dupStr(std::string());
+  }
+  if (S->PipeResult.SBF) {
+    S->setError("LLVM-to-C route is not supported for SBF; use the "
+                "dedicated C or Rust backend");
+    return dupStr(std::string());
+  }
+
+  llvm::Function *LF = S->findNativeLlvmFunction(FuncEntry);
+  if (!LF)
+    return dupStr(std::string());
+
+  std::string Out;
+  llvm::raw_string_ostream OS(Out);
+  CEmitterOptions Opts;
+  Opts.TheArch = S->Img.Arch;
+  Opts.Format = S->Img.Format;
+  LLVMCEmitter Emitter;
+  Emitter.emit(*S->PipeResult.LlvmModule, OS, Opts, S->Dbg.get(), &S->Img, LF);
   return dupStr(Out);
 }
 
@@ -444,7 +504,7 @@ const char *neverd_ir_llvm(neverd_session_t Sess, neverd_va_t FuncEntry) {
   if (S->PipeResult.SBF)
     return dupStr(sbf::emitLLVMText(*S->PipeResult.LlvmModule));
 
-  const llvm::Function *LF = S->findNativeLlvmFunction(FuncEntry);
+  llvm::Function *LF = S->findNativeLlvmFunction(FuncEntry);
   if (!LF)
     return dupStr(std::string());
 

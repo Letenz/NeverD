@@ -6,12 +6,15 @@
 ///
 /// \file
 /// x86-specific HighIR intrinsic rendering: multi-output CPUID/RDTSC/XGETBV
-/// emission, single-output x86 intrinsic calls, and hi/lo collapse patterns.
+/// emission, `__fastfail`, GS/FS reads, single-output x86 intrinsic calls,
+/// and hi/lo collapse patterns.
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
 #include "llvm/Support/ErrorHandling.h"
 
@@ -22,6 +25,35 @@ namespace neverd {
 
 llvm::SmallVector<const char *, 3> getX86IntrinsicHeaders() {
   return {"immintrin.h"};
+}
+
+const char *x86SegmentedReadIntrinsic(bool GS, unsigned SizeBytes) {
+  if (GS) {
+    switch (SizeBytes) {
+    case 8:
+      return "__readgsqword";
+    case 4:
+      return "__readgsdword";
+    case 2:
+      return "__readgsword";
+    case 1:
+      return "__readgsbyte";
+    default:
+      return nullptr;
+    }
+  }
+  switch (SizeBytes) {
+  case 8:
+    return "__readfsqword";
+  case 4:
+    return "__readfsdword";
+  case 2:
+    return "__readfsword";
+  case 1:
+    return "__readfsbyte";
+  default:
+    return nullptr;
+  }
 }
 
 namespace {
@@ -301,10 +333,9 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
 std::string
 renderMaskedByteStore(const HighExpr &Call,
                       std::function<std::string(const HighExpr &)> ExprFn) {
-  if (Call.IntrinsicId != Intrinsic::MaskedStoreB ||
-      Call.Operands.size() < 3 || !Call.Operands[0] || !Call.Operands[1] ||
-      !Call.Operands[2] || !Call.Operands[1]->Type ||
-      !Call.Operands[2]->Type)
+  if (Call.IntrinsicId != Intrinsic::MaskedStoreB || Call.Operands.size() < 3 ||
+      !Call.Operands[0] || !Call.Operands[1] || !Call.Operands[2] ||
+      !Call.Operands[1]->Type || !Call.Operands[2]->Type)
     return {};
   const unsigned VectorBytes = Call.Operands[1]->Type->Size;
   if ((VectorBytes != 8 && VectorBytes != 16) ||
@@ -316,10 +347,12 @@ renderMaskedByteStore(const HighExpr &Call,
   case NdMemoryAddressSpace::Default:
     break;
   case NdMemoryAddressSpace::X86FS:
-    PointerType = "uint8_t __attribute__((address_space(257))) *";
+    PointerType = "uint8_t __attribute__((address_space(" +
+                  std::to_string(kLLVMX86FSAddressSpace) + "))) *";
     break;
   case NdMemoryAddressSpace::X86GS:
-    PointerType = "uint8_t __attribute__((address_space(256))) *";
+    PointerType = "uint8_t __attribute__((address_space(" +
+                  std::to_string(kLLVMX86GSAddressSpace) + "))) *";
     break;
   default:
     return {};
@@ -333,11 +366,13 @@ renderMaskedByteStore(const HighExpr &Call,
   Result += "    unsigned __int128 neverd_data = (unsigned __int128)(" +
             ExprFn(*Call.Operands[2]) + ");\n";
   Result += "    for (unsigned neverd_i = 0; neverd_i < " +
-            std::to_string(VectorBytes) + "; ++neverd_i)\n"
+            std::to_string(VectorBytes) +
+            "; ++neverd_i)\n"
             "        if (((neverd_mask >> (neverd_i * 8)) & 0x80u) != 0)\n"
             "            *(" +
-            PointerType + ")(uintptr_t)(neverd_address + neverd_i) = "
-                          "(uint8_t)(neverd_data >> (neverd_i * 8));\n";
+            PointerType +
+            ")(uintptr_t)(neverd_address + neverd_i) = "
+            "(uint8_t)(neverd_data >> (neverd_i * 8));\n";
   Result += "} while (0);\n";
   return Result;
 }
@@ -364,17 +399,15 @@ renderSegmentedMaskedMemory(const HighExpr &Call, const HighExpr *PrimaryDst,
   for (size_t I = 0; I < RequiredOperands; ++I)
     if (!Call.Operands[I])
       return {};
-  if (!Call.Operands[1]->Type ||
-      (Call.Operands[1]->Type->Size != 16 &&
-       Call.Operands[1]->Type->Size != 32))
+  if (!Call.Operands[1]->Type || (Call.Operands[1]->Type->Size != 16 &&
+                                  Call.Operands[1]->Type->Size != 32))
     return {};
   const unsigned VectorBytes = Call.Operands[1]->Type->Size;
   if (IsLoad && (!PrimaryDst || PrimaryDst->Kind != ExprKind::Var ||
-                 !PrimaryDst->Type ||
-                 PrimaryDst->Type->Size != VectorBytes))
+                 !PrimaryDst->Type || PrimaryDst->Type->Size != VectorBytes))
     return {};
-  if (IsStore && (!Call.Operands[2]->Type ||
-                  Call.Operands[2]->Type->Size != VectorBytes))
+  if (IsStore &&
+      (!Call.Operands[2]->Type || Call.Operands[2]->Type->Size != VectorBytes))
     return {};
 
   std::string Result = "do {\n";
@@ -389,22 +422,21 @@ renderSegmentedMaskedMemory(const HighExpr &Call, const HighExpr *PrimaryDst,
                 "(uint256_t)(unsigned __int128)(" +
                 ExprFn(*Call.Operands[1]) + ");\n";
     else
-      Result += "    uint256_t neverd_mask_bits = " +
-                ExprFn(*Call.Operands[1]) + ";\n";
+      Result +=
+          "    uint256_t neverd_mask_bits = " + ExprFn(*Call.Operands[1]) +
+          ";\n";
     Result += "    __m256i neverd_mask;\n"
               "    __builtin_memcpy(&neverd_mask, &neverd_mask_bits, "
               "sizeof(neverd_mask));\n";
   }
   if (IsLoad) {
-    Result += VectorBytes == 16
-                  ? "    unsigned __int128 neverd_result;\n"
-                  : "    __m256i neverd_result_vector;\n";
+    Result += VectorBytes == 16 ? "    unsigned __int128 neverd_result;\n"
+                                : "    __m256i neverd_result_vector;\n";
     Result += "    __asm__ volatile(\"vmaskmov" +
               std::string(IsQword ? "pd" : "ps") + " " + MemoryOperand +
               ", %[mask], %[result]\"\n"
               "        : [result] \"=x\"(" +
-              (VectorBytes == 16 ? "neverd_result" :
-                                   "neverd_result_vector") +
+              (VectorBytes == 16 ? "neverd_result" : "neverd_result_vector") +
               ")\n"
               "        : [address] \"r\"(neverd_address),\n"
               "          [mask] \"x\"(neverd_mask)\n"
@@ -433,15 +465,17 @@ renderSegmentedMaskedMemory(const HighExpr &Call, const HighExpr *PrimaryDst,
                   "(uint256_t)(unsigned __int128)(" +
                   ExprFn(*Call.Operands[2]) + ");\n";
       else
-        Result += "    uint256_t neverd_data_bits = " +
-                  ExprFn(*Call.Operands[2]) + ";\n";
+        Result +=
+            "    uint256_t neverd_data_bits = " + ExprFn(*Call.Operands[2]) +
+            ";\n";
       Result += "    __m256i neverd_data;\n"
                 "    __builtin_memcpy(&neverd_data, &neverd_data_bits, "
                 "sizeof(neverd_data));\n";
     }
     Result += "    __asm__ volatile(\"vmaskmov" +
-              std::string(IsQword ? "pd" : "ps") +
-              " %[data], %[mask], " + MemoryOperand + "\"\n"
+              std::string(IsQword ? "pd" : "ps") + " %[data], %[mask], " +
+              MemoryOperand +
+              "\"\n"
               "        :\n"
               "        : [address] \"r\"(neverd_address),\n"
               "          [mask] \"x\"(neverd_mask),\n"
@@ -481,8 +515,8 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
           Divisor && Divisor->Type ? Divisor->Type->Size : 0),
       .KindIsConst = Kind && Kind->Kind == ExprKind::Const,
       .Kind = Kind ? Kind->ConstVal : 0,
-      .KindSize = static_cast<uint16_t>(
-          Kind && Kind->Type ? Kind->Type->Size : 0),
+      .KindSize =
+          static_cast<uint16_t>(Kind && Kind->Type ? Kind->Type->Size : 0),
   };
   if (!intrinsicX86DivPreconditionShapeIsValid(
           Intrinsic::X86RequireDivPrecondition, Shape))
@@ -524,10 +558,9 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
               ")neverd_divisor_magnitude_half;\n";
     Result += "    " + FullTy + " neverd_quotient_limit = ((" + FullTy +
               ")1 << " + std::to_string(HalfBits - 1) +
-              ") + (((neverd_dividend >> " +
-              std::to_string(FullBits - 1) +
-              ") ^ (neverd_divisor >> " +
-              std::to_string(HalfBits - 1) + ")) & 1);\n";
+              ") + (((neverd_dividend >> " + std::to_string(FullBits - 1) +
+              ") ^ (neverd_divisor >> " + std::to_string(HalfBits - 1) +
+              ")) & 1);\n";
     Result += "    if (neverd_divisor == 0 || "
               "neverd_dividend_magnitude >= "
               "neverd_divisor_magnitude * neverd_quotient_limit)\n"
@@ -635,13 +668,12 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
   // These six opcodes also have a register form.  Only an address-width first
   // operand denotes memory; a selector/MSW-width operand must keep using the
   // register renderer.
-  const bool HasRegisterForm =
-      Call.IntrinsicId == Intrinsic::Lldt ||
-      Call.IntrinsicId == Intrinsic::Ltr ||
-      Call.IntrinsicId == Intrinsic::Lmsw ||
-      Call.IntrinsicId == Intrinsic::Sldt ||
-      Call.IntrinsicId == Intrinsic::Str ||
-      Call.IntrinsicId == Intrinsic::Smsw;
+  const bool HasRegisterForm = Call.IntrinsicId == Intrinsic::Lldt ||
+                               Call.IntrinsicId == Intrinsic::Ltr ||
+                               Call.IntrinsicId == Intrinsic::Lmsw ||
+                               Call.IntrinsicId == Intrinsic::Sldt ||
+                               Call.IntrinsicId == Intrinsic::Str ||
+                               Call.IntrinsicId == Intrinsic::Smsw;
   // computeEA's public Low/Med carrier is uniformly 64-bit, including i386;
   // the architectural addr16/addr32 wrap happens before that final zext.
   if (HasRegisterForm && Call.Operands[0]->Type->Size != 8)
@@ -654,7 +686,8 @@ renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
   Result += "    uintptr_t neverd_address = (uintptr_t)(" +
             ExprFn(*Call.Operands[0]) + ");\n";
   Result += "    __asm__ volatile(\"" + std::string(Mnemonic) + " " +
-            MemoryOperand + "\"\n"
+            MemoryOperand +
+            "\"\n"
             "        :\n"
             "        : [address] \"r\"(neverd_address)";
   Result += "\n        : \"memory\");\n"
@@ -734,13 +767,66 @@ std::string renderRdtscp(const std::vector<MedVar> &Outs,
   return Result;
 }
 
+const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
+  unsigned Depth = 0;
+  while (E && Depth++ < limits::kMaxIntegerViewUnwrapDepth &&
+         !E->Operands.empty() && E->Operands[0]) {
+    if (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) {
+      E = E->Operands[0].get();
+      continue;
+    }
+    if (E->Kind == ExprKind::UnaryOp &&
+        (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) {
+      E = E->Operands[0].get();
+      continue;
+    }
+    break;
+  }
+  return E;
+}
+
 } // anonymous namespace
+
+bool isX86FastFailCall(const HighExpr &E) {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::IntN ||
+      E.Operands.empty() || !E.Operands[0])
+    return false;
+  const HighExpr *Vec = unwrapX86IntegerView(E.Operands[0].get());
+  return Vec && Vec->Kind == ExprKind::Const && (Vec->ConstVal & 0xFF) == 0x29;
+}
+
+std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
+                                       llvm::StringRef Addr,
+                                       NdMemoryOrdering Ordering,
+                                       NdMemoryAddressSpace AddressSpace) {
+  if (Ordering != NdMemoryOrdering::None)
+    return {};
+  if (TheArch != Arch::X86 && TheArch != Arch::X64)
+    return {};
+  if (AddressSpace != NdMemoryAddressSpace::X86GS &&
+      AddressSpace != NdMemoryAddressSpace::X86FS)
+    return {};
+  const char *Name = x86SegmentedReadIntrinsic(
+      AddressSpace == NdMemoryAddressSpace::X86GS, SizeBytes);
+  if (!Name)
+    return {};
+  return std::string(Name) + "(" + Addr.str() + ")";
+}
 
 std::string
 renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
                             std::function<std::string(const HighExpr &)> ExprFn,
                             bool &HasCIntrinsics) {
   using I = Intrinsic;
+  if (isX86FastFailCall(Call)) {
+    if (TheArch != Arch::X86 && TheArch != Arch::X64)
+      return {};
+    std::string Code = "0";
+    if (Call.Operands.size() > 1 && Call.Operands[1])
+      Code = ExprFn(*Call.Operands[1]);
+    HasCIntrinsics = true;
+    return "__fastfail(" + Code + ")";
+  }
   const bool IsGfni = Call.IntrinsicId == I::Gf2p8MulB ||
                       Call.IntrinsicId == I::Gf2p8AffineQb ||
                       Call.IntrinsicId == I::Gf2p8AffineInvQb;
@@ -825,8 +911,7 @@ std::string renderX86SegmentedIntrinsicStatement(
     return {};
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
     return renderDivPrecondition(TheArch, Call, std::move(ExprFn));
-  if (auto Rendered =
-          renderMemoryIntrinsic(TheArch, Call, ExprFn);
+  if (auto Rendered = renderMemoryIntrinsic(TheArch, Call, ExprFn);
       !Rendered.empty())
     return Rendered;
   if (isMovs(Call.IntrinsicId) || isStos(Call.IntrinsicId) ||

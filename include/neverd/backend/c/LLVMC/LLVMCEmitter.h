@@ -28,7 +28,8 @@ class LLVMCEmitter {
 public:
   bool emit(llvm::Module &Mod, llvm::raw_ostream &OS,
             const CEmitterOptions &Opts = {}, DebugContext *Dbg = nullptr,
-            const BinaryImage *Img = nullptr);
+            const BinaryImage *Img = nullptr,
+            const llvm::Function *Only = nullptr);
 
   bool emitToFile(llvm::Module &Mod, const std::string &Path,
                   const CEmitterOptions &Opts = {}, DebugContext *Dbg = nullptr,

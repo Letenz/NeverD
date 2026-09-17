@@ -42,6 +42,19 @@ struct CallArgScan {
   llvm::function_ref<bool(const MedVar &)> IsCalleeSave;
 };
 
+/// True only for a same-SSA no-op (`COPY rcx = rcx`).  `COPY rcx.3 = rcx`
+/// restores the entry value into a new SSA version and is a real call-arg
+/// write — MSVC `__GSHandlerCheck_EH` does this after copy-prop replaces
+/// `mov rcx, rbp` with the saved ExceptionRecord.
+inline bool isNoopRegisterCopy(const MedOp &Op) {
+  return Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 &&
+         Op.Output.Kind == MedVar::Reg && Op.Inputs[0].Kind == MedVar::Reg &&
+         Op.Output.RegOff == Op.Inputs[0].RegOff &&
+         Op.Output.Size == Op.Inputs[0].Size &&
+         Op.Output.Id == Op.Inputs[0].Id &&
+         Op.Output.SSAVer == Op.Inputs[0].SSAVer;
+}
+
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found);
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,

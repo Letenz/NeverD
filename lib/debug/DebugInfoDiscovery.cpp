@@ -101,10 +101,10 @@ mapCandidates(const std::filesystem::path &BinaryPath) {
   return Out;
 }
 
-DebugInfoResult loadPDB(const std::filesystem::path &P,
-                        const BinaryImage &Img) {
+DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
+                        const LoadProgress &Progress) {
   DebugInfoResult R;
-  auto CtxOr = PDBDebugContext::load(P, Img);
+  auto CtxOr = PDBDebugContext::load(P, Img, Progress);
   if (!CtxOr) {
     R.Error = llvm::toString(CtxOr.takeError());
     return R;
@@ -180,7 +180,8 @@ const char *debugInfoKindName(DebugInfoKind Kind) {
 
 DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
                               const BinaryImage &Img,
-                              const DebugInfoRequest &Req) {
+                              const DebugInfoRequest &Req,
+                              const LoadProgress &Progress) {
   DebugInfoResult Result;
   if (!Req.Enabled)
     return Result;
@@ -190,7 +191,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
       Result.Error = "PDB file not found: " + Req.PDBPath.string();
       return Result;
     }
-    Result = loadPDB(Req.PDBPath, Img);
+    Result = loadPDB(Req.PDBPath, Img, Progress);
     if (!Result && Result.Error.empty())
       Result.Error = "no function symbols in " + Req.PDBPath.string();
     return Result;
@@ -218,7 +219,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
     for (const std::filesystem::path &C : pdbCandidates(BinaryPath, Img)) {
       if (!isReadableFile(C))
         continue;
-      DebugInfoResult Attempt = loadPDB(C, Img);
+      DebugInfoResult Attempt = loadPDB(C, Img, Progress);
       if (Attempt)
         return Attempt;
       LLVM_DEBUG(llvm::dbgs()
@@ -279,6 +280,30 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
           Object.IsBuffer ? ExactDataObjectPrecision::TypedBuffer
                           : ExactDataObjectPrecision::TypedNonBuffer});
     }
+  }
+
+  // Names-only data publics (Phase A PDB) must still name image objects.
+  // Size 0 is intentional: extents stay unauthenticated.
+  for (const DataObjectSym &Object : Dbg.allDataObjects()) {
+    if (Object.Name.empty() || Object.Addr == InvalidVA)
+      continue;
+    bool Found = false;
+    for (Symbol &Existing : Img.Symbols) {
+      if (Existing.Addr != Object.Addr || Existing.IsFunc)
+        continue;
+      Found = true;
+      if (Existing.Name.empty() || isSynthesizedFuncName(Existing.Name))
+        Existing.Name = Object.Name;
+      break;
+    }
+    if (Found)
+      continue;
+    Symbol New;
+    New.Name = Object.Name;
+    New.Addr = Object.Addr;
+    New.Size = Object.Size;
+    New.IsFunc = false;
+    Img.Symbols.push_back(std::move(New));
   }
 
   if (DbgFuncs.empty())

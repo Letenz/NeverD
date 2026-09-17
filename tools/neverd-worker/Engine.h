@@ -3,7 +3,9 @@
 
 #include "neverd/sdk/NeverDCAPISession.h"
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -19,6 +21,12 @@ public:
   Engine(const Engine &) = delete;
   Engine &operator=(const Engine &) = delete;
   Json execute(const std::string &operation, const Json &payload);
+  using LoadProgressSink = std::function<void(
+      const char *Phase, std::uint64_t Done, std::uint64_t Total,
+      const char *Detail)>;
+  void setLoadProgressSink(LoadProgressSink Sink) {
+    loadProgress_ = std::move(Sink);
+  }
   std::string revision() const { return std::to_string(revision_); }
   std::string projectId() const { return projectId_; }
   bool analyzed() const { return analyzed_; }
@@ -43,6 +51,7 @@ private:
   std::string filterKey_;
   std::vector<int> filteredFunctions_;
   bool haveFilter_ = false;
+  LoadProgressSink loadProgress_;
   void invalidate();
   void requireLoaded() const;
   void requireWriter() const;

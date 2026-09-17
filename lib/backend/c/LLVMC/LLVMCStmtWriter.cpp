@@ -89,6 +89,9 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     return;
   if (Analysis.DeadFrameStores.count(&Inst))
     return;
+  if (AfterCxxThrow && (llvm::isa<llvm::ReturnInst>(&Inst) ||
+                        llvm::isa<llvm::UnreachableInst>(&Inst)))
+    return;
 
   auto Name = Inst.getType()->isVoidTy() ? "" : getName(&Inst);
 
@@ -118,7 +121,17 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   }
 
   if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+    if (isImportCalleeOnlyLoad(LI))
+      return;
     emitIndent(Indent);
+    if (std::string Seg = renderX86SegmentedLoad(
+            Opts.TheArch, *LI,
+            [this](const llvm::Value *V) { return valueStr(V); });
+        !Seg.empty()) {
+      OS << Name << " = " << Seg << ";\n";
+      HasCIntrinsics = true;
+      return;
+    }
     if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand()))
       OS << Name << " = " << getName(Slot) << ";\n";
     else
@@ -175,6 +188,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     return;
 
   if (auto *CR = llvm::dyn_cast<llvm::CatchReturnInst>(&Inst)) {
+    writePhiCopies(Inst.getParent(), CR->getSuccessor(), Indent);
     emitIndent(Indent);
     OS << "goto " << blockLabel(CR->getSuccessor()) << ";\n";
     return;
@@ -186,16 +200,27 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   }
 
   if (auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(&Inst)) {
+    const llvm::BasicBlock *From = Inst.getParent();
+    writePhiCopies(From, Br->getSuccessor(0), Indent);
     emitIndent(Indent);
     OS << "goto " << blockLabel(Br->getSuccessor(0)) << ";\n";
     return;
   }
 
   if (auto *Br = llvm::dyn_cast<llvm::CondBrInst>(&Inst)) {
+    const llvm::BasicBlock *From = Inst.getParent();
     emitIndent(Indent);
-    OS << "if (" << valueStr(Br->getCondition()) << ") goto "
-       << blockLabel(Br->getSuccessor(0)) << "; else goto "
-       << blockLabel(Br->getSuccessor(1)) << ";\n";
+    OS << "if (" << valueStr(Br->getCondition()) << ") {\n";
+    writePhiCopies(From, Br->getSuccessor(0), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(Br->getSuccessor(0)) << ";\n";
+    emitIndent(Indent);
+    OS << "} else {\n";
+    writePhiCopies(From, Br->getSuccessor(1), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(Br->getSuccessor(1)) << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
     return;
   }
 
@@ -205,15 +230,25 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   }
 
   if (auto *SW = llvm::dyn_cast<llvm::SwitchInst>(&Inst)) {
+    const llvm::BasicBlock *From = Inst.getParent();
     emitIndent(Indent);
     OS << "switch (" << valueStr(SW->getCondition()) << ") {\n";
     for (auto &C : SW->cases()) {
       emitIndent(Indent);
-      OS << "case " << C.getCaseValue()->getSExtValue() << ": goto "
-         << blockLabel(C.getCaseSuccessor()) << ";\n";
+      OS << "case " << C.getCaseValue()->getSExtValue() << ": {\n";
+      writePhiCopies(From, C.getCaseSuccessor(), Indent + 1);
+      emitIndent(Indent + 1);
+      OS << "goto " << blockLabel(C.getCaseSuccessor()) << ";\n";
+      emitIndent(Indent);
+      OS << "}\n";
     }
     emitIndent(Indent);
-    OS << "default: goto " << blockLabel(SW->getDefaultDest()) << ";\n";
+    OS << "default: {\n";
+    writePhiCopies(From, SW->getDefaultDest(), Indent + 1);
+    emitIndent(Indent + 1);
+    OS << "goto " << blockLabel(SW->getDefaultDest()) << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
     emitIndent(Indent);
     OS << "}\n";
     return;
@@ -230,11 +265,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     return;
   }
 
-  if (llvm::isa<llvm::PHINode>(&Inst)) {
-    emitIndent(Indent);
-    OS << "/* phi: " << Name << " */\n";
+  if (llvm::isa<llvm::PHINode>(&Inst))
     return;
-  }
 
   if (auto *Sel = llvm::dyn_cast<llvm::SelectInst>(&Inst)) {
     emitIndent(Indent);
@@ -327,8 +359,7 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = II->getIntrinsicID();
-  if (IID == llvm::Intrinsic::sideeffect ||
-      IID == llvm::Intrinsic::donothing ||
+  if (IID == llvm::Intrinsic::sideeffect || IID == llvm::Intrinsic::donothing ||
       IID == llvm::Intrinsic::seh_try_begin ||
       IID == llvm::Intrinsic::seh_try_end ||
       IID == llvm::Intrinsic::localaddress ||
@@ -360,13 +391,19 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
       IID == llvm::Intrinsic::lifetime_end)
     return true;
   if (IID == llvm::Intrinsic::debugtrap) {
+    if (AfterCxxThrow)
+      return true;
     emitIndent(Indent);
     OS << renderDebugBreak(Opts.TheArch);
+    AfterCxxThrow = false;
     return true;
   }
   if (IID == llvm::Intrinsic::trap) {
+    if (AfterCxxThrow)
+      return true;
     emitIndent(Indent);
     OS << "__builtin_trap();\n";
+    AfterCxxThrow = false;
     return true;
   }
   if (IID == llvm::Intrinsic::prefetch) {
@@ -431,12 +468,35 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
       CalleeName = functionIdentifier(*Callee);
     }
   } else {
-    CalleeName = "(" + valueStr(Call.getCalledOperand()) + ")";
+    CalleeName = resolveImportCalleeName(Call.getCalledOperand());
+    if (CalleeName.empty())
+      CalleeName = "(" + valueStr(Call.getCalledOperand()) + ")";
+  }
+
+  if (isMsvcCxxThrowCallName(CalleeName) ||
+      (Call.getCalledFunction() &&
+       isMsvcCxxThrowCallName(Call.getCalledFunction()->getName()))) {
+    emitIndent(Indent);
+    OS << "throw";
+    if (Call.arg_size() > 0)
+      OS << " " << valueStr(Call.getArgOperand(0));
+    OS << ";\n";
+    AfterCxxThrow = true;
+    return;
+  }
+
+  const bool NoReturn = callDoesNotReturn(Call);
+  if (Call.getCalledFunction() &&
+      isX86FastFailName(Call.getCalledFunction()->getName())) {
+    CalleeName = "__fastfail";
+    HasCIntrinsics = true;
   }
 
   emitIndent(Indent);
   bool ResultLive = !Call.getType()->isVoidTy();
-  if (ResultLive && InferredVoid) {
+  if (ResultLive && NoReturn)
+    ResultLive = false;
+  else if (ResultLive && InferredVoid) {
     if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Call))
       ResultLive = isCallResultLive(Analysis, CI);
   }
@@ -449,6 +509,99 @@ void LLVMCWriter::writeCallLike(llvm::CallBase &Call, const std::string &Name,
     OS << valueStr(Call.getArgOperand(ArgIdx));
   }
   OS << ");\n";
+  AfterCxxThrow = NoReturn;
+}
+
+void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
+                                 const llvm::BasicBlock *To, int Indent) {
+  if (!From || !To)
+    return;
+  for (const llvm::Instruction &Inst : *To) {
+    const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
+    if (!Phi)
+      break;
+    if (Analysis.Inlinable.count(Phi))
+      continue;
+    llvm::Value *Incoming = Phi->getIncomingValueForBlock(From);
+    if (!Incoming)
+      continue;
+    emitIndent(Indent);
+    OS << getName(Phi) << " = " << valueStr(Incoming) << ";\n";
+  }
+}
+
+std::string
+LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
+  if (!Callee)
+    return {};
+  const llvm::Value *Op = Callee->stripPointerCasts();
+  for (unsigned Depth = 0; Op && Depth < 4; ++Depth) {
+    if (const auto *Fn = llvm::dyn_cast<llvm::Function>(Op))
+      return functionIdentifier(*Fn);
+    if (const auto *CI = llvm::dyn_cast<llvm::CastInst>(Op)) {
+      if (CI->getOpcode() == llvm::Instruction::IntToPtr ||
+          CI->getOpcode() == llvm::Instruction::PtrToInt ||
+          CI->getOpcode() == llvm::Instruction::BitCast) {
+        Op = CI->getOperand(0)->stripPointerCasts();
+        continue;
+      }
+    }
+    if (const auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(Op)) {
+      if (CE->isCast()) {
+        Op = CE->getOperand(0)->stripPointerCasts();
+        continue;
+      }
+    }
+    break;
+  }
+  const llvm::Value *Ptr = Op;
+  if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Op))
+    Ptr = LI->getPointerOperand()->stripPointerCasts();
+  const auto *GV = llvm::dyn_cast<llvm::GlobalValue>(Ptr);
+  if (!GV)
+    return {};
+  const std::optional<va_t> Slot = parseNdCodePtrSymbol(GV->getName());
+  if (!Slot || !Img)
+    return {};
+  if (const Import *Imp = Img->findImportAt(*Slot); Imp && !Imp->Name.empty())
+    return Imp->Name;
+  return {};
+}
+
+bool LLVMCWriter::isImportCalleeOnlyLoad(const llvm::LoadInst *LI) const {
+  if (!LI || LI->use_empty())
+    return false;
+  for (const llvm::User *User : LI->users()) {
+    const llvm::Value *Callee = User;
+    if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(User)) {
+      if (Cast->user_empty())
+        return false;
+      for (const llvm::User *CastUser : Cast->users()) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(CastUser);
+        if (!Call || Call->getCalledOperand() != Cast ||
+            resolveImportCalleeName(Call->getCalledOperand()).empty())
+          return false;
+      }
+      continue;
+    }
+    const auto *Call = llvm::dyn_cast<llvm::CallBase>(User);
+    if (!Call || Call->getCalledOperand() != LI ||
+        resolveImportCalleeName(Call->getCalledOperand()).empty())
+      return false;
+  }
+  return true;
+}
+
+bool LLVMCWriter::callDoesNotReturn(const llvm::CallBase &Call) const {
+  if (Call.doesNotReturn())
+    return true;
+  const auto *Fn = Call.getCalledFunction();
+  if (!Fn)
+    return false;
+  llvm::StringRef Name = Fn->getName();
+  if (isX86FastFailName(Name))
+    return true;
+  return libc::isNoReturnFunction(Name);
 }
 
 void LLVMCWriter::writeCall(llvm::CallInst &Call, const std::string &Name,
@@ -461,8 +614,7 @@ void LLVMCWriter::writeInvoke(llvm::InvokeInst &Invoke, const std::string &Name,
   writeCallLike(Invoke, Name, Indent);
 }
 
-std::string
-LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
+std::string LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
   if (CS.getNumHandlers() == 0)
     return "EXCEPTION_EXECUTE_HANDLER";
   const llvm::BasicBlock *PadBB = *CS.handler_begin();
@@ -487,7 +639,8 @@ LLVMCWriter::windowsEHFilterExpr(const llvm::CatchSwitchInst &CS) {
 std::string LLVMCWriter::windowsCxxCatchType(const llvm::CatchPadInst &Pad) {
   uint32_t Adjectives = 0;
   if (Pad.arg_size() >= 2)
-    if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(Pad.getArgOperand(1)))
+    if (const auto *CI =
+            llvm::dyn_cast<llvm::ConstantInt>(Pad.getArgOperand(1)))
       Adjectives = static_cast<uint32_t>(CI->getZExtValue());
   if ((Adjectives & kCxxCatchAll) != 0 || Pad.arg_size() == 0)
     return "...";

@@ -249,8 +249,8 @@ bool LLVMCWriter::functionIsCxxEH(const llvm::Function &Fn) const {
   default:
     break;
   }
-  if (const auto *GV =
-          llvm::dyn_cast<llvm::GlobalValue>(Fn.getPersonalityFn()->stripPointerCasts())) {
+  if (const auto *GV = llvm::dyn_cast<llvm::GlobalValue>(
+          Fn.getPersonalityFn()->stripPointerCasts())) {
     llvm::StringRef Name = GV->getName();
     return Name.contains("CxxFrameHandler") || Name.contains("CxxFrame");
   }
@@ -260,7 +260,8 @@ bool LLVMCWriter::functionIsCxxEH(const llvm::Function &Fn) const {
 void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   if (!Opts.EmitComments)
     return;
-  const llvm::MDNode *Payload = Fn.getMetadata(windows_eh_md::FunctionAttachment);
+  const llvm::MDNode *Payload =
+      Fn.getMetadata(windows_eh_md::FunctionAttachment);
   if (!Payload)
     Payload = Fn.getMetadata(windows_eh_md::NativeAttachment);
   if (!Payload)
@@ -268,8 +269,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   auto MdU64 = [&](unsigned Index) -> uint64_t {
     if (Index >= Payload->getNumOperands())
       return 0;
-    if (const auto *C =
-            llvm::dyn_cast<llvm::ConstantAsMetadata>(Payload->getOperand(Index)))
+    if (const auto *C = llvm::dyn_cast<llvm::ConstantAsMetadata>(
+            Payload->getOperand(Index)))
       if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(C->getValue()))
         return CI->getZExtValue();
     return 0;
@@ -277,7 +278,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
   auto MdStr = [&](unsigned Index) -> std::string {
     if (Index >= Payload->getNumOperands())
       return {};
-    if (const auto *S = llvm::dyn_cast<llvm::MDString>(Payload->getOperand(Index)))
+    if (const auto *S =
+            llvm::dyn_cast<llvm::MDString>(Payload->getOperand(Index)))
       return S->getString().str();
     return {};
   };
@@ -285,8 +287,8 @@ void LLVMCWriter::writeExceptionAnnotation(const llvm::Function &Fn) {
      << getExceptionEncodingName(
             static_cast<ExceptionEncoding>(MdU64(windows_eh_md::Encoding)))
      << ", status="
-     << getExceptionParseStatusName(
-            static_cast<ExceptionParseStatus>(MdU64(windows_eh_md::ParseStatus)))
+     << getExceptionParseStatusName(static_cast<ExceptionParseStatus>(
+            MdU64(windows_eh_md::ParseStatus)))
      << ", personality=" << MdStr(windows_eh_md::PersonalityName) << "\n";
   OS << " * code=[0x" << llvm::utohexstr(MdU64(windows_eh_md::CodeBegin))
      << ", 0x" << llvm::utohexstr(MdU64(windows_eh_md::CodeEnd)) << ")";
@@ -338,6 +340,12 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         continue;
       if (Analysis.DeadFrameStores.count(&Inst))
         continue;
+      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+        if (isImportCalleeOnlyLoad(LI))
+          continue;
+      if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst))
+        if (callDoesNotReturn(*CB))
+          continue;
       if (InferredVoid) {
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
           if (!isCallResultLive(Analysis, CI))
@@ -448,6 +456,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   }
 
   for (auto &BB : Fn) {
+    AfterCxxThrow = false;
     if (!isSimpleEntry(&BB, Fn))
       OS << blockLabel(&BB) << ":\n";
 

@@ -46,8 +46,7 @@ std::string HighCWriter::varName(const MedVar &V) const {
   case MedVar::Param:
     if (Dbg && CurrentFunc) {
       if (auto FS = Dbg->resolveFunction(CurrentFunc->Entry);
-          FS && V.Id >= 0 &&
-          static_cast<size_t>(V.Id) < FS->Params.size() &&
+          FS && V.Id >= 0 && static_cast<size_t>(V.Id) < FS->Params.size() &&
           !FS->Params[static_cast<size_t>(V.Id)].first.empty())
         return FS->Params[static_cast<size_t>(V.Id)].first;
     }
@@ -230,7 +229,11 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   for (size_t I = 0; I < E.Operands.size(); ++I) {
     if (I > 0)
       S += ", ";
-    S += exprStr(*E.Operands[I]);
+    const HighExpr *Op = E.Operands[I].get();
+    if (Op)
+      S += exprStr(*Op);
+    else
+      S += "0";
   }
   S += ")";
   return S;
@@ -271,8 +274,7 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
   return E;
 }
 
-std::optional<int64_t>
-HighCWriter::frameDisplacement(const HighExpr &E) const {
+std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
   if (!CurrentFunc)
     return std::nullopt;
   const HighExpr *Cur = unwrapIntegerView(&E);
@@ -300,8 +302,14 @@ HighCWriter::frameDisplacement(const HighExpr &E) const {
       auto Alias = FrameAliases.find(varName(Cur->Var));
       if (Alias != FrameAliases.end())
         return Acc + Alias->second;
-      if (CurrentFunc->ExceptionMetadata &&
-          Cur->Var.Kind == MedVar::Reg && Cur->Var.RenameTag < 0 &&
+      // Incoming SP sometimes survives as an unassigned SSA 0 temp after
+      // prologue lowering. Treat it as the frame so `sp+k` can name a slot.
+      if (Acc != 0 && CurrentFunc->FrameSize > 0 && Cur->Var.SSAVer == 0 &&
+          Cur->Var.RenameTag < 0 && Cur->Var.Kind != MedVar::Param &&
+          !Analysis.AssignedVars.count(varName(Cur->Var)))
+        return Acc;
+      if (CurrentFunc->ExceptionMetadata && Cur->Var.Kind == MedVar::Reg &&
+          Cur->Var.RenameTag < 0 &&
           Cur->Var.RegOff == getTargetRegInfo(Opts.TheArch).FramePointer) {
         const int64_t Slot =
             static_cast<int64_t>(getTargetRegInfo(Opts.TheArch).PointerSize);
@@ -391,8 +399,9 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
   case ExprKind::Const:
     return constStr(E.ConstVal);
   case ExprKind::Undef:
-    return "((" + typeToC(E.Type) +
-           ")0 /* caller-saved register clobbered by call: unknown */)";
+    // Do not emit the former clobber-0 operand comment. Keep a short unknown
+    // marker so ABI tests can still see that high bits were not invented.
+    return "0 /* unknown */";
   case ExprKind::BinOp:
     if (auto Slot = namedFrameSlot(E))
       return "(uintptr_t)&" + *Slot;
@@ -405,15 +414,8 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     std::string Addr = exprStr(*E.Operands[0]);
     if (E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-      auto Fwd = Analysis.StoreFwd.find(Addr);
-      if (Fwd != Analysis.StoreFwd.end())
-        return "(" + typeToC(E.Type) + ")(" + Fwd->second + ")";
-      auto Key = Analysis.AddressKeys.find(E.Operands[0].get());
-      if (Key != Analysis.AddressKeys.end()) {
-        auto Stable = Analysis.StoreFwdByAddressKey.find(Key->second);
-        if (Stable != Analysis.StoreFwdByAddressKey.end())
-          return "(" + typeToC(E.Type) + ")(" + Stable->second + ")";
-      }
+      if (auto Fwd = forwardedStoreValue(*E.Operands[0], Addr))
+        return "(" + typeToC(E.Type) + ")(" + *Fwd + ")";
       if (auto Slot = namedFrameSlot(*E.Operands[0]))
         return copyForwardName(*Slot);
       if (auto VA = constAddress(*E.Operands[0])) {
@@ -466,8 +468,8 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     }
     // The explicit source cast prevents integer promotions (or an unsuffixed
     // constant) from changing the operand's byte width inside the builtin.
-    return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" +
-           typeToC(Src.Type) + ")(" + exprStr(Src) + "))";
+    return "__builtin_bit_cast(" + typeToC(E.Type) + ", (" + typeToC(Src.Type) +
+           ")(" + exprStr(Src) + "))";
   }
   case ExprKind::Addr: {
     if (E.Operands.empty())
@@ -612,6 +614,28 @@ std::string HighCWriter::copyForwardName(const std::string &Name) const {
   return Cur;
 }
 
+std::optional<std::string>
+HighCWriter::forwardedStoreValue(const HighExpr &Addr,
+                                 const std::string &Printed) const {
+  auto Find = [&](const std::string &Key) -> std::optional<std::string> {
+    auto It = Analysis.StoreFwd.find(Key);
+    if (It == Analysis.StoreFwd.end())
+      return std::nullopt;
+    return It->second;
+  };
+  if (auto Hit = Find(Printed))
+    return Hit;
+  auto KeyIt = Analysis.AddressKeys.find(&Addr);
+  if (KeyIt == Analysis.AddressKeys.end())
+    return std::nullopt;
+  if (auto Hit = Find(KeyIt->second))
+    return Hit;
+  auto Alias = Analysis.StoreFwdByAddressKey.find(KeyIt->second);
+  if (Alias == Analysis.StoreFwdByAddressKey.end())
+    return std::nullopt;
+  return Alias->second;
+}
+
 bool HighCWriter::isCopyForwardDestination(const MedVar &V) const {
   return V.Kind == MedVar::Temp || V.RenameTag >= 0;
 }
@@ -708,7 +732,7 @@ bool HighCWriter::isParamCopy(const HighExpr &E) const {
 }
 
 std::optional<std::string>
-HighCWriter::copyForwardSource(const HighExpr &E) {
+HighCWriter::copyForwardSource(const HighExpr &E) const {
   if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi)
     return copyForwardName(varName(E.Var));
   if (E.Kind == ExprKind::Load && !E.Operands.empty())
@@ -743,15 +767,101 @@ std::string HighCWriter::invertCondStr(const HighExpr &E) {
   return "!(" + exprStr(E) + ")";
 }
 
+bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
+  if (Analysis.DeadStmts.count(&Stmt) || Stmt.Kind == StmtKind::Nop)
+    return true;
+  if (Stmt.Kind == StmtKind::Block)
+    return stmtsEffectivelyEmpty(Stmt.Body);
+
+  const bool HideEHRuntimeMemory =
+      CurrentFunc && CurrentFunc->ExceptionMetadata.has_value();
+  auto HiddenEH = [&](NdMemoryAddressSpace Space) {
+    // x86 SEH registration is FS:[0].  x64 GS holds the TEB/TLS pointer and
+    // must print when the value is used (NtCurrentTeb / __readgsqword).
+    return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
+  };
+
+  if (Stmt.Kind == StmtKind::If)
+    return !Stmt.Cond || stmtsEffectivelyEmpty(Stmt.Body);
+  if (Stmt.Kind == StmtKind::IfElse)
+    return !Stmt.Cond || (stmtsEffectivelyEmpty(Stmt.Body) &&
+                          stmtsEffectivelyEmpty(Stmt.ElseBody));
+
+  if (Stmt.Kind == StmtKind::Assign) {
+    if (!Stmt.Dst || !Stmt.Val)
+      return true;
+    if (Stmt.Val->Kind == ExprKind::Load &&
+        HiddenEH(Stmt.Val->MemoryAddressSpace))
+      return true;
+    if (Stmt.Dst->Kind == ExprKind::Load) {
+      if (HiddenEH(Stmt.Dst->MemoryAddressSpace))
+        return true;
+      if (!Stmt.Dst->Operands.empty() &&
+          Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+          Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
+          if (isCompilerEHConstant(*Stmt.Val))
+            return true;
+          if (isParamCopy(*Stmt.Val)) {
+            if (auto Src = copyForwardSource(*Stmt.Val)) {
+              auto It = CopyForward.find(*Slot);
+              if (It != CopyForward.end() && It->second == *Src)
+                return true;
+            }
+          }
+        }
+      }
+    }
+    if (isHiddenCopyForwardAssign(Stmt))
+      return true;
+    return false;
+  }
+
+  if (Stmt.Kind == StmtKind::Store) {
+    if (!Stmt.StoreAddr || !Stmt.StoreVal)
+      return true;
+    if (HiddenEH(Stmt.MemoryAddressSpace))
+      return true;
+    if (isCompilerEHConstant(*Stmt.StoreVal))
+      return true;
+    if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+        Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
+        if (isParamCopy(*Stmt.StoreVal)) {
+          if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
+            auto It = CopyForward.find(*Slot);
+            if (It != CopyForward.end() && It->second == *Src)
+              return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+  return false;
+}
+
+bool HighCWriter::isHiddenCopyForwardAssign(const HighStmt &Stmt) const {
+  if (Stmt.Kind != StmtKind::Assign || !Stmt.Dst || !Stmt.Val)
+    return false;
+  if (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi)
+    return false;
+  if (!isCopyForwardDestination(Stmt.Dst->Var))
+    return false;
+  auto Src = copyForwardSource(*Stmt.Val);
+  if (!Src)
+    return false;
+  auto It = CopyForward.find(varName(Stmt.Dst->Var));
+  return It != CopyForward.end() && It->second == *Src;
+}
+
 bool HighCWriter::stmtsEffectivelyEmpty(
     const std::vector<HighStmt> &Stmts) const {
   for (const HighStmt &Stmt : Stmts) {
     if (Stmt.Addr != 0 && Stmt.Addr != InvalidVA &&
         GotoTargets.count(Stmt.Addr))
       return false;
-    if (Analysis.DeadStmts.count(&Stmt))
-      continue;
-    if (Stmt.Kind == StmtKind::Nop)
+    if (stmtHiddenFromC(Stmt))
       continue;
     return false;
   }

@@ -158,9 +158,18 @@ bool liftSystem(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     }
     if (InsnId == X86_INS_INT && X86.op_count >= 1 &&
         X86.operands[0].type == X86_OP_IMM) {
-      S.emitIntrinsic(
-          Id, NdVar::reg(x86reg::RAX, 8),
-          {NdVar::cst(static_cast<uint64_t>(X86.operands[0].imm), 1)});
+      const uint64_t Vector =
+          static_cast<uint64_t>(X86.operands[0].imm) & 0xFF;
+      if (Vector == 0x29) {
+        // Windows `int 0x29` is `__fastfail(ecx)`; it does not return a value
+        // in RAX.
+        S.emitVoidIntrinsic(Intrinsic::IntN,
+                            {NdVar::cst(Vector, 1),
+                             NdVar::reg(x86reg::RCX, 4)});
+      } else {
+        S.emitIntrinsic(Id, NdVar::reg(x86reg::RAX, 8),
+                        {NdVar::cst(Vector, 1)});
+      }
     } else {
       S.emitIntrinsic(Id);
     }

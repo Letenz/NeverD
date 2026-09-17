@@ -136,9 +136,13 @@ public:
   std::string unwrapCastVar(const HighExpr &E);
   std::string invertCondStr(const HighExpr &E);
   std::string copyForwardName(const std::string &Name) const;
+  std::optional<std::string>
+  forwardedStoreValue(const HighExpr &Addr, const std::string &Printed) const;
   bool isCopyForwardDestination(const MedVar &V) const;
   bool isParamCopy(const HighExpr &E) const;
-  std::optional<std::string> copyForwardSource(const HighExpr &E);
+  std::optional<std::string> copyForwardSource(const HighExpr &E) const;
+  bool isHiddenCopyForwardAssign(const HighStmt &Stmt) const;
+  bool stmtHiddenFromC(const HighStmt &Stmt) const;
   bool stmtsEffectivelyEmpty(const std::vector<HighStmt> &Stmts) const;
   void collectCopyForward(const HighFunc &Func);
 
@@ -206,6 +210,8 @@ public:
   struct NamedFrameSlot {
     std::string Name;
     TypeRef Type;
+    bool AddressTaken = false;
+    bool UsedAsMemory = false;
   };
   std::map<int64_t, NamedFrameSlot> FrameSlots;
   std::map<std::string, int64_t> FrameAliases;

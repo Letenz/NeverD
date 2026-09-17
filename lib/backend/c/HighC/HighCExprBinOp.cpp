@@ -62,6 +62,78 @@ int getOpPrecedence(NdOp Op) {
 } // anonymous namespace
 
 std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
+  auto IsZeroLike = [this](const ExprPtr &Op) {
+    if (!Op)
+      return false;
+    const HighExpr *Cur = unwrapIntegerView(Op.get());
+    return Cur && (Cur->Kind == ExprKind::Undef ||
+                   (Cur->Kind == ExprKind::Const && Cur->ConstVal == 0));
+  };
+  if (E.Operands.size() == 2 &&
+      (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_OR ||
+       E.Op == NdOp::INT_XOR)) {
+    if (IsZeroLike(E.Operands[0]) && E.Operands[1])
+      return exprStr(*E.Operands[1], ParentPrec);
+    if (IsZeroLike(E.Operands[1]) && E.Operands[0])
+      return exprStr(*E.Operands[0], ParentPrec);
+  }
+  if (E.Op == NdOp::INT_SUB && E.Operands.size() == 2 &&
+      IsZeroLike(E.Operands[1]) && E.Operands[0])
+    return exprStr(*E.Operands[0], ParentPrec);
+  // MSVC `sbb r, r` after a compare is `0 - (CF - 0)` / `0 - (undef - cond)`.
+  // Fold to `cond` so the printed body is not `0 /* unknown */`.
+  if (E.Op == NdOp::INT_SUB && E.Operands.size() == 2 &&
+      IsZeroLike(E.Operands[0]) && E.Operands[1]) {
+    const HighExpr *Inner = unwrapIntegerView(E.Operands[1].get());
+    if (Inner && Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_SUB &&
+        Inner->Operands.size() == 2 && IsZeroLike(Inner->Operands[0]) &&
+        Inner->Operands[1])
+      return exprStr(*Inner->Operands[1], ParentPrec);
+  }
+
+  // `(x << n) | (x >> (width-n))` is a rotate.  Print a rotate builtin
+  // instead of the nested unsigned-shift casts Hex-Rays beats with `__ROL8__`.
+  if (E.Op == NdOp::INT_OR && E.Operands.size() == 2 && E.Operands[0] &&
+      E.Operands[1]) {
+    auto ShiftCount = [this](const HighExpr *Op, NdOp Kind, uint64_t &Count,
+                             const HighExpr *&Src) -> bool {
+      Op = unwrapIntegerView(Op);
+      if (!Op || Op->Kind != ExprKind::BinOp || Op->Op != Kind ||
+          Op->Operands.size() != 2 || !Op->Operands[0] || !Op->Operands[1] ||
+          Op->Operands[1]->Kind != ExprKind::Const)
+        return false;
+      Count = Op->Operands[1]->ConstVal;
+      Src = unwrapIntegerView(Op->Operands[0].get());
+      return Src != nullptr;
+    };
+    const HighExpr *LeftSrc = nullptr;
+    const HighExpr *RightSrc = nullptr;
+    uint64_t LeftCount = 0;
+    uint64_t RightCount = 0;
+    const bool LeftIsShl =
+        ShiftCount(E.Operands[0].get(), NdOp::INT_LEFT, LeftCount, LeftSrc) &&
+        ShiftCount(E.Operands[1].get(), NdOp::INT_RIGHT, RightCount, RightSrc);
+    const bool LeftIsShr =
+        !LeftIsShl &&
+        ShiftCount(E.Operands[0].get(), NdOp::INT_RIGHT, RightCount,
+                   RightSrc) &&
+        ShiftCount(E.Operands[1].get(), NdOp::INT_LEFT, LeftCount, LeftSrc);
+    if ((LeftIsShl || LeftIsShr) && LeftSrc && RightSrc &&
+        exprStr(*LeftSrc) == exprStr(*RightSrc)) {
+      const uint16_t Size = E.Type && E.Type->Kind == NdTypeKind::Int
+                                ? E.Type->Size
+                                : (LeftSrc->Type ? LeftSrc->Type->Size : 0);
+      const uint64_t Bits = static_cast<uint64_t>(Size) * 8u;
+      if (Size == 1 || Size == 2 || Size == 4 || Size == 8) {
+        if (LeftCount < Bits && RightCount < Bits &&
+            LeftCount + RightCount == Bits) {
+          return "__builtin_rotateleft" + std::to_string(Bits) + "(" +
+                 exprStr(*LeftSrc) + ", " + std::to_string(LeftCount) + ")";
+        }
+      }
+    }
+  }
+
   if (E.Op == NdOp::FLOAT_FMA) {
     if (E.Operands.size() != 3 || !E.Type ||
         E.Type->Kind != NdTypeKind::Float ||

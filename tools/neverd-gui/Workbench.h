@@ -75,7 +75,11 @@ public:
   bool workerConnected() const { return connected_; }
   QString error() const { return error_; }
   QString status() const { return tr(status_.toUtf8().constData()); }
-  double progress() const { return busy() ? -1 : 1; }
+  double progress() const {
+    if (!busy())
+      return 1;
+    return progress_;
+  }
   QString fileName() const;
   QString filePath() const { return filePath_; }
   QString architecture() const { return metadata_["architecture"].toString(); }
@@ -223,6 +227,7 @@ private:
   quint64 filterGeneration_ = 0, sessionEpoch_ = 0, analysisPublishedEpoch_ = 0;
   int functionCount_ = 0, nextFunction_ = 0, pendingWrites_ = 0;
   bool loaded_ = false, connected_ = false, opening_ = false;
+  double progress_ = -1;
   bool dirty_ = false, transitionReady_ = false, functionRequest_ = false;
   QQmlEngine *qmlEngine_ = nullptr;
   QTranslator translator_;

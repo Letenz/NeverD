@@ -60,8 +60,8 @@ Json validateQuery(Json query) {
     (void)stringField(payload, "filter", {}, 256);
   if (payload.contains("representation")) {
     const auto rep = stringField(payload, "representation", "c", 16);
-    if (rep != "c" && rep != "low" && rep != "med" && rep != "high" &&
-        rep != "llvm")
+    if (rep != "c" && rep != "llvmc" && rep != "low" && rep != "med" &&
+        rep != "high" && rep != "llvm")
       throw Error("invalid_manifest",
                   "Unsupported representation in query template");
   }

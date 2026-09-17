@@ -365,6 +365,16 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     const std::string loadPath(utf8.begin(), utf8.end());
     const auto fileSize = fs::file_size(path);
     const auto fileTime = fs::last_write_time(path);
+    if (loadProgress_)
+      neverd_session_set_load_progress(
+          next.get(),
+          [](void *User, const char *Phase, unsigned long long Done,
+             unsigned long long Total, const char *Detail) {
+            auto *Sink = static_cast<LoadProgressSink *>(User);
+            if (Sink && *Sink)
+              (*Sink)(Phase, Done, Total, Detail);
+          },
+          &loadProgress_);
     if (!neverd_session_load(next.get(), loadPath.c_str()))
       throw Error("load_failed", ownedString(neverd_last_error(next.get())));
     if (fs::file_size(path) != fileSize ||
@@ -758,9 +768,9 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
-    if (representation != "c" && representation != "low" &&
-        representation != "med" && representation != "high" &&
-        representation != "llvm")
+    if (representation != "c" && representation != "llvmc" &&
+        representation != "low" && representation != "med" &&
+        representation != "high" && representation != "llvm")
       throw Error("unsupported", "Unknown code representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
@@ -795,11 +805,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (textKey_ != key) {
       textKey_.clear();
       const char *result =
-          representation == "c"      ? neverd_decompile(session_, address)
-          : representation == "low"  ? neverd_ir_low(session_, address)
-          : representation == "med"  ? neverd_ir_med(session_, address)
-          : representation == "high" ? neverd_ir_high(session_, address)
-                                     : neverd_ir_llvm(session_, address);
+          representation == "c"       ? neverd_decompile(session_, address)
+          : representation == "llvmc" ? neverd_decompile_llvm(session_, address)
+          : representation == "low"   ? neverd_ir_low(session_, address)
+          : representation == "med"   ? neverd_ir_med(session_, address)
+          : representation == "high"  ? neverd_ir_high(session_, address)
+                                      : neverd_ir_llvm(session_, address);
       textCache_ = ownedString(result);
       if (textCache_.empty())
         throw Error("unavailable", error().empty()

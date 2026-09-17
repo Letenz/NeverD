@@ -74,6 +74,11 @@ NEVERD_API const char *neverd_disasm_json(neverd_session_t Sess,
 NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
                                         neverd_va_t FuncEntry);
 
+/// LLVM-to-C for one native function (`neverd decompile --llvm`).  EVM and
+/// SBF have dedicated backends and return empty.  Free with neverd_free_string.
+NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
+                                             neverd_va_t FuncEntry);
+
 /// Reconstruct Mach-O native C and supported Objective-C method bodies as a
 /// schema_version=1 JSON report. MaxFunctions=0 analyzes all discovered native
 /// functions. Runtime signatures are source projection hints, not a semantic

@@ -1,5 +1,7 @@
 #include "Workbench.h"
 
+#include <algorithm>
+
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QDir>
@@ -57,6 +59,27 @@ Workbench::Workbench(QString workerPath, QObject *parent)
       status_ = QT_TR_NOOP("Ready");
     emit changed();
   });
+  connect(&queries_, &QueryService::loadProgress, this,
+          [this](const QJsonObject &payload) {
+            const auto total = payload.value("total").toDouble();
+            const auto done = payload.value("done").toDouble();
+            const auto frac =
+                total > 0 ? std::min(1.0, std::max(0.0, done / total)) : 0.0;
+            const auto phase = payload.value("phase").toString();
+            if (phase == "debug") {
+              progress_ = 0.15 + 0.85 * frac;
+              status_ = QT_TR_NOOP("Loading debug symbols…");
+            } else if (phase == "image") {
+              // Image parse has no inner counter yet; pulse like a wait dialog
+              // until the binary is in memory.
+              progress_ = (total > 0 && done >= total) ? 0.15 : -1;
+              status_ = QT_TR_NOOP("Opening binary…");
+            } else if (phase == "ready") {
+              progress_ = 1;
+              status_ = QT_TR_NOOP("Binary loaded");
+            }
+            emit changed();
+          });
   connect(&client_, &EngineClient::message, this, &Workbench::receive);
   connect(&client_, &EngineClient::diagnostic, this, &Workbench::log);
   connect(&client_, &EngineClient::failure, this, &Workbench::setError);
@@ -314,6 +337,7 @@ void Workbench::openPending() {
   const auto navigation = panes_.navigationRevision();
   const auto path = std::exchange(pendingFile_, {});
   opening_ = true;
+  progress_ = -1;
   error_.clear();
   status_ = QT_TR_NOOP("Opening binary…");
   send(

@@ -12,16 +12,21 @@
 #include "neverd/debug/PDBLoader.h"
 
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/Parallel.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/DebugInfo/CodeView/GUID.h"
+#include "llvm/DebugInfo/CodeView/RecordSerialization.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
+#include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PublicsStream.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
@@ -32,15 +37,20 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolTypeFunctionSig.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolTypePointer.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Support/BinaryStreamReader.h"
+#include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <iterator>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 
 namespace neverd {
@@ -77,6 +87,55 @@ const llvm::codeview::CVSymbol *pdb_loader_detail::findSymbolAtExactOffset(
   return It != Records.end() && It->Offset == Offset ? &It->Symbol : nullptr;
 }
 
+llvm::Error pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream,
+                                                  uint32_t Offset,
+                                                  ParsedPublicSym32 &Out) {
+  constexpr uint32_t PrefixSize =
+      static_cast<uint32_t>(sizeof(llvm::codeview::RecordPrefix));
+  constexpr uint32_t HeaderSize =
+      static_cast<uint32_t>(sizeof(llvm::codeview::PublicSym32Header));
+  if (Offset > Stream.size() || Stream.size() - Offset < PrefixSize)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Publics GSI offset is not an exact "
+                                   "symbol record boundary");
+
+  const uint8_t *const Bytes = Stream.data() + Offset;
+  const uint16_t RecordLen = llvm::support::endian::read16le(Bytes);
+  const uint16_t Kind = llvm::support::endian::read16le(Bytes + 2);
+  if (RecordLen < 2)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Publics GSI offset is not an exact "
+                                   "symbol record boundary");
+  const uint32_t Total = static_cast<uint32_t>(RecordLen) + 2;
+  if (Stream.size() - Offset < Total)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Publics GSI offset is not an exact "
+                                   "symbol record boundary");
+  if (Kind != static_cast<uint16_t>(llvm::codeview::SymbolKind::S_PUB32))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Publics GSI references a non-public "
+                                   "symbol");
+  if (RecordLen < 2 + HeaderSize + 1)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid public symbol record");
+
+  const uint8_t *const Body = Bytes + PrefixSize;
+  const uint32_t Flags = llvm::support::endian::read32le(Body);
+  Out.IsFunction =
+      (Flags & static_cast<uint32_t>(
+                   llvm::codeview::PublicSymFlags::Function)) != 0;
+  Out.Offset = llvm::support::endian::read32le(Body + 4);
+  Out.Segment = llvm::support::endian::read16le(Body + 8);
+  const char *const Name = reinterpret_cast<const char *>(Body + HeaderSize);
+  const size_t MaxName = Total - PrefixSize - HeaderSize;
+  const size_t NameLen = ::strnlen(Name, MaxName);
+  if (NameLen == MaxName)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid public symbol record");
+  Out.Name = llvm::StringRef(Name, NameLen);
+  return llvm::Error::success();
+}
+
 void pdb_loader_detail::FunctionNameRegistry::observe(va_t Address,
                                                       llvm::StringRef Name) {
   Record &Entry = Records[Address];
@@ -110,6 +169,31 @@ pdb_loader_detail::FunctionNameRegistry::name(va_t Address) const {
   if (It == Records.end() || It->second.State != FunctionNameState::Unique)
     return std::nullopt;
   return It->second.Name;
+}
+
+llvm::Error forEachProcedureSymbol(
+    const llvm::codeview::CVSymbolArray &Records,
+    llvm::function_ref<llvm::Error(const llvm::codeview::ProcSym &)> OnProc) {
+  bool HadError = false;
+  auto It = llvm::codeview::CVSymbolArray::Iterator(
+      Records, Records.getExtractor(), Records.skew(), &HadError);
+  const auto End = Records.end();
+  for (; It != End; ++It) {
+    const llvm::codeview::SymbolKind Kind = It->kind();
+    if (Kind != llvm::codeview::SymbolKind::S_LPROC32 &&
+        Kind != llvm::codeview::SymbolKind::S_GPROC32)
+      continue;
+    auto ProcOr = llvm::codeview::SymbolDeserializer::deserializeAs<
+        llvm::codeview::ProcSym>(*It);
+    if (!ProcOr)
+      return ProcOr.takeError();
+    if (llvm::Error E = OnProc(*ProcOr))
+      return E;
+  }
+  if (HadError)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "malformed CodeView symbol record stream");
+  return llvm::Error::success();
 }
 
 namespace {
@@ -243,6 +327,7 @@ TypeRef functionReturnType(llvm::pdb::NativeSession &Session,
 
 struct PDBDebugContext::Impl {
   std::map<va_t, FunctionSym> Functions;
+  std::map<va_t, DataObjectSym> DataObjects;
   std::map<va_t, std::map<int64_t, VariableSym>> Locals;
   std::map<va_t, std::set<int64_t>> AmbiguousLocalOffsets;
   bool ImageIdentityAuthenticated = false;
@@ -275,7 +360,7 @@ void PDBDebugContext::commitDebugFacts(
 
 llvm::Expected<std::unique_ptr<PDBDebugContext>>
 PDBDebugContext::load(const std::filesystem::path &PdbPath,
-                      const BinaryImage &Image) {
+                      const BinaryImage &Image, const LoadProgress &Progress) {
   if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable)
     return pdbLoadError("strict PDB loading requires a linked PE image");
   if (Image.DynInfo.CodeViewPDBIdentityState != PDBIdentityState::Unique ||
@@ -290,6 +375,7 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
   auto Ctx = std::unique_ptr<PDBDebugContext>(new PDBDebugContext());
   Ctx->PImpl = std::make_unique<Impl>();
 
+  Progress.report("debug", 0, 1, "opening pdb");
   std::unique_ptr<llvm::pdb::IPDBSession> Session;
   auto Err =
       llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
@@ -345,7 +431,9 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
   };
 
   pdb_loader_detail::FunctionNameRegistry FunctionNames;
+  pdb_loader_detail::FunctionNameRegistry DataNames;
   std::set<va_t> FunctionAddresses;
+  std::set<va_t> DataAddresses;
   if (PDB.hasPDBPublicsStream()) {
     auto PubOr = PDB.getPDBPublicsStream();
     if (!PubOr) {
@@ -353,95 +441,148 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
       return pdbLoadError("cannot read Publics stream: " + Detail);
     }
     auto &Publics = *PubOr;
-    if (!PDB.hasPDBSymbolStream())
+    const uint32_t SymIndex = DBI.getSymRecordStreamIndex();
+    if (SymIndex == llvm::pdb::kInvalidStreamIndex ||
+        SymIndex >= PDB.getNumStreams())
       return pdbLoadError("Publics stream has no backing symbol stream");
-    auto SymOr = PDB.getPDBSymbolStream();
-    if (!SymOr) {
-      const std::string Detail = llvm::toString(SymOr.takeError());
-      return pdbLoadError("cannot read backing symbol stream: " + Detail);
-    }
-    auto IndexedOr =
-        pdb_loader_detail::indexSymbolRecords(SymOr->getSymbolArray());
-    if (!IndexedOr) {
-      const std::string Detail = llvm::toString(IndexedOr.takeError());
-      return pdbLoadError("invalid backing symbol stream: " + Detail);
-    }
 
-    for (uint32_t Off : Publics.getPublicsTable()) {
-      const llvm::codeview::CVSymbol *CVS =
-          pdb_loader_detail::findSymbolAtExactOffset(*IndexedOr, Off);
-      if (!CVS)
-        return pdbLoadError(
-            "Publics GSI offset is not an exact symbol record boundary");
-      if (CVS->kind() != llvm::codeview::SymbolKind::S_PUB32)
-        return pdbLoadError("Publics GSI references a non-public symbol");
-
-      llvm::codeview::PublicSym32 PubRec(
-          llvm::codeview::SymbolRecordKind::PublicSym32);
-      if (auto Error = llvm::codeview::SymbolDeserializer::deserializeAs<
-              llvm::codeview::PublicSym32>(*CVS, PubRec)) {
-        const std::string Detail = llvm::toString(std::move(Error));
-        return pdbLoadError("invalid public symbol record: " + Detail);
+    // Address map is a dense list of S_PUB32 offsets.  Copy it once so
+    // FixedStreamArray does not issue a MappedBlockStream read per public.
+    llvm::ArrayRef<uint8_t> AddrBytes;
+    {
+      llvm::BinaryStreamRef AddrStream =
+          Publics.getAddressMap().getUnderlyingStream();
+      const uint64_t AddrLen = AddrStream.getLength();
+      if (AddrLen > 0) {
+        if (auto ReadErr = AddrStream.readBytes(0, AddrLen, AddrBytes)) {
+          llvm::consumeError(std::move(ReadErr));
+          return pdbLoadError("cannot read Publics address map");
+        }
+      }
+    }
+    if (AddrBytes.size() % sizeof(uint32_t) != 0)
+      return pdbLoadError("Publics address map is truncated");
+    const uint32_t PubCount =
+        static_cast<uint32_t>(AddrBytes.size() / sizeof(uint32_t));
+    if (PubCount != 0) {
+      // LLVM's SymbolStream::reload() indexes every global symbol.  Phase A
+      // only needs the publics the address map points at, so linearize the
+      // backing stream once and parse those records from the contiguous view.
+      Progress.report("debug", 0, 1, "pdb symbol stream");
+      std::unique_ptr<llvm::msf::MappedBlockStream> SymStream =
+          PDB.createIndexedStream(static_cast<uint16_t>(SymIndex));
+      if (!SymStream)
+        return pdbLoadError("cannot read backing symbol stream");
+      llvm::BinaryStreamReader SymReader(*SymStream);
+      const uint64_t SymLen = SymReader.getLength();
+      if (SymLen > std::numeric_limits<uint32_t>::max())
+        return pdbLoadError("backing symbol stream is too large");
+      llvm::ArrayRef<uint8_t> SymBytes;
+      if (SymLen > 0) {
+        if (auto ReadErr =
+                SymReader.readBytes(SymBytes, static_cast<uint32_t>(SymLen)))
+          return pdbLoadError("cannot read backing symbol stream: " +
+                              llvm::toString(std::move(ReadErr)));
       }
 
-      const bool IsFunc =
-          (static_cast<uint32_t>(PubRec.Flags) &
-           static_cast<uint32_t>(llvm::codeview::PublicSymFlags::Function)) !=
-          0;
-      if (!IsFunc)
-        continue;
-
-      const va_t VA = ResolveVA(PubRec.Segment, PubRec.Offset);
-      if (VA != 0) {
-        FunctionAddresses.insert(VA);
-        FunctionNames.observe(VA, PubRec.Name);
+      Progress.report("debug", 0, PubCount, "pdb publics");
+      for (uint32_t I = 0; I < PubCount; ++I) {
+        const uint32_t Off = llvm::support::endian::read32le(
+            AddrBytes.data() + I * sizeof(uint32_t));
+        pdb_loader_detail::ParsedPublicSym32 Pub;
+        if (auto ParseErr =
+                pdb_loader_detail::parsePublicSym32At(SymBytes, Off, Pub))
+          return ParseErr;
+        const va_t VA = ResolveVA(Pub.Segment, Pub.Offset);
+        if (VA == 0)
+          continue;
+        if (Pub.IsFunction) {
+          FunctionAddresses.insert(VA);
+          FunctionNames.observe(VA, Pub.Name);
+        } else {
+          DataAddresses.insert(VA);
+          DataNames.observe(VA, Pub.Name);
+        }
+        const uint32_t Done = I + 1;
+        if (Done == PubCount || (Done % 4096u) == 0)
+          Progress.report("debug", Done, PubCount, "pdb publics");
       }
     }
   }
 
-  for (uint32_t ModuleIndex = 0; ModuleIndex < DBI.modules().getModuleCount();
-       ++ModuleIndex) {
+  // Publics already named the linked functions.  Walking every module
+  // symbol stream is what made a large PDB stall load for tens of seconds
+  // with no UI; do that only when Publics did not contribute any function.
+  const bool NeedModuleWalk = FunctionAddresses.empty();
+  const uint32_t ModuleCount =
+      NeedModuleWalk ? DBI.modules().getModuleCount() : 0;
+  if (NeedModuleWalk && ModuleCount > 0)
+    Progress.report("debug", 0, ModuleCount, "pdb modules");
+  std::mutex NamesMutex;
+  std::mutex ErrorMutex;
+  std::string ModuleError;
+  std::atomic<bool> Failed{false};
+  std::atomic<uint32_t> Finished{0};
+  std::mutex ProgressMutex;
+  auto ScanModule = [&](uint32_t ModuleIndex) {
+    if (Failed.load(std::memory_order_relaxed))
+      return;
     const auto Descriptor = DBI.modules().getModuleDescriptor(ModuleIndex);
     if (Descriptor.getModuleStreamIndex() == llvm::pdb::kInvalidStreamIndex)
-      continue;
-    auto ModuleOr = Native->getModuleDebugStream(ModuleIndex);
+      return;
+    llvm::Expected<llvm::pdb::ModuleDebugStreamRef> ModuleOr =
+        Native->getModuleDebugStream(ModuleIndex);
     if (!ModuleOr) {
       const std::string Detail = llvm::toString(ModuleOr.takeError());
-      return pdbLoadError("cannot read module debug stream " +
-                          llvm::Twine(ModuleIndex) + ": " + Detail);
+      std::lock_guard<std::mutex> Guard(ErrorMutex);
+      if (!Failed.exchange(true))
+        ModuleError = ("cannot read module debug stream " +
+                       llvm::Twine(ModuleIndex) + ": " + Detail)
+                          .str();
+      return;
     }
-    auto IndexedOr =
-        pdb_loader_detail::indexSymbolRecords(ModuleOr->getSymbolArray());
-    if (!IndexedOr) {
-      const std::string Detail = llvm::toString(IndexedOr.takeError());
-      return pdbLoadError("invalid module symbol stream " +
-                          llvm::Twine(ModuleIndex) + ": " + Detail);
+    llvm::Error ScanErr = forEachProcedureSymbol(
+        ModuleOr->getSymbolArray(), [&](const llvm::codeview::ProcSym &Proc) {
+          const va_t VA = ResolveVA(Proc.Segment, Proc.CodeOffset);
+          if (VA == 0)
+            return llvm::Error::success();
+          std::lock_guard<std::mutex> Guard(NamesMutex);
+          FunctionAddresses.insert(VA);
+          FunctionNames.observe(VA, Proc.Name);
+          if (HasTPI) {
+            FunctionSym &FS = Ctx->PImpl->Functions[VA];
+            FS.Addr = VA;
+            FS.ReturnType = functionReturnType(*Native, Proc.FunctionType);
+          }
+          return llvm::Error::success();
+        });
+    if (ScanErr) {
+      const std::string Detail = llvm::toString(std::move(ScanErr));
+      std::lock_guard<std::mutex> Guard(ErrorMutex);
+      if (!Failed.exchange(true))
+        ModuleError = ("invalid module symbol stream " +
+                       llvm::Twine(ModuleIndex) + ": " + Detail)
+                          .str();
     }
-    for (const pdb_loader_detail::IndexedSymbolRecord &Indexed : *IndexedOr) {
-      const llvm::codeview::CVSymbol &Record = Indexed.Symbol;
-      if (Record.kind() != llvm::codeview::SymbolKind::S_LPROC32 &&
-          Record.kind() != llvm::codeview::SymbolKind::S_GPROC32)
-        continue;
-      auto ProcOr = llvm::codeview::SymbolDeserializer::deserializeAs<
-          llvm::codeview::ProcSym>(Record);
-      if (!ProcOr) {
-        const std::string Detail = llvm::toString(ProcOr.takeError());
-        return pdbLoadError("invalid procedure symbol record in module " +
-                            llvm::Twine(ModuleIndex) + ": " + Detail);
+  };
+  if (ModuleCount == 0) {
+    if (NeedModuleWalk)
+      Progress.report("debug", 1, 1, "pdb modules");
+  } else {
+    parallelForEach(ModuleCount, [&](auto Claim, size_t Total) {
+      for (size_t Index = Claim(); Index < Total; Index = Claim()) {
+        ScanModule(static_cast<uint32_t>(Index));
+        const uint32_t Done =
+            Finished.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (Done == ModuleCount || (Done % 16) == 0) {
+          std::lock_guard<std::mutex> Guard(ProgressMutex);
+          Progress.report("debug", Done, ModuleCount, "pdb modules");
+        }
       }
-      const auto &Proc = *ProcOr;
-      const va_t VA = ResolveVA(Proc.Segment, Proc.CodeOffset);
-      if (VA == 0)
-        continue;
-      FunctionAddresses.insert(VA);
-      FunctionNames.observe(VA, Proc.Name);
-      if (HasTPI) {
-        FunctionSym &FS = Ctx->PImpl->Functions[VA];
-        FS.Addr = VA;
-        FS.ReturnType = functionReturnType(*Native, Proc.FunctionType);
-      }
-    }
+    });
   }
+  if (Failed.load(std::memory_order_relaxed))
+    return pdbLoadError(ModuleError);
 
   for (const va_t VA : FunctionAddresses) {
     const std::optional<std::string> Name = FunctionNames.name(VA);
@@ -452,6 +593,16 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
     FunctionSym &FS = Ctx->PImpl->Functions[VA];
     FS.Addr = VA;
     FS.Name = *Name;
+  }
+  for (const va_t VA : DataAddresses) {
+    const std::optional<std::string> Name = DataNames.name(VA);
+    if (!Name)
+      continue;
+    DataObjectSym &Obj = Ctx->PImpl->DataObjects[VA];
+    Obj.Name = *Name;
+    Obj.Addr = VA;
+    Obj.Size = 0;
+    Obj.IsBuffer = false;
   }
   Ctx->PImpl->Loaded = !Ctx->PImpl->Functions.empty();
   LLVM_DEBUG(llvm::dbgs() << "pdb: loaded " << Ctx->PImpl->Functions.size()
@@ -507,6 +658,16 @@ std::vector<FunctionSym> PDBDebugContext::allFunctions() const {
   Result.reserve(PImpl->Functions.size());
   for (auto &[_, FS] : PImpl->Functions)
     Result.push_back(FS);
+  return Result;
+}
+
+std::vector<DataObjectSym> PDBDebugContext::allDataObjects() const {
+  std::vector<DataObjectSym> Result;
+  if (!PImpl)
+    return Result;
+  Result.reserve(PImpl->DataObjects.size());
+  for (auto &[_, Obj] : PImpl->DataObjects)
+    Result.push_back(Obj);
   return Result;
 }
 

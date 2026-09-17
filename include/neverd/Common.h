@@ -186,6 +186,14 @@ inline llvm::StringRef stripLeadingUnderscores(llvm::StringRef Name) {
   return Name;
 }
 
+/// MSVC `_CxxThrowException` after platform and emitter prefixes.
+inline bool isMsvcCxxThrowCallName(llvm::StringRef Name) {
+  Name = stripLeadingUnderscores(Name);
+  if (Name.consume_front("nd"))
+    Name = stripLeadingUnderscores(Name);
+  return Name == "CxxThrowException";
+}
+
 /// True if \p Name is the Apple/Darwin prologue stack-probe routine
 /// (`____chkstk_darwin` and the like). The rewrite backend elides this
 /// GOT-indirect probe call: it is invoked with its allocation size in a fixed

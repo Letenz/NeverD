@@ -1172,7 +1172,7 @@ TEST(SourceABI, IntegerPairCallsPreserveBothWordsThroughSSAAndReturns) {
         CEmitterOptions Options;
         Options.TheArch = Architecture;
         ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
-        EXPECT_NE(Source.find("caller-saved register clobbered"),
+        EXPECT_EQ(Source.find("caller-saved register clobbered"),
                   std::string::npos)
             << Source;
       } else {
@@ -1335,7 +1335,7 @@ TEST(SourceABI, NarrowDarwinReturnsPreserveWordReadsWithoutInventingHighBits) {
             CEmitterOptions Options;
             Options.TheArch = Architecture;
             ASSERT_TRUE(HighCEmitter().emit({High}, UnprovenOS, Options));
-            EXPECT_NE(Unproven.find("caller-saved register clobbered"),
+            EXPECT_EQ(Unproven.find("caller-saved register clobbered"),
                       std::string::npos)
                 << Unproven;
           } else {

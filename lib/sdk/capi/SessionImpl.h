@@ -45,6 +45,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -78,6 +79,7 @@ struct Session {
   // policy and must be set before neverd_session_load(); the rest describe what
   // that load actually found.
   DebugInfoRequest DbgRequest;
+  LoadProgress LoadProgressCb;
   std::unique_ptr<DebugContext> Dbg;
   DebugInfoKind DbgKind = DebugInfoKind::None;
   std::filesystem::path DbgPath;
@@ -87,6 +89,7 @@ struct Session {
   bool PipeRan = false;
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
+  std::set<va_t> OnlyFunctionEntries;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
   bool EVMStrict = true;
   sbf::Version SBFVersion = sbf::Version::Auto;
@@ -225,6 +228,7 @@ struct Session {
     Opts.SBFStrict = SBFStrict;
     Opts.SBFProfile = SBFProfile;
     Opts.SBFIdl = SBFIdl ? &*SBFIdl : nullptr;
+    Opts.OnlyFunctionEntries = OnlyFunctionEntries;
   }
 
   /// Snapshot the enabled cosmetic transforms without touching observable
@@ -341,13 +345,13 @@ struct Session {
   /// Native function identity is its original source address, independently of
   /// debug names or emitter-generated symbol suffixes. Declarations and
   /// untagged helpers do not represent source definitions.
-  const llvm::Function *findNativeLlvmFunction(va_t Addr) {
+  llvm::Function *findNativeLlvmFunction(va_t Addr) {
     if (!PipeResult.LlvmModule) {
       setError("LLVM module is not available");
       return nullptr;
     }
-    const llvm::Function *Match = nullptr;
-    for (const auto &Function : *PipeResult.LlvmModule) {
+    llvm::Function *Match = nullptr;
+    for (auto &Function : *PipeResult.LlvmModule) {
       if (Function.isDeclaration())
         continue;
       auto OriginalVA = rewrite_source::getOriginalVA(Function);

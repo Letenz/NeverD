@@ -1049,7 +1049,7 @@ bool PaneRegistry::restoreMetadata(const QVariantMap &metadata) {
         (!groupId.isEmpty() && !groupIds.contains(groupId)) ||
         !QStringList{"disasm", "cfg", "hex"}.contains(
             pane["view"].toString()) ||
-        !QStringList{"c", "low", "med", "high", "llvm"}.contains(
+        !QStringList{"c", "llvmc", "low", "med", "high", "llvm"}.contains(
             pane["representation"].toString()) ||
         !validLocation(pane["location"].toMap()))
       return invalid();

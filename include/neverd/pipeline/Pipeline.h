@@ -33,6 +33,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,11 @@ struct PipelineOptions {
   bool PatchMode = false;
   bool LiftMode = false;
   size_t MaxFunctions = 0;
+  /// When non-empty, only these entries are lifted to Low/Med/High IR.
+  /// Detection still reads image metadata; this bounds work for single-function
+  /// CLI export on large PEs. Callers that later need a different subset must
+  /// run a new pipeline.
+  std::set<va_t> OnlyFunctionEntries;
   /// Explicit declarations for source rendering only; never consumed in
   /// PatchMode or LiftMode and never promoted to transformation evidence.
   std::map<va_t, SourceFunctionTypeHint> SourceTypeHints;

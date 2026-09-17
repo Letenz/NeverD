@@ -290,16 +290,7 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
     va_t CallTarget = 0;
     if (Op.NumInputs >= 1 && Op.Inputs[0].isConst())
       CallTarget = Op.Inputs[0].ConstVal;
-    std::string Name;
-    if (FuncNames) {
-      auto NameIt = FuncNames->find(CallTarget);
-      Name = NameIt != FuncNames->end()
-                 ? NameIt->second
-                 : (kAutoFuncPrefix + llvm::utohexstr(CallTarget)).str();
-    } else {
-      Name = (kAutoFuncPrefix + llvm::utohexstr(CallTarget)).str();
-    }
-    return HighExpr::makeCall(Name, CallTarget, {});
+    return HighExpr::makeCall(calleeDisplayName(CallTarget), CallTarget, {});
   }
 
   case NdOp::INTRINSIC: {

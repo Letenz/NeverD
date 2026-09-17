@@ -97,6 +97,13 @@ private:
   ExprPtr forceInlineExpr(const ExprPtr &E);
 
   int regToArgIdx(uint64_t RegOff) const;
+  /// Map a MedIR parameter or its entry register to the ABI slot index in
+  /// `CurMed->Params`.  MedIR often stores the SSA id in `MedVar::Id`, which
+  /// is not the rcx/rdx/r8/r9 (or stack) slot HighC uses.
+  int abiParamIndex(const MedVar &V) const;
+
+  /// Prefer a non-synthetic FuncNames entry, then an import or image symbol.
+  std::string calleeDisplayName(va_t Target) const;
 
   std::vector<ExprPtr> collectCallArgs(const MedBlock &CurBlock,
                                        size_t CallIdx);

@@ -328,9 +328,8 @@ cl::opt<bool> DumpHigh("dump-high", cl::desc("Dump HighIR"), cl::sub(LiftCmd));
 //===----------------------------------------------------------------------===//
 
 cl::opt<bool>
-    LlvmRoute("llvm",
-              cl::desc("Route through LLVM IR + opt passes (goto-style C)"),
-              cl::sub(DecompileCmd));
+    LlvmRoute("llvm", cl::desc("Emit LLVM-to-C (goto-style) instead of HighC"),
+              cl::sub(DecompileCmd), cl::sub(ExportCmd));
 
 cl::opt<neverd_output_language_t>
     OutputLanguage("language", cl::desc("Output source language"),
@@ -691,7 +690,8 @@ cl::opt<std::string>
 cl::opt<ExportFormat> ExportFmt(
     "format", cl::desc("What to export"), cl::Required,
     cl::values(
-        clEnumValN(FmtDecompile, "decompile", "Decompiled C code"),
+        clEnumValN(FmtDecompile, "decompile",
+                   "Decompiled C (HighC; add --llvm for LLVM-to-C)"),
         clEnumValN(FmtIR, "ir", "LLVM IR"),
         clEnumValN(FmtFuncs, "funcs", "Function list (JSON)"),
         clEnumValN(FmtImports, "imports", "Import table (JSON)"),
@@ -712,7 +712,7 @@ cl::opt<std::string> ExportOutput("o", cl::desc("Output file path"),
 
 cl::opt<std::string>
     ExportFunc("func", cl::desc("Function name or address (for decompile/ir)"),
-               cl::init(""), cl::sub(ExportCmd));
+               cl::init(""), cl::sub(ExportCmd), cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//
 // Rename-specific options

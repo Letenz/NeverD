@@ -17,6 +17,7 @@
 #include "HighCWriter.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
 
@@ -125,16 +126,10 @@ const char *memoryAddressSpaceName(NdMemoryAddressSpace AddressSpace) {
 }
 
 unsigned cMemoryAddressSpace(NdMemoryAddressSpace AddressSpace) {
-  switch (AddressSpace) {
-  case NdMemoryAddressSpace::X86FS:
-    return 257;
-  case NdMemoryAddressSpace::X86GS:
-    return 256;
-  case NdMemoryAddressSpace::Default:
-    break;
-  }
-  llvm::report_fatal_error(
-      "default memory does not have a target address-space attribute");
+  if (AddressSpace == NdMemoryAddressSpace::Default)
+    llvm::report_fatal_error(
+        "default memory does not have a target address-space attribute");
+  return llvmX86MemoryAddressSpace(AddressSpace);
 }
 
 void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
@@ -217,9 +212,8 @@ void HighCWriter::prepareFunctionIdentifiers(
     // Darwin's underscored C runtime APIs already carry their source-level
     // underscore.  Other Mach-O imports have one platform decoration removed
     // before reaching the source-call layer.
-    const bool ExactDarwinName =
-        Name == "__stack_chk_fail" ||
-        llvm::StringRef(Name).starts_with("_Block_");
+    const bool ExactDarwinName = Name == "__stack_chk_fail" ||
+                                 llvm::StringRef(Name).starts_with("_Block_");
     if (!ExactDarwinName)
       RenderedName.consume_front("_");
     const auto Identifier =
@@ -303,14 +297,19 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (!Seen.insert(&E).second)
       return;
     if (HideEHRuntimeMemory &&
-        (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
-         E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
+        E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    const bool MsvcSegmentedScalar =
+        E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+        (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+        (E.Kind == ExprKind::Load || E.Kind == ExprKind::Store);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
-      HasSegmentedMemory = true;
+      if (!MsvcSegmentedScalar)
+        HasSegmentedMemory = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
           (E.Kind == ExprKind::BinOp &&
@@ -333,12 +332,17 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
           OrdinaryMemory && partialIntegerBytes(E.Type) == 0 && AddressType &&
           AddressType->Kind == NdTypeKind::Ptr && AddressType->Pointee &&
           equalSourceTypes(AddressType->Pointee, E.Type);
-      // Frame projection can later fall back to synthetic byte storage when
-      // an address escapes.  Collect its load helper conservatively now so
-      // that the fallback never references a helper omitted from the prefix.
-      if (!DirectTypedLoad)
-        Names.insert(Type);
-      if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      // Ordinary default-address-space loads print as `*(T *)addr` or a
+      // named frame slot.  Helpers are only required for atomics, segmented
+      // memory, or partial integer widths (including synthetic-frame fallback).
+      if (!MsvcSegmentedScalar && !DirectTypedLoad) {
+        const bool NeedsHelper =
+            !OrdinaryMemory || partialIntegerBytes(E.Type) != 0;
+        if (NeedsHelper)
+          Names.insert(Type);
+      }
+      if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+          !MsvcSegmentedScalar)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
       if (E.MemoryOrdering != NdMemoryOrdering::None)
         AtomicLoadTypes.insert({Type, E.MemoryOrdering, E.MemoryAddressSpace});
@@ -374,8 +378,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
         if (HideEHRuntimeMemory &&
-            (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
-             Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
+            Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
           return;
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
         HasSegmentedMemory = true;
@@ -549,6 +552,14 @@ HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
                             NdMemoryAddressSpace AddressSpace) const {
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
+  if (Ordering == NdMemoryOrdering::None &&
+      AddressSpace == NdMemoryAddressSpace::Default &&
+      partialIntegerBytes(Ty) == 0)
+    return "(*(" + Type + " *)(" + Addr.str() + "))";
+  if (std::string Seg = renderX86MsvcSegmentedLoad(
+          Opts.TheArch, Ty ? Ty->Size : 0, Addr, Ordering, AddressSpace);
+      !Seg.empty())
+    return Seg;
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
@@ -825,7 +836,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         }
         if (Ex.IntrinsicId == Intrinsic::None && Name[0] == '_')
           Name = Name.substr(1);
-        Targets.insert(Name);
+        if (!isMsvcCxxThrowCallName(Name) &&
+            !isMsvcCxxThrowCallName(Ex.CallTarget))
+          Targets.insert(Name);
       }
     }
     for (auto &Op : Ex.Operands)
@@ -1078,7 +1091,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
       OS << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
-      OS << "extern int " << Identifier << "();\n";
+      OS << "extern int " << Identifier << "()";
+      if (libc::isNoReturnFunction(Name) ||
+          libc::isNoReturnFunction(Identifier))
+        OS << " __attribute__((noreturn))";
+      OS << ";\n";
     }
   }
 
@@ -1216,8 +1233,10 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  std::vector<HighFunc> Working = Funcs;
+  attachCxxFuncletBodies(Working);
   HighCWriter W(Out, Opts, Dbg);
-  W.writeAll(Funcs);
+  W.writeAll(Working);
   return true;
 }
 

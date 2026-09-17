@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/libc/LibCNames.h"
 
@@ -34,22 +35,8 @@ namespace neverd {
 
 namespace {
 
-// LLVM's X86 backend assigns these target address spaces to segment-relative
-// pointers.  Keeping the mapping at the final target-specific boundary avoids
-// pretending that FS/GS bases are ordinary live-in GPRs.
-constexpr unsigned kLLVMX86GSAddressSpace = 256;
-constexpr unsigned kLLVMX86FSAddressSpace = 257;
-
 unsigned llvmMemoryAddressSpace(NdMemoryAddressSpace AddressSpace) {
-  switch (AddressSpace) {
-  case NdMemoryAddressSpace::Default:
-    return 0;
-  case NdMemoryAddressSpace::X86FS:
-    return kLLVMX86FSAddressSpace;
-  case NdMemoryAddressSpace::X86GS:
-    return kLLVMX86GSAddressSpace;
-  }
-  llvm_unreachable("unknown NeverD memory address space");
+  return llvmX86MemoryAddressSpace(AddressSpace);
 }
 
 llvm::AtomicOrdering toLLVMAtomicOrdering(NdMemoryOrdering Ordering) {

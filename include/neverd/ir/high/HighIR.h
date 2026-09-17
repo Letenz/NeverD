@@ -456,6 +456,43 @@ struct HighFunc {
   unsigned UnstructuredExceptionRegions = 0;
 };
 
+/// Copy catch-funclet HighFunc bodies into empty `CxxCatch` clause slots of
+/// the parent. MSVC x64 catch handlers are separate pdata functions.
+inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
+  std::map<va_t, HighFunc *> ByEntry;
+  for (HighFunc &Func : Funcs)
+    if (Func.Entry)
+      ByEntry[Func.Entry] = &Func;
+  auto Attach = [&](auto &&Self, std::vector<HighStmt> &Stmts) -> void {
+    for (HighStmt &Stmt : Stmts) {
+      if (Stmt.Kind == StmtKind::CxxTry) {
+        if (Stmt.EHClauseBodies.size() < Stmt.EHClauses.size())
+          Stmt.EHClauseBodies.resize(Stmt.EHClauses.size());
+        for (size_t I = 0; I < Stmt.EHClauses.size(); ++I) {
+          if (!Stmt.EHClauseBodies[I].empty())
+            continue;
+          const HighEHClause &Clause = Stmt.EHClauses[I];
+          if (Clause.Kind != HighEHClauseKind::CxxCatch || !Clause.HandlerVA)
+            continue;
+          auto It = ByEntry.find(Clause.HandlerVA);
+          if (It == ByEntry.end() || It->second == nullptr)
+            continue;
+          Stmt.EHClauseBodies[I] = It->second->Body;
+        }
+      }
+      Self(Self, Stmt.Body);
+      Self(Self, Stmt.ElseBody);
+      for (auto &Case : Stmt.Cases)
+        Self(Self, Case.Body);
+      Self(Self, Stmt.DefaultBody);
+      for (auto &ClauseBody : Stmt.EHClauseBodies)
+        Self(Self, ClauseBody);
+    }
+  };
+  for (HighFunc &Func : Funcs)
+    Attach(Attach, Func.Body);
+}
+
 /// The entry register represented by the source projection's private frame.
 bool isSyntheticEntryStackPointer(const MedVar &Value, const HighFunc &Function,
                                   Arch Architecture);

@@ -256,6 +256,17 @@ TEST(LibCArity, ExceptionRuntimeFunctions) {
   ASSERT_TRUE(ObjCThrow.has_value());
   EXPECT_EQ(ObjCThrow->IntArgs, 1);
   EXPECT_EQ(ObjCThrow->FpArgs, 0);
+
+  auto Cookie = libcArity("security_check_cookie");
+  ASSERT_TRUE(Cookie.has_value());
+  EXPECT_EQ(Cookie->IntArgs, 1);
+  EXPECT_EQ(Cookie->FpArgs, 0);
+  EXPECT_TRUE(libcArityForSymbol("__security_check_cookie").has_value());
+  EXPECT_EQ(libcArityForSymbol("__security_check_cookie")->IntArgs, 1);
+
+  auto Raise = libcArity("raise_securityfailure");
+  ASSERT_TRUE(Raise.has_value());
+  EXPECT_EQ(Raise->IntArgs, 1);
 }
 
 TEST(LibCArity, VaListConsumersHaveFixedPrototypes) {
@@ -362,6 +373,13 @@ TEST(IsNoReturnFunction, ItaniumCxxTerminators) {
   EXPECT_TRUE(isNoReturnFunction("_ZSt9terminatev"));
   EXPECT_TRUE(isNoReturnFunction("__cxa_call_terminate"));
   EXPECT_TRUE(isNoReturnFunction("__clang_call_terminate"));
+}
+
+TEST(IsNoReturnFunction, MsvcGsHelpers) {
+  EXPECT_TRUE(isNoReturnFunction("report_gsfailure"));
+  EXPECT_TRUE(isNoReturnFunction("_report_gsfailure"));
+  EXPECT_TRUE(isNoReturnFunction("raise_securityfailure"));
+  EXPECT_TRUE(isNoReturnFunction("_raise_securityfailure"));
 }
 
 TEST(IsNoReturnFunction, SometimesReturningExcluded) {

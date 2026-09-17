@@ -15,6 +15,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-simd"
@@ -278,13 +279,9 @@ llvm::Value *MedLLVMEmitter::emitMaskedMemOp(const MedOp &Op, Intrinsic IC,
     auto *ZV = llvm::ConstantVector::getSplat(llvm::ElementCount::getFixed(N),
                                               llvm::ConstantInt::get(ETy, 0));
     auto *Cmp = Builder.CreateICmpSLT(MV, ZV, "msb");
-    unsigned AddressSpace = 0;
-    if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
-      AddressSpace = 257;
-    else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86GS)
-      AddressSpace = 256;
     auto *Ptr = Builder.CreateIntToPtr(
-        Addr, llvm::PointerType::get(*Ctx, AddressSpace));
+        Addr, llvm::PointerType::get(
+                  *Ctx, llvmX86MemoryAddressSpace(Op.MemoryAddressSpace)));
     return fromVec(Builder.CreateMaskedLoad(VTy, Ptr, llvm::Align(1), Cmp,
                                             llvm::Constant::getNullValue(VTy),
                                             "mload"),
@@ -309,13 +306,9 @@ llvm::Value *MedLLVMEmitter::emitMaskedMemOp(const MedOp &Op, Intrinsic IC,
     auto *ZV = llvm::ConstantVector::getSplat(llvm::ElementCount::getFixed(N),
                                               llvm::ConstantInt::get(ETy, 0));
     auto *Cmp = Builder.CreateICmpSLT(toVec(MaskVal, VTy, Builder), ZV, "msb");
-    unsigned AddressSpace = 0;
-    if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
-      AddressSpace = 257;
-    else if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86GS)
-      AddressSpace = 256;
     auto *Ptr = Builder.CreateIntToPtr(
-        Addr, llvm::PointerType::get(*Ctx, AddressSpace));
+        Addr, llvm::PointerType::get(
+                  *Ctx, llvmX86MemoryAddressSpace(Op.MemoryAddressSpace)));
     Builder.CreateMaskedStore(toVec(StoreData, VTy, Builder), Ptr,
                               llvm::Align(1), Cmp);
     return nullptr;
