@@ -326,6 +326,68 @@ TEST(CodeViewPayloadResolver, RejectsOverlayThatCrossesASection) {
   llvm::consumeError(Crosses.takeError());
 }
 
+static std::vector<uint8_t> makePub32(uint32_t Flags, uint32_t Offset,
+                                      uint16_t Segment, llvm::StringRef Name) {
+  const uint32_t AfterLen = 2u + 10u + static_cast<uint32_t>(Name.size()) + 1u;
+  const uint32_t Padded = (AfterLen + 3u) & ~3u;
+  std::vector<uint8_t> Bytes(2u + Padded, 0);
+  llvm::support::endian::write16le(Bytes.data(), static_cast<uint16_t>(Padded));
+  llvm::support::endian::write16le(
+      Bytes.data() + 2,
+      static_cast<uint16_t>(llvm::codeview::SymbolKind::S_PUB32));
+  llvm::support::endian::write32le(Bytes.data() + 4, Flags);
+  llvm::support::endian::write32le(Bytes.data() + 8, Offset);
+  llvm::support::endian::write16le(Bytes.data() + 12, Segment);
+  std::memcpy(Bytes.data() + 14, Name.data(), Name.size());
+  return Bytes;
+}
+
+TEST(PDBPublicSym32Parse, FunctionRecord) {
+  const std::vector<uint8_t> Bytes = makePub32(
+      static_cast<uint32_t>(llvm::codeview::PublicSymFlags::Code) |
+          static_cast<uint32_t>(llvm::codeview::PublicSymFlags::Function),
+      0x1050, 1, "probe_plain_seh");
+  pdb_loader_detail::ParsedPublicSym32 Pub;
+  llvm::Error Err =
+      pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
+  ASSERT_FALSE(static_cast<bool>(Err)) << llvm::toString(std::move(Err));
+  EXPECT_TRUE(Pub.IsFunction);
+  EXPECT_EQ(Pub.Segment, 1u);
+  EXPECT_EQ(Pub.Offset, 0x1050u);
+  EXPECT_EQ(Pub.Name, "probe_plain_seh");
+}
+
+TEST(PDBPublicSym32Parse, DataRecordIsNotFunction) {
+  const std::vector<uint8_t> Bytes =
+      makePub32(0, 0x2000, 2, "g_image_object");
+  pdb_loader_detail::ParsedPublicSym32 Pub;
+  llvm::Error Err =
+      pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
+  ASSERT_FALSE(static_cast<bool>(Err)) << llvm::toString(std::move(Err));
+  EXPECT_FALSE(Pub.IsFunction);
+  EXPECT_EQ(Pub.Name, "g_image_object");
+}
+
+TEST(PDBPublicSym32Parse, RejectsWrongKindAndTruncation) {
+  const std::vector<uint8_t> End = makeMinimalCVSymbols(1);
+  pdb_loader_detail::ParsedPublicSym32 Pub;
+  llvm::Error WrongKind =
+      pdb_loader_detail::parsePublicSym32At(End, 0, Pub);
+  EXPECT_TRUE(static_cast<bool>(WrongKind));
+  llvm::consumeError(std::move(WrongKind));
+
+  const std::vector<uint8_t> Truncated{0x20, 0x00, 0x0e, 0x11};
+  llvm::Error Short =
+      pdb_loader_detail::parsePublicSym32At(Truncated, 0, Pub);
+  EXPECT_TRUE(static_cast<bool>(Short));
+  llvm::consumeError(std::move(Short));
+
+  llvm::Error BadOffset =
+      pdb_loader_detail::parsePublicSym32At(End, 1, Pub);
+  EXPECT_TRUE(static_cast<bool>(BadOffset));
+  llvm::consumeError(std::move(BadOffset));
+}
+
 TEST(PDBSymbolRecordIndex, AcceptsOnlyExactRecordStarts) {
   std::vector<uint8_t> Bytes = makeMinimalCVSymbols(2);
   llvm::BinaryByteStream Stream(Bytes, llvm::endianness::little);
@@ -376,6 +438,36 @@ TEST(PDBFunctionNameRegistry, IdenticalNamesRemainUnique) {
             pdb_loader_detail::FunctionNameState::Unique);
   ASSERT_TRUE(Registry.name(0x140001000).has_value());
   EXPECT_EQ(*Registry.name(0x140001000), "leaks_memory");
+}
+
+TEST(PDBIdentityIntegration, LoadReportsModuleProgress) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  struct Seen {
+    uint64_t DebugReports = 0;
+    std::string LastDetail;
+  } State;
+  LoadProgress Progress;
+  Progress.User = &State;
+  Progress.Callback = [](void *User, const char *Phase, unsigned long long,
+                         unsigned long long, const char *Detail) {
+    if (!Phase || llvm::StringRef(Phase) != "debug")
+      return;
+    auto *S = static_cast<Seen *>(User);
+    ++S->DebugReports;
+    if (Detail && Detail[0])
+      S->LastDetail = Detail;
+  };
+  auto ContextOr = PDBDebugContext::load(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr, Progress);
+  ASSERT_TRUE(static_cast<bool>(ContextOr))
+      << llvm::toString(ContextOr.takeError());
+  EXPECT_GE(State.DebugReports, 1u);
+  EXPECT_TRUE(State.LastDetail == "pdb publics" ||
+              State.LastDetail == "pdb modules" ||
+              State.LastDetail == "opening pdb" ||
+              State.LastDetail == "pdb symbol stream");
 }
 
 TEST(PDBIdentityIntegration, MatchingFixtureAuthenticatesNamesButNotExtents) {

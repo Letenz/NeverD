@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <limits>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -31,7 +32,23 @@ size_t fh3HandlerTypeSize(Arch TargetArch) {
 
 } // namespace
 
-bool parseFH3(ExceptionFunction &F, const BinaryImage &Img) {
+CxxFuncInfoGroups buildCxxFuncInfoGroups(const BinaryImage &Img) {
+  CxxFuncInfoGroups Groups;
+  Groups.reserve(Img.ExceptionMetadata.Functions.size());
+  for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
+    if (Candidate.Kind != RuntimeFunctionKind::Primary ||
+        Candidate.HandlerDataVA == 0 || !Candidate.CodeRange.isValid())
+      continue;
+    auto CandidateFuncInfoRVA =
+        readScalar<uint32_t>(Img, Candidate.HandlerDataVA);
+    if (CandidateFuncInfoRVA)
+      Groups[*CandidateFuncInfoRVA].push_back(Candidate.CodeRange);
+  }
+  return Groups;
+}
+
+bool parseFH3(ExceptionFunction &F, const BinaryImage &Img,
+              const CxxFuncInfoGroups *Groups) {
   auto FuncInfoRVA = readScalar<uint32_t>(Img, F.HandlerDataVA);
   va_t FuncInfoVA = 0;
   if (!FuncInfoRVA || *FuncInfoRVA == 0 ||
@@ -85,14 +102,21 @@ bool parseFH3(ExceptionFunction &F, const BinaryImage &Img) {
   Info.Version = Version;
   Info.BBTFlags = *MagicWord >> 29;
   std::vector<ExceptionAddressRange> FunctionGroupRanges{F.CodeRange};
-  for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
-    if (&Candidate == &F || Candidate.Kind != RuntimeFunctionKind::Primary ||
-        Candidate.HandlerDataVA == 0 || !Candidate.CodeRange.isValid())
-      continue;
-    auto CandidateFuncInfoRVA =
-        readScalar<uint32_t>(Img, Candidate.HandlerDataVA);
-    if (CandidateFuncInfoRVA && *CandidateFuncInfoRVA == *FuncInfoRVA)
-      FunctionGroupRanges.push_back(Candidate.CodeRange);
+  if (Groups) {
+    const auto It = Groups->find(*FuncInfoRVA);
+    if (It != Groups->end())
+      FunctionGroupRanges.insert(FunctionGroupRanges.end(), It->second.begin(),
+                                 It->second.end());
+  } else {
+    for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
+      if (&Candidate == &F || Candidate.Kind != RuntimeFunctionKind::Primary ||
+          Candidate.HandlerDataVA == 0 || !Candidate.CodeRange.isValid())
+        continue;
+      auto CandidateFuncInfoRVA =
+          readScalar<uint32_t>(Img, Candidate.HandlerDataVA);
+      if (CandidateFuncInfoRVA && *CandidateFuncInfoRVA == *FuncInfoRVA)
+        FunctionGroupRanges.push_back(Candidate.CodeRange);
+    }
   }
   std::sort(FunctionGroupRanges.begin(), FunctionGroupRanges.end(),
             [](const ExceptionAddressRange &A, const ExceptionAddressRange &B) {

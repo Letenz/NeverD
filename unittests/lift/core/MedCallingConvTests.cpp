@@ -321,11 +321,83 @@ TEST(TargetRegInfo, SelectsIntegerArgumentRegistersFromImageFormat) {
   EXPECT_EQ(Win64Args[2], x86reg::R8);
   EXPECT_EQ(X64.integerParamRegs(BinaryFormat::ELF), X64.IntParamRegs);
   EXPECT_EQ(X64.integerParamRegs(BinaryFormat::MachO), X64.IntParamRegs);
-
   const TargetRegInfo &X86 = getTargetRegInfo(Arch::X86);
   EXPECT_EQ(X86.integerParamRegs(BinaryFormat::COFF), X86.IntParamRegs);
   const TargetRegInfo &A64 = getTargetRegInfo(Arch::AArch64);
   EXPECT_EQ(A64.integerParamRegs(BinaryFormat::COFF), A64.IntParamRegs);
+}
+
+TEST(LowToMedX64CallingConv, Win64HomeLoadsAreNotStackParameters) {
+  constexpr Arch TheArch = Arch::X64;
+  const TargetRegInfo &TRI = getTargetRegInfo(TheArch);
+  LowFunc Low;
+  Low.Entry = 0x140001000;
+  Low.Name = "win64_homes";
+  Low.Blocks.resize(1);
+  LowBlock &Block = Low.Blocks[0];
+  Block.Id = 0;
+  Block.StartAddr = 0x140001000;
+  Block.EndAddr = 0x140001020;
+
+  auto LiveIn = [&](uint64_t Reg) {
+    LowOp Op;
+    Op.Opcode = NdOp::COPY;
+    Op.Addr = 0x140001000;
+    Op.Output = NdVar::reg(Reg, 8);
+    Op.addInput(NdVar::reg(Reg, 8));
+    Block.Ops.push_back(Op);
+  };
+  LiveIn(x86reg::RCX);
+  LiveIn(x86reg::RDX);
+  LiveIn(x86reg::R8);
+  LiveIn(x86reg::R9);
+
+  NdVar Home = NdVar::tmp(1, 8);
+  LowOp Lea;
+  Lea.Opcode = NdOp::INT_ADD;
+  Lea.Addr = 0x140001004;
+  Lea.Output = Home;
+  Lea.addInput(NdVar::reg(TRI.StackPointer, 8));
+  Lea.addInput(NdVar::cst(8, 8));
+  Block.Ops.push_back(Lea);
+
+  LowOp Save;
+  Save.Opcode = NdOp::STORE;
+  Save.Addr = 0x140001008;
+  Save.addInput(Home);
+  Save.addInput(NdVar::reg(x86reg::RBX, 8));
+  Block.Ops.push_back(Save);
+
+  NdVar Restored = NdVar::tmp(2, 8);
+  LowOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.Addr = 0x14000100c;
+  Load.Output = Restored;
+  Load.addInput(Home);
+  Block.Ops.push_back(Load);
+
+  LowOp Use;
+  Use.Opcode = NdOp::INT_ADD;
+  Use.Addr = 0x140001010;
+  Use.Output = NdVar::reg(x86reg::RAX, 8);
+  Use.addInput(NdVar::reg(x86reg::RCX, 8));
+  Use.addInput(Restored);
+  Block.Ops.push_back(Use);
+
+  LowOp Ret;
+  Ret.Opcode = NdOp::RETURN;
+  Ret.Addr = 0x140001014;
+  Ret.addInput(NdVar::reg(x86reg::RAX, 8));
+  Block.Ops.push_back(Ret);
+
+  MedFunc Med =
+      LowToMedConverter().convert(Low, TheArch, BinaryFormat::COFF);
+  ASSERT_EQ(Med.CC, CallingConv::Win64);
+  ASSERT_EQ(Med.Params.size(), 4u) << Med.Params.size();
+  EXPECT_EQ(Med.Params[0].RegOff, x86reg::RCX);
+  EXPECT_EQ(Med.Params[1].RegOff, x86reg::RDX);
+  EXPECT_EQ(Med.Params[2].RegOff, x86reg::R8);
+  EXPECT_EQ(Med.Params[3].RegOff, x86reg::R9);
 }
 
 TEST(TargetRegInfo, X86UsesSysVCalleeSavedRegisters) {

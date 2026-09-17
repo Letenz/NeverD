@@ -99,6 +99,7 @@ bool hasImmutableReachingStores(const HighCAnalysisState &State,
 void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
                             VarNameFn VarFn, ExprStrFn ExprFn) {
   State.StoreFwd.clear();
+  State.StoreFwdByAddressKey.clear();
   State.StoreFwdDeps.clear();
   State.ForwardedAddressDeps.clear();
   if (!hasImmutableReachingStores(State, Func, VarFn, ExprFn))
@@ -329,7 +330,9 @@ void analyzeStoreForwarding(HighCAnalysisState &State, const HighFunc &Func,
           ReadBytes <=
               (MaxTotalForwardedBytes - TotalForwardedBytes) / ReadCount) {
         TotalForwardedBytes += ReadBytes * ReadCount;
-        State.StoreFwd.emplace(Addr, std::move(Expanded));
+        State.StoreFwd.emplace(Addr, Expanded);
+        if (auto KeyIt = AddrToKey.find(Addr); KeyIt != AddrToKey.end())
+          State.StoreFwdByAddressKey.emplace(KeyIt->second, Expanded);
       }
     }
 

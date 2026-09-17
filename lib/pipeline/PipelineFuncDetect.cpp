@@ -152,12 +152,44 @@ std::vector<std::pair<va_t, std::string>>
 Pipeline::detectFunctions(const BinaryImage &Img, Decoder &Dec,
                           const PipelineOptions &Opts, DebugContext *Dbg,
                           PipelineResult &Result) {
-  FuncDetector Detector;
-  auto FuncEntries = Detector.detect(Img, Dec);
-  LLVM_DEBUG(llvm::dbgs() << "pipeline: detected " << FuncEntries.size()
-                          << " functions\n");
+  std::vector<std::pair<va_t, std::string>> FuncEntries;
+  if (!Opts.OnlyFunctionEntries.empty()) {
+    // Single-function CLI export must not scan the whole image: call-target
+    // detection on a 100k-function PE is the work we are trying to skip.
+    // Catch funclets are separate pdata functions; include them so HighC can
+    // embed their bodies in `catch` clauses of the requested parent.
+    std::set<va_t> Wanted(Opts.OnlyFunctionEntries.begin(),
+                          Opts.OnlyFunctionEntries.end());
+    std::vector<va_t> Work(Wanted.begin(), Wanted.end());
+    for (size_t I = 0; I < Work.size(); ++I) {
+      const ExceptionFunction *EH =
+          Img.ExceptionMetadata.findFunction(Work[I]);
+      if (!EH || !EH->Cxx)
+        continue;
+      for (const CxxTryBlock &Try : EH->Cxx->TryBlocks)
+        for (const CxxCatchHandler &Handler : Try.Handlers)
+          if (Handler.HandlerVA && Wanted.insert(Handler.HandlerVA).second)
+            Work.push_back(Handler.HandlerVA);
+    }
+    FuncEntries.reserve(Wanted.size());
+    for (va_t Addr : Wanted) {
+      if (!Img.hasExecutableCodeOwnerAt(Addr))
+        continue;
+      FuncEntries.push_back({Addr, Img.getFunctionNameAt(Addr)});
+    }
+    LLVM_DEBUG(llvm::dbgs() << "pipeline: only-function filter kept "
+                            << FuncEntries.size() << " entries\n");
+  } else {
+    FuncDetector Detector;
+    FuncEntries = Detector.detect(Img, Dec);
+    LLVM_DEBUG(llvm::dbgs() << "pipeline: detected " << FuncEntries.size()
+                            << " functions\n");
+  }
 
-  if (Dbg && Dbg->hasInfo()) {
+  // mergeDebugSymbols also *adds* every PDB function that is not already a
+  // candidate. Single-function export must not reintroduce the rest of the
+  // image after OnlyFunctionEntries has already chosen the work set.
+  if (Dbg && Dbg->hasInfo() && Opts.OnlyFunctionEntries.empty()) {
     mergeDebugSymbols(FuncEntries, *Dbg);
     std::vector<std::pair<va_t, va_t>> DebugRanges;
     std::set<va_t> DebugStarts;

@@ -290,6 +290,20 @@ TEST_F(COFFFunctionListingTest, UnnamedUnwindEntriesStillProduceFunctions) {
   }
 }
 
+TEST_F(COFFFunctionListingTest, UnnamedPdataAcceptsWin64RegisterHome) {
+  auto Bytes = makePE(Arch::X64, false, false, true);
+  // MSVC homes a 32-bit Win64 arg0 as `mov [rsp+8], ecx` (0x89), which is
+  // not a strict REX/push prologue byte.
+  Bytes[TextOffset] = 0x89;
+  COFFLoader Loader;
+  auto Image = Loader.load(writeFixture(Bytes));
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const auto Functions = Image->getFunctionSymbols();
+  ASSERT_EQ(Functions.size(), 1u);
+  EXPECT_EQ(Functions[0]->Addr, imageBase(Arch::X64) + TextRVA);
+  EXPECT_EQ(Functions[0]->Size, functionSize(Arch::X64));
+}
+
 TEST_F(COFFFunctionListingTest, OrdinaryObjectAuxRecordsDoNotBecomeAliases) {
   COFFLoader Loader;
   auto Image = Loader.load(writeFixture(makeObject()));

@@ -17,6 +17,7 @@
 #include "HighCWriter.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/libc/LibCNames.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -124,16 +125,10 @@ const char *memoryAddressSpaceName(NdMemoryAddressSpace AddressSpace) {
 }
 
 unsigned cMemoryAddressSpace(NdMemoryAddressSpace AddressSpace) {
-  switch (AddressSpace) {
-  case NdMemoryAddressSpace::X86FS:
-    return 257;
-  case NdMemoryAddressSpace::X86GS:
-    return 256;
-  case NdMemoryAddressSpace::Default:
-    break;
-  }
-  llvm::report_fatal_error(
-      "default memory does not have a target address-space attribute");
+  if (AddressSpace == NdMemoryAddressSpace::Default)
+    llvm::report_fatal_error(
+        "default memory does not have a target address-space attribute");
+  return llvmX86MemoryAddressSpace(AddressSpace);
 }
 
 void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
@@ -252,14 +247,19 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (!Seen.insert(&E).second)
       return;
     if (HideEHRuntimeMemory &&
-        (E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
-         E.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
+        E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
+    const bool MsvcSegmentedScalar =
+        E.MemoryOrdering == NdMemoryOrdering::None &&
+        E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+        (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
+        (E.Kind == ExprKind::Load || E.Kind == ExprKind::Store);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
-      HasSegmentedMemory = true;
+      if (!MsvcSegmentedScalar)
+        HasSegmentedMemory = true;
       const bool IsMemoryExpr =
           E.Kind == ExprKind::Load || E.Kind == ExprKind::Store ||
           (E.Kind == ExprKind::BinOp &&
@@ -276,9 +276,10 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       const bool NeedsHelper =
           E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
           E.MemoryOrdering != NdMemoryOrdering::None;
-      if (NeedsHelper)
+      if (NeedsHelper && !MsvcSegmentedScalar)
         Names.insert(Type);
-      if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+          !MsvcSegmentedScalar)
         SegmentedMemoryTypes.insert({Type, E.MemoryAddressSpace});
       if (E.MemoryOrdering != NdMemoryOrdering::None)
         AtomicLoadTypes.insert({Type, E.MemoryOrdering, E.MemoryAddressSpace});
@@ -311,8 +312,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
         if (HideEHRuntimeMemory &&
-            (Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ||
-             Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86GS))
+            Stmt.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
           return;
         validateMemoryAddressSpaceForC(Stmt.MemoryAddressSpace, Opts.TheArch);
         HasSegmentedMemory = true;
@@ -483,6 +483,10 @@ HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
   if (Ordering == NdMemoryOrdering::None &&
       AddressSpace == NdMemoryAddressSpace::Default)
     return "(*(" + Type + " *)(" + Addr.str() + "))";
+  if (std::string Seg = renderX86MsvcSegmentedLoad(
+          Opts.TheArch, Ty ? Ty->Size : 0, Addr, Ordering, AddressSpace);
+      !Seg.empty())
+    return Seg;
   auto It = MemoryTypes.find(Type);
   if (It == MemoryTypes.end())
     llvm::report_fatal_error("HighC memory load type was not collected");
@@ -739,7 +743,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         }
         if (Ex.IntrinsicId == Intrinsic::None && Name[0] == '_')
           Name = Name.substr(1);
-        Targets.insert(Name);
+        if (!isMsvcCxxThrowCallName(Name) &&
+            !isMsvcCxxThrowCallName(Ex.CallTarget))
+          Targets.insert(Name);
       }
     }
     for (auto &Op : Ex.Operands)
@@ -945,7 +951,6 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 
   for (const std::string &Name : ExternFuncs) {
     llvm::StringRef RenderedName(Name);
-    RenderedName.consume_front("_");
     std::string Identifier =
         GlobalIdentifierAllocator.allocate(RenderedName, "nd_external");
     ExternalFunctionIdentifiers.emplace(Name, Identifier);
@@ -983,7 +988,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       }
       OS << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
-      OS << "extern int " << Identifier << "();\n";
+      OS << "extern int " << Identifier << "()";
+      if (libc::isNoReturnFunction(Name) ||
+          libc::isNoReturnFunction(Identifier))
+        OS << " __attribute__((noreturn))";
+      OS << ";\n";
     }
   }
 
@@ -1121,8 +1130,10 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
+  std::vector<HighFunc> Working = Funcs;
+  attachCxxFuncletBodies(Working);
   HighCWriter W(Out, Opts, Dbg);
-  W.writeAll(Funcs);
+  W.writeAll(Working);
   return true;
 }
 

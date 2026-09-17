@@ -94,6 +94,7 @@ signals:
   void analysisCompleted();
   void pendingChanged();
   void idle();
+  void loadProgress(const QJsonObject &payload);
 
 private:
   struct State;

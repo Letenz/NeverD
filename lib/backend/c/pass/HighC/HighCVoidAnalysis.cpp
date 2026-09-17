@@ -11,6 +11,10 @@
 
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/libc/LibCNames.h"
+
+#include <functional>
+#include <map>
 
 namespace neverd {
 
@@ -87,9 +91,14 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
     auto It = VarSources.find(VName);
     if (It != VarSources.end()) {
       auto *Src = It->second;
-      if (Src->Kind == ExprKind::Call && Src->IntrinsicId != Intrinsic::None)
-        return isSideeffectIntrinsic(Src->IntrinsicId) ||
-               !intrinsicCName(Src->IntrinsicId);
+      if (Src->Kind == ExprKind::Call) {
+        if (isMsvcCxxThrowCallName(Src->CallTarget) ||
+            libc::isNoReturnFunction(Src->CallTarget))
+          return true;
+        if (Src->IntrinsicId != Intrinsic::None)
+          return isSideeffectIntrinsic(Src->IntrinsicId) ||
+                 !intrinsicCName(Src->IntrinsicId);
+      }
       return false;
     }
 
@@ -102,6 +111,8 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
 
   std::function<bool(const HighExpr &)> IsVoidExpr =
       [&](const HighExpr &E) -> bool {
+    if (E.Kind == ExprKind::Undef)
+      return true;
     if (E.Kind == ExprKind::Var)
       return IsVoidSource(VarFn(E.Var));
     if (E.Kind == ExprKind::BinOp && E.Op == NdOp::SELECT &&
@@ -191,6 +202,52 @@ void analyzeVoidDeadChain(HighCAnalysisState &State, const HighFunc &Func,
     if (S.Kind == StmtKind::Return && S.RetVal)
       Collect(*S.RetVal);
   });
+}
+
+void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
+                          VarNameFn VarFn) {
+  auto ExprHasEffect = [](const HighExpr &E) -> bool {
+    std::function<bool(const HighExpr &)> Walk = [&](const HighExpr &N) {
+      if (N.Kind == ExprKind::Call || N.Kind == ExprKind::Store)
+        return true;
+      if (N.MemoryOrdering != NdMemoryOrdering::None)
+        return true;
+      for (const ExprPtr &Op : N.Operands)
+        if (Op && Walk(*Op))
+          return true;
+      return false;
+    };
+    return Walk(E);
+  };
+
+  bool Changed = true;
+  unsigned Guard = 0;
+  while (Changed && Guard++ < 8) {
+    Changed = false;
+    std::map<std::string, TypeRef> Used;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (State.DeadStmts.count(&S))
+        return;
+      forEachRhsExpr(S, [&](const ExprPtr &E) {
+        if (E)
+          collectUsedVarsExpr(*E, Used, VarFn);
+      });
+    });
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (State.DeadStmts.count(&S))
+        return;
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
+        return;
+      if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
+        return;
+      if (ExprHasEffect(*S.Val))
+        return;
+      if (Used.count(VarFn(S.Dst->Var)))
+        return;
+      State.DeadStmts.insert(&S);
+      Changed = true;
+    });
+  }
 }
 
 } // namespace neverd

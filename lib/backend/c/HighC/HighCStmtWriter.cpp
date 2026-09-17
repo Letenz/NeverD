@@ -13,6 +13,7 @@
 
 #include "HighCWriter.h"
 
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -38,6 +39,52 @@ bool isCIdentifier(llvm::StringRef Name) {
   return llvm::all_of(Name, [](char Ch) {
     return std::isalnum(static_cast<unsigned char>(Ch)) || Ch == '_';
   });
+}
+
+bool isCxxThrowExpr(const HighExpr *E) {
+  return E && E->Kind == ExprKind::Call &&
+         isMsvcCxxThrowCallName(E->CallTarget);
+}
+
+bool isFastFailExpr(const HighExpr *E) { return E && isX86FastFailCall(*E); }
+
+bool isDebugTrapStmt(const HighStmt &Stmt) {
+  const HighExpr *E = nullptr;
+  if (Stmt.Kind == StmtKind::Call)
+    E = Stmt.CallExpr.get();
+  else if ((Stmt.Kind == StmtKind::Assign || Stmt.Kind == StmtKind::ExprStmt) &&
+           Stmt.Val)
+    E = Stmt.Val.get();
+  return E && E->Kind == ExprKind::Call &&
+         (E->IntrinsicId == Intrinsic::Int3 ||
+          E->IntrinsicId == Intrinsic::Ud2);
+}
+
+bool isCxxThrowStmt(const HighStmt &Stmt) {
+  if (Stmt.Kind == StmtKind::Call)
+    return isCxxThrowExpr(Stmt.CallExpr.get());
+  if ((Stmt.Kind == StmtKind::Assign || Stmt.Kind == StmtKind::ExprStmt) &&
+      Stmt.Val)
+    return isCxxThrowExpr(Stmt.Val.get());
+  return false;
+}
+
+const HighExpr *stmtCallExpr(const HighStmt &Stmt) {
+  if (Stmt.Kind == StmtKind::Call)
+    return Stmt.CallExpr.get();
+  if ((Stmt.Kind == StmtKind::Assign || Stmt.Kind == StmtKind::ExprStmt) &&
+      Stmt.Val)
+    return Stmt.Val.get();
+  return nullptr;
+}
+
+bool isNoReturnCallStmt(const HighStmt &Stmt) {
+  if (isCxxThrowStmt(Stmt))
+    return true;
+  const HighExpr *E = stmtCallExpr(Stmt);
+  if (!E || E->Kind != ExprKind::Call)
+    return false;
+  return libc::isNoReturnFunction(E->CallTarget) || isFastFailExpr(E);
 }
 
 void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
@@ -69,14 +116,27 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   const bool HideEHRuntimeMemory =
       CurrentFunc && CurrentFunc->ExceptionMetadata.has_value();
   auto IsEHRuntimeSpace = [&](NdMemoryAddressSpace Space) {
-    return HideEHRuntimeMemory &&
-           (Space == NdMemoryAddressSpace::X86FS ||
-            Space == NdMemoryAddressSpace::X86GS);
+    return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   switch (Stmt.Kind) {
   case StmtKind::Assign: {
     if (!Stmt.Dst || !Stmt.Val)
       return;
+    if (isCxxThrowExpr(Stmt.Val.get())) {
+      emitIndent(Indent);
+      OS << "throw";
+      if (!Stmt.Val->Operands.empty() && Stmt.Val->Operands[0])
+        OS << " " << exprStr(*Stmt.Val->Operands[0]);
+      OS << ";\n";
+      break;
+    }
+    if (Stmt.Val->Kind == ExprKind::Call &&
+        (libc::isNoReturnFunction(Stmt.Val->CallTarget) ||
+         isFastFailExpr(Stmt.Val.get()))) {
+      emitIndent(Indent);
+      OS << exprStr(*Stmt.Val) << ";\n";
+      break;
+    }
     if (Stmt.Val->Kind == ExprKind::Load &&
         IsEHRuntimeSpace(Stmt.Val->MemoryAddressSpace))
       return;
@@ -126,16 +186,19 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
           Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
         if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
-          if (isParamCopy(*Stmt.Val)) {
-            if (auto Src = copyForwardSource(*Stmt.Val)) {
-              CopyForward[*Slot] = *Src;
-              Analysis.DeadVars.insert(*Slot);
-              break;
-            }
-          }
           if (isCompilerEHConstant(*Stmt.Val))
             break;
+          if (isParamCopy(*Stmt.Val)) {
+            if (auto Src = copyForwardSource(*Stmt.Val)) {
+              auto It = CopyForward.find(*Slot);
+              if (It != CopyForward.end() && It->second == *Src) {
+                Analysis.DeadVars.insert(*Slot);
+                break;
+              }
+            }
+          }
           CopyForward.erase(*Slot);
+          Analysis.DeadVars.erase(*Slot);
           emitIndent(Indent);
           OS << *Slot << " = " << exprStr(*Stmt.Val) << ";\n";
           break;
@@ -158,11 +221,15 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         isCopyForwardDestination(Stmt.Dst->Var)) {
       const std::string DstName = varName(Stmt.Dst->Var);
       if (auto Src = copyForwardSource(*Stmt.Val)) {
-        CopyForward[DstName] = *Src;
-        Analysis.DeadVars.insert(DstName);
-        break;
+        auto It = CopyForward.find(DstName);
+        if (It != CopyForward.end() && It->second == *Src) {
+          Analysis.DeadVars.insert(DstName);
+          break;
+        }
+      } else {
+        CopyForward.erase(DstName);
+        Analysis.DeadVars.erase(DstName);
       }
-      CopyForward.erase(DstName);
     }
     emitIndent(Indent);
     if (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) {
@@ -194,12 +261,15 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
         if (isParamCopy(*Stmt.StoreVal)) {
           if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
-            CopyForward[*Slot] = *Src;
-            Analysis.DeadVars.insert(*Slot);
-            break;
+            auto It = CopyForward.find(*Slot);
+            if (It != CopyForward.end() && It->second == *Src) {
+              Analysis.DeadVars.insert(*Slot);
+              break;
+            }
           }
         }
         CopyForward.erase(*Slot);
+        Analysis.DeadVars.erase(*Slot);
         emitIndent(Indent);
         OS << *Slot << " = " << exprStr(*Stmt.StoreVal) << ";\n";
         break;
@@ -221,6 +291,14 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   case StmtKind::Call:
     if (!Stmt.CallExpr)
       return;
+    if (isCxxThrowExpr(Stmt.CallExpr.get())) {
+      emitIndent(Indent);
+      OS << "throw";
+      if (!Stmt.CallExpr->Operands.empty() && Stmt.CallExpr->Operands[0])
+        OS << " " << exprStr(*Stmt.CallExpr->Operands[0]);
+      OS << ";\n";
+      break;
+    }
     {
       auto Rendered = renderX86SegmentedIntrinsicStatement(
           Opts.TheArch, *Stmt.CallExpr, nullptr,
@@ -257,16 +335,20 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 
   case StmtKind::Return:
     emitIndent(Indent);
-    if (InferredVoid)
+    if (InferredVoid || !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef)
       OS << "return;\n";
-    else if (Stmt.RetVal)
-      OS << "return " << formatReturnExpr(*Stmt.RetVal) << ";\n";
+    else if (Stmt.RetVal->Kind == ExprKind::Var &&
+             Stmt.RetVal->Var.Kind != MedVar::Param &&
+             !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)))
+      OS << "return;\n";
     else
-      OS << "return;\n";
+      OS << "return " << formatReturnExpr(*Stmt.RetVal) << ";\n";
     break;
 
   case StmtKind::If:
     if (!Stmt.Cond)
+      return;
+    if (stmtsEffectivelyEmpty(Stmt.Body))
       return;
     emitIndent(Indent);
     OS << "if (" << exprStr(*Stmt.Cond) << ") {\n";
@@ -277,6 +359,9 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 
   case StmtKind::IfElse:
     if (!Stmt.Cond)
+      return;
+    if (stmtsEffectivelyEmpty(Stmt.Body) &&
+        stmtsEffectivelyEmpty(Stmt.ElseBody))
       return;
     if (stmtsEffectivelyEmpty(Stmt.Body) &&
         !stmtsEffectivelyEmpty(Stmt.ElseBody)) {
@@ -368,6 +453,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     break;
 
   case StmtKind::Block:
+    if (stmtsEffectivelyEmpty(Stmt.Body))
+      break;
     emitIndent(Indent);
     OS << "{\n";
     writeStmts(Stmt.Body, Indent + 1);
@@ -377,6 +464,14 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 
   case StmtKind::ExprStmt:
     if (Stmt.Val) {
+      if (isCxxThrowExpr(Stmt.Val.get())) {
+        emitIndent(Indent);
+        OS << "throw";
+        if (!Stmt.Val->Operands.empty() && Stmt.Val->Operands[0])
+          OS << " " << exprStr(*Stmt.Val->Operands[0]);
+        OS << ";\n";
+        break;
+      }
       if (Stmt.Val->Kind == ExprKind::Load && !Stmt.Val->Operands.empty() &&
           namedFrameSlot(*Stmt.Val->Operands[0]))
         break;
@@ -434,8 +529,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
             FilterName = functionIdentifier(Sym->Name);
         }
         if (FilterName.empty())
-          FilterName = "nd_seh_filter_0x" +
-                       llvm::utohexstr(Clause.FilterOrActionVA);
+          FilterName =
+              "nd_seh_filter_0x" + llvm::utohexstr(Clause.FilterOrActionVA);
         OS << FilterName << "(GetExceptionInformation())";
       }
       OS << ") {\n";
@@ -566,13 +661,100 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 
 void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent) {
   va_t LastLabel = InvalidVA;
-  for (auto &S : Stmts) {
+  bool AfterNoReturn = false;
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    const HighStmt &S = Stmts[I];
+    if (AfterNoReturn &&
+        (isDebugTrapStmt(S) || S.Kind == StmtKind::Return ||
+         S.Kind == StmtKind::Nop ||
+         (S.Kind == StmtKind::Block && stmtsEffectivelyEmpty(S.Body))))
+      continue;
+    if (S.Kind == StmtKind::IfElse && S.Cond && I + 1 < Stmts.size()) {
+      const HighStmt &Ret = Stmts[I + 1];
+      if (Ret.Kind == StmtKind::Return && Ret.RetVal &&
+          Ret.RetVal->Kind == ExprKind::Var) {
+        const std::string Join = varName(Ret.RetVal->Var);
+        const std::string JoinFwd = copyForwardName(Join);
+        auto JoinAssign =
+            [&](const std::vector<HighStmt> &Body) -> const HighStmt * {
+          const HighStmt *Hit = nullptr;
+          for (const HighStmt &E : Body) {
+            if (E.Kind != StmtKind::Assign || !E.Dst || !E.Val ||
+                E.Dst->Kind != ExprKind::Var)
+              continue;
+            const std::string Dst = varName(E.Dst->Var);
+            if (Dst == Join || Dst == JoinFwd)
+              Hit = &E;
+          }
+          return Hit;
+        };
+        const HighStmt *ThenJoin = JoinAssign(S.Body);
+        const HighStmt *ElseJoin = JoinAssign(S.ElseBody);
+        const HighStmt *AssignCall = nullptr;
+        const HighStmt *ThenLiveAssign = nullptr;
+        size_t ElseLive = 0;
+        size_t ThenLive = 0;
+        for (const HighStmt &E : S.Body) {
+          if (stmtHiddenFromC(E))
+            continue;
+          ++ThenLive;
+          if (E.Kind == StmtKind::Assign && E.Dst && E.Val &&
+              E.Dst->Kind == ExprKind::Var)
+            ThenLiveAssign = &E;
+        }
+        for (const HighStmt &E : S.ElseBody) {
+          if (stmtHiddenFromC(E))
+            continue;
+          ++ElseLive;
+          if (E.Kind == StmtKind::Assign && E.Dst && E.Val &&
+              E.Dst->Kind == ExprKind::Var && E.Val->Kind == ExprKind::Call)
+            AssignCall = &E;
+        }
+        bool MatchesCall = false;
+        if (AssignCall) {
+          const std::string CallDst = varName(AssignCall->Dst->Var);
+          if (CallDst == Join || CallDst == JoinFwd)
+            MatchesCall = true;
+          if (ElseJoin && ElseJoin->Val &&
+              ElseJoin->Val->Kind == ExprKind::Var &&
+              varName(ElseJoin->Val->Var) == CallDst)
+            MatchesCall = true;
+        }
+        const HighExpr *ThenVal = nullptr;
+        if (ThenJoin && ThenJoin->Val && ThenJoin->Val->Kind != ExprKind::Undef)
+          ThenVal = ThenJoin->Val.get();
+        else if (ThenLive == 1 && ThenLiveAssign && ThenLiveAssign->Val &&
+                 ThenLiveAssign->Val->Kind != ExprKind::Call &&
+                 ThenLiveAssign->Val->Kind != ExprKind::Undef)
+          ThenVal = ThenLiveAssign->Val.get();
+        if ((ThenLive == 0 || (ThenLive == 1 && ThenVal)) && ElseLive == 1 &&
+            AssignCall && MatchesCall) {
+          emitIndent(Indent);
+          OS << "if (" << invertCondStr(*S.Cond) << ")\n";
+          emitIndent(Indent + 1);
+          OS << "return " << exprStr(*AssignCall->Val) << ";\n";
+          emitIndent(Indent);
+          if (ThenVal)
+            OS << "return " << formatReturnExpr(*ThenVal) << ";\n";
+          else
+            OS << "return;\n";
+          AfterNoReturn =
+              isCxxThrowExpr(AssignCall->Val.get()) ||
+              (AssignCall->Val->Kind == ExprKind::Call &&
+               (libc::isNoReturnFunction(AssignCall->Val->CallTarget) ||
+                isFastFailExpr(AssignCall->Val.get())));
+          ++I;
+          continue;
+        }
+      }
+    }
     if (S.Addr != 0 && S.Addr != InvalidVA && GotoTargets.count(S.Addr) &&
         S.Addr != LastLabel) {
       OS << "L_" + llvm::utohexstr(S.Addr) + ":\n";
       LastLabel = S.Addr;
     }
     writeStmt(S, Indent);
+    AfterNoReturn = isNoReturnCallStmt(S);
   }
 }
 
@@ -624,68 +806,115 @@ bool HighCWriter::isCompilerEHConstant(const HighExpr &Val) const {
 }
 
 void HighCWriter::collectCopyForward(const HighFunc &Func) {
-  std::function<void(const std::vector<HighStmt> &, bool)> Walk;
-  Walk = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
+  std::set<std::string> SeenLoad;
+  std::map<std::string, std::vector<TypeRef>> SlotLoadTypes;
+  std::function<void(const std::vector<HighStmt> &, bool, bool)> Walk;
+  Walk = [&](const std::vector<HighStmt> &Stmts, bool InHandler, bool Nested) {
     const bool Saved = InEHClauseBody;
     InEHClauseBody = InHandler;
     for (const HighStmt &Stmt : Stmts) {
-      if (!Analysis.DeadStmts.count(&Stmt)) {
-        if (Stmt.Kind == StmtKind::Assign && Stmt.Dst && Stmt.Val) {
-          if (Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty() &&
-              Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
-              Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-            if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
-              if (isParamCopy(*Stmt.Val)) {
-                if (auto Src = copyForwardSource(*Stmt.Val)) {
-                  CopyForward[*Slot] = *Src;
-                  Analysis.DeadVars.insert(*Slot);
-                } else {
-                  CopyForward.erase(*Slot);
-                }
-              } else {
-                CopyForward.erase(*Slot);
-              }
-            }
-          } else if ((Stmt.Dst->Kind == ExprKind::Var ||
-                      Stmt.Dst->Kind == ExprKind::Phi) &&
-                     isCopyForwardDestination(Stmt.Dst->Var)) {
-            const std::string DstName = varName(Stmt.Dst->Var);
-            if (auto Src = copyForwardSource(*Stmt.Val)) {
-              CopyForward[DstName] = *Src;
-              Analysis.DeadVars.insert(DstName);
-            } else {
-              CopyForward.erase(DstName);
+      auto NoteLoads = [&](const ExprPtr &E) {
+        if (!E)
+          return;
+        std::function<void(const HighExpr &)> Rec = [&](const HighExpr &N) {
+          if (N.Kind == ExprKind::Load && !N.Operands.empty() &&
+              N.Operands[0]) {
+            if (auto Slot = namedFrameSlot(*N.Operands[0])) {
+              SeenLoad.insert(*Slot);
+              SlotLoadTypes[*Slot].push_back(N.Type);
             }
           }
-        } else if (Stmt.Kind == StmtKind::Store && Stmt.StoreAddr &&
-                   Stmt.StoreVal &&
-                   Stmt.MemoryOrdering == NdMemoryOrdering::None &&
-                   Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-          if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
-            if (isParamCopy(*Stmt.StoreVal)) {
-              if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
-                CopyForward[*Slot] = *Src;
-                Analysis.DeadVars.insert(*Slot);
-              } else {
-                CopyForward.erase(*Slot);
-              }
-            } else {
-              CopyForward.erase(*Slot);
-            }
+          for (const ExprPtr &Op : N.Operands)
+            if (Op)
+              Rec(*Op);
+        };
+        Rec(*E);
+      };
+      forEachRhsExpr(Stmt, NoteLoads);
+
+      auto ApplyNamedSlot = [&](const std::optional<std::string> &Slot,
+                                const HighExpr &Val) {
+        if (!Slot)
+          return;
+        if (Nested || SeenLoad.count(*Slot) || !isParamCopy(Val) || !Val.Type ||
+            Val.Type->Kind != NdTypeKind::Int) {
+          CopyForward.erase(*Slot);
+          Analysis.DeadVars.erase(*Slot);
+          return;
+        }
+        if (auto Src = copyForwardSource(Val)) {
+          CopyForward[*Slot] = *Src;
+          Analysis.DeadVars.insert(*Slot);
+        } else {
+          CopyForward.erase(*Slot);
+          Analysis.DeadVars.erase(*Slot);
+        }
+      };
+
+      if (Stmt.Kind == StmtKind::Assign && Stmt.Dst && Stmt.Val) {
+        if (Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty() &&
+            Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
+            Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+          ApplyNamedSlot(namedFrameSlot(*Stmt.Dst->Operands[0]), *Stmt.Val);
+        } else if (!Analysis.DeadStmts.count(&Stmt) &&
+                   (Stmt.Dst->Kind == ExprKind::Var ||
+                    Stmt.Dst->Kind == ExprKind::Phi) &&
+                   isCopyForwardDestination(Stmt.Dst->Var)) {
+          const std::string DstName = varName(Stmt.Dst->Var);
+          if (auto Src = copyForwardSource(*Stmt.Val)) {
+            CopyForward[DstName] = *Src;
+            Analysis.DeadVars.insert(DstName);
+          } else {
+            CopyForward.erase(DstName);
+            Analysis.DeadVars.erase(DstName);
           }
         }
+      } else if (Stmt.Kind == StmtKind::Store && Stmt.StoreAddr &&
+                 Stmt.StoreVal &&
+                 Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+                 Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        ApplyNamedSlot(namedFrameSlot(*Stmt.StoreAddr), *Stmt.StoreVal);
       }
-      Walk(Stmt.Body, InHandler);
-      Walk(Stmt.ElseBody, InHandler);
+
+      const bool ChildNested =
+          Nested || Stmt.Kind == StmtKind::If ||
+          Stmt.Kind == StmtKind::IfElse || Stmt.Kind == StmtKind::While ||
+          Stmt.Kind == StmtKind::DoWhile || Stmt.Kind == StmtKind::For ||
+          Stmt.Kind == StmtKind::Switch || Stmt.Kind == StmtKind::SEHTry ||
+          Stmt.Kind == StmtKind::CxxTry || Stmt.Kind == StmtKind::ItaniumTry;
+      Walk(Stmt.Body, InHandler, ChildNested);
+      Walk(Stmt.ElseBody, InHandler, ChildNested);
       for (const auto &C : Stmt.Cases)
-        Walk(C.Body, InHandler);
-      Walk(Stmt.DefaultBody, InHandler);
+        Walk(C.Body, InHandler, ChildNested);
+      Walk(Stmt.DefaultBody, InHandler, ChildNested);
       for (const auto &ClauseBody : Stmt.EHClauseBodies)
-        Walk(ClauseBody, true);
+        Walk(ClauseBody, true, true);
     }
     InEHClauseBody = Saved;
   };
-  Walk(Func.Body, false);
+  Walk(Func.Body, false, false);
+  for (const auto &[Slot, Types] : SlotLoadTypes) {
+    if (!CopyForward.count(Slot))
+      continue;
+    bool Compatible = true;
+    uint16_t Size = 0;
+    for (const TypeRef &Ty : Types) {
+      if (!Ty || Ty->Kind != NdTypeKind::Int) {
+        Compatible = false;
+        break;
+      }
+      if (Size == 0)
+        Size = Ty->Size;
+      else if (Ty->Size != Size) {
+        Compatible = false;
+        break;
+      }
+    }
+    if (!Compatible) {
+      CopyForward.erase(Slot);
+      Analysis.DeadVars.erase(Slot);
+    }
+  }
 }
 
 void HighCWriter::collectGotoTargets(const std::vector<HighStmt> &Stmts) {

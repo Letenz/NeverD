@@ -435,7 +435,8 @@ void PaneController::reloadRepresentationImpl() {
 }
 void PaneController::setRepresentation(const QString &representation) {
   if (kind_ != "representation" || representation_ == representation ||
-      !QStringList{"c", "low", "med", "high", "llvm"}.contains(representation))
+      !QStringList{"c", "llvmc", "low", "med", "high", "llvm"}.contains(
+          representation))
     return;
   registry_->resumeAnalysisReads(this);
   const QPointer<PaneController> guard(this);

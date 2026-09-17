@@ -1359,4 +1359,53 @@ TEST(COFFExceptionIR, DecompileRetainsFaithfulCxxAnnotation) {
   EXPECT_NE(Source.find("continuations=0x140001038"), std::string::npos);
 }
 
+TEST(COFFExceptionIR, OnlyFunctionEntriesSkipsUnrequestedFunctions) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  constexpr va_t First = 0x140001000;
+  constexpr va_t Second = 0x140001010;
+  Img.Entry = First;
+
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = First;
+  Text.Size = 0x20;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  Text.Data[0] = 0xc3;
+  Text.Data[Second - First] = 0xc3;
+  Img.Segments.push_back(std::move(Text));
+
+  Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = First;
+  TextSection.Size = 0x20;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(TextSection));
+  Img.KnownCodeRanges.emplace_back(First, First + 1);
+  Img.KnownCodeRanges.emplace_back(Second, Second + 1);
+  Img.Symbols.push_back(Symbol::makeFunc(First, 1));
+  Img.Symbols.push_back(Symbol::makeFunc(Second, 1));
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions All;
+  All.EmitDumpOutput = false;
+  auto AllResult = Pipeline().run(Img, Ctx, All);
+  ASSERT_TRUE(AllResult.Success) << AllResult.Error;
+  ASSERT_GE(AllResult.HighFuncs.size(), 2u);
+
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(Second);
+  auto OneResult = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(OneResult.Success) << OneResult.Error;
+  ASSERT_EQ(OneResult.HighFuncs.size(), 1u);
+  EXPECT_EQ(OneResult.HighFuncs[0].Entry, Second);
+  ASSERT_EQ(OneResult.LowFuncs.size(), 1u);
+  EXPECT_EQ(OneResult.LowFuncs[0].Entry, Second);
+}
+
 } // namespace

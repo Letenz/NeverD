@@ -286,6 +286,128 @@ static void mergeConsecutiveCondBlocks(std::vector<HighStmt> &Stmts) {
   }
 }
 
+// `if (c) { v = base + k; } use(v)` after goto-folding drops the false-edge
+// PHI `v = base`.  Seed that incoming value before the if when the then-arm
+// is an add/sub update of a named base.
+static const HighExpr *unwrapNamed(const HighExpr *E) {
+  unsigned Depth = 0;
+  while (E && Depth++ < 8 && !E->Operands.empty() && E->Operands[0] &&
+         (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+          (E->Kind == ExprKind::UnaryOp &&
+           (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT))))
+    E = E->Operands[0].get();
+  if (E && (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi))
+    return E;
+  return nullptr;
+}
+
+static const HighExpr *ifThenUpdateBase(const HighExpr &Val) {
+  const HighExpr *Cur = &Val;
+  unsigned Depth = 0;
+  while (Cur && Depth++ < 8 && !Cur->Operands.empty() && Cur->Operands[0] &&
+         (Cur->Kind == ExprKind::Cast || Cur->Kind == ExprKind::BitCast ||
+          (Cur->Kind == ExprKind::UnaryOp &&
+           (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT))))
+    Cur = Cur->Operands[0].get();
+  if (!Cur || Cur->Kind != ExprKind::BinOp || Cur->Operands.size() != 2 ||
+      (Cur->Op != NdOp::INT_ADD && Cur->Op != NdOp::INT_SUB))
+    return nullptr;
+  if (const HighExpr *Left = unwrapNamed(Cur->Operands[0].get()))
+    return Left;
+  if (Cur->Op == NdOp::INT_ADD)
+    return unwrapNamed(Cur->Operands[1].get());
+  return nullptr;
+}
+
+static bool stmtUsesVar(const HighStmt &S, const MedVar &Var) {
+  bool Hit = false;
+  forEachRhsExpr(S, [&](const ExprPtr &E) {
+    if (!E || Hit)
+      return;
+    std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+      if (Hit)
+        return;
+      if ((N.Kind == ExprKind::Var || N.Kind == ExprKind::Phi) &&
+          varKey(N.Var) == varKey(Var))
+        Hit = true;
+      for (const ExprPtr &Op : N.Operands)
+        if (Op)
+          Walk(*Op);
+    };
+    Walk(*E);
+  });
+  return Hit;
+}
+
+static void seedIfThenJoinInits(std::vector<HighStmt> &Stmts) {
+  for (size_t I = 0; I < Stmts.size(); ++I) {
+    if (!Stmts[I].Body.empty())
+      seedIfThenJoinInits(Stmts[I].Body);
+    if (!Stmts[I].ElseBody.empty())
+      seedIfThenJoinInits(Stmts[I].ElseBody);
+    for (auto &C : Stmts[I].Cases)
+      if (!C.Body.empty())
+        seedIfThenJoinInits(C.Body);
+    if (!Stmts[I].DefaultBody.empty())
+      seedIfThenJoinInits(Stmts[I].DefaultBody);
+    if (!Stmts[I].Cond ||
+        (Stmts[I].Kind != StmtKind::If && Stmts[I].Kind != StmtKind::IfElse))
+      continue;
+
+    auto LastVarAssign = [](const std::vector<HighStmt> &Body)
+        -> const HighStmt * {
+      const HighStmt *Hit = nullptr;
+      for (const HighStmt &Inner : Body) {
+        if (Inner.Kind == StmtKind::Assign && Inner.Dst && Inner.Val &&
+            Inner.Dst->Kind == ExprKind::Var)
+          Hit = &Inner;
+      }
+      return Hit;
+    };
+    const HighStmt *ThenAssign = LastVarAssign(Stmts[I].Body);
+    const HighStmt *ElseAssign = LastVarAssign(Stmts[I].ElseBody);
+    const HighStmt *LastAssign = ThenAssign;
+    if (Stmts[I].Kind == StmtKind::IfElse) {
+      if (ThenAssign && ElseAssign)
+        continue;
+      LastAssign = ThenAssign ? ThenAssign : ElseAssign;
+    }
+    if (!LastAssign)
+      continue;
+    const MedVar Dest = LastAssign->Dst->Var;
+    bool UsedAfter = false;
+    for (size_t J = I + 1; J < Stmts.size(); ++J) {
+      if (stmtUsesVar(Stmts[J], Dest)) {
+        UsedAfter = true;
+        break;
+      }
+    }
+    if (!UsedAfter)
+      continue;
+    bool AssignedBefore = false;
+    for (size_t J = 0; J < I; ++J) {
+      if (Stmts[J].Kind == StmtKind::Assign && Stmts[J].Dst &&
+          Stmts[J].Dst->Kind == ExprKind::Var &&
+          varKey(Stmts[J].Dst->Var) == varKey(Dest)) {
+        AssignedBefore = true;
+        break;
+      }
+    }
+    if (AssignedBefore)
+      continue;
+    const HighExpr *Base = ifThenUpdateBase(*LastAssign->Val);
+    if (!Base || varKey(Base->Var) == varKey(Dest))
+      continue;
+    HighStmt Init;
+    Init.Kind = StmtKind::Assign;
+    Init.Addr = Stmts[I].Addr;
+    Init.Dst = HighExpr::makeVar(Dest, LastAssign->Dst->Type);
+    Init.Val = std::make_shared<HighExpr>(*Base);
+    Stmts.insert(Stmts.begin() + static_cast<long>(I), std::move(Init));
+    ++I;
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // simplifyControlFlow -- the main entry point
 //===----------------------------------------------------------------------===//
@@ -314,6 +436,7 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
 
   removeTrivialGotos(Func.Body);
   simplifyNestedGotos(Func.Body);
+  seedIfThenJoinInits(Func.Body);
 
   mergeConsecutiveCondBlocks(Func.Body);
   inlineGotoReturns(Func, Med);

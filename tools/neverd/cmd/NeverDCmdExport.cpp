@@ -42,27 +42,41 @@ int runExport(neverd_session_t Sess) {
     return 1;
   }
   int FuncIdx = -1;
+  uint64_t DirectAddr = 0;
+  bool HaveDirectAddr = false;
   if (ExportFmt == FmtDecompile || ExportFmt == FmtIR) {
     if (!ExportFunc.empty()) {
       uint64_t Addr = 0;
       StringRef FuncRef(ExportFunc.getValue());
       if (FuncRef.consume_front("0x") || FuncRef.consume_front("0X")) {
-        if (!FuncRef.empty() && !FuncRef.getAsInteger(16, Addr))
+        if (!FuncRef.empty() && !FuncRef.getAsInteger(16, Addr)) {
+          HaveDirectAddr = true;
+          DirectAddr = Addr;
           FuncIdx = neverd_func_find_by_addr(Sess, Addr);
+        }
       } else {
         FuncIdx = neverd_func_find_by_name(Sess, ExportFunc.c_str());
-        if (FuncIdx < 0 && !FuncRef.empty() && !FuncRef.getAsInteger(16, Addr))
+        if (FuncIdx < 0 && !FuncRef.empty() &&
+            !FuncRef.getAsInteger(16, Addr)) {
+          HaveDirectAddr = true;
+          DirectAddr = Addr;
           FuncIdx = neverd_func_find_by_addr(Sess, Addr);
+        }
       }
     } else {
       FuncIdx = 0;
     }
 
-    if (FuncIdx < 0 || FuncIdx >= neverd_func_count(Sess)) {
+    if (FuncIdx < 0 && !HaveDirectAddr) {
       WithColor::error() << "function not found: " << ExportFunc.getValue()
                          << "\n";
       return 1;
     }
+  }
+
+  if (LlvmRoute && ExportFmt != FmtDecompile) {
+    WithColor::error() << "--llvm only applies to --format decompile\n";
+    return 1;
   }
 
   std::error_code EC;
@@ -73,20 +87,22 @@ int runExport(neverd_session_t Sess) {
   }
 
   if (ExportFmt == FmtDecompile || ExportFmt == FmtIR) {
-    uint64_t Entry = neverd_func_entry(Sess, FuncIdx);
+    uint64_t Entry =
+        FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
     const char *Text = nullptr;
     if (ExportFmt == FmtDecompile)
-      Text = neverd_decompile(Sess, Entry);
+      Text = LlvmRoute ? neverd_decompile_llvm(Sess, Entry)
+                       : neverd_decompile(Sess, Entry);
     else
       Text = neverd_ir_llvm(Sess, Entry);
 
-    if (Text) {
-      OS << Text;
-      neverd_free_string(Text);
-    } else {
+    if (!Text || Text[0] == '\0') {
       WithColor::error() << "export failed: " << takeLastError(Sess) << "\n";
+      neverd_free_string(Text);
       return 1;
     }
+    OS << Text;
+    neverd_free_string(Text);
   } else {
     const char *Json = nullptr;
     if (ExportFmt == FmtFuncs) {

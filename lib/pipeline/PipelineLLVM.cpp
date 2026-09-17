@@ -262,7 +262,12 @@ Pipeline::LLVMEmissionResult Pipeline::runLLVMShardPipeline(
           ShardPhase = "optimization";
           OptimizationOptions Options;
           OptimizationResult Optimization = optimizeModule(*M, Options);
-          if (isFatalOptimizationStop(Optimization.Stop)) {
+          if (Optimization.Stop == OptimizationStopReason::InputInvalid) {
+            // Input failed module verification or EH-rewrite contracts.
+            // Keep the unoptimized shard so `decompile --llvm` still emits C;
+            // do not treat this as a fatal shard failure.
+            promoteScaffoldingAllocas(*M);
+          } else if (isFatalOptimizationStop(Optimization.Stop)) {
             Shard.LLVMVerifierFailed = true;
             fail(optimizationStopReasonName(Optimization.Stop));
             return;

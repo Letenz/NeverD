@@ -721,15 +721,20 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
     return;
   const auto &TRI = getTargetRegInfo(TargetArch);
   const uint64_t SpOff = TRI.StackPointer;
-  const int MaxRegArgs = static_cast<int>(TRI.IntParamRegs.size());
+  const bool Win64 = Func.CC == CallingConv::Win64;
+  const llvm::ArrayRef<uint64_t> ParamRegs =
+      Win64 ? TRI.Win64ParamRegs : TRI.IntParamRegs;
+  const int MaxRegArgs = static_cast<int>(ParamRegs.size());
   const int Slot = TRI.PointerSize;
   if (MaxRegArgs <= 0 || Slot <= 0)
     return;
 
-  // x86-64 `call` pushes a return address into [entry_sp]; the first stack
-  // argument sits one slot above it.  AArch64/ARM keep the return address in
-  // LR, so the first stack argument is at [entry_sp + 0].
-  const int64_t Base = (TargetArch == Arch::X64) ? Slot : 0;
+  // x86-64 `call` pushes a return address into [entry_sp].  SysV's first
+  // stack argument sits one slot above it.  Win64's four register homes
+  // occupy [entry_sp+8, +32]; the first stack argument is at +0x28.
+  const int64_t Base = TargetArch != Arch::X64 ? 0
+                       : Win64                 ? Slot * (1 + MaxRegArgs)
+                                               : Slot;
 
   // Count the leading integer parameter registers already recovered.  A stack
   // argument implies every register slot is a real argument and the stack
@@ -740,7 +745,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
   int Leading = 0;
   for (int I = 0; I < MaxRegArgs && I < static_cast<int>(Func.Params.size());
        ++I) {
-    if (Func.Params[I].RegOff != TRI.IntParamRegs[I])
+    if (Func.Params[I].RegOff != ParamRegs[I])
       break;
     ++Leading;
   }
@@ -920,7 +925,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
         MedVar P;
         P.Kind = MedVar::Param;
         P.Id = I;
-        P.RegOff = TRI.IntParamRegs[I];
+        P.RegOff = ParamRegs[I];
         P.Size = TRI.FullRegWidth;
         P.TheArch = TargetArch;
         RegParams.push_back(P);
@@ -940,7 +945,7 @@ void detectStackParams(MedFunc &Func, Arch TargetArch,
         MedVar P;
         P.Kind = MedVar::Param;
         P.Id = -1;
-        P.RegOff = TRI.IntParamRegs[I];
+        P.RegOff = ParamRegs[I];
         P.Size = TRI.FullRegWidth;
         P.TheArch = TargetArch;
         Pad.push_back(P);

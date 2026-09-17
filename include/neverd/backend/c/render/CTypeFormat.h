@@ -38,6 +38,11 @@ std::string llvmStructName(llvm::StructType *ST);
 
 std::string escapeCString(llvm::StringRef Str);
 
+/// MSVC `<intrin.h>` GS/FS reads (`__readgsqword` / `__readfsdword`, …).
+/// Implemented with the x86 C renderer.  \p SizeBytes is the access width.
+/// Returns null when that width has no matching intrinsic.
+const char *x86SegmentedReadIntrinsic(bool GS, unsigned SizeBytes);
+
 /// Returns the platform-specific intrinsic headers for the given arch.
 /// Dispatches to the per-arch lists implemented alongside the intrinsic
 /// renderers (HighCIntrinsicRender{X86,ARM}.cpp).

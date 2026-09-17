@@ -736,6 +736,18 @@ TEST(ApplyDebugSymbolsTest, IgnoresUnusableDebugEntries) {
   EXPECT_TRUE(Img.Symbols.empty());
 }
 
+TEST(ApplyDebugSymbolsTest, PublishesNamesOnlyDataObjectsWithoutExtents) {
+  BinaryImage Img;
+  FakeDebugContext Dbg({}, {{"__security_cookie", 0x1400050E0, 0, false}},
+                       false);
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_TRUE(Img.ExactDataObjects.empty());
+  ASSERT_EQ(Img.Symbols.size(), 1u);
+  EXPECT_EQ(Img.Symbols[0].Name, "__security_cookie");
+  EXPECT_EQ(Img.Symbols[0].Addr, 0x1400050E0u);
+  EXPECT_FALSE(Img.Symbols[0].IsFunc);
+}
+
 TEST(ApplyDebugSymbolsTest, PublishesOnlyAuthenticatedTypedObjectExtents) {
   const std::vector<DataObjectSym> Objects = {
       {"array", 0x2000, 8, true},

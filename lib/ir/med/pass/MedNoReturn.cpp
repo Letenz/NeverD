@@ -33,6 +33,10 @@ bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
   if (TheArch == Arch::AArch64)
     return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64) &&
+      Id == Intrinsic::IntN && Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
+      (Op.Inputs[1].ConstVal & 0xFF) == 0x29)
+    return true;
   return false;
 }
 

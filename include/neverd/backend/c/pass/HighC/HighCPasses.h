@@ -37,8 +37,12 @@ struct HighCAnalysisState {
   // the function's private frame and no frame address escapes.
   bool CanElideFrameStores = false;
   std::map<std::string, std::string> StoreFwd;
+  /// AddressKey aliases for StoreFwd so emission can look up a named frame
+  /// slot whose printed address no longer matches the analysis-time ExprFn.
+  std::map<std::string, std::string> StoreFwdByAddressKey;
   std::map<std::string, std::set<std::string>> StoreFwdDeps;
   std::map<std::string, std::set<std::string>> ForwardedAddressDeps;
+  std::set<std::string> AssignedVars;
 };
 
 void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
@@ -57,6 +61,12 @@ void collectUsedVars(const std::vector<HighStmt> &Stmts,
                      std::map<std::string, TypeRef> &Vars, VarNameFn VarFn);
 
 void analyzeVoidDeadChain(HighCAnalysisState &State, const HighFunc &Func,
+                          VarNameFn VarFn);
+
+/// Drop assignments whose destination is never read and whose value has no
+/// observable effect.  Segmented FS/GS loads are included: an unused TEB/TLS
+/// read is not a reason to keep the temp, while a used GS load must stay.
+void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
                           VarNameFn VarFn);
 
 struct HiLoPair {

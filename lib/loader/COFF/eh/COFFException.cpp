@@ -131,6 +131,9 @@ std::set<va_t> findUnnamedMinGWPersonalities(BinaryImage &Img) {
 
 void resolveExceptionHandlers(BinaryImage &Img) {
   const std::set<va_t> UnnamedMinGW = findUnnamedMinGWPersonalities(Img);
+  const detail::CxxFuncInfoGroups CxxGroups = detail::buildCxxFuncInfoGroups(Img);
+  const detail::PrimaryFunctionByBegin PrimaryByBegin =
+      detail::indexPrimaryFunctionsByBegin(Img);
   for (ExceptionFunction &F : Img.ExceptionMetadata.Functions) {
     if (F.PersonalityVA == 0)
       continue;
@@ -139,7 +142,7 @@ void resolveExceptionHandlers(BinaryImage &Img) {
     F.Personality = detail::classifyPersonality(Name);
     if (F.Personality == ExceptionPersonality::Unknown)
       if (std::optional<ExceptionPersonality> Inferred =
-              detail::inferGSPersonality(F, Img)) {
+              detail::inferGSPersonality(F, Img, &PrimaryByBegin)) {
         F.Personality = *Inferred;
         F.PersonalityName = getExceptionPersonalityName(*Inferred);
         ResolvedVA = F.PersonalityVA;
@@ -184,7 +187,7 @@ void resolveExceptionHandlers(BinaryImage &Img) {
       detail::parseSEH(F, Img);
       break;
     case ExceptionPersonality::CxxFrameHandler3:
-      detail::parseFH3(F, Img);
+      detail::parseFH3(F, Img, &CxxGroups);
       break;
     case ExceptionPersonality::CxxFrameHandler4:
       detail::parseFH4(F, Img);
@@ -202,7 +205,7 @@ void resolveExceptionHandlers(BinaryImage &Img) {
       break;
     }
     case ExceptionPersonality::GSHandlerCheckEH:
-      if (detail::parseFH3(F, Img)) {
+      if (detail::parseFH3(F, Img, &CxxGroups)) {
         if (F.HandlerDataVA > InvalidVA - sizeof(uint32_t))
           detail::diagnose(F, ExceptionParseStatus::Malformed,
                            "GS FH3 payload address overflows");

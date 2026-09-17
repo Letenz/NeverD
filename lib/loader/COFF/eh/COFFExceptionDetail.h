@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -79,7 +80,16 @@ ExceptionPersonality classifyPersonality(llvm::StringRef Name);
 bool isCoveredByRuntimeFunction(const BinaryImage &Img,
                                 const ExceptionAddressRange &Range);
 bool parseSEH(ExceptionFunction &F, const BinaryImage &Img);
-bool parseFH3(ExceptionFunction &F, const BinaryImage &Img);
+
+using CxxFuncInfoGroups =
+    std::unordered_map<uint32_t, std::vector<ExceptionAddressRange>>;
+using PrimaryFunctionByBegin =
+    std::unordered_map<va_t, const ExceptionFunction *>;
+
+CxxFuncInfoGroups buildCxxFuncInfoGroups(const BinaryImage &Img);
+PrimaryFunctionByBegin indexPrimaryFunctionsByBegin(const BinaryImage &Img);
+bool parseFH3(ExceptionFunction &F, const BinaryImage &Img,
+              const CxxFuncInfoGroups *Groups = nullptr);
 bool parseFH4(ExceptionFunction &F, const BinaryImage &Img);
 
 bool parseGSCookie(ExceptionFunction &F, const BinaryImage &Img, va_t CookieVA);
@@ -89,7 +99,8 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
                               const uint8_t *Code, size_t CodeSize,
                               std::vector<std::string> &Names);
 std::optional<ExceptionPersonality>
-inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img);
+inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
+                   const PrimaryFunctionByBegin *PrimaryByBegin = nullptr);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
 } // namespace neverd::coff_loader

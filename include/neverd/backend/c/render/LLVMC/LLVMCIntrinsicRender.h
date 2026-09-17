@@ -10,7 +10,7 @@
 /// Implementation split across:
 ///   LLVMCIntrinsicRender.cpp      — arch-dispatching: renderInlineAsm,
 ///                                   renderFence, renderDebugBreak
-///   LLVMCIntrinsicRenderX86.cpp   — x86 inline-asm rendering & table
+///   LLVMCIntrinsicRenderX86.cpp   — x86 inline-asm, `__fastfail`, GS/FS loads
 ///   LLVMCIntrinsicRenderARM.cpp   — ARM/AArch64 inline-asm rendering & table
 ///
 //===----------------------------------------------------------------------===//
@@ -21,8 +21,14 @@
 
 #include "llvm/Support/AtomicOrdering.h"
 
+#include <functional>
 #include <string>
 #include <vector>
+
+namespace llvm {
+class LoadInst;
+class Value;
+} // namespace llvm
 
 namespace neverd {
 
@@ -44,6 +50,10 @@ renderX86InlineAsm(const std::string &AsmStr, const std::string &Mnemonic,
                    bool ResultLive, const std::vector<std::string> &Args);
 std::string renderX86Fence(llvm::AtomicOrdering Ordering);
 const char *renderX86DebugBreak();
+bool isX86FastFailName(llvm::StringRef Name);
+std::string renderX86SegmentedLoad(
+    Arch TheArch, const llvm::LoadInst &LI,
+    const std::function<std::string(const llvm::Value *)> &ValueStr);
 
 //--- Arch-specific (LLVMCIntrinsicRenderARM.cpp) ---
 const char *lookupArmAsmToC(const char *Mnem);

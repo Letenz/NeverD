@@ -22,6 +22,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/loader/BinaryImage.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -360,9 +361,21 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
     }
     return Value;
   };
-  if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
-      V.Id >= 0 && static_cast<size_t>(V.Id) < CurMed->TypedParams.size())
-    return SourceParameter(V, static_cast<size_t>(V.Id));
+  if (CurMed && V.Kind == MedVar::Param) {
+    const int Slot = abiParamIndex(V);
+    if (Slot >= 0) {
+      MedVar Param = V;
+      Param.Kind = MedVar::Param;
+      Param.Id = Slot;
+      if (CurMed->SourceTypeHint &&
+          static_cast<size_t>(Slot) < CurMed->TypedParams.size())
+        return SourceParameter(Param, static_cast<size_t>(Slot));
+      TypeRef Type;
+      if (static_cast<size_t>(Slot) < CurMed->Params.size())
+        Param.RegOff = CurMed->Params[static_cast<size_t>(Slot)].RegOff;
+      return HighExpr::makeVar(Param, Type);
+    }
+  }
 
   if (CurMed && V.Kind == MedVar::Reg) {
     for (size_t I = 0; I < CurMed->Params.size(); ++I) {
@@ -384,8 +397,63 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       It != SourceRecordValues.end() && V.Size == It->second->Size)
     return HighExpr::makeVar(V, It->second);
 
+  // Win64: a callee-save that still holds the entry copy of rcx/rdx/r8/r9
+  // is that parameter. `mov r14, r8` / `mov r8, r14` around a later call
+  // must not keep the clobbered or reused argument register. MedIR may bump
+  // the SSA version of rdi without a new def (`COPY r9.2 = rdi.2`); match the
+  // register as well as the exact SSA pair.
+  if (CurMed && V.Kind == MedVar::Reg && TargetArch == Arch::X64 && Image &&
+      Image->Format == BinaryFormat::COFF) {
+    int Fallback = -1;
+    for (const auto &Blk : CurMed->Blocks) {
+      for (const auto &Op : Blk.Ops) {
+        if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1)
+          continue;
+        if (Op.Output.Kind != MedVar::Reg)
+          continue;
+        if (Op.Output.Id != V.Id && Op.Output.RegOff != V.RegOff)
+          continue;
+        const MedVar &Src = Op.Inputs[0];
+        int Idx = -1;
+        if (Src.Kind == MedVar::Param)
+          Idx = abiParamIndex(Src);
+        else if (Src.Kind == MedVar::Reg && Src.SSAVer == 0)
+          Idx = regToArgIdx(Src.RegOff);
+        if (Idx < 0 || static_cast<size_t>(Idx) >= CurMed->Params.size())
+          continue;
+        if (Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer) {
+          MedVar Param = V;
+          Param.Kind = MedVar::Param;
+          Param.Id = Idx;
+          if (CurMed->SourceTypeHint &&
+              static_cast<size_t>(Idx) < CurMed->TypedParams.size())
+            return SourceParameter(Param, static_cast<size_t>(Idx));
+          return HighExpr::makeVar(Param, TypeRef{});
+        }
+        // Parameter registers (rcx/rdx/r8/r9) are reused as scratch after a
+        // call. Mapping every later SSA version to the entry argument turns
+        // GS flags and `rol cookie` into the raw parameter. Saved copies live
+        // in non-argument registers (rbp/rsi/rdi/r14), including Win64 rsi/rdi.
+        if (Fallback < 0 && regToArgIdx(V.RegOff) < 0)
+          Fallback = Idx;
+      }
+    }
+    if (Fallback >= 0) {
+      MedVar Param = V;
+      Param.Kind = MedVar::Param;
+      Param.Id = Fallback;
+      if (CurMed->SourceTypeHint &&
+          static_cast<size_t>(Fallback) < CurMed->TypedParams.size())
+        return SourceParameter(Param, static_cast<size_t>(Fallback));
+      return HighExpr::makeVar(Param, TypeRef{});
+    }
+  }
+
   if (CurMed) {
     if (const MedCallClobber *Clobber = findCallClobber(*CurMed, V)) {
+      // Do not remap a caller-saved clobber onto this function's parameters.
+      // After GSHandlerCheckCommon, r8 is flags scratch, not ContextRecord;
+      // call arguments are recovered from COPYs / homes in collectCallArgs.
       if (Clobber->PreservedPrefixSize == 0)
         return HighExpr::makeUndef(V.Size);
 

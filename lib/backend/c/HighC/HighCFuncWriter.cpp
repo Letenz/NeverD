@@ -15,6 +15,8 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Limits.h"
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -231,7 +233,20 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   auto VarFn = [this](const MedVar &V) { return varName(V); };
   auto ExprFn = [this](const HighExpr &E) { return exprStr(E); };
   analyzeDeadStores(Analysis, Func, VarFn, ExprFn);
+  analyzeUnusedAssigns(Analysis, Func, VarFn);
   analyzeStoreForwarding(Analysis, Func, VarFn, ExprFn);
+  Analysis.AssignedVars.clear();
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (Analysis.DeadStmts.count(&S))
+      return;
+    if (S.Kind != StmtKind::Assign || !S.Dst || S.Dst->Kind != ExprKind::Var)
+      return;
+    const HighExpr *Val = S.Val.get();
+    if (Val && Val->Kind == ExprKind::Call &&
+        (libc::isNoReturnFunction(Val->CallTarget) || isX86FastFailCall(*Val)))
+      return;
+    Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
+  });
   InferredVoid = analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
 
   HiLoPairs.clear();
@@ -286,11 +301,17 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
 void HighCWriter::emitLocalDecls(const HighFunc &Func,
                                  const std::set<std::string> &ParamNames) {
   auto VarFn = [this](const MedVar &V) { return varName(V); };
+  // Copy-forwarded temps print as their source (`arg0`), so collecting the
+  // IR destination would declare a name that never appears in the body.
+  auto PrintedVarFn = [this, &VarFn](const MedVar &V) {
+    return copyForwardName(VarFn(V));
+  };
 
   std::map<std::string, TypeRef> UsedVars;
   std::map<std::string, std::string> ExplicitDeclarations;
+  std::set<std::string> VisibleAssigned;
   walkStmts(Func.Body, [&](const HighStmt &S) {
-    if (Analysis.DeadStmts.count(&S))
+    if (Analysis.DeadStmts.count(&S) || stmtHiddenFromC(S))
       return;
     if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
         S.Dst->Kind == ExprKind::Var) {
@@ -319,10 +340,24 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         ExplicitDeclarations[Name] = Type + " " + Name;
       }
     }
-    forEachExpr(S, [&](const ExprPtr &E) {
-      if (E)
-        collectUsedVarsExpr(*E, UsedVars, VarFn);
-    });
+    if (!(InferredVoid && S.Kind == StmtKind::Return)) {
+      forEachRhsExpr(S, [&](const ExprPtr &E) {
+        if (E)
+          collectUsedVarsExpr(*E, UsedVars, PrintedVarFn);
+      });
+    }
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+        !isHiddenCopyForwardAssign(S)) {
+      const HighExpr *Val = S.Val.get();
+      const bool ResultOmitted = Val && Val->Kind == ExprKind::Call &&
+                                 (libc::isNoReturnFunction(Val->CallTarget) ||
+                                  isX86FastFailCall(*Val));
+      if (!ResultOmitted) {
+        collectUsedVarsExpr(*S.Dst, UsedVars, VarFn);
+        VisibleAssigned.insert(varName(S.Dst->Var));
+      }
+    }
   });
 
   if (!Analysis.StoreFwd.empty()) {
@@ -331,7 +366,7 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         return;
       std::string Addr = exprStr(*S.StoreAddr);
       if (Analysis.StoreFwd.count(Addr))
-        collectUsedVarsExpr(*S.StoreVal, UsedVars, VarFn);
+        collectUsedVarsExpr(*S.StoreVal, UsedVars, PrintedVarFn);
     });
   }
 
@@ -347,7 +382,13 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     if (UsedVars.find(Name) == UsedVars.end() &&
         UsedVars.find(Local.Name) == UsedVars.end())
       continue;
-    if (Analysis.DeadVars.count(Name) || Analysis.DeadVars.count(Local.Name))
+    if ((CopyForward.count(Name) || CopyForward.count(Local.Name)) &&
+        !VisibleAssigned.count(Name) && !VisibleAssigned.count(Local.Name))
+      continue;
+    if ((Analysis.DeadVars.count(Name) ||
+         Analysis.DeadVars.count(Local.Name)) &&
+        !Analysis.AssignedVars.count(Name) &&
+        !Analysis.AssignedVars.count(Local.Name))
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
@@ -368,7 +409,9 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   for (auto &[Name, Ty] : UsedVars) {
     if (DeclaredNames.count(Name))
       continue;
-    if (Analysis.DeadVars.count(Name))
+    if (CopyForward.count(Name) && !VisibleAssigned.count(Name))
+      continue;
+    if (Analysis.DeadVars.count(Name) && !Analysis.AssignedVars.count(Name))
       continue;
     DeclaredNames.insert(Name);
     emitIndent(1);
@@ -589,16 +632,20 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     WalkAliases(Func.Body, false);
     Grew = FrameAliases != Before;
   }
-  auto Note = [&](const HighExpr *Addr, const TypeRef &Ty) {
+  auto Note = [&](const HighExpr *Addr, const TypeRef &Ty,
+                  bool AddressTaken = false) {
     if (!Addr)
       return;
     const auto Disp = frameDisplacement(*Addr);
     if (!Disp)
       return;
     NamedFrameSlot &Slot = FrameSlots[*Disp];
+    if (AddressTaken)
+      Slot.AddressTaken = true;
+    else
+      Slot.UsedAsMemory = true;
     if (Slot.Name.empty()) {
-      const uint64_t Mag =
-          static_cast<uint64_t>(*Disp < 0 ? -*Disp : *Disp);
+      const uint64_t Mag = static_cast<uint64_t>(*Disp < 0 ? -*Disp : *Disp);
       Slot.Name = (*Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Mag);
       if (Dbg) {
         if (auto Var = Dbg->resolveVariable(Func.Entry, *Disp);
@@ -609,34 +656,67 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     if (Ty && (!Slot.Type || Ty->Size > Slot.Type->Size))
       Slot.Type = Ty;
   };
-  std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
-    if (E.Kind == ExprKind::Load && !E.Operands.empty())
+  // A frame displacement used as a value prints as `&var_N`. Mark it
+  // address-taken so copy-forward/DeadVars cannot drop the declaration.
+  std::function<void(const HighExpr &, bool)> Walk = [&](const HighExpr &E,
+                                                         bool AsAddress) {
+    if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0]) {
       Note(E.Operands[0].get(), E.Type);
-    if (E.Kind == ExprKind::Store && E.Operands.size() >= 2)
+      Walk(*E.Operands[0], true);
+      return;
+    }
+    if (E.Kind == ExprKind::Store && E.Operands.size() >= 2) {
       Note(E.Operands[0].get(), E.Operands[1] ? E.Operands[1]->Type : nullptr);
+      if (E.Operands[0])
+        Walk(*E.Operands[0], true);
+      if (E.Operands[1])
+        Walk(*E.Operands[1], false);
+      return;
+    }
     if (E.Kind == ExprKind::Addr && !E.Operands.empty() && E.Operands[0] &&
         E.Operands[0]->Kind == ExprKind::Load &&
-        !E.Operands[0]->Operands.empty())
-      Note(E.Operands[0]->Operands[0].get(), E.Operands[0]->Type);
+        !E.Operands[0]->Operands.empty()) {
+      Note(E.Operands[0]->Operands[0].get(), E.Operands[0]->Type,
+           /*AddressTaken=*/true);
+      if (E.Operands[0]->Operands[0])
+        Walk(*E.Operands[0]->Operands[0], true);
+      return;
+    }
+    if (!AsAddress && frameDisplacement(E)) {
+      Note(&E, E.Type, /*AddressTaken=*/true);
+      return;
+    }
     for (const ExprPtr &Op : E.Operands)
       if (Op)
-        Walk(*Op);
+        Walk(*Op, AsAddress);
   };
   std::function<void(const std::vector<HighStmt> &, bool)> WalkNotes;
   WalkNotes = [&](const std::vector<HighStmt> &Stmts, bool InHandler) {
     const bool Saved = InEHClauseBody;
     InEHClauseBody = InHandler;
     for (const HighStmt &S : Stmts) {
-      if (!Analysis.DeadStmts.count(&S)) {
+      if (!Analysis.DeadStmts.count(&S) && !stmtHiddenFromC(S)) {
         if (S.Kind == StmtKind::Store && S.StoreAddr)
           Note(S.StoreAddr.get(), S.StoreVal ? S.StoreVal->Type : nullptr);
         if (S.Kind == StmtKind::Assign && S.Dst &&
             S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty())
           Note(S.Dst->Operands[0].get(), S.Dst->Type);
-        forEachExpr(S, [&](const ExprPtr &E) {
-          if (E)
-            Walk(*E);
-        });
+        if (S.StoreAddr)
+          Walk(*S.StoreAddr, true);
+        if (S.StoreVal)
+          Walk(*S.StoreVal, false);
+        if (S.Dst)
+          Walk(*S.Dst, S.Dst->Kind == ExprKind::Load);
+        if (S.Val)
+          Walk(*S.Val, false);
+        if (S.Cond)
+          Walk(*S.Cond, false);
+        if (S.RetVal)
+          Walk(*S.RetVal, false);
+        if (S.CallExpr)
+          Walk(*S.CallExpr, false);
+        if (S.SwitchExpr)
+          Walk(*S.SwitchExpr, false);
       }
       WalkNotes(S.Body, InHandler);
       WalkNotes(S.ElseBody, InHandler);
@@ -734,7 +814,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   auto VisitFrameUses = [&](auto &&Self, const HighExpr &Expr) -> void {
     if (NeedsFrameStorage)
       return;
-    if (isNamedFrameMemory(Expr))
+    if (isNamedFrameMemory(Expr) || namedFrameSlot(Expr))
       return;
     if (Expr.Kind == ExprKind::Load && !Expr.Operands.empty()) {
       std::string Addr = exprStr(*Expr.Operands[0]);
@@ -888,9 +968,59 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     OS << "const uintptr_t frame_base = (uintptr_t)(stack_storage + "
        << FrameBaseOffset << ");\n";
   }
+  std::set<std::string> PrintedAddrSlots;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (Analysis.DeadStmts.count(&S) || stmtHiddenFromC(S))
+      return;
+    if (S.Dst && S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty() &&
+        S.Dst->Operands[0]) {
+      if (auto Name = namedFrameSlot(*S.Dst->Operands[0]);
+          Name && !CopyForward.count(*Name))
+        PrintedAddrSlots.insert(*Name);
+    }
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      if (!E)
+        return;
+      std::function<void(const HighExpr &, bool)> Walk = [&](const HighExpr &N,
+                                                             bool AsAddress) {
+        // Vars that alias a frame displacement still print as the variable.
+        // Only BinOp/Addr value uses become `&var_N` in C.
+        if (!AsAddress &&
+            (N.Kind == ExprKind::BinOp || N.Kind == ExprKind::Addr))
+          if (auto Name = namedFrameSlot(N))
+            PrintedAddrSlots.insert(*Name);
+        if (N.Kind == ExprKind::Load && !N.Operands.empty() && N.Operands[0]) {
+          if (auto Name = namedFrameSlot(*N.Operands[0]);
+              Name && !CopyForward.count(*Name))
+            PrintedAddrSlots.insert(*Name);
+          Walk(*N.Operands[0], true);
+          return;
+        }
+        if (N.Kind == ExprKind::Store && N.Operands.size() >= 2) {
+          if (N.Operands[0]) {
+            if (auto Name = namedFrameSlot(*N.Operands[0]);
+                Name && !CopyForward.count(*Name))
+              PrintedAddrSlots.insert(*Name);
+            Walk(*N.Operands[0], true);
+          }
+          if (N.Operands[1])
+            Walk(*N.Operands[1], false);
+          return;
+        }
+        for (const ExprPtr &Op : N.Operands)
+          if (Op)
+            Walk(*Op, AsAddress);
+      };
+      Walk(*E, false);
+    });
+  });
   for (const auto &[Disp, Slot] : FrameSlots) {
-    if (ParamNames.count(Slot.Name) || Analysis.DeadVars.count(Slot.Name) ||
-        CopyForward.count(Slot.Name))
+    if (ParamNames.count(Slot.Name))
+      continue;
+    if (!PrintedAddrSlots.count(Slot.Name))
+      continue;
+    if (!Slot.AddressTaken &&
+        (CopyForward.count(Slot.Name) || Analysis.DeadVars.count(Slot.Name)))
       continue;
     ParamNames.insert(Slot.Name);
     emitIndent(1);

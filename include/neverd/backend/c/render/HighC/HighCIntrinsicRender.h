@@ -11,6 +11,7 @@
 ///   HighCIntrinsicRender.cpp      — dispatch: MultiOutputRender,
 ///                                   renderIntrinsicCall
 ///   HighCIntrinsicRenderX86.cpp   — x86 multi-output & intrinsic rendering,
+///                                   `__fastfail`, GS/FS reads,
 ///                                   hiloCollapseExpr
 ///   HighCIntrinsicRenderARM.cpp   — ARM/AArch64 intrinsic rendering
 ///
@@ -77,6 +78,16 @@ std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
     std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive = {});
+
+/// Windows `int 0x29` / `__fastfail`.  True when \p E is that intrinsic.
+bool isX86FastFailCall(const HighExpr &E);
+
+/// MSVC `<intrin.h>` GS/FS scalar load, or empty when this access is not that
+/// x86 form.
+std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
+                                       llvm::StringRef Addr,
+                                       NdMemoryOrdering Ordering,
+                                       NdMemoryAddressSpace AddressSpace);
 
 const char *hiloCollapseExpr(Intrinsic Id);
 

@@ -72,7 +72,8 @@ struct DebugInfoResult {
 /// map.
 DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
                               const BinaryImage &Img,
-                              const DebugInfoRequest &Req = {});
+                              const DebugInfoRequest &Req = {},
+                              const LoadProgress &Progress = {});
 
 /// Publish \p Dbg's function symbols into \p Img's symbol table and return how
 /// many names it contributed.

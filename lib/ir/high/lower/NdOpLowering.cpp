@@ -113,15 +113,7 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
   va_t Target = 0;
   if (CurOp.NumInputs >= 1 && CurOp.Inputs[0].isConst())
     Target = CurOp.Inputs[0].ConstVal;
-  std::string Callee;
-  if (FuncNames) {
-    auto FnameIt = FuncNames->find(Target);
-    Callee = FnameIt != FuncNames->end()
-                 ? FnameIt->second
-                 : (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
-  } else {
-    Callee = (kAutoFuncPrefix + llvm::utohexstr(Target)).str();
-  }
+  std::string Callee = calleeDisplayName(Target);
 
   size_t CallIdx = 0;
   for (size_t K = 0; K < CurBlock.Ops.size(); ++K) {

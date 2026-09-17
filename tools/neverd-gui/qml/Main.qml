@@ -26,7 +26,7 @@ ApplicationWindow {
     readonly property bool modalActive: unsavedDialog.visible || renameDialog.visible || commentDialog.visible || settingsDialog.visible || shortcutsDialog.visible || aboutDialog.visible || fileDialog.visible || extensionFileDialog.visible
     readonly property bool analysisShortcutsEnabled: workbench.loaded && !textEntryActive && !modalActive
     readonly property var activeAnalysisPane: workbench.panes.activePane
-    readonly property var representationIds: ["c", "low", "med", "high", "llvm"]
+    readonly property var representationIds: ["c", "llvmc", "low", "med", "high", "llvm"]
     readonly property var languageCodes: ["en", "zh-CN", "zh-TW", "ja", "ko", "fr", "de", "es", "it", "ru", "ar"]
     readonly property var languageNames: ["English", "简体中文", "繁體中文", "日本語", "한국어", "Français", "Deutsch", "Español", "Italiano", "Русский", "العربية"]
 

@@ -8,7 +8,7 @@ Rectangle {
     required property var controller
     property real codePointSize: Theme.codeSize
     property var kddockwidgets_min_size: Qt.size(300, 180)
-    readonly property var representationIds: ["c", "low", "med", "high", "llvm"]
+    readonly property var representationIds: ["c", "llvmc", "low", "med", "high", "llvm"]
     color: Theme.editor
     function focusContent() { code.focusContent() }
     ColumnLayout {
@@ -16,7 +16,7 @@ Rectangle {
         spacing: 0
         PanelTabs {
             Layout.fillWidth: true
-            labels: ["C", "LowIR", "MedIR", "HighIR", "LLVM IR"]
+            labels: ["C", "LLVM C", "LowIR", "MedIR", "HighIR", "LLVM IR"]
             currentIndex: Math.max(0, root.representationIds.indexOf(root.controller.representation))
             onSelected: index => root.controller.setRepresentation(root.representationIds[index])
         }
@@ -46,7 +46,7 @@ Rectangle {
             onSourceLineSelected: line => root.controller.selectTextLine(line)
             codePointSize: root.codePointSize
             emptyTitle: root.controller.loaded ? qsTranslate("Main", "No representation available") : qsTranslate("Main", "Read beyond assembly")
-            emptyDetail: root.controller.loaded ? root.controller.representationStatus : qsTranslate("Main", "Compare recovered C with LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.")
+            emptyDetail: root.controller.loaded ? root.controller.representationStatus : qsTranslate("Main", "Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.")
         }
         RowLayout {
             Layout.fillWidth: true

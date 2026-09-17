@@ -5,13 +5,17 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// x86-specific inline-assembly-to-C rendering: asm-mnemonic lookup table
-/// and MSVC __asm / intrinsic translation (CPUID, XGETBV, etc.).
+/// x86-specific LLVM-to-C rendering: asm-mnemonic lookup, MSVC __asm /
+/// intrinsic translation (CPUID, XGETBV, `__fastfail`, GS/FS loads).
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/AtomicOrdering.h"
 
 #include <cstring>
@@ -101,5 +105,49 @@ std::string renderX86Fence(llvm::AtomicOrdering Ordering) {
 }
 
 const char *renderX86DebugBreak() { return "__debugbreak();\n"; }
+
+bool isX86FastFailName(llvm::StringRef Name) {
+  return stripLeadingUnderscores(Name) == "fastfail";
+}
+
+std::string renderX86SegmentedLoad(
+    Arch TheArch, const llvm::LoadInst &LI,
+    const std::function<std::string(const llvm::Value *)> &ValueStr) {
+  if (TheArch != Arch::X86 && TheArch != Arch::X64)
+    return {};
+  const unsigned AS = LI.getPointerAddressSpace();
+  const bool GS = isLLVMX86GSAddressSpace(AS);
+  if (!GS && !isLLVMX86FSAddressSpace(AS))
+    return {};
+
+  llvm::Type *Ty = LI.getType();
+  unsigned Size = 0;
+  if (Ty->isIntegerTy())
+    Size = Ty->getIntegerBitWidth() / 8;
+  else if (Ty->isPointerTy())
+    Size = TheArch == Arch::X86 ? 4 : 8;
+  const char *Intrinsic = x86SegmentedReadIntrinsic(GS, Size);
+  if (!Intrinsic)
+    return {};
+
+  const llvm::Value *Offset = LI.getPointerOperand();
+  for (unsigned Depth = 0; Offset && Depth < 4; ++Depth) {
+    Offset = Offset->stripPointerCasts();
+    if (const auto *CE = llvm::dyn_cast<llvm::ConstantExpr>(Offset)) {
+      if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
+        Offset = CE->getOperand(0);
+        continue;
+      }
+    }
+    if (const auto *I2P = llvm::dyn_cast<llvm::IntToPtrInst>(Offset)) {
+      Offset = I2P->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  if (!Offset)
+    return {};
+  return std::string(Intrinsic) + "(" + ValueStr(Offset) + ")";
+}
 
 } // namespace neverd

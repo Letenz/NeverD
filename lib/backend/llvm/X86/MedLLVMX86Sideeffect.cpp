@@ -23,6 +23,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicsX86.h"
 
@@ -44,11 +45,34 @@ bool MedLLVMEmitter::emitX86DebugTrap(const MedOp &Op, Intrinsic IC,
     return true;
   }
   case I::IntN: {
-    // `int imm8` (e.g. int 0x29 = __fastfail).  The interrupt vector is an
+    auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
+    // Windows `int 0x29` is `__fastfail(ecx)`.  Emit a named noreturn call
+    // so LLVMC prints the intrinsic and does not treat the interrupt vector
+    // (0x29 / 41) as the fail code.
+    if (Op.NumInputs > 1 && Op.Inputs[1].isConst() &&
+        (Op.Inputs[1].ConstVal & 0xFF) == 0x29) {
+      auto *I32 = llvm::Type::getInt32Ty(*Ctx);
+      auto *FnTy = llvm::FunctionType::get(VoidTy, {I32}, false);
+      llvm::FunctionCallee Callee =
+          Mod->getOrInsertFunction("__fastfail", FnTy);
+      if (auto *Fn = llvm::dyn_cast<llvm::Function>(Callee.getCallee()))
+        Fn->addFnAttr(llvm::Attribute::NoReturn);
+      llvm::Value *Code = llvm::ConstantInt::get(I32, 0);
+      if (Op.NumInputs >= 3) {
+        Code = getVar(Op.Inputs[2], Builder);
+        if (!Code->getType()->isIntegerTy())
+          llvm::report_fatal_error("__fastfail code is not integer");
+        if (Code->getType() != I32)
+          Code = Builder.CreateZExtOrTrunc(Code, I32, "fastfail.code");
+      }
+      llvm::CallInst *Call = Builder.CreateCall(Callee, {Code});
+      Call->setDoesNotReturn();
+      return true;
+    }
+    // `int imm8` for every other vector.  The interrupt vector is an
     // immediate that MUST appear in the asm text, so bake it in via the `$0`
     // template with an immediate constraint rather than a register operand
     // (a bare "int" would be rejected by the assembler: too few operands).
-    auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
     if (Op.NumInputs > 1 && Op.Inputs[1].isConst()) {
       auto *I8 = llvm::Type::getInt8Ty(*Ctx);
       auto *AsmFnTy = llvm::FunctionType::get(VoidTy, {I8}, false);
@@ -612,8 +636,7 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     llvm::Value *Divisor = getVar(Op.Inputs[2], Builder);
     auto *FullTy = llvm::dyn_cast<llvm::IntegerType>(Dividend->getType());
     auto *HalfTy = llvm::dyn_cast<llvm::IntegerType>(Divisor->getType());
-    if (!FullTy || !HalfTy ||
-        FullTy->getBitWidth() != Op.Inputs[1].Size * 8 ||
+    if (!FullTy || !HalfTy || FullTy->getBitWidth() != Op.Inputs[1].Size * 8 ||
         HalfTy->getBitWidth() != Op.Inputs[2].Size * 8 ||
         FullTy->getBitWidth() != HalfTy->getBitWidth() * 2)
       llvm::report_fatal_error(
@@ -640,29 +663,28 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
           Dividend, llvm::ConstantInt::get(FullTy, 0), "dividend.negative");
       llvm::Value *DivisorNegative = Builder.CreateICmpSLT(
           Divisor, llvm::ConstantInt::get(HalfTy, 0), "divisor.negative");
-      llvm::Value *DividendMagnitude = Builder.CreateSelect(
-          DividendNegative, Builder.CreateNeg(Dividend), Dividend,
-          "dividend.magnitude");
+      llvm::Value *DividendMagnitude =
+          Builder.CreateSelect(DividendNegative, Builder.CreateNeg(Dividend),
+                               Dividend, "dividend.magnitude");
       llvm::Value *ExtendedDivisor =
           Builder.CreateSExt(Divisor, FullTy, "divisor.extended");
       llvm::Value *DivisorMagnitude = Builder.CreateSelect(
-          DivisorNegative, Builder.CreateNeg(ExtendedDivisor),
-          ExtendedDivisor, "divisor.magnitude");
+          DivisorNegative, Builder.CreateNeg(ExtendedDivisor), ExtendedDivisor,
+          "divisor.magnitude");
       llvm::Value *NegativeQuotient = Builder.CreateXor(
           DividendNegative, DivisorNegative, "quotient.negative");
       llvm::APInt PositiveLimit =
           llvm::APInt::getOneBitSet(FullBits, HalfBits - 1);
       llvm::Value *Limit = Builder.CreateSelect(
-          NegativeQuotient,
-          llvm::ConstantInt::get(FullTy, PositiveLimit + 1),
+          NegativeQuotient, llvm::ConstantInt::get(FullTy, PositiveLimit + 1),
           llvm::ConstantInt::get(FullTy, PositiveLimit), "quotient.limit");
       llvm::Value *Threshold =
           Builder.CreateMul(DivisorMagnitude, Limit, "quotient.threshold");
-      Overflow = Builder.CreateOr(
-          DivisorZero,
-          Builder.CreateICmpUGE(DividendMagnitude, Threshold,
-                                "quotient.overflow"),
-          "divide.error");
+      Overflow =
+          Builder.CreateOr(DivisorZero,
+                           Builder.CreateICmpUGE(DividendMagnitude, Threshold,
+                                                 "quotient.overflow"),
+                           "divide.error");
     }
 
     llvm::Function *Function = Builder.GetInsertBlock()->getParent();
@@ -773,8 +795,8 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
       llvm::Value *Active = Builder.CreateICmpNE(
           Guard, llvm::ConstantInt::get(Guard->getType(), 0),
           "alignment.active");
-      Misaligned = Builder.CreateAnd(Active, Misaligned,
-                                     "active.and.misaligned");
+      Misaligned =
+          Builder.CreateAnd(Active, Misaligned, "active.and.misaligned");
     }
     llvm::Function *Function = Builder.GetInsertBlock()->getParent();
     llvm::BasicBlock *Trap =

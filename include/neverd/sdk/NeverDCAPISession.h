@@ -84,6 +84,17 @@ NEVERD_API void neverd_session_set_map_path(neverd_session_t Sess,
 NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
                                                       int Enabled);
 
+/// Called from `neverd_session_load` on the same thread.  \p phase is a
+/// stable token (`image`, `debug`, `ready`).  \p done/\p total are 0 when
+/// the step is indeterminate.  \p detail may be empty.  Pass NULL to clear.
+typedef void (*neverd_load_progress_fn)(void *user_data, const char *phase,
+                                        unsigned long long done,
+                                        unsigned long long total,
+                                        const char *detail);
+NEVERD_API void neverd_session_set_load_progress(neverd_session_t Sess,
+                                                 neverd_load_progress_fn Fn,
+                                                 void *UserData);
+
 /// Which loader supplied the session's debug symbols: "dwarf", "pdb", "map",
 /// or "none".  Caller frees.
 NEVERD_API const char *neverd_session_debug_info_kind(neverd_session_t Sess);

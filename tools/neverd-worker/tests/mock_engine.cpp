@@ -168,6 +168,9 @@ const char *neverd_ir_high(neverd_session_t s, neverd_va_t a) {
 const char *neverd_ir_llvm(neverd_session_t s, neverd_va_t a) {
   return neverd_decompile(s, a);
 }
+const char *neverd_decompile_llvm(neverd_session_t s, neverd_va_t a) {
+  return neverd_decompile(s, a);
+}
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {

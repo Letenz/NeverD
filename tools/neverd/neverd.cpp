@@ -123,7 +123,38 @@ static int realMain(int Argc, char *Argv[]) {
   if (!MapFile.getValue().empty())
     neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
 
+  if (!JsonOutput) {
+    errs() << "Loading " << Path.filename().string() << "...\n";
+    neverd_session_set_load_progress(
+        Sess,
+        [](void *, const char *Phase, unsigned long long Done,
+           unsigned long long Total, const char *Detail) {
+          if (!Phase)
+            return;
+          llvm::StringRef Name(Phase);
+          if (Name == "debug" && Total > 0) {
+            errs() << "\rLoading debug symbols " << Done << "/" << Total;
+            if (Detail && Detail[0])
+              errs() << " (" << Detail << ")";
+            errs() << "                    ";
+            errs().flush();
+            return;
+          }
+          if (Name == "ready") {
+            errs() << "\rLoaded                          \n";
+            errs().flush();
+            return;
+          }
+          if (Name == "image" && Done == 0) {
+            errs() << "Reading image...\n";
+            errs().flush();
+          }
+        },
+        nullptr);
+  }
   if (!neverd_session_load(Sess, InputFile.getValue().c_str())) {
+    if (!JsonOutput)
+      errs() << "\n";
     WithColor::error() << "failed to load: " << takeLastError(Sess) << "\n";
     return 1;
   }

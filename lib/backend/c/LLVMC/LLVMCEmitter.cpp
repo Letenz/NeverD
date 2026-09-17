@@ -18,6 +18,7 @@
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
+#include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
 #define DEBUG_TYPE "neverd-llvmc-emitter"
 #include "llvm/ADT/StringExtras.h"
@@ -48,17 +49,22 @@ std::string LLVMCWriter::functionIdentifier(const llvm::Function &Fn) const {
   return canonicalizeCProjectionIdentifier(Name, "nd_function");
 }
 
-void LLVMCWriter::writeModule(llvm::Module &Mod) {
+void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
+  OnlyFunction = Only;
   prepareFunctionIdentifiers(Mod);
   writeIncludes(Mod);
   OS << "\n";
-  writeStructDefs(Mod);
-  writeGlobals(Mod);
-  writeForwardDecls(Mod);
-  OS << "\n";
+  if (!OnlyFunction) {
+    writeStructDefs(Mod);
+    writeGlobals(Mod);
+    writeForwardDecls(Mod);
+    OS << "\n";
+  }
 
   for (auto &Fn : Mod) {
     if (Fn.isDeclaration())
+      continue;
+    if (OnlyFunction && &Fn != OnlyFunction)
       continue;
     writeFunction(Fn);
     OS << "\n";
@@ -73,13 +79,19 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   Headers.insert("stdint.h");
 
   for (auto &Fn : Mod) {
-    if (!Fn.isDeclaration() && GuardAnalysisOnlyFunctions &&
+    if (OnlyFunction && &Fn != OnlyFunction)
+      continue;
+    if (!OnlyFunction && !Fn.isDeclaration() && GuardAnalysisOnlyFunctions &&
         isAnalysisOnlyFunction(Fn))
       continue;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
+        if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+          if (isLLVMX86SegmentedAddressSpace(LI->getPointerAddressSpace()))
+            HasCIntrinsics = true;
+        }
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
           if (llvm::dyn_cast<llvm::InlineAsm>(CI->getCalledOperand()))
             continue;
@@ -92,6 +104,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             HasCIntrinsics = true;
             IntrinsicMappedNames.insert(Name);
           }
+          if (isX86FastFailName(Name))
+            HasCIntrinsics = true;
 
           if (const char *Hdr = libc::headerFor(stripLeadingUnderscores(Name)))
             Headers.insert(Hdr);
@@ -204,6 +218,8 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 
     if (llvmIntrinsicToCName(RawName.c_str()))
       continue;
+    if (isX86FastFailName(RawName))
+      continue;
 
     std::string Name = functionIdentifier(Fn);
 
@@ -238,9 +254,9 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
 
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
-                        const BinaryImage *Img) {
+                        const BinaryImage *Img, const llvm::Function *Only) {
   LLVMCWriter W(Out, Opts, Dbg, Img);
-  W.writeModule(Mod);
+  W.writeModule(Mod, Only);
   return true;
 }
 

@@ -1138,9 +1138,9 @@ TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   ASSERT_NE(Diagnostic.find("inactive opcode"), std::string::npos);
 
   using TextQuery = const char *(*)(neverd_session_t, neverd_va_t);
-  const std::array<TextQuery, 5> Queries{neverd_decompile, neverd_ir_low,
-                                         neverd_ir_med, neverd_ir_high,
-                                         neverd_ir_llvm};
+  const std::array<TextQuery, 6> Queries{
+      neverd_decompile, neverd_decompile_llvm, neverd_ir_low,
+      neverd_ir_med,    neverd_ir_high,        neverd_ir_llvm};
   for (size_t Index = 0; Index < Queries.size(); ++Index) {
     SCOPED_TRACE(Index);
     EXPECT_TRUE(takeString(Queries[Index](Session, 0)).empty());

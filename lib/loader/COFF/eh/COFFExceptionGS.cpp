@@ -711,8 +711,24 @@ bool collectDirectCallTargets(const BinaryImage &Img, Arch A, va_t BodyVA,
   return true;
 }
 
+PrimaryFunctionByBegin indexPrimaryFunctionsByBegin(const BinaryImage &Img) {
+  PrimaryFunctionByBegin ByBegin;
+  ByBegin.reserve(Img.ExceptionMetadata.Functions.size());
+  for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
+    if (Candidate.Kind != RuntimeFunctionKind::Primary ||
+        !Candidate.CodeRange.isValid())
+      continue;
+    const va_t CandidateVA = Img.Arch == Arch::ARM
+                                 ? (Candidate.CodeRange.Begin & ~va_t(1))
+                                 : Candidate.CodeRange.Begin;
+    ByBegin.emplace(CandidateVA, &Candidate);
+  }
+  return ByBegin;
+}
+
 std::optional<ExceptionPersonality>
-inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img) {
+inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img,
+                   const PrimaryFunctionByBegin *PrimaryByBegin) {
   if (F.PersonalityVA == 0 || F.HandlerDataVA == 0)
     return std::nullopt;
 
@@ -722,16 +738,22 @@ inferGSPersonality(const ExceptionFunction &F, const BinaryImage &Img) {
   const va_t WrapperVA =
       Img.Arch == Arch::ARM ? (F.PersonalityVA & ~va_t(1)) : F.PersonalityVA;
   const ExceptionFunction *Wrapper = nullptr;
-  for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
-    if (Candidate.Kind != RuntimeFunctionKind::Primary ||
-        !Candidate.CodeRange.isValid())
-      continue;
-    const va_t CandidateVA = Img.Arch == Arch::ARM
-                                 ? (Candidate.CodeRange.Begin & ~va_t(1))
-                                 : Candidate.CodeRange.Begin;
-    if (CandidateVA == WrapperVA) {
-      Wrapper = &Candidate;
-      break;
+  if (PrimaryByBegin) {
+    const auto It = PrimaryByBegin->find(WrapperVA);
+    if (It != PrimaryByBegin->end())
+      Wrapper = It->second;
+  } else {
+    for (const ExceptionFunction &Candidate : Img.ExceptionMetadata.Functions) {
+      if (Candidate.Kind != RuntimeFunctionKind::Primary ||
+          !Candidate.CodeRange.isValid())
+        continue;
+      const va_t CandidateVA = Img.Arch == Arch::ARM
+                                   ? (Candidate.CodeRange.Begin & ~va_t(1))
+                                   : Candidate.CodeRange.Begin;
+      if (CandidateVA == WrapperVA) {
+        Wrapper = &Candidate;
+        break;
+      }
     }
   }
   if (!Wrapper ||
