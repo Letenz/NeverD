@@ -17,6 +17,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "HighDCEDetail.h"
 #include "HighFrameAddress.h"
 
 #include "neverd/ir/SourceABI.h"
@@ -32,10 +33,9 @@
 
 namespace neverd {
 
-namespace {
 // Only remove or slice values whose evaluation cannot read memory, trap or
 // call another function. Unknown bits may be discarded only when their exact
-// private bytes have no reads; this never supplies a replacement bit value.
+// bytes have no reads; this never supplies a replacement bit value.
 bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   std::vector<const HighExpr *> Pending{Root.get()};
   std::unordered_set<const HighExpr *> Seen;
@@ -100,6 +100,7 @@ bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget) {
   return true;
 }
 
+namespace {
 ExprPtr frameValuePrefix(ExprPtr Value, uint16_t Bytes) {
   // CONCAT's low operand owns the low-address bytes in supported native IR.
   // Preserve its exact expression instead of retaining unknown high padding.

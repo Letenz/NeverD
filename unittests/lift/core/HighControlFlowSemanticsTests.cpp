@@ -418,6 +418,74 @@ TEST(HighControlFlowSemantics, SliceJoiningRejectsDifferentOrObservableValues) {
   }
 }
 
+TEST(HighControlFlowSemantics, LowSlicesIgnoreOnlyUnobservedConcatPadding) {
+  for (unsigned LowBytes : {1U, 2U, 4U}) {
+    for (unsigned HighBytes : {1U, 2U, 4U}) {
+      auto High = byteSlice(local(0), 0, HighBytes);
+      auto Low = byteSlice(local(0), HighBytes, LowBytes);
+      auto Joined = concatenate(High, Low);
+      HighFunc Function;
+      Function.Body = {result(0, byteSlice(Joined, 0, LowBytes))};
+      const auto Before = Function;
+      simplifyAllExprs(Function.Body);
+      EXPECT_EQ(Function.Body[0].RetVal, Low);
+      for (unsigned Bit = 0; Bit != 64; ++Bit) {
+        const auto Input = uint64_t{1} << Bit;
+        EXPECT_EQ(execute(Function, Input), execute(Before, Input));
+        EXPECT_EQ(execute(Function, ~Input), execute(Before, ~Input));
+      }
+    }
+  }
+  for (const bool Cast : {false, true}) {
+    auto Unknown = std::make_shared<HighExpr>();
+    Unknown->Kind = ExprKind::Undef;
+    Unknown->Type = NdType::makeInt(4, false);
+    auto Low = byteSlice(local(0), 0, 4);
+    auto Joined = concatenate(Unknown, Low);
+    auto View = byteSlice(Joined, 0, 4);
+    if (Cast) {
+      View->Kind = ExprKind::Cast;
+      View->CastTo = View->Type;
+      View->Operands = {Joined};
+    }
+    HighFunc Function;
+    Function.Body = {result(0, View), result(0, Joined)};
+    simplifyAllExprs(Function.Body);
+    EXPECT_EQ(Function.Body[0].RetVal, Low);
+    EXPECT_EQ(Function.Body[1].RetVal, Joined);
+    EXPECT_EQ(Joined->Operands[0], Unknown);
+  }
+}
+
+TEST(HighControlFlowSemantics, LowSliceFoldingKeepsEffectsAndObservedUnknowns) {
+  for (unsigned Case = 0; Case < 7; ++Case) {
+    auto High = byteSlice(local(0), 4, 4);
+    auto Low = byteSlice(local(0), 0, 4);
+    if (Case == 0 || Case == 1) {
+      High = HighExpr::makeLoad(local(1), NdType::makeInt(4, false));
+      if (Case == 1)
+        High->MemoryOrdering = NdMemoryOrdering::Acquire;
+    }
+    if (Case == 2) {
+      High = HighExpr::makeCall("effect", 0x4000, {});
+      High->Type = NdType::makeInt(4, false);
+    }
+    if (Case == 3) {
+      High =
+          HighExpr::makeBinop(NdOp::INT_DIV, High, HighExpr::makeConst(0, 4));
+      High->Type = NdType::makeInt(4, false);
+    }
+    auto Joined = concatenate(High, Low);
+    auto View = byteSlice(Joined, Case == 4 ? 1 : 0, Case == 5 ? 8 : 4);
+    if (Case == 6)
+      Joined->Type = NdType::makeInt(4, false);
+    HighFunc Function;
+    Function.Body = {result(0, View)};
+    simplifyAllExprs(Function.Body);
+    EXPECT_NE(Function.Body[0].RetVal, Low) << Case;
+  }
+}
+
 TEST(HighControlFlowSemantics, ReconstructedEqualityKeepsOnlyFeasibleUses) {
   auto F = relationalPhiCopy(true, true);
   F.Body[2].Cond->Operands[1] =
