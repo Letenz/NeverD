@@ -63,6 +63,16 @@ The work area is monitored with up to three times the configured entry/byte budg
 
 ## Objective-C source and runtime structure
 
+Both source-report modes include `source_projection_graph`. Its nodes report
+the final typed native bodies, local diagnostics, merged native/Block
+`dependencies`, and the production `closure_closed` result. Local checks and
+propagated dependency failures have separate reasons. Missing typed bodies have
+incomplete diagnostics. These edges describe the current projection; fixing an
+unbound call may introduce further dependencies. A closed node has passed the
+dependency stage only: each method must still pass emission and source-text
+checks before its status becomes `recovered`. Use this graph for helper work;
+`native_dependency_graph` remains a separate LowIR call inventory.
+
 For repeated coverage analysis, the following command runs the same analysis
 and publication checks as
 `--format=objc-methods`, but omits `native_source` and each method's `source`.

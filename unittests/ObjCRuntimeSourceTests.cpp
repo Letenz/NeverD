@@ -179,6 +179,11 @@ void verifyRuntime(bool Chained,
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
   const std::filesystem::path Work(Directory.str().str());
   const auto Cleanup = llvm::make_scope_exit([&] {
+    if (::testing::Test::HasFailure()) {
+      llvm::errs() << "Failed source fixture retained at " << Work.string()
+                   << "\n";
+      return;
+    }
     std::error_code Error;
     std::filesystem::remove_all(Work, Error);
   });
@@ -444,8 +449,53 @@ void verifyRuntime(bool Chained,
   }
   const auto *Object = JSON->getAsObject();
   ASSERT_NE(Object, nullptr);
+  const auto *ProjectionGraph = Object->getObject("source_projection_graph");
+  ASSERT_NE(ProjectionGraph, nullptr);
+  EXPECT_EQ(ProjectionGraph->getString("closure_stage"),
+            "before_method_emission_and_text_checks");
+  const auto *ProjectionNodes = ProjectionGraph->getArray("nodes");
+  ASSERT_NE(ProjectionNodes, nullptr);
+  std::map<std::string, const llvm::json::Object *> Nodes;
+  for (const auto &Value : *ProjectionNodes) {
+    const auto *Node = Value.getAsObject();
+    ASSERT_NE(Node, nullptr);
+    const auto Address = Node->getString("address");
+    ASSERT_TRUE(Address);
+    ASSERT_TRUE(Nodes.emplace(Address->str(), Node).second);
+    ASSERT_NE(Node->getObject("local_diagnostics"), nullptr);
+    if (Node->getBoolean("has_typed_body") == false)
+      EXPECT_EQ(
+          Node->getObject("local_diagnostics")->getBoolean("checks_complete"),
+          false);
+  }
+  for (const auto &[Address, Node] : Nodes) {
+    SCOPED_TRACE(Address);
+    const auto *Dependencies = Node->getArray("dependencies");
+    ASSERT_NE(Dependencies, nullptr);
+    const bool Closed = Node->getBoolean("closure_closed") == true;
+    if (Closed)
+      EXPECT_EQ(Node->getBoolean("local_gate_passed"), true);
+    for (const auto &Value : *Dependencies) {
+      const auto Dependency = Value.getAsString();
+      ASSERT_TRUE(Dependency);
+      ASSERT_TRUE(Nodes.count(Dependency->str()));
+      if (Closed)
+        EXPECT_EQ(Nodes.at(Dependency->str())->getBoolean("closure_closed"),
+                  true);
+    }
+  }
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
+  for (const auto &Value : *Methods) {
+    const auto *Method = Value.getAsObject();
+    ASSERT_NE(Method, nullptr);
+    if (Method->getString("status") != "recovered")
+      continue;
+    const auto Entry = Method->getString("implementation");
+    ASSERT_TRUE(Entry);
+    ASSERT_TRUE(Nodes.count(Entry->str()));
+    EXPECT_EQ(Nodes.at(Entry->str())->getBoolean("closure_closed"), true);
+  }
   if (DynamicProperties) {
     const auto *Metadata = Object->getObject("objc_metadata");
     ASSERT_NE(Metadata, nullptr);

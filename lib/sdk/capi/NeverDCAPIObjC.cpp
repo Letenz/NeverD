@@ -102,7 +102,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     // Stack expression identities belong to the final pipeline result.
     BlockPlan = discoverObjCBlockSources(BlockSource, Result);
     NativeSourceDependencyEvidence NativeEvidence;
-    walkObjCNativeDependencies(S->Img, Result, &NativeEvidence);
+    const auto NativeTargets =
+        walkObjCNativeDependencies(S->Img, Result, &NativeEvidence);
 
     CEmitterOptions COptions;
     COptions.TheArch = S->Img.Arch;
@@ -177,6 +178,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       Projections.emplace(Entry, std::move(Binding));
       BlockProjections.emplace(Entry, std::move(BlockBinding));
     }
+    // Keep the local result distinct from failures propagated through callees.
+    const auto LocalProjectionReasons = ProjectionReasons;
     bool Changed;
     do {
       Changed = false;
@@ -193,6 +196,76 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           }
       }
     } while (Changed);
+
+    // Read evidence from the final production projections. LowIR CALL edges
+    // alone omit Block dependencies and are not the source publication graph.
+    std::set<va_t> EvidenceEntries = NativeTargets;
+    EvidenceEntries.insert(NativeEvidence.Roots.begin(),
+                           NativeEvidence.Roots.end());
+    std::vector<va_t> EvidencePending(EvidenceEntries.begin(),
+                                      EvidenceEntries.end());
+    while (!EvidencePending.empty()) {
+      const auto Entry = EvidencePending.back();
+      EvidencePending.pop_back();
+      const auto Projection = Projections.find(Entry);
+      if (Projection == Projections.end())
+        continue;
+      for (const auto Dependency : Projection->second.Dependencies)
+        if (EvidenceEntries.insert(Dependency).second)
+          EvidencePending.push_back(Dependency);
+    }
+    llvm::json::Array ProjectionNodes;
+    for (const auto Entry : EvidenceEntries) {
+      const auto Projection = Projections.find(Entry);
+      const bool HasProjection = Projection != Projections.end();
+      llvm::json::Object Node{
+          {"address", addressText(Entry)},
+          {"name", jsonSafeText(S->Img.getFunctionNameAt(Entry))},
+          {"has_typed_body", HasProjection},
+          {"local_gate_passed",
+           HasProjection && LocalProjectionReasons.at(Entry).empty()},
+          {"closure_closed", Closed.count(Entry) != 0}};
+      llvm::json::Array Dependencies;
+      SourceProjectionDiagnostics Evidence;
+      if (HasProjection) {
+        const auto &Binding = Projection->second;
+        const auto &Block = BlockProjections.at(Entry);
+        const auto Audit = Audits.find(Entry);
+        const auto ReadOnlyHelpers =
+            readOnlyScalarSourceHelpers(Binding.Function, S->Img);
+        Evidence = sourceBodyDiagnostics(
+            Binding.Function, *Functions.at(Entry)->SourceTypeHint,
+            Audit == Audits.end() ? nullptr : Audit->second,
+            [&](const HighExpr &Expression) {
+              return objcSourceCallBound(Expression, S->Img, Functions,
+                                         &ProfileStorage, &ReadOnlyHelpers) ||
+                     objcBlockSourceCallBound(Expression, BlockSource,
+                                              BlockPlan, Functions);
+            });
+        Evidence.append(Binding.Diagnostics);
+        if (!Block.Limitation.empty()) {
+          Evidence.Complete = false;
+          Evidence.add(SourceProjectionIssue::Dependency, Block.Limitation);
+        }
+        for (const auto Dependency : Binding.Dependencies)
+          Dependencies.push_back(addressText(Dependency));
+        Node["local_reason"] = jsonSafeText(LocalProjectionReasons.at(Entry));
+        Node["closure_reason"] = jsonSafeText(ProjectionReasons.at(Entry));
+      } else {
+        Evidence.Complete = false;
+        std::string Reason =
+            "native function has no complete typed source body";
+        if (const auto It = NativeDependencies.find(Entry);
+            It != NativeDependencies.end() && !It->second.empty())
+          Reason = It->second;
+        Evidence.add(SourceProjectionIssue::Signature, Reason);
+        Node["local_reason"] = jsonSafeText(Reason);
+        Node["closure_reason"] = jsonSafeText(Reason);
+      }
+      Node["dependencies"] = std::move(Dependencies);
+      Node["local_diagnostics"] = sourceProjectionEvidenceJSON(Evidence);
+      ProjectionNodes.push_back(std::move(Node));
+    }
 
     llvm::json::Array Methods;
     size_t Recovered = 0;
@@ -455,6 +528,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         {"native_function_count", static_cast<int64_t>(NativeFunctionCount)},
         {"native_dependency_graph",
          nativeSourceDependencyEvidenceJSON(NativeEvidence)},
+        {"source_projection_graph",
+         llvm::json::Object{
+             {"schema_version", 1},
+             {"scope", "final_native_and_block_source_projections"},
+             {"native_inventory_complete", NativeEvidence.InventoryComplete},
+             {"closure_stage", "before_method_emission_and_text_checks"},
+             {"nodes", std::move(ProjectionNodes)}}},
         {"objc_metadata", objcMetadataJSON(S->Img)},
         {"method_count", static_cast<int64_t>(S->Img.ObjCMethods.size())},
         {"recovered_method_count", static_cast<int64_t>(Recovered)},
