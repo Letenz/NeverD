@@ -5210,6 +5210,85 @@ TEST(ObjCCallHints, UIKitReceiverDeclarationsRequireProvenOwnerAndProvider) {
   }
 }
 
+TEST(ObjCCallHints, UIKitImageConstructionKeepsScalarRecordAndResultTypes) {
+  const struct {
+    const char *Owner, *Selector;
+    bool ClassMethod;
+    NdTypeKind ReturnKind;
+    unsigned Parameters;
+    const char *ReturnClass;
+  } Cases[] = {
+      {"UIImage", "imageOrientation", false, NdTypeKind::Int, 2, ""},
+      {"UIImage", "imageWithCGImage:", true, NdTypeKind::Ptr, 3, "UIImage"},
+      {"UIImage", "imageWithCGImage:scale:orientation:", true, NdTypeKind::Ptr,
+       5, "UIImage"},
+      {"UIImage", "initWithCGImage:scale:orientation:", false, NdTypeKind::Ptr,
+       5, "First"},
+      {"UIImage", "drawInRect:", false, NdTypeKind::Void, 3, ""},
+      {"UIGraphicsImageRendererFormat", "defaultFormat", true, NdTypeKind::Ptr,
+       2, "First"},
+      {"UIGraphicsImageRendererFormat", "scale", false, NdTypeKind::Float, 2,
+       ""},
+      {"UIGraphicsImageRendererFormat", "setScale:", false, NdTypeKind::Void, 3,
+       ""},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Selector);
+    auto Image = receiverImage(Arch::AArch64, Case.ClassMethod);
+    Image.ObjCMethods.front().Selector = "useImageAPI";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = Case.Owner;
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    const auto Hint =
+        objcReceiverSourceTypeHint(Image, Case.Selector, *Receiver);
+    ASSERT_TRUE(Hint.Signature);
+    EXPECT_EQ(Hint.Signature->ReturnType->Kind, Case.ReturnKind);
+    ASSERT_EQ(Hint.Signature->Parameters.size(), Case.Parameters);
+    EXPECT_EQ(Hint.ReturnClass.value_or(""), Case.ReturnClass);
+    const auto &TRI = getTargetRegInfo(Arch::AArch64);
+    if (llvm::StringRef(Case.Selector).contains("scale:orientation:")) {
+      const auto &Scale = Hint.Signature->Parameters[3];
+      EXPECT_EQ(Scale.Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(Scale.Type->Size, 8U);
+      EXPECT_EQ(Scale.Location.RegisterOffset, TRI.FPParamRegs[0]);
+      const auto &Orientation = Hint.Signature->Parameters[4];
+      EXPECT_EQ(Orientation.Type->Size, 8U);
+      EXPECT_TRUE(Orientation.Type->IsSigned);
+      EXPECT_EQ(Orientation.Location.RegisterOffset, TRI.IntParamRegs[3]);
+    }
+    if (llvm::StringRef(Case.Selector) == "drawInRect:") {
+      const auto &Rect = Hint.Signature->Parameters[2];
+      EXPECT_EQ(Rect.Type->Size, 32U);
+      ASSERT_EQ(Rect.Components.size(), 4U);
+      for (unsigned I = 0; I < 4; ++I) {
+        EXPECT_EQ(Rect.Components[I].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Rect.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+      }
+    }
+    for (unsigned Mutation = 0; Mutation < 3; ++Mutation) {
+      auto Changed = Image;
+      auto ChangedReceiver = *Receiver;
+      if (Mutation == 0)
+        Changed.Arch = Arch::X64;
+      if (Mutation == 1)
+        Changed.DynInfo.NeededLibs.erase(Changed.DynInfo.NeededLibs.begin());
+      if (Mutation == 2)
+        ChangedReceiver.IsClassMethod = !Case.ClassMethod;
+      EXPECT_FALSE(
+          objcReceiverSourceTypeHint(Changed, Case.Selector, ChangedReceiver)
+              .Signature)
+          << Mutation;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SharedFrameworkReceiverHierarchyKeepsConflictingEvidence) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = receiverImage(Architecture);

@@ -3,8 +3,10 @@
 // iPhoneOS and iPhoneSimulator Clang ASTs. These are receiver declarations,
 // not globally unique selector signatures. The UIImage interface declares
 // NSObject as superclass and adopts NSSecureCoding. Both ASTs agree on the
-// instance methods below, their zero explicit parameters, non-variadic shape,
-// and canonical return types (NSArray *, CIImage *, double, double).
+// method declarations below and their non-variadic canonical types. Enum
+// UIImageOrientation has underlying type long; CGRect contains CGPoint and
+// CGSize, each holding two doubles, in that order. Renderer format ownership
+// and NSCopying adoption also agree in the device and simulator artifacts.
 // Exact runtime encodings were checked by compiling those canonical method
 // declarations with Apple Clang for arm64-apple-ios18.0; this does not claim a
 // local compilation of the original UIKit headers. No x86_64 evidence exists.
@@ -16,4 +18,14 @@ ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "cla
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "CIImage", "@16@0:8", "CIImage", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "scale", "d16@0:8", "", false, nullptr, "", false)
 ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "duration", "d16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "imageOrientation", "q16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", true, "imageWithCGImage:", "@24@0:8^{CGImage=}16", "UIImage", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", true, "imageWithCGImage:scale:orientation:", "@40@0:8^{CGImage=}16d24q32", "UIImage", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "initWithCGImage:scale:orientation:", "@40@0:8^{CGImage=}16d24q32", "", true, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIImage", "", false, "drawInRect:", "v48@0:8{CGRect={CGPoint=dd}{CGSize=dd}}16", "", false, nullptr, "", false)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIGraphicsRendererFormat", "", "C:NSObject|P:NSCopying", nullptr)
+ND_OBJC_OWNER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIGraphicsImageRendererFormat", "", "C:UIGraphicsRendererFormat", nullptr)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIGraphicsRendererFormat", "", true, "defaultFormat", "@16@0:8", "", true, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIGraphicsImageRendererFormat", "", false, "scale", "d16@0:8", "", false, nullptr, "", false)
+ND_OBJC_MEMBER("UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "class", "UIGraphicsImageRendererFormat", "", false, "setScale:", "v24@0:8d16", "", false, nullptr, "", false)
 // clang-format on
