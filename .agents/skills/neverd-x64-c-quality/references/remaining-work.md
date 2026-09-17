@@ -7,7 +7,7 @@ a regression, then delete the row.
 
 | Gap | Surface | Notes |
 |---|---|---|
-| Live x64 PE vs Hex-Rays | HighC | Cookie is `void` + `report_gsfailure(arg0)` (noreturn), rotate prints `__builtin_rotateleft64`, CRT names keep a leading `_`. `__GSHandlerCheckCommon` has a real body, `v1 = arg0` on the no-align path, and `_security_check_cookie(v2)` (one arg). `_report_gsfailure` prints `__fastfail(2)` and `_raise_securityfailure` as noreturn; unused `var_m38` is gone while `&var_8` stays. Hex-Rays still wins PDB types/struct fields (non-goal), `capture_previous_context` vs `sub_*`, and `__wind` ctor unwind. |
+| Live x64 PE vs Hex-Rays | HighC | Cookie is `void` + unnamed `jmp` fail helper treated as noreturn when a sibling path is a bare `return`. Rotate prints `__builtin_rotateleft64`. `__GSHandlerCheck` keeps `return 1` (Const is not void). `__GSHandlerCheckCommon` still has a real body but HighC drops the GS_HANDLER_DATA bit-2 align branch (LLVM IR keeps `and i8 …, 4`). Hex-Rays still wins PDB types/struct fields (non-goal), `capture_previous_context` vs `sub_*`, and `__wind` ctor unwind. |
 | C++ ctor unwind | HighC | Destructor `__unwind` vs unstructured `__try` on large ctors is still open. Catch funclets now attach into `catch` bodies on `--func`. |
 | LLVMC EH is a wrap | LLVMC | Whole-function `__try` + goto, not nested `__try`/`__except` regions. HighC structured regions are the readable target. |
 | `--llvm` shard opt quality | pipeline | Default `decompile --llvm` now still emits C if a shard's input fails verifier/EH contracts (opt skipped). The IR is still not a valid opt input; flag/popcount/`*(T*)0` DCE in LLVM remains the real fix. |
@@ -34,6 +34,11 @@ a regression, then delete the row.
 | Unnamed x64 pdata with MSVC `mov [rsp+8], ecx` home | `COFFFunctionListingTest.UnnamedPdataAcceptsWin64RegisterHome`; `export --func 0x140001050` |
 | Named frame slots stay declared after copy-forward | `NeverDHighCStoreForwardingTests`; FrameSlots emit even if DeadVars |
 | LLVMC PHI edge copies, not `/* phi: */` | `LLVMCPointerAddresses.AssignsPhiAtPredecessorEdges` |
+| Const `return 1` is not void | `HighCPointerAddresses.ConstantReturnIsNotInferredVoid` |
+| Unnamed cookie fail + bare `return` is noreturn/void | `HighCPointerAddresses.UnnamedGsFailureCallOmitsSuccessReturn` |
+| `GetCurrentProcess()` is 0-arg | `HighCPointerAddresses.GetCurrentProcessTakesNoArguments` |
+| `TerminateProcess` is noreturn | `HighCPointerAddresses.TerminateProcessOmitsSuccessReturn`; `LLVMCPointerAddresses.TerminateProcessOmitsSuccessReturn` |
+| Image function exclusive-end code pointer | `LLVMCodePointerInvariantBoundary.UnliftedFunctionExclusiveEndResolvesAsGep` |
 | LLVMC IAT load → import call name | `LLVMCPointerAddresses.NamesIATIndirectCall` |
 | `--func` hex on a large PE lifts only that entry | `PipelineOptions.OnlyFunctionEntries`; `COFFExceptionIR.OnlyFunctionEntriesSkipsUnrequestedFunctions`; `neverd_decompile` sets the filter before `ensurePipeline` |
 | No clobber-0 operand comment | `HighCPointerAddresses.UndefOperandIsNotClobberComment`; Undef prints `0 /* unknown */`; add/sub of 0/Undef folds |
