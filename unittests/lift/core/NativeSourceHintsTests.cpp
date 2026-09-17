@@ -97,6 +97,57 @@ TEST(NativeSourceHints, KeepsObservedIntegerLocationsWithoutUsingNames) {
   }
 }
 
+TEST(NativeSourceHints, LeafReturnsPreserveProvenFullMachineWidth) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    auto &Write = Fixture.Med.Blocks[0].Ops.front();
+    Write.Opcode = NdOp::INT_ZEXT;
+    Write.NumInputs = 1;
+    Write.Output.Size = 8;
+    Write.Inputs[0] = MedVar::makeConst(UINT32_MAX, 4);
+    Fixture.High.Body.front().RetVal =
+        HighExpr::makeUnary(NdOp::INT_ZEXT, HighExpr::makeConst(UINT32_MAX, 4));
+    Fixture.High.Body.front().RetVal->Type = NdType::makeInt(8, false);
+    std::string Error;
+    const auto Full = Fixture.infer(Error);
+    ASSERT_TRUE(Full) << Error;
+    EXPECT_EQ(Full->ReturnType->Size, 8U);
+    EXPECT_FALSE(Full->ReturnType->IsSigned);
+    EXPECT_EQ(Full->ReturnLocation.ValueBytes, 8U);
+    // A source expression alone cannot authorize a wider machine carrier.
+    Write.Output.Size = 4;
+    const auto Narrow = Fixture.infer(Error);
+    ASSERT_TRUE(Narrow) << Error;
+    EXPECT_EQ(Narrow->ReturnLocation.ValueBytes, 4U);
+    Write.Output.Size = 8;
+    Fixture.High.Body.front().RetVal = HighExpr::makeUndef(8);
+    const auto Unknown = Fixture.infer(Error);
+    ASSERT_TRUE(Unknown) << Error;
+    EXPECT_EQ(Unknown->ReturnLocation.ValueBytes, 4U);
+  }
+}
+
+TEST(NativeSourceHints, NarrowExternalResultsDoNotProveTheirUpperBits) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    auto &Write = Fixture.Med.Blocks[0].Ops.front();
+    Write.Opcode = NdOp::CALL;
+    Write.NumInputs = 1;
+    Write.Inputs[0] = MedVar::makeConst(0x1020, 8);
+    Write.Output.Size = 8;
+    auto Call = std::make_shared<SourceCallTypeHint>();
+    Call->Signature.ReturnType = NdType::makeInt(4, false);
+    std::string Error;
+    ASSERT_TRUE(
+        assignDarwinScalarSourceABI(Call->Signature, Architecture, Error));
+    Write.SourceCallHint = Call;
+    Fixture.High.Body.front().RetVal = HighExpr::makeConst(UINT32_MAX, 8);
+    const auto Hint = Fixture.infer(Error);
+    ASSERT_TRUE(Hint) << Error;
+    EXPECT_EQ(Hint->ReturnLocation.ValueBytes, 4U);
+  }
+}
+
 NativeFixture compilerRTPlatformVersionFixture(Arch Architecture) {
   NativeFixture Fixture(Architecture);
   const auto &TRI = getTargetRegInfo(Architecture);

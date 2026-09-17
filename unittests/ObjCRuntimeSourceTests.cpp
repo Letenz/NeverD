@@ -557,7 +557,7 @@ void verifyRuntime(bool Chained,
                              : SwiftRecordRuntime  ? 2U
                              : SwiftIntegerRuntime ? 2U
                              : SwiftTypeLookup     ? 1U
-                             : NativeReturnPaths   ? 1U
+                             : NativeReturnPaths   ? 2U
                              : IncomingResults     ? 2U
                              : RuntimeIvars        ? 4U
                              : AuxiliaryInputs     ? 2U
@@ -656,7 +656,7 @@ void verifyRuntime(bool Chained,
   if (SwiftIntegerRuntime)
     Remaining = {"retainObject:times:", "object:canCastToClass:"};
   if (NativeReturnPaths)
-    Remaining = {"adjusted:choose:output:"};
+    Remaining = {"adjusted:choose:output:", "wideLeaf:"};
   if (IncomingResults)
     Remaining = {"word:flags:", "word:memory:"};
   if (NativeContext)
@@ -1192,8 +1192,8 @@ void verifyRuntime(bool Chained,
                              "pass\nmetadata-response=pass\n"
       : SwiftIntegerRuntime ? "runtime-integer-cases=4096\ncast-results="
                               "pass\nreference-counts=pass\n"
-      : NativeReturnPaths
-          ? "native-return-cases=16384\nreturns-and-stores=pass\n"
+      : NativeReturnPaths   ? "native-return-cases=16384\nreturns-and-stores="
+                            "pass\nwide-leaf-cases=4096\n"
       : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
                           "memory-input=pass\n"
       : RuntimeIvars    ? "runtime-ivar-cases=16384\nproperty-bits=pass\n"

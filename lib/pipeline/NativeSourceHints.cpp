@@ -4,6 +4,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -380,6 +381,57 @@ struct ExactNativeContract {
   std::optional<SourceFunctionTypeHint> Signature;
 };
 
+// Generic return-type inference may choose int32 after a W0/EAX write even
+// though the lifted machine computation also defines the upper register bits.
+// Internal source calls must preserve that complete value when callers read it.
+// Limit this refinement to leaf bodies: an imported narrow result does not
+// authenticate its caller-saved upper bits.
+bool completeIntegerLeafReturn(const MedFunc &Med, const HighFunc &High,
+                               Arch Architecture,
+                               SourceABIValueLocation Location) {
+  if (!Med.ReturnType || Med.ReturnType->Kind != NdTypeKind::Int ||
+      Med.ReturnType->Size >= 8)
+    return false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC)
+        return false;
+  Location.ValueBytes = 8;
+  if (!definedReturnPaths(Med, Architecture, Location, std::nullopt))
+    return false;
+  const auto Flow = buildHighSourceFlowGraph(High);
+  if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
+    return false;
+  bool HasReturn = false;
+  std::vector<const HighExpr *> Pending;
+  for (const auto &Node : Flow.Nodes) {
+    if (!Node.Statement)
+      continue;
+    const auto &S = *Node.Statement;
+    if (S.Kind == StmtKind::Return) {
+      HasReturn = true;
+      if (!S.RetVal || !S.RetVal->Type ||
+          S.RetVal->Type->Kind != NdTypeKind::Int || S.RetVal->Type->Size != 8)
+        return false;
+    }
+    forEachExpr(S, [&](const ExprPtr &E) { Pending.push_back(E.get()); });
+  }
+  std::set<const HighExpr *> Seen;
+  size_t Remaining = 262144;
+  while (!Pending.empty()) {
+    const auto *E = Pending.back();
+    Pending.pop_back();
+    if (!E || !Remaining-- || E->Kind == ExprKind::Undef)
+      return false;
+    if (!Seen.insert(E).second)
+      continue;
+    for (const auto &Operand : E->Operands)
+      Pending.push_back(Operand.get());
+  }
+  return HasReturn;
+}
+
 ExactNativeContract
 compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
                                   const SourceFunctionTypeHint &Observed,
@@ -651,6 +703,10 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   }
   if (!HasReturn)
     return Reject("native function has no machine return");
+  if (completeIntegerLeafReturn(Med, High, Image.Arch, Hint.ReturnLocation)) {
+    Hint.ReturnType = NdType::makeInt(8, false);
+    Hint.ReturnLocation.ValueBytes = 8;
+  }
   if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
                           IncomingReturnParameter)) {
     if (!hasVoidRuntimeContract(Image, Low, Med) ||

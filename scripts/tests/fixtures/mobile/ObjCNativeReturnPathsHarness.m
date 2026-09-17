@@ -8,6 +8,7 @@
 - (uint64_t)adjusted:(uint64_t)value
               choose:(unsigned)choice
               output:(uint64_t *)output;
+- (uint64_t)wideLeaf:(uint64_t)value;
 @end
 #ifdef NEVERD_RECOVERED_ARC
 #include "replacements.h"
@@ -33,6 +34,9 @@ int main(void) {
     for (unsigned i = 0; i < 4096; ++i) {
       state = state * UINT64_C(6364136223846793005) + 1;
       const uint64_t input = i < 8 ? edges[i] : state;
+      const uint64_t wideExpected = (int64_t)input < 21 ? UINT32_MAX : 7;
+      if ([driver wideLeaf:input] != wideExpected)
+        abort();
       for (unsigned c = 0; c < 4; ++c) {
         const unsigned choice = choices[c];
         const uint64_t expected = choice ? input + 7 : input - 9;
@@ -51,6 +55,7 @@ int main(void) {
     [driver release];
     if (cases != 16384)
       abort();
-    puts("native-return-cases=16384\nreturns-and-stores=pass");
+    puts("native-return-cases=16384\nreturns-and-stores=pass\nwide-leaf-cases="
+         "4096");
   }
 }
