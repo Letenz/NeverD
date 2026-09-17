@@ -534,18 +534,41 @@ void LLVMCWriter::writePhiCopies(const llvm::BasicBlock *From,
                                  const llvm::BasicBlock *To, int Indent) {
   if (!From || !To)
     return;
+  struct PhiCopy {
+    const llvm::PHINode *Phi;
+    llvm::Value *Incoming;
+    std::string Temp;
+  };
+  std::vector<PhiCopy> Copies;
   for (const llvm::Instruction &Inst : *To) {
     const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
     if (!Phi)
       break;
-    if (Analysis.Inlinable.count(Phi))
+    if (Phi->use_empty() || Analysis.Inlinable.count(Phi) ||
+        Analysis.DeadFrameStores.count(Phi))
       continue;
     llvm::Value *Incoming = Phi->getIncomingValueForBlock(From);
     if (!Incoming)
       continue;
-    emitIndent(Indent);
-    OS << getName(Phi) << " = " << valueStr(Incoming) << ";\n";
+    Copies.push_back({Phi, Incoming, freshVar("phi_edge")});
   }
+  if (Copies.empty())
+    return;
+  emitIndent(Indent);
+  OS << "{\n";
+  // SSA edge updates are simultaneous. Materialize every source before any
+  // destination is overwritten, including loop PHIs that exchange values.
+  for (const auto &Copy : Copies) {
+    emitIndent(Indent + 1);
+    OS << typeToCLLVM(Copy.Phi->getType()) << " " << Copy.Temp << " = "
+       << valueStr(Copy.Incoming) << ";\n";
+  }
+  for (const auto &Copy : Copies) {
+    emitIndent(Indent + 1);
+    OS << getName(Copy.Phi) << " = " << Copy.Temp << ";\n";
+  }
+  emitIndent(Indent);
+  OS << "}\n";
 }
 
 std::string
