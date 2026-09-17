@@ -5136,6 +5136,80 @@ TEST(ObjCCallHints, SharedFrameworkRecordsUseTheSupportedArchitectureLayout) {
   }
 }
 
+TEST(ObjCCallHints, UIKitReceiverDeclarationsRequireProvenOwnerAndProvider) {
+  for (const auto *Selector : {"images", "CIImage", "scale", "duration"}) {
+    for (const bool Category : {false, true}) {
+      SCOPED_TRACE(Selector);
+      SCOPED_TRACE(Category);
+      auto Image = receiverImage(Arch::AArch64);
+      Image.DynInfo.NeededLibs = {
+          "/System/Library/Frameworks/UIKit.framework/UIKit",
+          "/System/Library/Frameworks/Foundation.framework/Foundation"};
+      Image.ObjCMethods.front().Selector = "readImageProperty";
+      Image.ObjCMethods.back().Selector = Selector;
+      auto Other = Image.ObjCMethods.front();
+      Other.Selector = Selector;
+      Other.ClassName = "Third";
+      Other.Implementation = 0x1600;
+      Image.ObjCMethods.push_back(Other);
+      Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+      if (Category) {
+        Image.ObjCClasses.clear();
+        Image.ObjCMethods.front().ClassName = "UIImage";
+        Image.ObjCMethods.front().CategoryName = "ImageMetadata";
+      } else {
+        auto &Class = Image.ObjCClasses.front();
+        Class.RootClass = false;
+        Class.InheritanceStatus = "resolved";
+        Class.SuperclassName = "UIImage";
+      }
+      // An unrelated owner's incompatible declaration must not replace the
+      // receiver's method ABI or make the selector globally unambiguous.
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector));
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      const auto Hint = objcReceiverSourceTypeHint(Image, Selector, *Receiver);
+      ASSERT_TRUE(Hint.Signature);
+      EXPECT_EQ(Hint.Signature->Parameters.size(), 2U);
+      EXPECT_EQ(Hint.Signature->ReturnType->Size, 8U);
+      EXPECT_EQ(Hint.Signature->ReturnType->Kind,
+                llvm::StringRef(Selector) == "images" ||
+                        llvm::StringRef(Selector) == "CIImage"
+                    ? NdTypeKind::Ptr
+                    : NdTypeKind::Float);
+      const auto Hints =
+          buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+      ASSERT_EQ(Hints.size(), 1U);
+      auto Call = receiverCallExpression(Hints.at(0x1204));
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DynInfo.NeededLibs.front() = "/tmp/UIKit.framework/UIKit";
+        if (Mutation == 1)
+          Changed.Arch = Arch::X64;
+        if (Mutation == 2) {
+          auto Conflict = Changed.ObjCMethods.at(1);
+          Conflict.ClassName = Changed.ObjCMethods.front().ClassName;
+          Changed.ObjCMethods.push_back(Conflict);
+        }
+        auto ChangedReceiver = *Receiver;
+        if (Mutation == 3)
+          ChangedReceiver.IsClassMethod = true;
+        if (Mutation == 4)
+          ChangedReceiver.ClassName = "UnknownImage";
+        EXPECT_FALSE(
+            objcReceiverSourceTypeHint(Changed, Selector, ChangedReceiver)
+                .Signature)
+            << Mutation;
+        if (Mutation < 3)
+          EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}))
+              << Mutation;
+      }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SharedFrameworkReceiverHierarchyKeepsConflictingEvidence) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = receiverImage(Architecture);

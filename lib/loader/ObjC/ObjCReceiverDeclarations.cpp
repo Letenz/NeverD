@@ -65,6 +65,7 @@ Catalog buildCatalog(Arch Architecture) {
   } Owners[] = {
 #define ND_OBJC_OWNER(...) {__VA_ARGS__},
 #define ND_OBJC_MEMBER(...)
+#include "ObjCIOSReceiverDeclarations.inc"
 #include "ObjCReceiverDeclarations.inc"
 #undef ND_OBJC_MEMBER
 #undef ND_OBJC_OWNER
@@ -79,6 +80,7 @@ Catalog buildCatalog(Arch Architecture) {
   } Members[] = {
 #define ND_OBJC_OWNER(...)
 #define ND_OBJC_MEMBER(...) {__VA_ARGS__},
+#include "ObjCIOSReceiverDeclarations.inc"
 #include "ObjCReceiverDeclarations.inc"
 #undef ND_OBJC_MEMBER
 #undef ND_OBJC_OWNER
