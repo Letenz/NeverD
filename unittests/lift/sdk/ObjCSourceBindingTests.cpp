@@ -2846,6 +2846,40 @@ TEST(ObjCSourceBindings, ImmutableScalarsPreserveWidthSignAndFloatingBits) {
   }
 }
 
+TEST(ObjCSourceBindings, BooleanConditionsDoNotTurnScalarReadsIntoAddresses) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    Fixture F;
+    F.Image.Arch = Architecture;
+    F.Image.ObjCSourceReferences.clear();
+    llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                     7);
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    auto Pointer = HighExpr::makeVar(Parameter, NdType::makePtr());
+    auto Load = HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8),
+                                   NdType::makeInt(8));
+    auto Compare = HighExpr::makeBinop(NdOp::INT_EQUAL, Load,
+                                       HighExpr::makeConst(7, 8));
+    auto Condition = HighExpr::makeBinop(NdOp::BOOL_OR, Pointer, Compare);
+    ASSERT_EQ(Compare->Type->Kind, NdTypeKind::Int);
+    ASSERT_EQ(Compare->Type->Size, 1U);
+    ASSERT_EQ(Condition->Type->Kind, NdTypeKind::Int);
+    ASSERT_EQ(Condition->Type->Size, 1U);
+    F.Function.ReturnType = Condition->Type;
+    F.Function.Body[0].RetVal = Condition;
+
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto Scalar = Bound.Function.Body[0].RetVal->Operands[1]->Operands[0];
+    ASSERT_EQ(Scalar->Kind, ExprKind::BitCast);
+    ASSERT_EQ(Scalar->Operands[0]->Kind, ExprKind::Const);
+    EXPECT_EQ(Scalar->Operands[0]->ConstVal, 7U);
+    EXPECT_EQ(Load->Kind, ExprKind::Load);
+  }
+}
+
 TEST(ObjCSourceBindings,
      ImmutableWideScalarsPreserveBothLanesAndRejectPointers) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
@@ -5201,6 +5235,35 @@ TEST(ObjCSourceBindings,
     EXPECT_EQ(ComparedContext->SourceCallHint->CallKind,
               SourceCallTypeHint::Kind::RuntimeKVOContext);
     EXPECT_TRUE(objcSourceCallBound(*ComparedContext, F.Image, {}));
+
+    MedVar Local;
+    Local.Kind = MedVar::Temp;
+    Local.Id = 50001;
+    Local.Size = 8;
+    HighStmt Define;
+    Define.Kind = StmtKind::Assign;
+    Define.Dst = HighExpr::makeVar(Local, NdType::makePtr());
+    Define.Val = HighExpr::makeConst(
+        Address, 8, ConstantAddressProvenance::DataAddress);
+    F.Function.Body.insert(F.Function.Body.begin(), Define);
+    auto LocalValue = HighExpr::makeVar(Local, NdType::makePtr());
+    F.Function.Body[1].RetVal =
+        HighExpr::makeBinop(NdOp::INT_EQUAL, Context, LocalValue);
+    Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_EQ(Bound.KVOContexts, std::set<va_t>{Address});
+    ASSERT_TRUE(Bound.Function.Body[0].Val->SourceCallHint);
+    EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::RuntimeKVOContext);
+
+    F.Function.Body[1].RetVal =
+        HighExpr::makeBinop(NdOp::BOOL_OR,
+                            HighExpr::makeBinop(NdOp::INT_EQUAL, Context,
+                                               LocalValue),
+                            LocalValue);
+    Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_FALSE(Bound.Limitation.empty());
+    EXPECT_TRUE(Bound.KVOContexts.empty());
   }
 }
 
