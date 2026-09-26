@@ -462,8 +462,24 @@ class SourceFlow {
   // may also carry the same relation to a later test.
   size_t refine(size_t Entry) {
     size_t BranchTests = 0;
-    for (const auto &N : Nodes)
-      BranchTests += N.Test && N.Next.size() > 1;
+    bool HasStoredBooleanTest = false;
+    for (const auto &N : Nodes) {
+      if (!N.Test || N.Next.size() <= 1)
+        continue;
+      ++BranchTests;
+      auto Condition = N.Test;
+      for (unsigned Depth = 0;
+           Depth != 8 && Condition &&
+           Condition->Kind == ExprKind::UnaryOp &&
+           Condition->Op == NdOp::BOOL_NOT &&
+           Condition->Operands.size() == 1 &&
+           Condition->IntrinsicOutputs.empty() &&
+           Condition->MemoryOrdering == NdMemoryOrdering::None &&
+           Condition->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+           ++Depth)
+        Condition = Condition->Operands[0];
+      HasStoredBooleanTest |= scalarLocal(Condition);
+    }
     if (BranchTests < 2)
       return Entry;
     struct Copy {
@@ -526,7 +542,10 @@ class SourceFlow {
       Copies.emplace(Destination, Copy{Source, I});
     }
     std::vector<std::vector<std::optional<Predicate>>> CanonicalFacts;
-    if (!Copies.empty()) {
+    // A one-write boolean can preserve a repeated equality even when neither
+    // operand was copied. Avoid materializing edge facts for direct tests that
+    // have no scalar-copy aliases to canonicalize.
+    if (!Copies.empty() || HasStoredBooleanTest) {
       CanonicalFacts.reserve(Nodes.size());
       for (size_t I = 0; I < Nodes.size(); ++I) {
         CanonicalFacts.push_back(Nodes[I].EdgeFacts);

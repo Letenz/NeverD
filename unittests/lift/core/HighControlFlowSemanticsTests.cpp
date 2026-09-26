@@ -345,6 +345,35 @@ TEST(HighControlFlowSemantics, RepeatedEqualityRemovesOnlyDeadEdgeCopies) {
     }
 }
 
+TEST(HighControlFlowSemantics,
+     BooleanEqualityNeedsNoUnrelatedScalarCopyToPruneDeadPhiRead) {
+  auto F = guardedPhiCopy();
+  auto Boolean = [](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 1;
+    return HighExpr::makeVar(V);
+  };
+  auto Equality = [&](va_t Address, int Destination) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = Boolean(Destination);
+    S.Val = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), local(3));
+    return S;
+  };
+  F.Body[0].Cond = Boolean(5);
+  F.Body[1].Cond = Boolean(8);
+  F.Body.insert(F.Body.begin(), assign(0x1000, 3, 7));
+  F.Body.insert(F.Body.begin() + 1, Equality(0x1002, 5));
+  F.Body.insert(F.Body.begin() + 3, Equality(0x100c, 8));
+  EXPECT_THROW(execute(F, 0), std::runtime_error);
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+  for (uint64_t Value : {uint64_t{0}, uint64_t{7}, uint64_t{19}})
+    EXPECT_EQ(execute(F, Value), Value == 7 ? 42u : 7u);
+}
+
 HighFunc copiedBooleanEquality(bool ReassignCopy) {
   auto Copy = [](va_t Address, int Destination, int Source) {
     auto S = assign(Address, Destination, 0);
