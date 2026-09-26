@@ -259,11 +259,16 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
     return bad("Swift string call has the wrong calling convention");
   if (Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
-      Hint.CallKind == Kind::RuntimeObjCMetadataFactory) {
+      Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
+      Hint.CallKind == Kind::RuntimeObjCForwardedInitializer) {
     const bool Factory = Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
-    const auto Name = std::string(Factory ? "neverd_objc_metadata_factory_"
-                                          : "neverd_objc_super_getter_") +
-                      llvm::utohexstr(Hint.TargetAddress, true);
+    const bool Forwarded =
+        Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
+    const auto Name =
+        std::string(Factory     ? "neverd_objc_metadata_factory_"
+                    : Forwarded ? "neverd_objc_forwarded_initializer_"
+                                : "neverd_objc_super_getter_") +
+        llvm::utohexstr(Hint.TargetAddress, true);
     if (!Hint.TargetAddress || Hint.TargetName != Name ||
         E.CallAddr != Hint.TargetAddress || !E.CallTarget.empty() ||
         E.IsIndirectCall || !E.IntrinsicOutputs.empty() ||
@@ -273,8 +278,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
             SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
         !Signature.ReturnType ||
         Signature.ReturnType->Kind !=
-            (Factory ? NdTypeKind::Ptr : NdTypeKind::Int) ||
-        Signature.ReturnType->Size != (Factory ? 8U : 1U) ||
+            (Factory || Forwarded ? NdTypeKind::Ptr : NdTypeKind::Int) ||
+        Signature.ReturnType->Size != (Factory || Forwarded ? 8U : 1U) ||
         Signature.Parameters.size() != (Factory ? 2U : 4U) ||
         !Signature.HasExplicitABI || Hint.DoesNotReturn || Hint.WeakImport ||
         Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
@@ -539,7 +544,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::SwiftStringFromNSString &&
       Hint.CallKind != Kind::DarwinRuntimeCall &&
       Hint.CallKind != Kind::RuntimeObjCSuperGetter &&
-      Hint.CallKind != Kind::RuntimeObjCMetadataFactory)
+      Hint.CallKind != Kind::RuntimeObjCMetadataFactory &&
+      Hint.CallKind != Kind::RuntimeObjCForwardedInitializer)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
       E.Operands.size() != Signature.Parameters.size())
@@ -668,7 +674,8 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::SwiftStringFromNSString ||
                          Hint.CallKind == Kind::DarwinRuntimeCall ||
                          Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
-                         Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
+                         Hint.CallKind == Kind::RuntimeObjCMetadataFactory ||
+                         Hint.CallKind == Kind::RuntimeObjCForwardedInitializer;
     if (Runtime)
       Name = Hint.TargetName;
     if (Hint.CallKind == Kind::SwiftStringBridge)

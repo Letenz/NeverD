@@ -8,6 +8,7 @@
 #include "JSONText.h"
 #include "NativePhaseTrace.h"
 #include "ObjCBlockSources.h"
+#include "ObjCForwardedInitializerSources.h"
 #include "ObjCImmutableStringCallbackSources.h"
 #include "ObjCMetadataFactorySources.h"
 #include "ObjCNativeDependencies.h"
@@ -70,6 +71,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     S->applyAnalysisOptions(Options);
     Options.MaxFunctions = MaxFunctions;
     Options.EmitDumpOutput = false;
+    seedObjCForwardedInitializerAccessorHints(S->Img, Options);
     Pipeline Engine;
     auto RunPipeline = [&](unsigned Iteration) {
       NativePhaseTrace PipelineTrace(NativePhaseTrace::Phase::Pipeline,
@@ -243,6 +245,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     const auto MetadataFactoryPlan =
         discoverObjCMetadataFactorySources(S->Img, Result, ProfileStorage);
     std::set<va_t> MetadataFactoryProjections;
+    const auto ForwardedInitializerPlan =
+        discoverObjCForwardedInitializerSources(S->Img, Result);
+    std::set<va_t> ForwardedInitializerProjections;
     std::map<va_t, std::string> ProjectionReasons;
     std::set<va_t> Closed;
     std::set<va_t> StableClosed;
@@ -278,6 +283,10 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                      MetadataFactoryPlan, ProfileStorage);
       if (MetadataFactoryBinding.Projected)
         MetadataFactoryProjections.insert(Entry);
+      auto ForwardedInitializerBinding = projectObjCForwardedInitializer(
+          MetadataFactoryBinding.Function, S->Img, ForwardedInitializerPlan);
+      if (ForwardedInitializerBinding.Projected)
+        ForwardedInitializerProjections.insert(Entry);
       // The immutable callback already carries all current source bindings.
       // Its proved scalar pool offsets may numerically overlap image code;
       // reinterpreting those generated offsets as raw machine addresses would
@@ -285,11 +294,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       auto Binding =
           ImmutableStringInputs.count(Entry)
               ? ImmutableStringInputs.at(Entry)
-              : bindObjCSourceReferences(MetadataFactoryBinding.Function,
+              : bindObjCSourceReferences(ForwardedInitializerBinding.Function,
                                          S->Img, &ProfileStorage, &Functions);
       if (const auto Immutable = ImmutableStringInputs.find(Entry);
           Immutable != ImmutableStringInputs.end()) {
-        Binding.Function = MetadataFactoryBinding.Function;
+        Binding.Function = ForwardedInitializerBinding.Function;
         if (!objCImmutableStringCallbackValid(Binding.Function, S->Img, Result,
                                               OncePlan))
           Binding.Limitation =
@@ -297,6 +306,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       }
       Binding.Dependencies.insert(MetadataFactoryBinding.Dependencies.begin(),
                                   MetadataFactoryBinding.Dependencies.end());
+      Binding.Dependencies.insert(
+          ForwardedInitializerBinding.Dependencies.begin(),
+          ForwardedInitializerBinding.Dependencies.end());
       Binding.ProfileCounterSections.insert(
           MetadataFactoryBinding.ProfileSections.begin(),
           MetadataFactoryBinding.ProfileSections.end());
@@ -361,6 +373,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      objCSuperGetterSourceCallBound(
                          Expression, S->Img, SuperGetterPlan, Binding.Function,
                          Functions) ||
+                     objCForwardedInitializerSourceCallBound(
+                         Expression, S->Img, ForwardedInitializerPlan,
+                         Binding.Function, Functions) ||
                      swiftOnceCallbackBound(Expression, S->Img, OncePlan,
                                             Functions) ||
                      swiftOnceAddressorBound(Expression, S->Img, OncePlan,
@@ -464,6 +479,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                      objCSuperGetterSourceCallBound(
                          Expression, S->Img, SuperGetterPlan, Binding.Function,
                          Functions) ||
+                     objCForwardedInitializerSourceCallBound(
+                         Expression, S->Img, ForwardedInitializerPlan,
+                         Binding.Function, Functions) ||
                      swiftOnceCallbackBound(Expression, S->Img, OncePlan,
                                             Functions) ||
                      swiftOnceAddressorBound(Expression, S->Img, OncePlan,
@@ -557,6 +575,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                  objCSuperGetterSourceCallBound(
                      Expression, S->Img, SuperGetterPlan, Projection.Function,
                      Functions) ||
+                 objCForwardedInitializerSourceCallBound(
+                     Expression, S->Img, ForwardedInitializerPlan,
+                     Projection.Function, Functions) ||
                  swiftOnceCallbackBound(Expression, S->Img, OncePlan,
                                         Functions) ||
                  swiftOnceAddressorBound(Expression, S->Img, OncePlan,
@@ -775,6 +796,13 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           MetadataFactories.insert(Entry);
       IdentityHelpers += renderObjCMetadataFactoryHelpers(
           S->Img, MetadataFactoryPlan, ProfileStorage, MetadataFactories,
+          SharedIdentityFunctions);
+      std::set<va_t> ForwardedInitializers;
+      for (const auto Entry : Included)
+        if (ForwardedInitializerProjections.count(Entry))
+          ForwardedInitializers.insert(Entry);
+      IdentityHelpers += renderObjCForwardedInitializerHelpers(
+          S->Img, ForwardedInitializerPlan, ForwardedInitializers,
           SharedIdentityFunctions);
       std::set<std::string> SharedStorageFunctions;
       const std::string StorageHelpers =

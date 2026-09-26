@@ -767,6 +767,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                        SourceCallTypeHint::Kind::RuntimeObjCSuperGetter ||
                    Hint.CallKind ==
                        SourceCallTypeHint::Kind::RuntimeObjCMetadataFactory ||
+                   Hint.CallKind == SourceCallTypeHint::Kind::
+                                        RuntimeObjCForwardedInitializer ||
                    Hint.CallKind ==
                        SourceCallTypeHint::Kind::SwiftRuntimeCall ||
                    DeclaredC) {
@@ -777,6 +779,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                   SourceCallTypeHint::Kind::RuntimeObjCSuperGetter ||
               Hint.CallKind ==
                   SourceCallTypeHint::Kind::RuntimeObjCMetadataFactory ||
+              Hint.CallKind ==
+                  SourceCallTypeHint::Kind::RuntimeObjCForwardedInitializer ||
               DeclaredC;
           // Scalar ABI declarations use private C identifiers and exact linker
           // names, avoiding conflicting SDK typedefs or libc header prototypes.
