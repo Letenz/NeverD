@@ -2944,6 +2944,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     CandidateStmts.insert(Stmt);
   }
 
+  // Each candidate below rescans every site.  Forwarding only folds
+  // single-use temporaries into their use, so a body this large keeps them.
+  if (Sites.size() > limits::kMaxValueForwardSites)
+    return;
   auto scalarSourceRedefined = [&](const Candidate &C) {
     if (!C.Stmt->Val)
       return true;
@@ -4380,6 +4384,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   PointerArgDestTypes.clear();
   AmbiguousFrameAliases.clear();
   ValueForward.clear();
+  AssignedValuesByName.clear();
+  AssignedValuesIndexed = false;
   CallResultNames.clear();
   CallResultTypes.clear();
   UnknownOnlyNames.clear();

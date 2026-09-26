@@ -32,6 +32,7 @@
 #include <utility>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace neverd {
@@ -514,6 +515,11 @@ public:
   std::map<std::string, TypeRef> PointerArgDestTypes;
   /// Single-use call / image-global loads print at the use, not as a temp.
   std::map<std::string, const HighExpr *> ValueForward;
+  /// Values assigned to each printed variable name in the current function,
+  /// built on first use by incrementBaseMatchesAddr.
+  mutable std::unordered_map<std::string, std::vector<const HighExpr *>>
+      AssignedValuesByName;
+  mutable bool AssignedValuesIndexed = false;
   /// Multi-use ATL ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).

@@ -2397,23 +2397,27 @@ bool HighCWriter::incrementBaseMatchesAddr(const HighExpr &Base,
     return Fwd && Fwd->Kind == ExprKind::Load && !Fwd->Operands.empty() &&
            Fwd->Operands[0] && samePeeledAddr(*Fwd->Operands[0], Addr);
   };
-  auto It = ValueForward.find(varName(B->Var));
+  const std::string Name = varName(B->Var);
+  auto It = ValueForward.find(Name);
   if (It != ValueForward.end() && It->second && MatchesLoad(It->second))
     return true;
   if (!CurrentFunc)
     return false;
-  bool Found = false;
-  walkStmts(CurrentFunc->Body, [&](const HighStmt &S) {
-    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
-      return;
-    if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
-      return;
-    if (varName(S.Dst->Var) != varName(B->Var))
-      return;
-    if (MatchesLoad(S.Val.get()))
-      Found = true;
-  });
-  return Found;
+  // Every increment store asks this; index the function's assignments once.
+  if (!AssignedValuesIndexed) {
+    AssignedValuesIndexed = true;
+    walkStmts(CurrentFunc->Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
+        return;
+      if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
+        return;
+      AssignedValuesByName[varName(S.Dst->Var)].push_back(S.Val.get());
+    });
+  }
+  auto Assigned = AssignedValuesByName.find(Name);
+  if (Assigned == AssignedValuesByName.end())
+    return false;
+  return llvm::any_of(Assigned->second, MatchesLoad);
 }
 
 const HighExpr *HighCWriter::asAndWithConst(const HighExpr &Val,
@@ -2530,6 +2534,22 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
     };
     return Walk(E);
   };
+  // Only a load whose variable is the base of some in-place add can be
+  // hidden.  Find those names once rather than rescanning the body for every
+  // load assignment.
+  std::set<std::string> IncrementBaseNames;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (Analysis.DeadStmts.count(&S))
+      return;
+    int64_t Delta = 0;
+    if (!isInplaceAddStore(S, Delta))
+      return;
+    const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
+    if (Base && (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi))
+      IncrementBaseNames.insert(varName(Base->Var));
+  });
+  if (IncrementBaseNames.empty())
+    return;
   walkStmts(Func.Body, [&](const HighStmt &Assign) {
     if (Analysis.DeadStmts.count(&Assign))
       return;
@@ -2543,7 +2563,8 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
     if (Assign.Val->MemoryOrdering != NdMemoryOrdering::None)
       return;
     const std::string Name = varName(Assign.Dst->Var);
-    if (Name.empty() || isEmittedParamName(Name))
+    if (Name.empty() || isEmittedParamName(Name) ||
+        !IncrementBaseNames.count(Name))
       return;
     unsigned IncrementStores = 0;
     bool OtherUse = false;

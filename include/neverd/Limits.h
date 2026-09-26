@@ -560,6 +560,19 @@ constexpr size_t kMaxStructuredHighStmts = 4000;
 /// stay within a few seconds at this size.
 constexpr size_t kMaxLateGotoReductionStmts = 400000;
 
+/// Statements before a branch whose assignments are substituted into its
+/// condition when comparing it with an earlier branch.  Substitution only
+/// exposes equal subexpressions, so a shorter window finds fewer implied
+/// conditions but never an unsound one; scanning the whole prefix for every
+/// branch was cubic on long bodies.
+constexpr size_t kMaxComposedWorkAssigns = 64;
+
+/// HighC value forwarding (folding a single-use temporary into its use)
+/// rescans every statement for each candidate.  Larger bodies, which only
+/// arise when an oversized function is lowered block by block, keep their
+/// temporaries.
+constexpr size_t kMaxValueForwardSites = 8192;
+
 /// if/else folding passes for ordinary vs large CFGs.
 constexpr int kIfElseStructuringPasses = 10;
 constexpr int kIfElseLargeCfgPasses = 3;
