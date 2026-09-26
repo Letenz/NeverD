@@ -230,6 +230,9 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     std::map<va_t, const PipelineFunctionAudit *> Audits;
     for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
       Audits.emplace(Audit.Entry, &Audit);
+    std::map<va_t, const LowFunc *> LowFunctions;
+    for (const LowFunc &Low : Result.LowFuncs)
+      LowFunctions.emplace(Low.Entry, &Low);
 
     std::map<va_t, ObjCSourceBindingResult> Projections;
     const ObjCProfileStorage ProfileStorage(S->Img);
@@ -317,6 +320,18 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       // calls and stores and externally targeted branch entries are retained.
       if (!OnceBinding.Dependencies.empty())
         eliminateUnusedValues(Binding.Function.Body);
+      if (Binding.Function.ExceptionMetadata) {
+        if (const auto Low = LowFunctions.find(Entry);
+            Low != LowFunctions.end()) {
+          std::set<va_t> DecodedInstructions;
+          for (const LowBlock &Block : Low->second->Blocks)
+            for (const LowInstructionBoundary &Boundary :
+                 Block.InstructionBoundaries)
+              DecodedInstructions.insert(Boundary.Address);
+          Binding.Function.ExceptionMetadata = sourceUnwindForDecodedSubentry(
+              *Binding.Function.ExceptionMetadata, Entry, DecodedInstructions);
+        }
+      }
       std::string Reason = BlockBinding.Limitation.empty()
                                ? Binding.Limitation
                                : BlockBinding.Limitation;
