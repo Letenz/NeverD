@@ -421,9 +421,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       if (E.MemoryOrdering != NdMemoryOrdering::None)
         AtomicStoreTypes.insert({Type, E.MemoryOrdering, E.MemoryAddressSpace});
     }
-    for (const ExprPtr &Operand : E.Operands)
-      if (Operand)
-        Visit(*Operand);
+    // An indirect call prints its callee expression too.
+    E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
   };
 
   for (const HighFunc &Func : Funcs) {
