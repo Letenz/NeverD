@@ -84,6 +84,46 @@ TEST(DarwinAccelerateSourceCalls, BoxConvolvePreservesFixedScalarABI) {
   }
 }
 
+TEST(DarwinAccelerateSourceCalls, ScaleAndConvertPreserveFixedScalarABI) {
+  struct Expected {
+    const char *Name;
+    unsigned ParameterCount;
+  };
+  for (const auto &Case : {
+           Expected{"_vImageScale_Planar8", 4},
+           Expected{"_vImageScale_Planar16U", 4},
+           Expected{"_vImageScale_PlanarF", 4},
+           Expected{"_vImageScale_ARGB8888", 4},
+           Expected{"_vImageScale_ARGB16U", 4},
+           Expected{"_vImageScale_ARGBFFFF", 4},
+           Expected{"_vImageConvert_ARGBFFFFtoRGBFFF", 3},
+           Expected{"_vImageConvert_ARGB16UtoRGB16U", 3},
+           Expected{"_vImageConvert_ARGB8888toRGB888", 3},
+       }) {
+    for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+      SCOPED_TRACE(Case.Name);
+      const auto Image = image(Architecture, Case.Name);
+      const auto Hint = darwinRuntimeSourceCallHint(Image, ImportSlot);
+      ASSERT_TRUE(Hint);
+      ASSERT_TRUE(Hint->Signature.ReturnType);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 8U);
+      EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+      const auto &Parameters = Hint->Signature.Parameters;
+      ASSERT_EQ(Parameters.size(), Case.ParameterCount);
+      for (unsigned I = 0; I + 1 < Case.ParameterCount; ++I) {
+        EXPECT_EQ(Parameters[I].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Parameters[I].Type->Size, 8U);
+      }
+      EXPECT_EQ(Parameters.back().Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Parameters.back().Type->Size, 4U);
+      EXPECT_FALSE(Parameters.back().Type->IsSigned);
+      std::string Error;
+      EXPECT_TRUE(validateSourceABI(Hint->Signature, Error)) << Error;
+    }
+  }
+}
+
 TEST(DarwinAccelerateSourceCalls, BoxConvolveRequiresExactImportProvider) {
   auto Image = image(Arch::AArch64);
   Image.DyldBindSlots[ImportSlot].Module =
