@@ -3083,9 +3083,13 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         while (J < Body.size() && isJoinClutter(Body[J], Cur) &&
                (!Join || Body[J].Addr != Join))
           ++J;
+        // With a goto in Prev, the join is that goto's target.  A call or
+        // return that merely reads the value elsewhere does not turn an
+        // unrelated jump (into a loop, say) into a join edge.
         if (J < Body.size() &&
             ((Join && Body[J].Addr == Join) ||
-             ((Body[J].Kind == StmtKind::Call ||
+             (!Join &&
+              (Body[J].Kind == StmtKind::Call ||
                Body[J].Kind == StmtKind::Return) &&
               stmtUsesJoinDest(Body[J], Cur)))) {
           // Keep the last join-used assign. An earlier same-RegOff copy
