@@ -428,6 +428,34 @@ TEST(HighControlFlowSemantics, BooleanEqualitySurvivesDominatingScalarCopies) {
   EXPECT_TRUE(Report.Items.empty());
 }
 
+TEST(HighControlFlowSemantics,
+     BooleanEqualitySurvivesIdenticalCopiesOnBothBranchArms) {
+  auto F = copiedBooleanEquality(false);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.Size = 8;
+  Branch.Cond = HighExpr::makeVar(Parameter);
+  Branch.Body = {F.Body[2], F.Body[3]};
+  Branch.ElseBody = {F.Body[2], F.Body[3]};
+  F.Body.erase(F.Body.begin() + 2, F.Body.begin() + 4);
+  F.Body.insert(F.Body.begin() + 2, std::move(Branch));
+
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty())
+      << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+  for (uint64_t Choice : {uint64_t{0}, uint64_t{1}})
+    EXPECT_EQ(execute(F, Choice), 0u);
+
+  // The alias proof must not cross a join when one path never writes it.
+  F.Body[2].ElseBody.pop_back();
+  const auto MissingCopy = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(MissingCopy.Complete);
+  EXPECT_FALSE(MissingCopy.Items.empty());
+}
+
 TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
   auto F = copiedBooleanEquality(true);
   const auto Report = analyzeHighSourceFlow(F, true);
