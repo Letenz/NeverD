@@ -345,6 +345,68 @@ TEST(HighControlFlowSemantics, RepeatedEqualityRemovesOnlyDeadEdgeCopies) {
     }
 }
 
+HighFunc copiedBooleanEquality(bool ReassignCopy) {
+  auto Copy = [](va_t Address, int Destination, int Source) {
+    auto S = assign(Address, Destination, 0);
+    S.Val = local(Source);
+    return S;
+  };
+  auto Boolean = [](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 1;
+    return HighExpr::makeVar(V);
+  };
+  auto Equality = [&](va_t Address, int Destination, int Left, int Right) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = Boolean(Destination);
+    S.Val = HighExpr::makeBinop(NdOp::INT_EQUAL, local(Left), local(Right));
+    return S;
+  };
+  HighStmt Define;
+  Define.Kind = StmtKind::If;
+  Define.Addr = 0x1018;
+  Define.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Boolean(5));
+  Define.Body = {assign(0x101c, 9, 7)};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Addr = 0x1034;
+  Use.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Boolean(8));
+  Use.Body = {result(0x1038, local(9))};
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 1),
+            assign(0x1004, 2, 1),
+            Copy(0x1008, 3, 1),
+            Copy(0x100c, 4, 2),
+            Equality(0x1010, 5, 1, 2),
+            Define};
+  if (ReassignCopy)
+    F.Body.push_back(assign(0x1020, 3, 2));
+  F.Body.insert(F.Body.end(),
+                {Copy(0x1024, 6, 3), Copy(0x1028, 7, 4),
+                 Equality(0x102c, 8, 6, 7), Use,
+                 result(0x103c, HighExpr::makeConst(0, 8))});
+  return F;
+}
+
+TEST(HighControlFlowSemantics, BooleanEqualitySurvivesDominatingScalarCopies) {
+  auto F = copiedBooleanEquality(false);
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+}
+
+TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
+  auto F = copiedBooleanEquality(true);
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  ASSERT_FALSE(Report.Items.empty());
+  EXPECT_EQ(Report.Items[0].Issue, HighSourceFlowIssue::DefiniteAssignment);
+}
+
 TEST(HighControlFlowSemantics, EitherEqualityOperandWriteInvalidatesTheFact) {
   for (unsigned Operand : {0U, 3U})
     for (bool Swapped : {false, true}) {

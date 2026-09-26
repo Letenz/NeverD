@@ -458,8 +458,151 @@ class SourceFlow {
   // comparison with zero. Facts belong to individual edges, even those with
   // the same destination. A write to either operand kills the relation.
   // Inconsistent widths and escaped locals remain unknown; no memory-value,
-  // alias, or transitive equality inference is needed.
+  // alias inference is needed. A chain of unique, dominating scalar copies
+  // may also carry the same relation to a later test.
   size_t refine(size_t Entry) {
+    size_t BranchTests = 0;
+    for (const auto &N : Nodes)
+      BranchTests += N.Test && N.Next.size() > 1;
+    if (BranchTests < 2)
+      return Entry;
+    struct Copy {
+      size_t Source, Node;
+    };
+    std::vector<unsigned> WriteCount(Locals.size());
+    std::vector<size_t> WriteAt(Locals.size(), NoNode);
+    for (size_t I = 0; I < Nodes.size(); ++I)
+      for (size_t Written : Nodes[I].Writes)
+        if (Written < WriteCount.size()) {
+          if (WriteCount[Written]++ == 0)
+            WriteAt[Written] = I;
+        }
+    std::map<std::pair<size_t, size_t>, bool> Dominance;
+    size_t DominanceWork = 0;
+    auto Dominates = [&](size_t Definition, size_t Use) {
+      const auto Key = std::pair{Definition, Use};
+      if (auto It = Dominance.find(Key); It != Dominance.end())
+        return It->second;
+      bool Result = Definition != Use;
+      std::vector<uint8_t> Seen(Nodes.size());
+      std::vector<size_t> Pending{Entry};
+      while (Result && !Pending.empty()) {
+        const size_t Current = Pending.back();
+        Pending.pop_back();
+        if (++DominanceWork > 1000000) {
+          Result = false;
+          break;
+        }
+        if (Current == Definition || Seen[Current])
+          continue;
+        if (Current == Use) {
+          Result = false;
+          break;
+        }
+        Seen[Current] = 1;
+        Pending.insert(Pending.end(), Nodes[Current].Next.begin(),
+                       Nodes[Current].Next.end());
+      }
+      return Dominance.emplace(Key, Result).first->second;
+    };
+    std::map<size_t, Copy> Copies;
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      const auto *S = Nodes[I].Statement;
+      if (!S || S->Kind != StmtKind::Assign || !scalarLocal(S->Dst) ||
+          !scalarLocal(S->Val) || entryValue(S->Dst->Var) ||
+          entryValue(S->Val->Var) ||
+          S->Dst->Type->Kind != S->Val->Type->Kind ||
+          S->Dst->Type->Size != S->Val->Type->Size ||
+          S->Dst->Type->IsSigned != S->Val->Type->IsSigned ||
+          !S->Body.empty() || !S->ElseBody.empty() || !S->Cases.empty() ||
+          !S->DefaultBody.empty())
+        continue;
+      const size_t Destination = local(S->Dst->Var);
+      const size_t Source = local(S->Val->Var);
+      if (Destination == Source || AddressTaken.count(Destination) ||
+          AddressTaken.count(Source) || WriteCount[Destination] != 1 ||
+          WriteCount[Source] != 1 || !Dominates(WriteAt[Source], I))
+        continue;
+      Copies.emplace(Destination, Copy{Source, I});
+    }
+    std::vector<std::vector<std::optional<Predicate>>> CanonicalFacts;
+    if (!Copies.empty()) {
+      CanonicalFacts.reserve(Nodes.size());
+      for (size_t I = 0; I < Nodes.size(); ++I) {
+        CanonicalFacts.push_back(Nodes[I].EdgeFacts);
+        // The emitter often stores a scalar equality in a one-write boolean
+        // local before testing it. Borrow the comparison only when every path
+        // to the test passes through that definition.
+        if (const auto &Test = Nodes[I].Test) {
+          ExprPtr Condition = Test;
+          bool Inverted = false;
+          for (unsigned Depth = 0;
+               Depth != 8 && Condition &&
+               Condition->Kind == ExprKind::UnaryOp &&
+               Condition->Op == NdOp::BOOL_NOT &&
+               Condition->Operands.size() == 1 &&
+               Condition->IntrinsicOutputs.empty() &&
+               Condition->MemoryOrdering == NdMemoryOrdering::None &&
+               Condition->MemoryAddressSpace ==
+                   NdMemoryAddressSpace::Default;
+               ++Depth) {
+            Inverted = !Inverted;
+            Condition = Condition->Operands[0];
+          }
+          if (Condition && scalarLocal(Condition)) {
+            const size_t Boolean = local(Condition->Var);
+            if (WriteCount[Boolean] == 1 &&
+                !AddressTaken.count(Boolean) &&
+                Dominates(WriteAt[Boolean], I)) {
+              const auto *Definition = Nodes[WriteAt[Boolean]].Statement;
+              if (Definition && Definition->Kind == StmtKind::Assign &&
+                  scalarLocal(Definition->Dst) &&
+                  local(Definition->Dst->Var) == Boolean &&
+                  Definition->Val &&
+                  Definition->Val->Kind == ExprKind::BinOp &&
+                  (Definition->Val->Op == NdOp::INT_EQUAL ||
+                   Definition->Val->Op == NdOp::INT_NOTEQUAL) &&
+                  Definition->Val->Type &&
+                  Definition->Val->Type->Kind == NdTypeKind::Int &&
+                  Definition->Val->Type->Size == Condition->Type->Size &&
+                  Definition->Dst->Type->Size == Condition->Type->Size &&
+                  Definition->Body.empty() &&
+                  Definition->ElseBody.empty() &&
+                  Definition->Cases.empty() &&
+                  Definition->DefaultBody.empty())
+                if (auto Relation = predicate(Definition->Val))
+                  for (size_t E = 0; E < CanonicalFacts.back().size(); ++E)
+                    if (Nodes[I].EdgeTruth[E]) {
+                      auto Fact = *Relation;
+                      Fact.Nonzero ^= Inverted ^ !*Nodes[I].EdgeTruth[E];
+                      CanonicalFacts.back()[E] = Fact;
+                    }
+            }
+          }
+        }
+        auto Canonical = [&](size_t Local) {
+          std::set<size_t> Seen;
+          while (Local != NoNode && Seen.insert(Local).second) {
+            const auto It = Copies.find(Local);
+            if (It == Copies.end() || !Dominates(It->second.Node, I))
+              break;
+            Local = It->second.Source;
+          }
+          return Local;
+        };
+        for (auto &Fact : CanonicalFacts.back())
+          if (Fact) {
+            Fact->Local = Canonical(Fact->Local);
+            Fact->Other = Canonical(Fact->Other);
+            if (Fact->Other < Fact->Local)
+              std::swap(Fact->Local, Fact->Other);
+          }
+      }
+    }
+    const auto Facts = [&](size_t I)
+        -> const std::vector<std::optional<Predicate>> & {
+      return CanonicalFacts.empty() ? Nodes[I].EdgeFacts : CanonicalFacts[I];
+    };
     struct Observations {
       size_t Count = 0;
       uint16_t Width = 0;
@@ -467,10 +610,10 @@ class SourceFlow {
     };
     using Relation = std::pair<size_t, size_t>;
     std::map<Relation, Observations> Tests;
-    for (const auto &N : Nodes) {
-      if (N.EdgeFacts.empty() || !N.EdgeFacts[0])
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      if (Facts(I).empty() || !Facts(I)[0])
         continue;
-      const auto &Fact = *N.EdgeFacts[0];
+      const auto &Fact = *Facts(I)[0];
       auto &Seen = Tests[Fact.identity()];
       Seen.Consistent &= !Seen.Count || Seen.Width == Fact.Width;
       Seen.Width = Fact.Width;
@@ -540,7 +683,7 @@ class SourceFlow {
           }
         for (size_t E = 0; E < Original.Next.size(); ++E) {
           uint32_t NextKnown = Known, NextNonzero = Nonzero;
-          if (auto Fact = Original.EdgeFacts[E])
+          if (auto Fact = Facts(S.Original)[E])
             if (auto It = Masks.find(Fact->identity()); It != Masks.end()) {
               const uint32_t Mask = It->second;
               if ((Known & Mask) && bool(Nonzero & Mask) != Fact->Nonzero)
