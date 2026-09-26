@@ -31,15 +31,30 @@ bool KernelFramework::ownsRequestIRP(uint64_t IRP) const {
   });
 }
 
+bool KernelFramework::isPowerParkedIRP(uint64_t IRP) const {
+  const auto Request =
+      std::find_if(Requests.begin(), Requests.end(),
+                   [&](const auto &Entry) { return Entry.second.IRP == IRP; });
+  if (Request == Requests.end() || Request->second.Completed)
+    return false;
+  auto Queue = Queues.find(Request->second.Queue);
+  if (Queue == Queues.end() || !Queue->second.PowerManaged)
+    return false;
+  auto Device = Devices.find(Queue->second.Device);
+  return Device != Devices.end() && Device->second.PowerQueuesHeld &&
+         (Request->second.Queued || Request->second.PowerSuspended);
+}
+
 llvm::Expected<std::optional<uint64_t>>
 KernelFramework::callRequestAccessors(llvm::StringRef Name, Binding &B,
                                       llvm::ArrayRef<uint64_t> A) {
   using Result = std::optional<uint64_t>;
-  const bool InputMdl = Name == "WdfRequestRetrieveInputWdmMdl";
-  const bool OutputMdl = Name == "WdfRequestRetrieveOutputWdmMdl";
-  if (!InputMdl && !OutputMdl && Name != "WdfRequestGetInformation" &&
-      Name != "WdfRequestSetInformation" && Name != "WdfRequestGetIoQueue" &&
-      Name != "WdfRequestGetFileObject" && Name != "WdfRequestWdmGetIrp")
+  const bool InputMdl = Name == api::WdfRequestRetrieveInputWdmMdl;
+  const bool OutputMdl = Name == api::WdfRequestRetrieveOutputWdmMdl;
+  if (!InputMdl && !OutputMdl && Name != api::WdfRequestGetInformation &&
+      Name != api::WdfRequestSetInformation &&
+      Name != api::WdfRequestGetIoQueue &&
+      Name != api::WdfRequestGetFileObject && Name != api::WdfRequestWdmGetIrp)
     return Result{};
   auto O = Objects.find(A[1]);
   auto R = Requests.find(A[1]);
@@ -48,14 +63,16 @@ KernelFramework::callRequestAccessors(llvm::StringRef Name, Binding &B,
     return accessorError("invalid or foreign framework request");
   if (R->second.Queued)
     return accessorError("framework owns the request in a manual queue");
+  if (R->second.SynchronousSendPending)
+    return accessorError("lower target owns the pending synchronous request");
   const bool Completed = R->second.Completed || R->second.Completing;
   // These documented neutral results require a surviving object handle, not
   // a surviving IRP. Completion detaches the queue before request cleanup.
   // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestgetinformation
   // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestgetioqueue
-  if (Name == "WdfRequestGetIoQueue")
+  if (Name == api::WdfRequestGetIoQueue)
     return Result{Completed ? 0 : R->second.Queue};
-  if (Name == "WdfRequestGetInformation") {
+  if (Name == api::WdfRequestGetInformation) {
     if (Completed)
       return Result{0};
     if (!RequestsHost.Information)
@@ -102,18 +119,15 @@ KernelFramework::callRequestAccessors(llvm::StringRef Name, Binding &B,
   }
   if (Completed)
     return accessorError("request is completed or completion is in progress");
-  if (Name == "WdfRequestSetInformation") {
+  if (Name == api::WdfRequestSetInformation) {
     if (!RequestsHost.SetInformation)
       return accessorError("information host is unavailable");
     if (auto E = RequestsHost.SetInformation(R->second.IRP, A[2]))
       return std::move(E);
     return Result{0};
   }
-  if (Name == "WdfRequestGetFileObject") {
-    // Current devices use the no-file-callback configuration, whose file
-    // class is WdfFileObjectNotRequired. A WDM FILE_OBJECT is not this handle.
-    // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestgetfileobject
-    return Result{0};
+  if (Name == api::WdfRequestGetFileObject) {
+    return Result{R->second.File};
   }
   if (!RequestsHost.View)
     return accessorError("request inspection host is unavailable");

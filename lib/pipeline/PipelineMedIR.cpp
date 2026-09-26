@@ -15,6 +15,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -28,7 +29,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
+#include <string>
 #include <vector>
 
 #define DEBUG_TYPE "neverd-pipeline"
@@ -45,6 +48,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
 
   const size_t Total = Result.LowFuncs.size();
   Result.MedFuncs.resize(Total);
+  // Each worker owns one element; publish errors in stable function order
+  // only after all workers have joined.
+  std::vector<std::optional<std::string>> ConversionErrors(Total);
 
   // Runtime metadata is a source-rendering hint, not a rewrite ABI contract.
   // Patch/lift and safety evidence keep their existing independent semantics.
@@ -53,13 +59,17 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     for (const auto &[Entry, Hint] : Opts.SourceTypeHints)
       SourceHints.emplace(Entry, &Hint);
     for (const auto &Method : Img.ObjCMethods)
-      if (Method.Status == "supported" && Method.TypeHint)
+      if (objcMethodHasSourceBody(Method))
         SourceHints.emplace(Method.Implementation, &*Method.TypeHint);
   }
 
-  std::map<va_t, SourceFunctionTypeHint> SourceCalleeHints;
+  std::map<va_t, SourceFunctionTypeHint> SourceEntryHints;
   for (const auto &[Entry, Hint] : SourceHints)
-    SourceCalleeHints.emplace(Entry, *Hint);
+    SourceEntryHints.emplace(Entry, *Hint);
+  auto SourceCalleeHints = SourceEntryHints;
+  if (!Opts.PatchMode && !Opts.LiftMode)
+    for (const auto &[Entry, Hint] : Opts.SourceCalleeTypeHints)
+      SourceCalleeHints.insert_or_assign(Entry, Hint);
 
   // Per-callee callee-cleanup pop (x86 `ret imm`, the i386 SysV sret hidden-
   // pointer pop) so each caller's CALL to such a callee gets a post-call stack-
@@ -97,7 +107,10 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     LowToMedConverter Local;
     Local.setBinaryImage(&Img);
     Local.setSourceCallHintsEnabled(!Opts.PatchMode && !Opts.LiftMode);
+    Local.setSourceEntryTypeHints(&SourceEntryHints);
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
+    Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
+    Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
     Local.setCalleePopMap(&CalleePop);
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);
@@ -123,6 +136,8 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         if (MF.Blocks.size() <= limits::kMaxStructurableMedBlocks &&
             MedOps <= static_cast<size_t>(limits::kMaxSSANodes))
           inferMedTypes(MF, Img.Arch);
+      } catch (const LowToMedConversionError &Error) {
+        ConversionErrors[I] = Error.what();
       } catch (...) {
         syncWarning() << "pipeline: low->med threw on "
                       << Result.LowFuncs[I].Name << "\n";
@@ -149,6 +164,16 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       }
     }
   });
+
+  for (size_t I = 0; I < Total; ++I) {
+    if (!ConversionErrors[I])
+      continue;
+    Result.Error = "LowIR to MedIR failed for " + Result.LowFuncs[I].Name +
+                   ": " + *ConversionErrors[I];
+    Result.Success = false;
+    Result.MedFuncs.clear();
+    return;
+  }
 
   recordMedIRVerification(Result, "pipeline-med-final");
 

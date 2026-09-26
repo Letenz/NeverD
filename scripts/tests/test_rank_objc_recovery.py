@@ -106,6 +106,97 @@ class ObjCRecoveryRankingTests(unittest.TestCase):
         self.assertEqual(sum(row["complete_methods"] for row in combinations), 2)
         self.assertEqual(sorted(len(row["blockers"]) for row in combinations), [1, 2])
 
+    def source_report(self):
+        report = self.report()
+        def node(entry, dependencies=(), items=(), *, complete=True, closed=False):
+            return {"address": entry, "dependencies": list(dependencies),
+                    "has_typed_body": True, "local_gate_passed": not items,
+                    "closure_closed": closed,
+                    "local_diagnostics": {"checks_complete": complete,
+                                          "items": list(items)}}
+        report["source_projection_graph"] = {
+            "schema_version": 1,
+            "scope": "final_native_and_block_source_projections",
+            "closure_stage": "before_method_emission_and_text_checks",
+            "native_inventory_complete": True,
+            "nodes": [node("0x10", ["0x30"]), node("0x20", ["0x40"]),
+                      node("0x30", ["0x40"], [item("data_binding", related="0x90")]),
+                      node("0x40", ["0x30"], [item("data_binding", related="0xa0")]),
+                      node("0x50", closed=True)],
+        }
+        return report
+
+    def test_source_bundles_include_downstream_blockers_and_keep_aliases(self):
+        result = analyze(self.source_report())["source_closure"]
+        self.assertTrue(result["available"])
+        self.assertEqual(result["recursive_scc_count"], 1)
+        self.assertEqual(result["complete_observed_method_count"], 2)
+        self.assertEqual(result["incomplete_observed_method_count"], 1)
+        self.assertEqual(len(result["repair_bundles"]), 2)
+        for bundle in result["repair_bundles"]:
+            details = [result["blocker_details"][key] for key in bundle["blockers"]]
+            self.assertTrue({"0x90", "0xa0"} <=
+                            {item.get("related_address") for item in details})
+            self.assertTrue(bundle["can_reveal_new_dependencies"])
+        self.assertEqual({method["metadata_address"]
+                          for bundle in result["repair_bundles"]
+                          for method in bundle["methods"]}, {"0x100", "0x108"})
+
+    def test_unknown_downstream_evidence_excludes_every_affected_method(self):
+        report = self.source_report()
+        report["source_projection_graph"]["nodes"][3]["local_diagnostics"]["checks_complete"] = False
+        result = analyze(report)["source_closure"]
+        self.assertEqual(result["complete_observed_method_count"], 0)
+        self.assertEqual(result["incomplete_observed_method_count"], 3)
+        self.assertTrue(all("incomplete_projection:0x40" in row["unknown_conditions"]
+                            for row in result["incomplete_methods"]))
+
+    def test_closed_native_projection_does_not_imply_method_publication(self):
+        report = self.source_report()
+        graph = report["source_projection_graph"]
+        for node in graph["nodes"]:
+            node.update(closure_closed=True, local_gate_passed=True,
+                        local_diagnostics={"checks_complete": True, "items": []})
+        result = analyze(report)["source_closure"]
+        self.assertEqual(result["closed_but_unpublished_method_count"], 3)
+        self.assertEqual(result["complete_observed_method_count"], 2)
+        # Native closure cannot erase alias-specific method diagnostics.
+        self.assertEqual(sorted(len(row["blockers"]) for row in result["repair_bundles"]), [1, 2])
+
+    def test_source_graph_rejects_missing_nodes_and_false_closure(self):
+        for mutation in range(3):
+            report = self.source_report()
+            graph = report["source_projection_graph"]
+            if mutation == 0:
+                graph["nodes"].pop(3)
+            elif mutation == 1:
+                graph["nodes"][0]["closure_closed"] = True
+            else:
+                graph["nodes"].append(dict(graph["nodes"][0]))
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                analyze(report)
+
+    def test_legacy_graph_never_claims_source_closure_evidence(self):
+        self.assertFalse(analyze(self.report())["source_closure"]["available"])
+
+    def test_unrelated_dynamic_calls_do_not_become_one_repair(self):
+        report = self.source_report()
+        for method, node in zip(report["methods"][:2],
+                                report["source_projection_graph"]["nodes"][:2]):
+            method["implementation"] = node["address"]
+            diagnostic = {"checks_complete": True, "items": [{
+                "code": "call_binding", "reason": "unknown dynamic ABI",
+                "call": {"indirect": True, "target_name": "indirect"},
+                "statement_address": node["address"],
+            }]}
+            method["projection_diagnostics"] = diagnostic
+            node.update(dependencies=[], local_gate_passed=False,
+                        local_diagnostics=diagnostic)
+        result = analyze(report)["source_closure"]
+        self.assertEqual(len(result["repair_bundles"]), 2)
+        self.assertTrue(all(row["observed_complete_methods"] == 1
+                            for row in result["repair_bundles"]))
+
     def test_rejects_duplicate_full_method_identity(self):
         report = self.report()
         report["methods"].append(dict(report["methods"][0]))

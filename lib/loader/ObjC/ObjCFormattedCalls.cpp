@@ -4,12 +4,62 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 #include <algorithm>
 #include <map>
 
 namespace neverd {
 namespace {
+std::optional<std::vector<uint16_t>>
+readImmutableCFormat(const BinaryImage &Image, va_t Address) {
+  constexpr uint32_t MaxUnits = 65536;
+  uint32_t Units = 0;
+  for (; Units <= MaxUnits; ++Units) {
+    if (Address > InvalidVA - Units)
+      return std::nullopt;
+    const auto *Byte = Image.readVA(Address + Units, 1);
+    if (!Byte)
+      return std::nullopt;
+    if (!*Byte)
+      break;
+  }
+  if (Units > MaxUnits)
+    return std::nullopt;
+  auto Bytes = readImmutableImageBytes(Image, Address, Units + 1);
+  if (!Bytes || Bytes->size() != Units + 1 || Bytes->back())
+    return std::nullopt;
+  std::vector<uint16_t> Result;
+  Result.reserve(Units);
+  for (uint32_t I = 0; I < Units; ++I)
+    Result.push_back((*Bytes)[I]);
+  return Result;
+}
+
+std::optional<SourceCallTypeHint>
+bindFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
+                    unsigned FormatParameter, va_t FormatAddress,
+                    SourceCallTypeHint::FormatSyntax Syntax,
+                    llvm::ArrayRef<uint16_t> Format) {
+  auto Arguments = objcFormatArgumentTypes(Format, Syntax);
+  if (!Arguments || FormatParameter >= Result.Signature.Parameters.size() ||
+      !Result.Signature.Parameters[FormatParameter].Type ||
+      Result.Signature.Parameters[FormatParameter].Type->Kind !=
+          NdTypeKind::Ptr ||
+      Result.Signature.Parameters.size() + Arguments->size() > 64)
+    return std::nullopt;
+  const auto Fixed = unsigned(Result.Signature.Parameters.size());
+  Result.Format = SourceCallTypeHint::FormatArguments{Fixed, FormatParameter,
+                                                      FormatAddress, Syntax};
+  for (const auto &Type : *Arguments)
+    Result.Signature.Parameters.push_back({"format_arg", Type});
+  std::string Diagnostic;
+  if (!assignDarwinVariadicSourceABI(Result.Signature, Fixed, Image.Arch,
+                                     Diagnostic))
+    return std::nullopt;
+  return Result;
+}
+
 // Predicate substitutions are tokens outside quoted literals. Extract only
 // the proven conversion tokens, then share the promoted scalar type rules
 // with NSString. The original string still goes to the framework parser.
@@ -73,7 +123,8 @@ objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
     auto Tokens = predicateConversions(Format);
     return Tokens ? objcFormatArgumentTypes(*Tokens) : std::nullopt;
   }
-  if (Syntax != SourceCallTypeHint::FormatSyntax::NSString)
+  const bool Printf = Syntax == SourceCallTypeHint::FormatSyntax::Printf;
+  if (!Printf && Syntax != SourceCallTypeHint::FormatSyntax::NSString)
     return std::nullopt;
   size_t Cursor = 0;
   unsigned Sequential = 0;
@@ -159,16 +210,16 @@ objcFormatArgumentTypes(llvm::ArrayRef<uint16_t> Format,
       if (!Length.empty() && Length != "l")
         return std::nullopt;
       Type = NdType::makeFloat(8);
-    } else if (Conversion == 'c' || Conversion == 'C') {
+    } else if (Conversion == 'c' || (!Printf && Conversion == 'C')) {
       if (!Length.empty())
         return std::nullopt;
       Type = NdType::makeInt(4, true);
-    } else if (Conversion == 's' || Conversion == 'S') {
+    } else if (Conversion == 's' || (!Printf && Conversion == 'S')) {
       if (!Length.empty())
         return std::nullopt;
       Type = NdType::makePtr(
           NdType::makeInt(Conversion == 's' ? 1 : 2, Conversion == 's'));
-    } else if (Conversion == '@' || Conversion == 'p') {
+    } else if ((!Printf && Conversion == '@') || Conversion == 'p') {
       if (!Length.empty())
         return std::nullopt;
       Type = NdType::makePtr(NdType::makeVoid());
@@ -194,24 +245,21 @@ bindObjCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
                         unsigned FormatParameter, va_t FormatAddress,
                         SourceCallTypeHint::FormatSyntax Syntax) {
   auto Format = readObjCConstantString(Image, FormatAddress);
-  auto Arguments =
-      Format ? objcFormatArgumentTypes(Format->Units, Syntax) : std::nullopt;
-  if (!Arguments || FormatParameter >= Result.Signature.Parameters.size() ||
-      !Result.Signature.Parameters[FormatParameter].Type ||
-      Result.Signature.Parameters[FormatParameter].Type->Kind !=
-          NdTypeKind::Ptr ||
-      Result.Signature.Parameters.size() + Arguments->size() > 64)
+  if (!Format || Syntax == SourceCallTypeHint::FormatSyntax::Printf)
     return std::nullopt;
-  const auto Fixed = unsigned(Result.Signature.Parameters.size());
-  Result.Format = SourceCallTypeHint::FormatArguments{Fixed, FormatParameter,
-                                                      FormatAddress, Syntax};
-  for (const auto &Type : *Arguments)
-    Result.Signature.Parameters.push_back({"format_arg", Type});
-  std::string Diagnostic;
-  if (!assignDarwinVariadicSourceABI(Result.Signature, Fixed, Image.Arch,
-                                     Diagnostic))
+  return bindFormatArguments(Image, std::move(Result), FormatParameter,
+                             FormatAddress, Syntax, Format->Units);
+}
+
+std::optional<SourceCallTypeHint>
+bindCFormatArguments(const BinaryImage &Image, SourceCallTypeHint Result,
+                     unsigned FormatParameter, va_t FormatAddress) {
+  auto Format = readImmutableCFormat(Image, FormatAddress);
+  if (!Format)
     return std::nullopt;
-  return Result;
+  return bindFormatArguments(Image, std::move(Result), FormatParameter,
+                             FormatAddress,
+                             SourceCallTypeHint::FormatSyntax::Printf, *Format);
 }
 
 std::optional<SourceCallTypeHint>
@@ -228,5 +276,97 @@ objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
   return bindObjCFormatArguments(Image, std::move(Call),
                                  Declaration->FormatParameter, FormatAddress,
                                  Declaration->Syntax);
+}
+
+std::optional<SourceCallTypeHint>
+objcFormattedSourceCallHint(const BinaryImage &Image, llvm::StringRef Selector,
+                            llvm::ArrayRef<va_t> FormatAddresses) {
+  if (FormatAddresses.empty() || FormatAddresses.size() > 64)
+    return std::nullopt;
+  std::vector<va_t> Addresses(FormatAddresses.begin(), FormatAddresses.end());
+  llvm::sort(Addresses);
+  if (!Addresses.front() ||
+      std::adjacent_find(Addresses.begin(), Addresses.end()) != Addresses.end())
+    return std::nullopt;
+  auto Result = objcFormattedSourceCallHint(Image, Selector, Addresses.front());
+  if (!Result || !Result->Format)
+    return std::nullopt;
+  for (size_t I = 1; I < Addresses.size(); ++I) {
+    auto Candidate =
+        objcFormattedSourceCallHint(Image, Selector, Addresses[I]);
+    if (!Candidate || !Candidate->Format ||
+        Candidate->CallKind != Result->CallKind ||
+        Candidate->TargetName != Result->TargetName ||
+        Candidate->Selector != Result->Selector ||
+        Candidate->Format->FixedCount != Result->Format->FixedCount ||
+        Candidate->Format->FormatParameter !=
+            Result->Format->FormatParameter ||
+        Candidate->Format->Syntax != Result->Format->Syntax ||
+        !equalSourceABIs(Candidate->Signature, Result->Signature))
+      return std::nullopt;
+  }
+  Result->Format->AlternativeFormatAddresses.assign(Addresses.begin() + 1,
+                                                     Addresses.end());
+  return Result;
+}
+
+std::optional<SourceCallTypeHint>
+objcDynamicFormatWithoutArgumentsSourceCallHint(const BinaryImage &Image,
+                                                llvm::StringRef Selector) {
+  return objcDynamicFormatPointerArgumentsSourceCallHint(Image, Selector, 0);
+}
+
+std::optional<SourceCallTypeHint>
+objcDynamicFormatPointerArgumentsSourceCallHint(const BinaryImage &Image,
+                                                llvm::StringRef Selector,
+                                                unsigned PointerArguments) {
+  auto Declaration = objcSelectorFormatDeclaration(Image, Selector);
+  if (!Declaration || PointerArguments > 64 ||
+      Declaration->Signature.Parameters.size() + PointerArguments > 64)
+    return std::nullopt;
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = Selector.str();
+  Call.TargetName = "objc_msgSend";
+  Call.Signature = std::move(Declaration->Signature);
+  const auto Fixed = unsigned(Call.Signature.Parameters.size());
+  for (unsigned I = 0; I < PointerArguments; ++I)
+    Call.Signature.Parameters.push_back(
+        {"format_pointer_arg", NdType::makePtr(NdType::makeVoid())});
+  Call.Format = SourceCallTypeHint::FormatArguments{
+      Fixed, Declaration->FormatParameter, 0, Declaration->Syntax, {},
+      PointerArguments == 0, PointerArguments != 0};
+  std::string Diagnostic;
+  if (!assignDarwinVariadicSourceABI(Call.Signature, Fixed, Image.Arch,
+                                     Diagnostic))
+    return std::nullopt;
+  return Call;
+}
+
+std::optional<SourceCallTypeHint>
+objcDynamicFormatInteger64ArgumentsSourceCallHint(
+    const BinaryImage &Image, llvm::StringRef Selector,
+    llvm::ArrayRef<TypeRef> IntegerArguments) {
+  if (Image.Arch != Arch::AArch64 || IntegerArguments.empty() ||
+      IntegerArguments.size() > 64 ||
+      !std::all_of(IntegerArguments.begin(), IntegerArguments.end(),
+                   [](const TypeRef &Type) {
+                     return Type && Type->Kind == NdTypeKind::Int &&
+                            Type->Size == 8;
+                   }))
+    return std::nullopt;
+  auto Call = objcDynamicFormatWithoutArgumentsSourceCallHint(Image, Selector);
+  if (!Call || !Call->Format ||
+      Call->Signature.Parameters.size() + IntegerArguments.size() > 64)
+    return std::nullopt;
+  for (const auto &Type : IntegerArguments)
+    Call->Signature.Parameters.push_back({"format_integer_arg", Type});
+  Call->Format->DynamicWithoutArguments = false;
+  Call->Format->DynamicInteger64Arguments = true;
+  std::string Diagnostic;
+  if (!assignDarwinVariadicSourceABI(Call->Signature, Call->Format->FixedCount,
+                                     Image.Arch, Diagnostic))
+    return std::nullopt;
+  return Call;
 }
 } // namespace neverd

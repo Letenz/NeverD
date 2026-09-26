@@ -71,7 +71,24 @@ neverd_emulate_driver_json(neverd_session_t Sess, const char *Path,
 /// separate direct IOCTL buffer's initial hex bytes). READ accepts output_size
 /// and byte_offset; WRITE accepts input and byte_offset. Offsets default to
 /// zero, accept integers or 0x strings, and the entire transfer must fit
-/// nonnegative signed 64-bit file offsets. Configured pnp_devices require a
+/// nonnegative signed 64-bit file offsets. Neither transfers may declare
+/// user_buffers (id, size, optional input/access) and user_pointers with
+/// source/target references (buffer=input/output/memory, offset, and id only
+/// for memory). Pointer slots hold x64 guest addresses; declarations are
+/// validated before execution. Declared regions share the requestor's page
+/// rights, MDL pins and unmap/exit lifetime. Reports retain configuration facts
+/// and per-buffer diagnostic backing_hex snapshots, including after revocation;
+/// these snapshots do not imply caller-visible output or guest access.
+/// Forwarded CREATE/CLEANUP/CLOSE
+/// requests require an explicit bus_completion with a final status. A positive
+/// delay_100ns is accepted for WDM file forwarding, automatic KMDF forwarding,
+/// and synchronous, callback-based asynchronous, or SEND_AND_FORGET CREATE
+/// sends. Synchronous sends suspend the guest caller until the lower response
+/// or relative timeout. Automatic KMDF forwarding retains the WDM IRP/file
+/// through cleanup and destruction callbacks required during completion.
+/// External WDF references preserve context but do not extend the lifetime
+/// of a completed WDM file.
+/// Configured pnp_devices require a
 /// unique case-sensitive ASCII id, bus="resource_free" or "register_bank",
 /// initial_device_power=
 /// "D0" and initial_system_power="working". The register_bank bus additionally
@@ -83,15 +100,20 @@ neverd_emulate_driver_json(neverd_session_t Sess, const char *Path,
 /// memory. Register initial values persist across unmap/stop/restart.
 /// Resource-free devices omit both arrays. Each interrupt requires id,
 /// independent raw_vector/raw_level/raw_affinity and
-/// translated_vector/translated_level/ translated_affinity, mode="latched", and
-/// share="device_exclusive". Only CPU0/group0 and translated DIRQL3..12 are
-/// supported. READ/WRITE/IOCTL may specify interrupt_events with explicit
-/// after_100ns/device_id/interrupt_id; successful submission binds each pulse
-/// to its connected resource epoch. Delivery is cooperative at callback
-/// boundaries, including zero delay; source request completion does not cancel
-/// a pulse. Reports keep interrupt BOOLEAN observations independently of
-/// IRP/NTSTATUS results. A kind="pnp" request requires device_id, minor
-/// (start/query_remove/cancel_remove/remove/query_stop/stop/
+/// translated_vector/translated_level/translated_affinity, mode="latched" or
+/// "level_sensitive", and share="device_exclusive" or "shared". Level sources
+/// require positive retrigger_after_100ns; latched sources reject that field.
+/// Shared vectors require matching level, affinity, mode and sampling period.
+/// Only CPU0/group0 and translated DIRQL3..12 are supported. READ/WRITE/IOCTL
+/// may specify interrupt_events with explicit
+/// after_100ns/device_id/interrupt_id. Action defaults to "pulse" for latched
+/// sources; level sources require "assert" or "deassert". Submission captures
+/// live connections and epochs. Delivery is cooperative at callback boundaries;
+/// source request completion does not cancel an event. A claimed level ISR does
+/// not clear its source. Reports retain each handler and delivery_index;
+/// deassertion has no synthetic ISR return. BOOLEAN observations remain
+/// independent of IRP/NTSTATUS results. A kind="pnp" request requires
+/// device_id, minor (start/query_remove/cancel_remove/remove/query_stop/stop/
 /// cancel_stop/surprise_removal), and
 /// bus_completion with explicit final status (u32 or 0x string) and optional
 /// nonnegative delay_100ns measured from provider receipt. Stop, cancel-stop,

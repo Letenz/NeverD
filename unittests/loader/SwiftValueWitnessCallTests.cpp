@@ -85,7 +85,15 @@ TEST(SwiftValueWitnessCalls, OperationsUseExactMetadataAndRequiredTableSlots) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto Operation :
          {SourceCallTypeHint::SwiftValueWitnessKind::Destroy,
-          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy}) {
+          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy,
+          SourceCallTypeHint::SwiftValueWitnessKind::
+              InitializeBufferWithCopyOfBuffer,
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy,
+          SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake,
+          SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake,
+          SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload,
+          SourceCallTypeHint::SwiftValueWitnessKind::
+              StoreEnumTagSinglePayload}) {
       for (const bool Split : {false, true}) {
         SCOPED_TRACE(static_cast<unsigned>(Architecture));
         SCOPED_TRACE(static_cast<unsigned>(Operation));
@@ -115,11 +123,73 @@ TEST(SwiftValueWitnessCalls, OperationsUseExactMetadataAndRequiredTableSlots) {
         EXPECT_EQ(Call->NumInputs,
                   Hints.begin()->second.Signature.Parameters.size() + 1);
         EXPECT_EQ(Call->Output.Size,
-                  Operation ==
-                          SourceCallTypeHint::SwiftValueWitnessKind::Destroy
-                      ? 0U
-                      : 8U);
+                  Hints.begin()->second.Signature.ReturnType->Size);
       }
+    }
+  }
+}
+
+TEST(SwiftValueWitnessCalls, ImageMetadataPreservesExactWitnessProvenance) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const bool Fragment : {false, true}) {
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Fragment);
+      Fixture F(Architecture, false,
+                SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
+      Segment Data;
+      Data.VA = 0x4000;
+      Data.Size = Data.FileSz = 0x1000;
+      Data.Flags = SegmentFlags::Readable;
+      Data.Data.resize(0x1000);
+      F.Image.Segments.push_back(Data);
+      Section Storage;
+      Storage.Name = "__const";
+      Storage.VA = Data.VA;
+      Storage.Size = Storage.FileSz = Data.Size;
+      Storage.Flags = Data.Flags;
+      F.Image.Sections.push_back(Storage);
+
+      auto SetMetadata = [&](NdVar Value) {
+        LowOp Definition;
+        Definition.Addr = F.Function.Entry;
+        Definition.Opcode = Fragment ? NdOp::INT_ADD : NdOp::COPY;
+        Definition.Output = NdVar::reg(F.Metadata, 8);
+        Definition.addInput(Value);
+        if (Fragment)
+          Definition.addInput(NdVar::scalar(0x800, 8));
+        F.Function.Blocks[0].Ops.insert(F.Function.Blocks[0].Ops.begin(),
+                                        Definition);
+      };
+      SetMetadata(Fragment ? NdVar::addressFragment(0x4000, 8)
+                           : NdVar::dataAddress(0x4800, 8));
+      EXPECT_EQ(F.hints().size(), 1U);
+
+      auto Literal = [&]() -> NdVar & {
+        return F.Function.Blocks[0].Ops.front().Inputs[0];
+      };
+      if (!Fragment) {
+        Literal().AddressOwnerVA = 0x4000;
+        LowOp Replacement;
+        Replacement.Addr = 0x1014;
+        Replacement.Opcode = NdOp::COPY;
+        Replacement.Output = NdVar::reg(F.Metadata, 8);
+        Replacement.addInput(NdVar::dataAddress(0x4800, 8, 0x4010));
+        auto &Ops = F.Function.Blocks[0].Ops;
+        Ops.insert(Ops.end() - 2, Replacement);
+        EXPECT_TRUE(F.hints().empty());
+        Ops.erase(Ops.end() - 3);
+        Literal().AddressOwnerVA = InvalidVA;
+      }
+      Literal().Provenance = ConstantAddressProvenance::Scalar;
+      EXPECT_TRUE(F.hints().empty());
+      Literal().Provenance = Fragment
+                                 ? ConstantAddressProvenance::AddressFragment
+                                 : ConstantAddressProvenance::DataAddress;
+      Literal().Offset = Fragment ? 0x5000 : 0x5800;
+      EXPECT_TRUE(F.hints().empty());
+      Literal().Offset = Fragment ? 0x4000 : 0x4800;
+      F.Image.Segments.front().Data.resize(0x7f8);
+      EXPECT_TRUE(F.hints().empty());
     }
   }
 }

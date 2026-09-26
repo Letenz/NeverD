@@ -154,6 +154,100 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
   }
 }
 
+// A narrow native result may leave the rest of its register undefined.  If a
+// later mask observes only bits supplied by CONCAT's low operand, replace that
+// partial-register reconstruction with an explicit zero extension.  This does
+// not invent values for the unknown upper bytes: those bytes remain outside
+// the mask.  Keep any high expression whose evaluation could be observable.
+static bool discardMaskedConcatHigh(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Op != NdOp::INT_AND ||
+      E->Operands.size() != 2 || !E->Type ||
+      E->Type->Kind != NdTypeKind::Int || !E->Type->Size ||
+      E->Type->Size > 8 || E->IntrinsicId != Intrinsic::None ||
+      !E->IntrinsicOutputs.empty() ||
+      E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+
+  const auto &Mask = E->Operands[1];
+  if (!Mask || Mask->Kind != ExprKind::Const || !Mask->Operands.empty() ||
+      !Mask->Type || Mask->Type->Kind != NdTypeKind::Int ||
+      !Mask->Type->Size || Mask->Type->Size > 8)
+    return false;
+
+  auto Joined = E->Operands[0];
+  // A zero-bit logical shift does not change the bits observed by the mask.
+  // AArch64 TBZ lowering can place this shift between a narrow call result
+  // and its bit-zero test, even when the register's upper bytes are unknown.
+  if (Joined && Joined->Kind == ExprKind::BinOp &&
+      Joined->Op == NdOp::INT_RIGHT && Joined->Operands.size() == 2 &&
+      Joined->Type && Joined->Type->Kind == NdTypeKind::Int &&
+      Joined->Operands[0] && Joined->Operands[0]->Type &&
+      Joined->Type->Size == Joined->Operands[0]->Type->Size &&
+      Joined->Operands[1] && Joined->Operands[1]->Kind == ExprKind::Const &&
+      Joined->Operands[1]->ConstVal == 0 &&
+      Joined->IntrinsicId == Intrinsic::None &&
+      Joined->IntrinsicOutputs.empty() &&
+      Joined->MemoryOrdering == NdMemoryOrdering::None &&
+      Joined->MemoryAddressSpace == NdMemoryAddressSpace::Default)
+    Joined = Joined->Operands[0];
+  if (Joined && Joined->Kind == ExprKind::Cast &&
+      Joined->Operands.size() == 1 && Joined->Type && Joined->CastTo &&
+      Joined->Type->Kind == NdTypeKind::Int &&
+      Joined->CastTo->Kind == NdTypeKind::Int &&
+      Joined->Type->Size == E->Type->Size &&
+      Joined->CastTo->Size == E->Type->Size &&
+      Joined->IntrinsicId == Intrinsic::None &&
+      Joined->IntrinsicOutputs.empty() &&
+      Joined->MemoryOrdering == NdMemoryOrdering::None &&
+      Joined->MemoryAddressSpace == NdMemoryAddressSpace::Default)
+    Joined = Joined->Operands[0];
+  else if (Joined && Joined->Kind == ExprKind::BinOp &&
+           Joined->Op == NdOp::SUBBYTES && Joined->Operands.size() == 2 &&
+           Joined->Type && Joined->Type->Kind == NdTypeKind::Int &&
+           Joined->Type->Size == E->Type->Size && Joined->Operands[1] &&
+           Joined->Operands[1]->Kind == ExprKind::Const &&
+           Joined->Operands[1]->ConstVal == 0 &&
+           Joined->IntrinsicId == Intrinsic::None &&
+           Joined->IntrinsicOutputs.empty() &&
+           Joined->MemoryOrdering == NdMemoryOrdering::None &&
+           Joined->MemoryAddressSpace == NdMemoryAddressSpace::Default)
+    Joined = Joined->Operands[0];
+
+  if (!Joined || Joined->Kind != ExprKind::BinOp ||
+      Joined->Op != NdOp::CONCAT || Joined->Operands.size() != 2 ||
+      !Joined->Type || Joined->Type->Kind != NdTypeKind::Int ||
+      !Joined->Type->Size || Joined->Type->Size > 8 ||
+      Joined->Type->Size < E->Type->Size ||
+      Joined->IntrinsicId != Intrinsic::None ||
+      !Joined->IntrinsicOutputs.empty() ||
+      Joined->MemoryOrdering != NdMemoryOrdering::None ||
+      Joined->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+
+  const auto &High = Joined->Operands[0], &Low = Joined->Operands[1];
+  if (!High || !Low || !High->Type || !Low->Type ||
+      High->Type->Kind != NdTypeKind::Int ||
+      Low->Type->Kind != NdTypeKind::Int || !High->Type->Size ||
+      !Low->Type->Size || Low->Type->Size > E->Type->Size ||
+      High->Type->Size + Low->Type->Size != Joined->Type->Size)
+    return false;
+
+  const unsigned LowBits = Low->Type->Size * 8;
+  const uint64_t LowMask = LowBits == 64
+                               ? UINT64_MAX
+                               : (uint64_t{1} << LowBits) - uint64_t{1};
+  size_t Budget = 128;
+  if ((Mask->ConstVal & ~LowMask) != 0 ||
+      !discardableIntegerValue(High, Budget))
+    return false;
+
+  auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Low);
+  Extended->Type = E->Type;
+  E->Operands[0] = std::move(Extended);
+  return true;
+}
+
 static void simplifyExprRecursive(ExprPtr &E,
                                   std::unordered_set<const HighExpr *> &Seen) {
   if (!E || !Seen.insert(E.get()).second)
@@ -170,6 +264,53 @@ static void simplifyExprRecursive(ExprPtr &E,
   if (auto Joined = joinLocalSlices(E)) {
     E = std::move(Joined);
     return;
+  }
+
+  // Re-reading the low part of a partially defined register does not read
+  // its upper padding. Keep the original CONCAT for any other, wider uses,
+  // and never discard a call, memory access, or potentially trapping value.
+  const bool IntegerCast = E->Kind == ExprKind::Cast &&
+                           E->Operands.size() == 1 && E->CastTo &&
+                           E->CastTo->Kind == NdTypeKind::Int && E->Type &&
+                           E->CastTo->Size == E->Type->Size &&
+                           E->CastTo->IsSigned == E->Type->IsSigned;
+  const bool LowSlice = E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+                        E->Operands.size() == 2 && E->Operands[1] &&
+                        E->Operands[1]->Kind == ExprKind::Const &&
+                        E->Operands[1]->ConstVal == 0;
+  if ((IntegerCast || LowSlice) && E->Type &&
+      E->Type->Kind == NdTypeKind::Int && E->Type->Size &&
+      E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+      E->MemoryOrdering == NdMemoryOrdering::None &&
+      E->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+    const auto &Joined = E->Operands[0];
+    if (Joined && Joined->Kind == ExprKind::BinOp &&
+        Joined->Op == NdOp::CONCAT && Joined->Operands.size() == 2 &&
+        Joined->Type && Joined->Type->Kind == NdTypeKind::Int &&
+        Joined->Type->Size <= 16 && Joined->IntrinsicId == Intrinsic::None &&
+        Joined->IntrinsicOutputs.empty() &&
+        Joined->MemoryOrdering == NdMemoryOrdering::None &&
+        Joined->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      const auto &High = Joined->Operands[0], &Low = Joined->Operands[1];
+      size_t Budget = 128;
+      if (High && Low && High->Type && Low->Type &&
+          High->Type->Kind == NdTypeKind::Int &&
+          Low->Type->Kind == NdTypeKind::Int && High->Type->Size &&
+          Low->Type->Size == E->Type->Size &&
+          High->Type->Size + Low->Type->Size == Joined->Type->Size &&
+          discardableIntegerValue(High, Budget)) {
+        if (Low->Type->IsSigned == E->Type->IsSigned) {
+          E = Low;
+        } else {
+          auto Cast = std::make_shared<HighExpr>();
+          Cast->Kind = ExprKind::Cast;
+          Cast->Type = Cast->CastTo = E->Type;
+          Cast->Operands = {Low};
+          E = std::move(Cast);
+        }
+        return;
+      }
+    }
   }
 
   if (E->Kind == ExprKind::UnaryOp && E->Op == NdOp::BOOL_NOT &&
@@ -242,6 +383,8 @@ static void simplifyExprRecursive(ExprPtr &E,
 
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2)
     return;
+
+  discardMaskedConcatHigh(E);
 
   // Sub-piece identity elimination.  SUBBYTES(x, 0) that extracts x's full
   // width, or the low bytes of a zero/sign-extended value back to its

@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace neverd::coff_loader {
 namespace {
@@ -156,6 +157,21 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
   for (va_t Addr : Wanted)
     ensureX64RuntimeFunction(Img, Addr);
 
+  // A focused x64 load decodes the requested frame's pdata, but the handler
+  // address may name a stripped GS wrapper with its own pdata record.  GS
+  // inference needs that wrapper's exact code range before it can inspect its
+  // calls.  Collect addresses first because materializing a pdata record may
+  // reallocate ExceptionMetadata.Functions.
+  if (Img.Arch == Arch::X64 && !Wanted.empty()) {
+    std::set<va_t> HandlerEntries;
+    for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions)
+      if (F.PersonalityVA != 0 && F.HandlerDataVA != 0 &&
+          functionOverlapsWanted(F, Wanted))
+        HandlerEntries.insert(F.PersonalityVA);
+    for (va_t Addr : HandlerEntries)
+      ensureX64RuntimeFunction(Img, Addr);
+  }
+
   std::unordered_map<va_t, std::pair<va_t, std::string>> PersonalityCache;
   PersonalityCache.reserve(64);
   std::unordered_map<va_t, ExceptionPersonality> InferredGS;
@@ -246,6 +262,9 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
                          "resolved personality is not executable");
 
       switch (F.Personality) {
+      case ExceptionPersonality::GSHandlerCheck:
+        detail::parseGSCookie(F, Img, F.HandlerDataVA);
+        break;
       case ExceptionPersonality::CSpecificHandler:
         detail::parseSEH(F, Img);
         break;
@@ -314,14 +333,57 @@ void ensureExceptionHandlers(BinaryImage &Img, const std::set<va_t> &Entries) {
           Img.ExceptionMetadata.ParseStatus, F.ParseStatus);
       F.LanguageTablesResolved = true;
       Progress = true;
+      std::vector<va_t> ExtraBodies;
       if (!Wanted.empty() && F.Cxx) {
         for (const CxxTryBlock &Try : F.Cxx->TryBlocks) {
           for (const CxxCatchHandler &Handler : Try.Handlers) {
-            if (Handler.HandlerVA == 0 || !Wanted.insert(Handler.HandlerVA).second)
-              continue;
-            if (ensureX64RuntimeFunction(Img, Handler.HandlerVA))
-              Progress = true;
+            if (Handler.HandlerVA != 0)
+              ExtraBodies.push_back(Handler.HandlerVA);
           }
+        }
+        for (const CxxUnwindAction &Action : F.Cxx->UnwindMap) {
+          if (Action.ActionVA != 0 && !F.CodeRange.contains(Action.ActionVA))
+            ExtraBodies.push_back(Action.ActionVA);
+        }
+      }
+      if (!Wanted.empty() && F.SEH) {
+        for (const SEHScopeRecord &Scope : F.SEH->Scopes) {
+          const va_t Filter = Scope.FilterOrFinallyVA;
+          if (Filter && !F.CodeRange.contains(Filter))
+            ExtraBodies.push_back(Filter);
+        }
+      }
+      for (va_t Body : ExtraBodies) {
+        if (!Wanted.insert(Body).second)
+          continue;
+        if (ensureX64RuntimeFunction(Img, Body))
+          Progress = true;
+      }
+    }
+  }
+  // Cleanup-only FH3 lists `__wind` ActionVAs after language decode.
+  // `--func` must materialize those pdata bodies so KnownCodeRanges covers
+  // the far unwind cluster; slicing `.text` to the parent dropped them.
+  if (!Wanted.empty()) {
+    bool Added = true;
+    while (Added) {
+      Added = false;
+      const size_t Count = Img.ExceptionMetadata.Functions.size();
+      for (size_t I = 0; I < Count; ++I) {
+        const ExceptionFunction &F = Img.ExceptionMetadata.Functions[I];
+        if (!functionOverlapsWanted(F, Wanted) || !F.Cxx)
+          continue;
+        std::vector<va_t> Actions;
+        Actions.reserve(F.Cxx->UnwindMap.size());
+        for (const CxxUnwindAction &Action : F.Cxx->UnwindMap) {
+          if (Action.ActionVA != 0 && !F.CodeRange.contains(Action.ActionVA))
+            Actions.push_back(Action.ActionVA);
+        }
+        for (va_t ActionVA : Actions) {
+          if (!Wanted.insert(ActionVA).second)
+            continue;
+          if (ensureX64RuntimeFunction(Img, ActionVA))
+            Added = true;
         }
       }
     }

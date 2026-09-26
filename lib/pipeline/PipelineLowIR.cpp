@@ -124,14 +124,11 @@ bool hasRealOps(const LowFunc &Func) {
 }
 
 void annotateDebugInfo(LowFunc &Func, DebugContext &Dbg) {
-  auto FSym = Dbg.resolveFunction(Func.Entry);
-  if (!FSym)
-    return;
-  Func.DebugName = FSym->Name;
-  Func.SourceFile = FSym->DeclLoc.File;
-  Func.SourceLine = FSym->DeclLoc.Line;
-  if (FSym->Size > 0)
-    Func.OriginalSize = FSym->Size;
+  // `functionName` is publics-only. `resolveFunction` walks S_LOCAL / TPI
+  // and is the `--func` LowIR cost of a moderately sized helper; HighC
+  // still calls it when it needs params or frame slots.
+  if (auto Name = Dbg.functionName(Func.Entry))
+    Func.DebugName = *Name;
 }
 
 struct ModuleJumpTableOwner {
@@ -2101,6 +2098,11 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
   if (Img.Format != BinaryFormat::COFF)
     return Result;
 
+  auto isFunctionEntry = [&](va_t Addr) {
+    return FunctionEntries.count(Addr) != 0 ||
+           Img.hasKnownFunctionEntryAt(Addr);
+  };
+
   for (const ExceptionFunction &Declaring : Img.ExceptionMetadata.Functions) {
     if (Declaring.Kind != RuntimeFunctionKind::Primary ||
         Declaring.ParseStatus != ExceptionParseStatus::Complete ||
@@ -2133,8 +2135,8 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
             }
             Owner = &Candidate;
           }
-          if (Owner && FunctionEntries.count(Owner->CodeRange.Begin) != 0 &&
-              FunctionEntries.count(Target) == 0 &&
+          if (Owner && isFunctionEntry(Owner->CodeRange.Begin) &&
+              !isFunctionEntry(Target) &&
               Img.hasExecutableCodeOwnerAt(Target))
             Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
         }
@@ -2171,8 +2173,16 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
   }
   std::set<va_t> CandidateTargets;
   for (const LowFunc &Func : Funcs)
-    for (va_t Target : Func.CodeRefTargets)
-      CandidateTargets.insert(normalizeCodeAddress(Target, Img.Arch, Img.Mode));
+    for (va_t Target : Func.CodeRefTargets) {
+      Target = normalizeCodeAddress(Target, Img.Arch, Img.Mode);
+      // Ordinary calls already name function entries.  Returned-code
+      // dataflow is only for mid-function continuations (local-unwind /
+      // FH3 catch).  Walking every call target on a `--func` C++ body
+      // is the LowIR cost of moderately sized helpers.
+      if (isFunctionEntry(Target) || !Img.hasExecutableCodeOwnerAt(Target))
+        continue;
+      CandidateTargets.insert(Target);
+    }
   // A source-level local-unwind helper also consumes returned-code analysis,
   // even when the module has no separated FH3 catch contribution.  Conversely,
   // an FH3 catch with no address candidates must still publish a completed,
@@ -2230,8 +2240,7 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
           normalizeCodeAddress(Target, Img.Arch, Img.Mode));
     for (va_t Target : LocalUnwind.TargetsByFunction[FuncIndex]) {
       Target = normalizeCodeAddress(Target, Img.Arch, Img.Mode);
-      if (PublishedBySource.count(Target) == 0 ||
-          FunctionEntries.count(Target) != 0 ||
+      if (PublishedBySource.count(Target) == 0 || isFunctionEntry(Target) ||
           !Img.hasExecutableCodeOwnerAt(Target))
         continue;
 
@@ -2251,8 +2260,7 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
         }
         Owner = &Candidate;
       }
-      if (!OwnerAmbiguous && Owner &&
-          FunctionEntries.count(Owner->CodeRange.Begin) != 0 &&
+      if (!OwnerAmbiguous && Owner && isFunctionEntry(Owner->CodeRange.Begin) &&
           Owner->CodeRange.Begin != Source.Entry)
         Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
     }
@@ -2290,12 +2298,11 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
           normalizeCodeAddress(Target, Img.Arch, Img.Mode));
     for (va_t Target : Returned.TargetsByFunction[FuncIndex]) {
       Target = normalizeCodeAddress(Target, Img.Arch, Img.Mode);
-      if (PublishedBySource.count(Target) == 0 ||
-          FunctionEntries.count(Target) != 0 ||
+      if (PublishedBySource.count(Target) == 0 || isFunctionEntry(Target) ||
           !Img.hasExecutableCodeOwnerAt(Target))
         continue;
       const ExceptionFunction *Owner = uniqueFH3Owner(Target);
-      if (!Owner || FunctionEntries.count(Owner->CodeRange.Begin) == 0)
+      if (!Owner || !isFunctionEntry(Owner->CodeRange.Begin))
         continue;
       const bool DeclaresSource = std::any_of(
           Owner->Cxx->TryBlocks.begin(), Owner->Cxx->TryBlocks.end(),
@@ -2920,20 +2927,16 @@ void Pipeline::buildLowIR(
   std::vector<LowFunc> AllLow(Total);
   const libc::NoReturnTargetIndex NoReturnTargets(Img);
   const detail::AbsoluteRelocationRootIndex AbsoluteRelocationRoots(Img);
-  // The index answers the same ownership queries as a scan of the image's
-  // function metadata.  Without it, a jump-table proof prices each target as
-  // that scan, so a large x64 image (ntoskrnl: 35k unwind entries) rejected
-  // every table of more than a few dozen entries.
-  const std::optional<ExecutableCodeOwnerIndex> ExecutableCodeOwners =
-      Img.Arch == Arch::AArch64 || Img.Arch == Arch::X64
-          ? std::optional<ExecutableCodeOwnerIndex>(std::in_place, Img)
-          : std::nullopt;
-  const ExecutableCodeOwnerIndex *CodeOwnerIndex =
-      ExecutableCodeOwners ? &*ExecutableCodeOwners : nullptr;
+  // One immutable index is shared by CFG workers. Besides code ownership it
+  // gives jump-table target validation a sorted function-symbol inventory;
+  // building that inventory lazily on BinaryImage would race between workers.
+  const ExecutableCodeOwnerIndex ExecutableCodeOwners(Img);
+  const ExecutableCodeOwnerIndex *CodeOwnerIndex = &ExecutableCodeOwners;
 
-  // The set of all detected function entries lets each CFG builder recognise an
-  // unconditional `jmp` to *another* function as a tail call (call + ret)
-  // rather than following it and fusing the callee into this function's CFG.
+  // Detected candidates plus, on a full-image run, every symbol/pdata start.
+  // `--func` keeps only the requested entries here; CFGBuilder queries
+  // RuntimeFunctionAddrs / KnownCodeRanges / ExceptionMetadata live so a
+  // tail `jmp` to `_report_gsfailure` still becomes call+ret.
   // A padding-boundary guess is not a tail-call target: MSVC separates
   // hot/cold chunks of one function with the same int3 padding, and a jump
   // into such a chunk must keep its code in the jumping function.
@@ -2942,19 +2945,17 @@ void Pipeline::buildLowIR(
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
       FuncEntries.insert(C.first);
-  for (const auto &Sym : Img.Symbols)
-    if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      FuncEntries.insert(Sym.Addr);
-  // `.pdata` exclusive-end ranges name every PE function start even when
-  // `--func` skipped materializing those ExceptionFunction/Symbol records.
-  // Without them, an unconditional jmp to the next RUNTIME_FUNCTION is
-  // followed and the callee is fused into this CFG.
-  // A chained-unwind continuation is part of its parent function: a jump to
-  // it must be followed, not modeled as a tail call to a missing function.
-  for (const auto &[Start, End] : Img.KnownCodeRanges) {
-    (void)End;
-    if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-      FuncEntries.insert(Start);
+  if (Opts.OnlyFunctionEntries.empty()) {
+    for (const auto &Sym : Img.Symbols)
+      if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
+        FuncEntries.insert(Sym.Addr);
+    // A chained-unwind continuation is part of its parent function: a jump
+    // to it must be followed, not modeled as a tail call to a missing one.
+    for (const auto &[Start, End] : Img.KnownCodeRanges) {
+      (void)End;
+      if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
+        FuncEntries.insert(Start);
+    }
   }
 
   // Decode cost tracks a function's instruction count, which is unknown before

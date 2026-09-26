@@ -1,3 +1,4 @@
+#include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "HighCWriter.h"
 
 #include "neverd/Limits.h"
@@ -6,6 +7,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace neverd {
@@ -122,9 +124,89 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       E.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
       E.MemoryOrdering != NdMemoryOrdering::None)
     return bad("incompatible operation effects");
+  if (Hint.BooleanResult && Hint.CallKind != Kind::SwiftBooleanProjection)
+    return bad("Boolean projection belongs to another binding kind");
+  if (Hint.CallKind == Kind::SwiftBooleanProjection) {
+    if (!isSwiftBooleanSourceBinding(Hint) || Opts.TheArch != Arch::AArch64 ||
+        !CurrentFunc ||
+        CurrentFunc->Entry != Hint.BooleanResult->FunctionEntry ||
+        E.IsIndirectCall ||
+        E.CallAddr != Hint.BooleanResult->Site.StaticTarget ||
+        E.Operands.size() != Hint.Signature.Parameters.size() ||
+        !equalSourceTypes(E.Type, Hint.Signature.ReturnType))
+      return bad("invalid Swift Boolean projection");
+    const auto Link = Hint.TargetName;
+    const auto SourceName = swiftBooleanSourceName(Link);
+    if (SourceNativeSignatures.count(Link) ||
+        SourceRuntimeLinkNames.count(Link) ||
+        std::any_of(SourceRuntimeLinkNames.begin(),
+                    SourceRuntimeLinkNames.end(),
+                    [&](const auto &Entry) { return Entry.second == Link; }) ||
+        DefinedFuncs.count(Link) || DefinedFuncs.count("_" + Link) ||
+        SourceNativeSignatures.count(SourceName))
+      return bad("conflicting Swift Boolean runtime declaration");
+    std::string Call = "((uint8_t)" + SourceName + "(";
+    for (unsigned I = 0; I != E.Operands.size(); ++I) {
+      if (!E.Operands[I])
+        return bad("missing Swift Boolean argument");
+      const auto Value =
+          sourceValue(exprStr(*E.Operands[I]), E.Operands[I]->Type,
+                      Hint.Signature.Parameters[I].Type);
+      if (!Value)
+        return bad("incompatible Swift Boolean argument carrier");
+      if (I)
+        Call += ", ";
+      Call += *Value;
+    }
+    return Call + "))";
+  }
   const auto &Signature = Hint.Signature;
+  if (Hint.NilTerminated &&
+      (Hint.CallKind != Kind::ObjCMessage || Hint.Format || !Hint.Receiver ||
+       Hint.DoesNotReturn || Hint.WeakImport || Hint.ReturnedArgument ||
+       Hint.RuntimeObjCResultType || Hint.ValueWitness ||
+       !Hint.OwnerClass.empty() || !Hint.BorrowedByteInputs.empty() ||
+       !Hint.SwiftStringInputs.empty() || Hint.SwiftTypeMetadata ||
+       Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
+       Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
+       Hint.SelectorArgumentStorageUse ||
+       Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
+       Hint.ImmutablePointerSlot || Hint.TargetName != "objc_msgSend" ||
+       Hint.Selector.empty() || !Hint.TargetAddress ||
+       !Hint.SelectorReferenceAddress ||
+       Hint.Receiver->Origin !=
+           ObjCReceiverTypeHint::OriginKind::ClassReference ||
+       !Hint.Receiver->IsClassMethod || !Hint.Receiver->Steps.empty() ||
+       Hint.Receiver->ClassName.empty() || !Hint.Receiver->Address ||
+       !Signature.ReturnType || Signature.ReturnType->Kind != NdTypeKind::Ptr ||
+       Signature.ReturnType->Size != 8 ||
+       Signature.Architecture != Arch::AArch64 ||
+       Opts.TheArch != Arch::AArch64 || !Signature.HasExplicitABI ||
+       Signature.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK ||
+       Hint.NilTerminated->Objects.size() > 61 ||
+       Signature.Parameters.size() != 3 + Hint.NilTerminated->Objects.size() ||
+       std::any_of(Hint.NilTerminated->Objects.begin(),
+                   Hint.NilTerminated->Objects.end(),
+                   [](va_t Address) { return !Address; }) ||
+       std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                   [](const auto &Parameter) {
+                     return !Parameter.Type ||
+                            Parameter.Type->Kind != NdTypeKind::Ptr ||
+                            Parameter.Type->Size != 8;
+                   })))
+    return bad("invalid nil-terminated source declaration");
+  if (Hint.NilTerminated) {
+    auto Expected = Signature;
+    std::string Diagnostic;
+    if (!assignDarwinVariadicSourceABI(Expected, 3, Arch::AArch64,
+                                       Diagnostic) ||
+        !equalSourceABIs(Signature, Expected))
+      return bad("nil-terminated arguments disagree with the variadic ABI");
+  }
+
   if (Hint.WeakImport &&
-      (Hint.CallKind != Kind::DarwinRuntimeCall ||
+      ((Hint.CallKind != Kind::DarwinRuntimeCall &&
+        Hint.CallKind != Kind::DarwinRuntimeGlobalAddress) ||
        Signature.Origin != SourceFunctionTypeHint::OriginKind::DarwinSDK))
     return bad("weak import belongs to another binding kind");
   if (Hint.ValueWitness && Hint.CallKind != Kind::SwiftValueWitness)
@@ -147,13 +229,12 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     const auto Slot = swiftValueWitnessSlot(*Hint.ValueWitness);
     if (!Slot)
       return bad("unsupported Swift value-witness operation");
-    std::string Prototype =
-        Signature.ReturnType->Kind == NdTypeKind::Void ? "void" : "void *";
+    std::string Prototype = typeToC(Signature.ReturnType);
     Prototype += " (__attribute__((swiftcall)) *)(";
     for (size_t I = 0; I < Arguments.size(); ++I) {
       if (I)
         Prototype += ", ";
-      Prototype += "void *";
+      Prototype += sourceParameterType(Signature.Parameters[I]);
     }
     const std::string Metadata = Arguments.back();
     const std::string Target =
@@ -177,17 +258,72 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
        Hint.CallKind == Kind::SwiftStringFromNSString) &&
       Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift)
     return bad("Swift string call has the wrong calling convention");
+  if (Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
+      Hint.CallKind == Kind::RuntimeObjCMetadataFactory) {
+    const bool Factory = Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
+    const auto Name = std::string(Factory ? "neverd_objc_metadata_factory_"
+                                          : "neverd_objc_super_getter_") +
+                      llvm::utohexstr(Hint.TargetAddress, true);
+    if (!Hint.TargetAddress || Hint.TargetName != Name ||
+        E.CallAddr != Hint.TargetAddress || !E.CallTarget.empty() ||
+        E.IsIndirectCall || !E.IntrinsicOutputs.empty() ||
+        Signature.Architecture != Arch::AArch64 ||
+        Signature.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+        Signature.Origin !=
+            SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+        !Signature.ReturnType ||
+        Signature.ReturnType->Kind !=
+            (Factory ? NdTypeKind::Ptr : NdTypeKind::Int) ||
+        Signature.ReturnType->Size != (Factory ? 8U : 1U) ||
+        Signature.Parameters.size() != (Factory ? 2U : 4U) ||
+        !Signature.HasExplicitABI || Hint.DoesNotReturn || Hint.WeakImport ||
+        Hint.ReturnedArgument || Hint.RuntimeObjCResultType ||
+        Hint.ValueWitness || Hint.Receiver || !Hint.Selector.empty() ||
+        !Hint.OwnerClass.empty() || Hint.SelectorReferenceAddress ||
+        !Hint.BorrowedByteInputs.empty() || !Hint.SwiftStringInputs.empty() ||
+        Hint.Format || Hint.NilTerminated || Hint.SwiftTypeMetadata ||
+        Hint.SelectorResultUse || Hint.SelectorResultTypeUse ||
+        Hint.SelectorArgumentTypeUse || Hint.SelectorForwardingUse ||
+        Hint.SelectorArgumentStorageUse ||
+        Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
+        Hint.ImmutablePointerSlot ||
+        std::any_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                    [](const auto &Parameter) {
+                      return !Parameter.Type ||
+                             Parameter.Type->Kind != NdTypeKind::Ptr ||
+                             Parameter.Type->Size != 8;
+                    }))
+      return bad("invalid compiler getter/factory declaration");
+    auto Expected = Signature;
+    std::string Diagnostic;
+    if (!assignDarwinScalarSourceABI(Expected, Arch::AArch64, Diagnostic) ||
+        !equalSourceABIs(Signature, Expected))
+      return bad("compiler getter/factory ABI is not canonical");
+  }
   if (Hint.CallKind == Kind::NativeAddress ||
       Hint.CallKind == Kind::RuntimeBlockIsa ||
       Hint.CallKind == Kind::RuntimeBlockDescriptor ||
       Hint.CallKind == Kind::RuntimeBlockLiteral ||
       Hint.CallKind == Kind::RuntimeAssociationKey ||
+      Hint.CallKind == Kind::RuntimeKVOContext ||
       Hint.CallKind == Kind::RuntimeStaticIdentity ||
+      Hint.CallKind == Kind::RuntimeClassReferenceAddress ||
+      Hint.CallKind == Kind::RuntimeMetaclassReferenceAddress ||
       Hint.CallKind == Kind::RuntimeLocalStorageAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftSmallStringAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftTypeMetadataAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftNominalDescriptorAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftNominalMetadataAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftWitnessCacheAddress ||
+      Hint.CallKind == Kind::RuntimeSwiftWitnessAccessor ||
+      Hint.CallKind == Kind::RuntimeSwiftOnceAccessor ||
+      Hint.CallKind == Kind::RuntimeSelectorReferenceAddress ||
       Hint.CallKind == Kind::RuntimeConstantString ||
       Hint.CallKind == Kind::RuntimeConstantObject ||
       Hint.CallKind == Kind::RuntimeBorrowedBytes ||
       Hint.CallKind == Kind::RuntimeReadOnlyBytes ||
+      Hint.CallKind == Kind::RuntimeCStringStorage ||
+      Hint.CallKind == Kind::RuntimeConstantObjectTable ||
       Hint.CallKind == Kind::DarwinRuntimeGlobalAddress ||
       Hint.CallKind == Kind::RuntimeProfileCounterStorage) {
     if (!E.Operands.empty() || !Signature.Parameters.empty() ||
@@ -211,7 +347,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
           Signature.Origin ==
               SourceFunctionTypeHint::OriginKind::SwiftRuntime) {
         auto It = SourceRuntimeDataIdentifiers.find(Hint.TargetName);
-        if (It == SourceRuntimeDataIdentifiers.end())
+        const auto Weak = SourceRuntimeDataWeakImports.find(Hint.TargetName);
+        if (It == SourceRuntimeDataIdentifiers.end() ||
+            Weak == SourceRuntimeDataWeakImports.end() ||
+            Weak->second != Hint.WeakImport ||
+            ConflictingSourceRuntimeDataIdentities.count(Hint.TargetName))
           return bad("unknown runtime data identity");
         Value = It->second;
       } else if (Hint.TargetName == "__stack_chk_guard")
@@ -233,6 +373,23 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Value = "neverd_borrowed_bytes_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_" +
               std::to_string(Hint.ByteCount) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeCStringStorage) {
+      if (!Hint.TargetAddress || !Hint.ByteCount ||
+          Hint.ByteCount > limits::kMaxSourceCallBorrowedBytes)
+        return bad("C string storage has no complete bounded source extent");
+      Value =
+          std::string(Hint.ImmutablePointerSlot ? "neverd_cstring_pointer_"
+                                                : "neverd_cstring_storage_") +
+          llvm::utohexstr(Hint.ImmutablePointerSlot ? Hint.ImmutablePointerSlot
+                                                    : Hint.TargetAddress,
+                          true) +
+          "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeConstantObjectTable) {
+      if (!Hint.TargetAddress || !Hint.ByteCount || Hint.ByteCount > 65536 ||
+          Hint.ByteCount % 8)
+        return bad("constant-object table has no complete bounded extent");
+      Value = "neverd_objc_constant_object_table_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeConstantString ||
                Hint.CallKind == Kind::RuntimeConstantObject) {
       if (!Hint.TargetAddress)
@@ -251,16 +408,80 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
         return bad("association key has no source identity");
       Value = "neverd_objc_association_key_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeKVOContext) {
+      if (!Hint.TargetAddress)
+        return bad("KVO context has no source identity");
+      Value = "neverd_objc_kvo_context_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeStaticIdentity) {
       if (!Hint.TargetAddress)
         return bad("static identity has no source identity");
       Value = "neverd_static_identity_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeClassReferenceAddress ||
+               Hint.CallKind == Kind::RuntimeMetaclassReferenceAddress) {
+      if (!Hint.TargetAddress || Hint.TargetName.empty())
+        return bad("Objective-C class-reference cell has no identity");
+      Value = "neverd_objc_class_reference_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
     } else if (Hint.CallKind == Kind::RuntimeLocalStorageAddress) {
       if (!Hint.TargetAddress || !Hint.ByteCount)
         return bad("local storage has no source extent");
       Value = "neverd_local_storage_" +
               llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftSmallStringAddress) {
+      if (!Hint.TargetAddress || Hint.ByteCount != 16)
+        return bad("Swift small string has no complete source extent");
+      Value = "neverd_swift_small_string_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftTypeMetadataAddress) {
+      if (!Hint.TargetAddress || !Hint.SwiftTypeMetadata || Hint.ByteCount ||
+          (Hint.TargetAddress != Hint.SwiftTypeMetadata->CacheAddress &&
+           Hint.TargetAddress != Hint.SwiftTypeMetadata->ReferenceAddress) ||
+          !Hint.SwiftTypeMetadata->CacheAddress ||
+          !Hint.SwiftTypeMetadata->ReferenceAddress ||
+          ((Hint.SwiftTypeMetadata->DescriptorSlot == 0) !=
+           Hint.SwiftTypeMetadata->DescriptorSymbol.empty()) ||
+          Hint.SwiftTypeMetadata->Suffix.empty())
+        return bad("Swift type metadata has no complete pair identity");
+      Value = "neverd_swift_type_metadata_" +
+              llvm::utohexstr(Hint.SwiftTypeMetadata->CacheAddress, true) +
+              "_" +
+              llvm::utohexstr(Hint.SwiftTypeMetadata->ReferenceAddress, true) +
+              (Hint.TargetAddress == Hint.SwiftTypeMetadata->CacheAddress
+                   ? "_cache_address()"
+                   : "_reference_address()");
+    } else if (Hint.CallKind == Kind::RuntimeSwiftNominalDescriptorAddress) {
+      if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
+        return bad("Swift nominal descriptor has no source identity");
+      Value = "neverd_swift_nominal_descriptor_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftNominalMetadataAddress) {
+      if (!Hint.TargetAddress || Hint.TargetName.empty() || Hint.ByteCount)
+        return bad("Swift nominal metadata has no source identity");
+      Value = "neverd_swift_nominal_metadata_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftWitnessCacheAddress) {
+      if (!Hint.TargetAddress || Hint.ByteCount || Hint.TargetName.empty())
+        return bad("Swift witness cache has no complete identity");
+      Value = "neverd_swift_witness_cache_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "_address()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftWitnessAccessor) {
+      if (!Hint.TargetAddress || Hint.ByteCount || Hint.TargetName.empty())
+        return bad("Swift witness accessor has no complete identity");
+      Value = "neverd_swift_witness_accessor_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "()";
+    } else if (Hint.CallKind == Kind::RuntimeSelectorReferenceAddress) {
+      const auto Name = "neverd_objc_selector_reference_" +
+                        llvm::utohexstr(Hint.TargetAddress, true) + "_address";
+      if (!Hint.TargetAddress || Hint.TargetName != Name || Hint.ByteCount)
+        return bad("selector-reference cell has no complete identity");
+      Value = Name + "()";
+    } else if (Hint.CallKind == Kind::RuntimeSwiftOnceAccessor) {
+      if (!Hint.TargetAddress || Hint.ByteCount || Hint.TargetName.empty())
+        return bad("Swift once accessor has no complete identity");
+      Value = "neverd_swift_once_accessor_" +
+              llvm::utohexstr(Hint.TargetAddress, true) + "()";
     } else {
       if (!Hint.TargetAddress)
         return bad("block source address has no runtime identity");
@@ -316,7 +537,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       Hint.CallKind != Kind::SwiftRuntimeCall &&
       Hint.CallKind != Kind::SwiftStringBridge &&
       Hint.CallKind != Kind::SwiftStringFromNSString &&
-      Hint.CallKind != Kind::DarwinRuntimeCall)
+      Hint.CallKind != Kind::DarwinRuntimeCall &&
+      Hint.CallKind != Kind::RuntimeObjCSuperGetter &&
+      Hint.CallKind != Kind::RuntimeObjCMetadataFactory)
     return bad("unknown binding kind");
   if (Signature.Parameters.size() > 64 ||
       E.Operands.size() != Signature.Parameters.size())
@@ -353,7 +576,59 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     const bool DeclaredC =
         Hint.CallKind == Kind::DarwinRuntimeCall &&
         Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK;
-    if ((!DeclaredMessage && !DeclaredC) || !Format.FormatAddress ||
+    const bool DynamicWithoutArguments =
+        Format.DynamicWithoutArguments && DeclaredMessage &&
+        !Format.DynamicPointerArguments && !Format.DynamicInteger64Arguments &&
+        !Format.FormatAddress && Format.AlternativeFormatAddresses.empty() &&
+        Format.FixedCount == Signature.Parameters.size();
+    const bool DynamicPointerArguments =
+        Format.DynamicPointerArguments && DeclaredMessage &&
+        !Format.DynamicInteger64Arguments && !Format.DynamicWithoutArguments &&
+        !Format.FormatAddress && Format.AlternativeFormatAddresses.empty() &&
+        Format.FixedCount < Signature.Parameters.size() &&
+        std::all_of(
+            Signature.Parameters.begin() + Format.FixedCount,
+            Signature.Parameters.end(),
+            [](const auto &Parameter) {
+              return Parameter.Type &&
+                     Parameter.Type->Kind == NdTypeKind::Ptr &&
+                     Parameter.Type->Size == 8;
+            });
+    const bool DynamicInteger64Arguments =
+        Format.DynamicInteger64Arguments && DeclaredMessage &&
+        Signature.Architecture == Arch::AArch64 && Signature.HasExplicitABI &&
+        !Format.DynamicWithoutArguments && !Format.DynamicPointerArguments &&
+        !Format.FormatAddress && Format.AlternativeFormatAddresses.empty() &&
+        Format.FixedCount < Signature.Parameters.size() &&
+        std::all_of(
+            Signature.Parameters.begin() + Format.FixedCount,
+            Signature.Parameters.end(),
+            [](const auto &Parameter) {
+              return Parameter.Type &&
+                     Parameter.Type->Kind == NdTypeKind::Int &&
+                     Parameter.Type->Size == 8;
+            }) &&
+        [&] {
+          auto Expected = Signature;
+          std::string Error;
+          return assignDarwinVariadicSourceABI(Expected, Format.FixedCount,
+                                               Arch::AArch64, Error) &&
+                 equalSourceABIs(Signature, Expected);
+        }();
+    if ((!DeclaredMessage && !DeclaredC) ||
+        (!Format.FormatAddress && !DynamicWithoutArguments &&
+         !DynamicPointerArguments && !DynamicInteger64Arguments) ||
+        (Format.DynamicWithoutArguments && !DynamicWithoutArguments) ||
+        (Format.DynamicPointerArguments && !DynamicPointerArguments) ||
+        (Format.DynamicInteger64Arguments && !DynamicInteger64Arguments) ||
+        Format.AlternativeFormatAddresses.size() >= 64 ||
+        !std::is_sorted(Format.AlternativeFormatAddresses.begin(),
+                        Format.AlternativeFormatAddresses.end()) ||
+        std::adjacent_find(Format.AlternativeFormatAddresses.begin(),
+                           Format.AlternativeFormatAddresses.end()) !=
+            Format.AlternativeFormatAddresses.end() ||
+        (!Format.AlternativeFormatAddresses.empty() &&
+         Format.AlternativeFormatAddresses.front() <= Format.FormatAddress) ||
         Format.FixedCount < (Message ? 3U : 1U) ||
         Format.FixedCount > Signature.Parameters.size() ||
         (Message && Format.FormatParameter < 2) ||
@@ -391,7 +666,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                          Hint.CallKind == Kind::SwiftRuntimeCall ||
                          Hint.CallKind == Kind::SwiftStringBridge ||
                          Hint.CallKind == Kind::SwiftStringFromNSString ||
-                         Hint.CallKind == Kind::DarwinRuntimeCall;
+                         Hint.CallKind == Kind::DarwinRuntimeCall ||
+                         Hint.CallKind == Kind::RuntimeObjCSuperGetter ||
+                         Hint.CallKind == Kind::RuntimeObjCMetadataFactory;
     if (Runtime)
       Name = Hint.TargetName;
     if (Hint.CallKind == Kind::SwiftStringBridge)
@@ -399,7 +676,11 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     else if (Hint.CallKind == Kind::SwiftStringFromNSString)
       Name = "neverd_nsstring_to_swift_string";
     else if (Hint.CallKind == Kind::DarwinRuntimeCall &&
-             Signature.Origin == SourceFunctionTypeHint::OriginKind::DarwinSDK)
+             (Signature.Origin ==
+                  SourceFunctionTypeHint::OriginKind::DarwinSDK ||
+              (Signature.Origin ==
+                   SourceFunctionTypeHint::OriginKind::DarwinRuntime &&
+               Hint.TargetName == "__isPlatformVersionAtLeast")))
       Name = "neverd_darwin_" + Hint.TargetName;
     const auto *Definition =
         Runtime ? nullptr : sourceCallDefinition(Hint, Name);
@@ -447,8 +728,9 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
     }
   } else {
     std::string Prototype = "(*)(";
-    const auto FixedCount =
-        Hint.Format ? Hint.Format->FixedCount : Signature.Parameters.size();
+    const auto FixedCount = Hint.Format          ? Hint.Format->FixedCount
+                            : Hint.NilTerminated ? 3U
+                                                 : Signature.Parameters.size();
     for (size_t I = 0; I < FixedCount; ++I) {
       if (I)
         Prototype += ", ";
@@ -460,7 +742,7 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       else
         Prototype += typeToC(Signature.Parameters[I].Type);
     }
-    if (Hint.Format)
+    if (Hint.Format || Hint.NilTerminated)
       Prototype += ", ...";
     Prototype = declarationToC(Signature.ReturnType, Prototype + ")");
     Name = "((" + Prototype + ")" +
@@ -479,8 +761,20 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
       if (auto Declared = declaredParamType(Argument.Var);
           Declared && Declared->Kind == NdTypeKind::Float)
         Carrier = Declared;
-    auto Value =
-        sourceValue(exprStr(Argument), Carrier, Signature.Parameters[I].Type);
+    const auto &SourceType = Signature.Parameters[I].Type;
+    // A machine register may carry a null pointer through a subregister (for
+    // example W0 on AArch64).  Preserve the exact zero as a C null pointer
+    // constant instead of requiring the integer carrier to have pointer width.
+    // Do not widen any nonzero integer here: those still require an explicit,
+    // size-compatible pointer carrier.
+    auto Value = Argument.Kind == ExprKind::Const && Carrier &&
+                         Carrier->Kind == NdTypeKind::Int &&
+                         Argument.ConstVal == 0 && SourceType &&
+                         SourceType->Kind == NdTypeKind::Ptr &&
+                         Carrier->Size != SourceType->Size
+                     ? std::optional<std::string>("(" + typeToC(SourceType) +
+                                                  ")0")
+                     : sourceValue(exprStr(Argument), Carrier, SourceType);
     if (!Value)
       return bad("argument carrier disagrees with the source declaration");
     if (I != FirstArgument)

@@ -92,7 +92,7 @@ V9 の schema テストは 8 種の名前の往復と共有最終状態検証を
 | `unittests/sbf` | `NeverDSBFMetadataTests`、`NeverDSBFProgramImageTests`、`NeverDSBFLoaderTests`、`NeverDSBFAnalyzerTests`、`NeverDSBFVerifierTests`、`NeverDSBFISAConformanceTests`、`NeverDSBFAgaveConformanceTests`、`NeverDSBFSemanticTests`、`NeverDSBFEmitterTests`、`NeverDSBFLLVMEmitterTests`、`NeverDSBFLLVMDifferentialTests`、`NeverDSBFSourceDifferentialTests`、`NeverDSBFMalformedCorpusTests`、`NeverDSBFUpstreamConformanceTests`、`NeverDSBFExternalOracleTests`、`NeverDSBFSolanaModelTests`、`NeverDSBFIntegrationTests` | v0-v4 メタデータと ELF レイアウト、厳格な verifier/loader 動作、固定済み ELF 成果物 23 個、独立 official oracle、全 opcode の可用性、敵対的入力、CFG/復元、実行済み LLVM/C/Rust 差分 |
 | `PatchFullSubstRTTests.cpp` | `NeverDPatchFullTests` | 4 ISA×3 オブジェクト形式の書き換え/難読化等価性 |
 | `unittests/semantic` の重点変換ファイル | `NeverDSwitchXformTests`、`NeverDIndCallXformTests`、`NeverDCFGLoopXformTests`、`NeverDTwoTableXformTests`、`NeverDAvxUpperXformTests` | 大きなセマンティック実行形式から分離した高速再リンク用プローブ |
-| `unittests/corpus`（submodule） | `NeverDWindowsEHCorpusTests`、`NeverDRustEHCorpusTests`、`NeverDGoEHCorpusTests`、`NeverDCxxItaniumEHCorpusTests`、`NeverDObjCEHCorpusTests` | pin された 317 個の実バイナリから読み取る例外とランタイム metadata。各バイナリは manifest で復元が満たすべき下限を宣言している |
+| `unittests/corpus`（submodule） | `NeverDWindowsEHCorpusTests`、`NeverDRustEHCorpusTests`、`NeverDGoEHCorpusTests`、`NeverDCxxItaniumEHCorpusTests`、`NeverDObjCEHCorpusTests`、`NeverDAdaDEHCorpusTests` | pin された 545 個の実バイナリから読み取る例外とランタイム metadata。各バイナリは manifest で復元が満たすべき下限を宣言している |
 
 登録の信頼できる情報源は
 [`unittests/CMakeLists.txt`](../../unittests/CMakeLists.txt)、
@@ -124,11 +124,11 @@ cmake --build build-corpus --target check-neverd-corpus --parallel 4
 
 `check-neverd-corpus` は全ラインを、`check-neverd-windows-eh-corpus`、
 `check-neverd-rust-eh-corpus`、`check-neverd-go-eh-corpus`、
-`check-neverd-cxx-itanium-eh-corpus`、`check-neverd-objc-eh-corpus` はそれぞれ 1 ライン
-を実行します。CI の 3 ホストすべてがこのフラグ付きで configure し、5 ライン全部を
+`check-neverd-cxx-itanium-eh-corpus`、`check-neverd-objc-eh-corpus`、`check-neverd-ada-d-eh-corpus` はそれぞれ 1 ライン
+を実行します。CI の 3 ホストすべてがこのフラグ付きで configure し、6 ライン全部を
 実行します。バイトはどこでも同一ですが、それを読むものは同一ではなく、1 ホストでの
 corpus 実行は他の 2 ホストについて何も証明しません。
-`scripts/audit_ci_test_inventory.py` は 5 つの label のどれかを欠く inventory を拒否
+`scripts/audit_ci_test_inventory.py` は 6 つの label のどれかを欠く inventory を拒否
 します。corpus を静かに読まなくなったビルドは、どのテストにも捕捉できない回帰だから
 です。消えたものがテストそのものなのです。
 
@@ -701,3 +701,11 @@ provenance/test のみです。`SBFFaultCodes.def` は execution fault の安定
 10,000 scale fixture が worklist、function ownership、multi-latch を守り、
 machine 固有時間は固定しません。cluster/account/slot row は通常 test を
 deterministic/offline に保ったまま `RPC activation audit` を可能にします。
+
+## モバイル SDK のエクスポート証拠
+
+手動ワークフロー `Mobile SDK Export Evidence` は、固定した Xcode SDK に対して `collect_mobile_ios_sdk_declarations.py --exports-only` を実行します。iOS 実機用とシミュレータ用の両 SDK から Foundation、CoreFoundation、UIKit のリンカーマップをそのまま保存し、ターゲット、SDK バージョン、SDK 設定のハッシュ、ファイルサイズ、SHA-256 を記録します。通常の宣言収集でも同じマップを保存します。ファイルの欠落、空ファイル、サイズ超過、SDK 外のファイルは収集を失敗させ、完了済みの証拠は保持します。リンカーマップはシンボルのエクスポートの証拠であり、呼び出し ABI やメソッド復元の成功を証明するものではありません。
+
+## モバイル Swift String の ABI 証拠
+
+手動ワークフロー `Mobile Swift String ABI Evidence` は、Xcode 26.5 を使い、arm64 iOS 実機とシミュレーター向けに固定の Swift 等価・順序比較プローブと C の `swiftcall` プローブをコンパイルします。`collect_mobile_swift_string_abi.py` は、ソース、LLVM IR、アセンブリ、コンパイラーの識別情報、SDK 設定、`libswiftCore.tbd` をハッシュ付きで保存します。両言語とも、正確な比較インポートが 5 引数を取り `i1` を返す必要があり、C はその結果を明示的に 1 バイトへ拡張する必要があります。ターゲットやシグネチャの相違、コマンド失敗、タイムアウトでは部分的な証拠を残して収集を失敗とします。この証拠はランタイム宣言を登録せず、メソッドの復元も証明しません。SDK 不要のテストは `python3 -m unittest scripts.tests.test_mobile_swift_string_abi` で実行できます。

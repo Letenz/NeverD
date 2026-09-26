@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../DriverScenario.h"
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
@@ -41,77 +42,17 @@ unsigned majorFunction(DriverRequestKind Kind) {
 #include "neverd/emulation/DriverRequestKinds.def"
 #undef NEVERD_DRIVER_REQUEST_KIND
   }
-  return 28;
+  return profile::MajorFunctionCount;
 }
 
-bool ntSuccess(uint32_t Status) { return !(Status & 0x80000000U); }
-bool ntError(uint32_t Status) { return (Status >> 30) == 3; }
-unsigned userPermissions(DriverUserPageAccess Access) {
-  switch (Access) {
-  case DriverUserPageAccess::ReadWrite:
-    return Read | Write;
-  case DriverUserPageAccess::ReadOnly:
-    return Read;
-  case DriverUserPageAccess::NoAccess:
-    return 0;
-  }
-  llvm_unreachable("invalid driver user page access");
+bool ntSuccess(uint32_t Status) {
+  return !(Status & profile::NTStatusFailureMask);
+}
+bool ntError(uint32_t Status) {
+  return (Status >> profile::NTStatusSeverityShift) ==
+         profile::NTStatusErrorSeverity;
 }
 } // namespace
-
-llvm::Expected<uint64_t>
-KernelModel::allocateUserBuffer(uint32_t Size, llvm::ArrayRef<uint8_t> Initial,
-                                DriverUserPageAccess Access,
-                                uint32_t ProcessID) {
-  if (!Size)
-    return 0;
-  if (Initial.size() > Size || Size > profile::KernelArenaSize)
-    return ioError("invalid synthetic user buffer extent");
-  const uint64_t Pages =
-      (uint64_t(Size) + profile::PageSize - 1) & ~(profile::PageSize - 1);
-  const uint64_t End = profile::UserArenaBase + profile::UserArenaSize;
-  if (NextUserAddress > End || Pages > End - NextUserAddress)
-    return ioError("synthetic user address space exhausted");
-  const uint64_t Address = NextUserAddress;
-  if (auto E = Memory.map(Address, Pages, Read | Write))
-    return std::move(E);
-  if (auto E = Physical.registerRegion(Address, Address, Size))
-    return std::move(E);
-  if (auto E = Memory.write(Address, Initial))
-    return std::move(E);
-  if (auto E = Memory.protect(Address, Pages, userPermissions(Access)))
-    return std::move(E);
-  UserAllocations.emplace(Address, UserAllocation{Size, ProcessID, Access});
-  NextUserAddress += Pages;
-  return Address;
-}
-
-llvm::Error KernelModel::setUserRequestContext(bool Active,
-                                               uint32_t ProcessID) {
-  if (Active) {
-    for (const auto &[Address, Allocation] : UserAllocations) {
-      const uint64_t Pages =
-          (Allocation.Size + profile::PageSize - 1) & ~(profile::PageSize - 1);
-      if (auto E = Memory.validateBacking(Address, Pages))
-        return E;
-    }
-    for (const auto &[Address, Allocation] : UserAllocations) {
-      const uint64_t Pages =
-          (Allocation.Size + profile::PageSize - 1) & ~(profile::PageSize - 1);
-      const unsigned Permissions =
-          Allocation.ProcessID == ProcessID &&
-                  !ExitedUserProcesses.contains(ProcessID) &&
-                  !RevokedUserAllocations.contains(Address)
-              ? userPermissions(Allocation.Access)
-              : 0;
-      if (auto E = Memory.protect(Address, Pages, Permissions))
-        return E;
-    }
-  }
-  UserRequestContext = Active;
-  CurrentUserProcessID = Active ? ProcessID : 0;
-  return llvm::Error::success();
-}
 
 llvm::Expected<uint64_t> KernelModel::processObject(uint32_t ProcessID) {
   if (!ProcessID)
@@ -137,16 +78,8 @@ llvm::Expected<uint64_t> KernelModel::requestorProcess(uint64_t IRP) {
 }
 
 llvm::Expected<uint64_t> KernelModel::currentProcess() {
-  if (CurrentExecution == profile::StackBase)
-    return processObject(UserRequestContext ? CurrentUserProcessID : 4);
-  if (Scheduler.active() &&
-      (Scheduler.active()->Kind == KernelScheduler::CallbackKind::WorkItem ||
-       Scheduler.active()->Kind == KernelScheduler::CallbackKind::SystemThread))
-    return processObject(!ProcessAttachments.empty() &&
-                                 ProcessAttachments.back().Execution ==
-                                     CurrentExecution
-                             ? CurrentUserProcessID
-                             : 4);
+  if (auto Context = executionProcessContext())
+    return processObject(Context->ProcessID);
   return ioError("current process requires a modeled foreground or system "
                  "thread");
 }
@@ -155,6 +88,10 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
                                             uint64_t ApcState) {
   if (!Scheduler.active() ||
       (Scheduler.active()->Kind != KernelScheduler::CallbackKind::WorkItem &&
+       Scheduler.active()->Kind !=
+           KernelScheduler::CallbackKind::FrameworkInterruptWorkItem &&
+       Scheduler.active()->Kind !=
+           KernelScheduler::CallbackKind::FrameworkPassive &&
        Scheduler.active()->Kind !=
            KernelScheduler::CallbackKind::SystemThread) ||
       CurrentExecution == profile::StackBase)
@@ -176,14 +113,12 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
       ApcState - CurrentExecution <= profile::CallbackStackSize &&
       KAPCStateSize <=
           profile::CallbackStackSize - (ApcState - CurrentExecution);
-  const bool NonPagedPool =
-      std::any_of(Allocations.begin(), Allocations.end(),
-                  [&](const auto &Entry) {
-                    return Entry.second.NonPaged && ApcState >= Entry.first &&
-                           ApcState - Entry.first <= Entry.second.Size &&
-                           KAPCStateSize <=
-                               Entry.second.Size - (ApcState - Entry.first);
-                  });
+  const bool NonPagedPool = std::any_of(
+      Allocations.begin(), Allocations.end(), [&](const auto &Entry) {
+        return Entry.second.NonPaged && ApcState >= Entry.first &&
+               ApcState - Entry.first <= Entry.second.Size &&
+               KAPCStateSize <= Entry.second.Size - (ApcState - Entry.first);
+      });
   if (!CurrentStack && !NonPagedPool)
     return ioError("APC storage must be on the current thread stack or in "
                    "nonpaged pool");
@@ -208,13 +143,13 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
   auto PreviousProcess = processObject(LogicalPreviousProcessID);
   if (!PreviousProcess)
     return PreviousProcess.takeError();
+  if (auto E = setUserRequestContext(true, ProcessID))
+    return E;
   std::array<uint8_t, KAPCStateSize> Saved{};
   if (auto E = Memory.write(ApcState, Saved))
     return E;
   if (auto E = Memory.writeInteger(ApcState + KAPCStateProcessOffset,
                                    *PreviousProcess, 8))
-    return E;
-  if (auto E = setUserRequestContext(true, ProcessID))
     return E;
   ProcessAttachments.push_back(
       {CurrentExecution, ApcState, PreviousProcessID, PreviousUserContext});
@@ -246,11 +181,14 @@ KernelModel::requestForIRP(uint64_t IRP) const {
   return I == Requests.end() ? nullptr : &I->second;
 }
 
-bool KernelModel::requestPending(uint64_t IRP) const {
-  auto Pending = [](const ActiveRequest &Request) {
+bool KernelModel::requestPending(uint64_t IRP,
+                                 PendingRequestScope Scope) const {
+  auto Pending = [&](const ActiveRequest &Request) {
     return Request.DispatchReturned &&
            (!Request.Completed ||
-            (Request.ChildPower && !Request.ChildPower->CallbackReturned));
+            (Request.ChildPower && !Request.ChildPower->CallbackReturned)) &&
+           (Scope == PendingRequestScope::All || !Framework ||
+            !Framework->isPowerParkedIRP(Request.IRP));
   };
   if (IRP) {
     const auto *Request = requestForIRP(IRP);
@@ -274,28 +212,8 @@ llvm::Error KernelModel::prepareRequestBuffers(ActiveRequest &Record,
   Request->InputSize = Input.Input.size();
   Request->ByteOffset = Input.ByteOffset;
   Request->TransferSize = IsWrite ? Input.Input.size() : Input.OutputSize;
-  if (Request->Neither) {
-    if (IsIOCTL) {
-      auto InputBuffer = allocateUserBuffer(
-          Input.Input.size(), Input.Input,
-          Input.UserInputAccess.value_or(DriverUserPageAccess::ReadWrite),
-          Request->ProcessID);
-      if (!InputBuffer)
-        return InputBuffer.takeError();
-      Request->UserInput = *InputBuffer;
-    }
-    auto UserBuffer = allocateUserBuffer(
-        IsWrite ? Input.Input.size() : Input.OutputSize,
-        IsWrite ? llvm::ArrayRef<uint8_t>(Input.Input)
-                : llvm::ArrayRef<uint8_t>(),
-        (IsWrite ? Input.UserInputAccess : Input.UserOutputAccess)
-            .value_or(DriverUserPageAccess::ReadWrite),
-        Request->ProcessID);
-    if (!UserBuffer)
-      return UserBuffer.takeError();
-    Request->UserBuffer = *UserBuffer;
-    return llvm::Error::success();
-  }
+  if (Request->Neither)
+    return prepareUserRequestBuffers(Record, Input);
   Request->BufferSize = Request->Direct ? (IsIOCTL ? Input.Input.size() : 0)
                                         : std::max<uint64_t>(Input.Input.size(),
                                                              Input.OutputSize);
@@ -335,57 +253,6 @@ llvm::Error KernelModel::prepareRequestBuffers(ActiveRequest &Record,
       return MDL.takeError();
     Request->Mdl = *MDL;
   }
-  return llvm::Error::success();
-}
-
-llvm::Error KernelModel::revokeRequestUserBuffers(uint64_t IRP) {
-  auto *Request = requestForIRP(IRP);
-  if (!Request || !Request->Neither || !Request->DispatchReturned)
-    return ioError("user unmapping requires a dispatched neither-I/O IRP");
-  std::vector<std::pair<uint64_t, uint64_t>> Ranges;
-  for (uint64_t Address : {Request->UserInput, Request->UserBuffer}) {
-    if (!Address)
-      continue;
-    auto It = UserAllocations.find(Address);
-    if (It == UserAllocations.end() || RevokedUserAllocations.contains(Address))
-      return ioError("user unmapping requires a live original buffer");
-    const uint64_t Pages =
-        (It->second.Size + profile::PageSize - 1) & ~(profile::PageSize - 1);
-    if (auto E = Memory.validateBacking(Address, Pages))
-      return E;
-    Ranges.emplace_back(Address, Pages);
-  }
-  for (const auto &[Address, Pages] : Ranges) {
-    if (auto E = Memory.protect(Address, Pages, 0))
-      return E;
-    RevokedUserAllocations.insert(Address);
-  }
-  return llvm::Error::success();
-}
-
-llvm::Error KernelModel::exitRequestorProcess(uint64_t IRP) {
-  const auto *Request = requestForIRP(IRP);
-  if (!Request || !Request->Neither || !Request->DispatchReturned ||
-      !Request->ProcessID || ExitedUserProcesses.contains(Request->ProcessID))
-    return ioError("requestor exit requires a live dispatched neither-I/O "
-                   "request and process");
-  std::vector<std::pair<uint64_t, uint64_t>> Ranges;
-  for (const auto &[Address, Allocation] : UserAllocations) {
-    if (Allocation.ProcessID != Request->ProcessID ||
-        RevokedUserAllocations.contains(Address))
-      continue;
-    const uint64_t Pages =
-        (Allocation.Size + profile::PageSize - 1) & ~(profile::PageSize - 1);
-    if (auto E = Memory.validateBacking(Address, Pages))
-      return E;
-    Ranges.emplace_back(Address, Pages);
-  }
-  for (const auto &[Address, Pages] : Ranges) {
-    if (auto E = Memory.protect(Address, Pages, 0))
-      return E;
-    RevokedUserAllocations.insert(Address);
-  }
-  ExitedUserProcesses.insert(Request->ProcessID);
   return llvm::Error::success();
 }
 
@@ -467,8 +334,8 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
               Memory.writeInteger(Request->Stack + F.Offset, F.Value, F.Size))
         return E;
     if (Request->Neither)
-      if (auto E = Memory.writeInteger(
-              Request->Stack + StackType3InputOffset, Request->UserInput, 8))
+      if (auto E = Memory.writeInteger(Request->Stack + StackType3InputOffset,
+                                       Request->UserInput, 8))
         return E;
   } else if (Input.Kind == DriverRequestKind::Read ||
              Input.Kind == DriverRequestKind::Write) {
@@ -502,7 +369,7 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
 
 llvm::Expected<KernelModel::Invocation>
 KernelModel::beginRequest(const DriverRequest &Input,
-                            std::optional<size_t> SourceIndex) {
+                          std::optional<size_t> SourceIndex) {
   DriverRequestResult Observation;
   Observation.Kind = Input.Kind;
   Observation.Device = Input.Device;
@@ -524,11 +391,14 @@ KernelModel::beginRequest(const DriverRequest &Input,
       Input.Kind != DriverRequestKind::Write &&
       Input.Kind != DriverRequestKind::DeviceControl)
     return ioError("interrupt events require a transfer request");
-  if (auto E = Interrupts.canArm(Input.InterruptEvents, SourceIndex.value_or(Index),
-                                 Scheduler.now100ns()))
+  if (auto E =
+          Interrupts.canArm(Input.InterruptEvents, SourceIndex.value_or(Index),
+                            Scheduler.now100ns()))
     return E;
   if (auto E = DMA.canArm(Input.DmaEvents, SourceIndex.value_or(Index),
                           Scheduler.now100ns()))
+    return E;
+  if (auto E = validateDriverUserMemory(Input))
     return E;
   if (Input.Kind == DriverRequestKind::Pnp) {
     if (auto E = snapshot())
@@ -669,10 +539,13 @@ KernelModel::beginRequest(const DriverRequest &Input,
     Neither = !TransferFlags;
     Direct = TransferFlags == DeviceDirectIO;
   }
+  if (!Neither && (!Input.UserBuffers.empty() || !Input.UserPointers.empty()))
+    return ioError("declared user memory requires neither-I/O transfer");
   if (!Neither && (Input.UserInputAccess || Input.UserOutputAccess))
     return ioError("user page access requires neither READ/WRITE I/O");
   if (Input.UserUnmapAfterDispatch &&
-      (!Neither || (Input.Input.empty() && !Input.OutputSize)))
+      (!Neither ||
+       (Input.Input.empty() && !Input.OutputSize && Input.UserBuffers.empty())))
     return ioError("user unmapping requires a nonempty neither-I/O transfer");
   if (Input.RequestorProcessID <= 4)
     return ioError("requestor process identity must be above the system PID");
@@ -681,7 +554,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
       Input.Kind != DriverRequestKind::Close)
     return ioError("requesting process has exited");
   if (Input.RequestorExitAfterDispatch &&
-      (!Neither || (Input.Input.empty() && !Input.OutputSize)))
+      (!Neither ||
+       (Input.Input.empty() && !Input.OutputSize && Input.UserBuffers.empty())))
     return ioError("requestor exit requires a nonempty neither-I/O transfer");
   auto FileIt = Files.find(Input.File);
   if (Input.Kind == DriverRequestKind::Create) {
@@ -768,6 +642,7 @@ KernelModel::beginRequest(const DriverRequest &Input,
   Record.Device = Device;
   Record.PnpDevice = PnpOwner;
   Record.LifecycleIo = LifecycleIo;
+  Record.FileBusCompletion = Input.FileBusCompletion;
   Record.Direct = Direct;
   Record.Neither = Neither;
   if (LifecycleIo)
@@ -794,8 +669,9 @@ KernelModel::beginRequest(const DriverRequest &Input,
   if (auto E = initializeRequestPacket(*Request, Input))
     return E;
   Result.Requests[Index].IRP = *Packet;
-  if (auto E = Interrupts.arm(Input.InterruptEvents, SourceIndex.value_or(Index),
-                              Scheduler.now100ns()))
+  if (auto E =
+          Interrupts.arm(Input.InterruptEvents, SourceIndex.value_or(Index),
+                         Scheduler.now100ns()))
     return E;
   if (auto E = DMA.arm(Input.DmaEvents, SourceIndex.value_or(Index),
                        Scheduler.now100ns()))
@@ -815,6 +691,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
             return E;
         if (auto E = processRequestCancellations())
           return E;
+        if (auto E = Framework->flushReadyNotifications())
+          return E;
         Invocation Call;
         Call.IRP = *Packet;
         return Call;
@@ -824,8 +702,15 @@ KernelModel::beginRequest(const DriverRequest &Input,
       Call.FrameworkDispatchStatus = Dispatch.Status;
       Call.FrameworkCallerContext = Dispatch.CallerContext;
       Call.IRP = *Packet;
-      if (auto E = processRequestCancellations())
-        return E;
+      // Caller-context preprocessing may enqueue a request without presenting
+      // it to an I/O callback. Apply an immediate cancellation after that
+      // routing decision so the queue can deliver its cancellation callback.
+      if (!Dispatch.CallerContext) {
+        if (auto E = processRequestCancellations())
+          return E;
+        if (auto E = Framework->flushReadyNotifications())
+          return E;
+      }
       uint64_t *Registers[] = {&Call.Argument0, &Call.Argument1,
                                &Call.Argument2, &Call.Argument3};
       for (size_t I = 0; I < Dispatch.Arguments.size(); ++I)
@@ -868,6 +753,10 @@ KernelModel::continueFrameworkCallerContext(uint64_t IRP) {
   auto Routed = Framework->continueCallerContext(IRP);
   if (!Routed)
     return Routed.takeError();
+  if (auto E = processRequestCancellations())
+    return E;
+  if (auto E = Framework->flushReadyNotifications())
+    return E;
   Invocation Call;
   Call.PC = Routed->PC;
   Call.IRP = IRP;
@@ -880,6 +769,43 @@ KernelModel::continueFrameworkCallerContext(uint64_t IRP) {
     else
       Call.StackArguments.push_back(Routed->Arguments[I]);
   return Call;
+}
+
+llvm::Expected<std::vector<std::pair<uint64_t, uint64_t>>>
+KernelModel::requestReleaseRanges(uint64_t IRP) const {
+  const auto *Request = requestForIRP(IRP);
+  if (!Request || Request->Completed)
+    return ioError("completion release requires a live IRP");
+  std::vector<std::pair<uint64_t, uint64_t>> Retiring{
+      {IRP, IRPSize + Request->StackCount * StackSize}};
+  if (Request->RawResources) {
+    Retiring.emplace_back(Request->RawResources, Request->ResourceListSize);
+    Retiring.emplace_back(Request->TranslatedResources,
+                          Request->ResourceListSize);
+  }
+  if (Request->SystemBuffer)
+    Retiring.emplace_back(Request->SystemBuffer, Request->BufferSize);
+  if (Request->UserBuffer && !Request->Neither)
+    Retiring.emplace_back(Request->UserBuffer, Request->Direct
+                                                   ? Request->TransferSize
+                                                   : Request->OutputSize);
+  if (Request->SecurityContext)
+    Retiring.emplace_back(Request->SecurityContext, SecurityContextSize);
+  std::vector<uint64_t> RetiringPins;
+  if (auto E = appendRequestMDLReleaseResources(IRP, Retiring, RetiringPins))
+    return E;
+  // This check is shared with terminal completion planning. No stack cursor,
+  // continuation, dispatcher registration or output observation changes until
+  // the entire retirement set has passed its ownership checks.
+  for (const auto &[Address, Size] : Retiring) {
+    if (auto E = canReleaseUserViewsForBacking(Address, Size))
+      return E;
+    if (auto E = canRevokeVirtualRange(Address, Size))
+      return E;
+  }
+  if (auto E = Physical.canReleaseRanges(Retiring, RetiringPins))
+    return E;
+  return Retiring;
 }
 
 llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
@@ -903,50 +829,18 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
                                          *Information))
     return E;
   auto &Observation = Result.Requests[Request->ResultIndex];
-  Observation.IOStatus = static_cast<uint32_t>(*Status);
-  Observation.Information = *Information;
   const bool HasIOCTLOutput =
       Request->Kind == DriverRequestKind::DeviceControl && Request->OutputSize;
   auto Pending = dispatchPending(*Request, Request->StackCount - 1);
   if (!Pending)
     return Pending.takeError();
-  Request->PendingMarked = *Pending;
   if (Request->DispatchReturned &&
-      Observation.DispatchStatus == StatusPending && !Request->PendingMarked)
+      Observation.DispatchStatus == StatusPending && !*Pending)
     return ioError(
         "pending dispatch completion requires propagation to the top stack");
-  // Completion retires several allocations together. Preflight every range
-  // before unregistering any dispatcher state or delivering output bytes.
-  std::vector<std::pair<uint64_t, uint64_t>> Retiring{
-      {IRP, IRPSize + Request->StackCount * StackSize}};
-  if (Request->RawResources) {
-    Retiring.emplace_back(Request->RawResources, Request->ResourceListSize);
-    Retiring.emplace_back(Request->TranslatedResources,
-                          Request->ResourceListSize);
-  }
-  if (Request->SystemBuffer)
-    Retiring.emplace_back(Request->SystemBuffer, Request->BufferSize);
-  if (Request->UserBuffer && !Request->Neither)
-    Retiring.emplace_back(Request->UserBuffer, Request->Direct
-                                                   ? Request->TransferSize
-                                                   : Request->OutputSize);
-  if (Request->SecurityContext)
-    Retiring.emplace_back(Request->SecurityContext, SecurityContextSize);
-  if (Request->Mdl) {
-    auto It = MDLs.find(Request->Mdl);
-    if (It == MDLs.end())
-      return ioError("active request lost ownership of its MDL");
-    Retiring.emplace_back(It->second.Address, It->second.Size);
-    Retiring.emplace_back(It->second.Buffer & ~(profile::PageSize - 1),
-                          It->second.AllocationSize);
-  }
-  if (Request->SystemMdl) {
-    auto It = MDLs.find(Request->SystemMdl);
-    if (It == MDLs.end() || It->second.OwnerIRP != IRP ||
-        It->second.Owner != LockedMdl::Ownership::RequestSystemBuffer)
-      return ioError("active request lost ownership of its system-buffer MDL");
-    Retiring.emplace_back(It->second.Address, It->second.Size);
-  }
+  auto Retiring = requestReleaseRanges(IRP);
+  if (!Retiring)
+    return Retiring.takeError();
   if (Request->PowerTicket) {
     if (auto E = validatePowerRequestCompletion(*Request, uint32_t(*Status)))
       return E;
@@ -957,8 +851,14 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
     if (auto E = Lifecycle.validateIoCompletion(Request->PnpDevice, IRP))
       return E;
   }
-  if (auto E = prepareReleaseRanges(Retiring))
-    return E;
+  // The plan accounts for the exact pins released by this IRP. Revoke virtual
+  // registrations now; expireRequestMDL drops those pins before retiring RAM.
+  for (const auto &[Address, Size] : *Retiring)
+    if (auto E = prepareRevokeVirtualRange(Address, Size))
+      return E;
+  Observation.IOStatus = static_cast<uint32_t>(*Status);
+  Observation.Information = *Information;
+  Request->PendingMarked = *Pending;
   if (Request->ChildPower && Request->ChildPower->StatusBlock) {
     const auto Block = Request->ChildPower->StatusBlock;
     if (auto E = Memory.writeInteger(Block, uint32_t(*Status), 4))
@@ -1065,6 +965,8 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
   if (!Request->DispatchReturned || !Request->Completed)
     return ioError(
         "request finalization requires completion and dispatch return");
+  if (Request->FileBusCompletion && !Request->FileBusReceived)
+    return ioError("configured lower file response was not consumed");
   if (std::any_of(IRPCalls.begin(), IRPCalls.end(),
                   [&](const auto &Entry) { return Entry.second.IRP == IRP; }))
     return ioError(
@@ -1232,7 +1134,9 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
     const auto *Request = &Record;
     if (auto E = Check(Request->IRP, IRPSize, [&](uint64_t Offset) {
           if (IsWrite)
-            return (Offset >= IRPStatusOffset &&
+            return (Offset >= IRPMdlOffset &&
+                    Offset < IRPMdlOffset + profile::PointerSize) ||
+                   (Offset >= IRPStatusOffset &&
                     Offset < IRPRequestorModeOffset) ||
                    (Offset >= IRPCancelRoutineOffset &&
                     Offset < IRPCancelRoutineOffset + profile::PointerSize) ||
@@ -1275,10 +1179,10 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
     // Raw user pointers are outside this kernel-only profile. Buffered requests
     // use SystemBuffer; direct requests access the locked system mapping.
     if (!Request->Neither)
-      if (auto E =
-            Check(Request->UserBuffer,
-                  Request->Direct ? Request->TransferSize : Request->OutputSize,
-                  [](uint64_t) { return false; }))
+      if (auto E = Check(Request->UserBuffer,
+                         Request->Direct ? Request->TransferSize
+                                         : Request->OutputSize,
+                         [](uint64_t) { return false; }))
         return E;
   }
   if (IsWrite)

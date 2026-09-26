@@ -86,6 +86,7 @@ void CFGBuilder::convertIndirectTailCalls(LowFunc &Func) {
         StackTableEvidenceIncompleteBranches.count(Addr) ||
         IndexDomainEvidenceIncompleteBranches.count(Addr) ||
         IncompleteBranchMarkerEvidenceIncomplete ||
+        (finiteGOTOFFGroupClaimed() && guardedGroupContains(Addr)) ||
         ValidatedPhysicalJumpTableBranches.count(Addr) ||
         AmbiguousI386GOTPCBranches.count(Addr) ||
         PendingAmbiguousI386GOTPCBranches.count(Addr) ||
@@ -267,7 +268,16 @@ bool CFGBuilder::hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr) {
 bool CFGBuilder::isTailCallTarget(va_t Target) const {
   if (Target == InvalidVA || Target == CurrentFuncEntry)
     return false;
-  if (KnownFuncEntries && KnownFuncEntries->count(Target) > 0)
+  // A selected-function run may omit other function symbols from its work
+  // set. An explicit transfer to such a symbol still names a tail callee.
+  // Symbol identity alone must not stop ordinary fallthrough exploration:
+  // x86 call-next/POP retains its architectural push even at a named address.
+  const bool FunctionEntry =
+      isKnownFunctionEntry(Target) ||
+      (CurrentImg &&
+       CurrentImg->hasFunctionSymbolAt(Target, ExecutableCodeOwners));
+  if (FunctionEntry && !isCurrentExceptionalEntry(Target) &&
+      !isCurrentOwnedFragment(Target))
     return true;
   // A direct branch landing on a registered import veneer is a tail call to
   // that external function.  Without this the veneer is followed and inlined

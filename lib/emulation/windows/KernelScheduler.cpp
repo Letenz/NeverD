@@ -30,15 +30,19 @@ llvm::Error schedulerError(const llvm::Twine &Message) {
 }
 
 bool containsObject(const std::deque<KernelScheduler::Invocation> &Queue,
-                    uint64_t Object) {
-  return llvm::any_of(
-      Queue, [Object](const auto &Call) { return Call.Object == Object; });
+                    uint64_t Object,
+                    std::optional<KernelScheduler::CallbackKind> Kind = {}) {
+  return llvm::any_of(Queue, [Object, Kind](const auto &Call) {
+    return Call.Object == Object && (!Kind || Call.Kind == *Kind);
+  });
 }
 
 bool removeObject(std::deque<KernelScheduler::Invocation> &Queue,
-                  uint64_t Object) {
-  auto I = llvm::find_if(
-      Queue, [Object](const auto &Call) { return Call.Object == Object; });
+                  uint64_t Object,
+                  std::optional<KernelScheduler::CallbackKind> Kind = {}) {
+  auto I = llvm::find_if(Queue, [Object, Kind](const auto &Call) {
+    return Call.Object == Object && (!Kind || Call.Kind == *Kind);
+  });
   if (I == Queue.end())
     return false;
   Queue.erase(I);
@@ -50,6 +54,11 @@ bool removeObject(std::deque<KernelScheduler::Invocation> &Queue,
 bool KernelScheduler::isDMACallbackKind(CallbackKind Kind) {
   return Kind == CallbackKind::DMAListControl ||
          Kind == CallbackKind::DMAAdapterControl;
+}
+
+bool KernelScheduler::isFrameworkInterruptCallbackKind(CallbackKind Kind) {
+  return Kind == CallbackKind::FrameworkInterruptDPC ||
+         Kind == CallbackKind::FrameworkInterruptWorkItem;
 }
 
 llvm::Error KernelScheduler::validateTime() const {
@@ -82,13 +91,16 @@ llvm::Error KernelScheduler::validateDPC(const DpcCallback &DPC) const {
   return schedulerError("invalid DPC importance");
 }
 
-llvm::Error KernelScheduler::validateInterrupt(
-    const InterruptCallback &Interrupt) const {
+llvm::Error
+KernelScheduler::validateInterrupt(const InterruptCallback &Interrupt) const {
   if (auto E = validateCallback(Interrupt))
     return E;
-  if (Interrupt.Priority < scheduler::MinDeviceIRQL ||
+  const bool Passive = Interrupt.IRQL == scheduler::PassiveLevel;
+  if ((!Passive && Interrupt.Priority < scheduler::MinDeviceIRQL) ||
+      (Passive && Interrupt.Priority &&
+       Interrupt.Priority < scheduler::MinDeviceIRQL) ||
       Interrupt.Priority > scheduler::MaxDeviceIRQL ||
-      Interrupt.IRQL < Interrupt.Priority ||
+      (!Passive && Interrupt.IRQL < Interrupt.Priority) ||
       Interrupt.IRQL > scheduler::MaxDeviceIRQL)
     return schedulerError("interrupt requires a device priority and an equal "
                           "or higher synchronization IRQL");
@@ -114,8 +126,9 @@ KernelScheduler::Invocation KernelScheduler::makeInvocation(Callback Work,
   static_cast<Callback &>(Call) = std::move(Work);
   Call.ID = NextID++;
   Call.Kind = Kind;
-  Call.IRQL = Kind == CallbackKind::DPC || Kind == CallbackKind::WDMCancel ||
-                      isDMACallbackKind(Kind)
+  Call.IRQL = Kind == CallbackKind::DPC ||
+                      Kind == CallbackKind::FrameworkInterruptDPC ||
+                      Kind == CallbackKind::WDMCancel || isDMACallbackKind(Kind)
                   ? scheduler::DispatchLevel
                   : scheduler::PassiveLevel;
   Call.DueTime100ns = DueTime;
@@ -150,11 +163,11 @@ llvm::Expected<uint64_t> KernelScheduler::enqueueSystemThread(Callback Thread) {
 }
 
 bool KernelScheduler::cancelWorkItem(uint64_t Object) {
-  return removeObject(Workers, Object);
+  return removeObject(Workers, Object, CallbackKind::WorkItem);
 }
 
 bool KernelScheduler::isWorkItemQueued(uint64_t Object) const {
-  return containsObject(Workers, Object);
+  return containsObject(Workers, Object, CallbackKind::WorkItem);
 }
 
 llvm::Expected<uint64_t>
@@ -168,6 +181,26 @@ KernelScheduler::enqueueFrameworkCancel(Callback Cancellation) {
   Cancellations.push_back(makeInvocation(std::move(Cancellation),
                                          CallbackKind::FrameworkCancel, Now));
   return Cancellations.back().ID;
+}
+
+llvm::Expected<uint64_t>
+KernelScheduler::enqueueFrameworkPassive(Callback Call) {
+  if (auto E = validateCallback(Call))
+    return E;
+  auto Matches = [&](const Invocation &Existing) {
+    return Existing.Kind == CallbackKind::FrameworkPassive &&
+           Existing.Object == Call.Object;
+  };
+  if (containsObject(Workers, Call.Object, CallbackKind::FrameworkPassive) ||
+      (Active && Matches(*Active)) ||
+      llvm::any_of(Suspended,
+                   [&](const auto &Entry) { return Matches(Entry.second); }))
+    return schedulerError("framework continuation is already outstanding");
+  if (auto E = checkCapacity(1))
+    return E;
+  Workers.push_back(
+      makeInvocation(std::move(Call), CallbackKind::FrameworkPassive, Now));
+  return Workers.back().ID;
 }
 
 llvm::Error KernelScheduler::canEnqueueWDMCancellations(
@@ -216,8 +249,33 @@ llvm::Expected<bool> KernelScheduler::queueDPC(DpcCallback DPC) {
   return true;
 }
 
-llvm::Error KernelScheduler::canEnqueueWDMCompletions(
-    llvm::ArrayRef<Callback> Batch) const {
+llvm::Expected<std::optional<uint64_t>>
+KernelScheduler::queueFrameworkInterrupt(Callback Call, bool WorkItem) {
+  if (auto E = validateCallback(Call))
+    return E;
+  const auto Kind = WorkItem ? CallbackKind::FrameworkInterruptWorkItem
+                             : CallbackKind::FrameworkInterruptDPC;
+  auto &Queue = WorkItem ? Workers : DPCs;
+  if (containsObject(Queue, Call.Object, Kind))
+    return std::optional<uint64_t>{};
+  if (auto E = checkCapacity(1))
+    return E;
+  Queue.push_back(makeInvocation(std::move(Call), Kind, Now));
+  return std::optional<uint64_t>{Queue.back().ID};
+}
+
+bool KernelScheduler::hasFrameworkInterrupt(uint64_t Object) const {
+  auto Matches = [Object](const Invocation &Call) {
+    return Call.Object == Object && isFrameworkInterruptCallbackKind(Call.Kind);
+  };
+  return (Active && Matches(*Active)) || llvm::any_of(Workers, Matches) ||
+         llvm::any_of(DPCs, Matches) ||
+         llvm::any_of(Suspended,
+                      [&](const auto &Entry) { return Matches(Entry.second); });
+}
+
+llvm::Error
+KernelScheduler::canEnqueueCompletions(llvm::ArrayRef<Callback> Batch) const {
   if (auto E = validateTime())
     return E;
   std::set<uint64_t> Objects;
@@ -226,17 +284,26 @@ llvm::Error KernelScheduler::canEnqueueWDMCompletions(
       return E;
     if (containsObject(Completions, Completion.Object) ||
         !Objects.insert(Completion.Object).second)
-      return schedulerError("WDM completion is already queued");
+      return schedulerError("request completion is already queued");
   }
   return checkCapacity(Batch.size());
 }
 
 llvm::Expected<uint64_t>
 KernelScheduler::enqueueWDMCompletion(Callback Completion) {
-  if (auto E = canEnqueueWDMCompletions({Completion}))
+  if (auto E = canEnqueueCompletions({Completion}))
+    return E;
+  Completions.push_back(
+      makeInvocation(std::move(Completion), CallbackKind::WDMCompletion, Now));
+  return Completions.back().ID;
+}
+
+llvm::Expected<uint64_t>
+KernelScheduler::enqueueFrameworkCompletion(Callback Completion) {
+  if (auto E = canEnqueueCompletions({Completion}))
     return E;
   Completions.push_back(makeInvocation(std::move(Completion),
-                                       CallbackKind::WDMCompletion, Now));
+                                       CallbackKind::FrameworkCompletion, Now));
   return Completions.back().ID;
 }
 
@@ -266,15 +333,18 @@ KernelScheduler::enqueueInterrupt(InterruptCallback Interrupt) {
   Call.IRQL = IRQL;
   Call.InterruptPriority = Priority;
   const uint64_t ID = Call.ID;
-  auto Position = llvm::find_if(Interrupts, [Priority](const auto &Queued) {
-    return Queued.InterruptPriority < Priority;
-  });
+  auto Position =
+      llvm::find_if(Interrupts, [IRQL, Priority](const auto &Queued) {
+        if (bool(IRQL) != bool(Queued.IRQL))
+          return bool(IRQL);
+        return Queued.InterruptPriority < Priority;
+      });
   Interrupts.insert(Position, std::move(Call));
   return ID;
 }
 
 bool KernelScheduler::removeDPC(uint64_t Object) {
-  return removeObject(DPCs, Object);
+  return removeObject(DPCs, Object, CallbackKind::DPC);
 }
 
 llvm::Error KernelScheduler::canReserveDMACallback(const Callback &Call,
@@ -432,7 +502,7 @@ llvm::Error KernelScheduler::finishInlineDMAListControl(uint64_t ID) {
 }
 
 bool KernelScheduler::isDPCQueued(uint64_t Object) const {
-  return containsObject(DPCs, Object);
+  return containsObject(DPCs, Object, CallbackKind::DPC);
 }
 
 llvm::Expected<uint64_t>
@@ -547,8 +617,9 @@ llvm::Error KernelScheduler::forgetTimer(uint64_t Timer) {
   return llvm::Error::success();
 }
 
-llvm::Error KernelScheduler::validateTimerExpirations(
-    uint64_t Time, uint64_t AdditionalCallbacks) const {
+llvm::Error
+KernelScheduler::validateTimerExpirations(uint64_t Time,
+                                          uint64_t AdditionalCallbacks) const {
   if (auto E = validateTime())
     return E;
   if (Time < Now || Time > Bounds.MaxTime100ns)
@@ -564,7 +635,7 @@ llvm::Error KernelScheduler::validateTimerExpirations(
       continue;
     ++Expirations;
     if (Timer.Period100ns && (Timer.Period100ns > UINT64_MAX - Time ||
-                               Timer.Period100ns > Bounds.MaxTime100ns - Time))
+                              Timer.Period100ns > Bounds.MaxTime100ns - Time))
       return schedulerError(
           "periodic timer deadline overflows virtual time limit");
     if (Timer.DPC && !isDPCQueued(Timer.DPC->Object))
@@ -629,11 +700,12 @@ KernelScheduler::next(bool AdvanceTime,
     if (queuedCallbackCount()) {
       if (Dispatches >= Bounds.MaxDispatches)
         return schedulerError("scheduler callback dispatch limit exhausted");
-      auto &Queue = !Interrupts.empty()      ? Interrupts
-                    : !DPCs.empty()          ? DPCs
-                    : !ReadyDMA.empty()      ? ReadyDMA
+      auto &Queue = !Interrupts.empty() && Interrupts.front().IRQL ? Interrupts
+                    : !DPCs.empty()                                ? DPCs
+                    : !ReadyDMA.empty()                            ? ReadyDMA
                     : !Cancellations.empty() ? Cancellations
                     : !Completions.empty()   ? Completions
+                    : !Interrupts.empty()    ? Interrupts
                     : !Workers.empty()       ? Workers
                                              : SystemThreads;
       Active = std::move(Queue.front());
@@ -672,8 +744,9 @@ llvm::Error KernelScheduler::processDueTimers() {
   return expireTimers(Now);
 }
 
-llvm::Error KernelScheduler::canAdvanceTo100ns(
-    uint64_t Time, uint64_t AdditionalCallbacks) const {
+llvm::Error
+KernelScheduler::canAdvanceTo100ns(uint64_t Time,
+                                   uint64_t AdditionalCallbacks) const {
   if (Time > Now) {
     if (Active || !InlineDMA.empty() || queuedCallbackCount())
       return schedulerError("cannot advance virtual time with runnable work");

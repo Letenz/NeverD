@@ -31,7 +31,8 @@ using namespace llvm;
 namespace neverd::cli {
 
 int runExport(neverd_session_t Sess) {
-  if ((ExportFmt == FmtObjCMethods || ExportFmt == FmtSwiftMethods) &&
+  if ((ExportFmt == FmtObjCMethods || ExportFmt == FmtObjCMethodsSummary ||
+       ExportFmt == FmtSwiftMethods) &&
       !ExportFunc.empty()) {
     WithColor::error() << "--func does not apply to method-source export\n";
     return 1;
@@ -123,8 +124,11 @@ int runExport(neverd_session_t Sess) {
       Json = neverd_exports_json(Sess);
     } else if (ExportFmt == FmtStrings) {
       Json = neverd_strings_json(Sess, 4);
-    } else if (ExportFmt == FmtObjCMethods) {
-      Json = neverd_objc_methods_json(Sess, MaxFunc);
+    } else if (ExportFmt == FmtObjCMethods ||
+               ExportFmt == FmtObjCMethodsSummary) {
+      Json = ExportFmt == FmtObjCMethods
+                 ? neverd_objc_methods_json(Sess, MaxFunc)
+                 : neverd_objc_methods_summary_json(Sess, MaxFunc);
       if (!Json) {
         WithColor::error() << "Objective-C export failed: "
                            << takeLastError(Sess) << "\n";

@@ -62,13 +62,14 @@ KernelResources::resourceList(uint64_t PDO, bool Translated) const {
     for (unsigned I = 0; I < Size; ++I)
       Bytes[Offset + I] = uint8_t(Value >> (I * 8));
   };
-  Put(resources::ResourceCountOffset, 1, 4);
+  Put(resources::ResourceCountOffset, resources::SupportedFullDescriptorCount,
+      resources::ResourceCountFieldSize);
   Put(resources::ResourceInterfaceOffset, resources::InterfaceInternal, 4);
   Put(resources::ResourceBusOffset, 0, 4);
   Put(resources::ResourceVersionOffset, 1, 2);
   Put(resources::ResourceRevisionOffset, 1, 2);
   Put(resources::ResourcePartialCountOffset,
-      Resources.size() + Interrupts.size(), 4);
+      Resources.size() + Interrupts.size(), resources::ResourceCountFieldSize);
   for (size_t I = 0; I < Resources.size(); ++I) {
     const auto &Resource = Resources[I];
     const uint64_t Base =
@@ -86,10 +87,18 @@ KernelResources::resourceList(uint64_t PDO, bool Translated) const {
         resources::ResourceHeaderSize +
         (Resources.size() + I) * resources::ResourceDescriptorSize;
     Put(Base + resources::ResourceTypeOffset, resources::InterruptType, 1);
-    Put(Base + resources::ResourceShareOffset, resources::DeviceExclusive, 1);
-    Put(Base + resources::ResourceFlagsOffset, resources::InterruptLatched, 2);
+    Put(Base + resources::ResourceShareOffset, uint8_t(Interrupt.Share), 1);
+    const uint16_t Flags =
+        (Interrupt.Mode == DriverInterruptMode::Latched
+             ? resources::InterruptLatched
+             : resources::InterruptLevelSensitive) |
+        (Interrupt.Messages.empty() ? 0 : resources::InterruptMessage);
+    Put(Base + resources::ResourceFlagsOffset, Flags, 2);
     Put(Base + resources::InterruptLevelOffset,
         Translated ? Interrupt.TranslatedLevel : Interrupt.RawLevel, 4);
+    if (!Translated && !Interrupt.Messages.empty())
+      Put(Base + resources::InterruptMessageCountOffset,
+          Interrupt.Messages.size(), 2);
     Put(Base + resources::InterruptVectorOffset,
         Translated ? Interrupt.TranslatedVector : Interrupt.RawVector, 4);
     Put(Base + resources::InterruptAffinityOffset,

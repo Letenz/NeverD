@@ -156,6 +156,142 @@ def reverse_reachable(starts: Iterable[int], parents: dict[int, set[int]]) -> se
     return seen
 
 
+def analyze_source_closure(report: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Group complete *observed* repair sets on the publication graph.
+
+    Unbound calls are diagnostics, not publication edges. Repairing one can
+    introduce new edges, so even a complete observed set is not a gain promise.
+    """
+    graph = report.get("source_projection_graph")
+    if graph is None:
+        return {"available": False, "reason": "source projection evidence absent"}
+    if (not isinstance(graph, dict) or graph.get("schema_version") != 1
+            or graph.get("scope") != "final_native_and_block_source_projections"
+            or graph.get("closure_stage") != "before_method_emission_and_text_checks"):
+        raise ValueError("unsupported source projection graph")
+    raw_nodes = graph.get("nodes")
+    if not isinstance(raw_nodes, list):
+        raise ValueError("source projection nodes must be an array")
+    nodes = {}
+    children: dict[int, set[int]] = {}
+    for node in raw_nodes:
+        entry = address(node.get("address"))
+        if entry is None or entry in nodes:
+            raise ValueError("invalid or duplicate source projection address")
+        dependencies = node.get("dependencies")
+        if not isinstance(dependencies, list):
+            raise ValueError("source projection dependencies must be an array")
+        targets = {address(target) for target in dependencies}
+        if None in targets:
+            raise ValueError("invalid source projection dependency address")
+        nodes[entry] = node
+        children[entry] = targets
+    for entry, targets in children.items():
+        if not targets <= nodes.keys():
+            raise ValueError("source projection dependency has no evidence node")
+        if nodes[entry].get("closure_closed") and (
+            not nodes[entry].get("local_gate_passed")
+            or any(not nodes[target].get("closure_closed") for target in targets)
+        ):
+            raise ValueError("source projection closure contradicts its dependencies")
+    mapping, components = strongly_connected_components(nodes, children)
+    def source_blocker(item: dict[str, Any], entry: int | None):
+        key, detail = blocker_key(item, mapping, components)
+        call = item.get("call", {})
+        if ((call and (call.get("indirect") or address(call.get("target_address")) is None))
+                or (not call and address(item.get("related_address")) is None)):
+            # Identical generic reasons do not prove identical repair work.
+            # Especially, unrelated dynamic calls must not become one batch.
+            key += f":at:{entry}:{item.get('statement_address', 'unknown')}"
+            detail = {**detail, "source_address": address_text(entry) if entry is not None else None,
+                      "statement_address": item.get("statement_address")}
+        return key, detail
+    details = {}
+    local_blockers = {}
+    complete = {}
+    for entry, node in nodes.items():
+        diagnostic = node.get("local_diagnostics", {})
+        items = diagnostic.get("items", [])
+        complete[entry] = bool(node.get("has_typed_body")
+                               and diagnostic.get("checks_complete"))
+        keys = set()
+        for item in items:
+            key, detail = source_blocker(item, entry)
+            keys.add(key)
+            details.setdefault(key, detail)
+        if not node.get("local_gate_passed") and not keys:
+            key = f"unclassified:source:{address_text(entry)}:{node.get('local_reason', '')}"
+            keys.add(key)
+            details[key] = {"code": "unclassified", "reason": node.get("local_reason", "")}
+            complete[entry] = False
+        local_blockers[entry] = keys
+
+    bundles: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    uncertain = []
+    closed_but_unpublished = 0
+    for method in report["methods"]:
+        if method.get("status") == "recovered":
+            continue
+        entry = address(method.get("implementation"))
+        reached = set()
+        pending = [entry] if entry in nodes else []
+        blockers = set()
+        unknown = set()
+        if entry not in nodes:
+            unknown.add("missing_method_projection")
+        if not graph.get("native_inventory_complete"):
+            unknown.add("incomplete_native_inventory")
+        while pending:
+            current = pending.pop()
+            if current in reached:
+                continue
+            reached.add(current)
+            blockers.update(local_blockers[current])
+            if not complete[current]:
+                unknown.add(f"incomplete_projection:{address_text(current)}")
+            pending.extend(children[current] - reached)
+        diagnostic = method.get("projection_diagnostics", {})
+        if not diagnostic.get("checks_complete"):
+            unknown.add("incomplete_method_checks")
+        # Per-method rendering/type checks can differ for aliases of one IMP.
+        # Keep their identities and diagnostics even when the native body closes.
+        for item in diagnostic.get("items", []):
+            key, detail = source_blocker(item, entry)
+            blockers.add(key)
+            details.setdefault(key, detail)
+        if entry in nodes and nodes[entry].get("closure_closed"):
+            closed_but_unpublished += 1
+        if not blockers:
+            unknown.add("unexplained_publication_failure")
+        if unknown:
+            uncertain.append({"method": method_identity(method),
+                              "unknown_conditions": sorted(unknown),
+                              "observed_blockers": sorted(blockers)})
+        else:
+            bundles[tuple(sorted(blockers))].append(method_identity(method))
+    rows = [{"blockers": list(keys), "observed_complete_methods": len(methods),
+             "methods": sorted(methods, key=lambda m: tuple(str(v) for v in identity_key(m))),
+             "can_reveal_new_dependencies": any(details[key]["code"] in
+                                                {"call_binding", "dependency"}
+                                                for key in keys)}
+            for keys, methods in bundles.items()]
+    rows.sort(key=lambda row: (-row["observed_complete_methods"],
+                              len(row["blockers"]), row["blockers"]))
+    return {
+        "available": True,
+        "scope": graph["scope"],
+        "node_count": len(nodes),
+        "edge_count": sum(map(len, children.values())),
+        "recursive_scc_count": sum(len(component) > 1 for component in components),
+        "complete_observed_method_count": sum(map(len, bundles.values())),
+        "incomplete_observed_method_count": len(uncertain),
+        "closed_but_unpublished_method_count": closed_but_unpublished,
+        "blocker_details": {key: details[key] for row in rows[:limit] for key in row["blockers"]},
+        "repair_bundles": rows[:limit],
+        "incomplete_methods": uncertain,
+    }
+
+
 def analyze(report: dict[str, Any], *, limit: int = 50) -> dict[str, Any]:
     methods = report.get("methods")
     graph = report.get("native_dependency_graph")
@@ -320,6 +456,8 @@ def analyze(report: dict[str, Any], *, limit: int = 50) -> dict[str, Any]:
             "Unknown indirect call targets are not traversed.",
             "Methods with incomplete checks may have additional blockers.",
             "A full export and source validation establish actual gains and regressions.",
+            "Legacy known_ready_if_resolved only counts method-local reported blockers.",
+            "Source repair bundles include current projection dependencies; binding repairs can reveal new ones.",
         ],
         "summary": {
             "method_count": len(methods),
@@ -340,6 +478,7 @@ def analyze(report: dict[str, Any], *, limit: int = 50) -> dict[str, Any]:
         },
         "candidate_batches": candidate_rows[:limit],
         "complete_blocker_combinations": combination_rows[:limit],
+        "source_closure": analyze_source_closure(report, limit),
     }
 
 
@@ -352,7 +491,9 @@ def markdown(result: dict[str, Any]) -> str:
         f"unrecovered: {summary['unrecovered_method_count']}; "
         f"incomplete checks: {summary['incomplete_check_method_count']}.",
         "",
-        "| Known ready | Reported | Incomplete | Reverse roots | Recovered at risk | Blocker |",
+        "Method-local estimates on the LowIR graph (not source closure):",
+        "",
+        "| Single reported blocker | Reported | Incomplete | Reverse roots | Recovered at risk | Blocker |",
         "| ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in result["candidate_batches"]:
@@ -362,6 +503,21 @@ def markdown(result: dict[str, Any]) -> str:
             f"{row['reverse_recovered_methods_at_risk']} | `{row['blocker']}` |"
         )
     lines.extend(["", "Counts are estimates; actual gains require a complete export.", ""])
+    closure = result["source_closure"]
+    if closure["available"]:
+        lines.extend([
+            "## Current source projection repair sets", "",
+            f"Complete observed methods: {closure['complete_observed_method_count']}; "
+            f"incomplete: {closure['incomplete_observed_method_count']}; "
+            f"closed but unpublished: {closure['closed_but_unpublished_method_count']}.",
+            "",
+            "Binding repairs can reveal additional dependencies. These counts are not guaranteed gains.",
+            "", "| Observed complete methods | Repair set |", "| ---: | --- |",
+        ])
+        for row in closure["repair_bundles"]:
+            lines.append(f"| {row['observed_complete_methods']} | "
+                         + "; ".join(f"`{key}`" for key in row["blockers"]) + " |")
+        lines.append("")
     return "\n".join(lines)
 
 

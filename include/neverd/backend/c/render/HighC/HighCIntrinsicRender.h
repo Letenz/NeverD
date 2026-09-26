@@ -30,6 +30,8 @@
 namespace neverd {
 
 using IsAliveFn = std::function<bool(const MedVar &)>;
+using SameWidthUnsignedFn =
+    std::function<bool(const HighExpr &, uint16_t)>;
 
 struct MultiOutputRender {
   std::string operator()(Arch TheArch, Intrinsic IID,
@@ -43,6 +45,7 @@ struct MultiOutputRender {
 //--- Dispatchers (HighCIntrinsicRender.cpp) ---
 std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 const std::vector<std::string> &Ops,
+                                uint16_t ResultBytes,
                                 bool &HasCIntrinsics);
 
 //--- Arch-specific (HighCIntrinsicRenderX86.cpp) ---
@@ -77,7 +80,8 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id);
 std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
-    std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive = {});
+    std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive = {},
+    SameWidthUnsignedFn SameWidthUnsigned = {});
 
 /// Windows `int 0x29` / `__fastfail`.  True when \p E is that intrinsic.
 bool isX86FastFailCall(const HighExpr &E);
@@ -113,6 +117,7 @@ renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
 
 std::string renderARMIntrinsicCall(Intrinsic Id,
                                    const std::vector<std::string> &Ops,
+                                   uint16_t ResultBytes,
                                    bool &HasCIntrinsics);
 
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`

@@ -16,6 +16,7 @@
 #include "WindowsKernelLayout.h"
 
 #include <algorithm>
+#include <bit>
 
 namespace neverd::emulation {
 namespace {
@@ -55,10 +56,13 @@ KernelFramework::preflightRequestCancellation(uint64_t IRP,
     if (PendingCall)
       return requestError(
           "cancellation cannot replace a pending guest callback");
-    if (!RequestsHost.IsCanceled || !RequestsHost.ValidateCompletion ||
-        !RequestsHost.SetInformation || !RequestsHost.Information ||
-        !RequestsHost.Complete)
-      return requestError("queued request completion host is unavailable");
+    const bool Notify = Q->second.CanceledOnQueue &&
+                        (R->second.DeliveredOnce || R->second.Enqueued);
+    if (!RequestsHost.IsCanceled ||
+        (!Notify &&
+         (!RequestsHost.ValidateCompletion || !RequestsHost.SetInformation ||
+          !RequestsHost.Information || !RequestsHost.Complete)))
+      return requestError("queued request cancellation host is unavailable");
     if (auto E = preflightCancellationToken(EarlierCallbacks))
       return E;
     // Even callback-free cancellation consumes a framework continuation.
@@ -104,6 +108,21 @@ KernelFramework::requestCancellation(uint64_t IRP) {
         std::find(Q->second.Pending.begin(), Q->second.Pending.end(), R->first);
     if (Pending == Q->second.Pending.end())
       return requestError("queued cancellation lost its pending request");
+    if (Q->second.CanceledOnQueue &&
+        (R->second.DeliveredOnce || R->second.Enqueued)) {
+      Q->second.Pending.erase(Pending);
+      if (Q->second.Pending.empty())
+        Q->second.ReadyPending = false;
+      R->second.Queued = false;
+      R->second.CanceledOnQueue = true;
+      R->second.QueuedCallback = 0;
+      R->second.QueuedArguments.clear();
+      R->second.QueuedCompletionStatus.reset();
+      auto Canceled = start({{StepKind::CanceledOnQueue, R->first}});
+      if (!Canceled)
+        return Canceled.takeError();
+      return takeGuestCall();
+    }
     if (auto E = RequestsHost.ValidateCompletion(IRP, RequestCancelled, 0))
       return E;
     if (auto E = RequestsHost.SetInformation(IRP, 0))
@@ -121,6 +140,8 @@ KernelFramework::requestCancellation(uint64_t IRP) {
         });
     Steps.insert(Destruction, {StepKind::CompleteRequest, R->first});
     Q->second.Pending.erase(Pending);
+    if (Q->second.Pending.empty())
+      Q->second.ReadyPending = false;
     R->second.Queued = false;
     auto Completed = start(std::move(Steps));
     if (!Completed)
@@ -209,7 +230,8 @@ llvm::Expected<bool> KernelFramework::presentQueued(uint64_t QueueHandle,
                                                     uint64_t Token) {
   auto Q = Queues.find(QueueHandle);
   if (Q == Queues.end() || Q->second.Dispatch == QueueDispatchManual ||
-      !Q->second.Dispatching || Q->second.Pending.empty())
+      !Q->second.Dispatching || queuePnpHeld(Q->second) ||
+      Q->second.Pending.empty())
     return false;
   if (PendingCall || !Continuations.contains(Token))
     return requestError("queued delivery lost its callback continuation");
@@ -264,6 +286,7 @@ llvm::Expected<bool> KernelFramework::presentQueued(uint64_t QueueHandle,
   }
   Q->second.Pending.pop_front();
   R->second.Queued = false;
+  R->second.DeliveredOnce = true;
   PendingCall = GuestCall{Token, R->second.QueuedCallback,
                           std::move(R->second.QueuedArguments)};
   R->second.QueuedCallback = 0;
@@ -285,6 +308,14 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
   auto View = RequestsHost.View(IRP);
   if (!View)
     return View.takeError();
+  auto FileRoute = routeFileRequest(D->first, IRP, *View);
+  if (!FileRoute)
+    return FileRoute.takeError();
+  if (*FileRoute)
+    return *FileRoute;
+  auto File = requestFileObject(D->first, View->File);
+  if (!File)
+    return File.takeError();
   auto CompleteImmediately =
       [&](uint32_t Status,
           uint32_t Dispatch) -> llvm::Expected<std::optional<RequestDispatch>> {
@@ -292,12 +323,10 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
       return E;
     return std::optional<RequestDispatch>{RequestDispatch{0, {}, Dispatch}};
   };
-  // The no-file-callback nonfilter package completes these synchronously with
-  // Information=0. File identity/order remains owned by the WDM request model.
-  if (View->Major == RequestMajorCreate || View->Major == RequestMajorCleanup ||
-      View->Major == RequestMajorClose)
-    return CompleteImmediately(0, 0);
   auto Q = Queues.find(D->second.DefaultQueue);
+  if (Q == Queues.end() && D->second.Filter)
+    return requestError(
+        "automatic non-file filter forwarding is outside this profile");
   if (Q == Queues.end())
     return CompleteImmediately(ControlInvalidDeviceRequest,
                                ControlInvalidDeviceRequest);
@@ -334,6 +363,7 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
       return Handle.takeError();
     Objects.at(*Handle).Kind = ObjectKind::Request;
     Requests.emplace(*Handle, Request{IRP, 0, D->first, true});
+    Requests.at(*Handle).File = *File;
     CallerRequests.emplace(IRP, *Handle);
     return std::optional<RequestDispatch>{
         RequestDispatch{D->second.CallerContext,
@@ -354,7 +384,7 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
     return requestError("caller-context queue completion without a guest I/O "
                         "callback is outside this profile");
   auto &Queue = Q->second;
-  bool WaitForSlot = !Queue.Dispatching;
+  bool WaitForSlot = !Queue.Dispatching || queuePnpHeld(Queue);
   if (Queue.Dispatch == QueueDispatchSequential ||
       (Queue.Dispatch == QueueDispatchParallel &&
        Queue.PresentedLimit != UINT32_MAX)) {
@@ -385,6 +415,7 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
     Handle = *Created;
     Objects.at(Handle).Kind = ObjectKind::Request;
     Requests.emplace(Handle, Request{IRP, Q->first, D->first});
+    Requests.at(Handle).File = *File;
   }
   if (Manual || WaitForSlot) {
     auto &Pending = Requests.at(Handle);
@@ -398,12 +429,16 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
         Pending.QueuedCompletionStatus = Planned->Status;
       }
     }
+    const bool WasEmpty = Queue.Pending.empty();
     Queue.Pending.push_back(Handle);
+    if (Manual && WasEmpty && Queue.ReadyNotify)
+      Queue.ReadyPending = true;
     return std::optional<RequestDispatch>{
         RequestDispatch{0, {}, windows::StatusPending}};
   }
   RequestDispatch Dispatch = std::move(*Planned);
   Dispatch.Arguments[1] = Handle;
+  Requests.at(Handle).DeliveredOnce = true;
   return std::optional<RequestDispatch>{std::move(Dispatch)};
 }
 
@@ -431,17 +466,165 @@ KernelFramework::continueCallerContext(uint64_t IRP) {
   return std::move(**Routed);
 }
 
+llvm::Error KernelFramework::writeRequestParameters(uint64_t Address,
+                                                    const RequestView &View) {
+  auto Size = read(Address, 2);
+  if (!Size)
+    return Size.takeError();
+  if (*Size != RequestParametersSize)
+    return requestError("unsupported WDF_REQUEST_PARAMETERS size");
+  if (auto E = writable(Address, RequestParametersSize))
+    return E;
+  if (auto E =
+          Memory.write(Address, std::vector<uint8_t>(RequestParametersSize)))
+    return E;
+  if (auto E = Memory.writeInteger(Address, RequestParametersSize, 2))
+    return E;
+  if (auto E =
+          Memory.writeInteger(Address + RequestParametersType, View.Major, 4))
+    return E;
+  if (View.Major == RequestMajorDeviceControl) {
+    if (auto E = Memory.writeInteger(Address + RequestParametersLength,
+                                     View.OutputLength, 8))
+      return E;
+    if (auto E = Memory.writeInteger(Address + RequestParametersInputLength,
+                                     View.InputLength, 8))
+      return E;
+    if (auto E = Memory.writeInteger(Address + RequestParametersControlCode,
+                                     View.ControlCode, 4))
+      return E;
+  } else {
+    const auto Length =
+        View.Major == RequestMajorRead ? View.OutputLength : View.InputLength;
+    if (auto E =
+            Memory.writeInteger(Address + RequestParametersLength, Length, 8))
+      return E;
+    if (auto E = Memory.writeInteger(Address + RequestParametersOffset,
+                                     View.ByteOffset, 8))
+      return E;
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::writeRequestCompletionParams(uint64_t Address,
+                                                          uint32_t Status) {
+  if (auto E = writable(Address, RequestCompletionParamsSize))
+    return E;
+  if (auto E = Memory.write(Address,
+                            std::vector<uint8_t>(RequestCompletionParamsSize)))
+    return E;
+  if (auto E = Memory.writeInteger(Address, RequestCompletionParamsSize, 4))
+    return E;
+  if (auto E = Memory.writeInteger(Address + RequestCompletionTypeOffset,
+                                   RequestCompletionTypeNoFormat, 4))
+    return E;
+  if (auto E = Memory.writeInteger(Address + RequestCompletionStatusOffset,
+                                   Status, 4))
+    return E;
+  return Memory.writeInteger(Address + RequestCompletionInformationOffset, 0,
+                             8);
+}
+
+llvm::Expected<KernelFramework::GuestCall>
+KernelFramework::previewFileSendCompletion(uint64_t IRP, uint32_t Status,
+                                           uint64_t EarlierCallbacks) const {
+  if (Status == windows::StatusPending)
+    return requestError("lower file completion requires a final status");
+  if (EarlierCallbacks >= UINT64_MAX - NextContinuation)
+    return requestError("completion callback capacity exhausted");
+  auto Request = llvm::find_if(Requests, [IRP](const auto &Entry) {
+    return Entry.second.IRP == IRP && Entry.second.FileCreate;
+  });
+  if (Request == Requests.end() || Request->second.Completed ||
+      !Request->second.CompletionCallbackPending ||
+      Request->second.CompletionCallbackEntered ||
+      Request->second.LastSendStatus || !Request->second.CompletionRoutine ||
+      !Request->second.CompletionTarget ||
+      !Request->second.PendingCompletionParams)
+    return requestError("lower file completion lost its sent request");
+  return GuestCall{0,
+                   Request->second.CompletionRoutine,
+                   {Request->first, Request->second.CompletionTarget,
+                    Request->second.PendingCompletionParams,
+                    Request->second.CompletionContext}};
+}
+
+llvm::Expected<KernelFramework::GuestCall>
+KernelFramework::queueFileSendCompletion(uint64_t IRP, uint32_t Status,
+                                         uint64_t ReturnValue) {
+  auto Call = previewFileSendCompletion(IRP, Status);
+  if (!Call)
+    return Call.takeError();
+  if (auto E = writeRequestCompletionParams(Call->Arguments[2], Status))
+    return E;
+  const uint64_t Token = NextContinuation++;
+  Continuation C;
+  C.ReturnValue = ReturnValue;
+  Continuations.emplace(Token, std::move(C));
+  RequestCompletionCallbacks.emplace(
+      Token, RequestCompletionCallback{Call->Arguments[0], Call->Arguments[2]});
+  auto &Request = Requests.at(Call->Arguments[0]);
+  Request.LastSendStatus = Status;
+  Request.PendingCompletionParams = 0;
+  Call->Token = Token;
+  return Call;
+}
+
+llvm::Error KernelFramework::beginRequestCompletionCallback(uint64_t Token) {
+  auto Callback = RequestCompletionCallbacks.find(Token);
+  if (Callback == RequestCompletionCallbacks.end())
+    return requestError("completion callback has no retained request");
+  auto Request = Requests.find(Callback->second.Request);
+  if (Request == Requests.end() || !Request->second.CompletionCallbackPending ||
+      Request->second.CompletionCallbackEntered ||
+      !Request->second.LastSendStatus)
+    return requestError("completion callback lost its lower result");
+  Request->second.CompletionCallbackEntered = true;
+  return llvm::Error::success();
+}
+
+std::optional<bool>
+KernelFramework::synchronousFileSendPending(uint64_t Handle) const {
+  auto Request = Requests.find(Handle);
+  if (Request == Requests.end() || Request->second.Completed)
+    return std::nullopt;
+  return Request->second.SynchronousSendPending;
+}
+
+llvm::Error
+KernelFramework::validateSynchronousFileCompletion(uint64_t IRP,
+                                                   uint32_t Status) const {
+  auto Request = llvm::find_if(
+      Requests, [IRP](const auto &Entry) { return Entry.second.IRP == IRP; });
+  if (Status == windows::StatusPending || Request == Requests.end() ||
+      Request->second.Completed || !Request->second.SynchronousSendPending ||
+      Request->second.LastSendStatus)
+    return requestError("lower completion lost its synchronous file send");
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::completeSynchronousFileSend(uint64_t IRP,
+                                                         uint32_t Status) {
+  if (auto E = validateSynchronousFileCompletion(IRP, Status))
+    return E;
+  auto Request = llvm::find_if(
+      Requests, [IRP](const auto &Entry) { return Entry.second.IRP == IRP; });
+  Request->second.LastSendStatus = Status;
+  Request->second.SynchronousSendPending = false;
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::optional<uint64_t>>
 KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
                              llvm::ArrayRef<uint64_t> A) {
   using Result = std::optional<uint64_t>;
-  if (Name == "WdfMemoryGetBuffer") {
+  if (Name == api::WdfMemoryGetBuffer) {
     auto O = Objects.find(A[1]);
-    auto M = UserMemories.find(A[1]);
+    auto M = RequestMemories.find(A[1]);
     if (O == Objects.end() || O->second.Kind != ObjectKind::Memory ||
-        O->second.Binding != B.Globals || M == UserMemories.end() ||
+        O->second.Binding != B.Globals || M == RequestMemories.end() ||
         !M->second.Active)
-      return requestError("invalid or completed framework user memory");
+      return requestError("invalid or completed framework request memory");
     if (A[2]) {
       if (auto E = writable(A[2], sizeof(uint64_t)))
         return E;
@@ -451,19 +634,27 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     }
     return Result{M->second.Buffer};
   }
-  if (Name != "WdfRequestComplete" &&
-      Name != "WdfRequestCompleteWithInformation" &&
-      Name != "WdfRequestGetParameters" &&
-      Name != "WdfRequestRetrieveInputBuffer" &&
-      Name != "WdfRequestRetrieveOutputBuffer" &&
-      Name != "WdfRequestRetrieveUnsafeUserInputBuffer" &&
-      Name != "WdfRequestRetrieveUnsafeUserOutputBuffer" &&
-      Name != "WdfRequestProbeAndLockUserBufferForRead" &&
-      Name != "WdfRequestProbeAndLockUserBufferForWrite" &&
-      Name != "WdfRequestMarkCancelable" &&
-      Name != "WdfRequestMarkCancelableEx" &&
-      Name != "WdfRequestUnmarkCancelable" && Name != "WdfRequestIsCanceled" &&
-      Name != "WdfRequestForwardToIoQueue" && Name != "WdfRequestRequeue")
+  if (Name != api::WdfRequestComplete &&
+      Name != api::WdfRequestCompleteWithInformation &&
+      Name != api::WdfRequestFormatRequestUsingCurrentType &&
+      Name != api::WdfRequestSend && Name != api::WdfRequestGetStatus &&
+      Name != api::WdfRequestSetCompletionRoutine &&
+      Name != api::WdfRequestGetCompletionParams &&
+      Name != api::WdfRequestStopAcknowledge &&
+      Name != api::WdfRequestGetParameters &&
+      Name != api::WdfRequestRetrieveInputBuffer &&
+      Name != api::WdfRequestRetrieveOutputBuffer &&
+      Name != api::WdfRequestRetrieveInputMemory &&
+      Name != api::WdfRequestRetrieveOutputMemory &&
+      Name != api::WdfRequestRetrieveUnsafeUserInputBuffer &&
+      Name != api::WdfRequestRetrieveUnsafeUserOutputBuffer &&
+      Name != api::WdfRequestProbeAndLockUserBufferForRead &&
+      Name != api::WdfRequestProbeAndLockUserBufferForWrite &&
+      Name != api::WdfRequestMarkCancelable &&
+      Name != api::WdfRequestMarkCancelableEx &&
+      Name != api::WdfRequestUnmarkCancelable &&
+      Name != api::WdfRequestIsCanceled &&
+      Name != api::WdfRequestForwardToIoQueue && Name != api::WdfRequestRequeue)
     return Result{};
   auto O = Objects.find(A[1]);
   auto R = Requests.find(A[1]);
@@ -473,8 +664,65 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     return requestError("invalid, foreign or completed framework request");
   if (R->second.Completing)
     return requestError("request completion in progress");
-  if (Name == "WdfRequestForwardToIoQueue" || Name == "WdfRequestRequeue") {
-    const bool Requeue = Name == "WdfRequestRequeue";
+  if (R->second.SynchronousSendPending)
+    return requestError("lower target owns the pending synchronous request");
+  if (Name == api::WdfRequestStopAcknowledge) {
+    if (A[2] > 1)
+      return requestError(
+          "stop acknowledgment requires a Boolean requeue flag");
+    const auto Active = std::find_if(
+        PnpTransitions.begin(), PnpTransitions.end(), [&](const auto &Entry) {
+          return Entry.second.Current.Phase == PnpPhase::IoStop &&
+                 Entry.second.Current.Request == A[1] &&
+                 !Entry.second.WaitingForRequests;
+        });
+    if (Active == PnpTransitions.end() || R->second.StopAcknowledged ||
+        R->second.InCallerContext || R->second.Queued)
+      return requestError(
+          "stop acknowledgment requires the active EvtIoStop request");
+    auto Q = Queues.find(R->second.Queue);
+    if (Q == Queues.end() || !Q->second.PowerManaged ||
+        Q->first != Active->second.Current.Queue)
+      return requestError("stop acknowledgment lost its power-managed queue");
+    if (A[2]) {
+      if (R->second.Cancellation != CancelState::Unmarked)
+        return requestError("requeue requires an unmarked request");
+      std::optional<RequestDispatch> Dispatch;
+      if (Q->second.Dispatch != QueueDispatchManual) {
+        if (!RequestsHost.View)
+          return requestError("request inspection host is unavailable");
+        auto View = RequestsHost.View(R->second.IRP);
+        if (!View)
+          return View.takeError();
+        auto Planned = queueDispatch(Q->first, A[1], *View);
+        if (!Planned)
+          return Planned.takeError();
+        Dispatch = std::move(*Planned);
+      }
+      R->second.Queued = true;
+      if (Dispatch) {
+        R->second.QueuedCallback = Dispatch->PC;
+        R->second.QueuedArguments = std::move(Dispatch->Arguments);
+        if (!Dispatch->PC)
+          R->second.QueuedCompletionStatus = Dispatch->Status;
+      }
+      const bool WasEmpty = Q->second.Pending.empty();
+      Q->second.Pending.push_back(A[1]);
+      if (WasEmpty && Q->second.Dispatch == QueueDispatchManual &&
+          Q->second.ReadyNotify)
+        Q->second.ReadyPending = true;
+    } else {
+      if (!Q->second.IoResume)
+        return requestError(
+            "retained stop acknowledgment requires EvtIoResume");
+      R->second.PowerSuspended = true;
+    }
+    R->second.StopAcknowledged = true;
+    return Result{0};
+  }
+  if (Name == api::WdfRequestForwardToIoQueue ||
+      Name == api::WdfRequestRequeue) {
+    const bool Requeue = Name == api::WdfRequestRequeue;
     const uint64_t Target = Requeue ? R->second.Queue : A[2];
     auto DestinationObject = Objects.find(Target);
     auto Destination = Queues.find(Target);
@@ -485,7 +733,8 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
       return requestError("invalid, foreign or deleting destination queue");
     if (!Destination->second.Accepting)
       return Result{QueueBusy};
-    if (R->second.InCallerContext || R->second.Queued || !R->second.Queue ||
+    if (R->second.InCallerContext || R->second.Queued ||
+        R->second.CanceledOnQueue || !R->second.Queue ||
         (Requeue ? Destination->second.Dispatch != QueueDispatchManual
                  : R->second.Queue == Target) ||
         R->second.Device != Destination->second.Device ||
@@ -540,10 +789,14 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
       if (!ForwardDispatch->PC)
         R->second.QueuedCompletionStatus = ForwardDispatch->Status;
     }
+    const bool WasEmpty = Destination->second.Pending.empty();
     if (Requeue)
       Destination->second.Pending.push_front(A[1]);
     else
       Destination->second.Pending.push_back(A[1]);
+    if (WasEmpty && Destination->second.Dispatch == QueueDispatchManual &&
+        Destination->second.ReadyNotify)
+      Destination->second.ReadyPending = true;
     if (*AlreadyCanceled) {
       // A request canceled before forwarding is subject to framework queue
       // cancellation as soon as the new queue takes ownership.
@@ -576,13 +829,15 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
           return Next.takeError();
       }
     }
+    if (auto E = flushReadyNotifications())
+      return E;
     return Result{0};
   }
   if (R->second.Queued)
     return requestError("framework owns the request in a manual queue");
-  if (Name == "WdfRequestMarkCancelable" ||
-      Name == "WdfRequestMarkCancelableEx") {
-    const bool Legacy = Name == "WdfRequestMarkCancelable";
+  if (Name == api::WdfRequestMarkCancelable ||
+      Name == api::WdfRequestMarkCancelableEx) {
+    const bool Legacy = Name == api::WdfRequestMarkCancelable;
     if (!A[2])
       return requestError("marking cancelable requires a cancel callback");
     if (R->second.Cancellation != CancelState::Unmarked) {
@@ -630,7 +885,7 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     }
     return Result{0};
   }
-  if (Name == "WdfRequestUnmarkCancelable") {
+  if (Name == api::WdfRequestUnmarkCancelable) {
     if (R->second.Cancellation == CancelState::Unmarked)
       return Result{ControlInvalidDeviceRequest};
     if (R->second.Cancellation != CancelState::Marked)
@@ -642,7 +897,7 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     R->second.Cancellation = CancelState::Unmarked;
     return Result{0};
   }
-  if (Name == "WdfRequestIsCanceled") {
+  if (Name == api::WdfRequestIsCanceled) {
     // The public verifier requires an owned, noncancelable request here.
     // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdfrequest/nf-wdfrequest-wdfrequestiscanceled
     if (R->second.Cancellation != CancelState::Unmarked)
@@ -654,8 +909,161 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
       return Canceled.takeError();
     return Result{*Canceled ? 1 : 0};
   }
-  if (Name == "WdfRequestComplete" ||
-      Name == "WdfRequestCompleteWithInformation") {
+  if (Name == api::WdfRequestFormatRequestUsingCurrentType) {
+    if (!R->second.FileCreate || !R->second.File || R->second.Queue ||
+        R->second.LastSendStatus || R->second.CompletionCallbackPending)
+      return requestError(
+          "current-type formatting requires an unsent framework-file CREATE");
+    R->second.FormattedForSend = true;
+    return Result{0};
+  }
+  if (Name == api::WdfRequestSetCompletionRoutine) {
+    if (!R->second.FileCreate || !R->second.File || R->second.Queue ||
+        R->second.LastSendStatus || R->second.CompletionCallbackPending ||
+        (!A[2] && A[3]))
+      return requestError(
+          "completion routine requires an unsent framework-file CREATE");
+    R->second.CompletionRoutine = A[2];
+    R->second.CompletionContext = A[3];
+    return Result{0};
+  }
+  if (Name == api::WdfRequestSend) {
+    auto Target = Objects.find(A[2]);
+    auto Device = Devices.find(R->second.Device);
+    if (Target == Objects.end() ||
+        Target->second.Kind != ObjectKind::IoTarget ||
+        Target->second.Binding != B.Globals || Target->second.Deleting ||
+        Device == Devices.end() || Device->second.LocalTarget != A[2] ||
+        Target->second.Parent != R->second.Device)
+      return requestError("send requires the request device's local target");
+    uint64_t Flags = 0;
+    std::optional<int64_t> SendTimeout;
+    if (A[3]) {
+      if (auto E = ValidateAccess(A[3], RequestSendOptionsSize, false))
+        return E;
+      auto Size = read(A[3], sizeof(uint32_t));
+      auto Options = read(A[3] + RequestSendFlagsOffset, sizeof(uint32_t));
+      if (!Size || !Options)
+        return llvm::joinErrors(Size.takeError(), Options.takeError());
+      if (*Size != RequestSendOptionsSize)
+        return requestError("unsupported request send options size");
+      Flags = *Options;
+      if (Flags & RequestSendTimeout) {
+        auto RawTimeout = read(A[3] + RequestSendTimeoutOffset);
+        if (!RawTimeout)
+          return RawTimeout.takeError();
+        SendTimeout = std::bit_cast<int64_t>(*RawTimeout);
+      }
+    }
+    if (Flags != 0 && Flags != RequestSendTimeout &&
+        Flags != RequestSendAndForget && Flags != RequestSendSynchronous &&
+        Flags != (RequestSendTimeout | RequestSendSynchronous))
+      return requestError(
+          "only default asynchronous, synchronous or send-and-forget file "
+          "forwarding with an optional timeout is modeled");
+    if (!R->second.FileCreate || R->second.Queue ||
+        R->second.Cancellation != CancelState::Unmarked ||
+        !Device->second.Files.forwards(Device->second.Filter) ||
+        R->second.LastSendStatus || R->second.CompletionCallbackPending)
+      return requestError("send requires an unsent forwardable CREATE request");
+    const bool SendAndForget = Flags == RequestSendAndForget;
+    const bool Synchronous = Flags & RequestSendSynchronous;
+    const bool Asynchronous = !SendAndForget && !Synchronous;
+    if ((SendAndForget && R->second.File) ||
+        (!SendAndForget && !R->second.File))
+      return requestError("send with completion ownership requires a "
+                          "framework file object; send-and-forget requires "
+                          "none");
+    if (Asynchronous &&
+        (!R->second.FormattedForSend || !R->second.CompletionRoutine))
+      return requestError(
+          "asynchronous CREATE send requires formatting and a completion "
+          "routine");
+    if (Synchronous && R->second.CompletionRoutine)
+      return requestError(
+          "synchronous CREATE send with a completion routine is unsupported");
+    if (!RequestsHost.ValidateFileForward ||
+        (SendAndForget ? !RequestsHost.ForwardFile
+         : Synchronous ? !RequestsHost.SendFileSynchronously
+                       : !RequestsHost.SendFileAsynchronously))
+      return requestError("lower file-request host is unavailable");
+    if (auto E = RequestsHost.ValidateFileForward(R->second.IRP))
+      return E;
+    uint64_t CompletionParams = 0;
+    if (Asynchronous) {
+      if (PendingCall || NextContinuation == UINT64_MAX)
+        return requestError("completion callback capacity exhausted");
+      auto Storage = allocate(RequestCompletionParamsSize, true, false);
+      if (!Storage)
+        return Storage.takeError();
+      CompletionParams = *Storage;
+      R->second.CompletionTarget = A[2];
+      R->second.PendingCompletionParams = CompletionParams;
+      R->second.CompletionCallbackPending = true;
+    }
+    auto Status =
+        SendAndForget ? RequestsHost.ForwardFile(R->second.IRP)
+        : Synchronous
+            ? RequestsHost.SendFileSynchronously(R->second.IRP, SendTimeout)
+            : RequestsHost.SendFileAsynchronously(R->second.IRP, SendTimeout);
+    if (!Status) {
+      auto E = Status.takeError();
+      if (CompletionParams) {
+        R->second.CompletionCallbackPending = false;
+        R->second.CompletionTarget = 0;
+        R->second.PendingCompletionParams = 0;
+        E = llvm::joinErrors(std::move(E), retire(CompletionParams));
+      }
+      return E;
+    }
+    if (!SendAndForget) {
+      if (Asynchronous) {
+        if (*Status != windows::StatusPending) {
+          auto Call = queueFileSendCompletion(R->second.IRP, *Status, 1);
+          if (!Call)
+            return Call.takeError();
+          PendingCall = std::move(*Call);
+        }
+      } else if (*Status == windows::StatusPending)
+        R->second.SynchronousSendPending = true;
+      else
+        R->second.LastSendStatus = *Status;
+      return Result{1};
+    }
+    R->second.Completed = true;
+    R->second.CompletionStatus = *Status;
+    std::vector<Step> Steps;
+    if (auto E = planDelete(A[1], Steps))
+      return E;
+    auto Retired = start(std::move(Steps));
+    if (!Retired)
+      return Retired.takeError();
+    return Result{1};
+  }
+  if (Name == api::WdfRequestGetStatus) {
+    if (!R->second.LastSendStatus)
+      return requestError("request has no completed lower send");
+    return Result{*R->second.LastSendStatus};
+  }
+  if (Name == api::WdfRequestGetCompletionParams) {
+    if (!R->second.LastSendStatus)
+      return requestError("request has no completed lower send");
+    if (auto E = writable(A[2], RequestCompletionParamsSize))
+      return E;
+    auto Size = read(A[2], sizeof(uint32_t));
+    if (!Size)
+      return Size.takeError();
+    if (*Size != RequestCompletionParamsSize)
+      return requestError("unsupported completion parameter size");
+    if (auto E = writeRequestCompletionParams(A[2], *R->second.LastSendStatus))
+      return E;
+    return Result{0};
+  }
+  if (Name == api::WdfRequestComplete ||
+      Name == api::WdfRequestCompleteWithInformation) {
+    if (R->second.CompletionCallbackPending &&
+        !R->second.CompletionCallbackEntered)
+      return requestError("request completion precedes its lower callback");
     if (R->second.Cancellation == CancelState::Marked ||
         R->second.Cancellation == CancelState::Queued)
       return requestError(
@@ -665,7 +1073,7 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
         !RequestsHost.SetInformation || !RequestsHost.ValidateCompletion)
       return requestError("completion host is unavailable");
     uint64_t Information = 0;
-    if (Name == "WdfRequestCompleteWithInformation") {
+    if (Name == api::WdfRequestCompleteWithInformation) {
       Information = A[3];
     } else {
       auto Value = RequestsHost.Information(R->second.IRP);
@@ -680,7 +1088,7 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     // cleanup callback holding the raw packet observes the supplied value.
     // Keep that packet authoritative through cleanup and final completion.
     // https://github.com/microsoft/Windows-Driver-Frameworks/blob/b6191d9543441329154da32f7ab9bdd97228dd3c/src/framework/shared/inc/private/common/fxrequest.hpp#L810-L821
-    if (Name == "WdfRequestCompleteWithInformation")
+    if (Name == api::WdfRequestCompleteWithInformation)
       if (auto E = RequestsHost.SetInformation(R->second.IRP, Information))
         return E;
     // FxRequest::CompleteInternal performs EarlyDispose before giving up the
@@ -706,8 +1114,54 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
   auto View = RequestsHost.View(R->second.IRP);
   if (!View)
     return View.takeError();
-  const bool UnsafeInput = Name == "WdfRequestRetrieveUnsafeUserInputBuffer";
-  const bool UnsafeOutput = Name == "WdfRequestRetrieveUnsafeUserOutputBuffer";
+  const bool InputMemory = Name == api::WdfRequestRetrieveInputMemory;
+  const bool OutputMemory = Name == api::WdfRequestRetrieveOutputMemory;
+  if (InputMemory || OutputMemory) {
+    if (auto E = writable(A[2], sizeof(uint64_t)))
+      return E;
+    if (auto E = Memory.writeInteger(A[2], 0, sizeof(uint64_t)))
+      return E;
+    if (View->Neither || (InputMemory && View->Major == RequestMajorRead) ||
+        (OutputMemory && View->Major == RequestMajorWrite))
+      return Result{ControlInvalidDeviceRequest};
+    const uint32_t Length =
+        OutputMemory ? View->OutputLength : View->InputLength;
+    if (!Length)
+      return Result{RequestBufferTooSmall};
+    auto Existing = std::find_if(
+        RequestMemories.begin(), RequestMemories.end(), [&](const auto &Entry) {
+          const auto &Memory = Entry.second;
+          return Memory.Request == A[1] && Memory.Active &&
+                 Memory.Output == OutputMemory;
+        });
+    if (Existing != RequestMemories.end()) {
+      if (auto E = Memory.writeInteger(A[2], Existing->first, sizeof(uint64_t)))
+        return E;
+      return Result{0};
+    }
+    if (!RequestsHost.Buffer)
+      return requestError("request buffer host is unavailable");
+    auto Buffer = RequestsHost.Buffer(R->second.IRP, OutputMemory);
+    if (!Buffer)
+      return Buffer.takeError();
+    if (!*Buffer)
+      return Result{windows::StatusInsufficientResources};
+    Attributes Attrs;
+    Attrs.Parent = A[1];
+    auto Created = createObject(B.Globals, Attrs, false);
+    if (!Created)
+      return Created.takeError();
+    const uint64_t Handle = *Created;
+    Objects.at(Handle).Kind = ObjectKind::Memory;
+    RequestMemories.emplace(Handle, RequestMemory{A[1], std::nullopt, *Buffer,
+                                                  Length, true, OutputMemory});
+    if (auto E = Memory.writeInteger(A[2], Handle, sizeof(uint64_t)))
+      return E;
+    return Result{0};
+  }
+  const bool UnsafeInput = Name == api::WdfRequestRetrieveUnsafeUserInputBuffer;
+  const bool UnsafeOutput =
+      Name == api::WdfRequestRetrieveUnsafeUserOutputBuffer;
   if (UnsafeInput || UnsafeOutput) {
     if (auto E = writable(A[3], sizeof(uint64_t)))
       return E;
@@ -735,8 +1189,8 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
         return E;
     return Result{0};
   }
-  const bool ProbeRead = Name == "WdfRequestProbeAndLockUserBufferForRead";
-  const bool ProbeWrite = Name == "WdfRequestProbeAndLockUserBufferForWrite";
+  const bool ProbeRead = Name == api::WdfRequestProbeAndLockUserBufferForRead;
+  const bool ProbeWrite = Name == api::WdfRequestProbeAndLockUserBufferForWrite;
   if (ProbeRead || ProbeWrite) {
     if (auto E = writable(A[4], sizeof(uint64_t)))
       return E;
@@ -759,48 +1213,15 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
       return llvm::joinErrors(Handle.takeError(),
                               RequestsHost.ReleaseUserBuffer(Locked->MDL));
     Objects.at(*Handle).Kind = ObjectKind::Memory;
-    UserMemories.emplace(*Handle,
-                         UserMemory{A[1], Locked->MDL, Locked->Buffer, A[3]});
+    RequestMemories.emplace(
+        *Handle, RequestMemory{A[1], Locked->MDL, Locked->Buffer, A[3]});
     if (auto E = Memory.writeInteger(A[4], *Handle, sizeof(uint64_t)))
       return E;
     return Result{0};
   }
-  if (Name == "WdfRequestGetParameters") {
-    auto Size = read(A[2], 2);
-    if (!Size)
-      return Size.takeError();
-    if (*Size != RequestParametersSize)
-      return requestError("unsupported WDF_REQUEST_PARAMETERS size");
-    if (auto E = writable(A[2], RequestParametersSize))
+  if (Name == api::WdfRequestGetParameters) {
+    if (auto E = writeRequestParameters(A[2], *View))
       return E;
-    if (auto E =
-            Memory.write(A[2], std::vector<uint8_t>(RequestParametersSize)))
-      return E;
-    if (auto E = Memory.writeInteger(A[2], RequestParametersSize, 2))
-      return E;
-    if (auto E =
-            Memory.writeInteger(A[2] + RequestParametersType, View->Major, 4))
-      return E;
-    if (View->Major == RequestMajorDeviceControl) {
-      if (auto E = Memory.writeInteger(A[2] + RequestParametersLength,
-                                       View->OutputLength, 8))
-        return E;
-      if (auto E = Memory.writeInteger(A[2] + RequestParametersInputLength,
-                                       View->InputLength, 8))
-        return E;
-      if (auto E = Memory.writeInteger(A[2] + RequestParametersControlCode,
-                                       View->ControlCode, 4))
-        return E;
-    } else {
-      const auto Length = View->Major == RequestMajorRead ? View->OutputLength
-                                                          : View->InputLength;
-      if (auto E =
-              Memory.writeInteger(A[2] + RequestParametersLength, Length, 8))
-        return E;
-      if (auto E = Memory.writeInteger(A[2] + RequestParametersOffset,
-                                       View->ByteOffset, 8))
-        return E;
-    }
     return Result{0};
   }
   if (auto E = writable(A[3], 8))
@@ -813,7 +1234,7 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
   if (A[4])
     if (auto E = Memory.writeInteger(A[4], 0, 8))
       return E;
-  const bool Output = Name == "WdfRequestRetrieveOutputBuffer";
+  const bool Output = Name == api::WdfRequestRetrieveOutputBuffer;
   if (View->Neither)
     return Result{ControlInvalidDeviceRequest};
   if ((!Output && View->Major == RequestMajorRead) ||

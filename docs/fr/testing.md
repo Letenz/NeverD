@@ -106,7 +106,7 @@ découvert un label CTest identique au nom de cette cible.
 | `unittests/sbf` | `NeverDSBFMetadataTests`, `NeverDSBFProgramImageTests`, `NeverDSBFLoaderTests`, `NeverDSBFAnalyzerTests`, `NeverDSBFVerifierTests`, `NeverDSBFISAConformanceTests`, `NeverDSBFAgaveConformanceTests`, `NeverDSBFSemanticTests`, `NeverDSBFEmitterTests`, `NeverDSBFLLVMEmitterTests`, `NeverDSBFLLVMDifferentialTests`, `NeverDSBFSourceDifferentialTests`, `NeverDSBFMalformedCorpusTests`, `NeverDSBFUpstreamConformanceTests`, `NeverDSBFExternalOracleTests`, `NeverDSBFSolanaModelTests`, `NeverDSBFIntegrationTests` | Métadonnées v0-v4 et dispositions ELF, comportement strict du verifier/loader, 23 artefacts ELF épinglés, oracle officiel indépendant, disponibilité exhaustive des opcodes, entrées hostiles, CFG/récupération et différences exécutées LLVM/C/Rust |
 | `PatchFullSubstRTTests.cpp` | `NeverDPatchFullTests` | Équivalence réécriture/obfuscation sur quatre ISA et trois formats objet |
 | Fichiers de transformation ciblés dans `unittests/semantic` | `NeverDSwitchXformTests`, `NeverDIndCallXformTests`, `NeverDCFGLoopXformTests`, `NeverDTwoTableXformTests`, `NeverDAvxUpperXformTests` | Sondes rapides à relier séparées du gros binaire sémantique |
-| `unittests/corpus` (sous-module) | `NeverDWindowsEHCorpusTests`, `NeverDRustEHCorpusTests`, `NeverDGoEHCorpusTests`, `NeverDCxxItaniumEHCorpusTests`, `NeverDObjCEHCorpusTests` | Métadonnées d’exceptions et d’exécution lues dans 317 binaires réels épinglés, chacun accompagné d’un manifeste énonçant les planchers que sa récupération doit franchir |
+| `unittests/corpus` (sous-module) | `NeverDWindowsEHCorpusTests`, `NeverDRustEHCorpusTests`, `NeverDGoEHCorpusTests`, `NeverDCxxItaniumEHCorpusTests`, `NeverDObjCEHCorpusTests`, `NeverDAdaDEHCorpusTests` | Métadonnées d’exceptions et d’exécution lues dans 545 binaires réels épinglés, chacun accompagné d’un manifeste énonçant les planchers que sa récupération doit franchir |
 
 Les références d’enregistrement sont
 [`unittests/CMakeLists.txt`](../../unittests/CMakeLists.txt),
@@ -139,13 +139,13 @@ cmake --build build-corpus --target check-neverd-corpus --parallel 4
 
 `check-neverd-corpus` exécute toutes les lignes ;
 `check-neverd-windows-eh-corpus`, `check-neverd-rust-eh-corpus`,
-`check-neverd-go-eh-corpus`, `check-neverd-cxx-itanium-eh-corpus` et
-`check-neverd-objc-eh-corpus` en exécutent une chacune. Les trois hôtes de CI
-configurent avec le drapeau et passent les cinq lignes : les octets sont
+`check-neverd-go-eh-corpus`, `check-neverd-cxx-itanium-eh-corpus`,
+`check-neverd-objc-eh-corpus` et `check-neverd-ada-d-eh-corpus` en exécutent une chacune. Les trois hôtes de CI
+configurent avec le drapeau et passent les six lignes : les octets sont
 identiques partout, mais ce qui les lit ne l’est pas, et un passage du corpus
 sur un hôte ne prouve rien sur les deux autres.
 `scripts/audit_ci_test_inventory.py` refuse un inventaire auquel manque l’un des
-cinq labels, car une compilation qui a cessé sans bruit de lire le corpus est
+six labels, car une compilation qui a cessé sans bruit de lire le corpus est
 une régression qu’aucun test ne peut attraper — le test est justement ce qui a
 disparu.
 
@@ -779,3 +779,11 @@ Les fixtures à l’échelle 10,000 protègent worklist, function ownership et
 multi-latch sans figer un temps machine. Les lignes cluster/account/slot
 permettent un `RPC activation audit`, les tests ordinaires restant déterministes
 et offline.
+
+## Preuves des exports des SDK mobiles
+
+Le workflow manuel `Mobile SDK Export Evidence` exécute `collect_mobile_ios_sdk_declarations.py --exports-only` avec les SDK Xcode épinglés. Il conserve sans modification les tables du linker de Foundation, CoreFoundation et UIKit des SDK iOS pour appareil et simulateur, avec la cible, la version du SDK, le hachage des paramètres du SDK, la taille et le SHA-256. Le collecteur de déclarations habituel les conserve aussi. Un fichier absent, vide, trop volumineux ou situé hors du SDK fait échouer la collecte tout en préservant les preuves déjà recueillies. Ces tables attestent les exports de symboles, sans prouver une ABI d’appel ni la récupération d’une méthode.
+
+## Preuves d’ABI des chaînes Swift mobiles
+
+Le workflow manuel `Mobile Swift String ABI Evidence` compile des sondes Swift fixes d’égalité et d’ordre, ainsi qu’une sonde C utilisant `swiftcall`, avec Xcode 26.5 pour les appareils iOS et simulateurs arm64. `collect_mobile_swift_string_abi.py` conserve les sources, LLVM IR, l’assembleur, l’identité des compilateurs, les paramètres SDK et `libswiftCore.tbd`, avec leurs empreintes. Les deux langages doivent montrer l’import exact de comparaison à cinq arguments retournant `i1` ; C doit explicitement étendre ce résultat sur un octet. Une cible ou signature incorrecte, un échec de commande ou un délai dépassé conserve les preuves partielles et fait échouer la collecte. Ces preuves n’installent aucune déclaration d’exécution et ne démontrent aucune récupération de méthode. Test sans SDK : `python3 -m unittest scripts.tests.test_mobile_swift_string_abi`.

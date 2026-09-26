@@ -3,8 +3,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+extern const unsigned char nd_string_metadata[] __asm__("_$sSSN");
+extern const unsigned char nd_int_metadata[] __asm__("_$sSiN");
+extern const unsigned char nd_string_hashable[] __asm__("_$sSSSHsWP");
+extern const unsigned char nd_int_hashable[] __asm__("_$sSiSHsWP");
 
 @interface NDSwiftRuntimeCalls : NSObject
+- (const void *)stringMetadata;
+- (const void *)integerMetadata;
+- (const void *)stringHashableWitness;
+- (const void *)integerHashableWitness;
 - (void *)keep:(void *)object;
 - (void)drop:(void *)object;
 - (void *)weakInitialize:(void *)reference object:(void *)object;
@@ -45,6 +53,13 @@ int main(void) {
 #endif
     NDSwiftRuntimeCalls *calls = [NDSwiftRuntimeCalls new];
     for (unsigned i = 0; i < 64; ++i) {
+      check([calls stringMetadata] == nd_string_metadata);
+      check([calls integerMetadata] == nd_int_metadata);
+      check([calls stringMetadata] != [calls integerMetadata]);
+      check([calls stringHashableWitness] == nd_string_hashable);
+      check([calls integerHashableWitness] == nd_int_hashable);
+      check([calls stringHashableWitness] != [calls integerHashableWitness]);
+      check([calls stringHashableWitness] != [calls stringMetadata]);
       // Runtime storage is opaque to these methods. Supply aligned space for
       // the runtime to initialize, and verify its actual object-lifetime
       // effects.

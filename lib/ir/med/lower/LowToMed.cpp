@@ -18,7 +18,10 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/ir/med/LowToMedError.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/SourceRegisterCopy.h"
+#include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -149,10 +152,6 @@ void LowToMedConverter::neutralizeStackProbeCalls(MedFunc &Func) {
 }
 
 namespace {
-/// Mark the COPYs that publish a multi-output INTRINSIC's auxiliary results.
-/// The lifter writes each auxiliary result through the input of a COPY that
-/// follows the intrinsic in the same instruction; sub-register normalization
-/// of the value just copied may sit between those COPYs.
 /// A function whose first instruction is also a loop header enters a block
 /// that has predecessors.  SSA can place no PHI for the machine-entry edge,
 /// so the loop-carried value would be lost (`for (p = arg; ...; p = p->next)`
@@ -197,33 +196,6 @@ void splitEntryLoopHeader(MedFunc &Func) {
   Func.Blocks.insert(Func.Blocks.begin(), std::move(Entry));
 }
 
-void markIntrinsicAuxResults(MedFunc &Func) {
-  for (MedBlock &Block : Func.Blocks)
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      const MedOp &Intr = Block.Ops[I];
-      if (Intr.Opcode != NdOp::INTRINSIC || Intr.NumInputs == 0 ||
-          !Intr.Inputs[0].isConst())
-        continue;
-      const uint8_t Count =
-          intrinsicOutputCount(static_cast<Intrinsic>(Intr.Inputs[0].ConstVal));
-      uint8_t Marked = 0;
-      for (size_t J = I + 1; J < Block.Ops.size() && Marked < Count; ++J) {
-        MedOp &Next = Block.Ops[J];
-        if (Next.Addr != Intr.Addr)
-          break;
-        if (Next.Opcode == NdOp::COPY && Next.NumInputs >= 1 &&
-            Next.Inputs[0].Kind == MedVar::Temp) {
-          Next.IntrinsicAuxResult = true;
-          ++Marked;
-          continue;
-        }
-        if (Next.Opcode == NdOp::INT_ZEXT || Next.Opcode == NdOp::INT_SEXT ||
-            Next.Opcode == NdOp::SUBBYTES)
-          continue;
-        break;
-      }
-    }
-}
 } // namespace
 
 void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
@@ -278,9 +250,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
   if (It == CallMayWriteGPRs->end())
     return;
   MOp.CallPreservedGPRs = ~It->second;
-  // A callee that never writes the return register returns nothing: the
-  // register still holds the caller's value after the call.
-  if (MOp.Output.Kind == MedVar::Reg)
+  // A callee that writes neither the integer nor the floating-point return
+  // register returns nothing: the register still holds the caller's value.
+  if (MOp.Output.Kind == MedVar::Reg && !(It->second & kFPReturnWriteBit))
     if (auto Family = gprFamilyOf(TargetArch, MOp.Output.RegOff);
         Family && (MOp.CallPreservedGPRs >> *Family) & 1) {
       MOp.Output = MedVar{};
@@ -421,6 +393,11 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.JumpTables = Low.JumpTables;
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
+  if (SourceCallHintsEnabled && Image && Fmt == BinaryFormat::MachO &&
+      TheArch == Arch::AArch64 && Image->Arch == TheArch) {
+    Func.RegisterCopyProjections = sourceRegisterCopies(*Image, Low);
+    Func.ClassGetterCallFacts = sourceClassGetterCalls(*Image, Low);
+  }
 
   // Win64 argument registers written on every path from entry, per block,
   // for Control Flow Guard dispatcher calls.  A call clobbers them.
@@ -502,6 +479,54 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       }
 
       MedOp MOp;
+      if (const auto Site = sourceCallOccurrenceKey(LOp); Site) {
+        const auto Found = Func.RegisterCopyProjections.find(*Site);
+        if (Found != Func.RegisterCopyProjections.end()) {
+          // All normalized sources refer to leaf entry, including when a
+          // sequence temporarily uses another destination as scratch.
+          auto SnapshotValue = [&](const SourceRegisterValue &Source) {
+            if (const auto *Address =
+                    std::get_if<SourceConstantStringAddress>(&Source))
+              return MedVar::makeConst(Address->Address, 8,
+                                       ConstantAddressProvenance::DataAddress,
+                                       Address->Address);
+            MedOp Read;
+            Read.Opcode = NdOp::COPY;
+            Read.Addr = LOp.Addr;
+            Read.Output.Kind = MedVar::Temp;
+            Read.Output.Id = allocVarId();
+            Read.Output.Size = 8;
+            Read.Output.TheArch = TheArch;
+            Read.addInput(ndVarToMedVar(
+                NdVar::reg(std::get<SourceEntryRegister>(Source).Offset, 8)));
+            const auto Value = Read.Output;
+            MB.Ops.push_back(std::move(Read));
+            return Value;
+          };
+          std::vector<std::pair<uint64_t, MedVar>> Snapshots;
+          for (const auto &[Destination, Source] : Found->second.Registers)
+            Snapshots.emplace_back(Destination, SnapshotValue(Source));
+          if (const auto &Store = Found->second.StackStore) {
+            const auto Value = SnapshotValue(Store->Value);
+            MedOp Write;
+            Write.Opcode = NdOp::STORE;
+            Write.Addr = LOp.Addr;
+            Write.addInput(ndVarToMedVar(
+                NdVar::reg(getTargetRegInfo(TheArch).StackPointer, 8)));
+            Write.addInput(Value);
+            MB.Ops.push_back(std::move(Write));
+          }
+          for (const auto &[Destination, Value] : Snapshots) {
+            MedOp Write;
+            Write.Opcode = NdOp::COPY;
+            Write.Addr = LOp.Addr;
+            Write.Output = ndVarToMedVar(NdVar::reg(Destination, 8));
+            Write.addInput(Value);
+            MB.Ops.push_back(std::move(Write));
+          }
+          continue;
+        }
+      }
       MOp.Opcode = LOp.Opcode;
       MOp.MemoryOrdering = LOp.MemoryOrdering;
       MOp.MemoryAddressSpace = LOp.MemoryAddressSpace;
@@ -578,6 +603,33 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       if (TrackDispatchArgs)
         DispatchDefined = StepDefined(DispatchDefined, LOp);
 
+      if (LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs > 0 &&
+          LOp.Inputs[0].isConst()) {
+        const auto Id = static_cast<Intrinsic>(LOp.Inputs[0].Offset);
+        const uint8_t Count = intrinsicOutputCount(Id);
+        for (size_t Next = LowOpIndex + 1;
+             Next < LB.Ops.size() && MOp.IntrinsicOutputs.size() < Count;
+             ++Next) {
+          const LowOp &Write = LB.Ops[Next];
+          if (Write.Addr != LOp.Addr)
+            break;
+          const bool IsTransport =
+              Write.Opcode == NdOp::COPY || Write.Opcode == NdOp::INT_ZEXT ||
+              Write.Opcode == NdOp::INT_SEXT || Write.Opcode == NdOp::SUBBYTES;
+          if (!IsTransport)
+            break;
+          if (Write.NumInputs == 0 || !Write.Inputs[0].isTemp())
+            continue;
+          MedVar Source = ndVarToMedVar(Write.Inputs[0]);
+          if (std::none_of(MOp.IntrinsicOutputs.begin(),
+                           MOp.IntrinsicOutputs.end(),
+                           [&](const MedVar &Existing) {
+                             return Existing == Source;
+                           }))
+            MOp.IntrinsicOutputs.push_back(Source);
+        }
+      }
+
       MB.Ops.push_back(MOp);
 
       // i386 callee-cleanup: a direct CALL to a callee that pops bytes on
@@ -644,10 +696,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: skipping SSA for " << Func.Name
                             << " insns=" << Low.DecodedInstructionCount
                             << " ops=" << CopiedOps << "\n");
+    if (TheArch == Arch::X64 && Low.ExceptionMetadata &&
+        Low.ExceptionMetadata->SEH)
+      throw LowToMedConversionError(
+          "Windows SEH establisher frame: SSA size limit prevents proof");
     // The unoptimized ops still carry their LowIR occurrences, so switch
-    // selectors and multi-output intrinsic results bind exactly as they
-    // would after the full pipeline.
-    markIntrinsicAuxResults(Func);
+    // selectors bind exactly as they would after the full pipeline.
     resolveSwitchSelectorPlans(Func);
     Func.SkippedSSA = true;
     return Func;
@@ -681,10 +735,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     neutralizeStackProbeCalls(Func);
     debugVerifyMedFunc(Func, "neutralizeStackProbeCalls");
 
-    markIntrinsicAuxResults(Func);
     splitEntryLoopHeader(Func);
     debugVerifyMedFunc(Func, "splitEntryLoopHeader");
-    buildSsa(Func);
+    buildSsa(Func, Low);
     debugVerifyMedFunc(Func, "buildSsa");
 
     // Model a call's floating-point/vector return (x86-64 returns it in XMM0, a
@@ -829,8 +882,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     // Flag lowering leaves PF/AF/OF writes that no remaining COND_BR reads.
     // Without DCE those become LLVMC `__builtin_popcount` / flag SSA noise on
     // `test`/`cmp` that only consume ZF.
-    runDce(Func);
-    debugVerifyMedFunc(Func, "runDce");
+    if (TheArch == Arch::X86 || TheArch == Arch::X64) {
+      runDce(Func);
+      debugVerifyMedFunc(Func, "runDce");
+    }
 
     // Bind public LowIR selector occurrences only after every MedIR rewrite and
     // SSA/propagation pass has finished.  A source op that disappeared, was
@@ -848,6 +903,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: " << Func.Blocks.size()
                             << " blocks, " << Func.Params.size() << " params, "
                             << Func.Locals.size() << " locals\n");
+  } catch (const LowToMedConversionError &) {
+    throw;
   } catch (const std::exception &) {
     LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: SSA/rewrite threw; keeping "
                                "copied blocks for "
@@ -983,6 +1040,7 @@ void LowToMedConverter::resolveI386GetPcModels(
     const MedVar ExpectedInput = ndVarToMedVar(Occurrence.InputWitness);
     std::optional<MedI386GetPcModel> Bound;
     bool Multiple = false;
+    bool SawSurvivingCopy = false;
     for (const MedBlock &Block : Func.Blocks) {
       for (const MedOp &Op : Block.Ops) {
         if (Op.Addr != Occurrence.InstructionAddr ||
@@ -995,7 +1053,10 @@ void LowToMedConverter::resolveI386GetPcModels(
             Candidate.Id == Expected.Id && Candidate.Size == Expected.Size &&
             (Candidate.Kind != MedVar::Reg ||
              Candidate.RegOff == Expected.RegOff);
-        if (!SameLane || Op.NumInputs != 1)
+        if (!SameLane)
+          continue;
+        SawSurvivingCopy = true;
+        if (Op.NumInputs != 1)
           continue;
         const MedVar &CandidateInput = Op.Inputs[0];
         const bool SameInputLane =
@@ -1017,10 +1078,43 @@ void LowToMedConverter::resolveI386GetPcModels(
       if (Multiple)
         break;
     }
+    // Propagation can redirect every user of the POP's architectural COPY to
+    // its input and DCE can then remove that COPY.  The CFG proof still names
+    // the exact POP LOAD temporary.  Bind that surviving producer only when
+    // there is no conflicting rewritten COPY, and require one matching LOAD at
+    // the same instruction before the original COPY sequence.  Its raw stack
+    // load remains in MedIR; only an address expression derived from this
+    // authenticated SSA value may fold to the call-next PC.
+    if (!Multiple && !Bound && !SawSurvivingCopy) {
+      const MedVar *PopLoad = nullptr;
+      for (const MedBlock &Block : Func.Blocks) {
+        for (const MedOp &Op : Block.Ops) {
+          if (Op.Addr != Occurrence.InstructionAddr ||
+              Op.OriginSeq >= Occurrence.OpSeq || Op.Opcode != NdOp::LOAD ||
+              Op.NumInputs != 1 ||
+              Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              Op.Output.Kind != ExpectedInput.Kind ||
+              Op.Output.Id != ExpectedInput.Id ||
+              Op.Output.Size != ExpectedInput.Size)
+            continue;
+          if (PopLoad) {
+            Multiple = true;
+            break;
+          }
+          PopLoad = &Op.Output;
+        }
+        if (Multiple)
+          break;
+      }
+      if (PopLoad)
+        Bound = MedI386GetPcModel{MedVar{}, *PopLoad,
+                                   Occurrence.PCValue};
+    }
     if (Multiple || !Bound)
       continue;
 
-    const Key BoundKey = keyFor(Bound->Output);
+    const Key BoundKey =
+        keyFor(Bound->Output.Size != 0 ? Bound->Output : Bound->Value);
     if (Ambiguous.count(BoundKey))
       continue;
     auto [It, Inserted] = BoundModels.emplace(BoundKey, *Bound);

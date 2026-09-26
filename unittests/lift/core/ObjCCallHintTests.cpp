@@ -7,6 +7,8 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedNoReturn.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
@@ -216,6 +218,87 @@ TEST(ObjCCallHints, FrameworkDeclarationsKeepMissingAndConflictingEvidence) {
   EXPECT_EQ(buildObjCSourceCallHints(Image, caller()).size(), 1U);
 }
 
+TEST(ObjCCallHints, ExactMethodForwardingSuppliesMissingSelectorDeclaration) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "ddLogLevel";
+  ObjCMethod Wrapper;
+  Wrapper.ClassName = "DDLog";
+  Wrapper.IsClassMethod = true;
+  Wrapper.Selector = "levelForClass:";
+  Wrapper.Implementation = 0x1200;
+  Wrapper.TypeHint = parseObjCMethodEncoding(Wrapper.Selector, "q24@0:8#16");
+  ASSERT_TRUE(Wrapper.TypeHint);
+  Image.ObjCMethods.push_back(Wrapper);
+
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.back().Inputs[0] = NdVar::reg(TRI.IntReturnReg, 8);
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  const auto &Getter = Hints.at(0x1200);
+  ASSERT_TRUE(Getter.SelectorForwardingUse);
+  EXPECT_EQ(Getter.SelectorForwardingUse->MethodEntry, 0x1200U);
+  EXPECT_EQ(Getter.SelectorForwardingUse->ReceiverSourceParameter, 2U);
+  EXPECT_TRUE(Getter.SelectorForwardingUse->ArgumentSourceParameters.empty());
+  ASSERT_TRUE(Getter.Signature.ReturnType);
+  EXPECT_EQ(Getter.Signature.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Getter.Signature.ReturnType->Size, 8U);
+
+  // The setter forwards its declared level and Class parameters into the
+  // receiver and sole selector argument before returning void.
+  Image.ObjCSourceReferences.at(0x2100).Name = "ddSetLogLevel:";
+  Image.ObjCMethods[0].Selector = "setLevel:forClass:";
+  Image.ObjCMethods[0].TypeHint =
+      parseObjCMethodEncoding(Image.ObjCMethods[0].Selector, "v32@0:8q16#24");
+  ASSERT_TRUE(Image.ObjCMethods[0].TypeHint);
+  Function.Blocks[0].Ops = {
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[3], 8)}, 0x11f8),
+      operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1204)};
+  Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  const auto &Setter = Hints.at(0x1200);
+  ASSERT_TRUE(Setter.SelectorForwardingUse);
+  EXPECT_EQ(Setter.SelectorForwardingUse->ReceiverSourceParameter, 3U);
+  EXPECT_EQ(Setter.SelectorForwardingUse->ArgumentSourceParameters,
+            std::vector<unsigned>{2});
+  ASSERT_EQ(Setter.Signature.Parameters.size(), 3U);
+  EXPECT_EQ(Setter.Signature.Parameters[2].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Setter.Signature.Parameters[2].Type->Size, 8U);
+  EXPECT_EQ(Setter.Signature.ReturnType->Kind, NdTypeKind::Void);
+
+  // A rewritten forwarded value, a non-tail call, or an incomplete selector
+  // declaration removes the proof instead of guessing the ABI.
+  auto Invalid = Function;
+  Invalid.Blocks[0].Ops.insert(
+      Invalid.Blocks[0].Ops.begin() + 1,
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[2], 8),
+                {NdVar::cst(7, 8)}, 0x11fc));
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Invalid).count(0x1200));
+  Invalid = Function;
+  Invalid.Blocks[0].Ops.insert(
+      Invalid.Blocks[0].Ops.end() - 1,
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::cst(0, 8)}, 0x1202));
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Invalid).count(0x1200));
+  ObjCMethod Unknown;
+  Unknown.ClassName = "UnknownLogger";
+  Unknown.Selector = "ddSetLogLevel:";
+  Image.ObjCMethods.push_back(std::move(Unknown));
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+  Image.ObjCMethods.back().TypeHint =
+      parseObjCMethodEncoding("ddSetLogLevel:", "v24@0:8@16");
+  ASSERT_TRUE(Image.ObjCMethods.back().TypeHint);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+}
+
 TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = image(Architecture);
@@ -272,6 +355,872 @@ TEST(ObjCCallHints, FrameworkProvidersRequireExactActivationAndAgreement) {
       EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector));
     }
   }
+}
+
+TEST(ObjCCallHints, ResultUseDisambiguatesConflictingSelectorDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "save:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreData.framework/CoreData"};
+  ObjCMethod VoidSave;
+  VoidSave.ClassName = "ApplicationController";
+  VoidSave.Selector = "save:";
+  VoidSave.TypeHint = parseObjCMethodEncoding("save:", "v24@0:8@16");
+  ASSERT_TRUE(VoidSave.TypeHint);
+  Image.ObjCMethods.push_back(VoidSave);
+
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "save:"));
+  auto Function = caller();
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1200);
+  EXPECT_EQ(Hint.Selector, "save:");
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 1U);
+  EXPECT_TRUE(Hint.Signature.ReturnLocation.ExtendTo32Bits);
+  ASSERT_TRUE(Hint.SelectorResultUse);
+  EXPECT_EQ(Hint.SelectorResultUse->RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint.SelectorResultUse->ValueBytes, 4U);
+
+  // A full-width save can transport the narrow result so long as its later
+  // use proves that only the declared W0 bytes are consumed.
+  Function = caller();
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.begin() + 1,
+                                operation(NdOp::COPY,
+                                          NdVar::reg(a64reg::X20, 8),
+                                          {NdVar::reg(a64reg::X0, 8)}, 0x1202));
+  Function.Blocks[0].Ops.back().Inputs[0] = NdVar::reg(a64reg::X20, 4);
+  Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).SelectorResultUse);
+  EXPECT_EQ(Hints.at(0x1200).SelectorResultUse->ValueBytes, 4U);
+
+  // An intervening call with no authenticated ABI revokes the saved alias.
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.end() - 1,
+                                operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                                          {NdVar::cst(0x1500, 8)}, 0x1203));
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+
+  // No observed result read leaves both declarations possible.
+  Function.Blocks[0].Ops[1].NumInputs = 0;
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  // A new definition before the read severs the call-result provenance.
+  Function = caller();
+  Function.Blocks[0].Ops.insert(Function.Blocks[0].Ops.begin() + 1,
+                                operation(NdOp::COPY, NdVar::reg(a64reg::X0, 4),
+                                          {NdVar::cst(1, 4)}, 0x1202));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  // BOOL defines W0 on arm64, not the full X0 read requested here.
+  Function = caller();
+  Function.Blocks[0].Ops[1].Inputs[0] = NdVar::reg(a64reg::X0, 8);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  // Any incomplete declaration remains a veto even when another candidate
+  // happens to fit the observed carrier.
+  ObjCMethod Unknown = VoidSave;
+  Unknown.ClassName = "UnknownController";
+  Unknown.TypeHint.reset();
+  Image.ObjCMethods.push_back(std::move(Unknown));
+  Function = caller();
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+}
+
+TEST(ObjCCallHints,
+     ResultConsumerTypeDisambiguatesEqualWidthSelectorDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "code";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCMethod ObjectCode;
+  ObjectCode.ClassName = "ApplicationValue";
+  ObjectCode.Selector = "code";
+  ObjectCode.TypeHint = parseObjCMethodEncoding("code", "@16@0:8");
+  ASSERT_TRUE(ObjectCode.TypeHint);
+  Image.ObjCMethods.push_back(ObjectCode);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "code"));
+
+  // A catalogued retain consumes its first parameter as an object pointer.
+  // The call boundary is an implicit register use in LowIR, so it supplies
+  // type evidence before the ordinary caller-saved clobber kills X0.
+  Image.ImportPtrSlots[0x2190] = "_objc_retainAutoreleasedReturnValue";
+  const uint32_t RetainStub[] = {0xb0000010, 0xf940ca10, 0xd61f0200};
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, RetainStub[I]);
+  auto Function = caller();
+  Function.Blocks[0].EndAddr = 0x120c;
+  Function.Blocks[0].Ops = {
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1140, 8)}, 0x1204),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1208)};
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  EXPECT_EQ(Hints.at(0x1200).Signature.ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_TRUE(Hints.at(0x1200).SelectorResultTypeUse);
+  EXPECT_EQ(*Hints.at(0x1200).SelectorResultTypeUse, NdTypeKind::Ptr);
+
+  // An untyped integer operation is not a declared source consumer: a casted
+  // object pointer has the same machine operation. Equal width remains
+  // ambiguous rather than guessing the dynamic receiver's implementation.
+  Function.Blocks[0].Ops = {
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X0, 8), NdVar::cst(4, 8)}, 0x1204),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X8, 8)}, 0x1208)};
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  Function.Blocks[0].Ops[1] =
+      operation(NdOp::COPY, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::X0, 8)}, 0x1204);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+}
+
+TEST(ObjCCallHints,
+     RetainConsumerSelectsUIKitObjectFromConflictingSystemVersionDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "systemVersion";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "systemVersion"));
+
+  Image.ImportPtrSlots[0x2190] = "_objc_retainAutoreleasedReturnValue";
+  const uint32_t RetainStub[] = {0xb0000010, 0xf940ca10, 0xd61f0200};
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, RetainStub[I]);
+  auto Function = caller();
+  Function.Blocks[0].EndAddr = 0x120c;
+  Function.Blocks[0].Ops = {
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1140, 8)}, 0x1204),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1208)};
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  const auto &Hint = Hints.at(0x1200);
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_TRUE(Hint.SelectorResultTypeUse);
+  EXPECT_EQ(*Hint.SelectorResultTypeUse, NdTypeKind::Ptr);
+}
+
+TEST(ObjCCallHints,
+     DeclaredEntryArgumentTypeDisambiguatesConflictingSelectorDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "save:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreData.framework/CoreData"};
+
+  ObjCMethod VoidSave;
+  VoidSave.ClassName = "ApplicationController";
+  VoidSave.Selector = "save:";
+  VoidSave.TypeHint = parseObjCMethodEncoding("save:", "v24@0:8@16");
+  ASSERT_TRUE(VoidSave.TypeHint);
+  Image.ObjCMethods.push_back(VoidSave);
+
+  ObjCMethod Caller;
+  Caller.ClassName = "Migrator";
+  Caller.Selector = "runWithObject:error:";
+  Caller.Implementation = 0x1200;
+  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, "v32@0:8@16^@24");
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+  const auto CallerSignature =
+      objcMethodSourceTypeHint(Image, Caller.Implementation);
+  ASSERT_TRUE(CallerSignature);
+  ASSERT_EQ(CallerSignature->Parameters.size(), 4U);
+  EXPECT_EQ(CallerSignature->Parameters[3].Location.RegisterOffset, a64reg::X3);
+  SourceCallTypeHint::SelectorArgumentTypeEvidence DirectEvidence;
+  DirectEvidence.Parameter = 2;
+  DirectEvidence.MethodEntry = Caller.Implementation;
+  DirectEvidence.Source = CallerSignature->Parameters[3].Location;
+  EXPECT_TRUE(objcSelectorSourceTypeHintForArgumentTypeUse(
+      Image, "save:", DirectEvidence));
+
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "typed_argument_caller";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = 0x1200;
+  Block.EndAddr = 0x120c;
+  Block.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                         {NdVar::reg(a64reg::X3, 8)}, 0x1200),
+               operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                         {NdVar::cst(0x1100, 8)}, 0x1204),
+               operation(NdOp::RETURN, {}, {}, 0x1208)};
+  Function.Blocks.push_back(Block);
+
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1204);
+  ASSERT_TRUE(Hint.SelectorArgumentTypeUse);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->Parameter, 2U);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->MethodEntry, 0x1200U);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->Source.Kind,
+            SourceABICarrierKind::IntegerRegister);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->Source.RegisterOffset, a64reg::X3);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
+  ASSERT_TRUE(Hint.Signature.Parameters[2].Type->Pointee);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Type->Pointee->Kind, NdTypeKind::Ptr);
+
+  // A typed spill below an escaped higher-addressed frame object remains
+  // private. The same spill above the escaped base cannot supply evidence.
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(64, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X20, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1204),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X20, 8), NdVar::reg(a64reg::X3, 8)},
+                0x1208),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X20, 8), {NdVar::cst(0, 8)},
+                0x120c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1300, 8)},
+                0x1210),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X20, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1214),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X21, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(48, 4)}, 0x1218),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X22, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(56, 4)}, 0x121c),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X22, 8), NdVar::reg(a64reg::X21, 8)},
+                0x1220),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X23, 8),
+                {NdVar::reg(a64reg::X20, 8)}, 0x1224),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(a64reg::X23, 8)}, 0x1228),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x122c),
+      operation(NdOp::RETURN, {}, {}, 0x1230)};
+  Block.EndAddr = 0x1234;
+  Function.Blocks[0] = Block;
+  Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_TRUE(Hints.at(0x122c).SelectorArgumentTypeUse);
+
+  Block.Ops[6] =
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X21, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(16, 4)}, 0x1218);
+  Function.Blocks[0] = Block;
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  // Bare object parameters have the same machine width but do not prove an
+  // NSError ** contract.
+  Image.ObjCMethods.back().TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, "v32@0:8@16@24");
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+
+  // Every method record sharing the entry must agree on the source type.
+  Image.ObjCMethods.back().TypeHint = Caller.TypeHint;
+  auto Alias = Image.ObjCMethods.back();
+  Alias.Selector = "aliasWithObject:error:";
+  Alias.TypeHint = parseObjCMethodEncoding(Alias.Selector, "v32@0:8@16@24");
+  Image.ObjCMethods.push_back(std::move(Alias));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+}
+
+TEST(ObjCCallHints,
+     DeclaredObjectArgumentDisambiguatesPointerAndFloatingDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "setProgress:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+
+  ObjCMethod ObjectSetter;
+  ObjectSetter.ClassName = "LoadState";
+  ObjectSetter.Selector = "setProgress:";
+  ObjectSetter.TypeHint =
+      parseObjCMethodEncoding(ObjectSetter.Selector, "v24@0:8@16");
+  ASSERT_TRUE(ObjectSetter.TypeHint);
+  Image.ObjCMethods.push_back(ObjectSetter);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, ObjectSetter.Selector));
+
+  ObjCMethod Caller;
+  Caller.ClassName = "ImageView";
+  Caller.Selector = "forwardProgress:";
+  Caller.Implementation = 0x1200;
+  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, "v24@0:8@16");
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+
+  const auto CallerSignature =
+      objcMethodSourceTypeHint(Image, Caller.Implementation);
+  ASSERT_TRUE(CallerSignature);
+  SourceCallTypeHint::SelectorArgumentTypeEvidence Evidence;
+  Evidence.Parameter = 2;
+  Evidence.MethodEntry = Caller.Implementation;
+  Evidence.Source = CallerSignature->Parameters[2].Location;
+  EXPECT_FALSE(objcSelectorSourceTypeHintForArgumentTypeUse(
+      Image, ObjectSetter.Selector, Evidence));
+  Evidence.ConsumedAsObject = true;
+  auto Direct = objcSelectorSourceTypeHintForArgumentTypeUse(
+      Image, ObjectSetter.Selector, Evidence);
+  ASSERT_TRUE(Direct);
+  ASSERT_EQ(Direct->Parameters.size(), 3U);
+  ASSERT_TRUE(Direct->Parameters[2].Type);
+  EXPECT_EQ(Direct->Parameters[2].Type->Kind, NdTypeKind::Ptr);
+
+  LowFunc Function;
+  Function.Entry = Caller.Implementation;
+  Function.Name = "object_argument_caller";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1214;
+  Image.ImportPtrSlots[0x2190] = "_objc_retain";
+  const uint32_t RetainStub[] = {0xb0000010, 0xf940ca10, 0xd61f0200};
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, RetainStub[I]);
+  Block.Ops = {
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(a64reg::X2, 8)}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x1204),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1140, 8)}, 0x1208),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x120c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1210)};
+  Function.Blocks.push_back(Block);
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 2U);
+  const auto &Hint = Hints.at(0x1210);
+  ASSERT_TRUE(Hint.SelectorArgumentTypeUse);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->Parameter, 2U);
+  EXPECT_EQ(Hint.SelectorArgumentTypeUse->MethodEntry, Caller.Implementation);
+  EXPECT_TRUE(Hint.SelectorArgumentTypeUse->ConsumedAsObject);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+
+  // The fact is exact source provenance, not a width guess. An overwrite of
+  // the saved carrier removes the evidence even though the value stays eight
+  // bytes wide.
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin() + 1,
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::cst(1, 8)}, 0x1202));
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1210));
+}
+
+TEST(ObjCCallHints,
+     PrivateFrameStorageDisambiguatesPointerToPointerSelectorArguments) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "save:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreData.framework/CoreData"};
+  ObjCMethod VoidSave;
+  VoidSave.ClassName = "ApplicationController";
+  VoidSave.Selector = "save:";
+  VoidSave.TypeHint = parseObjCMethodEncoding("save:", "v24@0:8@16");
+  ASSERT_TRUE(VoidSave.TypeHint);
+  Image.ObjCMethods.push_back(VoidSave);
+
+  SourceCallTypeHint::SelectorArgumentStorageEvidence DirectEvidence;
+  DirectEvidence.Parameter = 2;
+  DirectEvidence.FrameOffset = -24;
+  auto Direct = objcSelectorSourceTypeHintForArgumentStorageUse(
+      Image, "save:", DirectEvidence);
+  ASSERT_TRUE(Direct);
+  ASSERT_EQ(Direct->Parameters.size(), 3U);
+  ASSERT_TRUE(Direct->Parameters[2].Type->Pointee);
+  EXPECT_EQ(Direct->Parameters[2].Type->Pointee->Kind, NdTypeKind::Ptr);
+  DirectEvidence.FrameOffset = 8;
+  EXPECT_FALSE(objcSelectorSourceTypeHintForArgumentStorageUse(
+      Image, "save:", DirectEvidence));
+  DirectEvidence.FrameOffset = -24;
+  auto AmbiguousImage = Image;
+  ObjCMethod OtherPointerSave;
+  OtherPointerSave.ClassName = "OtherController";
+  OtherPointerSave.Selector = "save:";
+  OtherPointerSave.TypeHint =
+      parseObjCMethodEncoding("save:", "B24@0:8^^i16");
+  ASSERT_TRUE(OtherPointerSave.TypeHint);
+  AmbiguousImage.ObjCMethods.push_back(std::move(OtherPointerSave));
+  EXPECT_FALSE(objcSelectorSourceTypeHintForArgumentStorageUse(
+      AmbiguousImage, "save:", DirectEvidence));
+
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "frame_storage_caller";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = 0x1200;
+  Block.EndAddr = 0x1210;
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::X20, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(64, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(a64reg::X20, 8), NdVar::cst(40, 4)}, 0x1204),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1208),
+      operation(NdOp::RETURN, {}, {}, 0x120c)};
+  Function.Blocks.push_back(Block);
+
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1208);
+  ASSERT_TRUE(Hint.SelectorArgumentStorageUse);
+  EXPECT_EQ(Hint.SelectorArgumentStorageUse->Parameter, 2U);
+  EXPECT_EQ(Hint.SelectorArgumentStorageUse->FrameOffset, -24);
+  EXPECT_FALSE(Hint.SelectorArgumentTypeUse);
+  EXPECT_FALSE(Hint.SelectorResultUse);
+
+  // An incoming/caller-owned address is not private frame storage.
+  Block.Ops[0] = operation(NdOp::INT_ADD, NdVar::reg(a64reg::X20, 8),
+                           {NdVar::reg(a64reg::SP, 8), NdVar::cst(8, 4)},
+                           0x1200);
+  Block.Ops[1] = operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                           {NdVar::reg(a64reg::X20, 8)}, 0x1204);
+  Function.Blocks[0] = Block;
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+}
+
+TEST(ObjCCallHints,
+     SDKObjectPointerOutParameterQualifiesTheLoadedReceiverClass) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ObjCSourceReferences.at(0x2100).Name = "writeToFile:options:error:";
+
+  const auto Class =
+      objcSelectorOutParameterClass(Image, "writeToFile:options:error:", 4);
+  ASSERT_TRUE(Class);
+  EXPECT_EQ(*Class, "NSError");
+  EXPECT_FALSE(
+      objcSelectorOutParameterClass(Image, "writeToFile:options:error:", 3));
+
+  ObjCReceiverTypeHint Receiver;
+  Receiver.Origin = ObjCReceiverTypeHint::OriginKind::OutParameter;
+  Receiver.Address = 0x2100;
+  Receiver.ClassName = *Class;
+  Receiver.OutParameters.push_back({0x2100, "writeToFile:options:error:", 4});
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, Receiver));
+  const auto Code = objcReceiverSourceTypeHint(Image, "code", Receiver);
+  ASSERT_TRUE(Code.Signature);
+  EXPECT_EQ(Code.Signature->ReturnType->Kind, NdTypeKind::Int);
+  ObjCMethod ConflictingCode;
+  ConflictingCode.ClassName = "ApplicationEvent";
+  ConflictingCode.Selector = "code";
+  ConflictingCode.TypeHint =
+      parseObjCMethodEncoding(ConflictingCode.Selector, "@16@0:8");
+  ASSERT_TRUE(ConflictingCode.TypeHint);
+  Image.ObjCMethods.push_back(std::move(ConflictingCode));
+
+  ObjCSourceReference CodeReference;
+  CodeReference.Address = 0x2108;
+  CodeReference.Name = "code";
+  Image.ObjCSourceReferences.emplace(CodeReference.Address, CodeReference);
+  // ADRP x1,0x2000; LDR x1,[x1,#0x108]; ADRP x16,0x2000;
+  // LDR x16,[x16,#0x180]; BR x16.
+  const uint32_t CodeStub[] = {0xb0000001, 0xf9408421, 0xb0000010, 0xf940c210,
+                               0xd61f0200};
+  for (size_t I = 0; I < 5; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x120 + I * 4, CodeStub[I]);
+
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "error_out_parameter_caller";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1224;
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(64, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(40, 4)}, 0x1204),
+      operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X19, 8), NdVar::cst(0, 8)},
+                0x1208),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X4, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x120c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x1210),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x1214),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1120, 8)},
+                0x1218),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x121c)};
+  Function.Blocks.push_back(Block);
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1210));
+  ASSERT_TRUE(Hints.count(0x1218));
+  ASSERT_TRUE(Hints.at(0x1218).Receiver);
+  EXPECT_EQ(Hints.at(0x1218).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::OutParameter);
+  EXPECT_EQ(Hints.at(0x1218).Signature.ReturnType->Kind, NdTypeKind::Int);
+  auto Overwritten = Function;
+  Overwritten.Blocks[0].Ops.insert(
+      Overwritten.Blocks[0].Ops.begin() + 5,
+      operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X19, 8), NdVar::cst(1, 8)},
+                0x1212));
+  const auto OverwrittenHints = buildObjCSourceCallHints(Image, Overwritten);
+  EXPECT_TRUE(OverwrittenHints.count(0x1210));
+  EXPECT_FALSE(OverwrittenHints.count(0x1218));
+  auto Cleared = Function;
+  Cleared.Blocks[0].Ops.insert(
+      Cleared.Blocks[0].Ops.begin() + 5,
+      operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X19, 8), NdVar::cst(0, 8)},
+                0x1212));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Cleared).count(0x1218));
+  auto Escaped = Function;
+  Escaped.Blocks[0].Ops.insert(
+      Escaped.Blocks[0].Ops.begin() + 2,
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X10, 8), NdVar::reg(a64reg::X19, 8)},
+                0x1206));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Escaped).count(0x1218));
+
+  ObjCSourceReference AttributesReference;
+  AttributesReference.Address = 0x2110;
+  AttributesReference.Name = "setAttributes:ofItemAtPath:error:";
+  Image.ObjCSourceReferences.emplace(AttributesReference.Address,
+                                     AttributesReference);
+  const uint32_t AttributesStub[] = {0xb0000001, 0xf9408821, 0xb0000010,
+                                     0xf940c210, 0xd61f0200};
+  for (size_t I = 0; I < 5; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, AttributesStub[I]);
+  LowFunc Joined;
+  Joined.Entry = 0x1200;
+  Joined.Name = "joined_error_out_parameter_caller";
+  LowBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1200;
+  Entry.EndAddr = 0x120c;
+  Entry.Succs = {1, 2};
+  Entry.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(64, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(40, 4)}, 0x1204),
+      operation(NdOp::STORE, {}, {NdVar::reg(a64reg::X19, 8), NdVar::cst(0, 8)},
+                0x1208)};
+  LowBlock Write;
+  Write.Id = 1;
+  Write.StartAddr = 0x1210;
+  Write.EndAddr = 0x1218;
+  Write.Preds = {0};
+  Write.Succs = {3};
+  Write.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X4, 8),
+                         {NdVar::reg(a64reg::X19, 8)}, 0x1210),
+               operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                         {NdVar::cst(0x1100, 8)}, 0x1214)};
+  LowBlock Attributes = Write;
+  Attributes.Id = 2;
+  Attributes.StartAddr = 0x1220;
+  Attributes.EndAddr = 0x1228;
+  Attributes.Ops[0].Addr = 0x1220;
+  Attributes.Ops[1] = operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                                {NdVar::cst(0x1140, 8)}, 0x1224);
+  LowBlock Join;
+  Join.Id = 3;
+  Join.StartAddr = 0x1230;
+  Join.EndAddr = 0x123c;
+  Join.Preds = {1, 2};
+  Join.Ops = {operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                        {NdVar::reg(a64reg::X19, 8)}, 0x1230),
+              operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                        {NdVar::cst(0x1120, 8)}, 0x1234),
+              operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1238)};
+  Joined.Blocks = {Entry, Write, Attributes, Join};
+  const auto JoinedHints = buildObjCSourceCallHints(Image, Joined);
+  ASSERT_TRUE(JoinedHints.count(0x1234));
+  ASSERT_TRUE(JoinedHints.at(0x1234).Receiver);
+  EXPECT_EQ(JoinedHints.at(0x1234).Receiver->OutParameters.size(), 2U);
+  EXPECT_TRUE(
+      objcReceiverTypeHintValid(Image, *JoinedHints.at(0x1234).Receiver));
+
+  // Runtime metadata cannot preserve the NSError pointee spelling in ^@.
+  // A local declaration therefore vetoes the SDK-only source class fact.
+  ObjCMethod Local;
+  Local.ClassName = "LocalData";
+  Local.Selector = "writeToFile:options:error:";
+  Local.TypeHint = parseObjCMethodEncoding(Local.Selector, "B40@0:8@16Q24^@32");
+  ASSERT_TRUE(Local.TypeHint);
+  Image.ObjCMethods.push_back(std::move(Local));
+  EXPECT_FALSE(
+      objcSelectorOutParameterClass(Image, "writeToFile:options:error:", 4));
+  EXPECT_FALSE(objcReceiverTypeHintValid(Image, Receiver));
+}
+
+TEST(ObjCCallHints, ReceiverIdentitySurvivesOnlyLowerPrivateFrameSpills) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "save:";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreData.framework/CoreData"};
+
+  ObjCMethod LocalSave;
+  LocalSave.ClassName = "ExploreController";
+  LocalSave.Selector = "save:";
+  LocalSave.Implementation = 0x1400;
+  LocalSave.TypeHint = parseObjCMethodEncoding("save:", "v24@0:8@16");
+  ASSERT_TRUE(LocalSave.TypeHint);
+  Image.ObjCMethods.push_back(LocalSave);
+  ObjCMethod Caller;
+  Caller.ClassName = LocalSave.ClassName;
+  Caller.Selector = "migrate:context:";
+  Caller.Implementation = 0x1200;
+  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, "v32@0:8@16@24");
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+  ObjCClass Class;
+  Class.Name = LocalSave.ClassName;
+  Class.RootClass = true;
+  Class.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(std::move(Class));
+
+  LowFunc Function;
+  Function.Entry = Caller.Implementation;
+  Function.Name = "receiver_spill_caller";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1234;
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(64, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X20, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1204),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X20, 8), NdVar::reg(a64reg::X0, 8)},
+                0x1208),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X20, 8), {NdVar::cst(0, 8)},
+                0x120c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1300, 8)},
+                0x1210),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X20, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1214),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X21, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(48, 4)}, 0x1218),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X22, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(56, 4)}, 0x121c),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X22, 8), NdVar::reg(a64reg::X21, 8)},
+                0x1220),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X20, 8)}, 0x1224),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                {NdVar::reg(a64reg::X3, 8)}, 0x1228),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x122c),
+      operation(NdOp::RETURN, {}, {}, 0x1230)};
+  Function.Blocks.push_back(Block);
+
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x122c);
+  ASSERT_TRUE(Hint.Receiver);
+  EXPECT_EQ(Hint.Receiver->ClassName, LocalSave.ClassName);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+
+  Block.Ops[6] =
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X21, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(16, 4)}, 0x1218);
+  Function.Blocks[0] = Block;
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+}
+
+TEST(ObjCCallHints,
+     FloatingResultUseSurvivesThePreservedHalfOfAnAArch64Vector) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "duration";
+  ObjCSourceReference TouchReference;
+  TouchReference.Address = 0x2110;
+  TouchReference.Name = "touch";
+  Image.ObjCSourceReferences[TouchReference.Address] = TouchReference;
+  ObjCMethod Touch;
+  Touch.ClassName = "Worker";
+  Touch.Selector = TouchReference.Name;
+  Touch.TypeHint = parseObjCMethodEncoding(Touch.Selector, "v16@0:8");
+  ASSERT_TRUE(Touch.TypeHint);
+  Image.ObjCMethods.push_back(Touch);
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreSpotlight.framework/CoreSpotlight",
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+  ASSERT_FALSE(objcSelectorSourceTypeHint(Image, "duration"));
+
+  Image.ImportPtrSlots[0x2190] = "_objc_release";
+  const uint32_t ReleaseStub[] = {0xb0000010, 0xf940ca10, 0xd61f0200};
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, ReleaseStub[I]);
+  // ADRP x1,0x2000; LDR x1,[x1,#0x110]; ADRP x16,0x2000;
+  // LDR x16,[x16,#0x180]; BR x16.
+  const uint32_t TouchStub[] = {
+      0xb0000001, 0xf9408821, 0xb0000010, 0xf940c210, 0xd61f0200};
+  for (size_t I = 0; I < 5; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x160 + I * 4, TouchStub[I]);
+
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Function = caller();
+  Function.Blocks[0].EndAddr = 0x1218;
+  Function.Blocks[0].Ops = {
+      operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::V(8), 16),
+                {NdVar::reg(TRI.FPReturnReg, 16)}, 0x1204),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::cst(0, 8)}, 0x1208),
+      operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                {NdVar::cst(0x1140, 8)}, 0x120c),
+      operation(NdOp::COPY, NdVar::reg(TRI.FPReturnReg, 16),
+                {NdVar::reg(a64reg::V(8), 16)}, 0x1210),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.FPReturnReg, 8)}, 0x1214)};
+
+  auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  const auto &Hint = Hints.at(0x1200);
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 8U);
+  ASSERT_TRUE(Hint.SelectorResultUse);
+  EXPECT_EQ(Hint.SelectorResultUse->Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint.SelectorResultUse->RegisterOffset, TRI.FPReturnReg);
+  EXPECT_EQ(Hint.SelectorResultUse->ValueBytes, 8U);
+
+  const auto Med = convert(Image, Function);
+  const MedOp *BoundCall = nullptr;
+  const MedOp *WideResult = nullptr;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (Op.Addr == 0x1200 && Op.SourceCallHint)
+        BoundCall = &Op;
+      if (Op.Addr == 0x1200 && Op.Opcode == NdOp::CONCAT &&
+          Op.Output.Kind == MedVar::Reg &&
+          Op.Output.RegOff == TRI.FPReturnReg && Op.Output.Size == 16)
+        WideResult = &Op;
+    }
+  ASSERT_NE(BoundCall, nullptr);
+  ASSERT_EQ(BoundCall->Output.Kind, MedVar::Reg);
+  EXPECT_EQ(BoundCall->Output.RegOff, TRI.FPReturnReg);
+  EXPECT_EQ(BoundCall->Output.Size, 8U);
+  ASSERT_NE(WideResult, nullptr);
+  ASSERT_EQ(WideResult->NumInputs, 2U);
+  EXPECT_EQ(WideResult->Inputs[1].Kind, BoundCall->Output.Kind);
+  EXPECT_EQ(WideResult->Inputs[1].Id, BoundCall->Output.Id);
+  EXPECT_EQ(WideResult->Inputs[1].RegOff, BoundCall->Output.RegOff);
+  EXPECT_EQ(WideResult->Inputs[1].Size, BoundCall->Output.Size);
+  EXPECT_GT(WideResult->Inputs[1].SSAVer, 0);
+
+  // A fixed Objective-C declaration authenticates the intervening call's
+  // ordinary ABI just like a catalogued runtime call. The low half of v8 is
+  // call-preserved, so the later d0 use still selects the floating result.
+  Function.Blocks[0].Ops[3].Inputs[0] = NdVar::cst(0x1160, 8);
+  Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).SelectorResultUse);
+  EXPECT_EQ(Hints.at(0x1200).SelectorResultUse->Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hints.at(0x1200).SelectorResultUse->ValueBytes, 8U);
+
+  ObjCMethod ConflictingTouch = Touch;
+  ConflictingTouch.ClassName = "OtherWorker";
+  ConflictingTouch.TypeHint =
+      parseObjCMethodEncoding(ConflictingTouch.Selector, "q16@0:8");
+  ASSERT_TRUE(ConflictingTouch.TypeHint);
+  Image.ObjCMethods.push_back(ConflictingTouch);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+  Image.ObjCMethods.pop_back();
+
+  Function.Blocks[0].Ops[1].Output = NdVar::reg(a64reg::V(8), 4);
+  Function.Blocks[0].Ops[1].Inputs[0] = NdVar::reg(TRI.FPReturnReg, 4);
+  Function.Blocks[0].Ops[4].Output = NdVar::reg(TRI.FPReturnReg, 4);
+  Function.Blocks[0].Ops[4].Inputs[0] = NdVar::reg(a64reg::V(8), 4);
+  Function.Blocks[0].Ops.back().Inputs[0] = NdVar::reg(TRI.FPReturnReg, 4);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1200));
+}
+
+TEST(ObjCCallHints, FloatingResultUseFollowsSavedVectorAcrossCFGEdge) {
+  auto Image = image();
+  Image.ObjCSourceReferences.at(0x2100).Name = "duration";
+  Image.ObjCMethods[0].Selector = "duration";
+  Image.ObjCMethods[0].TypeHint =
+      parseObjCMethodEncoding("duration", "d16@0:8");
+  ASSERT_TRUE(Image.ObjCMethods[0].TypeHint);
+  ObjCMethod IntegerDuration = Image.ObjCMethods[0];
+  IntegerDuration.ClassName = "Other";
+  IntegerDuration.TypeHint =
+      parseObjCMethodEncoding("duration", "q16@0:8");
+  ASSERT_TRUE(IntegerDuration.TypeHint);
+  Image.ObjCMethods.push_back(std::move(IntegerDuration));
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "duration"));
+
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "cross_block_floating_result";
+  LowBlock Call;
+  Call.Id = 0;
+  Call.StartAddr = 0x1200;
+  Call.EndAddr = 0x1208;
+  Call.Succs = {1};
+  Call.Ops = {
+      operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::V(8), 16),
+                {NdVar::reg(TRI.FPReturnReg, 16)}, 0x1204)};
+  LowBlock Return;
+  Return.Id = 1;
+  Return.StartAddr = 0x1208;
+  Return.EndAddr = 0x1210;
+  Return.Preds = {0};
+  Return.Ops = {
+      operation(NdOp::COPY, NdVar::reg(TRI.FPReturnReg, 16),
+                {NdVar::reg(a64reg::V(8), 16)}, 0x1208),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.FPReturnReg, 8)}, 0x120c)};
+  Function.Blocks = {std::move(Call), std::move(Return)};
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1200);
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 8U);
+  ASSERT_TRUE(Hint.SelectorResultUse);
+  EXPECT_EQ(Hint.SelectorResultUse->Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint.SelectorResultUse->ValueBytes, 8U);
+
+  // Conflicting reachable uses in the integer and floating return banks do
+  // not select either of the ambiguous declarations.
+  Function.Blocks[0].Succs.push_back(2);
+  Function.Blocks[0].Ops.push_back(
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(TRI.IntReturnReg, 8)}, 0x1206));
+  LowBlock IntegerReturn;
+  IntegerReturn.Id = 2;
+  IntegerReturn.StartAddr = 0x1210;
+  IntegerReturn.EndAddr = 0x1214;
+  IntegerReturn.Preds = {0};
+  IntegerReturn.Ops = {operation(
+      NdOp::RETURN, {}, {NdVar::reg(a64reg::X19, 8)}, 0x1210)};
+  Function.Blocks.push_back(std::move(IntegerReturn));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
 }
 
 TEST(ObjCCallHints, FrameworkVariadicAndUnsupportedRecordsRemainUnbound) {
@@ -405,6 +1354,354 @@ BinaryImage runtimeImage(llvm::StringRef Name,
   return Image;
 }
 } // namespace
+
+TEST(ObjCCallHints, FoundationNSNotFoundGetterRequiresExactStrongImport) {
+  constexpr llvm::StringLiteral Name = "$s10Foundation10NSNotFoundSivg";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_" + Name.str(), Architecture);
+    Image.DyldBindSlots[0x2180] = {"_" + Name.str(), 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->TargetName, Name.str());
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    ASSERT_TRUE(Hint->Signature.ReturnType);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.ReturnType->Size, 8U);
+    EXPECT_TRUE(Hint->Signature.Parameters.empty());
+    auto Call = HighExpr::makeCall(Name.str(), 0x2180, {});
+    Call->Type = Hint->Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.DyldBindSlots[0x2180].Module = Provider.str();
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftStringRangeSubscriptKeepsFourWordResultABI) {
+  constexpr llvm::StringLiteral Name = "$sSSySsSnySS5IndexVGcig";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  auto Image = runtimeImage("_" + Name.str());
+  Image.DyldBindSlots[0x2180] = {"_" + Name.str(), 0, Provider.str(), false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+  EXPECT_EQ(Hint->TargetName, Name);
+  EXPECT_EQ(Hint->SwiftStringInputs,
+            (std::vector<std::pair<unsigned, unsigned>>{{2, 3}}));
+  const auto &ABI = Hint->Signature;
+  EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+  EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  ASSERT_TRUE(ABI.ReturnType);
+  EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(ABI.ReturnType->Size, 32U);
+  ASSERT_EQ(ABI.ReturnType->Fields.size(), 4U);
+  ASSERT_EQ(ABI.ReturnComponents.size(), 4U);
+  ASSERT_EQ(ABI.Parameters.size(), 4U);
+  for (size_t I = 0; I < 4; ++I) {
+    EXPECT_EQ(ABI.ReturnComponents[I].Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.ReturnComponents[I].RegisterOffset, I * 8);
+    EXPECT_EQ(ABI.Parameters[I].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.Parameters[I].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[I]);
+  }
+  EXPECT_EQ(ABI.ReturnType->Fields[3]->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(ABI.Parameters[3].Type->Kind, NdTypeKind::Ptr);
+  std::string Diagnostic;
+  EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+  std::vector<ExprPtr> Arguments;
+  for (const auto &Parameter : ABI.Parameters) {
+    auto Argument = HighExpr::makeConst(0, Parameter.Type->Size);
+    Argument->Type = Parameter.Type;
+    Arguments.push_back(std::move(Argument));
+  }
+  auto Call = HighExpr::makeCall(Name.str(), 0x2180, std::move(Arguments));
+  Call->Type = ABI.ReturnType;
+  Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+  HighFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "slice_string";
+  Function.ReturnType = ABI.ReturnType;
+  Function.SourceTypeHint = ABI;
+  for (size_t I = 0; I < ABI.Parameters.size(); ++I)
+    Function.Params.push_back({ABI.Parameters[I].Name,
+                               ABI.Parameters[I].Type});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = Call;
+  Function.Body = {Return};
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::AArch64;
+  Options.Format = BinaryFormat::MachO;
+  EXPECT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  EXPECT_NE(Source.find("slice_string"), std::string::npos);
+  EXPECT_NE(Source.find("swiftcall"), std::string::npos);
+  Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  Image.DyldBindSlots[0x2180].Module = Provider.str();
+  Image.DyldBindSlots[0x2180].WeakImport = true;
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  auto X64 = runtimeImage("_" + Name.str(), Arch::X64);
+  X64.DyldBindSlots[0x2180] = {"_" + Name.str(), 0, Provider.str(), false};
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(X64, 0x2180));
+}
+
+TEST(ObjCCallHints, SwiftAllocErrorKeepsObjectAndPayloadResults) {
+  auto Image = runtimeImage("_swift_allocError");
+  Image.DyldBindSlots[0x2180] = {
+      "_swift_allocError", 0, "/usr/lib/swift/libswiftCore.dylib", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+  const auto &ABI = Hint->Signature;
+  EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+  EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  ASSERT_TRUE(ABI.ReturnType);
+  EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Struct);
+  ASSERT_EQ(ABI.ReturnType->Fields.size(), 2U);
+  ASSERT_EQ(ABI.ReturnComponents.size(), 2U);
+  ASSERT_EQ(ABI.Parameters.size(), 4U);
+  for (size_t I = 0; I < 2; ++I) {
+    EXPECT_EQ(ABI.ReturnType->Fields[I]->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(ABI.ReturnComponents[I].Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.ReturnComponents[I].RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntReturnReg + I * 8);
+  }
+  for (size_t I = 0; I < 4; ++I) {
+    EXPECT_EQ(ABI.Parameters[I].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.Parameters[I].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[I]);
+  }
+  EXPECT_EQ(ABI.Parameters[3].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(ABI.Parameters[3].Type->Size, 1U);
+  std::string Diagnostic;
+  EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+  Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+  Image.DyldBindSlots[0x2180].Name += "_suffix";
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+}
+
+TEST(ObjCCallHints, SwiftGenericSinglePayloadEnumKeepsCallbackABI) {
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswiftCore.dylib";
+  for (const char *Name : {"swift_getEnumTagSinglePayloadGeneric",
+                           "swift_storeEnumTagSinglePayloadGeneric"}) {
+    const bool IsGet = llvm::StringRef(Name).starts_with("swift_get");
+    const std::string Import = std::string("_") + Name;
+    auto Image = runtimeImage(Import);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint) << Name;
+    const auto &ABI = Hint->Signature;
+    EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    EXPECT_EQ(ABI.ReturnType->Kind,
+              IsGet ? NdTypeKind::Int : NdTypeKind::Void);
+    EXPECT_EQ(ABI.ReturnLocation.Kind,
+              IsGet ? SourceABICarrierKind::IntegerRegister
+                    : SourceABICarrierKind::None);
+    if (IsGet)
+      EXPECT_EQ(ABI.ReturnType->Size, 4U);
+    ASSERT_EQ(ABI.Parameters.size(), IsGet ? 4U : 5U);
+    for (size_t I = 0; I < ABI.Parameters.size(); ++I) {
+      const bool IsCase = I == 1 || (!IsGet && I == 2);
+      EXPECT_EQ(ABI.Parameters[I].Type->Kind,
+                IsCase ? NdTypeKind::Int : NdTypeKind::Ptr);
+      EXPECT_EQ(ABI.Parameters[I].Type->Size, IsCase ? 4U : 8U);
+      EXPECT_EQ(ABI.Parameters[I].Location.Kind,
+                SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(ABI.Parameters[I].Location.RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).IntParamRegs[I]);
+    }
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+    Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    Image.DyldBindSlots[0x2180].Module = Provider.str();
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    auto X64 = runtimeImage(Import, Arch::X64);
+    X64.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto X64Hint = swiftRuntimeSourceCallHint(X64, 0x2180);
+    ASSERT_TRUE(X64Hint);
+    EXPECT_TRUE(validateSourceABI(X64Hint->Signature, Diagnostic))
+        << Diagnostic;
+  }
+}
+
+TEST(ObjCCallHints, SwiftClassMetadataDependencyKeepsTwoWordSwiftResult) {
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const char *Name :
+       {"swift_initClassMetadata2", "swift_updateClassMetadata2"}) {
+    const std::string Import = std::string("_") + Name;
+    auto Image = runtimeImage(Import);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint) << Name;
+    const auto &ABI = Hint->Signature;
+    EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+    EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_EQ(ABI.ReturnComponents.size(), 2U);
+    ASSERT_EQ(ABI.ReturnType->Fields.size(), 2U);
+    EXPECT_EQ(ABI.ReturnType->Fields[0]->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(ABI.ReturnType->Fields[1]->Kind, NdTypeKind::Int);
+    EXPECT_EQ(ABI.ReturnType->Fields[1]->Size, 8U);
+    for (size_t I = 0; I < 2; ++I) {
+      EXPECT_EQ(ABI.ReturnComponents[I].Kind,
+                SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(ABI.ReturnComponents[I].RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).IntReturnReg + I * 8);
+    }
+    ASSERT_EQ(ABI.Parameters.size(), 5U);
+    for (size_t I = 0; I < 5; ++I) {
+      EXPECT_EQ(ABI.Parameters[I].Type->Kind,
+                I == 1 || I == 2 ? NdTypeKind::Int : NdTypeKind::Ptr);
+      EXPECT_EQ(ABI.Parameters[I].Type->Size, 8U);
+      EXPECT_EQ(ABI.Parameters[I].Location.Kind,
+                SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(ABI.Parameters[I].Location.RegisterOffset,
+                getTargetRegInfo(Arch::AArch64).IntParamRegs[I]);
+    }
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+    Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    Image.DyldBindSlots[0x2180].Module = Provider.str();
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftOpaqueConformance2KeepsSignedDescriptorABI) {
+  auto Image = runtimeImage("_swift_getOpaqueTypeConformance2");
+  Image.DyldBindSlots[0x2180] = {"_swift_getOpaqueTypeConformance2", 0,
+                                 "/usr/lib/swift/libswiftCore.dylib", false};
+  const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  const auto &ABI = Hint->Signature;
+  EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+  EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  ASSERT_TRUE(ABI.ReturnType);
+  EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(ABI.ReturnLocation.Kind,
+            SourceABICarrierKind::IntegerRegister);
+  EXPECT_EQ(ABI.ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).IntReturnReg);
+  ASSERT_EQ(ABI.Parameters.size(), 3U);
+  for (size_t I = 0; I < 3; ++I) {
+    EXPECT_EQ(ABI.Parameters[I].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.Parameters[I].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[I]);
+  }
+  EXPECT_EQ(ABI.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(ABI.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(ABI.Parameters[2].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(ABI.Parameters[2].Type->Size, 8U);
+  std::string Diagnostic;
+  EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+  Image.DyldBindSlots[0x2180].Module = "/tmp/foreign.dylib";
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+  Image.DyldBindSlots[0x2180].Name += "_suffix";
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+  auto X64 = runtimeImage("_swift_getOpaqueTypeConformance2", Arch::X64);
+  X64.DyldBindSlots[0x2180] = {"_swift_getOpaqueTypeConformance2", 0,
+                               "/usr/lib/swift/libswiftCore.dylib", false};
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(X64, 0x2180));
+}
+
+TEST(ObjCCallHints, SwiftDefaultActorLifecycleKeepsSwiftConvention) {
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswift_Concurrency.dylib";
+  for (const char *Name : {"swift_defaultActor_initialize",
+                           "swift_defaultActor_destroy"}) {
+    const std::string Import = std::string("_") + Name;
+    auto Image = runtimeImage(Import);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint) << Name;
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &ABI = Hint->Signature;
+    EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+    EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(ABI.ReturnType);
+    EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(ABI.Parameters.size(), 1U);
+    EXPECT_EQ(ABI.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(ABI.Parameters[0].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[0]);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+    Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    Image.DyldBindSlots[0x2180].Module = Provider.str();
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    auto X64 = runtimeImage(Import, Arch::X64);
+    X64.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(X64, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftTaskFrameAllocationKeepsSwiftConvention) {
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswift_Concurrency.dylib";
+  for (const char *Name : {"swift_task_alloc", "swift_task_dealloc"}) {
+    const bool Alloc = llvm::StringRef(Name) == "swift_task_alloc";
+    const std::string Import = std::string("_") + Name;
+    auto Image = runtimeImage(Import);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint) << Name;
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    const auto &ABI = Hint->Signature;
+    EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::SwiftRuntime);
+    EXPECT_EQ(ABI.Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(ABI.ReturnType);
+    EXPECT_EQ(ABI.ReturnType->Kind,
+              Alloc ? NdTypeKind::Ptr : NdTypeKind::Void);
+    EXPECT_EQ(ABI.ReturnLocation.Kind,
+              Alloc ? SourceABICarrierKind::IntegerRegister
+                    : SourceABICarrierKind::None);
+    ASSERT_EQ(ABI.Parameters.size(), 1U);
+    EXPECT_EQ(ABI.Parameters[0].Type->Kind,
+              Alloc ? NdTypeKind::Int : NdTypeKind::Ptr);
+    EXPECT_EQ(ABI.Parameters[0].Type->Size, 8U);
+    EXPECT_EQ(ABI.Parameters[0].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(ABI.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Arch::AArch64).IntParamRegs[0]);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+    Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    Image.DyldBindSlots[0x2180].Module = Provider.str();
+    Image.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    auto X64 = runtimeImage(Import, Arch::X64);
+    X64.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(X64, 0x2180));
+  }
+}
 
 TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
   enum class Shape {
@@ -632,6 +1929,807 @@ TEST(ObjCCallHints, FoundationValueBridgesKeepCompilerObservedSwiftABI) {
         EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
       }
     }
+  }
+}
+
+TEST(ObjCCallHints, SwiftCocoaArrayEndIndexKeepsItsWordABI) {
+  constexpr llvm::StringLiteral Name = "$ss18_CocoaArrayWrapperV8endIndexSivg";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage(("_" + Name).str(), Architecture);
+    Image.DyldBindSlots[0x2180] = {("_" + Name).str(), 0, Provider.str(),
+                                   false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.ReturnType->Size, 8U);
+    ASSERT_EQ(Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[0].Type->Size, 8U);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+
+    auto Call = HighExpr::makeCall("untrusted_name", 0x2180,
+                                   {HighExpr::makeConst(1, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    Image.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Image, {}));
+  }
+}
+
+TEST(ObjCCallHints, FoundationNSKeyValueObservationInvalidateUsesSwiftSelf) {
+  constexpr llvm::StringLiteral Name =
+      "$s10Foundation21NSKeyValueObservationC10invalidateyyFTj";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call =
+        HighExpr::makeCall("untrusted", 0x2180, {HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (llvm::StringRef Alias :
+         {"/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation",
+          "/usr/lib/swift/libswiftFoundation.dylib"}) {
+      auto Aliased = Image;
+      Aliased.DyldBindSlots[0x2180].Module = Alias.str();
+      EXPECT_TRUE(swiftRuntimeSourceCallHint(Aliased, 0x2180)) << Alias.str();
+    }
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+      else if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Addend = 1;
+      else if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      else
+        Wrong.DyldBindSlots.erase(0x2180);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftUIBindingWrappedValueSetterKeepsGenericABI) {
+  constexpr llvm::StringLiteral Name = "$s7SwiftUI7BindingV12wrappedValuexvs";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/SwiftUI.framework/SwiftUI";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 3U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (size_t I = 0; I < 2; ++I) {
+      EXPECT_EQ(Signature.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+    }
+    EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[2].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[2].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall("untrusted", 0x2180,
+                                   {HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/SwiftUI.framework/SwiftUI";
+      else if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Addend = 1;
+      else if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      else
+        Wrong.DyldBindSlots.erase(0x2180);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftStringAppendKeepsTwoWordPayloadAndSwiftSelf) {
+  constexpr llvm::StringLiteral Name = "$sSS6appendyySSF";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 3U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[0].Type->Size, 8U);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              TRI.IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              TRI.IntParamRegs[1]);
+    EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[2].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[2].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall("untrusted", 0x2180,
+                                   {HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+  }
+}
+
+TEST(ObjCCallHints, SwiftLocalizationSDKCallsUseCompilerObservedABI) {
+  struct Case {
+    const char *Name;
+    const char *Provider;
+    NdTypeKind ReturnKind;
+    unsigned ReturnSize;
+    std::vector<NdTypeKind> ParameterKinds;
+  };
+  const Case Cases[] = {
+      {"$s10Foundation6LocaleV18preferredLanguagesSaySSGvgZ",
+       "/System/Library/Frameworks/Foundation.framework/Foundation",
+       NdTypeKind::Ptr, 8, {}},
+      {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib",
+       NdTypeKind::Int, 16, {NdTypeKind::Int, NdTypeKind::Ptr}},
+      {"$sSS5index5afterSS5IndexVAD_tF",
+       "/usr/lib/swift/libswiftCore.dylib", NdTypeKind::Int, 8,
+       {NdTypeKind::Int, NdTypeKind::Int, NdTypeKind::Ptr}},
+      {"$sSSySJSS5IndexVcig", "/usr/lib/swift/libswiftCore.dylib",
+       NdTypeKind::Int, 16,
+       {NdTypeKind::Int, NdTypeKind::Int, NdTypeKind::Ptr}},
+      {"$sSo7UIImageC5UIKitE24imageLiteralResourceNameABSS_tcfC",
+       "/System/Library/Frameworks/UIKit.framework/UIKit", NdTypeKind::Ptr,
+       8, {NdTypeKind::Int, NdTypeKind::Ptr}},
+  };
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const auto &Case : Cases) {
+      const std::string Import = std::string("_") + Case.Name;
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Case.Provider, false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Case.Name;
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, Case.ReturnKind);
+      EXPECT_EQ(Signature.ReturnType->Size, Case.ReturnSize);
+      ASSERT_EQ(Signature.Parameters.size(), Case.ParameterKinds.size());
+      for (size_t I = 0; I < Case.ParameterKinds.size(); ++I) {
+        EXPECT_EQ(Signature.Parameters[I].Type->Kind, Case.ParameterKinds[I]);
+        EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      std::vector<ExprPtr> Args;
+      for (size_t I = 0; I < Case.ParameterKinds.size(); ++I)
+        Args.push_back(HighExpr::makeConst(0, 8));
+      auto Call = HighExpr::makeCall("untrusted", 0x2180, std::move(Args));
+      Call->Type = Signature.ReturnType;
+      Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/untrusted.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftStringGutsGrowKeepsCapacityAndSwiftSelfABI) {
+  constexpr llvm::StringLiteral Name = "$ss11_StringGutsV4growyySiF";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[0].Type->Size, 8U);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall(
+        "untrusted", 0x2180,
+        {HighExpr::makeConst(30, 8), HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+    Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].WeakImport = true;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {}));
+  }
+}
+
+TEST(ObjCCallHints, FoundationNSNumberIntegerLiteralKeepsMetatypeABI) {
+  constexpr llvm::StringLiteral Name =
+      "$sSo8NSNumberC10FoundationE14integerLiteralABSi_tcfC";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_EQ(Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[0].Type->Size, 8U);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    auto Call = HighExpr::makeCall(
+        "untrusted", 0x2180,
+        {HighExpr::makeConst(5000, 8), HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (llvm::StringRef Alias :
+         {"/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation",
+          "/usr/lib/swift/libswiftFoundation.dylib"}) {
+      auto Aliased = Image;
+      Aliased.DyldBindSlots[0x2180].Module = Alias.str();
+      EXPECT_TRUE(swiftRuntimeSourceCallHint(Aliased, 0x2180)) << Alias.str();
+    }
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      auto Wrong = Image;
+      if (Mutation == 0)
+        Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+      else if (Mutation == 1)
+        Wrong.DyldBindSlots[0x2180].Addend = 1;
+      else if (Mutation == 2)
+        Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      else
+        Wrong.DyldBindSlots.erase(0x2180);
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180)) << Mutation;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Wrong, {})) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints,
+     FoundationStringContainsKeepsGenericWitnessAndSwiftSelfABI) {
+  constexpr llvm::StringLiteral Name =
+      "$sSy10FoundationE8containsySbqd__SyRd__lF";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::SwiftRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.ReturnType->Size, 1U);
+    ASSERT_EQ(Signature.Parameters.size(), 6U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (size_t I = 0; I < 5; ++I) {
+      EXPECT_EQ(Signature.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+    }
+    EXPECT_EQ(Signature.Parameters[5].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[5].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[5].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+
+    std::vector<ExprPtr> Arguments;
+    for (const auto &Parameter : Signature.Parameters)
+      Arguments.push_back(HighExpr::makeConst(0, Parameter.Type->Size));
+    auto Call = HighExpr::makeCall("untrusted", 0x2180, Arguments);
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+    for (llvm::StringRef Alias :
+         {"/System/Library/Frameworks/Foundation.framework/Versions/C/"
+          "Foundation",
+          "/usr/lib/swift/libswiftFoundation.dylib"}) {
+      auto Aliased = Image;
+      Aliased.DyldBindSlots[0x2180].Module = Alias.str();
+      EXPECT_TRUE(swiftRuntimeSourceCallHint(Aliased, 0x2180)) << Alias.str();
+    }
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, FoundationURLPathAndStringComparisonKeepSwiftABI) {
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (const auto &[Name, OrdinaryCount, ReturnBytes] :
+         {std::tuple{"$s10Foundation3URLV13pathExtensionSSvg", 0U, 16U},
+          std::tuple{"$sSy10FoundationE22caseInsensitiveCompareySo18NS"
+                     "ComparisonResultVqd__SyRd__lF",
+                     5U, 8U}}) {
+      SCOPED_TRACE(Name);
+      const std::string Import = "_" + std::string(Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Signature.ReturnType->Size, ReturnBytes);
+      ASSERT_EQ(Signature.Parameters.size(), OrdinaryCount + 1);
+      for (unsigned I = 0; I < OrdinaryCount; ++I) {
+        EXPECT_EQ(Signature.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Signature.Parameters[I].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                  TRI.IntParamRegs[I]);
+      }
+      const auto &Context = Signature.Parameters.back();
+      EXPECT_EQ(Context.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Context.TheRole, SourceParameterTypeHint::Role::SwiftContext);
+      EXPECT_EQ(Context.Location.RegisterOffset,
+                Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+      if (ReturnBytes == 16) {
+        ASSERT_EQ(Signature.ReturnComponents.size(), 2U);
+        for (unsigned I = 0; I < 2; ++I)
+          EXPECT_EQ(Signature.ReturnComponents[I].RegisterOffset,
+                    TRI.IntReturnRegs[I]);
+      } else {
+        EXPECT_TRUE(Signature.ReturnComponents.empty());
+        EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftStringHashIntoKeepsInoutAndStringCarriers) {
+  constexpr llvm::StringLiteral Name = "$sSS4hash4intoys6HasherVz_tF";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->TargetName, Name);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 3U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (unsigned I = 0; I < 3; ++I) {
+      EXPECT_EQ(Signature.Parameters[I].Type->Kind,
+                I == 1 ? NdTypeKind::Int : NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[I].TheRole,
+                SourceParameterTypeHint::Role::Ordinary);
+      EXPECT_EQ(Signature.Parameters[I].Location.RegisterOffset,
+                TRI.IntParamRegs[I]);
+    }
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Addend = 1;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftHasherSeedAndFinalizeKeepSpecialCarriers) {
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const auto &TRI = getTargetRegInfo(Architecture);
+    for (const auto &Name : {"$ss6HasherV5_seedABSi_tcfC",
+                             "$ss6HasherV9_finalizeSiyF"}) {
+      SCOPED_TRACE(Name);
+      const std::string Import = "_" + std::string(Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      const bool Seed = llvm::StringRef(Name).contains("_seed");
+      EXPECT_EQ(Signature.ReturnType->Kind,
+                Seed ? NdTypeKind::Void : NdTypeKind::Int);
+      ASSERT_EQ(Signature.Parameters.size(), Seed ? 2U : 1U);
+      if (Seed) {
+        EXPECT_EQ(Signature.Parameters[0].TheRole,
+                  SourceParameterTypeHint::Role::SwiftIndirectResult);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                              : TRI.IntReturnReg);
+        EXPECT_EQ(Signature.Parameters[1].TheRole,
+                  SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+                  TRI.IntParamRegs[0]);
+      } else {
+        EXPECT_EQ(Signature.ReturnType->Size, 8U);
+        EXPECT_EQ(Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+        EXPECT_EQ(Signature.Parameters[0].TheRole,
+                  SourceParameterTypeHint::Role::SwiftContext);
+        EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                  Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+  }
+}
+
+TEST(ObjCCallHints, SwiftArrayAnyObjectAppendKeepsSpecializedABI) {
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  struct Case {
+    const char *Name;
+    std::initializer_list<NdTypeKind> OrdinaryKinds;
+    std::initializer_list<unsigned> OrdinarySizes;
+  };
+  const Case Cases[] = {
+      {"$sSa034_makeUniqueAndReserveCapacityIfNotB0yyFyXl_Ts5", {}, {}},
+      {"$sSa16_createNewBuffer14bufferIsUnique15minimumCapacity13growForAppendy"
+       "Sb_SiSbtFyXl_Ts5",
+       {NdTypeKind::Int, NdTypeKind::Int, NdTypeKind::Int}, {1, 8, 1}},
+      {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
+       {NdTypeKind::Int, NdTypeKind::Ptr}, {8, 8}},
+  };
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &Test : Cases) {
+      SCOPED_TRACE(Test.Name);
+      const std::string Import = "_" + std::string(Test.Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Signature.Parameters.size(), Test.OrdinaryKinds.size() + 1);
+      auto Kind = Test.OrdinaryKinds.begin();
+      auto Size = Test.OrdinarySizes.begin();
+      for (size_t I = 0; I < Test.OrdinaryKinds.size(); ++I, ++Kind, ++Size) {
+        const auto &Parameter = Signature.Parameters[I];
+        EXPECT_EQ(Parameter.Type->Kind, *Kind);
+        EXPECT_EQ(Parameter.Type->Size, *Size);
+        EXPECT_EQ(Parameter.TheRole, SourceParameterTypeHint::Role::Ordinary);
+        EXPECT_EQ(Parameter.Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[I]);
+        if (*Size == 1)
+          EXPECT_EQ(Parameter.Location.ValueBytes, 1U);
+      }
+      const auto &Context = Signature.Parameters.back();
+      EXPECT_EQ(Context.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Context.TheRole, SourceParameterTypeHint::Role::SwiftContext);
+      EXPECT_EQ(Context.Location.RegisterOffset,
+                Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+}
+
+TEST(ObjCCallHints, SwiftDictionaryStorageAllocationKeepsMetadataContext) {
+  constexpr llvm::StringLiteral Name =
+      "$ss18_DictionaryStorageC8allocate8capacityAByxq_GSi_tFZ";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.ReturnLocation.RegisterOffset,
+              getTargetRegInfo(Architecture).IntReturnReg);
+    ASSERT_EQ(Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Addend = 1;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftDictionaryHashableViolationNeverReturns) {
+  constexpr llvm::StringLiteral Name = "$ss53KEY_TYPE_OF_DICTIONARY_VIOLATES_"
+                                       "HASHABLE_REQUIREMENTSys5NeverOypXpF";
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_TRUE(Hint->DoesNotReturn);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::Ordinary);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[0]);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Addend = 1;
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, SwiftDictionaryStorageCopyAndResizeKeepScalarABI) {
+  constexpr llvm::StringLiteral Provider = "/usr/lib/swift/libswiftCore.dylib";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &Name :
+         {"$ss18_DictionaryStorageC4copy8originalAByxq_Gs05__RawaB0C_tFZ",
+          "$ss18_DictionaryStorageC6resize8original8capacity4moveAByxq_Gs05__"
+          "RawaB0C_SiSbtFZ"}) {
+      SCOPED_TRACE(Name);
+      const bool Resize = llvm::StringRef(Name).contains("resize");
+      const std::string Import = "_" + std::string(Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_FALSE(Hint->DoesNotReturn);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.ReturnLocation.RegisterOffset,
+                getTargetRegInfo(Architecture).IntReturnReg);
+      ASSERT_EQ(Signature.Parameters.size(), Resize ? 4U : 2U);
+      EXPECT_EQ(Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs[0]);
+      if (Resize) {
+        EXPECT_EQ(Signature.Parameters[1].Type->Size, 8U);
+        EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[1]);
+        EXPECT_EQ(Signature.Parameters[2].Type->Size, 1U);
+        EXPECT_EQ(Signature.Parameters[2].Location.ValueBytes, 1U);
+        EXPECT_EQ(Signature.Parameters[2].Location.RegisterOffset,
+                  getTargetRegInfo(Architecture).IntParamRegs[2]);
+      }
+      const auto &Context = Signature.Parameters.back();
+      EXPECT_EQ(Context.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Context.TheRole, SourceParameterTypeHint::Role::SwiftContext);
+      EXPECT_EQ(Context.Location.RegisterOffset,
+                Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+}
+
+TEST(ObjCCallHints, FoundationURLAppendingPathKeepsIndirectResultABI) {
+  constexpr llvm::StringLiteral Name =
+      "$s10Foundation3URLV22appendingPathComponentyACSSF";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/Foundation.framework/Foundation";
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    const std::string Import = "_" + Name.str();
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+    const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    EXPECT_EQ(Signature.Origin, SourceFunctionTypeHint::OriginKind::SwiftSDK);
+    EXPECT_EQ(Signature.Convention,
+              SourceFunctionTypeHint::ConventionKind::Swift);
+    ASSERT_TRUE(Signature.ReturnType);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Signature.Parameters.size(), 4U);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    EXPECT_EQ(Signature.Parameters[0].TheRole,
+              SourceParameterTypeHint::Role::SwiftIndirectResult);
+    EXPECT_EQ(Signature.Parameters[0].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                            : TRI.IntReturnReg);
+    EXPECT_EQ(Signature.Parameters[1].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Signature.Parameters[1].Location.RegisterOffset,
+              TRI.IntParamRegs[0]);
+    EXPECT_EQ(Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[2].Location.RegisterOffset,
+              TRI.IntParamRegs[1]);
+    EXPECT_EQ(Signature.Parameters[3].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_EQ(Signature.Parameters[3].Location.RegisterOffset,
+              Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+    auto Wrong = Image;
+    Wrong.DyldBindSlots[0x2180].Module = "/tmp/Foundation";
+    EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
   }
 }
 
@@ -1149,6 +3247,60 @@ TEST(ObjCCallHints,
   }
 }
 
+TEST(ObjCCallHints, SwiftAssertionFailureTerminatesTheBoundMachineCall) {
+  const std::string Import =
+      "_$ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_"
+      "SSAHSus6UInt32VtF";
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    auto Image = runtimeImage(Import, Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        Import, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+    // The x64 stack arguments need the call's return-address bias.
+    if (Architecture == Arch::X64)
+      Image.Segments[0].Data[0x200] = 0xe8;
+    auto Med = convert(Image, caller(Architecture));
+    unsigned BoundCalls = 0;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          ASSERT_TRUE(Op.SourceCallHint);
+          EXPECT_TRUE(Op.DoesNotReturn);
+          EXPECT_EQ(Op.NumInputs, 11U);
+          EXPECT_EQ(Op.Inputs[0].ConstVal, 0x1100U);
+          EXPECT_EQ(Op.SourceCallHint->TargetAddress, 0x2180U);
+          ++BoundCalls;
+        }
+    ASSERT_EQ(BoundCalls, 1U);
+    std::vector<MedFunc> Functions{std::move(Med)};
+    propagateInternalNoReturn(Functions, Architecture);
+    EXPECT_TRUE(Functions[0].DoesNotReturn);
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Functions[0], Architecture);
+    EXPECT_TRUE(High.DoesNotReturn);
+    unsigned SourceReturns = 0;
+    walkStmts(High.Body, [&](const HighStmt &Statement) {
+      SourceReturns += Statement.Kind == StmtKind::Return;
+    });
+    EXPECT_EQ(SourceReturns, 0U);
+
+    // Neither disabled source binding nor a same-named foreign import grants
+    // the machine termination effect from the SDK declaration.
+    for (bool Enabled : {false, true}) {
+      if (Enabled)
+        Image.DyldBindSlots[0x2180].Module = "/tmp/libswiftCore.dylib";
+      const auto Unbound = convert(Image, caller(Architecture), Enabled);
+      for (const auto &Block : Unbound.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL) {
+            EXPECT_FALSE(Op.SourceCallHint);
+            EXPECT_FALSE(Op.DoesNotReturn);
+          }
+    }
+  }
+}
+
 TEST(ObjCCallHints, SwiftRuntimeRecordResultsKeepBothDeclaredCarriers) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const auto &[Name, Arguments] :
@@ -1353,7 +3505,7 @@ TEST(ObjCCallHints, SwiftFixedRuntimeImportsRequireExactStrongProvider) {
 TEST(ObjCCallHints, SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (const char *Name :
-         {"_swift_willThrow", "_swift_allocError", "_swift_allocBoxTyped",
+         {"_swift_willThrow", "_swift_allocBoxTyped",
           "_swift_retainDirect", "_swift_task_getCurrent",
           "_swift_getTypeByMangledNameInContext2_suffix"}) {
       auto Image = runtimeImage(Name, Architecture);
@@ -1361,6 +3513,10 @@ TEST(ObjCCallHints, SwiftFixedRuntimeDeclarationsExcludeCustomParameterABIs) {
       Image.DyldBindSlots[0x2180].Module = "/usr/lib/swift/libswiftCore.dylib";
       EXPECT_FALSE(swiftRuntimeSourceCallHint(Image, 0x2180)) << Name;
     }
+  auto X64 = runtimeImage("_swift_allocError", Arch::X64);
+  X64.DyldBindSlots[0x2180] = {
+      "_swift_allocError", 0, "/usr/lib/swift/libswiftCore.dylib", false};
+  EXPECT_FALSE(swiftRuntimeSourceCallHint(X64, 0x2180));
 }
 
 TEST(ObjCCallHints, SwiftOnceKeepsCallbackContextAndVoidResult) {
@@ -2490,6 +4646,41 @@ TEST(ObjCCallHints, UnresolvedFormatImportsDoNotInheritMessageDispatch) {
   }
 }
 
+TEST(ObjCCallHints, SnprintfBindsOnlyFromItsProvenCFormatRegister) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ImportPtrSlots[0x2180] = "_snprintf";
+    Image.DyldBindSlots[0x2180] = {"_snprintf", 0,
+                                   "/usr/lib/system/libsystem_c.dylib", false};
+    const std::string Format = "%02x";
+    std::copy(Format.begin(), Format.end(),
+              Image.Segments[0].Data.begin() + 0x1200);
+    Image.Segments[0].Data[0x1200 + Format.size()] = 0;
+    const auto &TRI = getTargetRegInfo(Architecture);
+    LowFunc Function;
+    Function.Entry = 0x1200;
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.StartAddr = 0x1200;
+    Block.Ops = {
+        operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[2], 8),
+                  {NdVar::cst(0x2200, 8)}, 0x1200),
+        operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1204),
+        operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 4)}, 0x1208)};
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Hint = Hints.at(0x1204);
+    EXPECT_EQ(Hint.TargetName, "snprintf");
+    ASSERT_TRUE(Hint.Format);
+    EXPECT_EQ(Hint.Format->FormatAddress, 0x2200U);
+    EXPECT_EQ(Hint.Format->Syntax, SourceCallTypeHint::FormatSyntax::Printf);
+    ASSERT_EQ(Hint.Signature.Parameters.size(), 4U);
+
+    Function.Blocks[0].Ops[0].Inputs[0] = NdVar::reg(TRI.IntParamRegs[3], 8);
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, Function).empty());
+  }
+}
+
 TEST(ObjCCallHints, RuntimeVoidAndWeakSignaturesDoNotInventResults) {
   auto Image = runtimeImage("_objc_storeStrong");
   const auto Hints = buildObjCSourceCallHints(Image, caller());
@@ -2577,6 +4768,30 @@ TEST(ObjCCallHints,
       EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180))
           << Name << ':' << Mutation;
     }
+}
+
+TEST(ObjCCallHints, PropertyGetterKeepsSignedOffsetAndPlatformBoolABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage("_objc_getProperty", Architecture);
+    EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+    auto &Binding = Image.DyldBindSlots[0x2180];
+    Binding.Name = "_objc_getProperty";
+    Binding.Module = "/usr/lib/libobjc.A.dylib";
+    const auto Hint = objcRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    const auto &Signature = Hint->Signature;
+    ASSERT_EQ(Signature.Parameters.size(), 4U);
+    EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Signature.Parameters[2].Type->Size, 8U);
+    EXPECT_TRUE(Signature.Parameters[2].Type->IsSigned);
+    EXPECT_EQ(Signature.Parameters[3].Type->Size, 1U);
+    EXPECT_EQ(Signature.Parameters[3].Type->IsSigned,
+              Architecture == Arch::X64);
+    EXPECT_EQ(Signature.Parameters[3].Location.RegisterOffset,
+              getTargetRegInfo(Architecture).IntParamRegs[3]);
+    Binding.Module = "/tmp/libobjc.A.dylib";
+    EXPECT_FALSE(objcRuntimeSourceCallHint(Image, 0x2180));
+  }
 }
 
 TEST(ObjCCallHints, PropertyRuntimeKeepsValueBeforeSignedOffset) {
@@ -2776,6 +4991,234 @@ TEST(ObjCCallHints, SelectorStubCommandProofDoesNotRequireMethodSignature) {
   }
 }
 
+TEST(ObjCCallHints, DynamicFormatStubBindsEmptyAndProvenPointerTails) {
+  auto Image = selectorStubImage();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  Image.ObjCSourceReferences.at(0x2100).Name = "localizedStringWithFormat:";
+  const auto Declared =
+      objcSelectorStubDynamicFormatSourceCallHint(Image, 0x1100);
+  ASSERT_TRUE(Declared);
+  ASSERT_TRUE(Declared->Format);
+  EXPECT_TRUE(Declared->Format->DynamicWithoutArguments);
+  EXPECT_EQ(Declared->Format->FixedCount, 3U);
+  EXPECT_EQ(Declared->Format->FormatParameter, 2U);
+  EXPECT_EQ(Declared->Format->FormatAddress, 0U);
+  EXPECT_TRUE(Declared->Format->AlternativeFormatAddresses.empty());
+  EXPECT_EQ(Declared->SelectorReferenceAddress, 0x2100U);
+
+  auto Native = std::make_shared<SourceCallTypeHint>(*Declared);
+  Native->CallKind = SourceCallTypeHint::Kind::Native;
+  Native->TargetName = "sub_1100";
+  Native->Selector.clear();
+  Native->SelectorReferenceAddress = 0;
+  Native->Format.reset();
+  Native->Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Native->Signature.ReturnType = NdType::makeInt(8, false);
+  for (auto &Parameter : Native->Signature.Parameters)
+    Parameter.Type = NdType::makeInt(8, false);
+
+  MedVar DynamicFormat;
+  DynamicFormat.Kind = MedVar::Param;
+  DynamicFormat.Id = 0;
+  DynamicFormat.Size = 8;
+  DynamicFormat.TheArch = Arch::AArch64;
+  auto MakeCall = [&] {
+    auto Call = HighExpr::makeCall(
+        Native->TargetName, Native->TargetAddress,
+        {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8),
+         HighExpr::makeVar(DynamicFormat, NdType::makeInt(8, false))});
+    Call->Type = Native->Signature.ReturnType;
+    Call->SourceCallHint = Native;
+    HighFunc Function;
+    Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+    Function.Params = {{"format", NdType::makePtr(NdType::makeVoid())}};
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Call;
+    Function.Body = {Return};
+    return Function;
+  };
+
+  auto Function = MakeCall();
+  auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+  EXPECT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  const auto &Call = Bound.Function.Body.front().RetVal;
+  ASSERT_TRUE(Call && Call->SourceCallHint);
+  EXPECT_EQ(Call->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::ObjCMessage);
+  EXPECT_TRUE(Call->SourceCallHint->Format->DynamicWithoutArguments);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}, nullptr, nullptr,
+                                       &Bound.Function));
+
+  // A raw direct call may not have a native source hint: selector stubs are
+  // not ordinary function entries. The exact stub plus every fixed scalar
+  // carrier is sufficient physical proof for the zero-tail call.
+  Function = MakeCall();
+  Function.Body.front().RetVal->SourceCallHint.reset();
+  Function.Body.front().RetVal->Type.reset();
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  const auto &RawCall = Bound.Function.Body.front().RetVal;
+  ASSERT_TRUE(RawCall && RawCall->SourceCallHint);
+  EXPECT_EQ(RawCall->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::ObjCMessage);
+  EXPECT_TRUE(RawCall->SourceCallHint->Format->DynamicWithoutArguments);
+
+  // A dynamic format can also preserve a nonempty variadic tail when every
+  // actual value already has a source pointer type. No format-text type is
+  // inferred; the pointer type itself proves the promoted physical carrier.
+  const auto PointerTail = objcDynamicFormatPointerArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", 2);
+  ASSERT_TRUE(PointerTail);
+  ASSERT_TRUE(PointerTail->Format);
+  EXPECT_FALSE(PointerTail->Format->DynamicWithoutArguments);
+  EXPECT_TRUE(PointerTail->Format->DynamicPointerArguments);
+  ASSERT_EQ(PointerTail->Signature.Parameters.size(), 5U);
+  EXPECT_EQ(PointerTail->Signature.Parameters[3].Location.Kind,
+            SourceABICarrierKind::Stack);
+  EXPECT_EQ(PointerTail->Signature.Parameters[3].Location.EntryStackOffset, 0);
+  EXPECT_EQ(PointerTail->Signature.Parameters[4].Location.EntryStackOffset, 8);
+
+  Function = MakeCall();
+  auto &PointerCall = Function.Body.front().RetVal;
+  auto PointerNative = std::make_shared<SourceCallTypeHint>(*Native);
+  PointerNative->Signature = PointerTail->Signature;
+  PointerNative->Signature.Origin =
+      SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  for (auto &Parameter : PointerNative->Signature.Parameters)
+    Parameter.Type = NdType::makeInt(8, false);
+  PointerCall->SourceCallHint = PointerNative;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  MedVar FirstPointer = DynamicFormat;
+  FirstPointer.Id = 1;
+  MedVar SecondPointer = DynamicFormat;
+  SecondPointer.Id = 2;
+  PointerCall->Operands.push_back(HighExpr::makeVar(FirstPointer, Pointer));
+  PointerCall->Operands.push_back(HighExpr::makeVar(SecondPointer, Pointer));
+  Function.Params.push_back({"first", Pointer});
+  Function.Params.push_back({"second", Pointer});
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  const auto &BoundPointerCall = Bound.Function.Body.front().RetVal;
+  ASSERT_TRUE(BoundPointerCall && BoundPointerCall->SourceCallHint);
+  EXPECT_EQ(BoundPointerCall->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::ObjCMessage);
+  ASSERT_TRUE(BoundPointerCall->SourceCallHint->Format);
+  EXPECT_TRUE(
+      BoundPointerCall->SourceCallHint->Format->DynamicPointerArguments);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*BoundPointerCall, Image, {}, nullptr,
+                                       nullptr, &Bound.Function));
+
+  PointerCall->SourceCallHint.reset();
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Function.Body.front().RetVal->SourceCallHint);
+  EXPECT_EQ(Bound.Function.Body.front().RetVal->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::ObjCMessage);
+
+  // Native SSA can retain a scalar spelling after an authenticated ARC call
+  // has proved that the value is an Objective-C pointer. Follow the complete
+  // definition family instead of treating every 64-bit scalar as a pointer.
+  constexpr va_t RetainSlot = 0x2188;
+  Image.ImportPtrSlots[RetainSlot] = "_objc_retainAutoreleasedReturnValue";
+  Image.DyldBindSlots[RetainSlot] = {"_objc_retainAutoreleasedReturnValue", 0,
+                                     "/usr/lib/libobjc.A.dylib", false};
+  const auto RetainHint = objcRuntimeSourceCallHint(Image, RetainSlot);
+  ASSERT_TRUE(RetainHint);
+  Function = MakeCall();
+  auto &ProvenCall = Function.Body.front().RetVal;
+  const auto OnePointerTail = objcDynamicFormatPointerArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", 1);
+  ASSERT_TRUE(OnePointerTail);
+  auto ProvenNative = std::make_shared<SourceCallTypeHint>(*Native);
+  ProvenNative->Signature = OnePointerTail->Signature;
+  ProvenNative->Signature.Origin =
+      SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  for (auto &Parameter : ProvenNative->Signature.Parameters)
+    Parameter.Type = NdType::makeInt(8, false);
+  ProvenCall->SourceCallHint = ProvenNative;
+  MedVar Retained = DynamicFormat;
+  Retained.Kind = MedVar::Temp;
+  Retained.Id = 3;
+  auto RetainedValue = HighExpr::makeVar(Retained, NdType::makeInt(8, false));
+  ProvenCall->Operands.push_back(RetainedValue);
+  auto Retain = HighExpr::makeCall("objc_retainAutoreleasedReturnValue",
+                                   RetainSlot, {HighExpr::makeConst(0, 8)});
+  Retain->Type = NdType::makeInt(8, false);
+  Retain->SourceCallHint = std::make_shared<SourceCallTypeHint>(*RetainHint);
+  HighStmt DefineRetained;
+  DefineRetained.Kind = StmtKind::Assign;
+  DefineRetained.Dst = RetainedValue;
+  DefineRetained.Val = Retain;
+  Function.Body.insert(Function.Body.begin(), DefineRetained);
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  const auto &ProvenPointerCall = Bound.Function.Body.back().RetVal;
+  ASSERT_TRUE(ProvenPointerCall && ProvenPointerCall->SourceCallHint);
+  EXPECT_EQ(ProvenPointerCall->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::ObjCMessage);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*ProvenPointerCall, Image, {}, nullptr,
+                                       nullptr, &Bound.Function));
+
+  HighStmt ConflictingDefinition = DefineRetained;
+  ConflictingDefinition.Val = HighExpr::makeConst(7, 8);
+  Function.Body.insert(Function.Body.begin(), ConflictingDefinition);
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Function.Body.back().RetVal->SourceCallHint);
+  EXPECT_EQ(Bound.Function.Body.back().RetVal->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::Native);
+
+  Function = MakeCall();
+  auto &IntegerTailCall = Function.Body.front().RetVal;
+  IntegerTailCall->SourceCallHint = PointerNative;
+  IntegerTailCall->Operands.push_back(HighExpr::makeVar(FirstPointer, Pointer));
+  IntegerTailCall->Operands.push_back(HighExpr::makeConst(7, 8));
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Function.Body.front().RetVal->SourceCallHint);
+  EXPECT_EQ(Bound.Function.Body.front().RetVal->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::Native);
+  EXPECT_FALSE(objcDynamicFormatPointerArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", 62));
+
+  Function = MakeCall();
+  Function.Body.front().RetVal->SourceCallHint.reset();
+  Function.Body.front().RetVal->Type = NdType::makeFloat(8);
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  EXPECT_FALSE(Bound.Function.Body.front().RetVal->SourceCallHint);
+
+  Function = MakeCall();
+  Function.Body.front().RetVal->SourceCallHint.reset();
+  Function.Body.front().RetVal->Operands[2]->Type = NdType::makeFloat(8);
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  EXPECT_FALSE(Bound.Function.Body.front().RetVal->SourceCallHint);
+
+  Function = MakeCall();
+  Function.Body.front().RetVal->SourceCallHint.reset();
+  Function.Body.front().RetVal->Operands.push_back(HighExpr::makeConst(7, 8));
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  EXPECT_FALSE(Bound.Function.Body.front().RetVal->SourceCallHint);
+
+  // One untyped tail operand is still too much: without the format object's
+  // exact contents there is no promoted source type for an integer value.
+  Function = MakeCall();
+  Function.Body.front().RetVal->Operands.push_back(HighExpr::makeConst(7, 8));
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Function.Body.front().RetVal->SourceCallHint);
+  EXPECT_EQ(Bound.Function.Body.front().RetVal->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::Native);
+
+  // The selector stub and native carrier proof are both authoritative.
+  Function = MakeCall();
+  auto WrongABI = std::make_shared<SourceCallTypeHint>(
+      *Function.Body.front().RetVal->SourceCallHint);
+  WrongABI->Signature.Parameters[2].Location.RegisterOffset += 8;
+  Function.Body.front().RetVal->SourceCallHint = WrongABI;
+  Bound = sdk::bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Bound.Function.Body.front().RetVal->SourceCallHint);
+  EXPECT_EQ(Bound.Function.Body.front().RetVal->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::Native);
+  Image.ObjCSourceReferences.at(0x2100).Name = "stringWithFormat:";
+  EXPECT_FALSE(objcSelectorStubDynamicFormatSourceCallHint(Image, 0x1104));
+}
+
 TEST(ObjCCallHints, SelectorStubCommandProofRejectsUnverifiedCodeAndSlots) {
   for (unsigned Mutation = 0; Mutation < 16; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -2965,6 +5408,193 @@ TEST(ObjCCallHints, NativeHintsPreserveIndependentFloatingRegisterBank) {
             getTargetRegInfo(Arch::AArch64).FPReturnReg);
 }
 
+TEST(ObjCCallHints, CallOnlyHintDoesNotReplaceCurrentFunctionEntryABI) {
+  auto EntryHint = signature(Arch::AArch64, 1);
+  std::string Diagnostic;
+
+  SourceFunctionTypeHint CallOnlyHint;
+  CallOnlyHint.ReturnType = NdType::makePtr(NdType::makeVoid());
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(CallOnlyHint, Arch::AArch64, Diagnostic))
+      << Diagnostic;
+  std::map<va_t, SourceFunctionTypeHint> EntryHints{{0x1200, EntryHint}};
+  std::map<va_t, SourceFunctionTypeHint> CalleeHints{{0x1200, CallOnlyHint},
+                                                     {0x1600, CallOnlyHint}};
+
+  auto Low = caller();
+  Low.Blocks[0].Ops[0].Inputs[0] = NdVar::cst(0x1600, 8);
+  Low.Blocks[0].Ops.back().Inputs[0] = NdVar::cst(0x2200, 8);
+  LowToMedConverter Converter;
+  Converter.setSourceEntryTypeHints(&EntryHints);
+  Converter.setSourceCalleeTypeHints(&CalleeHints);
+  Converter.setSourceCallHintsEnabled(true);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  recoverCallAbi(Med, Arch::AArch64, {});
+
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+  EXPECT_TRUE(Med.CallInfos[0].Args.empty());
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  bool FoundEntryReturn = false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::RETURN) {
+        ASSERT_EQ(Op.NumInputs, 1U);
+        EXPECT_EQ(Op.Inputs[0].Kind, MedVar::Reg);
+        EXPECT_EQ(Op.Inputs[0].RegOff, TRI.IntReturnReg);
+        EXPECT_EQ(Op.Inputs[0].Size, 4U);
+        FoundEntryReturn = true;
+      }
+  EXPECT_TRUE(FoundEntryReturn);
+}
+
+TEST(ObjCCallHints, ExplicitVoidEntryDropsGenericMachineReturnCarrier) {
+  SourceFunctionTypeHint EntryHint;
+  EntryHint.ReturnType = NdType::makeVoid();
+  EntryHint.Parameters = {
+      {"objc_self", NdType::makePtr(NdType::makeVoid())},
+      {"objc_cmd", NdType::makePtr(NdType::makeVoid())}};
+  std::string Diagnostic;
+  ASSERT_TRUE(
+      assignDarwinObjCSourceABI(EntryHint, Arch::AArch64, Diagnostic))
+      << Diagnostic;
+  std::map<va_t, SourceFunctionTypeHint> EntryHints{{0x1200, EntryHint}};
+
+  auto Low = caller();
+  Low.Blocks[0].Ops.back().Inputs[0] = NdVar::reg(a64reg::X0, 8);
+  LowToMedConverter Converter;
+  Converter.setSourceEntryTypeHints(&EntryHints);
+  Converter.setSourceCallHintsEnabled(true);
+  const auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+
+  bool FoundReturn = false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::RETURN) {
+        EXPECT_EQ(Op.NumInputs, 0U);
+        FoundReturn = true;
+      }
+  EXPECT_TRUE(FoundReturn);
+
+  MedFunc Branching;
+  Branching.Entry = 0x1200;
+  Branching.Name = "void_fallthrough";
+  Branching.ReturnType = NdType::makeVoid();
+  Branching.SourceTypeHint = EntryHint;
+  Branching.SourceParametersBound = true;
+  MedBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1200;
+  Entry.EndAddr = 0x1204;
+  Entry.Succs = {1, 2};
+  MedOp Cond;
+  Cond.Opcode = NdOp::COND_BR;
+  Cond.Addr = 0x1200;
+  Cond.addInput(MedVar::makeConst(0x1220, 8));
+  Cond.addInput(MedVar::makeConst(1, 1));
+  Entry.Ops.push_back(Cond);
+  MedBlock Returned;
+  Returned.Id = 1;
+  Returned.StartAddr = 0x1210;
+  Returned.EndAddr = 0x1214;
+  Returned.Preds = {0};
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1210;
+  Returned.Ops.push_back(Return);
+  MedBlock Fallthrough;
+  Fallthrough.Id = 2;
+  Fallthrough.StartAddr = 0x1220;
+  Fallthrough.EndAddr = 0x1224;
+  Fallthrough.Preds = {0};
+  MedOp MachineResult;
+  MachineResult.Opcode = NdOp::COPY;
+  MachineResult.Addr = 0x1220;
+  MachineResult.Output.Kind = MedVar::Reg;
+  MachineResult.Output.Id = 7;
+  MachineResult.Output.SSAVer = 1;
+  MachineResult.Output.RegOff = a64reg::X0;
+  MachineResult.Output.Size = 8;
+  MachineResult.Output.TheArch = Arch::AArch64;
+  MachineResult.addInput(MedVar::makeConst(42, 8));
+  Fallthrough.Ops.push_back(MachineResult);
+  Branching.Blocks = {Entry, Returned, Fallthrough};
+
+  const auto High = MedToHighConverter().convert(Branching, Arch::AArch64);
+  ASSERT_FALSE(High.Body.empty());
+  ASSERT_EQ(High.Body.back().Kind, StmtKind::Return);
+  EXPECT_FALSE(High.Body.back().RetVal);
+}
+
+TEST(ObjCCallHints, AArch64NarrowArgumentsUseDefinedWRegisterAcrossJoin) {
+  auto Hint = signature(Arch::AArch64, 6);
+  Hint.Parameters.back().Type = NdType::makeInt(1, false);
+  std::string Diagnostic;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(Hint, Arch::AArch64, Diagnostic))
+      << Diagnostic;
+  ASSERT_EQ(Hint.Parameters.back().Location.RegisterOffset, a64reg::X7);
+  ASSERT_EQ(Hint.Parameters.back().Location.ValueBytes, 1U);
+  std::map<va_t, SourceFunctionTypeHint> Hints{{0x1600, Hint}};
+
+  LowFunc Low;
+  Low.Entry = 0x1200;
+  Low.Name = "narrow_join_caller";
+  LowBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1200;
+  Entry.Succs = {1, 2};
+  LowBlock Left;
+  Left.Id = 1;
+  Left.StartAddr = 0x1210;
+  Left.Preds = {0};
+  Left.Succs = {3};
+  Left.Ops = {operation(NdOp::INT_ZEXT, NdVar::reg(a64reg::X7, 4),
+                        {NdVar::cst(0x7f, 1)}, 0x1210)};
+  LowBlock Right;
+  Right.Id = 2;
+  Right.StartAddr = 0x1220;
+  Right.Preds = {0};
+  Right.Succs = {3};
+  Right.Ops = {operation(NdOp::COPY, NdVar::reg(a64reg::X7, 4),
+                         {NdVar::cst(0, 4)}, 0x1220)};
+  LowBlock Join;
+  Join.Id = 3;
+  Join.StartAddr = 0x1230;
+  Join.Preds = {1, 2};
+  Join.Ops = {operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8),
+                        {NdVar::cst(0x1600, 8)}, 0x1230),
+              operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 4)}, 0x1234)};
+  Low.Blocks = {Entry, Left, Right, Join};
+
+  LowToMedConverter Converter;
+  Converter.setSourceCalleeTypeHints(&Hints);
+  Converter.setSourceCallHintsEnabled(true);
+  auto Med = Converter.convert(Low, Arch::AArch64, BinaryFormat::MachO);
+  recoverCallAbi(Med, Arch::AArch64, {});
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  const auto &Call = Med.CallInfos.front();
+  ASSERT_TRUE(Call.SourceCallHint);
+  ASSERT_EQ(Call.Args.size(), 8U);
+  const auto Narrow = Call.Args.back();
+  ASSERT_EQ(Narrow.Kind, MedVar::Temp);
+  ASSERT_EQ(Narrow.Size, 1U);
+
+  const MedOp *Extract = nullptr;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Output.Kind == Narrow.Kind && Op.Output.Id == Narrow.Id &&
+          Op.Output.SSAVer == Narrow.SSAVer)
+        Extract = &Op;
+  ASSERT_NE(Extract, nullptr);
+  EXPECT_EQ(Extract->Opcode, NdOp::SUBBYTES);
+  ASSERT_EQ(Extract->NumInputs, 2U);
+  EXPECT_EQ(Extract->Inputs[0].Kind, MedVar::Reg);
+  EXPECT_EQ(Extract->Inputs[0].RegOff, a64reg::X7);
+  EXPECT_EQ(Extract->Inputs[0].Size, 4U);
+  EXPECT_TRUE(Extract->Inputs[1].isConst());
+  EXPECT_EQ(Extract->Inputs[1].ConstVal, 0U);
+}
+
 TEST(ObjCCallHints, SuperDispatchUsesVerifiedRuntimeVeneerAndLoadedSelector) {
   auto Image = image();
   Image.ImportPtrSlots[0x2180] = "_objc_msgSendSuper2";
@@ -2980,6 +5610,95 @@ TEST(ObjCCallHints, SuperDispatchUsesVerifiedRuntimeVeneerAndLoadedSelector) {
   Low.Blocks[0].Ops[1].Inputs[0] = NdVar::cst(0x2180, 8);
   // The address of a bound pointer slot is not the function stored in it.
   EXPECT_TRUE(buildObjCSourceCallHints(Image, Low).empty());
+}
+
+TEST(ObjCCallHints, SuperInitResultKeepsTheStoredDynamicReceiver) {
+  auto Image = image();
+  Image.ObjCMethods.front().Implementation = 0x1200;
+  ObjCClass First;
+  First.Name = "First";
+  First.SuperclassName = "NSObject";
+  First.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(First);
+  ObjCClass NSObject;
+  NSObject.Name = "NSObject";
+  NSObject.RootClass = true;
+  NSObject.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(NSObject);
+  Image.ObjCClasses.front().RootClass = false;
+  Image.ObjCClasses.front().SuperclassName = "NSObject";
+  Image.ObjCClasses.front().InheritanceStatus = "resolved";
+  Image.ImportPtrSlots[0x2180] = "_objc_msgSendSuper2";
+  Image.ImportPtrSlots[0x2188] = "_objc_msgSend";
+  Image.ObjCSourceReferences[0x2100] = {
+      ObjCSourceReference::Kind::Selector, 0x2100, 8, "init"};
+  Image.ObjCSourceReferences[0x2110] = {
+      ObjCSourceReference::Kind::Selector, 0x2110, 8, "setIndex:"};
+
+  auto Init = Image.ObjCMethods.front();
+  Init.ClassName = "NSObject";
+  Init.Selector = "init";
+  Init.Implementation = 0x1500;
+  Init.TypeHint = signature(Arch::AArch64, 0);
+  Init.TypeHint->ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Diagnostic;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(*Init.TypeHint, Arch::AArch64,
+                                       Diagnostic));
+  Image.ObjCMethods.push_back(Init);
+  auto Setter = Image.ObjCMethods.front();
+  Setter.ClassName = "First";
+  Setter.Selector = "setIndex:";
+  Setter.Implementation = 0x1510;
+  Image.ObjCMethods.push_back(Setter);
+  auto Conflicting = Setter;
+  Conflicting.ClassName = "Other";
+  Conflicting.Implementation = 0x1520;
+  Conflicting.TypeHint->Parameters.back().Type =
+      NdType::makePtr(NdType::makeVoid());
+  Diagnostic.clear();
+  ASSERT_TRUE(assignDarwinObjCSourceABI(*Conflicting.TypeHint, Arch::AArch64,
+                                       Diagnostic));
+  Image.ObjCMethods.push_back(Conflicting);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "setIndex:"));
+
+  auto Function = caller();
+  auto &Block = Function.Blocks.front();
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(16, 4)}, 0x1204),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X8, 8), NdVar::reg(a64reg::X0, 8)},
+                0x1208),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X1, 8),
+                {NdVar::cst(0x2100, 8)}, 0x120c),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x1210),
+      operation(NdOp::INDIR_CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x2180, 8)}, 0x1214),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(a64reg::X0, 8)}, 0x1218),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X1, 8),
+                {NdVar::cst(0x2110, 8)}, 0x121c),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x1220),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X2, 8),
+                {NdVar::cst(7, 8)}, 0x1224),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x1228),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X19, 8)}, 0x122c)};
+  Block.EndAddr = 0x1230;
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  EXPECT_EQ(Hints.count(0x1214), 1U);
+  EXPECT_EQ(Hints.count(0x1228), 1U);
+  ASSERT_EQ(Hints.size(), 2U);
+  ASSERT_TRUE(Hints.at(0x1228).Receiver);
+  EXPECT_EQ(Hints.at(0x1228).Receiver->ClassName, "First");
+
+  Block.Ops[3] = operation(NdOp::LOAD, NdVar::reg(a64reg::X1, 8),
+                           {NdVar::cst(0x2110, 8)}, 0x120c);
+  EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1228), 0U);
 }
 
 TEST(ObjCCallHints, ExplicitNativeStackHintsRequireKnownX64CallInstruction) {
@@ -3045,6 +5764,14 @@ TEST(ObjCCallHints, SDKCDeclarationsPreservePointerIntegerAndFloatCarriers) {
                      NdTypeKind::Int, 8U},
           std::tuple{"fmod", "/usr/lib/libSystem.B.dylib", 2U,
                      NdTypeKind::Float, 8U},
+          std::tuple{
+              "CACurrentMediaTime",
+              "/System/Library/Frameworks/QuartzCore.framework/QuartzCore", 0U,
+              NdTypeKind::Float, 8U},
+          std::tuple{"UTTypeIsDynamic",
+                     "/System/Library/Frameworks/CoreServices.framework/"
+                     "CoreServices",
+                     1U, NdTypeKind::Int, 1U},
           std::tuple{"__error", "/usr/lib/libSystem.B.dylib", 0U,
                      NdTypeKind::Ptr, 8U}}) {
       SCOPED_TRACE(Name);
@@ -3092,6 +5819,206 @@ TEST(ObjCCallHints, SDKCDeclarationsPreservePointerIntegerAndFloatCarriers) {
   }
 }
 
+TEST(ObjCCallHints, UIKitCGSizeStringKeepsExactProviderAndRecordABI) {
+  auto Image = runtimeImage("_NSStringFromCGSize", Arch::AArch64);
+  Image.DyldBindSlots[0x2180] = {
+      "_NSStringFromCGSize", 0,
+      "/System/Library/Frameworks/UIKit.framework/UIKit", false};
+  const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+  EXPECT_EQ(Hint->TargetName, "NSStringFromCGSize");
+  EXPECT_EQ(Hint->Signature.Origin,
+            SourceFunctionTypeHint::OriginKind::DarwinSDK);
+  ASSERT_TRUE(Hint->Signature.ReturnType);
+  EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+  const auto &Size = Hint->Signature.Parameters.front();
+  ASSERT_TRUE(Size.Type);
+  EXPECT_EQ(Size.Type->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Size.Type->Size, 16U);
+  ASSERT_EQ(Size.Type->Fields.size(), 2U);
+  ASSERT_EQ(Size.Components.size(), 2U);
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned I = 0; I != 2; ++I) {
+    EXPECT_EQ(Size.Type->Fields[I]->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Size.Type->Fields[I]->Size, 8U);
+    EXPECT_EQ(Size.Components[I].Kind,
+              SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Size.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+    EXPECT_EQ(Size.Components[I].ValueBytes, 8U);
+  }
+  std::string Diagnostic;
+  EXPECT_TRUE(validateSourceABI(Hint->Signature, Diagnostic)) << Diagnostic;
+
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.Arch = Arch::X64;
+    if (Mutation == 1)
+      Changed.DyldBindSlots.clear();
+    if (Mutation == 2)
+      Changed.DyldBindSlots[0x2180].Module =
+          "/System/Library/Frameworks/Foundation.framework/Foundation";
+    if (Mutation == 3)
+      Changed.DyldBindSlots[0x2180].Module =
+          "/tmp/UIKit.framework/UIKit";
+    if (Mutation == 4)
+      Changed.DyldBindSlots[0x2180].Name = "_other";
+    if (Mutation == 5)
+      Changed.DyldBindSlots[0x2180].Addend = 8;
+    if (Mutation == 6)
+      Changed.DyldBindSlots[0x2180].WeakImport = true;
+    if (Mutation == 7)
+      Changed.ConflictingImportStorageSlots.insert(0x2180);
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+  }
+}
+
+TEST(ObjCCallHints, UIKitImageContextKeepsExactProviderAndPublicABIs) {
+  constexpr auto UIKit =
+      "/System/Library/Frameworks/UIKit.framework/UIKit";
+  for (const auto &[Name, ParameterCount, ReturnKind] :
+       {std::tuple{"UIGraphicsBeginImageContext", 1U, NdTypeKind::Void},
+        std::tuple{"UIGraphicsGetCurrentContext", 0U, NdTypeKind::Ptr},
+        std::tuple{"UIGraphicsGetImageFromCurrentImageContext", 0U,
+                   NdTypeKind::Ptr},
+        std::tuple{"UIGraphicsEndImageContext", 0U, NdTypeKind::Void}}) {
+    SCOPED_TRACE(Name);
+    auto Image = runtimeImage("_" + std::string(Name), Arch::AArch64);
+    Image.DyldBindSlots[0x2180] = {
+        "_" + std::string(Name), 0, UIKit, false};
+    const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, Name);
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinSDK);
+    ASSERT_TRUE(Hint->Signature.ReturnType);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, ReturnKind);
+    EXPECT_EQ(Hint->Signature.Parameters.size(), ParameterCount);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Hint->Signature, Diagnostic)) << Diagnostic;
+
+    if (ParameterCount) {
+      const auto &Size = Hint->Signature.Parameters.front();
+      ASSERT_TRUE(Size.Type);
+      EXPECT_EQ(Size.Type->Kind, NdTypeKind::Struct);
+      EXPECT_EQ(Size.Type->Size, 16U);
+      ASSERT_EQ(Size.Components.size(), 2U);
+      const auto &TRI = getTargetRegInfo(Arch::AArch64);
+      for (unsigned I = 0; I != 2; ++I) {
+        EXPECT_EQ(Size.Components[I].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Size.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+        EXPECT_EQ(Size.Components[I].ValueBytes, 8U);
+      }
+    }
+
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.Arch = Arch::X64;
+      if (Mutation == 1)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].Module =
+            "/System/Library/Frameworks/Foundation.framework/Foundation";
+      if (Mutation == 3)
+        Changed.DyldBindSlots[0x2180].Module =
+            "/tmp/UIKit.framework/UIKit";
+      if (Mutation == 4)
+        Changed.DyldBindSlots[0x2180].Name = "_other";
+      if (Mutation == 5)
+        Changed.DyldBindSlots[0x2180].Addend = 8;
+      if (Mutation == 6)
+        Changed.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 7)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, DarwinNotifyCancelKeepsGeneratedIntegerABIAndProviders) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Module : {"/usr/lib/libSystem.B.dylib",
+                               "/usr/lib/system/libsystem_notify.dylib"}) {
+      auto Image = runtimeImage("_notify_cancel", Architecture);
+      Image.DyldBindSlots[0x2180] = {"_notify_cancel", 0, Module, false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Module;
+      EXPECT_EQ(Hint->TargetName, "notify_cancel");
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      ASSERT_TRUE(Hint->Signature.ReturnType);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Size, 4U);
+      EXPECT_TRUE(Hint->Signature.Parameters[0].Type->IsSigned);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs.front());
+    }
+    auto Wrong = runtimeImage("_notify_cancel", Architecture);
+    Wrong.DyldBindSlots[0x2180] = {
+        "_notify_cancel", 0, "/tmp/libsystem_notify.dylib", false};
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Wrong, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, DarwinMallocSizePreservesPointerAndSizeTABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Module : {"/usr/lib/libSystem.B.dylib",
+                               "/usr/lib/system/libsystem_malloc.dylib"}) {
+      auto Image = runtimeImage("_malloc_size", Architecture);
+      Image.DyldBindSlots[0x2180] = {"_malloc_size", 0, Module, false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Module;
+      EXPECT_EQ(Hint->TargetName, "malloc_size");
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      ASSERT_TRUE(Hint->Signature.ReturnType);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 8U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+      const auto &Pointer = Hint->Signature.Parameters.front();
+      ASSERT_TRUE(Pointer.Type);
+      EXPECT_EQ(Pointer.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Pointer.Location.Kind, SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(Pointer.Location.RegisterOffset,
+                getTargetRegInfo(Architecture).IntParamRegs.front());
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Hint->Signature, Diagnostic)) << Diagnostic;
+    }
+
+    auto Image = runtimeImage("_malloc_size", Architecture);
+    Image.DyldBindSlots[0x2180] = {"_malloc_size", 0,
+                                   "/usr/lib/libSystem.B.dylib", false};
+    auto Weak = Image;
+    Weak.DyldBindSlots[0x2180].WeakImport = true;
+    const auto WeakHint = darwinRuntimeSourceCallHint(Weak, 0x2180);
+    ASSERT_TRUE(WeakHint);
+    EXPECT_TRUE(WeakHint->WeakImport);
+
+    for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Addend = 1;
+      if (Mutation == 2)
+        Changed.ImportPtrSlots[0x2180] = "_malloc";
+      if (Mutation == 3)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
@@ -3114,8 +6041,10 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
         Image.DyldBindSlots[0x2180].Addend = 4;
       if (Mutation == 7)
         Image.ConflictingImportStorageSlots.insert(0x2180);
-      EXPECT_EQ(bool(darwinRuntimeSourceCallHint(Image, 0x2180)), Mutation == 0)
-          << Mutation;
+      const auto Binding = darwinRuntimeSourceCallHint(Image, 0x2180);
+      EXPECT_EQ(bool(Binding), Mutation == 0 || Mutation == 5) << Mutation;
+      if (Mutation == 5 && Binding)
+        EXPECT_TRUE(Binding->WeakImport);
     }
     // Exported names cannot turn a variadic prefix, a by-value aggregate or
     // an unknown callback prototype into a complete scalar declaration.
@@ -3132,6 +6061,75 @@ TEST(ObjCCallHints, SDKCDeclarationsRequireExactExportsAndFixedPrototypes) {
               : "/usr/lib/libSystem.B.dylib",
           false};
       EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180)) << Name;
+    }
+  }
+}
+
+TEST(ObjCCallHints, WeakSDKFunctionKeepsOptionalExternalCallIdentity) {
+  constexpr llvm::StringLiteral Name = "CGColorSpaceUsesITUR_2100TF";
+  constexpr llvm::StringLiteral Symbol = "_CGColorSpaceUsesITUR_2100TF";
+  constexpr llvm::StringLiteral Module =
+      "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage(Symbol, Architecture);
+    Image.DyldBindSlots[0x2180] = {Symbol.str(), 0, Module.str(), true};
+    const auto Med = convert(Image, caller(Architecture));
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    ASSERT_TRUE(Med.CallInfos[0].SourceCallHint);
+    const auto &Binding = *Med.CallInfos[0].SourceCallHint;
+    EXPECT_EQ(Binding.TargetName, Name);
+    EXPECT_EQ(Binding.CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+    EXPECT_EQ(Binding.Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinSDK);
+    EXPECT_TRUE(Binding.WeakImport);
+    EXPECT_EQ(Binding.Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Binding.Signature.ReturnType->Size, 1U);
+    ASSERT_EQ(Binding.Signature.Parameters.size(), 1U);
+    EXPECT_EQ(Binding.Signature.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+
+    MedToHighConverter Converter;
+    Converter.setBinaryImage(&Image);
+    const auto High = Converter.convert(Med, Architecture);
+    const auto *Expression = sourceCall(High);
+    ASSERT_NE(Expression, nullptr);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+    EXPECT_NE(Source.find(
+                  "extern __attribute__((weak_import)) uint8_t "
+                  "neverd_darwin_CGColorSpaceUsesITUR_2100TF(void*) "
+                  "__asm__(\"_CGColorSpaceUsesITUR_2100TF\");"),
+              std::string::npos)
+        << Source;
+
+    auto Forged = *Expression;
+    auto ForgedHint =
+        std::make_shared<SourceCallTypeHint>(*Expression->SourceCallHint);
+    ForgedHint->WeakImport = false;
+    Forged.SourceCallHint = std::move(ForgedHint);
+    EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].WeakImport = false;
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Module += ".impostor";
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].Addend = 8;
+      if (Mutation == 3)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 4) {
+        Changed.ImportPtrSlots[0x2180] += "Suffix";
+        Changed.DyldBindSlots[0x2180].Name =
+            Changed.ImportPtrSlots[0x2180];
+      }
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}))
+          << Mutation;
     }
   }
 }
@@ -3181,6 +6179,141 @@ TEST(ObjCCallHints, DispatchOnceFPreservesExactCallbackPrototypeAndExport) {
         Changed.DyldBindSlots.clear();
       if (Mutation == 4)
         Changed.ImportPtrSlots[0x2180] = "_dispatch_async_f";
+      if (Mutation == 5)
+        Changed.ConflictingImportStorageSlots.insert(0x2180);
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReachabilityCallsPreserveCallbackAndBooleanABI) {
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/SystemConfiguration.framework/"
+      "SystemConfiguration";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name : {"SCNetworkReachabilitySetCallback",
+                             "SCNetworkReachabilitySetDispatchQueue"}) {
+      const std::string Import = std::string("_") + Name;
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint) << Name;
+      EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+      EXPECT_EQ(Hint->TargetName, Name);
+      const auto &ABI = Hint->Signature;
+      EXPECT_EQ(ABI.Origin, SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      ASSERT_TRUE(ABI.ReturnType);
+      EXPECT_EQ(ABI.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(ABI.ReturnType->Size, 1U);
+      ASSERT_EQ(ABI.Parameters.size(),
+                std::string_view(Name) == "SCNetworkReachabilitySetCallback"
+                    ? 3U
+                    : 2U);
+      for (const auto &Parameter : ABI.Parameters)
+        EXPECT_EQ(Parameter.Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+      EXPECT_EQ(ABI.Parameters[0].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(ABI.Parameters.back().Type->Kind, NdTypeKind::Ptr);
+      if (ABI.Parameters.size() == 3) {
+        const auto Callback = ABI.Parameters[1].Type;
+        ASSERT_EQ(Callback->Kind, NdTypeKind::Ptr);
+        ASSERT_TRUE(Callback->Pointee);
+        EXPECT_EQ(Callback->Pointee->Kind, NdTypeKind::Func);
+        EXPECT_EQ(Callback->Pointee->RetType->Kind, NdTypeKind::Void);
+        ASSERT_EQ(Callback->Pointee->ParamTypes.size(), 3U);
+        EXPECT_EQ(Callback->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Callback->Pointee->ParamTypes[1]->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Callback->Pointee->ParamTypes[1]->Size, 4U);
+        EXPECT_EQ(Callback->Pointee->ParamTypes[2]->Kind, NdTypeKind::Ptr);
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(ABI, Diagnostic)) << Diagnostic;
+      Image.DyldBindSlots[0x2180].Module = "/tmp/impostor.dylib";
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Image.DyldBindSlots[0x2180].Module = Provider.str();
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+    }
+  }
+}
+
+TEST(ObjCCallHints, ReachabilityCreateWithNameKeepsAllocatorAndName) {
+  constexpr llvm::StringLiteral Name = "_SCNetworkReachabilityCreateWithName";
+  constexpr llvm::StringLiteral Provider =
+      "/System/Library/Frameworks/SystemConfiguration.framework/"
+      "SystemConfiguration";
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = runtimeImage(Name, Architecture);
+    Image.DyldBindSlots[0x2180] = {Name.str(), 0, Provider.str(), false};
+    const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->TargetName, "SCNetworkReachabilityCreateWithName");
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinSDK);
+    ASSERT_TRUE(Hint->Signature.ReturnType);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Name, "allocator");
+    EXPECT_EQ(Hint->Signature.Parameters[1].Name, "nodename");
+    for (const auto &Parameter : Hint->Signature.Parameters) {
+      EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Parameter.Location.Kind,
+                SourceABICarrierKind::IntegerRegister);
+    }
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(Hint->Signature, Diagnostic)) << Diagnostic;
+    Image.DyldBindSlots[0x2180].Module = "/tmp/impostor.dylib";
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints,
+     DispatchQueueSetSpecificPreservesDestructorPrototypeAndExport) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Module : {"/usr/lib/libSystem.B.dylib",
+                               "/usr/lib/system/libdispatch.dylib"}) {
+      auto Image = runtimeImage("_dispatch_queue_set_specific", Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          "_dispatch_queue_set_specific", 0, Module, false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->TargetName, "dispatch_queue_set_specific");
+      EXPECT_EQ(Hint->Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::DarwinSDK);
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 4U);
+      for (unsigned I = 0; I != 3; ++I) {
+        EXPECT_EQ(Hint->Signature.Parameters[I].Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Hint->Signature.Parameters[I].Location.Kind,
+                  SourceABICarrierKind::IntegerRegister);
+      }
+      const auto Destructor = Hint->Signature.Parameters[3].Type;
+      ASSERT_EQ(Destructor->Kind, NdTypeKind::Ptr);
+      ASSERT_TRUE(Destructor->Pointee);
+      EXPECT_EQ(Destructor->Pointee->Kind, NdTypeKind::Func);
+      EXPECT_EQ(Destructor->Pointee->RetType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Destructor->Pointee->ParamTypes.size(), 1U);
+      EXPECT_EQ(Destructor->Pointee->ParamTypes[0]->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Hint->Signature.Parameters[3].Location.Kind,
+                SourceABICarrierKind::IntegerRegister);
+    }
+
+    auto Image = runtimeImage("_dispatch_queue_set_specific", Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        "_dispatch_queue_set_specific", 0, "/usr/lib/libSystem.B.dylib",
+        false};
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Addend = 1;
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].WeakImport = true;
+      if (Mutation == 3)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 4)
+        Changed.ImportPtrSlots[0x2180] = "_dispatch_queue_get_specific";
       if (Mutation == 5)
         Changed.ConflictingImportStorageSlots.insert(0x2180);
       EXPECT_FALSE(darwinRuntimeSourceCallHint(Changed, 0x2180)) << Mutation;
@@ -3247,6 +6380,69 @@ TEST(ObjCCallHints, AvailabilityCheckPreservesExactWeakImportAndABI) {
   }
 }
 
+TEST(ObjCCallHints, CompilerRTPlatformCheckUsesItsLinkedPublicContract) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.Symbols.push_back(
+        {"___isPlatformVersionAtLeast", 0x1500, 0x100, true});
+    const auto Hint = darwinCompilerRTSourceCallHint(Image, 0x1500);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->CallKind, SourceCallTypeHint::Kind::DarwinRuntimeCall);
+    EXPECT_EQ(Hint->TargetName, "__isPlatformVersionAtLeast");
+    EXPECT_EQ(Hint->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinRuntime);
+    ASSERT_TRUE(Hint->Signature.ReturnType);
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+    EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 4U);
+    for (const auto &Parameter : Hint->Signature.Parameters) {
+      ASSERT_TRUE(Parameter.Type);
+      EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Parameter.Type->Size, 4U);
+      EXPECT_FALSE(Parameter.Type->IsSigned);
+    }
+
+    auto Function = caller(Architecture);
+    Function.Blocks.front().Ops.front().Inputs[0] = NdVar::cst(0x1500, 8);
+    const auto Calls = buildObjCSourceCallHints(Image, Function);
+    const auto Bound = Calls.find(0x1200);
+    ASSERT_NE(Bound, Calls.end());
+    EXPECT_EQ(Bound->second.CallKind,
+              SourceCallTypeHint::Kind::DarwinRuntimeCall);
+    EXPECT_EQ(Bound->second.TargetAddress, 0x1500U);
+
+    auto Call = HighExpr::makeCall(
+        Hint->TargetName, Hint->TargetAddress,
+        {HighExpr::makeConst(1, 4), HighExpr::makeConst(17, 4),
+         HighExpr::makeConst(6, 4), HighExpr::makeConst(0, 4)});
+    Call->Type = Hint->Signature.ReturnType;
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+
+    for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.Symbols.front().Name = "___isOSVersionAtLeast";
+      if (Mutation == 1)
+        Changed.Symbols.front().Addr = 0x1510;
+      if (Mutation == 2)
+        Changed.Symbols.front().IsFunc = false;
+      if (Mutation == 3)
+        Changed.Symbols.push_back(Changed.Symbols.front());
+      if (Mutation == 4)
+        Changed.IsRelocatable = true;
+      if (Mutation == 5) {
+        Changed.Sections.front().Flags = SegmentFlags::Readable;
+        Changed.Sections.front().Type = 0;
+        Changed.Segments.front().Flags = SegmentFlags::Readable;
+      }
+      EXPECT_FALSE(darwinCompilerRTSourceCallHint(Changed, 0x1500))
+          << Mutation;
+    }
+  }
+}
+
 TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const auto &[Name, Widths] :
@@ -3297,12 +6493,110 @@ TEST(ObjCCallHints, SystemDeclarationsPreserveWidthsOpaquePointersAndExports) {
       EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
       Image.DyldBindSlots[0x2180].Addend = 0;
       Image.DyldBindSlots[0x2180].WeakImport = true;
-      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_TRUE(Hint->WeakImport);
     }
     auto Variadic = runtimeImage("_asl_log", Architecture);
     Variadic.DyldBindSlots[0x2180] = {"_asl_log", 0,
                                       "/usr/lib/libSystem.B.dylib", false};
     EXPECT_FALSE(darwinRuntimeSourceCallHint(Variadic, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, VectorIOAndUTTypeDeclarationsKeepExactProvidersAndABI) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    auto VectorIO = runtimeImage("_writev", Architecture);
+    VectorIO.DyldBindSlots[0x2180] = {
+        "_writev", 0, "/usr/lib/libSystem.B.dylib", false};
+    auto Hint = darwinRuntimeSourceCallHint(VectorIO, 0x2180);
+    ASSERT_TRUE(Hint);
+    EXPECT_EQ(Hint->TargetName, "writev");
+    EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.ReturnType->Size, 8U);
+    EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+    ASSERT_EQ(Hint->Signature.Parameters.size(), 3U);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.Parameters[0].Type->Size, 4U);
+    EXPECT_EQ(Hint->Signature.Parameters[1].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Hint->Signature.Parameters[1].Type->Pointee->Kind,
+              NdTypeKind::Void);
+    EXPECT_EQ(Hint->Signature.Parameters[2].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Hint->Signature.Parameters[2].Type->Size, 4U);
+    VectorIO.DyldBindSlots[0x2180].Module = "/tmp/libSystem.B.dylib";
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(VectorIO, 0x2180));
+
+    for (const char *Module : {
+             "/System/Library/Frameworks/CoreServices.framework/CoreServices",
+             "/System/Library/Frameworks/CoreServices.framework/Versions/A/"
+             "CoreServices",
+             "/System/Library/Frameworks/CoreServices.framework/Versions/A/"
+             "Frameworks/LaunchServices.framework/Versions/A/LaunchServices"}) {
+      auto UTType = runtimeImage("_UTTypeConformsTo", Architecture);
+      UTType.DyldBindSlots[0x2180] = {
+          "_UTTypeConformsTo", 0, Module, false};
+      Hint = darwinRuntimeSourceCallHint(UTType, 0x2180);
+      ASSERT_TRUE(Hint) << Module;
+      EXPECT_EQ(Hint->TargetName, "UTTypeConformsTo");
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 1U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+      for (const auto &Parameter : Hint->Signature.Parameters) {
+        EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+        EXPECT_EQ(Parameter.Type->Pointee->Kind, NdTypeKind::Void);
+      }
+    }
+    auto UTType = runtimeImage("_UTTypeConformsTo", Architecture);
+    UTType.DyldBindSlots[0x2180] = {
+        "_UTTypeConformsTo", 0, "/tmp/CoreServices.framework/CoreServices",
+        false};
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(UTType, 0x2180));
+  }
+}
+
+TEST(ObjCCallHints, MountEnumerationKeepsArchitectureSpecificLinkerIdentity) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (const char *Name : {"getmntinfo", "getmntinfo$INODE64"}) {
+      SCOPED_TRACE(Name);
+      const auto Symbol = "_" + std::string(Name);
+      auto Image = runtimeImage(Symbol, Architecture);
+      Image.DyldBindSlots[0x2180] = {Symbol, 0, "/usr/lib/libSystem.B.dylib",
+                                     false};
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      const bool Supported = (Architecture == Arch::AArch64) ==
+                             (std::string(Name) == "getmntinfo");
+      ASSERT_EQ(bool(Hint), Supported);
+      if (!Hint)
+        continue;
+      EXPECT_EQ(Hint->Signature.ReturnType->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+      EXPECT_TRUE(Hint->Signature.ReturnType->IsSigned);
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 2U);
+      const auto &Output = Hint->Signature.Parameters[0];
+      ASSERT_EQ(Output.Type->Kind, NdTypeKind::Ptr);
+      ASSERT_EQ(Output.Type->Pointee->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Output.Type->Pointee->Pointee->Kind, NdTypeKind::Void);
+      EXPECT_EQ(Output.Location.ValueBytes, 8U);
+      EXPECT_EQ(Hint->Signature.Parameters[1].Location.ValueBytes, 4U);
+      EXPECT_TRUE(Hint->Signature.Parameters[1].Type->IsSigned);
+      for (const char *Provider : {"/usr/lib/libSystem.B.dylib",
+                                   "/usr/lib/system/libsystem_c.dylib"}) {
+        Image.DyldBindSlots[0x2180].Module = Provider;
+        EXPECT_TRUE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      }
+      Image.DyldBindSlots[0x2180].Module =
+          "/usr/lib/system/libsystem_kernel.dylib";
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
+      Image.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
+      Image.DyldBindSlots[0x2180].Addend = 0;
+      Image.DyldBindSlots[0x2180].WeakImport = true;
+      const auto Weak = darwinRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Weak);
+      EXPECT_TRUE(Weak->WeakImport);
+    }
   }
 }
 
@@ -3374,6 +6668,11 @@ TEST(ObjCCallHints, SDKDataBindingsPreserveStorageAddressesAndSubsequentLoads) {
          {std::pair{"NSDefaultRunLoopMode", "/System/Library/Frameworks/"
                                             "Foundation.framework/Foundation"},
           std::pair{"_dispatch_main_q", "/usr/lib/libSystem.B.dylib"},
+          std::pair{"_os_log_default", "/usr/lib/libSystem.B.dylib"},
+          std::pair{"_os_log_disabled",
+                    "/usr/lib/system/libsystem_trace.dylib"},
+          std::pair{"kCAGravityResize", "/System/Library/Frameworks/"
+                                        "QuartzCore.framework/QuartzCore"},
           std::pair{"_dispatch_source_type_timer",
                     "/usr/lib/system/libdispatch.dylib"}}) {
       SCOPED_TRACE(Name);
@@ -3435,7 +6734,18 @@ TEST(ObjCCallHints, FrameworkAndCompilerDataKeepExactExportIdentities) {
       {"NSManagedObjectContextDidSaveNotification", "CoreData"},
       {"kCGImagePropertyGIFDictionary", "ImageIO"},
       {"CSSearchableItemActivityIdentifier", "CoreSpotlight"},
-      {"kCGColorSpaceSRGB", "CoreGraphics"}};
+      {"kCGColorSpaceSRGB", "CoreGraphics"},
+      {"kUTTagClassFilenameExtension", "CoreServices"},
+      {"kUTTypeImage", "CoreServices"},
+      {"UTTypeGIF", "UniformTypeIdentifiers"},
+      {"WKWebsiteDataTypeDiskCache", "WebKit"},
+      {"WKWebsiteDataTypeMemoryCache", "WebKit"},
+      {"CIDetectorAccuracy", "CoreImage"},
+      {"CIDetectorAccuracyLow", "CoreImage"},
+      {"CIDetectorTypeFace", "CoreImage"},
+      {"kCIInputImageKey", "CoreImage"},
+      {"CIDetectorAccuracy", "QuartzCore"},
+      {"kCIInputImageKey", "QuartzCore"}};
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (auto [Name, Framework] : Declarations) {
       SCOPED_TRACE(Name);
@@ -3462,20 +6772,115 @@ TEST(ObjCCallHints, FrameworkAndCompilerDataKeepExactExportIdentities) {
   }
 }
 
-TEST(ObjCCallHints, MobileSDKDataKeepsExactUIKitStorageIdentities) {
+TEST(ObjCCallHints, WeakSDKDataKeepsOptionalExternalStorageIdentity) {
+  constexpr llvm::StringLiteral Name = "kCGImageDestinationEncodeRequest";
+  constexpr llvm::StringLiteral Symbol = "_kCGImageDestinationEncodeRequest";
   constexpr llvm::StringLiteral Module =
-      "/System/Library/Frameworks/UIKit.framework/UIKit";
+      "/System/Library/Frameworks/ImageIO.framework/ImageIO";
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
-    for (llvm::StringRef Name :
-         {"UIApplicationDidReceiveMemoryWarningNotification",
-          "UIAccessibilityTraitButton", "UIEdgeInsetsZero",
-          "UIViewNoIntrinsicMetric"}) {
+    auto Image = runtimeImage(Symbol, Architecture);
+    Image.DyldBindSlots[0x2180] = {Symbol.str(), 0, Module.str(), true};
+    const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+    ASSERT_TRUE(Binding);
+    EXPECT_EQ(Binding->TargetName, Name);
+    EXPECT_EQ(Binding->CallKind,
+              SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress);
+    EXPECT_EQ(Binding->Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::DarwinSDK);
+    EXPECT_TRUE(Binding->WeakImport);
+
+    HighFunc Function;
+    Function.Name = "weak_framework_external_storage";
+    Function.ReturnType = NdType::makeInt(8);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = HighExpr::makeLoad(HighExpr::makeConst(0x2180, 8),
+                                       NdType::makeInt(8));
+    Function.Body = {Return};
+    const auto Bound = sdk::bindObjCSourceReferences(Function, Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto *Address = sourceCall(Bound.Function);
+    ASSERT_NE(Address, nullptr);
+    EXPECT_TRUE(Address->SourceCallHint->WeakImport);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Address, Image, {}));
+
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Architecture;
+    ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
+    EXPECT_NE(Source.find(
+                  "extern __attribute__((weak_import)) unsigned char "
+                  "neverd_darwin_data_kCGImageDestinationEncodeRequest[] "
+                  "__asm__(\"_kCGImageDestinationEncodeRequest\");"),
+              std::string::npos)
+        << Source;
+    EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
+
+    auto Forged = *Address;
+    auto ForgedHint =
+        std::make_shared<SourceCallTypeHint>(*Address->SourceCallHint);
+    ForgedHint->WeakImport = false;
+    Forged.SourceCallHint = std::move(ForgedHint);
+    EXPECT_FALSE(sdk::objcSourceCallBound(Forged, Image, {}));
+
+    for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      auto Changed = Image;
+      if (Mutation == 0)
+        Changed.DyldBindSlots[0x2180].WeakImport = false;
+      if (Mutation == 1)
+        Changed.DyldBindSlots[0x2180].Module += ".impostor";
+      if (Mutation == 2)
+        Changed.DyldBindSlots[0x2180].Addend = 8;
+      if (Mutation == 3)
+        Changed.DyldBindSlots.clear();
+      if (Mutation == 4) {
+        Changed.ImportPtrSlots[0x2180] += "Suffix";
+        Changed.DyldBindSlots[0x2180].Name =
+            Changed.ImportPtrSlots[0x2180];
+      }
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, MobileSDKDataKeepsExactFrameworkStorageIdentities) {
+  const std::pair<llvm::StringRef, llvm::StringRef> Declarations[] = {
+      {"UIApplicationDidReceiveMemoryWarningNotification", "UIKit"},
+      {"UIApplicationWillTerminateNotification", "UIKit"},
+      {"UIApplicationDidEnterBackgroundNotification", "UIKit"},
+      {"UIBackgroundTaskInvalid", "UIKit"},
+      {"UIAccessibilityTraitButton", "UIKit"},
+      {"UIEdgeInsetsZero", "UIKit"},
+      {"UIViewNoIntrinsicMetric", "UIKit"},
+      {"kCIContextPriorityRequestLow", "CoreImage"},
+      {"kCIContextUseSoftwareRenderer", "CoreImage"}};
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (auto [Name, Framework] : Declarations) {
       SCOPED_TRACE(Name.str());
       auto Image = runtimeImage(("_" + Name).str(), Architecture);
-      Image.DyldBindSlots[0x2180] = {
-          ("_" + Name).str(), 0, Module.str(), false};
+      const auto Module = ("/System/Library/Frameworks/" + Framework +
+                           ".framework/" + Framework)
+                              .str();
+      Image.DyldBindSlots[0x2180] = {("_" + Name).str(), 0, Module, false};
       const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      // These supplemental declarations cover ARM64 device and simulator.
+      if ((Framework == "CoreImage" ||
+           Name == "UIApplicationDidEnterBackgroundNotification") &&
+          Architecture == Arch::X64) {
+        EXPECT_FALSE(Binding);
+        continue;
+      }
       ASSERT_TRUE(Binding);
+      auto Versioned = Image;
+      Versioned.DyldBindSlots[0x2180].Module =
+          ("/System/Library/Frameworks/" + Framework +
+           ".framework/Versions/A/" + Framework)
+              .str();
+      EXPECT_EQ(darwinRuntimeGlobalAddressHint(Versioned, 0x2180).has_value(),
+                Framework == "CoreImage");
       EXPECT_EQ(Binding->TargetName, Name);
       EXPECT_EQ(Binding->CallKind,
                 SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress);
@@ -3483,7 +6888,7 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactUIKitStorageIdentities) {
                 SourceFunctionTypeHint::OriginKind::DarwinSDK);
 
       HighFunc Function;
-      Function.Name = "uikit_external_storage";
+      Function.Name = "framework_external_storage";
       Function.ReturnType = NdType::makeInt(8);
       HighStmt Return;
       Return.Kind = StmtKind::Return;
@@ -3508,7 +6913,7 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactUIKitStorageIdentities) {
       EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
       EXPECT_EQ(Source.find("0x2180"), std::string::npos) << Source;
 
-      for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+      for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
         auto Changed = Image;
         if (Mutation == 0)
           Changed.DyldBindSlots[0x2180].Module += ".impostor";
@@ -3522,19 +6927,48 @@ TEST(ObjCCallHints, MobileSDKDataKeepsExactUIKitStorageIdentities) {
           Changed.ImportPtrSlots[0x2180] += "Suffix";
           Changed.DyldBindSlots[0x2180].Name = Changed.ImportPtrSlots[0x2180];
         }
+        if (Mutation == 5)
+          Changed.DyldBindSlots[0x2180].Module =
+              "/System/Library/Frameworks/Foundation.framework/Foundation";
         EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Changed, 0x2180))
+            << Mutation;
+        EXPECT_FALSE(sdk::objcSourceCallBound(*Address, Changed, {}))
             << Mutation;
       }
     }
   }
 }
 
-TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactEmptyCollectionStorageIdentity) {
+TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactExternalStorageIdentity) {
   constexpr llvm::StringLiteral Module = "/usr/lib/swift/libswiftCore.dylib";
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     for (const char *Import : {"__swiftEmptyArrayStorage",
                                "__swiftEmptyDictionarySingleton",
-                               "__swiftEmptySetSingleton"}) {
+                               "__swiftEmptySetSingleton",
+                               "_$sSSN",
+                               "_$sSsN",
+                               "_$ss11AnyHashableVN",
+                               "_$sSbN",
+                               "_$sSiN",
+                               "_$sSuN",
+                               "_$sSfN",
+                               "_$sSdN",
+                               "_$sypN",
+                               "_$ss4Int8VN",
+                               "_$ss5Int16VN",
+                               "_$ss5Int32VN",
+                               "_$ss5Int64VN",
+                               "_$ss5UInt8VN",
+                               "_$ss6UInt16VN",
+                               "_$ss6UInt32VN",
+                               "_$ss6UInt64VN",
+                               "_$sSSSHsWP",
+                               "_$ss11AnyHashableVSHsWP",
+                               "_$sSiSHsWP",
+                               "_$sSbSHsWP",
+                               "_$sSuSHsWP",
+                               "_$sSfSHsWP",
+                               "_$sSdSHsWP"}) {
       auto Image = runtimeImage(Import, Architecture);
       Image.DyldBindSlots[0x2180] = {Import, 0, Module.str(), false};
       const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
@@ -3565,9 +6999,7 @@ TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactEmptyCollectionStorageIdentity) {
       Options.TheArch = Architecture;
       ASSERT_TRUE(HighCEmitter().emit({Bound.Function}, OS, Options));
       const auto SourceName = llvm::StringRef(Import).drop_front().str();
-      EXPECT_NE(Source.find("extern unsigned char neverd_darwin_data_" +
-                            SourceName + "[] __asm__(\"_" + SourceName +
-                            "\");"),
+      EXPECT_NE(Source.find("[] __asm__(\"_" + SourceName + "\");"),
                 std::string::npos)
           << Source;
       EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
@@ -3593,6 +7025,19 @@ TEST(ObjCCallHints, SwiftRuntimeDataKeepsExactEmptyCollectionStorageIdentity) {
       }
     }
   }
+}
+
+TEST(ObjCCallHints, SwiftMetadataAccessorsAndUnknownNominalsAreNotData) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (const char *Name :
+         {"_$sSSMa", "_$sSSMn", "_$s4Test6StringVN", "_$sSSNsuffix",
+          "_$sSsNsuffix",
+          "_$sypNsuffix", "_$sSSSHsWPsuffix", "_$s4Test6StringVSHsWP"}) {
+      auto Image = runtimeImage(Name, Architecture);
+      Image.DyldBindSlots[0x2180] = {
+          Name, 0, "/usr/lib/swift/libswiftCore.dylib", false};
+      EXPECT_FALSE(darwinRuntimeGlobalAddressHint(Image, 0x2180)) << Name;
+    }
 }
 
 TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
@@ -3622,9 +7067,10 @@ TEST(ObjCCallHints, SDKDataBindingsRequireExactExportsAndDataDeclarations) {
         Image.Format = BinaryFormat::ELF;
       if (Mutation == 9)
         Image.ImportPtrSlots[0x2180] = "_different";
-      EXPECT_EQ(bool(darwinRuntimeGlobalAddressHint(Image, 0x2180)),
-                Mutation == 0)
-          << Mutation;
+      const auto Binding = darwinRuntimeGlobalAddressHint(Image, 0x2180);
+      EXPECT_EQ(bool(Binding), Mutation == 0 || Mutation == 4) << Mutation;
+      if (Mutation == 4 && Binding)
+        EXPECT_TRUE(Binding->WeakImport);
     }
     for (const char *Name :
          {"NSStringFromClass", "NSDefaultRunLoopMode_suffix"}) {
@@ -3727,6 +7173,444 @@ ExprPtr receiverCallExpression(const SourceCallTypeHint &Binding) {
   return Call;
 }
 } // namespace
+
+TEST(ObjCCallHints,
+     FoundationNonescapingBlocksRequireExactParentAndCallbackDeclarations) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = image(Architecture);
+    Image.ObjCMethods.clear();
+    Image.ObjCProtocols.clear();
+    Image.ObjCProperties.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "indexesOfObjectsPassingTest:";
+    const auto Parent = objcSelectorSourceTypeHint(Image, Call.Selector);
+    ASSERT_TRUE(Parent);
+    Call.Signature = *Parent;
+    const auto Callback = objcNonEscapingBlockSignature(Image, Call, 2);
+    ASSERT_TRUE(Callback);
+    EXPECT_EQ(Callback->ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Callback->ReturnType->Size, 1U);
+    EXPECT_EQ(Callback->Parameters.size(), 4U);
+
+    auto DictionaryCall = Call;
+    DictionaryCall.Selector = "enumerateKeysAndObjectsUsingBlock:";
+    const auto DictionaryParent =
+        objcSelectorSourceTypeHint(Image, DictionaryCall.Selector);
+    ASSERT_TRUE(DictionaryParent);
+    DictionaryCall.Signature = *DictionaryParent;
+    const auto DictionaryCallback =
+        objcNonEscapingBlockSignature(Image, DictionaryCall, 2);
+    EXPECT_EQ(DictionaryCallback.has_value(), Architecture == Arch::AArch64);
+    if (DictionaryCallback)
+      EXPECT_EQ(DictionaryCallback->Parameters.size(), 4U);
+
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto ChangedImage = Image;
+      auto ChangedCall = Call;
+      unsigned Parameter = 2;
+      if (Mutation == 0)
+        ChangedImage.DynInfo.NeededLibs.front() =
+            "/tmp/Foundation.framework/Foundation";
+      if (Mutation == 1)
+        ChangedCall.Signature.Parameters.pop_back();
+      if (Mutation == 2)
+        ChangedCall.Signature.Origin =
+            SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      if (Mutation == 3)
+        ChangedCall.Selector = "enumerateObjectsUsingBlock:";
+      if (Mutation == 4)
+        Parameter = 1;
+      EXPECT_FALSE(
+          objcNonEscapingBlockSignature(ChangedImage, ChangedCall, Parameter))
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints,
+     FoundationNonescapingBlocksFollowRevalidatedReceiverHierarchy) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture);
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = "NSArray";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "enumerateObjectsUsingBlock:";
+    Call.Receiver = *Receiver;
+    const auto Parent =
+        objcReceiverSourceTypeHint(Image, Call.Selector, *Receiver);
+    ASSERT_TRUE(Parent.Signature);
+    Call.Signature = *Parent.Signature;
+    const auto ArrayCallback = objcNonEscapingBlockSignature(Image, Call, 2);
+    ASSERT_TRUE(ArrayCallback);
+    EXPECT_EQ(ArrayCallback->Parameters.size(), 4U);
+
+    auto OptionsCall = Call;
+    OptionsCall.Selector = "enumerateObjectsWithOptions:usingBlock:";
+    const auto OptionsParent =
+        objcReceiverSourceTypeHint(Image, OptionsCall.Selector, *Receiver);
+    ASSERT_TRUE(OptionsParent.Signature);
+    OptionsCall.Signature = *OptionsParent.Signature;
+    const auto ArrayOptionsCallback =
+        objcNonEscapingBlockSignature(Image, OptionsCall, 3);
+    EXPECT_EQ(ArrayOptionsCallback.has_value(), Architecture == Arch::AArch64);
+    if (ArrayOptionsCallback)
+      EXPECT_EQ(ArrayOptionsCallback->Parameters.size(), 4U);
+
+    auto SortedCall = Call;
+    SortedCall.Selector = "sortedArrayUsingComparator:";
+    const auto SortedParent =
+        objcReceiverSourceTypeHint(Image, SortedCall.Selector, *Receiver);
+    ASSERT_TRUE(SortedParent.Signature);
+    SortedCall.Signature = *SortedParent.Signature;
+    const auto SortedCallback =
+        objcNonEscapingBlockSignature(Image, SortedCall, 2);
+    ASSERT_TRUE(SortedCallback);
+    EXPECT_EQ(SortedCallback->ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(SortedCallback->ReturnType->Size, 8U);
+    EXPECT_EQ(SortedCallback->Parameters.size(), 3U);
+
+    auto SetImage = Image;
+    SetImage.ObjCClasses.front().SuperclassName = "NSSet";
+    const auto SetParent =
+        objcReceiverSourceTypeHint(SetImage, Call.Selector, *Receiver);
+    ASSERT_TRUE(SetParent.Signature);
+    auto SetCall = Call;
+    SetCall.Signature = *SetParent.Signature;
+    const auto SetCallback =
+        objcNonEscapingBlockSignature(SetImage, SetCall, 2);
+    ASSERT_TRUE(SetCallback);
+    EXPECT_EQ(SetCallback->Parameters.size(), 3U);
+
+    const auto SetOptionsParent =
+        objcReceiverSourceTypeHint(SetImage, OptionsCall.Selector, *Receiver);
+    ASSERT_TRUE(SetOptionsParent.Signature);
+    auto SetOptionsCall = OptionsCall;
+    SetOptionsCall.Signature = *SetOptionsParent.Signature;
+    const auto SetOptionsCallback =
+        objcNonEscapingBlockSignature(SetImage, SetOptionsCall, 3);
+    EXPECT_EQ(SetOptionsCallback.has_value(), Architecture == Arch::AArch64);
+    if (SetOptionsCallback)
+      EXPECT_EQ(SetOptionsCallback->Parameters.size(), 3U);
+
+    auto Unqualified = Call;
+    Unqualified.Receiver.reset();
+    EXPECT_FALSE(objcNonEscapingBlockSignature(Image, Unqualified, 2));
+    auto Unknown = Image;
+    Unknown.ObjCClasses.front().SuperclassName = "UnknownCollection";
+    EXPECT_FALSE(objcNonEscapingBlockSignature(Unknown, Call, 2));
+
+    auto DictionaryImage = Image;
+    DictionaryImage.ObjCClasses.front().SuperclassName = "NSDictionary";
+    auto DictionaryCall = Call;
+    DictionaryCall.Selector =
+        "keysSortedByValueWithOptions:usingComparator:";
+    const auto DictionaryParent = objcReceiverSourceTypeHint(
+        DictionaryImage, DictionaryCall.Selector, *Receiver);
+    ASSERT_TRUE(DictionaryParent.Signature);
+    DictionaryCall.Signature = *DictionaryParent.Signature;
+    const auto DictionaryCallback = objcNonEscapingBlockSignature(
+        DictionaryImage, DictionaryCall, 3);
+    ASSERT_TRUE(DictionaryCallback);
+    EXPECT_EQ(DictionaryCallback->ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(DictionaryCallback->ReturnType->Size, 8U);
+    EXPECT_EQ(DictionaryCallback->Parameters.size(), 3U);
+
+    auto RegularExpressionImage = Image;
+    RegularExpressionImage.ObjCClasses.front().SuperclassName =
+        "NSRegularExpression";
+    auto RegularExpressionCall = Call;
+    RegularExpressionCall.Selector =
+        "enumerateMatchesInString:options:range:usingBlock:";
+    const auto RegularExpressionParent = objcReceiverSourceTypeHint(
+        RegularExpressionImage, RegularExpressionCall.Selector, *Receiver);
+    ASSERT_TRUE(RegularExpressionParent.Signature);
+    RegularExpressionCall.Signature = *RegularExpressionParent.Signature;
+    const auto RegularExpressionCallback = objcNonEscapingBlockSignature(
+        RegularExpressionImage, RegularExpressionCall, 5);
+    EXPECT_EQ(RegularExpressionCallback.has_value(),
+              Architecture == Arch::AArch64);
+    if (RegularExpressionCallback)
+      EXPECT_EQ(RegularExpressionCallback->Parameters.size(), 4U);
+  }
+}
+
+TEST(ObjCCallHints,
+     CoreDataNonescapingBlocksFollowRevalidatedReceiverHierarchy) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    for (llvm::StringRef Owner : {"NSManagedObjectContext",
+                                  "NSPersistentStoreCoordinator"}) {
+      auto Image = receiverImage(Architecture);
+      auto &Class = Image.ObjCClasses.front();
+      Class.RootClass = false;
+      Class.InheritanceStatus = "resolved";
+      Class.SuperclassName = Owner.str();
+      Image.DynInfo.NeededLibs = {
+          "/System/Library/Frameworks/CoreData.framework/CoreData",
+          "/System/Library/Frameworks/Foundation.framework/Foundation"};
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      SourceCallTypeHint Call;
+      Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+      Call.Selector = "performBlockAndWait:";
+      Call.Receiver = *Receiver;
+      const auto Parent =
+          objcReceiverSourceTypeHint(Image, Call.Selector, *Receiver);
+      ASSERT_TRUE(Parent.Signature);
+      Call.Signature = *Parent.Signature;
+      const auto Callback = objcNonEscapingBlockSignature(Image, Call, 2);
+      ASSERT_TRUE(Callback) << Owner.str();
+      EXPECT_EQ(Callback->ReturnType->Kind, NdTypeKind::Void);
+      EXPECT_EQ(Callback->Parameters.size(), 1U);
+
+      auto Unknown = Image;
+      Unknown.ObjCClasses.front().SuperclassName = "NSPersistentContainer";
+      EXPECT_FALSE(objcNonEscapingBlockSignature(Unknown, Call, 2));
+      EXPECT_FALSE(objcNonEscapingBlockSignature(Image, Call, 1));
+    }
+  }
+}
+
+TEST(ObjCCallHints,
+     UIKitNonescapingBlocksFollowRevalidatedReceiverHierarchy) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverImage(Architecture);
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = "UIGraphicsImageRenderer";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "imageWithActions:";
+    Call.Receiver = *Receiver;
+    const auto Parent =
+        objcReceiverSourceTypeHint(Image, Call.Selector, *Receiver);
+    ASSERT_TRUE(Parent.Signature);
+    Call.Signature = *Parent.Signature;
+    const auto Callback = objcNonEscapingBlockSignature(Image, Call, 2);
+    ASSERT_TRUE(Callback);
+    EXPECT_EQ(Callback->ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_EQ(Callback->Parameters.size(), 2U);
+
+    auto Unknown = Image;
+    Unknown.ObjCClasses.front().SuperclassName = "UIGraphicsPDFRenderer";
+    EXPECT_FALSE(objcNonEscapingBlockSignature(Unknown, Call, 2));
+    EXPECT_FALSE(objcNonEscapingBlockSignature(Image, Call, 1));
+  }
+}
+
+TEST(ObjCCallHints, SuperDispatchUsesExactCurrentClassSuperclassDeclaration) {
+  auto Image = receiverImage(Arch::AArch64);
+  auto &Class = Image.ObjCClasses.front();
+  Class.RootClass = false;
+  Class.SuperclassName = "UIImage";
+  Class.InheritanceStatus = "resolved";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit",
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ImportPtrSlots[0x2180] = "_objc_msgSendSuper2";
+  Image.ObjCSourceReferences[0x2100] = {
+      ObjCSourceReference::Kind::Selector, 0x2100, 8,
+      "initWithCGImage:scale:orientation:"};
+  Image.ObjCSourceReferences[0x2120] = {
+      ObjCSourceReference::Kind::Class, 0x2120, 8, "First"};
+
+  auto Function = caller();
+  auto &Block = Function.Blocks.front();
+  Block.Ops = {
+      operation(NdOp::INT_SUB, NdVar::reg(a64reg::SP, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(32, 4)}, 0x1200),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X8, 8),
+                {NdVar::reg(a64reg::SP, 8), NdVar::cst(16, 4)}, 0x1204),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X8, 8), NdVar::reg(a64reg::X0, 8)},
+                0x1208),
+      operation(NdOp::INT_ADD, NdVar::reg(a64reg::X9, 8),
+                {NdVar::reg(a64reg::X8, 8), NdVar::cst(8, 4)}, 0x120c),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X10, 8),
+                {NdVar::cst(0x2120, 8)}, 0x1210),
+      operation(NdOp::STORE, {},
+                {NdVar::reg(a64reg::X9, 8), NdVar::reg(a64reg::X10, 8)},
+                0x1214),
+      operation(NdOp::LOAD, NdVar::reg(a64reg::X1, 8),
+                {NdVar::cst(0x2100, 8)}, 0x1218),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X8, 8)}, 0x121c),
+      operation(NdOp::INDIR_CALL, NdVar::reg(a64reg::X0, 8),
+                {NdVar::cst(0x2180, 8)}, 0x1220),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1224)};
+  Block.EndAddr = 0x1228;
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1220);
+  EXPECT_EQ(Hint.CallKind, SourceCallTypeHint::Kind::ObjCSuper2);
+  ASSERT_TRUE(Hint.Receiver);
+  EXPECT_EQ(Hint.Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::ClassReference);
+  EXPECT_EQ(Hint.Receiver->ClassName, "First");
+  EXPECT_EQ(Hint.Signature.Parameters.size(), 5U);
+  auto Expression = receiverCallExpression(Hint);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+
+  auto UntypedReceiver = Function;
+  UntypedReceiver.Blocks.front().Ops[2].Inputs[1] =
+      NdVar::reg(a64reg::X11, 8);
+  EXPECT_EQ(buildObjCSourceCallHints(Image, UntypedReceiver).size(), 1U);
+
+  auto EscapedHigherFrame = Function;
+  auto &EscapedOps = EscapedHigherFrame.Blocks.front().Ops;
+  for (size_t I = 1; I < EscapedOps.size(); ++I)
+    EscapedOps[I].Addr += 0x10;
+  EscapedOps.insert(
+      EscapedOps.begin() + 1,
+      {operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                 {NdVar::reg(a64reg::X0, 8)}, 0x1204),
+       operation(NdOp::INT_ADD, NdVar::reg(a64reg::X0, 8),
+                 {NdVar::reg(a64reg::SP, 8), NdVar::cst(48, 4)}, 0x1208),
+       operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2190, 8)}, 0x120c)});
+  EscapedOps[5].Inputs[1] = NdVar::reg(a64reg::X19, 8);
+  const auto EscapedHints =
+      buildObjCSourceCallHints(Image, EscapedHigherFrame);
+  EXPECT_EQ(EscapedHints.size(), 1U);
+  EXPECT_EQ(EscapedHints.count(0x1230), 1U);
+
+  auto UnprovedFrame = Function;
+  UnprovedFrame.Blocks.front().Ops[4].Inputs[0] = NdVar::cst(0x2130, 8);
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, UnprovedFrame).empty());
+  auto MismatchedClass = Image;
+  MismatchedClass.ObjCSourceReferences.at(0x2120).Name = "Other";
+  EXPECT_TRUE(buildObjCSourceCallHints(MismatchedClass, Function).empty());
+
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.ObjCSourceReferences.erase(0x2120);
+    else if (Mutation == 1)
+      Changed.ObjCSourceReferences.at(0x2120).Name = "Other";
+    else if (Mutation == 2)
+      Changed.ObjCClasses.front().InheritanceStatus = "unresolved";
+    else if (Mutation == 3)
+      Changed.ObjCClasses.front().SuperclassName.clear();
+    else
+      Changed.DynInfo.NeededLibs.front() = "/tmp/UIKit.framework/UIKit";
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}))
+        << Mutation;
+  }
+}
+
+TEST(ObjCCallHints,
+     AuthenticatedUnknownMessagesPreserveCalleeSavedReceiverIdentity) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const bool Restore : {false, true}) {
+      const auto Image = receiverImage(Architecture);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Saved = NdVar::reg(preservedFactRegister(Architecture), 8);
+      auto Function = receiverCaller(Architecture);
+      auto &Ops = Function.Blocks.front().Ops;
+      Ops = {
+          operation(NdOp::COPY, Saved,
+                    {NdVar::reg(TRI.IntParamRegs[0], 8)}, 0x1200),
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1204),
+          operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                    {NdVar::cst(0x2100, 8)}, 0x120c),
+          operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1210),
+          operation(NdOp::RETURN, {}, {}, 0x1214),
+      };
+      if (Restore)
+        Ops.insert(Ops.begin() + 2,
+                   operation(NdOp::COPY,
+                             NdVar::reg(TRI.IntParamRegs[0], 8), {Saved},
+                             0x1208));
+      Function.Blocks.front().EndAddr = 0x1218;
+      const auto Hints = buildObjCSourceCallHints(Image, Function);
+      EXPECT_EQ(Hints.count(0x1204), 0U);
+      EXPECT_EQ(Hints.count(0x1210), Restore ? 1U : 0U);
+      if (Restore) {
+        ASSERT_TRUE(Hints.at(0x1210).Receiver);
+        EXPECT_EQ(Hints.at(0x1210).Receiver->ClassName, "First");
+      }
+    }
+}
+
+TEST(ObjCCallHints,
+     AuthenticatedLocalCallsPreserveCalleeSavedReceiverIdentity) {
+  auto Image = receiverImage(Arch::AArch64);
+  constexpr va_t Callee = 0x1500;
+  constexpr va_t Site = 0x1204;
+  const uint32_t Branch =
+      0x94000000u | (uint32_t((Callee - Site) / 4) & 0x03ffffffu);
+  llvm::support::endian::write32le(
+      Image.Segments[0].Data.data() + Site - Image.Segments[0].VA, Branch);
+  Image.Symbols.push_back(Symbol::makeFunc(Callee));
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto Saved = NdVar::reg(a64reg::X23, 8);
+  const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+  const auto Command = NdVar::reg(TRI.IntParamRegs[1], 8);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.DecodedInstructionCount = Function.LiftedInstructionCount = 6;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1218;
+  Block.Ops = {
+      operation(NdOp::COPY, Saved, {Self}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X30, 8),
+                {NdVar::cst(Site + 4, 8)}, Site),
+      operation(NdOp::CALL, Self, {NdVar::cst(Callee, 8)}, Site),
+      operation(NdOp::COPY, Self, {Saved}, 0x1208),
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2100, 8)}, 0x120c),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1210),
+      operation(NdOp::RETURN, {}, {}, 0x1214),
+  };
+  Block.Ops[2].Seq = 1;
+  Block.InstructionBoundaries = {
+      {0x1200, 4, 0, 1},
+      {Site, 4, 1, 2, InstructionMode::Default, LowInstructionControl::Call,
+       LowInstructionControlFlag::Call, LowInstructionTargetMode::Preserve,
+       Callee},
+      {0x1208, 4, 3, 1},
+      {0x120c, 4, 4, 1},
+      {0x1210, 4, 5, 1, InstructionMode::Default, LowInstructionControl::Call,
+       LowInstructionControlFlag::Call | LowInstructionControlFlag::Indirect},
+      {0x1214, 4, 6, 1, InstructionMode::Default, LowInstructionControl::Return,
+       LowInstructionControlFlag::Return},
+  };
+  Function.Blocks.push_back(Block);
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1210));
+  ASSERT_TRUE(Hints.at(0x1210).Receiver);
+  EXPECT_EQ(Hints.at(0x1210).Receiver->ClassName, "First");
+  EXPECT_FALSE(Hints.count(Site)); // Preservation does not bind the call.
+
+  auto WithoutEntry = Image;
+  WithoutEntry.Symbols.clear();
+  EXPECT_FALSE(buildObjCSourceCallHints(WithoutEntry, Function).count(0x1210));
+  auto AlteredBranch = Image;
+  llvm::support::endian::write32le(AlteredBranch.Segments[0].Data.data() +
+                                       Site - Image.Segments[0].VA,
+                                   0xd503201fu);
+  EXPECT_FALSE(buildObjCSourceCallHints(AlteredBranch, Function).count(0x1210));
+  auto Incomplete = Function;
+  Incomplete.DecodeFailureAddresses.push_back(Site);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Incomplete).count(0x1210));
+}
 
 TEST(ObjCCallHints, ReceiverDeclarationsSeparateOwnersAndDispatchRoles) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
@@ -4494,6 +8378,23 @@ TEST(ObjCCallHints, ReceiverObjectEncodingsRequireAnExplicitCompleteClass) {
   EXPECT_FALSE(objcEncodedObjectClass("@\"" + std::string(4096, 'A') + "\""));
 }
 
+TEST(ObjCCallHints, ReceiverProtocolEncodingsRequireOneCompleteProtocol) {
+  for (const auto *Encoding :
+       {"@\"<SDImageLoader>\"", "r@\"<SDImageLoader>\"",
+        "n@\"<SDImageLoader>\""})
+    EXPECT_EQ(objcEncodedObjectProtocol(Encoding),
+              std::optional<std::string>("SDImageLoader"));
+  for (const auto *Encoding :
+       {"@", "@?", "^@\"<SDImageLoader>\"", "@\"<>\"",
+        "@\"SDImageLoader\"", "@\"NSObject<SDImageLoader>\"",
+        "@\"<First><Second>\"", "@\"<1Invalid>\"",
+        "@\"<SDImageLoader>\"0", "@\"<SDImageLoader\"",
+        "@\"<SD ImageLoader>\""})
+    EXPECT_FALSE(objcEncodedObjectProtocol(Encoding)) << Encoding;
+  EXPECT_FALSE(objcEncodedObjectProtocol("@\"<" + std::string(4096, 'A') +
+                                         ">\""));
+}
+
 TEST(ObjCCallHints,
      ReceiverFieldsKeepConstantOffsetsDistinctFromRuntimeReferences) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
@@ -4603,6 +8504,49 @@ TEST(ObjCCallHints, ReceiverResultsRevalidatePropertyAndSDKDeclarations) {
   }
 }
 
+TEST(ObjCCallHints, ReceiverResultsPreserveLocalProtocolContracts) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    auto Image = receiverResultImage(Architecture);
+    Image.ObjCProperties.front().TypeEncoding = "@\"<SDImageLoader>\"";
+    ObjCProtocol Protocol;
+    Protocol.Address = 0x2400;
+    Protocol.Name = "SDImageLoader";
+    Protocol.Status = "recovered";
+    ObjCProtocolMethod Method;
+    Method.MetadataAddress = 0x2410;
+    Method.Selector = "shouldBlockFailedURLWithURL:error:options:context:";
+    Method.TypeEncoding = "B48@0:8@16@24Q32@40";
+    Method.Status = "supported";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Protocol.Methods.push_back(std::move(Method));
+    Image.ObjCProtocols.push_back(std::move(Protocol));
+
+    const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Root);
+    const auto Loader = objcReceiverCallResultTypeHint(Image, *Root, "error");
+    ASSERT_TRUE(Loader);
+    const auto Declaration = objcReceiverSourceTypeHint(
+        Image, "shouldBlockFailedURLWithURL:error:options:context:", *Loader);
+    ASSERT_TRUE(Declaration.Signature);
+    EXPECT_EQ(Declaration.Signature->ReturnType->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Declaration.Signature->ReturnType->Size, 1U);
+
+    auto Changed = Image;
+    Changed.ObjCProperties.front().TypeEncoding =
+        "@\"<SDImageLoader><Other>\"";
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Loader));
+    Changed = Image;
+    Changed.ObjCProtocols.front().Status = "unresolved";
+    EXPECT_FALSE(objcReceiverSourceTypeHint(
+                     Changed,
+                     "shouldBlockFailedURLWithURL:error:options:context:",
+                     *Loader)
+                     .Signature);
+  }
+}
+
 TEST(ObjCCallHints, ReceiverResultsRejectUnknownConflictingAndMalformedPaths) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image = receiverResultImage(Architecture);
@@ -4625,7 +8569,7 @@ TEST(ObjCCallHints, ReceiverResultsRejectUnknownConflictingAndMalformedPaths) {
       if (Mutation == 5)
         Changed.ObjCProperties.front().TypeEncoding = "@?";
       if (Mutation == 6)
-        Changed.ObjCProperties.front().TypeEncoding = "@\"<NSObject>\"";
+        Changed.ObjCProperties.front().TypeEncoding = "@\"<MissingProtocol>\"";
       for (const bool Reverse : {false, true}) {
         if (Reverse)
           std::reverse(Changed.ObjCMethods.begin(), Changed.ObjCMethods.end());
@@ -5075,6 +9019,1522 @@ TEST(ObjCCallHints, SharedFrameworkDeclarationsKeepExactProviderAndScalarABI) {
   }
 }
 
+TEST(ObjCCallHints, MapKitPlacemarkCoordinateKeepsRecordAndNilDictionaryABI) {
+  constexpr auto Selector = "initWithCoordinate:addressDictionary:";
+  constexpr auto Module = "/System/Library/Frameworks/MapKit.framework/MapKit";
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+  Image.DynInfo.NeededLibs = {Module};
+
+  const auto Declaration = objcSelectorSourceTypeHint(Image, Selector);
+  ASSERT_TRUE(Declaration);
+  EXPECT_EQ(Declaration->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  ASSERT_EQ(Declaration->Parameters.size(), 4U);
+  const auto &Coordinate = Declaration->Parameters[2];
+  ASSERT_EQ(Coordinate.Type->Kind, NdTypeKind::Struct);
+  ASSERT_EQ(Coordinate.Type->Fields.size(), 2U);
+  ASSERT_EQ(Coordinate.Components.size(), 2U);
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (size_t I = 0; I < 2; ++I) {
+    EXPECT_EQ(Coordinate.Type->Fields[I]->Kind, NdTypeKind::Float);
+    EXPECT_EQ(Coordinate.Type->Fields[I]->Size, 8U);
+    EXPECT_EQ(Coordinate.Components[I].Kind,
+              SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Coordinate.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+  }
+  EXPECT_EQ(Declaration->Parameters[3].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Declaration->Parameters[3].Location.RegisterOffset,
+            TRI.IntParamRegs[2]);
+
+  const auto Hints = buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Binding = Hints.at(0x1204);
+  EXPECT_EQ(Binding.CallKind, SourceCallTypeHint::Kind::ObjCMessage);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*receiverCallExpression(Binding), Image,
+                                      {}));
+  const auto Med = convert(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+  ASSERT_EQ(Med.CallInfos.front().Args.size(), 5U);
+  EXPECT_EQ(Med.CallInfos.front().Args[2].RegOff, TRI.FPParamRegs[0]);
+  EXPECT_EQ(Med.CallInfos.front().Args[3].RegOff, TRI.FPParamRegs[1]);
+  EXPECT_EQ(Med.CallInfos.front().Args[4].RegOff, TRI.IntParamRegs[2]);
+
+  for (const auto &WrongModule :
+       {"/tmp/MapKit.framework/MapKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"}) {
+    auto Invalid = Image;
+    Invalid.DynInfo.NeededLibs = {WrongModule};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Invalid, Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(
+        *receiverCallExpression(Binding), Invalid, {}));
+  }
+  auto Conflict = Image;
+  ObjCMethod Other;
+  Other.Selector = Selector;
+  Other.TypeHint = parseObjCMethodEncoding(Selector, "@32@0:8@16@24");
+  ASSERT_TRUE(Other.TypeHint);
+  Conflict.ObjCMethods.push_back(std::move(Other));
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Conflict, Selector));
+  EXPECT_FALSE(sdk::objcSourceCallBound(*receiverCallExpression(Binding),
+                                       Conflict, {}));
+
+  auto Unsupported = image(Arch::X64);
+  Unsupported.ObjCMethods.clear();
+  Unsupported.DynInfo.NeededLibs = {Module};
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+}
+
+TEST(ObjCCallHints, CoreImageDetectorFeaturesUsesExactProviderAndObjectABI) {
+  constexpr auto Selector = "featuresInImage:options:";
+  constexpr auto Module = "/System/Library/Frameworks/CoreImage.framework/CoreImage";
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+  Image.DynInfo.NeededLibs = {Module};
+
+  const auto Declaration = objcSelectorSourceTypeHint(Image, Selector);
+  ASSERT_TRUE(Declaration);
+  EXPECT_EQ(Declaration->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  EXPECT_EQ(Declaration->ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Declaration->Parameters.size(), 4U);
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (size_t I = 0; I < Declaration->Parameters.size(); ++I) {
+    EXPECT_EQ(Declaration->Parameters[I].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Declaration->Parameters[I].Location.Kind,
+              SourceABICarrierKind::IntegerRegister);
+    EXPECT_EQ(Declaration->Parameters[I].Location.RegisterOffset,
+              TRI.IntParamRegs[I]);
+  }
+
+  const auto Hints = buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Binding = Hints.at(0x1204);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*receiverCallExpression(Binding), Image,
+                                      {}));
+  const auto Med = convert(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+  ASSERT_EQ(Med.CallInfos.front().Args.size(), 4U);
+  for (size_t I = 0; I < 4; ++I)
+    EXPECT_EQ(Med.CallInfos.front().Args[I].RegOff, TRI.IntParamRegs[I]);
+
+  for (const auto &WrongModule :
+       {"/tmp/CoreImage.framework/CoreImage",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"}) {
+    auto Invalid = Image;
+    Invalid.DynInfo.NeededLibs = {WrongModule};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Invalid, Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(
+        *receiverCallExpression(Binding), Invalid, {}));
+  }
+  auto Conflict = Image;
+  ObjCMethod Other;
+  Other.Selector = Selector;
+  Other.TypeHint = parseObjCMethodEncoding(Selector, "v32@0:8@16@24");
+  ASSERT_TRUE(Other.TypeHint);
+  Conflict.ObjCMethods.push_back(std::move(Other));
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Conflict, Selector));
+  EXPECT_FALSE(sdk::objcSourceCallBound(*receiverCallExpression(Binding),
+                                       Conflict, {}));
+
+  auto Unsupported = image(Arch::X64);
+  Unsupported.ObjCMethods.clear();
+  Unsupported.DynInfo.NeededLibs = {Module};
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+}
+
+TEST(ObjCCallHints, SDWebImageDelegateNeedsEmbeddedManagerEvidence) {
+  constexpr auto Selector = "imageManager:shouldBlockFailedURL:withError:";
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+  ObjCClass Manager;
+  Manager.Address = 0x2200;
+  Manager.Name = "SDWebImageManager";
+  Image.ObjCClasses.push_back(Manager);
+  ObjCProperty Delegate;
+  Delegate.Owner = ObjCProperty::OwnerKind::Class;
+  Delegate.OwnerAddress = Manager.Address;
+  Delegate.ClassName = Manager.Name;
+  Delegate.Name = Delegate.Getter = "delegate";
+  Delegate.TypeEncoding = "@\"<SDWebImageManagerDelegate>\"";
+  Delegate.Status = "supported";
+  Image.ObjCProperties.push_back(Delegate);
+  ObjCMethod Witness;
+  Witness.ClassName = Manager.Name;
+  Witness.Selector = "shouldBlockFailedURLWithURL:error:options:context:";
+  Witness.TypeEncoding = "B48@0:8@16@24Q32@40";
+  Witness.TypeHint =
+      parseObjCMethodEncoding(Witness.Selector, Witness.TypeEncoding);
+  ASSERT_TRUE(Witness.TypeHint);
+  Image.ObjCMethods.push_back(Witness);
+
+  const auto Declaration = objcSelectorSourceTypeHint(Image, Selector);
+  ASSERT_TRUE(Declaration);
+  EXPECT_EQ(Declaration->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  EXPECT_EQ(Declaration->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Declaration->ReturnType->Size, 1U);
+  ASSERT_EQ(Declaration->Parameters.size(), 5U);
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (size_t I = 0; I < Declaration->Parameters.size(); ++I) {
+    EXPECT_EQ(Declaration->Parameters[I].Type->Kind, NdTypeKind::Ptr);
+    EXPECT_EQ(Declaration->Parameters[I].Location.RegisterOffset,
+              TRI.IntParamRegs[I]);
+  }
+  const auto Hints =
+      buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Binding = Hints.at(0x1204);
+  EXPECT_TRUE(
+      sdk::objcSourceCallBound(*receiverCallExpression(Binding), Image, {}));
+  const auto Med = convert(Image, receiverCaller(Arch::AArch64));
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+  ASSERT_EQ(Med.CallInfos.front().Args.size(), 5U);
+  for (size_t I = 0; I < 5; ++I)
+    EXPECT_EQ(Med.CallInfos.front().Args[I].RegOff, TRI.IntParamRegs[I]);
+
+  auto CheckRejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*receiverCallExpression(Binding),
+                                          Changed, {}));
+  };
+  auto Changed = Image;
+  Changed.ObjCProperties.clear();
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCProperties.front().TypeEncoding = "@";
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCProperties.push_back(Delegate);
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.clear();
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.front().TypeEncoding = "v48@0:8@16@24Q32@40";
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.ObjCClasses.clear();
+  CheckRejected(Changed);
+  Changed = Image;
+  ObjCMethod Conflict;
+  Conflict.Selector = Selector;
+  Conflict.TypeHint = parseObjCMethodEncoding(Selector, "@40@0:8@16@24@32");
+  ASSERT_TRUE(Conflict.TypeHint);
+  Changed.ObjCMethods.push_back(Conflict);
+  CheckRejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  CheckRejected(Changed);
+}
+
+TEST(ObjCCallHints, SDWebImageOptionsResultNeedsEmbeddedClassEvidence) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  ObjCClass RootClass;
+  RootClass.Name = "NSObject";
+  RootClass.Address = 0x2200;
+  RootClass.RootClass = true;
+  RootClass.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(RootClass);
+  ObjCClass Manager;
+  Manager.Name = "SDWebImageManager";
+  Manager.Address = 0x2210;
+  Manager.SuperclassName = "NSObject";
+  Manager.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Manager);
+  ObjCClass ResultClass = Manager;
+  ResultClass.Name = "SDWebImageOptionsResult";
+  ResultClass.Address = 0x2220;
+  Image.ObjCClasses.push_back(ResultClass);
+  auto AddMethod = [&](llvm::StringRef Class, llvm::StringRef Selector,
+                       llvm::StringRef Encoding, va_t Entry) {
+    ObjCMethod Method;
+    Method.ClassName = Class.str();
+    Method.Selector = Selector.str();
+    Method.TypeEncoding = Encoding.str();
+    Method.Implementation = Entry;
+    Method.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+    EXPECT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Method));
+  };
+  AddMethod(Manager.Name, "useOptions:", "@24@0:8@16", 0x1200);
+  AddMethod(Manager.Name,
+            "processedResultForURL:options:context:", "@40@0:8@16Q24@32",
+            0x1400);
+  AddMethod(ResultClass.Name, "initWithOptions:context:", "@32@0:8Q16@24",
+            0x1500);
+  AddMethod(ResultClass.Name, "options", "Q16@0:8", 0x1600);
+  ObjCProperty Options;
+  Options.Owner = ObjCProperty::OwnerKind::Class;
+  Options.OwnerAddress = ResultClass.Address;
+  Options.ClassName = ResultClass.Name;
+  Options.Name = Options.Getter = "options";
+  Options.TypeEncoding = "Q";
+  Options.Status = "supported";
+  Options.GetterTypeHint = parseObjCMethodEncoding("options", "Q16@0:8");
+  ASSERT_TRUE(Options.GetterTypeHint);
+  Image.ObjCProperties.push_back(Options);
+
+  const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Root);
+  const auto Processed = objcReceiverCallResultTypeHint(
+      Image, *Root, "processedResultForURL:options:context:");
+  ASSERT_TRUE(Processed);
+  const auto Declaration =
+      objcReceiverSourceTypeHint(Image, "options", *Processed);
+  ASSERT_TRUE(Declaration.Signature);
+  EXPECT_EQ(Declaration.Signature->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Declaration.Signature->ReturnType->Size, 8U);
+  EXPECT_EQ(Declaration.Signature->ReturnLocation.Kind,
+            SourceABICarrierKind::IntegerRegister);
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Processed));
+    EXPECT_FALSE(
+        objcReceiverSourceTypeHint(Changed, "options", *Processed).Signature);
+  };
+  auto Changed = Image;
+  Changed.ObjCClasses.pop_back();
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCClasses.push_back(ResultClass);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].TypeEncoding = "@32@0:8@16Q24";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Image.ObjCMethods[1]);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[2].TypeEncoding = "v32@0:8Q16@24";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCProperties.front().TypeEncoding = "@";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, WMFCalendarComponentsNeedsEmbeddedCategoryEvidence) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCMethod Caller;
+  Caller.ClassName = "NSCalendar";
+  Caller.Selector = "wmf_testComponents";
+  Caller.TypeEncoding = "@16@0:8";
+  Caller.Implementation = 0x1200;
+  Caller.Status = "supported";
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+  ObjCMethod Components;
+  Components.ClassName = "NSCalendar";
+  Components.CategoryName = "WMFCommonCalendars";
+  Components.CategoryAddress = 0x2400;
+  Components.MetadataAddress = 0x2410;
+  Components.Selector = "wmf_components:fromDate:toDate:";
+  Components.TypeEncoding = "@40@0:8Q16@24@32";
+  Components.Implementation = 0x1400;
+  Components.Status = "supported";
+  Components.TypeHint =
+      parseObjCMethodEncoding(Components.Selector, Components.TypeEncoding);
+  ASSERT_TRUE(Components.TypeHint);
+  Image.ObjCMethods.push_back(Components);
+  ObjCMethod Factory = Components;
+  Factory.Selector = "wmf_gregorianCalendar";
+  Factory.TypeEncoding = "@16@0:8";
+  Factory.IsClassMethod = true;
+  Factory.Implementation = 0x1500;
+  Factory.MetadataAddress = 0x2420;
+  Factory.TypeHint =
+      parseObjCMethodEncoding(Factory.Selector, Factory.TypeEncoding);
+  ASSERT_TRUE(Factory.TypeHint);
+  Image.ObjCMethods.push_back(Factory);
+  ObjCMethod Conflicting;
+  Conflicting.ClassName = "OtherYear";
+  Conflicting.Selector = "year";
+  Conflicting.TypeEncoding = "@16@0:8";
+  Conflicting.TypeHint =
+      parseObjCMethodEncoding(Conflicting.Selector, Conflicting.TypeEncoding);
+  ASSERT_TRUE(Conflicting.TypeHint);
+  Image.ObjCMethods.push_back(Conflicting);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "year"));
+
+  Image.ObjCSourceReferences[0x2120] = {ObjCSourceReference::Kind::Class,
+                                        0x2120, 8, "NSCalendar"};
+  const ObjCReceiverTypeHint FactoryRoot{
+      ObjCReceiverTypeHint::OriginKind::ClassReference, 0x2120, "NSCalendar",
+      true};
+  const auto Root =
+      objcReceiverCallResultTypeHint(Image, FactoryRoot, Factory.Selector);
+  ASSERT_TRUE(Root);
+  const auto Result =
+      objcReceiverCallResultTypeHint(Image, *Root, Components.Selector);
+  ASSERT_TRUE(Result);
+  const auto Year = objcReceiverSourceTypeHint(Image, "year", *Result);
+  ASSERT_TRUE(Year.Signature);
+  EXPECT_EQ(Year.Signature->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Year.Signature->ReturnType->Size, 8U);
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Result));
+    EXPECT_FALSE(
+        objcReceiverSourceTypeHint(Changed, "year", *Result).Signature);
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[1].CategoryName = "OtherCategory";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].CategoryAddress = 0;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].TypeEncoding = "@32@0:8Q16@24";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Components);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[2].CategoryName = "OtherCategory";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[2].TypeEncoding = "v16@0:8";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  Rejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, MWKLanguageLinkArrayResultsNeedEmbeddedDeclarations) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "MWKLanguageLinkController";
+  Owner.Address = 0x2300;
+  Owner.SuperclassName = "NSObject";
+  Owner.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Caller;
+  Caller.ClassName = Owner.Name;
+  Caller.ClassAddress = Owner.Address;
+  Caller.MetadataAddress = 0x2410;
+  Caller.Selector = "testArrayResults";
+  Caller.TypeEncoding = "v16@0:8";
+  Caller.Implementation = 0x1200;
+  Caller.Status = "supported";
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+  ObjCMethod Read = Caller;
+  Read.Selector = "readPreferredLanguageCodes";
+  Read.TypeEncoding = "@16@0:8";
+  Read.MetadataAddress = 0x2420;
+  Read.Implementation = 0x1300;
+  Read.TypeHint = parseObjCMethodEncoding(Read.Selector, Read.TypeEncoding);
+  ASSERT_TRUE(Read.TypeHint);
+  Image.ObjCMethods.push_back(Read);
+  ObjCMethod All = Read;
+  All.Selector = "allLanguages";
+  All.MetadataAddress = 0x2430;
+  All.Implementation = 0x1400;
+  Image.ObjCMethods.push_back(All);
+  ObjCMethod ClassAll = All;
+  ClassAll.IsClassMethod = true;
+  ClassAll.MetadataAddress = 0x2440;
+  ClassAll.Implementation = 0x1500;
+  Image.ObjCMethods.push_back(ClassAll);
+
+  const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Receiver);
+  for (const auto *Selector : {"readPreferredLanguageCodes", "allLanguages"}) {
+    SCOPED_TRACE(Selector);
+    const auto Array =
+        objcReceiverCallResultTypeHint(Image, *Receiver, Selector);
+    ASSERT_TRUE(Array);
+    const auto Enumeration = objcReceiverSourceTypeHint(
+        Image, "enumerateObjectsUsingBlock:", *Array);
+    ASSERT_TRUE(Enumeration.Signature);
+  }
+  Image.ObjCSourceReferences[0x2120] = {ObjCSourceReference::Kind::Class,
+                                        0x2120, 8, Owner.Name};
+  const ObjCReceiverTypeHint ClassReference{
+      ObjCReceiverTypeHint::OriginKind::ClassReference, 0x2120, Owner.Name,
+      true};
+  EXPECT_TRUE(
+      objcReceiverCallResultTypeHint(Image, ClassReference, "allLanguages"));
+
+  auto Changed = Image;
+  Changed.ObjCMethods[1].TypeEncoding = "v16@0:8";
+  EXPECT_FALSE(objcReceiverCallResultTypeHint(
+      Changed, *Receiver, "readPreferredLanguageCodes"));
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Read);
+  EXPECT_FALSE(objcReceiverCallResultTypeHint(
+      Changed, *Receiver, "readPreferredLanguageCodes"));
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(objcReceiverCallResultTypeHint(
+      Changed, *Receiver, "readPreferredLanguageCodes"));
+}
+
+TEST(ObjCCallHints, WMFContentGroupArrayResultsQualifyEnumeration) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreData.framework/CoreData",
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCMethod Caller;
+  Caller.ClassName = "NSManagedObjectContext";
+  Caller.Selector = "wmf_testContentGroups";
+  Caller.TypeEncoding = "v16@0:8";
+  Caller.Implementation = 0x1200;
+  Caller.Status = "supported";
+  Caller.TypeHint =
+      parseObjCMethodEncoding(Caller.Selector, Caller.TypeEncoding);
+  ASSERT_TRUE(Caller.TypeHint);
+  Image.ObjCMethods.push_back(Caller);
+  static constexpr struct {
+    const char *Selector;
+    const char *Encoding;
+  } Cases[] = {
+      {"contentGroupsOfKind:sortedByDescriptors:", "@28@0:8i16@20"},
+      {"contentGroupsOfKind:sortedByKey:ascending:",
+       "@32@0:8i16@20B28"},
+      {"contentGroupsOfKind:", "@20@0:8i16"},
+  };
+  for (unsigned I = 0; I < std::size(Cases); ++I) {
+    ObjCMethod Method = Caller;
+    Method.Selector = Cases[I].Selector;
+    Method.TypeEncoding = Cases[I].Encoding;
+    Method.CategoryName = "WMFArticle";
+    Method.CategoryAddress = 0x2400;
+    Method.MetadataAddress = 0x2410 + I * 0x10;
+    Method.Implementation = 0x1300 + I * 0x10;
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(Method);
+  }
+  const auto Receiver = objcMethodReceiverTypeHint(Image, Caller.Implementation);
+  ASSERT_TRUE(Receiver);
+  for (unsigned I = 0; I < std::size(Cases); ++I) {
+    SCOPED_TRACE(Cases[I].Selector);
+    const auto Array = objcReceiverCallResultTypeHint(
+        Image, *Receiver, Cases[I].Selector);
+    ASSERT_TRUE(Array);
+    EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Array));
+    const auto Enumeration = objcReceiverSourceTypeHint(
+        Image, "enumerateObjectsUsingBlock:", *Array);
+    ASSERT_TRUE(Enumeration.Signature);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "enumerateObjectsUsingBlock:";
+    Call.Receiver = *Array;
+    Call.Signature = *Enumeration.Signature;
+    const auto Contract = objcBlockParameterContract(Image, Call, 2);
+    ASSERT_TRUE(Contract);
+    EXPECT_EQ(Contract->Storage,
+              ObjCBlockParameterContract::Lifetime::NonEscaping);
+
+    auto Changed = Image;
+    Changed.ObjCMethods[I + 1].CategoryName = "OtherCategory";
+    EXPECT_FALSE(objcReceiverCallResultTypeHint(
+        Changed, *Receiver, Cases[I].Selector));
+    Changed = Image;
+    Changed.ObjCMethods[I + 1].TypeEncoding = "@16@0:8";
+    EXPECT_FALSE(objcReceiverCallResultTypeHint(
+        Changed, *Receiver, Cases[I].Selector));
+    Changed = Image;
+    Changed.ObjCMethods.push_back(Image.ObjCMethods[I + 1]);
+    EXPECT_FALSE(objcReceiverCallResultTypeHint(
+        Changed, *Receiver, Cases[I].Selector));
+  }
+  auto Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(objcReceiverCallResultTypeHint(
+      Changed, *Receiver, Cases[0].Selector));
+}
+
+TEST(ObjCCallHints, WMFNewsArrayParameterQualifiesEnumerationBlock) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "WMFFeedContentSource";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.Selector = "saveGroupForNews:pageViews:date:inManagedObjectContext:";
+  Method.TypeEncoding = "v48@0:8@16@24@32@40";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "NSArray");
+  EXPECT_EQ(Root->SourceParameter, 2U);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto ArrayCall =
+      objcReceiverSourceTypeHint(Image, "enumerateObjectsUsingBlock:", *Root);
+  ASSERT_TRUE(ArrayCall.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "enumerateObjectsUsingBlock:";
+  Call.Receiver = *Root;
+  Call.Signature = *ArrayCall.Signature;
+  const auto Callback = objcBlockParameterContract(Image, Call, 2);
+  ASSERT_TRUE(Callback);
+  EXPECT_EQ(Callback->Storage,
+            ObjCBlockParameterContract::Lifetime::NonEscaping);
+  ASSERT_EQ(Callback->Signature.Parameters.size(), 4U);
+  EXPECT_EQ(Callback->Signature.Parameters[2].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Callback->Signature.Parameters[2].Type->Size, 8U);
+  Image.ObjCSourceReferences.at(0x2100).Name = Call.Selector;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).Receiver);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::MethodParameter);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->SourceParameter, 2U);
+  EXPECT_TRUE(objcBlockParameterContract(Image, Hints.at(0x1200), 2));
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root));
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[0].ClassName = "OtherSource";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].MetadataAddress = 0;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v40@0:8@16@24@32";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Method);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  Rejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  Rejected(Changed);
+  auto WrongParameter = *Root;
+  WrongParameter.SourceParameter = 3;
+  EXPECT_FALSE(objcReceiverTypeHintValid(Image, WrongParameter));
+}
+
+TEST(ObjCCallHints, SDImagePipelineArrayParameterQualifiesEnumeration) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "SDImagePipelineTransformer";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.IsClassMethod = true;
+  Method.Selector = "cacheKeyForTransformers:";
+  Method.TypeEncoding = "@24@0:8@16";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "NSArray");
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto Enumeration =
+      objcReceiverSourceTypeHint(Image, "enumerateObjectsUsingBlock:", *Root);
+  ASSERT_TRUE(Enumeration.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "enumerateObjectsUsingBlock:";
+  Call.Receiver = *Root;
+  Call.Signature = *Enumeration.Signature;
+  const auto Contract = objcBlockParameterContract(Image, Call, 2);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(Contract->Storage,
+            ObjCBlockParameterContract::Lifetime::NonEscaping);
+  Image.ObjCSourceReferences.at(0x2100).Name = Call.Selector;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).Receiver);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::MethodParameter);
+  EXPECT_TRUE(objcBlockParameterContract(Image, Hints.at(0x1200), 2));
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root));
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[0].IsClassMethod = false;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v24@0:8@16";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Method);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  Rejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, WMFAnnouncementFilterArrayParameterQualifiesSelection) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "WMFAnnouncementsFetcher";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.Selector =
+      "filterAnnouncements:withCurrentCountryInIPHeader:geoIPCookieValue:";
+  Method.TypeEncoding = "@40@0:8@16@24@32";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+  ObjCMethod Selection;
+  Selection.ClassName = "NSArray";
+  Selection.CategoryName = "MTLManipulationAdditions";
+  Selection.CategoryAddress = 0x2500;
+  Selection.MetadataAddress = 0x2510;
+  Selection.Selector = "wmf_select:";
+  Selection.TypeEncoding = "@24@0:8@?16";
+  Selection.Implementation = 0x1300;
+  Selection.Status = "supported";
+  Selection.TypeHint =
+      parseObjCMethodEncoding(Selection.Selector, Selection.TypeEncoding);
+  ASSERT_TRUE(Selection.TypeHint);
+  Image.ObjCMethods.push_back(Selection);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "NSArray");
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto Select = objcReceiverSourceTypeHint(Image, "wmf_select:", *Root);
+  ASSERT_TRUE(Select.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "wmf_select:";
+  Call.Receiver = *Root;
+  Call.Signature = *Select.Signature;
+  const auto Contract = objcBlockParameterContract(Image, Call, 2);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(Contract->Storage,
+            ObjCBlockParameterContract::Lifetime::Copied);
+  Image.ObjCSourceReferences.at(0x2100).Name = Call.Selector;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).Receiver);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::MethodParameter);
+  EXPECT_TRUE(objcBlockParameterContract(Image, Hints.at(0x1200), 2));
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root));
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[0].IsClassMethod = true;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "@24@0:8@16";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Method);
+  Rejected(Changed);
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, SDWebImageIndicatorQueueParameterQualifiesAsyncBlock) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  ObjCClass Queue;
+  Queue.Name = "SDCallbackQueue";
+  Queue.Address = 0x2300;
+  Queue.SuperclassName = "NSObject";
+  Queue.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Queue);
+  ObjCMethod Async;
+  Async.ClassName = Queue.Name;
+  Async.ClassAddress = Queue.Address;
+  Async.MetadataAddress = 0x2400;
+  Async.Selector = "async:";
+  Async.TypeEncoding = "v24@0:8@?16";
+  Async.Implementation = 0x1400;
+  Async.Status = "supported";
+  Async.TypeHint = parseObjCMethodEncoding(Async.Selector, Async.TypeEncoding);
+  ASSERT_TRUE(Async.TypeHint);
+  Image.ObjCMethods.push_back(Async);
+  ObjCMethod MainQueue = Async;
+  MainQueue.MetadataAddress = 0x2410;
+  MainQueue.Selector = "mainQueue";
+  MainQueue.TypeEncoding = "@16@0:8";
+  MainQueue.IsClassMethod = true;
+  MainQueue.Implementation = 0x1500;
+  MainQueue.TypeHint =
+      parseObjCMethodEncoding(MainQueue.Selector, MainQueue.TypeEncoding);
+  ASSERT_TRUE(MainQueue.TypeHint);
+  Image.ObjCMethods.push_back(MainQueue);
+  ObjCMethod Indicator;
+  Indicator.ClassName = "UIView";
+  Indicator.CategoryName = "WMFDefaultNib";
+  Indicator.CategoryAddress = 0x2500;
+  Indicator.MetadataAddress = 0x2510;
+  Indicator.Selector = "sd_startImageIndicatorWithQueue:";
+  Indicator.TypeEncoding = "v24@0:8@16";
+  Indicator.Implementation = 0x1200;
+  Indicator.Status = "supported";
+  Indicator.TypeHint =
+      parseObjCMethodEncoding(Indicator.Selector, Indicator.TypeEncoding);
+  ASSERT_TRUE(Indicator.TypeHint);
+  Image.ObjCMethods.push_back(Indicator);
+  ObjCMethod Stop = Indicator;
+  Stop.MetadataAddress = 0x2520;
+  Stop.Selector = "sd_stopImageIndicatorWithQueue:";
+  Stop.Implementation = 0x1300;
+  Stop.TypeHint = parseObjCMethodEncoding(Stop.Selector, Stop.TypeEncoding);
+  ASSERT_TRUE(Stop.TypeHint);
+  Image.ObjCMethods.push_back(Stop);
+
+  for (va_t Entry : {va_t{0x1200}, va_t{0x1300}}) {
+    const auto Root = objcMethodParameterReceiverTypeHint(Image, Entry, 2);
+    ASSERT_TRUE(Root);
+    EXPECT_EQ(Root->ClassName, "SDCallbackQueue");
+    EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+    const auto Declaration = objcReceiverSourceTypeHint(Image, "async:", *Root);
+    ASSERT_TRUE(Declaration.Signature);
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "async:";
+    Call.Receiver = *Root;
+    Call.Signature = *Declaration.Signature;
+    const auto Contract = objcBlockParameterContract(Image, Call, 2);
+    ASSERT_TRUE(Contract);
+    EXPECT_EQ(Contract->Storage, ObjCBlockParameterContract::Lifetime::Copied);
+  }
+  auto Changed = Image;
+  Changed.ObjCMethods[2].TypeEncoding = "v16@0:8";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods[3].CategoryAddress = 0x2600;
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v16@0:8";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Async);
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+}
+
+TEST(ObjCCallHints, RecentSearchArrayParameterQualifiesSelectionBlock) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "MWKRecentSearchList";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.Selector = "importEntries:";
+  Method.TypeEncoding = "v24@0:8@16";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "NSArray");
+  const auto ArrayCall =
+      objcReceiverSourceTypeHint(Image, "enumerateObjectsUsingBlock:", *Root);
+  ASSERT_TRUE(ArrayCall.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "enumerateObjectsUsingBlock:";
+  Call.Receiver = *Root;
+  Call.Signature = *ArrayCall.Signature;
+  const auto Contract = objcBlockParameterContract(Image, Call, 2);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(Contract->Storage,
+            ObjCBlockParameterContract::Lifetime::NonEscaping);
+
+  Image.ObjCMethods.front().TypeEncoding = "v32@0:8@16@24";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Image, 0x1200, 2));
+}
+
+TEST(ObjCCallHints, WMFTopReadResponseParameterQualifiesArticlePreviews) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Owner;
+  Owner.Name = "WMFFeedContentSource";
+  Owner.Address = 0x2300;
+  Image.ObjCClasses.push_back(Owner);
+  ObjCClass NSObject;
+  NSObject.Name = "NSObject";
+  NSObject.Address = 0x2700;
+  NSObject.RootClass = true;
+  NSObject.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(NSObject);
+  ObjCClass Response;
+  Response.Name = "WMFFeedTopReadResponse";
+  Response.Address = 0x2500;
+  Response.SuperclassName = "NSObject";
+  Response.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Response);
+  ObjCMethod Method;
+  Method.ClassName = Owner.Name;
+  Method.ClassAddress = Owner.Address;
+  Method.MetadataAddress = 0x2400;
+  Method.Selector =
+      "saveGroupForTopRead:pageViews:date:inManagedObjectContext:";
+  Method.TypeEncoding = "v48@0:8@16@24@32@40";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+  ObjCProperty Previews;
+  Previews.Owner = ObjCProperty::OwnerKind::Class;
+  Previews.OwnerAddress = Response.Address;
+  Previews.ClassName = Response.Name;
+  Previews.Name = Previews.Getter = "articlePreviews";
+  Previews.TypeEncoding = "@\"NSArray\"";
+  Previews.MetadataAddress = 0x2600;
+  Previews.Status = "supported";
+  Previews.GetterTypeHint = parseObjCMethodEncoding(Previews.Getter, "@16@0:8");
+  ASSERT_TRUE(Previews.GetterTypeHint);
+  Image.ObjCProperties.push_back(Previews);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, Response.Name);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto Array =
+      objcReceiverCallResultTypeHint(Image, *Root, "articlePreviews");
+  ASSERT_TRUE(Array);
+  const auto Enumeration =
+      objcReceiverSourceTypeHint(Image, "enumerateObjectsUsingBlock:", *Array);
+  ASSERT_TRUE(Enumeration.Signature);
+  SourceCallTypeHint Call;
+  Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Call.Selector = "enumerateObjectsUsingBlock:";
+  Call.Receiver = *Array;
+  Call.Signature = *Enumeration.Signature;
+  EXPECT_TRUE(objcBlockParameterContract(Image, Call, 2));
+
+  auto Changed = Image;
+  Changed.ObjCProperties[0].TypeEncoding = "@\"NSSet\"";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCProperties[0].MetadataAddress = 0;
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCClasses.push_back(Response);
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v40@0:8@16@24@32";
+  EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+}
+
+TEST(ObjCCallHints, WMFManagedContextParametersQualifyCopiedBlocks) {
+  static constexpr struct {
+    const char *Owner;
+    const char *Selector;
+    const char *Encoding;
+    unsigned Parameter;
+  } Cases[] = {
+      {"WMFSuggestedEditsContentSource",
+       "loadNewContentInManagedObjectContext:force:completion:",
+       "v36@0:8@16B24@?28", 2},
+      {"WMFContinueReadingContentSource",
+       "loadNewContentInManagedObjectContext:force:completion:",
+       "v36@0:8@16B24@?28", 2},
+      {"WMFNearbyContentSource",
+       "loadNewContentInManagedObjectContext:force:completion:",
+       "v36@0:8@16B24@?28", 2},
+      {"WMFFeedContentSource",
+       "saveContentForFeedDay:pageViews:onDate:inManagedObjectContext:"
+       "completion:",
+       "v56@0:8@16@24@32@40@?48", 5},
+      {"WMFFeedContentSource",
+       "saveGroupForTopRead:pageViews:date:inManagedObjectContext:",
+       "v48@0:8@16@24@32@40", 5},
+      {"WMFFeedContentSource",
+       "saveGroupForNews:pageViews:date:inManagedObjectContext:",
+       "v48@0:8@16@24@32@40", 5},
+      {"WMFAnnouncementsContentSource",
+       "saveAnnouncements:inManagedObjectContext:completion:",
+       "v40@0:8@16@24@?32", 3},
+      {"WMFAnnouncementsContentSource",
+       "loadContentForDate:inManagedObjectContext:force:addNewContent:"
+       "completion:",
+       "v48@0:8@16@24B32B36@?40", 3},
+      {"WMFOnThisDayContentSource",
+       "loadContentForDate:inManagedObjectContext:force:completion:",
+       "v44@0:8@16@24B32@?36", 3},
+      {"WMFRandomContentSource",
+       "loadContentForDate:inManagedObjectContext:force:completion:",
+       "v44@0:8@16@24B32@?36", 3},
+      {"WMFNearbyContentSource",
+       "getGroupForLocation:inManagedObjectContext:force:completion:failure:",
+       "v52@0:8@16@24B32@?36@?44", 3},
+      {"WMFRelatedPagesContentSource",
+       "loadContentForDate:inManagedObjectContext:force:addNewContent:"
+       "completion:",
+       "v48@0:8@16@24B32B36@?40", 3},
+      {"WMFRelatedPagesContentSource",
+       "extracted:completion:date:groupURL:moc:",
+       "v56@0:8@16@?24@32@40@48", 6},
+      {"WMFNearbyContentSource",
+       "removeSectionsForMidnightUTCDate:withKeyNotEqualToKey:"
+       "inManagedObjectContext:",
+       "v40@0:8@16@24@32", 4},
+      {"WMFAnnouncementsContentSource",
+       "updateVisibilityOfAnnouncementsInManagedObjectContext:addNewContent:",
+       "v28@0:8@16B24", 2},
+  };
+  for (const auto &Case : Cases) {
+    auto Image = image();
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/CoreData.framework/CoreData",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    ObjCClass Owner;
+    Owner.Name = Case.Owner;
+    Owner.Address = 0x2300;
+    Image.ObjCClasses.push_back(Owner);
+    ObjCMethod Method;
+    Method.ClassName = Owner.Name;
+    Method.ClassAddress = Owner.Address;
+    Method.MetadataAddress = 0x2400;
+    Method.Selector = Case.Selector;
+    Method.TypeEncoding = Case.Encoding;
+    Method.Implementation = 0x1200;
+    Method.Status = "supported";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+    ASSERT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(Method);
+
+    const auto Root =
+        objcMethodParameterReceiverTypeHint(Image, 0x1200, Case.Parameter);
+    ASSERT_TRUE(Root) << Case.Owner;
+    EXPECT_EQ(Root->ClassName, "NSManagedObjectContext");
+    EXPECT_EQ(Root->SourceParameter, Case.Parameter);
+    EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+    const auto ContextCall =
+        objcReceiverSourceTypeHint(Image, "performBlock:", *Root);
+    ASSERT_TRUE(ContextCall.Signature) << Case.Owner;
+    SourceCallTypeHint Call;
+    Call.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Call.Selector = "performBlock:";
+    Call.Receiver = *Root;
+    Call.Signature = *ContextCall.Signature;
+    const auto Callback = objcBlockParameterContract(Image, Call, 2);
+    ASSERT_TRUE(Callback) << Case.Owner;
+    EXPECT_EQ(Callback->Storage, ObjCBlockParameterContract::Lifetime::Copied);
+    if (llvm::StringRef(Case.Selector) ==
+        "saveAnnouncements:inManagedObjectContext:completion:") {
+      const auto Array = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+      ASSERT_TRUE(Array);
+      EXPECT_EQ(Array->ClassName, "NSArray");
+      EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Array));
+      const auto Enumeration = objcReceiverSourceTypeHint(
+          Image, "enumerateObjectsUsingBlock:", *Array);
+      ASSERT_TRUE(Enumeration.Signature);
+      Call.Selector = "enumerateObjectsUsingBlock:";
+      Call.Receiver = *Array;
+      Call.Signature = *Enumeration.Signature;
+      const auto Elements = objcBlockParameterContract(Image, Call, 2);
+      ASSERT_TRUE(Elements);
+      EXPECT_EQ(Elements->Storage,
+                ObjCBlockParameterContract::Lifetime::NonEscaping);
+    }
+
+    auto Rejected = [&](const BinaryImage &Changed) {
+      EXPECT_FALSE(
+          objcMethodParameterReceiverTypeHint(Changed, 0x1200, Case.Parameter))
+          << Case.Owner;
+      EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root)) << Case.Owner;
+    };
+    auto Changed = Image;
+    Changed.ObjCMethods[0].MetadataAddress = 0;
+    Rejected(Changed);
+    Changed = Image;
+    Changed.ObjCMethods[0].TypeEncoding = "v24@0:8@16";
+    Rejected(Changed);
+    Changed = Image;
+    Changed.ObjCMethods.push_back(Method);
+    Rejected(Changed);
+    Changed = Image;
+    Changed.DynInfo.NeededLibs.clear();
+    Rejected(Changed);
+    Changed = Image;
+    Changed.Arch = Arch::X64;
+    Rejected(Changed);
+    EXPECT_FALSE(
+        objcMethodParameterReceiverTypeHint(Image, 0x1200, Case.Parameter + 1));
+  }
+}
+
+TEST(ObjCCallHints, AuthenticatedBlockParameterQualifiesReceiverCopy) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  constexpr va_t Descriptor = 0x2500, Signature = 0x2600;
+  auto Put64 = [&](va_t Address, uint64_t Word) {
+    llvm::support::endian::write64le(
+        Image.Segments[0].Data.data() + Address - 0x1000, Word);
+  };
+  Put64(Descriptor, 0);
+  Put64(Descriptor + 8, 32);
+  Put64(Descriptor + 16, Signature);
+  constexpr llvm::StringLiteral Encoding = "v24@?0@\"NSArray\"8Q16";
+  std::copy(Encoding.bytes_begin(), Encoding.bytes_end(),
+            Image.Segments[0].Data.begin() + Signature - 0x1000);
+  Image.ObjCSourceReferences.at(0x2100).Name = "enumerateObjectsUsingBlock:";
+  const auto Root = objcBlockParameterReceiverTypeHint(
+      Image, 0x1200, Descriptor, 0x40000000, 1);
+  ASSERT_TRUE(Root);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[1], 8)}, 0x11fc));
+  const std::map<unsigned, ObjCReceiverTypeHint> Parameters{{1, *Root}};
+  const auto Hints = buildObjCSourceCallHints(Image, Function, &Parameters);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).Receiver);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->Origin,
+            ObjCReceiverTypeHint::OriginKind::BlockParameter);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->ClassName, "NSArray");
+  EXPECT_TRUE(objcBlockParameterContract(Image, Hints.at(0x1200), 2));
+
+  auto Changed = Image;
+  Changed.Segments[0].Data[Signature - 0x1000 + 11] = 'X';
+  EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root));
+  const auto Unqualified =
+      buildObjCSourceCallHints(Changed, Function, &Parameters);
+  EXPECT_FALSE(Unqualified.count(0x1200) && Unqualified.at(0x1200).Receiver);
+}
+
+TEST(ObjCCallHints, DDFileLoggerParameterQualifiesFileSize) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  ObjCClass Logger;
+  Logger.Name = "DDFileLogger";
+  Logger.Address = 0x2300;
+  Logger.SuperclassName = "NSObject";
+  Logger.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Logger);
+  ObjCClass FileInfo;
+  FileInfo.Name = "DDLogFileInfo";
+  FileInfo.Address = 0x2500;
+  FileInfo.SuperclassName = "NSObject";
+  FileInfo.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(FileInfo);
+  ObjCClass NSObject;
+  NSObject.Name = "NSObject";
+  NSObject.Address = 0x2700;
+  NSObject.RootClass = true;
+  NSObject.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(NSObject);
+  ObjCMethod Archive;
+  Archive.ClassName = Logger.Name;
+  Archive.ClassAddress = Logger.Address;
+  Archive.MetadataAddress = 0x2400;
+  Archive.Selector = "lt_shouldLogFileBeArchived:";
+  Archive.TypeEncoding = "B24@0:8@16";
+  Archive.Implementation = 0x1200;
+  Archive.Status = "supported";
+  Archive.TypeHint =
+      parseObjCMethodEncoding(Archive.Selector, Archive.TypeEncoding);
+  ASSERT_TRUE(Archive.TypeHint);
+  Image.ObjCMethods.push_back(Archive);
+  ObjCMethod Size;
+  Size.ClassName = FileInfo.Name;
+  Size.ClassAddress = FileInfo.Address;
+  Size.MetadataAddress = 0x2600;
+  Size.Selector = "fileSize";
+  Size.TypeEncoding = "Q16@0:8";
+  Size.Implementation = 0x1400;
+  Size.Status = "supported";
+  Size.TypeHint = parseObjCMethodEncoding(Size.Selector, Size.TypeEncoding);
+  ASSERT_TRUE(Size.TypeHint);
+  Image.ObjCMethods.push_back(Size);
+
+  const auto Root = objcMethodParameterReceiverTypeHint(Image, 0x1200, 2);
+  ASSERT_TRUE(Root);
+  EXPECT_EQ(Root->ClassName, "DDLogFileInfo");
+  EXPECT_EQ(Root->SourceParameter, 2U);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Root));
+  const auto SizeCall = objcReceiverSourceTypeHint(Image, "fileSize", *Root);
+  ASSERT_TRUE(SizeCall.Signature);
+  ASSERT_TRUE(SizeCall.Signature->ReturnType);
+  EXPECT_EQ(SizeCall.Signature->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(SizeCall.Signature->ReturnType->Size, 8U);
+  Image.ObjCSourceReferences.at(0x2100).Name = "fileSize";
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  auto Function = caller();
+  Function.Blocks[0].Ops.insert(
+      Function.Blocks[0].Ops.begin(),
+      operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1200));
+  ASSERT_TRUE(Hints.at(0x1200).Receiver);
+  EXPECT_EQ(Hints.at(0x1200).Receiver->ClassName, "DDLogFileInfo");
+  EXPECT_EQ(Hints.at(0x1200).Signature.ReturnType->Size, 8U);
+
+  // A selector without a source declaration can still dispatch through an
+  // exact objc_msgSend veneer. The input object held in x19 survives that
+  // Darwin call before the later, qualified fileSize message.
+  ObjCSourceReference Unknown = Image.ObjCSourceReferences.at(0x2100);
+  Unknown.Address = 0x2110;
+  Unknown.Name = "isOnInternalLoggerQueue";
+  Image.ObjCSourceReferences.emplace(Unknown.Address, Unknown);
+  std::copy_n(Image.Segments[0].Data.data() + 0x100, 20,
+              Image.Segments[0].Data.data() + 0x120);
+  llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x124,
+                                   0xf9408821); // selector slot 0x2110
+  LowFunc AcrossMessage = caller();
+  auto &Ops = AcrossMessage.Blocks[0].Ops;
+  Ops.clear();
+  Ops.push_back(operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                          {NdVar::reg(TRI.IntParamRegs[2], 8)}, 0x11fc));
+  Ops.push_back(operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                          {NdVar::cst(0x1120, 8)}, 0x1200));
+  Ops.push_back(operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                          {NdVar::reg(a64reg::X19, 8)}, 0x1204));
+  Ops.push_back(operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                          {NdVar::cst(0x1100, 8)}, 0x1208));
+  Ops.push_back(operation(NdOp::RETURN, {},
+                          {NdVar::reg(TRI.IntReturnReg, 8)}, 0x120c));
+  AcrossMessage.Blocks[0].EndAddr = 0x1210;
+  const auto AfterUnknown = buildObjCSourceCallHints(Image, AcrossMessage);
+  ASSERT_FALSE(AfterUnknown.count(0x1200));
+  ASSERT_TRUE(AfterUnknown.count(0x1208));
+  ASSERT_TRUE(AfterUnknown.at(0x1208).Receiver);
+  EXPECT_EQ(AfterUnknown.at(0x1208).Receiver->ClassName, "DDLogFileInfo");
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcMethodParameterReceiverTypeHint(Changed, 0x1200, 2));
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Root));
+  };
+  auto Changed = Image;
+  Changed.ObjCMethods[0].ClassName = "OtherLogger";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v24@0:8@16";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].MetadataAddress = 0;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].TypeEncoding = "d16@0:8";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.push_back(Size);
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, DDLogFileManagerArrayElementQualifiesFileSize) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass NSObject;
+  NSObject.Name = "NSObject";
+  NSObject.Address = 0x2200;
+  NSObject.RootClass = true;
+  NSObject.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(NSObject);
+  ObjCClass Manager;
+  Manager.Name = "DDLogFileManagerDefault";
+  Manager.Address = 0x2300;
+  Manager.SuperclassName = "NSObject";
+  Manager.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(Manager);
+  ObjCClass Info = Manager;
+  Info.Name = "DDLogFileInfo";
+  Info.Address = 0x2500;
+  Image.ObjCClasses.push_back(Info);
+  auto AddMethod = [&](llvm::StringRef ClassName, va_t ClassAddress,
+                       llvm::StringRef Selector, llvm::StringRef Encoding,
+                       va_t Entry, va_t Metadata) {
+    ObjCMethod Method;
+    Method.ClassName = ClassName.str();
+    Method.ClassAddress = ClassAddress;
+    Method.Selector = Selector.str();
+    Method.TypeEncoding = Encoding.str();
+    Method.Implementation = Entry;
+    Method.MetadataAddress = Metadata;
+    Method.Status = "supported";
+    Method.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+    EXPECT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Method));
+  };
+  AddMethod(Manager.Name, Manager.Address,
+            "deleteOldLogFilesWithError:", "B24@0:8^@16", 0x1200, 0x2400);
+  AddMethod(Manager.Name, Manager.Address, "sortedLogFileInfos", "@16@0:8",
+            0x1400, 0x2410);
+  AddMethod(Info.Name, Info.Address, "fileSize", "Q16@0:8", 0x1500, 0x2600);
+  ObjCProperty Property;
+  Property.Owner = ObjCProperty::OwnerKind::Class;
+  Property.OwnerAddress = Manager.Address;
+  Property.ClassName = Manager.Name;
+  Property.Name = "sortedLogFileInfos";
+  Property.Getter = Property.Name;
+  Property.TypeEncoding = "@\"NSArray\"";
+  Property.MetadataAddress = 0x2700;
+  Property.Status = "supported";
+  Property.GetterTypeHint = parseObjCMethodEncoding(Property.Getter, "@16@0:8");
+  ASSERT_TRUE(Property.GetterTypeHint);
+  Image.ObjCProperties.push_back(Property);
+
+  const auto Root = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Root);
+  const auto Array =
+      objcReceiverCallResultTypeHint(Image, *Root, "sortedLogFileInfos");
+  ASSERT_TRUE(Array);
+  ASSERT_EQ(Array->Steps.size(), 1U);
+  const auto Element = objcReceiverCallResultTypeHint(
+      Image, *Array, "objectAtIndexedSubscript:");
+  ASSERT_TRUE(Element);
+  ASSERT_EQ(Element->Steps.size(), 2U);
+  EXPECT_TRUE(objcReceiverTypeHintValid(Image, *Element));
+  const auto Size = objcReceiverSourceTypeHint(Image, "fileSize", *Element);
+  ASSERT_TRUE(Size.Signature);
+  ASSERT_TRUE(Size.Signature->ReturnType);
+  EXPECT_EQ(Size.Signature->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Size.Signature->ReturnType->Size, 8U);
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcReceiverTypeHintValid(Changed, *Element));
+    EXPECT_FALSE(
+        objcReceiverSourceTypeHint(Changed, "fileSize", *Element).Signature);
+  };
+  auto Changed = Image;
+  Changed.ObjCProperties[0].TypeEncoding = "@\"NSString\"";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[0].TypeEncoding = "v24@0:8^@16";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[1].MetadataAddress = 0;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods[2].TypeEncoding = "d16@0:8";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCProperties.push_back(Property);
+  Rejected(Changed);
+}
+
+TEST(ObjCCallHints, SDImageLoaderErrorReceiverSelectsNSErrorCode) {
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.ObjCSourceReferences.at(0x2100).Name = "code";
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  ObjCClass Downloader;
+  Downloader.Name = "SDWebImageDownloader";
+  Downloader.Address = 0x2300;
+  Image.ObjCClasses.push_back(Downloader);
+  ObjCMethod Method;
+  Method.ClassAddress = Downloader.Address;
+  Method.ClassName = Downloader.Name;
+  Method.Selector = "shouldBlockFailedURLWithURL:error:options:context:";
+  Method.TypeEncoding = "B48@0:8@16@24Q32@40";
+  Method.Implementation = 0x1200;
+  Method.Status = "supported";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+  ObjCProtocol Protocol;
+  Protocol.Name = "SDImageLoader";
+  Protocol.Address = 0x2400;
+  Protocol.Status = "recovered";
+  ObjCProtocolMethod Declaration;
+  Declaration.Selector = Method.Selector;
+  Declaration.TypeEncoding = Method.TypeEncoding;
+  Declaration.Status = "supported";
+  Declaration.IsOptional = true;
+  Declaration.TypeHint =
+      parseObjCMethodEncoding(Declaration.Selector, Declaration.TypeEncoding);
+  ASSERT_TRUE(Declaration.TypeHint);
+  Protocol.Methods.push_back(Declaration);
+  Image.ObjCProtocols.push_back(Protocol);
+  ObjCMethod Conflicting;
+  Conflicting.ClassName = "MWKLicense";
+  Conflicting.Selector = "code";
+  Conflicting.TypeEncoding = "@16@0:8";
+  Conflicting.TypeHint =
+      parseObjCMethodEncoding(Conflicting.Selector, Conflicting.TypeEncoding);
+  ASSERT_TRUE(Conflicting.TypeHint);
+  Image.ObjCMethods.push_back(Conflicting);
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "code"));
+
+  const auto Caller = objcMethodSourceTypeHint(Image, Method.Implementation);
+  ASSERT_TRUE(Caller);
+  SourceCallTypeHint::SelectorArgumentTypeEvidence Evidence;
+  Evidence.Parameter = 0;
+  Evidence.MethodEntry = Method.Implementation;
+  Evidence.Source = Caller->Parameters[3].Location;
+  Evidence.ConsumedAsObject = true;
+  const auto Exact =
+      objcSelectorSourceTypeHintForArgumentTypeUse(Image, "code", Evidence);
+  ASSERT_TRUE(Exact);
+  ASSERT_TRUE(Exact->ReturnType);
+  EXPECT_EQ(Exact->ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Exact->ReturnType->Size, 8U);
+
+  Image.ImportPtrSlots[0x2190] = "_objc_retain";
+  const uint32_t RetainStub[] = {0xb0000010, 0xf940ca10, 0xd61f0200};
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x140 + I * 4, RetainStub[I]);
+  LowFunc Function;
+  Function.Entry = Method.Implementation;
+  Function.Name = "sd_image_loader_error_code";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1218;
+  Block.Ops = {
+      operation(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+                {NdVar::reg(a64reg::X3, 8)}, 0x1200),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x1204),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1140, 8)},
+                0x1208),
+      operation(NdOp::COPY, NdVar::reg(a64reg::X0, 8),
+                {NdVar::reg(a64reg::X19, 8)}, 0x120c),
+      operation(NdOp::CALL, NdVar::reg(a64reg::X0, 8), {NdVar::cst(0x1100, 8)},
+                0x1210),
+      operation(NdOp::RETURN, {}, {NdVar::reg(a64reg::X0, 8)}, 0x1214)};
+  Function.Blocks.push_back(Block);
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Hints.count(0x1210));
+  ASSERT_TRUE(Hints.at(0x1210).SelectorArgumentTypeUse);
+  EXPECT_EQ(Hints.at(0x1210).SelectorArgumentTypeUse->Parameter, 0U);
+  EXPECT_EQ(Hints.at(0x1210).Signature.ReturnType->Kind, NdTypeKind::Int);
+
+  auto Rejected = [&](const BinaryImage &Changed) {
+    EXPECT_FALSE(objcSelectorSourceTypeHintForArgumentTypeUse(Changed, "code",
+                                                              Evidence));
+  };
+  auto Changed = Image;
+  Changed.ObjCClasses.clear();
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.front().ClassAddress = 0;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCMethods.front().TypeEncoding = "B32@0:8@16@24";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCProtocols.front().Methods.front().IsOptional = false;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.ObjCProtocols.front().Methods.front().TypeEncoding = "@16@0:8";
+  Rejected(Changed);
+  Changed = Image;
+  Changed.Arch = Arch::X64;
+  Rejected(Changed);
+  Changed = Image;
+  Changed.DynInfo.NeededLibs.clear();
+  Rejected(Changed);
+  Evidence.Source = Caller->Parameters[2].Location;
+  Rejected(Image);
+  Evidence.Source = Caller->Parameters[3].Location;
+  Evidence.ConsumedAsObject = false;
+  Rejected(Image);
+}
+
 TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
   constexpr auto Module = "/System/Library/Frameworks/UIKit.framework/UIKit";
   const struct {
@@ -5083,8 +10543,78 @@ TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
     unsigned Parameters;
   } Cases[] = {
       {"CGImage", NdTypeKind::Ptr, 2},
+      {"addSubview:", NdTypeKind::Void, 3},
+      {"CGColor", NdTypeKind::Ptr, 2},
+      {"CGRectValue", NdTypeKind::Struct, 2},
+      {"CIImage", NdTypeKind::Ptr, 2},
+      {"activateConstraints:", NdTypeKind::Void, 3},
+      {"addArrangedSubview:", NdTypeKind::Void, 3},
+      {"CGSizeValue", NdTypeKind::Struct, 2},
+      {"alpha", NdTypeKind::Float, 2},
+      {"blackColor", NdTypeKind::Ptr, 2},
+      {"centerXAnchor", NdTypeKind::Ptr, 2},
+      {"beginGeneratingDeviceOrientationNotifications", NdTypeKind::Void, 2},
+      {"contentLayoutGuide", NdTypeKind::Ptr, 2},
+      {"colorWithAlphaComponent:", NdTypeKind::Ptr, 3},
+      {"colorWithRed:green:blue:alpha:", NdTypeKind::Ptr, 6},
+      {"getRed:green:blue:alpha:", NdTypeKind::Int, 6},
+      {"frameLayoutGuide", NdTypeKind::Ptr, 2},
+      {"heightAnchor", NdTypeKind::Ptr, 2},
+      {"imageByPreparingForDisplay", NdTypeKind::Ptr, 2},
+      {"imageFlippedForRightToLeftLayoutDirection", NdTypeKind::Ptr, 2},
+      {"imageForState:", NdTypeKind::Ptr, 3},
+      {"imageNamed:inBundle:withConfiguration:", NdTypeKind::Ptr, 5},
+      {"imageOrientation", NdTypeKind::Int, 2},
+      {"imageRendererFormat", NdTypeKind::Ptr, 2},
+      {"imageWithCIImage:scale:orientation:", NdTypeKind::Ptr, 5},
+      {"initWithCGImage:", NdTypeKind::Ptr, 3},
+      {"initWithProgressViewStyle:", NdTypeKind::Ptr, 3},
+      {"initWithActivityIndicatorStyle:", NdTypeKind::Ptr, 3},
+      {"isHighDynamicRange", NdTypeKind::Int, 2},
+      {"interactivePopGestureRecognizer", NdTypeKind::Ptr, 2},
+      {"parentViewController", NdTypeKind::Ptr, 2},
+      {"transitionCoordinator", NdTypeKind::Ptr, 2},
+      {"flashScrollIndicators", NdTypeKind::Void, 2},
+      {"endBackgroundTask:", NdTypeKind::Void, 3},
+      {"endGeneratingDeviceOrientationNotifications", NdTypeKind::Void, 2},
+      {"initWithRed:green:blue:alpha:", NdTypeKind::Ptr, 6},
+      {"insertSubview:belowSubview:", NdTypeKind::Void, 4},
+      {"invalidateDataSourceCounts", NdTypeKind::Int, 2},
+      {"invalidateEverything", NdTypeKind::Int, 2},
+      {"constraintEqualToAnchor:", NdTypeKind::Ptr, 3},
+      {"constraintEqualToAnchor:constant:", NdTypeKind::Ptr, 4},
+      {"constraintEqualToConstant:", NdTypeKind::Ptr, 3},
+      {"leadingAnchor", NdTypeKind::Ptr, 2},
+      {"trailingAnchor", NdTypeKind::Ptr, 2},
+      {"topAnchor", NdTypeKind::Ptr, 2},
+      {"bottomAnchor", NdTypeKind::Ptr, 2},
+      {"instantiateWithOwner:options:", NdTypeKind::Ptr, 4},
+      {"nibWithNibName:bundle:", NdTypeKind::Ptr, 4},
+      {"resignFirstResponder", NdTypeKind::Int, 2},
+      {"safeAreaLayoutGuide", NdTypeKind::Ptr, 2},
+      {"sendActionsForControlEvents:", NdTypeKind::Void, 3},
       {"dismissViewControllerAnimated:completion:", NdTypeKind::Void, 4},
+      {"setAccessibilityIgnoresInvertColors:", NdTypeKind::Void, 3},
+      {"setAttributedText:", NdTypeKind::Void, 3},
+      {"setClipsToBounds:", NdTypeKind::Void, 3},
+      {"setIsAccessibilityElement:", NdTypeKind::Void, 3},
+      {"setActive:", NdTypeKind::Void, 3},
       {"setActivityIndicatorViewStyle:", NdTypeKind::Void, 3},
+      {"setAdjustsFontForContentSizeCategory:", NdTypeKind::Void, 3},
+      {"setCenter:", NdTypeKind::Void, 3},
+      {"setLayoutMargins:", NdTypeKind::Void, 3},
+      {"setProgressViewStyle:", NdTypeKind::Void, 3},
+      {"setShowsCancelButton:animated:", NdTypeKind::Void, 4},
+      {"setText:", NdTypeKind::Void, 3},
+      {"setTranslatesAutoresizingMaskIntoConstraints:", NdTypeKind::Void, 3},
+      {"setUserInteractionEnabled:", NdTypeKind::Void, 3},
+      {"setView:", NdTypeKind::Void, 3},
+      {"sizeToFit", NdTypeKind::Void, 2},
+      {"superview", NdTypeKind::Ptr, 2},
+      {"topViewController", NdTypeKind::Ptr, 2},
+      {"window", NdTypeKind::Ptr, 2},
+      {"whiteColor", NdTypeKind::Ptr, 2},
+      {"widthAnchor", NdTypeKind::Ptr, 2},
   };
   for (const auto &Case : Cases) {
     SCOPED_TRACE(Case.Selector);
@@ -5095,7 +10625,59 @@ TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
     ASSERT_TRUE(Hint);
     EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
     EXPECT_EQ(Hint->ReturnType->Kind, Case.ReturnKind);
-    EXPECT_EQ(Hint->Parameters.size(), Case.Parameters);
+    ASSERT_EQ(Hint->Parameters.size(), Case.Parameters);
+    if (llvm::StringRef(Case.Selector) == "CGRectValue") {
+      EXPECT_EQ(Hint->ReturnType->Size, 32U);
+      ASSERT_EQ(Hint->ReturnComponents.size(), 4U);
+      for (const auto &Component : Hint->ReturnComponents) {
+        EXPECT_EQ(Component.Kind, SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Component.ValueBytes, 8U);
+      }
+    }
+    if (llvm::StringRef(Case.Selector) == "endBackgroundTask:") {
+      EXPECT_EQ(Hint->Parameters[2].Type->Size, 8U);
+      EXPECT_FALSE(Hint->Parameters[2].Type->IsSigned);
+      EXPECT_EQ(Hint->Parameters[2].Location.RegisterOffset, 2U * 8);
+    }
+    if (llvm::StringRef(Case.Selector) == "isHighDynamicRange" ||
+        llvm::StringRef(Case.Selector) == "invalidateDataSourceCounts" ||
+        llvm::StringRef(Case.Selector) == "invalidateEverything") {
+      EXPECT_EQ(Hint->ReturnType->Size, 1U);
+      EXPECT_FALSE(Hint->ReturnType->IsSigned);
+    }
+    if (llvm::StringRef(Case.Selector) == "initWithActivityIndicatorStyle:") {
+      EXPECT_EQ(Hint->Parameters[2].Type->Size, 8U);
+      EXPECT_TRUE(Hint->Parameters[2].Type->IsSigned);
+      EXPECT_EQ(Hint->Parameters[2].Location.RegisterOffset, 2U * 8);
+    }
+    if (llvm::StringRef(Case.Selector) == "constraintEqualToAnchor:constant:" ||
+        llvm::StringRef(Case.Selector) == "constraintEqualToConstant:") {
+      const auto &Constant = Hint->Parameters.back();
+      EXPECT_EQ(Constant.Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(Constant.Type->Size, 8U);
+      EXPECT_EQ(Constant.Location.Kind,
+                SourceABICarrierKind::FloatingRegister);
+      EXPECT_EQ(Constant.Location.ValueBytes, 8U);
+    }
+    if (llvm::StringRef(Case.Selector) == "setActive:" ||
+        llvm::StringRef(Case.Selector) == "setClipsToBounds:" ||
+        llvm::StringRef(Case.Selector) == "setIsAccessibilityElement:" ||
+        llvm::StringRef(Case.Selector) == "setUserInteractionEnabled:") {
+      EXPECT_EQ(Hint->Parameters[2].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Hint->Parameters[2].Type->Size, 1U);
+      EXPECT_EQ(Hint->Parameters[2].Location.RegisterOffset, 16U);
+    }
+    if (llvm::StringRef(Case.Selector) == "setShowsCancelButton:animated:") {
+      for (size_t I : {2U, 3U}) {
+        EXPECT_EQ(Hint->Parameters[I].Type->Kind, NdTypeKind::Int);
+        EXPECT_EQ(Hint->Parameters[I].Type->Size, 1U);
+        EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset, I * 8);
+      }
+    }
+    if (llvm::StringRef(Case.Selector) == "setView:") {
+      EXPECT_EQ(Hint->Parameters[2].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Hint->Parameters[2].Location.RegisterOffset, 16U);
+    }
 
     auto Changed = Image;
     Changed.DynInfo.NeededLibs = {
@@ -5109,6 +10691,470 @@ TEST(ObjCCallHints, IOSFrameworkDeclarationsRequireExactDeviceEvidence) {
     Unsupported.DynInfo.NeededLibs = {Module};
     EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Case.Selector));
   }
+}
+
+TEST(ObjCCallHints, IOSProgressKeepsFloatAndBooleanInSeparateABIRegisters) {
+  constexpr auto Module = "/System/Library/Frameworks/UIKit.framework/UIKit";
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (const char *Selector : {"observedProgress", "setProgress:animated:"}) {
+    SCOPED_TRACE(Selector);
+    const bool Setter = llvm::StringRef(Selector) == "setProgress:animated:";
+    auto Image = image(Arch::AArch64);
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {Module};
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+    auto Low = caller();
+    if (Setter)
+      Low.Blocks.front().Ops.back().NumInputs = 0;
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    const auto &Hint = *Call.SourceCallHint;
+    EXPECT_EQ(Hint.Signature.Origin,
+              SourceFunctionTypeHint::OriginKind::ObjCSDK);
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind,
+              Setter ? NdTypeKind::Void : NdTypeKind::Ptr);
+    ASSERT_EQ(Call.Args.size(), Setter ? 4U : 2U);
+    EXPECT_EQ(Call.Args[0].RegOff, TRI.IntParamRegs[0]);
+    EXPECT_EQ(Hint.Signature.Parameters[1].Location.RegisterOffset,
+              TRI.IntParamRegs[1]);
+    if (Setter) {
+      // A float in s0 must not consume x2: the following BOOL still uses w2.
+      EXPECT_EQ(Call.Args[2].RegOff, TRI.FPParamRegs[0]);
+      EXPECT_EQ(Call.Args[2].Size, 4U);
+      EXPECT_EQ(Hint.Signature.Parameters[2].Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(Hint.Signature.Parameters[3].Location.RegisterOffset,
+                TRI.IntParamRegs[2]);
+      EXPECT_EQ(Call.Args[3].Size, 1U);
+      EXPECT_EQ(Hint.Signature.Parameters[3].Type->Kind, NdTypeKind::Int);
+      EXPECT_EQ(Med.Blocks[Call.BlockId].Ops[Call.OpIdx].Output.Size, 0U);
+    } else {
+      EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.IntReturnReg);
+      EXPECT_EQ(Hint.Signature.ReturnLocation.ValueBytes, 8U);
+    }
+    auto Expression = receiverCallExpression(Hint);
+    ASSERT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    if (Setter) {
+      auto ChangedHint = std::make_shared<SourceCallTypeHint>(Hint);
+      ChangedHint->Signature.Parameters[2].Location.ValueBytes = 8;
+      Expression->SourceCallHint = ChangedHint;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      Expression->SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+    }
+    for (const char *OtherModule :
+         {"/tmp/UIKit.framework/UIKit",
+          "/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit",
+          "/System/Library/Frameworks/Foundation.framework/Foundation"}) {
+      auto Changed = Image;
+      Changed.DynInfo.NeededLibs = {OtherModule};
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+    }
+    auto Unsupported = image(Arch::X64);
+    Unsupported.ObjCMethods.clear();
+    Unsupported.DynInfo.NeededLibs = {Module};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+  }
+}
+
+TEST(ObjCCallHints, IOSProgressSetterRequiresPropertyReceiverAcrossARC) {
+  const auto Architecture = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  auto Image = receiverResultImage(Architecture);
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/UIKit.framework/UIKit");
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore");
+  Image.ObjCProperties.front().TypeEncoding = "@\"UIProgressView\"";
+  Image.ObjCSourceReferences.at(0x2100).Name = "setProgress:";
+  auto ObjectSetter = Image.ObjCMethods.back();
+  ObjectSetter.ClassName = "Other";
+  ObjectSetter.Selector = "setProgress:";
+  ObjectSetter.TypeEncoding = "v24@0:8@16";
+  ObjectSetter.TypeHint =
+      parseObjCMethodEncoding(ObjectSetter.Selector, ObjectSetter.TypeEncoding);
+  Image.ObjCMethods.push_back(ObjectSetter);
+  receiverRuntimeImport(Image, "objc_retainAutoreleasedReturnValue");
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "setProgress:"));
+
+  auto Function = receiverCaller(Architecture);
+  auto &Ops = Function.Blocks.front().Ops;
+  Ops.back().NumInputs = 0;
+  const std::vector<LowOp> Prefix{
+      operation(NdOp::LOAD, NdVar::reg(TRI.IntParamRegs[1], 8),
+                {NdVar::cst(0x2110, 8)}, 0x11e0),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x11e4),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x11e8),
+      operation(NdOp::COPY, NdVar::reg(TRI.FPParamRegs[0], 4),
+                {NdVar::cst(0x3f800000, 4)}, 0x11ec)};
+  Ops.insert(Ops.begin(), Prefix.begin(), Prefix.end());
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 3U);
+  const auto &Hint = Hints.at(0x1204);
+  ASSERT_TRUE(Hint.Receiver);
+  ASSERT_EQ(Hint.Receiver->Steps.size(), 1U);
+  EXPECT_EQ(Hint.Receiver->Steps.front().Selector, "error");
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Type->Size, 4U);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Location.RegisterOffset,
+            TRI.FPParamRegs[0]);
+  auto Expression = receiverCallExpression(Hint);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.ObjCProperties.front().TypeEncoding = "@";
+    else if (Mutation == 1)
+      Changed.ObjCProperties.front().TypeEncoding = "@\"UIPageControl\"";
+    else if (Mutation == 2)
+      Changed.DyldBindSlots.at(0x2188).Module = "/tmp/libobjc.A.dylib";
+    else if (Mutation == 3) {
+      ObjCClass Child;
+      Child.Name = "Other";
+      Child.SuperclassName = "UIProgressView";
+      Child.InheritanceStatus = "resolved";
+      Changed.ObjCClasses.push_back(Child);
+    } else
+      Changed.DynInfo.NeededLibs.pop_back(); // Missing QuartzCore parent proof.
+    // The float constant is not receiver evidence. Neither the SDK object
+    // alternative nor the unrelated local object setter can win by order.
+    EXPECT_EQ(buildObjCSourceCallHints(Changed, Function).count(0x1204), 0U);
+    if (Mutation != 2)
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+  }
+}
+
+TEST(ObjCCallHints, UnknownDictionaryResultCannotInheritAnotherPathsReceiver) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Image = image();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  ObjCMethod EntryMethod;
+  EntryMethod.ClassName = "NSDictionary";
+  EntryMethod.Selector = "consumeProgress:";
+  EntryMethod.Implementation = 0x1200;
+  EntryMethod.TypeEncoding = "v24@0:8@16";
+  EntryMethod.TypeHint = parseObjCMethodEncoding(EntryMethod.Selector,
+                                                EntryMethod.TypeEncoding);
+  Image.ObjCMethods.push_back(EntryMethod);
+  auto Setter = EntryMethod;
+  Setter.ClassName = "Result";
+  Setter.Selector = "setProgress:";
+  Setter.Implementation = 0x1600;
+  Image.ObjCMethods.push_back(Setter);
+  ObjCClass ResultClass;
+  ResultClass.Name = "Result";
+  ResultClass.SuperclassName = "NSObject";
+  ResultClass.InheritanceStatus = "resolved";
+  Image.ObjCClasses.push_back(ResultClass);
+  Image.ObjCSourceReferences[0x2100].Name = "setProgress:";
+  Image.ObjCSourceReferences[0x2110] = {
+      ObjCSourceReference::Kind::Selector, 0x2110, 8, "objectForKey:"};
+  Image.ObjCSourceReferences[0x2118] = {
+      ObjCSourceReference::Kind::Selector, 0x2118, 8, "new"};
+  Image.ObjCSourceReferences[0x2200] = {
+      ObjCSourceReference::Kind::Class, 0x2200, 8, "Result"};
+  receiverRuntimeImport(Image, "objc_retainAutoreleasedReturnValue");
+  ASSERT_FALSE(objcSelectorSourceTypeHint(Image, "setProgress:"));
+
+  const auto Self = NdVar::reg(TRI.IntParamRegs[0], 8);
+  const auto Command = NdVar::reg(TRI.IntParamRegs[1], 8);
+  const auto Argument = NdVar::reg(TRI.IntParamRegs[2], 8);
+  const auto SavedArgument = NdVar::reg(a64reg::X20, 8);
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  LowBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1200;
+  Entry.Succs = {1, 2};
+  Entry.Ops = {operation(NdOp::COPY, SavedArgument, {Argument}, 0x1200)};
+  LowBlock Dictionary;
+  Dictionary.Id = 1;
+  Dictionary.StartAddr = 0x1300;
+  Dictionary.Preds = {0};
+  Dictionary.Succs = {3};
+  Dictionary.Ops = {
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2110, 8)}, 0x1300),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1304),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x1308)};
+  LowBlock Created;
+  Created.Id = 2;
+  Created.StartAddr = 0x1400;
+  Created.Preds = {0};
+  Created.Succs = {3};
+  Created.Ops = {
+      operation(NdOp::LOAD, Self, {NdVar::cst(0x2200, 8)}, 0x1400),
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2118, 8)}, 0x1404),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1408)};
+  LowBlock Join;
+  Join.Id = 3;
+  Join.StartAddr = 0x1500;
+  Join.Preds = {1, 2};
+  Join.Ops = {
+      operation(NdOp::COPY, Argument, {SavedArgument}, 0x1500),
+      operation(NdOp::LOAD, Command, {NdVar::cst(0x2100, 8)}, 0x1504),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1508),
+      operation(NdOp::RETURN, {}, {}, 0x150c)};
+  const std::vector<LowBlock> Blocks{Entry, Dictionary, Created, Join};
+  std::array<unsigned, 4> Order{0, 1, 2, 3};
+  do {
+    Function.Blocks.clear();
+    for (auto Index : Order)
+      Function.Blocks.push_back(Blocks[Index]);
+    const auto Hints = buildObjCSourceCallHints(Image, Function);
+    ASSERT_TRUE(Hints.count(0x1304));
+    ASSERT_TRUE(Hints.count(0x1408));
+    // A typed pointer in x2 does not prove which ABI the unknown receiver
+    // consumes. The new result on the other edge cannot supply that proof.
+    EXPECT_FALSE(Hints.count(0x1508));
+  } while (std::next_permutation(Order.begin(), Order.end()));
+
+  Entry.Succs = {2};
+  Join.Preds = {2};
+  Function.Blocks = {Entry, Created, Join};
+  const auto Known = buildObjCSourceCallHints(Image, Function);
+  ASSERT_TRUE(Known.count(0x1508));
+  ASSERT_TRUE(Known.at(0x1508).Receiver);
+  EXPECT_EQ(Known.at(0x1508).Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+}
+
+TEST(ObjCCallHints, IOSViewDeclarationsKeepVoidAndUnsignedControlState) {
+  constexpr auto Module = "/System/Library/Frameworks/UIKit.framework/UIKit";
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (const char *Selector :
+       {"invalidateIntrinsicContentSize", "setTitleColor:forState:"}) {
+    SCOPED_TRACE(Selector);
+    const bool Setter = llvm::StringRef(Selector) == "setTitleColor:forState:";
+    auto Image = image(Arch::AArch64);
+    Image.ObjCMethods.clear();
+    Image.DynInfo.NeededLibs = {Module};
+    Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+    auto Low = caller();
+    Low.Blocks.front().Ops.back().NumInputs = 0;
+    const auto Med = convert(Image, Low);
+    ASSERT_EQ(Med.CallInfos.size(), 1U);
+    const auto &Call = Med.CallInfos.front();
+    ASSERT_TRUE(Call.SourceCallHint);
+    const auto &Hint = *Call.SourceCallHint;
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+    EXPECT_EQ(Med.Blocks[Call.BlockId].Ops[Call.OpIdx].Output.Size, 0U);
+    ASSERT_EQ(Call.Args.size(), Setter ? 4U : 2U);
+    if (Setter) {
+      EXPECT_EQ(Hint.Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+      EXPECT_EQ(Call.Args[2].RegOff, TRI.IntParamRegs[2]);
+      const auto &State = Hint.Signature.Parameters[3];
+      EXPECT_EQ(State.Type->Kind, NdTypeKind::Int);
+      EXPECT_FALSE(State.Type->IsSigned);
+      EXPECT_EQ(State.Type->Size, 8U);
+      EXPECT_EQ(Call.Args[3].RegOff, TRI.IntParamRegs[3]);
+      EXPECT_EQ(Call.Args[3].Size, 8U);
+    }
+    auto Expression = receiverCallExpression(Hint);
+    EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+    if (Setter) {
+      auto Forged = std::make_shared<SourceCallTypeHint>(Hint);
+      Forged->Signature.Parameters[3].Type = NdType::makeInt(8, true);
+      Expression->SourceCallHint = Forged;
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}));
+      Expression->SourceCallHint = std::make_shared<SourceCallTypeHint>(Hint);
+    }
+    for (const char *Other :
+         {"/tmp/UIKit.framework/UIKit",
+          "/System/Library/Frameworks/UIKit.framework/Versions/A/UIKit"}) {
+      auto Changed = Image;
+      Changed.DynInfo.NeededLibs = {Other};
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+      EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+    }
+    auto Unsupported = image(Arch::X64);
+    Unsupported.ObjCMethods.clear();
+    Unsupported.DynInfo.NeededLibs = {Module};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Unsupported, Selector));
+    auto Conflicting = Image;
+    ObjCMethod OtherMethod;
+    OtherMethod.ClassName = "Unrelated";
+    OtherMethod.Selector = Selector;
+    OtherMethod.TypeEncoding = Setter ? "v32@0:8@16q24" : "@16@0:8";
+    OtherMethod.TypeHint =
+        parseObjCMethodEncoding(Selector, OtherMethod.TypeEncoding);
+    Conflicting.ObjCMethods.push_back(OtherMethod);
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Conflicting, Selector));
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Conflicting, {}));
+  }
+}
+
+TEST(ObjCCallHints, IOSImageViewSuperclassDisambiguatesLocalObjectSetter) {
+  auto Image = receiverImage(Arch::AArch64);
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/System/Library/Frameworks/UIKit.framework/UIKit",
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore"};
+  auto &Class = Image.ObjCClasses.front();
+  Class.RootClass = false;
+  Class.SuperclassName = "UIImageView";
+  Class.InheritanceStatus = "resolved";
+  Image.ObjCSourceReferences.at(0x2100).Name = "setCurrentFrame:";
+  for (auto &Method : Image.ObjCMethods) {
+    Method.Selector = "setCurrentFrame:";
+    Method.TypeEncoding =
+        Method.ClassName == "First" ? "v24@0:8@16" : "v24@0:8d16";
+    Method.TypeHint =
+        parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  }
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "setCurrentFrame:"));
+  auto Low = receiverCaller(Arch::AArch64);
+  Low.Blocks.front().Ops.back().NumInputs = 0;
+  const auto Hints = buildObjCSourceCallHints(Image, Low);
+  ASSERT_EQ(Hints.count(0x1204), 1U);
+  const auto &Hint = Hints.at(0x1204);
+  ASSERT_TRUE(Hint.Receiver);
+  EXPECT_EQ(Hint.Receiver->ClassName, "First");
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 3U);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint.Signature.Parameters[2].Location.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).IntParamRegs[2]);
+  auto Expression = receiverCallExpression(Hint);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}));
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.ObjCClasses.front().SuperclassName = "UnknownImageView";
+    else if (Mutation == 1)
+      Changed.DynInfo.NeededLibs.pop_back(); // Unproved CALayerDelegate parent.
+    else if (Mutation == 2)
+      Changed.DynInfo.NeededLibs[1] = "/tmp/UIKit.framework/UIKit";
+    else if (Mutation == 3) {
+      ObjCClass Child;
+      Child.Name = "Other";
+      Child.SuperclassName = "First";
+      Child.InheritanceStatus = "resolved";
+      Changed.ObjCClasses.push_back(Child);
+    } else
+      Changed.ObjCMethods.front().Implementation = 0x1300;
+    EXPECT_EQ(buildObjCSourceCallHints(Changed, Low).count(0x1204), 0U);
+    EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Changed, {}));
+  }
+  auto Unsupported = Image;
+  Unsupported.Arch = Arch::X64;
+  auto X64Low = receiverCaller(Arch::X64);
+  X64Low.Blocks.front().Ops.back().NumInputs = 0;
+  EXPECT_EQ(buildObjCSourceCallHints(Unsupported, X64Low).count(0x1204), 0U);
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Unsupported, {}));
+}
+
+TEST(ObjCCallHints, IOSCoreImageCropKeepsExactProviderAndRecordABI) {
+  constexpr auto Module =
+      "/System/Library/Frameworks/CoreImage.framework/CoreImage";
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {Module};
+  for (const auto &[Selector, ReturnKind, Parameters] :
+       {std::tuple{"contextWithOptions:", NdTypeKind::Ptr, 3U},
+        std::tuple{"createCGImage:fromRect:", NdTypeKind::Ptr, 4U},
+        std::tuple{"detectorOfType:context:options:", NdTypeKind::Ptr, 5U},
+        std::tuple{"extent", NdTypeKind::Struct, 2U},
+        std::tuple{"filterWithName:", NdTypeKind::Ptr, 3U},
+        std::tuple{"outputImage", NdTypeKind::Ptr, 2U}}) {
+    SCOPED_TRACE(Selector);
+    const auto Declaration = objcSelectorSourceTypeHint(Image, Selector);
+    ASSERT_TRUE(Declaration);
+    EXPECT_EQ(Declaration->Origin,
+              SourceFunctionTypeHint::OriginKind::ObjCSDK);
+    ASSERT_TRUE(Declaration->ReturnType);
+    EXPECT_EQ(Declaration->ReturnType->Kind, ReturnKind);
+    EXPECT_EQ(Declaration->Parameters.size(), Parameters);
+    std::string Diagnostic;
+    EXPECT_TRUE(validateSourceABI(*Declaration, Diagnostic)) << Diagnostic;
+
+    auto Changed = Image;
+    Changed.DynInfo.NeededLibs = {"/tmp/CoreImage.framework/CoreImage"};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+    Changed = image(Arch::X64);
+    Changed.ObjCMethods.clear();
+    Changed.DynInfo.NeededLibs = {Module};
+    EXPECT_FALSE(objcSelectorSourceTypeHint(Changed, Selector));
+  }
+  const auto Hint =
+      objcSelectorSourceTypeHint(Image, "imageByCroppingToRect:");
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  ASSERT_TRUE(Hint->ReturnType);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Hint->Parameters.size(), 3U);
+  const auto &Rect = Hint->Parameters.back();
+  ASSERT_TRUE(Rect.Type);
+  EXPECT_EQ(Rect.Type->Kind, NdTypeKind::Struct);
+  EXPECT_EQ(Rect.Type->Size, 32U);
+  EXPECT_EQ(Rect.Components.size(), 4U);
+  for (const auto &Component : Rect.Components) {
+    EXPECT_EQ(Component.Kind, SourceABICarrierKind::FloatingRegister);
+    EXPECT_EQ(Component.ValueBytes, 8U);
+  }
+  std::string Diagnostic;
+  EXPECT_TRUE(validateSourceABI(*Hint, Diagnostic)) << Diagnostic;
+
+  auto Changed = Image;
+  Changed.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/CoreImage.framework/Versions/A/CoreImage"};
+  EXPECT_FALSE(
+      objcSelectorSourceTypeHint(Changed, "imageByCroppingToRect:"));
+  Changed.DynInfo.NeededLibs = {"/tmp/CoreImage.framework/CoreImage"};
+  EXPECT_FALSE(
+      objcSelectorSourceTypeHint(Changed, "imageByCroppingToRect:"));
+  Changed = image(Arch::X64);
+  Changed.ObjCMethods.clear();
+  Changed.DynInfo.NeededLibs = {Module};
+  EXPECT_FALSE(
+      objcSelectorSourceTypeHint(Changed, "imageByCroppingToRect:"));
+}
+
+TEST(ObjCCallHints, IOSScaleUsesObservedFloatingResultToRejectConflicts) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/System/Library/Frameworks/UIKit.framework/UIKit"};
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "scale"));
+
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Hint = objcSelectorSourceTypeHintForResultUse(
+      Image, "scale",
+      {SourceABICarrierKind::FloatingRegister, TRI.FPReturnReg, 0, 8});
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::ObjCSDK);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->ReturnType->Size, 8U);
+  EXPECT_EQ(Hint->ReturnLocation.Kind,
+            SourceABICarrierKind::FloatingRegister);
+
+  // QuartzCore contains both float and double declarations for this selector.
+  // Their complete alternatives must remain available for an exact carrier
+  // use to select the double result; the unqualified selector stays ambiguous.
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/QuartzCore.framework/QuartzCore");
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "scale"));
+  const auto WithQuartzCore = objcSelectorSourceTypeHintForResultUse(
+      Image, "scale",
+      {SourceABICarrierKind::FloatingRegister, TRI.FPReturnReg, 0, 8});
+  ASSERT_TRUE(WithQuartzCore);
+  EXPECT_EQ(WithQuartzCore->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(WithQuartzCore->ReturnType->Size, 8U);
+
+  auto Changed = image(Arch::AArch64);
+  Changed.ObjCMethods.clear();
+  Changed.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation",
+      "/tmp/UIKit.framework/UIKit"};
+  EXPECT_FALSE(objcSelectorSourceTypeHintForResultUse(
+      Changed, "scale",
+      {SourceABICarrierKind::FloatingRegister, TRI.FPReturnReg, 0, 8}));
 }
 
 TEST(ObjCCallHints, SharedFrameworkRecordsUseTheSupportedArchitectureLayout) {
@@ -5133,6 +11179,240 @@ TEST(ObjCCallHints, SharedFrameworkRecordsUseTheSupportedArchitectureLayout) {
       EXPECT_FALSE(SetPosition);
     }
     EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "transform"));
+  }
+}
+
+TEST(ObjCCallHints, UIKitReceiverDeclarationsRequireProvenOwnerAndProvider) {
+  for (const auto *Selector : {"images", "CIImage", "scale", "duration"}) {
+    for (const bool Category : {false, true}) {
+      SCOPED_TRACE(Selector);
+      SCOPED_TRACE(Category);
+      auto Image = receiverImage(Arch::AArch64);
+      Image.DynInfo.NeededLibs = {
+          "/System/Library/Frameworks/UIKit.framework/UIKit",
+          "/System/Library/Frameworks/Foundation.framework/Foundation"};
+      Image.ObjCMethods.front().Selector = "readImageProperty";
+      Image.ObjCMethods.back().Selector = Selector;
+      auto Other = Image.ObjCMethods.front();
+      Other.Selector = Selector;
+      Other.ClassName = "Third";
+      Other.Implementation = 0x1600;
+      Image.ObjCMethods.push_back(Other);
+      Image.ObjCSourceReferences.at(0x2100).Name = Selector;
+      if (Category) {
+        Image.ObjCClasses.clear();
+        Image.ObjCMethods.front().ClassName = "UIImage";
+        Image.ObjCMethods.front().CategoryName = "ImageMetadata";
+      } else {
+        auto &Class = Image.ObjCClasses.front();
+        Class.RootClass = false;
+        Class.InheritanceStatus = "resolved";
+        Class.SuperclassName = "UIImage";
+      }
+      // An unrelated owner's incompatible declaration must not replace the
+      // receiver's method ABI or make the selector globally unambiguous.
+      EXPECT_FALSE(objcSelectorSourceTypeHint(Image, Selector));
+      const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+      ASSERT_TRUE(Receiver);
+      const auto Hint = objcReceiverSourceTypeHint(Image, Selector, *Receiver);
+      ASSERT_TRUE(Hint.Signature);
+      EXPECT_EQ(Hint.Signature->Parameters.size(), 2U);
+      EXPECT_EQ(Hint.Signature->ReturnType->Size, 8U);
+      EXPECT_EQ(Hint.Signature->ReturnType->Kind,
+                llvm::StringRef(Selector) == "images" ||
+                        llvm::StringRef(Selector) == "CIImage"
+                    ? NdTypeKind::Ptr
+                    : NdTypeKind::Float);
+      const auto Hints =
+          buildObjCSourceCallHints(Image, receiverCaller(Arch::AArch64));
+      ASSERT_EQ(Hints.size(), 1U);
+      auto Call = receiverCallExpression(Hints.at(0x1204));
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}));
+      for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+        auto Changed = Image;
+        if (Mutation == 0)
+          Changed.DynInfo.NeededLibs.front() = "/tmp/UIKit.framework/UIKit";
+        if (Mutation == 1)
+          Changed.Arch = Arch::X64;
+        if (Mutation == 2) {
+          auto Conflict = Changed.ObjCMethods.at(1);
+          Conflict.ClassName = Changed.ObjCMethods.front().ClassName;
+          Changed.ObjCMethods.push_back(Conflict);
+        }
+        auto ChangedReceiver = *Receiver;
+        if (Mutation == 3)
+          ChangedReceiver.IsClassMethod = true;
+        if (Mutation == 4)
+          ChangedReceiver.ClassName = "UnknownImage";
+        EXPECT_FALSE(
+            objcReceiverSourceTypeHint(Changed, Selector, ChangedReceiver)
+                .Signature)
+            << Mutation;
+        if (Mutation < 3)
+          EXPECT_FALSE(sdk::objcSourceCallBound(*Call, Changed, {}))
+              << Mutation;
+      }
+    }
+  }
+}
+
+TEST(ObjCCallHints, UIKitImageConstructionKeepsScalarRecordAndResultTypes) {
+  const struct {
+    const char *Owner, *Selector;
+    bool ClassMethod;
+    NdTypeKind ReturnKind;
+    unsigned Parameters;
+    const char *ReturnClass;
+  } Cases[] = {
+      {"UIImage", "imageOrientation", false, NdTypeKind::Int, 2, ""},
+      {"UIImage", "isHighDynamicRange", false, NdTypeKind::Int, 2, ""},
+      {"UINavigationController", "interactivePopGestureRecognizer", false,
+       NdTypeKind::Ptr, 2, "UIGestureRecognizer"},
+      {"UINavigationController", "viewControllers", false, NdTypeKind::Ptr, 2,
+       "NSArray"},
+      {"UIViewController", "parentViewController", false, NdTypeKind::Ptr, 2,
+       "UIViewController"},
+      {"UIViewController", "transitionCoordinator", false, NdTypeKind::Ptr, 2,
+       ""},
+      {"UIScrollView", "flashScrollIndicators", false, NdTypeKind::Void, 2, ""},
+      {"UIApplication", "endBackgroundTask:", false, NdTypeKind::Void, 3, ""},
+      {"UIActivityIndicatorView", "initWithActivityIndicatorStyle:", false,
+       NdTypeKind::Ptr, 3, "First"},
+      {"UIImage", "imageFlippedForRightToLeftLayoutDirection", false,
+       NdTypeKind::Ptr, 2, "UIImage"},
+      {"UIImage", "imageWithCGImage:", true, NdTypeKind::Ptr, 3, "UIImage"},
+      {"UIImage", "imageWithCGImage:scale:orientation:", true, NdTypeKind::Ptr,
+       5, "UIImage"},
+      {"UIImage", "initWithCGImage:scale:orientation:", false, NdTypeKind::Ptr,
+       5, "First"},
+      {"UIImage", "drawInRect:", false, NdTypeKind::Void, 3, ""},
+      {"UIScreen", "mainScreen", true, NdTypeKind::Ptr, 2, "UIScreen"},
+      {"UIScreen", "scale", false, NdTypeKind::Float, 2, ""},
+      {"UIGraphicsImageRendererFormat", "defaultFormat", true, NdTypeKind::Ptr,
+       2, "First"},
+      {"UIGraphicsImageRendererFormat", "scale", false, NdTypeKind::Float, 2,
+       ""},
+      {"UIGraphicsImageRendererFormat", "setScale:", false, NdTypeKind::Void, 3,
+       ""},
+  };
+  for (const auto &Case : Cases) {
+    SCOPED_TRACE(Case.Selector);
+    auto Image = receiverImage(Arch::AArch64, Case.ClassMethod);
+    Image.ObjCMethods.front().Selector = "useImageAPI";
+    Image.DynInfo.NeededLibs = {
+        "/System/Library/Frameworks/UIKit.framework/UIKit",
+        "/System/Library/Frameworks/Foundation.framework/Foundation"};
+    if (llvm::StringRef(Case.Owner) == "UIActivityIndicatorView" ||
+        llvm::StringRef(Case.Owner) == "UIScrollView")
+      Image.DynInfo.NeededLibs.push_back(
+          "/System/Library/Frameworks/QuartzCore.framework/QuartzCore");
+    auto &Class = Image.ObjCClasses.front();
+    Class.RootClass = false;
+    Class.InheritanceStatus = "resolved";
+    Class.SuperclassName = Case.Owner;
+    const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+    ASSERT_TRUE(Receiver);
+    const auto Hint =
+        objcReceiverSourceTypeHint(Image, Case.Selector, *Receiver);
+    ASSERT_TRUE(Hint.Signature);
+    EXPECT_EQ(Hint.Signature->ReturnType->Kind, Case.ReturnKind);
+    ASSERT_EQ(Hint.Signature->Parameters.size(), Case.Parameters);
+    EXPECT_EQ(Hint.ReturnClass.value_or(""), Case.ReturnClass);
+    const auto &TRI = getTargetRegInfo(Arch::AArch64);
+    if (llvm::StringRef(Case.Selector).contains("scale:orientation:")) {
+      const auto &Scale = Hint.Signature->Parameters[3];
+      EXPECT_EQ(Scale.Type->Kind, NdTypeKind::Float);
+      EXPECT_EQ(Scale.Type->Size, 8U);
+      EXPECT_EQ(Scale.Location.RegisterOffset, TRI.FPParamRegs[0]);
+      const auto &Orientation = Hint.Signature->Parameters[4];
+      EXPECT_EQ(Orientation.Type->Size, 8U);
+      EXPECT_TRUE(Orientation.Type->IsSigned);
+      EXPECT_EQ(Orientation.Location.RegisterOffset, TRI.IntParamRegs[3]);
+    }
+    if (llvm::StringRef(Case.Selector) == "drawInRect:") {
+      const auto &Rect = Hint.Signature->Parameters[2];
+      EXPECT_EQ(Rect.Type->Size, 32U);
+      ASSERT_EQ(Rect.Components.size(), 4U);
+      for (unsigned I = 0; I < 4; ++I) {
+        EXPECT_EQ(Rect.Components[I].Kind,
+                  SourceABICarrierKind::FloatingRegister);
+        EXPECT_EQ(Rect.Components[I].RegisterOffset, TRI.FPParamRegs[I]);
+      }
+    }
+    for (unsigned Mutation = 0; Mutation < 3; ++Mutation) {
+      auto Changed = Image;
+      auto ChangedReceiver = *Receiver;
+      if (Mutation == 0)
+        Changed.Arch = Arch::X64;
+      if (Mutation == 1)
+        Changed.DynInfo.NeededLibs.erase(Changed.DynInfo.NeededLibs.begin());
+      if (Mutation == 2)
+        ChangedReceiver.IsClassMethod = !Case.ClassMethod;
+      EXPECT_FALSE(
+          objcReceiverSourceTypeHint(Changed, Case.Selector, ChangedReceiver)
+              .Signature)
+          << Mutation;
+    }
+  }
+}
+
+TEST(ObjCCallHints, UIKitScreenResultSurvivesExactArcReturnIdentity) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/UIKit.framework/UIKit",
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ObjCSourceReferences[0x2100] = {
+      ObjCSourceReference::Kind::Selector, 0x2100, 8, "mainScreen"};
+  Image.ObjCSourceReferences[0x2110] = {
+      ObjCSourceReference::Kind::Selector, 0x2110, 8, "scale"};
+  Image.ObjCSourceReferences[0x2200] = {
+      ObjCSourceReference::Kind::Class, 0x2200, 8, "UIScreen"};
+  receiverRuntimeImport(Image, "objc_retainAutoreleasedReturnValue");
+
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto X0 = NdVar::reg(TRI.IntParamRegs[0], 8);
+  const auto X1 = NdVar::reg(TRI.IntParamRegs[1], 8);
+  Block.Ops = {
+      operation(NdOp::LOAD, X0, {NdVar::cst(0x2200, 8)}, 0x1200),
+      operation(NdOp::LOAD, X1, {NdVar::cst(0x2100, 8)}, 0x1204),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1208),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2188, 8)}, 0x120c),
+      operation(NdOp::LOAD, X1, {NdVar::cst(0x2110, 8)}, 0x1210),
+      operation(NdOp::INDIR_CALL, {}, {NdVar::cst(0x2180, 8)}, 0x1214),
+      operation(NdOp::RETURN, {}, {}, 0x1218)};
+  Function.Blocks.push_back(Block);
+
+  const auto Hints = buildObjCSourceCallHints(Image, Function);
+  ASSERT_EQ(Hints.size(), 3U);
+  ASSERT_TRUE(Hints.at(0x1208).Receiver);
+  EXPECT_EQ(Hints.at(0x1208).Receiver->ClassName, "UIScreen");
+  EXPECT_EQ(Hints.at(0x120c).ReturnedArgument, 0U);
+  const auto &Scale = Hints.at(0x1214);
+  ASSERT_TRUE(Scale.Receiver);
+  ASSERT_EQ(Scale.Receiver->Steps.size(), 1U);
+  EXPECT_EQ(Scale.Receiver->Steps.front().Selector, "mainScreen");
+  EXPECT_EQ(Scale.Signature.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Scale.Signature.ReturnType->Size, 8U);
+  EXPECT_EQ(Scale.Signature.ReturnLocation.Kind,
+            SourceABICarrierKind::FloatingRegister);
+
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    auto Changed = Image;
+    if (Mutation == 0)
+      Changed.DynInfo.NeededLibs.front() = "/tmp/UIKit.framework/UIKit";
+    if (Mutation == 1)
+      Changed.ObjCSourceReferences.at(0x2200).Size = 4;
+    if (Mutation == 2)
+      Changed.DyldBindSlots.at(0x2188).Module = "/tmp/libobjc.A.dylib";
+    const auto ChangedHints = buildObjCSourceCallHints(Changed, Function);
+    const auto It = ChangedHints.find(0x1214);
+    EXPECT_TRUE(It == ChangedHints.end() || !It->second.Receiver) << Mutation;
   }
 }
 
@@ -5207,6 +11487,162 @@ TEST(ObjCCallHints, PrivateFrameSelectorSurvivesADeclaredCall) {
     const auto Med = convert(Image, Function);
     ASSERT_EQ(Med.CallInfos.size(), 2U);
     EXPECT_TRUE(Med.CallInfos.back().SourceCallHint);
+  }
+}
+
+TEST(ObjCCallHints, IndirectMessageResultsRequireNilStorageModeling) {
+  auto Image = image(Arch::AArch64);
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ObjCSourceReferences.at(0x2100).Name = "operatingSystemVersion";
+  // The compiler-backed Foundation declaration has three signed words, but
+  // nil objc_msgSend preserves the caller's old result buffer. A fixed C
+  // record result does not supply that dispatch-specific storage behavior.
+  EXPECT_FALSE(objcSelectorSourceTypeHint(Image, "operatingSystemVersion"));
+  EXPECT_TRUE(buildObjCSourceCallHints(Image, caller()).empty());
+}
+
+namespace {
+LowFunc nonNullSelfIndirectResultCaller() {
+  LowFunc Function;
+  Function.Entry = 0x1200;
+  Function.Name = "-[NSProcessInfo neverd_versionAtLeast:]";
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Stack = NdVar::reg(TRI.StackPointer, 8);
+  const auto Buffer = NdVar::reg(TRI.indirectResultReg(), 8);
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Function.Entry;
+  Block.EndAddr = 0x1220;
+  Block.Ops = {
+      operation(NdOp::INT_SUB, Stack, {Stack, NdVar::cst(64, 8)}, 0x1200),
+      operation(NdOp::INT_ADD, Buffer, {Stack, NdVar::cst(8, 8)}, 0x1204),
+      operation(NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+                {NdVar::cst(0x1100, 8)}, 0x1208),
+      operation(NdOp::INT_ADD, NdVar::tmp(0, 8), {Stack, NdVar::cst(8, 8)},
+                0x120c),
+      operation(NdOp::LOAD, NdVar::tmp(1, 8), {NdVar::tmp(0, 8)}, 0x1210),
+      operation(NdOp::INT_EQUAL, NdVar::reg(TRI.IntReturnReg, 4),
+                {NdVar::tmp(1, 8), NdVar::cst(1, 8)}, 0x1214),
+      operation(NdOp::INT_ADD, Stack, {Stack, NdVar::cst(64, 8)}, 0x1218),
+      operation(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 4)}, 0x121c)};
+  Function.Blocks.push_back(std::move(Block));
+  return Function;
+}
+
+BinaryImage nonNullSelfIndirectResultImage() {
+  auto Image = image(Arch::AArch64);
+  Image.DynInfo.NeededLibs = {
+      "/System/Library/Frameworks/Foundation.framework/Foundation"};
+  Image.ObjCSourceReferences.at(0x2100).Name = "operatingSystemVersion";
+  Image.ObjCMethods.clear();
+  ObjCMethod Method;
+  Method.Status = "supported";
+  Method.ClassName = "NSProcessInfo";
+  Method.Selector = "neverd_hasVersion";
+  Method.Implementation = 0x1200;
+  Method.TypeHint = parseObjCMethodEncoding(Method.Selector, "B16@0:8");
+  Image.ObjCMethods.push_back(std::move(Method));
+  return Image;
+}
+} // namespace
+
+TEST(ObjCCallHints,
+     NonNullMethodSelfAndPrivateFrameAdmitIndirectMessageResult) {
+  auto Image = nonNullSelfIndirectResultImage();
+  const auto Receiver = objcMethodReceiverTypeHint(Image, 0x1200);
+  ASSERT_TRUE(Receiver);
+  const auto Ordinary =
+      objcReceiverSourceTypeHint(Image, "operatingSystemVersion", *Receiver);
+  EXPECT_TRUE(Ordinary.HasDeclaration);
+  EXPECT_FALSE(Ordinary.Signature);
+  const auto NonNull =
+      objcNonNilSelfSourceTypeHint(Image, "operatingSystemVersion", *Receiver);
+  ASSERT_TRUE(NonNull.Signature);
+  EXPECT_EQ(NonNull.Signature->ReturnLocation.Kind,
+            SourceABICarrierKind::IndirectResultPointer);
+
+  const auto Low = nonNullSelfIndirectResultCaller();
+  const auto Hints = buildObjCSourceCallHints(Image, Low);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(0x1208);
+  ASSERT_TRUE(Hint.Receiver);
+  ASSERT_TRUE(Hint.ObjCIndirectResultStorage);
+  EXPECT_EQ(Hint.ObjCIndirectResultStorage->MethodEntry, 0x1200U);
+  EXPECT_EQ(Hint.ObjCIndirectResultStorage->FrameOffset, -56);
+  EXPECT_EQ(Hint.ObjCIndirectResultStorage->ByteCount, 24U);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 24U);
+
+  const auto EntryHint = objcMethodSourceTypeHint(Image, Low.Entry);
+  ASSERT_TRUE(EntryHint);
+  std::map<va_t, SourceFunctionTypeHint> EntryHints{{Low.Entry, *EntryHint}};
+  LowToMedConverter LowConverter;
+  LowConverter.setBinaryImage(&Image);
+  LowConverter.setSourceEntryTypeHints(&EntryHints);
+  LowConverter.setSourceCallHintsEnabled(true);
+  auto Med = LowConverter.convert(Low, Image.Arch, BinaryFormat::MachO);
+  Med.SourceTypeHint = *EntryHint;
+  inferMedTypes(Med, Image.Arch);
+  ASSERT_TRUE(Med.SourceTypeHint);
+  recoverCallAbi(Med, Image.Arch, {}, &Image);
+  ASSERT_TRUE(Med.SourceTypeHint);
+  ASSERT_EQ(Med.CallInfos.size(), 1U);
+  ASSERT_TRUE(Med.CallInfos.front().SourceCallHint);
+  MedToHighConverter Converter;
+  Converter.setBinaryImage(&Image);
+  const auto High = Converter.convert(Med, Image.Arch);
+  const auto *Expression = sourceCall(High);
+  ASSERT_NE(Expression, nullptr);
+  ASSERT_TRUE(High.SourceTypeHint);
+  ASSERT_EQ(High.Params.size(), High.SourceTypeHint->Parameters.size());
+  ASSERT_EQ(Expression->Operands.size(), 2U);
+  EXPECT_TRUE(
+      sdk::objc_binding_detail::exactParameterValue(Expression->Operands[0], 0))
+      << Expression->Operands[0]->str();
+  EXPECT_GT(High.FrameSize, 0);
+  EXPECT_TRUE(sdk::objcSourceCallBound(*Expression, Image, {}, nullptr, nullptr,
+                                       &High));
+
+  auto BadFunction = High;
+  BadFunction.FrameSize = 16;
+  EXPECT_FALSE(sdk::objcSourceCallBound(*Expression, Image, {}, nullptr,
+                                        nullptr, &BadFunction));
+  auto BadExpression = *Expression;
+  BadExpression.Operands[0] = HighExpr::makeConst(1, 8);
+  EXPECT_FALSE(sdk::objcSourceCallBound(BadExpression, Image, {}, nullptr,
+                                        nullptr, &High));
+}
+
+TEST(ObjCCallHints, IndirectMessageResultRejectsMissingCallSiteProofs) {
+  const auto BaseImage = nonNullSelfIndirectResultImage();
+  const auto Base = nonNullSelfIndirectResultCaller();
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Image = BaseImage;
+    auto Low = Base;
+    auto &Ops = Low.Blocks.front().Ops;
+    if (Mutation == 0)
+      Ops.insert(Ops.begin() + 1,
+                 operation(NdOp::COPY, NdVar::reg(TRI.IntParamRegs[0], 8),
+                           {NdVar::cst(0, 8)}, 0x1202));
+    if (Mutation == 1)
+      Ops[1] = operation(NdOp::COPY, NdVar::reg(TRI.indirectResultReg(), 8),
+                         {NdVar::cst(0x2000, 8)}, 0x1204);
+    if (Mutation == 2) {
+      Ops[0].Inputs[1] = NdVar::cst(16, 8);
+      Ops[6].Inputs[1] = NdVar::cst(16, 8);
+    }
+    if (Mutation == 3)
+      Ops.insert(Ops.begin() + 2,
+                 operation(NdOp::STORE, {},
+                           {NdVar::reg(TRI.IntParamRegs[3], 8),
+                            NdVar::reg(TRI.indirectResultReg(), 8)},
+                           0x1206));
+    if (Mutation == 4)
+      Image.ObjCMethods.front().ClassName = "NSString";
+    EXPECT_TRUE(buildObjCSourceCallHints(Image, Low).empty());
   }
 }
 
@@ -5406,4 +11842,218 @@ TEST(ObjCCallHints, FrameBackedgesRevokeProvisionalSpillBindings) {
       EXPECT_EQ(buildObjCSourceCallHints(Image, Function).count(0x1250),
                 Overwrite ? 0U : 1U);
     }
+}
+
+TEST(ObjCCallHints, DynamicFormatInteger64TailRequiresDeclaredCompleteValues) {
+  auto Image = selectorStubImage();
+  Image.ObjCMethods.clear();
+  Image.DynInfo.NeededLibs.push_back(
+      "/System/Library/Frameworks/Foundation.framework/Foundation");
+  Image.ObjCSourceReferences.at(0x2100).Name = "localizedStringWithFormat:";
+  const auto Day = objcSelectorSourceTypeHint(Image, "day");
+  ASSERT_TRUE(Day);
+  ASSERT_TRUE(Day->ReturnType);
+  ASSERT_EQ(Day->ReturnType->Kind, NdTypeKind::Int);
+  ASSERT_EQ(Day->ReturnType->Size, 8U);
+  const auto Integer = Day->ReturnType;
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Tail = objcDynamicFormatInteger64ArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", {Integer});
+  ASSERT_TRUE(Tail);
+  ASSERT_TRUE(Tail->Format);
+  EXPECT_TRUE(Tail->Format->DynamicInteger64Arguments);
+  EXPECT_FALSE(Tail->Format->DynamicWithoutArguments);
+  EXPECT_FALSE(Tail->Format->DynamicPointerArguments);
+  ASSERT_EQ(Tail->Signature.Parameters.size(), 4U);
+  EXPECT_EQ(Tail->Signature.Parameters[3].Location.Kind,
+            SourceABICarrierKind::Stack);
+  EXPECT_EQ(Tail->Signature.Parameters[3].Location.EntryStackOffset, 0);
+  EXPECT_EQ(Tail->Signature.Parameters[3].Location.ValueBytes, 8U);
+
+  auto Cast = [](const ExprPtr &Value, const TypeRef &Type) {
+    auto E = std::make_shared<HighExpr>();
+    E->Kind = ExprKind::Cast;
+    E->Type = E->CastTo = Type;
+    E->Operands = {Value};
+    return E;
+  };
+  auto Leaf = [&] {
+    auto E = HighExpr::makeCall(
+        "objc_msgSend", 0,
+        {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8)});
+    E->Type = Integer;
+    auto Hint = std::make_shared<SourceCallTypeHint>();
+    Hint->CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+    Hint->TargetName = "objc_msgSend";
+    Hint->Selector = "day";
+    Hint->Signature = *Day;
+    E->SourceCallHint = std::move(Hint);
+    return E;
+  };
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = 42;
+  V.Size = 8;
+  V.TheArch = Arch::AArch64;
+  auto Value = [&] { return HighExpr::makeVar(V, Integer); };
+  auto Make = [&] {
+    HighFunc F;
+    F.ReturnType = Pointer;
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Dst = Value();
+    Assign.Val = Leaf();
+    F.Body.push_back(Assign);
+    auto Native = std::make_shared<SourceCallTypeHint>(*Tail);
+    Native->CallKind = SourceCallTypeHint::Kind::Native;
+    Native->TargetAddress = 0x1100;
+    Native->TargetName = "sub_1100";
+    Native->Selector.clear();
+    Native->Format.reset();
+    Native->Signature.Origin =
+        SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Native->Signature.ReturnType = NdType::makeInt(8, false);
+    for (auto &P : Native->Signature.Parameters)
+      P.Type = NdType::makeInt(8, false);
+    auto Call = HighExpr::makeCall("sub_1100", 0x1100,
+                                   {HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8),
+                                    HighExpr::makeConst(0, 8), Value()});
+    Call->Type = Native->Signature.ReturnType;
+    Call->SourceCallHint = std::move(Native);
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Call;
+    F.Body.push_back(Return);
+    return F;
+  };
+  auto Check = [&](const HighFunc &F, bool Expected) {
+    const auto Bound = sdk::bindObjCSourceReferences(F, Image);
+    const auto &Call = Bound.Function.Body.back().RetVal;
+    ASSERT_TRUE(Call && Call->SourceCallHint);
+    const bool Recovered =
+        Call->SourceCallHint->CallKind == SourceCallTypeHint::Kind::ObjCMessage;
+    EXPECT_EQ(Recovered, Expected) << Bound.Limitation;
+    if (Recovered) {
+      ASSERT_TRUE(Call->SourceCallHint->Format);
+      EXPECT_TRUE(Call->SourceCallHint->Format->DynamicInteger64Arguments);
+      EXPECT_TRUE(sdk::objcSourceCallBound(*Call, Image, {}, nullptr, nullptr,
+                                           &Bound.Function));
+    }
+  };
+  Check(Make(), true);
+  auto Casted = Make();
+  Casted.Body.front().Val =
+      Cast(Casted.Body.front().Val, NdType::makeInt(8, !Integer->IsSigned));
+  Check(Casted, true);
+  auto Joined = Make();
+  Joined.Body.insert(Joined.Body.begin(), Joined.Body.front());
+  Check(Joined, true);
+  auto Selected = Make();
+  Selected.Body.front().Val =
+      HighExpr::makeBinop(NdOp::SELECT, HighExpr::makeConst(1, 1), Leaf());
+  Selected.Body.front().Val->Operands.push_back(Leaf());
+  Selected.Body.front().Val->Type = Integer;
+  Check(Selected, true);
+
+  for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = Make();
+    auto &Call = F.Body.back().RetVal;
+    if (Mutation == 0)
+      F.Body.front().Val = HighExpr::makeConst(7, 8);
+    if (Mutation == 1)
+      F.Body.front().Val =
+          HighExpr::makeLoad(HighExpr::makeConst(0, 8), Integer);
+    if (Mutation == 2) {
+      auto P = V;
+      P.Kind = MedVar::Param;
+      P.Id = 0;
+      F.Params.push_back({"unproved_integer", Integer});
+      F.Body.front().Val = HighExpr::makeVar(P, Integer);
+    }
+    if (Mutation == 3)
+      F.Body.front().Val->Type = NdType::makeInt(4, true);
+    if (Mutation == 4) {
+      F.Body.front().Val->Type = NdType::makeFloat(8);
+      F.Body.front().Val = Cast(F.Body.front().Val, Integer);
+    }
+    if (Mutation == 5) {
+      F.Body.front().Val = Cast(F.Body.front().Val, Integer);
+      F.Body.front().Val->CastTo = NdType::makeInt(4, true);
+    }
+    if (Mutation == 6) {
+      auto Bad = std::make_shared<SourceCallTypeHint>(
+          *F.Body.front().Val->SourceCallHint);
+      Bad->Signature.ReturnType = NdType::makeInt(8, !Integer->IsSigned);
+      F.Body.front().Val->SourceCallHint = Bad;
+    }
+    if (Mutation == 7)
+      F.Body.front().Val = Value();
+    if (Mutation == 8) {
+      auto Unknown = F.Body.front();
+      Unknown.Val = HighExpr::makeConst(0, 8);
+      F.Body.insert(F.Body.begin(), Unknown);
+    }
+    if (Mutation == 9 || Mutation == 10) {
+      auto Bad = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+      if (Mutation == 9)
+        Bad->Signature.Parameters[3].Location.EntryStackOffset = 8;
+      else
+        Bad->Signature.Parameters[3].Location.ValueBytes = 4;
+      Call->SourceCallHint = Bad;
+    }
+    // The exact selector stub, complete operand carriers, and the declared
+    // integer producer together remain sufficient without a duplicate native
+    // callee hint.
+    if (Mutation == 11)
+      Call->SourceCallHint.reset();
+    if (Mutation == 12) {
+      auto Other = Leaf();
+      auto OtherHint =
+          std::make_shared<SourceCallTypeHint>(*Other->SourceCallHint);
+      OtherHint->Signature = *objcSelectorSourceTypeHint(Image, "length");
+      OtherHint->Selector = "length";
+      Other->SourceCallHint = OtherHint;
+      Other->Type = Other->SourceCallHint->Signature.ReturnType;
+      auto Define = F.Body.front();
+      Define.Val = Other;
+      F.Body.insert(F.Body.begin(), Define);
+    }
+    Check(F, Mutation == 11);
+  }
+
+  const auto Bound = sdk::bindObjCSourceReferences(Make(), Image);
+  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+    auto F = Bound.Function;
+    auto Call = std::make_shared<HighExpr>(*F.Body.back().RetVal);
+    auto MutableHint =
+        std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    Call->SourceCallHint = MutableHint;
+    F.Body.back().RetVal = Call;
+    auto &Format = *MutableHint->Format;
+    if (Mutation == 0)
+      Format.DynamicWithoutArguments = true;
+    if (Mutation == 1)
+      Format.DynamicPointerArguments = true;
+    if (Mutation == 2)
+      Format.FormatAddress = 0x4000;
+    if (Mutation == 3)
+      Format.AlternativeFormatAddresses = {0x4000};
+    if (Mutation == 4)
+      MutableHint->Signature.Parameters[3].Type = Pointer;
+    if (Mutation == 5)
+      F.Body.front().Val = HighExpr::makeConst(1, 8);
+    EXPECT_FALSE(
+        sdk::objcSourceCallBound(*Call, Image, {}, nullptr, nullptr, &F));
+  }
+  for (const auto &Bad :
+       {NdType::makeInt(4, true), NdType::makeFloat(8), Pointer})
+    EXPECT_FALSE(objcDynamicFormatInteger64ArgumentsSourceCallHint(
+        Image, "localizedStringWithFormat:", {Bad}));
+  EXPECT_FALSE(objcDynamicFormatInteger64ArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", {}));
+  Image.Arch = Arch::X64;
+  EXPECT_FALSE(objcDynamicFormatInteger64ArgumentsSourceCallHint(
+      Image, "localizedStringWithFormat:", {Integer}));
 }

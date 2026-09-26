@@ -15,6 +15,8 @@
 
 #include "neverd/ir/med/MedNoReturn.h"
 
+#include "neverd/ir/SourceABI.h"
+#include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <map>
@@ -23,7 +25,6 @@
 #include <vector>
 
 namespace neverd {
-namespace {
 
 bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
@@ -33,40 +34,57 @@ bool isArchitecturalNoReturn(const MedOp &Op, Arch TheArch) {
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
   if (TheArch == Arch::AArch64)
     return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
-  if ((TheArch == Arch::X86 || TheArch == Arch::X64) &&
-      Id == Intrinsic::IntN && Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
+      Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
       (Op.Inputs[1].ConstVal & 0xFF) == 0x29)
     return true;
   return false;
 }
 
-bool isX86DebugTrap(const MedOp &Op) {
+bool isArchitecturalNoReturn(const LowOp &Op, Arch TheArch) {
   if (Op.Opcode != NdOp::INTRINSIC || Op.NumInputs < 1 ||
       !Op.Inputs[0].isConst())
     return false;
-  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-  return Id == Intrinsic::Int3 || Id == Intrinsic::Ud2 ||
-         Id == Intrinsic::Int1;
+
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (TheArch == Arch::AArch64)
+    return Id == Intrinsic::Brk || Id == Intrinsic::Hlt_A64;
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64) && Id == Intrinsic::IntN &&
+      Op.NumInputs >= 2 && Op.Inputs[1].isConst() &&
+      (Op.Inputs[1].Offset & 0xFF) == 0x29)
+    return true;
+  return false;
 }
 
-void markCallsFollowedByTrap(MedFunc &Func) {
-  for (MedBlock &Block : Func.Blocks) {
-    for (size_t I = 0; I < Block.Ops.size(); ++I) {
-      MedOp &Op = Block.Ops[I];
-      if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
-        continue;
-      size_t J = I + 1;
-      while (J < Block.Ops.size() && Block.Ops[J].Dead)
-        ++J;
-      if (J < Block.Ops.size() && isX86DebugTrap(Block.Ops[J]))
-        Op.DoesNotReturn = true;
-    }
-  }
-}
-
+namespace {
 bool isDirectCallTo(const MedOp &Op, const std::set<va_t> &Targets) {
   return Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
          Op.Inputs[0].isConst() && Targets.count(Op.Inputs[0].ConstVal) != 0;
+}
+
+bool hasIndependentImportNoReturn(const MedOp &Op, Arch TheArch) {
+  // Function discovery also inventories import veneers. Their presence must
+  // not revoke a call effect established from an imported declaration before
+  // this internal fixed point. Require the complete runtime binding to agree;
+  // a source hint alone never introduces the fact here, and inferred native
+  // summaries still get refreshed.
+  if (!Op.DoesNotReturn || !Op.SourceCallHint ||
+      !Op.SourceCallHint->DoesNotReturn)
+    return false;
+  const auto &Hint = *Op.SourceCallHint;
+  switch (Hint.CallKind) {
+  case SourceCallTypeHint::Kind::ObjCRuntimeCall:
+  case SourceCallTypeHint::Kind::DarwinRuntimeCall:
+  case SourceCallTypeHint::Kind::SwiftRuntimeCall:
+    break;
+  default:
+    return false;
+  }
+  std::string Diagnostic;
+  return Hint.Signature.Architecture == TheArch &&
+         validateSourceABI(Hint.Signature, Diagnostic) &&
+         Hint.Signature.ReturnType->Kind == NdTypeKind::Void &&
+         Op.NumInputs == sourceABIParameters(Hint.Signature).size() + 1;
 }
 
 bool provesNoReturn(const MedFunc &Func, Arch TheArch,
@@ -124,6 +142,10 @@ bool provesNoReturn(const MedFunc &Func, Arch TheArch,
 
 } // namespace
 
+bool hasProvenNoReturnExit(const MedFunc &Func, Arch TheArch) {
+  return provesNoReturn(Func, TheArch, {});
+}
+
 void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
   std::set<va_t> InternalEntries;
   for (const MedFunc &Func : Funcs)
@@ -139,7 +161,8 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
       for (MedOp &Op : Block.Ops)
         if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
             Op.Inputs[0].isConst() &&
-            InternalEntries.count(Op.Inputs[0].ConstVal) != 0)
+            InternalEntries.count(Op.Inputs[0].ConstVal) != 0 &&
+            !hasIndependentImportNoReturn(Op, TheArch))
           Op.DoesNotReturn = false;
   }
 
@@ -183,12 +206,23 @@ void propagateInternalNoReturn(std::vector<MedFunc> &Funcs, Arch TheArch) {
   for (MedFunc &Func : Funcs) {
     Func.DoesNotReturn = NoReturnEntries.count(Func.Entry) != 0;
     for (MedBlock &Block : Func.Blocks)
-      for (MedOp &Op : Block.Ops)
+      for (MedOp &Op : Block.Ops) {
+        // A following trap belongs to this caller; it cannot establish that
+        // the call itself never returns or authorize dropping that trap.
         if (isDirectCallTo(Op, NoReturnEntries))
           Op.DoesNotReturn = true;
-    // MSVC plants `int3`/`ud2` after noreturn calls.  The callee may be an
-    // unlifted import thunk, so the trap at the call site is the local fact.
-    markCallsFollowedByTrap(Func);
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+            Op.SourceCallHint &&
+            Op.SourceCallHint->CallKind == SourceCallTypeHint::Kind::Native &&
+            Op.SourceCallHint->TargetAddress == Op.Inputs[0].ConstVal &&
+            InternalEntries.count(Op.Inputs[0].ConstVal)) {
+          // HighIR's source-flow owner consumes the bound call effect. Clone
+          // it so a later proof refresh cannot mutate another call's contract.
+          auto Hint = std::make_shared<SourceCallTypeHint>(*Op.SourceCallHint);
+          Hint->DoesNotReturn = Op.DoesNotReturn;
+          Op.SourceCallHint = std::move(Hint);
+        }
+      }
   }
 }
 

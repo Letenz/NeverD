@@ -1,3 +1,4 @@
+#include "../../../lib/loader/Swift/SwiftBooleanSourceBinding.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -8,6 +9,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -69,18 +71,20 @@ SourceCallTypeHint native(llvm::StringRef Name, TypeRef Return,
   return Hint;
 }
 
-std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true) {
+std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true,
+                 Arch Architecture = Arch::X64) {
   std::string Result;
   llvm::raw_string_ostream OS(Result);
   CEmitterOptions Options;
-  Options.TheArch = Arch::X64;
+  Options.TheArch = Architecture;
   Options.EmitIncludes = Includes;
   Options.EmitComments = false;
   EXPECT_TRUE(HighCEmitter().emit(Functions, OS, Options));
   return Result;
 }
 
-void compileAndRun(const std::string &Source) {
+void compileAndRun(const std::string &Source,
+                   llvm::ArrayRef<llvm::StringRef> ExtraArguments = {}) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -117,6 +121,7 @@ void compileAndRun(const std::string &Source) {
       SourcePath,
       "-o",
       BinaryPath};
+  Arguments.append(ExtraArguments.begin(), ExtraArguments.end());
   std::string Error;
   const int Compiled = llvm::sys::ExecuteAndWait(
       Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
@@ -126,7 +131,346 @@ void compileAndRun(const std::string &Source) {
                          << Source;
   const int Ran = llvm::sys::ExecuteAndWait(
       BinaryPath, {BinaryPath}, std::nullopt, Redirects, 30, 0, &Error);
-  ASSERT_EQ(Ran, 0) << Error << "\n" << Source;
+  const auto RuntimeErrors = llvm::MemoryBuffer::getFile(ErrorPath);
+  ASSERT_EQ(Ran, 0) << Error
+                    << (RuntimeErrors ? (*RuntimeErrors)->getBuffer().str()
+                                      : "")
+                    << "\n"
+                    << Source;
+}
+
+TEST(HighCSourceCalls,
+     UntypedStoresPreserveUnalignedBytesAndExpressionResults) {
+  const auto Word = NdType::makeInt(8, false);
+  const auto Address = NdType::makeInt(8, false);
+  std::vector<HighFunc> Functions;
+  for (unsigned Form = 0; Form < 3; ++Form) {
+    auto F = returning("raw_store_" + std::to_string(Form),
+                       HighExpr::makeLoad(parameter(0, Address), Word),
+                       {Address, Word});
+    if (Form == 1) {
+      auto Store = std::make_shared<HighExpr>();
+      Store->Kind = ExprKind::Store;
+      Store->Type = Word;
+      Store->Operands = {parameter(0, Address), parameter(1, Word)};
+      F.Body[0].RetVal = Store;
+    } else {
+      HighStmt Store;
+      if (Form == 0) {
+        Store.Kind = StmtKind::Store;
+        Store.StoreAddr = parameter(0, Address);
+        Store.StoreVal = parameter(1, Word);
+      } else {
+        Store.Kind = StmtKind::Assign;
+        Store.Dst = HighExpr::makeLoad(parameter(0, Address), Word);
+        Store.Val = parameter(1, Word);
+      }
+      F.Body.insert(F.Body.begin(), Store);
+    }
+    Functions.push_back(std::move(F));
+  }
+  const auto Source = emit(Functions) + R"(
+int main(void) {
+  _Alignas(16) unsigned char bytes[32];
+  uint64_t (*stores[])(uint64_t, uint64_t) = {raw_store_0, raw_store_1, raw_store_2};
+  for (unsigned i = 0; i != 3; ++i) {
+    memset(bytes, 0xA5, sizeof(bytes));
+    uint64_t expected = UINT64_C(0x9182736455463728) + i;
+    uint64_t result = stores[i]((uintptr_t)(bytes + 1), expected);
+    uint64_t actual;
+    memcpy(&actual, bytes + 1, sizeof(actual));
+    if (result != expected || actual != expected || bytes[0] != 0xA5 || bytes[9] != 0xA5)
+      return 1;
+  }
+  return 0;
+}
+)";
+  // Traps exercise alignment without requiring a sanitizer runtime library.
+  for (const llvm::StringRef Opt : {"-O0", "-O2"})
+    compileAndRun(Source,
+                  {Opt, "-fsanitize=alignment", "-fsanitize-trap=alignment"});
+}
+
+TEST(HighCSourceCalls, UnusedCallsAfterPredicatesPreserveSideEffects) {
+  const auto Integer = NdType::makeInt(8);
+  const auto Effect = native("fixture_predicate_effect", Integer, {Integer});
+  const auto Marker = native("fixture_predicate_marker", NdType::makeVoid(), {});
+  std::vector<HighFunc> Functions;
+  for (unsigned Form = 0; Form != 3; ++Form) {
+    auto Function = returning("predicate_calls_" + std::to_string(Form),
+                              HighExpr::makeConst(0, 8), {Integer});
+    auto Predicate = call(Effect, Integer, {parameter(0, Integer)});
+    MedVar Result;
+    Result.Kind = MedVar::Temp;
+    Result.Id = 19;
+    Result.Size = 8;
+    HighStmt Unused;
+    Unused.Kind = StmtKind::Assign;
+    Unused.Dst = HighExpr::makeVar(Result, Integer);
+    Unused.Val = call(Effect, Integer, {HighExpr::makeConst(7, 8)});
+    HighStmt Guard;
+    Guard.Kind = StmtKind::If;
+    Guard.Cond = Predicate;
+    Guard.Body = {Unused};
+    if (Form == 1) {
+      MedVar PredicateResult = Result;
+      PredicateResult.Id = 18;
+      HighStmt Evaluate;
+      Evaluate.Kind = StmtKind::Assign;
+      Evaluate.Dst = HighExpr::makeVar(PredicateResult, Integer);
+      Evaluate.Val = Predicate;
+      Guard.Cond = HighExpr::makeVar(PredicateResult, Integer);
+      Function.Body.insert(Function.Body.begin(), {Evaluate, Guard});
+    } else if (Form == 2) {
+      HighStmt Mark;
+      Mark.Kind = StmtKind::Call;
+      Mark.CallExpr = call(Marker, NdType::makeVoid());
+      Guard.Body = {Mark};
+      Function.Body.insert(Function.Body.begin(), {Guard, Unused});
+    } else {
+      Function.Body.insert(Function.Body.begin(), Guard);
+    }
+    Functions.push_back(std::move(Function));
+  }
+  compileAndRun(emit(Functions) + R"(
+static int calls, total, markers;
+int64_t fixture_predicate_effect(int64_t value) {
+  ++calls;
+  total += value;
+  return value;
+}
+void fixture_predicate_marker(void) { ++markers; }
+int main(void) {
+  uint64_t (*functions[])(int64_t) = {
+    predicate_calls_0, predicate_calls_1, predicate_calls_2
+  };
+  for (unsigned form = 0; form != 3; ++form) {
+    for (int condition = 0; condition != 2; ++condition) {
+      calls = total = markers = 0;
+      if (functions[form](condition) != 0)
+        return 1;
+      const int has_second = condition || form == 2;
+      if (calls != 1 + has_second || total != condition + 7 * has_second ||
+          markers != (form == 2 && condition))
+        return 2;
+    }
+  }
+  return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, UnknownOnlyTempsFailAtTheirObservableUse) {
+  const auto Integer = NdType::makeInt(8);
+  MedVar Unknown;
+  Unknown.Kind = MedVar::Temp;
+  Unknown.Id = 731;
+  Unknown.Size = 8;
+  Unknown.SSAVer = 3;
+  HighStmt Define;
+  Define.Kind = StmtKind::Assign;
+  Define.Dst = HighExpr::makeVar(Unknown, Integer);
+  Define.Val = HighExpr::makeUndef(8);
+  HighStmt Consume;
+  Consume.Kind = StmtKind::Call;
+  Consume.CallExpr =
+      call(native("fixture_unknown_consumer", NdType::makeVoid(), {Integer}),
+           NdType::makeVoid(), {HighExpr::makeVar(Unknown, Integer)});
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Cond = parameter(0, Integer);
+  Guard.Body = {Consume};
+  auto Function =
+      returning("unknown_argument", HighExpr::makeConst(0, 8), {Integer});
+  Function.Body.insert(Function.Body.begin(), {Define, Guard});
+  const std::string Source = emit({Function});
+  EXPECT_NE(Source.find("__builtin_trap(), 0 /* unknown value */"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("t731"), std::string::npos) << Source;
+  // The harness intercepts the emitted failure intrinsic so both the normal
+  // path and the failure before calling a consumer can execute in one process.
+  compileAndRun(R"(
+#include <setjmp.h>
+static jmp_buf failure;
+static void fixture_unknown_trap(void) { longjmp(failure, 1); }
+#define __builtin_trap fixture_unknown_trap
+)" + Source + R"(
+static int consumed;
+void fixture_unknown_consumer(int64_t value) { ++consumed; }
+int main(void) {
+  if (unknown_argument(0) != 0 || consumed)
+    return 1;
+  if (setjmp(failure) == 0) {
+    unknown_argument(1);
+    return 2;
+  }
+  return consumed ? 3 : 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, ExactNarrowZeroSuppliesOnlyPointerNullArguments) {
+  auto Binding = native("fixture_pointer_consumer", NdType::makeVoid(),
+                        {NdType::makePtr(NdType::makeVoid())});
+  Binding.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+
+  const auto Render = [&](uint64_t Value) {
+    HighFunc Function;
+    Function.Name = "null_pointer_caller";
+    Function.ReturnType = NdType::makeVoid();
+    HighStmt Statement;
+    Statement.Kind = StmtKind::Call;
+    Statement.CallExpr = call(Binding, NdType::makeVoid(),
+                              {HighExpr::makeConst(Value, 4)});
+    Function.Body = {std::move(Statement)};
+    return emit({Function});
+  };
+
+  const auto Null = Render(0);
+  EXPECT_NE(Null.find("fixture_pointer_consumer((void*)0)"),
+            std::string::npos)
+      << Null;
+  EXPECT_EQ(Null.find("bad source call"), std::string::npos) << Null;
+
+  const auto Nonnull = Render(1);
+  EXPECT_NE(Nonnull.find("bad source call"), std::string::npos) << Nonnull;
+}
+
+TEST(HighCSourceCalls, ConditionalCopiesKeepTheirReachingDefinitions) {
+  const auto Integer = NdType::makeInt(8);
+  MedVar Temporary;
+  Temporary.Kind = MedVar::Temp;
+  Temporary.Id = 19;
+  Temporary.Size = 8;
+  auto Value = HighExpr::makeVar(Temporary, Integer);
+  auto Function =
+      returning("conditional_copy", Value, {Integer, Integer, Integer});
+  HighStmt Initial;
+  Initial.Kind = StmtKind::Assign;
+  Initial.Dst = Value;
+  Initial.Val = parameter(0, Integer);
+  HighStmt Replacement = Initial;
+  Replacement.Val = parameter(2, Integer);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Cond = parameter(1, Integer);
+  Branch.Body = {Replacement};
+  Function.Body.insert(Function.Body.begin(), {Initial, Branch});
+  compileAndRun(emit({Function}) + R"(
+int main(void) {
+    return conditional_copy(17, 0, 91) == 17 &&
+           conditional_copy(17, 1, 91) == 91 ? 0 : 1;
+}
+)");
+}
+
+TEST(HighCSourceCalls, BytePointerCarriersAllowMachineBitOperations) {
+  const auto Pointer = NdType::makePtr(NdType::makeInt(1));
+  auto Shift = HighExpr::makeBinop(NdOp::INT_RIGHT, parameter(0, Pointer),
+                                   HighExpr::makeConst(4, 8));
+  Shift->Type = NdType::makeInt(8, false);
+  auto Function = returning("pointer_bits", Shift, {Pointer});
+  compileAndRun(emit({Function}) + R"(
+int main(void) {
+    int8_t bytes[64];
+    return pointer_bits(bytes) == ((uintptr_t)bytes >> 4) ? 0 : 1;
+}
+)");
+}
+
+TEST(HighCSourceCalls, NegatedFloatingComparisonsPreserveNaNsAndPrecedence) {
+  const auto Floating = NdType::makeFloat(8);
+  const auto Boolean = NdType::makeInt(1, false);
+  std::vector<HighFunc> Functions;
+  for (const auto &[Op, Name] :
+       {std::pair{NdOp::FLOAT_EQUAL, "not_equal"},
+        std::pair{NdOp::FLOAT_NOTEQUAL, "not_unequal"},
+        std::pair{NdOp::FLOAT_LESS, "not_less"},
+        std::pair{NdOp::FLOAT_LESSEQUAL, "not_less_equal"}}) {
+    auto Compare =
+        HighExpr::makeBinop(Op, parameter(0, Floating), parameter(1, Floating));
+    Compare->Type = Boolean;
+    auto Negated = HighExpr::makeUnary(NdOp::BOOL_NOT, Compare);
+    Negated->Type = Boolean;
+    Functions.push_back(returning(Name, Negated, {Floating, Floating}));
+  }
+  auto Xor = HighExpr::makeBinop(NdOp::BOOL_XOR, parameter(0, Boolean),
+                                 parameter(1, Boolean));
+  Xor->Type = Boolean;
+  auto Negated = HighExpr::makeUnary(NdOp::BOOL_NOT, Xor);
+  Negated->Type = Boolean;
+  Functions.push_back(returning("not_xor", Negated, {Boolean, Boolean}));
+  compileAndRun(emit(Functions) + R"(
+int main(void) {
+    double values[] = {0.0, -0.0, 1.0, 2.5, -2.5,
+                       __builtin_nan(""), __builtin_inf(), -__builtin_inf()};
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+        for (unsigned j = 0; j < sizeof(values) / sizeof(values[0]); ++j) {
+            double a = values[i], b = values[j];
+            if (not_equal(a, b) != !(a == b) ||
+                not_unequal(a, b) != !(a != b) ||
+                not_less(a, b) != !(a < b) ||
+                not_less_equal(a, b) != !(a <= b)) return 1;
+        }
+    for (unsigned a = 0; a < 2; ++a)
+        for (unsigned b = 0; b < 2; ++b)
+            if (not_xor(a, b) != !(a ^ b)) return 2;
+    return 0;
+}
+)");
+}
+
+TEST(HighCSourceCalls, ReorderedComparisonsKeepTheWideOperand) {
+  std::vector<HighFunc> Functions;
+  const auto Wide = NdType::makeInt(8, false);
+  for (const auto &[Op, Name] : {std::pair{NdOp::INT_LESS, "u_lt"},
+                                 std::pair{NdOp::INT_LESSEQUAL, "u_le"},
+                                 std::pair{NdOp::INT_SLESS, "s_lt"},
+                                 std::pair{NdOp::INT_SLESSEQUAL, "s_le"}}) {
+    auto Compare =
+        HighExpr::makeBinop(Op, HighExpr::makeConst(61, 4), parameter(0, Wide));
+    Compare->Type = NdType::makeInt(1, false);
+    Functions.push_back(returning(Name, Compare, {Wide}));
+    const auto Narrow = NdType::makeInt(4);
+    for (bool Swap : {false, true}) {
+      auto Left = parameter(0, Narrow), Right = parameter(1, Wide);
+      if (Swap)
+        std::swap(Left, Right);
+      auto Mixed = HighExpr::makeBinop(Op, Left, Right);
+      Mixed->Type = NdType::makeInt(1, false);
+      Functions.push_back(
+          returning(std::string(Name) + (Swap ? "_swap" : "_bits"), Mixed,
+                    {Narrow, Wide}));
+    }
+  }
+  compileAndRun(emit(Functions) + R"(
+int main(void) {
+    uint64_t values[] = {0, 60, 61, 62, UINT32_MAX,
+                        UINT64_C(0x100000001), UINT64_C(0x10000003d),
+                        UINT64_C(0x7fffffffffffffff),
+                        UINT64_C(0x8000000000000000), UINT64_MAX};
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+        uint64_t x = values[i];
+        if (u_lt(x) != (UINT64_C(61) < x) ||
+            u_le(x) != (UINT64_C(61) <= x) ||
+            s_lt(x) != (INT64_C(61) < (int64_t)x) ||
+            s_le(x) != (INT64_C(61) <= (int64_t)x)) return 1;
+        int32_t small[] = {0, 61, -1, INT32_MIN, INT32_MAX};
+        for (unsigned j = 0; j < sizeof(small) / sizeof(small[0]); ++j) {
+            int32_t n = small[j];
+            uint64_t z = (uint32_t)n;
+            if (u_lt_bits(n, x) != (z < x) || u_le_bits(n, x) != (z <= x) ||
+                u_lt_swap(n, x) != (x < z) || u_le_swap(n, x) != (x <= z) ||
+                s_lt_bits(n, x) != ((int64_t)z < (int64_t)x) ||
+                s_le_bits(n, x) != ((int64_t)z <= (int64_t)x) ||
+                s_lt_swap(n, x) != ((int64_t)x < (int64_t)z) ||
+                s_le_swap(n, x) != ((int64_t)x <= (int64_t)z)) return 2;
+        }
+    }
+    return 0;
+}
+)");
 }
 
 TEST(HighCSourceCalls, SwiftValueWitnessDestroyReloadsRuntimeTableEntry) {
@@ -181,33 +525,46 @@ int main(void) {
 
 TEST(HighCSourceCalls,
      SwiftValueWitnessInitializeWithCopyReturnsRuntimeDestination) {
-  const auto Hint = swiftValueWitnessSourceCallHint(
-      Arch::X64, SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy);
-  ASSERT_TRUE(Hint);
-  auto Copy =
-      HighExpr::makeCall("indirect_call", 0,
-                         {parameter(0, Hint->Signature.Parameters[0].Type),
-                          parameter(1, Hint->Signature.Parameters[1].Type),
-                          parameter(2, Hint->Signature.Parameters[2].Type)});
-  Copy->IsIndirectCall = true;
-  // HighIR retains the integer machine carrier even though the source ABI
-  // gives the same return register a pointer type.
-  Copy->Type = NdType::makeInt(8);
-  Copy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
-  HighFunc Function;
-  Function.Name = "copy_value";
-  Function.ReturnType = Copy->Type;
-  Function.Params = {{"destination", Hint->Signature.Parameters[0].Type},
-                     {"source", Hint->Signature.Parameters[1].Type},
-                     {"metadata", Hint->Signature.Parameters[2].Type}};
-  Function.SourceTypeHint = Hint->Signature;
-  HighStmt Return;
-  Return.Kind = StmtKind::Return;
-  Return.RetVal = Copy;
-  Function.Body = {Return};
-  const auto Source = emit({Function});
-  EXPECT_NE(Source.find("sizeof(void *)))[2]"), std::string::npos);
-  compileAndRun(Source + R"(
+  using OperationKind = SourceCallTypeHint::SwiftValueWitnessKind;
+  const std::pair<OperationKind, unsigned> Cases[] = {
+      {OperationKind::InitializeBufferWithCopyOfBuffer, 0},
+      {OperationKind::InitializeWithCopy, 2},
+      {OperationKind::AssignWithCopy, 3},
+      {OperationKind::InitializeWithTake, 4},
+      {OperationKind::AssignWithTake, 5},
+  };
+  for (const auto &[Operation, ExpectedSlot] : Cases) {
+    const auto Hint = swiftValueWitnessSourceCallHint(Arch::X64, Operation);
+    ASSERT_TRUE(Hint);
+    auto Copy =
+        HighExpr::makeCall("indirect_call", 0,
+                           {parameter(0, Hint->Signature.Parameters[0].Type),
+                            parameter(1, Hint->Signature.Parameters[1].Type),
+                            parameter(2, Hint->Signature.Parameters[2].Type)});
+    Copy->IsIndirectCall = true;
+    // HighIR retains the integer machine carrier even though the source ABI
+    // gives the same return register a pointer type.
+    Copy->Type = NdType::makeInt(8);
+    Copy->SourceCallHint = std::make_shared<const SourceCallTypeHint>(*Hint);
+    HighFunc Function;
+    Function.Name = "copy_value";
+    Function.ReturnType = Copy->Type;
+    Function.Params = {{"destination", Hint->Signature.Parameters[0].Type},
+                       {"source", Hint->Signature.Parameters[1].Type},
+                       {"metadata", Hint->Signature.Parameters[2].Type}};
+    Function.SourceTypeHint = Hint->Signature;
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Copy;
+    Function.Body = {Return};
+    const auto Source = emit({Function});
+    const auto Slot = swiftValueWitnessSlot(Operation);
+    ASSERT_TRUE(Slot);
+    EXPECT_EQ(*Slot, ExpectedSlot);
+    EXPECT_NE(
+        Source.find("sizeof(void *)))[" + std::to_string(ExpectedSlot) + "]"),
+        std::string::npos);
+    compileAndRun(Source + R"(
 static void *expected_metadata;
 static void *__attribute__((swiftcall))
 witness_copy(void *destination, void *source, void *metadata) {
@@ -216,12 +573,78 @@ witness_copy(void *destination, void *source, void *metadata) {
     return destination;
 }
 int main(void) {
-    void *table[3] = {0, 0, (void *)&witness_copy};
+    void *table[8] = {0};
+)" + "    table[" +
+                  std::to_string(ExpectedSlot) +
+                  "] = (void *)&witness_copy;\n" + R"(
     void *metadata_words[2] = {table, 0};
     expected_metadata = &metadata_words[1];
     unsigned source = 73, destination = 0;
     uintptr_t result = copy_value(&destination, &source, expected_metadata);
     return (void *)result == &destination && destination == source ? 0 : 1;
+}
+)");
+  }
+}
+
+TEST(HighCSourceCalls, SwiftSinglePayloadWitnessesPreserveUnsignedTagABI) {
+  using Operation = SourceCallTypeHint::SwiftValueWitnessKind;
+  std::vector<HighFunc> Functions;
+  for (const auto Op : {Operation::GetEnumTagSinglePayload,
+                        Operation::StoreEnumTagSinglePayload}) {
+    const auto Hint = swiftValueWitnessSourceCallHint(Arch::X64, Op);
+    ASSERT_TRUE(Hint);
+    HighFunc Function;
+    Function.Name = Hint->TargetName;
+    Function.ReturnType = Hint->Signature.ReturnType;
+    Function.SourceTypeHint = Hint->Signature;
+    std::vector<ExprPtr> Arguments;
+    for (const auto &P : Hint->Signature.Parameters) {
+      Arguments.push_back(parameter(Arguments.size(), P.Type));
+      Function.Params.push_back({P.Name, P.Type});
+    }
+    auto Call = call(*Hint, Hint->Signature.ReturnType, std::move(Arguments));
+    Call->IsIndirectCall = true;
+    HighStmt Statement;
+    if (Op == Operation::GetEnumTagSinglePayload) {
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 4U);
+      EXPECT_FALSE(Hint->Signature.ReturnType->IsSigned);
+      Statement.Kind = StmtKind::Return;
+      Statement.RetVal = Call;
+    } else {
+      Statement.Kind = StmtKind::Call;
+      Statement.CallExpr = Call;
+    }
+    Function.Body = {Statement};
+    Functions.push_back(Function);
+  }
+  compileAndRun(emit(Functions) + R"(
+static void *expected_metadata;
+static unsigned reads, writes;
+static uint32_t __attribute__((swiftcall))
+get_tag(void *value, uint32_t empty_cases, void *metadata) {
+    if (metadata != expected_metadata || empty_cases != 0x87654321u)
+        __builtin_trap();
+    ++reads;
+    return *(uint32_t *)value;
+}
+static void __attribute__((swiftcall))
+store_tag(void *value, uint32_t tag, uint32_t empty_cases, void *metadata) {
+    if (metadata != expected_metadata || empty_cases != 0x87654321u)
+        __builtin_trap();
+    ++writes;
+    *(uint32_t *)value = tag;
+}
+int main(void) {
+    void *table[8] = {0};
+    table[6] = (void *)&get_tag;
+    table[7] = (void *)&store_tag;
+    void *metadata_words[2] = {table, 0};
+    expected_metadata = &metadata_words[1];
+    uint32_t value = 0;
+    storeEnumTagSinglePayload(&value, 0xfedcba98u, 0x87654321u, expected_metadata);
+    uint32_t tag = getEnumTagSinglePayload(&value, 0x87654321u, expected_metadata);
+    return tag == 0xfedcba98u && reads == 1 && writes == 1 ? 0 : 1;
 }
 )");
 }
@@ -624,6 +1047,26 @@ int main(void) {
 )");
 }
 
+TEST(HighCSourceCalls, SwiftOnceAddressorUsesRebuiltHelper) {
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftOnceAccessor;
+  Hint.TargetAddress = 0x1234;
+  Hint.TargetName = "_$s4Test5valueSo8NSObjectCvau";
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint.Signature, Arch::X64, Error));
+  auto Address = call(Hint, Hint.Signature.ReturnType);
+  Address->CallTarget.clear();
+  const auto Source = emit({returning("read_value", Address)});
+  EXPECT_NE(Source.find("extern uintptr_t neverd_swift_once_accessor_1234("),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("neverd_swift_once_accessor_1234()"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+}
+
 TEST(HighCSourceCalls, NoncontiguousOrNestedEntriesRemainAmbiguous) {
   for (bool Nested : {false, true}) {
     auto Function = returning("ambiguous_entry", HighExpr::makeConst(1, 4));
@@ -655,6 +1098,7 @@ TEST(HighCSourceCalls, NoncontiguousOrNestedEntriesRemainAmbiguous) {
 
 TEST(HighCSourceCalls, ConditionalEntryEvaluatesBeforeItsTakenEdgeCopies) {
   for (bool ExplicitElse : {false, true}) {
+    SCOPED_TRACE(ExplicitElse);
     const auto Integer = NdType::makeInt(4);
     MedVar Variable;
     Variable.Kind = MedVar::Temp;
@@ -1149,6 +1593,25 @@ TEST(HighCSourceCalls,
                 .find("bad source call: invalid source address"),
             std::string::npos);
 }
+
+TEST(HighCSourceCalls,
+     SwiftTypeMetadataAddressesAcceptDescriptorFreePrintableReferences) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Hint = native("", Pointer, {});
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftTypeMetadataAddress;
+  Hint.TargetAddress = 0x1000;
+  Hint.SwiftTypeMetadata = SourceCallTypeHint::SwiftTypeMetadataAddress{
+      0x1000, 0x1010, 0x1020, 0, "", "ScPSg"};
+  const auto Source = emit({returning("metadata_cache", call(Hint, Pointer))});
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  EXPECT_NE(Source.find("neverd_swift_type_metadata_1000_1010_cache_address()"),
+            std::string::npos);
+
+  Hint.SwiftTypeMetadata->DescriptorSlot = 0x1030;
+  EXPECT_NE(emit({returning("bad_descriptor", call(Hint, Pointer))})
+                .find("bad source call: Swift type metadata"),
+            std::string::npos);
+}
 } // namespace
 
 TEST(HighCSourceCalls, VariadicMessageCompilesAndPreservesPromotedArguments) {
@@ -1202,6 +1665,84 @@ int main(void) {
   }
   return 0;
 })");
+}
+
+TEST(HighCSourceCalls, DynamicFormatsPermitEmptyOrPointerVariadicTails) {
+  auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Hint = native("objc_msgSend", Pointer, {Pointer, Pointer, Pointer});
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.Selector = "localizedStringWithFormat:";
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+  Hint.Format = SourceCallTypeHint::FormatArguments{
+      3, 2, 0, SourceCallTypeHint::FormatSyntax::NSString, {}, true};
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinVariadicSourceABI(Hint.Signature, 3, Arch::X64, Error));
+  auto Expression = call(
+      Hint, Pointer,
+      {parameter(0, Pointer), parameter(1, Pointer), parameter(2, Pointer)});
+  const auto Source = emit({returning("send_dynamic_format", Expression,
+                                      {Pointer, Pointer, Pointer})},
+                           false);
+  EXPECT_NE(Source.find("(*)(id, SEL, void*, ...)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+
+  auto PointerTail = Hint;
+  PointerTail.Format = SourceCallTypeHint::FormatArguments{
+      3, 2, 0, SourceCallTypeHint::FormatSyntax::NSString, {}, false, true};
+  PointerTail.Signature.Parameters.push_back({"first", Pointer});
+  PointerTail.Signature.Parameters.push_back({"second", Pointer});
+  ASSERT_TRUE(assignDarwinVariadicSourceABI(PointerTail.Signature, 3,
+                                             Arch::X64, Error));
+  const auto PointerTailSource = emit(
+      {returning("send_dynamic_pointer_format",
+                 call(PointerTail, Pointer,
+                      {parameter(0, Pointer), parameter(1, Pointer),
+                       parameter(2, Pointer), parameter(3, Pointer),
+                       parameter(4, Pointer)}),
+                 {Pointer, Pointer, Pointer, Pointer, Pointer})},
+      false);
+  EXPECT_NE(PointerTailSource.find("(*)(id, SEL, void*, ...)"),
+            std::string::npos)
+      << PointerTailSource;
+  EXPECT_EQ(PointerTailSource.find("bad source call"), std::string::npos)
+      << PointerTailSource;
+
+  auto ConflictingDynamic = PointerTail;
+  ConflictingDynamic.Format->DynamicWithoutArguments = true;
+  EXPECT_NE(emit({returning(
+                      "bad_conflicting_dynamic_format",
+                      call(ConflictingDynamic, Pointer,
+                           {parameter(0, Pointer), parameter(1, Pointer),
+                            parameter(2, Pointer), parameter(3, Pointer),
+                            parameter(4, Pointer)}),
+                      {Pointer, Pointer, Pointer, Pointer, Pointer})},
+                 false)
+                .find("bad source call: invalid variadic source declaration"),
+            std::string::npos);
+
+  for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
+    auto Bad = Hint;
+    if (Mutation == 0)
+      Bad.Format->FormatAddress = 0x2000;
+    if (Mutation == 1)
+      Bad.Format->AlternativeFormatAddresses = {0x2020};
+    if (Mutation == 2)
+      Bad.Format->FixedCount = 2;
+    if (Mutation == 3)
+      Bad.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    EXPECT_NE(
+        emit({returning("bad_dynamic_format_" + std::to_string(Mutation),
+                        call(Bad, Pointer,
+                             {parameter(0, Pointer), parameter(1, Pointer),
+                              parameter(2, Pointer)}),
+                        {Pointer, Pointer, Pointer})},
+             false)
+            .find("bad source call: invalid variadic source declaration"),
+        std::string::npos)
+        << Mutation;
+  }
 }
 
 TEST(HighCSourceCalls, VariadicCDeclarationsMergeOnlyTheirFixedPrefixes) {
@@ -1286,6 +1827,43 @@ TEST(HighCSourceCalls, DarwinWeakImportsRemainOptionalInDeclarations) {
   EXPECT_NE(
       emit({Bad}, false).find("weak import belongs to another binding kind"),
       std::string::npos);
+}
+
+TEST(HighCSourceCalls, CompilerRTPlatformCheckKeepsItsExactLinkNameAndABI) {
+  const auto I32 = NdType::makeInt(4, true);
+  const auto U32 = NdType::makeInt(4, false);
+  auto Hint = native("__isPlatformVersionAtLeast", I32,
+                     {U32, U32, U32, U32});
+  Hint.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Hint.Signature.Origin =
+      SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Hint.Signature, Arch::X64, Error));
+  auto Function = returning(
+      "check_platform",
+      call(Hint, I32,
+           {parameter(0, U32), parameter(1, U32), parameter(2, U32),
+            parameter(3, U32)}),
+      {U32, U32, U32, U32});
+  const auto Source = emit({Function});
+  EXPECT_NE(Source.find(
+                "extern int32_t neverd_darwin___isPlatformVersionAtLeast("),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("__asm__(\"___isPlatformVersionAtLeast\")"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+int32_t platform_check(uint32_t platform, uint32_t major, uint32_t minor,
+                       uint32_t subminor)
+    __asm__("___isPlatformVersionAtLeast");
+int32_t platform_check(uint32_t platform, uint32_t major, uint32_t minor,
+                       uint32_t subminor) {
+  return (int32_t)(platform + major * 10 + minor * 100 + subminor * 1000);
+}
+int main(void) { return check_platform(2, 14, 6, 3) != 3742; }
+)");
 }
 
 TEST(HighCSourceCalls, SwiftConventionSurvivesDefinitionsAndRejectsConflicts) {
@@ -1533,7 +2111,8 @@ TEST(HighCSourceCalls, PointerValuesStoredThroughIntegerLoadsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("(int64_t)(uintptr_t)(value)"), std::string::npos)
+  EXPECT_NE(Source.find("(int64_t)(uintptr_t)((uintptr_t)value)"),
+            std::string::npos)
       << Source;
   compileAndRun(Source + R"(
 int main(void) {
@@ -1569,7 +2148,7 @@ TEST(HighCSourceCalls, PointerValuesAssignedToIntegerTempsUsePointerBits) {
   Function.Body = {Assign, Return};
 
   const auto Source = emit({Function});
-  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)(value);"),
+  EXPECT_NE(Source.find("t17 = (int64_t)(uintptr_t)((uintptr_t)value);"),
             std::string::npos)
       << Source;
   compileAndRun(Source + R"(
@@ -1672,4 +2251,336 @@ TEST(HighCSourceCalls, PartialIntegerAtomicsRejectWidenedMemoryAccess) {
   Function.Body.insert(Function.Body.begin(), Store);
   EXPECT_DEATH(emit({Function}),
                "atomic access requires a supported machine width");
+}
+
+TEST(HighCSourceCalls, AssignedVersionZeroRegisterKeepsReturningCallResult) {
+  const auto I64 = NdType::makeInt(8, false);
+  for (bool Typed : {false, true}) {
+    HighFunc F;
+    F.Name = "read_value";
+    F.ReturnType = I64;
+    if (Typed)
+      F.SourceTypeHint = native(F.Name, I64, {}).Signature;
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.Id = 0;
+    Value.SSAVer = 0;
+    Value.Size = 8;
+    Value.TheArch = Arch::X64;
+    auto Hint = native("value_provider", I64, {});
+    Hint.TargetAddress = 0x1234;
+    HighStmt Assign;
+    Assign.Kind = StmtKind::Assign;
+    Assign.Dst = HighExpr::makeVar(Value, I64);
+    Assign.Val = call(Hint, I64);
+    HighStmt Ret;
+    Ret.Kind = StmtKind::Return;
+    Ret.RetVal = HighExpr::makeVar(Value, I64);
+    F.Body = {Assign, Ret};
+    compileAndRun(emit({F}) + R"(
+uint64_t value_provider(void) { return UINT64_C(0x123456789abcdef0); }
+int main(void) { return read_value() != UINT64_C(0x123456789abcdef0); }
+)");
+  }
+}
+
+TEST(HighCSourceCalls, DynamicInteger64FormatsKeepTrueVariadicCalls) {
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto Signed = NdType::makeInt(8, true);
+  const auto Unsigned = NdType::makeInt(8, false);
+  auto Hint = native("objc_msgSend", Pointer,
+                     {Pointer, Pointer, Pointer, Signed, Unsigned});
+  Hint.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Hint.Selector = "localizedStringWithFormat:";
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::ObjCSDK;
+  Hint.Format = SourceCallTypeHint::FormatArguments{
+      3,  2,     0,     SourceCallTypeHint::FormatSyntax::NSString,
+      {}, false, false, true};
+  std::string Error;
+  ASSERT_TRUE(
+      assignDarwinVariadicSourceABI(Hint.Signature, 3, Arch::AArch64, Error));
+  const auto Render = [&](const SourceCallTypeHint &Binding) {
+    std::vector<TypeRef> Types;
+    std::vector<ExprPtr> Arguments;
+    for (size_t I = 0; I < Binding.Signature.Parameters.size(); ++I) {
+      const auto &Type = Binding.Signature.Parameters[I].Type;
+      Types.push_back(Type);
+      auto V = parameter(unsigned(I), Type);
+      V->Var.TheArch = Arch::AArch64;
+      Arguments.push_back(V);
+    }
+    auto F = returning("send_dynamic_integer_format",
+                       call(Binding, Pointer, Arguments), Types);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::AArch64;
+    Options.EmitIncludes = false;
+    Options.EmitComments = false;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    EXPECT_TRUE(HighCEmitter().emit({F}, OS, Options));
+    return Source;
+  };
+  const auto Source = Render(Hint);
+  EXPECT_NE(Source.find("(*)(id, SEL, void*, ...)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  compileAndRun(R"(
+#include <stdint.h>
+#include <stdarg.h>
+typedef void *id;
+typedef void *SEL;
+static int64_t observed_signed;
+static uint64_t observed_unsigned;
+static void *implementation(id receiver, SEL selector, void *format, ...) {
+  va_list args;
+  va_start(args, format);
+  observed_signed = va_arg(args, int64_t);
+  observed_unsigned = va_arg(args, uint64_t);
+  va_end(args);
+  return receiver == (void*)1 && selector == (void*)2 ? format : (void*)0;
+}
+static void *(*objc_msgSend)(id, SEL, void*, ...) = implementation;
+)" + Source + R"(
+int main(void) {
+  const int64_t signed_values[] = { INT64_MIN, -1, 0, 1, INT64_MAX };
+  const uint64_t unsigned_values[] = { 0, 1, UINT64_C(0x8000000000000000), UINT64_MAX };
+  for (unsigned i = 0; i < 5; ++i) for (unsigned j = 0; j < 4; ++j) {
+    void *format = (void*)(uintptr_t)(3+i+j);
+    if (send_dynamic_integer_format((void*)1, (void*)2, format,
+                                   signed_values[i], unsigned_values[j]) != format)
+      return 1;
+    if (observed_signed != signed_values[i] || observed_unsigned != unsigned_values[j])
+      return 2;
+  }
+  return 0;
+})");
+  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Bad = Hint;
+    if (Mutation == 0)
+      Bad.Format->DynamicPointerArguments = true;
+    if (Mutation == 1)
+      Bad.Format->DynamicWithoutArguments = true;
+    if (Mutation == 2)
+      Bad.Format->FormatAddress = 0x1234;
+    if (Mutation == 3)
+      Bad.Format->AlternativeFormatAddresses = {0x1234};
+    if (Mutation == 4)
+      Bad.Signature.Parameters[3].Type = NdType::makeFloat(8);
+    if (Mutation == 5)
+      Bad.Signature.Parameters[3].Type = Pointer;
+    if (Mutation == 6) {
+      Bad.Signature.Parameters.resize(3);
+      ASSERT_TRUE(assignDarwinVariadicSourceABI(Bad.Signature, 3, Arch::AArch64,
+                                                Error));
+    }
+    if (Mutation == 7)
+      ASSERT_TRUE(
+          assignDarwinVariadicSourceABI(Bad.Signature, 3, Arch::X64, Error));
+    if (Mutation == 8)
+      Bad.Signature.HasExplicitABI = false;
+    if (Mutation == 9) {
+      Bad.Signature.Parameters[3].Location.EntryStackOffset = 8;
+      Bad.Signature.Parameters[4].Location.EntryStackOffset = 16;
+    }
+    if (Mutation == 10) {
+      ASSERT_TRUE(assignDarwinFixedSourceABI(Bad.Signature, Arch::AArch64, Error));
+      ASSERT_TRUE(validateSourceABI(Bad.Signature, Error));
+    }
+    EXPECT_NE(Render(Bad).find("bad source call"), std::string::npos);
+  }
+}
+
+namespace {
+HighFunc
+booleanSourceFunction(llvm::StringRef Import = SwiftBooleanComparisonImport) {
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::SwiftBooleanProjection;
+  Hint.Signature = *swiftBooleanNormalizedSignature(Import);
+  Hint.TargetName = Import.drop_front().str();
+  Hint.TargetAddress = 0x2080;
+  Hint.BooleanResult = SourceCallTypeHint::BooleanResultProjection{
+      0x1000, {0x101c, 0, NdOp::CALL, 0x1100}};
+  std::vector<ExprPtr> Args;
+  std::vector<TypeRef> Types;
+  for (const auto &P : Hint.Signature.Parameters) {
+    Args.push_back(parameter(Args.size(), P.Type));
+    Types.push_back(P.Type);
+  }
+  auto E = call(Hint, Hint.Signature.ReturnType, Args);
+  E->CallAddr = 0x1100;
+  auto Function = returning("projected_bool", E, Types);
+  Function.Entry = 0x1000;
+  return Function;
+}
+} // namespace
+
+TEST(HighCSourceCalls, SwiftBooleanUsesTrueI1DeclarationAndPreservesArguments) {
+  const auto Source = emit({booleanSourceFunction()}, true, Arch::AArch64);
+  EXPECT_NE(Source.find("extern _Bool neverd_swift_string_compare_bool"),
+            std::string::npos);
+  EXPECT_NE(Source.find("swiftcall"), std::string::npos);
+  EXPECT_NE(Source.find("((uint8_t)neverd_swift_string_compare_bool("),
+            std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+_Bool __attribute__((swiftcall)) neverd_swift_string_compare_bool(
+    uint64_t a, void *b, uint64_t c, void *d, uint8_t e) {
+  ++calls;
+  return a == 5 && b == (void *)0x1234 && c == 7 && d == (void *)0x5678 && e == 255;
+}
+int main(void) {
+  if (projected_bool(5, (void *)0x1234, 7, (void *)0x5678, 255) != 1 || calls != 1) return 1;
+  if (projected_bool(6, (void *)0x1234, 7, (void *)0x5678, 255) != 0 || calls != 2) return 2;
+  return 0;
+}
+)";
+  compileAndRun(Program, {"-O0", "-Werror"});
+  compileAndRun(Program, {"-O2", "-Werror"});
+}
+
+TEST(HighCSourceCalls, SwiftPrefixKeepsItsOwnFourArgumentI1Prototype) {
+  const auto Source = emit({booleanSourceFunction(SwiftBooleanPrefixImport)},
+                           true, Arch::AArch64);
+  EXPECT_NE(
+      Source.find("extern _Bool neverd_swift_string_has_prefix_bool(uint64_t, "
+                  "void*, uint64_t, void*)"),
+      std::string::npos);
+  EXPECT_NE(Source.find("__asm__(\"_$sSS9hasPrefixySbSSF\")"),
+            std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  EXPECT_EQ(Source.find("neverd_swift_string_compare_bool"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+_Bool __attribute__((swiftcall)) neverd_swift_string_has_prefix_bool(
+    uint64_t a, void *b, uint64_t c, void *d) {
+  ++calls;
+  return a == 5 && b == (void *)0x1234 && c == 7 && d == (void *)0x5678;
+}
+int main(void) {
+  if (projected_bool(5, (void *)0x1234, 7, (void *)0x5678) != 1 || calls != 1) return 1;
+  if (projected_bool(6, (void *)0x1234, 7, (void *)0x5678) != 0 || calls != 2) return 2;
+  return 0;
+}
+)";
+  compileAndRun(Program, {"-O0", "-Werror"});
+  compileAndRun(Program, {"-O2", "-Werror"});
+}
+
+TEST(HighCSourceCalls, SwiftSuffixKeepsItsOwnFourArgumentI1Prototype) {
+  const auto Source = emit({booleanSourceFunction(SwiftBooleanSuffixImport)},
+                           true, Arch::AArch64);
+  EXPECT_NE(
+      Source.find("extern _Bool neverd_swift_string_has_suffix_bool(uint64_t, "
+                  "void*, uint64_t, void*)"),
+      std::string::npos);
+  EXPECT_NE(Source.find("__asm__(\"_$sSS9hasSuffixySbSSF\")"),
+            std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+_Bool __attribute__((swiftcall)) neverd_swift_string_has_suffix_bool(
+    uint64_t a, void *b, uint64_t c, void *d) {
+  ++calls;
+  return a == 5 && b == (void *)0x1234 && c == 7 && d == (void *)0x5678;
+}
+int main(void) {
+  if (projected_bool(5, (void *)0x1234, 7, (void *)0x5678) != 1 || calls != 1) return 1;
+  if (projected_bool(6, (void *)0x1234, 7, (void *)0x5678) != 0 || calls != 2) return 2;
+  return 0;
+}
+)";
+  compileAndRun(Program, {"-O0", "-Werror"});
+  compileAndRun(Program, {"-O2", "-Werror"});
+}
+
+TEST(HighCSourceCalls, SwiftObjectEqualityPreservesHiddenContextAndI1Result) {
+  const auto Source =
+      emit({booleanSourceFunction(SwiftBooleanObjectEqualityImport)}, true,
+           Arch::AArch64);
+  EXPECT_NE(Source.find("extern _Bool neverd_swift_nsobject_equal_bool"),
+            std::string::npos);
+  EXPECT_NE(Source.find("swift_context"), std::string::npos);
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos);
+  const auto Program = Source + R"(
+static unsigned calls;
+_Bool __attribute__((swiftcall)) neverd_swift_nsobject_equal_bool(
+    void *a, void *b, void *metadata __attribute__((swift_context))) {
+  ++calls;
+  return a == (void *)0x1234 && b == (void *)0x5678 && metadata == (void *)0x9abc;
+}
+int main(void) {
+  if (projected_bool((void *)0x1234, (void *)0x5678, (void *)0x9abc) != 1 || calls != 1) return 1;
+  if (projected_bool((void *)0x1234, (void *)0x5678, (void *)0x9abd) != 0 || calls != 2) return 2;
+  return 0;
+}
+)";
+  compileAndRun(Program, {"-O0", "-Werror"});
+  compileAndRun(Program, {"-O2", "-Werror"});
+  for (unsigned Mutation = 0; Mutation != 2; ++Mutation) {
+    auto Function = booleanSourceFunction(SwiftBooleanObjectEqualityImport);
+    auto E = Function.Body[0].RetVal;
+    auto Hint = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+    E->SourceCallHint = Hint;
+    if (Mutation == 0)
+      Hint->Signature.Parameters.back().TheRole =
+          SourceParameterTypeHint::Role::Ordinary;
+    else
+      Hint->Signature.Parameters.back().Location.RegisterOffset = 16;
+    EXPECT_NE(emit({Function}, false, Arch::AArch64).find("bad source call"),
+              std::string::npos);
+  }
+}
+
+TEST(HighCSourceCalls, SwiftBooleanRejectsForeignBindingsAndBytePrototypes) {
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Function = booleanSourceFunction();
+    auto E = Function.Body[0].RetVal;
+    auto Hint = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+    E->SourceCallHint = Hint;
+    switch (Mutation) {
+    case 0:
+      Hint->BooleanResult.reset();
+      break;
+    case 1:
+      Hint->BooleanResult->FunctionEntry += 4;
+      break;
+    case 2:
+      Hint->CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
+      break;
+    case 3:
+      Hint->Signature.ReturnType = NdType::makeInt(8, false);
+      break;
+    case 4:
+      E->IsIndirectCall = true;
+      break;
+    case 5:
+      E->CallAddr += 4;
+      break;
+    case 6:
+      Hint->ValueWitness = SourceCallTypeHint::SwiftValueWitnessKind::Destroy;
+      break;
+    case 7:
+      Hint->SwiftStringInputs = {{0, 1}};
+      break;
+    }
+    EXPECT_NE(emit({Function}, false, Arch::AArch64).find("bad source call"),
+              std::string::npos);
+  }
+  auto Function = booleanSourceFunction();
+  auto E = Function.Body[0].RetVal;
+  auto Byte = std::make_shared<HighExpr>(*E);
+  auto Hint = std::make_shared<SourceCallTypeHint>(*E->SourceCallHint);
+  Hint->BooleanResult.reset();
+  Hint->CallKind = SourceCallTypeHint::Kind::SwiftRuntimeCall;
+  Byte->SourceCallHint = Hint;
+  HighStmt Statement;
+  Statement.Kind = StmtKind::Call;
+  Statement.CallExpr = Byte;
+  Function.Body.insert(Function.Body.begin(), Statement);
+  EXPECT_NE(emit({Function}, false, Arch::AArch64)
+                .find("conflicting Swift Boolean runtime declaration"),
+            std::string::npos);
 }

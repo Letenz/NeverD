@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "DriverNestedUserTestSupport.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/DriverSession.h"
@@ -27,6 +28,10 @@ constexpr uint32_t InvalidDeviceRequest = 0xc0000010;
 constexpr uint32_t DataError = 0xc000003e;
 constexpr uint32_t Cancelled = 0xc0000120;
 constexpr uint32_t AccessViolation = 0xc0000005;
+constexpr uint32_t AccessDenied = 0xc0000022;
+constexpr uint32_t BufferedControlCode = 0x222000;
+constexpr uint32_t DirectControlCode = 0x222002;
+constexpr uint32_t NeitherControlCode = 0x222003;
 
 std::vector<const char *> controlImages() {
   std::vector<const char *> Images{NEVERD_KMDF_CONTROL_FIXTURE};
@@ -57,7 +62,9 @@ DriverOptions controlOptions(char Mode = 'B') {
   Create.Device = "\\DosDevices\\NeverDKmdfControl";
   Options.Requests.push_back(std::move(Create));
   auto IO = controlRequest(DriverRequestKind::DeviceControl);
-  IO.ControlCode = Mode == 'T' ? 0x222003 : 0x222000;
+  IO.ControlCode = Mode == 'T'   ? NeitherControlCode
+                   : Mode == 'c' ? DirectControlCode
+                                 : BufferedControlCode;
   IO.Input = {0, 1, 0x5a, 0xff};
   // The fixture checks both logical lengths despite their aliased allocation.
   IO.OutputSize = 19;
@@ -88,7 +95,57 @@ size_t apiCount(const DriverResult &Result, llvm::StringRef Name) {
                        [Name](const auto &Call) { return Call.Name == Name; });
 }
 
-void checkCompletedLifecycle(const DriverResult &Result, size_t RequestCount);
+void checkCompletedLifecycle(const DriverResult &Result, size_t RequestCount,
+                             bool FileCallbacks = false);
+
+TEST(DriverKMDFControl, RequestMemoryAliasesBufferedIoUntilCompletion) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('b');
+      Options.LoadAddress = Address;
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      checkCompletedLifecycle(*Result, 6);
+      ASSERT_EQ(Result->Requests.size(), 6u);
+      EXPECT_EQ(Result->Requests[1].IOStatus, 0u);
+      EXPECT_EQ(
+          Result->Requests[1].Output,
+          (std::vector<uint8_t>{'K', 'M', 'D', 'b', 0x5a, 0x5b, 0, 0xa5}));
+      EXPECT_EQ(apiCount(*Result, "WdfRequestRetrieveInputMemory"), 2u);
+      EXPECT_EQ(apiCount(*Result, "WdfRequestRetrieveOutputMemory"), 1u);
+      EXPECT_EQ(apiCount(*Result, "WdfMemoryGetBuffer"), 2u);
+    }
+}
+
+TEST(DriverKMDFControl, RequestMemoryAliasesDirectIoUntilCompletion) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('c');
+      Options.LoadAddress = Address;
+      Options.Requests.erase(Options.Requests.begin() + 2,
+                             Options.Requests.begin() + 4);
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(::testing::PrintToString(Result->Messages));
+      ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+      EXPECT_TRUE(Result->UnloadCompleted);
+      ASSERT_EQ(Result->Requests.size(), 4u);
+      for (const auto &Request : Result->Requests) {
+        EXPECT_TRUE(Request.Completed);
+        EXPECT_EQ(Request.IOStatus, 0u);
+      }
+      EXPECT_EQ(
+          Result->Requests[1].Output,
+          (std::vector<uint8_t>{'K', 'M', 'D', 'c', 0x5a, 0x5b, 0, 0xa5}));
+      EXPECT_EQ(apiCount(*Result, "WdfRequestRetrieveInputMemory"), 2u);
+      EXPECT_EQ(apiCount(*Result, "WdfRequestRetrieveOutputMemory"), 1u);
+      EXPECT_EQ(apiCount(*Result, "WdfMemoryGetBuffer"), 2u);
+    }
+}
 
 TEST(DriverKMDFControl, SynchronousQueueOperationsWaitForRequestRetirement) {
   for (const auto *Image : controlImages())
@@ -721,6 +778,126 @@ TEST(DriverKMDFControl, FrameworkCancelsManualQueueRequestBeforeRetrieval) {
   }
 }
 
+TEST(DriverKMDFControl, ManualQueueCancellationCallbackOwnsForwardedRequest) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL})
+      for (uint64_t CancelAt : {0ULL, 10ULL}) {
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Address);
+        SCOPED_TRACE(CancelAt);
+        auto Options = controlOptions('7');
+        Options.LoadAddress = Address;
+        Options.Requests[0].AsynchronousFile = true;
+        auto Second = Options.Requests[1];
+        Second.Input = {1, 2};
+        Second.OutputSize = 6;
+        Options.Requests.insert(Options.Requests.begin() + 2, Second);
+        Options.Requests[1].DeferCallbackDrain = CancelAt != 0;
+        Options.Requests[1].CancelAfter100ns = CancelAt;
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        SCOPED_TRACE(::testing::PrintToString(Result->Messages));
+        checkCompletedLifecycle(*Result, 7);
+        ASSERT_EQ(Result->Requests.size(), 7u);
+        EXPECT_EQ(Result->Requests[1].IOStatus, Cancelled);
+        EXPECT_EQ(Result->Requests[1].CancelRequestedAt100ns, CancelAt);
+        EXPECT_TRUE(Result->Requests[1].Output.empty());
+        EXPECT_EQ(Result->Requests[2].Output,
+                  (std::vector<uint8_t>{'K', 'M', 'D', '7', 0x5b, 0x58}));
+        const auto Messages = controlMessages(*Result);
+        auto Position = [&](llvm::StringRef Needle) {
+          return std::find_if(
+              Messages.begin(), Messages.end(), [&](const auto &Message) {
+                return llvm::StringRef(Message).contains(Needle);
+              });
+        };
+        const auto Canceled = Position("canceled-on-queue callback");
+        const auto Retrieved =
+            Position("canceled-on-queue removed manual request");
+        ASSERT_NE(Canceled, Messages.end());
+        ASSERT_NE(Retrieved, Messages.end());
+        EXPECT_LT(Canceled, Retrieved);
+      }
+}
+
+TEST(DriverKMDFControl, CallerEnqueuedManualRequestUsesQueueCancelCallback) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('8');
+      Options.LoadAddress = Address;
+      Options.Requests.resize(2);
+      Options.Requests[1].CancelAfter100ns = 0;
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Cleanup));
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Close));
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(::testing::PrintToString(Result->Messages));
+      checkCompletedLifecycle(*Result, 4);
+      ASSERT_EQ(Result->Requests.size(), 4u);
+      EXPECT_EQ(Result->Requests[1].IOStatus, Cancelled);
+      EXPECT_EQ(Result->Requests[1].CancelRequestedAt100ns, 0u);
+      EXPECT_TRUE(Result->Requests[1].Output.empty());
+      EXPECT_EQ(apiCount(*Result, "WdfDeviceEnqueueRequest"), 1u);
+      const auto Messages = controlMessages(*Result);
+      EXPECT_NE(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: caller-context queued cancellation\n"),
+                Messages.end());
+    }
+}
+
+TEST(DriverKMDFControl, ManualQueueReadyCallbackRetrievesForwardedRequest) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('9');
+      Options.LoadAddress = Address;
+      Options.Requests.resize(2);
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Cleanup));
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Close));
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(::testing::PrintToString(Result->Messages));
+      checkCompletedLifecycle(*Result, 4);
+      ASSERT_EQ(Result->Requests.size(), 4u);
+      EXPECT_EQ(
+          Result->Requests[1].Output,
+          (std::vector<uint8_t>{'K', 'M', 'D', '9', 0x5a, 0x5b, 0, 0xa5}));
+      EXPECT_EQ(apiCount(*Result, "WdfIoQueueReadyNotify"), 1u);
+      const auto Messages = controlMessages(*Result);
+      EXPECT_NE(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: manual ready callback retrieved "
+                          "request\n"),
+                Messages.end());
+    }
+}
+
+TEST(DriverKMDFControl, ManualQueueFindAndRetrievePreservesRequestOwnership) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('0');
+      Options.LoadAddress = Address;
+      Options.Requests.resize(2);
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Cleanup));
+      Options.Requests.push_back(controlRequest(DriverRequestKind::Close));
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(::testing::PrintToString(Result->Messages));
+      checkCompletedLifecycle(*Result, 4);
+      ASSERT_EQ(Result->Requests.size(), 4u);
+      EXPECT_EQ(
+          Result->Requests[1].Output,
+          (std::vector<uint8_t>{'K', 'M', 'D', '0', 0x5a, 0x5b, 0, 0xa5}));
+      EXPECT_EQ(apiCount(*Result, "WdfIoQueueFindRequest"), 1u);
+      EXPECT_EQ(apiCount(*Result, "WdfIoQueueRetrieveFoundRequest"), 1u);
+      EXPECT_EQ(apiCount(*Result, "WdfObjectDereferenceActual"), 1u);
+    }
+}
+
 TEST(DriverKMDFControl, ManualRequestRequeueReturnsSameRequestToWorker) {
   for (const auto *Image : controlImages())
     for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
@@ -794,7 +971,8 @@ TEST(DriverKMDFControl, ParallelQueueBatchesTwoIndependentFileObjects) {
   }
 }
 
-void checkCompletedLifecycle(const DriverResult &Result, size_t RequestCount) {
+void checkCompletedLifecycle(const DriverResult &Result, size_t RequestCount,
+                             bool FileCallbacks) {
   ASSERT_EQ(Result.Stop, DriverStopReason::Returned) << Result.Diagnostic;
   EXPECT_EQ(Result.NTStatus, 0u);
   EXPECT_TRUE(Result.UnloadCompleted);
@@ -807,9 +985,9 @@ void checkCompletedLifecycle(const DriverResult &Result, size_t RequestCount) {
     const bool Queued = Request.Kind == DriverRequestKind::DeviceControl ||
                         Request.Kind == DriverRequestKind::Read ||
                         Request.Kind == DriverRequestKind::Write;
-    // FxIoQueue marks every request pending before calling the driver, even
-    // when its callback completes synchronously.
-    EXPECT_EQ(Request.DispatchStatus, Queued ? Pending : 0u);
+    // Queue and file callbacks own a pending IRP until their distinct
+    // completion paths return, even when a callback completes synchronously.
+    EXPECT_EQ(Request.DispatchStatus, Queued || FileCallbacks ? Pending : 0u);
     if (!Queued) {
       EXPECT_EQ(Request.IOStatus, 0u);
       EXPECT_EQ(Request.Information, 0u);
@@ -853,6 +1031,108 @@ TEST(DriverKMDFControl, BufferedLifecyclePreservesLogicalBufferLengths) {
                                 "KMDF control: read 40 bytes\n",
                                 "KMDF control: write 40 bytes\n",
                                 "KMDF control: driver unload\n"}));
+}
+
+TEST(DriverKMDFControl, ExclusiveControlDeviceSetsNamedObjectFlag) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('e');
+      Options.LoadAddress = Address;
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      checkCompletedLifecycle(*Result, Options.Requests.size());
+      EXPECT_EQ(apiCount(*Result, "WdfDeviceInitSetExclusive"), 1u);
+    }
+}
+
+TEST(DriverKMDFControl, FileCallbacksPreserveIdentityAndCloseOrder) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('f');
+      Options.LoadAddress = Address;
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(Result->Diagnostic);
+      checkCompletedLifecycle(*Result, Options.Requests.size(), true);
+      checkSuccessfulTransfers(*Result, 'f');
+      EXPECT_EQ(apiCount(*Result, "WdfDeviceInitSetFileObjectConfig"), 1u);
+      const auto Messages = controlMessages(*Result);
+      auto Position = [&](llvm::StringRef Text) {
+        return std::find_if(Messages.begin(), Messages.end(),
+                            [&](const auto &Message) {
+                              return llvm::StringRef(Message).contains(Text);
+                            });
+      };
+      const auto Create = Position("file create");
+      const auto Cleanup = Position("file cleanup");
+      const auto Close = Position("file close");
+      const auto ContextCleanup = Position("file context cleanup");
+      const auto ContextDestroy = Position("file context destroy");
+      ASSERT_NE(Create, Messages.end());
+      ASSERT_NE(Cleanup, Messages.end());
+      ASSERT_NE(Close, Messages.end());
+      ASSERT_NE(ContextCleanup, Messages.end());
+      ASSERT_NE(ContextDestroy, Messages.end());
+      EXPECT_LT(Create, Cleanup);
+      EXPECT_LT(Cleanup, Close);
+      EXPECT_LT(Close, ContextCleanup);
+      EXPECT_LT(ContextCleanup, ContextDestroy);
+      EXPECT_EQ(Position("failure"), Messages.end());
+    }
+}
+
+TEST(DriverKMDFControl, RejectedCreateDeletesOnlyTheFileObject) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Address);
+      auto Options = controlOptions('g');
+      Options.LoadAddress = Address;
+      Options.Requests.resize(1);
+      auto Result = emulateDriver(Image, Options);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      SCOPED_TRACE(Result->Diagnostic);
+      EXPECT_EQ(Result->Stop, DriverStopReason::Returned);
+      ASSERT_EQ(Result->Requests.size(), 1u);
+      EXPECT_EQ(Result->Requests[0].IOStatus, AccessDenied);
+      const auto Messages = controlMessages(*Result);
+      EXPECT_NE(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: file create\n"),
+                Messages.end());
+      EXPECT_NE(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: file context cleanup\n"),
+                Messages.end());
+      EXPECT_NE(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: file context destroy\n"),
+                Messages.end());
+      EXPECT_EQ(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: file cleanup\n"),
+                Messages.end());
+      EXPECT_EQ(std::find(Messages.begin(), Messages.end(),
+                          "KMDF control: file close\n"),
+                Messages.end());
+    }
+}
+
+TEST(DriverKMDFControl, FileContextClassesUseTheirDeclaredWdmSlot) {
+  for (const char Mode : {'h', 'i', 'j'})
+    for (const auto *Image : controlImages())
+      for (uint64_t Address : {0x180000000ULL, 0x190000000ULL}) {
+        SCOPED_TRACE(Mode);
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Address);
+        auto Options = controlOptions(Mode);
+        Options.LoadAddress = Address;
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        checkCompletedLifecycle(*Result, Options.Requests.size(), true);
+        checkSuccessfulTransfers(*Result, Mode);
+        EXPECT_EQ(apiCount(*Result, "WdfDeviceInitSetFileObjectConfig"), 1u);
+      }
 }
 
 TEST(DriverKMDFControl, DirectReadWriteRetainsBufferedIOCTL) {
@@ -932,6 +1212,46 @@ TEST(DriverKMDFControl, NeitherBuffersUseRequestOwnedLockedSystemAliases) {
                 2u);
       EXPECT_GE(apiCount(*Result, "WdfMemoryGetBuffer"), 4u);
     }
+}
+
+TEST(DriverKMDFControl, CallerContextLocksNestedPointersBeforeQueueDelivery) {
+  for (const auto *Image : controlImages())
+    for (uint64_t Address : {0x180000000ULL, 0x190000000ULL})
+      for (bool ReadOnlyResult : {false, true}) {
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Address);
+        SCOPED_TRACE(ReadOnlyResult);
+        auto Options = controlOptions(NestedFrameworkMode);
+        Options.LoadAddress = Address;
+        Options.Requests.resize(2);
+        Options.Requests[1] = nested_user_test::request();
+        if (ReadOnlyResult)
+          Options.Requests[1].UserBuffers.back().Access =
+              DriverUserPageAccess::ReadOnly;
+        Options.Requests.push_back(controlRequest(DriverRequestKind::Cleanup));
+        Options.Requests.push_back(controlRequest(DriverRequestKind::Close));
+        auto Result = emulateDriver(Image, Options);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        ASSERT_EQ(Result->Stop, DriverStopReason::Returned)
+            << Result->Diagnostic;
+        ASSERT_EQ(Result->NTStatus, 0u) << driverResultJSON(*Result);
+        ASSERT_EQ(Result->Requests.size(), 4u);
+        const auto &IO = Result->Requests[1];
+        EXPECT_TRUE(IO.Completed);
+        EXPECT_EQ(IO.IOStatus, ReadOnlyResult ? AccessViolation : 0u);
+        EXPECT_EQ(IO.Information, 0u);
+        nested_user_test::expectBacking(IO, !ReadOnlyResult);
+        EXPECT_EQ(apiCount(*Result, "WdfRequestRetrieveUnsafeUserInputBuffer"),
+                  1u);
+        EXPECT_EQ(apiCount(*Result, "WdfRequestProbeAndLockUserBufferForRead"),
+                  3u);
+        EXPECT_EQ(apiCount(*Result, "WdfRequestProbeAndLockUserBufferForWrite"),
+                  1u);
+        EXPECT_EQ(apiCount(*Result, "WdfDeviceEnqueueRequest"),
+                  ReadOnlyResult ? 0u : 1u);
+        EXPECT_TRUE(Result->UnloadCompleted);
+        EXPECT_FALSE(Result->Fault);
+      }
 }
 
 TEST(DriverKMDFControl, NeitherProbeRejectsInaccessibleUserPages) {

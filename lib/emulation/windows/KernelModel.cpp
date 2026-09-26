@@ -19,6 +19,7 @@
 
 #include "neverd/emulation/DriverProfile.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <algorithm>
@@ -104,7 +105,7 @@ llvm::Error validateObjectNameText(llvm::StringRef Name) {
   if (Name.size() > profile::MaxDeviceNameSize)
     return modelError("object name exceeds the bounded namespace size");
   for (unsigned char C : Name)
-    if (C < 0x20 || C > 0x7e)
+    if (C < ' ' || C > '~')
       return modelError("object-name model supports printable ASCII only; "
                         "Unicode namespace case folding is unsupported");
   return llvm::Error::success();
@@ -171,7 +172,7 @@ KernelModel::makeUnicodeString(const std::string &Text) {
     return Record.takeError();
   std::vector<uint8_t> Bytes((Text.size() + 1) * 2);
   for (size_t I = 0; I < Text.size(); ++I) {
-    if (static_cast<unsigned char>(Text[I]) > 0x7f || !Text[I])
+    if (!llvm::isASCII(Text[I]) || !Text[I])
       return modelError("initialization strings must be non-null ASCII");
     Bytes[I * 2] = static_cast<uint8_t>(Text[I]);
   }
@@ -254,6 +255,7 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
     Framework->configure(DriverObject, RegistryPath, Options.ServiceName);
     configureFrameworkDeviceHost();
     configureFrameworkRequestHost();
+    configureFrameworkInterruptHost();
   }
   return llvm::Error::success();
 }
@@ -379,9 +381,9 @@ KernelModel::createDeviceObjectForOwner(llvm::StringRef Name,
       (OwnerKind == DeviceOwnerKind::Guest && Owner != DriverObject) ||
       (OwnerKind == DeviceOwnerKind::Provider && Owner != PnpProviderDriver))
     return modelError("device creation requires a registered driver owner");
-  if (Type != UnknownDeviceType || (Characteristics & ~uint32_t(SecureOpen)))
-    return modelError("IoCreateDevice model supports FILE_DEVICE_UNKNOWN and "
-                      "FILE_DEVICE_SECURE_OPEN only");
+  if (Characteristics & ~uint32_t(SecureOpen))
+    return modelError(
+        "IoCreateDevice model supports FILE_DEVICE_SECURE_OPEN only");
   if (ExtensionSize > UINT16_MAX - DeviceObjectSize)
     return modelError(
         "device extension exceeds the bounded DEVICE_OBJECT size");
@@ -541,8 +543,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return modelError(Name +
                       " requires IRQL <= " + std::to_string(*MaximumIRQL));
   }
-  if (!ProcessAttachments.empty() &&
-      ProcessAttachments.back().Execution == CurrentExecution &&
+  if (auto Context = executionProcessContext();
+      Context && Context->Attached &&
       Kind != KernelAPIKind::KeStackAttachProcess &&
       Kind != KernelAPIKind::KeUnstackDetachProcess &&
       Kind != KernelAPIKind::IoGetCurrentProcess &&
@@ -555,6 +557,9 @@ llvm::Expected<uint64_t> KernelModel::call(
       Kind != KernelAPIKind::ProbeForRead &&
       Kind != KernelAPIKind::ProbeForWrite &&
       Kind != KernelAPIKind::MmProbeAndLockPages &&
+      Kind != KernelAPIKind::MmMapLockedPagesSpecifyCache &&
+      Kind != KernelAPIKind::MmGetSystemAddressForMdlSafe &&
+      Kind != KernelAPIKind::MmUnmapLockedPages &&
       Kind != KernelAPIKind::RtlCopyMemory &&
       Kind != KernelAPIKind::RtlMoveMemory)
     return modelError("process attachment permits only bounded user-memory "
@@ -579,18 +584,13 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::ProbeForWrite:
     return probeUserBuffer(A[0], A[1], uint32_t(A[2]),
                            Kind == KernelAPIKind::ProbeForWrite);
-  case KernelAPIKind::ExGetPreviousMode:
-    return UserRequestContext && CurrentExecution == profile::StackBase
-               ? uint64_t(UserMode)
-               : uint64_t(KernelMode);
+  case KernelAPIKind::ExGetPreviousMode: {
+    auto Context = executionProcessContext();
+    return uint64_t(Context ? Context->PreviousMode : KernelMode);
+  }
   case KernelAPIKind::PsGetCurrentProcessId:
-    if (CurrentExecution == profile::StackBase)
-      return uint64_t(UserRequestContext ? CurrentUserProcessID : 4);
-    if (Scheduler.active() &&
-        (Scheduler.active()->Kind == KernelScheduler::CallbackKind::WorkItem ||
-         Scheduler.active()->Kind ==
-             KernelScheduler::CallbackKind::SystemThread))
-      return uint64_t(4);
+    if (auto Context = executionProcessContext())
+      return uint64_t(Context->CreatingProcessID);
     return modelError("PsGetCurrentProcessId requires a modeled foreground "
                       "or system thread");
   case KernelAPIKind::PsCreateSystemThread:
@@ -635,8 +635,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   case KernelAPIKind::KeAreApcsDisabled:
   case KernelAPIKind::KeAreAllApcsDisabled:
     return callApcStateAPI(Name);
-#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL)                           \
-  case KernelAPIKind::Name:
+#define NEVERD_KERNEL_SPINLOCK_API(Name, Arity, IRQL) case KernelAPIKind::Name:
 #include "KernelSpinLockAPIs.def"
 #undef NEVERD_KERNEL_SPINLOCK_API
     return callSpinLockAPI(Name, A);
@@ -721,6 +720,11 @@ llvm::Expected<uint64_t> KernelModel::call(
     return getDMAAdapter(A);
   if (Kind == KernelAPIKind::IoAllocateMdl)
     return allocateMDL(A);
+  if (Kind == KernelAPIKind::IoBuildPartialMdl) {
+    if (auto E = buildPartialMDL(A[0], A[1], A[2], uint32_t(A[3])))
+      return E;
+    return 0;
+  }
   if (Kind == KernelAPIKind::IoFreeMdl) {
     if (auto E = freeMDL(A[0]))
       return E;
@@ -732,7 +736,7 @@ llvm::Expected<uint64_t> KernelModel::call(
     return 0;
   }
   if (Kind == KernelAPIKind::MmProbeAndLockPages) {
-    if (auto E = probeAndLockPages(A[0], uint32_t(A[1]), uint32_t(A[2])))
+    if (auto E = probeAndLockPages(A[0], uint8_t(A[1]), uint32_t(A[2])))
       return E;
     return 0;
   }
@@ -746,19 +750,39 @@ llvm::Expected<uint64_t> KernelModel::call(
       return E;
     return 0;
   }
+  if (Kind == KernelAPIKind::MmAllocatePagesForMdl ||
+      Kind == KernelAPIKind::MmAllocatePagesForMdlEx)
+    return allocatePagesForMDL(A,
+                               Kind == KernelAPIKind::MmAllocatePagesForMdlEx);
+  if (Kind == KernelAPIKind::MmFreePagesFromMdl) {
+    if (auto E = freePagesFromMDL(A[0]))
+      return E;
+    return 0;
+  }
   if (Kind == KernelAPIKind::MmMapLockedPagesSpecifyCache) {
-    if (static_cast<uint32_t>(A[1]) != KernelMode ||
-        static_cast<uint32_t>(A[2]) != MmCached || A[3] ||
+    auto Cache = memoryCacheType(static_cast<uint32_t>(A[2]));
+    if (!Cache)
+      return Cache.takeError();
+    if (static_cast<uint8_t>(A[1]) == UserMode)
+      return mapUserMDL(A[0], A[3], static_cast<uint32_t>(A[5]), *Cache);
+    if (static_cast<uint8_t>(A[1]) != KernelMode || A[3] ||
         static_cast<uint8_t>(A[4]))
-      return modelError(
-          "MDL mapping requires KernelMode, MmCached, no requested "
-          "address and no bugcheck");
-    return mapLockedPages(A[0], static_cast<uint32_t>(A[5]), false);
+      return modelError("MDL mapping requires KernelMode, no requested "
+                        "address and no bugcheck");
+    return mapLockedPages(A[0], static_cast<uint32_t>(A[5]), false, *Cache);
   }
   if (Kind == KernelAPIKind::MmGetSystemAddressForMdlSafe) {
     return mapLockedPages(A[0], static_cast<uint32_t>(A[1]), true);
   }
+  if (Kind == KernelAPIKind::MmProtectMdlSystemAddress)
+    return protectMDLSystemAddress(A[0], uint32_t(A[1]));
   if (Kind == KernelAPIKind::MmUnmapLockedPages) {
+    if (A[0] >= profile::UserMappedAliasBase &&
+        A[0] - profile::UserMappedAliasBase < profile::UserMappedAliasSize) {
+      if (auto E = unmapUserMDL(A[0], A[1]))
+        return E;
+      return 0;
+    }
     if (auto E = unmapLockedPages(A[0], A[1]))
       return E;
     return 0;
@@ -921,11 +945,23 @@ llvm::Expected<uint64_t> KernelModel::call(
   }
   if (Kind == KernelAPIKind::ExFreePoolWithTag ||
       Kind == KernelAPIKind::ExFreePool) {
+    if (auto Mdl = MDLs.find(A[0]);
+        Mdl != MDLs.end() &&
+        (Mdl->second.Owner == LockedMdl::Ownership::AllocatedPages ||
+         Mdl->second.Owner == LockedMdl::Ownership::ReleasedPages)) {
+      // The WDK ExFreePool macro calls ExFreePoolWithTag with a zero tag.
+      if (Kind == KernelAPIKind::ExFreePoolWithTag && uint32_t(A[1]))
+        return modelError(
+            "physical MDL descriptors require untagged ExFreePool");
+      if (auto E = freeAllocatedMDL(A[0]))
+        return E;
+      return 0;
+    }
     auto It = Allocations.find(A[0]);
     if (It == Allocations.end())
       return modelError(
           "pool free received an unknown or already freed pointer");
-    if (Kind == KernelAPIKind::ExFreePoolWithTag &&
+    if (Kind == KernelAPIKind::ExFreePoolWithTag && uint32_t(A[1]) &&
         static_cast<uint32_t>(A[1]) != It->second.Tag)
       return modelError("ExFreePoolWithTag tag does not match allocation");
     if (!It->second.NonPaged && CurrentIRQL > APCLevel)
@@ -987,8 +1023,7 @@ llvm::Expected<uint64_t> KernelModel::call(
   auto PreflightUser = [&](uint64_t Address, bool IsWrite) -> llvm::Error {
     if (!Size || Address >= profile::UserProbeLimit)
       return llvm::Error::success();
-    auto Allowed = Memory.canAccess(Address, Size,
-                                     IsWrite ? Write : Read);
+    auto Allowed = Memory.canAccess(Address, Size, IsWrite ? Write : Read);
     if (!Allowed)
       return Allowed.takeError();
     if (!*Allowed)
@@ -1051,6 +1086,8 @@ llvm::Expected<uint64_t> KernelModel::call(
 }
 
 llvm::Error KernelModel::snapshot() {
+  if (auto E = snapshotUserBuffers())
+    return E;
   Result.Registry = Registry.snapshot();
   if (!DriverObject)
     return modelError("cannot snapshot an uninitialized kernel model");
@@ -1112,6 +1149,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return modelError("overflowing guest access in Windows model");
   const uint64_t End = Address + Size;
   if (Address < profile::UserProbeLimit) {
+    if (auto E = validateUserMdlViewAccess(Address, Size, IsWrite))
+      return E;
     if (canCatchUserAccess(Address, Size))
       return llvm::Error::success();
     for (const auto &[Base, Allocation] : UserAllocations) {
@@ -1135,8 +1174,9 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   if (CurrentIRQL > APCLevel)
     for (const auto &[Base, Allocation] : Allocations)
       if (!Allocation.NonPaged && Address < Base + Allocation.Size &&
-          Base < End)
-        return modelError("paged pool access requires IRQL <= APC_LEVEL");
+          Base < End && !Physical.hasPinnedPages(Address, Size))
+        return modelError("paged pool access requires IRQL <= APC_LEVEL or "
+                          "live physical page locks");
   if (Address < profile::ThunkBase + profile::ThunkSize &&
       profile::ThunkBase < End)
     return modelError(
@@ -1169,7 +1209,7 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     return E;
   if (auto E = DMA.validateGuestAccess(Address, Size, IsWrite))
     return E;
-  if (auto E = Interrupts.validateGuestAccess(Address, Size))
+  if (auto E = Interrupts.validateGuestAccess(Address, Size, IsWrite))
     return E;
   for (const auto &[Item, Device] : WorkItems)
     if (Address < Item + profile::WorkItemTokenSize && Item < End)
@@ -1274,18 +1314,74 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   return llvm::Error::success();
 }
 
+std::optional<KernelModel::ExecutionProcessContext>
+KernelModel::executionProcessContext() const {
+  const bool Attached = !ProcessAttachments.empty() &&
+                        ProcessAttachments.back().Execution == CurrentExecution;
+  if (auto It = InheritedExecutionContexts.find(CurrentExecution);
+      It != InheritedExecutionContexts.end() &&
+      It->second.ThreadKey == CurrentThreadKey) {
+    auto Context = It->second.Process;
+    if (Context && Attached) {
+      Context->ProcessID = CurrentUserProcessID;
+      Context->Attached = true;
+    }
+    return Context;
+  }
+  if (CurrentExecution == profile::StackBase) {
+    const uint32_t Process =
+        UserRequestContext ? CurrentUserProcessID : SystemProcessID;
+    return ExecutionProcessContext{
+        Process, Process, uint8_t(UserRequestContext ? UserMode : KernelMode),
+        Attached};
+  }
+  if (Scheduler.active() &&
+      (Scheduler.active()->Kind == KernelScheduler::CallbackKind::WorkItem ||
+       Scheduler.active()->Kind ==
+           KernelScheduler::CallbackKind::FrameworkInterruptWorkItem ||
+       Scheduler.active()->Kind ==
+           KernelScheduler::CallbackKind::FrameworkPassive ||
+       Scheduler.active()->Kind == KernelScheduler::CallbackKind::SystemThread))
+    return ExecutionProcessContext{Attached ? CurrentUserProcessID
+                                            : uint32_t(SystemProcessID),
+                                   SystemProcessID, KernelMode, Attached};
+  return std::nullopt;
+}
+
+llvm::Error KernelModel::inheritExecutionContext(uint64_t Child,
+                                                 uint64_t Parent) {
+  if (!Child || Child == Parent || Parent != CurrentExecution ||
+      ExecutionThreadKeys.contains(Child) ||
+      InheritedExecutionContexts.contains(Child))
+    return modelError("exception context inheritance requires a fresh "
+                      "child of the active execution");
+  InheritedExecutionContexts.emplace(
+      Child,
+      InheritedExecutionContext{CurrentThreadKey, CurrentUserProcessID,
+                                canCatchUserAccess(profile::UserArenaBase, 1),
+                                executionProcessContext()});
+  return llvm::Error::success();
+}
+
 bool KernelModel::canCatchUserAccess(uint64_t Address, uint64_t Size) const {
+  const auto Inherited = InheritedExecutionContexts.find(CurrentExecution);
+  const bool InheritedPermission =
+      Inherited != InheritedExecutionContexts.end() &&
+      Inherited->second.ThreadKey == CurrentThreadKey &&
+      Inherited->second.UserProcessID == CurrentUserProcessID &&
+      Inherited->second.UserMemoryAuthority;
   return Size && Address < profile::UserProbeLimit &&
          Size <= profile::UserProbeLimit - Address && UserRequestContext &&
-         (CurrentExecution == profile::StackBase ||
+         (CurrentExecution == profile::StackBase || InheritedPermission ||
           (!ProcessAttachments.empty() &&
            ProcessAttachments.back().Execution == CurrentExecution)) &&
          CurrentIRQL <= APCLevel;
 }
 
-llvm::Expected<uint64_t>
-KernelModel::probeUserBuffer(uint64_t Address, uint64_t Size,
-                             uint32_t Alignment, bool ForWrite) {
+llvm::Expected<uint64_t> KernelModel::probeUserBuffer(uint64_t Address,
+                                                      uint64_t Size,
+                                                      uint32_t Alignment,
+                                                      bool ForWrite) {
   // A zero-length probe does not inspect even an invalid pointer/alignment.
   if (!Size)
     return 0;
@@ -1317,8 +1413,7 @@ KernelModel::probeUserBuffer(uint64_t Address, uint64_t Size,
       return Value.takeError();
     if (auto E = Memory.writeInteger(Byte, *Value, 1))
       return std::move(E);
-    const uint64_t Next =
-        (Byte & ~(profile::PageSize - 1)) + profile::PageSize;
+    const uint64_t Next = (Byte & ~(profile::PageSize - 1)) + profile::PageSize;
     if (Next >= Address + Size)
       return 0;
     Byte = Next;

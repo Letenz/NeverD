@@ -1066,6 +1066,31 @@ struct NativeDependencyFixture {
   }
 };
 
+TEST(ObjCSourceProjection, IntegerPairDemandOnlyFollowsExactDirectTail) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.call(0, 0x3000);
+  auto &Function = F.Result.LowFuncs[0];
+  auto &Ops = Function.Blocks[0].Ops;
+  const auto ReturnRegister = getTargetRegInfo(F.Image.Arch).IntReturnReg;
+  Ops[0].Output = NdVar::reg(ReturnRegister, 8);
+  LowOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = Ops[0].Addr;
+  Return.addInput(NdVar::reg(ReturnRegister, 8));
+  Ops.push_back(Return);
+  EXPECT_EQ(forwardedNativeIntegerPairTarget(F.Image, Function), 0x3000U);
+
+  Ops.back().Addr += 4;
+  EXPECT_FALSE(forwardedNativeIntegerPairTarget(F.Image, Function));
+  Ops.back().Addr = Ops[0].Addr;
+  Ops[0].Opcode = NdOp::INDIR_CALL;
+  EXPECT_FALSE(forwardedNativeIntegerPairTarget(F.Image, Function));
+  Ops[0].Opcode = NdOp::CALL;
+  Function.Blocks.emplace_back();
+  EXPECT_FALSE(forwardedNativeIntegerPairTarget(F.Image, Function));
+}
+
 TEST(ObjCSourceProjection, NativeDependencyGraphKeepsSharedCallsAndCycles) {
   NativeDependencyFixture F;
   F.call(0, 0x3000);
@@ -1106,6 +1131,97 @@ TEST(ObjCSourceProjection, NativeDependencyGraphKeepsSharedCallsAndCycles) {
     if (*Call.getAsObject()->getBoolean("indirect"))
       EXPECT_EQ(*Call.getAsObject()->get("target_address"),
                 llvm::json::Value(nullptr));
+}
+
+TEST(ObjCSourceProjection,
+     AmbiguousSelectorBodiesRemainSeparateNativeDependencyRoots) {
+  NativeDependencyFixture F;
+  F.Image.ObjCMethods[0].Status = "ambiguous_dispatch";
+  F.Image.ObjCMethods[1].Status = "conflicting_encoding";
+  NativeSourceDependencyEvidence Evidence;
+  walkObjCNativeDependencies(F.Image, F.Result, &Evidence);
+  EXPECT_EQ(Evidence.Roots, (std::set<va_t>{0x1000}));
+  F.Image.ObjCMethods[0].TypeHint.reset();
+  walkObjCNativeDependencies(F.Image, F.Result, &Evidence);
+  EXPECT_TRUE(Evidence.Roots.empty());
+}
+
+TEST(ObjCSourceProjection, NativeInferenceSkipsCallOnlyThunkTargets) {
+  NativeDependencyFixture F;
+  F.call(0, 0x3000);
+  PipelineOptions Options;
+  std::map<va_t, std::string> Diagnostics;
+  const std::set<va_t> CallOnlyTargets{0x3000};
+  EXPECT_EQ(inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics,
+                                        {}, CallOnlyTargets),
+            0U);
+  EXPECT_TRUE(Options.SourceTypeHints.empty());
+  EXPECT_FALSE(Diagnostics.count(0x3000));
+}
+
+TEST(ObjCSourceProjection, NativeInferenceUsesSourceBoundRefinementBodies) {
+  NativeDependencyFixture F;
+  F.Image.Arch = Arch::AArch64;
+  F.call(0, 0x3000);
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Hint.ReturnType = NdType::makeInt(4, false);
+  Hint.Parameters = {{"native_arg0", NdType::makeInt(8, false)},
+                     {"native_arg1", NdType::makeInt(8, false)}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  HighFunc Function;
+  Function.Entry = 0x3000;
+  Function.ReturnType = Hint.ReturnType;
+  Function.SourceTypeHint = Hint;
+  for (const auto &Parameter : Hint.Parameters)
+    Function.Params.push_back({Parameter.Name, Parameter.Type});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeConst(0, 4);
+  Function.Body.push_back(Return);
+  F.Result.HighFuncs.push_back(Function);
+  PipelineFunctionAudit Audit;
+  Audit.Entry = Function.Entry;
+  Audit.Disposition = PipelineFunctionDisposition::Accepted;
+  Audit.HasLowIR = Audit.HasMedIR = Audit.MedIRVerified = true;
+  Audit.DecodedInstructions = Audit.LiftedInstructions = 1;
+  F.Result.FunctionAudits.push_back(Audit);
+
+  auto Bound = Function;
+  MedVar ParameterValue;
+  ParameterValue.Kind = MedVar::Param;
+  ParameterValue.TheArch = Arch::AArch64;
+  ParameterValue.Id = 1;
+  ParameterValue.Size = 8;
+  auto Parameter = HighExpr::makeVar(ParameterValue, NdType::makeInt(8, false));
+  auto Prefix =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Parameter, HighExpr::makeConst(0, 4));
+  Prefix->Type = NdType::makeInt(4, false);
+  HighStmt Use;
+  Use.Kind = StmtKind::Assign;
+  MedVar Local;
+  Local.Kind = MedVar::Temp;
+  Local.Id = 9;
+  Local.Size = 4;
+  Local.TheArch = Arch::AArch64;
+  Use.Dst = HighExpr::makeVar(Local, NdType::makeInt(4, false));
+  Use.Val = Prefix;
+  Bound.Body.insert(Bound.Body.begin(), std::move(Use));
+
+  PipelineOptions Options;
+  Options.SourceTypeHints.emplace(Function.Entry, Hint);
+  std::map<va_t, HighFunc> Refinements{{Function.Entry, std::move(Bound)}};
+  std::map<va_t, std::string> Diagnostics;
+  EXPECT_EQ(inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics,
+                                        {}, {}, &Refinements),
+            1U);
+  ASSERT_EQ(Options.SourceTypeHints.at(Function.Entry).Parameters.size(), 2U);
+  EXPECT_EQ(Options.SourceTypeHints.at(Function.Entry).Parameters[1].Type->Size,
+            4U);
+  EXPECT_EQ(inferObjCNativeDependencies(F.Image, F.Result, Options, Diagnostics,
+                                        {}, {}, &Refinements),
+            0U);
 }
 
 TEST(ObjCSourceProjection, NativeDependencyGraphTracksMissingAndFinalEvidence) {

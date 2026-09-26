@@ -43,6 +43,11 @@ struct BinaryImage;
 /// (AL, AH, EAX, ...) sets the whole family.
 using GPRFamilyMask = uint32_t;
 
+/// In a may-write mask, a write to the x86-64 floating-point return register
+/// (any view of XMM0).  A callee that leaves RAX alone may still return a
+/// value there.
+constexpr GPRFamilyMask kFPReturnWriteBit = GPRFamilyMask(1) << 16;
+
 /// Per GPR family, how many low bytes of the slot are read (0 = none, 1 for
 /// CL, 2 for CX or CH, 4 for ECX, 8 for RCX).
 using GPRReadWidths = std::array<uint8_t, 16>;
@@ -58,6 +63,9 @@ struct RegisterStep {
   GPRFamilyMask Kills = 0;
   /// A direct call or branch into another function's entry.
   va_t Callee = InvalidVA;
+  /// \p Callee is entered by a tail call (a branch into its entry or a
+  /// rewritten tail jump), so it receives this function's registers.
+  bool TailCallee = false;
   /// Control leaves for code that no summary describes: an import tail
   /// call or an indirect tail jump.
   bool UnknownTailCall = false;
@@ -82,6 +90,10 @@ struct LocalRegisterEffect {
   bool Unknown = false;
   /// The body itself is not fully known, so neither summary exists.
   bool Incomplete = false;
+  /// Control leaves for code no summary describes (an import or indirect tail
+  /// call) while this function's argument registers may still be the
+  /// caller's; which of them that code reads is unknown.
+  bool UnknownEntryReads = false;
   /// Liveness skeleton; block 0 is the entry.
   std::vector<RegisterBlock> Blocks;
 };
@@ -102,7 +114,9 @@ struct CallRegisterSummaries {
 /// Solve may-write and entry-read GPR sets over \p Funcs (entry -> local
 /// effect).  A callee missing from \p Funcs, or reaching an unknown effect,
 /// has no may-write summary.  An unknown call is taken to clobber
-/// \p VolatileFamilies; an unknown tail call to read \p ArgumentFamilies.
+/// \p VolatileFamilies.  A function that tail-calls code no summary
+/// describes (an import, an indirect target, or a function without an
+/// entry-read summary) has no entry-read summary either.
 ///
 /// A call to one of \p DispatchThunks (an indirect-call dispatcher such as
 /// MSVC's `_guard_dispatch_icall`, which jumps to RAX with the caller's

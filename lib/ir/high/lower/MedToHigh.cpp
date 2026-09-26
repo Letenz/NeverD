@@ -349,8 +349,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       Value = HighExpr::makeRecordField(Value, Binding.ByteOffset,
                                         Binding.Type->Size);
     if (Binding.Type->Kind == NdTypeKind::Float)
-      return HighExpr::makeBitCast(Value,
-                                   NdType::makeInt(Binding.Type->Size, false));
+      Value = HighExpr::makeBitCast(Value,
+                                    NdType::makeInt(Binding.Type->Size, false));
     if (Binding.Location.ExtendTo32Bits && V.Size > Binding.Type->Size) {
       // Keep the logical parameter type while exposing only the carrier bytes
       // established by its source ABI. Wider machine reads still have an
@@ -359,8 +359,17 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
           Binding.Type->IsSigned ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Value);
       Value->Type = NdType::makeInt(std::min<uint16_t>(4, V.Size), false);
     }
-    return Value;
+    // A physical read keeps its requested width, including unknown bytes
+    // outside the declared ABI carrier. Preserve those bytes before COPY,
+    // PHI, or STORE lowering can turn a narrow expression into a C conversion.
+    return sourceBitSlice(Value, 0, V.Size);
   };
+  // Typed MedIR parameter IDs index physical source-ABI bindings, including
+  // context registers and record leaves. Ordinary argument-register numbering
+  // must not reinterpret these IDs.
+  if (CurMed && CurMed->SourceTypeHint && V.Kind == MedVar::Param &&
+      V.Id >= 0 && static_cast<size_t>(V.Id) < CurMed->TypedParams.size())
+    return SourceParameter(V, static_cast<size_t>(V.Id));
   if (CurMed && V.Kind == MedVar::Param) {
     const int Slot = abiParamIndex(V);
     if (Slot >= 0) {
@@ -412,10 +421,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       // One pass over the function instead of one per variable reference.
       ParamCopyIndexFunc = CurMed;
       ParamSourceCopies.clear();
-      DefinedVersions.clear();
+      ComputedVersions.clear();
       for (const auto &Blk : CurMed->Blocks)
         for (const auto &Op : Blk.Ops) {
-          DefinedVersions.insert({Op.Output.Id, Op.Output.SSAVer});
+          // Any def but a COPY of a register or parameter computes a value.
+          if (Op.Opcode != NdOp::COPY ||
+              (Op.NumInputs >= 1 && Op.Inputs[0].Kind != MedVar::Reg &&
+               Op.Inputs[0].Kind != MedVar::Param))
+            ComputedVersions.insert({Op.Output.Id, Op.Output.SSAVer});
           if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1 ||
               Op.Output.Kind != MedVar::Reg)
             continue;
@@ -445,13 +458,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
           return HighExpr::makeVar(Param, TypeRef{});
         }
         // SSA-bumped callee-saves with no new def (`rdi.2` after `mov rdi, r9`)
-        // still hold the parameter.  Any def of this exact version (a copy of
-        // an advanced pointer after REP CMPS, a cmov result, INT_AND of r10 on
-        // the GS_HANDLER_DATA bit-2 edge) is a new value; a copy of the
-        // parameter itself already matched above.
+        // still hold the parameter.  A later computed def (INT_AND of r10 on
+        // the GS_HANDLER_DATA bit-2 edge) does not.
+        // A COPY from a Temp is also a computed def: `mov eax, edx` then
+        // `mov rax, [bins+i]` must not remap RAX.3 onto arg1.  That deleted
+        // Typed map bucket walks.
         if (Fallback < 0 && regToArgIdx(V.RegOff) < 0) {
           const bool Computed = PhiOutputVars.count(varKey(V)) ||
-                                DefinedVersions.count({V.Id, V.SSAVer});
+                                ComputedVersions.count({V.Id, V.SSAVer});
           if (!Computed)
             Fallback = Idx;
         }
@@ -596,6 +610,38 @@ ExprPtr MedToHighConverter::forceInlineExpr(const ExprPtr &E) {
   auto Result = std::make_shared<HighExpr>(*E);
   for (size_t I = 0; I < Result->Operands.size(); ++I)
     Result->Operands[I] = forceInlineExpr(Result->Operands[I]);
+  if (Result->IndirectTarget)
+    Result->IndirectTarget = forceInlineExpr(Result->IndirectTarget);
+  return Result;
+}
+
+ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
+  struct DepthGuard {
+    int &D;
+    DepthGuard(int &Depth) : D(Depth) { ++D; }
+    ~DepthGuard() { --D; }
+  };
+  static thread_local int Depth = 0;
+  DepthGuard Guard(Depth);
+  if (!E || Depth > 16)
+    return E;
+  if (E->Kind == ExprKind::Var && E->Var.Id >= 0 && !E->Var.isConst()) {
+    auto Key = varKey(E->Var);
+    if (!PhiOutputVars.count(Key)) {
+      auto It = DefExpr.find(Key);
+      if (It != DefExpr.end() && It->second &&
+          It->second->Kind != ExprKind::Call &&
+          It->second->Kind != ExprKind::Phi &&
+          It->second->MemoryOrdering == NdMemoryOrdering::None &&
+          It->second.get() != E.get())
+        return forceInlineCallTarget(It->second);
+    }
+  }
+  auto Result = std::make_shared<HighExpr>(*E);
+  for (size_t I = 0; I < Result->Operands.size(); ++I)
+    Result->Operands[I] = forceInlineCallTarget(Result->Operands[I]);
+  if (Result->IndirectTarget)
+    Result->IndirectTarget = forceInlineCallTarget(Result->IndirectTarget);
   return Result;
 }
 
@@ -742,13 +788,14 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   Func.Entry = Med.Entry;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
-  Func.SEHHandlerFramesEstablished = Med.SEHHandlerFramesEstablished;
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   Func.ReturnType =
       Med.ReturnType ? Med.ReturnType : NdType::makeInt(inferReturnSize(Med));
   Func.SourceTypeHint = Med.SourceTypeHint;
+  Func.RegisterCopyProjections = Med.RegisterCopyProjections;
+  Func.ClassGetterCallFacts = Med.ClassGetterCallFacts;
 
   for (auto &ML : Med.Locals) {
     HighLocal HL;
@@ -841,8 +888,12 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   // entered by the personality, so ordinary reachability would delete them
   // and leave empty __except/__catch arms.
   structureExceptionRegions(Func, Med);
+  auto TEh = std::chrono::steady_clock::now();
   eliminateDeadStmts(Func);
+  auto TDead = std::chrono::steady_clock::now();
+  invertSkipGotos(Func);
   Trace.high(Func, "after-dce");
+  auto TInvert = std::chrono::steady_clock::now();
   foldStructuredContinuations(Func, &Med);
   coalesceBranchEntryStatements(Func);
   eliminateHighDeadPhiCopies(Func);
@@ -854,7 +905,9 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
     auto TotalMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(TEnd - TStart)
             .count();
-    if (TotalMs > 1000) {
+    const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
+    const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
+    if (TotalMs > 1000 || WantDetail) {
       auto ElapsedMs = [](auto Start, auto End) {
         return std::chrono::duration_cast<std::chrono::milliseconds>(End -
                                                                      Start)
@@ -868,6 +921,12 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
                     << "ms types=" << ElapsedMs(TTypes, TPost)
                     << "ms post=" << ElapsedMs(TPost, TDceStart)
                     << "ms dce=" << ElapsedMs(TDceStart, TEnd) << "ms]\n";
+      if (WantDetail)
+        syncWarning() << "m2h-dce: " << Med.Name
+                      << " [eh=" << ElapsedMs(TDceStart, TEh)
+                      << "ms dead=" << ElapsedMs(TEh, TDead)
+                      << "ms invert=" << ElapsedMs(TDead, TInvert)
+                      << "ms fold=" << ElapsedMs(TInvert, TEnd) << "ms]\n";
     }
   }
 

@@ -8,6 +8,7 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/SmallString.h"
@@ -20,6 +21,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -41,11 +43,13 @@ void returnValue(HighFunc &Func, ExprPtr Value) {
   Func.Body.push_back(std::move(Return));
 }
 
-std::string emitFunctions(const std::vector<HighFunc> &Functions) {
+std::string emitFunctions(const std::vector<HighFunc> &Functions,
+                          const BinaryImage *Image = nullptr) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.TheArch = Arch::X64;
+  Options.Image = Image;
   EXPECT_TRUE(HighCEmitter().emit(Functions, OS, Options));
   OS.flush();
   return Source;
@@ -137,6 +141,67 @@ void compileAndExecute(const std::string &Source, bool CheckShiftUB,
                           << Source;
 }
 
+TEST(HighCIntegerWidths, UnsignedMachineWidthArithmeticUsesDeclaredType) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  auto AddOne = [&](const std::string &Name, TypeRef Declared,
+                    TypeRef OperandType, TypeRef ResultType, const char *Input,
+                    const char *Expected) {
+    HighFunc Func;
+    Func.Name = Name;
+    Func.ReturnType = ResultType;
+    Func.Params = {{"arg0", Declared}};
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, OperandType),
+                                   HighExpr::makeConst(1, 4));
+    Sum->Type = ResultType;
+    returnValue(Func, Sum);
+    appendCheck(Checks, Name, argument(Declared, Input), Expected);
+    Functions.push_back(std::move(Func));
+  };
+
+  const auto U16 = NdType::makeInt(2, false);
+  const auto U32 = NdType::makeInt(4, false);
+  const auto S32 = NdType::makeInt(4, true);
+  const auto U64 = NdType::makeInt(8, false);
+  AddOne("natural_u32_add", U32, U32, U32, "0xffffffff", "0");
+  AddOne("natural_u64_add", U64, U64, U64, "0xffffffffffffffff", "0");
+  AddOne("natural_u32_to_s32", U32, S32, S32, "0xffffff9c",
+         "0xffffffffffffff9d");
+  // C promotes uint16_t to int, so the result still needs an explicit
+  // machine-width truncation. Signed operands also need unsigned arithmetic
+  // to avoid signed-overflow UB, even if HighIR inferred an unsigned result.
+  AddOne("narrow_u16_add", U16, U16, U16, "0xffff", "0");
+  AddOne("signed_s32_add", S32, S32, S32, "0x7fffffff", "0xffffffff80000000");
+  AddOne("signed_decl_unsigned_ir_add", S32, U32, U32, "0xffffffff", "0");
+
+  const std::string Source = emitFunctions(Functions);
+  auto Body = [&](const std::string &Name) {
+    const size_t Begin = Source.find(Name + "(");
+    EXPECT_NE(Begin, std::string::npos) << Source;
+    if (Begin == std::string::npos)
+      return std::string{};
+    const size_t End = Source.find("\n}", Begin);
+    EXPECT_NE(End, std::string::npos) << Source;
+    return Source.substr(Begin, End == std::string::npos ? End : End - Begin);
+  };
+  EXPECT_NE(Body("natural_u32_add").find("return arg0 + 1;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Body("natural_u64_add").find("return arg0 + 1;"), std::string::npos)
+      << Source;
+  EXPECT_NE(Body("natural_u32_to_s32").find("return (int32_t)(arg0 + 1);"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Body("narrow_u16_add").find("return arg0 + 1;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Body("signed_s32_add").find("return arg0 + 1;"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Body("signed_decl_unsigned_ir_add").find("return arg0 + 1;"),
+            std::string::npos)
+      << Source;
+  compileAndExecute(Source + executionHarness(Checks), false,
+                    /*CheckArithmeticUB=*/true);
+}
+
 TEST(HighCIntegerWidths, ArithmeticWrapsBeforeWideningWithoutSignedOverflow) {
   std::vector<HighFunc> Functions;
   std::string Checks;
@@ -224,6 +289,112 @@ TEST(HighCIntegerWidths, ArithmeticWrapsBeforeWideningWithoutSignedOverflow) {
     }
   compileAndExecute(emitFunctions(Functions) + executionHarness(Checks), false,
                     true);
+}
+
+TEST(HighCIntegerWidths, SignedOverflowPredicatesCompileAndMatchBoundaries) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (uint16_t Width : {1, 2, 4, 8, 16}) {
+    const unsigned Bits = Width * 8;
+    const std::vector<llvm::APInt> Values{
+        llvm::APInt(Bits, 0),
+        llvm::APInt(Bits, 1),
+        llvm::APInt::getSignedMaxValue(Bits),
+        llvm::APInt::getSignedMaxValue(Bits) - 1,
+        llvm::APInt::getSignedMinValue(Bits),
+        llvm::APInt::getSignedMinValue(Bits) + 1,
+        llvm::APInt::getAllOnes(Bits)};
+    for (bool SignedCarrier : {true, false}) {
+      const auto Type = NdType::makeInt(Width, SignedCarrier);
+      const auto BitArgument = [&](const llvm::APInt &BitsValue) {
+        if (Width <= 8)
+          return argument(
+              Type, std::to_string(BitsValue.getZExtValue()).c_str());
+        const auto Bits = "(((__uint128_t)UINT64_C(" +
+                          std::to_string(BitsValue.lshr(64).getZExtValue()) +
+                          ") << 64) | UINT64_C(" +
+                          std::to_string(BitsValue.trunc(64).getZExtValue()) +
+                          "))";
+        return SignedCarrier
+                   ? "__builtin_bit_cast(" + typeToC(Type) + ", " + Bits + ")"
+                   : Bits;
+      };
+      for (const auto Op : {NdOp::INT_SOVF, NdOp::INT_SBOR}) {
+        HighFunc Func;
+        Func.Name = "signed_overflow_" + std::to_string(Bits) +
+                    (SignedCarrier ? "_s" : "_u") +
+                    (Op == NdOp::INT_SOVF ? "_add" : "_sub");
+        Func.ReturnType = NdType::makeInt(1, false);
+        Func.Params = {{"arg0", Type}, {"arg1", Type}};
+        auto Value =
+            HighExpr::makeBinop(Op, parameter(0, Type), parameter(1, Type));
+        Value->Type = Func.ReturnType;
+        returnValue(Func, Value);
+        for (const auto &Left : Values)
+          for (const auto &Right : Values) {
+            bool Overflow = false;
+            [[maybe_unused]] const auto Result =
+                Op == NdOp::INT_SOVF ? Left.sadd_ov(Right, Overflow)
+                                      : Left.ssub_ov(Right, Overflow);
+            appendCheck(
+                Checks, Func.Name, BitArgument(Left) + ", " + BitArgument(Right),
+                Overflow ? "1" : "0");
+          }
+        Functions.push_back(std::move(Func));
+      }
+    }
+  }
+  const auto Source = emitFunctions(Functions);
+  EXPECT_EQ(Source.find("_overflow_p"), std::string::npos);
+  compileAndExecute(Source + executionHarness(Checks), false);
+}
+
+TEST(HighCIntegerWidths, WordShapedConstantsKeepTheirFullWidthValue) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (bool Signed : {false, true})
+    for (uint64_t Bits : {UINT64_C(0x7fffffff), UINT64_C(0x80000000),
+                          UINT64_C(0xfffffffe), UINT64_C(0xffffffff),
+                          UINT64_C(0x100000000), UINT64_MAX - 1, UINT64_MAX}) {
+      const auto Type = NdType::makeInt(8, Signed);
+      HighFunc F;
+      F.Name = std::string("constant_") + (Signed ? "s_" : "u_") +
+               std::to_string(Bits);
+      F.ReturnType = Type;
+      auto Constant = HighExpr::makeConst(Bits, 8);
+      Constant->Type = Type;
+      returnValue(F, Constant);
+      appendCheck(Checks, F.Name, "", std::to_string(Bits).c_str());
+      Functions.push_back(F);
+      F.Name += "_mask";
+      F.Params = {{"arg0", Type}};
+      F.Body.clear();
+      auto Masked =
+          HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Type), Constant);
+      Masked->Type = Type;
+      returnValue(F, Masked);
+      for (uint64_t Input : {UINT64_C(0), UINT64_C(0xffffffff),
+                             UINT64_C(0x8000000100000001), UINT64_MAX})
+        appendCheck(Checks, F.Name,
+                    argument(Type, std::to_string(Input).c_str()),
+                    std::to_string(Input & Bits).c_str());
+      Functions.push_back(F);
+    }
+  for (uint16_t Width : {1, 2, 4})
+    for (bool Signed : {false, true}) {
+      HighFunc F;
+      F.Name =
+          "narrow_constant_" + std::to_string(Width) + (Signed ? "s" : "u");
+      F.ReturnType = NdType::makeInt(8, Signed);
+      const uint64_t Bits = (UINT64_C(1) << (Width * 8)) - 1;
+      auto Constant = HighExpr::makeConst(Bits, Width);
+      Constant->Type = NdType::makeInt(Width, Signed);
+      returnValue(F, Constant);
+      appendCheck(Checks, F.Name, "",
+                  std::to_string(Signed ? UINT64_MAX : Bits).c_str());
+      Functions.push_back(F);
+    }
+  compileAndExecute(emitFunctions(Functions) + executionHarness(Checks), false);
 }
 
 TEST(HighCIntegerWidths, NegationWrapsAndNestedNegativeConstantsCompile) {
@@ -653,6 +824,244 @@ TEST(HighCIntegerWidths, ArithmeticRightShiftRestoresTypeBeforeComparison) {
     }
   }
   compileAndExecute(emitFunctions(Functions) + executionHarness(Checks), true);
+}
+
+TEST(HighCIntegerWidths, OverlappingX87ImageStoresUpdateOne80BitValue) {
+  constexpr va_t Base = 0x140002000;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  Segment Data;
+  Data.Name = ".data";
+  Data.VA = Base;
+  Data.Data = {3, 0, 0, 0, 0, 0, 0, 0, 0x34, 0x12};
+  Data.Size = Data.Data.size();
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(std::move(Data));
+
+  HighFunc Write;
+  Write.Name = "write_x87_image";
+  Write.ReturnType = NdType::makeVoid();
+  auto Store = [&](va_t Addr, uint64_t Value, uint16_t Size) {
+    HighStmt Stmt;
+    Stmt.Kind = StmtKind::Store;
+    Stmt.StoreAddr = HighExpr::makeConst(Addr, 8);
+    Stmt.StoreVal = HighExpr::makeConst(Value, Size);
+    Write.Body.push_back(std::move(Stmt));
+  };
+  Store(Base, UINT64_C(0x8000000000000001), 8);
+  Store(Base + 8, 0x7ffe, 2);
+
+  HighFunc Read;
+  Read.Name = "read_x87_image";
+  Read.ReturnType = NdType::makeInt(10, false);
+  returnValue(
+      Read, HighExpr::makeLoad(HighExpr::makeConst(Base, 8), Read.ReturnType));
+
+  const std::string Source = emitFunctions({Write, Read}, &Image);
+  EXPECT_NE(Source.find("unsigned char g_140002000_bytes[10]"),
+            std::string::npos)
+      << Source;
+  const std::string Checks = R"(
+    check_value("initial significand", (uint64_t)read_x87_image(), 3);
+    check_value("initial exponent", (uint64_t)(read_x87_image() >> 64), 0x1234);
+    write_x87_image();
+    check_value("written significand", (uint64_t)read_x87_image(),
+                UINT64_C(0x8000000000000001));
+    check_value("written exponent", (uint64_t)(read_x87_image() >> 64),
+                0x7ffe);
+)";
+  compileAndExecute(Source + executionHarness(Checks), false);
+}
+
+TEST(HighCIntegerWidths, SegmentedOffsetsDoNotAliasOverlappingImageBacking) {
+  constexpr va_t Base = 0x140002000;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::COFF;
+  Image.Base = 0x140000000;
+  Segment Data;
+  Data.Name = ".data";
+  Data.VA = Base;
+  Data.Data = {3, 0, 0, 0, 0, 0, 0, 0, 0x34, 0x12};
+  Data.Size = Data.Data.size();
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(std::move(Data));
+
+  HighFunc DefaultStore;
+  DefaultStore.Name = "write_image_backing";
+  DefaultStore.ReturnType = NdType::makeVoid();
+  for (const auto [Offset, Size] :
+       {std::pair<uint64_t, uint16_t>{0, 8}, {8, 2}}) {
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeConst(Base + Offset, 8);
+    Store.StoreVal = HighExpr::makeConst(1, Size);
+    DefaultStore.Body.push_back(std::move(Store));
+  }
+  HighFunc DefaultRead;
+  DefaultRead.Name = "read_image_backing";
+  DefaultRead.ReturnType = NdType::makeInt(10, false);
+  returnValue(DefaultRead, HighExpr::makeLoad(HighExpr::makeConst(Base, 8),
+                                              DefaultRead.ReturnType));
+
+  const auto U64 = NdType::makeInt(8, false);
+  HighFunc SegmentedRead;
+  SegmentedRead.Name = "read_gs_coincident";
+  SegmentedRead.ReturnType = U64;
+  returnValue(SegmentedRead, HighExpr::makeLoad(HighExpr::makeConst(Base, 8),
+                                                U64, NdMemoryOrdering::None,
+                                                NdMemoryAddressSpace::X86GS));
+
+  HighFunc CompoundRead;
+  CompoundRead.Name = "read_gs_compound";
+  CompoundRead.ReturnType = U64;
+  CompoundRead.Params = {{"arg0", U64}};
+  returnValue(CompoundRead,
+              HighExpr::makeLoad(
+                  HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, U64),
+                                      HighExpr::makeConst(Base, 8)),
+                  U64, NdMemoryOrdering::None, NdMemoryAddressSpace::X86GS));
+
+  HighFunc SegmentedStore;
+  SegmentedStore.Name = "write_gs_coincident";
+  SegmentedStore.ReturnType = NdType::makeVoid();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(Base, 8);
+  Store.StoreVal = HighExpr::makeConst(7, 8);
+  Store.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  SegmentedStore.Body.push_back(std::move(Store));
+
+  HighFunc AssignedStore;
+  AssignedStore.Name = "assign_gs_coincident";
+  AssignedStore.ReturnType = NdType::makeVoid();
+  HighStmt Assign;
+  Assign.Kind = StmtKind::Assign;
+  Assign.Dst =
+      HighExpr::makeLoad(HighExpr::makeConst(Base, 8), U64,
+                         NdMemoryOrdering::None, NdMemoryAddressSpace::X86GS);
+  Assign.Val = HighExpr::makeConst(9, 8);
+  AssignedStore.Body.push_back(std::move(Assign));
+
+  HighFunc ExpressionStore;
+  ExpressionStore.Name = "expression_gs_coincident";
+  ExpressionStore.ReturnType = U64;
+  auto StoreExpr = std::make_shared<HighExpr>();
+  StoreExpr->Kind = ExprKind::Store;
+  StoreExpr->Type = U64;
+  StoreExpr->MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  StoreExpr->Operands = {HighExpr::makeConst(Base, 8),
+                         HighExpr::makeConst(11, 8)};
+  returnValue(ExpressionStore, StoreExpr);
+
+  HighFunc AtomicStore;
+  AtomicStore.Name = "atomic_gs_coincident";
+  AtomicStore.ReturnType = U64;
+  auto Atomic =
+      HighExpr::makeBinop(NdOp::ATOMIC_ADD, HighExpr::makeConst(Base, 8),
+                          HighExpr::makeConst(1, 8));
+  Atomic->Type = U64;
+  Atomic->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  Atomic->MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  returnValue(AtomicStore, Atomic);
+
+  const std::string Source = emitFunctions(
+      {DefaultStore, DefaultRead, SegmentedRead, CompoundRead, SegmentedStore,
+       AssignedStore, ExpressionStore, AtomicStore},
+      &Image);
+  EXPECT_NE(Source.find("unsigned char g_140002000_bytes[10]"),
+            std::string::npos)
+      << Source;
+  auto Body = [&](const std::string &Name) {
+    const size_t Signature = Source.rfind(Name + "(");
+    EXPECT_NE(Signature, std::string::npos) << Source;
+    if (Signature == std::string::npos)
+      return std::string();
+    const size_t Open = Source.find('{', Signature);
+    const size_t Close = Source.find("\n}", Open);
+    EXPECT_NE(Open, std::string::npos) << Source;
+    EXPECT_NE(Close, std::string::npos) << Source;
+    if (Open == std::string::npos || Close == std::string::npos)
+      return std::string();
+    return Source.substr(Open, Close - Open);
+  };
+  for (const std::string &Name :
+       {"read_gs_coincident", "read_gs_compound", "write_gs_coincident",
+        "assign_gs_coincident", "expression_gs_coincident",
+        "atomic_gs_coincident"}) {
+    const std::string SegmentBody = Body(Name);
+    EXPECT_NE(SegmentBody.find("0x140002000"), std::string::npos)
+        << Name << "\n"
+        << Source;
+    EXPECT_EQ(SegmentBody.find("g_140002000_bytes"), std::string::npos)
+        << Name << "\n"
+        << Source;
+  }
+  EXPECT_NE(Body("read_gs_coincident").find("__readgsqword"), std::string::npos)
+      << Source;
+  EXPECT_NE(Body("read_gs_compound").find(" + 0x140002000"), std::string::npos)
+      << Source;
+  EXPECT_NE(Body("atomic_gs_coincident").find("__atomic_fetch_add"),
+            std::string::npos)
+      << Source;
+}
+
+TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
+  const auto U64 = NdType::makeInt(8, false);
+  auto UnknownRegister = [&](int Id) {
+    MedVar Register;
+    Register.Kind = MedVar::Reg;
+    Register.Id = Id;
+    Register.Size = 8;
+    Register.TheArch = Arch::X64;
+    return HighExpr::makeVar(Register, U64);
+  };
+  auto Pair = [&](int LowId, int HighId) {
+    auto Value = HighExpr::makeBinop(
+        NdOp::CONCAT, UnknownRegister(HighId), UnknownRegister(LowId));
+    Value->Type = NdType::makeInt(16, false);
+    return Value;
+  };
+  auto MakeCall = [&](uint64_t Number, const std::string &Name) {
+    HighFunc Func;
+    Func.Name = Name;
+    Func.ReturnType = NdType::makeVoid();
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall(
+        "neverd_x64_syscall", 0,
+        {HighExpr::makeConst(Number, 8), HighExpr::makeConst(0, 8),
+         Pair(6, 2), Pair(10, 8), UnknownRegister(9)});
+    Call.CallExpr->IntrinsicId = Intrinsic::X64Syscall;
+    Call.CallExpr->Type = NdType::makeInt(16, false);
+    Func.Body.push_back(std::move(Call));
+    return Func;
+  };
+
+  const std::string Source = emitFunctions(
+      {MakeCall(60, "call_exit"), MakeCall(231, "call_exit_group"),
+       MakeCall(39, "call_getpid")});
+  EXPECT_NE(Source.find("neverd_x64_syscall(60, 0, 0, 0, 0)"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("neverd_x64_syscall(231, 0, 0, 0, 0)"),
+            std::string::npos)
+      << Source;
+  const size_t Getpid = Source.find("call_getpid(");
+  ASSERT_NE(Getpid, std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_trap()", Getpid), std::string::npos)
+      << Source;
+#if defined(__x86_64__) && defined(__linux__)
+  compileAndExecute(Source + "int main(void) { call_exit(); return 99; }\n",
+                    false);
+  compileAndExecute(Source +
+                        "int main(void) { call_exit_group(); return 99; }\n",
+                    false);
+#endif
 }
 
 } // namespace

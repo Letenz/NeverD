@@ -13,9 +13,13 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include <algorithm>
+#include <array>
+
 namespace neverd::emulation {
 namespace {
 using namespace windows;
+constexpr size_t DirectPnpRouteSize = 2;
 
 llvm::Error frameworkRequestError(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Message);
@@ -61,6 +65,9 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
   if (auto E =
           DMA.canReleaseRange(IRP, IRPSize + Request->StackCount * StackSize))
     return E;
+  auto Chain = requestMDLChain(IRP);
+  if (!Chain)
+    return Chain.takeError();
   if (Status == StatusPending)
     return frameworkRequestError(
         "IoCompleteRequest cannot complete with STATUS_PENDING");
@@ -87,6 +94,9 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
       Information > MaxCreateInformation)
     return frameworkRequestError(
         "CREATE IoStatus.Information is not a defined create result");
+  auto Ranges = requestReleaseRanges(IRP);
+  if (!Ranges)
+    return Ranges.takeError();
   return llvm::Error::success();
 }
 
@@ -116,7 +126,8 @@ void KernelModel::configureFrameworkRequestHost() {
         Request->Kind == DriverRequestKind::Read ||
                 Request->Kind == DriverRequestKind::DeviceControl
             ? Request->UserBuffer
-            : 0};
+            : 0,
+        Request->FileAddress};
   };
   Host.Buffer = [this](uint64_t IRP, bool Output) -> llvm::Expected<uint64_t> {
     const auto *Request = requestForIRP(IRP);
@@ -219,6 +230,82 @@ void KernelModel::configureFrameworkRequestHost() {
     Request->IOStatusWritten.fill(true);
     return completeRequest(IRP, 0);
   };
+  Host.ValidateFileForward = [this](uint64_t IRP) -> llvm::Error {
+    const auto *Request = requestForIRP(IRP);
+    if (!Request || Request->Completed ||
+        Request->DeviceRoute.size() != DirectPnpRouteSize ||
+        !FrameworkDevices.count(Request->DeviceRoute.front()) ||
+        !isProviderDevice(Request->DeviceRoute.back()) ||
+        Request->PnpDevice != Request->DeviceRoute.back())
+      return frameworkRequestError(
+          "framework file forwarding requires a direct live PDO target");
+    if (!Request->FileBusCompletion || !Request->FileBusCompletion->Status)
+      return frameworkRequestError(
+          "framework file forwarding requires a configured bus response");
+    return llvm::Error::success();
+  };
+  auto ForwardFile = [this, Validate = Host.ValidateFileForward](
+                         uint64_t IRP, ForwardingOwner Owner,
+                         std::optional<int64_t> SendTimeout =
+                             std::nullopt) -> llvm::Expected<uint32_t> {
+    if (auto E = Validate(IRP))
+      return E;
+    auto *Request = requestForIRP(IRP);
+    auto Stack = currentRequestStack(IRP);
+    auto Cursor = requestStackCursor(IRP);
+    if (!Stack || !Cursor)
+      return llvm::joinErrors(Stack.takeError(), Cursor.takeError());
+    if (!*Cursor)
+      return frameworkRequestError(
+          "framework file IRP has no lower stack slot");
+    std::array<uint8_t, StackSize> Location{};
+    if (auto E = Memory.read(*Stack, Location))
+      return E;
+    Location[StackControlOffset] = 0;
+    std::fill(Location.begin() + StackCompletionOffset, Location.end(), 0);
+    if (auto E = Memory.write(*Stack - StackSize, Location))
+      return E;
+    auto Status =
+        callDriver(Request->DeviceRoute.back(), IRP, Owner, SendTimeout);
+    if (!Status)
+      return Status.takeError();
+    const bool LowerOwnsPendingFile = Owner == ForwardingOwner::FrameworkFile &&
+                                      *Status == windows::StatusPending;
+    if (PendingWdmCall ||
+        Request->Completed !=
+            (Owner == ForwardingOwner::FrameworkFile && !LowerOwnsPendingFile))
+      return frameworkRequestError(
+          "framework file target did not honor its completion ownership");
+    if ((Owner == ForwardingOwner::FrameworkFileSynchronous ||
+         Owner == ForwardingOwner::FrameworkFileAsynchronous ||
+         Owner == ForwardingOwner::FrameworkFileAutomatic) &&
+        *Status != windows::StatusPending) {
+      if (!Request->FileBusReceived)
+        return frameworkRequestError("file send lost its lower response");
+      if (auto E = Memory.writeInteger(IRP + IRPLocationOffset, *Cursor + 1, 1))
+        return E;
+      if (auto E = Memory.writeInteger(IRP + IRPStackPointerOffset,
+                                       IRP + IRPSize + *Cursor * StackSize, 8))
+        return E;
+    }
+    return static_cast<uint32_t>(*Status);
+  };
+  Host.ForwardFile = [ForwardFile](uint64_t IRP) {
+    return ForwardFile(IRP, ForwardingOwner::FrameworkFile);
+  };
+  Host.ForwardFileAutomatically = [ForwardFile](uint64_t IRP) {
+    return ForwardFile(IRP, ForwardingOwner::FrameworkFileAutomatic);
+  };
+  Host.SendFileSynchronously =
+      [ForwardFile](uint64_t IRP, std::optional<int64_t> SendTimeout) {
+        return ForwardFile(IRP, ForwardingOwner::FrameworkFileSynchronous,
+                           SendTimeout);
+      };
+  Host.SendFileAsynchronously =
+      [ForwardFile](uint64_t IRP, std::optional<int64_t> SendTimeout) {
+        return ForwardFile(IRP, ForwardingOwner::FrameworkFileAsynchronous,
+                           SendTimeout);
+      };
   Framework->setRequestHost(std::move(Host));
 }
 } // namespace neverd::emulation

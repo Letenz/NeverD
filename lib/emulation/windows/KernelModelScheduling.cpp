@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "KernelAPINames.h"
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
@@ -43,41 +44,40 @@ llvm::Expected<uint64_t> KernelModel::allocateWorkItem(uint64_t Device) {
 
 llvm::Expected<uint64_t>
 KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
-  constexpr uint32_t ThreadAllAccess = 0x001fffff;
-  constexpr uint32_t StatusInvalidParameter = 0xc000000d;
-  constexpr uint32_t StatusInsufficientResources = 0xc000009a;
   if (!A[0] || !A[5])
-    return StatusInvalidParameter;
+    return windows::StatusInvalidParameter;
   if (A[3] || A[4])
     return schedulingError("non-system process handles and client IDs are "
                            "unsupported for system threads");
-  if (uint32_t(A[1]) & ~ThreadAllAccess)
+  if (uint32_t(A[1]) & ~windows::ThreadAllAccess)
     return schedulingError("unsupported system-thread access mask");
   uint32_t Attributes = 0;
   if (A[2]) {
-    if (auto E = validateGuestAccess(A[2], 48, false))
+    if (auto E =
+            validateGuestAccess(A[2], windows::ObjectAttributesSize, false))
       return E;
     auto Size = Memory.readInteger(A[2], 4);
     if (!Size)
       return Size.takeError();
-    auto Root = Memory.readInteger(A[2] + 8, 8);
+    auto Root = Memory.readInteger(A[2] + windows::ObjectRootOffset, 8);
     if (!Root)
       return Root.takeError();
-    auto Name = Memory.readInteger(A[2] + 16, 8);
+    auto Name = Memory.readInteger(A[2] + windows::ObjectNameOffset, 8);
     if (!Name)
       return Name.takeError();
-    auto Flags = Memory.readInteger(A[2] + 24, 4);
+    auto Flags = Memory.readInteger(A[2] + windows::ObjectFlagsOffset, 4);
     if (!Flags)
       return Flags.takeError();
-    auto Security = Memory.readInteger(A[2] + 32, 8);
+    auto Security = Memory.readInteger(A[2] + windows::ObjectSecurityOffset, 8);
     if (!Security)
       return Security.takeError();
-    auto Quality = Memory.readInteger(A[2] + 40, 8);
+    auto Quality = Memory.readInteger(A[2] + windows::ObjectQualityOffset, 8);
     if (!Quality)
       return Quality.takeError();
-    if (*Size != 48)
-      return StatusInvalidParameter;
-    if (*Root || *Name || *Security || *Quality || (*Flags & ~0x200u))
+    if (*Size != windows::ObjectAttributesSize)
+      return windows::StatusInvalidParameter;
+    if (*Root || *Name || *Security || *Quality ||
+        (*Flags & ~windows::ObjectKernelHandle))
       return schedulingError("unsupported system-thread object attributes");
     Attributes = uint32_t(*Flags);
   }
@@ -85,18 +85,19 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
       (CurrentExecution == profile::StackBase && UserRequestContext) ||
       (!ProcessAttachments.empty() &&
        ProcessAttachments.back().Execution == CurrentExecution);
-  if (CallerInUserProcess && !(Attributes & 0x200u))
+  if (CallerInUserProcess && !(Attributes & windows::ObjectKernelHandle))
     return schedulingError("system-thread creation outside the system process "
                            "requires OBJ_KERNEL_HANDLE");
   if (auto E = validateGuestAccess(A[0], 8, true))
     return E;
   if (SystemThreads.size() >= profile::MaxConcurrentCallbacks ||
-      NextThreadHandle > 0x6ffffffc)
-    return StatusInsufficientResources;
-  const uint64_t Aligned = (NextAllocation + 15) & ~uint64_t(15);
+      NextThreadHandle > profile::SystemThreadHandleLimit)
+    return windows::StatusInsufficientResources;
+  const uint64_t Aligned = (NextAllocation + windows::PoolAlignment - 1) &
+                           ~uint64_t(windows::PoolAlignment - 1);
   if (Aligned > AllocationEnd ||
       profile::ProcessTokenSize > AllocationEnd - Aligned)
-    return StatusInsufficientResources;
+    return windows::StatusInsufficientResources;
   KernelScheduler::Callback Callback;
   Callback.Object = 1;
   Callback.Owner = DriverObject;
@@ -119,7 +120,7 @@ KernelModel::createSystemThread(llvm::ArrayRef<uint64_t> A) {
     return ID.takeError();
   ThreadHandles.emplace(NextThreadHandle, *Object);
   SystemThreads.emplace(*Object, SystemThread{NextThreadHandle, *ID});
-  NextThreadHandle += 4;
+  NextThreadHandle += profile::SystemThreadHandleStride;
   return uint64_t(0);
 }
 
@@ -146,24 +147,22 @@ std::optional<uint32_t> KernelModel::takeThreadTermination() {
 
 llvm::Expected<uint64_t>
 KernelModel::referenceThreadByHandle(llvm::ArrayRef<uint64_t> A) {
-  constexpr uint32_t StatusInvalidHandle = 0xc0000008;
-  constexpr uint32_t StatusInvalidParameter = 0xc000000d;
   auto Handle = ThreadHandles.find(A[0]);
   if (Handle == ThreadHandles.end()) {
     if (Registry.ownsHandle(A[0]))
       return schedulingError("registry-key object references are unsupported");
-    return StatusInvalidHandle;
+    return windows::StatusInvalidHandle;
   }
   auto Thread = SystemThreads.find(Handle->second);
   if (Thread == SystemThreads.end())
     return schedulingError("thread handle lost its object");
   // Only the modeled thread object type and kernel caller mode are available.
   if (!A[4])
-    return StatusInvalidParameter;
-  if (A[2] || A[3] != windows::KernelMode || A[5])
+    return windows::StatusInvalidParameter;
+  if (A[2] || uint8_t(A[3]) != windows::KernelMode || A[5])
     return schedulingError(
         "unsupported object type, access mode or handle-information output");
-  if (uint32_t(A[1]) & ~0x001fffffu)
+  if (uint32_t(A[1]) & ~windows::ThreadAllAccess)
     return schedulingError("unsupported system-thread reference access mask");
   if (auto E = validateGuestAccess(A[4], 8, true))
     return E;
@@ -188,8 +187,8 @@ llvm::Expected<uint64_t> KernelModel::closeHandle(uint64_t Handle) {
   auto It = ThreadHandles.find(Handle);
   if (It == ThreadHandles.end()) {
     if (Registry.ownsHandle(Handle))
-      return Registry.call(*this, "ZwClose", {Handle});
-    return uint64_t(0xc0000008);
+      return Registry.call(*this, kernel_api::ZwClose, {Handle});
+    return windows::StatusInvalidHandle;
   }
   const uint64_t Object = It->second;
   auto Thread = SystemThreads.find(Object);
@@ -314,6 +313,17 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
         if (auto E = Framework->beginCancelCallback(Token->second.ID))
           return E;
     }
+    if ((**Next).Kind == KernelScheduler::CallbackKind::FrameworkCompletion) {
+      auto Token = ScheduledModelContinuations.find((**Next).ID);
+      if (!Framework || Token == ScheduledModelContinuations.end() ||
+          Token->second.Owner != GuestCallOwner::Framework)
+        return schedulingError(
+            "request completion lost its framework identity");
+      if (!Framework->isAutomaticFileContinuation(Token->second.ID))
+        if (auto E =
+                Framework->beginRequestCompletionCallback(Token->second.ID))
+          return E;
+    }
     if ((**Next).Kind == KernelScheduler::CallbackKind::Interrupt) {
       auto Token = ScheduledModelContinuations.find((**Next).ID);
       if (Token == ScheduledModelContinuations.end() ||
@@ -373,6 +383,12 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   if (auto E = Scheduler.finish(ID))
     return E;
   CurrentIRQL = scheduler::PassiveLevel;
+  if (Framework) {
+    if (auto E = Framework->resumeInterruptDrain())
+      return E;
+    if (auto E = completeFrameworkTransitionIfReady())
+      return E;
+  }
   ApcStates.erase(ID);
   if (Invocation.Kind == KernelScheduler::CallbackKind::SystemThread) {
     SystemThreads.at(Invocation.Object).Exited = true;
@@ -390,6 +406,9 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
     return retireDeviceIfUnreferenced(Invocation.Owner);
   }
   if (Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCancel ||
+      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCompletion ||
+      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkPassive ||
+      KernelScheduler::isFrameworkInterruptCallbackKind(Invocation.Kind) ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
       Invocation.Kind == KernelScheduler::CallbackKind::Interrupt ||
@@ -512,6 +531,33 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::FrameworkInterruptLock) {
+    auto Acquired =
+        Interrupts.tryAcquirePassive(Pending.Object, Pending.Execution);
+    if (!Acquired)
+      return Acquired.takeError();
+    if (!*Acquired)
+      return std::optional<uint32_t>{};
+    FrameworkInterruptLocks.emplace(
+        std::make_pair(Pending.Execution, Pending.Object),
+        scheduler::PassiveLevel);
+    return std::optional<uint32_t>{windows::StatusSuccess};
+  }
+  if (Pending.Type == Wait::Kind::InterruptSynchronization) {
+    auto Ready = Interrupts.reserveSynchronization(Pending.Object);
+    if (!Ready)
+      return Ready.takeError();
+    return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
+                  : std::optional<uint32_t>{};
+  }
+  if (Pending.Type == Wait::Kind::FrameworkFileSend) {
+    if (!Framework)
+      return schedulingError("synchronous file wait lost its framework");
+    auto Waiting = Framework->synchronousFileSendPending(Pending.Object);
+    if (!Waiting)
+      return schedulingError("synchronous file wait lost its request");
+    return *Waiting ? std::optional<uint32_t>{} : std::optional<uint32_t>{1};
+  }
   if (Pending.Type == Wait::Kind::FrameworkQueueStop ||
       Pending.Type == Wait::Kind::FrameworkQueueEmpty) {
     if (!Framework)
@@ -578,6 +624,8 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
                                          uint64_t IgnoredDMAPin) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing object storage range");
+  if (auto E = canReleaseUserViewsForBacking(Base, Size))
+    return E;
   if (Size)
     if (auto E = Physical.canReleaseRange(Base, Size, IgnoredDMAPin))
       return E;
@@ -630,6 +678,11 @@ llvm::Error KernelModel::prepareReleaseRanges(
 llvm::Error KernelModel::validateDispatcherStorage(uint64_t Address,
                                                    uint32_t Size,
                                                    bool IsWrite) const {
+  if (Address < profile::UserProbeLimit) {
+    auto Range = resolveUserMemoryRange(Address, Size, IsWrite);
+    if (!Range)
+      return Range.takeError();
+  }
   if (auto E = validateGuestAccessImpl(Address, Size, IsWrite, false))
     return E;
   for (const auto &[Base, Allocation] : Allocations)
@@ -654,6 +707,7 @@ llvm::Error KernelModel::retireStack(uint64_t Base, uint64_t Size) {
   if (auto E = prepareReleaseRange(Base, Size))
     return E;
   ExecutionThreadKeys.erase(Base);
+  InheritedExecutionContexts.erase(Base);
   FreedRanges.emplace(Base, Size);
   return llvm::Error::success();
 }

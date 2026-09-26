@@ -18,13 +18,16 @@
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace neverd::emulation {
 namespace {
+constexpr uint64_t KibibyteBytes = 1024;
 
 namespace resourceField {
 #define NEVERD_DRIVER_RESOURCE_FIELD(Name, Spelling)                           \
@@ -47,6 +50,13 @@ namespace interruptField {
 #undef NEVERD_DRIVER_INTERRUPT_FIELD
 } // namespace interruptField
 
+namespace userField {
+#define NEVERD_DRIVER_USER_MEMORY_FIELD(Name, Spelling)                        \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverUserMemory.def"
+#undef NEVERD_DRIVER_USER_MEMORY_FIELD
+} // namespace userField
+
 #define NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Name, Spelling)                      \
   constexpr llvm::StringLiteral Name##Field = Spelling;
 #define NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(Name, Spelling)                   \
@@ -65,6 +75,8 @@ constexpr llvm::StringRef RootFields[] = {
 constexpr llvm::StringRef RequestFields[] = {
     interruptField::InterruptEvents,
     dmaField::DmaEvents,
+    userField::UserBuffers,
+    userField::UserPointers,
 #define NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Name, Spelling)
 #define NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(Name, Spelling) Spelling,
 #include "DriverScenarioFields.def"
@@ -80,7 +92,7 @@ llvm::Error invalid(const llvm::Twine &Message) {
 bool validDeviceName(llvm::StringRef Name) {
   return Name.size() <= profile::MaxDeviceNameSize &&
          std::all_of(Name.begin(), Name.end(),
-                     [](unsigned char C) { return C >= 0x20 && C <= 0x7e; });
+                     [](unsigned char C) { return C >= ' ' && C <= '~'; });
 }
 
 bool validIdentifier(llvm::StringRef ID, size_t Limit) {
@@ -179,6 +191,151 @@ llvm::Error fields(const llvm::json::Object &Object,
                   llvm::StringRef(Field.first)) == Allowed.end())
       return invalid("unknown field '" + Field.first.str() + "'");
   return llvm::Error::success();
+}
+
+llvm::Expected<DriverUserPageAccess>
+userPageAccess(const llvm::json::Value &Value, llvm::StringRef Field) {
+  auto Text = Value.getAsString();
+  if (!Text)
+    return invalid(Field + " must be a user-page access string");
+#define NEVERD_DRIVER_USER_PAGE_ACCESS(Name, Spelling)                         \
+  if (*Text == Spelling)                                                       \
+    return DriverUserPageAccess::Name;
+#include "neverd/emulation/DriverUserPageAccess.def"
+#undef NEVERD_DRIVER_USER_PAGE_ACCESS
+  return invalid(Field + " has an unsupported user-page access value");
+}
+
+bool validUserPageAccess(DriverUserPageAccess Access) {
+  switch (Access) {
+#define NEVERD_DRIVER_USER_PAGE_ACCESS(Name, Spelling)                         \
+  case DriverUserPageAccess::Name:
+#include "neverd/emulation/DriverUserPageAccess.def"
+#undef NEVERD_DRIVER_USER_PAGE_ACCESS
+    return true;
+  }
+  return false;
+}
+
+llvm::Expected<std::vector<uint8_t>> hexBytes(const llvm::json::Value &Value,
+                                              llvm::StringRef Field) {
+  auto Text = Value.getAsString();
+  if (!Text || Text->size() > DriverScenarioBufferLimit * 2 ||
+      Text->size() % 2 ||
+      !std::all_of(Text->begin(), Text->end(), llvm::isHexDigit))
+    return invalid(Field +
+                   llvm::formatv(" must be an even-length hexadecimal byte "
+                                 "string of at most {0} bytes",
+                                 DriverScenarioBufferLimit)
+                       .str());
+  std::vector<uint8_t> Result;
+  Result.reserve(Text->size() / 2);
+  for (size_t I = 0; I < Text->size(); I += 2)
+    Result.push_back((llvm::hexDigitValue((*Text)[I]) << 4) |
+                     llvm::hexDigitValue((*Text)[I + 1]));
+  return Result;
+}
+
+llvm::Expected<std::vector<DriverUserBuffer>>
+userBuffers(const llvm::json::Value &Value) {
+  const auto *Array = Value.getAsArray();
+  if (!Array || Array->size() > DriverScenarioUserBufferLimit)
+    return invalid("user_buffers must be a bounded array");
+  std::vector<DriverUserBuffer> Result;
+  for (const auto &Entry : *Array) {
+    const auto *Object = Entry.getAsObject();
+    if (!Object)
+      return invalid("each user_buffers entry must be an object");
+    if (auto E = fields(
+            *Object, {field::ID, field::Size, userField::Input, field::Access}))
+      return E;
+    auto ID = Object->getString(field::ID);
+    const auto *SizeValue = Object->get(field::Size);
+    auto Size = SizeValue ? SizeValue->getAsUINT64() : std::nullopt;
+    if (!ID || !validIdentifier(*ID, DriverScenarioUserBufferIDLimit))
+      return invalid("user buffer id must be a bounded ASCII identifier");
+    if (!Size || !*Size || *Size > DriverScenarioBufferLimit)
+      return invalid("user buffer size must be a nonzero bounded integer");
+    DriverUserBuffer Buffer;
+    Buffer.ID = ID->str();
+    Buffer.Size = static_cast<uint32_t>(*Size);
+    if (const auto *Input = Object->get(userField::Input)) {
+      auto Bytes = hexBytes(*Input, userField::Input);
+      if (!Bytes)
+        return Bytes.takeError();
+      Buffer.Input = std::move(*Bytes);
+    }
+    if (const auto *Access = Object->get(field::Access)) {
+      auto Parsed = userPageAccess(*Access, field::Access);
+      if (!Parsed)
+        return Parsed.takeError();
+      Buffer.Access = *Parsed;
+    }
+    Result.push_back(std::move(Buffer));
+  }
+  return Result;
+}
+
+llvm::Expected<DriverUserBufferRef>
+userBufferRef(const llvm::json::Value &Value) {
+  const auto *Object = Value.getAsObject();
+  if (!Object)
+    return invalid("user pointer reference must be an object");
+  if (auto E =
+          fields(*Object, {userField::Buffer, field::ID, userField::Offset}))
+    return E;
+  auto Kind = Object->getString(userField::Buffer);
+  const auto *OffsetValue = Object->get(userField::Offset);
+  auto Offset = OffsetValue ? OffsetValue->getAsUINT64() : std::nullopt;
+  if (!Kind || !Offset || *Offset > UINT32_MAX)
+    return invalid("user pointer requires a buffer kind and unsigned offset");
+  std::optional<DriverUserBufferKind> ParsedKind;
+#define NEVERD_DRIVER_USER_BUFFER_KIND(Name, Spelling)                         \
+  if (*Kind == Spelling)                                                       \
+    ParsedKind = DriverUserBufferKind::Name;
+#include "neverd/emulation/DriverUserMemory.def"
+#undef NEVERD_DRIVER_USER_BUFFER_KIND
+  if (!ParsedKind)
+    return invalid("unsupported user pointer buffer kind");
+  DriverUserBufferRef Result;
+  Result.Kind = *ParsedKind;
+  Result.Offset = static_cast<uint32_t>(*Offset);
+  if (Result.Kind == DriverUserBufferKind::Memory) {
+    auto ID = Object->getString(field::ID);
+    if (!ID || !validIdentifier(*ID, DriverScenarioUserBufferIDLimit))
+      return invalid("memory pointer reference requires a user buffer id");
+    Result.ID = ID->str();
+  } else if (Object->get(field::ID)) {
+    return invalid("input/output pointer references do not accept id");
+  }
+  return Result;
+}
+
+llvm::Expected<std::vector<DriverUserPointer>>
+userPointers(const llvm::json::Value &Value) {
+  const auto *Array = Value.getAsArray();
+  if (!Array || Array->size() > DriverScenarioUserPointerLimit)
+    return invalid("user_pointers must be a bounded array");
+  std::vector<DriverUserPointer> Result;
+  for (const auto &Entry : *Array) {
+    const auto *Object = Entry.getAsObject();
+    if (!Object)
+      return invalid("each user_pointers entry must be an object");
+    if (auto E = fields(*Object, {userField::Source, userField::Target}))
+      return E;
+    const auto *Source = Object->get(userField::Source);
+    const auto *Target = Object->get(userField::Target);
+    if (!Source || !Target)
+      return invalid("user pointer requires source and target references");
+    auto ParsedSource = userBufferRef(*Source);
+    if (!ParsedSource)
+      return ParsedSource.takeError();
+    auto ParsedTarget = userBufferRef(*Target);
+    if (!ParsedTarget)
+      return ParsedTarget.takeError();
+    Result.push_back({std::move(*ParsedSource), std::move(*ParsedTarget)});
+  }
+  return Result;
 }
 
 llvm::Expected<uint64_t> hexNumber(llvm::StringRef Text,
@@ -423,6 +580,70 @@ memoryResources(const llvm::json::Value &Value) {
   return Result;
 }
 
+llvm::Expected<std::vector<DriverInterruptMessage>>
+interruptMessages(const llvm::json::Value &Value) {
+  const auto *Array = Value.getAsArray();
+  if (!Array || Array->empty() ||
+      Array->size() > DriverScenarioInterruptMessageLimit)
+    return invalid("messages must be a nonempty bounded array");
+  std::vector<DriverInterruptMessage> Result;
+  for (const auto &Item : *Array) {
+    const auto *Object = Item.getAsObject();
+    if (!Object)
+      return invalid("each interrupt message must be an object");
+    if (auto E = fields(
+            *Object,
+            {interruptField::MessageAddress, interruptField::MessageData,
+             interruptField::TranslatedVector, interruptField::TranslatedLevel,
+             interruptField::TranslatedAffinity, interruptField::Polarity}))
+      return std::move(E);
+    DriverInterruptMessage Message;
+    const std::pair<llvm::StringRef, uint32_t DriverInterruptMessage::*>
+        Words[] = {
+            {interruptField::MessageData, &DriverInterruptMessage::MessageData},
+            {interruptField::TranslatedVector,
+             &DriverInterruptMessage::TranslatedVector},
+            {interruptField::TranslatedLevel,
+             &DriverInterruptMessage::TranslatedLevel}};
+    for (const auto &[Name, Member] : Words) {
+      const auto *Fact = Object->get(Name);
+      if (!Fact)
+        return invalid("interrupt messages require explicit " + Name);
+      auto Parsed = unsigned32(*Fact, Name);
+      if (!Parsed)
+        return Parsed.takeError();
+      Message.*Member = *Parsed;
+    }
+    const std::pair<llvm::StringRef, uint64_t DriverInterruptMessage::*>
+        Wide[] = {{interruptField::MessageAddress,
+                   &DriverInterruptMessage::MessageAddress},
+                  {interruptField::TranslatedAffinity,
+                   &DriverInterruptMessage::TranslatedAffinity}};
+    for (const auto &[Name, Member] : Wide) {
+      const auto *Fact = Object->get(Name);
+      if (!Fact)
+        return invalid("interrupt messages require explicit " + Name);
+      auto Parsed = unsigned64(*Fact, Name);
+      if (!Parsed)
+        return Parsed.takeError();
+      Message.*Member = *Parsed;
+    }
+    auto Polarity = Object->getString(interruptField::Polarity);
+    bool Found = false;
+#define NEVERD_DRIVER_INTERRUPT_POLARITY(Name, Value, Spelling)                \
+  if (Polarity && *Polarity == Spelling) {                                     \
+    Message.Polarity = DriverInterruptPolarity::Name;                          \
+    Found = true;                                                              \
+  }
+#include "neverd/emulation/DriverInterrupts.def"
+#undef NEVERD_DRIVER_INTERRUPT_POLARITY
+    if (!Found)
+      return invalid("unsupported or missing interrupt message polarity");
+    Result.push_back(Message);
+  }
+  return Result;
+}
+
 llvm::Expected<std::vector<DriverInterruptResource>>
 interruptResources(const llvm::json::Value &Value) {
   const auto *Array = Value.getAsArray();
@@ -433,13 +654,14 @@ interruptResources(const llvm::json::Value &Value) {
     const auto *Object = Item.getAsObject();
     if (!Object)
       return invalid("each interrupt must be an object");
-    if (auto E = fields(*Object,
-                        {interruptField::ID, interruptField::RawVector,
-                         interruptField::RawLevel, interruptField::RawAffinity,
-                         interruptField::TranslatedVector,
-                         interruptField::TranslatedLevel,
-                         interruptField::TranslatedAffinity,
-                         interruptField::Mode, interruptField::Share}))
+    if (auto E = fields(
+            *Object,
+            {interruptField::ID, interruptField::RawVector,
+             interruptField::RawLevel, interruptField::RawAffinity,
+             interruptField::TranslatedVector, interruptField::TranslatedLevel,
+             interruptField::TranslatedAffinity, interruptField::Mode,
+             interruptField::Share, interruptField::RetriggerAfter100ns,
+             interruptField::Messages}))
       return std::move(E);
     auto ID = Object->getString(interruptField::ID);
     auto Mode = Object->getString(interruptField::Mode);
@@ -464,6 +686,12 @@ interruptResources(const llvm::json::Value &Value) {
 #undef NEVERD_DRIVER_INTERRUPT_SHARE
     if (!ModeFound || !ShareFound)
       return invalid("unsupported interrupt mode or share");
+    if (const auto *Period = Object->get(interruptField::RetriggerAfter100ns)) {
+      auto Parsed = unsigned64(*Period, interruptField::RetriggerAfter100ns);
+      if (!Parsed)
+        return Parsed.takeError();
+      Resource.RetriggerAfter100ns = *Parsed;
+    }
     const std::pair<llvm::StringRef, uint32_t DriverInterruptResource::*>
         Words[] = {
             {interruptField::RawVector, &DriverInterruptResource::RawVector},
@@ -495,6 +723,12 @@ interruptResources(const llvm::json::Value &Value) {
         return Parsed.takeError();
       Resource.*Member = *Parsed;
     }
+    if (const auto *Messages = Object->get(interruptField::Messages)) {
+      auto Parsed = interruptMessages(*Messages);
+      if (!Parsed)
+        return Parsed.takeError();
+      Resource.Messages = std::move(*Parsed);
+    }
     Result.push_back(std::move(Resource));
   }
   return Result;
@@ -512,7 +746,8 @@ interruptEvents(const llvm::json::Value &Value) {
       return invalid("each interrupt event must be an object");
     if (auto E = fields(*Object,
                         {interruptField::After100ns, interruptField::DeviceID,
-                         interruptField::InterruptID}))
+                         interruptField::InterruptID, interruptField::Action,
+                         interruptField::MessageID}))
       return std::move(E);
     const auto *After = Object->get(interruptField::After100ns);
     auto DeviceID = Object->getString(interruptField::DeviceID);
@@ -523,7 +758,28 @@ interruptEvents(const llvm::json::Value &Value) {
     auto ParsedAfter = unsigned64(*After, interruptField::After100ns);
     if (!ParsedAfter)
       return ParsedAfter.takeError();
-    Result.push_back({*ParsedAfter, DeviceID->str(), InterruptID->str()});
+    DriverInterruptEvent Event{*ParsedAfter, DeviceID->str(),
+                               InterruptID->str()};
+    if (const auto *Field = Object->get(interruptField::Action)) {
+      auto Action = Field->getAsString();
+      bool Found = false;
+#define NEVERD_DRIVER_INTERRUPT_ACTION(Name, Spelling)                         \
+  if (Action && *Action == Spelling) {                                         \
+    Event.Action = DriverInterruptAction::Name;                                \
+    Found = true;                                                              \
+  }
+#include "neverd/emulation/DriverInterrupts.def"
+#undef NEVERD_DRIVER_INTERRUPT_ACTION
+      if (!Found)
+        return invalid("interrupt action must be pulse, assert or deassert");
+    }
+    if (const auto *ID = Object->get(interruptField::MessageID)) {
+      auto Parsed = unsigned32(*ID, interruptField::MessageID);
+      if (!Parsed)
+        return Parsed.takeError();
+      Event.MessageID = *Parsed;
+    }
+    Result.push_back(std::move(Event));
   }
   return Result;
 }
@@ -766,6 +1022,24 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
 #undef NEVERD_DRIVER_REQUEST_KIND
   if (!KnownKind)
     return invalid("unsupported request kind '" + *Kind + "'");
+  if ((Object->get(userField::UserBuffers) ||
+       Object->get(userField::UserPointers)) &&
+      Result.Kind != DriverRequestKind::DeviceControl &&
+      Result.Kind != DriverRequestKind::Read &&
+      Result.Kind != DriverRequestKind::Write)
+    return invalid("user memory requires a neither-I/O transfer request");
+  if (const auto *Buffers = Object->get(userField::UserBuffers)) {
+    auto Parsed = userBuffers(*Buffers);
+    if (!Parsed)
+      return Parsed.takeError();
+    Result.UserBuffers = std::move(*Parsed);
+  }
+  if (const auto *Pointers = Object->get(userField::UserPointers)) {
+    auto Parsed = userPointers(*Pointers);
+    if (!Parsed)
+      return Parsed.takeError();
+    Result.UserPointers = std::move(*Parsed);
+  }
   if (Object->get(AsynchronousFileField) &&
       Result.Kind != DriverRequestKind::Create)
     return invalid("asynchronous_file requires a create request");
@@ -798,7 +1072,10 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
   if (const auto *Device = Object->get(DeviceField)) {
     auto Name = Device->getAsString();
     if (!Name || Name->empty() || !validDeviceName(*Name))
-      return invalid("device must contain 1..512 printable ASCII bytes");
+      return invalid(
+          llvm::formatv("device must contain 1..{0} printable ASCII bytes",
+                        profile::MaxDeviceNameSize)
+              .str());
     Result.Device = Name->str();
   }
   if (const auto *DeviceID = Object->get(DeviceIDField)) {
@@ -813,17 +1090,11 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
     const auto *Value = Object->get(Field);
     if (!Value)
       return llvm::Error::success();
-    auto Text = Value->getAsString();
-    if (!Text)
-      return invalid(Field + " must be a user-page access string");
-#define NEVERD_DRIVER_USER_PAGE_ACCESS(Name, Spelling)                         \
-  if (*Text == Spelling) {                                                     \
-    Output = DriverUserPageAccess::Name;                                       \
-    return llvm::Error::success();                                             \
-  }
-#include "neverd/emulation/DriverUserPageAccess.def"
-#undef NEVERD_DRIVER_USER_PAGE_ACCESS
-    return invalid(Field + " has an unsupported user-page access value");
+    auto Parsed = userPageAccess(*Value, Field);
+    if (!Parsed)
+      return Parsed.takeError();
+    Output = *Parsed;
+    return llvm::Error::success();
   };
   if (auto E = UserAccess(UserInputAccessField, Result.UserInputAccess))
     return std::move(E);
@@ -862,7 +1133,17 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
     Result.Power = *Power;
     return Result;
   }
-  if (Object->get(MinorField) || Object->get(BusCompletionField) ||
+  const bool FileLifecycle = Result.Kind == DriverRequestKind::Create ||
+                             Result.Kind == DriverRequestKind::Cleanup ||
+                             Result.Kind == DriverRequestKind::Close;
+  if (FileLifecycle && Object->get(BusCompletionField)) {
+    auto Bus = busCompletion(*Object);
+    if (!Bus)
+      return Bus.takeError();
+    Result.FileBusCompletion = *Bus;
+  }
+  if (Object->get(MinorField) ||
+      (!FileLifecycle && Object->get(BusCompletionField)) ||
       Object->get(PowerTypeField) || Object->get(PowerStateField) ||
       Object->get(PowerActionField) || Object->get(SystemContextField))
     return invalid("power or pnp fields require the matching request kind");
@@ -918,22 +1199,21 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
     if (!ParsedCode)
       return ParsedCode.takeError();
     Result.ControlCode = *ParsedCode;
+    if ((Object->get(userField::UserBuffers) ||
+         Object->get(userField::UserPointers)) &&
+        (Result.ControlCode & windows::IoControlMethodMask) !=
+            windows::MethodNeither)
+      return invalid("user memory requires METHOD_NEITHER ioctl");
   }
   auto Bytes = [&](llvm::StringRef Field,
                    std::vector<uint8_t> &Output) -> llvm::Error {
     const auto *Input = Object->get(Field);
     if (!Input)
       return llvm::Error::success();
-    auto Text = Input->getAsString();
-    if (!Text || Text->size() > DriverScenarioBufferLimit * 2 ||
-        Text->size() % 2 ||
-        !std::all_of(Text->begin(), Text->end(), llvm::isHexDigit))
-      return invalid(Field + " must be an even-length hexadecimal byte string "
-                             "of at most 65536 bytes");
-    Output.reserve(Text->size() / 2);
-    for (size_t I = 0; I < Text->size(); I += 2)
-      Output.push_back((llvm::hexDigitValue((*Text)[I]) << 4) |
-                       llvm::hexDigitValue((*Text)[I + 1]));
+    auto Parsed = hexBytes(*Input, Field);
+    if (!Parsed)
+      return Parsed.takeError();
+    Output = std::move(*Parsed);
     return llvm::Error::success();
   };
   if (auto E = Bytes(InputField, Result.Input))
@@ -944,7 +1224,10 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
     auto Size = Output->getAsUINT64();
     if (!Size || *Size > DriverScenarioBufferLimit)
       return invalid(
-          "output_size must be an unsigned integer of at most 65536");
+          llvm::formatv("output_size must be an unsigned integer of at most "
+                        "{0}",
+                        DriverScenarioBufferLimit)
+              .str());
     Result.OutputSize = static_cast<uint32_t>(*Size);
   }
   return Result;
@@ -1085,8 +1368,31 @@ llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
 }
 
 llvm::Error validateDriverInterrupts(llvm::ArrayRef<DriverPnpDevice> Devices) {
-  size_t Count = 0;
-  std::set<uint32_t> Vectors;
+  size_t Count = 0, MessageCount = 0;
+  struct VectorFacts {
+    const DriverInterruptResource *Resource;
+    uint32_t Level;
+    uint64_t Affinity;
+  };
+  std::map<uint32_t, VectorFacts> Vectors;
+  auto AddVector = [&](const DriverInterruptResource &Interrupt,
+                       uint32_t Vector, uint32_t Level,
+                       uint64_t Affinity) -> llvm::Error {
+    auto [It, Inserted] =
+        Vectors.emplace(Vector, VectorFacts{&Interrupt, Level, Affinity});
+    if (!Inserted) {
+      const auto &Peer = *It->second.Resource;
+      if (Peer.Share != DriverInterruptShare::Shared ||
+          Interrupt.Share != DriverInterruptShare::Shared ||
+          Peer.Mode != Interrupt.Mode ||
+          Peer.RetriggerAfter100ns != Interrupt.RetriggerAfter100ns ||
+          It->second.Level != Level || It->second.Affinity != Affinity)
+        return invalid(
+            "translated interrupt vectors must be globally exclusive "
+            "or describe the same shared line");
+    }
+    return llvm::Error::success();
+  };
   for (const auto &Device : Devices) {
     if (Device.Bus == DriverBusKind::ResourceFree && !Device.Interrupts.empty())
       return invalid("resource_free devices cannot have interrupts");
@@ -1101,9 +1407,6 @@ llvm::Error validateDriverInterrupts(llvm::ArrayRef<DriverPnpDevice> Devices) {
         return invalid("interrupt id must be a bounded ASCII identifier");
       if (!IDs.insert(Interrupt.ID).second)
         return invalid("duplicate interrupt id '" + Interrupt.ID + "'");
-      if (!Vectors.insert(Interrupt.TranslatedVector).second)
-        return invalid(
-            "translated interrupt vectors must be globally exclusive");
       switch (Interrupt.Mode) {
 #define NEVERD_DRIVER_INTERRUPT_MODE(Name, Value, Spelling)                    \
   case DriverInterruptMode::Name:                                              \
@@ -1112,6 +1415,15 @@ llvm::Error validateDriverInterrupts(llvm::ArrayRef<DriverPnpDevice> Devices) {
 #undef NEVERD_DRIVER_INTERRUPT_MODE
       default:
         return invalid("unsupported interrupt mode");
+      }
+      if (Interrupt.Mode == DriverInterruptMode::LevelSensitive) {
+        if (!Interrupt.RetriggerAfter100ns || !*Interrupt.RetriggerAfter100ns ||
+            *Interrupt.RetriggerAfter100ns > INT64_MAX)
+          return invalid("level-sensitive interrupts require positive "
+                         "retrigger_after_100ns within signed 64-bit time");
+      } else if (Interrupt.RetriggerAfter100ns) {
+        return invalid(
+            "latched interrupts cannot specify retrigger_after_100ns");
       }
       switch (Interrupt.Share) {
 #define NEVERD_DRIVER_INTERRUPT_SHARE(Name, Value, Spelling)                   \
@@ -1125,13 +1437,55 @@ llvm::Error validateDriverInterrupts(llvm::ArrayRef<DriverPnpDevice> Devices) {
       if (Interrupt.RawLevel > DriverInterruptRawLevelLimit)
         return invalid(
             "raw interrupt level must fit the group-zero descriptor");
-      if (Interrupt.TranslatedLevel < DriverInterruptMinimumLevel ||
+      if ((Interrupt.TranslatedLevel &&
+           Interrupt.TranslatedLevel < DriverInterruptMinimumLevel) ||
           Interrupt.TranslatedLevel > DriverInterruptMaximumLevel)
         return invalid(
             "translated interrupt level must be a supported device DIRQL");
       if (Interrupt.RawAffinity != DriverInterruptAffinity ||
           Interrupt.TranslatedAffinity != DriverInterruptAffinity)
         return invalid("interrupt affinity must name only CPU zero");
+      if (Interrupt.Messages.empty()) {
+        if (auto E = AddVector(Interrupt, Interrupt.TranslatedVector,
+                               Interrupt.TranslatedLevel,
+                               Interrupt.TranslatedAffinity))
+          return E;
+        continue;
+      }
+      if (Interrupt.Messages.size() >
+          DriverScenarioInterruptMessageLimit - MessageCount)
+        return invalid("interrupt messages exceed the combined count limit");
+      MessageCount += Interrupt.Messages.size();
+      const auto &First = Interrupt.Messages.front();
+      if (Interrupt.Mode != DriverInterruptMode::Latched ||
+          Interrupt.RawLevel ||
+          Interrupt.TranslatedVector != First.TranslatedVector ||
+          Interrupt.TranslatedLevel != First.TranslatedLevel ||
+          Interrupt.TranslatedAffinity != First.TranslatedAffinity)
+        return invalid("message descriptors require latched mode, raw_level "
+                       "zero and the first message translated tuple");
+      for (const auto &Message : Interrupt.Messages) {
+        if (Message.MessageAddress != First.MessageAddress)
+          return invalid("messages in one descriptor require one address");
+        if (Message.TranslatedLevel < DriverInterruptMinimumLevel ||
+            Message.TranslatedLevel > DriverInterruptMaximumLevel ||
+            Message.TranslatedAffinity != DriverInterruptAffinity)
+          return invalid(
+              "interrupt messages require supported DIRQL and CPU zero");
+        switch (Message.Polarity) {
+#define NEVERD_DRIVER_INTERRUPT_POLARITY(Name, Value, Spelling)                \
+  case DriverInterruptPolarity::Name:                                          \
+    break;
+#include "neverd/emulation/DriverInterrupts.def"
+#undef NEVERD_DRIVER_INTERRUPT_POLARITY
+        default:
+          return invalid("unsupported interrupt message polarity");
+        }
+        if (auto E =
+                AddVector(Interrupt, Message.TranslatedVector,
+                          Message.TranslatedLevel, Message.TranslatedAffinity))
+          return E;
+      }
     }
   }
   return llvm::Error::success();
@@ -1147,18 +1501,30 @@ llvm::Error validateDriverDma(llvm::ArrayRef<DriverPnpDevice> Devices) {
     if (Dma.AddressBits != 32 && Dma.AddressBits != 64)
       return invalid("DMA address_bits must be 32 or 64");
     if (!Dma.MaximumLength || Dma.MaximumLength > DriverDmaMaximumLengthLimit)
-      return invalid("DMA maximum_length must be between 1 and 1 MiB");
+      return invalid(
+          llvm::formatv("DMA maximum_length must be between 1 and {0} bytes",
+                        DriverDmaMaximumLengthLimit)
+              .str());
     if (!Dma.MapRegisters || Dma.MapRegisters > DriverDmaMapRegisterLimit)
-      return invalid("DMA map_registers must be between 1 and 256");
+      return invalid(
+          llvm::formatv("DMA map_registers must be between 1 and {0}",
+                        DriverDmaMapRegisterLimit)
+              .str());
     if (!Dma.Alignment || Dma.Alignment > DriverDmaAlignmentLimit ||
         (Dma.Alignment & (Dma.Alignment - 1)))
-      return invalid("DMA alignment must be a power of two between 1 and 4096");
+      return invalid(llvm::formatv("DMA alignment must be a power of two "
+                                   "between 1 and {0}",
+                                   DriverDmaAlignmentLimit)
+                         .str());
     if (!Dma.LogicalBase || Dma.LogicalBase % DriverDmaPageSize)
       return invalid("DMA logical_base must be nonzero and page aligned");
     if (!Dma.LogicalLength || Dma.LogicalLength > DriverDmaLogicalLengthLimit ||
         Dma.LogicalLength % DriverDmaPageSize)
       return invalid(
-          "DMA logical_length must be page aligned from 4 KiB to 1 GiB");
+          llvm::formatv("DMA logical_length must be page aligned from {0} "
+                        "to {1} bytes",
+                        DriverDmaPageSize, DriverDmaLogicalLengthLimit)
+              .str());
     if (Dma.LogicalBase > UINT64_MAX - Dma.LogicalLength)
       return invalid("DMA logical aperture overflows 64 bits");
     if (Dma.AddressBits == 32 &&
@@ -1333,6 +1699,81 @@ llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   return llvm::Error::success();
 }
 
+llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
+  if (Request.UserInputAccess && !validUserPageAccess(*Request.UserInputAccess))
+    return invalid(UserInputAccessField + " has an unsupported value");
+  if (Request.UserOutputAccess &&
+      !validUserPageAccess(*Request.UserOutputAccess))
+    return invalid(UserOutputAccessField + " has an unsupported value");
+  if (Request.UserBuffers.empty() && Request.UserPointers.empty())
+    return llvm::Error::success();
+  const bool IOCTL = Request.Kind == DriverRequestKind::DeviceControl;
+  const bool Read = Request.Kind == DriverRequestKind::Read;
+  const bool Write = Request.Kind == DriverRequestKind::Write;
+  if ((!IOCTL && !Read && !Write) ||
+      (IOCTL && (Request.ControlCode & windows::IoControlMethodMask) !=
+                    windows::MethodNeither))
+    return invalid("user memory requires a neither-I/O transfer request");
+  if (Request.UserBuffers.size() > DriverScenarioUserBufferLimit ||
+      Request.UserPointers.size() > DriverScenarioUserPointerLimit)
+    return invalid("user memory exceeds the buffer or pointer count limit");
+  std::map<std::string, uint32_t> Buffers;
+  for (const auto &Buffer : Request.UserBuffers) {
+    if (!validIdentifier(Buffer.ID, DriverScenarioUserBufferIDLimit))
+      return invalid("user buffer id must be a bounded ASCII identifier");
+    if (!Buffers.emplace(Buffer.ID, Buffer.Size).second)
+      return invalid("duplicate user buffer id '" + Buffer.ID + "'");
+    if (!Buffer.Size || Buffer.Size > DriverScenarioBufferLimit ||
+        Buffer.Input.size() > Buffer.Size)
+      return invalid("user buffer size or initial bytes exceed its extent");
+    if (!validUserPageAccess(Buffer.Access))
+      return invalid("user buffer access has an unsupported value");
+  }
+  auto Size = [&](const DriverUserBufferRef &Ref) -> llvm::Expected<uint64_t> {
+    if (Ref.Kind != DriverUserBufferKind::Memory && !Ref.ID.empty())
+      return invalid("input/output pointer references do not accept id");
+    switch (Ref.Kind) {
+    case DriverUserBufferKind::Input:
+      return IOCTL || Write ? Request.Input.size() : 0;
+    case DriverUserBufferKind::Output:
+      return IOCTL || Read ? Request.OutputSize : 0;
+    case DriverUserBufferKind::Memory: {
+      auto It = Buffers.find(Ref.ID);
+      if (It == Buffers.end())
+        return invalid("user pointer references an unknown buffer id");
+      return It->second;
+    }
+    }
+    return invalid("unsupported user pointer buffer kind");
+  };
+  using BufferKey = std::pair<DriverUserBufferKind, std::string>;
+  using Range = std::pair<uint64_t, uint64_t>;
+  std::map<BufferKey, std::vector<Range>> Slots;
+  for (const auto &Pointer : Request.UserPointers) {
+    auto SourceSize = Size(Pointer.Source);
+    if (!SourceSize)
+      return SourceSize.takeError();
+    auto TargetSize = Size(Pointer.Target);
+    if (!TargetSize)
+      return TargetSize.takeError();
+    if (Pointer.Source.Offset > *SourceSize ||
+        profile::PointerSize > *SourceSize - Pointer.Source.Offset)
+      return invalid("user pointer source slot exceeds its buffer");
+    // A one-past pointer is valid data; guest access still needs real storage.
+    if (!*TargetSize || Pointer.Target.Offset > *TargetSize)
+      return invalid("user pointer target exceeds a nonempty buffer");
+    Slots[{Pointer.Source.Kind, Pointer.Source.ID}].emplace_back(
+        Pointer.Source.Offset, Pointer.Source.Offset + profile::PointerSize);
+  }
+  for (auto &[Key, Ranges] : Slots) {
+    std::sort(Ranges.begin(), Ranges.end());
+    for (size_t I = 1; I < Ranges.size(); ++I)
+      if (Ranges[I].first < Ranges[I - 1].second)
+        return invalid("user pointer source slots overlap");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
   if (auto E = validateDriverRegistry(Options.Registry))
     return invalid(llvm::toString(std::move(E)));
@@ -1371,8 +1812,19 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
   if (auto E = validateDmaEvents(Options))
     return E;
   uint64_t Total = 0;
+  size_t UserBufferCount = 0, UserPointerCount = 0;
   size_t InterruptEventCount = 0;
   for (const auto &Request : Options.Requests) {
+    if (auto E = validateDriverUserMemory(Request))
+      return E;
+    if (Request.UserBuffers.size() >
+            DriverScenarioUserBufferLimit - UserBufferCount ||
+        Request.UserPointers.size() >
+            DriverScenarioUserPointerLimit - UserPointerCount)
+      return invalid("user memory exceeds the combined buffer or pointer "
+                     "count limit");
+    UserBufferCount += Request.UserBuffers.size();
+    UserPointerCount += Request.UserPointers.size();
     if (Request.DeferCallbackDrain && Request.Kind != DriverRequestKind::Read &&
         Request.Kind != DriverRequestKind::Write &&
         Request.Kind != DriverRequestKind::DeviceControl)
@@ -1393,7 +1845,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
               windows::MethodNeither;
       if ((!NeitherIOCTL && Request.Kind != DriverRequestKind::Read &&
            Request.Kind != DriverRequestKind::Write) ||
-          (Request.Input.empty() && !Request.OutputSize))
+          (Request.Input.empty() && !Request.OutputSize &&
+           Request.UserBuffers.empty()))
         return invalid("requestor_exit_after_dispatch requires a nonempty "
                        "neither-I/O transfer buffer");
     }
@@ -1404,7 +1857,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
               windows::MethodNeither;
       if ((!NeitherIOCTL && Request.Kind != DriverRequestKind::Read &&
            Request.Kind != DriverRequestKind::Write) ||
-          (Request.Input.empty() && !Request.OutputSize))
+          (Request.Input.empty() && !Request.OutputSize &&
+           Request.UserBuffers.empty()))
         return invalid("user_unmap_after_dispatch requires a nonempty "
                        "neither-I/O transfer buffer");
     }
@@ -1452,12 +1906,34 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       if (Device == Options.PnpDevices.end())
         return invalid(
             "interrupt event device_id must name a configured pnp device");
-      if (std::none_of(Device->Interrupts.begin(), Device->Interrupts.end(),
+      const auto Interrupt =
+          std::find_if(Device->Interrupts.begin(), Device->Interrupts.end(),
                        [&](const DriverInterruptResource &I) {
                          return I.ID == Event.InterruptID;
-                       }))
+                       });
+      if (Interrupt == Device->Interrupts.end())
         return invalid(
             "interrupt_id must name an interrupt on the event device");
+      if (Interrupt->Messages.empty()
+              ? Event.MessageID.has_value()
+              : (!Event.MessageID ||
+                 *Event.MessageID >= Interrupt->Messages.size()))
+        return invalid("message_id must select a declared message and is "
+                       "forbidden for line interrupts");
+      switch (Event.Action) {
+      case DriverInterruptAction::Pulse:
+        if (Interrupt->Mode != DriverInterruptMode::Latched)
+          return invalid(
+              "level-sensitive interrupts require assert/deassert actions");
+        break;
+      case DriverInterruptAction::Assert:
+      case DriverInterruptAction::Deassert:
+        if (Interrupt->Mode != DriverInterruptMode::LevelSensitive)
+          return invalid("latched interrupts require pulse actions");
+        break;
+      default:
+        return invalid("unsupported interrupt action");
+      }
     }
     if (!Request.Device.empty() && !Request.DeviceID.empty())
       return invalid("device and device_id are mutually exclusive");
@@ -1494,6 +1970,18 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return invalid("PnP operation requires request kind pnp");
     if (Request.Power)
       return invalid("power operation requires request kind power");
+    if (Request.FileBusCompletion) {
+      if (Request.Kind != DriverRequestKind::Create &&
+          Request.Kind != DriverRequestKind::Cleanup &&
+          Request.Kind != DriverRequestKind::Close)
+        return invalid("bus_completion requires a file lifecycle request");
+      if (Request.DeviceID.empty() || !Request.FileBusCompletion->Status ||
+          *Request.FileBusCompletion->Status == windows::StatusPending)
+        return invalid("file bus_completion requires device_id and a "
+                       "nonpending explicit final status");
+      if (Request.FileBusCompletion->Delay100ns > INT64_MAX)
+        return invalid("file bus_completion delay exceeds signed time range");
+    }
     if (Request.CancelAfter100ns) {
       if (*Request.CancelAfter100ns > INT64_MAX)
         return invalid(
@@ -1510,11 +1998,20 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
         Request.ByteOffset > INT64_MAX)
       return invalid("request exceeds the buffer or signed offset limit");
     if (!validDeviceName(Request.Device))
-      return invalid("device must contain at most 512 printable ASCII bytes");
+      return invalid(
+          llvm::formatv("device must contain at most {0} printable ASCII "
+                        "bytes",
+                        profile::MaxDeviceNameSize)
+              .str());
     Total +=
         Request.Input.size() + Request.OutputSize + Request.DirectInput.size();
+    for (const auto &Buffer : Request.UserBuffers)
+      Total += Buffer.Size;
     if (Total > DriverScenarioTotalBufferLimit)
-      return invalid("combined request buffers exceed 512 KiB");
+      return invalid(
+          llvm::formatv("combined request buffers exceed {0} KiB",
+                        DriverScenarioTotalBufferLimit / KibibyteBytes)
+              .str());
     switch (Request.Kind) {
     case DriverRequestKind::Create:
     case DriverRequestKind::Cleanup:
@@ -1591,7 +2088,7 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
       if (!Present || ExportName.empty() ||
           ExportName.size() > profile::MaxKernelExportNameSize ||
           !std::all_of(ExportName.begin(), ExportName.end(),
-                       [](unsigned char C) { return C >= 0x21 && C <= 0x7e; }))
+                       [](unsigned char C) { return C >= '!' && C <= '~'; }))
         return invalid(
             "kernel_exports requires printable names and boolean values");
       Base.KernelExports.emplace(ExportName, *Present);

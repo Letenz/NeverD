@@ -9,9 +9,15 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelExportRegistry.cpp
   windows/KernelException.cpp
   windows/KernelSEH.cpp
+  windows/KernelSEHGS.cpp
+  windows/KernelSEHEpilogue.cpp
   windows/GuardControlFlow.cpp
   windows/KernelFramework.cpp
+  windows/KernelFrameworkInterrupts.cpp
+  windows/KernelModelFrameworkInterrupts.cpp
+  windows/KernelFrameworkPower.cpp
   windows/KernelFrameworkControl.cpp
+  windows/KernelFrameworkFiles.cpp
   windows/KernelFrameworkQueue.cpp
   windows/KernelFrameworkRequests.cpp
   windows/KernelFrameworkRequestAccessors.cpp
@@ -20,8 +26,10 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelModelExports.cpp
   windows/KernelModel.cpp
   windows/KernelModelIO.cpp
+  windows/KernelModelUserMemory.cpp
   windows/KernelModelPhysicalMemory.cpp
   windows/KernelModelMDL.cpp
+  windows/KernelModelMDLUserMappings.cpp
   windows/KernelModelIRPStack.cpp
   windows/KernelModelDeviceStack.cpp
   windows/KernelModelPnpDevices.cpp

@@ -97,10 +97,38 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
   const auto Scalar = [](const TypeRef &T) {
     return scalarType(T) && T->Kind != NdTypeKind::Float;
   };
-  if (!Hint.ReturnType || Hint.Parameters.size() > 64 ||
-      !std::all_of(Hint.Parameters.begin(), Hint.Parameters.end(),
-                   [&](const auto &P) { return Scalar(P.Type); }))
+  if (!Hint.ReturnType || Hint.Parameters.size() > 64)
     return false;
+  size_t FloatingParameters = 0;
+  for (const auto &Parameter : Hint.Parameters) {
+    if (Parameter.Type && Parameter.Type->Kind == NdTypeKind::Float) {
+      // The compiler-observed arm64 swiftcc scalar lane is v0..v7. Keep
+      // stack-passed Swift FP values outside this fixed ABI contract.
+      if (Architecture != Arch::AArch64 ||
+          Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+          !scalarType(Parameter.Type) ||
+          ++FloatingParameters >
+              getTargetRegInfo(Architecture).FPParamRegs.size())
+        return false;
+    } else if (Parameter.Type &&
+               Parameter.Type->Kind == NdTypeKind::Struct) {
+      // The closed CGRect shape lowers to four independent double lanes under
+      // arm64 swiftcc. Other records need their own compiler-backed contract.
+      const auto Members = sourceAggregateMembers(Parameter.Type);
+      if (Architecture != Arch::AArch64 ||
+          Parameter.TheRole != SourceParameterTypeHint::Role::Ordinary ||
+          Members.size() != 4 || Parameter.Type->Size != 32 ||
+          !std::all_of(Members.begin(), Members.end(), [](const auto &M) {
+            return M.Type && M.Type->Kind == NdTypeKind::Float &&
+                   M.Type->Size == 8;
+          }) ||
+          (FloatingParameters += 4) >
+              getTargetRegInfo(Architecture).FPParamRegs.size())
+        return false;
+    } else if (!Scalar(Parameter.Type)) {
+      return false;
+    }
+  }
   unsigned IndirectResults = 0, Contexts = 0;
   for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
     const auto &Parameter = Hint.Parameters[I];
@@ -120,11 +148,19 @@ bool swiftFixedShape(const SourceFunctionTypeHint &Hint, Arch Architecture) {
       return false;
     }
   }
-  if (Word(Hint.ReturnType) || Hint.ReturnType->Kind == NdTypeKind::Void ||
+  if (Word(Hint.ReturnType) ||
+      (Hint.ReturnType->Kind == NdTypeKind::Int &&
+       (Hint.ReturnType->Size == 1 || Hint.ReturnType->Size == 4)) ||
+      Hint.ReturnType->Kind == NdTypeKind::Void ||
       (Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size == 16))
     return true;
+  if (Architecture == Arch::AArch64 &&
+      Hint.ReturnType->Kind == NdTypeKind::Float && scalarType(Hint.ReturnType))
+    return true;
   const auto Members = sourceAggregateMembers(Hint.ReturnType);
-  return !Members.empty() && Members.size() <= 2 &&
+  return !Members.empty() &&
+         (Members.size() <= 2 ||
+          (Architecture == Arch::AArch64 && Members.size() == 4)) &&
          std::all_of(Members.begin(), Members.end(),
                      [&](const auto &M) { return Word(M.Type); });
 }
@@ -178,18 +214,55 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
             {Member.Type->Fields[I],
              uint16_t(Member.ByteOffset + Member.Type->FieldOffsets[I])});
     } else {
-      const bool Floating = Member.Type->Kind == NdTypeKind::Float;
-      if (!scalarType(Member.Type) || (!Floating && Member.Type->Size != 8) ||
-          Result.size() >= (Floating ? 4U : 2U) ||
-          Member.ByteOffset != Result.size() * Member.Type->Size ||
-          (!Result.empty() &&
-           (Result.front().Type->Size != Member.Type->Size ||
-            (Result.front().Type->Kind == NdTypeKind::Float) != Floating)))
+      if (!scalarType(Member.Type))
         return {};
       Result.push_back(std::move(Member));
     }
   }
-  if (Result.empty() || Result.size() * Result.front().Type->Size != Type->Size)
+  if (Result.empty())
+    return {};
+  const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
+  if (Floating) {
+    if (Result.size() > 4 ||
+        !std::all_of(Result.begin(), Result.end(),
+                     [&](const auto &Member) {
+                       return Member.Type->Kind == NdTypeKind::Float &&
+                              Member.Type->Size == Result.front().Type->Size &&
+                              Member.ByteOffset ==
+                                  (&Member - Result.data()) * Member.Type->Size;
+                     }) ||
+        Result.size() * Result.front().Type->Size != Type->Size)
+      return {};
+    return Result;
+  }
+  // Bound indirect results to the three signed words used by Darwin's
+  // NSOperatingSystemVersion. Other three-word leaf types need distinct C
+  // record identities before their source declarations can safely coexist.
+  if (Result.size() == 3 &&
+      !std::all_of(Result.begin(), Result.end(), [](const auto &Member) {
+        return Member.Type->Kind == NdTypeKind::Int && Member.Type->IsSigned;
+      }))
+    return {};
+  const bool FullWords =
+      Result.size() <= 4 &&
+      std::all_of(Result.begin(), Result.end(),
+                  [&](const auto &Member) {
+                    return Member.Type->Kind != NdTypeKind::Float &&
+                           Member.Type->Size == 8 &&
+                           Member.ByteOffset == (&Member - Result.data()) * 8;
+                  }) &&
+      Result.size() * 8 == Type->Size;
+  // Both Darwin arm64 and x86_64 classify this natural 16-byte layout as two
+  // INTEGER eightbytes. Only four bytes of the first carrier are meaningful;
+  // the padding is not a source field and must never become a value. Keep the
+  // exception exact until other mixed layouts have their own compiler-backed
+  // classification and lowering tests.
+  const bool NarrowLeadingWord =
+      Result.size() == 2 && Type->Size == 16 &&
+      Result[0].Type->Kind == NdTypeKind::Int && Result[0].Type->Size == 4 &&
+      Result[0].ByteOffset == 0 && Result[1].Type->Kind == NdTypeKind::Int &&
+      Result[1].Type->Size == 8 && Result[1].ByteOffset == 8;
+  if (!FullWords && !NarrowLeadingWord)
     return {};
   return Result;
 }
@@ -225,10 +298,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     return fail(Diagnostic,
                 "Source ABI requires an explicit arm64/x86_64 layout");
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
+  const auto EmptyLocation = [](const SourceABIValueLocation &Location) {
+    return Location.Kind == SourceABICarrierKind::None &&
+           Location.RegisterOffset == 0 && Location.EntryStackOffset == 0 &&
+           Location.ValueBytes == 0 && !Location.ExtendTo32Bits;
+  };
   if (Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift) {
     if (!swiftFixedShape(Hint, Hint.Architecture))
       return fail(Diagnostic, "Unsupported fixed Swift source ABI shape");
     size_t IntegerIndex = 0;
+    size_t FloatingIndex = 0;
     int64_t StackOffset = Hint.Architecture == Arch::X64 ? 8 : 0;
     for (size_t I = 0; I < Hint.Parameters.size(); ++I) {
       const auto &P = Hint.Parameters[I];
@@ -243,6 +322,22 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
         Expected.Kind = SourceABICarrierKind::IntegerRegister;
         Expected.RegisterOffset =
             Hint.Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13;
+      } else if (P.Type->Kind == NdTypeKind::Float) {
+        Expected.Kind = SourceABICarrierKind::FloatingRegister;
+        Expected.RegisterOffset = TRI.FPParamRegs[FloatingIndex++];
+      } else if (P.Type->Kind == NdTypeKind::Struct) {
+        const auto Members = sourceAggregateMembers(P.Type);
+        if (!EmptyLocation(P.Location) ||
+            P.Components.size() != Members.size())
+          return fail(Diagnostic, "Unsupported fixed Swift record carrier");
+        for (size_t J = 0; J < Members.size(); ++J) {
+          const SourceABIValueLocation Member = {
+              SourceABICarrierKind::FloatingRegister,
+              TRI.FPParamRegs[FloatingIndex++], 0, Members[J].Type->Size};
+          if (!sameLocation(P.Components[J], Member))
+            return fail(Diagnostic, "Unsupported fixed Swift record carrier");
+        }
+        continue;
       } else if (IntegerIndex < TRI.IntParamRegs.size()) {
         Expected.Kind = SourceABICarrierKind::IntegerRegister;
         Expected.RegisterOffset = TRI.IntParamRegs[IntegerIndex++];
@@ -300,11 +395,6 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
              (!IsReturn || Location.RegisterOffset == TRI.IntReturnReg);
     return false;
   };
-  const auto EmptyLocation = [](const SourceABIValueLocation &Location) {
-    return Location.Kind == SourceABICarrierKind::None &&
-           Location.RegisterOffset == 0 && Location.EntryStackOffset == 0 &&
-           Location.ValueBytes == 0 && !Location.ExtendTo32Bits;
-  };
   auto AggregateLocations = [&](const TypeRef &Type,
                                 const std::vector<SourceABIValueLocation>
                                     &Parts,
@@ -313,11 +403,18 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     if (Members.empty() || Parts.size() != Members.size())
       return false;
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+    const bool SwiftFourWordReturn =
+        IsReturn && !Floating &&
+        Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
+        Hint.Architecture == Arch::AArch64 && Members.size() == 4;
+    if (!Floating && Members.size() > 2 && !SwiftFourWordReturn)
+      return false;
     if (Floating && Hint.Architecture != Arch::AArch64)
       return false;
-    const auto Bank = Floating   ? TRI.FPParamRegs
-                      : IsReturn ? TRI.IntReturnRegs
-                                 : TRI.IntParamRegs;
+    const auto Bank = Floating              ? TRI.FPParamRegs
+                      : SwiftFourWordReturn ? TRI.IntParamRegs
+                      : IsReturn            ? TRI.IntReturnRegs
+                                            : TRI.IntParamRegs;
     const auto Start =
         std::find(Bank.begin(), Bank.end(), Parts.front().RegisterOffset);
     const bool Stack = Parts.front().Kind == SourceABICarrierKind::Stack;
@@ -344,8 +441,20 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     return true;
   };
   if (Hint.ReturnType->Kind == NdTypeKind::Struct) {
-    if (!EmptyLocation(Hint.ReturnLocation) ||
-        !AggregateLocations(Hint.ReturnType, Hint.ReturnComponents, true))
+    const auto &Return = Hint.ReturnLocation;
+    if (Return.Kind == SourceABICarrierKind::IndirectResultPointer) {
+      const auto Members = sourceAggregateMembers(Hint.ReturnType);
+      if (Hint.Architecture != Arch::AArch64 ||
+          Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
+          Members.size() != 3 || Hint.ReturnType->Size != 24 ||
+          Members.front().Type->Kind == NdTypeKind::Float ||
+          Return.RegisterOffset != TRI.indirectResultReg() ||
+          Return.EntryStackOffset != 0 || Return.ValueBytes != 8 ||
+          Return.ExtendTo32Bits || !Hint.ReturnComponents.empty())
+        return fail(Diagnostic, "Unsupported source indirect record result");
+    } else if (!EmptyLocation(Return) ||
+               !AggregateLocations(Hint.ReturnType, Hint.ReturnComponents,
+                                   true))
       return fail(Diagnostic, "Unsupported source record return carriers");
   } else if (!Hint.ReturnComponents.empty()) {
     if (Hint.ReturnType->Kind != NdTypeKind::Int ||
@@ -368,6 +477,9 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     return fail(Diagnostic, "Unsupported source return carrier");
   }
   std::set<std::pair<SourceABICarrierKind, uint64_t>> Registers;
+  if (Hint.ReturnLocation.Kind == SourceABICarrierKind::IndirectResultPointer)
+    Registers.emplace(SourceABICarrierKind::IntegerRegister,
+                      Hint.ReturnLocation.RegisterOffset);
   std::vector<std::pair<int64_t, int64_t>> StackRanges;
   size_t PhysicalCount = 0;
   for (const auto &Parameter : Hint.Parameters) {
@@ -449,7 +561,8 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       if (Members.empty())
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-      if (Floating && Architecture != Arch::AArch64)
+      if ((Floating && Architecture != Arch::AArch64) ||
+          (!Floating && Members.size() > 2))
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       Parameter.Location = {};
       auto &Index = Floating ? FloatIndex : IntegerIndex;
@@ -513,11 +626,23 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (Members.empty())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-    const auto Bank = Floating ? TRI.FPParamRegs : TRI.IntReturnRegs;
-    if ((Floating && Architecture != Arch::AArch64) ||
-        Members.size() > Bank.size())
+    const bool SwiftFourWordReturn =
+        !Floating &&
+        Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
+        Architecture == Arch::AArch64 && Members.size() == 4;
+    const auto Bank = Floating              ? TRI.FPParamRegs
+                      : SwiftFourWordReturn ? TRI.IntParamRegs
+                                            : TRI.IntReturnRegs;
+    const bool Indirect =
+        !Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
+        Convention == SourceFunctionTypeHint::ConventionKind::C;
+    if (Indirect)
+      Hint.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
+                             TRI.indirectResultReg(), 0, 8};
+    else if ((Floating && Architecture != Arch::AArch64) ||
+             Members.size() > Bank.size())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
-    for (size_t I = 0; I < Members.size(); ++I)
+    for (size_t I = 0; !Indirect && I < Members.size(); ++I)
       Hint.ReturnComponents.push_back(
           {Floating ? SourceABICarrierKind::FloatingRegister
                     : SourceABICarrierKind::IntegerRegister,
@@ -541,6 +666,7 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     // width separate so a byte result is still emitted with its byte type.
     Hint.ReturnLocation.ExtendTo32Bits =
         Architecture == Arch::AArch64 &&
+        Convention == SourceFunctionTypeHint::ConventionKind::C &&
         Hint.ReturnType->Kind == NdTypeKind::Int && Hint.ReturnType->Size < 4;
   }
   Hint.Architecture = Architecture;
@@ -587,10 +713,42 @@ std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
     break;
   case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
     Result.TargetName = "initializeWithCopy";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::
+      InitializeBufferWithCopyOfBuffer:
+    Result.TargetName = "initializeBufferWithCopyOfBuffer";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy:
+    Result.TargetName = "assignWithCopy";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake:
+    Result.TargetName = "initializeWithTake";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake:
+    Result.TargetName = "assignWithTake";
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload:
+    Result.TargetName = "getEnumTagSinglePayload";
+    Signature.ReturnType = NdType::makeInt(4, false);
+    Signature.Parameters = {{"value", Pointer},
+                            {"emptyCases", NdType::makeInt(4, false)},
+                            {"metadata", Pointer}};
+    break;
+  case SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload:
+    Result.TargetName = "storeEnumTagSinglePayload";
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"value", Pointer},
+                            {"whichCase", NdType::makeInt(4, false)},
+                            {"emptyCases", NdType::makeInt(4, false)},
+                            {"metadata", Pointer}};
+    break;
+  default:
+    return std::nullopt;
+  }
+  if (!Signature.ReturnType) {
     Signature.ReturnType = Pointer;
     Signature.Parameters = {
         {"destination", Pointer}, {"source", Pointer}, {"metadata", Pointer}};
-    break;
   }
   std::string Diagnostic;
   if (!assignDarwinSwiftSourceABI(Signature, Architecture, Diagnostic))
@@ -600,18 +758,33 @@ std::optional<SourceCallTypeHint> swiftValueWitnessSourceCallHint(
 
 std::optional<unsigned>
 swiftValueWitnessSlot(SourceCallTypeHint::SwiftValueWitnessKind Operation) {
+  // Required function entries precede the layout words in Swift ABI
+  // include/swift/ABI/ValueWitness.def. Optional enum witnesses are excluded.
   switch (Operation) {
+  case SourceCallTypeHint::SwiftValueWitnessKind::
+      InitializeBufferWithCopyOfBuffer:
+    return 0;
   case SourceCallTypeHint::SwiftValueWitnessKind::Destroy:
     return 1;
   case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithCopy:
     return 2;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithCopy:
+    return 3;
+  case SourceCallTypeHint::SwiftValueWitnessKind::InitializeWithTake:
+    return 4;
+  case SourceCallTypeHint::SwiftValueWitnessKind::AssignWithTake:
+    return 5;
+  case SourceCallTypeHint::SwiftValueWitnessKind::GetEnumTagSinglePayload:
+    return 6;
+  case SourceCallTypeHint::SwiftValueWitnessKind::StoreEnumTagSinglePayload:
+    return 7;
   }
   return std::nullopt;
 }
 
 bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
                                        Arch Architecture) {
-  if (!Hint.ValueWitness)
+  if (!Hint.ValueWitness || Hint.BooleanResult)
     return false;
   const auto Expected =
       swiftValueWitnessSourceCallHint(Architecture, *Hint.ValueWitness);
@@ -622,7 +795,11 @@ bool isSwiftValueWitnessSourceCallHint(const SourceCallTypeHint &Hint,
          Hint.SelectorReferenceAddress == 0 && !Hint.DoesNotReturn &&
          !Hint.ReturnedArgument && !Hint.RuntimeObjCResultType &&
          Hint.BorrowedByteInputs.empty() && Hint.SwiftStringInputs.empty() &&
-         !Hint.Format && !Hint.Receiver && Hint.ByteCount == 0 &&
+         !Hint.Format && !Hint.NilTerminated && !Hint.Receiver &&
+         !Hint.SelectorResultUse && !Hint.SelectorResultTypeUse &&
+         !Hint.SelectorArgumentTypeUse && !Hint.SelectorForwardingUse &&
+         !Hint.SelectorArgumentStorageUse &&
+         !Hint.ObjCIndirectResultStorage && Hint.ByteCount == 0 &&
          Hint.ImmutablePointerSlot == 0 &&
          equalSourceABIs(Hint.Signature, Expected->Signature);
 }
@@ -633,7 +810,17 @@ bool assignDarwinObjCSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
        Hint.Origin != SourceFunctionTypeHint::OriginKind::ObjCSDK) ||
       Hint.Parameters.size() < 2)
     return fail(Diagnostic, "Unsupported Objective-C source ABI");
-  return assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic);
+  if (!assignDarwinFixedSourceABI(Hint, Architecture, Diagnostic))
+    return false;
+  // Unlike an ordinary C callee, objc_msgSend with a nil receiver leaves an
+  // indirect result buffer untouched. The logical-record call projection
+  // cannot supply that storage behavior until it models nil dispatch.
+  if (Hint.ReturnLocation.Kind == SourceABICarrierKind::IndirectResultPointer) {
+    Hint.HasExplicitABI = false;
+    return fail(Diagnostic,
+                "Objective-C indirect results require nil storage modeling");
+  }
+  return true;
 }
 
 bool assignDarwinVariadicSourceABI(SourceFunctionTypeHint &Hint,

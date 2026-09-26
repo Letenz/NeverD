@@ -33,13 +33,22 @@ struct SwiftSDKDeclaration {
   const char *Name;
   const char *Modules;
   const char *Signature;
+  bool DoesNotReturn = false;
 };
 
 // Compiler-observed public Foundation bridge entry points. The compact
 // signature alphabet records only physical scalar carriers: p is a pointer,
-// z is an unsigned word, I is swift_indirect_result, and C is swift_context.
+// z is an unsigned word, b is a Boolean byte, I is swift_indirect_result,
+// and C is swift_context.
 // A parenthesized pair is returned in the two integer result registers.
 constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
+    // Foundation's NSNotFound getter has no arguments and returns one Int
+    // carrier. The exact strong import is required by darwinRuntimeImport.
+    {"$s10Foundation10NSNotFoundSivg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "z"},
     {"$s10Foundation10URLRequestV19_bridgeToObjectiveCSo12NSURLRequestCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -62,7 +71,8 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
-    {"$s10Foundation13URLComponentsV19_bridgeToObjectiveCSo15NSURLComponentsCyF",
+    {"$s10Foundation13URLComponentsV19_"
+     "bridgeToObjectiveCSo15NSURLComponentsCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
@@ -73,16 +83,37 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // NSKeyValueObservation.invalidate() passes its receiver in swiftself.
+    {"$s10Foundation21NSKeyValueObservationC10invalidateyyFTj",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vC"},
     {"$s10Foundation22_convertErrorToNSErrorySo0E0Cs0C0_pF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pp"},
+    // URL.pathExtension reads the URL value through swiftself and returns
+    // both words of the String value.
+    {"$s10Foundation3URLV13pathExtensionSSvg",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "(zz)C"},
     {"$s10Foundation3URLV19_bridgeToObjectiveCSo5NSURLCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pC"},
+    // Swift 6.1.2 arm64 client IR shows URL.appendingPathComponent(String)
+    // constructing its URL result through the Swift indirect-result pointer
+    // and reading the receiver through swiftself.
+    {"$s10Foundation3URLV22appendingPathComponentyACSSF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "vIzpC"},
     {"$s10Foundation3URLV36_"
      "unconditionallyBridgeFromObjectiveCyACSo5NSURLCSgFZ",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
@@ -111,12 +142,19 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Locale.preferredLanguages returns the Array object in one register.
+    {"$s10Foundation6LocaleV18preferredLanguagesSaySSGvgZ",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "p"},
     {"$s10Foundation6LocaleV19_bridgeToObjectiveCSo8NSLocaleCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "pC"},
-    {"$s10Foundation6LocaleV36_unconditionallyBridgeFromObjectiveCyACSo8NSLocale"
+    {"$s10Foundation6LocaleV36_"
+     "unconditionallyBridgeFromObjectiveCyACSo8NSLocale"
      "CSgFZ",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -133,6 +171,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "vIp"},
+    // Binding.wrappedValue's generic setter receives the value address,
+    // Binding metadata, and the mutable Binding in swiftself.
+    {"$s7SwiftUI7BindingV12wrappedValuexvs",
+     "/System/Library/Frameworks/SwiftUI.framework/SwiftUI", "vppC"},
     {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -144,6 +186,23 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "ppppp"},
+    {"$sSS10lowercasedSSyF", "/usr/lib/swift/libswiftCore.dylib", "(zz)zp"},
+    // Swift 6.1.2 arm64 client IR passes the inout Hasher address followed
+    // by the two String words to String.hash(into:).
+    {"$sSS4hash4intoys6HasherVz_tF", "/usr/lib/swift/libswiftCore.dylib",
+     "vpzp"},
+    {"$sSS5index5afterSS5IndexVAD_tF", "/usr/lib/swift/libswiftCore.dylib",
+     "zzzp"},
+    // Swift String is passed as its two scalar carriers; the mutable
+    // destination is the swiftself pointer.
+    {"$sSS6appendyySSF", "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // Character occupies the same two scalar result carriers as String.
+    {"$sSSySJSS5IndexVcig", "/usr/lib/swift/libswiftCore.dylib", "(zz)zzp"},
+    // Swift 6.1.2 arm64 and x86_64 client IR specializes Array<AnyObject>
+    // append into these exact libswiftCore entries. The mutable Array value
+    // lives in swiftself; the element is an object pointer.
+    {"$sSa034_makeUniqueAndReserveCapacityIfNotB0yyFyXl_Ts5",
+     "/usr/lib/swift/libswiftCore.dylib", "vC"},
     {"$sSa10FoundationE19_bridgeToObjectiveCSo7NSArrayCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -155,14 +214,72 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
      "/usr/lib/swift/libswiftFoundation.dylib",
      "ppp"},
+    {"$sSa16_createNewBuffer14bufferIsUnique15minimumCapacity13growForAppendy"
+     "Sb_SiSbtFyXl_Ts5",
+     "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
+    {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
+     "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "zC"},
-    {"$ss018_bridgeAnyObjectToB0yypyXlSgF",
-     "/usr/lib/swift/libswiftCore.dylib", "vIp"},
+    // The concrete UIImage initializer consumes the two String words in x0/x1
+    // and returns an object in x0. WMF's arm64 call uses those carriers and
+    // links the exact Swift overlay symbol from UIKit.
+    // https://developer.apple.com/documentation/uikit/uiimage/init(imageliteralresourcename:)
+    {"$sSo7UIImageC5UIKitE24imageLiteralResourceNameABSS_tcfC",
+     "/System/Library/Frameworks/UIKit.framework/UIKit", "pzp"},
+    // NSNumber(integerLiteral:) takes the integer in the first argument
+    // register and the NSNumber metatype in swiftself.
+    {"$sSo8NSNumberC10FoundationE14integerLiteralABSi_tcfC",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "pzC"},
+    // StringProtocol.caseInsensitiveCompare<String> carries five generic
+    // pointers and the String value address in swiftself.
+    {"$sSy10FoundationE22caseInsensitiveCompareySo18NSComparisonResultVqd__"
+     "SyRd__lF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "zpppppC"},
+    // Swift 6.1.2 emits StringProtocol.contains<String> as five ordinary
+    // pointer carriers plus the haystack value in swiftself. The generic
+    // conformance and metadata arguments remain explicit runtime inputs.
+    {"$sSy10FoundationE8containsySbqd__SyRd__lF",
+     "/System/Library/Frameworks/Foundation.framework/Foundation|"
+     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
+     "/usr/lib/swift/libswiftFoundation.dylib",
+     "bpppppC"},
+    {"$ss018_bridgeAnyObjectToB0yypyXlSgF", "/usr/lib/swift/libswiftCore.dylib",
+     "vIp"},
+    // The mutating _StringGuts.grow(Int) entry takes the capacity in the
+    // first integer register and the two-word guts address in swiftself.
+    {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
+    {"$ss18_CocoaArrayWrapperV8endIndexSivg",
+     "/usr/lib/swift/libswiftCore.dylib", "zz"},
+    // Swift 6.1.2 DictionaryStorage.swift defines the original storage,
+    // capacity and move flag; the specialized generic metadata is swiftself.
+    {"$ss18_DictionaryStorageC4copy8originalAByxq_Gs05__RawaB0C_tFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "ppC"},
+    {"$ss18_DictionaryStorageC6resize8original8capacity4moveAByxq_Gs05__"
+     "RawaB0C_SiSbtFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "ppzbC"},
+    // Swift 6.1.2 optimized arm64 and x86_64 client IR passes capacity as
+    // an Int and concrete dictionary metadata through swiftself.
+    {"$ss18_DictionaryStorageC8allocate8capacityAByxq_GSi_tFZ",
+     "/usr/lib/swift/libswiftCore.dylib", "pzC"},
     {"$ss27_bridgeAnythingToObjectiveCyyXlxlF",
      "/usr/lib/swift/libswiftCore.dylib", "ppp"},
+    // Swift 6.1.2 NativeDictionary.swift declares this exact diagnostic
+    // with one Any.Type input and a Never result. It must retain its trap.
+    {"$ss53KEY_TYPE_OF_DICTIONARY_VIOLATES_HASHABLE_REQUIREMENTSys5NeverOypXpF",
+     "/usr/lib/swift/libswiftCore.dylib", "vp", true},
+    // The Hasher's 72-byte value is returned through x8; the dictionary
+    // caller passes its seed in x0, then _finalize reads the value in x20.
+    {"$ss6HasherV5_seedABSi_tcfC", "/usr/lib/swift/libswiftCore.dylib", "vIz"},
+    {"$ss6HasherV9_finalizeSiyF", "/usr/lib/swift/libswiftCore.dylib", "zC"},
 };
 
 bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
@@ -179,6 +296,7 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     return false;
 
   const auto Word = NdType::makeInt(8, false);
+  const auto Byte = NdType::makeInt(1, false);
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
   auto &Signature = Hint.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
@@ -189,19 +307,30 @@ bool declaredSDKABI(const BinaryImage &Image, va_t Slot,
     Signature.ReturnType = Pointer;
   else if (Encoding.consume_front("z"))
     Signature.ReturnType = Word;
+  else if (Encoding.consume_front("b"))
+    Signature.ReturnType = Byte;
   else if (Encoding.consume_front("v"))
     Signature.ReturnType = NdType::makeVoid();
   else
     return false;
+  if (Found->DoesNotReturn && Signature.ReturnType->Kind != NdTypeKind::Void)
+    return false;
+  Hint.DoesNotReturn = Found->DoesNotReturn;
+  // UIKit's image-literal initializer receives the opaque String words in
+  // x0/x1. Authenticate that exact SDK import before allowing its immutable
+  // literal storage to be copied into the generated source.
+  if (Hint.TargetName ==
+      "$sSo7UIImageC5UIKitE24imageLiteralResourceNameABSS_tcfC")
+    Hint.SwiftStringInputs = {{0, 1}};
   for (char Code : Encoding) {
     SourceParameterTypeHint Parameter;
     Parameter.Name = "arg" + std::to_string(Signature.Parameters.size());
-    Parameter.Type = Code == 'z' ? Word : Pointer;
+    Parameter.Type = Code == 'z' ? Word : Code == 'b' ? Byte : Pointer;
     if (Code == 'I')
       Parameter.TheRole = SourceParameterTypeHint::Role::SwiftIndirectResult;
     else if (Code == 'C')
       Parameter.TheRole = SourceParameterTypeHint::Role::SwiftContext;
-    else if (Code != 'p' && Code != 'z')
+    else if (Code != 'p' && Code != 'z' && Code != 'b')
       return false;
     Signature.Parameters.push_back(std::move(Parameter));
   }
@@ -239,16 +368,62 @@ bool declaredStdlibABI(const BinaryImage &Image, va_t Slot,
   constexpr llvm::StringLiteral AssertionFailure =
       "$ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_"
       "SSAHSus6UInt32VtF";
+  constexpr llvm::StringLiteral StringRangeSubscript =
+      "$sSSySsSnySS5IndexVGcig";
+  constexpr llvm::StringLiteral AllocError = "swift_allocError";
+  constexpr llvm::StringLiteral OpaqueConformance2 =
+      "swift_getOpaqueTypeConformance2";
   const auto Bind = Image.DyldBindSlots.find(Slot);
-  if (Name != AssertionFailure || Bind == Image.DyldBindSlots.end() ||
-      Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib")
+  if (Bind == Image.DyldBindSlots.end() ||
+      Bind->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
+      (Name != AssertionFailure && Name != StringRangeSubscript &&
+       Name != AllocError && Name != OpaqueConformance2) ||
+      ((Name == StringRangeSubscript || Name == AllocError ||
+        Name == OpaqueConformance2) &&
+       Image.Arch != Arch::AArch64))
     return false;
 
   auto &Signature = Hint.Signature;
   Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
   const auto Word = NdType::makeInt(8, false);
-  const auto Byte = NdType::makeInt(1, false);
   const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  if (Name == AllocError) {
+    // Swift 6.1.2 arm64 client IR: swiftcc { ptr, ptr }
+    // (ptr metadata, ptr witness, ptr initialValue, i1 isTake). Its generated
+    // assembly stores the error payload through the second result in x1.
+    Signature.ReturnType = NdType::makeStruct({Pointer, Pointer});
+    Signature.Parameters = {{"type", Pointer},
+                            {"conformance", Pointer},
+                            {"initial_value", Pointer},
+                            {"is_take", NdType::makeInt(1, false)}};
+    std::string Diagnostic;
+    return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+  }
+  if (Name == OpaqueConformance2) {
+    // Swift RuntimeFunctions.def (9215272a) declares a swiftcc witness-table
+    // pointer result from (arguments, signed descriptor, index). The strong
+    // libswiftCore import proves this versioned entry is present.
+    Signature.ReturnType = Pointer;
+    Signature.Parameters = {{"arguments", Pointer},
+                            {"descriptor", Pointer},
+                            {"index", Word}};
+    std::string Diagnostic;
+    return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+  }
+  if (Name == StringRangeSubscript) {
+    // Swift 6.1.2 arm64 client IR: swiftcc { i64, i64, i64, ptr }
+    // (i64, i64, i64, ptr). The range precedes the String value; neither
+    // its four-word result nor its storage can be collapsed to a pointer.
+    Signature.ReturnType =
+        NdType::makeStruct({Word, Word, Word, Pointer});
+    Signature.Parameters = {{"lower", Word}, {"upper", Word},
+                            {"string_bits", Word},
+                            {"string_storage", Pointer}};
+    Hint.SwiftStringInputs = {{2, 3}};
+    std::string Diagnostic;
+    return assignDarwinSwiftSourceABI(Signature, Image.Arch, Diagnostic);
+  }
+  const auto Byte = NdType::makeInt(1, false);
   Signature.ReturnType = NdType::makeVoid();
   // Compiler IR lowers the two StaticString values to (i64, i64, i8), the
   // String value to (i64, ptr), followed by UInt and UInt32. This is a fixed
@@ -480,6 +655,35 @@ swiftRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
   } else if (Name == "swift_endAccess") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"scratch", Pointer}};
+  } else if (Name == "swift_defaultActor_initialize" ||
+             Name == "swift_defaultActor_destroy") {
+    // Swift 6.1.2 arm64 client IR calls both actor lifecycle entries with
+    // swiftcc void(ptr). The actor's storage is passed, not returned.
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module !=
+            "/usr/lib/swift/libswift_Concurrency.dylib")
+      return std::nullopt;
+    Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+    Signature.ReturnType = NdType::makeVoid();
+    Signature.Parameters = {{"actor", Pointer}};
+  } else if (Name == "swift_task_alloc" || Name == "swift_task_dealloc") {
+    // Swift 6.1.2 arm64 async client IR declares swiftcc ptr(i64) and
+    // swiftcc void(ptr), respectively. Preserve allocation and release as
+    // real calls with the exact libswift_Concurrency provider.
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module !=
+            "/usr/lib/swift/libswift_Concurrency.dylib")
+      return std::nullopt;
+    Signature.Convention = SourceFunctionTypeHint::ConventionKind::Swift;
+    if (Name == "swift_task_alloc") {
+      Signature.ReturnType = Pointer;
+      Signature.Parameters = {{"size", NdType::makeInt(8, false)}};
+    } else {
+      Signature.ReturnType = NdType::makeVoid();
+      Signature.Parameters = {{"pointer", Pointer}};
+    }
   } else if (!declaredFixedABI(Image, ImportSlot, Name, Result)) {
     return std::nullopt;
   }

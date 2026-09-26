@@ -42,6 +42,10 @@ void run(const std::vector<std::string> &Arguments,
 }
 
 enum class RuntimeFixture {
+  AtomicARC,
+  DispatchOnce,
+  MutableConstants,
+  CStringStorage,
   ARC,
   Associations,
   SwiftCalls,
@@ -74,6 +78,7 @@ enum class RuntimeFixture {
   FramePadding,
   FrameSelectors,
   NativeReturnPaths,
+  SwiftOnce,
   IncomingResults,
   NativeContext,
   AuxiliaryInputs,
@@ -82,6 +87,7 @@ enum class RuntimeFixture {
   SwiftIntegerRuntime,
   SwiftRecordRuntime,
   NativeRecords,
+  NativeIntegerPairs,
   NativeFloating,
   NativeVoid,
   NativeVoidFrames,
@@ -101,7 +107,8 @@ enum class RuntimeFixture {
 
 void verifyRuntime(bool Chained,
                    RuntimeFixture FixtureKind = RuntimeFixture::ARC,
-                   bool Profiled = false, bool ManualBlocks = false) {
+                   bool Profiled = false, bool ManualBlocks = false,
+                   bool CheckSummary = false) {
   const bool DarwinDeclarations =
       FixtureKind == RuntimeFixture::DarwinDeclarations;
   const bool DynamicProperties =
@@ -121,10 +128,17 @@ void verifyRuntime(bool Chained,
   const bool NativeVoidFrames = FixtureKind == RuntimeFixture::NativeVoidFrames;
   const bool NativeFloating = FixtureKind == RuntimeFixture::NativeFloating;
   const bool NativeRecords = FixtureKind == RuntimeFixture::NativeRecords;
+  const bool NativeIntegerPairs =
+      FixtureKind == RuntimeFixture::NativeIntegerPairs;
   const bool SwiftRecordRuntime =
       FixtureKind == RuntimeFixture::SwiftRecordRuntime;
   const bool SwiftIntegerRuntime =
       FixtureKind == RuntimeFixture::SwiftIntegerRuntime;
+  const bool DispatchOnce = FixtureKind == RuntimeFixture::DispatchOnce;
+  const bool MutableConstants = FixtureKind == RuntimeFixture::MutableConstants;
+  const bool CStringStorage = FixtureKind == RuntimeFixture::CStringStorage;
+  const bool AtomicARC = FixtureKind == RuntimeFixture::AtomicARC;
+  const bool SwiftOnce = FixtureKind == RuntimeFixture::SwiftOnce;
   const bool NativeReturnPaths =
       FixtureKind == RuntimeFixture::NativeReturnPaths;
   const bool IncomingResults = FixtureKind == RuntimeFixture::IncomingResults;
@@ -178,6 +192,11 @@ void verifyRuntime(bool Chained,
       llvm::sys::fs::createUniqueDirectory("neverd-objc-arc", Directory));
   const std::filesystem::path Work(Directory.str().str());
   const auto Cleanup = llvm::make_scope_exit([&] {
+    if (::testing::Test::HasFailure()) {
+      llvm::errs() << "Failed source fixture retained at " << Work.string()
+                   << "\n";
+      return;
+    }
     std::error_code Error;
     std::filesystem::remove_all(Work, Error);
   });
@@ -194,9 +213,14 @@ void verifyRuntime(bool Chained,
                         : NativeVoid          ? "ObjCNativeVoid.m"
                         : NativeFloating      ? "ObjCNativeFloating.m"
                         : NativeRecords       ? "ObjCNativeRecordResults.m"
+                        : NativeIntegerPairs  ? "ObjCNativeIntegerPairs.m"
                         : SwiftRecordRuntime  ? "ObjCSwiftRecordRuntime.m"
                         : SwiftIntegerRuntime ? "ObjCSwiftIntegerRuntime.m"
                         : SwiftTypeLookup     ? "ObjCSwiftTypeLookup.m"
+                        : DispatchOnce        ? "ObjCDispatchOnce.m"
+                        : MutableConstants    ? "ObjCMutableConstants.m"
+                        : CStringStorage      ? "ObjCCStringStorage.m"
+                        : SwiftOnce           ? "ObjCSwiftOnce.m"
                         : NativeReturnPaths   ? "ObjCNativeReturnPaths.m"
                         : IncomingResults     ? "ObjCIncomingResults.m"
                         : RuntimeIvars        ? "ObjCRuntimeIvars.swift"
@@ -248,10 +272,15 @@ void verifyRuntime(bool Chained,
                         : NativeVoid       ? "ObjCNativeVoidHarness.m"
                         : NativeFloating   ? "ObjCNativeFloatingHarness.m"
                         : NativeRecords    ? "ObjCNativeRecordResultsHarness.m"
+                        : NativeIntegerPairs ? "ObjCNativeIntegerPairsHarness.m"
                         : SwiftRecordRuntime ? "ObjCSwiftRecordRuntimeHarness.m"
                         : SwiftIntegerRuntime
                             ? "ObjCSwiftIntegerRuntimeHarness.m"
                         : SwiftTypeLookup   ? "ObjCSwiftTypeLookupHarness.m"
+                        : DispatchOnce      ? "ObjCDispatchOnceHarness.m"
+                        : MutableConstants  ? "ObjCMutableConstantsHarness.m"
+                        : CStringStorage    ? "ObjCCStringStorageHarness.m"
+                        : SwiftOnce         ? "ObjCSwiftOnceHarness.m"
                         : NativeReturnPaths ? "ObjCNativeReturnPathsHarness.m"
                         : IncomingResults   ? "ObjCIncomingResultsHarness.m"
                         : RuntimeIvars      ? "ObjCRuntimeIvarsHarness.m"
@@ -305,6 +334,10 @@ void verifyRuntime(bool Chained,
                                    "-dynamiclib", "-framework",
                                    "Foundation",  (Fixtures / Fixture).string(),
                                    "-o",          Original};
+  if (CStringStorage)
+    Compile.push_back((Fixtures / "ObjCCStringStorageCells.m").string());
+  if (AtomicARC)
+    Compile.push_back("-DNEVERD_ATOMIC_PROPERTIES");
   if (ReceiverAliases) {
     auto Flag = std::find(Compile.begin(), Compile.end(), "-fobjc-arc");
     ASSERT_NE(Flag, Compile.end());
@@ -352,7 +385,8 @@ void verifyRuntime(bool Chained,
     Compile.push_back("-DNEVERD_NATIVE_POINTERS");
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      NativeRecords || NativeVoid || NativeVoidFrames || RuntimeIvars)
+      NativeRecords || NativeVoid || NativeVoidFrames || RuntimeIvars ||
+      SwiftOnce)
     Compile.insert(Compile.end(), {"-L/usr/lib/swift", "-lswiftCore",
                                    "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings)
@@ -411,10 +445,85 @@ void verifyRuntime(bool Chained,
   ASSERT_TRUE(Raw);
   auto JSON = llvm::json::parse(Raw.get());
   ASSERT_TRUE(bool(JSON));
+  if (CheckSummary) {
+    auto Compare = [&](const llvm::json::Value &Full, size_t MaxFunctions) {
+      std::unique_ptr<const char, decltype(&neverd_free_string)> SummaryRaw(
+          neverd_objc_methods_summary_json(Session.get(), MaxFunctions),
+          neverd_free_string);
+      ASSERT_TRUE(SummaryRaw);
+      auto Summary = llvm::json::parse(SummaryRaw.get());
+      ASSERT_TRUE(bool(Summary));
+      auto *SummaryObject = Summary->getAsObject();
+      ASSERT_NE(SummaryObject, nullptr);
+      EXPECT_EQ(SummaryObject->getBoolean("sources_omitted"), true);
+      SummaryObject->erase("sources_omitted");
+      auto Expected = Full;
+      Expected.getAsObject()->erase("native_source");
+      for (auto &Method : *Expected.getAsObject()->getArray("methods"))
+        Method.getAsObject()->erase("source");
+      EXPECT_TRUE(Expected == *Summary);
+    };
+    ASSERT_NO_FATAL_FAILURE(Compare(*JSON, 0));
+    // A restricted inventory must preserve unrecovered rows and incomplete
+    // diagnostics, not just parity for methods whose source was emitted.
+    std::unique_ptr<const char, decltype(&neverd_free_string)> LimitedRaw(
+        neverd_objc_methods_json(Session.get(), 1), neverd_free_string);
+    ASSERT_TRUE(LimitedRaw);
+    auto Limited = llvm::json::parse(LimitedRaw.get());
+    ASSERT_TRUE(bool(Limited));
+    ASSERT_GT(Limited->getAsObject()->getInteger("method_count"),
+              Limited->getAsObject()->getInteger("recovered_method_count"));
+    ASSERT_NO_FATAL_FAILURE(Compare(*Limited, 1));
+  }
   const auto *Object = JSON->getAsObject();
   ASSERT_NE(Object, nullptr);
+  const auto *ProjectionGraph = Object->getObject("source_projection_graph");
+  ASSERT_NE(ProjectionGraph, nullptr);
+  EXPECT_EQ(ProjectionGraph->getString("closure_stage"),
+            "before_method_emission_and_text_checks");
+  const auto *ProjectionNodes = ProjectionGraph->getArray("nodes");
+  ASSERT_NE(ProjectionNodes, nullptr);
+  std::map<std::string, const llvm::json::Object *> Nodes;
+  for (const auto &Value : *ProjectionNodes) {
+    const auto *Node = Value.getAsObject();
+    ASSERT_NE(Node, nullptr);
+    const auto Address = Node->getString("address");
+    ASSERT_TRUE(Address);
+    ASSERT_TRUE(Nodes.emplace(Address->str(), Node).second);
+    ASSERT_NE(Node->getObject("local_diagnostics"), nullptr);
+    if (Node->getBoolean("has_typed_body") == false)
+      EXPECT_EQ(
+          Node->getObject("local_diagnostics")->getBoolean("checks_complete"),
+          false);
+  }
+  for (const auto &[Address, Node] : Nodes) {
+    SCOPED_TRACE(Address);
+    const auto *Dependencies = Node->getArray("dependencies");
+    ASSERT_NE(Dependencies, nullptr);
+    const bool Closed = Node->getBoolean("closure_closed") == true;
+    if (Closed)
+      EXPECT_EQ(Node->getBoolean("local_gate_passed"), true);
+    for (const auto &Value : *Dependencies) {
+      const auto Dependency = Value.getAsString();
+      ASSERT_TRUE(Dependency);
+      ASSERT_TRUE(Nodes.count(Dependency->str()));
+      if (Closed)
+        EXPECT_EQ(Nodes.at(Dependency->str())->getBoolean("closure_closed"),
+                  true);
+    }
+  }
   const auto *Methods = Object->getArray("methods");
   ASSERT_NE(Methods, nullptr);
+  for (const auto &Value : *Methods) {
+    const auto *Method = Value.getAsObject();
+    ASSERT_NE(Method, nullptr);
+    if (Method->getString("status") != "recovered")
+      continue;
+    const auto Entry = Method->getString("implementation");
+    ASSERT_TRUE(Entry);
+    ASSERT_TRUE(Nodes.count(Entry->str()));
+    EXPECT_EQ(Nodes.at(Entry->str())->getBoolean("closure_closed"), true);
+  }
   if (DynamicProperties) {
     const auto *Metadata = Object->getObject("objc_metadata");
     ASSERT_NE(Metadata, nullptr);
@@ -458,10 +567,10 @@ void verifyRuntime(bool Chained,
     EXPECT_EQ(Rejected, 1U);
     return;
   }
-  ASSERT_EQ(Methods->size(), DarwinDeclarations    ? 19U
+  ASSERT_EQ(Methods->size(), DarwinDeclarations    ? 21U
                              : Equality            ? 6U
                              : FloatingSaves       ? 2U
-                             : SharedFrameworks    ? 11U
+                             : SharedFrameworks    ? 13U
                              : SavedScalars        ? 13U
                              : ReceiverResults     ? 8U
                              : ReceiverAliases     ? 5U
@@ -469,14 +578,19 @@ void verifyRuntime(bool Chained,
                              : WordRecords         ? 11U
                              : PredicateFormats    ? 8U
                              : CRecords            ? CRecordMethods
-                             : NativeVoidFrames    ? 3U
+                             : NativeVoidFrames    ? 6U
                              : NativeVoid          ? 3U
                              : NativeFloating      ? 3U
-                             : NativeRecords       ? 2U
+                             : NativeRecords       ? 4U
+                             : NativeIntegerPairs  ? 1U
                              : SwiftRecordRuntime  ? 2U
                              : SwiftIntegerRuntime ? 2U
                              : SwiftTypeLookup     ? 1U
-                             : NativeReturnPaths   ? 1U
+                             : DispatchOnce        ? 2U
+                             : MutableConstants    ? 7U
+                             : CStringStorage      ? 8U
+                             : SwiftOnce           ? 1U
+                             : NativeReturnPaths   ? 2U
                              : IncomingResults     ? 2U
                              : RuntimeIvars        ? 4U
                              : AuxiliaryInputs     ? 2U
@@ -493,7 +607,7 @@ void verifyRuntime(bool Chained,
                              : DynamicProperties   ? 6U
                              : CoreData            ? 3U
                              : ReadOnlyTables      ? 4U
-                             : ScalarConstants     ? 6U
+                             : ScalarConstants     ? 7U
                              : SwiftLiterals       ? 3U
                              : StoredStrings       ? 4U
                              : SwiftAllocation     ? 4U
@@ -501,14 +615,14 @@ void verifyRuntime(bool Chained,
                              : IndirectFields      ? 5U
                              : SystemData          ? 9U
                              : Graphics            ? 6U
-                             : BlockLifetimes      ? (ManualBlocks ? 6U : 5U)
+                             : BlockLifetimes      ? (ManualBlocks ? 9U : 8U)
                              : Foundation          ? 13U
                              : Protocols           ? 6U
-                             : DiagnosticReports   ? 5U
+                             : DiagnosticReports   ? 6U
                              : SwiftStrings        ? 2U
                              : ConstantObjects     ? 5U
-                             : ConstantStrings     ? 12U
-                             : SwiftCalls          ? 9U
+                             : ConstantStrings     ? 13U
+                             : SwiftCalls          ? 13U
                                                    : 7U);
   std::set<std::string> Remaining{"item",         "setItem:", "observer",
                                   "setObserver:", "title",    "setTitle:",
@@ -521,10 +635,13 @@ void verifyRuntime(bool Chained,
         "NDPointerReceiver-code",        "NDPointerReceiver-readOwnCode",
         "NDTypedError-declaredCode"};
   if (SharedFrameworks)
-    Remaining = {"makeLayer",      "opacity:",        "opacity:layer:",
-                 "position:",      "position:layer:", "distance:from:",
-                 "describe:text:", "descriptionOf:",  "request:content:",
-                 "type:",          "extensionOf:"};
+    Remaining = {"makeLayer",           "opacity:",
+                 "opacity:layer:",      "position:",
+                 "position:layer:",     "distance:from:",
+                 "describe:text:",      "descriptionOf:",
+                 "request:content:",    "type:",
+                 "extensionOf:",        "resizeGravity",
+                 "resizeGravityStorage"};
   if (SavedScalars)
     Remaining = {"flag",          "setFlag:",
                  "byte",          "setByte:",
@@ -561,21 +678,37 @@ void verifyRuntime(bool Chained,
   if (SwiftTypeLookup)
     Remaining = {"lookup:length:"};
   if (NativeVoidFrames)
-    Remaining = {"releaseFirst:second:active:",
-                 "releaseFirst:second:active:result:"};
+    Remaining = {
+        "releaseFirst:second:active:", "releaseFirst:second:active:result:",
+        "touchFirst:second:active:", "touchFirst:second:active:result:"};
   if (NativeVoid)
     Remaining = {"releaseObject:active:", "releaseObject:active:result:"};
   if (NativeFloating)
     Remaining = {"doubleValue:other:mode:output:",
                  "floatValue:other:mode:output:", "compare:other:bias:"};
   if (NativeRecords)
-    Remaining = {"newBox:value:storage:", "metadataState:request:result:"};
+    Remaining = {"newBox:value:storage:", "metadataState:request:result:",
+                 "unionStart:length:otherStart:length:output:",
+                 "intersectionStart:length:otherStart:length:output:"};
+  if (NativeIntegerPairs)
+    Remaining = {"first:second:mode:output:"};
   if (SwiftRecordRuntime)
     Remaining = {"newBox:value:storage:", "metadataState:request:result:"};
   if (SwiftIntegerRuntime)
     Remaining = {"retainObject:times:", "object:canCastToClass:"};
+  if (SwiftOnce)
+    Remaining = {"value"};
+  if (DispatchOnce)
+    Remaining = {"shared", "initializationCount"};
+  if (MutableConstants)
+    Remaining = {"value",          "independent",     "initial",
+                 "setValue:",      "setIndependent:", "manualValue",
+                 "setManualValue:"};
   if (NativeReturnPaths)
-    Remaining = {"adjusted:choose:output:"};
+    Remaining = {"adjusted:choose:output:", "wideLeaf:"};
+  if (CStringStorage)
+    Remaining = {"loadedLabel", "loadedSuffix", "label",  "suffix", "newQueue",
+                 "string", "stored", "setStored:"};
   if (IncomingResults)
     Remaining = {"word:flags:", "word:memory:"};
   if (NativeContext)
@@ -634,7 +767,11 @@ void verifyRuntime(bool Chained,
                  "objectForInteriorKey",
                  "storeObjectForInteriorKey:"};
   if (SwiftCalls)
-    Remaining = {"keep:",
+    Remaining = {"stringMetadata",
+                 "stringHashableWitness",
+                 "integerHashableWitness",
+                 "integerMetadata",
+                 "keep:",
                  "drop:",
                  "weakInitialize:object:",
                  "weakAssign:object:",
@@ -647,17 +784,18 @@ void verifyRuntime(bool Chained,
     Remaining = {"words", "nested", "signedNumber", "unsignedNumber",
                  "mapping"};
   if (ConstantStrings)
-    Remaining = {"ascii",         "alias",          "unicode", "embedded",
-                 "empty",         "first",          "second",  "indirectASCII",
-                 "indirectAlias", "indirectUnicode"};
+    Remaining = {"ascii",           "alias",         "unicode",
+                 "embedded",        "empty",         "first",
+                 "second",          "indirectASCII", "indirectAlias",
+                 "indirectUnicode", "mutableValue",  "setMutableValue:"};
   if (UnfairLocks)
     Remaining = {"add:",   "value",       "tryAdd:",       "lock",
                  "unlock", "assertOwner", "assertNotOwner"};
   if (SwiftStrings)
     Remaining = {"bridgeWord:storage:", "roundTrip:"};
   if (DiagnosticReports)
-    Remaining = {"initializer", "initializerInFile", "fatal", "fatalInFile",
-                 "terminal"};
+    Remaining = {"initializer", "initializerInFile", "fatal",
+                 "fatalInFile", "terminal",          "terminalViaNative:"};
   if (Protocols) {
     Remaining = {"enumerate:state:objects:count:",
                  "metricOf:",
@@ -714,7 +852,8 @@ void verifyRuntime(bool Chained,
         "registeredObjectsInContext:"};
   if (ScalarConstants)
     Remaining = {"finiteDouble", "negativeZeroDouble", "payloadDouble",
-                 "finiteFloat",  "negativeZeroFloat",  "payloadFloat"};
+                 "finiteFloat",  "negativeZeroFloat",  "payloadFloat",
+                 "fillWide:"};
   if (Graphics)
     Remaining = {"widthOfImage:", "heightOfImage:",     "retainImage:",
                  "alphaOfColor:", "componentsInColor:", "imageCountInSource:"};
@@ -759,13 +898,20 @@ void verifyRuntime(bool Chained,
                  "descriptionKey",
                  "mainQueue",
                  "timerType",
+                 "defaultLog",
+                 "disabledLog",
                  "defaultPriority",
                  "foundationVersion",
                  "belongs:to:",
                  "responds:selector:"};
   if (BlockLifetimes)
-    Remaining = {"makeCounterForArray:", "makeCounterForArray:other:offset:",
-                 "duplicateBlock:", "releaseBlock:",
+    Remaining = {"makeCounterForArray:",
+                 "makeCounterForArray:other:offset:",
+                 "duplicateBlock:",
+                 "releaseBlock:",
+                 "copiedCountForArray:offset:",
+                 "asynchronouslyAppend:toArray:queue:",
+                 "barrierAppend:toArray:queue:",
                  "synchronouslyAppend:toArray:queue:"};
   if (ManualBlocks)
     Remaining.insert("holderForBlock:");
@@ -784,9 +930,14 @@ void verifyRuntime(bool Chained,
                   : NativeVoid          ? "NDVoidForwarders"
                   : NativeFloating      ? "NDNativeFloating"
                   : NativeRecords       ? "NDNativeRecordResults"
+                  : NativeIntegerPairs  ? "NDNativeIntegerPairs"
                   : SwiftRecordRuntime  ? "NDSwiftRecordRuntime"
                   : SwiftIntegerRuntime ? "NDSwiftIntegerRuntime"
                   : SwiftTypeLookup     ? "NDSwiftTypeLookup"
+                  : DispatchOnce        ? "NDDispatchOnce"
+                  : MutableConstants    ? "NDMutableConstants"
+                  : CStringStorage      ? "NDCStringStorage"
+                  : SwiftOnce           ? "NDSwiftOnce"
                   : NativeReturnPaths   ? "NDNativeReturnPaths"
                   : IncomingResults     ? "NDIncomingResults"
                   : RuntimeIvars        ? "NDRuntimeIvars"
@@ -830,17 +981,20 @@ void verifyRuntime(bool Chained,
   std::map<std::string, std::string> BlockHelpers;
   unsigned RepeatedBlockHelpers = 0;
   std::set<std::string> RejectedConstantUses =
-      ConstantStrings ? std::set<std::string>{"mutableValue", "slotAddress"}
+      ConstantStrings ? std::set<std::string>{"slotAddress"}
                       : std::set<std::string>{};
   std::string NativeHelper;
   std::set<std::string> StorageNames;
+  std::set<std::string> CStringNames;
   for (const auto &Value : *Methods) {
     const auto *Method = Value.getAsObject();
     ASSERT_NE(Method, nullptr);
     auto Selector = Method->getString("selector");
     ASSERT_TRUE(Selector);
     if ((NativeVoid && *Selector == "unprovenResult:active:") ||
-        (NativeVoidFrames && *Selector == "unprovenResult:second:active:")) {
+        (NativeVoidFrames &&
+         (*Selector == "unprovenResult:second:active:" ||
+          *Selector == "unprovenMixedResult:second:active:"))) {
       EXPECT_EQ(Method->getString("status"), "unrecovered");
       EXPECT_EQ(Method->getString("reason"),
                 "method contains an unresolved value");
@@ -860,6 +1014,8 @@ void verifyRuntime(bool Chained,
     auto Name = Method->getString("function_name");
     auto Source = Method->getString("source");
     ASSERT_TRUE(Selector && Name && Source);
+    if (AtomicARC && *Selector == "item")
+      EXPECT_TRUE(Source->contains("objc_getProperty(")) << Source->str();
     std::string Identity = Selector->str();
     if (ReceiverTypes || ReceiverFields || ReceiverAliases || ReceiverResults) {
       const auto Class = Method->getString("class_name");
@@ -904,6 +1060,9 @@ void verifyRuntime(bool Chained,
     const char *NativeSignature =
         NativeVoid
             ? "void releaseIfActive(void* native_arg0, int64_t native_arg1)"
+        : NativeVoidFrames && Selector->starts_with("touchFirst:")
+            ? "void retainAndReleasePair(void* native_arg0, void* native_arg1, "
+              "int64_t native_arg2)"
         : NativePointers && (*Selector == "ascii" || *Selector == "unicode")
             ? "int64_t NDForwardPointer(void* native_arg0)"
         : IndirectFields && (*Selector == "first" || *Selector == "second")
@@ -912,8 +1071,9 @@ void verifyRuntime(bool Chained,
     if (NativeSignature) {
       EXPECT_NE(MethodSource.find(NativeSignature), std::string::npos)
           << MethodSource;
-      EXPECT_NE(MethodSource.find(NativeVoid ? "swift_unknownObjectRelease"
-                                             : "objc_retain"),
+      EXPECT_NE(MethodSource.find(NativeVoid || NativeVoidFrames
+                                      ? "swift_unknownObjectRelease"
+                                      : "objc_retain"),
                 std::string::npos);
       // Each C API method includes its complete native dependency group.
       // Link the common helper once when combining these two independent units.
@@ -938,6 +1098,8 @@ void verifyRuntime(bool Chained,
           ASSERT_TRUE(Helper);
           if (llvm::StringRef(Inventory) == "shared_storage_functions")
             StorageNames.insert(Helper->str());
+          if (Helper->starts_with("neverd_cstring_storage_"))
+            CStringNames.insert(Helper->str());
           const auto Begin =
               MethodSource.find("\nuintptr_t " + Helper->str() + "(void) {\n");
           ASSERT_NE(Begin, std::string::npos);
@@ -965,13 +1127,18 @@ void verifyRuntime(bool Chained,
   EXPECT_TRUE(RejectedConstantUses.empty());
   if (BlockLifetimes)
     EXPECT_GE(RepeatedBlockHelpers, 2U);
-  EXPECT_EQ(StorageNames.size(), Profiled ? 1U : 0U);
+  EXPECT_EQ(StorageNames.size(), Profiled || ConstantStrings   ? 1U
+                                 : (SwiftOnce || DispatchOnce) ? 3U
+                                 : MutableConstants            ? 3U
+                                                               : 0U);
   if (DiagnosticReports)
     EXPECT_FALSE(IdentityHelpers.empty());
   else
-    EXPECT_EQ(IdentityHelpers.size(), (Associations       ? 2U
+    EXPECT_EQ(IdentityHelpers.size(), (Associations       ? 0U
                                        : ConstantObjects  ? 13U
-                                       : ConstantStrings  ? 6U
+                                       : ConstantStrings  ? 7U
+                                       : MutableConstants ? 1U
+                                       : CStringStorage   ? 3U
                                        : Foundation       ? 6U
                                        : SwiftLiterals    ? 2U
                                        : StoredStrings    ? 4U
@@ -980,9 +1147,12 @@ void verifyRuntime(bool Chained,
                                        : FrameSelectors   ? 1U
                                        : PredicateFormats ? 8U
                                                           : 0U) +
-                                          StorageNames.size());
+                                          StorageNames.size() +
+                                          CStringNames.size());
   if (!IdentityHelpers.empty()) {
     std::string Shared = "#include <stdint.h>\n";
+    for (const auto &[Name, Definition] : IdentityHelpers)
+      Shared += "uintptr_t " + Name + "(void);\n";
     for (const auto &[Name, Definition] : IdentityHelpers)
       Shared += Definition + "\n";
     const auto Path = Work / "shared-identities.c";
@@ -1005,6 +1175,8 @@ void verifyRuntime(bool Chained,
              Original,
              "-o",
              Baseline};
+  if (AtomicARC)
+    Compile.insert(Compile.end() - 2, "-DNEVERD_ATOMIC_PROPERTIES");
   if (ManualBlocks)
     Compile.insert(Compile.end() - 2, "-DNEVERD_MANUAL_BLOCKS");
   if (ReceiverResults)
@@ -1024,7 +1196,8 @@ void verifyRuntime(bool Chained,
                    {"-framework", "CoreGraphics", "-framework", "ImageIO"});
   if (SwiftCalls || SwiftStrings || DiagnosticReports || SwiftAllocation ||
       SwiftTypeLookup || SwiftIntegerRuntime || SwiftRecordRuntime ||
-      NativeRecords || NativeVoid || NativeVoidFrames || RuntimeIvars)
+      NativeRecords || NativeVoid || NativeVoidFrames || RuntimeIvars ||
+      SwiftOnce)
     Compile.insert(Compile.end() - 2, {"-L/usr/lib/swift", "-lswiftCore",
                                        "-Wl,-rpath,/usr/lib/swift"});
   if (SwiftStrings) {
@@ -1099,24 +1272,35 @@ void verifyRuntime(bool Chained,
       : SwiftTypeLookup ? "swift-type-lookup-cases=20480\nmetadata-identity="
                           "pass\nbyte-length=pass\n"
       : NativeVoidFrames
-          ? "native-void-frame-cases=16384\nrelease-effects=pass\n"
-            "independent-results=pass\n"
+          ? "native-void-frame-cases=32768\nrelease-effects=pass\n"
+            "independent-results=pass\nmixed-call-results=pass\n"
       : NativeVoid         ? "native-void-cases=16384\nrelease-effects=pass\n"
                              "independent-results=pass\n"
       : NativeFloating     ? "native-floating-cases=24576\nfloating-bits=pass\n"
                              "memory-effects=pass\n"
       : NativeRecords      ? "native-record-result-cases=16384\nbox-storage="
-                             "pass\nmetadata-response=pass\n"
+                             "pass\nmetadata-response=pass\nnative-record-argument-cases=16384\n"
+      : NativeIntegerPairs ? "native-pair-cases=8192\nboth-words=pass\n"
+                             "call-effects=24576\n"
       : SwiftRecordRuntime ? "swift-record-runtime-cases=16384\nbox-storage="
                              "pass\nmetadata-response=pass\n"
       : SwiftIntegerRuntime ? "runtime-integer-cases=4096\ncast-results="
                               "pass\nreference-counts=pass\n"
-      : NativeReturnPaths
-          ? "native-return-cases=16384\nreturns-and-stores=pass\n"
-      : IncomingResults ? "incoming-result-cases=16384\nbit-patterns=pass\n"
-                          "memory-input=pass\n"
-      : RuntimeIvars    ? "runtime-ivar-cases=16384\nproperty-bits=pass\n"
-                          "resilient-field=pass\n"
+      : DispatchOnce        ? "dispatch-once-calls=8192\ninitializer-effects="
+                              "once\nshared-object=pass\n"
+      : MutableConstants    ? "mutable-initializers=1024\nshared-cells=pass\n"
+                              "initial-identity=pass\nnull-stores=pass\n"
+                              "pointer-store-lifetimes=2048\n"
+      : CStringStorage
+          ? "cstring-checks=4096\ninterior-aliases=pass\nretained-label=pass\n"
+      : SwiftOnce ? "swift-once-calls=8192\ninitializer-effects=once\nshared-"
+                    "state=pass\n"
+      : NativeReturnPaths ? "native-return-cases=16384\nreturns-and-stores="
+                            "pass\nwide-leaf-cases=4096\n"
+      : IncomingResults   ? "incoming-result-cases=16384\nbit-patterns=pass\n"
+                            "memory-input=pass\n"
+      : RuntimeIvars      ? "runtime-ivar-cases=16384\nproperty-bits=pass\n"
+                            "resilient-field=pass\n"
       : AuxiliaryInputs ? "native-auxiliary-cases=16384\nresult-buffers=pass\n"
                           "scalar-results=pass\n"
       : NativeContext   ? "native-context-cases=16384\ncontext-bits=pass\n"
@@ -1142,7 +1326,7 @@ void verifyRuntime(bool Chained,
                                  : "c-record-checks=2048\n")
       : PredicateFormats ? "predicate-checks=30720\nquoted-placeholders="
                            "pass\nscalar-widths=pass\n"
-      : SharedFrameworks ? "framework-calls=2816\nscalar-record-values="
+      : SharedFrameworks ? "framework-calls=3328\nscalar-record-values="
                            "pass\nobject-identity=pass\n"
       : SavedScalars
           ? "scalar-cases=589824\ncall-effects=589824\nknown-bytes=pass\n"
@@ -1159,12 +1343,12 @@ void verifyRuntime(bool Chained,
       : CoreData
           ? "core-data-fetches=1024\ncontext-identity=pass\nfetch-count=16\n"
             "nil-context=pass\n"
-      : ScalarConstants
-          ? "scalar-bit-checks=6144\nsigned-zero=pass\nnan-payload=pass\n"
-      : SwiftLiterals ? "swift-literals=3072\nutf8=pass\nlifetime="
-                        "pass\nidentical-objects=0\n"
-      : SystemData    ? "system-data=9216\nsingletons=pass\nframework-identity="
-                        "pass\nlifetime=pass\n"
+      : ScalarConstants ? "scalar-bit-checks=7168\nsigned-zero=pass\nnan-"
+                          "payload=pass\nwide-lanes=pass\n"
+      : SwiftLiterals   ? "swift-literals=3072\nutf8=pass\nlifetime="
+                          "pass\nidentical-objects=0\n"
+      : SystemData ? "system-data=9216\nsingletons=pass\nframework-identity="
+                     "pass\nlifetime=pass\n"
       : SwiftAllocation    ? "swift-allocation=4096\nalignment=pass\nmemory="
                              "pass\nmetadata=pass\ndestruction=pass\n"
       : ProtocolReferences ? "protocol-references=8192\nregistered-identity="
@@ -1177,17 +1361,17 @@ void verifyRuntime(bool Chained,
       : BlockLifetimes
           ? "escaping-blocks=1024\ncopy-dispose=pass\nmutated-captures=pass\n"
             "conditional-invokes=1024\nconditional-construction=pass\n"
-            "synchronous-mutations=1024\n"
+            "synchronous-mutations=1024\nasync-copied-captures=2\n"
       : Foundation ? "variadic-formats=2276\nframework-iterations=2048\narray-"
                      "dictionaries=17\nnil-"
                      "dispatch=pass\n"
       : Protocols  ? "enumerated=132096\nmutations=2048\nloop-mutations=4\n"
                      "integer-bits=4096\nguard-check=pass\n"
-      : DiagnosticReports
-          ? "diagnostic-runtime=pass\ncontents=pass\ntrap=pass\n"
-      : SwiftStrings    ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
-      : UnfairLocks     ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
-                          "concurrency=pass\n"
+      : DiagnosticReports ? "diagnostic-runtime=pass\ncontents=pass\ntrap="
+                            "pass\nnative-traps=2\n"
+      : SwiftStrings      ? "swift-string=pass\ncontents=pass\nlifetime=pass\n"
+      : UnfairLocks       ? "unfair-locks=pass\ntrylock=pass\nownership=pass\n"
+                            "concurrency=pass\n"
       : ConstantObjects ? "constant-object-checks=32768\ncontents-and-aliases="
                           "pass\nconcurrent-initialization=pass\n"
       : ConstantStrings ? "constant-strings=pass\nunicode=pass\nidentity="
@@ -1211,6 +1395,45 @@ TEST(ObjCRuntimeSource, RecompiledARCMethodsPreserveActualObjectLifetimes) {
 #else
   GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
+}
+
+TEST(ObjCRuntimeSource, AtomicPropertyGettersPreserveObjectLifetimes) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::AtomicARC));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SummaryPreservesCoverageDiagnosticsAndSharedHelpers) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true}) {
+    SCOPED_TRACE(Chained);
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(
+        Chained, RuntimeFixture::DiagnosticReports, false, false, true));
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::Associations,
+                                          false, false, true));
+  }
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SummaryRejectsMissingSessionsAndUnloadedImages) {
+  EXPECT_EQ(neverd_objc_methods_summary_json(nullptr, 0), nullptr);
+  std::unique_ptr<void, decltype(&neverd_session_destroy)> Session(
+      neverd_session_create(), neverd_session_destroy);
+  ASSERT_TRUE(Session);
+  EXPECT_EQ(neverd_objc_methods_json(Session.get(), 0), nullptr);
+  std::unique_ptr<const char, decltype(&neverd_free_string)> FullError(
+      neverd_last_error(Session.get()), neverd_free_string);
+  EXPECT_EQ(neverd_objc_methods_summary_json(Session.get(), 0), nullptr);
+  std::unique_ptr<const char, decltype(&neverd_free_string)> SummaryError(
+      neverd_last_error(Session.get()), neverd_free_string);
+  ASSERT_TRUE(FullError);
+  ASSERT_TRUE(SummaryError);
+  EXPECT_STREQ(FullError.get(), SummaryError.get());
 }
 
 TEST(ObjCRuntimeSource, RecompiledAssociatedObjectsPreserveLifetimeAndPolicy) {
@@ -1907,6 +2130,16 @@ TEST(ObjCRuntimeSource, NativeRecordMembersPreserveScalarResultsAndEffects) {
 #endif
 }
 
+TEST(ObjCRuntimeSource, NativeIntegerPairsPreserveBothWordsAndEveryCallEffect) {
+#ifdef __APPLE__
+  for (const bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::NativeIntegerPairs));
+#else
+  GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
 TEST(ObjCRuntimeSource, NativeFloatingHelpersPreserveLanesAndMemoryEffects) {
 #ifdef __APPLE__
   for (const bool Chained : {false, true})
@@ -1935,5 +2168,46 @@ TEST(ObjCRuntimeSource,
         verifyRuntime(Chained, RuntimeFixture::NativeVoidFrames));
 #else
   GTEST_SKIP() << "requires the actual Darwin Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, SwiftOncePreservesInitializationAndSharedStorage) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(verifyRuntime(Chained, RuntimeFixture::SwiftOnce));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Swift runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource, DispatchOncePreservesCapturedClassAndSharedObject) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::DispatchOnce));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     CStringStoragePreservesInteriorAliasesAndRetainedLabels) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::CStringStorage));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and libdispatch";
+#endif
+}
+
+TEST(ObjCRuntimeSource,
+     MutableConstantInitializersPreserveIdentityAndLaterStores) {
+#ifdef __APPLE__
+  for (bool Chained : {false, true})
+    ASSERT_NO_FATAL_FAILURE(
+        verifyRuntime(Chained, RuntimeFixture::MutableConstants));
+#else
+  GTEST_SKIP() << "Requires macOS Foundation and Objective-C runtime";
 #endif
 }

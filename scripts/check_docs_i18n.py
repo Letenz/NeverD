@@ -2109,6 +2109,16 @@ def validate_markdown_structure(
             )
 
 
+def driver_report_profile(view: RepositoryView) -> str:
+    source = view.read_text(Path("include/neverd/emulation/DriverProfileStrings.def"))
+    profiles = re.findall(
+        r'NEVERD_DRIVER_PROFILE_STRING\(ReportProfile,\s*"([^"]+)"\)', source
+    )
+    if len(profiles) != 1:
+        raise ValueError("driver profile must have one ReportProfile definition")
+    return profiles[0]
+
+
 def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     """Keep execution examples, supported exports and locale entry points aligned."""
     english = Path("docs/driver-emulation.md")
@@ -2300,7 +2310,7 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "output_hex",
         "information_hex",
         "configuration.registry",
-        "wdm-x64-scheduled-v45", "defer_callback_drain",
+        driver_report_profile(view), "defer_callback_drain",
         "PsCreateSystemThread", "PsTerminateSystemThread",
         "ObReferenceObjectByHandle", "ObfDereferenceObject",
         "KeEnterCriticalRegion", "KeLeaveCriticalRegion",
@@ -2311,7 +2321,24 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "WdfRequestProbeAndLockUserBufferForRead",
         "WdfRequestProbeAndLockUserBufferForWrite", "WdfMemoryGetBuffer",
         "WdfRequestForwardToIoQueue", "WdfRequestRequeue",
+        "WdfDeviceInitSetExclusive", "DO_EXCLUSIVE",
+        "WdfInterruptCreate", "WdfInterruptQueueDpcForIsr",
+        "WdfInterruptQueueWorkItemForIsr", "WdfInterruptSynchronize",
+        "WdfInterruptAcquireLock", "WdfInterruptReleaseLock",
+        "WdfInterruptEnable", "WdfInterruptDisable",
+        "WdfInterruptWdmGetInterrupt", "WdfInterruptGetInfo",
+        "WdfInterruptGetDevice", "WDFSPINLOCK", "WDFWAITLOCK",
+        "__GSHandlerCheck", "__GSHandlerCheck_SEH",
+        "WdfDeviceInitSetFileObjectConfig", "WdfFileObjectGetDevice",
+        "WdfFileObjectWdmGetFileObject", "EvtDeviceFileCreate",
+        "EvtFileCleanup", "EvtFileClose",
+        "EvtIoCanceledOnQueue",
+        "WdfIoQueueReadyNotify",
+        "WdfIoQueueFindRequest", "WdfIoQueueRetrieveFoundRequest",
         "WdfIoQueueRetrieveNextRequest", "WdfIoQueueGetState",
+        "WdfIoQueuePnpHeld", "WdfUseDefault",
+        "EvtIoStop", "EvtIoResume", "WdfRequestStopAcknowledge",
+        "CM_PARTIAL_RESOURCE_DESCRIPTOR", "MmMapIoSpace",
         "WdfIoQueueStop", "WdfIoQueueStopSynchronously", "WdfIoQueueStart",
         "WdfIoQueueDrain", "WdfIoQueueDrainSynchronously",
         "WdfIoQueuePurge", "WdfIoQueuePurgeSynchronously",

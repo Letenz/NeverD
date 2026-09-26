@@ -8,6 +8,10 @@ set(NEVERD_KMDF_CONTROL_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF control-device fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_CONTROL_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK KMDF control-device fixture linked with active CFG")
+set(NEVERD_KMDF_PNP_FIXTURE "" CACHE FILEPATH
+  "Optional original KMDF PnP fixture linked with genuine WDK libraries")
+set(NEVERD_KMDF_PNP_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF PnP fixture linked with active CFG")
 set(NEVERD_WDM_STACK_FIXTURE "" CACHE FILEPATH
   "Optional original WDM device-stack fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_STACK_CFG_FIXTURE "" CACHE FILEPATH
@@ -32,6 +36,10 @@ set(NEVERD_WDM_SEH_FIXTURE "" CACHE FILEPATH
   "Optional original WDM API exception fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_SEH_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK API exception fixture linked with active CFG")
+set(NEVERD_WDM_USER_MAPPING_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK user-mode MDL mapping driver")
+set(NEVERD_WDM_USER_MAPPING_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK user-mode MDL mapping driver with active CFG")
 set(NEVERD_WDM_NEITHER_FIXTURE "" CACHE FILEPATH
   "Optional original WDM user-buffer fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_NEITHER_CFG_FIXTURE "" CACHE FILEPATH
@@ -100,6 +108,9 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
     set(_driver_entry DriverEntry)
   endif()
   set(_driver_additional_dependencies)
+  if(_driver_name STREQUAL "driver_mdl")
+    list(APPEND _driver_additional_dependencies fixtures/driver_mdl_actions.h)
+  endif()
   if(_driver_name STREQUAL "driver_async")
     list(APPEND _driver_additional_dependencies
       fixtures/driver_io.c fixtures/DriverAsyncCases.def
@@ -172,8 +183,10 @@ add_custom_target(NeverDDriverFixtures DEPENDS ${_driver_outputs})
 set(_driver_kmdf_definitions)
 set(_driver_has_kmdf_fixture FALSE)
 set(_driver_has_kmdf_control_fixture FALSE)
+set(_driver_has_kmdf_pnp_fixture FALSE)
 foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
-    NEVERD_KMDF_CONTROL_FIXTURE NEVERD_KMDF_CONTROL_CFG_FIXTURE)
+    NEVERD_KMDF_CONTROL_FIXTURE NEVERD_KMDF_CONTROL_CFG_FIXTURE
+    NEVERD_KMDF_PNP_FIXTURE NEVERD_KMDF_PNP_CFG_FIXTURE)
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CFG_FIXTURE"
       AND NOT _driver_has_kmdf_fixture)
     message(STATUS "Driver KMDF CFG tests skipped: NEVERD_KMDF_FIXTURE is unavailable")
@@ -182,6 +195,11 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CONTROL_CFG_FIXTURE"
       AND NOT _driver_has_kmdf_control_fixture)
     message(STATUS "Driver KMDF control CFG tests skipped: NEVERD_KMDF_CONTROL_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_pnp_fixture)
+    message(STATUS "Driver KMDF PnP CFG tests skipped: NEVERD_KMDF_PNP_FIXTURE is unavailable")
     continue()
   endif()
   if(NOT "${${_driver_kmdf_variable}}" STREQUAL ""
@@ -195,6 +213,8 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
       set(_driver_has_kmdf_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CONTROL_FIXTURE")
       set(_driver_has_kmdf_control_fixture TRUE)
+    elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_FIXTURE")
+      set(_driver_has_kmdf_pnp_fixture TRUE)
     endif()
     message(STATUS "Driver KMDF fixture ${_driver_kmdf_variable}: ${_driver_kmdf_path}")
   else()
@@ -452,7 +472,32 @@ foreach(_driver_neither_variable NEVERD_WDM_NEITHER_FIXTURE
   endif()
 endforeach()
 
+set(_driver_wdm_user_mapping_definitions)
+set(_driver_has_wdm_user_mapping_fixture FALSE)
+foreach(_driver_user_mapping_variable NEVERD_WDM_USER_MAPPING_FIXTURE
+    NEVERD_WDM_USER_MAPPING_CFG_FIXTURE)
+  if(NOT _driver_user_mapping_variable STREQUAL "NEVERD_WDM_USER_MAPPING_FIXTURE"
+      AND NOT _driver_has_wdm_user_mapping_fixture)
+    continue()
+  endif()
+  if(NOT "${${_driver_user_mapping_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_user_mapping_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_user_mapping_variable}}")
+    get_filename_component(_driver_user_mapping_path
+      "${${_driver_user_mapping_variable}}" ABSOLUTE)
+    list(APPEND _driver_wdm_user_mapping_definitions
+      "${_driver_user_mapping_variable}=\"${_driver_user_mapping_path}\"")
+    if(_driver_user_mapping_variable STREQUAL "NEVERD_WDM_USER_MAPPING_FIXTURE")
+      set(_driver_has_wdm_user_mapping_fixture TRUE)
+    endif()
+    message(STATUS "Driver WDM user MDL mapping fixture ${_driver_user_mapping_variable}: ${_driver_user_mapping_path}")
+  else()
+    message(STATUS "Driver WDM user MDL mapping tests requiring ${_driver_user_mapping_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
 add_neverd_unittest(NeverDDriverEmulationTests
+  DriverWDMUserMappingTests.cpp
   DriverWDMNeitherTests.cpp
   DriverWDMSEHTests.cpp
   KernelSEHTests.cpp
@@ -472,6 +517,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverGuardTests.cpp
   DriverKMDFLifecycleTests.cpp
   DriverKMDFControlTests.cpp
+  DriverKMDFPnpTests.cpp
   DriverWDMStackTests.cpp
   DriverWDMPnpTests.cpp
   DriverWDMPowerTests.cpp
@@ -495,11 +541,16 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelRequestOwnershipTests.cpp
   KernelCancellationTests.cpp
   KernelFrameworkTests.cpp
+  KernelFrameworkInterruptTests.cpp
   KernelFrameworkControlTests.cpp
+  KernelFrameworkFileTests.cpp
+  KernelFrameworkFileSendTests.cpp
   KernelFrameworkQueueTests.cpp
   KernelFrameworkRequestTests.cpp
   KernelFrameworkRequestAccessorTests.cpp
   KernelRequestMDLTests.cpp
+  KernelMDLChainTests.cpp
+  KernelMDLUserMappingTests.cpp
   KernelDeviceStackTests.cpp
   KernelPnpRequestTests.cpp
   KernelPnpDeviceTests.cpp
@@ -545,7 +596,8 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   ${_driver_wdm_dma_definitions}
   ${_driver_wdm_dma_channel_definitions}
   ${_driver_wdm_seh_definitions}
-  ${_driver_wdm_neither_definitions})
+  ${_driver_wdm_neither_definitions}
+  ${_driver_wdm_user_mapping_definitions})
 add_dependencies(NeverDDriverEmulationTests NeverDDriverFixtures)
 
 if(TARGET neverd_shared AND TARGET neverd)
@@ -558,6 +610,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   target_include_directories(NeverDDriverEmulationPublicTests PRIVATE
     ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
   target_compile_definitions(NeverDDriverEmulationPublicTests PRIVATE
+    NEVERD_DRIVER_NESTED_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-nested-user-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
     NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
     NEVERD_DRIVER_CLI="$<TARGET_FILE:neverd>"
@@ -571,7 +624,8 @@ if(TARGET neverd_shared AND TARGET neverd)
   ${_driver_wdm_dma_definitions}
   ${_driver_wdm_dma_channel_definitions}
   ${_driver_wdm_seh_definitions}
-  ${_driver_wdm_neither_definitions})
+  ${_driver_wdm_neither_definitions}
+  ${_driver_wdm_user_mapping_definitions})
   if(WIN32)
     target_link_libraries(NeverDDriverEmulationPublicTests PRIVATE LLVMSupport)
   endif()

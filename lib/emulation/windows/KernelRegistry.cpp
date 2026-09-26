@@ -19,8 +19,10 @@
 #include "KernelRegistry.h"
 
 #include "KernelModel.h"
+#include "WindowsKernelLayout.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -56,7 +58,7 @@ std::string folded(llvm::StringRef Text) {
 }
 
 bool asciiName(llvm::StringRef Text) {
-  return llvm::all_of(Text, [](unsigned char C) { return C && C < 128; });
+  return llvm::all_of(Text, [](char C) { return C && llvm::isASCII(C); });
 }
 
 bool atOrBelow(llvm::StringRef Path, llvm::StringRef Parent) {
@@ -126,7 +128,7 @@ llvm::Expected<std::string> readName(const KernelModel &Model,
     return Bytes.takeError();
   std::string Result;
   for (size_t I = 0; I < Bytes->size(); I += 2) {
-    if ((*Bytes)[I + 1] || !(*Bytes)[I] || (*Bytes)[I] >= 128)
+    if ((*Bytes)[I + 1] || !(*Bytes)[I] || !llvm::isASCII(char((*Bytes)[I])))
       return registryError(
           "registry names require ASCII; Unicode case folding is unsupported");
     Result.push_back((*Bytes)[I]);
@@ -246,20 +248,23 @@ llvm::Expected<uint64_t> KernelRegistry::open(const KernelModel &Model,
   if (Create && (uint32_t(A[3]) || A[4] || (uint32_t(A[5]) & ~VolatileOption)))
     return registryError(
         "unsupported registry title, class, or creation options");
-  auto Object = readBytes(Model, Memory, A[2], ObjectAttributesSize);
+  auto Object = readBytes(Model, Memory, A[2], windows::ObjectAttributesSize);
   if (!Object)
     return Object.takeError();
-  if (llvm::support::endian::read32le(Object->data()) != ObjectAttributesSize)
+  if (llvm::support::endian::read32le(Object->data()) !=
+      windows::ObjectAttributesSize)
     return InvalidParameter;
-  const uint64_t Root =
-      llvm::support::endian::read64le(Object->data() + ObjectRootOffset);
-  const uint64_t Name =
-      llvm::support::endian::read64le(Object->data() + ObjectNameOffset);
-  const uint32_t Flags =
-      llvm::support::endian::read32le(Object->data() + ObjectFlagsOffset);
-  if ((Flags & ~(CaseInsensitive | KernelHandle)) ||
-      llvm::support::endian::read64le(Object->data() + ObjectSecurityOffset) ||
-      llvm::support::endian::read64le(Object->data() + ObjectQualityOffset))
+  const uint64_t Root = llvm::support::endian::read64le(
+      Object->data() + windows::ObjectRootOffset);
+  const uint64_t Name = llvm::support::endian::read64le(
+      Object->data() + windows::ObjectNameOffset);
+  const uint32_t Flags = llvm::support::endian::read32le(
+      Object->data() + windows::ObjectFlagsOffset);
+  if ((Flags & ~(CaseInsensitive | windows::ObjectKernelHandle)) ||
+      llvm::support::endian::read64le(Object->data() +
+                                      windows::ObjectSecurityOffset) ||
+      llvm::support::endian::read64le(Object->data() +
+                                      windows::ObjectQualityOffset))
     return registryError(
         "unsupported registry object attributes or security policy");
   auto Text = readName(Model, Memory, Name, MaxRegistryPathLength);

@@ -248,7 +248,10 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
       // A call already remodeled as a multi-register struct return (its output
       // is the flat aggregate temp, its FP return register claimed by an
       // extract op) is handled there — do not also route its FP register here.
-      if (Op.Output.Kind == MedVar::Temp)
+      // A call with no output at all (a callee that leaves the integer return
+      // register untouched) may still return in the FP register.
+      if (Op.Output.Kind == MedVar::Temp && Op.Output.Id >= 0 &&
+          Op.Output.Size > 0)
         continue;
 
       // Is the call's result consumed via the FP return register?  Either a

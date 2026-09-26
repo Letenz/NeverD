@@ -16,7 +16,14 @@
 
 #include "KernelFramework.h"
 
+#include "KernelResources.h"
+#include "KernelScheduler.h"
 #include "WindowsKernelLayout.h"
+
+#include "neverd/emulation/DriverProfile.h"
+
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <limits>
@@ -52,6 +59,92 @@ void KernelFramework::configure(uint64_t NewDriver, uint64_t NewRegistryPath,
   Driver = NewDriver;
   RegistryPath = NewRegistryPath;
   ServiceName = std::move(NewServiceName);
+}
+
+bool KernelFramework::hasPnpDriver() const {
+  return std::any_of(Bindings.begin(), Bindings.end(), [](const auto &Entry) {
+    const auto &B = Entry.second;
+    return !B.Unbound && !B.Unloaded && B.DriverHandle && B.AddDeviceCallback;
+  });
+}
+
+llvm::Expected<KernelFramework::PnpAddDevice>
+KernelFramework::beginPnpAddDevice(uint64_t PDO) {
+  if (!PDO || PnpDeviceHandles.count(PDO) ||
+      std::any_of(DeviceInits.begin(), DeviceInits.end(),
+                  [&](const auto &Entry) {
+                    return Entry.second.Kind == DeviceInitKind::Pnp &&
+                           Entry.second.PDO == PDO;
+                  }))
+    return invalid("PnP AddDevice requires a new physical device");
+  auto B =
+      std::find_if(Bindings.begin(), Bindings.end(), [](const auto &Entry) {
+        const auto &Binding = Entry.second;
+        return !Binding.Unbound && !Binding.Unloaded && Binding.DriverHandle &&
+               Binding.AddDeviceCallback;
+      });
+  if (B == Bindings.end())
+    return invalid("PnP AddDevice requires a live framework driver");
+  auto Init = allocate(HandleSize, false, true);
+  if (!Init)
+    return Init.takeError();
+  DeviceInits.emplace(*Init,
+                      DeviceInit{B->second.Globals, DeviceInitKind::Pnp, PDO});
+  return PnpAddDevice{B->second.AddDeviceCallback, B->second.DriverHandle,
+                      *Init};
+}
+
+llvm::Error KernelFramework::finishPnpAddDevice(uint64_t PDO, uint64_t Init,
+                                                uint32_t Status) {
+  auto I = DeviceInits.find(Init);
+  if (I != DeviceInits.end()) {
+    if (I->second.Kind != DeviceInitKind::Pnp || I->second.PDO != PDO)
+      return invalid("PnP AddDevice lost its framework initializer");
+    if (auto E = retire(Init))
+      return E;
+    DeviceInits.erase(I);
+  }
+  auto Device = PnpDeviceHandles.find(PDO);
+  if (!Status) {
+    if (Device == PnpDeviceHandles.end())
+      return invalid("successful PnP AddDevice did not create an FDO");
+    auto &FDO = Devices.at(Device->second);
+    if (!DevicesHost.FinishInitializing)
+      return invalid("PnP device initialization host is unavailable");
+    if (auto E = DevicesHost.FinishInitializing(FDO.Wdm))
+      return E;
+    FDO.Initialized = true;
+    return llvm::Error::success();
+  }
+  if (Device == PnpDeviceHandles.end())
+    return llvm::Error::success();
+  std::vector<Step> Steps;
+  if (auto E = planDelete(Device->second, Steps))
+    return E;
+  auto Started = start(std::move(Steps));
+  if (!Started)
+    return Started.takeError();
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::removePnpDevice(uint64_t PDO) {
+  auto Device = PnpDeviceHandles.find(PDO);
+  if (Device == PnpDeviceHandles.end())
+    return invalid("PnP removal has no live framework device");
+  std::vector<Step> Steps;
+  auto &D = Devices.at(Device->second);
+  if (D.SelfManagedIo != SelfManagedIoState::Uninitialized &&
+      D.SelfManagedIo != SelfManagedIoState::Cleaned) {
+    if (D.Callbacks.SelfManagedIoCleanup)
+      Steps.push_back({StepKind::Callback, Device->second,
+                       D.Callbacks.SelfManagedIoCleanup});
+    D.SelfManagedIo = SelfManagedIoState::Cleaned;
+  }
+  Steps.push_back({StepKind::BeginDeviceDelete, Device->second});
+  auto Started = start(std::move(Steps));
+  if (!Started)
+    return Started.takeError();
+  return llvm::Error::success();
 }
 
 std::optional<unsigned>
@@ -91,13 +184,14 @@ llvm::Error KernelFramework::writable(uint64_t Address, uint32_t Size) {
 
 llvm::Expected<std::vector<uint8_t>>
 KernelFramework::readRegistryPath(uint64_t Address) {
-  auto Length = read(Address, 2);
-  auto Maximum = read(Address + 2, 2);
-  auto Buffer = read(Address + 8);
+  auto Length = read(Address, sizeof(char16_t));
+  auto Maximum =
+      read(Address + windows::UnicodeMaximumOffset, sizeof(char16_t));
+  auto Buffer = read(Address + windows::UnicodeBufferOffset);
   if (!Length || !Maximum || !Buffer)
     return joinedErrors(Length.takeError(), Maximum.takeError(),
                         Buffer.takeError());
-  if (!*Length || *Length % 2 || *Maximum < *Length ||
+  if (!*Length || *Length % sizeof(char16_t) || *Maximum < *Length ||
       *Length > MaxRegistryPathBytes)
     return invalid("invalid counted driver registry path");
   if (auto E = ValidateAccess(*Buffer, *Length, false))
@@ -131,6 +225,61 @@ llvm::Error KernelFramework::retire(uint64_t Address) {
     return E;
   I->second.Freed = true;
   return llvm::Error::success();
+}
+
+llvm::Expected<KernelFramework::ResourceList>
+KernelFramework::createResourceList(uint64_t Source, uint64_t Size) {
+  if (bool(Source) != bool(Size))
+    return invalid("hardware resource list address and size disagree");
+  uint32_t Count = 0;
+  std::vector<uint8_t> Descriptors;
+  if (Source) {
+    if (Size < resources::ResourceHeaderSize ||
+        (Size - resources::ResourceHeaderSize) %
+            resources::ResourceDescriptorSize)
+      return invalid("invalid hardware resource list size");
+    auto FullCount = read(Source + resources::ResourceCountOffset,
+                          resources::ResourceCountFieldSize);
+    auto PartialCount = read(Source + resources::ResourcePartialCountOffset,
+                             resources::ResourceCountFieldSize);
+    if (!FullCount || !PartialCount)
+      return joinedErrors(FullCount.takeError(), PartialCount.takeError());
+    const uint64_t Expected = (Size - resources::ResourceHeaderSize) /
+                              resources::ResourceDescriptorSize;
+    if (*FullCount != resources::SupportedFullDescriptorCount ||
+        *PartialCount != Expected ||
+        Expected > std::numeric_limits<uint32_t>::max())
+      return invalid("unsupported hardware resource list layout");
+    Count = uint32_t(Expected);
+    Descriptors.resize(Count * resources::ResourceDescriptorSize);
+    if (auto E =
+            Memory.read(Source + resources::ResourceHeaderSize, Descriptors))
+      return std::move(E);
+  }
+  auto Handle = allocate(HandleSize, false, true);
+  if (!Handle)
+    return Handle.takeError();
+  uint64_t Address = 0;
+  if (!Descriptors.empty()) {
+    auto Region = allocate(Descriptors.size(), false, false);
+    if (!Region)
+      return llvm::joinErrors(Region.takeError(), retire(*Handle));
+    Address = *Region;
+    if (auto E = Memory.write(Address, Descriptors))
+      return joinedErrors(std::move(E), retire(Address), retire(*Handle));
+  }
+  return ResourceList{*Handle, Address, Count};
+}
+
+llvm::Error KernelFramework::retireResourceList(ResourceList &List) {
+  auto E = llvm::joinErrors(retire(List.Descriptors), retire(List.Handle));
+  List = {};
+  return E;
+}
+
+llvm::Error KernelFramework::retireResourceLists(Device &D) {
+  return llvm::joinErrors(retireResourceList(D.RawResources),
+                          retireResourceList(D.TranslatedResources));
 }
 
 llvm::Error KernelFramework::validateGuestAccess(uint64_t Address,
@@ -180,14 +329,17 @@ llvm::Expected<uint64_t> KernelFramework::bind(llvm::ArrayRef<uint64_t> A) {
     return joinedErrors(Component.takeError(), Major.takeError(),
                         Minor.takeError(), Build.takeError(), Count.takeError(),
                         TableSlot.takeError(), Module.takeError());
-  if (*Major != MajorVersion || *Minor != MinorVersion || *Build ||
-      *Count != FunctionCount)
-    return invalid(
-        "unsupported framework version or function count; expected 1.33.0/458");
+  if (*Major != MajorVersion || *Minor != MinorVersion ||
+      *Build != BuildVersion || *Count != FunctionCount)
+    return invalid(llvm::formatv("unsupported framework version or function "
+                                 "count; expected {0}.{1}.{2}/{3}",
+                                 MajorVersion, MinorVersion, BuildVersion,
+                                 FunctionCount)
+                       .str());
   if (*Module)
     return invalid("binding record already contains a module identity");
   for (size_t I = 0; I <= FrameworkComponent.size(); ++I) {
-    auto Ch = read(*Component + 2 * I, 2);
+    auto Ch = read(*Component + sizeof(char16_t) * I, sizeof(char16_t));
     if (!Ch)
       return Ch.takeError();
     const uint64_t Expected =
@@ -475,11 +627,17 @@ KernelFramework::createDriver(Binding &B, llvm::ArrayRef<uint64_t> A) {
   if (!AddDevice || !Unload || !Flags || !Tag)
     return joinedErrors(AddDevice.takeError(), Unload.takeError(),
                         Flags.takeError(), Tag.takeError());
-  if ((*Flags & DriverNonPnp) && *AddDevice)
-    return InvalidParameter;
-  if (*Flags != DriverNonPnp || !*Unload)
-    return invalid("this framework lifecycle requires a non-PnP driver with "
-                   "EvtDriverUnload");
+  if (*Flags == DriverNonPnp) {
+    if (*AddDevice)
+      return InvalidParameter;
+    if (!*Unload)
+      return invalid("non-PnP framework drivers require EvtDriverUnload");
+  } else if (*Flags == 0) {
+    if (!*AddDevice)
+      return invalid("PnP framework drivers require EvtDriverDeviceAdd");
+  } else {
+    return invalid("unsupported framework driver configuration flags");
+  }
   if (B.DriverHandle)
     return DriverInternalError;
   auto Validation = attributes(A[3], AttributesUse::Driver);
@@ -498,18 +656,8 @@ KernelFramework::createDriver(Binding &B, llvm::ArrayRef<uint64_t> A) {
       Exports.insertFrameworkFunction(B.Globals, FrameworkUnloadRoutine);
   if (!Thunk)
     return Thunk.takeError();
-  auto Length = read(RegistryPath, 2);
-  auto Buffer = read(RegistryPath + 8);
-  if (!Length || !Buffer)
-    return joinedErrors(Length.takeError(), Buffer.takeError());
-  if (*Length % 2 || *Length > MaxRegistryPathBytes)
-    return invalid("invalid counted driver registry path");
-  if (auto E = ValidateAccess(*Buffer, *Length, false))
-    return E;
-  std::vector<uint8_t> Path(*Length + 2);
-  if (auto E =
-          Memory.read(*Buffer, llvm::MutableArrayRef(Path).take_front(*Length)))
-    return E;
+  std::vector<uint8_t> Path = std::move(*SuppliedPath);
+  Path.resize(Path.size() + sizeof(char16_t), 0);
   auto Copy = allocate(Path.size(), false, false);
   if (!Copy)
     return Copy.takeError();
@@ -546,13 +694,15 @@ KernelFramework::createDriver(Binding &B, llvm::ArrayRef<uint64_t> A) {
     if (auto E = Memory.writeInteger(A[5], *Handle, 8))
       return E;
   B.DriverHandle = *Handle;
+  B.AddDeviceCallback = *AddDevice;
   B.UnloadCallback = *Unload;
   B.RegistryCopy = *Copy;
   return 0;
 }
 
-llvm::Error KernelFramework::planDelete(uint64_t Handle,
-                                        std::vector<Step> &Steps) {
+llvm::Expected<KernelFramework::DeletionPlan>
+KernelFramework::prepareDeletion(uint64_t Handle, uint64_t UnlinkedFile) const {
+  DeletionPlan Plan;
   // Cancellation/draining of live queue requests needs an explicit schedule.
   // Detect that boundary before changing any ancestor or invoking cleanup.
   auto Preflight = [&](auto &&Self, uint64_t Current) -> llvm::Error {
@@ -570,6 +720,33 @@ llvm::Error KernelFramework::planDelete(uint64_t Handle,
             "deletion with an outstanding cancellation callback requires "
             "asynchronous draining, which is not modeled");
     }
+    if (I->second.Kind == ObjectKind::Interrupt) {
+      const auto &Interrupt = InterruptObjects.at(Current);
+      if (Interrupt.Connection || Interrupt.ChangingState ||
+          I->second.InternalReferences ||
+          (InterruptsHost.HasDeferred && InterruptsHost.HasDeferred(Current)))
+        return invalid(
+            "interrupt deletion requires disconnected and drained callbacks");
+    }
+    if (I->second.Kind == ObjectKind::File) {
+      auto File = FileObjects.find(Current);
+      if (File == FileObjects.end())
+        return invalid("framework file object lost its WDM identity");
+      if (Current != UnlinkedFile && FileHandles.contains(File->second.Wdm))
+        return invalid("deletion with an open file requires CLOSE");
+    }
+    if (I->second.Kind == ObjectKind::IoTarget && I->second.References)
+      return invalid("device deletion with a referenced local target "
+                     "requires the driver to release it first");
+    if (I->second.Kind == ObjectKind::Queue &&
+        (std::any_of(
+             ReadyQueueCallbacks.begin(), ReadyQueueCallbacks.end(),
+             [&](const auto &Entry) { return Entry.second == Current; }) ||
+         std::any_of(
+             CanceledQueueCallbacks.begin(), CanceledQueueCallbacks.end(),
+             [&](const auto &Entry) { return Entry.second == Current; })))
+      return invalid("deletion with an active queue callback requires "
+                     "asynchronous draining, which is not modeled");
     for (uint64_t Child : I->second.Children)
       if (Objects.count(Child))
         if (auto E = Self(Self, Child))
@@ -583,25 +760,40 @@ llvm::Error KernelFramework::planDelete(uint64_t Handle,
     auto I = Objects.find(Handle);
     if (I == Objects.end())
       return invalid("delete requires a live framework object");
-    auto &O = I->second;
+    const auto &O = I->second;
     if (O.Deleting)
       return invalid("object deletion is already in progress");
-    O.Deleting = true;
+    Plan.Objects.push_back(Handle);
     for (uint64_t Child : O.Children)
       if (Objects.count(Child) && !Objects.at(Child).Deleting)
         if (auto E = Self(Self, Child))
           return E;
     for (uint64_t Type : O.ContextOrder)
       if (O.Contexts.at(Type).Cleanup)
-        Steps.push_back(
+        Plan.Steps.push_back(
             {StepKind::Callback, Handle, O.Contexts.at(Type).Cleanup});
-    Steps.push_back({StepKind::Cleaned, Handle});
+    Plan.Steps.push_back({StepKind::Cleaned, Handle});
     Destruction.push_back({StepKind::TryDestroy, Handle});
     return llvm::Error::success();
   };
   if (auto E = Visit(Visit, Handle))
     return E;
-  Steps.insert(Steps.end(), Destruction.begin(), Destruction.end());
+  Plan.Steps.insert(Plan.Steps.end(), Destruction.begin(), Destruction.end());
+  return Plan;
+}
+
+void KernelFramework::commitDeletion(const DeletionPlan &Plan) {
+  for (uint64_t Handle : Plan.Objects)
+    Objects.at(Handle).Deleting = true;
+}
+
+llvm::Error KernelFramework::planDelete(uint64_t Handle,
+                                        std::vector<Step> &Steps) {
+  auto Plan = prepareDeletion(Handle);
+  if (!Plan)
+    return Plan.takeError();
+  commitDeletion(*Plan);
+  Steps.insert(Steps.end(), Plan->Steps.begin(), Plan->Steps.end());
   return llvm::Error::success();
 }
 
@@ -626,7 +818,13 @@ KernelFramework::advance(uint64_t Token) {
                       [&](const auto &Entry) {
                         auto O = Objects.find(Entry.second);
                         return O != Objects.end() && O->second.Parent == Handle;
-                      }))
+                      }) ||
+          std::any_of(
+              CanceledQueueCallbacks.begin(), CanceledQueueCallbacks.end(),
+              [&](const auto &Entry) { return Entry.second == Handle; }) ||
+          std::any_of(
+              ReadyQueueCallbacks.begin(), ReadyQueueCallbacks.end(),
+              [&](const auto &Entry) { return Entry.second == Handle; }))
         continue;
       if (Q.StopComplete) {
         PendingCall = GuestCall{Token, Q.StopComplete, {Handle, Q.StopContext}};
@@ -644,7 +842,7 @@ KernelFramework::advance(uint64_t Token) {
     }
     return false;
   };
-  if (NotifyQueueState())
+  if (!C.AutomaticFile && NotifyQueueState())
     return std::optional<uint64_t>{};
   while (C.Index < C.Steps.size()) {
     const Step S = C.Steps[C.Index++];
@@ -669,9 +867,13 @@ KernelFramework::advance(uint64_t Token) {
         return E;
       continue;
     }
-    if (S.Kind == StepKind::BeginDriverDelete) {
+    if (S.Kind == StepKind::BeginDriverDelete ||
+        S.Kind == StepKind::BeginDeviceDelete) {
       std::vector<Step> Delete;
-      if (auto E = planDelete(Bindings.at(S.Object).DriverHandle, Delete))
+      const uint64_t Object = S.Kind == StepKind::BeginDriverDelete
+                                  ? Bindings.at(S.Object).DriverHandle
+                                  : S.Object;
+      if (auto E = planDelete(Object, Delete))
         return E;
       C.Steps.insert(C.Steps.begin() + C.Index, Delete.begin(), Delete.end());
       continue;
@@ -701,6 +903,60 @@ KernelFramework::advance(uint64_t Token) {
       PendingCall = GuestCall{Token, Routine, {S.Object}};
       return std::optional<uint64_t>{};
     }
+    if (S.Kind == StepKind::CanceledOnQueue) {
+      auto R = Requests.find(S.Object);
+      if (R == Requests.end() || !R->second.CanceledOnQueue ||
+          R->second.Queued || R->second.Completed || R->second.Completing)
+        return invalid("queued cancellation lost its driver-owned request");
+      auto Q = Queues.find(R->second.Queue);
+      if (Q == Queues.end() || !Q->second.CanceledOnQueue)
+        return invalid("queued cancellation lost its callback");
+      if (!CanceledQueueCallbacks.emplace(Token, R->second.Queue).second)
+        return invalid("queued cancellation callback already active");
+      C.Steps.insert(C.Steps.begin() + C.Index,
+                     {StepKind::CanceledOnQueueReturned, R->second.Queue});
+      PendingCall = GuestCall{
+          Token, Q->second.CanceledOnQueue, {R->second.Queue, S.Object}};
+      return std::optional<uint64_t>{};
+    }
+    if (S.Kind == StepKind::CanceledOnQueueReturned) {
+      auto Callback = CanceledQueueCallbacks.find(Token);
+      if (Callback == CanceledQueueCallbacks.end() ||
+          Callback->second != S.Object)
+        return invalid("queued cancellation callback return lost its queue");
+      CanceledQueueCallbacks.erase(Callback);
+      if (NotifyQueueState())
+        return std::optional<uint64_t>{};
+      continue;
+    }
+    if (S.Kind == StepKind::ReadyNotify) {
+      auto Q = Queues.find(S.Object);
+      if (Q == Queues.end())
+        return invalid("ready notification lost its manual queue");
+      if (!Q->second.ReadyNotify || !Q->second.Dispatching ||
+          queuePnpHeld(Q->second) || Q->second.Pending.empty()) {
+        if (Q->second.Pending.empty() || !Q->second.ReadyNotify)
+          Q->second.ReadyPending = false;
+        continue;
+      }
+      Q->second.ReadyPending = false;
+      if (!ReadyQueueCallbacks.emplace(Token, S.Object).second)
+        return invalid("ready notification callback already active");
+      C.Steps.insert(C.Steps.begin() + C.Index,
+                     {StepKind::ReadyNotifyReturned, S.Object});
+      PendingCall = GuestCall{
+          Token, Q->second.ReadyNotify, {S.Object, Q->second.ReadyContext}};
+      return std::optional<uint64_t>{};
+    }
+    if (S.Kind == StepKind::ReadyNotifyReturned) {
+      auto Callback = ReadyQueueCallbacks.find(Token);
+      if (Callback == ReadyQueueCallbacks.end() || Callback->second != S.Object)
+        return invalid("ready notification callback return lost its queue");
+      ReadyQueueCallbacks.erase(Callback);
+      if (NotifyQueueState())
+        return std::optional<uint64_t>{};
+      continue;
+    }
     if (S.Kind == StepKind::CompleteRequest) {
       auto R = Requests.find(S.Object);
       if (R == Requests.end() || !R->second.Completing || R->second.Completed)
@@ -711,18 +967,34 @@ KernelFramework::advance(uint64_t Token) {
       if (auto E = RequestsHost.Complete(
               R->second.IRP, R->second.CompletionStatus, *Information))
         return E;
-      for (auto &[Handle, M] : UserMemories)
+      for (auto &[Handle, M] : RequestMemories)
         if (M.Request == S.Object && M.Active) {
-          if (!RequestsHost.ReleaseUserBuffer)
-            return invalid("framework user-memory release host is unavailable");
-          if (auto E = RequestsHost.ReleaseUserBuffer(M.MDL))
-            return E;
+          if (M.LockedMDL) {
+            if (!RequestsHost.ReleaseUserBuffer)
+              return invalid(
+                  "framework user-memory release host is unavailable");
+            if (auto E = RequestsHost.ReleaseUserBuffer(*M.LockedMDL))
+              return E;
+          }
           M.Active = false;
         }
       const uint64_t QueueHandle = R->second.Queue;
       R->second.Completed = true;
       R->second.Completing = false;
       R->second.Queue = 0;
+      if (R->second.FileCreate &&
+          (R->second.CompletionStatus & profile::NTStatusFailureMask) &&
+          R->second.File) {
+        const uint64_t File = R->second.File;
+        if (auto E = unlinkFileObject(File))
+          return E;
+        std::vector<Step> Delete;
+        if (auto E = planDelete(File, Delete))
+          return E;
+        C.Steps.insert(C.Steps.begin() + C.Index, Delete.begin(), Delete.end());
+      }
+      for (auto &Entry : PnpTransitions)
+        Entry.second.WaitingRequests.erase(S.Object);
       if (NotifyQueueState()) {
         C.Steps.insert(C.Steps.begin() + C.Index,
                        {StepKind::PresentQueue, QueueHandle});
@@ -733,6 +1005,44 @@ KernelFramework::advance(uint64_t Token) {
         return Presented.takeError();
       if (*Presented)
         return std::optional<uint64_t>{};
+      continue;
+    }
+    if (S.Kind == StepKind::DeleteFileObject) {
+      if (auto E = unlinkFileObject(S.Object))
+        return E;
+      std::vector<Step> Delete;
+      if (auto E = planDelete(S.Object, Delete))
+        return E;
+      C.Steps.insert(C.Steps.begin() + C.Index, Delete.begin(), Delete.end());
+      continue;
+    }
+    if (S.Kind == StepKind::CompleteFileIRP) {
+      if (!RequestsHost.Complete)
+        return invalid("file request completion host is unavailable");
+      if (auto E = RequestsHost.Complete(S.Object, S.Status, 0))
+        return E;
+      continue;
+    }
+    if (S.Kind == StepKind::ForwardFileIRP) {
+      if (!RequestsHost.ForwardFileAutomatically || !RequestsHost.View)
+        return invalid("lower file-request host is unavailable");
+      auto View = RequestsHost.View(S.Object);
+      if (!View)
+        return View.takeError();
+      if (!AutomaticFileForwards
+               .emplace(S.Object,
+                        AutomaticFileForward{Token, S.File, View->Major})
+               .second)
+        return invalid("automatic file request is already forwarded");
+      auto Status = RequestsHost.ForwardFileAutomatically(S.Object);
+      if (!Status) {
+        AutomaticFileForwards.erase(S.Object);
+        return Status.takeError();
+      }
+      if (*Status == windows::StatusPending)
+        return std::optional<uint64_t>{C.ReturnValue};
+      if (auto E = finishAutomaticFileForward(S.Object, *Status))
+        return E;
       continue;
     }
     if (S.Kind == StepKind::CancelReturned) {
@@ -784,27 +1094,38 @@ KernelFramework::advance(uint64_t Token) {
       for (const auto &[Handle, Queue] : Queues)
         if (Queue.Device == S.Object)
           return invalid("device deletion still owns a referenced queue");
+      for (const auto &[Handle, Interrupt] : InterruptObjects)
+        if (Interrupt.Device == S.Object)
+          return invalid("device deletion still owns a referenced interrupt");
       if (!DevicesHost.Delete)
         return invalid("framework device host is not configured");
       if (auto E = DevicesHost.Delete(Devices.at(S.Object).Wdm))
         return E;
+      if (auto E = retireResourceLists(Devices.at(S.Object)))
+        return E;
+      if (Devices.at(S.Object).PDO)
+        PnpDeviceHandles.erase(Devices.at(S.Object).PDO);
       Devices.erase(S.Object);
     }
+    if (O.Kind == ObjectKind::Interrupt)
+      InterruptObjects.erase(S.Object);
     if (O.Kind == ObjectKind::Queue)
       Queues.erase(S.Object);
+    if (O.Kind == ObjectKind::File)
+      FileObjects.erase(S.Object);
     if (O.Kind == ObjectKind::Request)
       Requests.erase(S.Object);
     if (O.Kind == ObjectKind::Memory) {
-      auto M = UserMemories.find(S.Object);
-      if (M == UserMemories.end())
+      auto M = RequestMemories.find(S.Object);
+      if (M == RequestMemories.end())
         return invalid("framework memory lost its object state");
-      if (M->second.Active) {
+      if (M->second.Active && M->second.LockedMDL) {
         if (!RequestsHost.ReleaseUserBuffer)
           return invalid("framework user-memory release host is unavailable");
-        if (auto E = RequestsHost.ReleaseUserBuffer(M->second.MDL))
+        if (auto E = RequestsHost.ReleaseUserBuffer(*M->second.LockedMDL))
           return E;
       }
-      UserMemories.erase(M);
+      RequestMemories.erase(M);
     }
     for (const auto &[Type, Context] : O.Contexts)
       if (auto E = retire(Context.Address))
@@ -813,13 +1134,23 @@ KernelFramework::advance(uint64_t Token) {
       return E;
     Objects.erase(OI);
   }
+  const uint64_t ReturnValue = C.ReturnValue;
+  const bool AutomaticFile = C.AutomaticFile;
   Continuations.erase(I);
-  return std::optional<uint64_t>{0};
+  if (!AutomaticFile)
+    if (auto E = resumePausedPnp())
+      return E;
+  return PendingCall ? std::optional<uint64_t>{}
+                     : std::optional<uint64_t>{ReturnValue};
 }
 
 llvm::Expected<uint64_t> KernelFramework::start(std::vector<Step> Steps) {
   const uint64_t Token = NextContinuation++;
-  Continuations.emplace(Token, Continuation{std::move(Steps)});
+  Continuation Sequence{std::move(Steps)};
+  Sequence.AutomaticFile = std::any_of(
+      Sequence.Steps.begin(), Sequence.Steps.end(),
+      [](const Step &S) { return S.Kind == StepKind::ForwardFileIRP; });
+  Continuations.emplace(Token, std::move(Sequence));
   auto Result = advance(Token);
   if (!Result)
     return Result.takeError();
@@ -827,16 +1158,96 @@ llvm::Expected<uint64_t> KernelFramework::start(std::vector<Step> Steps) {
 }
 
 std::optional<KernelFramework::GuestCall> KernelFramework::takeGuestCall() {
-  return std::exchange(PendingCall, std::nullopt);
+  auto Call = std::exchange(PendingCall, std::nullopt);
+  if (Call) {
+    if (auto Callback = RequestCompletionCallbacks.find(Call->Token);
+        Callback != RequestCompletionCallbacks.end()) {
+      if (auto Request = Requests.find(Callback->second.Request);
+          Request != Requests.end())
+        Request->second.CompletionCallbackEntered = true;
+    }
+  }
+  return Call;
 }
 
 llvm::Expected<std::optional<uint64_t>>
-KernelFramework::finishGuestCall(uint64_t Token, uint64_t) {
+KernelFramework::finishGuestCall(uint64_t Token, uint64_t Result,
+                                 uint8_t IRQL) {
+  llvm::SaveAndRestore<uint8_t> CallbackLevel(CallbackIRQL, IRQL);
+  if (InterruptContinuations.contains(Token))
+    return finishInterruptCallback(Token, Result);
+  const bool AutomaticFile = isAutomaticFileContinuation(Token);
+  auto Progress = finishPnpCallback(Token, Result);
+  if (!Progress)
+    return Progress.takeError();
+  if (*Progress == PnpCallbackProgress::Scheduled)
+    return std::optional<uint64_t>{};
+  if (*Progress == PnpCallbackProgress::Waiting)
+    return std::optional<uint64_t>{0};
   auto Cancel = CancelCallbacks.find(Token);
   if (Cancel != CancelCallbacks.end() &&
       Requests.at(Cancel->second).Cancellation != CancelState::Delivered)
     return invalid("cancellation callback has not entered guest execution");
-  return advance(Token);
+  auto Completion = RequestCompletionCallbacks.find(Token);
+  if (Completion != RequestCompletionCallbacks.end()) {
+    if (auto Request = Requests.find(Completion->second.Request);
+        Request != Requests.end()) {
+      if (!Request->second.CompletionCallbackPending ||
+          !Request->second.CompletionCallbackEntered)
+        return invalid("request completion callback was not delivered");
+      Request->second.CompletionCallbackPending = false;
+      Request->second.CompletionCallbackEntered = false;
+    }
+    if (auto E = retire(Completion->second.Params))
+      return E;
+    RequestCompletionCallbacks.erase(Completion);
+  }
+  auto Next = advance(Token);
+  if (!Next)
+    return Next.takeError();
+  if (Next->has_value()) {
+    auto Complete = PnpTransitions.find(Token);
+    if (Complete != PnpTransitions.end() &&
+        Complete->second.CallbacksComplete) {
+      CompletedPnp =
+          PnpCompletion{Complete->second.IRP, Complete->second.Status};
+      PnpTransitions.erase(Complete);
+    }
+  }
+  if (*Next && !AutomaticFile) {
+    if (auto E = flushReadyNotifications())
+      return std::move(E);
+  }
+  auto Deferred = deferPassiveCall();
+  if (!Deferred)
+    return Deferred.takeError();
+  if (*Deferred)
+    return std::optional<uint64_t>{0};
+  return PendingCall ? std::optional<uint64_t>{} : *Next;
+}
+
+llvm::Error KernelFramework::flushReadyNotifications() {
+  if (PendingCall)
+    return llvm::Error::success();
+  std::vector<Step> Steps;
+  for (const auto &[Handle, Queue] : Queues) {
+    if (!Queue.ReadyPending || !Queue.ReadyNotify || !Queue.Dispatching ||
+        queuePnpHeld(Queue) || Queue.Pending.empty())
+      continue;
+    const bool Active =
+        std::any_of(ReadyQueueCallbacks.begin(), ReadyQueueCallbacks.end(),
+                    [&](const auto &Entry) { return Entry.second == Handle; });
+    if (!Active)
+      Steps.push_back({StepKind::ReadyNotify, Handle});
+  }
+  if (Steps.empty())
+    return llvm::Error::success();
+  if (auto E = preflightCancellationToken(0))
+    return E;
+  auto Started = start(std::move(Steps));
+  if (!Started)
+    return Started.takeError();
+  return llvm::Error::success();
 }
 
 bool KernelFramework::hasLiveBinding() const {
@@ -847,33 +1258,105 @@ bool KernelFramework::hasLiveBinding() const {
 llvm::Expected<uint64_t>
 KernelFramework::call(const KernelExportRegistry::Export &Export,
                       llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
+  llvm::SaveAndRestore<uint8_t> CallbackLevel(CallbackIRQL, IRQL);
+  // Capture device ownership before completion can retire the request handle.
+  uint64_t WdmDevice = 0;
+  if (IRQL && A.size() > 1) {
+    auto Object = Objects.find(A[1]);
+    while (Object != Objects.end()) {
+      if (auto Device = Devices.find(Object->first); Device != Devices.end()) {
+        WdmDevice = Device->second.Wdm;
+        break;
+      }
+      Object = Objects.find(Object->second.Parent);
+    }
+  }
+  auto Result = callImpl(Export, A, IRQL);
+  if (!Result)
+    return Result.takeError();
+  auto Deferred = deferPassiveCall(WdmDevice);
+  if (!Deferred)
+    return Deferred.takeError();
+  return *Result;
+}
+
+llvm::Expected<bool> KernelFramework::deferPassiveCall(uint64_t WdmDevice) {
+  if (!CallbackIRQL || !PendingCall || PendingCall->ExecutionToken)
+    return false;
+  if (!WdmDevice && !PendingCall->Arguments.empty()) {
+    auto Object = Objects.find(PendingCall->Arguments.front());
+    while (Object != Objects.end()) {
+      if (auto Device = Devices.find(Object->first); Device != Devices.end()) {
+        WdmDevice = Device->second.Wdm;
+        break;
+      }
+      Object = Objects.find(Object->second.Parent);
+    }
+  }
+  if (!WdmDevice || !DevicesHost.DeferCall)
+    return invalid("PASSIVE_LEVEL callback scheduling requires a device host");
+  if (auto E = DevicesHost.DeferCall(*PendingCall, WdmDevice))
+    return E;
+  PendingCall.reset();
+  return true;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::callImpl(const KernelExportRegistry::Export &Export,
+                          llvm::ArrayRef<uint64_t> A, uint8_t IRQL) {
   auto Count = argumentCount(Export);
   if (!Count || *Count != A.size())
     return invalid("unsupported framework routine or argument count");
-  if (IRQL)
-    return invalid("current framework object callbacks require PASSIVE_LEVEL");
+  if (IRQL &&
+      Export.Kind != KernelExportRegistry::ExportKind::FrameworkFunction)
+    return invalid("framework binding requires PASSIVE_LEVEL");
   if (Export.Kind != KernelExportRegistry::ExportKind::FrameworkFunction)
-    return Export.Name == "WdfVersionBind" ? bind(A) : unbind(A);
+    return Export.Name == api::WdfVersionBind ? bind(A) : unbind(A);
   auto BI = Bindings.find(Export.Binding);
   if (BI == Bindings.end() || BI->second.Unbound)
     return invalid("table entry belongs to an unbound framework instance");
   auto &B = BI->second;
   if (Export.Name == FrameworkUnloadRoutine) {
+    if (IRQL)
+      return invalid("framework unload requires PASSIVE_LEVEL");
     if (A[0] != Driver || !B.DriverHandle || B.Unloaded)
       return invalid("invalid or repeated framework driver unload");
-    std::vector<Step> Steps{
-        {StepKind::Callback, B.DriverHandle, B.UnloadCallback}};
+    std::vector<Step> Steps;
+    if (B.UnloadCallback)
+      Steps.push_back({StepKind::Callback, B.DriverHandle, B.UnloadCallback});
     Steps.push_back({StepKind::BeginDriverDelete, B.Globals});
     Steps.push_back({StepKind::DriverUnloaded, B.Globals});
     return start(std::move(Steps));
   }
   if (A[0] != B.Globals)
     return invalid("framework function received another binding's globals");
+  auto InterruptResult = callInterrupt(Export.Name, B, A, IRQL);
+  if (!InterruptResult)
+    return InterruptResult.takeError();
+  if (*InterruptResult)
+    return **InterruptResult;
+  if (IRQL && Export.Name != api::WdfObjectGetTypedContextWorker &&
+      Export.Name != api::WdfObjectContextGetObject &&
+      Export.Name != api::WdfObjectReferenceActual) {
+    bool DispatchAPI = false;
+#define NEVERD_FRAMEWORK_DISPATCH_API(Routine)                                 \
+  DispatchAPI |= Export.Name == api::Routine;
+#include "KernelFrameworkDispatchAPIs.def"
+#undef NEVERD_FRAMEWORK_DISPATCH_API
+    if (!DispatchAPI || IRQL > scheduler::DispatchLevel)
+      return invalid("framework routine requires PASSIVE_LEVEL or a supported "
+                     "DISPATCH_LEVEL operation");
+  }
   auto Control = callControl(Export.Name, B, A);
   if (!Control)
     return Control.takeError();
   if (*Control)
     return **Control;
+  auto File = callFile(Export.Name, B, A);
+  if (!File)
+    return File.takeError();
+  if (*File)
+    return **File;
   auto Queue = callQueue(Export.Name, B, A);
   if (!Queue)
     return Queue.takeError();
@@ -889,14 +1372,14 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
     return Request.takeError();
   if (*Request)
     return **Request;
-  if (Export.Name == "WdfDriverCreate")
+  if (Export.Name == api::WdfDriverCreate)
     return createDriver(B, A);
-  if (Export.Name == "WdfWdmDriverGetWdfDriverHandle") {
+  if (Export.Name == api::WdfWdmDriverGetWdfDriverHandle) {
     if (A[1] != Driver || !Objects.count(B.DriverHandle))
       return invalid("WDM driver does not own a live framework driver");
     return B.DriverHandle;
   }
-  if (Export.Name == "WdfObjectCreate") {
+  if (Export.Name == api::WdfObjectCreate) {
     auto Validation = attributes(A[1], AttributesUse::Object);
     if (!Validation)
       return Validation.takeError();
@@ -912,7 +1395,7 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
       return E;
     return 0;
   }
-  if (Export.Name == "WdfObjectContextGetObject") {
+  if (Export.Name == api::WdfObjectContextGetObject) {
     for (const auto &[Handle, O] : Objects)
       if (O.Binding == B.Globals)
         for (const auto &[Type, Context] : O.Contexts)
@@ -924,13 +1407,14 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
   if (OI == Objects.end() || OI->second.Binding != B.Globals)
     return invalid("invalid, foreign or deleted framework handle");
   auto &O = OI->second;
-  if (Export.Name == "WdfDriverGetRegistryPath" ||
-      Export.Name == "WdfDriverWdmGetDriverObject") {
+  if (Export.Name == api::WdfDriverGetRegistryPath ||
+      Export.Name == api::WdfDriverWdmGetDriverObject) {
     if (O.Kind != ObjectKind::Driver)
       return invalid("framework handle has the wrong object type");
-    return Export.Name == "WdfDriverGetRegistryPath" ? B.RegistryCopy : Driver;
+    return Export.Name == api::WdfDriverGetRegistryPath ? B.RegistryCopy
+                                                        : Driver;
   }
-  if (Export.Name == "WdfObjectGetTypedContextWorker") {
+  if (Export.Name == api::WdfObjectGetTypedContextWorker) {
     auto TypeSize = read(A[2], 4);
     if (!TypeSize)
       return TypeSize.takeError();
@@ -939,7 +1423,7 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
     auto CI = O.Contexts.find(A[2]);
     return CI == O.Contexts.end() ? 0 : CI->second.Address;
   }
-  if (Export.Name == "WdfObjectAllocateContext") {
+  if (Export.Name == api::WdfObjectAllocateContext) {
     if (O.Deleting)
       return DeletePending;
     auto Validation = attributes(A[2], AttributesUse::AdditionalContext);
@@ -962,7 +1446,7 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
         return E;
     return Exists ? ObjectNameExists : 0;
   }
-  if (Export.Name == "WdfObjectReferenceActual") {
+  if (Export.Name == api::WdfObjectReferenceActual) {
     if (O.Cleaned)
       return invalid(
           "references after cleanup are outside this framework profile");
@@ -971,7 +1455,7 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
     ++O.References;
     return 0;
   }
-  if (Export.Name == "WdfObjectDereferenceActual") {
+  if (Export.Name == api::WdfObjectDereferenceActual) {
     if (!O.References)
       return invalid("framework reference count underflow");
     --O.References;
@@ -980,13 +1464,19 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
       return start({{StepKind::TryDestroy, A[1]}});
     return 0;
   }
-  if (Export.Name == "WdfObjectDelete") {
+  if (Export.Name == api::WdfObjectDelete) {
     if (O.Kind == ObjectKind::Driver)
       return invalid("WDFDRIVER cannot be deleted by the driver");
     if (O.Kind == ObjectKind::Queue && Queues.at(A[1]).IsDefault)
       return invalid("the default queue cannot be deleted by the driver");
     if (O.Kind == ObjectKind::Request)
       return invalid("an incoming framework request is released by completion");
+    if (O.Kind == ObjectKind::IoTarget)
+      return invalid("the local I/O target is owned by its device");
+    if (O.Kind == ObjectKind::File)
+      return invalid("a framework file object is released by CLOSE");
+    if (O.Kind == ObjectKind::Device && Devices.at(A[1]).PDO)
+      return invalid("a PnP framework device is deleted by removal");
     std::vector<Step> Steps;
     if (auto E = planDelete(A[1], Steps))
       return E;

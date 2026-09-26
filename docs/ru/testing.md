@@ -92,7 +92,7 @@ Fixture проверяют гостевую инициализацию, успе
 | `unittests/sbf` | `NeverDSBFMetadataTests`, `NeverDSBFProgramImageTests`, `NeverDSBFLoaderTests`, `NeverDSBFAnalyzerTests`, `NeverDSBFVerifierTests`, `NeverDSBFISAConformanceTests`, `NeverDSBFAgaveConformanceTests`, `NeverDSBFSemanticTests`, `NeverDSBFEmitterTests`, `NeverDSBFLLVMEmitterTests`, `NeverDSBFLLVMDifferentialTests`, `NeverDSBFSourceDifferentialTests`, `NeverDSBFMalformedCorpusTests`, `NeverDSBFUpstreamConformanceTests`, `NeverDSBFExternalOracleTests`, `NeverDSBFSolanaModelTests`, `NeverDSBFIntegrationTests` | Метаданные v0-v4 и компоновки ELF, строгая работа verifier/loader, 23 закреплённых ELF-артефакта, независимый официальный oracle, полный охват opcode, враждебные входы, CFG/восстановление и исполняемые различия LLVM/C/Rust |
 | `PatchFullSubstRTTests.cpp` | `NeverDPatchFullTests` | Эквивалентность переписывания/обфускации для четырёх ISA и трёх объектных форматов |
 | Целевые файлы преобразований в `unittests/semantic` | `NeverDSwitchXformTests`, `NeverDIndCallXformTests`, `NeverDCFGLoopXformTests`, `NeverDTwoTableXformTests`, `NeverDAvxUpperXformTests` | Быстро перелинковываемые проверки отдельно от большого семантического бинарника |
-| `unittests/corpus` (подмодуль) | `NeverDWindowsEHCorpusTests`, `NeverDRustEHCorpusTests`, `NeverDGoEHCorpusTests`, `NeverDCxxItaniumEHCorpusTests`, `NeverDObjCEHCorpusTests` | Метаданные исключений и рантайма, прочитанные из 317 зафиксированных настоящих бинарников; для каждого манифест объявляет нижние границы, которые восстановление обязано преодолеть |
+| `unittests/corpus` (подмодуль) | `NeverDWindowsEHCorpusTests`, `NeverDRustEHCorpusTests`, `NeverDGoEHCorpusTests`, `NeverDCxxItaniumEHCorpusTests`, `NeverDObjCEHCorpusTests`, `NeverDAdaDEHCorpusTests` | Метаданные исключений и рантайма, прочитанные из 545 зафиксированных настоящих бинарников; для каждого манифест объявляет нижние границы, которые восстановление обязано преодолеть |
 
 Источники регистрации:
 [`unittests/CMakeLists.txt`](../../unittests/CMakeLists.txt),
@@ -124,12 +124,12 @@ cmake --build build-corpus --target check-neverd-corpus --parallel 4
 
 `check-neverd-corpus` запускает все линии; `check-neverd-windows-eh-corpus`,
 `check-neverd-rust-eh-corpus`, `check-neverd-go-eh-corpus`,
-`check-neverd-cxx-itanium-eh-corpus` и `check-neverd-objc-eh-corpus` — по одной.
-Все три хоста CI выполняют configure с этим флагом и прогоняют все пять линий:
+`check-neverd-cxx-itanium-eh-corpus`, `check-neverd-objc-eh-corpus` и `check-neverd-ada-d-eh-corpus` — по одной.
+Все три хоста CI выполняют configure с этим флагом и прогоняют все шесть линий:
 байты везде одинаковы, а то, что их читает, — нет, и прогон corpus на одном
 хосте ничего не доказывает про два других.
 `scripts/audit_ci_test_inventory.py` отклоняет инвентарь, в котором не хватает
-хотя бы одной из пяти меток, потому что сборка, тихо переставшая читать
+хотя бы одной из шести меток, потому что сборка, тихо переставшая читать
 corpus, — это регрессия, которую не поймает ни один тест: пропало как раз то,
 что проверяло.
 
@@ -737,3 +737,11 @@ offline-анализа. Текущий предел 10 MiB равен ровно
 Fixtures масштаба 10,000 защищают worklist, function ownership и multi-latch,
 не фиксируя машинное время. Строки cluster/account/slot позволяют
 `RPC activation audit`, сохраняя обычные тесты детерминированными и offline.
+
+## Свидетельства экспорта мобильных SDK
+
+Ручной процесс `Mobile SDK Export Evidence` запускает `collect_mobile_ios_sdk_declarations.py --exports-only` для закреплённых SDK Xcode. Он сохраняет без изменений карты компоновщика Foundation, CoreFoundation и UIKit из SDK iOS для устройств и симулятора, записывая целевую платформу, версию SDK, хеш настроек SDK, размер файла и SHA-256. Обычный сборщик объявлений также сохраняет эти карты. Отсутствующие, пустые, слишком большие файлы и файлы вне SDK приводят к ошибке сбора; уже полученные свидетельства сохраняются. Карты подтверждают экспорт символов, но не доказывают ABI вызова или восстановление метода.
+
+## Доказательства ABI мобильных строк Swift
+
+Ручной процесс `Mobile Swift String ABI Evidence` компилирует фиксированные пробы равенства и порядка на Swift и пробу C с `swiftcall` с помощью Xcode 26.5 для устройств iOS и симуляторов arm64. `collect_mobile_swift_string_abi.py` сохраняет исходники, LLVM IR, ассемблер, идентификацию компиляторов, настройки SDK и `libswiftCore.tbd` вместе с хешами. Оба языка должны показать точный импорт сравнения с пятью аргументами и результатом `i1`; C должен явно расширять этот результат до байта. Неверные цели, изменённые сигнатуры, ошибки команд и тайм-ауты сохраняют частичные доказательства и завершают сбор с ошибкой. Эти данные не устанавливают объявление среды выполнения и не доказывают восстановление методов. Проверка сборщика без SDK: `python3 -m unittest scripts.tests.test_mobile_swift_string_abi`.

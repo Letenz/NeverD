@@ -19,6 +19,8 @@
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/SourceTypeHint.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/SourceClassGetterCall.h"
+#include "neverd/ir/low/SourceRegisterCopy.h"
 
 #include "llvm/ADT/SmallVector.h"
 
@@ -165,6 +167,11 @@ struct MedOp {
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
   NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default;
   MedVar Output = {};
+  /// Values defined by a multi-result intrinsic besides its primary Output.
+  /// LowIR writes these through following COPY/sub-register operations; keep
+  /// the definition on the intrinsic so SSA does not invent a live-in value
+  /// when those transport operations are later propagated away.
+  std::vector<MedVar> IntrinsicOutputs;
   // Ordinary operations retain six inline slots. Source-bound calls may carry
   // their full scalar argument list through the same SSA/liveness operands.
   llvm::SmallVector<MedVar, 6> Inputs = llvm::SmallVector<MedVar, 6>(6);
@@ -184,12 +191,6 @@ struct MedOp {
   /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
   /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
   int8_t CalleeRegisterArgs = -1;
-  /// This COPY publishes an auxiliary result of the INTRINSIC before it in the
-  /// same instruction: its input temp is defined by that INTRINSIC (for
-  /// example the flag snapshot of REP CMPS or RDTSC's EDX half), not read.
-  /// SSA versions the input at the COPY, and copy propagation keeps the COPY
-  /// so HighIR and LLVM emission can bind the result to the intrinsic.
-  bool IntrinsicAuxResult = false;
   /// The source instruction is a proven no-return call.  This is explicit MedIR
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
@@ -315,13 +316,12 @@ struct MedFunc {
   /// registers not represented by the call's explicit return value.
   std::vector<MedCallClobber> CallClobbers;
   std::vector<MedStructReturnCandidate> StructReturnCandidates;
+  SourceRegisterCopies RegisterCopyProjections;
+  SourceClassGetterCalls ClassGetterCallFacts;
   CallingConv CC = CallingConv::Unknown;
   /// Bytes reserved below and above the synthetic entry stack pointer.
   int64_t FrameSize = 0;
   int64_t FrameHeadroom = 0;
-  /// SSA placed RSP at every Windows x64 __except handler root at the body's
-  /// established frame (from the unwind operations).
-  bool SEHHandlerFramesEstablished = false;
 
   TypeRef ReturnType;
 

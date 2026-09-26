@@ -1,11 +1,23 @@
 #include "neverd/pipeline/NativeSourceHints.h"
 
+#include "../loader/Swift/SwiftBooleanProjection.h"
+#include "../loader/Swift/SwiftBooleanSourceBinding.h"
+#include "NativeSourceFloatingReturn.h"
+#include "NativeSourceIntegerPrefixReturn.h"
 #include "NativeSourcePreservation.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/MedNoReturn.h"
 #include "neverd/ir/med/MedSourceParameterUses.h"
 #include "neverd/lift/AArch64Regs.h"
+#include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/MachO/SourceRegisterCopy.h"
+#include "neverd/loader/ObjC/ObjCBlockCallHints.h"
+#include "neverd/loader/ObjC/ObjCCallHints.h"
+#include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
+#include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -15,6 +27,34 @@
 #include <tuple>
 
 namespace neverd {
+
+std::map<va_t, SourceFunctionTypeHint>
+boundNativeBooleanCallees(const MedFunc &Caller) {
+  std::map<va_t, SourceFunctionTypeHint> NativeCallees;
+  std::set<va_t> ConflictingNativeCallees;
+  for (const auto &Block : Caller.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Op.SourceCallHint || Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
+          !Op.Inputs[0].isConst() ||
+          Op.SourceCallHint->CallKind != SourceCallTypeHint::Kind::Native ||
+          Op.SourceCallHint->TargetAddress != Op.Inputs[0].ConstVal ||
+          Op.DoesNotReturn ||
+          ConflictingNativeCallees.count(Op.Inputs[0].ConstVal))
+        continue;
+      if (Op.NumInputs !=
+          sourceABIParameters(Op.SourceCallHint->Signature).size() + 1)
+        continue;
+      auto [It, Inserted] = NativeCallees.emplace(Op.Inputs[0].ConstVal,
+                                                  Op.SourceCallHint->Signature);
+      if (!Inserted &&
+          !equalSourceABIs(It->second, Op.SourceCallHint->Signature)) {
+        NativeCallees.erase(It);
+        ConflictingNativeCallees.insert(Op.Inputs[0].ConstVal);
+      }
+    }
+  return NativeCallees;
+}
+
 namespace {
 bool integerCarrier(const TypeRef &Type) {
   return Type &&
@@ -44,22 +84,134 @@ bool completeNativeAudit(va_t Entry, const PipelineFunctionAudit &Audit) {
          Audit.UnsupportedInstructions.empty() && Audit.TruncatedPaths.empty();
 }
 
+// This exceptional exit has no source arguments and never returns. Reuse the
+// loader's current machine-veneer proof rather than treating a runtime name or
+// a candidate's noreturn flag as executable identity.
+bool stackCheckFailureBinding(const BinaryImage &Image, const MedOp &Op,
+                              const SourceCallTypeHint &Current) {
+  if (Image.Arch != Arch::AArch64 || Op.Opcode != NdOp::CALL ||
+      Op.NumInputs != 1 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 8 ||
+      !Op.CallSiteId || !Op.DoesNotReturn || Op.PreservesCallerSaved ||
+      Op.Output.Size || !Op.SourceCallHint)
+    return false;
+  const auto &Binding = *Op.SourceCallHint;
+  const auto Import = Image.DyldBindSlots.find(Binding.TargetAddress);
+  if (Binding.CallKind != SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+      Binding.TargetName != "__stack_chk_fail" || !Binding.DoesNotReturn ||
+      Binding.WeakImport || Import == Image.DyldBindSlots.end() ||
+      Import->second.Module != "/usr/lib/libSystem.B.dylib" ||
+      std::find(Image.DynInfo.NeededLibs.begin(),
+                Image.DynInfo.NeededLibs.end(),
+                Import->second.Module) == Image.DynInfo.NeededLibs.end() ||
+      Import->second.Name != "___stack_chk_fail" || Import->second.Addend ||
+      Import->second.WeakImport || Binding.ValueWitness ||
+      Binding.ReturnedArgument || Binding.RuntimeObjCResultType ||
+      !Binding.Selector.empty() || !Binding.OwnerClass.empty() ||
+      Binding.SelectorReferenceAddress || !Binding.BorrowedByteInputs.empty() ||
+      !Binding.SwiftStringInputs.empty() || Binding.Format ||
+      Binding.NilTerminated || Binding.SwiftTypeMetadata || Binding.Receiver ||
+      Binding.SelectorResultUse || Binding.SelectorResultTypeUse ||
+      Binding.SelectorArgumentTypeUse || Binding.SelectorForwardingUse ||
+      Binding.SelectorArgumentStorageUse ||
+      Binding.ObjCIndirectResultStorage || Binding.ByteCount ||
+      Binding.ImmutablePointerSlot)
+    return false;
+  const auto Expected =
+      darwinRuntimeSourceCallHint(Image, Binding.TargetAddress);
+  return Expected && Expected->DoesNotReturn &&
+         Expected->CallKind == Binding.CallKind &&
+         Expected->TargetAddress == Binding.TargetAddress &&
+         Expected->TargetName == Binding.TargetName &&
+         Expected->Signature.Origin == Binding.Signature.Origin &&
+         equalSourceABIs(Expected->Signature, Binding.Signature) &&
+         Current.CallKind == Binding.CallKind &&
+         Current.TargetAddress == Binding.TargetAddress &&
+         Current.TargetName == Binding.TargetName && Current.DoesNotReturn &&
+         !Current.WeakImport &&
+         Current.Signature.Origin == Binding.Signature.Origin &&
+         equalSourceABIs(Current.Signature, Binding.Signature);
+}
+
+bool hasNativeSourceStateContract(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    bool RequireCalls, std::set<uint64_t> *UsedEntryRegisters = nullptr,
+    bool TerminalContext = false,
+    const NativeSourceCalleeContracts *Callees = nullptr,
+    const SourceFunctionTypeHint *EntrySignature = nullptr);
+
+std::set<uint64_t> directMedSourceEntryEffects(const MedFunc &Med) {
+  std::set<uint64_t> Registers;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops) {
+      const bool Effect =
+          Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE ||
+          Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+          Op.Opcode == NdOp::ATOMIC_CMPXCHG || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL || Op.Opcode == NdOp::INTRINSIC ||
+          Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR ||
+          Op.Opcode == NdOp::INDIR_BR ||
+          Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default;
+      if (!Effect)
+        continue;
+      for (unsigned I = 0; I < Op.NumInputs; ++I) {
+        // A plain store observes its address directly, but its value may only
+        // be a callee-save prologue spill. Do not turn saved X19-X28/RBX-R15
+        // bytes into source parameters when the complete demand graph is
+        // unavailable.
+        if (Op.Opcode == NdOp::STORE && I != 0)
+          continue;
+        const auto &Input = Op.Inputs[I];
+        if (Input.Kind == MedVar::Reg && Input.SSAVer == 0 && Input.Size == 8)
+          Registers.insert(Input.RegOff);
+      }
+    }
+  return Registers;
+}
+
 // These are internal source parameters, not a guessed external convention.
 // Use MedIR's observable entry-byte analysis and independent full-width native
 // reads. Caller-saved input registers may subsequently become scratch values.
-// Preserved context inputs additionally require no native writes to preserved
-// non-frame registers: hidden outputs cannot acquire a scalar call contract.
+// Preserved context inputs require an independent proof that every exit
+// restores state after any preserved-register write. An input register that is
+// itself overwritten must first reach a complete non-preservation use; a
+// prologue spill alone cannot invent a source parameter. A straight-line
+// helper with an authenticated terminating runtime call may retain an
+// unmodified, completely observed context after the same byte/frame proof,
+// without inventing a return-state restoration. Saving and restoring scratch
+// registers does not create hidden outputs.
 // The complete source body and its callers still require validation.
-std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
-                                           const MedFunc &Med,
-                                           const SourceFunctionTypeHint &Hint) {
+std::vector<uint64_t>
+nativeEntryRegisters(const BinaryImage &Image, const LowFunc *Low,
+                     const MedFunc &Med, const SourceFunctionTypeHint &Hint,
+                     const NativeSourceCalleeContracts *Callees) {
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
       Low->Blocks.size() > 16384)
     return {};
-  const auto Observed = observedMedSourceEntryRegisters(Med, Hint);
-  if (!Observed)
+  if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections))
     return {};
   const auto &TRI = getTargetRegInfo(Hint.Architecture);
+  auto Observed = observedMedSourceEntryRegisters(Med, Hint);
+  // An earlier, narrow call result can leave an unobserved high word in a
+  // return register. It cannot invalidate independent evidence that an entry
+  // context reaches an effect. This fallback only adds observed inputs; result
+  // proof and final source validation remain separate requirements.
+  if (!Observed)
+    Observed = observedMedSourceEntryRegisters(Med, Hint,
+                                               SourceEntryDemand::EffectsOnly);
+  if (!Observed) {
+    // One unrelated, call-defined value can make the complete backward graph
+    // unavailable. Retain only independent positive evidence where a complete
+    // entry word itself is an operand of an effect. LowIR must still confirm
+    // the same native read and the full preservation contract below.
+    auto Direct = directMedSourceEntryEffects(Med);
+    std::erase_if(Direct, [&](uint64_t Register) {
+      return !TRI.isCallPreserved(Register, 8);
+    });
+    if (Direct.empty())
+      return {};
+    Observed = std::move(Direct);
+  }
   auto IntegerRegister = [&](uint64_t Register) {
     return !TRI.isFrameOrLinkReg(Register) &&
            (Hint.Architecture == Arch::AArch64
@@ -69,11 +221,28 @@ std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
   const auto Preserved = TRI.callPreservedRanges(BinaryFormat::MachO);
   size_t Remaining = 262144;
   std::set<uint64_t> Reads;
-  bool PreservedWrite = false;
+  std::set<uint64_t> WrittenPreserved;
   for (const auto &Block : Low->Blocks)
     for (const auto &Op : Block.Ops) {
       if (!Remaining-- || Op.NumInputs > 6)
         return {};
+      if (const auto Site = sourceCallOccurrenceKey(Op); Site) {
+        const auto Copy = Med.RegisterCopyProjections.find(*Site);
+        if (Copy != Med.RegisterCopyProjections.end()) {
+          if (Copy->second.StackStore)
+            if (const auto *Entry = std::get_if<SourceEntryRegister>(
+                    &Copy->second.StackStore->Value);
+                Entry && Observed->count(Entry->Offset))
+              Reads.insert(Entry->Offset);
+          for (const auto &[Destination, Source] : Copy->second.Registers) {
+            if (const auto *Entry = std::get_if<SourceEntryRegister>(&Source);
+                Entry && Observed->count(Entry->Offset))
+              Reads.insert(Entry->Offset);
+            if (TRI.isCallPreserved(Destination, 8))
+              WrittenPreserved.insert(Destination);
+          }
+        }
+      }
       const auto &Output = Op.Output;
       if (Output.isReg() && Output.Size &&
           !(TRI.isFrameOrLinkReg(Output.Offset) && Output.Size <= 8))
@@ -82,7 +251,7 @@ std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
               (Output.Offset <= Range.Offset
                    ? Range.Offset - Output.Offset < Output.Size
                    : Output.Offset - Range.Offset < Range.Bytes))
-            PreservedWrite = true;
+            WrittenPreserved.insert(Range.Offset);
       for (unsigned I = 0; I < Op.NumInputs; ++I) {
         if (!Remaining--)
           return {};
@@ -92,10 +261,34 @@ std::vector<uint64_t> nativeEntryRegisters(const LowFunc *Low,
           Reads.insert(Input.Offset);
       }
     }
-  if (PreservedWrite)
-    std::erase_if(Reads, [&](uint64_t Register) {
-      return TRI.isCallPreserved(Register, 8);
-    });
+  const bool ReadsPreserved =
+      std::any_of(Reads.begin(), Reads.end(), [&](uint64_t Register) {
+        return TRI.isCallPreserved(Register, 8);
+      });
+  if ((!WrittenPreserved.empty() || Med.DoesNotReturn) && ReadsPreserved) {
+    std::set<uint64_t> Used;
+    if (Med.DoesNotReturn) {
+      // Terminal effects-only demand must always pass the complete terminal
+      // proof, including when only SP/frame/link registers were written.
+      const bool Terminal = Hint.ReturnType &&
+                            Hint.ReturnType->Kind == NdTypeKind::Void &&
+                            hasNativeSourceStateContract(Image, Low, Med, true,
+                                                         &Used, true, Callees);
+      std::erase_if(Reads, [&](uint64_t Register) {
+        return TRI.isCallPreserved(Register, 8) &&
+               (!Terminal || WrittenPreserved.count(Register) ||
+                !Used.count(Register));
+      });
+    } else if (!hasNativeSourceStateContract(Image, Low, Med, false, &Used,
+                                             false, Callees, &Hint))
+      std::erase_if(Reads, [&](uint64_t Register) {
+        return TRI.isCallPreserved(Register, 8);
+      });
+    else
+      std::erase_if(Reads, [&](uint64_t Register) {
+        return WrittenPreserved.count(Register) && !Used.count(Register);
+      });
+  }
   return {Reads.begin(), Reads.end()};
 }
 
@@ -131,17 +324,77 @@ bool completeCallResultPrefix(llvm::ArrayRef<MedOp> Ops, size_t Index,
   return true;
 }
 
-// A cleanup forwarder can have no usable scalar result. An internal void
+// Call-only declarations have a separate producer-owned authority. Matching a
+// Swift origin on a Med hint is insufficient: require the independently rebuilt
+// image contract and its canonical ABI as well as this exact direct call
+// target.
+bool certifiedNativeCallee(const BinaryImage &Image, const MedOp &Op,
+                           const NativeSourceCalleeContracts *Callees) {
+  if (!Callees || Callees->SourceImage != &Image || Op.Opcode != NdOp::CALL ||
+      Op.NumInputs != 1 || !Op.Inputs[0].isConst() || !Op.SourceCallHint ||
+      Op.DoesNotReturn)
+    return false;
+  const auto &Binding = *Op.SourceCallHint;
+  if (Binding.CallKind != SourceCallTypeHint::Kind::Native ||
+      Binding.TargetAddress != Op.Inputs[0].ConstVal || Binding.DoesNotReturn ||
+      !Image.isCodeAddress(Binding.TargetAddress))
+    return false;
+  const auto Found =
+      Callees->ZeroArgumentPointerCallees.find(Binding.TargetAddress);
+  if (Found == Callees->ZeroArgumentPointerCallees.end())
+    return false;
+  SourceFunctionTypeHint Expected;
+  Expected.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  Expected.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Error;
+  return assignDarwinScalarSourceABI(Expected, Image.Arch, Error) &&
+         equalSourceABIs(Found->second, Expected) &&
+         equalSourceABIs(Binding.Signature, Expected);
+}
+
+// A source-bound helper can have no usable scalar result. An internal void
 // summary preserves its effects and deliberately supplies no result to
-// callers. Framed and ordinary-call shapes require exact state restoration;
+// callers. Callees may return values used inside the helper; those values do
+// not establish a result on every exit from the helper itself.
+// Framed and ordinary-call shapes require exact state restoration;
 // the established frameless tail shape uses the narrower no-write proof plus
 // byte-taint rejection of stack-derived arguments and stores.
-bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
-                            const MedFunc &Med) {
+bool hasNativeSourceStateContract(
+    const BinaryImage &Image, const LowFunc *Low, const MedFunc &Med,
+    bool RequireCalls, std::set<uint64_t> *UsedEntryRegisters,
+    bool TerminalContext, const NativeSourceCalleeContracts *Callees,
+    const SourceFunctionTypeHint *EntrySignature) {
+  if (TerminalContext &&
+      (!Med.DoesNotReturn || !hasProvenNoReturnExit(Med, Image.Arch)))
+    return false;
   if (!Low || Low->Entry != Med.Entry || Low->Blocks.empty() ||
       Low->Blocks.size() > 16384)
     return false;
   NativeSourceCalls Calls;
+  if (!validateSourceRegisterCopies(Image, *Low, Med.RegisterCopyProjections) ||
+      (TerminalContext && !Med.RegisterCopyProjections.empty()))
+    return false;
+  for (const auto &[Site, Copy] : Med.RegisterCopyProjections) {
+    NativeSourceCallContract Contract;
+    Contract.RegisterCopy = &Copy;
+    Calls.emplace(Site, std::move(Contract));
+  }
+  std::optional<std::map<va_t, SourceCallTypeHint>> CurrentCallBindings;
+  std::optional<std::map<va_t, SourceCallTypeHint>> CurrentBlockBindings;
+  std::vector<SwiftBooleanProjection> BooleanProjections;
+  if (EntrySignature) {
+    bool HasBoolean = false;
+    for (const auto &Block : Med.Blocks)
+      for (const auto &Op : Block.Ops)
+        HasBoolean |= Op.SourceCallHint &&
+                      Op.SourceCallHint->CallKind ==
+                          SourceCallTypeHint::Kind::SwiftBooleanProjection;
+    if (HasBoolean) {
+      const auto NativeCallees = boundNativeBooleanCallees(Med);
+      BooleanProjections = qualifySwiftBooleanProjections(
+          Image, *Low, *EntrySignature, &NativeCallees);
+    }
+  }
   size_t Remaining = 262144;
   for (const auto &Block : Med.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -154,10 +407,22 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
         return false;
       const auto &Binding = *Op.SourceCallHint;
       using Kind = SourceCallTypeHint::Kind;
-      const bool StaticRuntime = Op.Inputs[0].isConst() &&
-                                 (Binding.CallKind == Kind::ObjCRuntimeCall ||
-                                  Binding.CallKind == Kind::SwiftRuntimeCall ||
-                                  Binding.CallKind == Kind::DarwinRuntimeCall);
+      const bool StaticRuntime =
+          Op.Inputs[0].isConst() &&
+          (Binding.CallKind == Kind::ObjCRuntimeCall ||
+           Binding.CallKind == Kind::SwiftRuntimeCall ||
+           Binding.CallKind == Kind::DarwinRuntimeCall ||
+           Binding.CallKind == Kind::SwiftStringBridge ||
+           Binding.CallKind == Kind::SwiftStringFromNSString);
+      const bool StaticMessage =
+          Op.Inputs[0].isConst() &&
+          (Binding.CallKind == Kind::ObjCMessage ||
+           Binding.CallKind == Kind::ObjCSuper2) &&
+          (Binding.Signature.Origin ==
+               SourceFunctionTypeHint::OriginKind::ObjCRuntime ||
+           Binding.Signature.Origin ==
+               SourceFunctionTypeHint::OriginKind::ObjCSDK) &&
+          Binding.Signature.HasExplicitABI;
       const bool StaticNative =
           Op.Inputs[0].isConst() && Binding.CallKind == Kind::Native &&
           Binding.TargetAddress == Op.Inputs[0].ConstVal &&
@@ -166,26 +431,189 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
           Binding.Signature.Origin ==
               SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
           Binding.Signature.HasExplicitABI;
+      const bool CertifiedNative = Binding.TargetAddress != Med.Entry &&
+                                   !TerminalContext &&
+                                   certifiedNativeCallee(Image, Op, Callees);
       const bool DynamicWitness =
           Op.Opcode == NdOp::INDIR_CALL && !Op.Inputs[0].isConst() &&
-          Binding.ValueWitness ==
-              SourceCallTypeHint::SwiftValueWitnessKind::Destroy &&
           isSwiftValueWitnessSourceCallHint(Binding, Image.Arch);
-      if ((!StaticRuntime && !StaticNative && !DynamicWitness) ||
-          Binding.DoesNotReturn || !Binding.Signature.ReturnType ||
-          Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
-          !Image.isCodeAddress(Op.Addr) ||
+      // An inferred block invocation is useful as an internal effect only
+      // when the current LowIR independently proves the same block+16 target,
+      // receiver, and zero-argument void ABI. A persisted MedIR hint alone
+      // cannot certify an indirect call's source contract.
+      const bool DynamicVoidBlock = [&] {
+        if (Image.Arch != Arch::AArch64 || Op.Opcode != NdOp::INDIR_CALL ||
+            Op.Inputs[0].isConst() || Op.NumInputs != 2 ||
+            Binding.CallKind != Kind::BlockInvoke || Binding.DoesNotReturn ||
+            Binding.WeakImport || !Binding.Signature.HasExplicitABI ||
+            (Binding.Signature.Origin !=
+                 SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+             Binding.Signature.Origin !=
+                 SourceFunctionTypeHint::OriginKind::BlockRuntime) ||
+            !Binding.Signature.ReturnType ||
+            Binding.Signature.ReturnType->Kind != NdTypeKind::Void ||
+            Binding.Signature.Parameters.size() != 1 ||
+            !Binding.Signature.Parameters[0].Type ||
+            Binding.Signature.Parameters[0].Type->Kind != NdTypeKind::Ptr ||
+            Binding.Signature.Parameters[0].Location.Kind !=
+                SourceABICarrierKind::IntegerRegister ||
+            Binding.Signature.Parameters[0].Location.RegisterOffset !=
+                a64reg::X0)
+          return false;
+        if (!CurrentCallBindings)
+          CurrentCallBindings = buildObjCSourceCallHints(Image, *Low);
+        if (!CurrentBlockBindings)
+          CurrentBlockBindings = buildObjCBlockCallHints(Image, *Low, nullptr,
+                                                         &*CurrentCallBindings);
+        const auto Current = CurrentBlockBindings->find(Op.Addr);
+        return Current != CurrentBlockBindings->end() &&
+               Current->second.CallKind == Binding.CallKind &&
+               !Current->second.DoesNotReturn && !Current->second.WeakImport &&
+               equalSourceABIs(Current->second.Signature, Binding.Signature);
+      }();
+      const bool StaticBoolean = [&] {
+        if (!EntrySignature || !Op.Inputs[0].isConst() ||
+            !isSwiftBooleanSourceBinding(Binding) ||
+            Binding.BooleanResult->FunctionEntry != Med.Entry)
+          return false;
+        const SourceCallOccurrenceKey Site{Op.Addr, Op.OriginSeq, Op.Opcode,
+                                           Op.Inputs[0].ConstVal};
+        if (Site != Binding.BooleanResult->Site)
+          return false;
+        return std::any_of(
+            BooleanProjections.begin(), BooleanProjections.end(),
+            [&](const SwiftBooleanProjection &Projection) {
+              return Projection.Normalization.Site == Site &&
+                     Projection.Runtime.ImportSlot == Binding.TargetAddress &&
+                     llvm::StringRef(Projection.Runtime.ImportName)
+                             .drop_front() == Binding.TargetName;
+            });
+      }();
+      NativeSourceCallContract Contract;
+      Contract.Signature = &Binding.Signature;
+      if (StaticMessage && Binding.CallKind == Kind::ObjCSuper2)
+        Contract.ReadOnlyFrameParameters.emplace(0, 16);
+      // These exact libswiftCore imports may borrow bounded private-frame
+      // storage. swift_beginAccess writes its three-word ValueBuffer;
+      // Hasher's 72-byte value is written through x8, then passed inout to
+      // String.hash and _finalize. Independently authenticate the current
+      // import and ABI before invalidating those frame bytes. A borrow may
+      // neither escape nor overlap a saved register.
+      if (StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
+          (Binding.TargetName == "swift_beginAccess" ||
+           Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" ||
+           Binding.TargetName == "$sSS4hash4intoys6HasherVz_tF" ||
+           Binding.TargetName == "$ss6HasherV9_finalizeSiyF") &&
+          Binding.TargetAddress && Image.Bits == Bitness::Bits64) {
+        const auto Import = Image.DyldBindSlots.find(Binding.TargetAddress);
+        const auto Expected =
+            swiftRuntimeSourceCallHint(Image, Binding.TargetAddress);
+        if (Import != Image.DyldBindSlots.end() &&
+            Import->second.Module == "/usr/lib/swift/libswiftCore.dylib" &&
+            Expected && Expected->CallKind == Binding.CallKind &&
+            Expected->TargetAddress == Binding.TargetAddress &&
+            Expected->TargetName == Binding.TargetName &&
+            Expected->DoesNotReturn == Binding.DoesNotReturn &&
+            equalSourceABIs(Expected->Signature, Binding.Signature)) {
+          if (Binding.TargetName == "swift_beginAccess")
+            Contract.WritableFrameParameters.emplace(1, 3 * sizeof(uint64_t));
+          else if (Image.Arch == Arch::AArch64 &&
+                   !Binding.Signature.Parameters.empty()) {
+            const auto &Buffer = Binding.Signature.Parameters[0];
+            if (Binding.TargetName == "$ss6HasherV5_seedABSi_tcfC" &&
+                Binding.Signature.Parameters.size() == 2 &&
+                Buffer.TheRole ==
+                    SourceParameterTypeHint::Role::SwiftIndirectResult &&
+                Buffer.Location.RegisterOffset ==
+                    getTargetRegInfo(Image.Arch).indirectResultReg())
+              Contract.WritableFrameParameters.emplace(0, 72);
+            else if (Binding.TargetName == "$sSS4hash4intoys6HasherVz_tF" &&
+                     Binding.Signature.Parameters.size() == 3 &&
+                     Buffer.TheRole ==
+                         SourceParameterTypeHint::Role::Ordinary &&
+                     Buffer.Location.RegisterOffset == 0)
+              Contract.WritableFrameParameters.emplace(0, 72);
+            else if (Binding.TargetName == "$ss6HasherV9_finalizeSiyF" &&
+                     Binding.Signature.Parameters.size() == 1 &&
+                     Buffer.TheRole ==
+                         SourceParameterTypeHint::Role::SwiftContext &&
+                     Buffer.Location.RegisterOffset == a64reg::X20)
+              Contract.WritableFrameParameters.emplace(0, 72);
+          }
+        }
+      }
+      if (TerminalContext) {
+        // The binding's import slot and the call's code veneer are distinct
+        // addresses. Authenticate every loader declaration, including a
+        // returning prefix call, then match the complete Low/Med occurrence
+        // below. A candidate native signature or name cannot supply effects.
+        const auto Import = Image.DyldBindSlots.find(Binding.TargetAddress);
+        const auto Expected =
+            StaticRuntime && Binding.CallKind == Kind::SwiftRuntimeCall &&
+                    Import != Image.DyldBindSlots.end() &&
+                    Import->second.Module == "/usr/lib/swift/libswiftCore.dylib"
+                ? swiftRuntimeSourceCallHint(Image, Binding.TargetAddress)
+                : std::nullopt;
+        if (!Expected || Expected->DoesNotReturn != Binding.DoesNotReturn ||
+            Op.DoesNotReturn != Binding.DoesNotReturn ||
+            Expected->CallKind != Binding.CallKind ||
+            Expected->TargetAddress != Binding.TargetAddress ||
+            Expected->TargetName != Binding.TargetName ||
+            !equalSourceABIs(Expected->Signature, Binding.Signature) ||
+            Op.NumInputs != sourceABIParameters(Binding.Signature).size() + 1)
+          return false;
+        Contract.Termination =
+            Binding.DoesNotReturn
+                ? NativeSourceCallContract::TerminationKind::RuntimeEntry
+                : NativeSourceCallContract::TerminationKind::None;
+      } else if (Binding.DoesNotReturn && StaticRuntime &&
+                 Binding.CallKind ==
+                     SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+                 Binding.TargetName == "__stack_chk_fail") {
+        if (!CurrentCallBindings)
+          CurrentCallBindings = buildObjCSourceCallHints(Image, *Low);
+        const auto Current = CurrentCallBindings->find(Op.Addr);
+        if (Current == CurrentCallBindings->end() ||
+            !stackCheckFailureBinding(Image, Op, Current->second))
+          return false;
+        Contract.Termination =
+            NativeSourceCallContract::TerminationKind::StackCheckFailure;
+      } else if (Binding.DoesNotReturn && StaticRuntime &&
+                 Binding.CallKind == Kind::SwiftRuntimeCall &&
+                 Binding.TargetName == "$ss53KEY_TYPE_OF_DICTIONARY_VIOLATES_"
+                                       "HASHABLE_REQUIREMENTSys5NeverOypXpF") {
+        const auto Import = Image.DyldBindSlots.find(Binding.TargetAddress);
+        const auto Expected =
+            swiftRuntimeSourceCallHint(Image, Binding.TargetAddress);
+        if (Image.Arch != Arch::AArch64 ||
+            Import == Image.DyldBindSlots.end() ||
+            Import->second.Module != "/usr/lib/swift/libswiftCore.dylib" ||
+            !Expected || !Expected->DoesNotReturn ||
+            Expected->CallKind != Binding.CallKind ||
+            Expected->TargetAddress != Binding.TargetAddress ||
+            Expected->TargetName != Binding.TargetName ||
+            !equalSourceABIs(Expected->Signature, Binding.Signature) ||
+            !Op.DoesNotReturn || Op.PreservesCallerSaved || Op.NumInputs != 2)
+          return false;
+        Contract.Termination =
+            NativeSourceCallContract::TerminationKind::SwiftDictionaryViolation;
+      }
+      if ((!StaticRuntime && !StaticNative && !CertifiedNative &&
+           !StaticBoolean && !StaticMessage && !DynamicWitness &&
+           !DynamicVoidBlock) ||
+          (Binding.DoesNotReturn && !Contract.terminates()) ||
+          !Binding.Signature.ReturnType || !Image.isCodeAddress(Op.Addr) ||
           !Calls
                .emplace(NativeSourceCallKey{Op.Addr, Op.OriginSeq, Op.Opcode,
                                             Op.Inputs[0].isConst()
                                                 ? std::optional<va_t>(
                                                       Op.Inputs[0].ConstVal)
                                                 : std::nullopt},
-                        &Binding.Signature)
+                        std::move(Contract))
                .second)
         return false;
     }
-  if (Calls.empty())
+  if (RequireCalls && Calls.empty())
     return false;
   std::set<NativeSourceCallKey> NativeCalls;
   for (const auto &Block : Low->Blocks)
@@ -200,9 +628,26 @@ bool hasVoidRuntimeContract(const BinaryImage &Image, const LowFunc *Low,
       if (!Calls.count(*Key) || !NativeCalls.insert(*Key).second)
         return false;
     }
-  return NativeCalls.size() == Calls.size() &&
-         (restoresNativeSourceState(*Low, Image.Arch, Calls) ||
-          preservesNativeSourceLeafState(*Low, Image.Arch, Calls));
+  if (NativeCalls.size() != Calls.size())
+    return false;
+  std::set<uint64_t> Used;
+  if (TerminalContext) {
+    if (!observesTerminalNativeSourceState(*Low, Image.Arch, Calls, Used))
+      return false;
+    if (UsedEntryRegisters)
+      *UsedEntryRegisters = std::move(Used);
+    return true;
+  }
+  if (restoresNativeSourceState(*Low, Image.Arch, Calls, &Used,
+                                EntrySignature)) {
+    if (UsedEntryRegisters)
+      *UsedEntryRegisters = std::move(Used);
+    return true;
+  }
+  for (const auto &[Site, Copy] : Med.RegisterCopyProjections)
+    if (Copy.StackStore)
+      return false;
+  return preservesNativeSourceLeafState(*Low, Image.Arch, Calls);
 }
 
 // This proves a defined machine carrier, not an original return declaration.
@@ -377,10 +822,117 @@ bool definedReturnPaths(const MedFunc &Function, Arch Architecture,
   return !Returns.empty();
 }
 
+std::optional<SourceFunctionTypeHint>
+integerPairReturn(const MedFunc &Med, const SourceFunctionTypeHint &Scalar) {
+  const auto Architecture = Scalar.Architecture;
+  if (Architecture != Arch::AArch64 && Architecture != Arch::X64)
+    return std::nullopt;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  std::string Error;
+  if (Scalar.Origin != SourceFunctionTypeHint::OriginKind::NativeAnalysis ||
+      !Scalar.HasExplicitABI || !validateSourceABI(Scalar, Error) ||
+      !integerCarrier(Scalar.ReturnType) || Scalar.ReturnType->Size != 8 ||
+      !Scalar.ReturnComponents.empty() ||
+      Scalar.ReturnLocation.Kind != SourceABICarrierKind::IntegerRegister ||
+      TRI.IntReturnRegs.size() < 2 || Med.DoesNotReturn || Med.IsVariadic ||
+      Scalar.ReturnLocation.RegisterOffset != TRI.IntReturnRegs[0] ||
+      Scalar.ReturnLocation.ValueBytes != 8 || !Med.MultiReturn.empty() ||
+      Med.FPReturnViaX87)
+    return std::nullopt;
+  size_t Remaining = 262144;
+  for (const auto &Block : Med.Blocks) {
+    if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return std::nullopt;
+    for (const auto &Op : Block.Ops) {
+      if (!Remaining-- ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !isArchitecturalNoReturn(Op, Architecture) &&
+           !hasNativeScalarIntrinsicEvidence(Op, Architecture)))
+        return std::nullopt;
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+        if (!Op.SourceCallHint ||
+            !validateSourceABI(Op.SourceCallHint->Signature, Error) ||
+            Op.NumInputs !=
+                sourceABIParameters(Op.SourceCallHint->Signature).size() + 1)
+          return std::nullopt;
+    }
+  }
+  SourceFunctionTypeHint Pair = Scalar;
+  Pair.ReturnType =
+      NdType::makeStruct({Scalar.ReturnType, NdType::makeInt(8, false)});
+  Pair.ReturnLocation = {};
+  for (unsigned I = 0; I < 2; ++I) {
+    SourceABIValueLocation Location{SourceABICarrierKind::IntegerRegister,
+                                    TRI.IntReturnRegs[I], 0, 8};
+    std::optional<MedVar> Incoming;
+    for (const auto &Parameter : Med.Params)
+      if (Parameter.Kind == MedVar::Param && Parameter.Id >= 0 &&
+          Parameter.RegOff == Location.RegisterOffset && Parameter.Size == 8)
+        Incoming = Parameter;
+    if (!definedReturnPaths(Med, Architecture, Location, Incoming))
+      return std::nullopt;
+    Pair.ReturnComponents.push_back(Location);
+  }
+  return validateSourceABI(Pair, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Pair))
+             : std::nullopt;
+}
+
 struct ExactNativeContract {
   bool Recognized = false;
   std::optional<SourceFunctionTypeHint> Signature;
 };
+
+// Generic return-type inference may choose int32 after a W0/EAX write even
+// though the lifted machine computation also defines the upper register bits.
+// Internal source calls must preserve that complete value when callers read it.
+// Limit this refinement to leaf bodies: an imported narrow result does not
+// authenticate its caller-saved upper bits.
+bool completeIntegerLeafReturn(const MedFunc &Med, const HighFunc &High,
+                               Arch Architecture,
+                               SourceABIValueLocation Location) {
+  if (!Med.ReturnType || Med.ReturnType->Kind != NdTypeKind::Int ||
+      Med.ReturnType->Size >= 8)
+    return false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC)
+        return false;
+  Location.ValueBytes = 8;
+  if (!definedReturnPaths(Med, Architecture, Location, std::nullopt))
+    return false;
+  const auto Flow = buildHighSourceFlowGraph(High);
+  if (!Flow.Diagnostics.Complete || !Flow.Diagnostics.Items.empty())
+    return false;
+  bool HasReturn = false;
+  std::vector<const HighExpr *> Pending;
+  for (const auto &Node : Flow.Nodes) {
+    if (!Node.Statement)
+      continue;
+    const auto &S = *Node.Statement;
+    if (S.Kind == StmtKind::Return) {
+      HasReturn = true;
+      if (!S.RetVal || !S.RetVal->Type ||
+          S.RetVal->Type->Kind != NdTypeKind::Int || S.RetVal->Type->Size != 8)
+        return false;
+    }
+    forEachExpr(S, [&](const ExprPtr &E) { Pending.push_back(E.get()); });
+  }
+  std::set<const HighExpr *> Seen;
+  size_t Remaining = 262144;
+  while (!Pending.empty()) {
+    const auto *E = Pending.back();
+    Pending.pop_back();
+    if (!E || !Remaining-- || E->Kind == ExprKind::Undef)
+      return false;
+    if (!Seen.insert(E).second)
+      continue;
+    for (const auto &Operand : E->Operands)
+      Pending.push_back(Operand.get());
+  }
+  return HasReturn;
+}
 
 ExactNativeContract
 compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
@@ -480,17 +1032,96 @@ compilerRTPlatformVersionContract(const BinaryImage &Image, const MedFunc &Med,
 }
 } // namespace
 
-std::optional<SourceFunctionTypeHint>
-inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
-                          const HighFunc &High,
-                          const PipelineFunctionAudit &Audit,
-                          std::string &Diagnostic, const LowFunc *Low) {
+std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
+                                                Arch Architecture) {
+  if ((Architecture != Arch::AArch64 && Architecture != Arch::X64) ||
+      Function.Blocks.size() > 16384)
+    return {};
+  const auto &TRI = getTargetRegInfo(Architecture);
+  if (TRI.IntReturnRegs.size() < 2)
+    return {};
+  const auto Register = TRI.IntReturnRegs[1];
+  std::set<va_t> Targets;
+  size_t Remaining = 262144;
+  for (const auto &Block : Function.Blocks) {
+    std::optional<va_t> Pending;
+    for (const auto &Op : Block.Ops) {
+      if (!Remaining-- || Op.NumInputs > 6)
+        return {};
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          Op.Opcode == NdOp::RETURN) {
+        Pending.reset();
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+            Op.Inputs[0].isConst())
+          Pending = Op.Inputs[0].Offset;
+        continue;
+      }
+      if (!Pending)
+        continue;
+      const bool SelfZero =
+          (Op.Opcode == NdOp::INT_XOR || Op.Opcode == NdOp::INT_SUB) &&
+          Op.NumInputs == 2 && Op.Inputs[0] == Op.Inputs[1];
+      if (!SelfZero)
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          // A caller may only inspect the low Boolean bits of a second
+          // result. This is still demand for that register's ABI component;
+          // integerPairReturn independently proves the complete word before
+          // it can change a callee signature.
+          if (Op.Inputs[I].isReg() && Op.Inputs[I].Offset == Register &&
+              Op.Inputs[I].Size && Op.Inputs[I].Size <= 8)
+            Targets.insert(*Pending);
+      if (Op.Output.isReg() && Op.Output.Size &&
+          (Op.Output.Offset <= Register
+               ? Register - Op.Output.Offset < Op.Output.Size
+               : Op.Output.Offset - Register < 8))
+        Pending.reset();
+    }
+  }
+  return Targets;
+}
+
+bool sourceStackStoreStateContract(const BinaryImage &Image, const LowFunc &Low,
+                                   const MedFunc &Med, const HighFunc &High) {
+  std::string Error;
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      Low.Entry != Med.Entry || Med.Entry != High.Entry ||
+      !Med.SourceTypeHint || !High.SourceTypeHint ||
+      !Med.SourceParametersBound || !Med.SourceTypeHint->HasExplicitABI ||
+      Med.SourceTypeHint->Architecture != Image.Arch ||
+      !equalSourceABIs(*Med.SourceTypeHint, *High.SourceTypeHint) ||
+      !validateSourceABI(*Med.SourceTypeHint, Error) ||
+      Med.RegisterCopyProjections != High.RegisterCopyProjections)
+    return false;
+  const bool HasStore = std::any_of(
+      Med.RegisterCopyProjections.begin(), Med.RegisterCopyProjections.end(),
+      [](const auto &Item) { return Item.second.StackStore.has_value(); });
+  return HasStore &&
+         hasNativeSourceStateContract(Image, &Low, Med, true, nullptr, false,
+                                      nullptr, &*Med.SourceTypeHint);
+}
+
+std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
+    const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
+    const PipelineFunctionAudit &Audit, std::string &Diagnostic,
+    const LowFunc *Low, bool ObserveIntegerPair,
+    const NativeSourceCalleeContracts *CalleeContracts) {
   Diagnostic.clear();
   auto Reject =
       [&](const char *Reason) -> std::optional<SourceFunctionTypeHint> {
     Diagnostic = Reason;
     return std::nullopt;
   };
+  if (High.RegisterCopyProjections != Med.RegisterCopyProjections ||
+      High.ClassGetterCallFacts != Med.ClassGetterCallFacts ||
+      (!Med.ClassGetterCallFacts.empty() &&
+       (!Low || !validateSourceClassGetterCalls(Image, *Low,
+                                                Med.ClassGetterCallFacts))) ||
+      (!Med.RegisterCopyProjections.empty() &&
+       (!Low || !validateSourceRegisterCopies(Image, *Low,
+                                              Med.RegisterCopyProjections))))
+    return Reject("source register-copy proof is no longer valid");
   if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
       Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
@@ -501,8 +1132,17 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     return Reject("native source inference requires complete verified lifting");
   if (Med.SourceTypeHint || High.SourceTypeHint || Med.SourceParametersBound)
     return Reject("native function already has a source declaration");
+  if (const auto Effects = sourceRegisterCopyLeafEffects(Image, Med.Entry)) {
+    if (Effects->StackStore)
+      return Reject("native leaf writes its caller's private stack frame");
+    for (const auto &[Destination, Source] : Effects->Registers)
+      if (getTargetRegInfo(Image.Arch).isCallPreserved(Destination, 8))
+        return Reject("native register-copy leaf has private register outputs");
+  }
+  const bool NoReturn = Med.DoesNotReturn && High.DoesNotReturn &&
+                        hasProvenNoReturnExit(Med, Image.Arch);
   if (Med.IsVariadic || !Med.MultiReturn.empty() || Med.FPReturnViaX87 ||
-      Med.DoesNotReturn || High.DoesNotReturn)
+      ((Med.DoesNotReturn || High.DoesNotReturn) && !NoReturn))
     return Reject("native function has a non-scalar or non-returning ABI");
   if (Med.Blocks.empty() || High.Body.empty() ||
       Med.Params.size() != Med.TypedParams.size() || Med.Params.size() > 64 ||
@@ -517,15 +1157,26 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Architecture = Image.Arch;
   Hint.HasExplicitABI = true;
-  Hint.ReturnType = Med.ReturnType;
+  Hint.ReturnType = NoReturn ? NdType::makeVoid() : Med.ReturnType;
   const bool FloatingReturn = Hint.ReturnType->Kind == NdTypeKind::Float;
-  Hint.ReturnLocation.Kind = FloatingReturn
+  Hint.ReturnLocation.Kind = NoReturn ? SourceABICarrierKind::None
+                             : FloatingReturn
                                  ? SourceABICarrierKind::FloatingRegister
                                  : SourceABICarrierKind::IntegerRegister;
-  Hint.ReturnLocation.RegisterOffset =
-      FloatingReturn ? TRI.FPReturnReg : TRI.IntReturnReg;
+  Hint.ReturnLocation.RegisterOffset = NoReturn         ? 0
+                                       : FloatingReturn ? TRI.FPReturnReg
+                                                        : TRI.IntReturnReg;
   Hint.ReturnLocation.ValueBytes = Hint.ReturnType->Size;
-  const auto EntryBytes = observedMedSourceEntryBytes(Med, Hint);
+  auto EntryBytes = observedMedSourceEntryBytes(Med, Hint);
+  // Generic recovery can provisionally expose a scalar return which a later
+  // source-bound call clobbers.  That makes the combined effect/return slice
+  // unavailable even though an incoming FP lane independently reaches a
+  // declared call argument or memory effect.  Parameter evidence does not
+  // depend on the enclosing helper's eventual result declaration, which is
+  // proved separately below, so retain the narrower effects-only certificate.
+  if (!EntryBytes)
+    EntryBytes = observedMedSourceEntryBytes(
+        Med, Hint, SourceEntryDemand::EffectsOnly);
   std::set<uint64_t> ParameterRegisters;
   std::set<uint64_t> AuxiliaryRegisters;
   std::set<int> StackSlots;
@@ -619,13 +1270,21 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
     if (!Block.ExceptionalSuccs.empty() || !Block.ExceptionalPreds.empty())
       return Reject("native exception-dependent parameters are unsupported");
     for (const auto &Op : Block.Ops) {
-      if (Op.Opcode == NdOp::INTRINSIC)
+      // Generic lifting may attach a placeholder register output to a trap.
+      // It is never a result carrier: the shared termination proof cuts the
+      // path and HighIR lowers the intrinsic as a terminal statement.
+      if (Op.Opcode == NdOp::INTRINSIC &&
+          !isArchitecturalNoReturn(Op, Image.Arch) &&
+          !hasNativeScalarIntrinsicEvidence(Op, Image.Arch))
         return Reject("native intrinsic requires explicit scalar ABI evidence");
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         std::string Error;
         if (!Op.SourceCallHint ||
             !validateSourceABI(Op.SourceCallHint->Signature, Error) ||
-            Op.NumInputs != Op.SourceCallHint->Signature.Parameters.size() + 1)
+            (NoReturn &&
+             Op.DoesNotReturn != Op.SourceCallHint->DoesNotReturn) ||
+            Op.NumInputs !=
+                sourceABIParameters(Op.SourceCallHint->Signature).size() + 1)
           return Reject(
               "native function calls a target without a source binding");
       }
@@ -651,16 +1310,39 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
         if (Input.Kind == MedVar::Param && Input.RegOff == kNoParamReg)
           return Reject("native stack parameter PHI requires range recovery");
   }
-  if (!HasReturn)
+  if (!HasReturn && !NoReturn)
     return Reject("native function has no machine return");
-  if (!definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
-                          IncomingReturnParameter)) {
-    if (!hasVoidRuntimeContract(Image, Low, Med) ||
-        !definedReturnPaths(Med, Image.Arch, {}, std::nullopt))
-      return Reject("native result has no complete defined carrier on every "
-                    "return path");
-    Hint.ReturnType = NdType::makeVoid();
-    Hint.ReturnLocation = {};
+  if (!NoReturn &&
+      completeIntegerLeafReturn(Med, High, Image.Arch, Hint.ReturnLocation)) {
+    Hint.ReturnType = NdType::makeInt(8, false);
+    Hint.ReturnLocation.ValueBytes = 8;
+  }
+  if (!NoReturn && !definedReturnPaths(Med, Image.Arch, Hint.ReturnLocation,
+                                       IncomingReturnParameter)) {
+    auto FloatingHint = Hint;
+    FloatingHint.ReturnType = NdType::makeFloat(8);
+    FloatingHint.ReturnLocation = {SourceABICarrierKind::FloatingRegister,
+                                   TRI.FPReturnReg, 0, 8};
+    // Generic integer inference can miss a typed double carried through Q/D
+    // identity PHIs. Require the complete value proof and the ordinary frame
+    // and return-carrier contracts before proposing this source-only result.
+    if (Hint.ReturnType->Kind == NdTypeKind::Int &&
+        Hint.ReturnType->Size == 8 &&
+        detail::hasProvenNativeSourceFloat64Return(Med, Image.Arch) &&
+        definedReturnPaths(Med, Image.Arch, FloatingHint.ReturnLocation,
+                           std::nullopt) &&
+        hasNativeSourceStateContract(Image, Low, Med, true, nullptr, false,
+                                     CalleeContracts, &FloatingHint)) {
+      Hint = std::move(FloatingHint);
+    } else {
+      if (!hasNativeSourceStateContract(Image, Low, Med, true, nullptr, false,
+                                        CalleeContracts, &Hint) ||
+          !definedReturnPaths(Med, Image.Arch, {}, std::nullopt))
+        return Reject("native result has no complete defined carrier on every "
+                      "return path");
+      Hint.ReturnType = NdType::makeVoid();
+      Hint.ReturnLocation = {};
+    }
   }
   const auto PointerParameters = inferMedSourcePointerParameters(Med);
   size_t SourceIndex = 0;
@@ -673,7 +1355,8 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
   }
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
-  const auto EntryRegisters = nativeEntryRegisters(Low, Med, Hint);
+  const auto EntryRegisters =
+      nativeEntryRegisters(Image, Low, Med, Hint, CalleeContracts);
   for (uint64_t Register : AuxiliaryRegisters)
     if (std::find(EntryRegisters.begin(), EntryRegisters.end(), Register) ==
         EntryRegisters.end())
@@ -687,10 +1370,30 @@ inferNativeSourceTypeHint(const BinaryImage &Image, const MedFunc &Med,
            {SourceABICarrierKind::IntegerRegister, Register, 0, 8}});
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;
+  if (!Med.RegisterCopyProjections.empty() &&
+      !hasNativeSourceStateContract(Image, Low, Med, false, nullptr, false,
+                                    CalleeContracts, &Hint))
+    return Reject("projected register copies do not restore native call state");
   auto Exact = compilerRTPlatformVersionContract(Image, Med, Hint, Diagnostic);
   if (Exact.Recognized)
     return Exact.Signature;
+  if (ObserveIntegerPair)
+    if (auto Pair = integerPairReturn(Med, Hint))
+      return Pair;
   return Hint;
+}
+
+std::optional<SourceFunctionTypeHint>
+refineNativeIntegerPairReturnHint(const MedFunc &Med, const HighFunc &High,
+                                  const PipelineFunctionAudit &Audit) {
+  if (Med.Entry != High.Entry || !completeNativeAudit(Med.Entry, Audit) ||
+      !Med.SourceParametersBound || !Med.SourceTypeHint ||
+      !High.SourceTypeHint || High.DoesNotReturn || High.Body.empty() ||
+      !equalSourceABIs(*Med.SourceTypeHint, *High.SourceTypeHint) ||
+      !equalSourceTypes(Med.ReturnType, Med.SourceTypeHint->ReturnType) ||
+      !equalSourceTypes(High.ReturnType, Med.SourceTypeHint->ReturnType))
+    return std::nullopt;
+  return integerPairReturn(Med, *Med.SourceTypeHint);
 }
 
 std::optional<SourceFunctionTypeHint>
@@ -706,12 +1409,137 @@ refineNativeSourceTypeHint(const HighFunc &Function,
       (Original.Architecture != Arch::AArch64 &&
        Original.Architecture != Arch::X64) ||
       !Original.HasExplicitABI || !Original.ReturnType ||
-      Original.ReturnType->Kind != NdTypeKind::Void ||
+      (Original.ReturnType->Kind != NdTypeKind::Void &&
+       !scalarCarrier(Original.ReturnType)) ||
       !equalSourceTypes(Original.ReturnType, Function.ReturnType) ||
       Original.Parameters.size() != Function.Params.size() ||
       Original.Parameters.size() > 64 || !validateSourceABI(Original, Error))
     return std::nullopt;
   const auto &TRI = getTargetRegInfo(Original.Architecture);
+  // A previous source-bound iteration can prove that a generic 64-bit integer
+  // carrier reaches effects only through an explicit low-word projection. In
+  // particular, private-frame cleanup turns a store/reload used by a `%d`
+  // format argument into SUBBYTES(param, 0). Refine that source parameter to
+  // the observed word while retaining its physical register. Evidence is
+  // per-parameter: unrelated pointer, floating, or malformed parameter uses
+  // cannot erase a complete proof, while any non-prefix use of the candidate
+  // itself keeps its full carrier. Analysis-limit exhaustion keeps every
+  // parameter unchanged.
+  std::vector<uint16_t> ParameterBytes(Original.Parameters.size());
+  std::vector<bool> ParameterObserved(Original.Parameters.size(), false);
+  bool ByteProof = true;
+  size_t ByteBudget = 100000;
+  struct ByteUse {
+    const HighExpr *Expression = nullptr;
+    const HighExpr *Parent = nullptr;
+    unsigned Operand = 0;
+    unsigned Depth = 0;
+  };
+  std::vector<const HighStmt *> ByteStatements;
+  std::vector<const HighStmt *> ByteStatementWork;
+  for (const auto &Statement : Function.Body)
+    ByteStatementWork.push_back(&Statement);
+  for (size_t I = 0; I < ByteStatementWork.size(); ++I) {
+    const auto *Statement = ByteStatementWork[I];
+    ByteStatements.push_back(Statement);
+    const auto Add = [&](const std::vector<HighStmt> &Body) {
+      for (const auto &Child : Body)
+        ByteStatementWork.push_back(&Child);
+    };
+    Add(Statement->Body);
+    Add(Statement->ElseBody);
+    Add(Statement->DefaultBody);
+    for (const auto &Case : Statement->Cases)
+      Add(Case.Body);
+    for (const auto &Body : Statement->EHClauseBodies)
+      Add(Body);
+  }
+  std::vector<ByteUse> ByteUses;
+  for (const auto *Statement : ByteStatements)
+    forEachExpr(*Statement, [&](const ExprPtr &Expression) {
+      if (!(Statement->Kind == StmtKind::Assign &&
+            &Expression == &Statement->Dst))
+        ByteUses.push_back({Expression.get(), nullptr, 0, 0});
+    });
+  for (size_t I = 0; ByteProof && I < ByteUses.size(); ++I) {
+    const auto [Expression, Parent, Operand, Depth] = ByteUses[I];
+    if (!Expression || !ByteBudget-- || Depth > 128) {
+      ByteProof = false;
+      break;
+    }
+    if (Expression->Kind == ExprKind::Var &&
+        Expression->Var.Kind == MedVar::Param) {
+      const auto Id = Expression->Var.Id;
+      if (Id < 0 || size_t(Id) >= Original.Parameters.size()) {
+        ByteProof = false;
+        break;
+      }
+      const auto &Declared = Original.Parameters[Id];
+      if (Declared.Type && Declared.Type->Kind == NdTypeKind::Int &&
+          Declared.Type->Size == 8 && Declared.Components.empty() &&
+          Declared.Location.Kind == SourceABICarrierKind::IntegerRegister) {
+        uint16_t Bytes = 8;
+        if (Expression->Type && Expression->Type->Kind == NdTypeKind::Int &&
+            Expression->Type->Size == Expression->Var.Size) {
+          if (Parent && Parent->Kind == ExprKind::BinOp &&
+              Parent->Op == NdOp::SUBBYTES && Operand == 0 && Parent->Type &&
+              Parent->Type->Kind == NdTypeKind::Int &&
+              Parent->Operands.size() == 2 && Parent->Operands[1] &&
+              Parent->Operands[1]->Kind == ExprKind::Const &&
+              Parent->Operands[1]->ConstVal == 0 &&
+              Parent->Type->Size <= Expression->Var.Size) {
+            Bytes = Parent->Type->Size;
+          } else if (Parent && Parent->Kind == ExprKind::Call &&
+                     Parent->SourceCallHint) {
+            std::string CallError;
+            const auto &Signature = Parent->SourceCallHint->Signature;
+            const auto Parameters = sourceABIParameters(Signature);
+            if (validateSourceABI(Signature, CallError) &&
+                Parent->Operands.size() == Parameters.size() &&
+                Operand < Parameters.size() && Parameters[Operand].Type &&
+                Parameters[Operand].Type->Kind == NdTypeKind::Int &&
+                Parameters[Operand].Location.ValueBytes ==
+                    Parameters[Operand].Type->Size &&
+                Parameters[Operand].Location.ValueBytes <= Expression->Var.Size)
+              Bytes = Parameters[Operand].Location.ValueBytes;
+          }
+        }
+        ParameterObserved[Id] = true;
+        ParameterBytes[Id] = std::max(ParameterBytes[Id], Bytes);
+      }
+    }
+    for (unsigned J = 0; J < Expression->Operands.size(); ++J)
+      ByteUses.push_back(
+          {Expression->Operands[J].get(), Expression, J, Depth + 1});
+  }
+  std::optional<SourceFunctionTypeHint> Narrowed;
+  if (detail::hasNativeSourceIntegerPrefixReturn(Function)) {
+    auto Prefix = Original;
+    Prefix.ReturnType = NdType::makeInt(4, Original.ReturnType->IsSigned);
+    Prefix.ReturnLocation.ValueBytes = 4;
+    if (validateSourceABI(Prefix, Error))
+      Narrowed = std::move(Prefix);
+  }
+  if (ByteProof) {
+    auto Candidate = Narrowed.value_or(Original);
+    for (size_t I = 0; I < Candidate.Parameters.size(); ++I) {
+      auto &Parameter = Candidate.Parameters[I];
+      if (!ParameterObserved[I] || ParameterBytes[I] != 4 || !Parameter.Type ||
+          Parameter.Type->Kind != NdTypeKind::Int ||
+          Parameter.Type->Size != 8 || !Parameter.Components.empty() ||
+          Parameter.Location.Kind != SourceABICarrierKind::IntegerRegister ||
+          std::find(TRI.IntParamRegs.begin(), TRI.IntParamRegs.end(),
+                    Parameter.Location.RegisterOffset) ==
+              TRI.IntParamRegs.end())
+        continue;
+      Parameter.Type = NdType::makeInt(4, Parameter.Type->IsSigned);
+      Parameter.Location.ValueBytes = 4;
+      Parameter.Location.ExtendTo32Bits = false;
+      Narrowed = Candidate;
+    }
+    if (Narrowed && !validateSourceABI(*Narrowed, Error))
+      Narrowed.reset();
+  }
   std::set<size_t> Unused;
   for (size_t I = 0; I < Original.Parameters.size(); ++I) {
     const auto &Parameter = Original.Parameters[I];
@@ -724,9 +1552,11 @@ refineNativeSourceTypeHint(const HighFunc &Function,
       Unused.insert(I);
   }
   if (Unused.empty())
-    return std::nullopt;
+    return Narrowed;
   bool Valid = true, HasReturn = false;
   size_t Remaining = 65536;
+  std::vector<MedVar> RegisterUses;
+  std::map<HighSourceLocalIdentity, std::pair<uint64_t, uint16_t>> RegisterDefs;
   auto Observe = [&](const MedVar &Value) {
     if (Value.Kind == MedVar::Param) {
       if (Value.Id < 0 || size_t(Value.Id) >= Function.Params.size())
@@ -734,13 +1564,7 @@ refineNativeSourceTypeHint(const HighFunc &Function,
       else
         Unused.erase(Value.Id);
     } else if (Value.Kind == MedVar::Reg) {
-      std::erase_if(Unused, [&](size_t I) {
-        const auto &Location = Original.Parameters[I].Location;
-        return Value.RegOff <= Location.RegisterOffset
-                   ? Location.RegisterOffset - Value.RegOff < Value.Size
-                   : Value.RegOff - Location.RegisterOffset <
-                         Location.ValueBytes;
-      });
+      RegisterUses.push_back(Value);
     }
   };
   const auto Scan = [&](auto &&Self, const ExprPtr &Expression,
@@ -782,7 +1606,24 @@ refineNativeSourceTypeHint(const HighFunc &Function,
       return std::nullopt;
     const auto &Statement = *Pending.back();
     Pending.pop_back();
-    HasReturn |= Statement.Kind == StmtKind::Return;
+    if (Statement.Kind == StmtKind::Assign && Statement.Dst &&
+        Statement.Dst->Kind == ExprKind::Var &&
+        Statement.Dst->Var.Kind == MedVar::Reg) {
+      const auto &V = Statement.Dst->Var;
+      const auto [It, Added] = RegisterDefs.emplace(
+          highSourceLocalIdentity(V), std::pair{V.RegOff, V.Size});
+      if (!Added)
+        It->second.second = It->second.first == V.RegOff
+                                ? std::min(It->second.second, V.Size)
+                                : 0;
+    }
+    if (Statement.Kind == StmtKind::Return) {
+      HasReturn = true;
+      if (Original.ReturnType->Kind != NdTypeKind::Void &&
+          (!Statement.RetVal || !Statement.RetVal->Type ||
+           Statement.RetVal->Type->Size != Original.ReturnType->Size))
+        Valid = false;
+    }
     forEachExpr(Statement,
                 [&](const ExprPtr &Expression) { Scan(Scan, Expression, 0); });
     auto Add = [&](const std::vector<HighStmt> &Body) {
@@ -808,8 +1649,33 @@ refineNativeSourceTypeHint(const HighFunc &Function,
       Add(Body);
   }
   if (!Valid || !HasReturn || Unused.empty())
-    return std::nullopt;
-  auto Refined = Original;
+    return Narrowed;
+  std::optional<bool> DefinedLocals;
+  for (const auto &Value : RegisterUses) {
+    const auto Definition = RegisterDefs.find(highSourceLocalIdentity(Value));
+    if (Definition != RegisterDefs.end() &&
+        Definition->second.first == Value.RegOff &&
+        Definition->second.second >= Value.Size) {
+      if (!DefinedLocals) {
+        const auto Flow = analyzeHighSourceFlow(
+            Function, Original.ReturnType->Kind != NdTypeKind::Void);
+        DefinedLocals = Flow.Complete && Flow.Items.empty();
+      }
+      // Renaming retains the original physical register on a local. A value
+      // defined on every reaching path is not an incoming register parameter.
+      if (*DefinedLocals)
+        continue;
+    }
+    std::erase_if(Unused, [&](size_t I) {
+      const auto &Location = Original.Parameters[I].Location;
+      return Value.RegOff <= Location.RegisterOffset
+                 ? Location.RegisterOffset - Value.RegOff < Value.Size
+                 : Value.RegOff - Location.RegisterOffset < Location.ValueBytes;
+    });
+  }
+  if (Unused.empty())
+    return Narrowed;
+  auto Refined = Narrowed ? std::move(*Narrowed) : Original;
   for (auto I = Unused.rbegin(); I != Unused.rend(); ++I)
     Refined.Parameters.erase(Refined.Parameters.begin() + *I);
   return validateSourceABI(Refined, Error) ? std::optional(std::move(Refined))

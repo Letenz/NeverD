@@ -42,6 +42,13 @@ namespace interruptField {
 #undef NEVERD_DRIVER_INTERRUPT_FIELD
 } // namespace interruptField
 
+namespace userField {
+#define NEVERD_DRIVER_USER_MEMORY_FIELD(Name, Spelling)                        \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverUserMemory.def"
+#undef NEVERD_DRIVER_USER_MEMORY_FIELD
+} // namespace userField
+
 const char *requestKindName(DriverRequestKind Kind) {
   switch (Kind) {
 #define NEVERD_DRIVER_REQUEST_KIND(Name, Spelling, Major)                      \
@@ -72,9 +79,17 @@ bool scenarioSucceeded(const DriverResult &Result) {
       (Result.Configuration.Unload && !Result.UnloadCompleted))
     return false;
   if (!llvm::all_of(Result.Interrupts, [](const DriverInterruptResult &Event) {
-        return Event.OccurredAt100ns && Event.DeliveredAt100ns &&
-               Event.ReturnedAt100ns && Event.ReturnValue &&
-               !Event.UndeliveredReason;
+        if (!Event.OccurredAt100ns || Event.UndeliveredReason)
+          return false;
+        switch (Event.Action) {
+        case DriverInterruptAction::Pulse:
+          return bool(Event.DeliveredAt100ns && Event.ReturnedAt100ns &&
+                      Event.ReturnValue);
+        case DriverInterruptAction::Assert:
+        case DriverInterruptAction::Deassert:
+          return true;
+        }
+        return false;
       }))
     return false;
   if (!llvm::all_of(Result.DmaTransfers, [](const DriverDmaResult &Event) {
@@ -296,11 +311,33 @@ const char *interruptShareName(DriverInterruptShare Share) {
   llvm_unreachable("invalid driver interrupt share");
 }
 
+const char *interruptActionName(DriverInterruptAction Action) {
+  switch (Action) {
+#define NEVERD_DRIVER_INTERRUPT_ACTION(Name, Spelling)                         \
+  case DriverInterruptAction::Name:                                            \
+    return Spelling;
+#include "neverd/emulation/DriverInterrupts.def"
+#undef NEVERD_DRIVER_INTERRUPT_ACTION
+  }
+  llvm_unreachable("invalid driver interrupt action");
+}
+
+const char *interruptPolarityName(DriverInterruptPolarity Polarity) {
+  switch (Polarity) {
+#define NEVERD_DRIVER_INTERRUPT_POLARITY(Name, Value, Spelling)                \
+  case DriverInterruptPolarity::Name:                                          \
+    return Spelling;
+#include "neverd/emulation/DriverInterrupts.def"
+#undef NEVERD_DRIVER_INTERRUPT_POLARITY
+  }
+  llvm_unreachable("invalid driver interrupt polarity");
+}
+
 llvm::json::Array
 interruptConfigurationJSON(llvm::ArrayRef<DriverInterruptResource> Interrupts) {
   llvm::json::Array Result;
-  for (const auto &Interrupt : Interrupts)
-    Result.push_back(llvm::json::Object{
+  for (const auto &Interrupt : Interrupts) {
+    llvm::json::Object Item{
         {interruptField::ID, Interrupt.ID},
         {interruptField::RawVector, Interrupt.RawVector},
         {interruptField::RawLevel, Interrupt.RawLevel},
@@ -309,7 +346,25 @@ interruptConfigurationJSON(llvm::ArrayRef<DriverInterruptResource> Interrupts) {
         {interruptField::TranslatedLevel, Interrupt.TranslatedLevel},
         {interruptField::TranslatedAffinity, Interrupt.TranslatedAffinity},
         {interruptField::Mode, interruptModeName(Interrupt.Mode)},
-        {interruptField::Share, interruptShareName(Interrupt.Share)}});
+        {interruptField::Share, interruptShareName(Interrupt.Share)}};
+    if (Interrupt.RetriggerAfter100ns)
+      Item[interruptField::RetriggerAfter100ns] =
+          *Interrupt.RetriggerAfter100ns;
+    if (!Interrupt.Messages.empty()) {
+      llvm::json::Array Messages;
+      for (const auto &Message : Interrupt.Messages)
+        Messages.push_back(llvm::json::Object{
+            {interruptField::MessageAddress, Message.MessageAddress},
+            {interruptField::MessageData, Message.MessageData},
+            {interruptField::TranslatedVector, Message.TranslatedVector},
+            {interruptField::TranslatedLevel, Message.TranslatedLevel},
+            {interruptField::TranslatedAffinity, Message.TranslatedAffinity},
+            {interruptField::Polarity,
+             interruptPolarityName(Message.Polarity)}});
+      Item[interruptField::Messages] = std::move(Messages);
+    }
+    Result.push_back(std::move(Item));
+  }
   return Result;
 }
 
@@ -318,13 +373,18 @@ interruptEventConfigurationJSON(const DriverOptions &Options) {
   llvm::json::Array Result;
   for (size_t I = 0; I < Options.Requests.size(); ++I) {
     const auto &Events = Options.Requests[I].InterruptEvents;
-    for (size_t J = 0; J < Events.size(); ++J)
-      Result.push_back(llvm::json::Object{
+    for (size_t J = 0; J < Events.size(); ++J) {
+      llvm::json::Object Item{
           {interruptField::SourceRequestIndex, I},
           {interruptField::EventIndex, J},
           {interruptField::After100ns, Events[J].After100ns},
+          {interruptField::Action, interruptActionName(Events[J].Action)},
           {interruptField::DeviceID, Events[J].DeviceID},
-          {interruptField::InterruptID, Events[J].InterruptID}});
+          {interruptField::InterruptID, Events[J].InterruptID}};
+      if (Events[J].MessageID)
+        Item[interruptField::MessageID] = *Events[J].MessageID;
+      Result.push_back(std::move(Item));
+    }
   }
   return Result;
 }
@@ -384,6 +444,52 @@ const char *userPageAccessName(DriverUserPageAccess Access) {
 #undef NEVERD_DRIVER_USER_PAGE_ACCESS
   }
   llvm_unreachable("invalid driver user page access");
+}
+
+const char *userBufferKindName(DriverUserBufferKind Kind) {
+  switch (Kind) {
+#define NEVERD_DRIVER_USER_BUFFER_KIND(Name, Spelling)                         \
+  case DriverUserBufferKind::Name:                                             \
+    return Spelling;
+#include "neverd/emulation/DriverUserMemory.def"
+#undef NEVERD_DRIVER_USER_BUFFER_KIND
+  }
+  llvm_unreachable("invalid driver user buffer kind");
+}
+
+llvm::json::Object userBufferRefJSON(const DriverUserBufferRef &Ref) {
+  llvm::json::Object Result{{userField::Buffer, userBufferKindName(Ref.Kind)},
+                            {userField::Offset, Ref.Offset}};
+  if (Ref.Kind == DriverUserBufferKind::Memory)
+    Result[field::ID] = Ref.ID;
+  return Result;
+}
+
+llvm::json::Array userMemoryConfigurationJSON(const DriverOptions &Options) {
+  llvm::json::Array Result;
+  for (size_t I = 0; I < Options.Requests.size(); ++I) {
+    const auto &Request = Options.Requests[I];
+    if (Request.UserBuffers.empty() && Request.UserPointers.empty())
+      continue;
+    llvm::json::Array Buffers;
+    for (const auto &Buffer : Request.UserBuffers)
+      Buffers.push_back(llvm::json::Object{
+          {field::ID, Buffer.ID},
+          {field::Size, Buffer.Size},
+          {userField::Input,
+           llvm::toHex(llvm::ArrayRef<uint8_t>(Buffer.Input), true)},
+          {field::Access, userPageAccessName(Buffer.Access)}});
+    llvm::json::Array Pointers;
+    for (const auto &Pointer : Request.UserPointers)
+      Pointers.push_back(llvm::json::Object{
+          {userField::Source, userBufferRefJSON(Pointer.Source)},
+          {userField::Target, userBufferRefJSON(Pointer.Target)}});
+    Result.push_back(llvm::json::Object{
+        {field::SourceRequestIndex, static_cast<uint64_t>(I)},
+        {userField::UserBuffers, std::move(Buffers)},
+        {userField::UserPointers, std::move(Pointers)}});
+  }
+  return Result;
 }
 
 llvm::json::Array
@@ -493,6 +599,8 @@ std::string driverResultJSON(const DriverResult &Result) {
       {dmaField::DmaEvents, dmaEventConfigurationJSON(Result.Configuration)},
       {field::UserPageAccess,
        userPageAccessConfigurationJSON(Result.Configuration)},
+      {userField::UserMemory,
+       userMemoryConfigurationJSON(Result.Configuration)},
       {field::KernelExports, std::move(Exports)}};
   if (Result.Fault) {
     const auto &Fault = *Result.Fault;
@@ -553,10 +661,12 @@ std::string driverResultJSON(const DriverResult &Result) {
     llvm::json::Object Item{
         {interruptField::SourceRequestIndex, Interrupt.SourceRequestIndex},
         {interruptField::EventIndex, Interrupt.EventIndex},
+        {interruptField::Action, interruptActionName(Interrupt.Action)},
         {interruptField::DeviceID, Interrupt.DeviceID},
         {interruptField::InterruptID, Interrupt.InterruptID},
         {interruptField::Epoch, Interrupt.Epoch},
         {interruptField::DueAt100ns, Interrupt.DueAt100ns},
+        {interruptField::MessageID, nullptr},
         {interruptField::OccurredAt100ns, nullptr},
         {interruptField::DeliveredAt100ns, nullptr},
         {interruptField::ReturnedAt100ns, nullptr},
@@ -564,6 +674,8 @@ std::string driverResultJSON(const DriverResult &Result) {
         {interruptField::ReturnValue, nullptr},
         {interruptField::Claimed, nullptr},
         {interruptField::UndeliveredReason, nullptr}};
+    if (Interrupt.MessageID)
+      Item[interruptField::MessageID] = *Interrupt.MessageID;
     if (Interrupt.OccurredAt100ns)
       Item[interruptField::OccurredAt100ns] = *Interrupt.OccurredAt100ns;
     if (Interrupt.DeliveredAt100ns)
@@ -579,6 +691,27 @@ std::string driverResultJSON(const DriverResult &Result) {
     }
     if (Interrupt.UndeliveredReason)
       Item[interruptField::UndeliveredReason] = *Interrupt.UndeliveredReason;
+    llvm::json::Array Handlers;
+    for (const auto &Handler : Interrupt.Handlers) {
+      llvm::json::Object Call{
+          {interruptField::InterruptObject, Address(Handler.InterruptObject)},
+          {interruptField::DeliveryIndex, Handler.DeliveryIndex},
+          {interruptField::MessageID, nullptr},
+          {interruptField::DeliveredAt100ns, Handler.DeliveredAt100ns},
+          {interruptField::ReturnedAt100ns, nullptr},
+          {interruptField::ReturnValue, nullptr},
+          {interruptField::Claimed, nullptr}};
+      if (Handler.MessageID)
+        Call[interruptField::MessageID] = *Handler.MessageID;
+      if (Handler.ReturnedAt100ns)
+        Call[interruptField::ReturnedAt100ns] = *Handler.ReturnedAt100ns;
+      if (Handler.ReturnValue) {
+        Call[interruptField::ReturnValue] = *Handler.ReturnValue;
+        Call[interruptField::Claimed] = *Handler.ReturnValue != 0;
+      }
+      Handlers.push_back(std::move(Call));
+    }
+    Item[interruptField::Handlers] = std::move(Handlers);
     Interrupts.push_back(std::move(Item));
   }
   Root[interruptField::Interrupts] = std::move(Interrupts);
@@ -646,6 +779,16 @@ std::string driverResultJSON(const DriverResult &Result) {
   Root[field::Messages] = std::move(Messages);
   llvm::json::Array Requests;
   for (const auto &Request : Result.Requests) {
+    llvm::json::Array UserBuffers;
+    for (const auto &Buffer : Request.UserBuffers)
+      UserBuffers.push_back(llvm::json::Object{
+          {field::ID, Buffer.ID},
+          {field::Address, Address(Buffer.Address)},
+          {field::Size, Buffer.Size},
+          {field::Access, userPageAccessName(Buffer.Access)},
+          {userField::Revoked, Buffer.Revoked},
+          {userField::Backing,
+           llvm::toHex(llvm::ArrayRef<uint8_t>(Buffer.Backing), true)}});
     llvm::json::Object Item{
         {field::Kind, requestKindName(Request.Kind)},
         {field::Device, Request.Device},
@@ -666,7 +809,8 @@ std::string driverResultJSON(const DriverResult &Result) {
         {field::Information, Request.Information},
         {field::InformationHex, Address(Request.Information)},
         {field::Output,
-         llvm::toHex(llvm::ArrayRef<uint8_t>(Request.Output), true)}};
+         llvm::toHex(llvm::ArrayRef<uint8_t>(Request.Output), true)},
+        {userField::UserBuffers, std::move(UserBuffers)}};
     if (!Request.DeviceID.empty())
       Item[field::DeviceID] = Request.DeviceID;
     if (Request.RequestorProcessID)

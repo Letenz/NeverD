@@ -2,6 +2,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedNoReturn.h"
 
 #include <algorithm>
 #include <deque>
@@ -28,19 +29,23 @@ struct ValueUses {
 
 std::optional<std::map<uint64_t, uint64_t>>
 observedMedSourceEntryBytes(const MedFunc &Function,
-                            const SourceFunctionTypeHint &Hint) {
+                            const SourceFunctionTypeHint &Hint,
+                            SourceEntryDemand Demand) {
   std::string Error;
   if (Function.Blocks.empty() || !Hint.HasExplicitABI ||
       !validateSourceABI(Hint, Error))
     return std::nullopt;
-  // A graph without any observed return may be an unfinished lifting
-  // fragment. It cannot prove that an incoming byte is unobservable in the
-  // complete source function. Retain the original validation in that case.
+  // A graph without an observed return cannot prove an incoming byte dead.
+  // Effects-only demand can still establish positive input evidence when the
+  // shared termination proof independently certifies the no-return graph.
+  // A flag alone never turns an unfinished fragment into a complete body.
   bool HasReturn = false;
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops)
       HasReturn |= Op.Opcode == NdOp::RETURN;
-  if (!HasReturn)
+  if (!HasReturn &&
+      !(Demand == SourceEntryDemand::EffectsOnly && Function.DoesNotReturn &&
+        hasProvenNoReturnExit(Function, Hint.Architecture)))
     return std::nullopt;
   struct Node {
     MedVar Value;
@@ -137,12 +142,16 @@ observedMedSourceEntryBytes(const MedFunc &Function,
       Need(V, Required);
     }
   };
-  RootReturn(Hint.ReturnLocation);
-  for (const auto &Location : Hint.ReturnComponents)
-    RootReturn(Location);
+  if (Demand == SourceEntryDemand::EffectsAndReturns) {
+    RootReturn(Hint.ReturnLocation);
+    for (const auto &Location : Hint.ReturnComponents)
+      RootReturn(Location);
+  }
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops) {
       if (Op.Opcode == NdOp::RETURN) {
+        if (Demand == SourceEntryDemand::EffectsOnly)
+          continue;
         for (unsigned I = 0; I < Op.NumInputs; ++I)
           if (Op.Inputs[I].Kind != MedVar::Reg)
             Need(Op.Inputs[I], Mask(Op.Inputs[I].Size));
@@ -243,8 +252,9 @@ observedMedSourceEntryBytes(const MedFunc &Function,
 
 std::optional<std::set<uint64_t>>
 observedMedSourceEntryRegisters(const MedFunc &Function,
-                                const SourceFunctionTypeHint &Hint) {
-  const auto Bytes = observedMedSourceEntryBytes(Function, Hint);
+                                const SourceFunctionTypeHint &Hint,
+                                SourceEntryDemand Demand) {
+  const auto Bytes = observedMedSourceEntryBytes(Function, Hint, Demand);
   if (!Bytes)
     return std::nullopt;
   std::set<uint64_t> Registers;

@@ -14,6 +14,10 @@ from enum import Enum, IntEnum, IntFlag
 
 SessionHandle = ctypes.c_void_p
 VirtualAddress = ctypes.c_ulonglong
+LoadProgressCallback = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_ulonglong,
+    ctypes.c_ulonglong, ctypes.c_char_p,
+)
 
 
 class OutputLanguage(IntEnum):
@@ -636,13 +640,13 @@ _C_TYPES: dict[str, object] = {
     "neverd_translate_semantic_stop_t": ctypes.c_uint32,
     "neverd_translate_proof_status_t": ctypes.c_uint32,
     "neverd_sanitize_status_t": ctypes.c_uint32,
-    "void *": ctypes.c_void_p,
-    "neverd_load_progress_fn": ctypes.c_void_p,
     "const char *": ctypes.c_char_p,
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
     "const void *": ctypes.c_void_p,
+    "void *": ctypes.c_void_p,
+    "neverd_load_progress_fn": LoadProgressCallback,
     "const neverd_simplify_options *": ctypes.POINTER(NeverDSimplifyOptions),
     "neverd_simplify_result *": ctypes.POINTER(NeverDSimplifyResult),
     "const neverd_synthesize_options *": ctypes.POINTER(NeverDSynthesizeOptions),
@@ -727,9 +731,9 @@ _declare(
     ["neverd_session_t", "neverd_va_t"],
 )
 _declare(
-    "neverd_session_set_load_progress",
-    "void",
-    ["neverd_session_t", "neverd_load_progress_fn", "void *"],
+    "neverd_session_resolve_function_name_before_load",
+    "neverd_va_t",
+    ["neverd_session_t", "const char *", "const char *"],
 )
 _declare("neverd_session_is_loaded", "int", ["neverd_session_t"])
 _declare("neverd_session_analyze", "int", ["neverd_session_t"])
@@ -767,6 +771,11 @@ _declare(
     "neverd_session_set_debug_info_enabled",
     "void",
     ["neverd_session_t", "int"],
+)
+_declare(
+    "neverd_session_set_load_progress",
+    "void",
+    ["neverd_session_t", "neverd_load_progress_fn", "void *"],
 )
 _declare(
     "neverd_session_debug_info_kind",
@@ -809,6 +818,12 @@ _declare(
 )
 _declare(
     "neverd_objc_methods_json",
+    "const char *",
+    ["neverd_session_t", "size_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_objc_methods_summary_json",
     "const char *",
     ["neverd_session_t", "size_t"],
     ownership=Ownership.OWNED_STRING,

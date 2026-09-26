@@ -14,6 +14,7 @@
 #include "../GuestMemory.h"
 #include "../X64Registers.h"
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -81,6 +82,9 @@ public:
                   unsigned Permissions) override;
   llvm::Error mapAlias(uint64_t Address, uint64_t Source, uint64_t Size,
                        unsigned Permissions) override;
+  llvm::Error unmapAlias(uint64_t Address, uint64_t Size) override;
+  llvm::Error replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
+                             llvm::ArrayRef<GuestAliasMapping> Add) override;
   llvm::Error protect(uint64_t Address, uint64_t Size,
                       unsigned Permissions) override;
   llvm::Error mapMMIO(uint64_t Address, uint64_t Size,
@@ -91,14 +95,19 @@ public:
   llvm::Error write(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes) override;
   llvm::Error validateBacking(uint64_t Address, uint64_t Size) const override;
   llvm::Expected<bool> canAccess(uint64_t Address, uint64_t Size,
-                                  unsigned Permissions) const override;
+                                 unsigned Permissions) const override;
   llvm::Error readBacking(uint64_t Address,
                           llvm::MutableArrayRef<uint8_t> Bytes) override;
   llvm::Error writeBacking(uint64_t Address,
                            llvm::ArrayRef<uint8_t> Bytes) override;
+  llvm::Error snapshotBacking(uint64_t Address,
+                              llvm::MutableArrayRef<uint8_t> Bytes) override;
   llvm::Error fetch(uint64_t Address, llvm::MutableArrayRef<uint8_t> Bytes);
   llvm::Expected<uint64_t> reg(X64Register Register);
   llvm::Error setReg(X64Register Register, uint64_t Value);
+  using XmmValue = std::array<uint64_t, 2>;
+  llvm::Expected<XmmValue> xmm(unsigned Register);
+  llvm::Error setXmm(unsigned Register, const XmmValue &Value);
   /// Capture the complete Unicorn CPU state, including SIMD and FPU registers.
   llvm::Expected<std::unique_ptr<BackendContext>> saveContext();
   /// Replace an existing snapshot with this backend's current CPU state.

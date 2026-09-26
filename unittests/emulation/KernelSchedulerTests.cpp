@@ -57,6 +57,98 @@ void expectError(llvm::Error E, llvm::StringRef Text) {
   EXPECT_NE(llvm::toString(std::move(E)).find(Text.str()), std::string::npos);
 }
 
+TEST(DriverKernelScheduler,
+     FrameworkInterruptCallbacksCoalesceWithoutAliasingKernelObjects) {
+  Scheduler S;
+  const auto Deferred = take(S.queueFrameworkInterrupt(work(1), false));
+  ASSERT_TRUE(Deferred);
+  EXPECT_FALSE(take(S.queueFrameworkInterrupt(work(1), false)));
+  EXPECT_FALSE(S.removeDPC(1));
+  EXPECT_TRUE(take(S.queueDPC(dpc(1))));
+  const auto Worker = take(S.queueFrameworkInterrupt(work(1), true));
+  ASSERT_TRUE(Worker);
+  EXPECT_FALSE(take(S.queueFrameworkInterrupt(work(1), true)));
+  EXPECT_FALSE(S.cancelWorkItem(1));
+  EXPECT_TRUE(S.hasFrameworkInterrupt(1));
+  auto First = take(S.next());
+  ASSERT_TRUE(First);
+  EXPECT_EQ(First->Kind, Scheduler::CallbackKind::FrameworkInterruptDPC);
+  EXPECT_EQ(First->IRQL, scheduler::DispatchLevel);
+  EXPECT_EQ(First->ID, *Deferred);
+  EXPECT_EQ(First->Arguments, work(1).Arguments);
+  // Dequeue permits another delivery while the active callback retains owner.
+  EXPECT_TRUE(take(S.queueFrameworkInterrupt(work(1), false)));
+  success(S.finish(First->ID));
+  auto Kernel = take(S.next());
+  ASSERT_TRUE(Kernel);
+  EXPECT_EQ(Kernel->Kind, Scheduler::CallbackKind::DPC);
+  success(S.finish(Kernel->ID));
+  auto Requeued = take(S.next());
+  ASSERT_TRUE(Requeued);
+  EXPECT_EQ(Requeued->Kind, Scheduler::CallbackKind::FrameworkInterruptDPC);
+  success(S.finish(Requeued->ID));
+  auto Passive = take(S.next());
+  ASSERT_TRUE(Passive);
+  EXPECT_EQ(Passive->Kind, Scheduler::CallbackKind::FrameworkInterruptWorkItem);
+  EXPECT_EQ(Passive->IRQL, scheduler::PassiveLevel);
+  EXPECT_EQ(Passive->ID, *Worker);
+  success(S.suspend(Passive->ID));
+  EXPECT_TRUE(S.hasFrameworkInterrupt(1));
+  EXPECT_TRUE(S.hasOutstanding(100));
+  success(S.resume(Passive->ID));
+  success(S.finish(Passive->ID));
+  EXPECT_FALSE(S.hasFrameworkInterrupt(1));
+  EXPECT_FALSE(S.hasOutstanding(100));
+}
+
+TEST(DriverKernelScheduler,
+     FrameworkInterruptCoalescingDoesNotConsumeCapacityOrIdentities) {
+  Scheduler::Limits Limits;
+  Limits.MaxPendingCallbacks = 1;
+  Scheduler S(Limits);
+  auto First = take(S.queueFrameworkInterrupt(work(1), false));
+  ASSERT_TRUE(First);
+  EXPECT_FALSE(take(S.queueFrameworkInterrupt(work(1), false)));
+  expectError(S.queueFrameworkInterrupt(work(2), false), "limit");
+  auto Invocation = take(S.next());
+  ASSERT_TRUE(Invocation);
+  expectError(S.queueFrameworkInterrupt(work(1), false), "limit");
+  success(S.finish(Invocation->ID));
+  auto Next = take(S.queueFrameworkInterrupt(work(1), false));
+  ASSERT_TRUE(Next);
+  EXPECT_EQ(*Next, *First + 1);
+}
+
+TEST(DriverKernelScheduler,
+     FrameworkPassiveContinuationsRetainIdentityAndWorkerOrdering) {
+  Scheduler S;
+  const auto First = take(S.enqueueWorkItem(work(1)));
+  const auto Deferred = take(S.enqueueFrameworkPassive(work(1)));
+  EXPECT_TRUE(S.cancelWorkItem(1));
+  EXPECT_FALSE(S.cancelWorkItem(1));
+  EXPECT_FALSE(S.isWorkItemQueued(1));
+  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
+  auto Invocation = take(S.next());
+  ASSERT_TRUE(Invocation);
+  EXPECT_EQ(Invocation->Kind, Scheduler::CallbackKind::FrameworkPassive);
+  EXPECT_EQ(Invocation->ID, Deferred);
+  EXPECT_GT(Deferred, First);
+  EXPECT_EQ(Invocation->IRQL, scheduler::PassiveLevel);
+  EXPECT_EQ(Invocation->Arguments, work(1).Arguments);
+  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
+  success(S.suspend(Deferred));
+  EXPECT_TRUE(S.hasOutstanding(100));
+  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
+  const auto Second = take(S.enqueueFrameworkPassive(work(2)));
+  auto Next = take(S.next());
+  ASSERT_TRUE(Next);
+  EXPECT_EQ(Next->ID, Second);
+  success(S.finish(Second));
+  success(S.resume(Deferred));
+  success(S.finish(Deferred));
+  EXPECT_FALSE(S.hasOutstanding(100));
+}
+
 TEST(DriverKernelScheduler, WorkersPreserveFIFOAndExactGuestMetadata) {
   Scheduler S;
   const uint64_t FirstID = take(S.enqueueWorkItem(work(1)));
@@ -950,8 +1042,7 @@ TEST(DriverKernelScheduler, WDMCancellationRunsAtDispatchBeforeItsWorker) {
   const auto Cancel = take(S.enqueueWDMCancellation(work(11, 101)));
   EXPECT_TRUE(S.hasQueuedCancellation());
   EXPECT_FALSE(S.hasQueuedFrameworkCancel());
-  expectError(S.canEnqueueWDMCancellations({work(11, 101)}),
-              "already queued");
+  expectError(S.canEnqueueWDMCancellations({work(11, 101)}), "already queued");
   auto Call = take(S.next(false));
   ASSERT_TRUE(Call);
   EXPECT_EQ(Call->ID, Cancel);
@@ -1095,14 +1186,15 @@ TEST(DriverKernelScheduler, InvalidCancellationMetadataCannotRetainOwnership) {
   EXPECT_EQ(S.queuedCallbackCount(), 0u);
 }
 
-TEST(DriverKernelScheduler, WDMCompletionPriorityAndObjectNamespacesAreIndependent) {
+TEST(DriverKernelScheduler,
+     WDMCompletionPriorityAndObjectNamespacesAreIndependent) {
   Scheduler S;
   const auto Worker = take(S.enqueueWorkItem(work(7)));
   const auto First = take(S.enqueueWDMCompletion(work(7, 101)));
   const auto Second = take(S.enqueueWDMCompletion(work(8, 102)));
   const auto Cancel = take(S.enqueueFrameworkCancel(work(7, 103)));
   EXPECT_TRUE(take(S.queueDPC(dpc(7))));
-  EXPECT_TRUE(S.hasQueuedWDMCompletion());
+  EXPECT_TRUE(S.hasQueuedCompletion());
   auto Call = take(S.next(false));
   ASSERT_TRUE(Call);
   EXPECT_EQ(Call->Kind, Scheduler::CallbackKind::DPC);
@@ -1124,33 +1216,34 @@ TEST(DriverKernelScheduler, WDMCompletionBatchAdmissionDoesNotReserveOrMutate) {
   Limits.MaxPendingCallbacks = 2;
   Scheduler S(Limits);
   take(S.enqueueWorkItem(work(1)));
-  expectError(S.canEnqueueWDMCompletions({work(2), work(3)}), "pending callback");
+  expectError(S.canEnqueueCompletions({work(2), work(3)}), "pending callback");
   EXPECT_EQ(S.queuedCallbackCount(), 1u);
-  EXPECT_FALSE(S.hasQueuedWDMCompletion());
-  success(S.canEnqueueWDMCompletions({work(2)}));
-  success(S.canEnqueueWDMCompletions({work(2)}));
+  EXPECT_FALSE(S.hasQueuedCompletion());
+  success(S.canEnqueueCompletions({work(2)}));
+  success(S.canEnqueueCompletions({work(2)}));
   EXPECT_EQ(take(S.enqueueWDMCompletion(work(2))), 2u);
   expectError(S.enqueueWDMCompletion(work(3)), "pending callback");
   EXPECT_TRUE(S.cancelWorkItem(1));
   EXPECT_FALSE(S.cancelWorkItem(2));
   EXPECT_FALSE(S.isWorkItemQueued(2));
-  EXPECT_TRUE(S.hasQueuedWDMCompletion());
+  EXPECT_TRUE(S.hasQueuedCompletion());
 }
 
 TEST(DriverKernelScheduler, WDMCompletionBatchRejectsDuplicatesAndInvalidPC) {
   Scheduler S;
-  expectError(S.canEnqueueWDMCompletions({work(1), work(1)}), "already queued");
+  expectError(S.canEnqueueCompletions({work(1), work(1)}), "already queued");
   auto Invalid = work(1);
   Invalid.PC = 0;
-  expectError(S.canEnqueueWDMCompletions({work(2), Invalid}), "nonzero");
+  expectError(S.canEnqueueCompletions({work(2), Invalid}), "nonzero");
   EXPECT_FALSE(S.hasPending());
   const auto ID = take(S.enqueueWDMCompletion(work(1)));
-  expectError(S.canEnqueueWDMCompletions({work(1)}), "already queued");
+  expectError(S.canEnqueueCompletions({work(1)}), "already queued");
   EXPECT_EQ(ID, 1u);
   EXPECT_EQ(S.queuedCallbackCount(), 1u);
 }
 
-TEST(DriverKernelScheduler, WDMCompletionSuspensionRetainsKindCapacityAndOwner) {
+TEST(DriverKernelScheduler,
+     WDMCompletionSuspensionRetainsKindCapacityAndOwner) {
   Scheduler::Limits Limits;
   Limits.MaxPendingCallbacks = 2;
   Scheduler S(Limits);
@@ -1158,9 +1251,9 @@ TEST(DriverKernelScheduler, WDMCompletionSuspensionRetainsKindCapacityAndOwner) 
   const auto Worker = take(S.enqueueWorkItem(work(2, 102)));
   ASSERT_TRUE(take(S.next(false)));
   success(S.suspend(Completion));
-  EXPECT_FALSE(S.hasQueuedWDMCompletion());
+  EXPECT_FALSE(S.hasQueuedCompletion());
   EXPECT_TRUE(S.hasOutstanding(101));
-  expectError(S.canEnqueueWDMCompletions({work(3)}), "pending callback");
+  expectError(S.canEnqueueCompletions({work(3)}), "pending callback");
   auto Call = take(S.next(false));
   ASSERT_TRUE(Call);
   EXPECT_EQ(Call->ID, Worker);
@@ -1174,13 +1267,14 @@ TEST(DriverKernelScheduler, WDMCompletionSuspensionRetainsKindCapacityAndOwner) 
   EXPECT_FALSE(S.hasOutstanding(101));
 }
 
-TEST(DriverKernelScheduler, WDMCompletionDispatchLimitPreservesQueuedOwnership) {
+TEST(DriverKernelScheduler,
+     WDMCompletionDispatchLimitPreservesQueuedOwnership) {
   Scheduler::Limits Limits;
   Limits.MaxDispatches = 0;
   Scheduler S(Limits);
   take(S.enqueueWDMCompletion(work(1, 101)));
   expectError(S.next(false), "dispatch limit");
-  EXPECT_TRUE(S.hasQueuedWDMCompletion());
+  EXPECT_TRUE(S.hasQueuedCompletion());
   EXPECT_TRUE(S.hasOutstanding(101));
   EXPECT_FALSE(S.active());
 }

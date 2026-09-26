@@ -15,6 +15,26 @@ struct BinaryImage;
 std::optional<std::vector<uint8_t>>
 readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
 
+/// Read uniquely mapped immutable instruction bytes without fixups. This
+/// proves byte availability only, not function ownership or instruction
+/// semantics. Ordinary data reads continue to reject executable addresses.
+std::optional<std::vector<uint8_t>>
+readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size);
+
+/// Read the complete runtime bits of one exact, resolved Mach-O chained
+/// rebase in unique immutable storage. Competing or overlapping fixups are
+/// rejected. This grants no ordinary pointer identity or byte-copy authority;
+/// a consumer must separately prove the value's representation and relocation.
+std::optional<uint64_t> readImmutableChainedImageValue(const BinaryImage &Image,
+                                                    va_t Address);
+
+/// Prove a complete store range lies in unique file-backed writable image
+/// storage, disjoint from a function's private frame and newly allocated
+/// objects. This proves only the storage owner, never its contents or a source
+/// binding. Zero-fill, executable and ambiguous mappings are not accepted.
+bool isFileBackedWritableImageRange(const BinaryImage &Image, va_t Address,
+                                    uint32_t Size);
+
 /// Whether scalar bits could name a source-owned image object or instruction.
 /// A pointer requires the target width and a mapped section owner; segment
 /// padding and narrow integer pieces do not provide that identity. This check
@@ -28,5 +48,22 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 /// permission to copy the target object.
 std::optional<va_t> readImmutableImagePointer(const BinaryImage &Image,
                                               va_t Address);
+
+/// Prove one exact strong, zero-addend import slot has unique immutable
+/// file-backed storage and no competing fixups. This authenticates the slot,
+/// not a runtime object layout, provider export, or permission to copy bytes.
+bool isImmutableImageImportSlot(const BinaryImage &Image, va_t Address);
+
+/// Same storage/fixup proof, additionally requiring one exact Class reference
+/// matching the strong imported class symbol. Only that matching metadata
+/// record is permitted; provider ownership remains the caller's obligation.
+bool isImmutableImageClassImportSlot(const BinaryImage &Image, va_t Address);
+
+/// Read the initial value of an authenticated local data-pointer relocation.
+/// Storage may be writable: this is an initializer recipe, never permission
+/// to replace subsequent loads with the initial value. The caller must rebuild
+/// the slot's shared mutable identity and separately validate the target.
+std::optional<va_t> readInitialImagePointer(const BinaryImage &Image,
+                                            va_t Address);
 } // namespace neverd
 #endif

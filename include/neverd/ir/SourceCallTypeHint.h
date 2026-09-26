@@ -3,6 +3,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/SourceTypeHint.h"
+#include "neverd/ir/low/SourceCallOccurrence.h"
 
 #include <tuple>
 
@@ -10,9 +11,17 @@ namespace neverd {
 
 /// Source receiver provenance carried through full-width machine copies.
 /// Method self has a declared base class; an exact class reference denotes
-/// that class object. Neither fact selects a dynamic method implementation.
+/// that class object. An out-parameter root records compiler-declared pointee
+/// classes from every reaching SDK call. No fact selects a dynamic method
+/// implementation.
 struct ObjCReceiverTypeHint {
-  enum class OriginKind { MethodEntry, ClassReference };
+  enum class OriginKind {
+    MethodEntry,
+    MethodParameter,
+    BlockParameter,
+    ClassReference,
+    OutParameter
+  };
   OriginKind Origin = OriginKind::MethodEntry;
   va_t Address = 0;
   /// Root receiver's declared class, before any type steps.
@@ -43,10 +52,38 @@ struct ObjCReceiverTypeHint {
   /// Neither supplies object identity or permission to remove operations.
   std::vector<TypeStep> Steps;
 
+  struct OutParameterRoot {
+    va_t Address = 0;
+    std::string Selector;
+    unsigned Parameter = 0;
+    bool operator==(const OutParameterRoot &Other) const {
+      return Address == Other.Address && Selector == Other.Selector &&
+             Parameter == Other.Parameter;
+    }
+    bool operator<(const OutParameterRoot &Other) const {
+      return std::tie(Address, Selector, Parameter) <
+             std::tie(Other.Address, Other.Selector, Other.Parameter);
+    }
+  };
+  /// For OutParameter roots, each item identifies one authenticated selector
+  /// reference and compiler-declared object-pointer argument reaching a join.
+  std::vector<OutParameterRoot> OutParameters;
+  /// Source parameter index for a declaration erased to an Objective-C id.
+  unsigned SourceParameter = 0;
+  /// Exact runtime descriptor that declares a block callback parameter.
+  /// The source plan separately proves that this descriptor belongs to the
+  /// invoke entry in Address.
+  va_t BlockDescriptorAddress = 0;
+  uint32_t BlockDescriptorFlags = 0;
+
   bool operator==(const ObjCReceiverTypeHint &Other) const {
     return Origin == Other.Origin && Address == Other.Address &&
            ClassName == Other.ClassName &&
-           IsClassMethod == Other.IsClassMethod && Steps == Other.Steps;
+           IsClassMethod == Other.IsClassMethod && Steps == Other.Steps &&
+           OutParameters == Other.OutParameters &&
+           SourceParameter == Other.SourceParameter &&
+           BlockDescriptorAddress == Other.BlockDescriptorAddress &&
+           BlockDescriptorFlags == Other.BlockDescriptorFlags;
   }
 };
 
@@ -61,6 +98,11 @@ struct SourceCallTypeHint {
     RuntimeSelector,
     RuntimeClass,
     RuntimeMetaclass,
+    /// Address of one validated Objective-C class-reference pointer cell.
+    /// The rebuilt cell is initialized from the named runtime class and keeps
+    /// the original extra level of indirection; it is not a class object.
+    RuntimeClassReferenceAddress,
+    RuntimeMetaclassReferenceAddress,
     RuntimeIvarOffset,
     NativeAddress,
     RuntimeBlockIsa,
@@ -73,6 +115,11 @@ struct SourceCallTypeHint {
     /// TargetAddress identifies the original key; rebuilt methods share one
     /// opaque storage identity. This does not bind readable image contents.
     RuntimeAssociationKey,
+    /// A uniquely named writable KVO context token. The address is rebuilt
+    /// only for an exact observer-registration context argument or an exact
+    /// comparison with the matching callback's context parameter. Its bytes
+    /// are never copied or exposed.
+    RuntimeKVOContext,
     /// A loader-authenticated self-referential writable pointer slot. The
     /// original value is the slot's own address, so source rebuilds one shared
     /// opaque identity instead of retaining either original image address.
@@ -80,6 +127,36 @@ struct SourceCallTypeHint {
     /// Exact scalar accesses rooted at a uniquely named writable data symbol.
     /// ByteCount is the proven storage prefix rebuilt across methods.
     RuntimeLocalStorageAddress,
+    /// One exported, immutable Swift String static with an inline ASCII value.
+    /// The complete pointer-free 16-byte value is rebuilt in shared storage.
+    RuntimeSwiftSmallStringAddress,
+    /// One address in a compiler-emitted Swift concrete-type metadata pair.
+    /// The pair is a fresh zero cache plus a rebuilt relative mangled-name
+    /// record; no initialized metadata pointer from the loaded image is copied.
+    RuntimeSwiftTypeMetadataAddress,
+    /// The address of one uniquely exported, read-only Swift nominal type
+    /// descriptor passed to an authenticated singleton-metadata runtime call.
+    RuntimeSwiftNominalDescriptorAddress,
+    /// The exact exported address of concrete Swift struct metadata used by
+    /// a value-witness call. The metadata and its nominal descriptor remain
+    /// owned by the original linked image; source only names their identity.
+    RuntimeSwiftNominalMetadataAddress,
+    /// The zero-initialized pointer cache of a compiler-emitted Swift lazy
+    /// witness-table accessor. The containing accessor proves the exact
+    /// swift_getWitnessTable call, external descriptor/metadata identities,
+    /// fast-path load, release store, and returned values.
+    RuntimeSwiftWitnessCacheAddress,
+    /// A compiler-emitted zero-argument Swift lazy witness-table accessor.
+    /// TargetAddress is the exact local accessor entry; source projection
+    /// replaces the incidental machine value in the runtime's instantiation
+    /// register with the compiler-level undef represented by a private helper.
+    RuntimeSwiftWitnessAccessor,
+    /// A compiler-emitted zero-argument Swift lazy global addressor. The exact
+    /// body proves one zero-initialized once token, one writable value cell,
+    /// one nonescaping initializer, and returns the value-cell address on
+    /// every path. Source projection rebuilds those identities and the once
+    /// operation rather than retaining their original image addresses.
+    RuntimeSwiftOnceAccessor,
     /// Base of a rebuilt numeric profiling-counter section. The SDK proves
     /// storage extents and permits only bounded, unordered memory accesses.
     RuntimeProfileCounterStorage,
@@ -114,10 +191,46 @@ struct SourceCallTypeHint {
     RuntimeConstantObject,
     /// Immutable scalar table bytes, confined to proven indexed source loads.
     /// Bounds and every helper occurrence must be revalidated in the caller.
-    RuntimeReadOnlyBytes
+    RuntimeReadOnlyBytes,
+    /// Complete immutable C-string literal section, rebuilt once per image.
+    /// Interior offsets, embedded NULs and retained pointers share its
+    /// identity.
+    RuntimeCStringStorage,
+    /// A bounded immutable table whose full-width slots are authenticated
+    /// relocations to rebuildable constant Objective-C objects or exact nulls.
+    /// ByteCount is the complete table prefix used by proven indexed loads.
+    RuntimeConstantObjectTable,
+    /// A complete compiler-emitted superclass getter, projected only in its
+    /// verified Objective-C callers. The SDK retains the metadata accessor,
+    /// dynamic selector load and super dispatch under one shared contract.
+    RuntimeObjCSuperGetter,
+    /// One rebuilt selector-reference cell used by a verified super getter.
+    /// The source helper loads the cell after its metadata accessor call.
+    RuntimeSelectorReferenceAddress,
+    /// A complete counter/metadata factory projected only in one verified
+    /// Objective-C caller. Its counter retains the shared profiling storage.
+    RuntimeObjCMetadataFactory,
+    /// Caller-proven normalization of a raw Swift i1 result. The logical
+    /// byte signature describes the source expression, never the runtime ABI.
+    SwiftBooleanProjection
   };
   Kind CallKind = Kind::Native;
-  enum class SwiftValueWitnessKind { Destroy, InitializeWithCopy };
+  struct BooleanResultProjection {
+    va_t FunctionEntry = 0;
+    SourceCallOccurrenceKey Site;
+  };
+  /// Identity only; publication must repeat the current caller proof.
+  std::optional<BooleanResultProjection> BooleanResult;
+  enum class SwiftValueWitnessKind {
+    Destroy,
+    InitializeWithCopy,
+    InitializeBufferWithCopyOfBuffer,
+    AssignWithCopy,
+    InitializeWithTake,
+    AssignWithTake,
+    GetEnumTagSinglePayload,
+    StoreEnumTagSinglePayload
+  };
   /// Present only for a dynamically loaded required Swift value witness.
   std::optional<SwiftValueWitnessKind> ValueWitness;
   /// The bound source routine has a noreturn contract. Runtime bindings must
@@ -160,7 +273,7 @@ struct SourceCallTypeHint {
   /// rebuild proven immortal literal storage; ownership and dynamic values
   /// remain unchanged.
   std::vector<std::pair<unsigned, unsigned>> SwiftStringInputs;
-  enum class FormatSyntax { NSString, Predicate };
+  enum class FormatSyntax { NSString, Predicate, Printf };
   /// Proven actual arguments of a declared format call. Signature contains
   /// every supplied value at its physical location; only FixedCount values
   /// belong in the emitted prototype. Revalidate the format object's identity
@@ -170,14 +283,123 @@ struct SourceCallTypeHint {
     unsigned FormatParameter = 0;
     va_t FormatAddress = 0;
     FormatSyntax Syntax = FormatSyntax::NSString;
+    /// Additional exact immutable format objects that can reach the same call
+    /// through control flow. Every candidate is independently parsed and must
+    /// produce the identical promoted variadic ABI. Kept sorted and distinct
+    /// from FormatAddress so a single-format binding retains its old shape.
+    std::vector<va_t> AlternativeFormatAddresses;
+    /// The format value is dynamic, but the call supplies no variadic tail.
+    /// Its contents therefore cannot change the emitted argument ABI. This is
+    /// valid only for an exact declared message whose parameter count equals
+    /// FixedCount.
+    bool DynamicWithoutArguments = false;
+    /// The format value is dynamic and every supplied variadic value is an
+    /// already typed source pointer. Pointer values have one complete promoted
+    /// variadic carrier without inspecting the format text. Integer and
+    /// floating tails still require an immutable parsed format object.
+    bool DynamicPointerArguments = false;
+    /// An independent dynamic format contract whose nonempty tail consists
+    /// only of declaration-proven 64-bit integers. These values are already
+    /// promoted; all reaching definitions must agree on signedness and width.
+    bool DynamicInteger64Arguments = false;
   };
   std::optional<FormatArguments> Format;
+  /// Proven non-null object arguments in order, followed by the first nil.
+  /// Empty means the fixed firstObject is nil and no tail is consumed. This
+  /// is a distinct SDK sentinel contract, never a format-string annotation.
+  struct NilTerminatedArguments {
+    std::vector<va_t> Objects;
+    bool operator==(const NilTerminatedArguments &) const = default;
+  };
+  std::optional<NilTerminatedArguments> NilTerminated;
+
+  struct SwiftTypeMetadataAddress {
+    va_t CacheAddress = 0;
+    va_t ReferenceAddress = 0;
+    va_t TypeReferenceAddress = 0;
+    va_t DescriptorSlot = 0;
+    std::string DescriptorSymbol;
+    std::string Suffix;
+    bool operator==(const SwiftTypeMetadataAddress &Other) const {
+      return std::tie(CacheAddress, ReferenceAddress, TypeReferenceAddress,
+                      DescriptorSlot, DescriptorSymbol, Suffix) ==
+             std::tie(Other.CacheAddress, Other.ReferenceAddress,
+                      Other.TypeReferenceAddress, Other.DescriptorSlot,
+                      Other.DescriptorSymbol, Other.Suffix);
+    }
+  };
+  /// Complete pair proof used by RuntimeSwiftTypeMetadataAddress. The current
+  /// TargetAddress must be exactly CacheAddress or ReferenceAddress.
+  std::optional<SwiftTypeMetadataAddress> SwiftTypeMetadata;
   /// Restricts declaration agreement using revalidated receiver provenance.
+  /// For ObjCSuper2 this is the exact current-class reference stored in the
+  /// objc_super record, not the dynamic receiver pointer.
   std::optional<ObjCReceiverTypeHint> Receiver;
+  /// An exact post-call integer-register read that uniquely selected one
+  /// otherwise conflicting Objective-C selector declaration. This is machine
+  /// dataflow evidence, not a source type guess; publication revalidates the
+  /// complete declaration set against the same carrier range.
+  std::optional<SourceABIValueLocation> SelectorResultUse;
+  /// Complete source kind required by the first authenticated consumer of the
+  /// result. This is present only with SelectorResultUse. The consumer must
+  /// have a complete source declaration; untyped machine operations and
+  /// equal-width carriers alone prove no source kind.
+  std::optional<NdTypeKind> SelectorResultTypeUse;
+  /// An exact Objective-C method-entry parameter flowed to one message
+  /// argument without changing its source type. Parameter zero denotes the
+  /// receiver when an authenticated source declaration identifies its class.
+  /// This may select one otherwise conflicting selector declaration only when
+  /// the current method metadata, physical source carrier and complete
+  /// parameter type still agree.
+  struct SelectorArgumentTypeEvidence {
+    unsigned Parameter = 0;
+    va_t MethodEntry = 0;
+    SourceABIValueLocation Source;
+    /// A bound objc_retain consumed this unchanged entry value before the
+    /// selector use, proving that an opaque pointer is used as an object.
+    bool ConsumedAsObject = false;
+  };
+  std::optional<SelectorArgumentTypeEvidence> SelectorArgumentTypeUse;
+  /// An exact Objective-C method forwards an entry parameter as the receiver,
+  /// forwards every selector argument from named entry parameters, and returns
+  /// the message result without changing its declared source type. This can
+  /// supply a missing selector declaration; publication revalidates the
+  /// current method declaration and exact HighIR parameter operands.
+  struct SelectorForwardingEvidence {
+    va_t MethodEntry = 0;
+    unsigned ReceiverSourceParameter = 0;
+    std::vector<unsigned> ArgumentSourceParameters;
+    bool operator==(const SelectorForwardingEvidence &) const = default;
+  };
+  std::optional<SelectorForwardingEvidence> SelectorForwardingUse;
+  /// An exact address inside the current function's private frame flowed to
+  /// one message argument. This may distinguish a pointer-to-pointer
+  /// declaration from an object-valued declaration; publication revalidates
+  /// the same argument expression, frame offset and private-frame bounds.
+  struct SelectorArgumentStorageEvidence {
+    unsigned Parameter = 0;
+    int64_t FrameOffset = 0;
+  };
+  std::optional<SelectorArgumentStorageEvidence> SelectorArgumentStorageUse;
+  /// A non-null current-method self and the exact private frame range supplied
+  /// through Darwin's hidden indirect-result register. This admits an
+  /// Objective-C record result without changing selector-wide nil-dispatch
+  /// semantics. Publication revalidates the method entry, self operand, frame
+  /// bounds, and complete receiver-qualified declaration.
+  struct ObjCIndirectResultStorageEvidence {
+    va_t MethodEntry = 0;
+    int64_t FrameOffset = 0;
+    uint16_t ByteCount = 0;
+    bool operator==(const ObjCIndirectResultStorageEvidence &) const = default;
+  };
+  std::optional<ObjCIndirectResultStorageEvidence> ObjCIndirectResultStorage;
   /// RuntimeBorrowedBytes/RuntimeReadOnlyBytes extent at TargetAddress.
   uint32_t ByteCount = 0;
   /// Constant strings/objects: the immutable relocated slot whose loaded
-  /// value supplied TargetAddress. Revalidate it against the current image.
+  /// value supplied TargetAddress. For RuntimeCStringStorage, TargetAddress
+  /// names the shared pool and this slot identifies a revalidated pointer
+  /// into it; its source helper preserves the current interior offset.
+  /// Revalidate the complete slot and pool against the current image.
   va_t ImmutablePointerSlot = 0;
 };
 

@@ -2,8 +2,10 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedNoReturn.h"
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <limits>
 #include <optional>
@@ -11,22 +13,90 @@
 
 namespace neverd {
 std::optional<NativeSourceCallKey> nativeSourceCallKey(const LowOp &Operation) {
-  if ((Operation.Opcode != NdOp::CALL &&
-       Operation.Opcode != NdOp::INDIR_CALL) ||
-      Operation.Seq < 0 || Operation.NumInputs != 1 ||
-      Operation.Inputs[0].Size != 8 ||
-      (Operation.Opcode == NdOp::CALL && !Operation.Inputs[0].isConst()))
-    return std::nullopt;
-  return NativeSourceCallKey{
-      Operation.Addr, Operation.Seq, Operation.Opcode,
-      Operation.Inputs[0].isConst()
-          ? std::optional<va_t>(Operation.Inputs[0].Offset)
-          : std::nullopt};
+  return sourceCallOccurrenceKey(Operation);
+}
+
+bool hasNativeScalarIntrinsicEvidence(const LowOp &Operation,
+                                      Arch Architecture) {
+  if (Architecture != Arch::AArch64 || Operation.Opcode != NdOp::INTRINSIC ||
+      Operation.NumInputs != 2 || !Operation.Inputs[0].isConst() ||
+      Operation.Inputs[0].Size != 2 ||
+      Operation.Inputs[0].Offset !=
+          static_cast<uint64_t>(Intrinsic::A64_Rbit) ||
+      (!Operation.Output.isReg() && !Operation.Output.isTemp()) ||
+      Operation.Output.Size != Operation.Inputs[1].Size ||
+      (Operation.Output.Size != 1 && Operation.Output.Size != 2 &&
+       Operation.Output.Size != 4 && Operation.Output.Size != 8) ||
+      (!Operation.Inputs[1].isConst() && !Operation.Inputs[1].isReg() &&
+       !Operation.Inputs[1].isTemp()) ||
+      Operation.MemoryOrdering != NdMemoryOrdering::None ||
+      Operation.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  return true;
+}
+
+bool hasNativeScalarIntrinsicEvidence(const MedOp &Operation,
+                                      Arch Architecture) {
+  if (Architecture != Arch::AArch64 || Operation.Opcode != NdOp::INTRINSIC ||
+      Operation.NumInputs != 2 || !Operation.Inputs[0].isConst() ||
+      Operation.Inputs[0].Size != 2 ||
+      Operation.Inputs[0].ConstVal !=
+          static_cast<uint64_t>(Intrinsic::A64_Rbit) ||
+      (Operation.Output.Kind != MedVar::Reg &&
+       Operation.Output.Kind != MedVar::Temp) ||
+      Operation.Output.Size != Operation.Inputs[1].Size ||
+      (Operation.Output.Size != 1 && Operation.Output.Size != 2 &&
+       Operation.Output.Size != 4 && Operation.Output.Size != 8))
+    return false;
+  return true;
 }
 
 namespace {
 constexpr int64_t MaxFrame = 1 << 20;
 constexpr size_t MaxFacts = 4096;
+
+bool stackCheckTermination(const NativeSourceCallContract &Contract,
+                           Arch Architecture) {
+  if (Contract.Termination !=
+          NativeSourceCallContract::TerminationKind::StackCheckFailure ||
+      Architecture != Arch::AArch64 || !Contract.Signature ||
+      Contract.Signature->Origin !=
+          SourceFunctionTypeHint::OriginKind::DarwinRuntime ||
+      !Contract.ReadOnlyFrameParameters.empty() ||
+      !Contract.WritableFrameParameters.empty())
+    return false;
+  SourceFunctionTypeHint Expected;
+  Expected.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+  Expected.ReturnType = NdType::makeVoid();
+  std::string Error;
+  return assignDarwinScalarSourceABI(Expected, Architecture, Error) &&
+         equalSourceABIs(*Contract.Signature, Expected);
+}
+
+bool swiftDictionaryViolationTermination(
+    const NativeSourceCallContract &Contract, Arch Architecture) {
+  if (Contract.Termination !=
+          NativeSourceCallContract::TerminationKind::SwiftDictionaryViolation ||
+      Architecture != Arch::AArch64 || !Contract.Signature ||
+      Contract.Signature->Origin !=
+          SourceFunctionTypeHint::OriginKind::SwiftSDK ||
+      !Contract.ReadOnlyFrameParameters.empty() ||
+      !Contract.WritableFrameParameters.empty())
+    return false;
+  SourceFunctionTypeHint Expected;
+  Expected.Origin = SourceFunctionTypeHint::OriginKind::SwiftSDK;
+  Expected.ReturnType = NdType::makeVoid();
+  Expected.Parameters = {{"arg0", NdType::makePtr(NdType::makeVoid())}};
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Expected, Architecture, Error) &&
+         equalSourceABIs(*Contract.Signature, Expected);
+}
+
+bool ordinaryFrameTermination(const NativeSourceCallContract &Contract,
+                              Arch Architecture) {
+  return stackCheckTermination(Contract, Architecture) ||
+         swiftDictionaryViolationTermination(Contract, Architecture);
+}
 
 // Byte identities make partial writes and overlapping spills explicit. A
 // frame address needs all eight ordered bytes before it can name a stack slot.
@@ -96,9 +166,19 @@ std::optional<int64_t> signedConstant(const NdVar &Value) {
 
 class PreservationProof {
 public:
-  PreservationProof(Arch Architecture, const NativeSourceCalls &Calls)
+  PreservationProof(Arch Architecture, const NativeSourceCalls &Calls,
+                    bool TerminalOnly = false,
+                    std::set<int64_t> IncomingStackSlots = {})
       : Architecture(Architecture), Calls(Calls),
-        TRI(getTargetRegInfo(Architecture)) {
+        TRI(getTargetRegInfo(Architecture)), TerminalOnly(TerminalOnly),
+        TrackStackArguments(TerminalOnly),
+        IncomingStackSlots(std::move(IncomingStackSlots)) {
+    if (Architecture == Arch::AArch64)
+      for (const auto &[Site, Contract] : Calls)
+        if (Contract.Signature)
+          for (const auto &Parameter : Contract.Signature->Parameters)
+            TrackStackArguments |=
+                Parameter.Location.Kind == SourceABICarrierKind::Stack;
     for (const auto &Range : TRI.callPreservedRanges(BinaryFormat::MachO))
       for (unsigned I = 0; I < Range.Bytes; ++I)
         Preserved.insert(Range.Offset + I);
@@ -115,9 +195,14 @@ public:
 
   State Initial;
   size_t Remaining = 262144;
+  bool DidTerminate = false;
 
-  bool transfer(const LowBlock &Block, State &Current, bool CheckExits) {
+  bool transfer(const LowBlock &Block, State &Current, bool CheckExits,
+                std::set<uint64_t> *UsedEntryRegisters = nullptr) {
     RegisterFacts Temps;
+    // Outgoing arguments require a complete private write in this same block.
+    // This local set deliberately does not infer definitions across CFG edges.
+    std::set<int64_t> WrittenStack;
     va_t Instruction = InvalidVA;
     auto Read = [&](const NdVar &Value, unsigned Byte) {
       if (Value.isReg())
@@ -150,8 +235,19 @@ public:
         Temps.clear();
         Instruction = Op.Addr;
       }
+      if (isArchitecturalNoReturn(Op, Architecture)) {
+        const unsigned ExpectedInputs = Architecture == Arch::AArch64 ? 1 : 2;
+        if (Op.NumInputs != ExpectedInputs ||
+            Op.MemoryOrdering != NdMemoryOrdering::None ||
+            Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            Index + 1 != Block.Ops.size() || !Block.Succs.empty())
+          return false;
+        DidTerminate = true;
+        return true;
+      }
       if (Op.NumInputs > 6 || Op.Output.Size > 64 ||
-          Op.Opcode == NdOp::INTRINSIC ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !hasNativeScalarIntrinsicEvidence(Op, Architecture)) ||
           Op.MemoryOrdering != NdMemoryOrdering::None ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
@@ -169,17 +265,94 @@ public:
       if (Remaining < Cost || Op.Output.Offset > UINT64_MAX - Op.Output.Size)
         return false;
       Remaining -= Cost;
+      if (UsedEntryRegisters && Op.Opcode != NdOp::COPY &&
+          Op.Opcode != NdOp::RETURN) {
+        std::optional<LowMemoryOperandView> Memory;
+        std::optional<int64_t> MemoryAddress;
+        if (Op.Opcode == NdOp::STORE) {
+          Memory = lowMemoryOperands(Op);
+          if (!Memory->Complete || !Memory->Address || !Memory->StoredValue)
+            return false;
+          MemoryAddress = FrameOffset(*Memory->Address);
+        }
+        for (unsigned InputIndex = 0; InputIndex < Op.NumInputs;
+             ++InputIndex) {
+          const auto &Input = Op.Inputs[InputIndex];
+          if ((!Input.isReg() && !Input.isTemp()) || Input.Size != 8 ||
+              (MemoryAddress && Memory->StoredValue &&
+               Input == *Memory->StoredValue))
+            continue;
+          const auto First = Read(Input, 0);
+          if (First.TheKind != ByteFact::Entry || First.Value < 0)
+            continue;
+          bool Complete = true;
+          for (unsigned I = 0; I < Input.Size; ++I)
+            Complete &= Read(Input, I) ==
+                        ByteFact{ByteFact::Entry, First.Value + I};
+          if (Complete)
+            UsedEntryRegisters->insert(static_cast<uint64_t>(First.Value));
+        }
+      }
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         const auto Key = nativeSourceCallKey(Op);
         if (!Key)
           return false;
         const auto Found = Calls.find(*Key);
-        if (Found == Calls.end() || !Found->second)
+        if (Found == Calls.end())
           return false;
         for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
           if (Read(Op.Inputs[0], I).MayBeFrame)
             return false;
-        const auto &Signature = *Found->second;
+        if (const auto *Copy = Found->second.RegisterCopy) {
+          auto SnapshotValue = [&](const SourceRegisterValue &Source) {
+            std::array<ByteFact, 8> Value{};
+            if (const auto *Entry = std::get_if<SourceEntryRegister>(&Source))
+              for (unsigned I = 0; I < 8; ++I)
+                Value[I] = Read(NdVar::reg(Entry->Offset, 8), I);
+            return Value;
+          };
+          std::vector<std::pair<uint64_t, std::array<ByteFact, 8>>> Snapshots;
+          for (const auto &[Destination, Source] : Copy->Registers)
+            Snapshots.emplace_back(Destination, SnapshotValue(Source));
+          if (Copy->StackStore) {
+            const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
+            const auto Value = SnapshotValue(Copy->StackStore->Value);
+            if (!SP || !sourceStackStoreFitsFrame(*SP) ||
+                std::any_of(Value.begin(), Value.end(),
+                            [](const auto &Byte) { return Byte.MayBeFrame; }))
+              return false;
+            // A physical write replaces every old spill byte. Unknown source
+            // bytes remain unknown; WrittenStack does not define their value.
+            for (unsigned I = 0; I < 8; ++I) {
+              put(Current.Stack, *SP + I, Value[I]);
+              if (TrackStackArguments)
+                WrittenStack.insert(*SP + I);
+            }
+          }
+          for (const auto &[Destination, Value] : Snapshots)
+            for (unsigned I = 0; I < 8; ++I)
+              put(Current.Registers, Destination + I, Value[I]);
+          continue;
+        }
+        if (!Found->second.Signature)
+          return false;
+        if (Found->second.terminates() && !TerminalOnly &&
+            !ordinaryFrameTermination(Found->second, Architecture))
+          return false;
+        if (Found->second.Termination ==
+                NativeSourceCallContract::TerminationKind::StackCheckFailure &&
+            (TerminalOnly || Index + 1 != Block.Ops.size() ||
+             !Block.Succs.empty()))
+          return false;
+        if (Found->second.Termination ==
+                NativeSourceCallContract::TerminationKind::
+                    SwiftDictionaryViolation &&
+            (TerminalOnly || !Block.Succs.empty() ||
+             (Index + 1 != Block.Ops.size() &&
+              (Index + 2 != Block.Ops.size() ||
+               !isArchitecturalNoReturn(Block.Ops.back(), Architecture)))))
+          return false;
+        const auto &Signature = *Found->second.Signature;
         const bool Tail = Index + 1 < Block.Ops.size() &&
                           Block.Ops[Index + 1].Opcode == NdOp::RETURN &&
                           Block.Ops[Index + 1].Addr == Op.Addr;
@@ -192,16 +365,130 @@ public:
         } else if ((*SP + (Architecture == Arch::X64 ? 8 : 0)) % 16 != 0) {
           return false;
         }
-        for (const auto &Parameter : Signature.Parameters) {
-          const auto &Location = Parameter.Location;
+        std::vector<std::pair<int64_t, size_t>> WritableFrameRanges;
+        // Inspect the same validated physical members used by call lowering.
+        // A record has no single carrier; checking only its primary location
+        // would reject valid records or miss a frame address in a later member.
+        for (const auto &Physical : sourceABIParameters(Signature)) {
+          const size_t ParameterIndex = Physical.ParameterIndex;
+          const auto &Parameter = Signature.Parameters[ParameterIndex];
+          const auto &Location = Physical.Location;
+          if (Location.Kind == SourceABICarrierKind::Stack) {
+            const bool TerminalArgument =
+                TerminalOnly && Found->second.terminates();
+            const bool ReturningArgument =
+                !TerminalOnly && Architecture == Arch::AArch64 && !Tail &&
+                Parameter.Components.empty() && Parameter.Type &&
+                (Parameter.Type->Kind == NdTypeKind::Int ||
+                 Parameter.Type->Kind == NdTypeKind::Ptr ||
+                 Parameter.Type->Kind == NdTypeKind::Float) &&
+                Parameter.Type->Size == 8 && Location.ValueBytes == 8 &&
+                Location.EntryStackOffset % 8 == 0;
+            if ((!TerminalArgument && !ReturningArgument) ||
+                !Location.ValueBytes || Location.ValueBytes > 64 ||
+                Location.EntryStackOffset < 0 ||
+                Location.EntryStackOffset > MaxFrame)
+              return false;
+            const int64_t Start = *SP + Location.EntryStackOffset;
+            if (Start < *SP || Start > -int64_t(Location.ValueBytes))
+              return false;
+            for (unsigned I = 0; I < Location.ValueBytes; ++I)
+              if (!WrittenStack.count(Start + I) ||
+                  lookup(Current.Stack, Start + I).MayBeFrame)
+                return false;
+            if (UsedEntryRegisters && ReturningArgument &&
+                Location.ValueBytes == 8) {
+              const auto First = lookup(Current.Stack, Start);
+              if (First.TheKind == ByteFact::Entry && First.Value >= 0 &&
+                  First.Value <= 28 * 8 && First.Value % 8 == 0 &&
+                  First.Value != 18 * 8) {
+                bool Complete = true;
+                for (unsigned I = 0; I < 8; ++I)
+                  Complete &= lookup(Current.Stack, Start + I) ==
+                              ByteFact{ByteFact::Entry, First.Value + I};
+                if (Complete)
+                  UsedEntryRegisters->insert(
+                      static_cast<uint64_t>(First.Value));
+              }
+            }
+            // AAPCS64 permits the callee to overwrite its incoming argument
+            // area. A by-value argument does not lend a frame pointer, but its
+            // complete area, including padding before/between parameters,
+            // cannot restore a spill after this call. These prefix ranges
+            // together cover call SP through the final stacked argument.
+            if (ReturningArgument)
+              WritableFrameRanges.emplace_back(*SP, Start - *SP + 8);
+            continue;
+          }
           if ((Location.Kind != SourceABICarrierKind::IntegerRegister &&
                Location.Kind != SourceABICarrierKind::FloatingRegister) ||
               Location.ValueBytes > 64)
             return false;
+          bool HasFrameByte = false;
           for (unsigned I = 0; I < Location.ValueBytes; ++I)
-            if (lookup(Current.Registers, Location.RegisterOffset + I)
-                    .MayBeFrame)
+            HasFrameByte |=
+                lookup(Current.Registers, Location.RegisterOffset + I)
+                    .MayBeFrame;
+          if (HasFrameByte) {
+            // Borrowing certificates describe a complete scalar pointer, not
+            // one member of a source record with the same parameter index.
+            if (!Parameter.Components.empty())
               return false;
+            const auto ReadOnly =
+                Found->second.ReadOnlyFrameParameters.find(ParameterIndex);
+            const auto Writable =
+                Found->second.WritableFrameParameters.find(ParameterIndex);
+            if ((ReadOnly ==
+                     Found->second.ReadOnlyFrameParameters.end()) ==
+                    (Writable ==
+                     Found->second.WritableFrameParameters.end()) ||
+                Location.Kind != SourceABICarrierKind::IntegerRegister ||
+                Location.ValueBytes != 8)
+              return false;
+            const size_t BorrowedBytes =
+                ReadOnly != Found->second.ReadOnlyFrameParameters.end()
+                    ? ReadOnly->second
+                    : Writable->second;
+            if (!BorrowedBytes || BorrowedBytes > MaxFrame)
+              return false;
+            const auto Address = FrameOffset(
+                NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
+            if (!Address || *Address < *SP ||
+                *Address > -static_cast<int64_t>(BorrowedBytes))
+              return false;
+            if (Writable != Found->second.WritableFrameParameters.end())
+              WritableFrameRanges.emplace_back(*Address, BorrowedBytes);
+          }
+          if (UsedEntryRegisters &&
+              Location.Kind == SourceABICarrierKind::IntegerRegister &&
+              Location.ValueBytes == 8) {
+            const auto First =
+                lookup(Current.Registers, Location.RegisterOffset);
+            if (First.TheKind == ByteFact::Entry) {
+              bool Complete = true;
+              for (unsigned I = 0; I < Location.ValueBytes; ++I)
+                Complete &=
+                    lookup(Current.Registers, Location.RegisterOffset + I) ==
+                    ByteFact{ByteFact::Entry, First.Value + I};
+              if (Complete && First.Value >= 0)
+                UsedEntryRegisters->insert(
+                    static_cast<uint64_t>(First.Value));
+            }
+          }
+        }
+        for (const auto &[Address, Bytes] : WritableFrameRanges) {
+          std::erase_if(Current.Stack, [&](const auto &Item) {
+            return Item.first >= Address &&
+                   Item.first - Address < static_cast<int64_t>(Bytes);
+          });
+          std::erase_if(WrittenStack, [&](int64_t Byte) {
+            return Byte >= Address &&
+                   Byte - Address < static_cast<int64_t>(Bytes);
+          });
+        }
+        if (Found->second.terminates()) {
+          DidTerminate = true;
+          return true;
         }
         if (!Tail) {
           std::erase_if(Current.Registers, [&](const auto &Item) {
@@ -213,6 +500,8 @@ public:
           // through an ordinary call. The callee owns storage below call SP.
           std::erase_if(Current.Stack,
                         [&](const auto &Item) { return Item.first < *SP; });
+          std::erase_if(WrittenStack,
+                        [&](int64_t Byte) { return Byte < *SP; });
           Temps.clear();
         }
         continue;
@@ -245,6 +534,21 @@ public:
           Op.Inputs[0].Size == Op.Output.Size) {
         for (unsigned I = 0; I < Value.size(); ++I)
           Value[I] = Read(Op.Inputs[0], I);
+      } else if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+                 Op.Inputs[0].Size <= Op.Output.Size) {
+        // LowIR register normalization can widen a restored D register to Q.
+        // The extension's upper bytes are new zeroes, but its low bytes retain
+        // their exact entry or frame identity.
+        for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
+          Value[I] = Read(Op.Inputs[0], I);
+      } else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
+                 Op.Inputs[1].isConst() &&
+                 Op.Inputs[1].Offset <= Op.Inputs[0].Size &&
+                 Op.Output.Size <=
+                     Op.Inputs[0].Size - Op.Inputs[1].Offset) {
+        const auto Offset = static_cast<unsigned>(Op.Inputs[1].Offset);
+        for (unsigned I = 0; I < Value.size(); ++I)
+          Value[I] = Read(Op.Inputs[0], Offset + I);
       } else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
                  Op.NumInputs == 2 && Op.Output.Size == 8) {
         unsigned Base = 0, Constant = 1;
@@ -265,7 +569,12 @@ public:
           return false;
         const auto Address = FrameOffset(*Memory.Address);
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
-        if (Address) {
+        const bool IncomingRead = Address && Op.Opcode == NdOp::LOAD &&
+                                  Memory.AccessSize == 8 &&
+                                  IncomingStackSlots.count(*Address);
+        if (IncomingRead && (!SP || *SP > 0))
+          return false;
+        if (Address && !IncomingRead) {
           if (!SP || *Address > -int64_t(Memory.AccessSize))
             return false;
           int64_t StackFloor = *SP;
@@ -323,13 +632,25 @@ public:
               return false;
             for (unsigned I = 0; I < Memory.AccessSize; ++I)
               put(Current.Stack, *Address + I, Read(*Memory.StoredValue, I));
-          } else {
-            Current.Stack.clear();
-          }
+            if (TrackStackArguments)
+              for (unsigned I = 0; I < Memory.AccessSize; ++I)
+                WrittenStack.insert(*Address + I);
+          } else
+            // A value with any frame-derived byte may be a partial or
+            // inexact alias of private storage. A completely non-frame
+            // address names storage outside this invocation's private frame,
+            // so the write cannot invalidate its exact spill identities.
+            for (unsigned I = 0; I < Memory.Address->Size; ++I)
+              if (Read(*Memory.Address, I).MayBeFrame)
+                return false;
         } else {
           for (unsigned I = 0; I < Value.size(); ++I)
-            Value[I] =
-                Address ? lookup(Current.Stack, *Address + I) : ByteFact{};
+            // Incoming arguments are external values. Even if a slot happens
+            // to contain a saved register's bits, it cannot certify restoration
+            // of this invocation's preserved state or a private-frame address.
+            Value[I] = Address && !IncomingRead
+                           ? lookup(Current.Stack, *Address + I)
+                           : ByteFact{};
         }
       }
       if (Op.Output.isReg() || Op.Output.isTemp()) {
@@ -347,7 +668,8 @@ public:
         return false;
       }
       if (Current.Registers.size() > MaxFacts ||
-          Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts)
+          Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts ||
+          WrittenStack.size() > MaxFacts)
         return false;
     }
     return true;
@@ -358,18 +680,70 @@ private:
   const NativeSourceCalls &Calls;
   const TargetRegInfo &TRI;
   std::set<uint64_t> Preserved;
+  bool TerminalOnly;
+  bool TrackStackArguments;
+  std::set<int64_t> IncomingStackSlots;
 };
 } // namespace
 
 bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
-                               const NativeSourceCalls &Calls) {
+                               const NativeSourceCalls &Calls,
+                               std::set<uint64_t> *UsedEntryRegisters,
+                               const SourceFunctionTypeHint *EntrySignature) {
   const size_t Count = Function.Blocks.size();
-  if (!Count || Count > 16384 || Calls.empty() ||
+  if (!Count || Count > 16384 ||
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
     return false;
-  for (const auto &[Site, Signature] : Calls) {
+  bool HasStackStore = false;
+  for (const auto &[Site, Contract] : Calls) {
+    if (const auto *Copy = Contract.RegisterCopy) {
+      if (Architecture != Arch::AArch64 || Contract.Signature ||
+          Contract.terminates() || !Contract.ReadOnlyFrameParameters.empty() ||
+          !Contract.WritableFrameParameters.empty() ||
+          Copy->Caller != Function.Entry || Copy->Site != Site ||
+          Copy->Registers.empty() || Copy->Registers.size() > 16)
+        return false;
+      if (Copy->StackStore) {
+        const auto &Store = *Copy->StackStore;
+        if (Store.InstructionIndex >= 16 ||
+            Store.InstructionIndex >= Copy->LeafWords.size() ||
+            Copy->LeafWords[Store.InstructionIndex] != Store.Word ||
+            (Store.Word & 0xffffffe0) != 0xf90003e0 || (Store.Word & 31) > 28 ||
+            (Store.Word & 31) == 18)
+          return false;
+        if (const auto *Entry =
+                std::get_if<SourceEntryRegister>(&Store.Value)) {
+          if (Entry->Offset > 28 * 8 || Entry->Offset % 8 ||
+              Entry->Offset == 18 * 8)
+            return false;
+        } else if (!std::get<SourceConstantStringAddress>(Store.Value)
+                        .Address) {
+          return false;
+        }
+        HasStackStore = true;
+      }
+      for (const auto &[Destination, Source] : Copy->Registers) {
+        if (Destination > 28 * 8 || Destination % 8 || Destination == 18 * 8)
+          return false;
+        if (const auto *Entry = std::get_if<SourceEntryRegister>(&Source)) {
+          if (Entry->Offset > 28 * 8 || Entry->Offset % 8 ||
+              Entry->Offset == 18 * 8)
+            return false;
+        } else if (!std::get<SourceConstantStringAddress>(Source).Address) {
+          return false;
+        }
+      }
+      continue;
+    }
+    const auto *Signature = Contract.Signature;
     std::string Error;
-    if (!Signature || Signature->Architecture != Architecture ||
+    // Hidden result storage needs its own bounded frame-write proof before
+    // this analysis can treat it as preserving saved machine state.
+    if ((Contract.terminates() &&
+         !ordinaryFrameTermination(Contract, Architecture)) ||
+        !Signature || Signature->Architecture != Architecture ||
+        Signature->ReturnLocation.Kind ==
+            SourceABICarrierKind::IndirectResultPointer ||
         !validateSourceABI(*Signature, Error))
       return false;
   }
@@ -392,7 +766,32 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
     Entry = Blocks.at(0);
   if (!Entry)
     return false;
-  PreservationProof Proof(Architecture, Calls);
+  std::set<int64_t> IncomingStackSlots;
+  if (EntrySignature) {
+    std::string Error;
+    if (EntrySignature->Architecture != Architecture ||
+        (EntrySignature->Origin !=
+             SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+         !HasStackStore) ||
+        !validateSourceABI(*EntrySignature, Error))
+      return false;
+    for (const auto &Parameter : EntrySignature->Parameters) {
+      const auto &Location = Parameter.Location;
+      if (Location.Kind != SourceABICarrierKind::Stack)
+        continue;
+      if (Architecture != Arch::AArch64 || !Parameter.Components.empty() ||
+          !Parameter.Type || Parameter.Type->Size != 8 ||
+          (Parameter.Type->Kind != NdTypeKind::Int &&
+           Parameter.Type->Kind != NdTypeKind::Ptr) ||
+          Location.ValueBytes != 8 || Location.EntryStackOffset < 0 ||
+          Location.EntryStackOffset > MaxFrame - 8 ||
+          Location.EntryStackOffset % 8 != 0 ||
+          !IncomingStackSlots.insert(Location.EntryStackOffset).second)
+        return false;
+    }
+  }
+  PreservationProof Proof(Architecture, Calls, false,
+                          std::move(IncomingStackSlots));
   std::vector<std::set<size_t>> Preds(Count), Succs(Count);
   for (size_t I = 0; I < Count; ++I)
     for (int Id : Function.Blocks[I].Succs) {
@@ -414,7 +813,16 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
     if (Declared != Preds[I] || Function.Blocks[I].Ops.empty())
       return false;
     const bool Returns = Function.Blocks[I].Ops.back().Opcode == NdOp::RETURN;
-    if (Succs[I].empty() && !Returns)
+    const auto LastCall = nativeSourceCallKey(Function.Blocks[I].Ops.back());
+    const auto Terminal = LastCall ? Calls.find(*LastCall) : Calls.end();
+    const bool ExceptionalCall =
+        Terminal != Calls.end() &&
+        ordinaryFrameTermination(Terminal->second, Architecture);
+    const bool ArchitecturalTrap =
+        isArchitecturalNoReturn(Function.Blocks[I].Ops.back(), Architecture);
+    if ((Succs[I].empty() && !Returns && !ExceptionalCall &&
+         !ArchitecturalTrap) ||
+        ((ExceptionalCall || ArchitecturalTrap) && !Succs[I].empty()))
       return false;
     HasReturn |= Returns;
   }
@@ -449,9 +857,88 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
       }
     }
   }
-  for (size_t I = 0; I < Count; ++I)
-    if (!Incoming[I] || !Proof.transfer(Function.Blocks[I], *Incoming[I], true))
+  std::set<uint64_t> Used;
+  bool HasReachableReturn = false;
+  for (size_t I = 0; I < Count; ++I) {
+    if (!Incoming[I] ||
+        !Proof.transfer(Function.Blocks[I], *Incoming[I], true, &Used))
       return false;
+    HasReachableReturn |= Function.Blocks[I].Ops.back().Opcode == NdOp::RETURN;
+  }
+  if (!HasReachableReturn)
+    return false;
+  if (UsedEntryRegisters)
+    *UsedEntryRegisters = std::move(Used);
+  return true;
+}
+
+bool observesTerminalNativeSourceState(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    std::set<uint64_t> &UsedEntryRegisters) {
+  // This narrow mode proves only incoming context uses in a straight-line
+  // helper with at most two independently declared runtime calls. Exactly
+  // the last call terminates; a returning prefix uses the same clobber and
+  // frame-escape transfer as ordinary preservation proofs.
+  if (Architecture != Arch::AArch64 || Function.Blocks.size() != 1 ||
+      Calls.empty() || Calls.size() > 2)
+    return false;
+  const auto &Block = Function.Blocks.front();
+  if (Block.Id < 0 ||
+      (Block.StartAddr != Function.Entry &&
+       (Block.StartAddr || Block.Id != 0)) ||
+      !Block.Preds.empty() || !Block.Succs.empty() ||
+      !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty() ||
+      Block.Ops.empty() || Block.Ops.size() > 262144)
+    return false;
+  unsigned TerminatingCalls = 0;
+  for (const auto &[Site, Contract] : Calls) {
+    if (Contract.RegisterCopy)
+      return false;
+    const auto *Signature = Contract.Signature;
+    std::string Error;
+    if ((Contract.terminates() &&
+         Contract.Termination !=
+             NativeSourceCallContract::TerminationKind::RuntimeEntry) ||
+        !Signature || Signature->Architecture != Architecture ||
+        !Signature->ReturnType ||
+        Signature->ReturnLocation.Kind ==
+            SourceABICarrierKind::IndirectResultPointer ||
+        !Signature->ReturnComponents.empty() ||
+        (Contract.terminates() &&
+         Signature->ReturnType->Kind != NdTypeKind::Void) ||
+        !validateSourceABI(*Signature, Error))
+      return false;
+    for (const auto &Parameter : Signature->Parameters)
+      if (!Parameter.Components.empty() || !Parameter.Type ||
+          (Parameter.Type->Kind != NdTypeKind::Int &&
+           Parameter.Type->Kind != NdTypeKind::Ptr))
+        return false;
+    TerminatingCalls += Contract.terminates();
+  }
+  if (TerminatingCalls != 1)
+    return false;
+  unsigned NativeCalls = 0;
+  bool SawTerminatingCall = false;
+  for (const auto &Op : Block.Ops) {
+    if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR ||
+        Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::RETURN)
+      return false;
+    if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
+      continue;
+    const auto Key = nativeSourceCallKey(Op);
+    if (!Key || !Calls.count(*Key) || SawTerminatingCall)
+      return false;
+    ++NativeCalls;
+    SawTerminatingCall = Calls.at(*Key).terminates();
+  }
+  PreservationProof Proof(Architecture, Calls, true);
+  auto State = Proof.Initial;
+  std::set<uint64_t> Used;
+  if (NativeCalls != Calls.size() || !SawTerminatingCall ||
+      !Proof.transfer(Block, State, false, &Used) ||
+      !Proof.DidTerminate)
+    return false;
+  UsedEntryRegisters = std::move(Used);
   return true;
 }
 
@@ -462,9 +949,15 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
     return false;
   const auto &TRI = getTargetRegInfo(Architecture);
-  for (const auto &[Site, Signature] : Calls) {
+  for (const auto &[Site, Contract] : Calls) {
+    if (Contract.RegisterCopy)
+      return false;
+    const auto *Signature = Contract.Signature;
     std::string Error;
-    if (!Signature || Signature->Architecture != Architecture ||
+    if (Contract.terminates() || !Signature ||
+        Signature->Architecture != Architecture ||
+        Signature->ReturnLocation.Kind ==
+            SourceABICarrierKind::IndirectResultPointer ||
         !validateSourceABI(*Signature, Error))
       return false;
   }
@@ -590,7 +1083,10 @@ bool preservesNativeSourceLeafState(const LowFunc &Function, Arch Architecture,
         for (unsigned I = 0; I < Op.Inputs[0].Size; ++I)
           if (Tainted(Op.Inputs[0], I))
             return false;
-        for (const auto &Parameter : Found->second->Parameters) {
+        if (!Found->second.Signature)
+          return false;
+        for (const auto &Parameter :
+             sourceABIParameters(*Found->second.Signature)) {
           const auto &Location = Parameter.Location;
           if ((Location.Kind != SourceABICarrierKind::IntegerRegister &&
                Location.Kind != SourceABICarrierKind::FloatingRegister) ||

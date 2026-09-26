@@ -143,6 +143,44 @@ protected:
   }
 };
 
+TEST_F(DriverKernelModel,
+       ExceptionUserAuthorityStaysBoundToThreadProcessAndLifetime) {
+  constexpr uint32_t Process = DriverRequest::DefaultRequestorProcessID;
+  constexpr uint64_t Child = Scratch + profile::PageSize;
+  constexpr uint64_t Worker = Scratch + 2 * profile::PageSize;
+  constexpr uint64_t WorkerChild = Scratch + 3 * profile::PageSize;
+  const auto Allowed = [&] {
+    return Model->canCatchUserAccess(profile::UserArenaBase, 1);
+  };
+  Model->enterExecution(profile::StackBase);
+  success(Model->setUserRequestContext(true, Process));
+  ASSERT_TRUE(Allowed());
+  success(Model->inheritExecutionContext(Child, profile::StackBase));
+  Model->enterExecution(Child, profile::StackBase);
+  EXPECT_TRUE(Allowed());
+  Model->enterExecution(Child, Worker);
+  EXPECT_FALSE(Allowed());
+  Model->enterExecution(Child, profile::StackBase);
+  success(Model->setUserRequestContext(true, Process + 1));
+  EXPECT_FALSE(Allowed());
+  success(Model->setUserRequestContext(true, Process));
+  EXPECT_TRUE(Allowed());
+  success(Model->setUserRequestContext(false));
+  EXPECT_FALSE(Allowed());
+  success(Model->setUserRequestContext(true, Process));
+  success(Model->retireStack(Child, profile::PageSize));
+  Model->enterExecution(Child, profile::StackBase);
+  EXPECT_FALSE(Allowed());
+
+  // Even a lingering request process does not authorize a worker or its
+  // exception callback. Only the active parent's existing authority transfers.
+  Model->enterExecution(Worker);
+  EXPECT_FALSE(Allowed());
+  success(Model->inheritExecutionContext(WorkerChild, Worker));
+  Model->enterExecution(WorkerChild, Worker);
+  EXPECT_FALSE(Allowed());
+}
+
 TEST_F(DriverKernelModel, PoolOwnershipSurvivesBadTagAndRejectsUseAfterFree) {
   constexpr uint32_t Tag = 0x74736554;
   const uint64_t Pointer = invoke("ExAllocatePoolWithTag", {512, 48, Tag});
@@ -162,13 +200,16 @@ TEST_F(DriverKernelModel, PoolOwnershipSurvivesBadTagAndRejectsUseAfterFree) {
 TEST_F(DriverKernelModel,
        SystemThreadObjectSurvivesHandleCloseUntilExitAndWait) {
   constexpr uint32_t ThreadAllAccess = 0x001fffff;
+  constexpr uint64_t KernelModeWithRegisterHighBits =
+      0xaabbccdd12345600 | windows::KernelMode;
   EXPECT_EQ(invoke("PsCreateSystemThread",
                    {Scratch, ThreadAllAccess, 0, 0, 0, Entry, Scratch + 0x100}),
             0u);
   const uint64_t Handle = integer(Scratch);
   ASSERT_NE(Handle, 0u);
   EXPECT_EQ(invoke("ObReferenceObjectByHandle",
-                   {Handle, 0x100000, 0, 0, Scratch + 8, 0}),
+                   {Handle, 0x100000, 0, KernelModeWithRegisterHighBits,
+                    Scratch + 8, 0}),
             0u);
   const uint64_t Object = integer(Scratch + 8);
   ASSERT_NE(Object, 0u);
@@ -178,7 +219,9 @@ TEST_F(DriverKernelModel,
   EXPECT_EQ(invoke("ObReferenceObjectByHandle",
                    {Handle, 0x100000, 0, 0, Scratch + 16, 0}),
             0xc0000008u);
-  EXPECT_EQ(invoke("KeWaitForSingleObject", {Object, 0, 0, 0, 0}), 0u);
+  EXPECT_EQ(invoke("KeWaitForSingleObject",
+                   {Object, 0, KernelModeWithRegisterHighBits, 0, 0}),
+            0u);
   auto Wait = Model->takeWait();
   ASSERT_TRUE(Wait);
   EXPECT_EQ(Wait->Type, KernelModel::Wait::Kind::Thread);
@@ -326,6 +369,17 @@ TEST_F(DriverKernelModel, DevicesLinkCollideAndDeleteWithoutLosingLiveState) {
   EXPECT_EQ(integer(Model->driverObject() + 8), 0u);
   success(Model->snapshot());
   EXPECT_TRUE(Result.Devices.empty());
+}
+
+TEST_F(DriverKernelModel, DeviceTypeIsStoredAsGuestVisibleMetadata) {
+  constexpr uint32_t VendorDeviceType = 0x8000;
+  ASSERT_EQ(
+      invoke("IoCreateDevice", {Model->driverObject(), 0, 0, VendorDeviceType,
+                                windows::SecureOpen, 0, Scratch}),
+      windows::StatusSuccess);
+  const uint64_t Device = integer(Scratch);
+  EXPECT_EQ(integer(Device + windows::DeviceTypeOffset, 4), VendorDeviceType);
+  invoke("IoDeleteDevice", {Device});
 }
 
 TEST_F(DriverKernelModel, UnmappedDeviceOutputPreservesExistingListAndFault) {

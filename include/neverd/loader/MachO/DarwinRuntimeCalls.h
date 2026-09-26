@@ -13,6 +13,25 @@ struct BinaryImage;
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 
+/// A linked compiler-rt builtin with a stable public C contract. Unlike an
+/// imported runtime call, TargetAddress is the exact local function entry.
+/// The unique function symbol is required so ordinary native helpers never
+/// acquire a declaration from an inferred name.
+std::optional<SourceCallTypeHint>
+darwinCompilerRTSourceCallHint(const BinaryImage &Image, va_t TargetAddress);
+
+struct DarwinBlockParameterContract {
+  enum class Lifetime { NonEscaping, Copied };
+  SourceFunctionTypeHint Signature;
+  Lifetime Storage;
+};
+
+/// Exact imported block consumer with a compiler-derived callback ABI and
+/// either a noescape attribute or an audited runtime copying contract.
+std::optional<DarwinBlockParameterContract>
+darwinBlockParameterContract(const BinaryImage &Image, va_t ImportSlot,
+                             unsigned Parameter);
+
 /// A compiler-declared block parameter whose references and copies cannot
 /// survive the imported call. Includes the complete fixed callback ABI; this
 /// is not a read-only memory contract and never describes function pointers.
@@ -24,10 +43,12 @@ struct DarwinFormatDeclaration {
   SourceFunctionTypeHint Signature;
   std::string Name;
   unsigned FormatParameter = 0;
+  SourceCallTypeHint::FormatSyntax Syntax =
+      SourceCallTypeHint::FormatSyntax::NSString;
 };
 
-/// Fixed prefix and NSString format attribute of an exact C import. This
-/// declaration alone cannot bind a variadic call's actual arguments.
+/// Fixed prefix and language-specific format attribute of an exact C import.
+/// This declaration alone cannot bind a variadic call's actual arguments.
 std::optional<DarwinFormatDeclaration>
 darwinRuntimeFormatDeclaration(const BinaryImage &Image, va_t ImportSlot);
 

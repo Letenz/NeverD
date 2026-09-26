@@ -60,6 +60,10 @@ add_neverd_component_library(NeverDLoader
   MachO/MachOIndirectSymbols.cpp
   MachO/MachOLoader.cpp
   MachO/MachOLoaderUtils.cpp
+  MachO/MachOLocalFunction.cpp
+  MachO/SourceRegisterCopy.cpp
+  MachO/SourceLocalCall.cpp
+  ObjC/ObjCClassGetterCalls.cpp
   MachO/MachORelocations.cpp
   ObjC/ObjCEH.cpp
   ObjC/ObjCMethods.cpp
@@ -78,6 +82,7 @@ add_neverd_component_library(NeverDLoader
   ObjC/ObjCCallHints.cpp
   ObjC/ObjCSourceDeclarations.cpp
   ObjC/ObjCFormattedCalls.cpp
+  ObjC/ObjCSentinelCalls.cpp
   Swift/SwiftMetadata.cpp
   Swift/SwiftABI.cpp
   Swift/SwiftRuntimeSource.cpp

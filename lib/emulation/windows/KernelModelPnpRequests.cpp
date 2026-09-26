@@ -15,6 +15,7 @@
 #include "WindowsKernelLayout.h"
 
 #include <algorithm>
+#include <array>
 
 namespace neverd::emulation {
 namespace {
@@ -84,10 +85,9 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
 #undef NEVERD_DRIVER_REQUEST_KIND
   }
   const uint64_t Callback = Result.MajorFunctions[Major];
-  if (*Top != PDO && !Callback)
+  const bool FrameworkPnp = Framework && FrameworkDevices.count(*Top);
+  if (*Top != PDO && !Callback && !FrameworkPnp)
     return pnpError("attached driver did not register a PnP dispatch callback");
-  if (FrameworkDevices.count(*Top))
-    return pnpError("framework PnP device dispatch is outside this profile");
   if (Minor == DevicePnpRequest::Start)
     if (auto E = Resources.canStart(PDO))
       return E;
@@ -138,9 +138,65 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
     Call.IRP = *Packet;
     return Call;
   }
+  if (FrameworkPnp) {
+    if (Request.DeviceRoute.size() != 2 || Request.DeviceRoute.back() != PDO ||
+        Request.StackCount < 2)
+      return pnpError("framework PnP forwarding requires its FDO/PDO pair");
+    auto Preprocess = Framework->beginPnpPreprocess(PDO, *Packet, Minor);
+    if (!Preprocess)
+      return Preprocess.takeError();
+    if (*Preprocess) {
+      Request.FrameworkTransitionBeforeBus = true;
+      Request.FrameworkTransitionAwaiting = true;
+      if (auto E = markRequestPending(*Packet))
+        return E;
+      if (auto E = recordDispatchReturn(*Packet, StatusPending))
+        return E;
+      Invocation Call;
+      Call.IRP = *Packet;
+      return Call;
+    }
+    auto Status = forwardFrameworkTransitionRequest(*Packet);
+    if (!Status)
+      return Status.takeError();
+    if (auto E = recordDispatchReturn(*Packet, uint32_t(*Status)))
+      return E;
+    Invocation Call;
+    Call.IRP = *Packet;
+    return Call;
+  }
   Invocation Call{Callback, *Top, *Packet};
   Call.IRP = *Packet;
   return Call;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::forwardFrameworkTransitionRequest(uint64_t IRP) {
+  auto *Request = requestForIRP(IRP);
+  if (!Request || (!Request->PnpOperation && !Request->PowerOperation) ||
+      Request->Completed || Request->Forwarded ||
+      Request->FrameworkTransitionAwaiting ||
+      Request->DeviceRoute.size() != 2 || Request->StackCount < 2 ||
+      Request->DeviceRoute.back() != Request->PnpDevice ||
+      !FrameworkDevices.count(Request->DeviceRoute.front()))
+    return pnpError("framework forwarding lost its undispatched FDO/PDO IRP");
+  const uint64_t Lower = Request->Stack - StackSize;
+  std::array<uint8_t, StackSize> StackBytes{};
+  if (auto E = Memory.read(Request->Stack, StackBytes))
+    return E;
+  StackBytes[StackControlOffset] = 0;
+  if (auto E = Memory.write(Lower, StackBytes))
+    return E;
+  if (auto E =
+          Memory.writeInteger(Lower + StackDeviceOffset, Request->PnpDevice, 8))
+    return E;
+  if (auto E = Memory.writeInteger(IRP + IRPLocationOffset,
+                                   Request->StackCount - 1, 1))
+    return E;
+  if (auto E = Memory.writeInteger(IRP + IRPStackPointerOffset, Lower, 8))
+    return E;
+  Request->Forwarded = true;
+  return callProviderDriver(Request->PnpDevice, IRP);
 }
 
 llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
@@ -159,8 +215,8 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
     Observation.DeviceStateAfter = State->DevicePower;
     Observation.SystemStateAfter = State->SystemPower;
   } else if (Request.PnpTicket) {
-    if (auto E = Resources.finishPnp(Request.PnpDevice, Request.PnpOperation->Minor,
-                                Status))
+    if (auto E = Resources.finishPnp(Request.PnpDevice,
+                                     Request.PnpOperation->Minor, Status))
       return E;
     if (auto E = Lifecycle.finishPnp(*Request.PnpTicket, Status))
       return E;

@@ -91,7 +91,7 @@ ctest --test-dir build-release -L '^NeverDDriverEmulation' --output-on-failure
 | `unittests/sbf` | `NeverDSBFMetadataTests`، `NeverDSBFProgramImageTests`، `NeverDSBFLoaderTests`، `NeverDSBFAnalyzerTests`، `NeverDSBFVerifierTests`، `NeverDSBFISAConformanceTests`، `NeverDSBFAgaveConformanceTests`، `NeverDSBFSemanticTests`، `NeverDSBFEmitterTests`، `NeverDSBFLLVMEmitterTests`، `NeverDSBFLLVMDifferentialTests`، `NeverDSBFSourceDifferentialTests`، `NeverDSBFMalformedCorpusTests`، `NeverDSBFUpstreamConformanceTests`، `NeverDSBFExternalOracleTests`، `NeverDSBFSolanaModelTests`، `NeverDSBFIntegrationTests` | بيانات v0-v4 الوصفية وتخطيطات ELF، وسلوك التحقق والتحميل الصارم، و23 من عناصر ELF المثبتة، وoracle الرسمي المنفصل، وتغطية opcode الشاملة، والمدخلات العدائية، وCFG/الاستعادة، وفروق LLVM/C/Rust المنفّذة |
 | `PatchFullSubstRTTests.cpp` | `NeverDPatchFullTests` | تكافؤ إعادة الكتابة/التشويش عبر أربع ISA وثلاث صيغ كائنات |
 | ملفات التحويل المحددة في `unittests/semantic` | `NeverDSwitchXformTests` و`NeverDIndCallXformTests` و`NeverDCFGLoopXformTests` و`NeverDTwoTableXformTests` و`NeverDAvxUpperXformTests` | مجسات سريعة الربط منفصلة عن الثنائي الدلالي الكبير |
-| `unittests/corpus` (وحدة فرعية) | `NeverDWindowsEHCorpusTests` و`NeverDRustEHCorpusTests` و`NeverDGoEHCorpusTests` و`NeverDCxxItaniumEHCorpusTests` و`NeverDObjCEHCorpusTests` | metadata الاستثناءات ووقت التشغيل المقروءة من 317 ثنائيًا حقيقيًا مثبّتًا، كل واحد منها معلن في manifest يذكر الحدود الدنيا التي يجب أن يتجاوزها استرجاعه |
+| `unittests/corpus` (وحدة فرعية) | `NeverDWindowsEHCorpusTests` و`NeverDRustEHCorpusTests` و`NeverDGoEHCorpusTests` و`NeverDCxxItaniumEHCorpusTests` و`NeverDObjCEHCorpusTests` و`NeverDAdaDEHCorpusTests` | metadata الاستثناءات ووقت التشغيل المقروءة من 545 ثنائيًا حقيقيًا مثبّتًا، كل واحد منها معلن في manifest يذكر الحدود الدنيا التي يجب أن يتجاوزها استرجاعه |
 
 مصادر التسجيل الموثوقة هي
 [`unittests/CMakeLists.txt`](../../unittests/CMakeLists.txt) و
@@ -124,10 +124,10 @@ cmake --build build-corpus --target check-neverd-corpus --parallel 4
 يشغّل `check-neverd-corpus` كل الخطوط، بينما يشغّل
 `check-neverd-windows-eh-corpus` و`check-neverd-rust-eh-corpus` و
 `check-neverd-go-eh-corpus` و`check-neverd-cxx-itanium-eh-corpus` و
-`check-neverd-objc-eh-corpus` خطًا واحدًا لكل منها. تُعدّ مضيفات الـCI الثلاثة جميعها
-بهذا الخيار وتشغّل الخطوط الخمسة: البايتات واحدة في كل مكان، أما ما يقرؤها فليس
+`check-neverd-objc-eh-corpus` و`check-neverd-ada-d-eh-corpus` خطًا واحدًا لكل منها. تُعدّ مضيفات الـCI الثلاثة جميعها
+بهذا الخيار وتشغّل الخطوط الستة: البايتات واحدة في كل مكان، أما ما يقرؤها فليس
 كذلك، وتشغيل الـcorpus على مضيف واحد لا يثبت شيئًا عن المضيفين الآخرين. يرفض
-`scripts/audit_ci_test_inventory.py` أي inventory ينقصه أحد الـlabels الخمسة، لأن
+`scripts/audit_ci_test_inventory.py` أي inventory ينقصه أحد الـlabels الستة، لأن
 بناءً توقف بصمت عن قراءة الـcorpus هو انحدار لا يستطيع أي اختبار التقاطه —
 فالاختبار نفسه هو ما اختفى.
 
@@ -700,3 +700,11 @@ generated-source ABI المستقل.
 تحرس fixtures بحجم 10,000 خصائص worklist/function ownership/multi-latch من دون
 تثبيت زمن جهاز. وتتيح rows الخاصة بالـcluster/account/slot تنفيذ
 `RPC activation audit` مع بقاء الاختبارات العادية deterministic وoffline.
+
+## أدلة تصدير SDK للأجهزة المحمولة
+
+يشغّل سير العمل اليدوي `Mobile SDK Export Evidence` الأمر `collect_mobile_ios_sdk_declarations.py --exports-only` على إصدارات Xcode SDK المثبتة. ويحتفظ بخرائط الرابط الأصلية لكل من Foundation وCoreFoundation وUIKit من حزم iOS للأجهزة والمحاكي، مع الهدف وإصدار SDK وبصمة إعداداته وحجم الملف وSHA-256. ويحتفظ جامع التصريحات المعتاد بهذه الخرائط أيضًا. يفشل الجمع عند غياب الملفات أو فراغها أو تجاوز حجمها الحد أو وجودها خارج SDK، مع الاحتفاظ بالأدلة المكتملة. تثبت خرائط الرابط تصدير الرموز، لكنها لا تثبت ABI الاستدعاء أو نجاح استعادة الطريقة.
+
+## أدلة ABI لسلاسل Swift على الأجهزة المحمولة
+
+يُصرّف سير العمل اليدوي `Mobile Swift String ABI Evidence` مسبارات Swift ثابتة للمساواة والترتيب ومسبار C يستخدم `swiftcall` بواسطة Xcode 26.5 لأجهزة iOS ومحاكياتها بمعمارية arm64. يحتفظ `collect_mobile_swift_string_abi.py` بالمصدر وLLVM IR والتجميع وهوية المصرّف وإعدادات SDK و`libswiftCore.tbd` مع بصماتها. يجب أن تُظهر اللغتان استيراد المقارنة الدقيق بخمسة معاملات ونتيجة `i1`؛ ويجب أن يوسّع C هذه النتيجة صراحةً إلى بايت. تؤدي الأهداف الخاطئة والتواقيع المتغيرة وفشل الأوامر والمهل المنتهية إلى فشل الجمع مع حفظ الأدلة الجزئية. لا تثبّت هذه الأدلة تصريحًا لوقت التشغيل ولا تثبت استعادة طريقة. اختبر المجمّع دون SDK باستخدام `python3 -m unittest scripts.tests.test_mobile_swift_string_abi`.

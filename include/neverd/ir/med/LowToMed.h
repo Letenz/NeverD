@@ -18,6 +18,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -42,14 +43,36 @@ public:
   /// image-independent folding policy.
   void setBinaryImage(const BinaryImage *I) { Image = I; }
 
+  /// Register DCE with an explicit architecture. Used by tests that build
+  /// MedIR directly; the pipeline path sets TargetArch in convert().
+  void runRegisterDce(MedFunc &Func, Arch TheArch) {
+    TargetArch = TheArch;
+    runDce(Func);
+  }
+
   /// Source rendering only. The pipeline must keep this disabled for patching
   /// and lifting: these declarations are not authenticated semantic evidence.
   void setSourceCallHintsEnabled(bool Enabled) {
     SourceCallHintsEnabled = Enabled;
   }
+  /// Source rendering only. Entry contracts describe the function currently
+  /// being converted and must remain independent from call-only overrides for
+  /// compiler thunks whose public source ABI differs from their machine body.
+  void
+  setSourceEntryTypeHints(const std::map<va_t, SourceFunctionTypeHint> *Hints) {
+    SourceEntryTypeHints = Hints;
+  }
   void setSourceCalleeTypeHints(
       const std::map<va_t, SourceFunctionTypeHint> *Hints) {
     SourceCalleeTypeHints = Hints;
+  }
+  void setObjCBlockCaptureCallFields(
+      const std::map<va_t, ObjCBlockCaptureCallFields> *Fields) {
+    ObjCBlockCaptureFields = Fields;
+  }
+  void setObjCBlockParameterReceivers(
+      const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>> *Roots) {
+    ObjCBlockParameterReceivers = Roots;
   }
 
   /// Provide the per-callee callee-cleanup pop map (entry VA -> x86 `ret imm`
@@ -203,7 +226,7 @@ private:
   void neutralizeStackProbeCalls(MedFunc &Func);
   /// Record which GPRs a direct call's callee never writes.
   void applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp);
-  void buildSsa(MedFunc &Func);
+  void buildSsa(MedFunc &Func, const LowFunc &Low);
   void runDce(MedFunc &Func);
   void propagate(MedFunc &Func);
   void resolveSwitchSelectorPlans(MedFunc &Func);
@@ -230,12 +253,17 @@ private:
   int NextTempId = 0;
   uint32_t NextCallSiteId = 1;
   Arch TargetArch = Arch::Unknown;
-  /// Selects the platform calling convention's preserved registers.
-  BinaryFormat TargetFormat = BinaryFormat::ELF;
+  /// Set by convert(). Win64 COFF preserves RSI/RDI; SysV does not.
+  BinaryFormat TargetFormat = BinaryFormat::Unknown;
 
   const BinaryImage *Image = nullptr;
   bool SourceCallHintsEnabled = false;
+  const std::map<va_t, SourceFunctionTypeHint> *SourceEntryTypeHints = nullptr;
   const std::map<va_t, SourceFunctionTypeHint> *SourceCalleeTypeHints = nullptr;
+  const std::map<va_t, ObjCBlockCaptureCallFields> *ObjCBlockCaptureFields =
+      nullptr;
+  const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
+      *ObjCBlockParameterReceivers = nullptr;
 
   std::vector<StackSlot> StackSlots;
 

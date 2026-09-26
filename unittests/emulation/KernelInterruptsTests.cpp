@@ -11,6 +11,8 @@
 #include "gtest/gtest.h"
 #include "windows/KernelInterrupts.h"
 
+#include <array>
+
 namespace neverd::emulation {
 namespace {
 class KernelInterruptTest : public ::testing::Test {
@@ -19,9 +21,8 @@ protected:
   static constexpr uint64_t Object = 0x100000, OtherObject = 0x100100;
   DriverResult Result;
   std::unique_ptr<KernelInterrupts> Model;
-  KernelResources Resources{[this](uint64_t Owner) {
-    return Model->canRelease(Owner);
-  }};
+  KernelResources Resources{
+      [this](uint64_t Owner) { return Model->canRelease(Owner); }};
 
   void ok(llvm::Error Error) {
     if (Error)
@@ -69,12 +70,24 @@ protected:
   KernelInterrupts::Connection connect(unsigned Index = 0,
                                        uint32_t Version = 0) {
     const uint64_t Owner = Index ? OtherPDO : PDO;
-    auto Candidate = take(Model->match(Owner, 0x91 + Index,
-                                       uint8_t(5 + Index), 1));
+    auto Candidate =
+        take(Model->match(Owner, 0x91 + Index, uint8_t(5 + Index), 1));
     Candidate.Object = Index ? OtherObject : Object;
     Candidate.Routine = 0x180001000 + Index * 0x100;
     Candidate.Context = 0x500000 + Index * 0x100;
     Candidate.Version = Version;
+    ok(Model->connect(Candidate));
+    return Candidate;
+  }
+  KernelInterrupts::Connection connectPassive(unsigned Index = 0) {
+    auto Candidate = take(Model->match(Index ? OtherPDO : PDO, 0x91 + Index,
+                                       uint8_t(5 + Index), 1));
+    Candidate.Object = Index ? OtherObject : Object;
+    Candidate.Routine = 0x180005000 + Index * 0x100;
+    Candidate.Context = 0x600000 + Index * 0x100;
+    Candidate.Version = interrupts::FullySpecified;
+    Candidate.Passive = true;
+    Candidate.SynchronizeIRQL = 0;
     ok(Model->connect(Candidate));
     return Candidate;
   }
@@ -88,6 +101,30 @@ protected:
     EXPECT_TRUE(Delivery);
     return Delivery ? std::move(*Delivery) : KernelInterrupts::Delivery{};
   }
+  std::array<KernelInterrupts::Connection, 2>
+  sharedConnections(DriverInterruptMode Mode = DriverInterruptMode::Latched) {
+    std::array<KernelInterrupts::Connection, 2> Values;
+    for (unsigned I = 0; I < Values.size(); ++I) {
+      auto Device = configuration(I + 2);
+      auto &Resource = Device.Interrupts.front();
+      Resource.TranslatedVector = 0xa0;
+      Resource.TranslatedLevel = 7;
+      Resource.Share = DriverInterruptShare::Shared;
+      Resource.Mode = Mode;
+      if (Mode == DriverInterruptMode::LevelSensitive)
+        Resource.RetriggerAfter100ns = 3;
+      const uint64_t Owner = 0x4000 + I * 0x1000;
+      ok(Resources.configure(Owner, Device));
+      start(Owner);
+      auto Candidate = take(Model->match(Owner, 0xa0, 7, 1));
+      Candidate.Object = 0x200000 + I * 0x100;
+      Candidate.Routine = 0x180004000 + I * 0x100;
+      Candidate.Context = 0x600000 + I * 0x100;
+      ok(Model->connect(Candidate));
+      Values[I] = Candidate;
+    }
+    return Values;
+  }
   void SetUp() override {
     Model = std::make_unique<KernelInterrupts>(Resources, Result);
     ok(Resources.configure(PDO, configuration(0)));
@@ -96,6 +133,323 @@ protected:
     start(OtherPDO);
   }
 };
+
+TEST_F(KernelInterruptTest,
+       FrameworkServiceArgumentsRetainAssignedInterruptAndLockOwnership) {
+  constexpr uint64_t Handle = 0x6000;
+  auto Candidate = take(Model->matchOrdinal(PDO, 0));
+  Candidate.Object = Object;
+  Candidate.Routine = 0x180001000;
+  Candidate.ServiceArguments = std::vector<uint64_t>{Handle, 0};
+  ok(Model->connect(Candidate));
+  reject(Model->matchOrdinal(PDO, 1), "ordinal");
+  reject(Model->matchOrdinal(PDO, 0, 1), "ordinal");
+  arm();
+  auto Delivery = queue();
+  EXPECT_EQ(Delivery.Call.Arguments, (std::vector<uint64_t>{Handle, 0}));
+  EXPECT_EQ(take(Model->beginCall(Delivery.Call.Token.ID, 0, 17)), 5u);
+  reject(Model->acquire(Object, 77, 5), "nonrecursive");
+  reject(Model->disconnectConnection(Object), "owned");
+  take(Model->finishCall(Delivery.Call.Token.ID, 1, 5, 18));
+  ok(Model->disconnectConnection(Object));
+}
+
+TEST_F(KernelInterruptTest,
+       FrameworkPassiveLocksRetainWaitersAndAllowOtherOwners) {
+  connectPassive();
+  connectPassive(1);
+  EXPECT_TRUE(take(Model->tryAcquirePassive(Object, 11)));
+  EXPECT_FALSE(take(Model->tryAcquirePassive(Object, 22)));
+  reject(Model->tryAcquirePassive(Object, 11), "nonrecursive");
+  reject(Model->disconnectConnection(Object), "owned");
+  EXPECT_TRUE(take(Model->tryAcquirePassive(OtherObject, 33)));
+  // Independent passive locks do not impose an unrelated execution's LIFO.
+  EXPECT_EQ(take(Model->release(Object, 11, 0, 0)), 0u);
+  reject(Model->disconnectConnection(Object), "owned");
+  EXPECT_TRUE(take(Model->tryAcquirePassive(Object, 22)));
+  EXPECT_EQ(take(Model->release(OtherObject, 33, 0, 0)), 0u);
+  EXPECT_EQ(take(Model->release(Object, 22, 0, 0)), 0u);
+  ok(Model->disconnectConnection(Object));
+  ok(Model->disconnectConnection(OtherObject));
+}
+
+TEST_F(KernelInterruptTest, FrameworkMessageSelectionUsesDescriptorOrdinals) {
+  auto Device = configuration(2);
+  Device.Interrupts.front().Messages = {{0xfee01000, 0x100, 0x93, 5, 1},
+                                        {0xfee01000, 0x101, 0x94, 7, 1}};
+  auto Second = Device.Interrupts.front();
+  Second.ID = "second";
+  Second.Messages = {{0xfee02000, 0x102, 0x95, 8, 1}};
+  Device.Interrupts.push_back(Second);
+  constexpr uint64_t Owner = 0x4000;
+  ok(Resources.configure(Owner, Device));
+  start(Owner);
+  auto Candidate = take(Model->matchOrdinal(Owner, 0, 1));
+  EXPECT_EQ(Candidate.ResourceIndex, 1u);
+  EXPECT_EQ(Candidate.ResourceMessage, 0u);
+  EXPECT_EQ(Candidate.MessageID, 2u);
+  EXPECT_EQ(take(Model->matchOrdinal(Owner, 2)).MessageID, 2u);
+  Candidate.Object = Object;
+  Candidate.Routine = 0x180001000;
+  Candidate.Version = interrupts::MessageBased;
+  Candidate.ServiceArguments = std::vector<uint64_t>{0x6000, 2};
+  ok(Model->connect(Candidate));
+  DriverInterruptEvent Event{0, Device.ID, "second",
+                             DriverInterruptAction::Pulse, 0};
+  ok(Model->arm({Event}, 0, 0));
+  auto Delivery = queue(0);
+  EXPECT_EQ(Delivery.Call.Arguments, (std::vector<uint64_t>{0x6000, 2}));
+  EXPECT_EQ(take(Model->beginCall(Delivery.Call.Token.ID, 0, 0)), 8u);
+  take(Model->finishCall(Delivery.Call.Token.ID, 1, 8, 0));
+  ok(Model->disconnectConnection(Object));
+}
+
+TEST_F(KernelInterruptTest, SharedLatchedLineCallsEveryCapturedHandler) {
+  const auto Connections = sharedConnections();
+  reject(Model->match(0, 0xa0, 7, 1), "one assigned");
+  arm(0, 10, 0, "irq3");
+  EXPECT_EQ(take(Model->dueCount(10)), 1u);
+  const auto Delivery = queue(10);
+  const auto Token = Delivery.Call.Token.ID;
+  EXPECT_EQ(Delivery.Call.Arguments.front(), Connections[0].Object);
+  EXPECT_EQ(take(Model->beginCall(Token, 0, 10)), 7u);
+  reject(Model->disconnect(Connections[1].Object, 0),
+         "owned interrupt callback");
+  auto First = take(Model->finishCall(Token, 0x101, 7, 10));
+  ASSERT_TRUE(First.Next);
+  EXPECT_EQ(First.Next->Token.ID, Token);
+  EXPECT_EQ(First.Next->Arguments.front(), Connections[1].Object);
+  EXPECT_EQ(First.RestoredIRQL, 0u);
+  EXPECT_TRUE(Model->hasPendingEvents());
+  EXPECT_EQ(take(Model->beginCall(Token, 0, 11)), 7u);
+  auto Second = take(Model->finishCall(Token, 0x100, 7, 12));
+  EXPECT_FALSE(Second.Next);
+  EXPECT_EQ(Second.Value, 1u);
+  EXPECT_FALSE(Model->hasPendingEvents());
+  const auto &Observation = Result.Interrupts.back();
+  ASSERT_EQ(Observation.Handlers.size(), 2u);
+  EXPECT_EQ(Observation.Handlers[0].ReturnValue, 1u);
+  EXPECT_EQ(Observation.Handlers[1].ReturnValue, 0u);
+  EXPECT_EQ(Observation.Handlers[1].DeliveredAt100ns, 11u);
+  EXPECT_EQ(Observation.ReturnedAt100ns, 12u);
+  EXPECT_EQ(Observation.ReturnValue, 1u);
+}
+
+TEST_F(KernelInterruptTest, SharedPulseRejectsLostPeerWithoutRetargeting) {
+  auto Connections = sharedConnections();
+  arm(0, 10, 0, "irq2");
+  ok(Model->disconnect(Connections[1].Object, 0));
+  Connections[1].Object += 32;
+  ok(Model->connect(Connections[1]));
+  reject(Model->queueNextDue(10), "captured live connection");
+  EXPECT_TRUE(Result.Interrupts.back().Handlers.empty());
+  EXPECT_FALSE(Result.Interrupts.back().DeliveredAt100ns);
+  EXPECT_FALSE(Result.Interrupts.back().ReturnValue);
+}
+
+TEST_F(KernelInterruptTest, LevelAssertionRetriggersUntilExplicitDeassertion) {
+  sharedConnections(DriverInterruptMode::LevelSensitive);
+  using Action = DriverInterruptAction;
+  const DriverInterruptEvent Inputs[]{{0, "irq2", "line0", Action::Assert},
+                                      {8, "irq2", "line0", Action::Deassert}};
+  ok(Model->arm(Inputs, 0, 0));
+  for (uint64_t Time : {0u, 3u, 6u}) {
+    EXPECT_EQ(Model->nextEventTime(), Time);
+    EXPECT_EQ(take(Model->dueCount(Time)), 1u);
+    const auto Call = queue(Time).Call;
+    EXPECT_EQ(take(Model->beginCall(Call.Token.ID, 0, Time)), 7u);
+    auto Return = take(Model->finishCall(Call.Token.ID, 1, 7, Time));
+    EXPECT_FALSE(Return.Next);
+    EXPECT_EQ(Return.Value, 1u);
+    EXPECT_TRUE(Model->hasPendingEvents());
+  }
+  EXPECT_EQ(Model->nextEventTime(), 8u);
+  EXPECT_EQ(take(Model->dueCount(8)), 0u);
+  EXPECT_FALSE(take(Model->queueNextDue(8)));
+  EXPECT_FALSE(Model->hasPendingEvents());
+  const auto &Assert = Result.Interrupts[0];
+  ASSERT_EQ(Assert.Handlers.size(), 3u);
+  for (size_t I = 0; I < Assert.Handlers.size(); ++I) {
+    EXPECT_EQ(Assert.Handlers[I].DeliveryIndex, I);
+    EXPECT_EQ(Assert.Handlers[I].DeliveredAt100ns, I * 3);
+    EXPECT_EQ(Assert.Handlers[I].ReturnValue, 1u);
+  }
+  EXPECT_EQ(Result.Interrupts[1].OccurredAt100ns, 8u);
+  EXPECT_FALSE(Result.Interrupts[1].DeliveredAt100ns);
+  EXPECT_FALSE(Result.Interrupts[1].ReturnValue);
+}
+
+TEST_F(KernelInterruptTest,
+       SameBoundaryDeassertionCancelsSamplingBeforeMutation) {
+  sharedConnections(DriverInterruptMode::LevelSensitive);
+  using Action = DriverInterruptAction;
+  const DriverInterruptEvent Inputs[]{{0, "irq2", "line0", Action::Assert},
+                                      {0, "irq2", "line0", Action::Deassert}};
+  ok(Model->arm(Inputs, 0, 10));
+  EXPECT_EQ(take(Model->dueCount(10)), 0u);
+  EXPECT_FALSE(Result.Interrupts[0].OccurredAt100ns);
+  EXPECT_FALSE(Result.Interrupts[1].OccurredAt100ns);
+  EXPECT_FALSE(take(Model->queueNextDue(10)));
+  EXPECT_FALSE(Model->hasPendingEvents());
+  for (const auto &Event : Result.Interrupts) {
+    EXPECT_EQ(Event.OccurredAt100ns, 10u);
+    EXPECT_TRUE(Event.Handlers.empty());
+    EXPECT_FALSE(Event.ReturnValue);
+  }
+}
+
+TEST_F(KernelInterruptTest,
+       SharedLevelUsesSourceOrWithoutTurningReassertIntoEdge) {
+  const auto Connections =
+      sharedConnections(DriverInterruptMode::LevelSensitive);
+  using Action = DriverInterruptAction;
+  const DriverInterruptEvent Inputs[]{{0, "irq2", "line0", Action::Assert},
+                                      {1, "irq3", "line0", Action::Assert},
+                                      {2, "irq3", "line0", Action::Assert},
+                                      {2, "irq2", "line0", Action::Deassert},
+                                      {5, "irq3", "line0", Action::Deassert}};
+  ok(Model->arm(Inputs, 0, 0));
+  auto First = queue(0).Call;
+  take(Model->beginCall(First.Token.ID, 0, 0));
+  take(Model->finishCall(First.Token.ID, 1, 7, 0));
+  reject(Model->disconnect(Connections[0].Object, 0), "asserted");
+  for (uint64_t Time : {1u, 2u}) {
+    EXPECT_EQ(take(Model->dueCount(Time)), 0u);
+    EXPECT_FALSE(take(Model->queueNextDue(Time)));
+  }
+  EXPECT_EQ(Model->nextEventTime(), 3u);
+  auto Second = queue(3).Call;
+  take(Model->beginCall(Second.Token.ID, 0, 3));
+  auto Unclaimed = take(Model->finishCall(Second.Token.ID, 0, 7, 3));
+  ASSERT_TRUE(Unclaimed.Next);
+  take(Model->beginCall(Second.Token.ID, 0, 3));
+  EXPECT_FALSE(take(Model->finishCall(Second.Token.ID, 1, 7, 3)).Next);
+  EXPECT_FALSE(take(Model->queueNextDue(5)));
+  EXPECT_FALSE(Model->hasPendingEvents());
+  EXPECT_EQ(Result.Interrupts[0].Handlers.size(), 1u);
+  ASSERT_EQ(Result.Interrupts[1].Handlers.size(), 2u);
+  EXPECT_EQ(Result.Interrupts[1].Handlers[0].ReturnValue, 0u);
+  EXPECT_EQ(Result.Interrupts[1].Handlers[1].ReturnValue, 1u);
+  EXPECT_TRUE(Result.Interrupts[2].Handlers.empty());
+}
+
+TEST_F(KernelInterruptTest,
+       LevelDeliveryBudgetPrecedesMutationAndAllowsDeassertion) {
+  sharedConnections(DriverInterruptMode::LevelSensitive);
+  using Action = DriverInterruptAction;
+  ok(Model->arm({{0, "irq2", "line0", Action::Assert}}, 0, 0));
+  for (uint64_t I = 0; I < DriverInterruptDeliveryLimit; ++I) {
+    const uint64_t Time = I * 3;
+    const auto Call = queue(Time).Call;
+    take(Model->beginCall(Call.Token.ID, 0, Time));
+    take(Model->finishCall(Call.Token.ID, 1, 7, Time));
+  }
+  const uint64_t Next = DriverInterruptDeliveryLimit * 3;
+  const auto Before = Result.Interrupts.front().ReturnedAt100ns;
+  reject(Model->dueCount(Next), "delivery limit");
+  reject(Model->queueNextDue(Next), "delivery limit");
+  EXPECT_EQ(Model->nextEventTime(), Next);
+  EXPECT_EQ(Result.Interrupts.front().ReturnedAt100ns, Before);
+  EXPECT_EQ(Result.Interrupts.front().Handlers.size(),
+            DriverInterruptDeliveryLimit);
+  ok(Model->arm({{0, "irq2", "line0", Action::Deassert}}, 1, Next));
+  EXPECT_EQ(take(Model->dueCount(Next)), 0u);
+  EXPECT_FALSE(take(Model->queueNextDue(Next)));
+  EXPECT_FALSE(Model->hasPendingEvents());
+}
+
+TEST_F(KernelInterruptTest, LevelDeadlineOverflowDoesNotPublishDelivery) {
+  sharedConnections(DriverInterruptMode::LevelSensitive);
+  using Action = DriverInterruptAction;
+  ok(Model->arm({{0, "irq2", "line0", Action::Assert}}, 0, UINT64_MAX - 1));
+  reject(Model->dueCount(UINT64_MAX - 1), "deadline overflows");
+  reject(Model->queueNextDue(UINT64_MAX - 1), "deadline overflows");
+  EXPECT_FALSE(Result.Interrupts.front().OccurredAt100ns);
+  EXPECT_TRUE(Result.Interrupts.front().Handlers.empty());
+  EXPECT_EQ(Model->nextEventTime(), UINT64_MAX - 1);
+}
+
+TEST_F(KernelInterruptTest, LevelReturnOverflowRetainsTheCallbackAndLock) {
+  const auto Connections =
+      sharedConnections(DriverInterruptMode::LevelSensitive);
+  ok(Model->arm({{0, "irq2", "line0", DriverInterruptAction::Assert}}, 0, 0));
+  const auto Call = queue(0).Call;
+  take(Model->beginCall(Call.Token.ID, 0, 0));
+  reject(Model->finishCall(Call.Token.ID, 1, 7, UINT64_MAX),
+         "deadline overflows");
+  ASSERT_EQ(Result.Interrupts.front().Handlers.size(), 1u);
+  EXPECT_FALSE(Result.Interrupts.front().Handlers.front().ReturnValue);
+  EXPECT_FALSE(Result.Interrupts.front().ReturnedAt100ns);
+  reject(Model->acquire(Connections.front().Object, 77, 7), "nonrecursive");
+  take(Model->finishCall(Call.Token.ID, 1, 7, 0));
+  EXPECT_EQ(Model->nextEventTime(), 3u);
+}
+
+TEST_F(KernelInterruptTest, CallerLockSharesOneCriticalSectionAcrossVectors) {
+  constexpr uint64_t Lock = 0x900000;
+  auto First = take(Model->match(PDO, 0x91, 5, 1));
+  First.Object = Object;
+  First.Routine = 0x180001000;
+  First.SpinLock = Lock;
+  First.SynchronizeIRQL = 6;
+  ok(Model->connect(First));
+  auto Second = take(Model->match(OtherPDO, 0x92, 6, 1));
+  Second.Object = OtherObject;
+  Second.Routine = 0x180002000;
+  Second.SpinLock = Lock;
+  ok(Model->connect(Second));
+  EXPECT_TRUE(Model->usesSpinLock(Lock));
+  reject(Model->canReleaseRange(Lock + 7, 1), "interrupt spin lock");
+  EXPECT_EQ(take(Model->acquire(Object, 77, 0)), 0u);
+  EXPECT_EQ(Model->manualHoldIRQL(77), 6u);
+  reject(Model->acquire(OtherObject, 77, 6), "nonrecursive");
+  auto Call = take(Model->synchronize(OtherObject, 0x180003000, 0));
+  reject(Model->beginCall(Call.Token.ID, 6, 0), "nonrecursive");
+  reject(Model->release(OtherObject, 77, 0, 6), "owning execution");
+  EXPECT_EQ(take(Model->release(Object, 77, 0, 6)), 0u);
+  EXPECT_EQ(take(Model->beginCall(Call.Token.ID, 0, 0)), 6u);
+  reject(Model->acquire(Object, 77, 6), "nonrecursive");
+  take(Model->finishCall(Call.Token.ID, 1, 6, 0));
+  ok(Model->arm({{0, "irq0", "line0"}}, 0, 0));
+  const auto Delivery = queue(0);
+  EXPECT_EQ(Delivery.IRQL, 6u);
+  EXPECT_EQ(Delivery.Priority, 5u);
+  take(Model->beginCall(Delivery.Call.Token.ID, 0, 0));
+  take(Model->finishCall(Delivery.Call.Token.ID, 1, 6, 0));
+  ok(Model->disconnect(Object, 0));
+  reject(Model->canReleaseRange(Lock, 8), "interrupt spin lock");
+  ok(Model->disconnect(OtherObject, 0));
+  ok(Model->canReleaseRange(Lock, 8));
+}
+
+TEST_F(KernelInterruptTest,
+       LegacyMatchingIgnoresUnpublishedResourcesButRejectsLiveAmbiguity) {
+  KernelResources Inventory{[](uint64_t) { return llvm::Error::success(); }};
+  DriverResult Observations;
+  KernelInterrupts Interrupts(Inventory, Observations);
+  for (uint64_t Owner : {PDO, OtherPDO}) {
+    auto Device = configuration(0);
+    Device.ID = Owner == PDO ? "first" : "second";
+    Device.Interrupts.front().Share = DriverInterruptShare::Shared;
+    ok(Inventory.configure(Owner, Device));
+  }
+  auto Start = [&](uint64_t Owner) {
+    ok(Inventory.beginStart(Owner));
+    ok(Inventory.completeLowerStart(Owner, 0));
+    ok(Inventory.finishPnp(Owner, DevicePnpRequest::Start, 0));
+  };
+  Start(PDO);
+  auto Match = take(Interrupts.match(0, 0x91, 5, 1));
+  EXPECT_EQ(Match.PDO, PDO);
+  EXPECT_EQ(Match.Epoch, Inventory.find(PDO)->Epoch);
+  reject(Interrupts.match(OtherPDO, 0x91, 5, 1), "present assigned resource");
+  Start(OtherPDO);
+  reject(Interrupts.match(0, 0x91, 5, 1), "one assigned interrupt");
+  EXPECT_EQ(take(Interrupts.match(PDO, 0x91, 5, 1)).PDO, PDO);
+  Inventory.surpriseRemoval(OtherPDO);
+  EXPECT_EQ(take(Interrupts.match(0, 0x91, 5, 1)).PDO, PDO);
+  reject(Interrupts.match(OtherPDO, 0x91, 5, 1), "present assigned resource");
+}
 
 TEST_F(KernelInterruptTest, MatchingRequiresExactTranslatedTupleAndAssignment) {
   const auto Candidate = take(Model->match(0, 0x91, 5, 1));
@@ -142,7 +496,8 @@ TEST_F(KernelInterruptTest, DuplicateAndStaleCandidatesDoNotPublishTokens) {
   ok(Model->connect(Candidate));
 }
 
-TEST_F(KernelInterruptTest, InvalidCandidateDoesNotReserveAnOtherwiseValidToken) {
+TEST_F(KernelInterruptTest,
+       InvalidCandidateDoesNotReserveAnOtherwiseValidToken) {
   auto Candidate = take(Model->match(PDO, 0x91, 5, 1));
   Candidate.Object = Object;
   Candidate.Context = 0x500000;
@@ -157,7 +512,8 @@ TEST_F(KernelInterruptTest, InvalidCandidateDoesNotReserveAnOtherwiseValidToken)
   EXPECT_NE(Model->connection(Object), nullptr);
 }
 
-TEST_F(KernelInterruptTest, ConnectionCapacityRejectionDoesNotConsumeCandidate) {
+TEST_F(KernelInterruptTest,
+       ConnectionCapacityRejectionDoesNotConsumeCandidate) {
   std::vector<KernelInterrupts::Connection> Candidates;
   for (size_t I = 0; I <= DriverScenarioInterruptLimit; ++I) {
     const uint64_t Owner = 0x4000 + I * 0x100;
@@ -180,7 +536,8 @@ TEST_F(KernelInterruptTest, ConnectionCapacityRejectionDoesNotConsumeCandidate) 
   EXPECT_NE(Model->connection(Candidates.back().Object), nullptr);
 }
 
-TEST_F(KernelInterruptTest, OpaqueExtentPersistsAfterDisconnectAndNeverReusesToken) {
+TEST_F(KernelInterruptTest,
+       OpaqueExtentPersistsAfterDisconnectAndNeverReusesToken) {
   auto Candidate = connect(0, 4);
   ok(Model->validateGuestAccess(Object - 4, 4));
   ok(Model->validateGuestAccess(Object + interrupts::TokenSize, 1));
@@ -228,7 +585,8 @@ TEST_F(KernelInterruptTest, ProvenOutputDeviceExtentProtectsEvenNullContext) {
   ok(Model->canReleaseRange(0x700000, 0x180));
 }
 
-TEST_F(KernelInterruptTest, StorageGuardUsesOnlyExactBorrowedFactsAndLiveOwners) {
+TEST_F(KernelInterruptTest,
+       StorageGuardUsesOnlyExactBorrowedFactsAndLiveOwners) {
   const auto First = connect();
   auto Second = take(Model->match(OtherPDO, 0x92, 6, 1));
   Second.Object = OtherObject;
@@ -251,7 +609,8 @@ TEST_F(KernelInterruptTest, StorageGuardUsesOnlyExactBorrowedFactsAndLiveOwners)
   ok(Model->canReleaseRange(First.Context, 1));
 }
 
-TEST_F(KernelInterruptTest, PulseSurvivesSourceIrpAndCapturesIndependentIdentity) {
+TEST_F(KernelInterruptTest,
+       PulseSurvivesSourceIrpAndCapturesIndependentIdentity) {
   const auto Connection = connect();
   Result.Requests.emplace_back();
   Result.Requests.back().IRP = 0xdeadbeef;
@@ -332,7 +691,8 @@ TEST_F(KernelInterruptTest, SurpriseInvalidatesArmedPulseBeforeGuestEntry) {
   EXPECT_FALSE(Result.Interrupts[0].DeliveredAt100ns);
 }
 
-TEST_F(KernelInterruptTest, ReleaseGuardKeepsEventsAndConnectionsInsideTheirEpoch) {
+TEST_F(KernelInterruptTest,
+       ReleaseGuardKeepsEventsAndConnectionsInsideTheirEpoch) {
   connect();
   const uint64_t Epoch = Resources.find(PDO)->Epoch;
   arm();
@@ -343,12 +703,12 @@ TEST_F(KernelInterruptTest, ReleaseGuardKeepsEventsAndConnectionsInsideTheirEpoc
   EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
 }
 
-TEST_F(KernelInterruptTest, SameDeadlineOrderingUsesAdmissionIndexWithoutLosingPulses) {
+TEST_F(KernelInterruptTest,
+       SameDeadlineOrderingUsesAdmissionIndexWithoutLosingPulses) {
   connect();
   connect(1);
-  const DriverInterruptEvent Inputs[]{{9, "irq0", "line0"},
-                                      {5, "irq1", "line0"},
-                                      {5, "irq0", "line0"}};
+  const DriverInterruptEvent Inputs[]{
+      {9, "irq0", "line0"}, {5, "irq1", "line0"}, {5, "irq0", "line0"}};
   ok(Model->arm(Inputs, 7, 0));
   EXPECT_EQ(take(Model->dueCount(5)), 2u);
   auto First = queue(5);
@@ -375,9 +735,9 @@ TEST_F(KernelInterruptTest, InvalidArmBatchAndDeadlineOverflowAreAtomic) {
   reject(Model->arm(Batch, 0, 10), "unknown");
   EXPECT_TRUE(Result.Interrupts.empty());
   EXPECT_FALSE(Model->hasPendingEvents());
-  reject(Model->arm({DriverInterruptEvent{9, "irq0", "line0"}}, 0,
-                    UINT64_MAX - 8),
-         "overflows");
+  reject(
+      Model->arm({DriverInterruptEvent{9, "irq0", "line0"}}, 0, UINT64_MAX - 8),
+      "overflows");
   EXPECT_TRUE(Result.Interrupts.empty());
   reject(Model->arm({DriverInterruptEvent{0, "irq0", "line0"}},
                     uint64_t(UINT32_MAX) + 1, 0),
@@ -385,7 +745,8 @@ TEST_F(KernelInterruptTest, InvalidArmBatchAndDeadlineOverflowAreAtomic) {
   EXPECT_FALSE(Model->nextEventTime());
 }
 
-TEST_F(KernelInterruptTest, EventCapacityIsCheckedBeforeAnyObservationMutation) {
+TEST_F(KernelInterruptTest,
+       EventCapacityIsCheckedBeforeAnyObservationMutation) {
   connect();
   std::vector<DriverInterruptEvent> Batch(
       DriverScenarioInterruptEventsPerRequestLimit + 1,
@@ -400,7 +761,8 @@ TEST_F(KernelInterruptTest, EventCapacityIsCheckedBeforeAnyObservationMutation) 
   EXPECT_EQ(Result.Interrupts.size(), DriverScenarioInterruptEventLimit);
 }
 
-TEST_F(KernelInterruptTest, ManualLocksAreNonrecursiveAndRequireLifoOwnerAndIrql) {
+TEST_F(KernelInterruptTest,
+       ManualLocksAreNonrecursiveAndRequireLifoOwnerAndIrql) {
   connect();
   connect(1);
   EXPECT_EQ(take(Model->acquire(Object, 77, 0)), 0u);
@@ -419,7 +781,8 @@ TEST_F(KernelInterruptTest, ManualLocksAreNonrecursiveAndRequireLifoOwnerAndIrql
   reject(Model->acquire(Object, 77, 6), "exceeds");
 }
 
-TEST_F(KernelInterruptTest, NestedDifferentInterruptSyncRestoresEachCallerIrql) {
+TEST_F(KernelInterruptTest,
+       NestedDifferentInterruptSyncRestoresEachCallerIrql) {
   connect();
   connect(1);
   auto Outer = take(Model->synchronize(Object, 0x180003000, 0x7000));
@@ -452,7 +815,8 @@ TEST_F(KernelInterruptTest, SynchronizedCallbackUsesTheSameNonrecursiveLock) {
   ok(Model->disconnect(Object, 0));
 }
 
-TEST_F(KernelInterruptTest, FailedCallbackEntryAndReturnDoNotConsumeContinuation) {
+TEST_F(KernelInterruptTest,
+       FailedCallbackEntryAndReturnDoNotConsumeContinuation) {
   connect();
   arm();
   const auto Delivery = queue();
@@ -468,7 +832,8 @@ TEST_F(KernelInterruptTest, FailedCallbackEntryAndReturnDoNotConsumeContinuation
   reject(Model->finishCall(Token, 1, 5, 20), "lock or IRQL");
 }
 
-TEST_F(KernelInterruptTest, ManualHoldDefersIsrEntryWithoutLosingPreparedPulse) {
+TEST_F(KernelInterruptTest,
+       ManualHoldDefersIsrEntryWithoutLosingPreparedPulse) {
   connect();
   take(Model->acquire(Object, 7, 0));
   arm(0, 0);
@@ -503,10 +868,11 @@ TEST_F(KernelInterruptTest, PreparedAndActiveCallbacksPreventDisconnect) {
   ok(Model->disconnect(Object, 0));
 }
 
-TEST_F(KernelInterruptTest, ContinuationCapacityPreflightPreservesDueObservation) {
+TEST_F(KernelInterruptTest,
+       ContinuationCapacityPreflightPreservesDueObservation) {
   connect();
-  constexpr size_t Limit = DriverScenarioInterruptEventLimit +
-                           profile::MaxConcurrentCallbacks;
+  constexpr size_t Limit =
+      DriverScenarioInterruptEventLimit + profile::MaxConcurrentCallbacks;
   std::vector<KernelGuestCall> Calls;
   for (size_t I = 0; I < Limit; ++I)
     Calls.push_back(take(Model->synchronize(Object, 0x180002000, 0)));
@@ -520,6 +886,211 @@ TEST_F(KernelInterruptTest, ContinuationCapacityPreflightPreservesDueObservation
   take(Model->finishCall(Calls.back().Token.ID, 1, 5, 0));
   EXPECT_EQ(take(Model->dueCount(0)), 1u);
   EXPECT_NE(queue(0).Call.Token.ID, Calls.back().Token.ID);
+}
+
+TEST_F(KernelInterruptTest, MessageIdsUsePdoOrderAndDisconnectIsAtomic) {
+  auto Device = configuration(2);
+  auto &Resource = Device.Interrupts.front();
+  Resource.RawLevel = 0;
+  Resource.Messages = {{0xfee01000, 0x100, 0x93, 5, 1},
+                       {0xfee01000, 0x101, 0x94, 7, 1}};
+  auto Second = Resource;
+  Second.ID = "second";
+  Second.TranslatedVector = 0x95;
+  Second.TranslatedLevel = 8;
+  Second.Messages = {{0xfee02000, 0x200, 0x95, 8, 1}};
+  Device.Interrupts.push_back(Second);
+  constexpr uint64_t Owner = 0x4000, Table = 0x300000;
+  ok(Resources.configure(Owner, Device));
+  start(Owner);
+  auto Candidates = take(Model->matchMessages(Owner));
+  ASSERT_EQ(Candidates.size(), 3u);
+  for (size_t I = 0; I < Candidates.size(); ++I) {
+    Candidates[I].Object = Table + 0x100 + I * interrupts::TokenSize;
+    Candidates[I].Version = interrupts::MessageBased;
+    Candidates[I].Routine = 0x180005000;
+    Candidates[I].Context = 0x600000;
+  }
+  auto Incomplete = Candidates;
+  Incomplete.pop_back();
+  reject(Model->connectMessages(Table, Incomplete), "every assigned message");
+  EXPECT_EQ(Model->connection(Candidates.front().Object), nullptr);
+  ok(Model->connectMessages(Table, Candidates));
+  reject(Model->disconnectConnection(Candidates.front().Object), "together");
+  ok(Model->validateGuestAccess(Table, interrupts::MessageTableHeaderSize));
+  reject(Model->validateGuestAccess(Table, 1, true), "read-only");
+  const DriverInterruptEvent Event{0, Device.ID, "second",
+                                   DriverInterruptAction::Pulse, 0};
+  ok(Model->arm({Event}, 1, 0));
+  auto Delivery = queue(0);
+  EXPECT_EQ(Delivery.Call.Arguments,
+            (std::vector<uint64_t>{Candidates[2].Object, 0x600000, 2}));
+  EXPECT_EQ(Delivery.IRQL, 8u);
+  EXPECT_EQ(take(Model->beginCall(Delivery.Call.Token.ID, 0, 0)), 8u);
+  reject(Model->disconnect(Table, interrupts::MessageBased), "owned");
+  for (const auto &Candidate : Candidates)
+    EXPECT_NE(Model->connection(Candidate.Object), nullptr);
+  auto Returned = take(Model->finishCall(Delivery.Call.Token.ID, 0x100, 8, 0));
+  EXPECT_EQ(Returned.Value, 0u);
+  ASSERT_EQ(Result.Interrupts.size(), 1u);
+  EXPECT_EQ(Result.Interrupts[0].MessageID, 0u);
+  ASSERT_EQ(Result.Interrupts[0].Handlers.size(), 1u);
+  EXPECT_EQ(Result.Interrupts[0].Handlers[0].MessageID, 2u);
+  ok(Model->disconnect(Table, interrupts::MessageBased));
+  reject(Model->validateGuestAccess(Table, 1), "read-only");
+  for (const auto &Candidate : Candidates)
+    EXPECT_EQ(Model->connection(Candidate.Object), nullptr);
+}
+
+TEST_F(KernelInterruptTest,
+       MessagePrivateLocksAndCallerLockHaveDistinctOwnership) {
+  auto Device = configuration(2);
+  auto &Resource = Device.Interrupts.front();
+  Resource.RawLevel = 0;
+  Resource.Messages = {{0xfee01000, 0x100, 0x93, 5, 1},
+                       {0xfee01000, 0x101, 0x94, 7, 1}};
+  constexpr uint64_t Owner = 0x4000;
+  ok(Resources.configure(Owner, Device));
+  start(Owner);
+  for (bool Shared : {false, true}) {
+    const uint64_t Table = Shared ? 0x400000 : 0x300000;
+    auto Candidates = take(Model->matchMessages(Owner));
+    for (size_t I = 0; I < Candidates.size(); ++I) {
+      auto &Candidate = Candidates[I];
+      Candidate.Object = Table + 0x100 + I * interrupts::TokenSize;
+      Candidate.Version = interrupts::MessageBased;
+      Candidate.Routine = 0x180005000;
+      if (Shared) {
+        Candidate.SpinLock = 0xffff800040000000;
+        Candidate.SynchronizeIRQL = 7;
+      }
+    }
+    ok(Model->connectMessages(Table, Candidates));
+    EXPECT_EQ(take(Model->acquire(Candidates[0].Object, 1, 0)), 0u);
+    if (Shared)
+      reject(Model->acquire(Candidates[1].Object, 2, 0), "nonrecursive");
+    else {
+      EXPECT_EQ(take(Model->acquire(Candidates[1].Object, 2, 5)), 5u);
+      EXPECT_EQ(take(Model->release(Candidates[1].Object, 2, 5, 7)), 5u);
+    }
+    reject(Model->disconnect(Table, interrupts::MessageBased), "owned");
+    EXPECT_EQ(take(Model->release(Candidates[0].Object, 1, 0, Shared ? 7 : 5)),
+              0u);
+    ok(Model->disconnect(Table, interrupts::MessageBased));
+  }
+}
+
+TEST_F(KernelInterruptTest, MessageEventRetainsOriginalGroupAcrossReconnect) {
+  auto Device = configuration(2);
+  auto &Resource = Device.Interrupts.front();
+  Resource.RawLevel = 0;
+  Resource.Messages = {{0xfee01000, 0x100, 0x93, 5, 1}};
+  constexpr uint64_t Owner = 0x4000;
+  ok(Resources.configure(Owner, Device));
+  start(Owner);
+  auto Candidates = take(Model->matchMessages(Owner));
+  auto &Candidate = Candidates.front();
+  Candidate.Object = 0x300100;
+  Candidate.Version = interrupts::MessageBased;
+  Candidate.Routine = 0x180005000;
+  ok(Model->connectMessages(0x300000, Candidates));
+  DriverInterruptEvent Event{5, Device.ID, "line0"};
+  reject(Model->arm({Event}, 0, 0), "connected interrupt");
+  Event.MessageID = 0;
+  ok(Model->arm({Event}, 0, 0));
+  ok(Model->disconnect(0x300000, interrupts::MessageBased));
+  Candidate.Object = 0x400100;
+  ok(Model->connectMessages(0x400000, Candidates));
+  reject(Model->queueNextDue(5), "original interrupt");
+  ASSERT_EQ(Result.Interrupts.size(), 1u);
+  EXPECT_TRUE(Result.Interrupts[0].UndeliveredReason);
+  EXPECT_TRUE(Result.Interrupts[0].Handlers.empty());
+}
+
+TEST_F(KernelInterruptTest,
+       PassiveArrivalIsObservedWhileDeliveryWaitsForItsEvent) {
+  connectPassive();
+  const std::vector<DriverInterruptEvent> Inputs{
+      {0, "irq0", "line0"}, {1, "irq0", "line0"}, {2, "irq0", "line0"}};
+  ok(Model->arm(Inputs, 0, 0));
+  EXPECT_EQ(take(Model->dueCount(2)), 1u);
+  auto First = queue(0);
+  EXPECT_EQ(First.IRQL, 0u);
+  EXPECT_EQ(take(Model->beginCall(First.Call.Token.ID, 0, 0)), 0u);
+  EXPECT_EQ(Model->nextEventTime(), 1u);
+  EXPECT_FALSE(take(Model->queueNextDue(1)));
+  EXPECT_EQ(Result.Interrupts[1].OccurredAt100ns, 1u);
+  EXPECT_FALSE(Result.Interrupts[1].DeliveredAt100ns);
+  EXPECT_EQ(Model->nextEventTime(), 2u);
+  EXPECT_FALSE(take(Model->queueNextDue(2)));
+  EXPECT_FALSE(Model->nextEventTime());
+  EXPECT_EQ(take(Model->finishCall(First.Call.Token.ID, 1, 0, 5)).Value, 1u);
+  auto Second = queue(5);
+  EXPECT_EQ(take(Model->beginCall(Second.Call.Token.ID, 0, 5)), 0u);
+  take(Model->finishCall(Second.Call.Token.ID, 0, 0, 5));
+  auto Third = queue(5);
+  EXPECT_EQ(take(Model->beginCall(Third.Call.Token.ID, 0, 5)), 0u);
+  take(Model->finishCall(Third.Call.Token.ID, 0, 0, 5));
+  EXPECT_EQ(Result.Interrupts[1].OccurredAt100ns, 1u);
+  EXPECT_EQ(Result.Interrupts[1].DeliveredAt100ns, 5u);
+  EXPECT_EQ(Result.Interrupts[2].OccurredAt100ns, 2u);
+  EXPECT_FALSE(Model->hasPendingEvents());
+}
+
+TEST_F(KernelInterruptTest,
+       PassiveSynchronizationWaitersReserveTheEventInOrder) {
+  connectPassive();
+  reject(Model->acquire(Object, 1, 0), "do not have");
+  arm(0, 0);
+  auto ISR = queue(0);
+  take(Model->beginCall(ISR.Call.Token.ID, 0, 0));
+  auto First = take(Model->synchronize(Object, 0x180005100, 11));
+  auto Second = take(Model->synchronize(Object, 0x180005200, 22));
+  EXPECT_FALSE(take(Model->reserveSynchronization(First.Token.ID)));
+  EXPECT_FALSE(take(Model->reserveSynchronization(Second.Token.ID)));
+  take(Model->finishCall(ISR.Call.Token.ID, 0, 0, 5));
+  EXPECT_FALSE(take(Model->reserveSynchronization(Second.Token.ID)));
+  EXPECT_TRUE(take(Model->reserveSynchronization(First.Token.ID)));
+  reject(Model->disconnect(Object, interrupts::FullySpecified), "owned");
+  EXPECT_EQ(take(Model->beginCall(First.Token.ID, 0, 5)), 0u);
+  EXPECT_FALSE(take(Model->reserveSynchronization(Second.Token.ID)));
+  EXPECT_EQ(take(Model->finishCall(First.Token.ID, 0x101, 0, 6)).Value, 1u);
+  EXPECT_TRUE(take(Model->reserveSynchronization(Second.Token.ID)));
+  EXPECT_EQ(take(Model->beginCall(Second.Token.ID, 0, 6)), 0u);
+  EXPECT_EQ(take(Model->finishCall(Second.Token.ID, 0x100, 0, 7)).Value, 0u);
+  ok(Model->disconnect(Object, interrupts::FullySpecified));
+}
+
+TEST_F(KernelInterruptTest, IndependentPassiveCallsCanResumeOutOfStackOrder) {
+  connectPassive();
+  connectPassive(1);
+  arm(0, 0);
+  arm(0, 0, 1, "irq1");
+  auto First = queue(0);
+  take(Model->beginCall(First.Call.Token.ID, 0, 0));
+  auto Second = queue(0);
+  take(Model->beginCall(Second.Call.Token.ID, 0, 0));
+  EXPECT_EQ(take(Model->finishCall(First.Call.Token.ID, 1, 0, 3)).Value, 1u);
+  reject(Model->disconnect(OtherObject, interrupts::FullySpecified), "owned");
+  EXPECT_EQ(take(Model->finishCall(Second.Call.Token.ID, 0, 0, 5)).Value, 0u);
+  ok(Model->disconnect(Object, interrupts::FullySpecified));
+  ok(Model->disconnect(OtherObject, interrupts::FullySpecified));
+}
+
+TEST_F(KernelInterruptTest,
+       BlockedPassiveArrivalStillChecksPowerAtItsDeadline) {
+  connectPassive();
+  auto Sync = take(Model->synchronize(Object, 0x180005100, 11));
+  EXPECT_TRUE(take(Model->reserveSynchronization(Sync.Token.ID)));
+  take(Model->beginCall(Sync.Token.ID, 0, 0));
+  arm(3, 0);
+  Resources.setPhysicalPower(PDO, DevicePowerState::D3);
+  EXPECT_EQ(take(Model->dueCount(3)), 0u);
+  reject(Model->queueNextDue(3), "D0");
+  ASSERT_EQ(Result.Interrupts.size(), 1u);
+  EXPECT_EQ(Result.Interrupts[0].OccurredAt100ns, 3u);
+  EXPECT_TRUE(Result.Interrupts[0].UndeliveredReason);
+  EXPECT_TRUE(Result.Interrupts[0].Handlers.empty());
 }
 } // namespace
 } // namespace neverd::emulation

@@ -16,128 +16,16 @@
 
 #include <functional>
 #include <map>
+#include <set>
 
 namespace neverd {
 
-namespace {
-
-bool isDebugTrapExpr(const HighExpr *E) {
-  return E && E->Kind == ExprKind::Call &&
-         (E->IntrinsicId == Intrinsic::Int3 ||
-          E->IntrinsicId == Intrinsic::Ud2 ||
-          E->IntrinsicId == Intrinsic::Int1);
-}
-
-bool isDebugTrapStmt(const HighStmt &Stmt) {
-  if (Stmt.Kind == StmtKind::Call)
-    return isDebugTrapExpr(Stmt.CallExpr.get());
-  if ((Stmt.Kind == StmtKind::Assign || Stmt.Kind == StmtKind::ExprStmt) &&
-      Stmt.Val)
-    return isDebugTrapExpr(Stmt.Val.get());
-  return false;
-}
-
-const HighExpr *stmtCallExpr(const HighStmt &Stmt) {
-  if (Stmt.Kind == StmtKind::Call)
-    return Stmt.CallExpr.get();
-  if ((Stmt.Kind == StmtKind::Assign || Stmt.Kind == StmtKind::ExprStmt) &&
-      Stmt.Val)
-    return Stmt.Val.get();
-  return nullptr;
-}
-
-void markCallsFollowedByTrap(HighCAnalysisState &State,
-                             const std::vector<HighStmt> &Stmts) {
-  for (size_t I = 0; I < Stmts.size(); ++I) {
-    const HighStmt &S = Stmts[I];
-    markCallsFollowedByTrap(State, S.Body);
-    markCallsFollowedByTrap(State, S.ElseBody);
-    for (const SwitchCase &C : S.Cases)
-      markCallsFollowedByTrap(State, C.Body);
-    markCallsFollowedByTrap(State, S.DefaultBody);
-    for (const auto &ClauseBody : S.EHClauseBodies)
-      markCallsFollowedByTrap(State, ClauseBody);
-
-    const HighExpr *Call = stmtCallExpr(S);
-    if (!Call || Call->Kind != ExprKind::Call ||
-        Call->IntrinsicId != Intrinsic::None)
-      continue;
-    size_t J = I + 1;
-    while (J < Stmts.size() && (State.DeadStmts.count(&Stmts[J]) ||
-                                Stmts[J].Kind == StmtKind::Nop))
-      ++J;
-    if (J >= Stmts.size() || !isDebugTrapStmt(Stmts[J]))
-      continue;
-    State.InferredNoreturnCalls.insert(Call);
-    if (Call->CallAddr != 0 && Call->CallAddr != InvalidVA)
-      State.InferredNoreturnCallAddrs.insert(Call->CallAddr);
-  }
-}
-
-} // namespace
-
-bool isNoreturnCallExpr(const HighCAnalysisState &State, const HighExpr &E) {
-  if (E.Kind != ExprKind::Call)
-    return false;
-  if (libc::isNoReturnFunction(E.CallTarget) || isX86FastFailCall(E))
-    return true;
-  if (State.InferredNoreturnCalls.count(&E) != 0)
-    return true;
-  return E.CallAddr != 0 && E.CallAddr != InvalidVA &&
-         State.InferredNoreturnCallAddrs.count(E.CallAddr) != 0;
-}
-
-void analyzeInferredNoreturn(HighCAnalysisState &State, const HighFunc &Func,
-                             VarNameFn VarFn) {
-  State.InferredNoreturnCallAddrs.clear();
-  State.InferredNoreturnCalls.clear();
-  markCallsFollowedByTrap(State, Func.Body);
-  std::map<std::string, const HighExpr *> VarSources;
-  walkStmts(Func.Body, [&](const HighStmt &S) {
-    if (State.DeadStmts.count(&S))
-      return;
-    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var &&
-        S.Val)
-      VarSources[VarFn(S.Dst->Var)] = S.Val.get();
-  });
-  auto IsBareReturnValue = [&](const HighExpr *Ret) -> bool {
-    if (!Ret || Ret->Kind == ExprKind::Undef)
-      return true;
-    if (Ret->Kind != ExprKind::Var)
-      return false;
-    // Incoming EAX/RAX with no assignment is the MSVC `ret` success path on
-    // a void cookie helper, not a value the caller can read.  A SSAVer-0
-    // register that this function assigned (call result, etc.) is a real
-    // value; treating it as bare made `call(); if (v0_0)` drop the dest.
-    if (VarSources.count(VarFn(Ret->Var)))
-      return false;
-    return Ret->Var.Kind == MedVar::Reg && Ret->Var.SSAVer == 0;
-  };
-  bool HasBareReturn = false;
-  walkStmts(Func.Body, [&](const HighStmt &S) {
-    if (S.Kind == StmtKind::Return && IsBareReturnValue(S.RetVal.get()))
-      HasBareReturn = true;
-  });
-  if (!HasBareReturn)
-    return;
-
-  walkStmts(Func.Body, [&](const HighStmt &S) {
-    if (S.Kind != StmtKind::Return || !S.RetVal)
-      return;
-    const HighExpr *Ret = S.RetVal.get();
-    if (Ret->Kind == ExprKind::Call) {
-      if (Ret->CallAddr != 0 && Ret->CallAddr != InvalidVA)
-        State.InferredNoreturnCallAddrs.insert(Ret->CallAddr);
-      return;
-    }
-    if (Ret->Kind != ExprKind::Var)
-      return;
-    auto It = VarSources.find(VarFn(Ret->Var));
-    if (It == VarSources.end() || It->second->Kind != ExprKind::Call)
-      return;
-    if (It->second->CallAddr != 0 && It->second->CallAddr != InvalidVA)
-      State.InferredNoreturnCallAddrs.insert(It->second->CallAddr);
-  });
+bool isNoreturnCallExpr(const HighExpr &E) {
+  // A bare return in the caller says nothing about whether another callee
+  // returns. In particular, HighIR can assign a result to register version 0.
+  // Only a known terminating operation authorizes omitting its result.
+  return E.Kind == ExprKind::Call &&
+         (libc::isNoReturnFunction(E.CallTarget) || isX86FastFailCall(E));
 }
 
 bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
@@ -214,13 +102,10 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
     if (It != VarSources.end()) {
       auto *Src = It->second;
       if (Src->Kind == ExprKind::Call) {
-        if (isMsvcCxxThrowCallName(Src->CallTarget) ||
-            isNoreturnCallExpr(State, *Src))
+        if (isMsvcCxxThrowCallName(Src->CallTarget) || isNoreturnCallExpr(*Src))
           return true;
-        // The x64 debug service and a system call with its register inputs
-        // return their status in RAX.
-        if (Src->IntrinsicId == Intrinsic::DebugService ||
-            (Src->IntrinsicId == Intrinsic::Syscall && !Src->Operands.empty()))
+        // The x64 debug service returns its status in RAX.
+        if (Src->IntrinsicId == Intrinsic::DebugService)
           return false;
         if (Src->IntrinsicId != Intrinsic::None)
           return isSideeffectIntrinsic(Src->IntrinsicId) ||
@@ -276,8 +161,7 @@ bool analyzeVoidReturn(const HighCAnalysisState &State, const HighFunc &Func,
       return true;
     }
     if (E.Kind == ExprKind::Call)
-      return isMsvcCxxThrowCallName(E.CallTarget) ||
-             isNoreturnCallExpr(State, E);
+      return isMsvcCxxThrowCallName(E.CallTarget) || isNoreturnCallExpr(E);
     return false;
   };
 
@@ -333,7 +217,7 @@ void analyzeVoidDeadChain(HighCAnalysisState &State, const HighFunc &Func,
 }
 
 void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
-                          VarNameFn VarFn) {
+                          VarNameFn VarFn, CallArgLimitFn ArgLimit) {
   auto ExprHasEffect = [](const HighExpr &E) -> bool {
     std::function<bool(const HighExpr &)> Walk = [&](const HighExpr &N) {
       if (N.Kind == ExprKind::Call || N.Kind == ExprKind::Store)
@@ -358,7 +242,7 @@ void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
         return;
       forEachRhsExpr(S, [&](const ExprPtr &E) {
         if (E)
-          collectUsedVarsExpr(*E, Used, VarFn);
+          collectUsedVarsExpr(*E, Used, VarFn, ArgLimit);
       });
     });
     walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -376,6 +260,76 @@ void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
       Changed = true;
     });
   }
+}
+
+void analyzeUnusedCallResults(HighCAnalysisState &State, const HighFunc &Func,
+                              VarNameFn VarFn, CallArgLimitFn ArgLimit) {
+  std::map<std::string, TypeRef> Used;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (State.DeadStmts.count(&S))
+      return;
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        collectUsedVarsExpr(*E, Used, VarFn, ArgLimit);
+    });
+  });
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (State.DeadStmts.count(&S) || State.OmittedCallResults.count(&S))
+      return;
+    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
+      return;
+    if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
+      return;
+    if (S.Val->Kind != ExprKind::Call)
+      return;
+    if (isNoreturnCallExpr(*S.Val))
+      return;
+    if (Used.count(VarFn(S.Dst->Var)))
+      return;
+    State.OmittedCallResults.insert(&S);
+  });
+
+  // HighC prints cleanup `call();` and drops the trailing `return dest`.
+  // The dest is still "used" by that skipped return, so omit it here.
+  std::function<void(const std::vector<HighStmt> &)> WalkCleanup;
+  WalkCleanup = [&](const std::vector<HighStmt> &Stmts) {
+    for (const HighStmt &S : Stmts) {
+      WalkCleanup(S.Body);
+      WalkCleanup(S.ElseBody);
+      for (const auto &C : S.Cases)
+        WalkCleanup(C.Body);
+      WalkCleanup(S.DefaultBody);
+      for (size_t C = 0; C < S.EHClauseBodies.size(); ++C) {
+        const bool Cleanup =
+            C < S.EHClauses.size() &&
+            S.EHClauses[C].Kind == HighEHClauseKind::CxxCleanup;
+        if (Cleanup) {
+          const auto &Body = S.EHClauseBodies[C];
+          for (size_t J = 0; J < Body.size(); ++J) {
+            const HighStmt &CS = Body[J];
+            if (State.DeadStmts.count(&CS))
+              continue;
+            if (CS.Kind != StmtKind::Assign || !CS.Dst || !CS.Val)
+              continue;
+            if (CS.Val->Kind != ExprKind::Call)
+              continue;
+            const HighStmt *Ret = nullptr;
+            for (size_t K = J + 1; K < Body.size(); ++K) {
+              if (Body[K].Kind == StmtKind::Nop)
+                continue;
+              if (Body[K].Kind == StmtKind::Return)
+                Ret = &Body[K];
+              break;
+            }
+            if (Ret)
+              State.OmittedCallResults.insert(&CS);
+          }
+        }
+        WalkCleanup(S.EHClauseBodies[C]);
+      }
+    }
+  };
+  WalkCleanup(Func.Body);
 }
 
 } // namespace neverd

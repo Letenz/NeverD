@@ -6,7 +6,10 @@
 
 #include "neverd/ir/low/CallRegisterEffects.h"
 
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
+
+#include "llvm/ADT/STLExtras.h"
 
 #include <algorithm>
 
@@ -60,6 +63,11 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
     BlockStarts.insert(F.Blocks[I].StartAddr);
   }
   Effect.Blocks.resize(F.Blocks.size());
+  const uint64_t FPReturn = getTargetRegInfo(Img.Arch).FPReturnReg;
+  auto WritesFPReturn = [&](const NdVar &Out) {
+    return FPReturn != 0 && Out.isReg() && Out.Size != 0 &&
+           Out.Offset < FPReturn + 16 && FPReturn < Out.Offset + Out.Size;
+  };
   for (size_t BI = 0; BI < F.Blocks.size(); ++BI) {
     const LowBlock &Block = F.Blocks[BI];
     RegisterBlock &Out = Effect.Blocks[BI];
@@ -84,6 +92,8 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
       if (Op.Output.isReg()) {
         const GPRFamilyMask Bit = familyBit(Img.Arch, Op.Output.Offset);
         Effect.Writes |= Bit;
+        if (WritesFPReturn(Op.Output))
+          Effect.Writes |= kFPReturnWriteBit;
         // A 32- or 64-bit write defines the whole register; a byte or word
         // write keeps the rest of the old value, which stays live exactly as
         // wide as a later read needs it.
@@ -94,8 +104,10 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
       const bool TailCall = Control == LowInstructionControl::TailCall;
       switch (Op.Opcode) {
       case NdOp::INDIR_CALL:
+        // A rewritten indirect tail jump (`jmp [iat]` in an import thunk)
+        // passes this function's registers on to its unknown target.
         Effect.Unknown = true;
-        Step.UnknownCall = true;
+        (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
         break;
       case NdOp::INDIR_BR:
         // A resolved jump table has successors; an indirect tail jump leaves
@@ -113,6 +125,7 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
             !BlockStarts.count(Op.Inputs[0].Offset)) {
           Effect.Callees.insert(Op.Inputs[0].Offset);
           Step.Callee = Op.Inputs[0].Offset;
+          Step.TailCallee = true;
         }
         break;
       case NdOp::CALL: {
@@ -128,6 +141,7 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
           (TailCall ? Step.UnknownTailCall : Step.UnknownCall) = true;
         } else {
           Step.Callee = Op.Inputs[0].Offset;
+          Step.TailCallee = TailCall;
           if (!NoReturn)
             Effect.Callees.insert(Op.Inputs[0].Offset);
         }
@@ -136,6 +150,7 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
       default:
         break;
       }
+      Effect.UnknownEntryReads |= Step.UnknownTailCall;
       Out.Steps.push_back(Step);
     }
   }
@@ -245,10 +260,36 @@ solveCallRegisterEffects(const std::map<va_t, LocalRegisterEffect> &Funcs,
   }
 
   // Entry reads, also a least fixed point: a callee's reads only grow a
-  // caller's.  A body we do not fully know has none.
+  // caller's.  A body we do not fully know has none, and neither does one
+  // that tail-calls code whose reads are unknown: that code receives this
+  // function's incoming registers.
+  std::set<va_t> UnknownReads;
+  for (const auto &[Entry, Effect] : Funcs)
+    if (!FixedEntryReads.count(Entry) &&
+        (Effect.Incomplete || Effect.UnknownEntryReads))
+      UnknownReads.insert(Entry);
+  for (bool Changed = true; Changed;) {
+    Changed = false;
+    for (const auto &[Entry, Effect] : Funcs) {
+      if (UnknownReads.count(Entry) || FixedEntryReads.count(Entry))
+        continue;
+      const bool ForwardsToUnknown = llvm::any_of(
+          Effect.Blocks, [&](const RegisterBlock &Block) {
+            return llvm::any_of(Block.Steps, [&](const RegisterStep &Step) {
+              return Step.TailCallee && !FixedEntryReads.count(Step.Callee) &&
+                     (!Funcs.count(Step.Callee) ||
+                      UnknownReads.count(Step.Callee));
+            });
+          });
+      if (ForwardsToUnknown) {
+        UnknownReads.insert(Entry);
+        Changed = true;
+      }
+    }
+  }
   std::map<va_t, GPRReadWidths> &Reads = Result.EntryReads;
   for (const auto &[Entry, Effect] : Funcs)
-    if (!Effect.Incomplete)
+    if (!UnknownReads.count(Entry))
       Reads[Entry] = GPRReadWidths{};
   for (const auto &[Entry, Widths] : FixedEntryReads)
     Reads[Entry] = Widths;

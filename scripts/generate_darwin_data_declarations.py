@@ -13,10 +13,10 @@ import subprocess
 import tempfile
 
 try:
-    from .generate_darwin_declarations import CDeclarations, load_exports
+    from .generate_darwin_declarations import CDeclarations, CXType, load_exports
     from .generate_objc_declarations import CXCursor, TARGETS, catalog_rows
 except ImportError:
-    from generate_darwin_declarations import CDeclarations, load_exports
+    from generate_darwin_declarations import CDeclarations, CXType, load_exports
     from generate_objc_declarations import CXCursor, TARGETS, catalog_rows
 
 
@@ -24,6 +24,7 @@ class DataDeclarations(CDeclarations):
     def __init__(self, library):
         super().__init__(library)
         self.bind("clang_getCursorTLSKind", ctypes.c_uint, CXCursor)
+        self.bind("clang_getCanonicalType", CXType, CXType)
 
     def declaration(self, cursor):
         if cursor.kind != 9 or self.clang_getCursorLinkage(cursor) != 4:
@@ -33,7 +34,13 @@ class DataDeclarations(CDeclarations):
             return None
         # A TLS symbol requires thread-specific access and cannot use an
         # ordinary external storage address. Keep its negative evidence.
-        return name[1:], "data" if self.clang_getCursorTLSKind(cursor) == 0 else ""
+        if self.clang_getCursorTLSKind(cursor) != 0:
+            return name[1:], ""
+        canonical = self.clang_getCanonicalType(self.clang_getCursorType(cursor))
+        # Preserve only the declaration-level fact that loading this external
+        # storage yields an Objective-C object pointer. This grants no class or
+        # object-layout authority, but is enough for an `id` argument carrier.
+        return name[1:], "object" if canonical.kind == 109 else "data"
 
 
 LITERAL_PROBES = {
@@ -141,9 +148,13 @@ def render(profiles, exports, version, compiler, literal_compiler=None):
     for name, arm, intel in catalog_rows(profiles):
         if not any(name in index for index in exports):
             continue
-        modules = ["|".join(sorted(index.get(name, ()))) if kind == "data" else ""
+        modules = ["|".join(sorted(index.get(name, ())))
+                   if kind in ("data", "object") else ""
                    for kind, index in zip((arm, intel), exports)]
-        lines.append("{" + ", ".join(json.dumps(x) for x in (name, *modules)) + "},")
+        values = (name, *modules, arm == "object", intel == "object")
+        lines.append("{" + ", ".join(
+            json.dumps(x) if not isinstance(x, bool) else str(x).lower()
+            for x in values) + "},")
         count += 1
     lines.append("    // clang-format on")
     return "\n".join(lines) + "\n", count
@@ -160,15 +171,32 @@ def main():
     args = parser.parse_args()
     sdk = args.sdk.resolve(strict=True)
     clang = DataDeclarations(args.libclang)
-    frameworks = ("CoreData", "CoreGraphics", "ImageIO", "CoreSpotlight")
+    frameworks = ("CoreData", "CoreGraphics", "ImageIO", "CoreSpotlight", "QuartzCore",
+                  "CoreImage")
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-data-") as work:
         source = Path(work) / "declarations.m"
         source.write_text(
             "#import <Foundation/Foundation.h>\n#include <objc/runtime.h>\n"
             "#include <objc/objc-sync.h>\n#include <pthread.h>\n"
-            "#include <dispatch/dispatch.h>\n" +
-            "".join(f"#import <{name}/{name}.h>\n" for name in frameworks))
-        profiles = [clang.extract(source, sdk, target) for target in TARGETS]
+            "#include <dispatch/dispatch.h>\n#include <os/log.h>\n"
+            "#import <LaunchServices/UTType.h>\n"
+            "#import <LaunchServices/UTCoreTypes.h>\n"
+            "#import <UniformTypeIdentifiers/UTCoreTypes.h>\n"
+            "#import <WebKit/WKWebsiteDataRecord.h>\n" +
+            # CALayer supplies the public layer constants without pulling in
+            # OpenGLES headers absent from the command-line-tools SDK.
+            "".join(f"#import <{name}/{'CALayer' if name == 'QuartzCore' else name}.h>\n"
+                    for name in frameworks if name != "CoreImage") +
+            # These public CoreImage headers are complete on every target.
+            # The umbrella also imports CIContext, whose iOS OpenGLES headers
+            # are absent from the command-line-tools SDK.
+            "#import <CoreImage/CIDetector.h>\n#import <CoreImage/CIFilter.h>\n"
+            "#import <CoreImage/CIImage.h>\n")
+        nested_frameworks = (sdk / "System/Library/Frameworks/"
+                             "CoreServices.framework/Frameworks")
+        profiles = [clang.extract(source, sdk, target,
+                                  ("-F", str(nested_frameworks)))
+                    for target in TARGETS]
         for profile, target in zip(profiles, TARGETS):
             for name, declarations in compile_literal_storage(args.clang, sdk, target).items():
                 profile.setdefault(name, set()).update(declarations)
@@ -184,7 +212,20 @@ def main():
     if not version_match:
         raise ValueError("unrecognized literal compiler version")
     version = json.loads((sdk / "SDKSettings.json").read_text())["Version"]
-    output, count = render(profiles, load_exports(sdk, frameworks), version,
+    exports = load_exports(sdk, frameworks)
+    core_services = load_exports(sdk, ("CoreServices",))
+    for common, extra in zip(exports, core_services):
+        for name in ("kUTTagClassFilenameExtension", "kUTTypeImage"):
+            common[name] = extra[name]
+    uniform_types = load_exports(sdk, ("UniformTypeIdentifiers",))
+    webkit = load_exports(sdk, ("WebKit",))
+    for common, extra in zip(exports, uniform_types):
+        common["UTTypeGIF"] = extra["UTTypeGIF"]
+    for common, extra in zip(exports, webkit):
+        for name in ("WKWebsiteDataTypeDiskCache",
+                     "WKWebsiteDataTypeMemoryCache"):
+            common[name] = extra[name]
+    output, count = render(profiles, exports, version,
                            clang.string(clang.clang_getClangVersion()), version_match[0])
     if args.check:
         if args.output.read_text() != output:

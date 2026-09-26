@@ -93,6 +93,8 @@ public:
   llvm::Error preparePnpDevices();
   llvm::Expected<Invocation> beginAddDevice(llvm::StringRef ID);
   llvm::Error finishAddDevice(llvm::StringRef ID, uint32_t Status);
+  llvm::Error finalizeAddDevice(llvm::StringRef ID);
+  llvm::Error beginFrameworkRemoval(uint64_t IRP);
   /// A pending dispatch retains its packet until a guest callback completes it.
   llvm::Expected<Invocation>
   beginRequest(const DriverRequest &Request,
@@ -101,8 +103,12 @@ public:
   llvm::Error recordDispatchReturn(uint64_t IRP, uint32_t DispatchStatus);
   /// Finalization is idempotent only for an already finalized owned IRP.
   llvm::Error finalizeRequest(uint64_t IRP);
-  /// IRP=0 inspects all requests for the scheduler's drain boundary.
-  bool requestPending(uint64_t IRP = 0) const;
+  /// IRP=0 inspects all requests. The scheduler can exclude framework packets
+  /// parked by device power so a later START can produce their completion.
+  enum class PendingRequestScope { All, ExcludePowerParked };
+  bool
+  requestPending(uint64_t IRP = 0,
+                 PendingRequestScope Scope = PendingRequestScope::All) const;
   llvm::Expected<std::optional<KernelScheduler::Invocation>>
   nextScheduled(bool AdvanceTime,
                 std::optional<uint64_t> Deadline = std::nullopt);
@@ -121,7 +127,10 @@ public:
       Delay,
       RemoveLock,
       FrameworkQueueStop,
-      FrameworkQueueEmpty
+      FrameworkQueueEmpty,
+      FrameworkFileSend,
+      InterruptSynchronization,
+      FrameworkInterruptLock
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
@@ -140,8 +149,7 @@ public:
            (Transfer && *Transfer <= Scheduler.now100ns()) ||
            Scheduler.hasQueuedInterrupt() || hasQueuedDPC() ||
            Scheduler.hasQueuedDMACallback() ||
-           Scheduler.hasQueuedCancellation() ||
-           Scheduler.hasQueuedWDMCompletion();
+           Scheduler.hasQueuedCancellation() || Scheduler.hasQueuedCompletion();
   }
   llvm::Error activateStack(uint64_t Base, uint64_t Size);
   llvm::Error retireStack(uint64_t Base, uint64_t Size);
@@ -160,6 +168,9 @@ public:
       CancelLock.CallbackExecution = Identity;
     }
   }
+  /// A synchronous exception callback retains its parent's user-memory
+  /// authority while keeping its own execution and resource ownership.
+  llvm::Error inheritExecutionContext(uint64_t Child, uint64_t Parent);
   llvm::Error setUserRequestContext(
       bool Active,
       uint32_t ProcessID = DriverRequest::DefaultRequestorProcessID);
@@ -168,7 +179,9 @@ public:
   bool canCatchUserAccess(uint64_t Address, uint64_t Size) const;
   llvm::Error validateExecutionReturn(uint64_t Identity, uint8_t EntryIRQL,
                                       bool Nested = false) const;
-  bool hasPendingInterruptEvents() const { return Interrupts.hasPendingEvents(); }
+  bool hasPendingInterruptEvents() const {
+    return Interrupts.hasPendingEvents();
+  }
   bool hasPendingHardwareWork() const {
     return Interrupts.hasPendingEvents() || DMA.hasPendingEvents() ||
            DMA.hasPendingCallbacks();
@@ -189,6 +202,10 @@ private:
   llvm::Expected<std::optional<uint64_t>> finishWdmGuestCall(uint64_t Token,
                                                              uint64_t Result);
   void configureFrameworkDeviceHost();
+  void configureFrameworkInterruptHost();
+  llvm::Error completeFrameworkTransitionIfReady();
+  llvm::Expected<uint64_t> forwardFrameworkTransitionRequest(uint64_t IRP);
+  llvm::Error detachFrameworkPnpDevice(uint64_t Device, uint64_t PDO);
   /// Framework-owned WDM devices and their canonical symbolic-link keys.
   std::map<uint64_t, std::vector<std::string>> FrameworkDevices;
   KernelRegistry Registry;
@@ -238,6 +255,19 @@ private:
   uint64_t CurrentExecution = 0;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
+  struct ExecutionProcessContext {
+    uint32_t ProcessID, CreatingProcessID;
+    uint8_t PreviousMode;
+    bool Attached;
+  };
+  std::optional<ExecutionProcessContext> executionProcessContext() const;
+  struct InheritedExecutionContext {
+    uint64_t ThreadKey;
+    uint32_t UserProcessID;
+    bool UserMemoryAuthority;
+    std::optional<ExecutionProcessContext> Process;
+  };
+  std::map<uint64_t, InheritedExecutionContext> InheritedExecutionContexts;
   struct ApcState {
     uint16_t CriticalDepth = 0;
     uint16_t GuardedDepth = 0;
@@ -247,7 +277,6 @@ private:
   bool UserRequestContext = false;
   uint32_t CurrentUserProcessID = 0;
   uint64_t NextUserAddress = profile::UserArenaBase;
-  uint64_t NextUserAlias = profile::UserAliasBase;
   struct UserAllocation {
     uint64_t Size;
     uint32_t ProcessID;
@@ -256,6 +285,18 @@ private:
   std::map<uint64_t, UserAllocation> UserAllocations;
   std::set<uint64_t> RevokedUserAllocations;
   std::set<uint32_t> ExitedUserProcesses;
+  struct UserMdlView {
+    uint64_t MDL = 0;
+    uint64_t Address = 0;
+    uint64_t PageBase = 0;
+    uint64_t MappedSize = 0;
+    uint64_t BackingAddress = 0;
+    uint32_t ProcessID = 0;
+    uint32_t Length = 0;
+    unsigned Permissions = 0;
+  };
+  using UserMdlViewKey = std::pair<uint32_t, uint64_t>;
+  std::map<UserMdlViewKey, UserMdlView> UserMdlViews;
   std::map<uint32_t, uint64_t> ProcessObjects;
   std::map<uint64_t, uint32_t> ProcessObjectIDs;
   struct ProcessAttachment {
@@ -291,12 +332,14 @@ private:
                                               DriverUserPageAccess Access,
                                               uint32_t ProcessID);
   llvm::Expected<uint64_t> probeUserBuffer(uint64_t Address, uint64_t Size,
-                                            uint32_t Alignment, bool ForWrite);
+                                           uint32_t Alignment, bool ForWrite);
   std::optional<KernelGuestCall> PendingInterruptCall;
+  std::map<uint64_t, uint64_t> FrameworkInterruptContinuations;
+  std::map<std::pair<uint64_t, uint64_t>, uint8_t> FrameworkInterruptLocks;
   llvm::Expected<uint64_t> callInterruptAPI(llvm::StringRef Name,
                                             llvm::ArrayRef<uint64_t> Arguments);
-  llvm::Expected<std::optional<uint64_t>>
-  finishInterruptCall(uint64_t Token, uint64_t Value);
+  llvm::Expected<std::optional<uint64_t>> finishInterruptCall(uint64_t Token,
+                                                              uint64_t Value);
   llvm::Expected<uint64_t> preflightScheduledBoundary(uint64_t Time);
   llvm::Error processInterruptEvents();
   std::optional<uint64_t> nextInterruptEventTime() const {
@@ -316,7 +359,7 @@ private:
   };
   std::map<uint64_t, SystemThread> SystemThreads;
   std::map<uint64_t, uint64_t> ThreadHandles;
-  uint64_t NextThreadHandle = 0x60000000;
+  uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
   llvm::Expected<uint64_t>
   createSystemThread(llvm::ArrayRef<uint64_t> Arguments);
@@ -412,6 +455,8 @@ private:
     DriverBusKind Bus = DriverBusKind::ResourceFree;
     std::optional<uint32_t> AddDeviceStatus;
     bool AddDeviceActive = false;
+    bool FrameworkAdd = false;
+    uint64_t FrameworkInit = 0;
     std::set<uint64_t> ExistingGuestDevices;
     std::set<uint64_t> GuestDevices;
     std::optional<DevicePowerState> InitialReportedDevicePower;
@@ -454,6 +499,14 @@ private:
     uint32_t ResponseIndex = 0;
     bool CallbackStarted = false;
     bool CallbackReturned = false;
+    DriverRequestOrigin Origin = DriverRequestOrigin::PoRequestPowerIrp;
+    uint64_t FrameworkParent = 0;
+  };
+  struct UserRegion {
+    DriverUserBufferKind Kind;
+    std::string ID;
+    uint64_t Address;
+    uint32_t Size;
   };
   struct ActiveRequest {
     DriverRequestKind Kind;
@@ -468,6 +521,8 @@ private:
     uint64_t ResourceListSize = 0;
     std::optional<DeviceLifecycleTicket> PowerTicket;
     std::optional<DriverPowerOperation> PowerOperation;
+    std::optional<DriverBusCompletion> FileBusCompletion;
+    bool FileBusReceived = false;
     std::optional<RequestedPower> ChildPower;
     bool LifecycleIo = false;
     uint64_t Stack = 0;
@@ -480,11 +535,17 @@ private:
     uint64_t SystemBuffer = 0;
     uint64_t UserBuffer = 0;
     uint64_t UserInput = 0;
+    std::vector<UserRegion> UserRegions;
     uint64_t BufferSize = 0;
     uint64_t SecurityContext = 0;
     uint32_t OutputSize = 0;
     bool Completed = false;
     bool DispatchReturned = false;
+    bool FrameworkRemoveStarted = false;
+    bool FrameworkTransitionAwaiting = false;
+    bool FrameworkTransitionBeforeBus = false;
+    bool FrameworkTransitionHandled = false;
+    bool FrameworkPolicyIssued = false;
     bool PendingMarked = false;
     bool CancelRequested = false;
     std::optional<uint64_t> CancelDeadline = std::nullopt;
@@ -525,7 +586,19 @@ private:
   std::optional<KernelGuestCall> PendingWdmCall;
   llvm::Expected<uint32_t> requestStackCursor(uint64_t IRP) const;
   llvm::Expected<uint64_t> currentRequestStack(uint64_t IRP) const;
-  llvm::Expected<uint64_t> callDriver(uint64_t Device, uint64_t IRP);
+  /// Only the framework host may forward a framework-owned file IRP. Guest
+  /// WDM dispatch still requires independent ownership of the packet.
+  enum class ForwardingOwner {
+    WDM,
+    FrameworkFile,
+    FrameworkFileSynchronous,
+    FrameworkFileAsynchronous,
+    FrameworkFileAutomatic
+  };
+  llvm::Expected<uint64_t>
+  callDriver(uint64_t Device, uint64_t IRP,
+             ForwardingOwner Owner = ForwardingOwner::WDM,
+             std::optional<int64_t> SendTimeout = std::nullopt);
   struct IRPCompletionStep {
     uint32_t Slot;
     bool Pending;
@@ -541,12 +614,22 @@ private:
       uint64_t IRP,
       std::optional<uint32_t> StatusOverride = std::nullopt) const;
   struct ProviderCompletion {
+    enum class Kind {
+      WDM,
+      FrameworkCallback,
+      FrameworkSynchronous,
+      FrameworkAutomatic
+    };
     uint64_t Device = 0, Deadline = 0, Sequence = 0;
     uint32_t Status = 0;
+    Kind Owner = Kind::WDM;
   };
   uint64_t NextProviderSequence = 1;
   std::map<uint64_t, ProviderCompletion> ProviderCompletions;
-  llvm::Expected<uint64_t> callProviderDriver(uint64_t Device, uint64_t IRP);
+  llvm::Expected<uint64_t>
+  callProviderDriver(uint64_t Device, uint64_t IRP,
+                     ForwardingOwner Owner = ForwardingOwner::WDM,
+                     std::optional<int64_t> SendTimeout = std::nullopt);
   llvm::Error processProviderCompletions();
   llvm::Expected<std::optional<uint64_t>> advanceIRPCompletion(uint64_t Token);
   llvm::Expected<bool> dispatchPending(const ActiveRequest &Request,
@@ -558,6 +641,9 @@ private:
   llvm::Error markRequestPending(uint64_t IRP);
   llvm::Error prepareRequestBuffers(ActiveRequest &Record,
                                     const DriverRequest &Input);
+  llvm::Error prepareUserRequestBuffers(ActiveRequest &Request,
+                                        const DriverRequest &Input);
+  llvm::Error snapshotUserBuffers();
   llvm::Expected<Invocation> beginPnpRequest(const DriverRequest &Input,
                                              size_t ResultIndex);
   llvm::Expected<Invocation> beginPowerRequest(const DriverRequest &Input,
@@ -567,6 +653,8 @@ private:
   llvm::Expected<Invocation>
   preparePowerRequest(const DriverRequest &Input, size_t ResultIndex,
                       std::optional<RequestedPower> Child = std::nullopt);
+  llvm::Expected<uint32_t> dispatchPreparedPowerRequest(const Invocation &Call);
+  llvm::Expected<bool> beginFrameworkPowerPolicy(uint64_t IRP);
   llvm::Expected<uint64_t> requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> setPowerState(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Error startNextPowerIrp(uint64_t IRP);
@@ -588,13 +676,22 @@ private:
       RequestSystemBuffer,
       Driver,
       NonPagedPool,
-      UserLocked
+      UserLocked,
+      KernelLocked,
+      AllocatedPages,
+      ReleasedPages,
+      Partial
     };
     Ownership Owner = Ownership::Request;
     uint64_t OwnerIRP = 0;
     uint64_t Address = 0;
     uint64_t Size = 0;
     uint64_t Buffer = 0;
+    uint64_t OriginalAddress = 0;
+    uint64_t BackingAddress = 0;
+    uint64_t LockOwnerMDL = 0;
+    uint64_t SystemMappingOwnerMDL = 0;
+    bool OwnsSystemMapping = false;
     uint64_t AllocationSize = 0;
     uint64_t UserAddress = 0;
     uint32_t ByteCount = 0;
@@ -603,15 +700,30 @@ private:
     bool Writable = false;
     bool DmaWritable = false;
     bool Mapped = false;
-    bool MappingWritable = false;
+    bool isProbeLocked() const {
+      return Owner == Ownership::UserLocked || Owner == Ownership::KernelLocked;
+    }
   };
   std::map<uint64_t, LockedMdl> MDLs;
   llvm::Error initializeMDLPhysicalPages(const LockedMdl &State);
   llvm::Expected<uint64_t> allocateMDL(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t>
+  allocatePagesForMDL(llvm::ArrayRef<uint64_t> Arguments, bool Extended);
+  llvm::Error freePagesFromMDL(uint64_t MDL);
+  llvm::Error freeAllocatedMDL(uint64_t MDL);
+  static llvm::Expected<KernelPhysicalMemory::CacheType>
+  memoryCacheType(uint32_t Value);
   llvm::Error buildNonPagedMDL(uint64_t MDL);
+  llvm::Error buildPartialMDL(uint64_t Source, uint64_t Target,
+                              uint64_t Address, uint32_t Length);
+  llvm::Error canReleaseMDLDependencies(uint64_t MDL,
+                                        llvm::ArrayRef<uint64_t> Retiring = {},
+                                        bool ReleasePages = true) const;
   llvm::Error probeAndLockPages(uint64_t MDL, uint32_t Mode,
-                                 uint32_t Operation);
+                                uint32_t Operation);
   llvm::Error unlockPages(uint64_t MDL);
+  llvm::Expected<uint64_t> protectMDLSystemAddress(uint64_t MDL,
+                                                   uint32_t Protection);
   llvm::Error freeMDL(uint64_t MDL);
   llvm::Expected<uint64_t> createMDLRecord(uint64_t Address, uint32_t Size,
                                            uint16_t Flags);
@@ -624,11 +736,36 @@ private:
                                             llvm::ArrayRef<uint8_t> Initial,
                                             bool Writable, uint64_t UserAddress,
                                             bool DmaWritable);
-  llvm::Expected<uint64_t> mapLockedPages(uint64_t MDL, uint32_t Priority,
-                                          bool ReuseExisting);
+  llvm::Expected<uint64_t>
+  mapLockedPages(uint64_t MDL, uint32_t Priority, bool ReuseExisting,
+                 KernelPhysicalMemory::CacheType Cache =
+                     KernelPhysicalMemory::CacheType::Cached);
+  llvm::Expected<uint64_t> mapUserMDL(uint64_t MDL, uint64_t RequestedAddress,
+                                      uint32_t Priority,
+                                      KernelPhysicalMemory::CacheType Cache);
+  llvm::Error unmapUserMDL(uint64_t Address, uint64_t MDL);
+  llvm::Error canReleaseMdlUserViews(uint64_t MDL) const;
+  llvm::Error canReleaseUserViewsForBacking(uint64_t Address,
+                                            uint64_t Size) const;
+  llvm::Error validateUserMdlViewAccess(uint64_t Address, uint64_t Size,
+                                        bool IsWrite) const;
+  struct UserMemoryRange {
+    uint64_t Owner;
+    uint64_t Offset;
+    uint64_t Backing;
+  };
+  llvm::Expected<UserMemoryRange> resolveUserMemoryRange(uint64_t Address,
+                                                         uint64_t Length,
+                                                         bool ForWrite) const;
   llvm::Error unmapLockedPages(uint64_t Address, uint64_t MDL);
   llvm::Error validateMDLAccess(uint64_t Address, uint32_t Size,
                                 bool IsWrite) const;
+  llvm::Expected<std::vector<uint64_t>> requestMDLChain(uint64_t IRP) const;
+  llvm::Expected<std::vector<std::pair<uint64_t, uint64_t>>>
+  requestReleaseRanges(uint64_t IRP) const;
+  llvm::Error appendRequestMDLReleaseResources(
+      uint64_t IRP, std::vector<std::pair<uint64_t, uint64_t>> &Ranges,
+      std::vector<uint64_t> &Pins) const;
   llvm::Error expireRequestMDL(uint64_t IRP);
   llvm::Expected<std::vector<uint8_t>> readMDLBytes(uint64_t MDL,
                                                     uint32_t Count);

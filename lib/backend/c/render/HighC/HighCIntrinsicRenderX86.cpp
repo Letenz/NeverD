@@ -63,11 +63,6 @@ llvm::ArrayRef<const char *> x86DebugServiceRegisters() {
   return Regs;
 }
 
-llvm::ArrayRef<const char *> x86SyscallRegisters() {
-  static const char *const Regs[] = {"rax"};
-  return Regs;
-}
-
 std::string renderX86InterruptAsm(
     unsigned Vector,
     llvm::ArrayRef<std::pair<const char *, std::string>> Inputs,
@@ -538,7 +533,8 @@ renderSegmentedMaskedMemory(const HighExpr &Call, const HighExpr *PrimaryDst,
 
 std::string
 renderDivPrecondition(Arch TheArch, const HighExpr &Call,
-                      std::function<std::string(const HighExpr &)> ExprFn) {
+                      std::function<std::string(const HighExpr &)> ExprFn,
+                      SameWidthUnsignedFn SameWidthUnsigned) {
   const HighExpr *Dividend =
       Call.Operands.size() > 0 ? Call.Operands[0].get() : nullptr;
   const HighExpr *Divisor =
@@ -579,11 +575,18 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
   const std::string FullTy = typeToC(NdType::makeInt(FullBytes, false));
   const std::string HalfTy = typeToC(NdType::makeInt(HalfBytes, false));
 
+  auto Operand = [&](const HighExpr *Expr, uint16_t Width,
+                     const std::string &Ty) {
+    const std::string Text = ExprFn(*Expr);
+    if (SameWidthUnsigned && SameWidthUnsigned(*Expr, Width))
+      return Text;
+    return "(" + Ty + ")(" + Text + ")";
+  };
   std::string Result = "do {\n";
-  Result += "    " + FullTy + " neverd_dividend = (" + FullTy + ")(" +
-            ExprFn(*Dividend) + ");\n";
-  Result += "    " + HalfTy + " neverd_divisor = (" + HalfTy + ")(" +
-            ExprFn(*Divisor) + ");\n";
+  Result += "    " + FullTy + " neverd_dividend = " +
+            Operand(Dividend, FullBytes, FullTy) + ";\n";
+  Result += "    " + HalfTy + " neverd_divisor = " +
+            Operand(Divisor, HalfBytes, HalfTy) + ";\n";
 
   // Decide quotient representability without executing C division: the
   // exceptional divisor-zero and signed-min/-1 cases would otherwise be UB.
@@ -989,27 +992,8 @@ std::string renderX86InterruptStatement(
     }
     return renderX86InterruptAsm(0x2D, Inputs, ResultVar, Reg);
   }
-  if (Call.IntrinsicId == Intrinsic::Syscall) {
-    const auto Regs = x86SyscallRegisters();
-    if (Call.Operands.empty())
-      return renderX86InterruptAsm(0, {}, ResultVar, Reg, "syscall");
-    if (TheArch != Arch::X64 || Call.Operands.size() != Regs.size())
-      llvm::report_fatal_error("x64 syscall has an invalid operand shape");
-    std::vector<std::pair<const char *, std::string>> Inputs;
-    for (size_t I = 0; I < Regs.size(); ++I) {
-      if (!Call.Operands[I])
-        llvm::report_fatal_error("x64 syscall has a missing operand");
-      Inputs.emplace_back(Regs[I], ExprFn(*Call.Operands[I]));
-    }
-    // Move the status out through the RAX temporary so the assignment is
-    // ordinary C after the block.
-    if (ResultVar.empty())
-      return renderX86InterruptAsm(0, Inputs, "", Reg, "syscall");
-    std::string Block =
-        renderX86InterruptAsm(0, Inputs, "_rax", "rax", "syscall");
-    Block.insert(Block.rfind('}'), "    " + ResultVar.str() + " = _rax;\n");
-    return Block;
-  }
+  if (Call.IntrinsicId == Intrinsic::Syscall && Call.Operands.empty())
+    return renderX86InterruptAsm(0, {}, ResultVar, Reg, "syscall");
   if (Call.IntrinsicId != Intrinsic::IntN || Call.Operands.size() != 1 ||
       !Call.Operands[0] || isX86FastFailCall(Call))
     return {};
@@ -1042,6 +1026,15 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
                             std::function<std::string(const HighExpr &)> ExprFn,
                             bool &HasCIntrinsics) {
   using I = Intrinsic;
+  if (Call.IntrinsicId == I::X87Ffree) {
+    if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+        Call.Operands.size() != 2 || !Call.Operands[1] ||
+        Call.Operands[1]->Kind != ExprKind::Const ||
+        Call.Operands[1]->ConstVal >= 8)
+      llvm::report_fatal_error("invalid x87 FFREE HighC operand");
+    return "__asm {{ ffree st(" + std::to_string(Call.Operands[1]->ConstVal) +
+           ") }}";
+  }
   if (isX86FastFailCall(Call)) {
     if (TheArch != Arch::X86 && TheArch != Arch::X64)
       return {};
@@ -1152,12 +1145,14 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
 std::string renderX86SegmentedIntrinsicStatement(
     Arch TheArch, const HighExpr &Call, const HighExpr *PrimaryDst,
     std::function<std::string(const HighExpr &)> ExprFn,
-    std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive) {
+    std::function<std::string(const MedVar &)> VarFn, IsAliveFn IsAlive,
+    SameWidthUnsignedFn SameWidthUnsigned) {
   if (Call.Kind != ExprKind::Call ||
       (TheArch != Arch::X86 && TheArch != Arch::X64))
     return {};
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
-    return renderDivPrecondition(TheArch, Call, std::move(ExprFn));
+    return renderDivPrecondition(TheArch, Call, std::move(ExprFn),
+                                 std::move(SameWidthUnsigned));
   if (auto Rendered = renderMemoryIntrinsic(TheArch, Call, ExprFn);
       !Rendered.empty())
     return Rendered;

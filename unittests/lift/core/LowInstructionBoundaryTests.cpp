@@ -1,6 +1,7 @@
 //===- LowInstructionBoundaryTests.cpp - LowIR instruction provenance ----===//
 
 #include "../../../lib/ir/low/jumptable/JumpTableResolverDetail.h"
+#include "../../../lib/pipeline/NativeSourcePreservation.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -19,6 +20,8 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Analysis/ConstantFolding.h"
@@ -46,6 +49,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -674,6 +678,415 @@ const LowBlock *findBlock(const LowFunc &Function, va_t Address) {
     if (Block.StartAddr == Address)
       return &Block;
   return nullptr;
+}
+
+struct BackwardEpilogueFixture {
+  static constexpr va_t Tail = 0x1000;
+  static constexpr va_t ImportEntry = 0x3000;
+  static constexpr va_t Entry = 0x4000;
+  BinaryImage Image;
+  std::set<va_t> Entries{Tail, Entry, Entry + 0x40, ImportEntry};
+
+  static uint32_t branch(va_t From, va_t To, bool Link = false) {
+    return (Link ? 0x94000000u : 0x14000000u) |
+           (uint32_t((int64_t(To) - int64_t(From)) / 4) & 0x03ffffff);
+  }
+  void word(va_t Address, uint32_t Word) {
+    writeLE<uint32_t>(Image.Segments[0].Data.data() + Address - Tail, Word);
+  }
+  BackwardEpilogueFixture() {
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.Format = BinaryFormat::MachO;
+    Image.Entry = Entry;
+    Segment Text;
+    Text.VA = Tail;
+    Text.Size = Text.FileSz = 0x3100;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.resize(Text.Size);
+    Image.Segments.push_back(std::move(Text));
+    Section Code;
+    Code.VA = Tail;
+    Code.Size = Code.FileSz = 0x3100;
+    Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Code.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    Image.Sections.push_back(Code);
+    Import External;
+    External.Name = "external_effect";
+    External.IATAddr = ImportEntry;
+    Image.Imports.push_back(External);
+    word(ImportEntry, 0xd65f03c0); // Registered executable external target.
+    word(Tail, 0xa9414ff4);     // ldp x20, x19, [sp, #16]
+    word(Tail + 4, 0xa9427bfd); // ldp x29, x30, [sp, #32]
+    word(Tail + 8, 0x9100c3ff); // add sp, sp, #48
+    word(Tail + 12, branch(Tail + 12, ImportEntry));
+    for (va_t Root : {Entry, Entry + 0x40}) {
+      word(Root, 0xd100c3ff);     // sub sp, sp, #48
+      word(Root + 4, 0xa9014ff4); // stp x20, x19, [sp, #16]
+      word(Root + 8, 0xa9027bfd); // stp x29, x30, [sp, #32]
+      word(Root + 12, 0x910083fd); // add x29, sp, #32
+      word(Root + 16, branch(Root + 16, Tail));
+      word(Root + 20, 0xd65f03c0);
+    }
+  }
+  LowFunc build(va_t Root = Entry) const {
+    Decoder Dec;
+    EXPECT_TRUE(Dec.init(Image.Arch));
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    return Builder.build(Image, Dec, Root, "shared_epilogue");
+  }
+  bool restores(const LowFunc &Function) const {
+    SourceFunctionTypeHint Signature;
+    Signature.ReturnType = NdType::makeVoid();
+    std::string Error;
+    if (!assignDarwinScalarSourceABI(Signature, Arch::AArch64, Error))
+      return false;
+    NativeSourceCalls Calls;
+    for (const auto &Block : Function.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL) {
+          const auto Key = nativeSourceCallKey(Op);
+          if (!Key || Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+              Op.Inputs[0].Offset != ImportEntry)
+            return false;
+          Calls[*Key].Signature = &Signature;
+        }
+    return restoresNativeSourceState(Function, Arch::AArch64, Calls);
+  }
+};
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsCallerFrameAndEntry) {
+  BackwardEpilogueFixture F;
+  for (va_t Root : {F.Entry, F.Entry + 0x40}) {
+    const auto Function = F.build(Root);
+    ASSERT_EQ(Function.Blocks.size(), 2U);
+    EXPECT_EQ(Function.Blocks.front().StartAddr, Root);
+    EXPECT_EQ(Function.computedSize(), 20U);
+    EXPECT_EQ(Function.DecodedInstructionCount, 9U);
+    EXPECT_TRUE(F.restores(Function));
+    const auto *Tail = findBlock(Function, F.Tail);
+    ASSERT_NE(Tail, nullptr);
+    ASSERT_EQ(Tail->InstructionBoundaries.size(), 4U);
+    EXPECT_EQ(Tail->InstructionBoundaries.back().Address, F.Tail + 12);
+    EXPECT_EQ(Tail->InstructionBoundaries.back().Control,
+              LowInstructionControl::TailCall);
+    EXPECT_FALSE(static_cast<bool>(validateLowInstructionBoundaries(
+        Function, LowInstructionBoundaryRequirement::Required)));
+  }
+  const auto Independent = F.build(F.Tail);
+  EXPECT_EQ(Independent.Blocks.size(), 1U);
+  EXPECT_EQ(Independent.DecodedInstructionCount, 4U);
+  EXPECT_FALSE(F.restores(Independent));
+  F.word(F.Entry + 4, 0xd503201f); // Caller did not save x19/x20.
+  const auto MissingSave = F.build();
+  EXPECT_NE(findBlock(MissingSave, F.Tail), nullptr);
+  EXPECT_FALSE(F.restores(MissingSave));
+}
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueRejectsUnprovenBoundaries) {
+  for (unsigned Mutation = 0; Mutation < 21; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    BackwardEpilogueFixture F;
+    if (Mutation == 0) F.word(F.Tail, 0xa9014ff4); // Store, not restore.
+    if (Mutation == 1) F.word(F.Tail, 0x29414ff4); // Only W registers.
+    if (Mutation == 2) F.word(F.Tail, 0xa94107e0); // x0/x1 argument loads.
+    if (Mutation == 3) F.word(F.Tail + 4, 0xa9424ff4); // Duplicate x19/x20.
+    if (Mutation == 4) F.word(F.Tail + 8, 0xd503201f); // No release.
+    if (Mutation == 5) F.word(F.Tail + 8, 0x910023ff); // Unaligned release.
+    if (Mutation == 6) F.word(F.Tail + 4, 0x910043ff); // Two releases.
+    if (Mutation == 7) F.Entries.insert(F.Tail + 4);
+    if (Mutation == 8) F.Image.RuntimeFunctionAddrs.insert(F.Tail + 4);
+    if (Mutation == 9) F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 4));
+    if (Mutation == 10) F.Image.CodePtrRelocSlots.insert(F.Tail + 4);
+    if (Mutation == 11)
+      F.Image.Segments[0].Flags =
+          F.Image.Segments[0].Flags | SegmentFlags::Writable;
+    if (Mutation == 12) F.Image.Sections.push_back(F.Image.Sections.front());
+    if (Mutation == 13) F.Image.Segments.push_back(F.Image.Segments.front());
+    if (Mutation == 14) F.Image.Imports.clear();
+    if (Mutation == 15) F.Image.Format = BinaryFormat::ELF;
+    if (Mutation == 16) F.Image.IsRelocatable = true;
+    if (Mutation == 17) {
+      auto *Text = &F.Image.Sections.front();
+      Text->FileSz = 12; // Terminal instruction has no section file bytes.
+    }
+    if (Mutation == 18) {
+      const va_t Forward = F.Entry + 0x80;
+      for (unsigned I = 0; I < 3; ++I)
+        F.word(Forward + I * 4,
+               readLE<uint32_t>(F.Image.Segments[0].Data.data() + I * 4));
+      F.word(Forward + 12, F.branch(Forward + 12, F.ImportEntry));
+      F.word(F.Entry + 16, F.branch(F.Entry + 16, Forward));
+      F.Entries.insert(Forward);
+    }
+    if (Mutation == 19) F.Entries.insert(F.Tail + 2);
+    if (Mutation == 20)
+      F.Image.Symbols.push_back(Symbol::makeFunc(F.Tail + 2));
+    const auto Function = F.build();
+    EXPECT_EQ(Function.DecodedInstructionCount, 5U);
+    EXPECT_EQ(Function.Blocks.size(), 1U);
+    EXPECT_EQ(Function.computedSize(), 20U);
+    EXPECT_FALSE(F.restores(Function));
+  }
+}
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueDoesNotChangeBL) {
+  BackwardEpilogueFixture F;
+  F.word(F.Entry + 16, F.branch(F.Entry + 16, F.Tail, true));
+  const auto Function = F.build();
+  EXPECT_EQ(Function.Blocks.size(), 1U);
+  EXPECT_EQ(Function.DecodedInstructionCount, 6U);
+  EXPECT_EQ(findBlock(Function, F.Tail), nullptr);
+  EXPECT_FALSE(F.restores(Function));
+  EXPECT_FALSE(readImmutableImageBytes(F.Image, F.Tail, 16));
+  EXPECT_TRUE(readImmutableCodeBytes(F.Image, F.Tail, 16));
+}
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsPostIndexedRestore) {
+  BackwardEpilogueFixture F;
+  F.word(F.Tail, 0xa8c17bfd); // ldp x29, x30, [sp], #16
+  F.word(F.Tail + 4, F.branch(F.Tail + 4, F.ImportEntry));
+  F.word(F.Entry, 0xa9bf7bfd); // stp x29, x30, [sp, #-16]!
+  F.word(F.Entry + 4, 0x910003fd);
+  F.word(F.Entry + 8, F.branch(F.Entry + 8, F.Tail));
+  const auto Function = F.build();
+  EXPECT_EQ(Function.DecodedInstructionCount, 5U);
+  EXPECT_EQ(Function.computedSize(), 12U);
+  EXPECT_TRUE(F.restores(Function));
+  F.word(F.Tail, 0xa8c0fbfd); // Only eight bytes of stack release.
+  EXPECT_EQ(findBlock(F.build(), F.Tail), nullptr);
+}
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueSharesOneBlockForTwoBEdges) {
+  BackwardEpilogueFixture F;
+  F.word(F.Entry + 16, 0xb4000040); // cbz x0, entry + 24
+  F.word(F.Entry + 20, F.branch(F.Entry + 20, F.Tail));
+  F.word(F.Entry + 24, F.branch(F.Entry + 24, F.Tail));
+  const auto First = F.build();
+  ASSERT_EQ(First.Blocks.size(), 4U);
+  const auto *Tail = findBlock(First, F.Tail);
+  ASSERT_NE(Tail, nullptr);
+  EXPECT_EQ(Tail->Preds.size(), 2U);
+  EXPECT_EQ(First.DecodedInstructionCount, 11U);
+  EXPECT_TRUE(F.restores(First));
+  const auto Rebuilt = F.build();
+  EXPECT_EQ(Rebuilt.DecodedInstructionCount, First.DecodedInstructionCount);
+  EXPECT_EQ(Rebuilt.Blocks.size(), First.Blocks.size());
+  EXPECT_EQ(Rebuilt.computedSize(), First.computedSize());
+  EXPECT_TRUE(F.restores(Rebuilt));
+}
+
+TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsOtherPhysicalEdges) {
+  BackwardEpilogueFixture F;
+  const auto Conditional = 0xb4000000u |
+      ((uint32_t((int64_t(F.Tail) - int64_t(F.Entry + 16)) / 4) & 0x7ffff) << 5);
+  F.word(F.Entry + 16, Conditional); // cbz x0, tail
+  F.word(F.Entry + 20, 0xd65f03c0);
+  // Without an authenticating B the other function's epilogue is not decoded
+  // here; the conditional edge is a tail call into that function.
+  {
+    const auto ConditionalOnly = F.build();
+    if (const auto *Stub = findBlock(ConditionalOnly, F.Tail)) {
+      unsigned Calls = 0;
+      for (const auto &Op : Stub->Ops) {
+        EXPECT_NE(Op.Opcode, NdOp::LOAD);
+        Calls += Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+                 Op.Inputs[0].isConst() && Op.Inputs[0].Offset == F.Tail;
+      }
+      EXPECT_EQ(Calls, 1U);
+    }
+  }
+  F.word(F.Entry + 20, F.branch(F.Entry + 20, F.Tail));
+  const auto ConditionalAndB = F.build();
+  const auto *Tail = findBlock(ConditionalAndB, F.Tail);
+  ASSERT_NE(Tail, nullptr);
+  EXPECT_EQ(Tail->Preds.size(), 2U);
+  EXPECT_TRUE(F.restores(ConditionalAndB));
+  // A B authenticates decoding; other physical edges into the now available
+  // block still exist. An ordinary BL remains a call with its own ABI proof.
+  F.word(F.Entry + 16, F.branch(F.Entry + 16, F.Tail, true));
+  const auto CallAndB = F.build();
+  ASSERT_NE(findBlock(CallAndB, F.Tail), nullptr);
+  unsigned CallsToTail = 0;
+  for (const auto &Block : CallAndB.Blocks)
+    for (const auto &Op : Block.Ops)
+      CallsToTail += Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+                     Op.Inputs[0].isConst() && Op.Inputs[0].Offset == F.Tail;
+  EXPECT_EQ(CallsToTail, 1U);
+  EXPECT_FALSE(F.restores(CallAndB));
+}
+
+TEST(LowInstructionBoundary, X64SyscallRetainsNumberAndArguments) {
+  // A naked Linux exit sequence used to lose RAX and RDI during SSA cleanup:
+  // the emitted syscall had no operands, so the exit status was arbitrary.
+  LowFunc Low =
+      buildFunction(Arch::X64, InstructionMode::Default,
+                    {0xb8, 0x3c, 0, 0, 0, 0xbf, 7, 0, 0, 0, 0x0f, 0x05, 0xc3});
+  MedFunc Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::ELF);
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Med}, Context, "linux-syscall", Arch::X64);
+  ASSERT_NE(Module, nullptr);
+  ASSERT_TRUE(validLLVMModule(*Module));
+  // Standalone emission retains virtual-register backing; perform the same
+  // promotion/folding needed before checking values at the syscall boundary.
+  for (llvm::Function &Function : *Module) {
+    if (Function.isDeclaration())
+      continue;
+    llvm::SmallVector<llvm::AllocaInst *> Allocas;
+    for (llvm::Instruction &Instruction : Function.getEntryBlock())
+      if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
+        if (llvm::isAllocaPromotable(Alloca))
+          Allocas.push_back(Alloca);
+    llvm::DominatorTree DT(Function);
+    llvm::PromoteMemToReg(Allocas, DT);
+    for (llvm::BasicBlock &Block : Function)
+      for (llvm::Instruction &Instruction : Block)
+        if (auto *Folded = llvm::ConstantFoldInstruction(
+                &Instruction, Module->getDataLayout()))
+          Instruction.replaceAllUsesWith(Folded);
+  }
+  unsigned Calls = 0;
+  for (const llvm::Function &Function : *Module)
+    for (const llvm::BasicBlock &Block : Function)
+      for (const llvm::Instruction &Instruction : Block) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
+        if (!Call)
+          continue;
+        const auto *Asm =
+            llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+        if (!Asm || Asm->getAsmString() != "syscall")
+          continue;
+        ++Calls;
+        ASSERT_EQ(Call->arg_size(), 7u);
+        const auto *Number =
+            llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(0));
+        const auto *Status =
+            llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(1));
+        ASSERT_NE(Number, nullptr);
+        ASSERT_NE(Status, nullptr);
+        EXPECT_EQ(Number->getZExtValue(), 60u);
+        EXPECT_EQ(Status->getZExtValue(), 7u);
+        for (unsigned Index = 2; Index != 7; ++Index) {
+          const auto *Unused =
+              llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(Index));
+          ASSERT_NE(Unused, nullptr);
+          EXPECT_TRUE(Unused->isZero());
+        }
+        EXPECT_EQ(
+            Asm->getConstraintString(),
+            "={ax},={r11},0,{di},{si},{dx},{r10},{r8},{r9},~{rcx},~{memory},"
+            "~{dirflag},~{fpsr},~{flags}");
+        EXPECT_TRUE(Asm->hasSideEffects());
+        const auto *Result = llvm::dyn_cast<llvm::StructType>(Call->getType());
+        ASSERT_NE(Result, nullptr);
+        EXPECT_EQ(Result->getNumElements(), 2u);
+      }
+  EXPECT_EQ(Calls, 1u);
+}
+
+TEST(LowInstructionBoundary, X87FpremCapturesStatusInsideOneLLVMAsm) {
+  for (const auto &[Opcode, Mnemonic, IntrinsicId] :
+       {std::tuple<uint8_t, const char *, Intrinsic>{0xf8, "fprem",
+                                                     Intrinsic::X87Fprem},
+        {0xf5, "fprem1", Intrinsic::X87Fprem1}}) {
+    SCOPED_TRACE(Mnemonic);
+    // fprem/fprem1; fnstsw ax; ret. The lifter inserts X87ReadStatus
+    // immediately after FPREM to model its condition codes.
+    LowFunc Low = buildFunction(Arch::X64, InstructionMode::Default,
+                                {0xd9, Opcode, 0xdf, 0xe0, 0xc3});
+    MedFunc Med =
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::ELF);
+    bool PairedMedOps = false;
+    for (const MedBlock &Block : Med.Blocks)
+      for (size_t I = 1; I < Block.Ops.size(); ++I) {
+        const MedOp &Remainder = Block.Ops[I - 1];
+        const MedOp &Status = Block.Ops[I];
+        PairedMedOps |= Remainder.Opcode == NdOp::INTRINSIC &&
+                        Remainder.NumInputs > 0 &&
+                        Remainder.Inputs[0].isConst() &&
+                        Remainder.Inputs[0].ConstVal ==
+                            static_cast<uint64_t>(IntrinsicId) &&
+                        Status.Opcode == NdOp::INTRINSIC &&
+                        Status.NumInputs > 0 && Status.Inputs[0].isConst() &&
+                        Status.Inputs[0].ConstVal ==
+                            static_cast<uint64_t>(Intrinsic::X87ReadStatus);
+      }
+    ASSERT_TRUE(PairedMedOps);
+
+    llvm::LLVMContext Context;
+    auto Module =
+        MedLLVMEmitter().emit({Med}, Context, "x87-fprem-status", Arch::X64);
+    ASSERT_NE(Module, nullptr);
+    EXPECT_TRUE(validLLVMModule(*Module));
+    unsigned FusedCalls = 0;
+    unsigned SeparateStatusCalls = 0;
+    for (const llvm::Function &Function : *Module)
+      for (const llvm::BasicBlock &Block : Function)
+        for (const llvm::Instruction &Instruction : Block) {
+          const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
+          if (!Call)
+            continue;
+          const auto *Asm =
+              llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+          if (!Asm)
+            continue;
+          if (Asm->getAsmString() == "fnstsw $0")
+            ++SeparateStatusCalls;
+          if (Asm->getAsmString() != std::string(Mnemonic) + "\n\tfnstsw $1")
+            continue;
+          ++FusedCalls;
+          EXPECT_EQ(Asm->getConstraintString(),
+                    "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}");
+          const auto *PairType =
+              llvm::dyn_cast<llvm::StructType>(Call->getType());
+          ASSERT_NE(PairType, nullptr);
+          EXPECT_EQ(PairType->getName(), "neverd.x87.fprem_result");
+          bool HasValue = false, HasStatus = false;
+          for (const llvm::User *User : Call->users())
+            if (const auto *Extract =
+                    llvm::dyn_cast<llvm::ExtractValueInst>(User)) {
+              const auto Indices = Extract->getIndices();
+              if (Indices.size() != 1)
+                continue;
+              HasValue |= Indices[0] == 0;
+              HasStatus |= Indices[0] == 1 && !Extract->use_empty();
+            }
+          EXPECT_TRUE(HasValue);
+          EXPECT_TRUE(HasStatus);
+        }
+    EXPECT_EQ(FusedCalls, 1u);
+    EXPECT_EQ(SeparateStatusCalls, 0u);
+
+    if (Opcode == 0xf8) {
+      MedFunc Unpaired = Med;
+      bool Inserted = false;
+      for (MedBlock &Block : Unpaired.Blocks) {
+        for (size_t I = 1; I < Block.Ops.size(); ++I) {
+          const MedOp &Status = Block.Ops[I];
+          if (Status.Opcode != NdOp::INTRINSIC || Status.NumInputs == 0 ||
+              !Status.Inputs[0].isConst() ||
+              Status.Inputs[0].ConstVal !=
+                  static_cast<uint64_t>(Intrinsic::X87ReadStatus))
+            continue;
+          Block.Ops.insert(Block.Ops.begin() + I, MedOp{});
+          Inserted = true;
+          break;
+        }
+        if (Inserted)
+          break;
+      }
+      ASSERT_TRUE(Inserted);
+      EXPECT_DEATH(
+          {
+            llvm::LLVMContext BadContext;
+            (void)MedLLVMEmitter().emit({Unpaired}, BadContext,
+                                        "x87-unpaired-status", Arch::X64);
+          },
+          "X87ReadStatus requires an immediately preceding FPREM");
+    }
+  }
 }
 
 TEST(LowInstructionBoundary, SegmentOffsetsPreserveNarrowShiftSemantics) {
@@ -4168,6 +4581,12 @@ TEST(LowInstructionBoundary,
   NumericUse.addInput(NdVar::reg(0, 4));
   NumericUse.addInput(UnknownValue);
   Block.Ops.push_back(std::move(NumericUse));
+  LowOp StoreNumeric;
+  StoreNumeric.Opcode = NdOp::STORE;
+  StoreNumeric.Addr = kEntry + 4;
+  StoreNumeric.addInput(NdVar::cst(0x4000, 4));
+  StoreNumeric.addInput(NdVar::tmp(8, 4));
+  Block.Ops.push_back(std::move(StoreNumeric));
 
   const NdVar ExactAddress = NdVar::tmp(16, 4);
   LowOp MaterializeAddress;
@@ -4184,6 +4603,12 @@ TEST(LowInstructionBoundary,
   AddressUse.addInput(NdVar::reg(4, 4));
   AddressUse.addInput(ExactAddress);
   Block.Ops.push_back(std::move(AddressUse));
+  LowOp StoreAddress;
+  StoreAddress.Opcode = NdOp::STORE;
+  StoreAddress.Addr = kEntry + 0xc;
+  StoreAddress.addInput(NdVar::cst(0x4004, 4));
+  StoreAddress.addInput(NdVar::tmp(24, 4));
+  Block.Ops.push_back(std::move(StoreAddress));
   Low.Blocks.push_back(std::move(Block));
 
   BinaryImage Image;

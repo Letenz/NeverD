@@ -142,15 +142,15 @@ constexpr uint32_t kMaxJumpTableModuloRecipeSymbolEvidenceWork = 262144;
 /// Target/address roles, modulo/mask domains, every candidate-graph snapshot,
 /// recursive core proof, and precise-before-upper-bound replay all debit this
 /// one balance.  Exact ordered-container and lifetime accounting for the
-/// largest supported O0 large-switch/jump-table transaction consumes about 101
-/// million units after exact target-role certificate reuse; the next
-/// power-of-two ceiling preserves bounded headroom without granting fresh
-/// per-phase or per-round allowances.
-constexpr uint32_t kMaxJumpTableMaskFixedPointEvidenceWork = 134217728;
+/// largest supported O0 large-switch/jump-table transaction consumes
+/// 143,404,495 units through final consumer-audited address-role replay.  The
+/// 160 Mi-unit ceiling leaves 24,367,665 units of bounded headroom without
+/// granting fresh per-phase or per-round allowances.
+constexpr uint32_t kMaxJumpTableMaskFixedPointEvidenceWork = 167772160;
 /// One jump-table candidate's whole evidence account.  Large kernel functions
 /// (thousands of instructions with cold chunks) can spend most of the mask
 /// fixed-point allowance on inventory prepayment alone, so the candidate keeps
-/// four times that allowance for its remaining guard, role and claim proofs.
+/// a larger allowance for its remaining guard, role and claim proofs.
 /// The MSVC two-level table in ntoskrnl 0x1406216C0 (97 cases, index table in
 /// PAGE) needs about 320 million units; its proof runs in well under a second,
 /// the units being conservative container-work prepayments.
@@ -343,6 +343,11 @@ constexpr uint64_t kMaxOverlapDistance = 0x10000;
 constexpr int kMaxCallEffectCalleeDepth = 4;
 constexpr size_t kMaxCallEffectExtraLifts = 256;
 
+/// `--func` may attach out-of-line catch/unwind pdata, but a malformed or
+/// merged runtime-function range must not import that owner's entire EH
+/// graph.  Real MSVC methods stay well below 1 MiB.
+constexpr uint64_t kMaxOnlyFunctionEHOwnerSize = 0x100000;
+
 //===----------------------------------------------------------------------===//
 // Expression tree / IR limits
 //===----------------------------------------------------------------------===//
@@ -374,9 +379,11 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// How many stores before a call to scan for stack-passed arguments.
 constexpr int kCallArgStoreScanWindow = 12;
 
-/// The Win64 scan window: outgoing-area stores for a many-argument call are
-/// interleaved with their address and value computations.
-constexpr int kWin64CallArgStoreScanWindow = 128;
+/// AArch64 calls with the complete x0-x7 prefix can have an integer argument
+/// at [sp]. Materializing eight constants may expand into several MedIR ops per
+/// register, so keep a larger but finite window once the full bank itself
+/// proves that stack overflow is ABI-plausible.
+constexpr int kAArch64FullBankCallArgStoreScanWindow = 64;
 
 //===----------------------------------------------------------------------===//
 // Backend / code generation
@@ -489,6 +496,12 @@ constexpr size_t kMinFuncScanChunk = 64 * 1024;
 /// setup outweighs the work, so the check stays single-threaded.
 constexpr size_t kMinParallelVerify = 512;
 
+/// Minimum Low/Med/High work items before `parallelForEach` spawns 8 MiB
+/// workers. `--func` expands unwind ActionVAs so the batch is often 2–20,
+/// not 1; those stacks are CLI latency. Below this the caller thread runs
+/// the batch (heaviest-first when weighted).
+constexpr size_t kMinParallelIRWorkItems = 32;
+
 //===----------------------------------------------------------------------===//
 // C output formatting
 //===----------------------------------------------------------------------===//
@@ -496,6 +509,10 @@ constexpr size_t kMinParallelVerify = 512;
 /// Threshold below which integer constants are printed in decimal
 /// rather than hexadecimal in decompiled C output.
 constexpr uint64_t kDecimalConstThreshold = 4096;
+
+/// Display-only TPI member / enumerator names.  Structs stay small;
+/// LF_ENUM string-id tables are sequential and commonly exceed 1k.
+constexpr size_t kMaxTpiDisplayFields = 16384;
 
 /// Bytes to read from MSVC `TypeDescriptor::name[]` (RTTI).
 constexpr size_t kMaxMsvcTypeDescriptorNameBytes = 256;
@@ -546,6 +563,10 @@ constexpr size_t kMaxLateGotoReductionStmts = 400000;
 /// if/else folding passes for ordinary vs large CFGs.
 constexpr int kIfElseStructuringPasses = 10;
 constexpr int kIfElseLargeCfgPasses = 3;
+/// Newly folded then/else arms already lived in the parent list. Re-drain
+/// them with this many passes; the parent still runs kIfElseStructuringPasses
+/// and structureIfElseNested already structured existing children.
+constexpr int kIfElseNestedArmPasses = 1;
 
 /// x86 registration-chain prologue helper expansion fixed point.
 constexpr unsigned kMaxRegistrationEHFixedPoint = 16;

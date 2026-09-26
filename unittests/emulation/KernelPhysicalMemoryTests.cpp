@@ -45,6 +45,112 @@ protected:
   }
 };
 
+TEST_F(KernelPhysicalRAM,
+       AllocatedPagesRespectRangesAndReleasePhysicalCapacity) {
+  const uint64_t Low = physical::PhysicalBase + 8 * Page;
+  auto Plan = take(Model->planAllocatedPages(Low, Low + Page - 1, 2 * Page, 2));
+  ASSERT_EQ(Plan, (std::vector<uint64_t>{Low, Low + 2 * Page}));
+  EXPECT_EQ(Model->find(1), nullptr);
+  ASSERT_EQ(llvm::toString(
+                Model->registerAllocatedPages(1, Base, Plan, std::nullopt)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base)), Low);
+  EXPECT_EQ(take(Model->physicalAddress(Base + Page)), Low + 2 * Page);
+  EXPECT_TRUE(
+      take(Model->planAllocatedPages(Low, Low + Page - 1, 0, 1)).empty());
+  const auto Pin = take(Model->pin(1, 0, 1));
+  EXPECT_NE(llvm::toString(Model->retire(1)), "");
+  EXPECT_EQ(take(Model->physicalAddress(Base)), Low);
+  ASSERT_EQ(llvm::toString(Model->unpin(Pin)), "");
+  ASSERT_EQ(llvm::toString(Model->retire(1)), "");
+  rejects(Model->physicalAddress(Base));
+  EXPECT_EQ(take(Model->planAllocatedPages(Low, Low + Page - 1, 0, 1)),
+            (std::vector<uint64_t>{Low}));
+  ASSERT_EQ(llvm::toString(Model->registerAllocatedPages(2, Base + 2 * Page,
+                                                         {Low}, std::nullopt)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base + 2 * Page)), Low);
+}
+
+TEST_F(KernelPhysicalRAM, FirstCommittedMappingChoosesUnspecifiedPageCache) {
+  using Cache = KernelPhysicalMemory::CacheType;
+  auto Pages = take(Model->planAllocatedPages(0, UINT64_MAX, 0, 1));
+  ASSERT_EQ(llvm::toString(
+                Model->registerAllocatedPages(1, Base, Pages, std::nullopt)),
+            "");
+  EXPECT_EQ(take(Model->cacheTypeForMapping(Base, Page, Cache::NonCached)),
+            Cache::NonCached);
+  // Pure mapping admission does not publish a cache attribute.
+  EXPECT_EQ(take(Model->cacheTypeForMapping(Base, Page, Cache::WriteCombined)),
+            Cache::WriteCombined);
+  ASSERT_EQ(
+      llvm::toString(Model->commitMappingCache(Base, Page, Cache::NonCached)),
+      "");
+  EXPECT_EQ(take(Model->cacheTypeForMapping(Base, Page, Cache::Cached)),
+            Cache::NonCached);
+  EXPECT_NE(llvm::toString(
+                Model->commitMappingCache(Base, Page, Cache::WriteCombined)),
+            "");
+  EXPECT_EQ(take(Model->cacheTypeForMapping(Base, Page, Cache::Cached)),
+            Cache::NonCached);
+}
+
+TEST_F(KernelPhysicalRAM, AllocatedPagePlansRejectInventedOrDuplicatePages) {
+  const uint64_t Low = physical::PhysicalBase + 4 * Page;
+  EXPECT_NE(llvm::toString(Model->registerAllocatedPages(1, Base, {Low, Low},
+                                                         std::nullopt)),
+            "");
+  EXPECT_EQ(Model->find(1), nullptr);
+  ASSERT_EQ(llvm::toString(
+                Model->registerAllocatedPages(1, Base, {Low}, std::nullopt)),
+            "");
+  EXPECT_NE(llvm::toString(Model->registerAllocatedPages(2, Base + Page, {Low},
+                                                         std::nullopt)),
+            "");
+  EXPECT_EQ(Model->find(2), nullptr);
+  EXPECT_TRUE(
+      take(Model->planAllocatedPages(Low - Page, Low + Page - 1, 0, 2, 2))
+          .empty());
+  rejects(Model->planAllocatedPages(Low + 1, Low, 0, 1));
+  rejects(Model->planAllocatedPages(0, UINT64_MAX, 1, 1));
+}
+
+TEST_F(KernelPhysicalRAM, ContiguousChunkPlansKeepAlignmentAndWholeBlocks) {
+  const uint64_t End = physical::PhysicalBase + physical::PhysicalSize;
+  const uint64_t Low = End - 5 * Page;
+  EXPECT_EQ(take(Model->planAllocatedPages(Low, End - 1, 2 * Page, 6, 2)),
+            (std::vector<uint64_t>{End - 4 * Page, End - 3 * Page,
+                                   End - 2 * Page, End - Page}));
+  ASSERT_EQ(llvm::toString(Model->registerAllocatedPages(
+                1, Base, {End - 3 * Page}, std::nullopt)),
+            "");
+  EXPECT_EQ(take(Model->planAllocatedPages(Low, End - 1, 2 * Page, 6, 2)),
+            (std::vector<uint64_t>{End - 2 * Page, End - Page}));
+  // Without a chunk-alignment request, a single contiguous block may start
+  // at any page satisfying the caller's physical bounds.
+  EXPECT_EQ(take(Model->planAllocatedPages(Low, End - 1, 0, 2, 2)),
+            (std::vector<uint64_t>{Low, Low + Page}));
+  rejects(Model->planAllocatedPages(Low, End - 1, 3 * Page, 6, 3));
+  rejects(Model->planAllocatedPages(Low, End - 1, 2 * Page, 3, 2));
+}
+
+TEST_F(KernelPhysicalRAM, ResidencyTracksTheUnionOfLivePinnedPages) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(1, Base, 3 * Page)), "");
+  EXPECT_FALSE(Model->hasPinnedPages(Base, 1));
+  const auto First = take(Model->pin(1, 17, 1));
+  EXPECT_TRUE(Model->hasPinnedPages(Base, Page));
+  EXPECT_FALSE(Model->hasPinnedPages(Base, Page + 1));
+  const auto Second = take(Model->pin(1, 2 * Page - 1, 2));
+  EXPECT_TRUE(Model->hasPinnedPages(Base, 3 * Page));
+  ASSERT_EQ(llvm::toString(Model->unpin(First)), "");
+  EXPECT_FALSE(Model->hasPinnedPages(Base, 3 * Page));
+  EXPECT_TRUE(Model->hasPinnedPages(Base + Page, 2 * Page));
+  ASSERT_EQ(llvm::toString(Model->unpin(Second)), "");
+  EXPECT_FALSE(Model->hasPinnedPages(Base + Page, 1));
+  EXPECT_FALSE(Model->hasPinnedPages(Base, 0));
+  EXPECT_FALSE(Model->hasPinnedPages(UINT64_MAX, 2));
+}
+
 TEST_F(KernelPhysicalRAM, SamePageOwnersSharePFNButNeverByteAuthority) {
   ASSERT_EQ(llvm::toString(Model->registerRegion(1, Base + 16, 16)), "");
   ASSERT_EQ(llvm::toString(Model->registerRegion(2, Base + 32, 16)), "");
@@ -67,6 +173,53 @@ TEST_F(KernelPhysicalRAM, SamePageOwnersSharePFNButNeverByteAuthority) {
   EXPECT_EQ(take(Model->physicalAddress(Base + 16)),
             physical::PhysicalBase + 16);
   EXPECT_NE(llvm::toString(Model->registerRegion(1, Base + 64, 1)), "");
+}
+
+TEST_F(KernelPhysicalRAM, MappingRequestsInheritTheExistingPageCacheType) {
+  using Cache = KernelPhysicalMemory::CacheType;
+  constexpr std::array Types{Cache::Cached, Cache::NonCached,
+                             Cache::WriteCombined};
+  for (size_t I = 0; I != Types.size(); ++I) {
+    const uint64_t Address = Base + I * Page;
+    ASSERT_EQ(
+        llvm::toString(Model->registerRegion(I + 1, Address, Page, Types[I])),
+        "");
+    const auto Physical = take(Model->physicalAddress(Address));
+    for (Cache Requested : Types) {
+      EXPECT_EQ(
+          take(Model->cacheTypeForMapping(Address + 3, Page - 3, Requested)),
+          Types[I]);
+      EXPECT_EQ(take(Model->physicalAddress(Address)), Physical);
+    }
+  }
+  rejects(Model->cacheTypeForMapping(Base, 1, static_cast<Cache>(-1)));
+  rejects(Model->cacheTypeForMapping(Base, Page + 1, Cache::Cached));
+}
+
+TEST_F(KernelPhysicalRAM, CacheConflictsDoNotPublishOwnersOrNewPages) {
+  using Cache = KernelPhysicalMemory::CacheType;
+  ASSERT_EQ(llvm::toString(Model->registerRegion(1, Base + Page + 16, 16,
+                                                 Cache::NonCached)),
+            "");
+  const auto Existing = take(Model->physicalAddress(Base + Page + 16));
+  EXPECT_NE(llvm::toString(Model->canRegisterRegion(2, Base, Page + 8)), "");
+  EXPECT_NE(llvm::toString(Model->registerRegion(2, Base, Page + 8)), "");
+  EXPECT_EQ(Model->find(2), nullptr);
+  rejects(Model->physicalAddress(Base));
+  ASSERT_EQ(llvm::toString(
+                Model->registerRegion(2, Base, Page, Cache::WriteCombined)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base)), physical::PhysicalBase + Page);
+  EXPECT_EQ(take(Model->physicalAddress(Base + Page + 16)), Existing);
+  ASSERT_EQ(llvm::toString(Model->retire(1)), "");
+  EXPECT_NE(llvm::toString(Model->registerRegion(3, Base + Page + 16, 16)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(3, Base + Page + 16, 16,
+                                                 Cache::NonCached)),
+            "");
+  EXPECT_EQ(take(Model->physicalAddress(Base + Page + 16)), Existing);
+  EXPECT_EQ(
+      take(Model->cacheTypeForMapping(Base + Page + 16, 16, Cache::Cached)),
+      Cache::NonCached);
 }
 
 TEST_F(KernelPhysicalRAM, AliasedPinsAndCPUObserveTheSameExistingBytes) {
@@ -125,7 +278,12 @@ TEST_F(KernelPhysicalRAM, PinsPreventRetirementBeforeAnyOwnerMutation) {
   ASSERT_NE(Model->find(1), nullptr);
   EXPECT_EQ(Model->find(1)->Backing, Base);
   EXPECT_EQ(take(Model->ownerForRange(Base, 32)), 1u);
+  EXPECT_EQ(llvm::toString(Model->canUnpin(Pin)), "");
+  // Preflight does not release the pin or permit its owner to retire.
+  EXPECT_NE(llvm::toString(Model->canRetire(1)), "");
+  EXPECT_NE(llvm::toString(Model->canUnpin(Pin + 1)), "");
   ASSERT_EQ(llvm::toString(Model->unpin(Pin)), "");
+  EXPECT_NE(llvm::toString(Model->canUnpin(Pin)), "");
   ASSERT_EQ(llvm::toString(Model->retire(1)), "");
   EXPECT_EQ(Model->find(1), nullptr);
   std::array<uint8_t, 1> Byte{};
@@ -149,6 +307,63 @@ TEST_F(KernelPhysicalRAM, IgnoredPinMustBeOwnedAndDoesNotHideOtherPins) {
   ASSERT_EQ(llvm::toString(Model->unpin(A)), "");
   EXPECT_NE(llvm::toString(Model->canRetire(1, A)), "");
   EXPECT_EQ(llvm::toString(Model->retire(1)), "");
+}
+
+TEST_F(KernelPhysicalRAM, GroupReleaseOnlyExcludesItsExactLivePins) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(1, Base, 32)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(2, Base + 64, 32)), "");
+  ASSERT_EQ(llvm::toString(Model->registerRegion(3, Base + Page, 32)), "");
+  const auto A = take(Model->pin(1, 0, 16));
+  const auto B = take(Model->pin(1, 8, 8));
+  const auto C = take(Model->pin(2, 0, 16));
+  const auto Retained = take(Model->pin(3, 0, 16));
+  const auto External = take(Model->pin(2, 8, 8));
+  const std::array<std::pair<uint64_t, uint64_t>, 2> Ranges{
+      {{Base, 32}, {Base + 64, 32}}};
+  const std::array<uint64_t, 4> Pins{A, B, C, Retained};
+  const std::array<uint8_t, 4> Written{1, 2, 3, 4};
+  ASSERT_EQ(llvm::toString(Model->write(C, 8, Written)), "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges(Ranges, Pins)), "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges(Ranges, {})), "");
+  std::array<uint8_t, 4> Bytes{};
+  ASSERT_EQ(llvm::toString(Model->read(External, 0, Bytes)), "");
+  EXPECT_EQ(Bytes, Written);
+  ASSERT_EQ(llvm::toString(Model->unpin(External)), "");
+  EXPECT_EQ(llvm::toString(Model->canReleaseRanges(Ranges, Pins)), "");
+  // The plan can unlock a descriptor whose owner survives this retirement;
+  // validation still leaves every pin and owner intact until the commit phase.
+  for (uint64_t Pin : Pins)
+    EXPECT_EQ(llvm::toString(Model->canUnpin(Pin)), "");
+  for (uint64_t Owner : {1u, 2u, 3u})
+    EXPECT_NE(llvm::toString(Model->canRetire(Owner)), "");
+  ASSERT_EQ(llvm::toString(Model->read(C, 8, Bytes)), "");
+  EXPECT_EQ(Bytes, Written);
+  for (uint64_t Pin : Pins)
+    ASSERT_EQ(llvm::toString(Model->unpin(Pin)), "");
+  EXPECT_EQ(llvm::toString(Model->canReleaseRanges(Ranges, {})), "");
+  EXPECT_EQ(llvm::toString(Model->retire(1)), "");
+  EXPECT_EQ(llvm::toString(Model->retire(2)), "");
+  EXPECT_NE(Model->find(3), nullptr);
+}
+
+TEST_F(KernelPhysicalRAM, InvalidGroupReleaseNeverConsumesPins) {
+  ASSERT_EQ(llvm::toString(Model->registerRegion(1, Base, 32)), "");
+  const auto Pin = take(Model->pin(1, 0, 16));
+  const std::array<uint8_t, 1> Written{0x67};
+  ASSERT_EQ(llvm::toString(Model->write(Pin, 0, Written)), "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges({{Base, 32}}, {Pin, Pin})),
+            "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges({{Base, 32}}, {Pin + 1})),
+            "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges({{Base, 0}}, {Pin})), "");
+  EXPECT_NE(llvm::toString(Model->canReleaseRanges(
+                {{Base, 32}, {UINT64_MAX - 1, 4}}, {Pin})),
+            "");
+  std::array<uint8_t, 1> Bytes{};
+  ASSERT_EQ(llvm::toString(Model->read(Pin, 0, Bytes)), "");
+  EXPECT_EQ(Bytes, Written);
+  EXPECT_NE(llvm::toString(Model->retire(1)), "");
+  EXPECT_EQ(llvm::toString(Model->canReleaseRanges({{Base, 32}}, {Pin})), "");
 }
 
 TEST_F(KernelPhysicalRAM, InvalidRangesDoNotPublishOwnerOrConsumePageIdentity) {

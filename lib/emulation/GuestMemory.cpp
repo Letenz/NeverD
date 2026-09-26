@@ -25,6 +25,17 @@ llvm::Error GuestMemory::mapAlias(uint64_t, uint64_t, uint64_t, unsigned) {
       llvm::inconvertibleErrorCode(),
       "guest memory does not support shared RAM aliases");
 }
+llvm::Error GuestMemory::unmapAlias(uint64_t, uint64_t) {
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "guest memory does not support RAM alias unmapping");
+}
+llvm::Error GuestMemory::replaceAliases(llvm::ArrayRef<GuestAliasRange>,
+                                        llvm::ArrayRef<GuestAliasMapping>) {
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "guest memory does not support transactional RAM alias replacement");
+}
 llvm::Error GuestMemory::mapMMIO(uint64_t, uint64_t, GuestMMIOCallbacks) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "guest memory does not support MMIO mappings");
@@ -40,7 +51,7 @@ llvm::Error GuestMemory::validateBacking(uint64_t, uint64_t) const {
       "guest memory does not support RAM backing access");
 }
 llvm::Expected<bool> GuestMemory::canAccess(uint64_t, uint64_t,
-                                             unsigned) const {
+                                            unsigned) const {
   return llvm::createStringError(
       llvm::inconvertibleErrorCode(),
       "guest memory does not support pure CPU access preflight");
@@ -54,6 +65,12 @@ llvm::Error GuestMemory::writeBacking(uint64_t, llvm::ArrayRef<uint8_t>) {
   return llvm::createStringError(
       llvm::inconvertibleErrorCode(),
       "guest memory does not support RAM backing writes");
+}
+llvm::Error GuestMemory::snapshotBacking(uint64_t,
+                                         llvm::MutableArrayRef<uint8_t>) {
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "guest memory does not support diagnostic RAM snapshots");
 }
 llvm::Expected<uint64_t> GuestMemory::readInteger(uint64_t Address,
                                                   unsigned Size) {

@@ -366,7 +366,7 @@ TEST(X86_32_FunctionDiscovery, SkipsSsaWhenInstructionCountExceedsCap) {
   Low.Name = "wide_ssa";
   Low.Entry = 0x401000;
   Low.DecodedInstructionCount =
-      static_cast<uint64_t>(limits::kMaxSSANodes) + 1;
+      static_cast<uint64_t>(limits::kMaxSSAFunctionOps) + 1;
   LowBlock B0;
   B0.Id = 0;
   B0.StartAddr = 0x401000;
@@ -386,6 +386,7 @@ TEST(X86_32_FunctionDiscovery, SkipsSsaWhenInstructionCountExceedsCap) {
   Low.Blocks = {B0, B1};
 
   MedFunc Med = LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+  EXPECT_TRUE(Med.SkippedSSA);
   ASSERT_EQ(Med.Blocks.size(), 2u);
   EXPECT_TRUE(Med.Blocks[0].Phis.empty());
   EXPECT_TRUE(Med.Blocks[1].Phis.empty());

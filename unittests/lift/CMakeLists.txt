@@ -123,10 +123,16 @@ add_neverd_unittest(NeverDLiftTests
   core/HighSSADefinitionTests.cpp
   core/HighSourceRangeTests.cpp
   core/ObjCCallHintTests.cpp
+  core/ObjCSentinelCallTests.cpp
+  core/DarwinUIKitSourceCallTests.cpp
   core/ObjCCategoryTests.cpp
   core/ObjCStorageTests.cpp
   core/HighCSourceCallTests.cpp
   core/NativeSourceHintsTests.cpp
+  core/SourceRegisterCopyTests.cpp
+  core/NativeFloatingReturnProofTests.cpp
+  core/NativeBooleanResultProofTests.cpp
+  core/SwiftBooleanRuntimeCandidateTests.cpp
   core/ObjCBlocksTests.cpp
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
@@ -140,6 +146,11 @@ add_neverd_unittest(NeverDLiftTests
   core/HighCIntegerWidthTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   sdk/ObjCSourceBindingTests.cpp
+  sdk/ObjCSwiftOnceSourceTests.cpp
+  sdk/ObjCSuperGetterSourceTests.cpp
+  sdk/ObjCMetadataFactorySourceTests.cpp
+  sdk/ObjCImmutableStringCallbackSourceTests.cpp
+  sdk/ObjCSwiftBooleanSourceTests.cpp
   sdk/ObjCBlockSourceTests.cpp
   sdk/SwiftSourceNamespaceTests.cpp
   sdk/SwiftSourceSignatureTests.cpp
@@ -160,6 +171,7 @@ add_neverd_unittest(NeverDLiftTests
   format/COFFImportStorageBoundaryTests.cpp
   format/LLVMImportVeneerBoundaryTests.cpp
   format/MachOPointerRelocationBoundaryTests.cpp
+  format/ImmutableChainedValueTests.cpp
   format/COFFRelocatableAbsoluteRelocationTests.cpp
   format/NativePointerRelocationBoundaryTests.cpp
   core/MedCallingConvTests.cpp
@@ -930,6 +942,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 # Run source call ABI, binding, and emitted-code checks without rebuilding the
 # complete fixture inventory during mobile decompiler development.
 add_neverd_unittest(NeverDObjCSourceCallTests
+  ../loader/SwiftValueWitnessCallTests.cpp
   core/ObjCCategoryTests.cpp
   core/SourceABITests.cpp
   core/AdjacentCallTests.cpp
@@ -939,11 +952,24 @@ add_neverd_unittest(NeverDObjCSourceCallTests
   core/ObjCProtocolTests.cpp
   core/ObjCPropertyTests.cpp
   core/NativeSourceHintsTests.cpp
+  core/SourceRegisterCopyTests.cpp
+  core/NativeFloatingReturnProofTests.cpp
+  core/NativeBooleanResultProofTests.cpp
+  core/SwiftBooleanRuntimeCandidateTests.cpp
+  format/ImmutableChainedValueTests.cpp
   core/ObjCStorageTests.cpp
+  core/ObjCBlocksTests.cpp
   core/ObjCCallHintTests.cpp
+  core/ObjCSentinelCallTests.cpp
+  core/DarwinUIKitSourceCallTests.cpp
   core/HighCSourceCallTests.cpp
   sdk/ObjCBlockSourceTests.cpp
   sdk/ObjCSourceBindingTests.cpp
+  sdk/ObjCSwiftOnceSourceTests.cpp
+  sdk/ObjCSuperGetterSourceTests.cpp
+  sdk/ObjCMetadataFactorySourceTests.cpp
+  sdk/ObjCImmutableStringCallbackSourceTests.cpp
+  sdk/ObjCSwiftBooleanSourceTests.cpp
   sdk/ObjCSourceProjectionTests.cpp
   sdk/SwiftABIProjectionPlanTests.cpp
   LINK_COMPONENTS
@@ -1043,6 +1069,7 @@ target_link_libraries(NeverDLiftTests PRIVATE
   NeverDLift
   NeverDPipeline
   NeverDSupport
+  NeverDDebugInfo
 )
 
 add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
@@ -1075,6 +1102,10 @@ target_include_directories(NeverDLLVMCVoidAnalysisTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCVoidAnalysisTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
 
 add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   core/MedLLVMMemoryAlignmentTests.cpp
@@ -1086,6 +1117,48 @@ target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
   ${LLVM_INCLUDE_DIRS}
 )
 
+add_neverd_unittest(NeverDLLVMCVectorTests
+  core/LLVMCVectorTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
+target_include_directories(NeverDLLVMCVectorTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCVectorTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
+add_neverd_unittest(NeverDLLVMCPhiTests
+  core/LLVMCPhiTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
+target_include_directories(NeverDLLVMCPhiTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCPhiTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
+add_neverd_unittest(NeverDLLVMCValueTests
+  core/LLVMCValueTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
+target_include_directories(NeverDLLVMCValueTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCValueTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 # Keeps HighIR store-to-load forwarding resource bounds independently runnable
 # without relinking the aggregate lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDHighCStoreForwardingTests
@@ -1096,6 +1169,16 @@ add_neverd_unittest(NeverDHighCStoreForwardingTests
 )
 
 target_include_directories(NeverDHighCStoreForwardingTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+add_neverd_unittest(NeverDLLVMCFrameMemoryTests
+  core/LLVMCFrameMemoryTests.cpp
+  LINK_COMPONENTS BackendC
+)
+
+target_include_directories(NeverDLLVMCFrameMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
 )
@@ -1231,6 +1314,7 @@ target_include_directories(NeverDLLVMImportVeneerBoundaryTests PRIVATE
 # without relinking the full lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDMachOPointerRelocationBoundaryTests
   format/MachOPointerRelocationBoundaryTests.cpp
+  format/ImmutableChainedValueTests.cpp
 
   LINK_COMPONENTS
   BackendLLVM
@@ -1811,6 +1895,7 @@ set(X86_32_TEST_SOURCES
 set(AARCH64_TEST_SOURCES
   aarch64/test_param_phi_a64.s
   aarch64/test_jumptable_index_identity_a64.s
+  aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
   aarch64/test_pageoff_alternatives_a64.s
   aarch64/test_pageoff_nominal_miss_a64.s
@@ -2079,6 +2164,64 @@ add_custom_command(
   DEPENDS ${stack_cgoto_i386_pic_src}
   COMMENT "Compiling PIC i386 stack-materialized jump-table fixture")
 list(APPEND TEST_OBJECTS ${stack_cgoto_i386_pic_obj})
+
+# Keep the optimized i386 PIC layout used by the adjacent two-table semantic
+# roundtrip probe: two five-entry GOTOFF runs and two dispatches per run.
+set(i386_adjacent_twotable_src
+    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_twotable.c")
+set(i386_adjacent_twotable_obj
+    "${CMAKE_CURRENT_BINARY_DIR}/test_i386_adjacent_twotable.o")
+add_custom_command(
+  OUTPUT ${i386_adjacent_twotable_obj}
+  COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c -O2
+          -fno-stack-protector -fno-exceptions -fno-unwind-tables
+          -fno-asynchronous-unwind-tables -march=pentium4
+          ${i386_adjacent_twotable_src} -o ${i386_adjacent_twotable_obj}
+  DEPENDS ${i386_adjacent_twotable_src}
+  COMMENT "Compiling optimized adjacent i386 GOTOFF tables")
+list(APPEND TEST_OBJECTS ${i386_adjacent_twotable_obj})
+
+# O0 uses an EBP-relative GOT spill across three independent switch loops.
+set(i386_three_switch_loops_src
+    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_three_switch_loops.c")
+set(i386_three_switch_loops_obj
+    "${CMAKE_CURRENT_BINARY_DIR}/test_i386_three_switch_loops.o")
+add_custom_command(
+  OUTPUT ${i386_three_switch_loops_obj}
+  COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c -O0
+          -fno-stack-protector -fno-exceptions -fno-unwind-tables
+          -fno-asynchronous-unwind-tables -march=pentium4
+          ${i386_three_switch_loops_src} -o ${i386_three_switch_loops_obj}
+  DEPENDS ${i386_three_switch_loops_src}
+  COMMENT "Compiling O0 i386 PIC switch loops with a shared GOT spill")
+list(APPEND TEST_OBJECTS ${i386_three_switch_loops_obj})
+
+# The same public program has three adjacent GOTOFF runs, each with an entry
+# and a loop-back consumer, after optimization.
+set(i386_three_switch_loops_o2_obj
+    "${CMAKE_CURRENT_BINARY_DIR}/test_i386_three_switch_loops_o2.o")
+add_custom_command(
+  OUTPUT ${i386_three_switch_loops_o2_obj}
+  COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c -O2
+          -fno-stack-protector -fno-exceptions -fno-unwind-tables
+          -fno-asynchronous-unwind-tables -march=pentium4
+          ${i386_three_switch_loops_src} -o ${i386_three_switch_loops_o2_obj}
+  DEPENDS ${i386_three_switch_loops_src}
+  COMMENT "Compiling optimized three-run i386 GOTOFF tables")
+list(APPEND TEST_OBJECTS ${i386_three_switch_loops_o2_obj})
+
+set(i386_adjacent_function_pointer_src
+    "${CMAKE_CURRENT_SOURCE_DIR}/x86_32/test_i386_adjacent_function_pointer_runs.S")
+set(i386_adjacent_function_pointer_obj
+    "${CMAKE_CURRENT_BINARY_DIR}/test_i386_adjacent_function_pointer_runs.o")
+add_custom_command(
+  OUTPUT ${i386_adjacent_function_pointer_obj}
+  COMMAND ${CLANG_EXEC} -target i386-linux-gnu -nostdlib -nostdlibinc -c
+          ${i386_adjacent_function_pointer_src}
+          -o ${i386_adjacent_function_pointer_obj}
+  DEPENDS ${i386_adjacent_function_pointer_src}
+  COMMENT "Compiling adjacent i386 GOT-relative function-pointer runs")
+list(APPEND TEST_OBJECTS ${i386_adjacent_function_pointer_obj})
 
 foreach(src ${AARCH64_TEST_SOURCES})
   get_filename_component(base ${src} NAME_WE)
@@ -2923,3 +3066,12 @@ if(COFF_NATIVE_EH_TEST_OBJECTS)
                     DEPENDS ${COFF_NATIVE_EH_TEST_OBJECTS})
   add_dependencies(NeverDLiftTests lift-coff-native-eh-test-objects)
 endif()
+
+add_neverd_unittest(NeverDLLVMCIntrinsicSemanticTests
+  core/LLVMCIntrinsicSemanticTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDLLVMCIntrinsicSemanticTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)

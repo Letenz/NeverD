@@ -85,8 +85,9 @@ llvm::Expected<bool> KernelModel::dispatchPending(const ActiveRequest &Request,
   return (*Control & StackPendingReturned) != 0;
 }
 
-llvm::Expected<uint64_t> KernelModel::callDriver(uint64_t Device,
-                                                 uint64_t IRP) {
+llvm::Expected<uint64_t>
+KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
+                        std::optional<int64_t> SendTimeout) {
   auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed)
     return stackError("IoCallDriver requires a live owned IRP");
@@ -98,7 +99,8 @@ llvm::Expected<uint64_t> KernelModel::callDriver(uint64_t Device,
     return stackError("pageable power forwarding requires PASSIVE_LEVEL");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return stackError("cannot replace a pending guest callback");
-  if (Framework && Framework->ownsRequestIRP(IRP))
+  if (Owner == ForwardingOwner::WDM && Framework &&
+      Framework->ownsRequestIRP(IRP))
     return stackError("framework-owned requests cannot use WDM forwarding");
   if (!Devices.count(Device) ||
       std::find(Request->DeviceRoute.begin(), Request->DeviceRoute.end(),
@@ -158,6 +160,7 @@ llvm::Expected<uint64_t> KernelModel::callDriver(uint64_t Device,
     return OldDevice.takeError();
   const bool WasForwarded = Request->Forwarded;
   const auto WasPending = Request->UnwoundPending[Slot];
+  const bool FileBusReceived = Request->FileBusReceived;
   const size_t ResultIndex = Request->ResultIndex;
   const auto &Observation = Result.Requests[ResultIndex];
   const auto Received = Observation.Pnp ? Observation.Pnp->BusReceivedAt100ns
@@ -173,7 +176,7 @@ llvm::Expected<uint64_t> KernelModel::callDriver(uint64_t Device,
   Request->Forwarded = true;
   Request->UnwoundPending[Slot].reset();
   if (Provider) {
-    auto Status = callProviderDriver(Device, IRP);
+    auto Status = callProviderDriver(Device, IRP, Owner, SendTimeout);
     if (Status)
       return Status;
     auto E = Status.takeError();
@@ -185,7 +188,8 @@ llvm::Expected<uint64_t> KernelModel::callDriver(uint64_t Device,
     // Provider preflight reads the prospective stack cursor. If it rejected
     // the call without accepting the packet, restore that cursor and its slot
     // metadata. Once a real receipt occurred, effects cannot be rolled back.
-    if (Retained && !Retained->Completed && NowReceived == Received) {
+    if (Retained && !Retained->Completed && NowReceived == Received &&
+        Retained->FileBusReceived == FileBusReceived) {
       E = llvm::joinErrors(
           std::move(E),
           Memory.writeInteger(IRP + IRPLocationOffset, *Cursor + 1, 1));
@@ -241,7 +245,8 @@ llvm::Error KernelModel::completeRequest(uint64_t IRP, uint8_t PriorityBoost) {
   if (PriorityBoost)
     return stackError("modeled completion supports IO_NO_INCREMENT only");
   if (CancelLock.Held)
-    return stackError("IoCompleteRequest cannot run with the cancel spin lock held");
+    return stackError(
+        "IoCompleteRequest cannot run with the cancel spin lock held");
   auto CancelRoutine = Memory.readInteger(IRP + IRPCancelRoutineOffset, 8);
   if (!CancelRoutine)
     return CancelRoutine.takeError();
@@ -260,6 +265,57 @@ llvm::Error KernelModel::completeRequest(uint64_t IRP, uint8_t PriorityBoost) {
     return llvm::joinErrors(Status.takeError(), Information.takeError());
   if (uint32_t(*Status) == StatusPending)
     return stackError("IoCompleteRequest cannot complete with STATUS_PENDING");
+  if (Request->FrameworkTransitionAwaiting)
+    return stackError("framework PnP callback still owns this completion");
+  if (!(uint32_t(*Status) & profile::NTStatusFailureMask)) {
+    auto Policy = beginFrameworkPowerPolicy(IRP);
+    if (!Policy)
+      return Policy.takeError();
+    if (*Policy)
+      return llvm::Error::success();
+  }
+  if (Framework && Request->PnpOperation &&
+      Request->PnpOperation->Minor == DevicePnpRequest::Start &&
+      !Request->FrameworkTransitionHandled &&
+      !(uint32_t(*Status) & profile::NTStatusFailureMask) &&
+      !Request->DeviceRoute.empty() &&
+      FrameworkDevices.count(Request->DeviceRoute.front())) {
+    auto Deferred = Framework->beginPnpPowerTransition(
+        Request->PnpDevice, IRP, Request->PnpOperation->Minor,
+        Request->RawResources, Request->TranslatedResources,
+        Request->ResourceListSize);
+    if (!Deferred)
+      return Deferred.takeError();
+    Request->FrameworkTransitionHandled = !*Deferred;
+    Request->FrameworkTransitionAwaiting = *Deferred;
+    if (*Deferred) {
+      if (auto E = markRequestPending(IRP))
+        return E;
+      return llvm::Error::success();
+    }
+  }
+  if (Framework && Request->PowerOperation &&
+      Request->PowerOperation->Minor == DevicePowerRequest::Set &&
+      Request->PowerOperation->Type == DriverPowerType::Device &&
+      Request->PowerOperation->State == uint32_t(DevicePowerState::D0) &&
+      !Request->FrameworkTransitionHandled &&
+      !(uint32_t(*Status) & profile::NTStatusFailureMask) &&
+      !Request->DeviceRoute.empty() &&
+      FrameworkDevices.count(Request->DeviceRoute.front())) {
+    const auto &Power = *Result.Requests[Request->ResultIndex].Power;
+    auto Deferred = Framework->beginDevicePowerTransition(
+        Request->PnpDevice, IRP, Power.DeviceStateBefore,
+        DevicePowerState(Power.State));
+    if (!Deferred)
+      return Deferred.takeError();
+    Request->FrameworkTransitionHandled = !*Deferred;
+    Request->FrameworkTransitionAwaiting = *Deferred;
+    if (*Deferred) {
+      if (auto E = markRequestPending(IRP))
+        return E;
+      return llvm::Error::success();
+    }
+  }
   auto Cursor = requestStackCursor(IRP);
   if (!Cursor)
     return Cursor.takeError();
@@ -309,7 +365,8 @@ KernelModel::planIRPCompletion(uint64_t IRP,
       return stackError("completion invocation flags require a callback");
     const bool Pending = PropagatePending || (*Control & StackPendingReturned);
     Plan.Steps.push_back({Slot, Pending});
-    const bool Success = (uint32_t(*Status) & 0x80000000U) == 0;
+    const bool Success =
+        (uint32_t(*Status) & profile::NTStatusFailureMask) == 0;
     const bool Invoke = (Success && (*Control & StackInvokeOnSuccess)) ||
                         (!Success && (*Control & StackInvokeOnError)) ||
                         (*Cancel && (*Control & StackInvokeOnCancel));
@@ -453,8 +510,7 @@ KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
     return finishPowerCompletion(Token);
   if (Call->second.Kind == IRPCallKind::Cancel) {
     if (!CancelLock.Callback || CancelLock.Held ||
-        CancelLock.IRP != Call->second.IRP ||
-        CurrentIRQL != CancelLock.OldIRQL)
+        CancelLock.IRP != Call->second.IRP || CurrentIRQL != CancelLock.OldIRQL)
       return stackError("IoCancelIrp callback did not release its cancel lock");
     CancelLock = {};
     IRPCalls.erase(Call);

@@ -62,6 +62,9 @@ void eliminateLoopAliases(std::vector<HighStmt> &Stmts);
 void elimConsecutiveDeadStores(std::vector<HighStmt> &Stmts);
 void elimUnreadPrivateFrameStores(HighFunc &Func, Arch Architecture);
 void narrowSourceConcatLocals(HighFunc &Func);
+/// Whether evaluating an unused integer value can be discarded without a
+/// memory access, call, or trap. This never supplies values for unknown bits.
+bool discardableIntegerValue(const ExprPtr &Root, size_t &Budget);
 
 //===----------------------------------------------------------------------===//
 // Expression simplification  (defined in HighExprSimplify.cpp)

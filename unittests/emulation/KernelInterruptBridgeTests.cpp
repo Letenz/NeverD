@@ -49,8 +49,7 @@ protected:
   }
   void reject(llvm::Error E, llvm::StringRef Text) {
     ASSERT_TRUE(bool(E));
-    EXPECT_NE(llvm::toString(std::move(E)).find(Text.str()),
-              std::string::npos);
+    EXPECT_NE(llvm::toString(std::move(E)).find(Text.str()), std::string::npos);
   }
   template <class T>
   void reject(llvm::Expected<T> Value, llvm::StringRef Text) {
@@ -72,6 +71,8 @@ protected:
     put(IRP + IRPInformationOffset, 0);
     call("IofCompleteRequest", {IRP, 0});
   }
+  virtual void configureInterrupts(DriverPnpDevice &Device) {}
+  virtual bool connectInitialLine() const { return true; }
   void SetUp() override {
     Memory = take(UnicornBackend::create(8 * 1024 * 1024));
     ASSERT_TRUE(Memory);
@@ -99,6 +100,7 @@ protected:
     IRQ.TranslatedLevel = 5;
     IRQ.TranslatedAffinity = 1;
     Device.Interrupts.push_back(IRQ);
+    configureInterrupts(Device);
     Options.PnpDevices.push_back(Device);
     Result.Configuration = Options;
     Model = std::make_unique<KernelModel>(*Memory, Result);
@@ -125,8 +127,7 @@ protected:
     DriverRequest Start;
     Start.Kind = DriverRequestKind::Pnp;
     Start.DeviceID = "sensor";
-    Start.Pnp =
-        DriverPnpOperation{DevicePnpRequest::Start, {StatusSuccess, 0}};
+    Start.Pnp = DriverPnpOperation{DevicePnpRequest::Start, {StatusSuccess, 0}};
     const auto Packet = take(Model->beginRequest(Start));
     const uint64_t Stack = get(Packet.IRP + IRPStackPointerOffset);
     std::array<uint8_t, StackCompletionOffset> Prefix;
@@ -135,11 +136,13 @@ protected:
     EXPECT_EQ(call("IofCallDriver", {PDO, Packet.IRP}), StatusSuccess);
     ok(Model->recordDispatchReturn(Packet.IRP, StatusSuccess));
     ok(Model->finalizeRequest(Packet.IRP));
-    EXPECT_EQ(call("IoConnectInterrupt",
-                   {Scratch, ISR, Scratch + 0x100, 0, 0x55, 5, 5, 1, 0, 1, 0}),
-              StatusSuccess);
-    Interrupt = get(Scratch);
-    ASSERT_NE(Interrupt, 0u);
+    if (connectInitialLine()) {
+      EXPECT_EQ(call("IoConnectInterrupt", {Scratch, ISR, Scratch + 0x100, 0,
+                                            0x55, 5, 5, 1, 0, 1, 0}),
+                StatusSuccess);
+      Interrupt = get(Scratch);
+      ASSERT_NE(Interrupt, 0u);
+    }
     DriverRequest Open;
     Open.Kind = DriverRequestKind::Create;
     Open.DeviceID = "sensor";
@@ -191,6 +194,114 @@ protected:
   }
 };
 
+class KernelMessageInterruptBridge : public KernelInterruptBridge {
+protected:
+  void configureInterrupts(DriverPnpDevice &Device) override {
+    auto &Resource = Device.Interrupts.front();
+    Resource.RawLevel = 0;
+    Resource.Messages = {
+        {0xfee00000, 0x1234, 0x55, 5, 1, DriverInterruptPolarity::RisingEdge},
+        {0xfee00000, 0x5678, 0x77, 7, 1, DriverInterruptPolarity::FallingEdge}};
+  }
+  bool connectInitialLine() const override { return false; }
+  uint64_t parameters(uint8_t Sync = 0, uint64_t Lock = 0) {
+    const uint64_t Address = Scratch + 0x1000;
+    put(Address + interrupts::VersionOffset, interrupts::MessageBased, 4);
+    put(Address + interrupts::PDOOffset, PDO);
+    put(Address + interrupts::OutputOffset, Scratch);
+    put(Address + interrupts::RoutineOffset, ISR);
+    put(Address + interrupts::ContextOffset, Scratch + 0x100);
+    put(Address + interrupts::SpinLockOffset, Lock);
+    put(Address + interrupts::SynchronizeIRQL, Sync, 1);
+    put(Address + interrupts::FloatingSave, 0, 1);
+    put(Address + interrupts::FallbackRoutine, 0);
+    return Address;
+  }
+  void disconnectTable(uint64_t Table) {
+    const uint64_t Address = Scratch + 0x1100;
+    put(Address + interrupts::VersionOffset, interrupts::MessageBased, 4);
+    put(Address + interrupts::DisconnectContext, Table);
+    call("IoDisconnectInterruptEx", {Address});
+  }
+};
+
+TEST_F(KernelMessageInterruptBridge, TableMatchesAssignmentsAndSelectedUnion) {
+  // Bytes following FallBackServiceRoutine do not belong to this version.
+  const uint64_t Original = parameters();
+  const uint64_t Parameters =
+      Scratch + 0x10000 - interrupts::FallbackRoutine - 8;
+  std::array<uint8_t, interrupts::FallbackRoutine + 8> Bytes;
+  ok(Memory->read(Original, Bytes));
+  ok(Memory->write(Parameters, Bytes));
+  EXPECT_EQ(call("IoConnectInterruptEx", {Parameters}), StatusSuccess);
+  const uint64_t Table = get(Scratch);
+  EXPECT_EQ(get(Table + interrupts::MessageTableIRQL, 1), 0u);
+  EXPECT_EQ(get(Table + interrupts::MessageTableCount, 4), 2u);
+  ok(Model->validateGuestAccess(Table,
+                                interrupts::MessageTableHeaderSize +
+                                    2 * interrupts::MessageEntrySize,
+                                false));
+  reject(Model->validateGuestAccess(Table, 1, true), "read-only");
+  for (size_t I = 0; I < 2; ++I) {
+    const uint64_t Entry = Table + interrupts::MessageTableHeaderSize +
+                           I * interrupts::MessageEntrySize;
+    EXPECT_EQ(get(Entry + interrupts::MessageAddress), 0xfee00000u);
+    EXPECT_EQ(get(Entry + interrupts::MessageAffinity), 1u);
+    EXPECT_EQ(get(Entry + interrupts::MessageData, 4), I ? 0x5678u : 0x1234u);
+    EXPECT_EQ(get(Entry + interrupts::MessageVector, 4), I ? 0x77u : 0x55u);
+    EXPECT_EQ(get(Entry + interrupts::MessageIRQL, 1), I ? 7u : 5u);
+    EXPECT_EQ(get(Entry + interrupts::MessageMode, 4), 1u);
+    EXPECT_EQ(get(Entry + interrupts::MessagePolarity, 4), I ? 2u : 1u);
+    const uint64_t Object = get(Entry + interrupts::MessageObject);
+    reject(Model->validateGuestAccess(Object, 1, false), "opaque");
+    EXPECT_EQ(call("KeAcquireInterruptSpinLock", {Object}), 0u);
+    EXPECT_EQ(Model->currentIRQL(), I ? 7u : 5u);
+    call("KeReleaseInterruptSpinLock", {Object, 0});
+  }
+  disconnectTable(Table);
+  reject(Model->validateGuestAccess(Table, 1, false), "read-only");
+}
+
+TEST_F(KernelMessageInterruptBridge,
+       UnifiedIrqlAndFailedRegistrationRemainAtomic) {
+  constexpr uint64_t Sentinel = 0xabcdef;
+  put(Scratch, Sentinel);
+  const uint64_t Parameters = parameters(6);
+  reject(Model->call("IoConnectInterruptEx", {Parameters}), "every message");
+  EXPECT_EQ(get(Scratch), Sentinel);
+  put(Parameters + interrupts::SynchronizeIRQL, 9, 1);
+  EXPECT_EQ(call("IoConnectInterruptEx", {Parameters}), StatusSuccess);
+  const uint64_t Table = get(Scratch);
+  EXPECT_EQ(get(Table + interrupts::MessageTableIRQL, 1), 9u);
+  const uint64_t Object = get(Table + interrupts::MessageTableHeaderSize +
+                              interrupts::MessageObject);
+  EXPECT_EQ(call("KeAcquireInterruptSpinLock", {Object}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 9u);
+  const uint64_t Disconnect = Scratch + 0x1100;
+  put(Disconnect + interrupts::VersionOffset, interrupts::MessageBased, 4);
+  put(Disconnect + interrupts::DisconnectContext, Table);
+  reject(Model->call("IoDisconnectInterruptEx", {Disconnect}), "IRQL");
+  ok(Model->validateGuestAccess(Table, 8, false));
+  call("KeReleaseInterruptSpinLock", {Object, 0});
+  disconnectTable(Table);
+}
+
+TEST_F(KernelInterruptBridge, MessageRegistrationFallsBackToActualLineRoutine) {
+  const uint64_t Parameters = Scratch + 0x1000;
+  exParameters(Parameters, interrupts::MessageBased);
+  put(Parameters + interrupts::RoutineOffset, ISR + 0x80);
+  put(Parameters + interrupts::FallbackRoutine, ISR);
+  EXPECT_EQ(call("IoConnectInterruptEx", {Parameters}), StatusSuccess);
+  EXPECT_EQ(get(Parameters, 4), interrupts::LineBased);
+  const uint64_t Object = get(Scratch);
+  request(0);
+  const auto Call = next();
+  EXPECT_EQ(Call.PC, ISR);
+  EXPECT_EQ(Call.Arguments.size(), 2u);
+  EXPECT_EQ(Call.Arguments[0], Object);
+  finishISR(Call, 1);
+}
+
 TEST_F(KernelInterruptBridge, LineBasedExDoesNotReadUnselectedUnionTail) {
   // FloatingSave is the final selected byte. Every later union field lies
   // outside this mapping; a whole-record read would reject a valid call.
@@ -199,6 +310,36 @@ TEST_F(KernelInterruptBridge, LineBasedExDoesNotReadUnselectedUnionTail) {
   exParameters(Parameters, interrupts::LineBased);
   EXPECT_EQ(call("IoConnectInterruptEx", {Parameters}), StatusSuccess);
   EXPECT_NE(get(Scratch), Interrupt);
+}
+
+TEST_F(KernelInterruptBridge,
+       CallerLockStorageAndSynchronizationIrqlAreRetained) {
+  call("IoDisconnectInterrupt", {Interrupt});
+  constexpr uint32_t LockTag = 0x4b724949;
+  const auto Lock =
+      call("ExAllocatePoolWithTag", {0, profile::PointerSize, LockTag});
+  ASSERT_NE(Lock, 0u);
+  call("KeInitializeSpinLock", {Lock});
+  EXPECT_EQ(call("IoConnectInterrupt",
+                 {Scratch, ISR, Scratch + 0x100, Lock, 0x55, 5, 7, 1, 0, 1, 0}),
+            StatusSuccess);
+  Interrupt = get(Scratch);
+  reject(Model->call("ExFreePool", {Lock}), "interrupt spin lock");
+  reject(Model->call("KeInitializeSpinLock", {Lock}), "interrupt APIs");
+  reject(Model->call("KeAcquireSpinLockRaiseToDpc", {Lock}), "interrupt APIs");
+  EXPECT_EQ(call("KeAcquireInterruptSpinLock", {Interrupt}), 0u);
+  EXPECT_EQ(Model->currentIRQL(), 7u);
+  call("KeReleaseInterruptSpinLock", {Interrupt, 0});
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  call("KeSynchronizeExecution", {Interrupt, Synchronize, Scratch + 0x100});
+  auto Call = Model->takeGuestCall();
+  ASSERT_TRUE(Call);
+  ok(Model->beginGuestCall(Call->Token));
+  EXPECT_EQ(Model->currentIRQL(), 7u);
+  EXPECT_EQ(take(Model->finishGuestCall(Call->Token, 0x101)), 1u);
+  EXPECT_EQ(Model->currentIRQL(), 0u);
+  call("IoDisconnectInterrupt", {Interrupt});
+  call("ExFreePool", {Lock});
 }
 
 TEST_F(KernelInterruptBridge, FullySpecifiedExDoesNotReadGroupField) {

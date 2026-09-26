@@ -56,6 +56,10 @@ observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
 
+HighIR supports narrowing a 64-bit source local to 32 bits under the same proof used for 128-bit carriers: every definition must agree on the carrier and prefix widths, and every read must explicitly select the low prefix. A full-width integer AND also selects that prefix when its constant mask fits the low word without sign-extending from a narrower type; the narrowed local is zero-extended at that use before applying the unchanged mask. Full-width stores, escapes, upper-byte reads, or effectful upper expressions prevent narrowing. Source-parameter padding remains unknown.
+Exact whole-variable copies can share this proof through a bounded graph when a constructing definition establishes the prefix width. Every copied destination must itself qualify for narrowing; a full-width consumer invalidates all upstream exemptions. Unseeded cycles, conflicting widths and exhausted budgets preserve the original values.
+Bounded integer casts, zero-offset slices and extensions can carry this proof when every intermediate width retains the prefix. Each use is checked under its own statement root. Two bounded rounds can expose a narrower prefix after removing vector padding.
+
 The shared MedIR source-entry analysis owns observable byte masks for physical
 register inputs. Native helper inference uses these masks to represent proven
 low float/double lanes without claiming original source types or a rewriting
@@ -64,21 +68,50 @@ construct the same scalar prefix and all reads explicitly select that prefix.
 Only effect-free upper expressions are discarded; lower expressions and their
 control-flow positions remain unchanged. Unknown lanes are never filled in.
 
+When an unrelated unresolved value prevents a complete entry-demand graph,
+native helper inference may retain an independent full-word, call-preserved
+entry register used directly by an effect. LowIR must confirm the same read and
+the existing preserved-state proof still applies. A prologue spill value alone
+does not establish a source parameter. MedIR keeps narrow physical-register
+views for source-flow validation when the entry binder cannot insert a byte
+slice into their consuming operation.
+
+HighIR may also discard undefined upper bytes from a reconstructed integer only
+when a following constant mask cannot observe any bit above the complete low
+operand. A direct `CONCAT`, a bounded integer cast, a zero-offset `SUBBYTES`
+view, or a same-width zero-bit logical right shift may expose that low operand.
+The low operand may fill the masked result width. The replacement is an
+explicit zero extension and the mask remains in place. The upper expression
+must be bounded and discardable; calls, loads, ordered accesses, traps,
+malformed widths, and masks that reach an upper bit retain the original
+unknown value.
+
 An internal void summary for a native cleanup forwarder does not assert an
 original void prototype. It contributes no result carrier. Calls must match
-validated external void declarations or a canonical dynamically loaded Swift
-value-witness destroy declaration. MedIR and LowIR must agree on the exact
+validated runtime declarations, exact native source contracts or canonical
+dynamically loaded Swift value-witness declarations. A callee may return a
+value used inside the helper: that value does not establish a return carrier
+on every exit from the helper itself. MedIR and LowIR must agree on the exact
 instruction address and operation sequence, direct or indirect call form, and
-static target when one exists. A bounded LowIR fixed point tracks exact incoming
-register bytes and private stack spills, requiring restored preserved registers,
+static target when one exists. Exact Swift String bridge imports participate
+through their own validated static target and source ABI. A bounded LowIR fixed
+point tracks exact incoming register bytes and private stack spills, requiring
+restored preserved registers,
 stack pointer and link register at every exit. The frameless source-bound tail
 shape instead proves that those registers are never written and uses a bounded
 byte-taint fixed point to reject stack-derived call targets, arguments or stored
 values.
 Partial writes,
 implicit zero extensions, call clobbers and overlapping stores invalidate the
-affected identities. Unknown stores invalidate spill facts; frame-address spills
-and call arguments are rejected. Unallocated stack bytes cannot survive a call.
+affected identities. A store through an address with no frame-derived bytes is
+disjoint from the current invocation's private frame and keeps its exact spill
+facts. Partial or exact frame-derived addresses still reject possible escapes;
+frame-address spills and call arguments are rejected, except that an exact
+`objc_msgSendSuper2` binding may synchronously borrow its first argument as a
+read-only 16-byte `objc_super` object. The proof requires the complete pointer
+and object to stay inside the currently allocated frame; ordinary messages,
+partial pointers and objects crossing either frame boundary remain rejected.
+Unallocated stack bytes cannot survive a call.
 The ordinary CFG and source dependency proofs still apply.
 Re-lifted callers that observe a missing result retain their unknown value and
 cannot pass source publication.
@@ -90,7 +123,185 @@ adding another store-elimination rule. Canonical parameters and auxiliary
 reads or writes remain intact. Changed signatures require another pipeline run;
 neither an inferred signature nor its refinement certifies a publishable body.
 
+Non-returning native source helpers use an internal void ABI only when both
+IR stages agree and the shared MedIR termination analysis independently
+rechecks the current graph. Bound calls retain their exact parameters and
+effects; only recognized architectural terminators bypass the ordinary
+intrinsic restriction. The final interprocedural no-return fixed point copies
+its result into each exact native source-call hint, including clearing stale
+effects on a later run. HighIR therefore sees the same termination boundary.
+Publication revalidates the typed callee's complete source flow and requires
+its dependency closure; a function flag alone never authorizes a terminating
+source call. Reports, writes and traps before termination remain observable.
+HighIR cleanup, trailing-return insertion, and source-flow validation share
+the same exact source-termination predicate. An unconditional architectural
+trap removes an otherwise synthetic unknown return only when no branch enters
+that return; resumable debugger traps preserve fallthrough.
+
+At source-bound runtime calls, Low-to-Med lowering carries the authenticated
+external no-return declaration into the MedIR call effect.
+An imported runtime veneer may also appear in the native function inventory.
+The no-return fixed point preserves an existing machine termination fact when
+the validated runtime binding and complete call operands agree; a source hint
+alone cannot create that fact. The binding names the import slot, while the
+call names the veneer. Inferred native effects are still recomputed from the
+current graph, and source publication revalidates the import identity.
+
+Native two-word integer returns are requested by an observed low-prefix read of
+the second return register after an exact direct call in the same LowIR block.
+The read may be narrower than a word, but an intervening call, intrinsic or
+overlapping register write ends the demand. Demand also follows a one-block
+direct tail forwarder whose last operations are an adjacent call and return of
+the first result word. Neither observation nor forwarding proves an ABI: both
+result registers must independently pass the existing bounded MedIR
+return-path proof. The candidate then uses an
+internal two-field record and the shared `ReturnComponents` lowering for calls
+and returns. A later dependency iteration may extend an inferred native scalar
+contract when its second word becomes provable; external and declared source
+contracts are never extended. Re-lifting and the normal source body/closure
+checks remain mandatory, and an unproved second result remains unresolved.
+
 Block consumer escape analysis also uses this graph. A bounded fixed point carries pointer identities and private frame spills across branches and loops. Joins retain possible context addresses; only complete overwrites erase them. Unknown edges, exceptional flow, and exhausted proof budgets reject the binding.
+
+An exact zero-offset `SUBBYTES` view may preserve a complete low pointer word
+from a wider physical register view. Partial frame, context, and invoke-pointer
+views retain their source identity and byte interval; only ordered, contiguous,
+same-source `CONCAT` operations that cover the complete pointer restore an
+address. Every other partial view remains tainted and is rejected if it reaches
+memory, a call, control flow, storage, or an observable return. Equal scalar
+bits never acquire pointer identity.
+When an exact source ABI declares a narrow scalar result, an explicit
+`CONCAT` may contribute undefined high physical-return padding. Escape
+analysis checks the complete declared low result and ignores only that
+structured high padding; a context pointer in any observable return byte is
+still rejected.
+
+A block invoke may pass an address in its own fresh frame to a bound call only
+while that frame contains no context, invoke, ISA, or other proven pointer
+identity. Storing any such identity makes an unbounded frame argument an
+escape again. This distinguishes ordinary callback locals such as an error
+result slot from the block context without weakening the context escape proof.
+
+Stack-block construction distinguishes an exact literal base from other frame
+arguments before interpreting a call as a block consumer. Ordinary frame
+arrays may therefore be passed before construction; wide frame initialization
+is retained as poisoned byte coverage, so it cannot satisfy a block header or
+owned capture. Once an ISA identity is live, other frame arguments remain
+rejected until a declared copying or nonescaping consumer invalidates the
+literal storage. This keeps later unrelated frame calls available without
+forgetting a block identity that still exists on any reaching path.
+An unchanged entry pointer parameter cannot address the current invocation's
+fresh private block frame, so an ordinary scalar store through that exact
+parameter does not invalidate construction. Loaded pointers, reassigned
+parameters, pointer-derived values, and unsupported store effects remain
+unproven aliases.
+An exact `objc_msgSendSuper2` call may synchronously borrow a separate,
+fully initialized 16-byte `objc_super` record in the same frame. Its two words
+must contain no block or frame identity, and every live pointer-identity byte
+must remain inside a known, disjoint block literal. Other frame arguments
+remain subject to the ordinary escape proof.
+
+Capture-free global block literals may share one compiler descriptor. Source
+dependencies and generated helpers follow the exact literal references in the
+current source closure: an unreferenced literal sharing that descriptor neither
+adds its invoke dependency nor appears in the emitted storage. The descriptor
+remains shared, and the same original literal keeps one shared generated
+identity across methods.
+
+Darwin block consumers have one loader-owned callback and lifetime contract.
+The generated catalog distinguishes compiler-declared `noescape` parameters
+from audited runtime copying consumers. The latter covers `dispatch_after`,
+`dispatch_async`, `dispatch_barrier_async`, `dispatch_group_async`,
+`dispatch_group_notify`, and `dispatch_source_set_event_handler`, whose API
+contracts specify copying the block. Every contract requires exact
+import/provider identity, four-profile compiler agreement, and a matching
+complete callback ABI.
+Source publication still proves the stack header, initialized captures,
+copy/dispose helpers, and invoke dependency. Either kind of consumer invalidates
+the caller's construction facts after use; a copied consumer is never reported
+as nonescaping. Unannotated block parameters confer no lifetime permission.
+An invoke may call a block stored in its own capture only when the containing
+literal has a complete descriptor, the capture word was initialized, and its
+validated copy helper assigns that strong field with block flag 7. The source
+pipeline passes these exact field offsets to LowIR call binding on a later
+round; ordinary initialized capture words contribute only observed integer
+carriers. Conflicting assignments or descriptors with different fields remove
+the proof, and the call still requires an exact receiver-plus-16 target load.
+An invoke callback may receive a class-qualified object parameter from its
+compiler block signature. The source plan must first prove the literal's
+descriptor-to-invoke link and agree on the same class for every literal using
+that invoke. Call analysis carries this declared class through ordinary
+receiver copies; publication re-reads the descriptor and checks the final
+plan link. Bare `id`, conflicting descriptors, and unrelated invocations
+remain unqualified, and dynamic message dispatch is unchanged.
+An invoke body's unresolved nested block does not erase an independently
+validated outer literal's parameter declaration: that declaration may be
+needed to prove the nested block consumer on the next pipeline round.
+An authenticated `NSArray` fast-enumeration call may borrow its
+`NSFastEnumerationState` (64 bytes) and object buffer (`count * 8` bytes)
+from an invoke's frame while another validated block is live. Both ranges
+must fit the recovered frame and be disjoint from complete validated block
+literals and every private context identity byte. Unknown counts, receivers,
+and call bindings still fail the capture proof.
+Individual literal probes merge import evidence only for the isa slot they
+inspect; whole-image block discovery still walks the complete import inventory.
+
+Objective-C SDK `noescape` block parameters use the same loader-owned
+boundary. A catalog row is accepted only when the current message still has
+the exact SDK parent-method ABI and parameter position, its block descriptor
+has the exact compiler callback ABI, and any qualified receiver follows a
+complete, conflict-free class hierarchy to the declaring owner. An
+unqualified selector is usable only when all matching catalog rows agree on
+one callback contract. This proves the caller-side lifetime only: dispatch
+remains dynamic, no implementation address is selected, and methods without a
+cataloged `noescape` declaration continue to reject stack-block escape.
+The two Core Data `performBlock:` instance methods instead enqueue work after
+returning, so their block parameters require a copied lifetime. Their audited
+contracts use the same exact method and callback ABI checks and additionally
+require a revalidated receiver lineage to `NSManagedObjectContext` or
+`NSPersistentStoreCoordinator`; an unqualified `performBlock:` selector does
+not prove copying. `performBlockAndWait:` remains a separate nonescaping
+contract.
+The same copied-contract boundary covers `NSBlockOperation`
+`blockOperationWithBlock:`, `CLGeocoder`
+`reverseGeocodeLocation:completionHandler:`, and the two asynchronous
+`UNUserNotificationCenter` settings and authorization callbacks. The
+`NSPersistentContainer loadPersistentStoresWithCompletionHandler:` callback
+also uses a copied contract because store descriptions can request asynchronous
+addition and the SDK imports the completion as escaping. The receiver must
+resolve to `NSPersistentContainer` and both method and callback ABIs must match.
+The authorization callback is unavailable on x86-64 in this catalog because the
+macOS and iOS SDKs encode its `BOOL` argument differently.
+Rejected Objective-C block consumers distinguish an unqualified receiver,
+callback ABI mismatch, and unproven message binding in their dependency
+diagnostic, so a missing lifetime proof can be traced without treating a
+selector name alone as authority.
+
+An invoke may pass a nested stack block only when construction proves every
+header and owned capture byte, the exact call consumes that frame base, and the
+consumer's lifetime contract is still bound. The outer context cannot be
+smuggled through a nested capture or another frame argument. Complete 16-byte
+loads from initialized captures may pass through private vector spills as
+opaque bytes; partial pointer values and computed wide expressions retain
+their private or unproven identity and cannot establish a capture.
+
+Calls through copied stack blocks reuse the loader's source-call fixed point.
+A complete stack header and descriptor establish the invoke ABI before an
+authenticated `objc_retainBlock` or `_Block_copy` supplies a copied-block
+identity. Only an invoke-field load and receiver with that same identity can
+bind a dynamic call. Conflicting aliases, partial pointer operations, escaping
+copies, unknown calls and ambiguous writes discard the proof. Image stores
+preserve private construction facts only when the shared loader range check
+proves a complete writable file-backed range disjoint from private storage.
+For an AArch64 register tail branch through a captured block, the loaded
+invoke register is a call target rather than an extra callback parameter.
+The synthetic call-and-return pair at one instruction address may use the
+descriptor-bound entry's void result ABI only when its instruction boundary
+proves an indirect tail call with no successor. An ordinary call still needs
+observed result evidence.
+Stack adjustments retain their full pointer width with bounded narrow numeric
+offsets; SIMD zero extension can preserve the unchanged low image-byte recipe
+without creating a wider pointer or interpreting floating-point values.
 
 Source-call discovery uses a bounded forward fixed point for register facts.
 At ordinary joins, a selector, import slot or numeric address survives only
@@ -126,6 +337,78 @@ either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
 
+At a validated source-call boundary, an exact integer constant zero may supply
+a pointer parameter even when the machine expression uses a narrower integer
+carrier than the declared pointer. Generated C emits an explicit null pointer
+constant. This exception applies only to the literal zero and only to a
+declared pointer parameter; nonzero integers and other width mismatches remain
+explicit source-call failures.
+
+Selector-wide Objective-C lookup normally requires every complete local,
+protocol, property and active SDK declaration to agree. When complete
+declarations disagree only in their result contract, an exact post-call
+scalar-register read may narrow the set if exactly one declared result carrier
+defines the observation. Integer observations may consume a fully defined
+subrange, including an explicitly extended narrow result. Floating observations
+must match the declared register, offset and width exactly; reading four bytes
+does not reinterpret a declared double as a float. Full-width copies can
+transport that evidence. Recognized runtime calls preserve only ABI-preserved
+aliases, including only the low 64-bit prefix of AArch64 `Q8`-`Q15`. Unknown
+calls, overlapping writes, unused results, incomplete declarations and multiple
+matching carriers leave the message unresolved. The selected carrier range is
+stored with the source-call hint and revalidated against the current image at
+publication, so a local dataflow observation cannot bypass global declaration
+checks.
+
+An exact declared pointer parameter from the enclosing Objective-C method may
+also narrow incompatible declarations when that unchanged entry value reaches
+one message argument and exactly one complete declaration has the same source
+type at that position. An ordinary opaque object pointer additionally requires
+that the unchanged entry value first reach an exactly bound `objc_retain` call;
+this authenticated object consumer may distinguish a pointer declaration from
+a non-pointer declaration. Every method record sharing the entry must agree
+before the parameter fact is seeded. Stack reloads after the frame escapes,
+transformed values, multiple matching arguments or pointer declarations, and
+incomplete declarations remain unresolved. The hint records the method entry,
+source ABI carrier, object-consumer fact and message parameter index;
+publication rebuilds the method and selector declarations from the current
+image before accepting the call.
+
+An exact Objective-C wrapper may supply a selector declaration that is absent
+from both the image and active SDK catalogs. The call must use one unchanged,
+declared method-entry parameter as its receiver, forward every selector
+argument from an unchanged full-width integer-register parameter, and
+immediately return the call output with the wrapper's declared result ABI. The
+selector arity, caller parameter locations and return carrier must all agree
+with a freshly assigned Darwin ABI. Any incomplete declaration is a veto, and
+every complete declaration that does exist must match the reconstructed
+signature. The hint records the caller entry and parameter mapping;
+publication rebuilds the method signature and requires the exact HighIR
+parameter operands before accepting the message.
+
+Full-width receiver and declared pointer identities may survive an
+exact private-frame spill and reload. A returning call preserves the entry-SP
+identity even when its source signature is unknown. When a frame address is
+visible to a call or stored elsewhere, only typed spills wholly below that
+address remain private: reaching them would require a backwards access outside
+the source object rooted at the escaped address. An escaped address at or below
+the spill, an inexact frame-derived carrier, an overlapping write, a partial
+load, conflicting control-flow facts, an invalid stack adjustment or an
+analysis budget limit discards the identity. Ordinary frame contents retain
+the stricter whole-frame escape rule.
+
+An exact address of bounded private frame storage may provide the same
+pointer-to-pointer shape evidence when it flows directly to one message
+argument. This fact identifies only the storage shape, not its pointee class or
+value; exactly one complete declaration must require an eight-byte
+pointer-to-pointer at that position. Positive entry-SP-relative addresses,
+loads or reloads, transformed or ambiguous values and multiple matching
+declarations remain unresolved. Publication replays only contiguous
+single-definition aliases from the function entry, checks the exact negative
+offset and private frame bounds, and rebuilds the current selector declarations.
+Address escape does not change the address category, but no fact about the
+storage contents is inferred after an escape.
+
 Required Swift value-witness operations have a separate symbol-independent call
 proof. A bounded backward trace must show that the indirect target is loaded
 from the operation's required `metadata[-1][slot]` entry and that the same
@@ -136,8 +419,36 @@ exhausted budgets reject the binding. Generated C repeats the table lookup
 through the live metadata; it never retains the witness address from the
 analyzed image.
 
+A compiler-generated Swift protocol witness accessor uses a different exact
+proof. The loader pairs its `Wl` code symbol with the matching writable,
+zero-initialized `WL` cache, then verifies the cache load, the
+`swift_getWitnessTable` call with the exact conformance descriptor and type
+metadata objects, the release store, and both return paths. Call sites receive a
+zero-argument, pointer-result callee contract without changing the accessor's
+own machine-inferred entry signature. Generated C rebuilds a fresh shared cache
+and repeats the runtime query; it never publishes the captured process cache or
+witness pointer.
+
+Standard Swift metadata storage addresses use compiler-generated `.self`
+queries; standard Hashable witness storage uses the direct witness argument
+of a compiler-generated constrained generic call. Both require matching SDK
+exports across ARM64/x86-64 macOS and Mac Catalyst.
+`Any.self` is the one supported full-existential exception: compiler IR must
+return the exact eight-byte interior metadata member of an externally exported
+`%swift.full_existential_type`, while the catalog records and rebuilds the
+owning `$sypN` storage base. This does not authorize any other interior pointer
+or infer the full-existential layout from a mangled name.
+Only direct external, non-TLS globals qualify. The loader authenticates each
+symbol and provider before binding its runtime address; this supplies neither
+a metadata/witness layout nor a call ABI for accessors, witness members or
+arbitrary mangled symbols.
+
 Objective-C property metadata supplies accessor declarations independently of
 method implementations, including dynamic, readonly and custom accessors.
+When class and category records declare the same selector, each validated IMP
+may still produce its own source body. The export retains the collision
+diagnostic and does not choose a runtime dispatch winner; calls require
+agreement across all declarations.
 The loader checks the class, category or protocol record layout and derives
 scalar/pointer signatures through the shared encoding parser and Darwin ABI.
 Call binding requires agreement with all matching property, method, protocol
@@ -157,20 +468,86 @@ call argument or result. Structural C declarations include layout assertions.
 Darwin ARM64 and x86_64 also support nested records containing one or two
 64-bit integers or pointers. When the whole record spills, ARM64 exhausts the
 integer bank; x86_64 leaves unused registers available to later arguments.
+Fixed C calls on Darwin ARM64 may also return records of three signed
+64-bit integers through the hidden x8 result pointer. The source ABI owns
+that classification. Low-to-Med lowering preserves the pre-call pointer,
+produces one logical record result, and writes its three fields into the
+caller-owned storage. Ordinary arguments keep their original registers; x0 is
+still clobbered and does not acquire a result. Call-hint discovery invalidates
+facts about escaped result storage. Entry projection and native preservation
+proofs reject these indirect results until their own storage proofs exist;
+Objective-C indirect results remain rejected by selector-wide and ordinary
+receiver lookup because nil message dispatch leaves the original result buffer
+untouched. One receiver-qualified ARM64 call may use the fixed record ABI when
+the receiver is exactly the current method's non-null self and x8 names the
+complete, private, unescaped frame range. Source publication revalidates the
+method entry, self operand, receiver declaration, record size and frame bounds;
+missing or changed evidence leaves the message unresolved.
+Three-word records with unsigned or pointer fields, three-word parameters and
+x86_64 indirect results remain unsupported.
 Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.
 
+The generated Darwin C catalog takes declarations only from its explicit public
+header set and intersects all four macOS/iOS architecture profiles with SDK
+export evidence. Public `notify.h` functions use this path, including exact
+`libSystem` and `libsystem_notify` providers; a header declaration alone cannot
+authorize a call.
+
+Fixed Darwin C imports may use a public declaration outside the generated
+command-line-tools catalog only at an exact symbol and dyld provider boundary.
+On ARM64, `NSStringFromCGSize` and `UIGraphicsBeginImageContext` use the shared
+homogeneous-record ABI for their natural two-double `CGSize` parameter.
+`UIGraphicsGetCurrentContext` and
+`UIGraphicsGetImageFromCurrentImageContext` return opaque pointers, while
+`UIGraphicsEndImageContext` returns void; generated source keeps every real
+UIKit call. Weak imports, addends, conflicting storage identities, other
+providers and architectures without the same compiler evidence remain
+unbound. The final source check rebuilds the hint from the current image
+instead of trusting an earlier call-site annotation.
+
+The ARM64 UIKit Objective-C catalog has the same evidence boundary. Each row
+must agree between compiler-produced iPhoneOS and arm64 iPhoneSimulator
+artifacts, retain its declaring framework owner and require the exact system
+UIKit provider. Selector-wide lookup still rejects incompatible declarations.
+Receiver provenance or an exact observed result carrier may narrow that set,
+but cannot supply a declaration or widen an unsupported carrier. Architectures
+without matching compiler evidence remain unsupported.
+
 Objective-C receiver facts distinguish method-entry self from an exact class
 reference. All metadata records sharing an entry must agree before self is
 seeded. Full-width copies and ABI-preserved registers carry the fact through
-the same fixed point, including entry backedges. Declaration agreement uses
+the same fixed point, including entry backedges.
+An unbound but authenticated `objc_msgSend` retains a declared object
+parameter's provenance only in a complete callee-saved register; it does not
+preserve unknown argument or frame facts. Declaration agreement uses
 class/instance scope, recorded categories, superclass chains and adopted
 protocols; entry self also includes known subclass declarations. Compiler
 catalogs retain declaration owners and hierarchy separately from selector-wide
 agreement. The SDK revalidates the receiver origin and applicable declarations
 against the current image before publishing source. These facts neither select
 an IMP nor authorize binary rewriting.
+A compiler-shared native thunk may receive the address of a validated
+Objective-C class-reference slot instead of the class object stored in it.
+Source recovery preserves that extra indirection with one rebuilt cell per
+original slot, initialized through `objc_getClass` or `objc_getMetaClass`.
+The binding is permitted only when the exact typed native dependency proves
+only full-width loads from that parameter with no store, offset, escape or
+unsupported memory effect. A bare slot address still cannot act as a message
+receiver or acquire class-object identity.
+An agreed named object result extends that provenance through the declared
+message-result step. Exact ARC routines whose catalog contract returns their
+object argument preserve the complete step after normal call clobbers. For
+example, UIKit's `+[UIScreen mainScreen]` result remains a `UIScreen` receiver
+after `objc_retainAutoreleasedReturnValue`, so `-[UIScreen scale]` uses its
+owner-qualified `double` ABI instead of an incompatible selector-wide guess.
+An authenticated `objc_msgSend` or `objc_msgSendSuper2` target has the Darwin
+call-preservation contract even when its selector declaration is unavailable.
+Across such a call, the dataflow may retain only receiver identities held in
+complete call-preserved registers. It still marks private frame storage as
+escaped and discards caller-saved, selector, import, block and numeric facts.
+A later message still needs its own exact receiver declaration and source ABI.
 Missing external hierarchy requires selector-wide agreement instead of a receiver-specific signature; explicit unsupported or conflicting declarations remain negative evidence.
 
 Declared object ivars extend a receiver proof through at most eight full-width
@@ -182,6 +559,130 @@ id, blocks, protocol-only types, ambiguous storage and unknown pointer bases do
 not provide class facts. Source validation repeats the entire path against the
 current image. These facts describe declared types, not object identity or
 permission to remove memory operations.
+
+When control flow selects among authenticated Objective-C ivar-offset cells,
+the source binding may move the runtime offset values to the predecessor edges
+and merge those values instead of merging cell addresses. Every reaching leaf
+must name an ivar of the same class with the same carrier width, the address
+chain may contain only same-width local or SSA aliases, and the merged address
+must feed exactly one full-width load. Mixed classes or widths, arithmetic,
+stores, escapes and additional loads retain the unresolved address diagnostic.
+
+Writable pointer initializers require the same resolved local data-pointer relocation and target-owner proof as immutable pointer loads, without treating writable contents as a constant value. The source layer admits only complete, uniquely named eight-byte cells initialized with validated constant strings. Shared storage helpers initialize those cells before exposing their addresses; subsequent loads, stores and authenticated `objc_storeStrong` calls use the mutable cells. Initializer objects share the ordinary constant-object identities. A null store does not repeat initialization.
+
+A shared Swift once getter may expose the two machine words of a `String` only
+under one exact four-carrier contract: predicate, initializer, and two ordered
+storage words. The getter must make one authenticated `swift_once` call, feed
+the two unmodified words to the exact Swift `String`-to-`NSString` bridge, and
+use each address parameter only through pure same-width aliases and the proven
+loads. Callers must pass adjacent words of one validated writable storage
+region.
+The callback and all dependencies still require ordinary source closure; the
+storage proof does not authorize skipping an initializer or inventing contents.
+
+A shared object getter may also carry unused Objective-C `self` and `_cmd`
+registers before its predicate, object cell and initializer. The five-carrier
+form is accepted only after the complete use scan proves that the leading two
+registers are unobserved and the three trailing roles are exact. It proposes
+a callback ABI only when the initializer independently ignores its context;
+multi-level initializers without that proof remain unresolved.
+For either getter form, the cell may start at an interior offset of a named
+writable region when the complete prefix through the cell has no intervening
+symbol or pointer relocation. Projection keeps the region's shared base and
+the exact field offset, so independently emitted accesses use one rebuilt
+storage object.
+
+A compiler-emitted zero-argument Swift lazy-global addressor is rebuilt only
+when the exact `vau`/`vpZ`/`_Wz`/`_WZ` symbol family agrees with one canonical
+load, completion test, authenticated `swift_once` call, and the same storage
+return on both paths. Its initializer must ignore the incidental context and
+close as ordinary source. Projection creates a fresh shared once token and
+value cell; no predicate, value, or initializer address from the loaded image
+is retained. Its zero-argument source callee ABI applies only at call sites;
+the native entry ABI remains separate so incidental context carriers stay
+available to the contract proof.
+
+A Swift once callback that initializes a writable two-word `String` through a
+merged tail helper may call an independently proven zero-argument addressor.
+The caller-specific projection requires the exact callback and helper bytes,
+the addressor's current initializer and storage contract, disjoint complete
+16-byte source and destination cells, and an authenticated
+`swift_bridgeObjectRetain` import. It calls the addressor once, copies both
+words in order, retains the second word, and keeps the initializer as a source
+dependency. Revalidation repeats the machine, call, storage and projected-body
+proofs; a helper address or saved callback hint alone cannot authorize it.
+
+An ordinary native `swift_once` call can similarly bind a writable predicate
+and exact initializer when that callback ignores its context. The native
+entry ABI remains intact. Only after the projected callee body and its
+dependencies close, and the erased context parameter has no other source use,
+may a direct caller replace an effect-free unknown argument at that exact
+position with zero. Other arguments and computations remain observable.
+
+An authenticated `dispatch_once_f` call may likewise rebuild its predicate and
+local callback address. The loader must prove the exact libdispatch export,
+the complete writable predicate cell, a unique code target that has no ordinary
+direct callers, and the public `void (*)(void *)` callback ABI. The callback is
+re-lifted with that contract and remains an ordinary source dependency. The
+generated unit uses fresh shared predicate storage and the recovered callback
+definition; neither original image address is retained. Unknown providers,
+unproved storage, non-code targets and conflicting call ABIs remain unbound.
+
+If such an initializer calls a compiler-emitted imported Objective-C class
+metadata accessor, projection requires the exact zero-cache, class-reference,
+`objc_opt_self`, `swift_getObjCClassMetadata`, and release-publication template.
+It emits the authenticated runtime lookup directly and retains no image cache.
+
+A Swift concrete-metadata cache/reference pair may rebuild its mangled type
+reference only when the zero cache, immutable metadata-reference record, every
+relative descriptor slot, and the exact `MR`/`Md` symbol spelling agree. The
+type reference consists of printable mangling bytes and at most eight indirect
+`0x02` context descriptors; expanding every descriptor must reproduce a
+complete symbol name that itself passes a bounded Swift type demangle. Imported
+nominal descriptors require a bounded demangle and the exact system-framework
+install name derived from the declared module.
+Local protocols and bounded module/class/structure/enum nominal paths require a
+resolved read-only relocation to one unique data symbol with exactly one
+matching export. Direct `0x01` or other symbolic references, unexported private
+contexts, weak or mismatched providers, malformed records, and ambiguous
+symbols remain unsupported.
+When the exact pair passes that proof but its addresses travel through local
+variables, source projection may bind the defining constants. Each local must
+have one direct constant definition, be definitely assigned before use, and be
+read only as an argument in typed native calls carrying that same proven pair.
+Any reassignment or other use leaves the address unbound.
+
+An explicit pointer-typed load or store supplies the same eight-byte cell extent
+as an integer machine carrier. It uses the existing named writable-storage and
+initializer proofs, including zero-initialized cells. The pointer value itself
+still requires its ordinary source binding; an accepted destination cell does
+not authorize an unbound image pointer or change retain/release effects.
+
+An exact named-storage argument proof may follow a direct native call chain
+when every edge has a complete matching source ABI and forwards the same
+pointer parameter without arithmetic. The terminal callees must still use the
+parameter only for bounded full-width accesses. Ordinary loads and stores are
+accepted; a writable cache may additionally use an exact release store because
+the emitted dependency preserves that atomic ordering. Read-only class-reference
+cells still reject every store. Indirect or mismatched calls, other atomic
+orders, escapes, cycles, depth or evidence-budget exhaustion fail closed.
+
+A profiling-counter address may pass into an exact native source dependency
+when that dependency's complete typed HighIR uses the corresponding pointer
+parameter only as the exact address of bounded, unordered numeric loads and
+stores. The caller then passes the matching interior address in the shared
+reconstructed `__llvm_prf_cnts` section. Returning, storing, comparing,
+offsetting or forwarding the pointer, pointer-typed memory accesses, incomplete
+callee ABIs and accesses outside the rebuilt section all retain the unresolved
+image-address limitation.
+
+Complete immutable `S_CSTRING_LITERALS` sections can be rebuilt as one shared static byte array. Section-wide bounds, mapping and fixup checks authorize the full contents; source hints revalidate that exact extent. Interior addresses use the shared base plus their original offset, including associated-object keys. Embedded NUL bytes do not define separate object boundaries. This storage preserves aliases and pointer lifetime, so callers may retain it; the separate borrowed-byte contract still requires a nonretaining consumer. The one MiB extent limit bounds source growth, and each method inventories the helper that must be defined once when linking recovered sources.
+
+An exported, read-only Swift static `String` with an exact inline ASCII representation may expose its storage address. The binder checks the structured static-property mangling, all 16 bytes, the small-string tag and padding, unique symbol/export identity, and the absence of fixups. It rebuilds one aligned immutable cell shared by recovered callers and revalidates the source hint and image when emitting the helper. Other String storage forms remain unresolved.
+
+Runtime keys may be rebuilt as shared pointer identities only at an authenticated identity-only argument. Objective-C associated-object calls accept the existing immutable string-key proof and exact, uniquely named writable data symbols; `dispatch_get_specific` and `dispatch_queue_get_specific` accept uniquely named data symbols only when storage is read-only initially or after Mach-O relocations. The binding records the symbol name and exact runtime parameter, and publication revalidates the import provider, signature, parameter position, storage guarantee and symbol identity. Arithmetic, loads, returns, ambiguous symbols and unrelated calls retain the unresolved image-address diagnostic; writable dispatch-specific keys remain unresolved.
+
+KVO context tokens use a separate writable-identity proof. A uniquely named writable data symbol may be rebuilt only in the declared context argument of `addObserver:forKeyPath:options:context:`, or in a direct equality comparison with parameter 5 of the unique supported `observeValueForKeyPath:ofObject:change:context:` method at that IMP. The method encoding, assigned ABI, source parameters, SDK message declaration, exact symbol address and helper identity are revalidated. Loads, arithmetic, interior or ambiguous symbols, other parameters, other callbacks and ordinary address uses remain unresolved.
 
 The loader validates bounded, acyclic graphs of Darwin constant strings, integer objects, arrays and sorted dictionaries. Every container field and edge requires immutable mapped storage and unambiguous import or relocation evidence; unsupported encodings, cycles and incomplete graphs fail explicitly. Source bindings revalidate the graph and any incoming pointer slot. Generated helpers preserve integer bits, child order and shared object addresses, reusing existing string identities. Container slots initialize once with acquire/release publication; initialization calls only validated child helpers. Each helper carries its own child declarations so independently recovered methods can share one definition. Portable graph tests cover malformed inputs and proof budgets; native compiler fixtures compare contents, aliases, copy identity and concurrent initialization against the original methods.
 
@@ -492,7 +993,10 @@ requests per file, and public scenarios still submit and drain requests in order
 The same MDL authority also owns standalone driver descriptors: nonpaged pool
 provenance is recorded by pool allocation, building a descriptor retains the
 original pool VA, and descriptor release never frees or remaps its backing
-buffer. MDL chains and IRP association remain unmodeled.
+buffer. Guest `Next` links are authoritative within checked acyclic MDL chains;
+primary replacement and secondary append preserve IRP association. Terminal
+completion preflights dependencies before automatic unlock/free. Partial MDLs
+retain independent descriptor, root-lock and borrowed-alias ownership.
 
 `KernelRegistry` owns the explicitly configured session tree, per-handle access
 rights and lifetime, value serialization, and mutations. Scenario preflight and
@@ -526,29 +1030,158 @@ argument-dependent checks in the owning model.
 
 `KernelModelDeviceStack` keeps each device's driver owner, allocation, attachment neighbors, delete-pending state and internal references in one record. The guest `NextDevice` inventory and the host-owned attachment graph have different meanings. Namespace resolution retains the named lower device for `FILE_OBJECT` and reports, selects the current top for initial dispatch and READ/WRITE buffer flags, and captures a retained route. Detach/delete cannot expire devices still owned by a request or callback; the public `ReferenceCount` remains an open-handle count.
 
-`KernelModelIRPStack` owns bounded stack cursors, exact-target lower dispatch and completion unwinding over the original guest packet. Inline Copy/Skip/SetCompletion writes remain authoritative. Dispatch status, completion callback control and final `IoStatus` are distinct; pending propagation may occur after dispatch returns. `STATUS_MORE_PROCESSING_REQUIRED` retains packet/MDL/buffer storage until resumed terminal unwinding, including nested completion. `KernelGuestCall` carries a subsystem owner and local token so WDM and WDF nested continuations cannot collide; `DriverSession` retains CPU frames and inherited IRQL. One guest driver may attach above separately owned scenario PDOs; driver-allocated IRPs remain unsupported. WDF attachment/forwarding, live-stack attachment, intermediate detach, changed forwarded majors and targets outside the captured route remain unsupported. Each consumed lower stack location is cleared before the upper completion callback runs.
+`DriverUserMemory.h/.def` own explicit user-region and pointer-reference facts;
+`DriverScenario` validates the complete graph without interpreting private IOCTL
+layouts. `KernelModelUserMemory` allocates process-owned regions, initializes
+pointers and coordinates revocation with the existing physical-memory authority.
+WDM MDLs and WDF locked-memory objects alias that same backing.
+`KernelPhysicalMemory` owns each page's immutable cache attribute alongside its
+identity and pins. User MDL views are keyed by process and virtual address;
+only the active process is installed in the CPU adapter. The optional
+`GuestMemory::replaceAliases` operation preflights an entire removal/addition
+batch, then exchanges exact aliases without copying or retargeting physical
+pins. Ordinary validation failures preserve all old aliases; unexpected engine
+failures prevent resume. Canonical RAM and surviving derived aliases remain
+owned independently. Exact unmapping releases the virtual address and mapping
+budget for reuse. Process switching preflights physical backing and opaque
+object dependencies before changing aliases, original user permissions or the
+published process context. Final user-buffer
+observations use the separate `GuestMemory::snapshotBacking` boundary: it copies
+adapter-owned RAM only while stopped, includes terminal faults, and never clears
+fault state or invokes device callbacks. It does not authorize runtime access.
 
-`DriverPnp.h` and public `DeviceLifecycle.def` own lifecycle enums and exact-success contracts; `devicePnpFinalStatusError` is shared by scenario preflight and final guest completion. `KernelModelPnpDevices` owns stable PDO identity, the separate provider driver inventory and actual AddDevice observations. `KernelModelPnpRequests` ties lifecycle transactions and immutable device/file identity to the existing IRP record, without inventing an I/O rejection from stop, remove-pending or power state. Ordinary IRPs reach real guest dispatch; the driver decides which operations succeed, fail or wait. `KernelModelPnpCompletion` owns actual bus receipt/completion and virtual deadlines, reusing `KernelModelIRPStack` and owner-tagged continuations. Final upper completion commits lifecycle state; successful PnP requires completed provider forwarding, while an early Start/QueryStop/QueryRemove failure may retain null bus observations. Stop/CancelStop/SurpriseRemoval/CancelRemove/Remove require exactly STATUS_SUCCESS. QueryStop STATUS_RESOURCE_REQUIREMENTS_CHANGED (0x119) is rejected because resource requery is unmodeled. Provider retirement and guest detach/delete remain separate; leaked guest devices are never silently cleaned up. The eight common minors support resource-free and register-bank providers; PnP packets remain serial, and Remove requires closed files and drained earlier requests. This does not provide other PnP operations, general hardware/resources or KMDF PnP.
+`KernelModelIRPStack` owns bounded stack cursors, exact-target lower dispatch and completion unwinding over the original guest packet. Inline Copy/Skip/SetCompletion writes remain authoritative. Dispatch status, completion callback control and final `IoStatus` are distinct; pending propagation may occur after dispatch returns. `STATUS_MORE_PROCESSING_REQUIRED` retains packet/MDL/buffer storage until resumed terminal unwinding, including nested completion. `KernelGuestCall` carries a subsystem owner and local token so WDM and WDF nested continuations cannot collide; `DriverSession` retains CPU frames and inherited IRQL. One guest driver may attach above separately owned scenario PDOs; driver-allocated IRPs remain unsupported. A KMDF FDO may forward CREATE/CLEANUP/CLOSE over its direct retained PDO route through the same WDM stack and completion authority. Other WDF target forwarding, live-stack attachment, intermediate detach, changed forwarded majors and targets outside the captured route remain unsupported. Each consumed lower stack location is cleared before the upper completion callback runs.
+
+`DriverPnp.h` and public `DeviceLifecycle.def` own lifecycle enums and exact-success contracts; `devicePnpFinalStatusError` is shared by scenario preflight and final guest completion. `KernelModelPnpDevices` owns stable PDO identity, the separate provider driver inventory and actual AddDevice observations. `KernelModelPnpRequests` ties lifecycle transactions and immutable device/file identity to the existing IRP record, without inventing an I/O rejection from stop, remove-pending or power state. Ordinary IRPs reach real guest dispatch; the driver decides which operations succeed, fail or wait. `KernelModelPnpCompletion` owns actual bus receipt/completion and virtual deadlines, reusing `KernelModelIRPStack` and owner-tagged continuations. Final upper completion commits lifecycle state; successful PnP requires completed provider forwarding, while an early Start/QueryStop/QueryRemove failure may retain null bus observations. Stop/CancelStop/SurpriseRemoval/CancelRemove/Remove require exactly STATUS_SUCCESS. QueryStop STATUS_RESOURCE_REQUIREMENTS_CHANGED (0x119) is rejected because resource requery is unmodeled. Provider retirement and guest detach/delete remain separate; leaked guest devices are never silently cleaned up. The eight common minors support resource-free and register-bank providers; PnP packets remain serial, and Remove requires closed files and drained earlier requests. `KernelFramework` passes explicit `WdfDeviceInitSetDeviceType` and `WdfDeviceInitSetExclusive` values through the host bridge; the existing WDM device creator remains the only writer of `DEVICE_OBJECT.DeviceType` and the initial `DO_EXCLUSIVE` flag. `FILE_DEVICE_UNKNOWN` and nonexclusive remain the absent-value defaults. Open exclusivity is checked on the named object, not the upper dispatch target: an exclusive PnP FDO does not make its named PDO or entire stack exclusive. `KernelFramework` owns KMDF device D0 state, while each queue owns its power-management policy. A managed queue exposes `WdfIoQueuePnpHeld` until D0 entry finishes and during D0 exit; the request router and queue presenter share this gate. A leaving-D0 transition invokes a registered EvtIoStop for driver-owned managed-queue requests before D0Exit and ReleaseHardware. Completion or WdfRequestStopAcknowledge resolves each stop: true returns the request to the queue, while false retains driver ownership for EvtIoResume after the next D0Entry. With no EvtIoStop, or when that callback returns without action, the transition retains the PnP IRP and waits for each delivered request to complete; a request completion continuation resumes D0Exit only after the last owner retires. A wait without a completion producer stalls explicitly. Framework-queued requests stay parked across STOP and are presented when D0 resumes; the driver scenario retains their IRPs without treating them as a stalled callback. Configured register-bank assignments come from the existing WDM resource authority; `KernelFramework` copies their raw/translated descriptors into read-only guest regions for the WDF list handles, then retires those regions after ReleaseHardware. The final upper PnP completion checks mapping release, after framework callbacks have run. This does not provide other PnP operations, general hardware/resources or the broader KMDF PnP contract.
+
+`KernelFrameworkFiles` owns the WDF file handle as a child of its WDF device and indexes it by the WDM request host's existing `FILE_OBJECT`. The initializer copies file callback and context configuration before device creation; CREATE completion owns failed-open deletion, while CLEANUP and CLOSE callbacks run on their corresponding WDM IRPs. For a direct FDO/PDO route, filter-default or explicit file auto-forwarding copies the original stack location to the PDO and consumes a declared synchronous provider response; framework callbacks run before lower CLEANUP/CLOSE dispatch. WDM owns the original packet and final status. CLOSE schedules context cleanup/destroy before request finalization. Requests refer to the WDF handle only while the original file identity is live. The authoritative WDM file state still enforces open, cleanup and close ordering; no second file namespace is created.
 
 `KernelRemoveLocks` is the sole authority for remove-lock registration, exact DEVICE_OBJECT ownership, size, Tag multiplicities and the drain latch. It is separate from `DeviceLifecycle` transactions; neither PDO state nor an IRP-shaped Tag supplies ownership. `KernelModel` validates complete extension storage and opaque access, routes the four Ex exports, and registers typed resumable RemoveLock waits. The final release makes the waiter ready before callback return, using existing CPU continuations rather than a synthetic callback. The bounded AndWait context check requires an associated REMOVE route and actual provider receipt, not lower completion or a live Tag packet; it is not full Driver Verifier enforcement. REMOVE admission keeps the closed-file/earlier-request limits while allowing callbacks to release locks. The session retains the REMOVE route through remaining frames and validates final teardown before releasing ownership. Acquisition/wait storage checks occur before delete-pending mutation; actual extension retirement unregisters the lock. Draining does not consume work-item or route references.
 
-`DriverResources.h` / `DriverResources.def` and `DriverInterrupts.h` / `DriverInterrupts.def` define fixed `register_bank` memory and interrupt assignments. `DriverScenario` owns JSON/native preflight; `DriverResult` records initial configuration without duplicating observed bank state. `KernelResources` alone owns packed raw/translated assignments, resource epochs, physical presence and power. `KernelMMIO` owns persistent register values and independent mapping aliases; `KernelInterrupts` owns opaque connections, locks and explicit pulses. `KernelModelResources` builds read-only START packets and integrates actual provider completion: successful lower START publishes its epoch before upper callbacks, and actual provider device-SET updates D0/D3 accessibility. Failed START or STOP/REMOVE teardown is checked before terminal IRP completion, after upper callbacks can unmap and disconnect, without implicit cleanup. Surprise removal immediately denies hardware access. `GuestMemory` and `UnicornBackend` validate whole CPU/API transactions before MMIO effects and preserve the first fault latch. Fixed-assignment restart preserves bank values. Arbitrary RAM, resource rebalance, ports, shared/level/message interrupts and other DMA interfaces remain unsupported.
+`DriverResources.h` / `DriverResources.def` and `DriverInterrupts.h` / `DriverInterrupts.def` define fixed `register_bank` memory and interrupt assignments. `DriverScenario` owns JSON/native preflight; `DriverResult` records initial configuration without duplicating observed bank state. `KernelResources` alone owns packed raw/translated assignments, resource epochs, physical presence and power. `KernelMMIO` owns persistent register values and independent mapping aliases; `KernelInterrupts` owns assigned interrupt identities, epoch-bound captured
+connections, shared lines and nonrecursive interrupt locks.
+`KernelModelResources` builds the raw/translated guest resource descriptors
+from the same assignment. Scenario facts
+explicitly distinguish latched pulses from level-source assert/deassert events
+and declare each level line's positive sampling interval. Shared latched
+samples visit every captured ISR; level samples stop when claimed but retain
+each source's assertion until explicit deassertion. All same-deadline source
+changes precede sampling, and a line has one future sampling deadline. Neither
+ISR return nor register access fabricates acknowledgement. Pure batch preflight
+checks connection/epoch/power validity, callback capacity and delivery budget
+before publication. `KernelModelInterrupts` decodes legacy and selected Ex
+ABIs and delegates lock-storage ownership to the existing nonpaged allocation
+model. ISR/synchronization callbacks execute at synchronization IRQL, while
+scheduler priority remains the assigned hardware DIRQL. Caller-provided locks
+may span connections with matching synchronization IRQL; executive lock APIs
+cannot bypass their ownership. `KernelGuestCall` preserves owner/token and
+caller CPU/IRQL state. `DriverResult.Interrupts` reports actual per-handler and
+per-sample observations, with source transitions separate from ISR returns.
+Unavailable or stale captured sources fail without rebinding. These explicit
+synthetic sources do not provide arbitrary controller state or
+instruction-level preemption; explicit message resources and passive ISR
+delivery use the same ownership model described below.
 
-`KernelInterrupts` binds each explicit pulse to the connection token and resource epoch present at successful source request submission. `KernelModelInterruptEvents` preflights all same-time producer capacities before clock advancement or observation mutation, including exact framework cancellation callback counts; timers, provider completion and cancellation cannot silently consume the space reserved for an ISR. Actual provider hardware publication precedes pulse eligibility, and admitted interrupts precede DPCs and passive callbacks. The schedule remains cooperative: virtual time advances only while idle, and zero delay does not mean instruction preemption. `KernelModelInterrupts` decodes the legacy eleven-argument ABI and selected Ex fields, while `KernelGuestCall` gives interrupt callbacks a separate owner/token. ISR and synchronization callbacks hold the same nonrecursive lock at assigned DIRQL; nested CPU frames preserve caller IRQL/CR8, and BOOLEAN uses only AL. Manual locks require the same execution identity and saved IRQL, and a callback cannot return with a leaked lock. Armed pulses outlive their source IRP; disconnected, unavailable-epoch or D3 delivery records an explicit undelivered reason and stops, with no rebind or invented enable/ack register behavior. `DriverResult.Interrupts` contains independent observations, never synthetic IRPs or NTSTATUS completions.
+`KernelModelInterruptEvents` preflights same-time producer capacity before
+clock advancement or observation changes, including exact framework
+cancellation callback counts. Provider hardware publication precedes interrupt
+eligibility; admitted ISRs precede DPCs and passive callbacks. Virtual time
+advances only while idle, and zero delay does not imply instruction preemption.
+Armed events outlive their source IRP. BOOLEAN uses only AL; manual locks retain
+the original execution and saved IRQL, and callbacks cannot return with leaked
+locks. Interrupt reports never fabricate an IRP or an NTSTATUS completion.
 
 `DriverDMA.h` / `DriverDMA.def` own explicit per-PDO capabilities and independent external transactions. `KernelPhysicalMemory` registers exact live RAM allocations, assigns shared page identities and pins byte ranges; MDLs are views of that authority, not copied buffers. `GuestMemory` / `UnicornBackend` provide whole-span backing access that bypasses CPU permissions without changing them, rejects MMIO/running/reentrant or faulted access, and latches unexpected backend failures. `KernelDMA` owns independent logical domains, adapter-bound method identities, common/SG mappings, map-register admission and callback references; `KernelDMAEvents` resolves captured PDO epochs at actual delivery. `KernelModelPhysicalMemory`, `KernelModelDMA` and `KernelModelDMATransfers` bridge original allocation/MDL ownership and real indirect guest callbacks. Available SG resources permit inline delivery, while queued callbacks reserve identity and capacity until FIFO promotion. Mapping and callback lifetimes are separate: Put can release data/descriptor pins before callback return, and callback retention does not keep completed IRPs alive. `DmaWritable` records lock intent independently of CPU mapping permissions. Same-time provider publication precedes DMA RAM effects and then interrupt eligibility. Resource epochs/presence/power remain solely in `KernelResources`; DMA does not infer vendor registers, assert an IRQ, complete an IRP or own a second lifecycle. Logical addresses are never recycled, and transaction validation failures retain observations without changing RAM. The modeled interface includes coherent common-buffer, version-one SG and translated bus-master channel DMA over bounded model RAM; general hardware, subordinate controllers and other DMA interfaces remain unsupported.
 
 `KernelDMAChannels` extends that same domain allocator with channel reservations and a typed SG/channel FIFO. It keeps callback state, retained map registers and each operation's aggregate mapping separate. A channel operation reserves its logical aperture once and grows one physical pin in place, so interleaved MapTransfer calls do not copy RAM, double-charge registers or overlap another mapping. Pure transfer, return, flush and release plans validate identities and complete promotion batches before publication. `KernelModelDMAChannels` decodes the indirect ABI and actual CurrentIrp registration snapshot, and shares the MDL view helper with SG. The scheduler's distinct `DMAAdapterControl` kind shares DMA ordering, capacity and inline-parent preservation; only the DMA model interprets the callback's low 32-bit return action. A queued captured IRP is protected before terminal stack unwind, while callback entry releases that input hold so completion from its body is legal. Aggregate flush retires mapped bytes; exact FreeMapRegisters retires the independent reservation. `KeFlushIoBuffers` has a coherent-cache contract and does not discharge either obligation.
 
-`DriverPower.def` declares power type/action spellings and request origins, while `DriverPnp.h` shares one `DriverPowerOperation` between scenario packets and per-PDO response FIFOs. `KernelModelPowerRequests` owns explicit packet facts, captured routes and per-DEVICE_OBJECT notification state; `PoSetPowerState` returns that object's previous explicit notification value without changing the lifecycle transaction. `KernelModelPowerCompletion` owns real `PoRequestPowerIrp` children, each with a separate IRP, result row and response index. It consumes only the matching PDO FIFO head, never infers a parent from callback context or borrows a parent's result. Nested dispatch and terminal five-argument void callbacks reuse owner-tagged continuations, retained routes and separate callback stacks; the callback's status snapshot survives waits until callback return. Inline child completion may precede the API's STATUS_PENDING return, and a system S0 parent may complete before its device D0 child. Final upper completion controls observed lifecycle state; bus observations remain independent. This bounded profile requires DO_POWER_PAGABLE without DO_POWER_INRUSH and PASSIVE_LEVEL dispatch, supports Query/Set for D0/D3 and Working/Sleeping3, and keeps the explicit 32-bit SystemContext opaque. It does not provide general power policy, WAIT_WAKE, shutdown/hibernate, general hardware, KMDF PnP or concurrent public scenario submission.
+`DriverPower.def` declares power type/action spellings and request origins, while `DriverPnp.h` shares one `DriverPowerOperation` between scenario packets and per-PDO response FIFOs. `KernelModelPowerRequests` owns explicit packet facts, captured routes and per-DEVICE_OBJECT notification state; `PoSetPowerState` returns that object's previous explicit notification value without changing the lifecycle transaction. `KernelModelPowerCompletion` owns real `PoRequestPowerIrp` children, each with a separate IRP, result row and response index. It consumes only the matching PDO FIFO head, never infers a parent from callback context or borrows a parent's result. Nested dispatch and terminal five-argument void callbacks reuse owner-tagged continuations, retained routes and separate callback stacks; the callback's status snapshot survives waits until callback return. Inline child completion may precede the API's STATUS_PENDING return, and a system S0 parent may complete before its device D0 child. Final upper completion controls observed lifecycle state; bus observations remain independent. This bounded profile requires DO_POWER_PAGABLE without DO_POWER_INRUSH and PASSIVE_LEVEL dispatch, supports Query/Set for D0/D3 and Working/Sleeping3, and keeps the explicit 32-bit SystemContext opaque. It does not provide general power policy, WAIT_WAKE, shutdown/hibernate, general hardware, idle/wake policy or concurrent public scenario submission.
 
-`KernelFramework` owns KMDF 1.33 bindings, table identity, WDF objects/contexts, control-device initializers, manual, sequential and finite or unlimited parallel default and nondefault queues, and request handles. Its typed device and request hosts delegate WDM namespace, storage, packet state, MDL mapping and completion validation to `KernelModel`; neither side invents duplicate devices or IRPs. Queue routing carries a framework-owned dispatch status separately from the void guest callback return. Caller-context callbacks can obtain original neither-I/O user VAs; the request host checks page rights and locks the same physical bytes under a request-owned WDFMEMORY system alias. Completion continuations run cleanup while buffers remain valid, complete the original IRP, release WDFMEMORY pins and aliases, then destroy children when references permit. External references retain only WDF context. Pending-request deletion is rejected before ancestor mutation; automatic cancellation/draining during deletion remains unsupported. `DriverSession` executes nested callbacks with shared budgets and can batch pending parallel-queue requests before draining work items. Sequential automatic queues have one presentation slot and accept incoming requests into a FIFO wait list while it is occupied; finite parallel queues also hold excess requests until a slot opens. Manual default queues retain incoming requests without a delivery callback. Queue Stop/Start toggles delivery without refusing new requests; GetState counts framework-queued and driver-owned requests, and a stop-completion callback waits for the delivered count to reach zero without waiting for queued requests. Forwarding to another queue transfers ownership and may present its own callback; manual and sequential queues can explicitly return pending requests to the driver. Automatic delivery without a matching callback completes the request after a slot opens. `DriverImage` validates CFG metadata; `GuardControlFlow` owns declared image/API targets, and the CPU adapter preserves check/dispatch calling state. PnP devices, general queue power transitions, class extensions and UMDF remain unsupported.
+`KernelFramework` owns KMDF 1.33 bindings, table identity, WDF objects/contexts, control-device initializers, manual, sequential and finite or unlimited parallel default and nondefault queues, and request handles. Its typed device and request hosts delegate WDM namespace, storage, packet state, MDL mapping and completion validation to `KernelModel`; neither side invents duplicate devices or IRPs. Queue routing carries a framework-owned dispatch status separately from the void guest callback return. Caller-context callbacks can obtain original neither-I/O user VAs; the request host checks page rights and locks the same physical bytes under a request-owned WDFMEMORY system alias. Buffered and direct request memory handles borrow the existing request buffers without adding MDL pins. Completion continuations run cleanup while buffers remain valid, complete the original IRP, release pinned user pages and invalidate request memory aliases, then destroy children when references permit. External references retain only WDF context. Pending-request deletion is rejected before ancestor mutation; automatic cancellation/draining during deletion remains unsupported. `DriverSession` executes nested callbacks with shared budgets and can batch pending parallel-queue requests before draining work items. Sequential automatic queues have one presentation slot and accept incoming requests into a FIFO wait list while it is occupied; finite parallel queues also hold excess requests until a slot opens. Manual default queues retain incoming requests without a delivery callback. Queue Stop/Start toggles delivery without refusing new requests; GetState counts framework-queued and driver-owned requests, and a stop-completion callback waits for the delivered count to reach zero without waiting for queued requests. Forwarding to another queue transfers ownership and may present its own callback; manual and sequential queues can explicitly return pending requests to the driver. Automatic delivery without a matching callback completes the request after a slot opens. `DriverImage` validates CFG metadata; `GuardControlFlow` owns declared image/API targets, and the CPU adapter preserves check/dispatch calling state. Direct FDO/PDO pairs for resource-free and configured register-bank devices form the supported PnP subset: `KernelFramework` owns the AddDevice initializer, WDF object graph, PrepareHardware/ReleaseHardware, D0Entry/D0Exit and QueryStop/QueryRemove/SurpriseRemoval callbacks, bounded resource-list handles and failed-Add or Remove cleanup callbacks, while `KernelModelPnpDevices` owns PDO identity and provider retirement. `KernelModelIRPStack` defers a provider-completed PnP IRP until the ordered framework guest callbacks return; `KernelModelFramework` resumes the same packet and applies failed hardware or D0 callback status. `DriverSession` drains callbacks before finalizing those phases. Query callbacks
+run before lower forwarding and can reject the original packet without any bus
+observation or power transition; surprise notification is void and also precedes
+the bus. File-send timeouts use the existing virtual clock for both relative
+and absolute deadlines, with lower completion winning ties and immediate
+completion. The function-table API names come from `KernelFrameworkAPIs.def`; WDM call-site names come from `KernelAPIs.def`. Other resource types, broader queue power policy, class extensions and UMDF remain unsupported.
 
 Scenario cancellation is a per-transfer virtual deadline, owned by the IRP record in `KernelModel` and configured by `cancel_after_100ns`; public scenarios remain serial. The model records the actual absolute `cancel_requested_at_100ns` independently of whether a callback is registered. `KernelModel` applies zero-delay cancellation after framework routing and before guest I/O dispatch, preserves completion-first outcomes, and includes positive cancellation deadlines in idle time advancement. `KernelFramework` owns mark/unmark state, queued versus delivered cancellation and an internal reference through callback return. A queued callback cannot authorize completion; after delivery, a worker may coordinate completion while the cancellation callback waits. WDF lifetime retention never revalidates completed IRP storage. The scheduler carries cancellation callbacks separately from work items, preserving callback kind through suspend/resume and enforcing shared capacity and dispatch budgets. This bounded control-device contract does not add a WDM cancel routine or a general queue scheduler.
 
 Legacy `WdfRequestMarkCancelable` on an already canceled IRP uses a nested `GuestCall` in the current API continuation. Its cancel, cleanup and final destroy callbacks may wait; the caller resumes only after the continuation finishes. Cancellation after registration still uses the scheduler. `KernelFramework` owns WDF handle identity and the defined neutral getter results during/after completion. Its request-accessor host delegates the original IRP, 64-bit Information and MDL identity to `KernelModel`, which also rejects guest WDM completion of a framework-owned IRP. A single request-owned SystemBuffer MDL is allocated lazily; direct buffers retain their existing descriptor, and retrieval alone does not map it. Completion retires both descriptor kinds with the IRP/buffers, independently of retained WDF context references.
 
-`KernelGuestException` is a typed API outcome carrying a 32-bit status, separate from model errors and backend faults. `DriverImage` retains the loader's existing preferred-base exception metadata. `KernelSEH` prepares a pure, bounded x64 version-one C catch-all transfer over that metadata, with checked address translation and stack reads. It restores supported nonvolatile GPR saves across ordinary helper frames and selects the actual guest handler; it rejects encountered filters/finally, GS/C++ personalities, chains, incomplete records, prologues and XMM restoration. `DriverSession` commits the validated register plan only at a healthy API stop, keeps API trace results null, and resumes the handler within the same execution. It never clears the backend's retained fault or unwinds into another callback stack. This boundary supports ExRaiseStatus/ExRaiseAccessViolation/ExRaiseDatatypeMisalignment; user probing, locked user buffers and CPU-fault recovery remain separate work.
+`KernelGuestException` is a typed API outcome carrying a 32-bit status,
+separate from model errors and backend faults. `DriverImage` retains the
+loader's preferred-base exception metadata. `KernelSEH` owns a bounded pure
+search/unwind state machine over x64 version-one C scopes: it plans real guest
+filter callbacks, selects the handler, then invokes only the exited finally
+scopes. `KernelSEHEpilogue` recognizes canonical V1 epilogues from live executable
+bytes before applying any stack read, tracking biased return PCs separately
+from fault PCs. Partial prologues, validated chains and full nonvolatile GPR/XMM
+restoration share the loader's unwind authority. `DriverSession`
+executes filters/finally on a private child stack with stable guest exception
+records and a saved full CPU context; callbacks inherit the parent's thread,
+process identity and existing user-access authority. Creating a child does not
+turn an unrelated worker into a requestor-context execution. A negative filter
+may resume an admitted user read/write CPU fault using validated integer/control
+context changes. The adapter's narrow recoverable-fault channel never clears an
+unrelated retained terminal fault. Handler execution remains on the original
+stack. Nested filter dispatch joins explicit logical stack segments and links
+exception records; collided finally dispatch advances past entered cleanups.
+Only abandoned exception callback frames are retired. API-raise continuation,
+C++ personalities and incomplete metadata remain explicit failures.
+`KernelSEHGS` validates `__GSHandlerCheck_SEH` and standalone
+`__GSHandlerCheck` using loader-decoded offsets
+and live image/stack storage. GS checks are independent of wrapped C-handler
+flags. The unwind plan retains one check before each frame’s cleanup group,
+including frames with no finally, so search-time validation cannot hide later
+cookie corruption. Dynamic slot alignment does not change the frame pointer
+used to encode the cookie. Standalone GS owns only its cookie payload and never
+invents C language scopes. Loader classification requires an exact symbol or
+import identity for that standalone personality; a cookie-shaped payload or
+anonymous instruction sequence cannot establish it.
+
+`KernelFrameworkPower` owns the ordered self-managed I/O, hardware and D0
+callback plan. `KernelModelPowerCompletion` creates independent framework power
+policy IRPs using the same explicit response FIFO and completion authority as
+WDM children. Framework ownership, parent continuation and report origin are
+explicit facts; no callback address or diagnostic string selects behavior.
+
+`KernelPhysicalMemory` also owns independent MDL page allocations and exact
+pinned residency. `KernelModelMDL` centralizes their allocation, partial views,
+release dependencies and system-view protection. Actual backend page rights
+remain the authority for access checks; aliases can reuse retired VA ranges
+without creating a second permission flag. Pure `canAccess` queries may run
+inside CPU hooks without entering the execution engine.
+
+`KernelFrameworkInterrupts` owns WDF interrupt objects, their typed continuations
+and power callback plan. `KernelModelFrameworkInterrupts` connects the typed
+host to `KernelInterrupts`; resource assignment, epoch, lock, IRQL and ISR
+ownership are never copied into a second interrupt model. An explicit service
+argument list supplies the WDF ISR signature while retaining the same WDM
+connection. Per-message connections preserve resource order, and excess WDF
+objects stay unassigned. Enable/disable callbacks use interrupt execution tokens
+mapped to framework continuations, preserving complete NTSTATUS values rather
+than interpreting them as ISR BOOLEAN results. Internal passive locks retain
+waiting executions and prevent disconnection while owned.
+
+`KernelScheduler` keeps interrupt DPCs, interrupt work items and deferred
+framework continuations as distinct callback kinds. They reuse the DPC/worker
+FIFOs, budgets and suspended-execution ownership. Interrupt queueing coalesces
+only while queued; framework passive continuations cannot duplicate an
+outstanding token. `DriverSession` preserves wait state before nested, detached
+and scheduled continuation entry. Power-down disconnects interrupt sources and
+waits for deferred callback retirement before D0Exit and hardware release;
+`KernelModel` resumes this drain after releasing scheduler ownership.
+DISPATCH_LEVEL request completion defers real cleanup and subsequent delivery
+to a retained PASSIVE_LEVEL framework continuation, without broadly relaxing
+other WDF API restrictions. External WDF lock objects, automatic parent
+serialization, wake interrupts, retained inactive connections and general
+idle/wake policy remain outside the profile.
+
+Message interrupt descriptors retain per-message assignment facts while
+`KernelInterrupts` owns the captured PDO-wide registration and opaque guest
+message table. Passive synchronization uses owned event holds and preserves
+independent suspended execution frames. Arrival observation precedes blocked
+admission, so a retained interrupt cannot prevent timer or DPC progress.
 
 ## Exception-rewrite boundaries
 
@@ -791,18 +1424,46 @@ Runtime call catalogs may declare `ReturnedArgument` only for exact imported rou
 The compiler-derived framework and receiver catalogs share one provider list: Foundation, CoreData, CoreLocation, CoreSpotlight, QuartzCore, UniformTypeIdentifiers and UserNotifications. QuartzCore uses its public `CoreAnimation.h` umbrella; compatibility imports for other frameworks do not contribute owned declarations. Both generators retain the same four preprocessing profiles, exact framework identities and negative declaration evidence.
 
 Object result types extend the same bounded receiver proof through agreed method declarations. Named object results and compiler-declared related result types contribute class facts; bare id alone does not. Field loads and message results share an eight-step budget, and source validation rechecks every step against the current declarations. Exact imported allocation helpers use the corresponding message result contracts; calls, custom overrides and ownership effects remain intact. Conflicting result classes or incomplete receiver hierarchies cancel propagation.
+For an exact WMF method whose runtime encoding erases a named argument class,
+the source declaration may seed that class only after the method identity and
+ABI are rechecked against the image. `saveGroupForTopRead:...` additionally
+requires the embedded `WMFFeedTopReadResponse.articlePreviews` declaration to
+agree on `NSArray`; its subsequent messages remain dynamically dispatched.
+The exact WMF content-source declarations that take a named
+`NSManagedObjectContext *` can similarly seed the corresponding parameter
+only when the embedded method, source ABI and imported Core Data declaration
+agree. A `performBlock:` stack literal then uses Core Data's independent
+copied-block contract; this parameter fact does not authorize other selectors.
 
-Format-call bindings retain their language contract. NSString attributes and the documented predicate entry points are checked against SDK declarations and all runtime alternatives. Predicate substitution excludes single- and double-quoted literals and treats `%K` as an object argument for a property name. The same promoted scalar and Darwin variadic ABI rules assign the actual arguments. Unsupported escapes and formatting modifiers fail explicitly. Source validation repeats the language, constant-object identity and argument proof; generated code still calls the original framework parser.
+Format-call bindings retain their language contract. NSString attributes and the documented predicate entry points are checked against SDK declarations and all runtime alternatives. Predicate substitution excludes single- and double-quoted literals and treats `%K` as an object argument for a property name. Exact Darwin `snprintf` imports use their public fixed prototype only when the format is a uniquely mapped, immutable, NUL-terminated C string with no fixups. Its `printf` grammar admits the supported promoted scalar conversions and rejects Objective-C conversions, `%n`, long double and unsupported wide-string forms. The same promoted scalar and Darwin variadic ABI rules assign the actual arguments. Unsupported escapes and formatting modifiers fail explicitly. Source validation repeats the language, constant identity and argument proof; generated code still calls the original framework or C runtime parser.
+
+An exact selector-specific Objective-C stub may also bind a dynamic format object when the recovered call ends at the declaration's fixed prefix, or when every variadic value has a complete source pointer type or a complete definition chain ending in an authenticated pointer-returning Objective-C runtime call. An empty tail cannot depend on the format contents; a proven pointer-only tail keeps the same promoted pointer carriers for every runtime format. Generated code passes the original format object and values to the framework parser without inferring conversions. Tails outside the bounded pointer and integer contracts, non-exact stubs, declaration conflicts and physical ABI mismatches remain unresolved.
 
 Compiler-declared fixed C imports and Objective-C messages share the same source ABI assignment for supported records. Only explicitly declared parameters consume carriers; the Objective-C layer supplies its hidden receiver and selector parameters. Exact SDK export and signature agreement remains required. Scalar-only callbacks and variadic arguments retain their existing restrictions.
 
-Source function declarations retain their calling convention as part of signature identity. The shared ABI layer supports bounded Swift calls with 1-, 2-, 4-, or 8-byte integer parameters and pointer parameters, assigning the integer register bank before entry-SP-relative stack carriers. Each narrow carrier records its exact extension rule; results remain limited to two integer or pointer words. HighC preserves `swiftcall` in declarations and definitions. Compiler-observed Foundation value bridges may also declare one `swift_indirect_result` pointer and one `swift_context` pointer: arm64 uses x8/x20 and x86_64 uses RAX/R13, and neither consumes the ordinary integer-argument bank. HighC preserves both parameter attributes. Public Foundation metadata imports require agreement between compiler symbol graphs, actual metadata-query IR and exact SDK exports across ARM64/x86-64 macOS and Mac Catalyst. A mangled suffix alone supplies no ABI. Generic or undeclared hidden arguments, Swift callback types and unsupported carriers remain rejected. Mac Catalyst declarations do not establish iOS-device execution coverage.
+Source function declarations retain their calling convention as part of signature identity. The shared ABI layer supports bounded Swift calls with 1-, 2-, 4-, or 8-byte integer parameters and pointer parameters, assigning the integer register bank before entry-SP-relative stack carriers. Each narrow carrier records its exact extension rule; results support up to two integer or pointer words, plus exactly four full words returned in x0–x3 on arm64. HighC preserves `swiftcall` in declarations and definitions. On arm64, Swift float and double parameters and results use the independent FP register bank; a four-double homogeneous record uses four successive FP lanes. The exact compiler-observed CGRect constructor places that record in v0–v3 with its class receiver in `swiftself`. An exact class `init(coder:)` constructor carries `NSCoder` in x0, the class receiver in `swiftself`, and a pointer result in x0 (optionally null when failable); only the complete initializing-constructor mangled type authorizes this binding. FP stack arguments, other Swift record shapes and x86_64 Swift FP signatures remain unsupported. Compiler-observed Foundation value bridges may also declare one `swift_indirect_result` pointer and one `swift_context` pointer: arm64 uses x8/x20 and x86_64 uses RAX/R13, and neither consumes the ordinary integer-argument bank. HighC preserves both parameter attributes. Public Foundation metadata imports require agreement between compiler symbol graphs, actual metadata-query IR and exact SDK exports across ARM64/x86-64 macOS and Mac Catalyst. A mangled suffix alone supplies no ABI. Generic or undeclared hidden arguments, Swift callback types and unsupported carriers remain rejected. Mac Catalyst declarations do not establish iOS-device execution coverage.
+
+Swift 6.1.2 arm64 code generation also places a direct class getter's `Optional<any P>` result in an indirect output pointer at x8 and its receiver in `swiftself` at x20. Only a complete getter/class/optional/single-protocol mangled tree supplies this declaration; the caller and any shared implementation still need complete lifting, call binding and source closure. Protocol compositions and class-constrained existentials have no declaration from this rule.
+
+The exact strongly imported UIKit `UIImage(imageLiteralResourceName:)`
+initializer accepts two Swift `String` words. When they encode a validated
+immortal UTF-8 literal, source projection rebuilds its immutable bytes and
+preserves the original count, flags, storage bias and tag. Other Swift calls
+do not inherit that literal-input contract from their argument widths alone.
 
 The operation-scoped code-owner index also records exact primary-to-fragment relationships from runtime metadata. Indexed and live queries share one relationship visitor, preserve raw primary entries and reject orphan or non-primary parent references. Jump-table target validation, bound proofs and temporary group analyses use the same immutable index and lookup-cost calculation. Foreign indexes fall back to live metadata, and exhausted budgets still reject incomplete proofs.
 
 The source ABI explicitly records 32-bit sign or zero extension for narrow integer register parameters on Darwin ARM64 and x86_64. HighIR preserves that carrier through saved copies while retaining the original source parameter type. Reads beyond 32 bits, stack padding and registers clobbered by calls remain unknown. This follows Apple’s [ARM64](https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms) and [Intel](https://developer.apple.com/documentation/xcode/writing-64-bit-intel-code-for-apple-platforms) calling conventions; observed native low-byte values alone provide no extension evidence.
 
+At a bound Darwin ARM64 call, a 1- or 2-byte integer register argument reads the complete 32-bit `Wn` carrier before SSA and then extracts only its declared low bytes. This keeps converging `Wn` definitions in one SSA web without claiming that the call observes extra source bytes. x86-64 keeps its separate partial-register rules.
+
+Before an AAPCS64 call clobbers a full `Q8`–`Q15` carrier, MedIR materializes the low `D` view established by the latest full-vector write. The call preserves that exact 64-bit value while the upper half remains unknown. HighIR keeps ARM `FMINNM`/`FMAXNM` as IEEE number-selecting operations, and HighC emits the matching typed compiler builtins.
+
 Mach-O loading preserves the segment’s explicit read-only-after-fixups guarantee without changing its initial permissions. Source byte and pointer readers share unique, file-backed storage checks; section names alone provide no immutability proof. An ordinary full-width load may bind a resolved local data pointer to an independently validated constant-string object. The binding retains its originating slot for revalidation, and aliases share the target object’s generated identity. Mutable storage, conflicting fixups, partial or ordered loads, and the slot’s own address remain unsupported.
+
+A bounded indexed load may rebuild an immutable Objective-C object-pointer table when its range proof covers a complete prefix, every eight-byte slot is either an authenticated relocation to a rebuildable constant object or exact relocation-free null, and every occurrence uses the same table contract. The generated table initializes each slot from the shared rebuilt object identity and publishes its address only to those contextual loads. An integer machine carrier is accepted only when direct local copies lead to a declared pointer parameter or pointer return and every use in that chain has pointer semantics. Publication revalidates the bounds, slot relocations, target objects, helper metadata and non-escaping use; arbitrary pointers, partial slots, arithmetic consumers, writable storage and unbounded indexes remain unresolved.
+
+For an immutable scalar byte table, a small fixed addition or subtraction in the address expression may be folded into the table base before the indexed range proof. The emitted offset then contains only the bounded index and stride. Publication rejects any later fixed-bias edit to that offset, so the helper's base and byte count continue to cover every load exactly.
 
 Jump-table recovery emits transfers to ordinary successor blocks instead of rebuilding their statements through a separate path. Each block keeps one lowering owner, including shared cases, default targets and loop entries. Dispatch-edge PHI copies execute before the corresponding transfer, with parallel snapshots preserved; incomplete edge bindings remain explicit failures.
 
@@ -821,3 +1482,150 @@ MedIR source parameter validation traces demanded bytes backward from declared r
 Conditional structuring keeps fallthrough PHI copies on their original edge. Their provenance address cannot become a newly invented continuation target; when moving a run would require that target, the shared continuation remains in place. An unconditional synthetic loop also shares its first native instruction’s continuation when there are no operations before that exact header; conditional tests and preceding effects prevent this equivalence.
 
 Native source helper inference proves a complete integer result on every machine return path with a bounded CFG analysis. Predecessor facts meet across shared exits; entry paths prevent unseeded loops from proving themselves. Calls and partial writes invalidate the carrier until another complete computation. Malformed graphs, input-only returns and x86-64 epilogue restores remain rejected. This produces only a candidate source signature: the second pipeline run must still validate the body and its dependency closure, without changing the rewriting ABI.
+
+Bound MedIR calls carry one operand per physical ABI component, plus their
+call target. Native source inference and call-ABI recovery use
+`sourceABIParameters` to validate that count, as call lowering does. A record's
+logical parameter count cannot validate its split register operands; accepting
+a missing component or replacing renamed operands with a register scan loses
+source semantics.
+
+Immutable relocated C-string pointer slots reuse the complete literal pool.
+Their slot-specific source helpers revalidate the relocation and current
+interior offset, then return that offset within the same permanent pool used
+by direct pointers. Mutable, unresolved, partially mapped or conflicting slots
+remain unsupported; the loaded value does not authorize use of the slot's
+image address.
+
+Native context inputs still require observable complete entry bytes and an
+independent full-width machine read. A helper that writes preserved registers
+must additionally prove that every exit restores the incoming preserved,
+stack and link state; exact private spills may satisfy this proof. If the
+candidate context register is itself overwritten, its complete entry identity
+must first reach a non-preservation use such as a bound call or an address
+calculation. COPY operations, returns, prologue spills into the private frame
+and their matching restores cannot invent a source parameter. The same
+state analysis handles framed leaf bodies and source-bound runtime, native or
+Objective-C dispatch calls. Its one frame-borrow exception is the exact
+two-word `objc_super` input to a bound `objc_msgSendSuper2` call; the runtime
+contract is synchronous and read-only, and both words must lie in the allocated
+private frame. Missing call-site evidence, other frame escapes, partial
+restoration and hidden preserved-register outputs cannot supply this proof.
+After re-lifting, void and scalar helpers may shed auxiliary parameters used
+only by eliminated private saves. An exhaustive HighIR use scan must preserve
+all observable inputs and reject unresolved bodies or incomplete scalar returns;
+the refined candidate then passes through lifting and source validation again.
+Entry-byte demand keeps result proof separate from effect proof. An undefined
+or partially defined return carrier may block a source result without hiding an
+independent context register consumed by a load, store or bound call. Narrow
+unsigned AArch64 extracts retain their actual input-byte boundary so unrelated
+upper register bytes do not enter either proof.
+
+A single straight-line ARM64 helper may retain an unmodified, fully observed entry context when at most two Swift runtime imports are independently revalidated and exactly the final call terminates. A returning prefix uses ordinary call-clobber rules. The same byte-identity and frame-escape proof checks every preceding operation and requires each outgoing scalar stack argument to occupy completely written private bytes. Branches, returns, exceptional edges and unknown calls remain unsupported. Effects-only entry-byte demand accepts independently proven terminal graphs; the default dead-input proof still requires an observed return. This produces a candidate signature whose source body and dependency closure must still validate.
+
+A Swift lazy-global addressor can supply a call-only ABI to native state restoration only through an independently rebuilt contract from the current image and pipeline result. The shared once validator rechecks its exact body, storage/initializer identities and canonical callback ABI, and proves that the current initializer ignores its context. Existing MedIR or persisted option hints do not authenticate this contract. Native inference matches the exact direct target and zero-argument pointer ABI, then retains the complete Low/Med call-occurrence and byte/frame restoration proof. Calls keep their ordinary clobbers and initialization effects; the contract neither declares a read-only or terminating call nor closes any source body or dependency.
+
+Ordinary ARM64 calls may consume an aligned eight-byte scalar stack argument only when every byte was written into the allocated private frame in the same LowIR block and no byte derives from a frame address. The call ABI and every native occurrence remain independently validated. AAPCS64 permits the callee to overwrite its incoming argument area, so the proof invalidates the entire outgoing argument extent, including padding, after the call before checking later arguments or restoring saved registers. Reusing that slot requires a new complete write. Cross-block definitions, partial words, tail calls and x64 remain unsupported by this extension; all ordinary clobber and exit-restoration checks still apply.
+
+For linked Mach-O ARM64 code, LowIR may follow an original unconditional B into a shared epilogue whose complete range precedes the current function entry. The bounded shape contains only full-width LDP restores of x19–x30 from SP, exactly one aligned positive stack release, and a final branch to a registered executable import. Unique immutable bytes, absence of fixups, and absence of interior function entries are checked for the exact edge. Both CFG entry gates use that edge evidence; BL, conditional branches and fallthrough cannot independently authorize decoding across an entry. Once decoded, the block retains all its physical CFG predecessors. The original loads, stack update and external transfer remain in LowIR, the shared function remains independently lifted, and the existing frame proof still decides source recovery. Earlier shared blocks do not enlarge the primary function size.
+
+An additional arm64 dynamic-format contract admits a nonempty tail of 64-bit integers only when every reaching definition ends in a currently validated Objective-C declaration returning the same complete integer type. Equal-width integer casts preserve its carrier; raw loads, bare parameters, constants, cycles, floating or narrow intermediates, and conflicting signedness remain unsupported. A complete native ABI must agree with the shared Darwin variadic assignment before binding, and publication repeats the value and declaration proof. This does not infer the runtime format text or change its parser: emitted messages retain the fixed prefix, true ellipsis and original argument bits.
+
+Stack block source-flow transfers temporarily swap their owned output facts into local scratch state. This avoids copying all local and byte facts twice per node while preserving the same joins, work and storage budgets, successful evidence, and failure diagnostics. An untyped call result cannot supply the value for a cast in this proof; that candidate is rejected with a diagnostic rather than being treated as a block identity.
+
+Native state preservation uses the shared validated ABI mapping for every register component of a record argument, including ARM64 homogeneous floating aggregates. Both framed calls and frameless tail calls check every component for frame-address escape. Frame borrowing remains attached to the original scalar parameter index and never authorizes a record member; stacked records and indirect result storage still require separate proofs. This changes state-preservation evidence only, not the callee ABI or source-closure requirements.
+
+For a bounded ARM64 Objective-C class factory, the SDK proves the complete five-instruction caller and nine-instruction shared body before projecting that caller. The caller fixes the profiling counter and metadata accessor; the shared body increments the same counter, calls the accessor indirectly, restores its frame, and tail-calls the authenticated Swift class conversion. Superclass getters and factories share the current eight-instruction class-accessor proof. The original indirect LowIR occurrence retains its independently validated ABI and full frame proof. Source helpers use the existing whole-section profiling storage, preserve unsigned 64-bit wraparound and call order, retain accessor dependencies, and revalidate at publication. Other callers and the shared native ABI are unchanged.
+
+ARM64 native source recovery may try a Float64 candidate only after the existing integer return fails its defined-carrier check. A source-only SSA proof requires a complete local write of the low eight return bytes on every normal exit and a reachable, currently source-bound Float64 call in their provenance. All PHI arms must be defined, definitions must dominate their uses, and every cyclic component needs a real external seed. This first scope rejects entry-block backedges. Partial call clobbers follow the exact current CallSiteId and recorded PreservedInput for the target ABI’s eight-byte preserved prefix; stale narrow aliases cannot substitute for that record. Constants alone, loads, arithmetic and unknown returned values do not prove Float64. The existing current-call, definedReturnPaths, native-state, re-lifting and final-binding checks remain mandatory; generic Med type inference is unchanged.
+
+An ordinary ARM64 frame proof can also include an exact `__stack_chk_fail` exit, authenticated through the current loader call binding and the strong `___stack_chk_fail` import from `/usr/lib/libSystem.B.dylib`. Its declaration must be a zero-argument `void` call that does not return. Only that final call may end a block without successors or restored registers; all earlier memory and argument checks remain. At least one reachable normal return is required, and every normal return must restore all preserved machine state. The separate terminal-entry proof retains its original rules.
+
+LowIR owns exact call occurrence identity: instruction address, operation sequence, opcode and static target. Native state and source result proofs share this identity while retaining separate permissions. An ARM64 single-bit result proof checks every reachable path before treating zeroed bits 63:1 as unobservable; a permitted call clobber does not establish that the callee overwrote those bits. When a difference reaches a call, every volatile general-purpose, vector and flag byte may differ afterward; preserved bytes retain their prior facts. Ordinary calls still need independently established complete ABIs. The separately authenticated Swift comparison candidate records the compiler's raw one-bit result and exact import provider; it does not publish a byte-return declaration or authorize a source projection by itself.
+
+HighC emits ordinary memory stores through byte-copy helpers with the exact value width. Machine addresses do not establish C alignment or effective type. Statement stores, expression stores and assignments through memory all use the same helper path, which evaluates each address and value once and returns the stored value for expression results.
+
+Swift Boolean qualification combines the current Objective-C entry ABI, immutable direct-call bytes, exact strong runtime import and complete LowIR consumer proof. Other calls require freshly catalogued runtime ABIs, a fixed object-returning SDK message with only pointer arguments, a complete eight-instruction class-accessor proof, or an exact strongly imported super `init` with two pointer arguments and a pointer result. Native dependencies and super receiver/frame checks remain mandatory at publication. Unproved native or dynamic calls and duplicate occurrences are rejected; these facts alone never publish source or declare a runtime byte-return ABI.
+
+A native entry with a function symbol at its exact image address may provisionally claim only a full x0 word as observable. Once source inference binds its complete ABI, publication reruns the same LowIR proof against that bound entry; the provisional claim supplies no source or byte-return ABI by itself. Native preserved-register inference may use such a Boolean call only after requalifying its exact LowIR occurrence under the current entry ABI. Entry-byte and complete state-restoration proofs still decide whether an observed preserved register becomes a parameter. A bound two-word native result may extend observation to x0/x1 only when both carriers pass the native pair proof; publication re-infers the complete pair before accepting the Boolean call.
+
+The exact libswiftCore Hasher seed, String.hash(into:), and Hasher.finalize imports may borrow a 72-byte private ARM64 frame region through their verified Swift ABI argument. The state proof invalidates every borrowed byte after the call and rejects overlap with saved registers or an escaped frame; a matching name without the current import and ABI proof grants no borrow.
+
+Swift 6.1.2 client IR also gives the exact libswiftCore `_DictionaryStorage.allocate(capacity:)` import a pointer result, an integer capacity, and dictionary metadata in `swiftself` on ARM64 and x64. This authenticated ABI binds the call while retaining allocation effects; it does not by itself recover the caller or other dictionary dependencies.
+
+Swift 6.1.2 also defines the exact libswiftCore `_DictionaryStorage.copy(original:)` and `resize(original:capacity:move:)` imports as pointer-returning calls with concrete dictionary metadata in `swiftself`. Resize additionally carries an integer capacity and a Boolean byte. The proof keeps the calls and their allocation effects, validates the provider and complete ABI, and leaves callers with any other unresolved dependencies unpublished.
+
+Swift 6.1.2 arm64 and x86-64 client IR specializes `Array<AnyObject>.append` into three exact libswiftCore imports: `_makeUniqueAndReserveCapacityIfNotUnique`, `_createNewBuffer`, and `_appendElementAssumeUniqueAndCapacity`. They mutate the array through `swiftself`; buffer creation also takes Boolean, integer-capacity, and Boolean inputs, while element append takes an integer index and object pointer. Only matching strong, zero-addend imports receive these complete ABIs. Their allocation and mutation effects remain in the caller's source dependency proof.
+
+Swift 6.1.2 arm64 client IR declares the exact libswiftCore `String` range
+subscript as four ordinary input words (two `String.Index` bounds, then both
+`String` words) and a four-word `Substring` result in x0–x3. Binding requires
+the strong import and this complete ABI; the last result word remains a
+pointer, and x86-64 has no ABI declaration from this probe.
+
+Swift 6.1.2 arm64 client IR calls the exact libswift_Concurrency
+`swift_defaultActor_initialize` and `swift_defaultActor_destroy` entries as
+`swiftcc void(ptr)`. Their bindings retain the actor storage argument and
+require a strong import from that provider.
+
+The SystemConfiguration SDK declares `SCNetworkReachabilityCreateWithName`
+with allocator and C-string inputs and a reference result. It declares
+`SCNetworkReachabilitySetCallback` and
+`SCNetworkReachabilitySetDispatchQueue` with an unsigned byte `Boolean`
+result. The former takes a reachability reference, a three-argument callback
+and a context pointer; the latter takes the reference and a dispatch queue.
+Their source bindings require the exact strong framework import and preserve
+the callback prototype even when a particular caller unregisters it with
+null arguments.
+
+The exact libswiftCore `KEY_TYPE_OF_DICTIONARY_VIOLATES_HASHABLE_REQUIREMENTS` import takes one type-metadata pointer and never returns, as declared by Swift 6.1.2. Only its authenticated provider and ABI receive this termination contract; the original call and trap remain in the source path. In an ordinary returning ARM64 helper, this exact call may end a successorless exceptional branch, including one with an immediate trap. Every normal return still requires a complete state proof.
+
+The eight-instruction ARM64 class-accessor proof has one shared machine owner. It validates immutable instructions and the strong `objc_opt_self` import, proving that incoming arguments are unused and all eight result bytes come from that runtime call. These facts do not establish the class object’s identity or source closure. Super getters and metadata factories retain their independent class, pipeline, frame and dependency checks. Structural unwind acceptance is also shared; partial decoding and language dispatch remain unsupported.
+
+Boolean normalization proofs treat SP as an implicit input to every call, including calls with no arguments or only register arguments. A differing incoming SP is rejected before the call; restoring SP later cannot undo the callee’s stack accesses.
+
+A successorless ARM64 `BRK` block is a terminal Boolean-proof path only when
+its one LowIR intrinsic and the current immutable instruction bytes agree.
+That path has no return observation; ordinary paths must still prove the
+normalized result and complete return and preserved-register state.
+
+The Boolean result proof tracks exact difference bits through constant integer left, logical-right and arithmetic-right shifts within the operand width, and through bitwise results truncated to a smaller destination. This covers ARM64 bit-test predicates without declaring unobserved runtime padding defined. A variable shift or SELECT is accepted only when all inputs are identical in both executions; differing-input variable shifts, out-of-range constant shifts and padding that reaches a branch, argument, store or returned value still reject normalization.
+
+ARM64 comparisons and carry, signed-overflow and signed-borrow flag
+operations may combine a full-width register with a narrower encoded
+immediate. The proof accepts that shape only for a one-byte predicate result:
+equal inputs remain equal, while any differing input taints the whole byte
+rather than inventing its value.
+
+An inferred native 64-bit integer return can be refined to its low 32 bits when every return supports that projection and at least one explicitly contains undefined upper padding. Complete source flow and all local definitions must agree; unknown low bytes, cyclic definitions, missing branches and effectful upper expressions remain rejected. The candidate is re-lifted with its new source ABI. Callers that observe the discarded upper word retain unresolved values and cannot publish recovered source.
+
+Constant Objective-C arrays and dictionaries can retain exact imported CoreFoundation Boolean singletons as elements. Each edge requires a strong, zero-addend SDK data binding in unique immutable file-backed storage, with no overlapping fixups. Generated helpers return the imported object address, preserving repeated-element identity without copying its representation. An import slot address is never interchangeable with its loaded object, and imported Booleans do not become dictionary string keys. Publication revalidates the complete graph.
+
+AArch64 Swift type-reference recipes also accept the exact `_ContiguousArrayStorage` nominal descriptor exported by `libswiftCore`, using the retained device and simulator SDK export evidence. This requires a strong, zero-addend import in unique immutable storage and the existing cache/reference/mangling proof; generated C preserves descriptor identity, relative references and the shared writable cache without copying descriptor bytes. The exact `_DictionaryStorage` and `ManagedBuffer` descriptors are also accepted only when the linked image proves a strong, zero-addend `libswiftCore` bind; other standard-library descriptors remain unsupported. A recipe containing a separate direct local descriptor still needs that descriptor's independent export proof.
+An exported nominal descriptor passed through a native Swift metadata helper can be rebound when the helper's verified source ABI carries that exact argument in x2 and its typed body forwards the argument to the authenticated `swift_getSingletonMetadata` import. The generated reference uses the export's symbol identity; a missing export, changed runtime provider, or helper without the forwarding path leaves the address unresolved.
+Repeated type-reference revalidation merges import evidence for the one descriptor
+slot under inspection. The scoped merge uses the same validation, priority and
+conflict rules as the complete image inventory, and reads current image state
+each time; it does not cache a proof across image changes.
+
+Exact data addresses of immutable self-pointer globals share the same reconstructed pointer-sized storage as loads of their values. The initial pointer refers to that storage itself, preserving both opaque-key identity and pointer contents. Direct-address publication revalidates unique mapped storage, the local self-rebase and immutability; mutable, overlapping, truncated or conflicting storage remains unresolved.
+
+Source recovery can project a bounded local AArch64 leaf containing only full-width register copies and `RET x30`. The loader authenticates immutable linked Mach-O bytes, local linkage and the exact original BL occurrence; platform, frame, link and zero-register operands, memory effects and other instructions are rejected. Sequential copies normalize to leaf-entry values, and every consumer snapshots reads before writing destinations. MedIR conversion, Objective-C receiver/frame facts and native state restoration share that transfer while preserving the real BL link-register write. Original LowIR and generic lift/patch behavior stay unchanged. MedIR and HighIR retain matching receipts, and source publication revalidates current bytes and caller boundaries. Missing, duplicate, conflicting or stale evidence remains unresolved; memory-bearing outlined helpers require a separate proof. Writes to preserved registers also prevent declaring the leaf as an ordinary C function.
+
+This source-only leaf projection also admits `ADRP` followed by unshifted 64-bit `ADD` for complete constant-string object addresses. Register values explicitly distinguish entry inputs from object addresses. Page values remain internal; any page left at return, arithmetic overflow or unverified object rejects the entire projection. Address calculation uses the callee instruction PC. `readObjCConstantString` authenticates each final object and payload, retained in the receipt for fresh comparison. MedIR marks the complete object as `DataAddress` with that object as owner; publication still uses ordinary source binding. Constant writes invalidate overlapping receiver, entry-register and frame-byte facts while preserving untouched registers and memory. The same effects govern native input inference and private-output rejection.
+
+A separate ordinary-call receipt covers a local `ADRP x8; LDR x0,[x8,#imm]; RET x30` class getter. The shared loader proof authenticates the original BL, complete leaf, immutable class-import slot and exact SDK class/provider ownership. Objective-C fact transfer uses its proven zero-input behavior to retain frame privacy and recover the class receiver; it never clears an earlier escape. The CALL remains and still needs an independently bound native signature and closed source body. MedIR and HighIR retain matching getter receipts; publication rechecks current machine bytes, import identity and the unique remaining ordinary call. The dedicated class-import storage check permits only matching class metadata; ordinary byte and import readers retain their existing rules.
+
+A projected leaf may additionally perform exactly one `STR Xn,[SP,#0]` of a freshly authenticated constant-string address. Its receipt preserves the original instruction and the value at the store independently of final register values. Both fact propagation and byte preservation require a known, 16-byte-aligned current SP and a complete eight-byte slot in the allocated private frame; overwritten facts and outgoing argument storage are invalidated. Escaped frames cannot regain privacy. Every published function with this effect, including Objective-C and pretyped native bodies, must pass the complete framed state proof with matching explicit Med/High entry ABIs. No frameless fallback or ordinary standalone helper ABI is allowed for this effect.
+
+The same single SP store may carry a normalized leaf-entry register value. Every consumer snapshots that independent input before final register writes. Byte preservation rejects any frame-derived source byte and replaces all overwritten facts; a written slot does not define unknown input bits. Only a declared outgoing argument consuming eight complete, contiguous entry-register bytes can establish an observed entry use; an unused preservation spill cannot. Objective-C propagation retains only proven scalar or receiver/parameter facts, rejects known copied-block identities, and never restores frame privacy. The complete input-definition, ABI, framed-state and source-closure checks remain mandatory.
+
+An opaque direct native call may participate in Boolean normalization only when every physical register and flag has identical bits in both executions at that occurrence. A current, explicit native source ABI can instead prove that its declared inputs are identical and clear only its complete declared result carriers; publication still requires the callee's validated source body and dependency closure. Native inference and publication collect the same conflict-free MedIR call ABIs; publication also matches each one to a current HighIR callee and complete pipeline audit before rerunning the Boolean proof. An exact `objc_msgSend` selector stub with a fixed SDK pointer ABI can also use that ABI: the receiver, explicit pointer arguments, and SP must be equal, and only its full pointer result is cleared. The authenticated stub overwrites x1 with its fixed selector before dispatch. This applies to selectors with arguments, while publication still revalidates the original message and receiver. Other authenticated raw Swift Boolean calls define bit 0 of x0 when their inputs agree; higher bits remain unknown and no byte-return ABI is published. The proof rejects differing memory observations, retains temporary differences, and repeats these checks on loop backedges. Recognizable import veneers without a current ABI and invalid existing bindings remain rejected.
+
+A native Boolean owner may also carry the closed mangled Swift String-bundle ABI. Qualification rechecks the exact function symbol and complete nine-argument, two-word ABI before using its return carriers; a Swift-mangled origin tag alone does not authenticate the entry.
+
+Swift lazy object getters also admit a separately authenticated `swift_retain` followed by `objc_autoreleaseReturnValue`. Both calls and their actual result chain remain intact. An optional empty label before initialization must contain no expressions, nested statements or memory effects. Removing the incidental once context still requires an independently context-free initializer and current evidence at publication.
+
+The Swift `NSObject` equality candidate uses the independently verified device and simulator ABI `swiftcc i1(ptr, ptr, ptr swiftself)`: object arguments occupy x0/x1 and metadata occupies x20. It requires the exact strong import from `libswiftObjectiveC`, immutable storage and the existing complete caller normalization proof. HighC derives the `_Bool` prototype and `swift_context` parameter from the same canonical input contract; lookup alone never publishes a byte-return ABI.
+
+A fixed zero-argument Objective-C object getter may occur inside that normalization proof only as an opaque identical-state call. The current selector stub, all 20 immutable instruction bytes, selector reference, strong `objc_msgSend` import and exact SDK pointer ABI must agree; failed `__objc_stubs` evidence cannot fall back to an unknown native call. This grants no clobber, result or source-binding fact, so every physical register, flag and memory observation must already be identical at the occurrence.

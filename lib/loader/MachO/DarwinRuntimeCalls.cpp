@@ -9,28 +9,45 @@
 #include "llvm/ADT/StringRef.h"
 
 namespace neverd {
-namespace {
-std::optional<llvm::StringRef> darwinWeakRuntimeImport(const BinaryImage &Image,
-                                                       va_t Slot) {
-  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
-      Image.Bits != Bitness::Bits64 ||
+
+std::optional<SourceCallTypeHint>
+darwinCompilerRTSourceCallHint(const BinaryImage &Image, va_t TargetAddress) {
+  constexpr llvm::StringLiteral SymbolName =
+      "___isPlatformVersionAtLeast";
+  if (Image.Format != BinaryFormat::MachO || Image.Bits != Bitness::Bits64 ||
+      Image.IsRelocatable ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
-      Image.ConflictingImportStorageSlots.count(Slot))
+      !Image.isCodeAddress(TargetAddress))
     return std::nullopt;
-  const auto Import = Image.ImportPtrSlots.find(Slot);
-  const auto Bind = Image.DyldBindSlots.find(Slot);
-  if (Import == Image.ImportPtrSlots.end() ||
-      Bind == Image.DyldBindSlots.end() ||
-      Bind->second.Name != Import->second || Bind->second.Addend ||
-      !Bind->second.WeakImport)
+  size_t Matches = 0;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Name != SymbolName)
+      continue;
+    ++Matches;
+    if (Symbol.Addr != TargetAddress || !Symbol.IsFunc)
+      return std::nullopt;
+  }
+  if (Matches != 1)
     return std::nullopt;
-  if (auto I = Image.ImportStorageSlots.find(Slot);
-      I != Image.ImportStorageSlots.end() &&
-      (I->second.Name != Import->second || I->second.Addend))
+
+  SourceCallTypeHint Result;
+  Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+  Result.TargetAddress = TargetAddress;
+  Result.TargetName = "__isPlatformVersionAtLeast";
+  auto &Signature = Result.Signature;
+  Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinRuntime;
+  Signature.ReturnType = NdType::makeInt(4, true);
+  Signature.Parameters = {
+      {"platform", NdType::makeInt(4, false)},
+      {"major", NdType::makeInt(4, false)},
+      {"minor", NdType::makeInt(4, false)},
+      {"subminor", NdType::makeInt(4, false)},
+  };
+  std::string Diagnostic;
+  if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
     return std::nullopt;
-  return Import->second;
+  return Result;
 }
-} // namespace
 
 std::optional<SourceCallTypeHint>
 darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
@@ -61,10 +78,121 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
 
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import)
-    return std::nullopt;
+    return darwinDeclaredSourceCallHint(Image, ImportSlot);
   llvm::StringRef Name(*Import);
   if (!Name.consume_front("_"))
     return std::nullopt;
+
+  // SCNetworkReachability.h declares these fixed C calls. Keep the
+  // callback's complete input shape even when a caller passes null: other
+  // callers can install a real callback and context through the same import.
+  if (Name == "SCNetworkReachabilityCreateWithName" ||
+      Name == "SCNetworkReachabilitySetCallback" ||
+      Name == "SCNetworkReachabilitySetDispatchQueue") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        !darwinExportModuleMatches(
+            "/System/Library/Frameworks/SystemConfiguration.framework/"
+            "SystemConfiguration",
+            Bind->second.Module))
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = Name.str();
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    if (Name == "SCNetworkReachabilityCreateWithName") {
+      Signature.ReturnType = Pointer;
+      Signature.Parameters = {{"allocator", Pointer}, {"nodename", Pointer}};
+    } else if (Name == "SCNetworkReachabilitySetCallback") {
+      Signature.ReturnType = NdType::makeInt(1, false); // Boolean
+      Signature.Parameters.push_back({"target", Pointer});
+      const auto Callback = NdType::makePtr(NdType::makeFunc(
+          NdType::makeVoid(), {Pointer, NdType::makeInt(4, false), Pointer}));
+      Signature.Parameters.push_back({"callout", Callback});
+      Signature.Parameters.push_back({"context", Pointer});
+    } else {
+      Signature.ReturnType = NdType::makeInt(1, false); // Boolean
+      Signature.Parameters = {{"target", Pointer}, {"queue", Pointer}};
+    }
+    std::string Diagnostic;
+    if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
+
+  // UIKit declares these fixed source contracts. The command-line-tools SDK
+  // used for DarwinSourceDeclarations.inc has no UIKit headers or binary, so
+  // retain the public contracts at the same exact symbol/provider boundary as
+  // the UIKit external storage below.
+  // https://developer.apple.com/documentation/uikit/nsstringfromcgsize
+  // https://developer.apple.com/documentation/uikit/uigraphicsbeginimagecontext(_:)
+  const bool UIKitFixedFunction =
+      Name == "NSStringFromCGSize" || Name == "CGSizeFromString" ||
+      Name == "UIAccessibilityPostNotification" ||
+      Name == "UIGraphicsBeginImageContext" ||
+      Name == "UIGraphicsBeginImageContextWithOptions" ||
+      Name == "UIGraphicsGetCurrentContext" ||
+      Name == "UIGraphicsGetImageFromCurrentImageContext" ||
+      Name == "UIGraphicsEndImageContext";
+  if (UIKitFixedFunction) {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Image.Arch != Arch::AArch64 || Bind == Image.DyldBindSlots.end() ||
+        !darwinExportModuleMatches(
+            "/System/Library/Frameworks/UIKit.framework/UIKit",
+            Bind->second.Module))
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = Name.str();
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    const bool ReturnsPointer =
+        Name == "NSStringFromCGSize" || Name == "UIGraphicsGetCurrentContext" ||
+        Name == "UIGraphicsGetImageFromCurrentImageContext";
+    Signature.ReturnType = ReturnsPointer ? NdType::makePtr(NdType::makeVoid())
+                                          : NdType::makeVoid();
+    if (Name == "NSStringFromCGSize" || Name == "UIGraphicsBeginImageContext" ||
+        Name == "UIGraphicsBeginImageContextWithOptions") {
+      const auto Size =
+          NdType::makeStruct({NdType::makeFloat(8), NdType::makeFloat(8)});
+      if (!Size)
+        return std::nullopt;
+      Signature.Parameters = {{"size", Size}};
+    }
+    if (Name == "CGSizeFromString") {
+      // The same complete device/simulator SDK ASTs and UIKit reexport map
+      // establish CGSize(NSString *). The shared ABI assigns both FP results.
+      Signature.ReturnType =
+          NdType::makeStruct({NdType::makeFloat(8), NdType::makeFloat(8)});
+      if (!Signature.ReturnType)
+        return std::nullopt;
+      Signature.Parameters = {{"string", NdType::makePtr(NdType::makeVoid())}};
+    }
+    if (Name == "UIAccessibilityPostNotification") {
+      // Device and simulator SDK ASTs agree on void(uint32_t, id nullable).
+      // The notification is an integer value; its argument may be nil.
+      Signature.Parameters = {
+          {"notification", NdType::makeInt(4, false)},
+          {"argument", NdType::makePtr(NdType::makeVoid())},
+      };
+    }
+    if (Name == "UIGraphicsBeginImageContextWithOptions") {
+      // Complete Xcode 26.5 device and arm64 simulator ASTs agree on
+      // void(CGSize, BOOL=bool, CGFloat=double). Their UIKit TBDs reexport
+      // this exact symbol from the embedded UIKitCore export map.
+      // SDK evidence: NeverSight/NeverD Actions run 35648792995.
+      Signature.Parameters.push_back({"opaque", NdType::makeInt(1, false)});
+      Signature.Parameters.push_back({"scale", NdType::makeFloat(8)});
+    }
+    std::string Diagnostic;
+    if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
 
   // dispatch_once_f has a fixed callback contract that the generated Clang
   // encoding can only spell as the intentionally unsupported opaque `^?`.
@@ -94,6 +222,40 @@ darwinRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
     };
     std::string Diagnostic;
     if (!assignDarwinFixedSourceABI(Signature, Image.Arch, Diagnostic))
+      return std::nullopt;
+    return Result;
+  }
+
+  // dispatch_queue_set_specific has a fixed destructor callback contract that
+  // the generated Clang encoding spells as the intentionally unsupported
+  // opaque `^?`. Keep the public void (*)(void *) prototype at the same exact
+  // libdispatch export boundary instead of accepting unknown callbacks in the
+  // declaration parser.
+  if (Name == "dispatch_queue_set_specific") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        !darwinExportModuleMatches(
+            "/usr/lib/libSystem.B.dylib|/usr/lib/system/libdispatch.dylib",
+            Bind->second.Module))
+      return std::nullopt;
+    SourceCallTypeHint Result;
+    Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeCall;
+    Result.TargetAddress = ImportSlot;
+    Result.TargetName = Name.str();
+    auto &Signature = Result.Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
+    Signature.ReturnType = NdType::makeVoid();
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto Destructor =
+        NdType::makePtr(NdType::makeFunc(NdType::makeVoid(), {Pointer}));
+    Signature.Parameters = {
+        {"queue", Pointer},
+        {"key", Pointer},
+        {"context", Pointer},
+        {"destructor", Destructor},
+    };
+    std::string Diagnostic;
+    if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Diagnostic))
       return std::nullopt;
     return Result;
   }
@@ -146,26 +308,54 @@ std::optional<SourceCallTypeHint>
 darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
   const auto Import = darwinRuntimeImport(Image, ImportSlot);
   if (!Import)
-    return std::nullopt;
+    return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   // These UIKit constants are public external storage, rather than functions
   // or implementation-owned objects. The command-line-tools SDK used to
   // generate DarwinSourceDataDeclarations.inc has no UIKit headers or binary,
   // so retain the same exact symbol/provider proof here.
   // https://developer.apple.com/documentation/uikit/uiapplicationdidreceivememorywarningnotification
-  llvm::StringRef UIKitData;
+  llvm::StringRef FrameworkData;
+  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+  auto MatchFrameworkData = [&](llvm::StringRef Name, llvm::StringRef Module) {
+    if (Import->starts_with("_") && Import->drop_front() == Name &&
+        Bind != Image.DyldBindSlots.end() &&
+        darwinExportModuleMatches(Module, Bind->second.Module))
+      FrameworkData = Name;
+  };
   for (llvm::StringRef Name :
        {"UIApplicationDidReceiveMemoryWarningNotification",
+        "UIApplicationWillTerminateNotification", "UIBackgroundTaskInvalid",
         "UIAccessibilityTraitButton", "UIEdgeInsetsZero",
         "UIViewNoIntrinsicMetric"})
-    if (Import->starts_with("_") && Import->drop_front() == Name)
-      UIKitData = Name;
-  const auto Bind = Image.DyldBindSlots.find(ImportSlot);
-  const bool UIKitStorage =
-      !UIKitData.empty() && Bind != Image.DyldBindSlots.end() &&
-      darwinExportModuleMatches(
-          "/System/Library/Frameworks/UIKit.framework/UIKit",
-          Bind->second.Module);
+    MatchFrameworkData(Name,
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // Both complete Xcode 26.5 ARM64 SDK ASTs declare this notification as
+  // external, non-TLS NSString pointer storage. Keep the original load.
+  // https://developer.apple.com/documentation/uikit/uiapplication/didenterbackgroundnotification
+  if (Image.Arch == Arch::AArch64)
+    MatchFrameworkData(
+        "UIApplicationDidEnterBackgroundNotification",
+        "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // UIAccessibilityNotifications is uint32_t in both complete ARM64 SDK
+  // ASTs. Bind the external const object's address and keep the native load;
+  // neither the notification value nor pointer-sized contents are invented.
+  if (Image.Arch == Arch::AArch64)
+    MatchFrameworkData("UIAccessibilityAnnouncementNotification",
+                       "/System/Library/Frameworks/UIKit.framework/UIKit");
+  // CIContext.h imports OpenGLES on iOS, unavailable in the CLT SDK used by
+  // the generated catalog. Complete Xcode 26.5 iPhoneOS and arm64 simulator
+  // ASTs agree that these are external, non-TLS NSString pointer objects.
+  // The CoreImage export authenticates their storage, not their contents.
+  // https://developer.apple.com/documentation/coreimage/kcicontextpriorityrequestlow
+  // https://developer.apple.com/documentation/coreimage/kcicontextusesoftwarerenderer
+  if (Image.Arch == Arch::AArch64)
+    for (llvm::StringRef Name :
+         {"kCIContextPriorityRequestLow", "kCIContextUseSoftwareRenderer"})
+      MatchFrameworkData(
+          Name, "/System/Library/Frameworks/CoreImage.framework/CoreImage|"
+                "/System/Library/Frameworks/CoreImage.framework/Versions/A/"
+                "CoreImage");
   // Swift's inlinable collection implementations take these singletons'
   // addresses, making their external storage identities part of the
   // stdlib/runtime ABI. Apple Swift 6.1.2 emits all three as external globals.
@@ -183,18 +373,38 @@ darwinRuntimeGlobalAddressHint(const BinaryImage &Image, va_t ImportSlot) {
       !SwiftEmptyCollection.empty() && Bind != Image.DyldBindSlots.end() &&
       darwinExportModuleMatches("/usr/lib/swift/libswiftCore.dylib",
                                 Bind->second.Module);
-  if (!UIKitStorage && !SwiftEmptyStorage && *Import != "___stack_chk_guard")
+  // Compiler .self queries prove these are external non-TLS data addresses,
+  // not metadata accessors. Exact per-architecture exports authenticate the
+  // provider; neither a mangled-name suffix nor metadata contents are guessed.
+  static constexpr struct {
+    const char *Name;
+    const char *AArch64Modules;
+    const char *X64Modules;
+  } SwiftData[] = {
+#include "SwiftSourceDataDeclarations.inc"
+  };
+  llvm::StringRef SwiftMetadata;
+  if (Import->starts_with("_") && Bind != Image.DyldBindSlots.end())
+    for (const auto &D : SwiftData)
+      if (Import->drop_front() == D.Name &&
+          darwinExportModuleMatches(
+              Image.Arch == Arch::AArch64 ? D.AArch64Modules : D.X64Modules,
+              Bind->second.Module))
+        SwiftMetadata = D.Name;
+  if (FrameworkData.empty() && !SwiftEmptyStorage && SwiftMetadata.empty() &&
+      *Import != "___stack_chk_guard")
     return darwinDeclaredSourceGlobalAddressHint(Image, ImportSlot);
 
   SourceCallTypeHint Result;
   Result.CallKind = SourceCallTypeHint::Kind::DarwinRuntimeGlobalAddress;
   Result.TargetAddress = ImportSlot;
-  if (UIKitStorage) {
-    Result.TargetName = UIKitData.str();
+  if (!FrameworkData.empty()) {
+    Result.TargetName = FrameworkData.str();
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::DarwinSDK;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
-  } else if (SwiftEmptyStorage) {
-    Result.TargetName = SwiftEmptyCollection.str();
+  } else if (SwiftEmptyStorage || !SwiftMetadata.empty()) {
+    Result.TargetName =
+        (SwiftEmptyStorage ? SwiftEmptyCollection : SwiftMetadata).str();
     Result.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
     Result.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   } else {

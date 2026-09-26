@@ -10,8 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "../TestProcess.h"
+#include "fixtures/driver_kmdf_interrupt_test.h"
+#include "fixtures/driver_nested_user.h"
+#include "fixtures/driver_seh_test.h"
 #include "gtest/gtest.h"
 
+#include "neverd/emulation/DriverProfile.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -19,6 +23,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -671,6 +676,7 @@ void checkKMDFControlReport(const llvm::json::Object &Report, char Mode) {
                                             : Mode == 'M' ? "4b4d444d5a4b78"
                                             : Mode == 'I' ? "4b4d44495a4b78"
                                             : Mode == 'T' ? "4b4d44545a4b78"
+                                            : Mode == 'b' ? "4b4d44625a4b78"
                                                           : "4b4d44425a4b78");
   EXPECT_EQ((*Requests)[2].getAsObject()->getString("output_hex"), "60616263");
   const auto *Devices = Report.getArray("devices");
@@ -696,6 +702,628 @@ TEST_F(DriverScenarioPublic, CAPIAndCLICompleteGenuineKMDFControlIO) {
   }
 #else
   GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIUsesKMDFRequestMemoryAliases) {
+#ifdef NEVERD_KMDF_CONTROL_FIXTURE
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDKmdfControlb";
+  std::vector<const char *> Images{NEVERD_KMDF_CONTROL_FIXTURE};
+#ifdef NEVERD_KMDF_CONTROL_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_CONTROL_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+            Session, Image, KMDFControlScenario, &Options)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+    ASSERT_NE(Parsed->getAsObject(), nullptr);
+    checkKMDFControlReport(*Parsed->getAsObject(), 'b');
+    EXPECT_TRUE(error().empty());
+  }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+constexpr llvm::StringLiteral KMDFPnpLifecycleScenario = R"({
+    "pnp_devices":[{"id":"kmdf-pdo","bus":"resource_free",
+      "initial_device_power":"D0","initial_system_power":"working"}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0,"delay_100ns":11}},
+      {"kind":"create","device_id":"kmdf-pdo","file":7},
+      {"kind":"ioctl","device_id":"kmdf-pdo","file":7,
+       "code":"0x222000","input":"7a","output_size":4},
+      {"kind":"cleanup","device_id":"kmdf-pdo","file":7},
+      {"kind":"close","device_id":"kmdf-pdo","file":7},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"remove",
+       "bus_completion":{"status":0,"delay_100ns":7}}],
+    "unload":true})";
+
+constexpr llvm::StringLiteral KMDFPnpHeldRequestScenario = R"({
+    "pnp_devices":[{"id":"kmdf-pdo","bus":"resource_free",
+      "initial_device_power":"D0","initial_system_power":"working"}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"create","device_id":"kmdf-pdo","file":7},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_stop",
+       "bus_completion":{"status":0}},
+      {"kind":"ioctl","device_id":"kmdf-pdo","file":7,
+       "code":"0x222000","input":"7a","output_size":4,
+       "defer_callback_drain":true},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"stop",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"cleanup","device_id":"kmdf-pdo","file":7},
+      {"kind":"close","device_id":"kmdf-pdo","file":7},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"remove",
+       "bus_completion":{"status":0}}],
+    "unload":true})";
+
+constexpr llvm::StringLiteral KMDFPnpFileForwardScenario = R"({
+    "pnp_devices":[{"id":"kmdf-pdo","bus":"resource_free",
+      "initial_device_power":"D0","initial_system_power":"working"}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"create","device_id":"kmdf-pdo","file":7,
+       "bus_completion":{"status":0}},
+      {"kind":"cleanup","device_id":"kmdf-pdo","file":7,
+       "bus_completion":{"status":0}},
+      {"kind":"close","device_id":"kmdf-pdo","file":7,
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"remove",
+       "bus_completion":{"status":0}}],
+    "unload":true})";
+
+constexpr llvm::StringLiteral KMDFPnpServicePrefix = "NeverDKmdfPnp";
+constexpr int64_t DelayedKMDFFileCompletion100ns = 17;
+constexpr int64_t KMDFFileSendTimeout100ns = 5;
+constexpr int64_t ExpectedIOTimeoutStatus = 0xc00000b5;
+
+neverd_driver_options_v1 kmdfPnpOptions(const char *Service) {
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = Service;
+  return Options;
+}
+#endif
+
+TEST_F(DriverScenarioPublic, CAPIAndCLICompleteGenuineKMDFPnpLifecycle) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images)
+    for (bool CLI : {false, true}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(CLI);
+      const std::string Service = KMDFPnpServicePrefix.str() + 'H';
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Parsed = llvm::json::parse(
+          CLI ? runCLI(KMDFPnpLifecycleScenario.str(), 0, "success", Image)
+              : takeString(neverd_emulate_driver_scenario_json(
+                    Session, Image, KMDFPnpLifecycleScenario.data(),
+                    &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      ASSERT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Devices = Report->getArray("pnp_devices");
+      ASSERT_NE(Devices, nullptr);
+      ASSERT_EQ(Devices->size(), 1u);
+      const auto *Device = Devices->front().getAsObject();
+      ASSERT_NE(Device, nullptr);
+      EXPECT_EQ(Device->getInteger("add_device_status"), 0);
+      EXPECT_EQ(Device->getString("pnp_state"), "removed");
+      EXPECT_EQ(Device->getBoolean("attached"), false);
+      EXPECT_EQ(Device->getBoolean("provider_present"), false);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 7u);
+      const auto *IO = (*Requests)[2].getAsObject();
+      ASSERT_NE(IO, nullptr);
+      EXPECT_EQ(IO->getInteger("io_status"), 0);
+      EXPECT_EQ(IO->getString("output_hex"), "504e507a");
+      if (!CLI) {
+        const auto *Messages = Report->getArray("messages");
+        ASSERT_NE(Messages, nullptr);
+        std::vector<std::string> PnpMessages;
+        for (const auto &Message : *Messages) {
+          auto Text = Message.getAsString();
+          ASSERT_TRUE(Text);
+          if (Text->starts_with("KMDF PnP:"))
+            PnpMessages.push_back(Text->str());
+        }
+        EXPECT_EQ(
+            PnpMessages,
+            (std::vector<std::string>{
+                "KMDF PnP: device ready\n", "KMDF PnP: prepare hardware\n",
+                "KMDF PnP: D0 entry\n", "KMDF PnP: D0 exit\n",
+                "KMDF PnP: release hardware\n", "KMDF PnP: device cleanup\n",
+                "KMDF PnP: device destroy\n", "KMDF PnP: driver unload\n"}));
+      }
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIForwardsKMDFFileLifecycleToConfiguredPDO) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images)
+    for (char Mode : {'O', 'p', 's', 'a'}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Mode);
+      const std::string Service = KMDFPnpServicePrefix.str() + Mode;
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Scenario = llvm::json::parse(KMDFPnpFileForwardScenario);
+      ASSERT_TRUE(bool(Scenario)) << llvm::toString(Scenario.takeError());
+      {
+        auto *Requests = Scenario->getAsObject()->getArray("requests");
+        ASSERT_NE(Requests, nullptr);
+        for (size_t Index : {1u, 2u, 3u}) {
+          auto *Completion =
+              (*Requests)[Index].getAsObject()->getObject("bus_completion");
+          ASSERT_NE(Completion, nullptr);
+          (*Completion)["delay_100ns"] = DelayedKMDFFileCompletion100ns;
+        }
+      }
+      const std::string ScenarioJSON = llvm::formatv("{0}", *Scenario).str();
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, ScenarioJSON.c_str(), &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 6u);
+      for (size_t Index : {1u, 2u, 3u}) {
+        const auto *Request = (*Requests)[Index].getAsObject();
+        ASSERT_NE(Request, nullptr);
+        EXPECT_EQ(Request->getInteger("io_status"), 0);
+        EXPECT_EQ(Request->getBoolean("completed"), true);
+      }
+      {
+        const auto *Start = (*Requests)[0].getAsObject()->getObject("pnp");
+        const auto *Remove = (*Requests)[4].getAsObject()->getObject("pnp");
+        ASSERT_NE(Start, nullptr);
+        ASSERT_NE(Remove, nullptr);
+        ASSERT_TRUE(Start->getInteger("bus_completed_at_100ns"));
+        ASSERT_TRUE(Remove->getInteger("bus_received_at_100ns"));
+        EXPECT_GE(*Remove->getInteger("bus_received_at_100ns"),
+                  *Start->getInteger("bus_completed_at_100ns") +
+                      3 * DelayedKMDFFileCompletion100ns);
+      }
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIDeliversKMDFFileSendTimeout) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (char Mode : {'t', 'q'})
+    for (const char *Image : Images) {
+      SCOPED_TRACE(Image);
+      const std::string Service = KMDFPnpServicePrefix.str() + Mode;
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Scenario = llvm::json::parse(KMDFPnpFileForwardScenario);
+      ASSERT_TRUE(bool(Scenario)) << llvm::toString(Scenario.takeError());
+      auto *Requests = Scenario->getAsObject()->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      auto *Create = (*Requests)[1].getAsObject();
+      ASSERT_NE(Create, nullptr);
+      auto *Completion = Create->getObject("bus_completion");
+      ASSERT_NE(Completion, nullptr);
+      (*Completion)["delay_100ns"] = DelayedKMDFFileCompletion100ns;
+      for (auto It = Requests->begin(); It != Requests->end();) {
+        const auto *Object = It->getAsObject();
+        if (Object && (Object->getString("kind") == "cleanup" ||
+                       Object->getString("kind") == "close"))
+          It = Requests->erase(It);
+        else
+          ++It;
+      }
+      const std::string ScenarioJSON = llvm::formatv("{0}", *Scenario).str();
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, ScenarioJSON.c_str(), &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      const auto *Output = Report->getArray("requests");
+      ASSERT_NE(Output, nullptr);
+      ASSERT_EQ(Output->size(), 4u);
+      const auto *Open = (*Output)[1].getAsObject();
+      ASSERT_NE(Open, nullptr);
+      EXPECT_EQ(Open->getInteger("io_status"), ExpectedIOTimeoutStatus);
+      EXPECT_EQ(Open->getBoolean("completed"), true);
+      const auto *Start = (*Output)[0].getAsObject()->getObject("pnp");
+      const auto *Remove = (*Output)[2].getAsObject()->getObject("pnp");
+      ASSERT_NE(Start, nullptr);
+      ASSERT_NE(Remove, nullptr);
+      ASSERT_TRUE(Start->getInteger("bus_completed_at_100ns"));
+      ASSERT_TRUE(Remove->getInteger("bus_received_at_100ns"));
+      EXPECT_GE(*Remove->getInteger("bus_received_at_100ns"),
+                *Start->getInteger("bus_completed_at_100ns") +
+                    KMDFFileSendTimeout100ns);
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIReportsFrameworkSystemPowerChildren) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  constexpr char Scenario[] = R"({
+    "load_address":"0x190000000","unload":true,
+    "pnp_devices":[{"id":"kmdf0","bus":"resource_free",
+      "initial_device_power":"D0","initial_system_power":"working",
+      "requested_device_power":[
+        {"minor":"set","power_type":"device","power_state":"D3",
+         "power_action":"sleep","system_context":0,
+         "bus_completion":{"status":0,"delay_100ns":7}},
+        {"minor":"set","power_type":"device","power_state":"D0",
+         "power_action":"none","system_context":0,
+         "bus_completion":{"status":0,"delay_100ns":13}}]}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf0","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"power","device_id":"kmdf0","minor":"set",
+       "power_type":"system","power_state":"sleeping3",
+       "power_action":"sleep","system_context":0,
+       "bus_completion":{"status":0,"delay_100ns":5}},
+      {"kind":"power","device_id":"kmdf0","minor":"set",
+       "power_type":"system","power_state":"working",
+       "power_action":"none","system_context":0,
+       "bus_completion":{"status":0,"delay_100ns":11}},
+      {"kind":"pnp","device_id":"kmdf0","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf0","minor":"remove",
+       "bus_completion":{"status":0}}]})";
+  const std::string Service = KMDFPnpServicePrefix.str() + '6';
+  auto Options = kmdfPnpOptions(Service.c_str());
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+          Session, NEVERD_KMDF_PNP_FIXTURE, Scenario, &Options)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+  const auto *Report = Parsed->getAsObject();
+  ASSERT_NE(Report, nullptr);
+  ASSERT_EQ(Report->getString("stop_reason"), "returned")
+      << Report->getString("diagnostic").value_or("").str();
+  EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+  EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+  const auto *Requests = Report->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 7u);
+  unsigned Children = 0;
+  for (const auto &Value : *Requests) {
+    const auto *Request = Value.getAsObject();
+    ASSERT_NE(Request, nullptr);
+    EXPECT_EQ(Request->getBoolean("completed"), true);
+    EXPECT_EQ(Request->getInteger("io_status"), 0);
+    if (Request->getString("origin") == "framework_power_policy") {
+      EXPECT_EQ(Request->getInteger("response_index"), Children++);
+      const auto *Power = Request->getObject("power");
+      ASSERT_NE(Power, nullptr);
+      EXPECT_EQ(Power->getString("power_type"), "device");
+    }
+  }
+  EXPECT_EQ(Children, 2u);
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic,
+       CAPIFrameworkInterruptDpcAndWorkItemCompleteRequest) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  constexpr llvm::StringLiteral Scenario = R"({
+    "load_address":"0x190000000","unload":true,
+    "pnp_devices":[{"id":"kmdf-pdo","bus":"register_bank",
+      "initial_device_power":"D0","initial_system_power":"working",
+      "interrupts":[{"id":"framework-interrupt","raw_vector":17,
+        "raw_level":7,"raw_affinity":1,"translated_vector":145,
+        "translated_level":5,"translated_affinity":1,
+        "mode":"latched","share":"device_exclusive"}]}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+        "bus_completion":{"status":0}},
+      {"kind":"create","device_id":"kmdf-pdo","file":7},
+      {"kind":"ioctl","device_id":"kmdf-pdo","file":7,
+        "code":"0x222000","output_size":16,"interrupt_events":[{
+          "after_100ns":7,"device_id":"kmdf-pdo",
+          "interrupt_id":"framework-interrupt"}]},
+      {"kind":"cleanup","file":7},{"kind":"close","file":7},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_remove",
+        "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"remove",
+        "bus_completion":{"status":0}}]})";
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const auto *Image : Images)
+    for (char Mode : {KmdfInterruptLine, KmdfInterruptPassive,
+                      KmdfInterruptPassiveCleanup}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Mode);
+      const std::string Service = KMDFPnpServicePrefix.str() + Mode;
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, Scenario.data(), &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      ASSERT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 7u);
+      const auto *IO = (*Requests)[2].getAsObject();
+      ASSERT_NE(IO, nullptr);
+      EXPECT_EQ(IO->getString("output_hex"),
+                "01000000010000000100000002000000");
+      const auto *Events = Report->getArray("interrupts");
+      ASSERT_NE(Events, nullptr);
+      ASSERT_EQ(Events->size(), 1u);
+      const auto *Event = Events->front().getAsObject();
+      ASSERT_NE(Event, nullptr);
+      EXPECT_EQ(Event->getInteger("return_value"), 1);
+      EXPECT_TRUE(Event->getInteger("delivered_at_100ns"));
+      EXPECT_TRUE(Event->getInteger("returned_at_100ns"));
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIPowerManagedKMDFPnpQueueEntersD0) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    const std::string Service = KMDFPnpServicePrefix.str() + 'M';
+    auto Options = kmdfPnpOptions(Service.c_str());
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+            Session, Image, KMDFPnpLifecycleScenario.data(), &Options)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+    const auto *Report = Parsed->getAsObject();
+    ASSERT_NE(Report, nullptr);
+    ASSERT_EQ(Report->getString("stop_reason"), "returned")
+        << Report->getString("diagnostic").value_or("").str();
+    EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+    EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+    const auto *Requests = Report->getArray("requests");
+    ASSERT_NE(Requests, nullptr);
+    ASSERT_EQ(Requests->size(), 7u);
+    const auto *IO = (*Requests)[2].getAsObject();
+    ASSERT_NE(IO, nullptr);
+    EXPECT_EQ(IO->getInteger("io_status"), 0);
+    EXPECT_EQ(IO->getString("output_hex"), "504e507a");
+    const auto *Calls = Report->getArray("calls");
+    ASSERT_NE(Calls, nullptr);
+    EXPECT_EQ(std::count_if(Calls->begin(), Calls->end(),
+                            [](const auto &Call) {
+                              const auto *Object = Call.getAsObject();
+                              return Object && Object->getString("name") ==
+                                                   "WdfIoQueueGetState";
+                            }),
+              4);
+  }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIResumesStoppedKMDFRequests) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images)
+    for (char Mode : {'A', 'V'}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Mode);
+      const std::string Service = KMDFPnpServicePrefix.str() + Mode;
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, KMDFPnpHeldRequestScenario.data(), &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      ASSERT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 10u);
+      const auto *IO = (*Requests)[3].getAsObject();
+      ASSERT_NE(IO, nullptr);
+      EXPECT_EQ(IO->getInteger("io_status"), 0);
+      EXPECT_EQ(IO->getString("output_hex"), Mode == 'A' ? "504e507a" : "");
+      const auto *Calls = Report->getArray("calls");
+      ASSERT_NE(Calls, nullptr);
+      EXPECT_EQ(std::count_if(Calls->begin(), Calls->end(),
+                              [](const auto &Call) {
+                                const auto *Object = Call.getAsObject();
+                                return Object &&
+                                       Object->getString("name") ==
+                                           "WdfRequestStopAcknowledge";
+                              }),
+                1);
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIWaitsForKMDFWorkerBeforeStop) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images)
+    for (char Mode : {'B', 'D', 'Y'}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Mode);
+      const std::string Service = KMDFPnpServicePrefix.str() + Mode;
+      auto Options = kmdfPnpOptions(Service.c_str());
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, KMDFPnpHeldRequestScenario.data(), &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      ASSERT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 10u);
+      const auto *IO = (*Requests)[3].getAsObject();
+      ASSERT_NE(IO, nullptr);
+      EXPECT_EQ(IO->getBoolean("completed"), true);
+      EXPECT_EQ(IO->getInteger("io_status"), 0);
+      EXPECT_EQ(IO->getString("output_hex"), "");
+      const auto *Calls = Report->getArray("calls");
+      ASSERT_NE(Calls, nullptr);
+      EXPECT_EQ(std::count_if(Calls->begin(), Calls->end(),
+                              [](const auto &Call) {
+                                const auto *Object = Call.getAsObject();
+                                return Object && Object->getString("name") ==
+                                                     "IoFreeWorkItem";
+                              }),
+                1);
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIPreparesAssignedKMDFHardware) {
+#ifdef NEVERD_KMDF_PNP_FIXTURE
+  constexpr llvm::StringLiteral Scenario = R"({
+    "pnp_devices":[{"id":"kmdf-pdo","bus":"register_bank",
+      "initial_device_power":"D0","initial_system_power":"working",
+      "resources":[{"id":"registers","raw_start":"0x200000000",
+        "translated_start":"0x300000000","length":"0x1000",
+        "registers":[{"offset":0,"width":4,"access":"read_only",
+          "value":"0x12345678"}]}]}],
+    "requests":[
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_stop",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"stop",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"kmdf-pdo","minor":"remove",
+       "bus_completion":{"status":0}}],
+    "unload":true})";
+  std::vector<const char *> Images{NEVERD_KMDF_PNP_FIXTURE};
+#ifdef NEVERD_KMDF_PNP_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_PNP_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    const std::string Service = KMDFPnpServicePrefix.str() + 'R';
+    auto Options = kmdfPnpOptions(Service.c_str());
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+            Session, Image, Scenario.data(), &Options)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+    const auto *Report = Parsed->getAsObject();
+    ASSERT_NE(Report, nullptr);
+    ASSERT_EQ(Report->getString("stop_reason"), "returned")
+        << Report->getString("diagnostic").value_or("").str();
+    EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+    EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+    const auto *Requests = Report->getArray("requests");
+    ASSERT_NE(Requests, nullptr);
+    ASSERT_EQ(Requests->size(), 6u);
+    for (const auto &Value : *Requests) {
+      const auto *Request = Value.getAsObject();
+      ASSERT_NE(Request, nullptr);
+      EXPECT_EQ(Request->getInteger("io_status"), 0);
+    }
+    const auto *Calls = Report->getArray("calls");
+    ASSERT_NE(Calls, nullptr);
+    for (llvm::StringRef API : {"MmMapIoSpace", "MmUnmapIoSpace"})
+      EXPECT_EQ(std::count_if(Calls->begin(), Calls->end(),
+                              [API](const auto &Call) {
+                                const auto *Object = Call.getAsObject();
+                                return Object &&
+                                       Object->getString("name") == API;
+                              }),
+                2);
+  }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
 #endif
 }
 
@@ -1163,6 +1791,163 @@ TEST_F(DriverScenarioPublic, CAPIExecutesKMDFManualQueueAndRequeue) {
               Mode == 'Y' ? "4b4d44595b58" : "4b4d44525b58");
     EXPECT_TRUE(error().empty());
   }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic,
+       CAPIExecutesKMDFCanceledOnQueueForForwardedRequest) {
+#ifdef NEVERD_KMDF_CONTROL_FIXTURE
+  constexpr char Scenario[] = R"({"requests":[
+    {"kind":"create","device":"\\DosDevices\\NeverDKmdfControl",
+     "asynchronous_file":true},
+    {"kind":"ioctl","code":"0x222000","input":"00015aff",
+     "output_size":8,"defer_callback_drain":true,"cancel_after_100ns":10},
+    {"kind":"ioctl","code":"0x222000","input":"0102",
+     "output_size":6},
+    {"kind":"cleanup"},{"kind":"close"}
+  ],"unload":true})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDKmdf7";
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+          Session, NEVERD_KMDF_CONTROL_FIXTURE, Scenario, &Options)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+  const auto *Report = Parsed->getAsObject();
+  ASSERT_NE(Report, nullptr);
+  EXPECT_EQ(Report->getString("stop_reason"), "returned")
+      << Report->getString("diagnostic").value_or("").str();
+  EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+  const auto *Requests = Report->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 5u);
+  const auto *Canceled = (*Requests)[1].getAsObject();
+  ASSERT_NE(Canceled, nullptr);
+  EXPECT_EQ(Canceled->getBoolean("completed"), true);
+  EXPECT_EQ(Canceled->getInteger("io_status"), 0xc0000120u);
+  EXPECT_EQ(Canceled->getInteger("cancel_requested_at_100ns"), 10);
+  EXPECT_EQ(Canceled->getString("output_hex"), "");
+  EXPECT_EQ((*Requests)[2].getAsObject()->getString("output_hex"),
+            "4b4d44375b58");
+  EXPECT_TRUE(error().empty());
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic,
+       CAPIExecutesKMDFCanceledOnQueueAfterCallerEnqueue) {
+#ifdef NEVERD_KMDF_CONTROL_FIXTURE
+  constexpr char Scenario[] = R"({"requests":[
+    {"kind":"create","device":"\\DosDevices\\NeverDKmdfControl"},
+    {"kind":"ioctl","code":"0x222000","input":"00015aff",
+     "output_size":8,"cancel_after_100ns":0},
+    {"kind":"cleanup"},{"kind":"close"}
+  ],"unload":true})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDKmdf8";
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+          Session, NEVERD_KMDF_CONTROL_FIXTURE, Scenario, &Options)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+  const auto *Report = Parsed->getAsObject();
+  ASSERT_NE(Report, nullptr);
+  EXPECT_EQ(Report->getString("stop_reason"), "returned")
+      << Report->getString("diagnostic").value_or("").str();
+  EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+  const auto *Requests = Report->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 4u);
+  const auto *Canceled = (*Requests)[1].getAsObject();
+  ASSERT_NE(Canceled, nullptr);
+  EXPECT_EQ(Canceled->getBoolean("completed"), true);
+  EXPECT_EQ(Canceled->getInteger("io_status"), 0xc0000120u);
+  EXPECT_EQ(Canceled->getInteger("cancel_requested_at_100ns"), 0);
+  EXPECT_EQ(Canceled->getString("output_hex"), "");
+  EXPECT_TRUE(error().empty());
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIExecutesKMDFManualQueueReadyNotification) {
+#ifdef NEVERD_KMDF_CONTROL_FIXTURE
+  constexpr char Scenario[] = R"({"requests":[
+    {"kind":"create","device":"\\DosDevices\\NeverDKmdfControl"},
+    {"kind":"ioctl","code":"0x222000","input":"00015aff",
+     "output_size":8},
+    {"kind":"cleanup"},{"kind":"close"}
+  ],"unload":true})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDKmdf9";
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+          Session, NEVERD_KMDF_CONTROL_FIXTURE, Scenario, &Options)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+  const auto *Report = Parsed->getAsObject();
+  ASSERT_NE(Report, nullptr);
+  EXPECT_EQ(Report->getString("stop_reason"), "returned")
+      << Report->getString("diagnostic").value_or("").str();
+  EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+  EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+  const auto *Requests = Report->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 4u);
+  EXPECT_EQ((*Requests)[1].getAsObject()->getString("output_hex"),
+            "4b4d44395a5b00a5");
+  EXPECT_TRUE(error().empty());
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIExecutesKMDFManualQueueFindAndRetrieve) {
+#ifdef NEVERD_KMDF_CONTROL_FIXTURE
+  constexpr char Scenario[] = R"({"requests":[
+    {"kind":"create","device":"\\DosDevices\\NeverDKmdfControl"},
+    {"kind":"ioctl","code":"0x222000","input":"00015aff",
+     "output_size":8},
+    {"kind":"cleanup"},{"kind":"close"}
+  ],"unload":true})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDKmdf0";
+  auto Parsed =
+      llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+          Session, NEVERD_KMDF_CONTROL_FIXTURE, Scenario, &Options)));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+  const auto *Report = Parsed->getAsObject();
+  ASSERT_NE(Report, nullptr);
+  EXPECT_EQ(Report->getString("stop_reason"), "returned")
+      << Report->getString("diagnostic").value_or("").str();
+  EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+  EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+  const auto *Requests = Report->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 4u);
+  EXPECT_EQ((*Requests)[1].getAsObject()->getString("output_hex"),
+            "4b4d44305a5b00a5");
+  EXPECT_TRUE(error().empty());
 #else
   GTEST_SKIP() << "NEVERD_KMDF_CONTROL_FIXTURE requires a genuine WDK fixture";
 #endif
@@ -1643,7 +2428,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteDirectBuffersWithFileIdentity) {
         << llvm::toString(Parsed.takeError());
     const auto *Report = Parsed->getAsObject();
     ASSERT_NE(Report, nullptr);
-    EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+    EXPECT_EQ(Report->getString("profile"),
+              neverd::emulation::profile::ReportProfile);
     EXPECT_EQ(Report->getBoolean("scenario_success"), true);
     const auto *Requests = Report->getArray("requests");
     ASSERT_NE(Requests, nullptr);
@@ -2008,7 +2794,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteStopRestartAndSurpriseLifecycle) {
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned");
       EXPECT_EQ(Report->getInteger("nt_status"), 0);
       EXPECT_EQ(Report->getBoolean("scenario_success"), false);
@@ -2134,7 +2921,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIObserveIndependentPowerChildren) {
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned")
           << Report->getString("diagnostic").value_or("").str();
       EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2255,7 +3043,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteResumableRemoveLockDrain) {
             << llvm::toString(Parsed.takeError()) << error();
         const auto *Report = Parsed->getAsObject();
         ASSERT_NE(Report, nullptr);
-        EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+        EXPECT_EQ(Report->getString("profile"),
+                  neverd::emulation::profile::ReportProfile);
         EXPECT_EQ(Report->getString("stop_reason"), "returned")
             << Report->getString("diagnostic").value_or("").str();
         EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2423,7 +3212,8 @@ TEST_F(DriverScenarioPublic,
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned")
           << Report->getString("diagnostic").value_or("").str();
       EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2512,7 +3302,10 @@ TEST_F(DriverScenarioPublic, RejectsInvalidInterruptFactsBeforeImageLoading) {
            {"translated_level", "2"},
            {"translated_affinity", "2"},
            {"mode", "\"level_sensitive\""},
-           {"share", "\"shared\""}}) {
+           {"share", "\"invalid\""},
+           {"retrigger_after_100ns", "3"}}) {
+    SCOPED_TRACE(Field);
+    SCOPED_TRACE(Fact);
     auto Value = llvm::json::parse(R"({"pnp_devices":[{
       "id":"interrupt0","bus":"register_bank","initial_device_power":"D0",
       "initial_system_power":"working","interrupts":[{
@@ -2547,6 +3340,193 @@ TEST_F(DriverScenarioPublic, RejectsInvalidInterruptFactsBeforeImageLoading) {
     EXPECT_NE(error().find("driver scenario:"), std::string::npos);
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
   }
+}
+
+TEST_F(DriverScenarioPublic, CAPIExecutesExplicitMessageAssignmentsAndIds) {
+#ifdef NEVERD_WDM_INTERRUPT_FIXTURE
+  std::vector<const char *> Images{NEVERD_WDM_INTERRUPT_FIXTURE};
+#ifdef NEVERD_WDM_INTERRUPT_CFG_FIXTURE
+  Images.push_back(NEVERD_WDM_INTERRUPT_CFG_FIXTURE);
+#endif
+  constexpr char Scenario[] = R"({
+    "load_address":"0x190000000","unload":true,
+    "pnp_devices":[{"id":"interrupt0","bus":"register_bank",
+      "initial_device_power":"D0","initial_system_power":"working",
+      "resources":[{"id":"counter","raw_start":"0x200000000",
+        "translated_start":"0x300000000","length":"0x1000",
+        "registers":[{"offset":0,"width":4,"access":"read_write","value":0}]}],
+      "interrupts":[{"id":"line0","raw_vector":17,"raw_level":0,
+        "raw_affinity":1,"translated_vector":145,"translated_level":5,
+        "translated_affinity":1,"mode":"latched","share":"device_exclusive",
+        "messages":[
+          {"message_address":"0xfee01000","message_data":"0x123400",
+           "translated_vector":145,"translated_level":5,"translated_affinity":1,
+           "polarity":"rising_edge"},
+          {"message_address":"0xfee01000","message_data":"0x123401",
+           "translated_vector":146,"translated_level":7,"translated_affinity":1,
+           "polarity":"falling_edge"}]}]}],
+    "requests":[
+      {"kind":"pnp","device_id":"interrupt0","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"create","device_id":"interrupt0","file":1},
+      {"kind":"ioctl","file":1,"code":"0x222000","output_size":32,
+       "interrupt_events":[{"after_100ns":7,"device_id":"interrupt0",
+                            "interrupt_id":"line0","message_id":1}]},
+      {"kind":"cleanup","file":1},{"kind":"close","file":1},
+      {"kind":"pnp","device_id":"interrupt0","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"interrupt0","minor":"remove",
+       "bus_completion":{"status":0}}]})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDInterruptM";
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+            Session, Image, Scenario, &Options)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+    const auto *Report = Parsed->getAsObject();
+    ASSERT_NE(Report, nullptr);
+    EXPECT_EQ(Report->getString("stop_reason"), "returned")
+        << Report->getString("diagnostic").value_or("").str();
+    EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+    const auto *Configuration = Report->getObject("configuration");
+    ASSERT_NE(Configuration, nullptr);
+    const auto *Devices = Configuration->getArray("pnp_devices");
+    ASSERT_NE(Devices, nullptr);
+    ASSERT_EQ(Devices->size(), 1u);
+    const auto *Resources =
+        Devices->front().getAsObject()->getArray("interrupts");
+    ASSERT_NE(Resources, nullptr);
+    const auto *Messages =
+        Resources->front().getAsObject()->getArray("messages");
+    ASSERT_NE(Messages, nullptr);
+    ASSERT_EQ(Messages->size(), 2u);
+    EXPECT_EQ((*Messages)[1].getAsObject()->getInteger("message_data"),
+              0x123401);
+    EXPECT_EQ((*Messages)[1].getAsObject()->getString("polarity"),
+              "falling_edge");
+    const auto *Inputs = Configuration->getArray("interrupt_events");
+    ASSERT_NE(Inputs, nullptr);
+    ASSERT_EQ(Inputs->size(), 1u);
+    EXPECT_EQ(Inputs->front().getAsObject()->getInteger("message_id"), 1);
+    const auto *Events = Report->getArray("interrupts");
+    ASSERT_NE(Events, nullptr);
+    ASSERT_EQ(Events->size(), 1u);
+    const auto *Event = Events->front().getAsObject();
+    EXPECT_EQ(Event->getInteger("message_id"), 1);
+    EXPECT_EQ(Event->getInteger("return_value"), 1);
+    const auto *Handlers = Event->getArray("handlers");
+    ASSERT_NE(Handlers, nullptr);
+    ASSERT_EQ(Handlers->size(), 1u);
+    EXPECT_EQ(Handlers->front().getAsObject()->getInteger("message_id"), 1);
+    EXPECT_EQ(Handlers->front().getAsObject()->getInteger("delivery_index"), 0);
+  }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_INTERRUPT_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIExecutesExplicitLevelAssertionAndDeassertion) {
+#ifdef NEVERD_WDM_INTERRUPT_FIXTURE
+  std::vector<const char *> Images{NEVERD_WDM_INTERRUPT_FIXTURE};
+#ifdef NEVERD_WDM_INTERRUPT_CFG_FIXTURE
+  Images.push_back(NEVERD_WDM_INTERRUPT_CFG_FIXTURE);
+#endif
+  constexpr char Scenario[] = R"({
+    "load_address":"0x190000000","unload":true,
+    "pnp_devices":[{"id":"interrupt0","bus":"register_bank",
+      "initial_device_power":"D0","initial_system_power":"working",
+      "resources":[{"id":"counter","raw_start":"0x200000000",
+        "translated_start":"0x300000000","length":"0x1000",
+        "registers":[{"offset":0,"width":4,"access":"read_write","value":0}]}],
+      "interrupts":[{"id":"line0","raw_vector":17,"raw_level":7,
+        "raw_affinity":1,"translated_vector":145,"translated_level":5,
+        "translated_affinity":1,"mode":"level_sensitive",
+        "share":"device_exclusive","retrigger_after_100ns":3}]}],
+    "requests":[
+      {"kind":"pnp","device_id":"interrupt0","minor":"start",
+       "bus_completion":{"status":0}},
+      {"kind":"create","device_id":"interrupt0","file":1},
+      {"kind":"ioctl","file":1,"code":"0x222000","output_size":32,
+       "interrupt_events":[
+         {"after_100ns":7,"device_id":"interrupt0","interrupt_id":"line0","action":"assert"},
+         {"after_100ns":15,"device_id":"interrupt0","interrupt_id":"line0","action":"deassert"}]},
+      {"kind":"cleanup","file":1},{"kind":"close","file":1},
+      {"kind":"pnp","device_id":"interrupt0","minor":"query_remove",
+       "bus_completion":{"status":0}},
+      {"kind":"pnp","device_id":"interrupt0","minor":"remove",
+       "bus_completion":{"status":0}}]})";
+  neverd_driver_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.instruction_limit = 100000;
+  Options.memory_limit = 64 * 1024 * 1024;
+  Options.event_limit = 10000;
+  Options.timeout_milliseconds = 5000;
+  Options.service_name = "NeverDInterruptD";
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+            Session, Image, Scenario, &Options)));
+    ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError()) << error();
+    const auto *Report = Parsed->getAsObject();
+    ASSERT_NE(Report, nullptr);
+    EXPECT_EQ(Report->getString("stop_reason"), "returned")
+        << Report->getString("diagnostic").value_or("").str();
+    EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+    EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+    const auto *Configuration = Report->getObject("configuration");
+    ASSERT_NE(Configuration, nullptr);
+    const auto *Devices = Configuration->getArray("pnp_devices");
+    ASSERT_NE(Devices, nullptr);
+    ASSERT_EQ(Devices->size(), 1u);
+    const auto *Resources =
+        Devices->front().getAsObject()->getArray("interrupts");
+    ASSERT_NE(Resources, nullptr);
+    ASSERT_EQ(Resources->size(), 1u);
+    const auto *Resource = Resources->front().getAsObject();
+    EXPECT_EQ(Resource->getString("mode"), "level_sensitive");
+    EXPECT_EQ(Resource->getInteger("retrigger_after_100ns"), 3);
+    const auto *Inputs = Configuration->getArray("interrupt_events");
+    ASSERT_NE(Inputs, nullptr);
+    ASSERT_EQ(Inputs->size(), 2u);
+    EXPECT_EQ((*Inputs)[0].getAsObject()->getString("action"), "assert");
+    EXPECT_EQ((*Inputs)[1].getAsObject()->getString("action"), "deassert");
+    const auto *Events = Report->getArray("interrupts");
+    ASSERT_NE(Events, nullptr);
+    ASSERT_EQ(Events->size(), 2u);
+    const auto *Assert = (*Events)[0].getAsObject();
+    EXPECT_EQ(Assert->getString("action"), "assert");
+    EXPECT_EQ(Assert->getInteger("occurred_at_100ns"), 7);
+    const auto *Handlers = Assert->getArray("handlers");
+    ASSERT_NE(Handlers, nullptr);
+    ASSERT_EQ(Handlers->size(), 3u);
+    for (size_t I = 0; I < Handlers->size(); ++I) {
+      const auto *Handler = (*Handlers)[I].getAsObject();
+      ASSERT_NE(Handler, nullptr);
+      EXPECT_EQ(Handler->getInteger("delivery_index"), I);
+      EXPECT_EQ(Handler->getInteger("delivered_at_100ns"), 7 + I * 3);
+      EXPECT_EQ(Handler->getInteger("returned_at_100ns"), 7 + I * 3);
+      EXPECT_EQ(Handler->getInteger("return_value"), I == 0 ? 1 : 0);
+      EXPECT_EQ(Handler->getBoolean("claimed"), I == 0);
+    }
+    const auto *Deassert = (*Events)[1].getAsObject();
+    EXPECT_EQ(Deassert->getString("action"), "deassert");
+    EXPECT_EQ(Deassert->getInteger("occurred_at_100ns"), 15);
+    EXPECT_TRUE(Deassert->getArray("handlers")->empty());
+    for (const char *Field : {"delivered_at_100ns", "returned_at_100ns",
+                              "interrupt_object", "return_value", "claimed"})
+      EXPECT_TRUE(Deassert->get(Field)->getAsNull()) << Field;
+  }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_INTERRUPT_FIXTURE requires a genuine WDK fixture";
+#endif
 }
 
 TEST_F(DriverScenarioPublic,
@@ -2589,7 +3569,8 @@ TEST_F(DriverScenarioPublic,
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned")
           << Report->getString("diagnostic").value_or("").str();
       EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2690,7 +3671,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIObserveDmaRamBeforeExplicitInterrupt) {
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned")
           << Report->getString("diagnostic").value_or("").str();
       EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2778,7 +3760,8 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIFlushChannelFragmentsBeforeCompletion) {
           << llvm::toString(Parsed.takeError()) << error();
       const auto *Report = Parsed->getAsObject();
       ASSERT_NE(Report, nullptr);
-      EXPECT_EQ(Report->getString("profile"), "wdm-x64-scheduled-v45");
+      EXPECT_EQ(Report->getString("profile"),
+                neverd::emulation::profile::ReportProfile);
       EXPECT_EQ(Report->getString("stop_reason"), "returned")
           << Report->getString("diagnostic").value_or("").str();
       EXPECT_EQ(Report->getBoolean("scenario_success"), true);
@@ -2907,6 +3890,57 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIResumeGenuineConstantExceptionHandler) {
 #endif
 }
 
+TEST_F(DriverScenarioPublic, CAPIGSCookieFailureCannotBecomeSuccessfulSEH) {
+#ifdef NEVERD_WDM_SEH_FIXTURE
+  std::vector<const char *> Images{NEVERD_WDM_SEH_FIXTURE};
+#ifdef NEVERD_WDM_SEH_CFG_FIXTURE
+  Images.push_back(NEVERD_WDM_SEH_CFG_FIXTURE);
+#endif
+  for (const auto *Image : Images)
+    for (char Mode :
+         {SehGSCookie, SehGSAlignedCookie, SehGSCorruptCookie,
+          SehGSAlignedCorruptCookie, SehGSStandaloneCookie,
+          SehGSStandaloneAlignedCookie, SehGSStandaloneCorruptCookie,
+          SehGSStandaloneAlignedCorruptCookie}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Mode);
+      const bool Corrupt = Mode == SehGSCorruptCookie ||
+                           Mode == SehGSAlignedCorruptCookie ||
+                           Mode == SehGSStandaloneCorruptCookie ||
+                           Mode == SehGSStandaloneAlignedCorruptCookie;
+      const std::string Service = std::string("NeverDSEH") + Mode;
+      neverd_driver_options_v1 Options{};
+      Options.struct_size = sizeof(Options);
+      Options.instruction_limit =
+          neverd::emulation::profile::DefaultInstructionLimit;
+      Options.memory_limit = neverd::emulation::profile::DefaultMemoryLimit;
+      Options.event_limit = neverd::emulation::profile::DefaultEventLimit;
+      Options.timeout_milliseconds =
+          neverd::emulation::profile::DefaultTimeoutMilliseconds;
+      Options.service_name = Service.c_str();
+      auto Parsed =
+          llvm::json::parse(takeString(neverd_emulate_driver_scenario_json(
+              Session, Image, R"({"load_address":"0x190000000","unload":true})",
+              &Options)));
+      ASSERT_TRUE(bool(Parsed))
+          << llvm::toString(Parsed.takeError()) << error();
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"),
+                Corrupt ? "model_error" : "returned");
+      EXPECT_EQ(Report->getBoolean("scenario_success"), !Corrupt);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), !Corrupt);
+      if (Corrupt)
+        EXPECT_NE(Report->getString("diagnostic")
+                      .value_or("")
+                      .find("GS security cookie check failed"),
+                  llvm::StringRef::npos);
+    }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_SEH_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
 TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteGenuineNeitherUserBuffers) {
 #ifdef NEVERD_WDM_NEITHER_FIXTURE
   std::vector<const char *> Images{NEVERD_WDM_NEITHER_FIXTURE};
@@ -2950,6 +3984,94 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteGenuineNeitherUserBuffers) {
         EXPECT_EQ(Request->getString("output_hex"), Expected);
         EXPECT_EQ(Request->getInteger("io_status"), 0);
         EXPECT_EQ(Request->getBoolean("completed"), true);
+      }
+    }
+  }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_NEITHER_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteNestedUserMemoryExample) {
+#ifdef NEVERD_WDM_NEITHER_FIXTURE
+  std::ifstream Input(NEVERD_DRIVER_NESTED_SCENARIO);
+  ASSERT_TRUE(Input.is_open());
+  const std::string Scenario(std::istreambuf_iterator<char>(Input), {});
+  for (const char *Image : {NEVERD_WDM_NEITHER_FIXTURE,
+#ifdef NEVERD_WDM_NEITHER_CFG_FIXTURE
+                            NEVERD_WDM_NEITHER_CFG_FIXTURE
+#endif
+       }) {
+    for (const char *Base : {"0x180000000", "0x190000000"}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Base);
+      auto Document = llvm::json::parse(Scenario);
+      ASSERT_TRUE(bool(Document)) << llvm::toString(Document.takeError());
+      (*Document->getAsObject())["load_address"] = Base;
+      const std::string JSON = llvm::formatv("{0}", *Document).str();
+      const std::string API = takeString(neverd_emulate_driver_scenario_json(
+          Session, Image, JSON.c_str(), nullptr));
+      ASSERT_FALSE(API.empty()) << error();
+      for (const auto &Text : {API, runCLI(JSON, 0, nullptr, Image)}) {
+        auto Parsed = llvm::json::parse(Text);
+        ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+        const auto *Report = Parsed->getAsObject();
+        ASSERT_NE(Report, nullptr);
+        EXPECT_EQ(Report->getString("stop_reason"), "returned")
+            << Report->getString("diagnostic").value_or("").str();
+        EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+        EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+        const auto *Configuration = Report->getObject("configuration");
+        ASSERT_NE(Configuration, nullptr);
+        const auto *Memory = Configuration->getArray("user_memory");
+        ASSERT_NE(Memory, nullptr);
+        ASSERT_EQ(Memory->size(), 2u);
+        const auto *Requests = Report->getArray("requests");
+        ASSERT_NE(Requests, nullptr);
+        ASSERT_EQ(Requests->size(), 5u);
+        std::string PreviousPayload;
+        for (size_t Index : {1u, 2u}) {
+          const auto *Request = (*Requests)[Index].getAsObject();
+          ASSERT_NE(Request, nullptr);
+          EXPECT_EQ(Request->getInteger("io_status"), 0);
+          EXPECT_EQ(Request->getBoolean("completed"), true);
+          EXPECT_EQ(Request->getString("output_hex"), "");
+          const auto *Buffers = Request->getArray("user_buffers");
+          ASSERT_NE(Buffers, nullptr);
+          ASSERT_EQ(Buffers->size(), 3u);
+          const auto *Descriptor = (*Buffers)[0].getAsObject();
+          const auto *Payload = (*Buffers)[1].getAsObject();
+          const auto *Sink = (*Buffers)[2].getAsObject();
+          ASSERT_NE(Descriptor, nullptr);
+          ASSERT_NE(Payload, nullptr);
+          ASSERT_NE(Sink, nullptr);
+          EXPECT_EQ(Payload->getString("id"), "payload");
+          EXPECT_EQ(Payload->getString("access"), "read_only");
+          EXPECT_EQ(Payload->getString("backing_hex"),
+                    "a5a5a501020304a5a5a5a5a5");
+          EXPECT_EQ(Sink->getString("backing_hex"), "a5a5a5a531323334a5a5a5a5");
+          const auto Address = Payload->getString("address");
+          ASSERT_TRUE(Address);
+          EXPECT_NE(Address->str(), PreviousPayload);
+          PreviousPayload = Address->str();
+          uint64_t PayloadAddress = 0;
+          ASSERT_FALSE(Address->getAsInteger(0, PayloadAddress));
+          const auto Backing = Descriptor->getString("backing_hex");
+          ASSERT_TRUE(Backing);
+          ASSERT_EQ(Backing->size(), sizeof(DriverNestedBuffer) * 2);
+          uint64_t Pointer = 0;
+          for (unsigned I = 0; I < sizeof(uint64_t); ++I) {
+            unsigned Byte = 0;
+            ASSERT_FALSE(Backing->substr(I * 2, 2).getAsInteger(16, Byte));
+            Pointer |= uint64_t(Byte) << (I * 8);
+          }
+          EXPECT_EQ(Pointer, PayloadAddress + NestedPayloadOffset);
+          EXPECT_EQ(
+              Backing->take_front(sizeof(uint64_t) * 2),
+              Backing->substr(sizeof(uint64_t) * 2, sizeof(uint64_t) * 2));
+          for (const auto &Buffer : *Buffers)
+            EXPECT_EQ(Buffer.getAsObject()->getBoolean("revoked"), Index == 2);
+        }
       }
     }
   }

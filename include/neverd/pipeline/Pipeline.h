@@ -21,6 +21,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ObjC/ObjCBlockCallHints.h"
 #include "neverd/pass/ir/simplify/SymSimplifyPass.h"
 #include "neverd/sbf/SBFIR.h"
 #include "neverd/solver/SymSynthVerifier.h"
@@ -66,6 +67,16 @@ struct PipelineOptions {
   /// Explicit declarations for source rendering only; never consumed in
   /// PatchMode or LiftMode and never promoted to transformation evidence.
   std::map<va_t, SourceFunctionTypeHint> SourceTypeHints;
+  /// Exact semantic declarations used only when binding calls to a callee.
+  /// This is distinct from SourceTypeHints: compiler-generated thunks may
+  /// have a public call contract whose machine body contains incidental live
+  /// registers that are not source parameters.
+  std::map<va_t, SourceFunctionTypeHint> SourceCalleeTypeHints;
+  /// Source-only descriptor and ownership proofs for captured block calls.
+  std::map<va_t, ObjCBlockCaptureCallFields> ObjCBlockCaptureFields;
+  /// Source-only receiver roots from authenticated invoke/descriptor pairs.
+  std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
+      ObjCBlockParameterReceivers;
   std::string OutputFile;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
   bool EVMStrict = true;
@@ -505,7 +516,7 @@ private:
 
   /// Phase 3: convert MedIR -> HighIR in parallel.
   void buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
-                   PipelineResult &Result);
+                   PipelineResult &Result, DebugContext *Dbg = nullptr);
 
   static void
   mergeDebugSymbols(std::vector<std::pair<va_t, std::string>> &FuncEntries,

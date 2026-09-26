@@ -52,6 +52,8 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
     case NdOp::FLOAT_SUB:
     case NdOp::FLOAT_MULT:
     case NdOp::FLOAT_DIV:
+    case NdOp::FLOAT_MINNUM:
+    case NdOp::FLOAT_MAXNUM:
     case NdOp::FLOAT_EQUAL:
     case NdOp::FLOAT_NOTEQUAL:
     case NdOp::FLOAT_LESS:
@@ -154,6 +156,8 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
   case NdOp::FLOAT_SUB:
   case NdOp::FLOAT_MULT:
   case NdOp::FLOAT_DIV:
+  case NdOp::FLOAT_MINNUM:
+  case NdOp::FLOAT_MAXNUM:
   case NdOp::FLOAT_EQUAL:
   case NdOp::FLOAT_NOTEQUAL:
   case NdOp::FLOAT_LESS:

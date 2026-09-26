@@ -37,6 +37,13 @@ struct GuestMMIOCallbacks {
   std::function<llvm::Expected<uint64_t>(uint64_t, unsigned)> Read;
   std::function<llvm::Error(uint64_t, unsigned, uint64_t)> Write;
 };
+struct GuestAliasRange {
+  uint64_t Address, Size;
+};
+struct GuestAliasMapping {
+  uint64_t Address, Source, Size;
+  unsigned Permissions;
+};
 class GuestMemory {
 public:
   virtual ~GuestMemory() = default;
@@ -44,8 +51,19 @@ public:
                           unsigned Permissions) = 0;
   /// Map a second virtual range onto the same RAM pages. The source and alias
   /// are page aligned; the owner must separately govern their lifetimes.
-  virtual llvm::Error mapAlias(uint64_t Address, uint64_t Source,
-                               uint64_t Size, unsigned Permissions);
+  virtual llvm::Error mapAlias(uint64_t Address, uint64_t Source, uint64_t Size,
+                               unsigned Permissions);
+  /// Retire exactly one complete RAM alias. Canonical storage and other
+  /// aliases survive; the address and mapping budget become available again.
+  /// Reject running/faulted CPUs, callbacks and partial or canonical ranges.
+  virtual llvm::Error unmapAlias(uint64_t Address, uint64_t Size);
+  /// Replace a set of complete RAM aliases at one stopped-CPU boundary.
+  /// Validate every removal, source, destination and the final mapping budget
+  /// before any change. Sources must remain mapped throughout the operation.
+  /// An unexpected engine failure is terminal; predictable errors leave all
+  /// aliases, permissions and accounting unchanged.
+  virtual llvm::Error replaceAliases(llvm::ArrayRef<GuestAliasRange> Remove,
+                                     llvm::ArrayRef<GuestAliasMapping> Add);
   virtual llvm::Error protect(uint64_t Address, uint64_t Size,
                               unsigned Permissions) = 0;
   /// Optional device access support; unrelated memory implementations reject
@@ -63,9 +81,10 @@ public:
   /// The model must separately authorize the exact live allocation and pins.
   virtual llvm::Error validateBacking(uint64_t Address, uint64_t Size) const;
   /// Pure CPU-permission preflight. False means an access would fault; no
-  /// first-fault state may be latched by this query.
+  /// first-fault state may be latched by this query. Instruction and memory
+  /// hooks may query permissions without reentering the execution engine.
   virtual llvm::Expected<bool> canAccess(uint64_t Address, uint64_t Size,
-                                          unsigned Permissions) const;
+                                         unsigned Permissions) const;
   /// Access the same RAM bytes without changing CPU permissions.
   /// Implementations validate the complete span before effects and reject
   /// running/faulted CPUs. Unexpected engine failures must prevent further
@@ -74,6 +93,13 @@ public:
                                   llvm::MutableArrayRef<uint8_t> Bytes);
   virtual llvm::Error writeBacking(uint64_t Address,
                                    llvm::ArrayRef<uint8_t> Bytes);
+  /// Diagnostic snapshot of existing RAM, including after a terminal fault.
+  /// Requires a stopped CPU without an active device callback. Validate the
+  /// complete span before copying; never invoke MMIO, change permissions or
+  /// clear fault state. This observation does not authorize guest/device
+  /// access.
+  virtual llvm::Error snapshotBacking(uint64_t Address,
+                                      llvm::MutableArrayRef<uint8_t> Bytes);
   llvm::Expected<uint64_t> readInteger(uint64_t Address, unsigned Size);
   llvm::Error writeInteger(uint64_t Address, uint64_t Value, unsigned Size);
 };

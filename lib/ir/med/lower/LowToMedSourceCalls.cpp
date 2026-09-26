@@ -1,3 +1,6 @@
+#include "../../../loader/Swift/SwiftBooleanProjection.h"
+#include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -45,7 +48,12 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
       (Image && (Image->IsRelocatable || Image->Arch != TargetArch)) ||
       (TargetArch != Arch::AArch64 && TargetArch != Arch::X64))
     return;
-  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low)
+  const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters = nullptr;
+  if (ObjCBlockParameterReceivers)
+    if (auto It = ObjCBlockParameterReceivers->find(Low.Entry);
+        It != ObjCBlockParameterReceivers->end())
+      BlockParameters = &It->second;
+  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters)
                      : std::map<va_t, SourceCallTypeHint>();
   if (Image) {
     auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
@@ -56,17 +64,69 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     }
   }
   const SourceFunctionTypeHint *EntrySignature = nullptr;
-  if (SourceCalleeTypeHints)
-    if (auto It = SourceCalleeTypeHints->find(Low.Entry);
-        It != SourceCalleeTypeHints->end()) {
+  // Standalone clients historically supplied one shared map. The pipeline
+  // supplies a distinct entry map so call-only thunk overrides cannot rewrite
+  // the machine body's return and live-in contract.
+  const auto *EntryHints =
+      SourceEntryTypeHints ? SourceEntryTypeHints : SourceCalleeTypeHints;
+  if (EntryHints)
+    if (auto It = EntryHints->find(Low.Entry); It != EntryHints->end()) {
       std::string Diagnostic;
       if (It->second.Architecture == TargetArch &&
           validateSourceABI(It->second, Diagnostic))
         EntrySignature = &It->second;
     }
   if (Image) {
-    auto BlockHints = buildObjCBlockCallHints(*Image, Low, EntrySignature);
+    const ObjCBlockCaptureCallFields *Captures = nullptr;
+    if (ObjCBlockCaptureFields)
+      if (auto It = ObjCBlockCaptureFields->find(Low.Entry);
+          It != ObjCBlockCaptureFields->end())
+        Captures = &It->second;
+    auto BlockHints =
+        buildObjCBlockCallHints(*Image, Low, EntrySignature, &Hints, Captures);
     Hints.insert(BlockHints.begin(), BlockHints.end());
+  }
+  std::optional<SourceFunctionTypeHint> ProvisionalBooleanEntry;
+  if (Image && !EntrySignature) {
+    bool HasBooleanCandidate = false;
+    for (const auto &Block : Low.Blocks) {
+      for (const auto &Op : Block.Ops) {
+        if (Op.Opcode != NdOp::CALL)
+          continue;
+        const auto Site = sourceCallOccurrenceKey(Op);
+        if (Site && Site->StaticTarget &&
+            swiftBooleanRuntimeVeneerCandidate(*Image, *Site->StaticTarget)) {
+          HasBooleanCandidate = true;
+          break;
+        }
+      }
+      if (HasBooleanCandidate)
+        break;
+    }
+    if (HasBooleanCandidate)
+      ProvisionalBooleanEntry =
+          provisionalNativeSwiftBooleanEntry(*Image, Low.Entry);
+  }
+  if (Image && (EntrySignature || ProvisionalBooleanEntry)) {
+    const auto Booleans = qualifySwiftBooleanProjections(
+        *Image, Low,
+        EntrySignature ? *EntrySignature : *ProvisionalBooleanEntry,
+        SourceCalleeTypeHints);
+    for (const auto &Boolean : Booleans) {
+      const auto Signature =
+          swiftBooleanNormalizedSignature(Boolean.Runtime.ImportName);
+      if (!Signature)
+        continue;
+      SourceCallTypeHint Hint;
+      Hint.CallKind = SourceCallTypeHint::Kind::SwiftBooleanProjection;
+      Hint.BooleanResult = SourceCallTypeHint::BooleanResultProjection{
+          Low.Entry, Boolean.Normalization.Site};
+      Hint.Signature = *Signature;
+      Hint.TargetAddress = Boolean.Runtime.ImportSlot;
+      Hint.TargetName =
+          llvm::StringRef(Boolean.Runtime.ImportName).drop_front().str();
+      Hints.emplace(Boolean.Normalization.Site.Instruction, std::move(Hint));
+    }
   }
   const auto &TRI = getTargetRegInfo(TargetArch);
   auto Temporary = [&](uint16_t Size) {
@@ -81,7 +141,17 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     std::vector<MedOp> Ops;
     for (auto Op : Block.Ops) {
       if (Op.Opcode == NdOp::RETURN && EntrySignature &&
-          EntrySignature->ReturnType->Kind == NdTypeKind::Struct) {
+          EntrySignature->ReturnType->Kind == NdTypeKind::Void) {
+        // RET reads the architecture's conventional result register in the
+        // generic LowIR model.  An authenticated source signature returning
+        // void makes that machine value unobservable; keeping it would retain
+        // an undefined caller-saved carrier and reject an otherwise complete
+        // source projection.
+        Op.NumInputs = 0;
+      } else if (Op.Opcode == NdOp::RETURN && EntrySignature &&
+                 EntrySignature->ReturnType->Kind == NdTypeKind::Struct &&
+                 EntrySignature->ReturnLocation.Kind !=
+                     SourceABICarrierKind::IndirectResultPointer) {
         Op.NumInputs = 0;
         for (const auto &Piece : EntrySignature->ReturnComponents)
           Op.addInput(ndVarToMedVar(
@@ -137,6 +207,17 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Ops.push_back(std::move(Op));
         continue;
       }
+      if (Hint->BooleanResult &&
+          (!isSwiftBooleanSourceBinding(*Hint) ||
+           Hint->BooleanResult->FunctionEntry != Low.Entry ||
+           Hint->BooleanResult->Site.Instruction != Op.Addr ||
+           Hint->BooleanResult->Site.Sequence != Op.OriginSeq ||
+           Hint->BooleanResult->Site.Opcode != Op.Opcode ||
+           !Op.Inputs[0].isConst() ||
+           Hint->BooleanResult->Site.StaticTarget != Op.Inputs[0].ConstVal)) {
+        Ops.push_back(std::move(Op));
+        continue;
+      }
       const auto &Signature = Hint->Signature;
       const auto Parameters = sourceABIParameters(Signature);
       const bool HasStack =
@@ -182,6 +263,24 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
           Argument = Load.Output;
           Ops.push_back(std::move(Address));
           Ops.push_back(std::move(Load));
+        } else if (TargetArch == Arch::AArch64 &&
+                   Location.Kind == SourceABICarrierKind::IntegerRegister &&
+                   Location.ValueBytes < 4) {
+          // AArch64 writes to Wn define the complete 32-bit register, even
+          // when the source value carried by a call is only a byte or half.
+          // Publish that architectural carrier before SSA, then extract the
+          // declared source lane. Reading the narrow physical alias directly
+          // would create a separate SSA web that misses converging Wn writes.
+          MedOp Extract;
+          Extract.Opcode = NdOp::SUBBYTES;
+          Extract.Addr = Op.Addr;
+          Extract.Output = Temporary(Location.ValueBytes);
+          Extract.addInput(
+              ndVarToMedVar(NdVar::reg(Location.RegisterOffset, 4)));
+          Extract.addInput(
+              MedVar::makeConst(0, 4, ConstantAddressProvenance::Scalar));
+          Argument = Extract.Output;
+          Ops.push_back(std::move(Extract));
         } else {
           Argument = ndVarToMedVar(
               NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
@@ -189,25 +288,76 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Op.addInput(Argument);
       }
       const auto &Return = Signature.ReturnLocation;
-      Op.Output = Return.Kind == SourceABICarrierKind::None
+      const bool IndirectResult =
+          Return.Kind == SourceABICarrierKind::IndirectResultPointer;
+      Op.Output = Return.Kind == SourceABICarrierKind::None || IndirectResult
                       ? MedVar()
                       : ndVarToMedVar(NdVar::reg(Return.RegisterOffset,
                                                  Return.ValueBytes));
       std::vector<MedOp> ReturnOps;
-      if (!Signature.ReturnComponents.empty()) {
+      if (IndirectResult) {
+        // Preserve the pre-call hidden pointer before SSA introduces the
+        // caller-saved x8 clobber. A declared result initializes every record
+        // field; the logical call keeps the ordinary source parameter list.
+        MedOp Address;
+        Address.Opcode = NdOp::COPY;
+        Address.Addr = Op.Addr;
+        Address.Output = Temporary(8);
+        Address.addInput(ndVarToMedVar(NdVar::reg(Return.RegisterOffset, 8)));
+        const auto Buffer = Address.Output;
+        Ops.push_back(std::move(Address));
         Op.Output = Temporary(Signature.ReturnType->Size);
-        uint16_t Offset = 0;
-        for (const auto &Piece : Signature.ReturnComponents) {
+        for (const auto &Member :
+             sourceAggregateMembers(Signature.ReturnType)) {
+          MedOp Extract;
+          Extract.Opcode = NdOp::SUBBYTES;
+          Extract.Addr = Op.Addr;
+          Extract.Output = Temporary(Member.Type->Size);
+          Extract.addInput(Op.Output);
+          Extract.addInput(MedVar::makeConst(Member.ByteOffset, 4));
+          MedOp Field;
+          Field.Opcode = NdOp::INT_ADD;
+          Field.Addr = Op.Addr;
+          Field.Output = Temporary(8);
+          Field.addInput(Buffer);
+          Field.addInput(MedVar::makeConst(Member.ByteOffset, 8));
+          MedOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.Addr = Op.Addr;
+          Store.addInput(Field.Output);
+          Store.addInput(Extract.Output);
+          ReturnOps.push_back(std::move(Extract));
+          ReturnOps.push_back(std::move(Field));
+          ReturnOps.push_back(std::move(Store));
+        }
+      } else if (!Signature.ReturnComponents.empty()) {
+        Op.Output = Temporary(Signature.ReturnType->Size);
+        const auto Members = sourceAggregateMembers(Signature.ReturnType);
+        for (size_t I = 0; I < Signature.ReturnComponents.size(); ++I) {
+          const auto &Piece = Signature.ReturnComponents[I];
           MedOp Extract;
           Extract.Opcode = NdOp::SUBBYTES;
           Extract.Addr = Op.Addr;
           Extract.Output =
               ndVarToMedVar(NdVar::reg(Piece.RegisterOffset, Piece.ValueBytes));
           Extract.addInput(Op.Output);
-          Extract.addInput(MedVar::makeConst(Offset, 4));
-          Offset += Piece.ValueBytes;
+          Extract.addInput(MedVar::makeConst(
+              Members.empty() ? I * Piece.ValueBytes : Members[I].ByteOffset,
+              4));
           ReturnOps.push_back(std::move(Extract));
         }
+      } else if (Hint->CallKind ==
+                 SourceCallTypeHint::Kind::SwiftBooleanProjection) {
+        // Only this exact occurrence has a complete caller proof that zeroing
+        // undefined bits is unobservable. Ordinary narrow returns retain their
+        // unknown upper-byte dependency below.
+        Op.Output = Temporary(1);
+        MedOp Extend;
+        Extend.Opcode = NdOp::INT_ZEXT;
+        Extend.Addr = Op.Addr;
+        Extend.Output = ndVarToMedVar(NdVar::reg(Return.RegisterOffset, 8));
+        Extend.addInput(Op.Output);
+        ReturnOps.push_back(std::move(Extend));
       } else if (Return.Kind == SourceABICarrierKind::IntegerRegister &&
                  Return.ValueBytes < 8) {
         // A scalar ABI result does not define the rest of its register. Keep
@@ -239,7 +389,46 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
         Merge.addInput(Value);
         ReturnOps.push_back(std::move(Upper));
         ReturnOps.push_back(std::move(Merge));
+      } else if (Return.Kind == SourceABICarrierKind::FloatingRegister &&
+                 TRI.isVectorReg(Return.RegisterOffset)) {
+        auto [WideOffset, WideBytes] =
+            TRI.findWideReg(Return.RegisterOffset, Return.ValueBytes);
+        if (TRI.FPABIRegWidth)
+          WideBytes = std::min(WideBytes, TRI.FPABIRegWidth);
+        if (WideBytes > Return.ValueBytes &&
+            TRI.subRegByteOffset(Return.RegisterOffset, Return.ValueBytes,
+                                 WideOffset, WideBytes) == 0) {
+          // A scalar floating result defines only the low lane of its vector
+          // return carrier. Preserve that exact dependency when a later
+          // instruction copies the full vector: the suffix is this call's
+          // unknown clobber, not the pre-call value, while the prefix remains
+          // available to a later narrow source projection.
+          MedOp Upper;
+          Upper.Opcode = NdOp::SUBBYTES;
+          Upper.Addr = Op.Addr;
+          Upper.Output = Temporary(WideBytes - Return.ValueBytes);
+          Upper.addInput(ndVarToMedVar(NdVar::reg(WideOffset, WideBytes)));
+          Upper.addInput(MedVar::makeConst(Return.ValueBytes, 4));
+          MedOp Merge;
+          Merge.Opcode = NdOp::CONCAT;
+          Merge.Addr = Op.Addr;
+          Merge.Output = ndVarToMedVar(NdVar::reg(WideOffset, WideBytes));
+          Merge.addInput(Upper.Output);
+          Merge.addInput(Op.Output);
+          ReturnOps.push_back(std::move(Upper));
+          ReturnOps.push_back(std::move(Merge));
+        }
       }
+      // These hints were matched to an exact imported runtime declaration by
+      // the loader and passed ABI validation above. Carry its termination
+      // effect into MedIR as well as source flow. Native candidate signatures
+      // are not declarations of this effect and use the separate fixed point.
+      if (Hint->DoesNotReturn &&
+          Signature.ReturnType->Kind == NdTypeKind::Void &&
+          (Hint->CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
+           Hint->CallKind == SourceCallTypeHint::Kind::DarwinRuntimeCall ||
+           Hint->CallKind == SourceCallTypeHint::Kind::SwiftRuntimeCall))
+        Op.DoesNotReturn = true;
       Op.SourceCallHint =
           std::make_shared<const SourceCallTypeHint>(std::move(*Hint));
       Ops.push_back(std::move(Op));

@@ -155,6 +155,50 @@ TEST(ObjCBlocks,
   EXPECT_EQ(Signature.Parameters[1].Type->Size, 4U);
 }
 
+TEST(ObjCBlocks, PageRelativeLiteralInvokeRequiresValidatedBlockIdentity) {
+  auto HintsFor = [](BlockFixture &Fixture) {
+    const auto &TRI = getTargetRegInfo(Fixture.Image.Arch);
+    LowFunc Low;
+    Low.Entry = 0x1000;
+    Low.Blocks.emplace_back();
+    auto &B = Low.Blocks[0];
+    B.Id = 0;
+    auto Add = [&](NdOp Opcode, NdVar Output,
+                   std::initializer_list<NdVar> Inputs) {
+      LowOp Op;
+      Op.Opcode = Opcode;
+      Op.Output = Output;
+      Op.Addr = 0x1000 + B.Ops.size() * 4;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      B.Ops.push_back(Op);
+    };
+    const auto Receiver = NdVar::reg(TRI.IntParamRegs[0], 8);
+    const auto Argument = NdVar::reg(TRI.IntParamRegs[1], 8);
+    const auto Target = NdVar::reg(64, 8);
+    Add(NdOp::COPY, Receiver, {NdVar::cst(0x2000, 8)});
+    Add(NdOp::INT_ADD, Receiver, {Receiver, NdVar::cst(0x100, 8)});
+    Add(NdOp::COPY, Argument, {NdVar::cst(42, 8)});
+    Add(NdOp::COPY, Target, {NdVar::cst(0x2000, 8)});
+    Add(NdOp::INT_ADD, Target, {Target, NdVar::cst(0x110, 8)});
+    Add(NdOp::LOAD, Target, {Target});
+    Add(NdOp::INDIR_CALL, NdVar::reg(TRI.IntReturnReg, 8), {Target});
+    Add(NdOp::RETURN, {}, {NdVar::reg(TRI.IntReturnReg, 8)});
+    return buildObjCBlockCallHints(Fixture.Image, Low);
+  };
+
+  BlockFixture Valid;
+  auto Hints = HintsFor(Valid);
+  ASSERT_EQ(Hints.size(), 1U);
+  EXPECT_EQ(Hints.begin()->second.Signature.Origin,
+            SourceFunctionTypeHint::OriginKind::BlockRuntime);
+  EXPECT_EQ(Hints.begin()->second.Signature.ReturnType->Size, 4U);
+
+  BlockFixture Invalid;
+  Invalid.Image.ImportPtrSlots.clear();
+  EXPECT_TRUE(HintsFor(Invalid).empty());
+}
+
 TEST(ObjCBlocks, ChainedPointerSlotsRequireIndividualResolution) {
   for (va_t Missing : {BlockFixture::Literal + 16, BlockFixture::Literal + 24,
                        BlockFixture::Descriptor + 16}) {
@@ -267,6 +311,55 @@ TEST(ObjCBlocks, ExtendedOwnershipBytecodeIsBoundedAndReportsUnknownOpcodes) {
   EXPECT_FALSE(Block->Descriptor.Limitations.empty());
   EXPECT_EQ(Block->Descriptor.Captures[0].StorageKind,
             ObjCBlockCaptureRange::Kind::Unknown);
+}
+
+TEST(ObjCBlocks, RelocatedLowLayoutAddressIsNotAnInlineCount) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    for (bool Chained : {false, true}) {
+      BlockFixture F;
+      F.Image.Arch = Architecture;
+      Segment Low;
+      Low.VA = 0x800;
+      Low.Size = Low.FileSz = 8;
+      Low.FileOff = 0x4000;
+      Low.Flags = SegmentFlags::Readable;
+      Low.Data.resize(8);
+      F.Image.Segments.push_back(Low);
+      Section S;
+      S.VA = Low.VA;
+      S.Size = S.FileSz = Low.Size;
+      S.FileOff = Low.FileOff;
+      S.Flags = Low.Flags;
+      F.Image.Sections.push_back(S);
+      F.put64(BlockFixture::Descriptor + 8, 40);
+      F.put64(BlockFixture::Descriptor + 24, Low.VA);
+      F.Image.MachOHasChainedFixups = Chained;
+      F.Image.MachOResolvedChainedPointerSlots.insert(BlockFixture::Descriptor +
+                                                      16);
+      if (Chained)
+        F.Image.MachOResolvedChainedPointerSlots.insert(
+            BlockFixture::Descriptor + 24);
+      else
+        F.Image.DataPtrRelocSlots.insert(BlockFixture::Descriptor + 24);
+      std::string Error;
+      auto D = readObjCBlockDescriptor(F.Image, BlockFixture::Descriptor,
+                                       0xc0000000, Error);
+      ASSERT_TRUE(D) << Error;
+      EXPECT_TRUE(D->Limitations.empty());
+      EXPECT_EQ(D->LayoutBytes, std::vector<uint8_t>{0});
+      ASSERT_EQ(D->Captures.size(), 1U);
+      EXPECT_EQ(D->Captures[0].StorageKind,
+                ObjCBlockCaptureRange::Kind::NonObjectBytes);
+      F.Image.DataPtrRelocSlots.clear();
+      F.Image.MachOResolvedChainedPointerSlots.erase(BlockFixture::Descriptor +
+                                                     24);
+      D = readObjCBlockDescriptor(F.Image, BlockFixture::Descriptor, 0xc0000000,
+                                  Error);
+      ASSERT_TRUE(D);
+      EXPECT_FALSE(D->Limitations.empty());
+      EXPECT_TRUE(D->LayoutBytes.empty());
+    }
+  }
 }
 
 TEST(ObjCBlocks, InlineLayoutCountsAreScalarsEvenInChainedImages) {

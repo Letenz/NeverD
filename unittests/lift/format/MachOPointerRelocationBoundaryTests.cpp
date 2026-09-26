@@ -14,6 +14,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/BinaryFormat/MachO.h"
@@ -1724,7 +1725,11 @@ MedFunc makeDeepScalarIndexTableLookup(Arch TargetArch) {
   return Func;
 }
 
-MedFunc makeMaskedScalarPhiIndexLookup() {
+MedFunc
+makeMaskedScalarPhiIndexLookup(uint64_t InitialIndex = 0,
+                               uint64_t IndexMask = 0xffffffffULL,
+                               ConstantAddressProvenance InitialProvenance =
+                                   ConstantAddressProvenance::Unknown) {
   constexpr uint16_t PointerSize = 8;
   auto makeVar = [](MedVar::VarKind Kind, int Id, int SSAVer, uint16_t Size) {
     MedVar V;
@@ -1775,13 +1780,15 @@ MedFunc makeMaskedScalarPhiIndexLookup() {
   Loop.Succs = {2};
   PhiNode IndexPhi;
   IndexPhi.Output = ScalarIndex;
-  IndexPhi.Args = {{0, MedVar::makeConst(0, PointerSize)}, {2, NextIndex}};
+  IndexPhi.Args = {
+      {0, MedVar::makeConst(InitialIndex, PointerSize, InitialProvenance)},
+      {2, NextIndex}};
   Loop.Phis.push_back(std::move(IndexPhi));
   MedOp Mask;
   Mask.Opcode = NdOp::INT_AND;
   Mask.Output = MaskedIndex;
   Mask.addInput(ScalarIndex);
-  Mask.addInput(MedVar::makeConst(0xffffffffULL, PointerSize));
+  Mask.addInput(MedVar::makeConst(IndexMask, PointerSize));
   Loop.Ops.push_back(std::move(Mask));
   MedOp Scale;
   Scale.Opcode = NdOp::INT_LEFT;
@@ -2870,6 +2877,8 @@ MedFunc makeReentrantFeasibleEdgeRecurrentTableLookup(Arch TargetArch) {
   return Func;
 }
 
+constexpr va_t RelocationFoldObservationVA = 0x600;
+
 LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
   const uint16_t PointerSize =
       static_cast<uint16_t>(getTargetRegInfo(TargetArch).PointerSize);
@@ -2883,6 +2892,17 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
   Block.StartAddr = CallerVA;
   Block.EndAddr = CallerVA + 0x5C;
 
+  unsigned NextObservation = 0;
+  auto observe = [&](NdVar Value, va_t Addr) {
+    LowOp Store;
+    Store.Opcode = NdOp::STORE;
+    Store.Addr = Addr;
+    Store.addInput(NdVar::address(
+        RelocationFoldObservationVA + NextObservation++ * PointerSize,
+        PointerSize));
+    Store.addInput(Value);
+    Block.Ops.push_back(std::move(Store));
+  };
   auto addBinary = [&](NdOp Opcode, NdVar Output, NdVar A, NdVar B, va_t Addr) {
     LowOp Op;
     Op.Opcode = Opcode;
@@ -2891,6 +2911,7 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
     Op.addInput(A);
     Op.addInput(B);
     Block.Ops.push_back(std::move(Op));
+    observe(Output, Addr);
   };
 
   const NdVar Page = NdVar::address(TextVA, PointerSize);
@@ -2958,6 +2979,7 @@ LowFunc makeRelocationSensitiveConstantFoldFunction(Arch TargetArch) {
   TruncateAddress.Addr = CallerVA + 0x48;
   TruncateAddress.addInput(NdVar::address(0x410, PointerSize));
   Block.Ops.push_back(std::move(TruncateAddress));
+  observe(NarrowAddress, CallerVA + 0x48);
   addBinary(NdOp::INT_ADD, NdVar::tmp(0x140, PointerSize), NarrowAddress,
             NdVar::cst(8, PointerSize), CallerVA + 0x4C);
   addBinary(NdOp::INT_ADD, NdVar::tmp(0x150, PointerSize),
@@ -7838,6 +7860,146 @@ TEST(MachOChainedPointerBoundary, RecordsBindAndFineGrainedRebases) {
 }
 
 TEST(MachOChainedPointerBoundary,
+     PreservesRebaseHighByteWithoutClaimingUntaggedPointerIdentity) {
+  for (const Arch Architecture : {Arch::AArch64, Arch::X64})
+    for (const uint16_t Format :
+         {DYLD_CHAINED_PTR_64, DYLD_CHAINED_PTR_64_OFFSET})
+      for (const uint8_t HighByte : {0u, 1u, 0x80u, 0xffu}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Format);
+        SCOPED_TRACE(static_cast<unsigned>(HighByte));
+        auto Image = makeChainedImage();
+        Image.Arch = Architecture;
+        Image.MachOHasChainedFixups = true;
+        Image.Segments[1].ReadOnlyAfterRelocations = true;
+        for (auto &Section : Image.Sections)
+          Section.FileOff = Section.VA - TextVA;
+        Section Slots;
+        Slots.Name = "__const";
+        Slots.SegmentName = "__DATA_CONST";
+        Slots.VA = DataVA;
+        Slots.Size = Slots.FileSz = Image.Segments[1].Size;
+        Slots.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+        Image.Sections.push_back(Slots);
+
+        macho_loader::ChainedFixupsInfo Info;
+        auto Binary = makeChainedBlob(Info);
+        // This one segment-start record is the format authority for the
+        // complete four-slot chain below, not a guessed pointer spelling.
+        constexpr size_t FormatOffset =
+            0x100 + 0x20 + sizeof(uint32_t) * 2 +
+            offsetof(dyld_chained_starts_in_segment, pointer_format);
+        writeObject(Binary, FormatOffset, Format);
+        const va_t Targets[] = {CStringVA, CodeVA, CStringBVA, WritableVA + 8};
+        for (size_t I = 0; I < std::size(Targets); ++I) {
+          dyld_chained_ptr_64_rebase Rebase{};
+          Rebase.target = Format == DYLD_CHAINED_PTR_64_OFFSET
+                              ? Targets[I] - TextVA
+                              : Targets[I];
+          Rebase.high8 = I < 2 ? HighByte : 0;
+          Rebase.next = I + 1 < std::size(Targets) ? 2 : 0;
+          writeObject(Image.Segments[1].Data, I * 8, Rebase);
+        }
+        macho_loader::parseChainedFixupsRebases(Binary.data(), Binary.size(),
+                                                Info, TextVA, Image);
+        for (size_t I = 0; I < std::size(Targets); ++I) {
+          const va_t Slot = DataVA + I * 8;
+          const bool Tagged = I < 2 && HighByte;
+          const va_t Expected =
+              Targets[I] | (I < 2 ? uint64_t(HighByte) << 56 : 0);
+          ASSERT_NE(Image.readVA(Slot, 8), nullptr);
+          EXPECT_EQ(readPtr(Image.readVA(Slot, 8), true), Expected);
+          EXPECT_EQ(Image.MachOResolvedChainedPointerSlots.count(Slot), 1u);
+          EXPECT_EQ(Image.CodePtrRelocSlots.count(Slot),
+                    !Tagged && I == 1 ? 1u : 0u);
+          EXPECT_EQ(Image.DataPtrRelocSlots.count(Slot),
+                    !Tagged && I != 1 ? 1u : 0u);
+          if (Tagged) {
+            EXPECT_EQ(Image.DataPtrRelocTargetOwners.count(Slot), 0u);
+            EXPECT_FALSE(Image.isCodeAddress(Expected));
+            EXPECT_FALSE(Image.isDataAddress(Expected));
+            EXPECT_FALSE(readInitialImagePointer(Image, Slot));
+            EXPECT_FALSE(readImmutableImagePointer(Image, Slot));
+          }
+          // Even a rejected tagged address remains a resolved fixup, so raw
+          // immutable-byte copying cannot silently transplant its contents.
+          EXPECT_FALSE(readImmutableImageBytes(Image, Slot, 8));
+        }
+        EXPECT_EQ(readImmutableImagePointer(Image, DataVA + 16), CStringBVA);
+      }
+}
+
+TEST(MachOChainedPointerBoundary, AddsImageBaseAfterUnpackingOffsetHighByte) {
+  for (const bool Overflow : {false, true}) {
+    SCOPED_TRACE(Overflow);
+    auto Image = makeChainedImage();
+    const va_t Base =
+        Overflow ? UINT64_C(0xff00000000000000) : UINT64_C(0x0100000000000000);
+    for (auto &Segment : Image.Segments)
+      Segment.VA = Base + Segment.VA - TextVA;
+    for (auto &Section : Image.Sections)
+      Section.VA = Base + Section.VA - TextVA;
+    dyld_chained_ptr_64_rebase Rebase{};
+    Rebase.target = CStringVA - TextVA;
+    Rebase.high8 = 1;
+    writeObject(Image.Segments[1].Data, 0, Rebase);
+    const uint64_t Original = readPtr(Image.Segments[1].Data.data(), true);
+    macho_loader::ChainedFixupsInfo Info;
+    auto Binary = makeChainedBlob(Info);
+    macho_loader::parseChainedFixupsRebases(Binary.data(), Binary.size(), Info,
+                                            Base, Image);
+    const va_t Slot = Base + DataVA - TextVA;
+    ASSERT_NE(Image.readVA(Slot, 8), nullptr);
+    // Addition must carry through high8, not OR it into a separately rebased
+    // low target. An unrepresentable result follows the existing overflow
+    // rejection and leaves the encoded word unresolved.
+    EXPECT_EQ(readPtr(Image.readVA(Slot, 8), true),
+              Overflow ? Original : UINT64_C(0x0200000000000580));
+    EXPECT_EQ(Image.MachOResolvedChainedPointerSlots.count(Slot),
+              Overflow ? 0u : 1u);
+    EXPECT_EQ(Image.DataPtrRelocSlots.count(Slot), 0u);
+    EXPECT_EQ(Image.CodePtrRelocSlots.count(Slot), 0u);
+    EXPECT_EQ(Image.DataPtrRelocTargetOwners.count(Slot), 0u);
+  }
+}
+
+TEST(MachOChainedPointerBoundary, ClassifiesMappedFullHighAddressesExactly) {
+  for (const uint16_t Format :
+       {DYLD_CHAINED_PTR_64, DYLD_CHAINED_PTR_64_OFFSET}) {
+    SCOPED_TRACE(Format);
+    auto Image = makeChainedImage();
+    constexpr va_t Base = UINT64_C(0x0100000100000000);
+    for (auto &Segment : Image.Segments)
+      Segment.VA = Base + Segment.VA - TextVA;
+    for (auto &Section : Image.Sections)
+      Section.VA = Base + Section.VA - TextVA;
+    const va_t Target = Base + CStringVA - TextVA;
+    dyld_chained_ptr_64_rebase Rebase{};
+    Rebase.target = Format == DYLD_CHAINED_PTR_64_OFFSET
+                        ? CStringVA - TextVA
+                        : Target & UINT64_C(0xfffffffff);
+    Rebase.high8 = Format == DYLD_CHAINED_PTR_64 ? Target >> 56 : 0;
+    writeObject(Image.Segments[1].Data, 0, Rebase);
+    macho_loader::ChainedFixupsInfo Info;
+    auto Binary = makeChainedBlob(Info);
+    constexpr size_t FormatOffset =
+        0x100 + 0x20 + sizeof(uint32_t) * 2 +
+        offsetof(dyld_chained_starts_in_segment, pointer_format);
+    writeObject(Binary, FormatOffset, Format);
+    macho_loader::parseChainedFixupsRebases(Binary.data(), Binary.size(), Info,
+                                            Base, Image);
+    const va_t Slot = Base + DataVA - TextVA;
+    ASSERT_NE(Image.readVA(Slot, 8), nullptr);
+    EXPECT_EQ(readPtr(Image.readVA(Slot, 8), true), Target);
+    EXPECT_EQ(Image.MachOResolvedChainedPointerSlots.count(Slot), 1u);
+    EXPECT_EQ(Image.DataPtrRelocSlots.count(Slot), 1u);
+    EXPECT_EQ(Image.CodePtrRelocSlots.count(Slot), 0u);
+    ASSERT_EQ(Image.DataPtrRelocTargetOwners.count(Slot), 1u);
+    EXPECT_EQ(Image.DataPtrRelocTargetOwners.at(Slot), Target);
+  }
+}
+
+TEST(MachOChainedPointerBoundary,
      RejectsMalformedOrdinalNameAndAddendOverflow) {
   // An out-of-range ordinal is local to that slot: it must not alias the last
   // valid record or partially join an Import.
@@ -9714,6 +9876,57 @@ TEST(MachOLLVMDataPointerBoundary,
               SawIntegerMask |= Integer->getZExtValue() == Mask32;
     EXPECT_TRUE(SawIntegerMask);
     EXPECT_EQ(Module->getNamedGlobal(makeNdDataSymbol(Mask32)), nullptr);
+  }
+}
+
+TEST(MachOLLVMDataPointerBoundary,
+     DistinguishesBoundedNumericCollisionFromAddressPhi) {
+  // A numeric PHI initializer can happen to lie inside a low-VA read-only
+  // object. A small runtime index remains numeric after AND 7,
+  // but an unmasked value or an explicitly relocated address may still carry
+  // an original-image pointer and must retain the fail-closed path.
+  struct Scenario {
+    uint64_t Mask;
+    ConstantAddressProvenance Provenance;
+    bool ExpectSuccess;
+  };
+  const Scenario Cases[] = {
+      {7, ConstantAddressProvenance::Unknown, true},
+      {0xffffffffULL, ConstantAddressProvenance::Unknown, false},
+      {7, ConstantAddressProvenance::DataAddress, false},
+  };
+  for (const Scenario &Case : Cases) {
+    SCOPED_TRACE(Case.Mask == 7 ? "small mask" : "pointer-width mask");
+    SCOPED_TRACE(Case.Provenance == ConstantAddressProvenance::Unknown
+                     ? "numeric immediate"
+                     : "explicit data address");
+    BinaryImage Image = makeSpilledConstTableImage(Arch::AArch64);
+    addThresholdCrossingConstTableRun(Image);
+    Image.RelocDataAddrs.insert(SpilledConstTableVA);
+    MedFunc Lookup = makeMaskedScalarPhiIndexLookup(LowSpilledConstTableVA + 7,
+                                                    Case.Mask, Case.Provenance);
+    llvm::LLVMContext Context;
+    testing::internal::CaptureStderr();
+    auto Module = MedLLVMEmitter().emit(
+        {Lookup}, Context, "macho-bounded-numeric-table-index", Arch::AArch64,
+        {}, &Image, BinaryFormat::MachO);
+    std::string Diagnostic = testing::internal::GetCapturedStderr();
+    if (!Case.ExpectSuccess) {
+      EXPECT_EQ(Module, nullptr);
+      EXPECT_NE(Diagnostic.find("refusing stale-address fallback"),
+                std::string::npos)
+          << Diagnostic;
+      continue;
+    }
+    ASSERT_NE(Module, nullptr) << Diagnostic;
+    expectValidModule(*Module);
+    llvm::Function *Function = Module->getFunction(Lookup.Name);
+    ASSERT_NE(Function, nullptr);
+    const llvm::LoadInst *TableLoad = findVolatileI16Load(*Function);
+    ASSERT_NE(TableLoad, nullptr);
+    std::set<const llvm::Value *> Seen;
+    EXPECT_TRUE(
+        valueReferencesConstantGlobal(TableLoad->getPointerOperand(), Seen));
   }
 }
 
@@ -17833,6 +18046,14 @@ TEST(LowToMedRelocationInvariantBoundary,
       LowRodata.Flags = SegmentFlags::Readable;
       LowRodata.Data.assign(LowRodata.Size, 0);
       Image.Segments.push_back(std::move(LowRodata));
+      Segment Observations;
+      Observations.Name = ".observations";
+      Observations.VA = RelocationFoldObservationVA;
+      Observations.Size = 0x100;
+      Observations.FileSz = Observations.Size;
+      Observations.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Observations.Data.assign(Observations.Size, 0);
+      Image.Segments.push_back(std::move(Observations));
       Image.RelocDataAddrs.insert(0x248);
       LowToMedConverter Converter;
       Converter.setBinaryImage(&Image);
@@ -17841,27 +18062,54 @@ TEST(LowToMedRelocationInvariantBoundary,
           Format);
       ASSERT_EQ(Func.Blocks.size(), 1U);
 
-      auto opAt = [&](va_t Addr) -> const MedOp * {
+      auto observedValueAt = [&](va_t Addr) -> const MedVar * {
         const auto &Ops = Func.Blocks.front().Ops;
         auto It = std::find_if(Ops.begin(), Ops.end(), [&](const MedOp &Op) {
-          return Op.Addr == Addr;
+          return Op.Addr == Addr && Op.Opcode == NdOp::STORE;
+        });
+        EXPECT_NE(It, Ops.end());
+        if (It == Ops.end())
+          return nullptr;
+        EXPECT_EQ(It->NumInputs, 2U);
+        if (It->NumInputs != 2)
+          return nullptr;
+        return &It->Inputs[1];
+      };
+      auto definingOpAt = [&](va_t Addr, const MedVar &Value) -> const MedOp * {
+        const auto &Ops = Func.Blocks.front().Ops;
+        auto It = std::find_if(Ops.begin(), Ops.end(), [&](const MedOp &Op) {
+          return Op.Addr == Addr && Op.Output == Value;
         });
         EXPECT_NE(It, Ops.end());
         return It == Ops.end() ? nullptr : &*It;
       };
+      auto observedConstantAt = [&](va_t Addr) -> const MedVar * {
+        const MedVar *Value = observedValueAt(Addr);
+        if (!Value || Value->isConst())
+          return Value;
+        const MedOp *Def = definingOpAt(Addr, *Value);
+        if (!Def)
+          return nullptr;
+        EXPECT_EQ(Def->Opcode, NdOp::COPY);
+        EXPECT_EQ(Def->NumInputs, 1U);
+        if (Def->Opcode != NdOp::COPY || Def->NumInputs != 1)
+          return nullptr;
+        return &Def->Inputs[0];
+      };
       auto expectCopyConstant = [&](va_t Addr, uint64_t Value,
                                     ConstantAddressProvenance Provenance =
                                         ConstantAddressProvenance::Unknown) {
-        const MedOp *Op = opAt(Addr);
-        ASSERT_NE(Op, nullptr);
-        EXPECT_EQ(Op->Opcode, NdOp::COPY);
-        ASSERT_EQ(Op->NumInputs, 1U);
-        EXPECT_TRUE(Op->Inputs[0].isConst());
-        EXPECT_EQ(Op->Inputs[0].ConstVal, Value);
-        EXPECT_EQ(Op->Inputs[0].Provenance, Provenance);
+        const MedVar *Observed = observedConstantAt(Addr);
+        ASSERT_NE(Observed, nullptr);
+        ASSERT_TRUE(Observed->isConst());
+        EXPECT_EQ(Observed->ConstVal, Value);
+        EXPECT_EQ(Observed->Provenance, Provenance);
       };
       auto expectBinary = [&](va_t Addr, NdOp Opcode) {
-        const MedOp *Op = opAt(Addr);
+        const MedVar *Observed = observedValueAt(Addr);
+        ASSERT_NE(Observed, nullptr);
+        ASSERT_FALSE(Observed->isConst());
+        const MedOp *Op = definingOpAt(Addr, *Observed);
         ASSERT_NE(Op, nullptr);
         EXPECT_EQ(Op->Opcode, Opcode);
         EXPECT_EQ(Op->NumInputs, 2U);
@@ -17899,14 +18147,12 @@ TEST(LowToMedRelocationInvariantBoundary,
                          ConstantAddressProvenance::Address);
       expectBinary(CallerVA + 0x4C, NdOp::INT_ADD);
       expectBinary(CallerVA + 0x50, NdOp::INT_ADD);
-      const MedOp *CompletedPageAddress = opAt(CallerVA + 0x54);
+      const MedVar *CompletedPageAddress = observedConstantAt(CallerVA + 0x54);
       ASSERT_NE(CompletedPageAddress, nullptr);
-      EXPECT_EQ(CompletedPageAddress->Opcode, NdOp::COPY);
-      ASSERT_EQ(CompletedPageAddress->NumInputs, 1U);
-      EXPECT_TRUE(CompletedPageAddress->Inputs[0].isConst());
-      EXPECT_EQ(CompletedPageAddress->Inputs[0].ConstVal, 0x248U);
+      ASSERT_TRUE(CompletedPageAddress->isConst());
+      EXPECT_EQ(CompletedPageAddress->ConstVal, 0x248U);
       EXPECT_TRUE(
-          isExactAddressProvenance(CompletedPageAddress->Inputs[0].Provenance));
+          isExactAddressProvenance(CompletedPageAddress->Provenance));
     }
 }
 

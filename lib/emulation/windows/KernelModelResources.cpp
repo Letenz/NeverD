@@ -56,12 +56,13 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
     const ActiveRequest &Request, uint32_t Status, bool ProviderProbe) const {
   if (auto E = Lifecycle.validatePnpCompletion(*Request.PnpTicket, Status))
     return E;
-  // A provider probe runs before the bus activates resources. The real final
-  // completion repeats this validation after actual provider completion.
+  // START has not assigned resources at the provider probe. All STOP/REMOVE
+  // routes, including framework ReleaseHardware, retire resources before
+  // forwarding to the provider. Final completion validates both paths.
   if (ProviderProbe && Request.PnpOperation->Minor == DevicePnpRequest::Start)
     return llvm::Error::success();
-  return Resources.validateCompletion(Request.PnpDevice, Request.PnpOperation->Minor,
-                                 Status);
+  return Resources.validateCompletion(Request.PnpDevice,
+                                      Request.PnpOperation->Minor, Status);
 }
 
 llvm::Error KernelModel::publishProviderHardware(ActiveRequest &Request,

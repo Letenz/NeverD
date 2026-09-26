@@ -16,6 +16,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/libc/LibCNames.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-op-emitter"
@@ -106,6 +107,15 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                             int BlockId, int OpIdx) {
   if (Op.Dead)
     return;
+
+  const bool IsSyntheticX87StatusRead =
+      Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
+      Op.Inputs[0].isConst() &&
+      static_cast<Intrinsic>(Op.Inputs[0].ConstVal) == Intrinsic::X87ReadStatus;
+  if (!IsSyntheticX87StatusRead) {
+    PendingX87FpremStatus = nullptr;
+    PendingX87FpremBlock = nullptr;
+  }
 
   if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
     llvm::report_fatal_error("MedIR contains an unknown memory address space");
@@ -222,7 +232,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       auto GetPc = std::find_if(CurMedFunc->I386GetPcModels.begin(),
                                 CurMedFunc->I386GetPcModels.end(),
                                 [&](const MedI386GetPcModel &Model) {
-                                  return addressProvenanceVarKey(
+                                  return Model.Output.Size != 0 &&
+                                         addressProvenanceVarKey(
                                              Model.Output) == OutputKey;
                                 });
       if (GetPc != CurMedFunc->I386GetPcModels.end()) {
@@ -1163,25 +1174,12 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       for (auto &Blk : CurMedFunc->Blocks) {
         if (Blk.Id != BlockId)
           continue;
-        unsigned CI = 0;
-        for (size_t J = static_cast<size_t>(OpIdx) + 1;
-             J < Blk.Ops.size() && CI < PendingIntrinsicCount; ++J) {
-          auto &NOp = Blk.Ops[J];
-          if (NOp.IntrinsicAuxResult) {
-            setVar(NOp.Inputs[0], PendingIntrinsicOutputs[CI], Builder);
-            ++CI;
-            continue;
-          }
-          // LowToMed inserts sub-register normalization (zero/sign extension
-          // of the value just copied, sub-piece extraction) between the
-          // INTRINSIC output copies on targets with sub-register writes
-          // (e.g. an x86-64 EAX write zeroes the upper half of RAX).  Tolerate
-          // these so every auxiliary output (e.g. RDTSC's EDX high half) is
-          // still wired to its pending value instead of defaulting to zero.
-          if (NOp.Opcode == NdOp::INT_ZEXT || NOp.Opcode == NdOp::INT_SEXT ||
-              NOp.Opcode == NdOp::SUBBYTES)
-            continue;
-          break;
+        const auto Bindings = collectMedIntrinsicOutputBindings(
+            Blk, static_cast<size_t>(OpIdx), PendingIntrinsicCount);
+        for (size_t I = 0; I < Bindings.size(); ++I) {
+          if (!PendingIntrinsicOutputs[I])
+            llvm::report_fatal_error("intrinsic output is missing a value");
+          setVar(Bindings[I].Source, PendingIntrinsicOutputs[I], Builder);
         }
         break;
       }

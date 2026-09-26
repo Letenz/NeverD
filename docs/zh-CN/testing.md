@@ -89,7 +89,7 @@ V9 schema 测试往返验证八种次功能名称，并与生命周期完成共�
 | `unittests/sbf` | `NeverDSBFMetadataTests`、`NeverDSBFProgramImageTests`、`NeverDSBFLoaderTests`、`NeverDSBFAnalyzerTests`、`NeverDSBFVerifierTests`、`NeverDSBFISAConformanceTests`、`NeverDSBFAgaveConformanceTests`、`NeverDSBFSemanticTests`、`NeverDSBFEmitterTests`、`NeverDSBFLLVMEmitterTests`、`NeverDSBFLLVMDifferentialTests`、`NeverDSBFSourceDifferentialTests`、`NeverDSBFMalformedCorpusTests`、`NeverDSBFUpstreamConformanceTests`、`NeverDSBFExternalOracleTests`、`NeverDSBFSolanaModelTests`、`NeverDSBFIntegrationTests` | v0-v4 元数据与 ELF 布局、严格 verifier/loader 行为、23 个固定 ELF 工件、独立 official oracle、全部 opcode 可用性、恶意输入、CFG/恢复及已执行的 LLVM/C/Rust 差分 |
 | `PatchFullSubstRTTests.cpp` | `NeverDPatchFullTests` | 四 ISA×三对象格式的重写/混淆等价性 |
 | `unittests/semantic` 中的聚焦变换文件 | `NeverDSwitchXformTests`、`NeverDIndCallXformTests`、`NeverDCFGLoopXformTests`、`NeverDTwoTableXformTests`、`NeverDAvxUpperXformTests` | 从大型语义二进制拆出的快速重链接探针 |
-| `unittests/corpus`（子模块） | `NeverDWindowsEHCorpusTests`、`NeverDRustEHCorpusTests`、`NeverDGoEHCorpusTests`、`NeverDCxxItaniumEHCorpusTests`、`NeverDObjCEHCorpusTests` | 从 317 个钉住的真实二进制中读出的异常与运行时元数据，每个都在清单里声明了其恢复必须达到的下限 |
+| `unittests/corpus`（子模块） | `NeverDWindowsEHCorpusTests`、`NeverDRustEHCorpusTests`、`NeverDGoEHCorpusTests`、`NeverDCxxItaniumEHCorpusTests`、`NeverDObjCEHCorpusTests`、`NeverDAdaDEHCorpusTests` | 从 545 个钉住的真实二进制中读出的异常与运行时元数据，每个都在清单里声明了其恢复必须达到的下限 |
 
 注册的事实来源是
 [`unittests/CMakeLists.txt`](../../unittests/CMakeLists.txt)、
@@ -118,9 +118,9 @@ cmake --build build-corpus --target check-neverd-corpus --parallel 4
 
 `check-neverd-corpus` 跑全部产线；`check-neverd-windows-eh-corpus`、
 `check-neverd-rust-eh-corpus`、`check-neverd-go-eh-corpus`、
-`check-neverd-cxx-itanium-eh-corpus` 与 `check-neverd-objc-eh-corpus` 各跑一条。三个
-CI 宿主都带着这个开关配置并跑全部五条产线：字节到处都一样，但读字节的东西不一样，
-在一台宿主上跑通不能说明另外两台。`scripts/audit_ci_test_inventory.py` 会拒绝缺少五
+`check-neverd-cxx-itanium-eh-corpus`、`check-neverd-objc-eh-corpus` 与 `check-neverd-ada-d-eh-corpus` 各跑一条。三个
+CI 宿主都带着这个开关配置并跑全部六条产线：字节到处都一样，但读字节的东西不一样，
+在一台宿主上跑通不能说明另外两台。`scripts/audit_ci_test_inventory.py` 会拒绝缺少六
 个标签中任何一个的清单——构建悄悄不再读 corpus 是一种没有任何测试能捕获的回归，因为
 消失的正是那个测试。
 
@@ -631,3 +631,11 @@ execution fault 的稳定值；`SBFSourceStatuses.def` 单独拥有 generated-so
 10,000 规模 fixture 守护 worklist、function ownership 与 multi-latch，不固定某台机器
 的耗时。cluster/account/slot row 支持 `RPC activation audit`，普通测试仍保持
 deterministic 与 offline。
+
+## 移动 SDK 导出证据
+
+手动工作流 `Mobile SDK Export Evidence` 针对固定的 Xcode SDK 运行 `collect_mobile_ios_sdk_declarations.py --exports-only`。它原样留存 iOS 真机和模拟器 SDK 的 Foundation、CoreFoundation、UIKit 链接器映射，并记录目标、SDK 版本、SDK 设置哈希、文件大小和 SHA-256。常规声明收集器也会留存这些映射。文件缺失、为空、超出大小限制或位于 SDK 外部时，收集失败，并保留已完成的证据。链接器映射提供符号导出证据，不能证明调用 ABI 或方法恢复成功。
+
+## 移动端 Swift String ABI 证据
+
+手动工作流 `Mobile Swift String ABI Evidence` 使用 Xcode 26.5，为 arm64 iOS 设备与模拟器编译固定的 Swift 相等、排序比较探针及 C `swiftcall` 探针。`collect_mobile_swift_string_abi.py` 保存源码、LLVM IR、汇编、编译器身份、SDK 设置与 `libswiftCore.tbd` 及其哈希。两种语言都必须显示精确比较导入采用五个参数并返回 `i1`；C 必须将该结果显式扩展为一字节。目标或签名不符、命令失败及超时均保留部分证据并令采集失败。这些编译器证据不会安装运行时声明，也不证明方法已恢复。可在无 SDK 环境运行 `python3 -m unittest scripts.tests.test_mobile_swift_string_abi` 验证采集器。

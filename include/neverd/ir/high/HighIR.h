@@ -107,9 +107,20 @@ struct HighExpr {
   va_t CallAddr = 0;
   bool IsIndirectCall = false;
   int IndirectParamIdx = -1;
+  /// Unresolved `INDIR_CALL` callee.  Not a printed argument.
+  std::shared_ptr<HighExpr> IndirectTarget;
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
   Intrinsic IntrinsicId = Intrinsic::None;
   std::vector<MedVar> IntrinsicOutputs;
+
+  /// Operands plus \ref IndirectTarget.
+  template <typename F> void forEachChildExpr(F &&Fn) const {
+    for (const auto &Op : Operands)
+      if (Op)
+        Fn(Op);
+    if (IndirectTarget)
+      Fn(IndirectTarget);
+  }
 
   /// For Cast
   TypeRef CastTo;
@@ -150,6 +161,9 @@ using ExprPtr = std::shared_ptr<HighExpr>;
 /// Termination promised by the bound source routine, independently of a
 /// native CFG flag or call spelling. Source admission revalidates the binding.
 bool isNonReturningSourceCall(const ExprPtr &Expression);
+/// A bound noreturn call or an exact unconditional source trap. Resumable
+/// debugger traps and unbound call spellings do not terminate source flow.
+bool isTerminatingHighCall(const ExprPtr &Expression);
 
 //===----------------------------------------------------------------------===//
 // Statements (structured control flow)
@@ -480,9 +494,6 @@ struct HighFunc {
   /// Bytes reserved below and above the synthetic entry stack pointer.
   int64_t FrameSize = 0;
   int64_t FrameHeadroom = 0;
-  /// MedFunc::SEHHandlerFramesEstablished: handler stack addresses are
-  /// already relative to the established frame and need no rebase.
-  bool SEHHandlerFramesEstablished = false;
   std::string Name;
   std::string DebugName;
   std::string SourceFile;
@@ -490,6 +501,8 @@ struct HighFunc {
   bool DoesNotReturn = false;
   TypeRef ReturnType;
   std::optional<SourceFunctionTypeHint> SourceTypeHint;
+  SourceRegisterCopies RegisterCopyProjections;
+  SourceClassGetterCalls ClassGetterCallFacts;
   std::vector<HighParam> Params;
   std::vector<HighLocal> Locals;
   std::vector<HighStmt> Body;
@@ -497,6 +510,10 @@ struct HighFunc {
   unsigned StructuredExceptionRegions = 0;
   unsigned UnstructuredExceptionRegions = 0;
 };
+
+/// After EH wrapping, invert `if (c) goto L; work; L:` in try/catch lists.
+/// Med `ExceptionalPreds` must not block this: the handler is already a clause.
+void invertSkipGotos(HighFunc &Func);
 
 /// Copy catch-funclet and C++ unwind-funclet HighFunc bodies into empty
 /// `CxxCatch` / `CxxCleanup` clause slots of the parent. MSVC x64 catch
@@ -548,6 +565,7 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
       }
     };
     Attach(Attach, Func.Body);
+    invertSkipGotos(Func);
   }
 }
 

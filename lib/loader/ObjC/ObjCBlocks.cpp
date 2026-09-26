@@ -47,8 +47,8 @@ bool stackIsa(llvm::StringRef Name) {
   return Name == "__NSConcreteStackBlock" || Name == "_NSConcreteStackBlock";
 }
 
-void captureLayout(const objc::RuntimeData &Data, ObjCBlockDescriptor &Result,
-                   va_t LayoutSlot) {
+void captureLayout(const BinaryImage &Image, const objc::RuntimeData &Data,
+                   ObjCBlockDescriptor &Result, va_t LayoutSlot) {
   using Kind = ObjCBlockCaptureRange::Kind;
   uint64_t Cursor = HeaderSize;
   auto Append = [&](Kind StorageKind, uint64_t Size) {
@@ -75,7 +75,12 @@ void captureLayout(const objc::RuntimeData &Data, ObjCBlockDescriptor &Result,
     return;
   }
   Result.LayoutValue = *RawLayout;
-  if (*RawLayout < 4096) {
+  // A low preferred address can still be a real pointer in a rebased image.
+  // Relocation evidence distinguishes that address from inline ownership bits.
+  const bool PointerStorage =
+      Image.hasRelocationProvenanceAt(LayoutSlot) ||
+      Image.MachOResolvedChainedPointerSlots.count(LayoutSlot);
+  if (*RawLayout < 4096 && !PointerStorage) {
     // Inline xyz counts represent strong, byref, weak pointers in that order.
     // These are scalar bits and must not require a pointer fixup certificate.
     if (!Append(Kind::Strong, ((*RawLayout >> 8) & 15) * 8) ||
@@ -87,7 +92,7 @@ void captureLayout(const objc::RuntimeData &Data, ObjCBlockDescriptor &Result,
     Append(Kind::NonObjectBytes, Result.LiteralSize - Cursor);
     return;
   }
-  const auto Layout = Data.pointer(LayoutSlot);
+  const auto Layout = Data.localPointer(LayoutSlot);
   if (!Layout) {
     Unknown("block layout pointer has an unresolved fixup");
     return;
@@ -165,6 +170,33 @@ parseObjCBlockSignature(llvm::StringRef Signature, Arch Architecture,
   if (!assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic))
     return std::nullopt;
   return Hint;
+}
+
+std::optional<std::string>
+objcBlockObjectParameterClass(llvm::StringRef Signature, unsigned Parameter) {
+  if (!Parameter || Parameter >= 64 || Signature.empty() ||
+      Signature.size() > 4096)
+    return std::nullopt;
+  size_t Offset = 0;
+  if (!parseObjCScalarType(Signature, Offset) ||
+      !skipOffset(Signature, Offset) ||
+      !Signature.substr(Offset).starts_with("@?"))
+    return std::nullopt;
+  Offset += 2;
+  if (!skipOffset(Signature, Offset))
+    return std::nullopt;
+  std::optional<std::string> Result;
+  for (unsigned Index = 1; Offset < Signature.size() && Index < 64; ++Index) {
+    const size_t Start = Offset;
+    const auto Type = parseObjCScalarType(Signature, Offset);
+    if (!Type || Type->Kind == NdTypeKind::Void)
+      return std::nullopt;
+    if (Index == Parameter)
+      Result = objcEncodedObjectClass(Signature.slice(Start, Offset));
+    if (!skipOffset(Signature, Offset))
+      return std::nullopt;
+  }
+  return Offset == Signature.size() ? Result : std::nullopt;
 }
 
 std::optional<ObjCBlockDescriptor>
@@ -253,7 +285,7 @@ readObjCBlockDescriptor(const BinaryImage &Image, va_t Address, uint32_t Flags,
     if (!Result.InvokeTypeHint)
       Result.Limitations.push_back(std::move(SignatureError));
   }
-  captureLayout(Data, Result, Cursor + 8);
+  captureLayout(Image, Data, Result, Cursor + 8);
   return Result;
 }
 
@@ -304,7 +336,7 @@ readLiteral(const BinaryImage &Image,
 std::optional<ObjCBlockLiteral> readObjCBlockLiteral(const BinaryImage &Image,
                                                      va_t Address,
                                                      std::string &Diagnostic) {
-  return readLiteral(Image, Image.collectImportStorageSlots(), Address,
+  return readLiteral(Image, Image.collectImportStorageSlot(Address), Address,
                      Diagnostic);
 }
 

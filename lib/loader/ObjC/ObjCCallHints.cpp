@@ -1,21 +1,32 @@
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 
 #include "../MachO/DarwinRuntimeImport.h"
+#include "../MachO/DarwinSourceDeclarations.h"
+#include "../MachO/SourceLocalCall.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/AArch64Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/MachO/DarwinImportVeneer.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/MachO/SourceRegisterCopy.h"
+#include "neverd/loader/ObjC/ObjCBlocks.h"
+#include "neverd/loader/ObjC/ObjCClassGetterCalls.h"
+#include "neverd/loader/ObjC/ObjCConstantStrings.h"
 #include "neverd/loader/ObjC/ObjCFormattedCalls.h"
+#include "neverd/loader/ObjC/ObjCSentinelCalls.h"
 #include "neverd/loader/ObjC/ObjCSourceDeclarations.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/loader/Swift/SwiftRuntimeCalls.h"
 #include "neverd/loader/Swift/SwiftStringCalls.h"
 #include "neverd/object/SectionNames.h"
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
+#include <array>
 #include <deque>
 #include <optional>
 #include <tuple>
@@ -84,18 +95,17 @@ struct Dispatch {
   std::string Selector;
   va_t SelectorSlot = 0;
   va_t ImportSlot = 0;
+  bool LoadsSelector = false;
 };
 
-std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
+std::optional<Dispatch> veneerStorage(const BinaryImage &Image, va_t Address) {
   if (Image.Arch == Arch::X64) {
     const auto *Bytes = code(Image, Address, 6);
     if (!Bytes || Bytes[0] != 0xff || Bytes[1] != 0x25)
       return std::nullopt;
     auto Slot = addSigned(Address + 6,
                           int32_t(llvm::support::endian::read32le(Bytes + 2)));
-    const auto Name = Slot ? importAt(Image, *Slot) : std::string();
-    return Name.empty() ? std::nullopt
-                        : std::optional<Dispatch>({Name, {}, 0, *Slot});
+    return Slot ? std::optional<Dispatch>({{}, {}, 0, *Slot}) : std::nullopt;
   }
   if (Image.Arch != Arch::AArch64)
     return std::nullopt;
@@ -119,6 +129,7 @@ std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
       return std::nullopt;
     Result.Selector = Reference->second.Name;
     Result.SelectorSlot = *Slot;
+    Result.LoadsSelector = true;
     Address += 8;
     Bytes = code(Image, Address, 12);
     if (!Bytes)
@@ -128,39 +139,306 @@ std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
   auto Slot = Page ? ldrSlot(Word(1), *Page, 16) : std::nullopt;
   if (!Slot || Word(2) != 0xd61f0200u) // BR x16
     return std::nullopt;
-  Result.Name = importAt(Image, *Slot);
   Result.ImportSlot = *Slot;
-  // A selector-loading veneer only has a proven ABI for message dispatch.
-  if (Result.SelectorSlot && Result.Name != "objc_msgSend" &&
-      Result.Name != "objc_msgSendSuper2")
-    return std::nullopt;
-  return Result.Name.empty() ? std::nullopt
-                             : std::optional<Dispatch>(std::move(Result));
+  return Result;
 }
+
+std::optional<Dispatch> veneer(const BinaryImage &Image, va_t Address) {
+  auto Result = veneerStorage(Image, Address);
+  if (!Result)
+    return std::nullopt;
+  Result->Name = importAt(Image, Result->ImportSlot);
+  // A selector-loading veneer only has a proven ABI for message dispatch.
+  if (Result->SelectorSlot && Result->Name != "objc_msgSend" &&
+      Result->Name != "objc_msgSendSuper2")
+    return std::nullopt;
+  return Result->Name.empty() ? std::nullopt : Result;
+}
+
+struct BlockIdentity {
+  va_t CopySite = 0, Descriptor = 0, Invoke = 0;
+  uint32_t Flags = 0;
+  bool operator==(const BlockIdentity &) const = default;
+};
 
 struct Value {
   enum class Kind {
     Number,
+    NumberSet,
     Selector,
     Import,
+    ImportedObject,
     Receiver,
     IvarOffset,
     FieldAddress,
-    Frame
+    Frame,
+    BlockIsa,
+    ImageBytes,
+    CopiedBlock,
+    BlockInvoke,
+    SourceParameter
   };
   Kind TheKind = Kind::Number;
   uint64_t Number = 0;
   std::string Name;
   std::optional<ObjCReceiverTypeHint> Object;
+  std::optional<BlockIdentity> Block;
+  va_t SourceMethodEntry = 0;
+  SourceABIValueLocation SourceLocation;
+  bool SourceConsumedAsObject = false;
+  std::vector<uint64_t> AlternativeNumbers;
   bool operator==(const Value &Other) const {
-    return std::tie(TheKind, Number, Name, Object) ==
-           std::tie(Other.TheKind, Other.Number, Other.Name, Other.Object);
+    return std::tie(TheKind, Number, Name, Object, Block, SourceMethodEntry,
+                    SourceLocation.Kind, SourceLocation.RegisterOffset,
+                    SourceLocation.EntryStackOffset, SourceLocation.ValueBytes,
+                    SourceLocation.ExtendTo32Bits, SourceConsumedAsObject,
+                    AlternativeNumbers) ==
+           std::tie(Other.TheKind, Other.Number, Other.Name, Other.Object,
+                    Other.Block, Other.SourceMethodEntry,
+                    Other.SourceLocation.Kind,
+                    Other.SourceLocation.RegisterOffset,
+                    Other.SourceLocation.EntryStackOffset,
+                    Other.SourceLocation.ValueBytes,
+                    Other.SourceLocation.ExtendTo32Bits,
+                    Other.SourceConsumedAsObject, Other.AlternativeNumbers);
   }
 };
+
+std::optional<Value> mergeNumberCandidates(const Value &Left,
+                                           const Value &Right) {
+  const auto IsNumber = [](const Value &Candidate) {
+    return Candidate.TheKind == Value::Kind::Number ||
+           Candidate.TheKind == Value::Kind::NumberSet;
+  };
+  if (!IsNumber(Left) || !IsNumber(Right))
+    return std::nullopt;
+  std::vector<uint64_t> Candidates{Left.Number, Right.Number};
+  Candidates.insert(Candidates.end(), Left.AlternativeNumbers.begin(),
+                    Left.AlternativeNumbers.end());
+  Candidates.insert(Candidates.end(), Right.AlternativeNumbers.begin(),
+                    Right.AlternativeNumbers.end());
+  llvm::sort(Candidates);
+  Candidates.erase(std::unique(Candidates.begin(), Candidates.end()),
+                   Candidates.end());
+  if (Candidates.empty() || Candidates.size() > 64)
+    return std::nullopt;
+  Value Result;
+  Result.TheKind =
+      Candidates.size() == 1 ? Value::Kind::Number : Value::Kind::NumberSet;
+  Result.Number = Candidates.front();
+  Result.AlternativeNumbers.assign(Candidates.begin() + 1, Candidates.end());
+  return Result;
+}
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
 
 constexpr int64_t FrameOffsetLimit = 1048576;
+
+bool fitsUnsignedValue(uint64_t Value, unsigned Bytes) {
+  return Bytes && Bytes <= 8 &&
+         (Bytes == 8 || Value < (UINT64_C(1) << (Bytes * 8)));
+}
+
+struct LocalResultUse {
+  SourceABIValueLocation Location;
+  std::optional<NdTypeKind> TypeKind;
+};
+
+std::optional<LocalResultUse>
+localResultUse(const LowFunc &Function, size_t InitialBlock, size_t CallIndex,
+               const TargetRegInfo &TRI, const BinaryImage &Image) {
+  struct Alias {
+    NdVar Value;
+    uint16_t SourceOffset = 0;
+  };
+  auto Overlap = [](const NdVar &A, const NdVar &B) {
+    return A.Space == VnodeSpace::REG && B.Space == VnodeSpace::REG && A.Size &&
+           B.Size && A.Offset < B.Offset + B.Size &&
+           B.Offset < A.Offset + A.Size;
+  };
+  auto KnownCallSignature =
+      [&](const LowOp &Op) -> std::optional<SourceFunctionTypeHint> {
+    if (Op.Opcode != NdOp::CALL || !Op.NumInputs ||
+        Op.Inputs[0].Space != VnodeSpace::CONST)
+      return std::nullopt;
+    if (const auto CompilerRT =
+            darwinCompilerRTSourceCallHint(Image, Op.Inputs[0].Offset))
+      return CompilerRT->Signature;
+    const auto Target = veneer(Image, Op.Inputs[0].Offset);
+    if (!Target)
+      return std::nullopt;
+    if (Target->Name == "objc_msgSend" && !Target->Selector.empty())
+      return objcSelectorSourceTypeHint(Image, Target->Selector);
+    for (auto Hint : {objcRuntimeSourceCallHint(Image, Target->ImportSlot),
+                      swiftRuntimeSourceCallHint(Image, Target->ImportSlot),
+                      darwinRuntimeSourceCallHint(Image, Target->ImportSlot),
+                      swiftStringSourceCallHint(Image, Target->ImportSlot)})
+      if (Hint)
+        return Hint->Signature;
+    return std::nullopt;
+  };
+  std::map<int, size_t> Blocks;
+  for (size_t I = 0; I < Function.Blocks.size(); ++I)
+    if (!Blocks.emplace(Function.Blocks[I].Id, I).second)
+      return std::nullopt;
+  if (InitialBlock >= Function.Blocks.size())
+    return std::nullopt;
+  auto Scan = [&](SourceABICarrierKind Kind, uint64_t Begin,
+                  uint16_t FullWidth) -> std::optional<LocalResultUse> {
+    if (!FullWidth)
+      return std::nullopt;
+    struct State {
+      size_t Block = 0;
+      size_t FirstOp = 0;
+      std::vector<Alias> Aliases;
+    };
+    std::vector<State> Work{
+        {InitialBlock, CallIndex + 1, {{NdVar::reg(Begin, FullWidth), 0}}}};
+    using AliasKey = std::tuple<uint64_t, uint16_t, uint16_t>;
+    std::set<std::tuple<size_t, size_t, std::vector<AliasKey>>> Seen;
+    std::optional<LocalResultUse> Result;
+    bool Ambiguous = false;
+    size_t Budget = 4096;
+    auto Observe = [&](LocalResultUse Use) {
+      const auto Same = [](const LocalResultUse &A, const LocalResultUse &B) {
+        return A.Location.Kind == B.Location.Kind &&
+               A.Location.RegisterOffset == B.Location.RegisterOffset &&
+               A.Location.ValueBytes == B.Location.ValueBytes &&
+               A.TypeKind == B.TypeKind;
+      };
+      if (Result && !Same(*Result, Use))
+        Ambiguous = true;
+      else if (!Result)
+        Result = std::move(Use);
+    };
+    while (!Work.empty() && !Ambiguous) {
+      auto Current = std::move(Work.back());
+      Work.pop_back();
+      if (!Budget-- || Current.Block >= Function.Blocks.size())
+        return std::nullopt;
+      std::vector<AliasKey> Keys;
+      for (const auto &Alias : Current.Aliases)
+        Keys.emplace_back(Alias.Value.Offset, Alias.Value.Size,
+                          Alias.SourceOffset);
+      llvm::sort(Keys);
+      Keys.erase(std::unique(Keys.begin(), Keys.end()), Keys.end());
+      if (!Seen.emplace(Current.Block, Current.FirstOp, std::move(Keys)).second)
+        continue;
+      const auto &Block = Function.Blocks[Current.Block];
+      bool Used = false;
+      for (size_t I = Current.FirstOp; I < Block.Ops.size() && !Used; ++I) {
+        const auto &Op = Block.Ops[I];
+        const bool Copy = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                          Op.Output.Space == VnodeSpace::REG;
+        std::optional<Alias> Copied;
+        if (Copy)
+          for (const auto &Alias : Current.Aliases)
+            if (Op.Inputs[0].Space == VnodeSpace::REG &&
+                Op.Inputs[0].Offset == Alias.Value.Offset &&
+                Op.Inputs[0].Size == Alias.Value.Size) {
+              Copied = Alias;
+              break;
+            }
+        for (uint8_t J = 0; J < Op.NumInputs && !Used; ++J) {
+          const auto &Input = Op.Inputs[J];
+          for (const auto &Alias : Current.Aliases) {
+            if (!Overlap(Input, Alias.Value) || (Copied && J == 0))
+              continue;
+            const uint64_t AliasBegin =
+                std::max<uint64_t>(Input.Offset, Alias.Value.Offset);
+            const uint64_t AliasEnd =
+                std::min<uint64_t>(Input.Offset + Input.Size,
+                                   Alias.Value.Offset + Alias.Value.Size);
+            LocalResultUse Use;
+            Use.Location.Kind = Kind;
+            Use.Location.RegisterOffset =
+                Begin + Alias.SourceOffset + (AliasBegin - Alias.Value.Offset);
+            Use.Location.ValueBytes =
+                static_cast<uint16_t>(AliasEnd - AliasBegin);
+            Observe(std::move(Use));
+            Used = true;
+            break;
+          }
+        }
+        if (Used)
+          break;
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::INTRINSIC) {
+          const auto Signature = KnownCallSignature(Op);
+          if (!Signature)
+            return std::nullopt;
+          std::optional<LocalResultUse> ArgumentUse;
+          for (const auto &Parameter : sourceABIParameters(*Signature)) {
+            const auto &Location = Parameter.Location;
+            if (Location.Kind != SourceABICarrierKind::IntegerRegister &&
+                Location.Kind != SourceABICarrierKind::FloatingRegister)
+              continue;
+            for (const auto &Alias : Current.Aliases) {
+              if (Alias.Value.Offset != Location.RegisterOffset ||
+                  Alias.Value.Size < Location.ValueBytes ||
+                  Alias.SourceOffset > FullWidth - Location.ValueBytes)
+                continue;
+              if (!Parameter.Type ||
+                  (Parameter.Type->Kind != NdTypeKind::Int &&
+                   Parameter.Type->Kind != NdTypeKind::Ptr &&
+                   Parameter.Type->Kind != NdTypeKind::Float) ||
+                  ArgumentUse)
+                return std::nullopt;
+              ArgumentUse = LocalResultUse{
+                  {Kind, Begin + Alias.SourceOffset, 0, Location.ValueBytes},
+                  Parameter.Type->Kind};
+            }
+          }
+          if (ArgumentUse) {
+            Observe(std::move(*ArgumentUse));
+            Used = true;
+            break;
+          }
+          for (auto It = Current.Aliases.begin();
+               It != Current.Aliases.end();) {
+            const auto Preserved =
+                TRI.callPreservedPrefixSize(It->Value.Offset, It->Value.Size);
+            if (!Preserved)
+              It = Current.Aliases.erase(It);
+            else {
+              It->Value.Size = Preserved;
+              ++It;
+            }
+          }
+        }
+        if (Op.Output.Space == VnodeSpace::REG && Op.Output.Size)
+          std::erase_if(Current.Aliases, [&](const Alias &Alias) {
+            return Overlap(Op.Output, Alias.Value);
+          });
+        if (Copied && Op.Output.Size == Copied->Value.Size)
+          Current.Aliases.push_back({Op.Output, Copied->SourceOffset});
+        if (Current.Aliases.empty())
+          break;
+      }
+      if (Used || Current.Aliases.empty())
+        continue;
+      for (int Successor : Block.Succs) {
+        const auto Found = Blocks.find(Successor);
+        if (Found == Blocks.end())
+          return std::nullopt;
+        const auto &Child = Function.Blocks[Found->second];
+        if (!llvm::is_contained(Child.Preds, Block.Id))
+          return std::nullopt;
+        Work.push_back({Found->second, 0, Current.Aliases});
+      }
+    }
+    return Ambiguous ? std::nullopt : Result;
+  };
+  const auto Integer = Scan(SourceABICarrierKind::IntegerRegister,
+                            TRI.IntReturnReg, TRI.FullRegWidth);
+  const auto FPWidth = !TRI.hasFPReturnReg() ? 0
+                       : TRI.FPABIRegWidth
+                           ? TRI.FPABIRegWidth
+                           : TRI.maxRegisterWidth(TRI.FPReturnReg);
+  const auto Floating =
+      Scan(SourceABICarrierKind::FloatingRegister, TRI.FPReturnReg, FPWidth);
+  return Integer && Floating ? std::nullopt : Integer ? Integer : Floating;
+}
 
 std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
   const auto Delta = static_cast<int64_t>(Amount);
@@ -177,6 +455,23 @@ std::optional<Value> adjustedFrame(Value Base, uint64_t Amount, bool Subtract) {
 struct CallFacts {
   std::map<Key, Value> Values;
   std::map<std::pair<int64_t, unsigned>, Value> FrameSlots;
+  // Receiver and declared source-parameter identities need less frame
+  // knowledge than block construction does.  A pointer to a higher-addressed
+  // frame object cannot reach storage wholly below that object's base through
+  // the source ABI without a backwards/out-of-object access.  Keep those
+  // lower spills while ordinary FrameSlots retain the stricter whole-frame
+  // escape rule.
+  std::map<std::pair<int64_t, unsigned>, Value> TypedFrameSlots;
+  // A compiler-declared T ** argument initialized from nil gives the pointed
+  // frame word a stable Objective-C source type after the call. The value may
+  // change through the escaped pointer, but every conforming write retains T.
+  std::map<std::pair<int64_t, unsigned>, Value> DeclaredObjectFrameSlots;
+  // A direct nil store after the frame has escaped remains exact until the
+  // next call boundary. This lets a following typed out call re-establish its
+  // declared object class without reviving general escaped frame contents.
+  std::set<std::pair<int64_t, unsigned>> FreshNilFrameSlots;
+  std::optional<int64_t> EscapedTypedFrameFloor;
+  bool TypedFrameFullyEscaped = false;
   // Exact values are must facts. Pointer-derived bytes are may facts: a
   // conflicting predecessor or partial alias must not erase a possible escape.
   std::set<std::pair<VnodeSpace, uint64_t>> FrameBytes;
@@ -210,6 +505,77 @@ struct CallFacts {
     FrameSlots.clear();
   }
 
+  bool typedFrameRangePrivate(int64_t Offset, unsigned Size) const {
+    if (TypedFrameFullyEscaped || !Size || Offset > INT64_MAX - Size)
+      return false;
+    return !EscapedTypedFrameFloor ||
+           Offset + static_cast<int64_t>(Size) <= *EscapedTypedFrameFloor;
+  }
+
+  void invalidateTypedFrameRange(int64_t Offset, unsigned Size) {
+    for (auto It = TypedFrameSlots.begin(); It != TypedFrameSlots.end();)
+      if (It->first.first < Offset + Size &&
+          Offset < It->first.first + It->first.second)
+        It = TypedFrameSlots.erase(It);
+      else
+        ++It;
+    for (auto It = DeclaredObjectFrameSlots.begin();
+         It != DeclaredObjectFrameSlots.end();)
+      if (It->first.first < Offset + Size &&
+          Offset < It->first.first + It->first.second)
+        It = DeclaredObjectFrameSlots.erase(It);
+      else
+        ++It;
+    for (auto It = FreshNilFrameSlots.begin(); It != FreshNilFrameSlots.end();)
+      if (It->first < Offset + Size && Offset < It->first + It->second)
+        It = FreshNilFrameSlots.erase(It);
+      else
+        ++It;
+  }
+
+  void escapeTypedFrame() {
+    TypedFrameFullyEscaped = true;
+    EscapedTypedFrameFloor.reset();
+    TypedFrameSlots.clear();
+    DeclaredObjectFrameSlots.clear();
+    FreshNilFrameSlots.clear();
+  }
+
+  void escapeTypedFrameFrom(const std::optional<Value> &Address) {
+    if (!Address || Address->TheKind != Value::Kind::Frame) {
+      escapeTypedFrame();
+      return;
+    }
+    const auto Offset = static_cast<int64_t>(Address->Number);
+    for (auto It = DeclaredObjectFrameSlots.begin();
+         It != DeclaredObjectFrameSlots.end();)
+      if (It->first.first > INT64_MAX - It->first.second ||
+          It->first.first + static_cast<int64_t>(It->first.second) > Offset)
+        It = DeclaredObjectFrameSlots.erase(It);
+      else
+        ++It;
+    if (!EscapedTypedFrameFloor || Offset < *EscapedTypedFrameFloor)
+      EscapedTypedFrameFloor = Offset;
+    for (auto It = TypedFrameSlots.begin(); It != TypedFrameSlots.end();)
+      if (!typedFrameRangePrivate(It->first.first, It->first.second))
+        It = TypedFrameSlots.erase(It);
+      else
+        ++It;
+  }
+
+  void forgetCopiedBlocks() {
+    for (auto It = Values.begin(); It != Values.end();)
+      if (It->second.Block)
+        It = Values.erase(It);
+      else
+        ++It;
+    for (auto It = FrameSlots.begin(); It != FrameSlots.end();)
+      if (It->second.Block)
+        It = FrameSlots.erase(It);
+      else
+        ++It;
+  }
+
   void invalidateFrameRange(int64_t Offset, unsigned Size) {
     for (auto It = FrameSlots.begin(); It != FrameSlots.end();)
       if (It->first.first < Offset + Size &&
@@ -220,16 +586,103 @@ struct CallFacts {
   }
 
   void merge(const CallFacts &Other) {
+    // A lost alias must not survive elsewhere as a supposedly private copied
+    // block. Drop this family on any inconsistent reaching alias, including
+    // an alias present on only one predecessor.
+    auto ConflictingBlocks = [](const auto &A, const auto &B) {
+      for (const auto &[K, V] : A) {
+        const auto Found = B.find(K);
+        if (V.Block && (Found == B.end() || !(V == Found->second)))
+          return true;
+      }
+      return false;
+    };
+    const bool LostBlockAlias =
+        ConflictingBlocks(Values, Other.Values) ||
+        ConflictingBlocks(Other.Values, Values) ||
+        ConflictingBlocks(FrameSlots, Other.FrameSlots) ||
+        ConflictingBlocks(Other.FrameSlots, FrameSlots);
     for (auto It = Values.begin(); It != Values.end();) {
       const auto Found = Other.Values.find(It->first);
-      if (Found == Other.Values.end() || !(It->second == Found->second))
+      if (Found == Other.Values.end()) {
+        It = Values.erase(It);
+        continue;
+      }
+      if (!(It->second == Found->second)) {
+        if (auto Merged = mergeNumberCandidates(It->second, Found->second)) {
+          It->second = std::move(*Merged);
+          ++It;
+          continue;
+        }
+      }
+      if (!(It->second == Found->second))
         It = Values.erase(It);
       else
         ++It;
     }
     FrameBytes.insert(Other.FrameBytes.begin(), Other.FrameBytes.end());
+    for (auto It = FreshNilFrameSlots.begin(); It != FreshNilFrameSlots.end();)
+      if (!Other.FreshNilFrameSlots.count(*It))
+        It = FreshNilFrameSlots.erase(It);
+      else
+        ++It;
+    auto MergeDeclaredObject = [](Value &Left, const Value &Right) {
+      if (Left == Right)
+        return true;
+      if (Left.TheKind != Value::Kind::Receiver ||
+          Right.TheKind != Value::Kind::Receiver || !Left.Object ||
+          !Right.Object ||
+          Left.Object->Origin !=
+              ObjCReceiverTypeHint::OriginKind::OutParameter ||
+          Right.Object->Origin !=
+              ObjCReceiverTypeHint::OriginKind::OutParameter ||
+          Left.Object->ClassName != Right.Object->ClassName ||
+          Left.Object->IsClassMethod != Right.Object->IsClassMethod ||
+          Left.Object->Steps != Right.Object->Steps)
+        return false;
+      auto Roots = Left.Object->OutParameters;
+      Roots.insert(Roots.end(), Right.Object->OutParameters.begin(),
+                   Right.Object->OutParameters.end());
+      llvm::sort(Roots);
+      Roots.erase(std::unique(Roots.begin(), Roots.end()), Roots.end());
+      if (Roots.empty() || Roots.size() > 8)
+        return false;
+      Left.Object->Address = Roots.front().Address;
+      Left.Object->OutParameters = std::move(Roots);
+      return true;
+    };
+    for (auto It = DeclaredObjectFrameSlots.begin();
+         It != DeclaredObjectFrameSlots.end();) {
+      const auto Found = Other.DeclaredObjectFrameSlots.find(It->first);
+      if (Found == Other.DeclaredObjectFrameSlots.end() ||
+          !MergeDeclaredObject(It->second, Found->second))
+        It = DeclaredObjectFrameSlots.erase(It);
+      else
+        ++It;
+    }
+    TypedFrameFullyEscaped |= Other.TypedFrameFullyEscaped;
+    if (Other.EscapedTypedFrameFloor &&
+        (!EscapedTypedFrameFloor ||
+         *Other.EscapedTypedFrameFloor < *EscapedTypedFrameFloor))
+      EscapedTypedFrameFloor = Other.EscapedTypedFrameFloor;
+    if (TypedFrameFullyEscaped) {
+      EscapedTypedFrameFloor.reset();
+      TypedFrameSlots.clear();
+    } else {
+      for (auto It = TypedFrameSlots.begin(); It != TypedFrameSlots.end();) {
+        const auto Found = Other.TypedFrameSlots.find(It->first);
+        if (Found == Other.TypedFrameSlots.end() ||
+            !(It->second == Found->second) ||
+            !typedFrameRangePrivate(It->first.first, It->first.second))
+          It = TypedFrameSlots.erase(It);
+        else
+          ++It;
+      }
+    }
     if (FrameEscaped || Other.FrameEscaped) {
       escapeFrame();
+      if (LostBlockAlias)
+        forgetCopiedBlocks();
       return;
     }
     for (auto It = FrameSlots.begin(); It != FrameSlots.end();) {
@@ -239,13 +692,50 @@ struct CallFacts {
       else
         ++It;
     }
+    if (LostBlockAlias)
+      forgetCopiedBlocks();
   }
 };
 
 std::optional<ObjCReceiverTypeHint> receiver(const Value &V) {
-  return V.TheKind == Value::Kind::Receiver ? V.Object : std::nullopt;
+  return V.TheKind == Value::Kind::Receiver ||
+                 V.TheKind == Value::Kind::SourceParameter
+             ? V.Object
+             : std::nullopt;
+}
+
+bool isObjCInitFamily(llvm::StringRef Selector) {
+  if (!Selector.consume_front("init"))
+    return false;
+  return Selector.empty() || Selector.front() < 'a' || Selector.front() > 'z';
+}
+
+bool strongObjCMessageImport(const BinaryImage &Image, va_t Slot) {
+  const auto Bind = Image.DyldBindSlots.find(Slot);
+  return Bind != Image.DyldBindSlots.end() &&
+         Bind->second.Name == "_objc_msgSend" && !Bind->second.Addend &&
+         !Bind->second.WeakImport &&
+         Bind->second.Module == "/usr/lib/libobjc.A.dylib" &&
+         std::find(Image.DynInfo.NeededLibs.begin(),
+                   Image.DynInfo.NeededLibs.end(),
+                   Bind->second.Module) != Image.DynInfo.NeededLibs.end();
 }
 } // namespace
+
+std::optional<va_t> darwinImportVeneerSlot(const BinaryImage &Image,
+                                           va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 ||
+      (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64) ||
+      (Image.Arch == Arch::AArch64 && Address % 4) ||
+      !readImmutableCodeBytes(Image, Address,
+                              Image.Arch == Arch::AArch64 ? 12 : 6))
+    return std::nullopt;
+  const auto Target = veneerStorage(Image, Address);
+  return Target && !Target->LoadsSelector
+             ? std::optional<va_t>(Target->ImportSlot)
+             : std::nullopt;
+}
 
 std::optional<SourceCallTypeHint>
 objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
@@ -337,6 +827,20 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot) {
              Canonical == "objc_enumerationMutation") {
     Signature.ReturnType = NdType::makeVoid();
     Signature.Parameters = {{"object", Object}};
+  } else if (Canonical == "objc_getProperty") {
+    const auto Bind = Image.DyldBindSlots.find(ImportSlot);
+    if (Bind == Image.DyldBindSlots.end() ||
+        Bind->second.Module != "/usr/lib/libobjc.A.dylib")
+      return std::nullopt;
+    // objc4/runtime/objc-accessors.mm: id, SEL, ptrdiff_t, BOOL. Preserve the
+    // runtime operation: an atomic getter retains under the property lock and
+    // autoreleases its result. Reading the ivar directly is not equivalent.
+    Signature.ReturnType = Object;
+    Signature.Parameters = {
+        {"object", Object},
+        {"selector", Object},
+        {"offset", NdType::makeInt(8)},
+        {"atomic", NdType::makeInt(1, Image.Arch == Arch::X64)}};
   } else if (Canonical == "objc_setProperty_atomic" ||
              Canonical == "objc_setProperty_nonatomic" ||
              Canonical == "objc_setProperty_atomic_copy" ||
@@ -387,14 +891,74 @@ bool objcSelectorStubOverwritesCommand(const BinaryImage &Image, va_t Address) {
          Target->SelectorSlot != 0 && !Target->Selector.empty();
 }
 
-std::map<va_t, SourceCallTypeHint>
-buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
+bool objcSelectorStubPreservesNonvolatileRegisters(const BinaryImage &Image,
+                                                   va_t Address) {
+  if (!objcSelectorStubOverwritesCommand(Image, Address))
+    return false;
+  const auto Target = veneer(Image, Address);
+  return Target && strongObjCMessageImport(Image, Target->ImportSlot);
+}
+
+bool objcSelectorStubMatches(const BinaryImage &Image, va_t Address,
+                             va_t SelectorReferenceAddress,
+                             llvm::StringRef Selector) {
+  if (!SelectorReferenceAddress || Selector.empty() ||
+      !objcSelectorStubOverwritesCommand(Image, Address))
+    return false;
+  const auto Target = veneer(Image, Address);
+  return Target && Target->SelectorSlot == SelectorReferenceAddress &&
+         Target->Selector == Selector;
+}
+
+std::optional<SourceCallTypeHint>
+objcSelectorStubSentinelSourceCallHint(const BinaryImage &Image, va_t Address,
+                                       const ObjCReceiverTypeHint &Receiver,
+                                       llvm::ArrayRef<va_t> Objects) {
+  const auto Target = veneer(Image, Address);
+  if (!Target || Target->Name != "objc_msgSend" || !Target->SelectorSlot)
+    return std::nullopt;
+  if (!strongObjCMessageImport(Image, Target->ImportSlot))
+    return std::nullopt;
+  auto Hint =
+      objcSentinelSourceCallHint(Image, Target->Selector, Receiver, Objects);
+  if (Hint) {
+    Hint->TargetAddress = Address;
+    Hint->SelectorReferenceAddress = Target->SelectorSlot;
+  }
+  return Hint;
+}
+
+std::optional<SourceCallTypeHint>
+objcSelectorStubDynamicFormatSourceCallHint(const BinaryImage &Image,
+                                            va_t Address) {
+  if (!objcSelectorStubOverwritesCommand(Image, Address))
+    return std::nullopt;
+  const auto Target = veneer(Image, Address);
+  if (!Target || Target->Name != "objc_msgSend" || Target->Selector.empty() ||
+      !Target->SelectorSlot)
+    return std::nullopt;
+  auto Hint =
+      objcDynamicFormatWithoutArgumentsSourceCallHint(Image, Target->Selector);
+  if (!Hint || !Hint->Format ||
+      Hint->Format->FixedCount != Hint->Signature.Parameters.size())
+    return std::nullopt;
+  Hint->TargetAddress = Address;
+  Hint->SelectorReferenceAddress = Target->SelectorSlot;
+  return Hint;
+}
+
+std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters) {
   std::map<va_t, SourceCallTypeHint> Result;
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))
     return Result;
   const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto RegisterCopies = sourceRegisterCopies(Image, Function);
+  const auto ClassGetters = sourceClassGetterCalls(Image, Function);
+  std::optional<SourceLocalCalls> LocalCalls;
   const size_t Count = Function.Blocks.size();
   if (Count > 16384)
     return {};
@@ -456,6 +1020,39 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
     if (const auto Receiver = objcMethodReceiverTypeHint(Image, Function.Entry))
       EntryFacts.Values.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
                                 Value{Value::Kind::Receiver, 0, {}, *Receiver});
+    if (const auto Signature = objcMethodSourceTypeHint(Image, Function.Entry))
+      for (size_t Index = 0; Index < Signature->Parameters.size(); ++Index) {
+        const auto &Parameter = Signature->Parameters[Index];
+        const auto &Type = Parameter.Type;
+        const auto &Location = Parameter.Location;
+        const bool CompleteForwardedScalar =
+            Type && Type->Size == 8 &&
+            (Type->Kind == NdTypeKind::Int || Type->Kind == NdTypeKind::Ptr);
+        if ((!isObjCSelectorArgumentEvidenceType(Type, true) &&
+             !CompleteForwardedScalar) ||
+            Location.Kind != SourceABICarrierKind::IntegerRegister ||
+            Location.ValueBytes != 8)
+          continue;
+        Value V;
+        V.TheKind = Value::Kind::SourceParameter;
+        V.SourceMethodEntry = Function.Entry;
+        V.SourceLocation = Location;
+        V.Object = objcMethodParameterReceiverTypeHint(Image, Function.Entry,
+                                                       unsigned(Index));
+        EntryFacts.Values.emplace(key(NdVar::reg(Location.RegisterOffset, 8)),
+                                  std::move(V));
+      }
+    if (BlockParameters)
+      for (const auto &[Parameter, Root] : *BlockParameters) {
+        if (Root.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter ||
+            Root.Address != Function.Entry ||
+            Root.SourceParameter != Parameter || Parameter >= 8 ||
+            !Root.Steps.empty() || !objcReceiverTypeHintValid(Image, Root))
+          continue;
+        EntryFacts.Values.emplace(
+            key(NdVar::reg(TRI.IntParamRegs[Parameter], 8)),
+            Value{Value::Kind::Receiver, 0, {}, Root});
+      }
   }
   // Enumerate preserved physical bytes through the authoritative ABI policy.
   // This retains upper bytes of partial integer aliases and only the preserved
@@ -475,7 +1072,9 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
     PreservedBytes.insert(TRI.StackPointer + I);
   using ReceiverKey =
       std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
-                 std::vector<ObjCReceiverTypeHint::TypeStep>, std::string>;
+                 std::vector<ObjCReceiverTypeHint::TypeStep>,
+                 std::vector<ObjCReceiverTypeHint::OutParameterRoot>, unsigned,
+                 va_t, uint32_t, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts State,
                       Hints &BlockHints) -> std::optional<Facts> {
@@ -489,22 +1088,115 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       return It == Values.end() ? std::nullopt
                                 : std::optional<Value>(It->second);
     };
-    auto Clobber = [&](const SourceFunctionTypeHint *Signature) {
+    auto CopiedBlockInput = [&](const NdVar &V) {
+      for (const auto &[K, Fact] : Values)
+        if (Fact.Block && std::get<0>(K) == V.Space &&
+            std::get<1>(K) < V.Offset + V.Size &&
+            V.Offset < std::get<1>(K) + std::get<2>(K))
+          return true;
+      return false;
+    };
+    auto StackBlock = [&](const Value &Address,
+                          va_t CopySite) -> std::optional<Value> {
+      if (Address.TheKind != Value::Kind::Frame || State.FrameEscaped)
+        return std::nullopt;
+      const int64_t Base = static_cast<int64_t>(Address.Number);
+      auto Word = [&](int64_t Offset, unsigned Size) -> std::optional<Value> {
+        const auto It = State.FrameSlots.find({Base + Offset, Size});
+        return It == State.FrameSlots.end() ? std::nullopt
+                                            : std::optional<Value>(It->second);
+      };
+      auto Bits = [&](const std::optional<Value> &V,
+                      unsigned Size) -> std::optional<uint64_t> {
+        if (!V)
+          return std::nullopt;
+        if (V->TheKind == Value::Kind::Number)
+          return V->Number;
+        if (V->TheKind != Value::Kind::ImageBytes)
+          return std::nullopt;
+        auto Bytes = readImmutableImageBytes(Image, V->Number, Size);
+        if (!Bytes)
+          return std::nullopt;
+        uint64_t Result = 0;
+        for (unsigned I = 0; I < Size; ++I)
+          Result |= uint64_t((*Bytes)[I]) << (8 * I);
+        return Result;
+      };
+      const auto Isa = Word(0, 8), Invoke = Word(16, 8), D = Word(24, 8);
+      auto Flags = Bits(Word(8, 8), 8);
+      if (!Flags) {
+        const auto Low = Bits(Word(8, 4), 4), High = Bits(Word(12, 4), 4);
+        if (Low && High)
+          Flags = (*Low & UINT32_MAX) | (*High << 32);
+      }
+      if (!Isa || Isa->TheKind != Value::Kind::BlockIsa || !Invoke ||
+          Invoke->TheKind != Value::Kind::Number ||
+          !Image.isCodeAddress(Invoke->Number) || !D ||
+          D->TheKind != Value::Kind::Number || !Flags || *Flags > UINT32_MAX ||
+          ((*Flags & (1u << 28)) && !(*Flags & (1u << 23))))
+        return std::nullopt;
+      std::string Error;
+      const auto Descriptor =
+          readObjCBlockDescriptor(Image, D->Number, uint32_t(*Flags), Error);
+      if (!Descriptor || !Descriptor->InvokeTypeHint ||
+          !Descriptor->Limitations.empty())
+        return std::nullopt;
+      Value V{Value::Kind::CopiedBlock};
+      V.Block =
+          BlockIdentity{CopySite, D->Number, Invoke->Number, uint32_t(*Flags)};
+      return V;
+    };
+    auto Clobber = [&](const SourceFunctionTypeHint *Signature,
+                       bool PreserveReceiverRegisters = false) {
+      State.FreshNilFrameSlots.clear();
       const bool KnownABI = Signature && Signature->HasExplicitABI;
       if (!KnownABI) {
+        for (const auto &[K, V] : Values) {
+          const auto &[Space, Offset, Size] = K;
+          if (Space != VnodeSpace::REG ||
+              (Offset == TRI.StackPointer && Size == 8) ||
+              V.TheKind != Value::Kind::Frame)
+            continue;
+          State.DeclaredObjectFrameSlots.clear();
+          State.escapeTypedFrameFrom(V);
+        }
+        for (const auto &[Space, Byte] : State.FrameBytes) {
+          if (Space != VnodeSpace::REG ||
+              (TRI.StackPointer <= Byte && Byte < TRI.StackPointer + 8))
+            continue;
+          const bool Exact = llvm::any_of(Values, [&](const auto &Entry) {
+            const auto &[K, V] = Entry;
+            const auto &[ValueSpace, Offset, Size] = K;
+            return ValueSpace == Space && V.TheKind == Value::Kind::Frame &&
+                   Offset <= Byte && Byte < Offset + Size;
+          });
+          if (!Exact) {
+            State.escapeTypedFrame();
+            break;
+          }
+        }
         State.escapeFrame();
       } else {
         int64_t ArgumentBytes = 0;
         const int64_t ReturnAddressBytes = Image.Arch == Arch::X64 ? 8 : 0;
         auto CheckArgument = [&](const SourceABIValueLocation &Location) {
           if (Location.Kind == SourceABICarrierKind::IntegerRegister ||
-              Location.Kind == SourceABICarrierKind::FloatingRegister) {
-            if (State.mayBeFrame(
-                    NdVar::reg(Location.RegisterOffset, Location.ValueBytes)))
+              Location.Kind == SourceABICarrierKind::FloatingRegister ||
+              Location.Kind == SourceABICarrierKind::IndirectResultPointer) {
+            const auto Argument =
+                NdVar::reg(Location.RegisterOffset, Location.ValueBytes);
+            if (State.mayBeFrame(Argument)) {
+              State.escapeTypedFrameFrom(Read(Argument));
               State.escapeFrame();
+            }
+            if (CopiedBlockInput(
+                    NdVar::reg(Location.RegisterOffset, Location.ValueBytes)))
+              State.forgetCopiedBlocks();
           } else if (Location.Kind == SourceABICarrierKind::Stack) {
             const int64_t Begin =
                 Location.EntryStackOffset - ReturnAddressBytes;
+            if (Begin < 0 || Begin > 4096 || Location.ValueBytes > 4096 - Begin)
+              State.escapeTypedFrame();
             if (Begin < 0 || Begin > 4096 || Location.ValueBytes > 4096 - Begin)
               State.escapeFrame();
             else
@@ -517,6 +1209,9 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           for (const auto &Component : Parameter.Components)
             CheckArgument(Component);
         }
+        if (Signature->ReturnLocation.Kind ==
+            SourceABICarrierKind::IndirectResultPointer)
+          CheckArgument(Signature->ReturnLocation);
         const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
         if (!Stack || Stack->TheKind != Value::Kind::Frame) {
           State.FrameSlots.clear();
@@ -535,21 +1230,41 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       }
       for (auto It = Values.begin(); It != Values.end();) {
         const auto &[Space, Offset, Size] = It->first;
-        if (!KnownABI || Space != VnodeSpace::REG ||
-            (!(Offset == TRI.StackPointer && Size == 8) &&
-             !TRI.isCallPreserved(Offset, Size)))
+        // Exact libobjc dispatch and an authenticated local BL both obey
+        // Darwin's callee-saved register contract even when the call's source
+        // signature is unavailable. Keep only receiver provenance there;
+        // unknown arguments can escape the frame, and no other value fact
+        // crosses an unbound call. A declared source parameter with an
+        // authenticated object class retains that same identity in a
+        // full-width callee-saved register.
+        const bool PreservedReceiver =
+            PreserveReceiverRegisters &&
+            (It->second.TheKind == Value::Kind::Receiver ||
+             (It->second.TheKind == Value::Kind::SourceParameter &&
+              It->second.Object.has_value())) &&
+            Space == VnodeSpace::REG && TRI.isCallPreserved(Offset, Size);
+        const bool StackIdentity = Space == VnodeSpace::REG &&
+                                   Offset == TRI.StackPointer && Size == 8 &&
+                                   It->second.TheKind == Value::Kind::Frame;
+        if ((!KnownABI && !PreservedReceiver && !StackIdentity) ||
+            (KnownABI && (Space != VnodeSpace::REG ||
+                          (!(Offset == TRI.StackPointer && Size == 8) &&
+                           !TRI.isCallPreserved(Offset, Size)))))
           It = Values.erase(It);
         else
           ++It;
       }
       for (auto It = State.FrameBytes.begin(); It != State.FrameBytes.end();)
-        if (!KnownABI || It->first != VnodeSpace::REG ||
-            !PreservedBytes.count(It->second))
+        if (It->first != VnodeSpace::REG ||
+            ((!KnownABI && !(TRI.StackPointer <= It->second &&
+                             It->second < TRI.StackPointer + 8)) ||
+             (KnownABI && !PreservedBytes.count(It->second))))
           It = State.FrameBytes.erase(It);
         else
           ++It;
     };
-    for (const auto &Op : Block.Ops) {
+    for (size_t OpIndex = 0; OpIndex < Block.Ops.size(); ++OpIndex) {
+      const auto &Op = Block.Ops[OpIndex];
       if (Op.Addr != PreviousAddress) {
         for (auto It = Values.begin(); It != Values.end();)
           if (std::get<0>(It->first) == VnodeSpace::TEMP)
@@ -572,8 +1287,133 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           Clobber(nullptr);
           continue;
         }
+        if (const auto Site = sourceCallOccurrenceKey(Op); Site) {
+          if (const auto Found = ClassGetters.find(*Site);
+              Found != ClassGetters.end()) {
+            // Only transfer machine input/frame facts. The ordinary CALL
+            // still requires independent native declaration and closure.
+            SourceFunctionTypeHint Signature;
+            Signature.ReturnType = NdType::makeInt(8, false);
+            std::string Error;
+            if (!assignDarwinScalarSourceABI(Signature, Image.Arch, Error))
+              return std::nullopt;
+            Clobber(&Signature);
+            Values[key(NdVar::reg(TRI.IntReturnRegs.front(), 8))] =
+                Value{Value::Kind::Receiver,
+                      0,
+                      {},
+                      ObjCReceiverTypeHint{
+                          ObjCReceiverTypeHint::OriginKind::ClassReference,
+                          Found->second.Slot, Found->second.ClassName, true}};
+            continue;
+          }
+          const auto Found = RegisterCopies.find(*Site);
+          if (Found != RegisterCopies.end()) {
+            struct Snapshot {
+              uint64_t Destination;
+              std::optional<Value> Fact;
+              std::array<bool, 8> Frame;
+            };
+            std::vector<Snapshot> Snapshots;
+            for (const auto &[Destination, Source] : Found->second.Registers) {
+              Snapshot Copy{Destination, std::nullopt, {}};
+              if (const auto *Entry =
+                      std::get_if<SourceEntryRegister>(&Source)) {
+                Copy.Fact = Read(NdVar::reg(Entry->Offset, 8));
+                for (unsigned I = 0; I < 8; ++I)
+                  Copy.Frame[I] = State.FrameBytes.count(
+                      {VnodeSpace::REG, Entry->Offset + I});
+              } else {
+                Copy.Fact =
+                    Value{Value::Kind::Number,
+                          std::get<SourceConstantStringAddress>(Source).Address,
+                          {}};
+              }
+              Snapshots.push_back(std::move(Copy));
+            }
+            if (const auto &Store = Found->second.StackStore) {
+              const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+              if (!Stack || Stack->TheKind != Value::Kind::Frame)
+                return std::nullopt;
+              const auto Offset = static_cast<int64_t>(Stack->Number);
+              if (!sourceStackStoreFitsFrame(Offset) || State.FrameEscaped ||
+                  !State.typedFrameRangePrivate(Offset, 8))
+                return std::nullopt;
+              std::optional<Value> Stored;
+              if (const auto *Entry =
+                      std::get_if<SourceEntryRegister>(&Store->Value)) {
+                const auto Input = NdVar::reg(Entry->Offset, 8);
+                if (State.mayBeFrame(Input) || CopiedBlockInput(Input))
+                  return std::nullopt;
+                Stored = Read(Input);
+                if (Stored && Stored->Block)
+                  return std::nullopt;
+                if (Stored && Stored->TheKind != Value::Kind::Number &&
+                    Stored->TheKind != Value::Kind::Receiver &&
+                    Stored->TheKind != Value::Kind::SourceParameter)
+                  Stored.reset();
+              } else {
+                Stored = Value{
+                    Value::Kind::Number,
+                    std::get<SourceConstantStringAddress>(Store->Value).Address,
+                    {}};
+              }
+              State.invalidateFrameRange(Offset, 8);
+              State.invalidateTypedFrameRange(Offset, 8);
+              if (Stored) {
+                State.FrameSlots[{Offset, 8}] = *Stored;
+                if (Stored->TheKind == Value::Kind::Receiver ||
+                    Stored->TheKind == Value::Kind::SourceParameter)
+                  State.TypedFrameSlots[{Offset, 8}] = *Stored;
+              }
+              if (State.FrameSlots.size() > 4096 ||
+                  State.TypedFrameSlots.size() > 4096)
+                return std::nullopt;
+            }
+            for (auto &Copy : Snapshots) {
+              for (auto It = Values.begin(); It != Values.end();)
+                if (std::get<0>(It->first) == VnodeSpace::REG &&
+                    std::get<1>(It->first) < Copy.Destination + 8 &&
+                    Copy.Destination <
+                        std::get<1>(It->first) + std::get<2>(It->first))
+                  It = Values.erase(It);
+                else
+                  ++It;
+              if (Copy.Fact)
+                Values.emplace(key(NdVar::reg(Copy.Destination, 8)),
+                               std::move(*Copy.Fact));
+              for (unsigned I = 0; I < 8; ++I) {
+                const auto Byte =
+                    std::pair{VnodeSpace::REG, Copy.Destination + I};
+                State.FrameBytes.erase(Byte);
+                if (Copy.Frame[I])
+                  State.FrameBytes.insert(Byte);
+              }
+            }
+            if (State.FrameBytes.size() > 4096)
+              return std::nullopt;
+            continue;
+          }
+        }
         std::optional<Dispatch> Target;
         auto V = Op.NumInputs ? Read(Op.Inputs[0]) : std::nullopt;
+        if (Op.Opcode == NdOp::INDIR_CALL && V && V->Block &&
+            V->TheKind == Value::Kind::BlockInvoke) {
+          const auto Receiver = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
+          std::string Error;
+          const auto D = readObjCBlockDescriptor(Image, V->Block->Descriptor,
+                                                 V->Block->Flags, Error);
+          if (Receiver && Receiver->TheKind == Value::Kind::CopiedBlock &&
+              Receiver->Number == 0 && Receiver->Block == V->Block && D &&
+              D->InvokeTypeHint && D->Limitations.empty()) {
+            SourceCallTypeHint Hint;
+            Hint.CallKind = SourceCallTypeHint::Kind::BlockInvoke;
+            Hint.Signature = *D->InvokeTypeHint;
+            Clobber(&Hint.Signature);
+            BlockHints.emplace(Op.Addr, std::move(Hint));
+            continue;
+          }
+        }
         if (V && V->TheKind == Value::Kind::Import)
           Target = Dispatch{V->Name, {}, 0, V->Number};
         else if (V && V->TheKind == Value::Kind::Number) {
@@ -584,6 +1424,14 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
               Target = Dispatch{Name, {}, 0, V->Number};
           } else if (Op.Opcode == NdOp::CALL) {
             Target = veneer(Image, V->Number);
+          }
+        }
+        if (V && V->TheKind == Value::Kind::Number && Op.Opcode == NdOp::CALL) {
+          auto CompilerRT = darwinCompilerRTSourceCallHint(Image, V->Number);
+          if (CompilerRT) {
+            Clobber(&CompilerRT->Signature);
+            BlockHints.emplace(Op.Addr, std::move(*CompilerRT));
+            continue;
           }
         }
         if (Target) {
@@ -615,6 +1463,63 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             std::optional<Value> ReturnedReceiver;
             const auto &Signature = Runtime->Signature;
             const auto &Return = Signature.ReturnLocation;
+            const auto Bind = Image.DyldBindSlots.find(Runtime->TargetAddress);
+            if (Runtime->CallKind ==
+                    SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+                Runtime->TargetName == "objc_retain" &&
+                Signature.Parameters.size() == 1 &&
+                Signature.Parameters[0].Location.Kind ==
+                    SourceABICarrierKind::IntegerRegister &&
+                Signature.Parameters[0].Location.ValueBytes == 8) {
+              const auto Input = Read(NdVar::reg(
+                  Signature.Parameters[0].Location.RegisterOffset, 8));
+              if (Input && Input->TheKind == Value::Kind::SourceParameter) {
+                const auto SameSourceLocation = [&](const auto &Location) {
+                  return std::tie(Location.Kind, Location.RegisterOffset,
+                                  Location.EntryStackOffset,
+                                  Location.ValueBytes,
+                                  Location.ExtendTo32Bits) ==
+                         std::tie(Input->SourceLocation.Kind,
+                                  Input->SourceLocation.RegisterOffset,
+                                  Input->SourceLocation.EntryStackOffset,
+                                  Input->SourceLocation.ValueBytes,
+                                  Input->SourceLocation.ExtendTo32Bits);
+                };
+                auto Mark = [&](auto &Facts) {
+                  for (auto &[K, Fact] : Facts)
+                    if (Fact.TheKind == Value::Kind::SourceParameter &&
+                        Fact.SourceMethodEntry == Input->SourceMethodEntry &&
+                        SameSourceLocation(Fact.SourceLocation))
+                      Fact.SourceConsumedAsObject = true;
+                };
+                Mark(Values);
+                Mark(State.FrameSlots);
+                Mark(State.TypedFrameSlots);
+              }
+            }
+            const bool CopiesStackBlock =
+                Bind != Image.DyldBindSlots.end() &&
+                ((Runtime->CallKind ==
+                      SourceCallTypeHint::Kind::ObjCRuntimeCall &&
+                  Runtime->TargetName == "objc_retainBlock" &&
+                  Bind->second.Module == "/usr/lib/libobjc.A.dylib") ||
+                 (Runtime->CallKind ==
+                      SourceCallTypeHint::Kind::DarwinRuntimeCall &&
+                  Runtime->TargetName == "_Block_copy" &&
+                  darwinExportModuleMatches("/usr/lib/libSystem.B.dylib|/usr/"
+                                            "lib/system/libsystem_blocks.dylib",
+                                            Bind->second.Module)));
+            if (CopiesStackBlock && Signature.Parameters.size() == 1 &&
+                Signature.Parameters[0].Location.Kind ==
+                    SourceABICarrierKind::IntegerRegister &&
+                Signature.Parameters[0].Location.ValueBytes == 8 &&
+                Return.Kind == SourceABICarrierKind::IntegerRegister &&
+                Return.ValueBytes == 8) {
+              const auto Input = Read(NdVar::reg(
+                  Signature.Parameters[0].Location.RegisterOffset, 8));
+              if (Input)
+                ReturnedReceiver = StackBlock(*Input, Op.Addr);
+            }
             if (Runtime->ReturnedArgument &&
                 *Runtime->ReturnedArgument < Signature.Parameters.size()) {
               const auto &Argument =
@@ -675,16 +1580,53 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           if (Name && Name->TheKind == Value::Kind::Selector)
             Target->Selector = Name->Name;
         }
+        std::optional<ObjCReceiverTypeHint> SuperInitReceiver;
         if (Target && !Target->Selector.empty()) {
           std::optional<ObjCReceiverTypeHint> Receiver;
           ObjCReceiverDeclaration Declaration;
           const auto Self = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
           if (Self && Target->Name == "objc_msgSend")
             Receiver = receiver(*Self);
-          if (Receiver) {
+          if (Self && Target->Name == "objc_msgSendSuper2" &&
+              Self->TheKind == Value::Kind::Frame) {
+            const int64_t Base = static_cast<int64_t>(Self->Number);
+            auto StoredReceiver = [&](int64_t Offset) -> std::optional<Value> {
+              const auto Slot = std::pair{Offset, 8U};
+              const auto Exact = State.FrameSlots.find(Slot);
+              if (Exact != State.FrameSlots.end())
+                return Exact->second;
+              const auto Typed = State.TypedFrameSlots.find(Slot);
+              return Typed != State.TypedFrameSlots.end() &&
+                             State.typedFrameRangePrivate(Offset, 8)
+                         ? std::optional<Value>(Typed->second)
+                         : std::nullopt;
+            };
+            const auto DynamicValue = StoredReceiver(Base);
+            const auto ClassValue = StoredReceiver(Base + 8);
+            const auto Dynamic =
+                DynamicValue ? receiver(*DynamicValue) : std::nullopt;
+            const auto CurrentClass =
+                ClassValue ? receiver(*ClassValue) : std::nullopt;
+            if (Dynamic && isObjCInitFamily(Target->Selector))
+              SuperInitReceiver = Dynamic;
+            // objc_msgSendSuper2 selects the declaration from current_class;
+            // the receiver word affects object identity, not the call ABI.
+            // It may be an untyped result even when the exact class slot is
+            // independently proven.
+            if (CurrentClass && CurrentClass->IsClassMethod &&
+                CurrentClass->Steps.empty()) {
+              Receiver = CurrentClass;
+              Declaration = objcSuperSourceTypeHint(Image, Target->Selector,
+                                                    *CurrentClass);
+            }
+          }
+          if (Receiver && Target->Name == "objc_msgSend") {
             auto [It, Inserted] = ReceiverDeclarations.try_emplace(std::tuple{
                 Receiver->Origin, Receiver->Address, Receiver->ClassName,
-                Receiver->IsClassMethod, Receiver->Steps, Target->Selector});
+                Receiver->IsClassMethod, Receiver->Steps,
+                Receiver->OutParameters, Receiver->SourceParameter,
+                Receiver->BlockDescriptorAddress,
+                Receiver->BlockDescriptorFlags, Target->Selector});
             if (Inserted)
               It->second = objcReceiverSourceTypeHint(Image, Target->Selector,
                                                       *Receiver);
@@ -695,6 +1637,205 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
           auto Signature =
               Qualified ? Declaration.Signature
                         : objcSelectorSourceTypeHint(Image, Target->Selector);
+          std::optional<SourceABIValueLocation> SelectorResultUse;
+          std::optional<NdTypeKind> SelectorResultTypeUse;
+          std::optional<SourceCallTypeHint::SelectorArgumentTypeEvidence>
+              SelectorArgumentTypeUse;
+          std::optional<SourceCallTypeHint::SelectorForwardingEvidence>
+              SelectorForwardingUse;
+          bool SelectorForwardingContract = false;
+          std::optional<SourceCallTypeHint::SelectorArgumentStorageEvidence>
+              SelectorArgumentStorageUse;
+          std::optional<SourceCallTypeHint::ObjCIndirectResultStorageEvidence>
+              ObjCIndirectResultStorage;
+          if (!Signature && Qualified && Receiver &&
+              Target->Name == "objc_msgSend" &&
+              Receiver->Origin ==
+                  ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+              Receiver->Address == Function.Entry && Receiver->Steps.empty()) {
+            const auto NonNull = objcNonNilSelfSourceTypeHint(
+                Image, Target->Selector, *Receiver);
+            if (NonNull.HasDeclaration && !NonNull.RequiresGlobalAgreement &&
+                NonNull.Signature && NonNull.Signature->ReturnType &&
+                NonNull.Signature->ReturnLocation.Kind ==
+                    SourceABICarrierKind::IndirectResultPointer &&
+                NonNull.Signature->ReturnComponents.empty() &&
+                !sourceAggregateMembers(NonNull.Signature->ReturnType)
+                     .empty()) {
+              const auto Size = NonNull.Signature->ReturnType->Size;
+              const auto &Location = NonNull.Signature->ReturnLocation;
+              const auto Buffer = Read(
+                  NdVar::reg(Location.RegisterOffset, Location.ValueBytes));
+              const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+              if (Size && Buffer && Stack &&
+                  Buffer->TheKind == Value::Kind::Frame &&
+                  Stack->TheKind == Value::Kind::Frame) {
+                const auto Offset = static_cast<int64_t>(Buffer->Number);
+                const auto StackOffset = static_cast<int64_t>(Stack->Number);
+                if (!State.FrameEscaped && Offset >= StackOffset &&
+                    Offset <= -static_cast<int64_t>(Size) &&
+                    State.typedFrameRangePrivate(Offset, Size)) {
+                  Signature = *NonNull.Signature;
+                  ObjCIndirectResultStorage =
+                      SourceCallTypeHint::ObjCIndirectResultStorageEvidence{
+                          Function.Entry, Offset, Size};
+                }
+              }
+            }
+          }
+          if (!Qualified && Target->Name == "objc_msgSend") {
+            const auto Caller = objcMethodSourceTypeHint(Image, Function.Entry);
+            const auto SourceParameter =
+                [&](const Value &V) -> std::optional<unsigned> {
+              if (!Caller || V.TheKind != Value::Kind::SourceParameter ||
+                  V.SourceMethodEntry != Function.Entry)
+                return std::nullopt;
+              std::optional<unsigned> Result;
+              for (unsigned I = 0; I < Caller->Parameters.size(); ++I)
+                if (std::tie(Caller->Parameters[I].Location.Kind,
+                             Caller->Parameters[I].Location.RegisterOffset,
+                             Caller->Parameters[I].Location.EntryStackOffset,
+                             Caller->Parameters[I].Location.ValueBytes,
+                             Caller->Parameters[I].Location.ExtendTo32Bits) ==
+                    std::tie(V.SourceLocation.Kind,
+                             V.SourceLocation.RegisterOffset,
+                             V.SourceLocation.EntryStackOffset,
+                             V.SourceLocation.ValueBytes,
+                             V.SourceLocation.ExtendTo32Bits)) {
+                  if (Result)
+                    return std::nullopt;
+                  Result = I;
+                }
+              return Result;
+            };
+            const auto &Ops = Block.Ops;
+            const auto &Return = Ops.back();
+            const bool DirectReturn =
+                OpIndex + 2 == Ops.size() && Return.Opcode == NdOp::RETURN;
+            bool ExactReturn = false;
+            if (Caller && Caller->ReturnType && DirectReturn) {
+              if (Caller->ReturnType->Kind == NdTypeKind::Void)
+                ExactReturn = Return.NumInputs == 1 && Op.Output.Size == 8 &&
+                              Return.Inputs[0] == Op.Output;
+              else if (Caller->ReturnComponents.empty() &&
+                       Caller->ReturnLocation.Kind ==
+                           SourceABICarrierKind::IntegerRegister &&
+                       Caller->ReturnLocation.ValueBytes == 8 &&
+                       Return.NumInputs == 1)
+                ExactReturn =
+                    Return.Inputs[0] ==
+                    NdVar::reg(Caller->ReturnLocation.RegisterOffset, 8);
+            }
+            const auto Self = Read(NdVar::reg(TRI.IntParamRegs[0], 8));
+            const auto ReceiverParameter =
+                Self ? SourceParameter(*Self) : std::nullopt;
+            const size_t ArgumentCount = std::count(
+                Target->Selector.begin(), Target->Selector.end(), ':');
+            if (ExactReturn && ReceiverParameter &&
+                ArgumentCount <= TRI.IntParamRegs.size() - 2) {
+              SourceCallTypeHint::SelectorForwardingEvidence Evidence;
+              Evidence.MethodEntry = Function.Entry;
+              Evidence.ReceiverSourceParameter = *ReceiverParameter;
+              bool ExactArguments = true;
+              for (size_t I = 0; I < ArgumentCount; ++I) {
+                const auto Argument =
+                    Read(NdVar::reg(TRI.IntParamRegs[I + 2], 8));
+                const auto Parameter =
+                    Argument ? SourceParameter(*Argument) : std::nullopt;
+                if (!Parameter) {
+                  ExactArguments = false;
+                  break;
+                }
+                Evidence.ArgumentSourceParameters.push_back(*Parameter);
+              }
+              if (ExactArguments) {
+                const auto Reconstructed = objcMethodForwardingSourceTypeHint(
+                    Image, Target->Selector, Evidence);
+                if (Reconstructed) {
+                  SelectorForwardingContract = true;
+                  Signature = objcSelectorSourceTypeHintForForwardingUse(
+                      Image, Target->Selector, Evidence);
+                  if (Signature)
+                    SelectorForwardingUse = std::move(Evidence);
+                }
+              }
+            }
+          }
+          if (!Signature && !Qualified && !SelectorForwardingContract)
+            if (const auto Required =
+                    localResultUse(Function, Index, OpIndex, TRI, Image)) {
+              Signature = objcSelectorSourceTypeHintForResultUse(
+                  Image, Target->Selector, Required->Location,
+                  Required->TypeKind);
+              if (Signature) {
+                SelectorResultUse = Required->Location;
+                SelectorResultTypeUse = Required->TypeKind;
+              }
+            }
+          if (!Signature && !Qualified && !SelectorForwardingContract) {
+            if (Self && Self->TheKind == Value::Kind::SourceParameter &&
+                Self->SourceConsumedAsObject) {
+              SourceCallTypeHint::SelectorArgumentTypeEvidence Evidence;
+              Evidence.Parameter = 0;
+              Evidence.MethodEntry = Self->SourceMethodEntry;
+              Evidence.Source = Self->SourceLocation;
+              Evidence.ConsumedAsObject = true;
+              Signature = objcSelectorSourceTypeHintForArgumentTypeUse(
+                  Image, Target->Selector, Evidence);
+              if (Signature)
+                SelectorArgumentTypeUse = Evidence;
+            }
+          }
+          if (!Signature && !Qualified && !SelectorForwardingContract) {
+            for (size_t Parameter = 2; Parameter < TRI.IntParamRegs.size();
+                 ++Parameter) {
+              const auto Argument =
+                  Read(NdVar::reg(TRI.IntParamRegs[Parameter], 8));
+              if (!Argument ||
+                  Argument->TheKind != Value::Kind::SourceParameter)
+                continue;
+              SourceCallTypeHint::SelectorArgumentTypeEvidence Evidence;
+              Evidence.Parameter = static_cast<unsigned>(Parameter);
+              Evidence.MethodEntry = Argument->SourceMethodEntry;
+              Evidence.Source = Argument->SourceLocation;
+              Evidence.ConsumedAsObject = Argument->SourceConsumedAsObject;
+              auto Candidate = objcSelectorSourceTypeHintForArgumentTypeUse(
+                  Image, Target->Selector, Evidence);
+              if (!Candidate)
+                continue;
+              if (SelectorArgumentTypeUse) {
+                Signature.reset();
+                SelectorArgumentTypeUse.reset();
+                break;
+              }
+              Signature = std::move(Candidate);
+              SelectorArgumentTypeUse = Evidence;
+            }
+          }
+          if (!Signature && !Qualified && !SelectorForwardingContract) {
+            for (size_t Parameter = 2; Parameter < TRI.IntParamRegs.size();
+                 ++Parameter) {
+              const auto Argument =
+                  Read(NdVar::reg(TRI.IntParamRegs[Parameter], 8));
+              if (!Argument || Argument->TheKind != Value::Kind::Frame)
+                continue;
+              const int64_t Offset = static_cast<int64_t>(Argument->Number);
+              SourceCallTypeHint::SelectorArgumentStorageEvidence Evidence;
+              Evidence.Parameter = static_cast<unsigned>(Parameter);
+              Evidence.FrameOffset = Offset;
+              auto Candidate = objcSelectorSourceTypeHintForArgumentStorageUse(
+                  Image, Target->Selector, Evidence);
+              if (!Candidate)
+                continue;
+              if (SelectorArgumentStorageUse) {
+                Signature.reset();
+                SelectorArgumentStorageUse.reset();
+                break;
+              }
+              Signature = std::move(Candidate);
+              SelectorArgumentStorageUse = Evidence;
+            }
+          }
           if (Signature) {
             SourceCallTypeHint Hint;
             Hint.CallKind = Target->Name == "objc_msgSendSuper2"
@@ -706,10 +1847,17 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
             Hint.TargetName = Target->Name;
             Hint.Selector = Target->Selector;
             Hint.SelectorReferenceAddress = Target->SelectorSlot;
+            Hint.SelectorResultUse = SelectorResultUse;
+            Hint.SelectorResultTypeUse = SelectorResultTypeUse;
+            Hint.SelectorArgumentTypeUse = SelectorArgumentTypeUse;
+            Hint.SelectorForwardingUse = SelectorForwardingUse;
+            Hint.SelectorArgumentStorageUse = SelectorArgumentStorageUse;
+            Hint.ObjCIndirectResultStorage = ObjCIndirectResultStorage;
             if (Qualified)
               Hint.Receiver = std::move(Receiver);
             BlockHints.emplace(Op.Addr, std::move(Hint));
-          } else if (Target->Name == "objc_msgSend") {
+          } else if (Target->Name == "objc_msgSend" &&
+                     !SelectorForwardingContract) {
             const auto Declaration =
                 objcSelectorFormatDeclaration(Image, Target->Selector);
             if (Declaration) {
@@ -721,10 +1869,18 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                   Location.Kind == SourceABICarrierKind::IntegerRegister
                       ? Read(NdVar::reg(Location.RegisterOffset, 8))
                       : std::nullopt;
-              auto Hint = Format && Format->TheKind == Value::Kind::Number
-                              ? objcFormattedSourceCallHint(
-                                    Image, Target->Selector, Format->Number)
-                              : std::nullopt;
+              std::optional<SourceCallTypeHint> Hint;
+              if (Format && Format->TheKind == Value::Kind::Number)
+                Hint = objcFormattedSourceCallHint(Image, Target->Selector,
+                                                   Format->Number);
+              else if (Format && Format->TheKind == Value::Kind::NumberSet) {
+                std::vector<va_t> Candidates{Format->Number};
+                Candidates.insert(Candidates.end(),
+                                  Format->AlternativeNumbers.begin(),
+                                  Format->AlternativeNumbers.end());
+                Hint = objcFormattedSourceCallHint(Image, Target->Selector,
+                                                   Candidates);
+              }
               if (Hint) {
                 Hint->TargetAddress =
                     V && V->TheKind == Value::Kind::Number ? V->Number : 0;
@@ -732,18 +1888,160 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                 BlockHints.emplace(Op.Addr, std::move(*Hint));
               }
             }
+            if (!BlockHints.count(Op.Addr) && Receiver &&
+                Target->SelectorSlot && V &&
+                V->TheKind == Value::Kind::Number &&
+                objcSentinelReceiverValid(Image, Target->Selector, *Receiver)) {
+              const auto Objects = [&]() -> std::optional<std::vector<va_t>> {
+                const auto Object =
+                    [&](const Value &Value) -> std::optional<va_t> {
+                  if (Value.TheKind == Value::Kind::Number && Value.Number &&
+                      readObjCConstantString(Image, Value.Number))
+                    return Value.Number;
+                  if (Value.TheKind == Value::Kind::ImportedObject &&
+                      Value.Number &&
+                      darwinDeclaredSourceDataObject(Image, Value.Number))
+                    return Value.Number;
+                  return std::nullopt;
+                };
+                const auto First = Read(NdVar::reg(TRI.IntParamRegs[2], 8));
+                if (!First)
+                  return std::nullopt;
+                // sentinel(0,1) permits firstObject itself to be nil. Do not
+                // require SP, inspect a tail slot, or introduce a tail load.
+                if (First->TheKind == Value::Kind::Number && !First->Number)
+                  return std::vector<va_t>{};
+                const auto FirstObject = Object(*First);
+                if (!FirstObject)
+                  return std::nullopt;
+                const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+                if (!Stack || Stack->TheKind != Value::Kind::Frame ||
+                    State.FrameEscaped)
+                  return std::nullopt;
+                const int64_t Base = static_cast<int64_t>(Stack->Number);
+                std::vector<va_t> Result{*FirstObject};
+                for (;;) {
+                  const int64_t Offset =
+                      Base + 8 * static_cast<int64_t>(Result.size() - 1);
+                  const auto Slot = State.FrameSlots.find({Offset, 8U});
+                  if (Slot == State.FrameSlots.end())
+                    return std::nullopt;
+                  if (Slot->second.TheKind == Value::Kind::Number &&
+                      !Slot->second.Number)
+                    return Result; // No reads beyond the first definite nil.
+                  const auto Next = Object(Slot->second);
+                  if (Result.size() == 61 || !Next)
+                    return std::nullopt;
+                  Result.push_back(*Next);
+                }
+              }();
+              if (Objects)
+                if (auto Hint = objcSelectorStubSentinelSourceCallHint(
+                        Image, V->Number, *Receiver, *Objects))
+                  BlockHints.emplace(Op.Addr, std::move(*Hint));
+            }
           }
         }
-        // Only a bound Darwin ABI establishes which physical views survive.
-        // Unknown calls may use another convention and invalidate every fact.
+        // Only a bound Darwin ABI establishes which ordinary physical views
+        // survive. A returning call must restore SP; typed frame spills below
+        // every frame address visible to an unknown convention remain private.
         const auto Bound = BlockHints.find(Op.Addr);
         std::optional<ObjCReceiverTypeHint> ReturnedReceiver;
+        std::vector<std::pair<std::pair<int64_t, unsigned>, Value>>
+            OutParameterReceivers;
         if (Bound != BlockHints.end() &&
             Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
             Bound->second.Receiver)
           ReturnedReceiver = objcReceiverCallResultTypeHint(
               Image, *Bound->second.Receiver, Bound->second.Selector);
-        Clobber(Bound != BlockHints.end() ? &Bound->second.Signature : nullptr);
+        if (Bound != BlockHints.end() && SuperInitReceiver &&
+            Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCSuper2 &&
+            Bound->second.Signature.ReturnType &&
+            Bound->second.Signature.ReturnType->Kind == NdTypeKind::Ptr)
+          ReturnedReceiver = std::move(SuperInitReceiver);
+        if (Bound != BlockHints.end() &&
+            Bound->second.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+            Bound->second.SelectorReferenceAddress) {
+          const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+          for (unsigned Parameter = 2;
+               Stack && Stack->TheKind == Value::Kind::Frame &&
+               Parameter < Bound->second.Signature.Parameters.size();
+               ++Parameter) {
+            const auto Class = objcSelectorOutParameterClass(
+                Image, Bound->second.Selector, Parameter);
+            const auto &Location =
+                Bound->second.Signature.Parameters[Parameter].Location;
+            if (!Class ||
+                Location.Kind != SourceABICarrierKind::IntegerRegister ||
+                Location.ValueBytes != 8)
+              continue;
+            const auto Address = Read(NdVar::reg(Location.RegisterOffset, 8));
+            if (!Address || Address->TheKind != Value::Kind::Frame)
+              continue;
+            const auto Offset = static_cast<int64_t>(Address->Number);
+            const auto Initial = State.FrameSlots.find({Offset, 8});
+            const auto Declared =
+                State.DeclaredObjectFrameSlots.find({Offset, 8});
+            const bool InitializedNil =
+                Initial != State.FrameSlots.end() &&
+                Initial->second.TheKind == Value::Kind::Number &&
+                !Initial->second.Number;
+            const bool FreshlyInitializedNil =
+                State.FreshNilFrameSlots.count({Offset, 8});
+            const bool AlreadyDeclared =
+                Declared != State.DeclaredObjectFrameSlots.end() &&
+                Declared->second.TheKind == Value::Kind::Receiver &&
+                Declared->second.Object &&
+                Declared->second.Object->Origin ==
+                    ObjCReceiverTypeHint::OriginKind::OutParameter &&
+                Declared->second.Object->ClassName == *Class;
+            if ((!InitializedNil && !FreshlyInitializedNil &&
+                 !AlreadyDeclared) ||
+                Offset < static_cast<int64_t>(Stack->Number) || Offset > -8)
+              continue;
+            ObjCReceiverTypeHint Receiver;
+            Receiver.Origin = ObjCReceiverTypeHint::OriginKind::OutParameter;
+            Receiver.Address = Bound->second.SelectorReferenceAddress;
+            Receiver.ClassName = *Class;
+            Receiver.OutParameters.push_back(
+                {Bound->second.SelectorReferenceAddress, Bound->second.Selector,
+                 Parameter});
+            OutParameterReceivers.push_back(
+                {{Offset, 8},
+                 Value{Value::Kind::Receiver, 0, {}, std::move(Receiver)}});
+          }
+        }
+        const bool AuthenticatedMessageDispatch =
+            Target && (Target->Name == "objc_msgSend" ||
+                       Target->Name == "objc_msgSendSuper2");
+        bool AuthenticatedLocalCall = false;
+        if (Image.Arch == Arch::AArch64 && !Target && Op.Opcode == NdOp::CALL &&
+            V && V->TheKind == Value::Kind::Number &&
+            llvm::any_of(Values, [&](const auto &Entry) {
+              const auto &[Space, Offset, Size] = Entry.first;
+              const auto &Fact = Entry.second;
+              return Space == VnodeSpace::REG &&
+                     TRI.isCallPreserved(Offset, Size) &&
+                     (Fact.TheKind == Value::Kind::Receiver ||
+                      (Fact.TheKind == Value::Kind::SourceParameter &&
+                       Fact.Object.has_value()));
+            })) {
+          const auto Site = sourceCallOccurrenceKey(Op);
+          if (Site && Site->StaticTarget && *Site->StaticTarget == V->Number) {
+            if (!LocalCalls)
+              LocalCalls.emplace(sourceLocalCalls(Image, Function));
+            AuthenticatedLocalCall =
+                LocalCalls->count(*Site) &&
+                Image.hasAuthenticatedFunctionEntryAt(V->Number) &&
+                !Image.isImportStubAt(V->Number);
+          }
+        }
+        Clobber(Bound != BlockHints.end() ? &Bound->second.Signature : nullptr,
+                AuthenticatedMessageDispatch || AuthenticatedLocalCall);
+        for (auto &[Slot, Fact] : OutParameterReceivers)
+          State.DeclaredObjectFrameSlots[Slot] = std::move(Fact);
+        if (State.DeclaredObjectFrameSlots.size() > 4096)
+          return std::nullopt;
         if (ReturnedReceiver) {
           const auto &Location = Bound->second.Signature.ReturnLocation;
           if (Location.Kind == SourceABICarrierKind::IntegerRegister &&
@@ -758,33 +2056,98 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
       const bool PlainMemory =
           Op.MemoryOrdering == NdMemoryOrdering::None &&
           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      if (Op.Output.Size && CopiedBlockInput(Op.Output)) {
+        const auto Overwritten = Read(Op.Output);
+        if (Op.Output.Size != 8 || !Overwritten || !Overwritten->Block)
+          State.forgetCopiedBlocks();
+      }
+      bool UsesCopiedBlock = false;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        UsesCopiedBlock |= CopiedBlockInput(Op.Inputs[I]);
+      const bool KeepsBlockIdentity =
+          Op.Output.Size == 8 &&
+          ((Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+            Op.Inputs[0].Size == 8) ||
+           ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+            Op.NumInputs == 2 && Op.Inputs[0].Size == 8 &&
+            Op.Inputs[1].Size == 8));
+      const bool ReadsBlockField = Op.Opcode == NdOp::LOAD &&
+                                   Op.NumInputs == 1 &&
+                                   Op.Inputs[0].Size == 8 && PlainMemory;
+      if (UsesCopiedBlock && !KeepsBlockIdentity && !ReadsBlockField)
+        State.forgetCopiedBlocks();
       if (Op.Opcode == NdOp::STORE) {
-        if (Op.NumInputs == 2 && State.mayBeFrame(Op.Inputs[1]))
+        if (Op.NumInputs == 2 && State.mayBeFrame(Op.Inputs[1])) {
+          State.escapeTypedFrameFrom(Read(Op.Inputs[1]));
           State.escapeFrame();
+        }
         const auto Address = Op.NumInputs == 2 && PlainMemory
                                  ? Read(Op.Inputs[0])
                                  : std::nullopt;
         const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
+        const bool ImageStore =
+            Address && Address->TheKind == Value::Kind::Number &&
+            isFileBackedWritableImageRange(Image, Address->Number,
+                                           Op.Inputs[1].Size);
+        if (!ImageStore &&
+            (!Address || Address->TheKind != Value::Kind::Frame ||
+             State.FrameEscaped))
+          State.forgetCopiedBlocks();
         if (!Address || Address->TheKind != Value::Kind::Frame || !Stack ||
             Stack->TheKind != Value::Kind::Frame) {
-          State.FrameSlots.clear();
-        } else if (!State.FrameEscaped) {
+          if (!ImageStore) {
+            State.FrameSlots.clear();
+            State.escapeTypedFrame();
+          }
+        } else {
           const auto Offset = static_cast<int64_t>(Address->Number);
           const auto Size = Op.Inputs[1].Size;
-          State.invalidateFrameRange(Offset, Size);
           const auto Stored = Read(Op.Inputs[1]);
+          std::optional<Value> NilCompatibleDeclaration;
+          if (Stored && Size == 8 && Stored->TheKind == Value::Kind::Number &&
+              !Stored->Number) {
+            const auto Declared =
+                State.DeclaredObjectFrameSlots.find({Offset, Size});
+            if (Declared != State.DeclaredObjectFrameSlots.end())
+              NilCompatibleDeclaration = Declared->second;
+          }
+          State.invalidateTypedFrameRange(Offset, Size);
+          if (Stored && Size == 8 && Stored->TheKind == Value::Kind::Number &&
+              !Stored->Number &&
+              Offset >= static_cast<int64_t>(Stack->Number) && Offset <= -8)
+            State.FreshNilFrameSlots.emplace(Offset, Size);
+          if (NilCompatibleDeclaration)
+            State.DeclaredObjectFrameSlots[{Offset, Size}] =
+                std::move(*NilCompatibleDeclaration);
+          if (Stored && Size == 8 &&
+              (Stored->TheKind == Value::Kind::Receiver ||
+               Stored->TheKind == Value::Kind::SourceParameter) &&
+              Offset >= static_cast<int64_t>(Stack->Number) &&
+              Offset <= -static_cast<int64_t>(Size) &&
+              State.typedFrameRangePrivate(Offset, Size))
+            State.TypedFrameSlots[{Offset, Size}] = *Stored;
+          if (State.TypedFrameSlots.size() > 4096 ||
+              State.FreshNilFrameSlots.size() > 4096)
+            return std::nullopt;
+          if (State.FrameEscaped)
+            continue;
+          State.invalidateFrameRange(Offset, Size);
           if (Stored && Size && Size <= 8 &&
               Offset >= static_cast<int64_t>(Stack->Number) &&
               Offset <= -static_cast<int64_t>(Size))
             State.FrameSlots[{Offset, Size}] = *Stored;
         }
-        if (State.FrameSlots.size() > 4096)
+        if (State.FrameSlots.size() > 4096 ||
+            State.TypedFrameSlots.size() > 4096 ||
+            State.FreshNilFrameSlots.size() > 4096)
           return std::nullopt;
         continue;
       }
       if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
           Op.Opcode == NdOp::ATOMIC_CMPXCHG) {
         State.FrameSlots.clear();
+        State.escapeTypedFrame();
+        State.forgetCopiedBlocks();
         for (unsigned I = 1; I < Op.NumInputs; ++I)
           if (State.mayBeFrame(Op.Inputs[I]))
             State.escapeFrame();
@@ -794,11 +2157,28 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         for (unsigned I = 0; I < Op.NumInputs; ++I)
           FrameDerived |= State.mayBeFrame(Op.Inputs[I]);
       std::optional<Value> Out;
+      std::optional<Value> LowImageBytes;
+      // SIMD scalar loads can explicitly zero the upper vector lane. Keep
+      // only the unchanged low eight-byte image recipe, not a 16-byte value
+      // or a pointer fact manufactured by a widening conversion.
+      if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+          Op.Inputs[0].Size == 8 && Op.Output.Size == 16) {
+        const auto Input = Read(Op.Inputs[0]);
+        if (Input && Input->TheKind == Value::Kind::ImageBytes)
+          LowImageBytes = Input;
+      }
       if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
         Out = Read(Op.Inputs[0]);
-      else if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
-               Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
-               Op.Output.Size == 8) {
+      else if (Op.Opcode == NdOp::SELECT && Op.NumInputs == 3 &&
+               Op.Output.Size == Op.Inputs[1].Size &&
+               Op.Output.Size == Op.Inputs[2].Size) {
+        const auto TrueValue = Read(Op.Inputs[1]);
+        const auto FalseValue = Read(Op.Inputs[2]);
+        if (TrueValue && FalseValue)
+          Out = mergeNumberCandidates(*TrueValue, *FalseValue);
+      } else if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
+                 Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
+                 Op.Output.Size == 8) {
         const auto Input = Read(Op.Inputs[0]);
         // Validated runtime field offsets are bounded by the instance layout.
         // Preserve the identity only for the exact 32-bit offset carrier.
@@ -811,12 +2191,17 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                  Op.NumInputs == 2) {
         auto A = Read(Op.Inputs[0]);
         auto B = Read(Op.Inputs[1]);
-        if (A && B && Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
-            Op.Inputs[1].Size == 8 &&
-            ((A->TheKind == Value::Kind::Frame &&
-              B->TheKind == Value::Kind::Number) ||
+        // LowIR uses a narrow unsigned immediate for ordinary SP adjustments
+        // (for example AArch64 SUB Xsp, #96 carries a four-byte constant).
+        // Preserve the full pointer lane; the bounded numeric offset need not
+        // itself occupy an eight-byte carrier.
+        if (A && B && Op.Output.Size == 8 &&
+            ((A->TheKind == Value::Kind::Frame && Op.Inputs[0].Size == 8 &&
+              B->TheKind == Value::Kind::Number &&
+              fitsUnsignedValue(B->Number, Op.Inputs[1].Size)) ||
              (Op.Opcode == NdOp::INT_ADD && B->TheKind == Value::Kind::Frame &&
-              A->TheKind == Value::Kind::Number))) {
+              Op.Inputs[1].Size == 8 && A->TheKind == Value::Kind::Number &&
+              fitsUnsignedValue(A->Number, Op.Inputs[0].Size)))) {
           if (B->TheKind == Value::Kind::Frame)
             std::swap(A, B);
           Out = adjustedFrame(*A, B->Number, Op.Opcode == NdOp::INT_SUB);
@@ -826,8 +2211,14 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                       Op.Opcode == NdOp::INT_ADD ? A->Number + B->Number
                                                  : A->Number - B->Number,
                       {}};
-        else if (A && B && Op.Opcode == NdOp::INT_ADD && Op.Output.Size == 8 &&
-                 Op.Inputs[0].Size == 8 && Op.Inputs[1].Size == 8) {
+        else if (A && B && Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
+                 Op.Inputs[1].Size == 8 &&
+                 A->TheKind == Value::Kind::CopiedBlock && A->Block &&
+                 B->TheKind == Value::Kind::Number) {
+          Out = adjustedFrame(*A, B->Number, Op.Opcode == NdOp::INT_SUB);
+        } else if (A && B && Op.Opcode == NdOp::INT_ADD &&
+                   Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
+                   Op.Inputs[1].Size == 8) {
           if (B->TheKind == Value::Kind::Receiver)
             std::swap(A, B);
           const auto Base = receiver(*A);
@@ -843,12 +2234,28 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         }
       } else if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
         auto Address = Read(Op.Inputs[0]);
-        if (Address && Address->TheKind == Value::Kind::Frame && PlainMemory &&
-            !State.FrameEscaped) {
-          const auto Found = State.FrameSlots.find(
-              {static_cast<int64_t>(Address->Number), Op.Output.Size});
-          if (Found != State.FrameSlots.end())
-            Out = Found->second;
+        if (Address && Address->TheKind == Value::Kind::CopiedBlock &&
+            Address->Block && Address->Number == 16 && PlainMemory &&
+            Op.Output.Size == 8) {
+          Out = *Address;
+          Out->TheKind = Value::Kind::BlockInvoke;
+          Out->Number = 0;
+        } else if (Address && Address->TheKind == Value::Kind::Frame &&
+                   PlainMemory) {
+          const auto Slot = std::pair{static_cast<int64_t>(Address->Number),
+                                      unsigned(Op.Output.Size)};
+          const auto Declared = State.DeclaredObjectFrameSlots.find(Slot);
+          const auto Typed = State.TypedFrameSlots.find(Slot);
+          if (Declared != State.DeclaredObjectFrameSlots.end())
+            Out = Declared->second;
+          else if (Typed != State.TypedFrameSlots.end() &&
+                   State.typedFrameRangePrivate(Slot.first, Slot.second))
+            Out = Typed->second;
+          else if (!State.FrameEscaped) {
+            const auto Found = State.FrameSlots.find(Slot);
+            if (Found != State.FrameSlots.end())
+              Out = Found->second;
+          }
         } else if (Address && Address->TheKind == Value::Kind::FieldAddress &&
                    Op.Output.Size == 8 && Address->Object)
           Out = Value{Value::Kind::Receiver, 0, {}, Address->Object};
@@ -858,6 +2265,11 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
               objcReceiverFieldTypeHint(Image, *Address->Object, 0);
           if (Field)
             Out = Value{Value::Kind::Receiver, 0, {}, *Field};
+        } else if (Address && Address->TheKind == Value::Kind::Import &&
+                   Op.Output.Size == 8 &&
+                   darwinDeclaredSourceDataObject(Image, Address->Number)) {
+          Out = Value{Value::Kind::ImportedObject, Address->Number,
+                      Address->Name};
         } else if (Address && Address->TheKind == Value::Kind::Number) {
           auto Ref = Image.ObjCSourceReferences.find(Address->Number);
           if (Ref != Image.ObjCSourceReferences.end() &&
@@ -886,11 +2298,24 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
                      !Name.empty())
               Out =
                   Value{Value::Kind::Import, Address->Number, std::move(Name)};
+            else if (const auto Data =
+                         darwinRuntimeGlobalAddressHint(Image, Address->Number);
+                     Data) {
+              if (Data->TargetName == "_NSConcreteStackBlock")
+                Out = Value{Value::Kind::BlockIsa, Address->Number};
+              else if (darwinDeclaredSourceDataObject(Image, Address->Number))
+                Out = Value{Value::Kind::Import, Address->Number,
+                            Data->TargetName};
+            }
           }
+          if (!Out && PlainMemory && Op.Output.Size && Op.Output.Size <= 8)
+            Out = Value{Value::Kind::ImageBytes, Address->Number};
         }
       }
       if (!Op.Output.Size)
         continue;
+      if (UsesCopiedBlock && KeepsBlockIdentity && (!Out || !Out->Block))
+        State.forgetCopiedBlocks();
       if (!State.writeFrameBytes(Op.Output, FrameDerived))
         return std::nullopt;
       // Kill all overlapping physical aliases, not just the queried width.
@@ -914,17 +2339,43 @@ buildObjCSourceCallHints(const BinaryImage &Image, const LowFunc &Function) {
         if (Values.size() > 4096)
           return std::nullopt;
       }
+      if (LowImageBytes) {
+        auto Prefix = Op.Output;
+        Prefix.Size = 8;
+        Values.emplace(key(Prefix), std::move(*LowImageBytes));
+        if (Values.size() > 4096)
+          return std::nullopt;
+      }
       if (Op.Output.isReg() && Op.Output.Offset < TRI.StackPointer + 8 &&
           TRI.StackPointer < Op.Output.Offset + Op.Output.Size) {
         const auto Stack = Read(NdVar::reg(TRI.StackPointer, 8));
         if (!Stack || Stack->TheKind != Value::Kind::Frame) {
           State.FrameSlots.clear();
+          State.escapeTypedFrame();
         } else {
           const auto Begin = static_cast<int64_t>(Stack->Number);
           for (auto It = State.FrameSlots.begin();
                It != State.FrameSlots.end();)
             if (It->first.first < Begin)
               It = State.FrameSlots.erase(It);
+            else
+              ++It;
+          for (auto It = State.TypedFrameSlots.begin();
+               It != State.TypedFrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.TypedFrameSlots.erase(It);
+            else
+              ++It;
+          for (auto It = State.DeclaredObjectFrameSlots.begin();
+               It != State.DeclaredObjectFrameSlots.end();)
+            if (It->first.first < Begin)
+              It = State.DeclaredObjectFrameSlots.erase(It);
+            else
+              ++It;
+          for (auto It = State.FreshNilFrameSlots.begin();
+               It != State.FreshNilFrameSlots.end();)
+            if (It->first < Begin)
+              It = State.FreshNilFrameSlots.erase(It);
             else
               ++It;
         }

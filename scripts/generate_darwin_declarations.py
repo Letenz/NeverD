@@ -5,7 +5,8 @@ Generation requires the SDK's libclang and PyYAML. The generated catalog is
 self-contained and carries no SDK implementation or build-time dependency.
 Declarations must agree between macOS and iOS preprocessing environments;
 exports and reexports establish which exact library may supply each symbol.
-Public inputs include Foundation, graphics, file attributes, logging and digests.
+Public inputs include Foundation, graphics, file and vector I/O attributes,
+notifications, uniform type identifiers, logging and digests.
 """
 import argparse
 import ctypes
@@ -83,7 +84,8 @@ def export_index(documents, target):
     return result
 
 
-def load_exports(sdk, extra_frameworks=(), targets=("arm64-macos", "x86_64-macos")):
+def load_exports(sdk, extra_frameworks=(), targets=("arm64-macos", "x86_64-macos"),
+                 extra_libraries=()):
     import yaml
 
     class TBDLoader(yaml.SafeLoader):
@@ -105,6 +107,11 @@ def load_exports(sdk, extra_frameworks=(), targets=("arm64-macos", "x86_64-macos
         if len(framework_module_aliases(module)) != 2:
             raise ValueError("invalid framework name")
         paths.append(frameworks / f"{name}.framework/{name}.tbd")
+    for name in extra_libraries:
+        if not isinstance(name, str) or not name.startswith("lib") or \
+                not name.replace("_", "").isalnum():
+            raise ValueError("invalid Swift library name")
+        paths.append(sdk / "usr/lib/swift" / f"{name}.tbd")
     documents = []
     for path in paths:
         documents.extend(yaml.load_all(path.read_text(), Loader=TBDLoader))
@@ -140,18 +147,41 @@ def main():
     sdk = args.sdk.resolve(strict=True)
     clang = CDeclarations(args.libclang)
     frameworks = ("CoreGraphics", "ImageIO")
+    framework_headers = ("CoreGraphics/CoreGraphics.h",
+                         "CoreLocation/CLLocation.h", "ImageIO/ImageIO.h",
+                         "QuartzCore/CABase.h")
     with tempfile.TemporaryDirectory(prefix="neverd-darwin-declarations-") as work:
         source = Path(work) / "declarations.m"
         source.write_text(
             "#import <Foundation/Foundation.h>\n#include <objc/runtime.h>\n"
             "#include <objc/objc-sync.h>\n#include <pthread.h>\n"
-            "#include <dispatch/dispatch.h>\n#include <sys/xattr.h>\n"
+            "#include <dispatch/dispatch.h>\n#include <notify.h>\n"
+            "#include <sys/uio.h>\n#include <sys/xattr.h>\n"
+            "#include <sys/mount.h>\n"
             "#include <os/log.h>\n#include <asl.h>\n"
-            "#include <CommonCrypto/CommonDigest.h>\n" +
-            "".join(f"#import <{name}/{name}.h>\n" for name in frameworks))
-        profiles = [clang.extract(source, sdk, target) for target in TARGETS]
+            "#include <CommonCrypto/CommonDigest.h>\n"
+            "#import <LaunchServices/UTType.h>\n" +
+            "".join(f"#import <{header}>\n" for header in framework_headers))
+        nested_frameworks = (sdk / "System/Library/Frameworks/"
+                             "CoreServices.framework/Frameworks")
+        profiles = [clang.extract(source, sdk, target,
+                                  ("-F", str(nested_frameworks)))
+                    for target in TARGETS]
     version = json.loads((sdk / "SDKSettings.json").read_text())["Version"]
-    output, count = render(profiles, load_exports(sdk, frameworks), version,
+    exports = load_exports(sdk, frameworks)
+    core_services = load_exports(sdk, ("CoreServices",))
+    core_location = load_exports(sdk, ("CoreLocation",))
+    quartz_core = load_exports(sdk, ("QuartzCore",))
+    for common, extra in zip(exports, core_services):
+        for name in ("UTTypeConformsTo", "UTTypeCreatePreferredIdentifierForTag",
+                     "UTTypeIsDynamic"):
+            common[name] = extra[name]
+    for common, extra in zip(exports, core_location):
+        for name in ("CLLocationCoordinate2DIsValid", "CLLocationCoordinate2DMake"):
+            common[name] = extra[name]
+    for common, extra in zip(exports, quartz_core):
+        common["CACurrentMediaTime"] = extra["CACurrentMediaTime"]
+    output, count = render(profiles, exports, version,
                            clang.string(clang.clang_getClangVersion()))
     if args.check:
         if args.output.read_text() != output:

@@ -191,6 +191,16 @@ bool isNonReturningSourceCall(const ExprPtr &Expression) {
          Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default;
 }
 
+bool isTerminatingHighCall(const ExprPtr &Expression) {
+  if (isNonReturningSourceCall(Expression))
+    return true;
+  return Expression && Expression->Kind == ExprKind::Call &&
+         !Expression->IsIndirectCall && !Expression->SourceCallHint &&
+         Expression->Operands.empty() && Expression->IntrinsicOutputs.empty() &&
+         Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         isUnconditionalTrapIntrinsic(Expression->IntrinsicId);
+}
+
 bool HighExpr::hasOrderedMemoryAccess() const {
   std::unordered_set<const HighExpr *> Seen;
   std::vector<const HighExpr *> Work{this};
@@ -207,8 +217,8 @@ bool HighExpr::hasOrderedMemoryAccess() const {
     if (Expr->MemoryOrdering != NdMemoryOrdering::None ||
         Expr->MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return true;
-    for (const ExprPtr &Operand : Expr->Operands)
-      Work.push_back(Operand.get());
+    Expr->forEachChildExpr(
+        [&](const ExprPtr &Operand) { Work.push_back(Operand.get()); });
   }
   return false;
 }
