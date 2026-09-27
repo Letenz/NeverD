@@ -3264,11 +3264,13 @@
         "aarch64"
       ],
       "docs": [
-        "docs/python-plugins.md"
+        "docs/python-plugins.md",
+        "docs/solver.md"
       ],
       "limitations": [
         "candidate discovery never authorizes a rewrite without an equivalent proof",
-        "grammar coverage is explicit; exhaustive mode removes work and solver ceilings but cannot remove physical resource limits"
+        "grammar coverage is explicit; exhaustive mode removes work and solver ceilings but cannot remove physical resource limits",
+        "expression synthesis defaults to the built-in proof backend; Z3 requires an enabled build and an explicit request, with no fallback when unavailable; its timeout applies per check and excludes expression translation"
       ],
       "proof_test": {
         "runner": "gtest",
@@ -3297,6 +3299,28 @@
           "runner": "gtest",
           "target": "NeverDSemanticCAPITests",
           "source": "unittests/lift/sdk/SemanticCAPITests.cpp",
+          "filter": "NeverDSemanticCAPI.SynthesisBackendSelectionIsExplicitAndSizeBounded",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSemanticCAPITests",
+          "source": "unittests/lift/sdk/SemanticCAPITests.cpp",
+          "filter": "NeverDSemanticCAPI.SynthesisRejectsResourcesForTheWrongBackend",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDSemanticCAPITests",
+          "source": "unittests/lift/sdk/SemanticCAPITests.cpp",
           "filter": "NeverDSemanticCAPI.SolverUnknownAndSearchBudgetAreDistinct",
           "platforms": [
             "darwin",
@@ -3307,6 +3331,7 @@
       ],
       "public_surfaces": {
         "c": [
+          "neverd_solver_backend_available",
           "neverd_synthesize_expr",
           "neverd_synthesize_expr_json_v1"
         ],
@@ -3314,7 +3339,9 @@
           "synthesize_expression"
         ],
         "cli": [
-          "neverd simplify --synthesize"
+          "neverd simplify --synthesize",
+          "neverd simplify --solver",
+          "neverd simplify --solver-timeout-ms"
         ],
         "json": [
           "neverd_synthesize_expr_json_v1"
