@@ -70,6 +70,11 @@ namespace neverd {
 
 namespace call_args_detail {
 
+bool isWin64(const CallArgScan &Scan) {
+  return Scan.TheArch == Arch::X64 && Scan.Image &&
+         Scan.Image->Format == BinaryFormat::COFF;
+}
+
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found) {
   const TargetRegInfo &TRI = *Scan.TRI;
@@ -85,6 +90,9 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
            isCallPreservedReg(TRI, Format, V.RegOff, V.Size);
   };
 
+  // Written Win64 outgoing slots (call-time offset, address) so a slot left
+  // unwritten between two written ones can still be read afterwards.
+  std::vector<std::pair<int64_t, MedVar>> StoredSlots;
   auto considerStore = [&](const std::vector<MedOp> &Ops, int J) {
     const MedOp &Prev = Ops[static_cast<size_t>(J)];
     if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
@@ -143,6 +151,11 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
       }
     }
 
+    // An `r11 = rsp` frame addresses the outgoing area from the entry stack.
+    if (StackOff < 0 && Win64 && Scan.EntryOffsetOf)
+      if (std::optional<int64_t> Entry = Scan.EntryOffsetOf(AddrVar))
+        StackOff = *Entry + Scan.FrameSize;
+
     if (StackOff < 0 || SlotBytes == 0)
       return;
     int ArgPos = -1;
@@ -151,6 +164,10 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
         return;
       const int64_t SlotOff = StackOff - Layout.CallStackBase;
       if (SlotOff % SlotBytes != 0)
+        return;
+      // A slot the function reads back is a local stored before the call.
+      if (Scan.LoadedEntrySlots &&
+          Scan.LoadedEntrySlots->count(StackOff - Scan.FrameSize))
         return;
       ArgPos = static_cast<int>(Layout.Registers.size()) +
                static_cast<int>(SlotOff / SlotBytes);
@@ -161,6 +178,8 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     }
     if (ArgPos < 0 || ArgPos >= Scan.MaxArgs || Found[ArgPos])
       return;
+    if (Win64)
+      StoredSlots.push_back({StackOff, AddrVar});
     if (Scan.ResolveWindow) {
       if (ExprPtr E = Scan.ResolveWindow(Prev.Inputs[1], Ops, J - 1))
         if (E->Kind != ExprKind::Undef) {
@@ -252,6 +271,30 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   for (const auto &W : Scan.ExtraWindows)
     if (W.Ops)
       scanWindow(*W.Ops, W.Before, 0);
+
+  // A Win64 stack slot the caller did not write between two it did is still
+  // an argument: the callee reads whatever the slot holds.  Read it through
+  // the address of a written neighbour rather than dropping later arguments.
+  if (!Win64 || StoredSlots.empty())
+    return;
+  const int FirstStackArg = static_cast<int>(Layout.Registers.size());
+  int Last = -1;
+  for (int K = FirstStackArg; K < Scan.MaxArgs; ++K)
+    if (Found[K])
+      Last = K;
+  const auto &[BaseOff, BaseAddr] = StoredSlots.front();
+  for (int K = FirstStackArg; K < Last; ++K) {
+    if (Found[K])
+      continue;
+    const int64_t Off =
+        Layout.CallStackBase + int64_t(K - FirstStackArg) * SlotBytes;
+    ExprPtr Address = HighExpr::makeBinop(
+        NdOp::INT_ADD, Scan.ToExpr(BaseAddr),
+        HighExpr::makeConst(static_cast<uint64_t>(Off - BaseOff),
+                            TRI.PointerSize));
+    Found[K] = HighExpr::makeLoad(std::move(Address),
+                                  NdType::makeInt(TRI.PointerSize));
+  }
 }
 
 static bool preferScannedCallArg(const ExprPtr &Scanned, const ExprPtr &Hinted,
@@ -757,6 +800,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
   }
 
+  // A summarized Win64 callee published exactly the register arguments it
+  // reads as the CALL's inputs (LowToMed); SSA already renamed them to the
+  // values reaching the call, including a caller's pass-through argument.
+  if (CallIdx < Ops.size() && Ops[CallIdx].CalleeRegisterArgs >= 0 &&
+      !Ops[CallIdx].SourceCallHint) {
+    const MedOp &Call = Ops[CallIdx];
+    for (int I = 0; I < 4 && I < MaxArgs; ++I)
+      Found[I] = I < Call.CalleeRegisterArgs && 1 + I < Call.NumInputs
+                     ? medvarToExpr(Call.Inputs[1 + I])
+                     : nullptr;
+  }
+
   // `mov r8d, [p+field]; call` is often `LOAD t; ZEXT r8, t`. The zext is the
   // last param-reg write, so the call would keep a dangling SSA of t if the
   // load assign is later DCE'd. The argument is the loaded value.
@@ -904,6 +959,80 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   auto ToExpr = [this](const MedVar &V) { return medvarToExpr(V); };
   Scan.ToExpr = ToExpr;
   Scan.IsCalleeSave = IsCalleeSave;
+  auto ReachingRegArg = [&](int Index) -> ExprPtr {
+    if (Index < 0 || Index >= static_cast<int>(ParamRegs.size()))
+      return nullptr;
+    MedVar LiveIn;
+    if (reachingRegAtBlockEntry(CurBlock, ParamRegs[Index], LiveIn))
+      return medvarToExpr(LiveIn);
+    return nullptr;
+  };
+  Scan.ReachingRegArg = ReachingRegArg;
+  std::function<std::optional<int64_t>(const MedVar &, int)> EntryOffset =
+      [&](const MedVar &V, int Depth) -> std::optional<int64_t> {
+    if (!CurMed || Depth > 8)
+      return std::nullopt;
+    if (V.Kind == MedVar::Reg && V.RegOff == SpRegOff && V.SSAVer == 0)
+      return 0;
+    if (EntryOffsetDefsFor != CurMed) {
+      EntryOffsetDefs.clear();
+      for (const auto &Blk : CurMed->Blocks)
+        for (const auto &Op : Blk.Ops) {
+          auto [It, Inserted] =
+              EntryOffsetDefs.try_emplace({static_cast<int>(Op.Output.Kind),
+                                           Op.Output.Id, Op.Output.SSAVer},
+                                          &Op);
+          if (!Inserted)
+            It->second = nullptr;
+        }
+      EntryOffsetDefsFor = CurMed;
+    }
+    auto DefIt =
+        EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+    const MedOp *Def = DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+    if (!Def || Def->NumInputs < 1)
+      return std::nullopt;
+    if (Def->Opcode == NdOp::COPY)
+      return EntryOffset(Def->Inputs[0], Depth + 1);
+    if ((Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB) &&
+        Def->NumInputs == 2 && Def->Inputs[1].isConst()) {
+      auto Base = EntryOffset(Def->Inputs[0], Depth + 1);
+      if (!Base)
+        return std::nullopt;
+      const int64_t C = static_cast<int64_t>(Def->Inputs[1].ConstVal);
+      return Def->Opcode == NdOp::INT_ADD ? *Base + C : *Base - C;
+    }
+    return std::nullopt;
+  };
+  auto EntryOffsetOf = [&](const MedVar &V) { return EntryOffset(V, 0); };
+  Scan.EntryOffsetOf = EntryOffsetOf;
+  Scan.FrameSize = CurMed ? CurMed->FrameSize : 0;
+  if (CurMed && LoadedEntrySlotsFor != CurMed) {
+    LoadedEntrySlots.clear();
+    auto AddSlot = [&](const MedVar &V) {
+      if (auto Off = EntryOffsetOf(V))
+        LoadedEntrySlots.insert(*Off);
+    };
+    for (const auto &Blk : CurMed->Blocks)
+      for (const auto &Op : Blk.Ops) {
+        if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          continue;
+        if (Op.Opcode == NdOp::LOAD && Op.NumInputs >= 1)
+          AddSlot(Op.Inputs[0]);
+        // A slot whose address escapes (kept in a register, stored, or
+        // passed to a callee) is a local the callee or a later load reads
+        // through that pointer, not an outgoing argument.
+        // The stack and frame pointers themselves only locate the frame.
+        if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::COPY) &&
+            Op.Output.Kind == MedVar::Reg && Op.Output.RegOff != SpRegOff &&
+            Op.Output.RegOff != TRI.FramePointer)
+          AddSlot(Op.Output);
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)
+          AddSlot(Op.Inputs[1]);
+      }
+    LoadedEntrySlotsFor = CurMed;
+  }
+  Scan.LoadedEntrySlots = &LoadedEntrySlots;
   Scan.ResolveWindow = exprFromWindowValue;
 
   std::vector<ExprPtr> Args;
@@ -931,10 +1060,55 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     }
   }
 
-  if (Win64 && CurMed) {
+  // A callee summary already published exactly the register arguments the
+  // callee reads, SSA-renamed to their reaching values; guessing a
+  // pass-through parameter for an unread slot would print the function's
+  // incoming RCX where the caller loaded 0xC9.
+  const bool SummarizedCallee = CallIdx < Ops.size() &&
+                                Ops[CallIdx].CalleeRegisterArgs >= 0 &&
+                                !Ops[CallIdx].SourceCallHint;
+  // A recursive call passes this function's own parameters: its register
+  // arguments are this definition's register parameters.
+  const bool SelfCall = CallIdx < Ops.size() && CurMed &&
+                        Ops[CallIdx].NumInputs >= 1 &&
+                        Ops[CallIdx].Inputs[0].isConst() &&
+                        Ops[CallIdx].Inputs[0].ConstVal == CurMed->Entry;
+  // The signature this function is printed with: a native source type hint
+  // when it has one, else its recovered parameters.
+  const size_t OwnParamCount =
+      CurMed
+          ? (CurMed->SourceTypeHint ? CurMed->SourceTypeHint->Parameters.size()
+                                    : CurMed->Params.size())
+          : 0;
+  // A recursive call passes exactly the parameters of the signature it
+  // calls.  A missing register argument is this function's own parameter
+  // when one was recovered for that position, else a value the call site
+  // does not determine.
+  auto MatchOwnSignature = [&](std::vector<ExprPtr> Collected) {
+    if (!SelfCall || !Win64)
+      return Collected;
+    if (Collected.size() > OwnParamCount)
+      Collected.resize(OwnParamCount);
+    for (size_t I = Collected.size(); I < OwnParamCount; ++I) {
+      if (I < CurMed->Params.size() &&
+          CurMed->Params[I].RegOff != kNoParamReg &&
+          CurMed->Params[I].Id >= 0) {
+        MedVar Param = CurMed->Params[I];
+        Param.Kind = MedVar::Param;
+        Param.Id = static_cast<int>(I);
+        Collected.push_back(HighExpr::makeVar(Param, TypeRef{}));
+      } else {
+        Collected.push_back(HighExpr::makeUndef(8));
+      }
+    }
+    return Collected;
+  };
+  if (Win64 && CurMed && !SummarizedCallee) {
     size_t FillTo = 0;
     if (!Hinted.empty())
       FillTo = std::min(Hinted.size(), static_cast<size_t>(4));
+    else if (SelfCall)
+      FillTo = std::min(OwnParamCount, static_cast<size_t>(4));
     else {
       for (int K = 3; K >= 0; --K)
         if (Found[K] && Found[K]->Kind != ExprKind::Undef) {
@@ -960,6 +1134,8 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
   auto BoundKnownCalleeArity = [&](std::vector<ExprPtr> Collected) {
     if (CallIdx >= Ops.size())
       return Collected;
+    if (SelfCall && Win64)
+      return MatchOwnSignature(std::move(Collected));
     const MedOp &Call = Ops[CallIdx];
     std::string Name;
     if (Call.SourceCallHint && !Call.SourceCallHint->TargetName.empty())
@@ -968,11 +1144,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
       Name = calleeDisplayName(Call.Inputs[0].ConstVal);
     if (Name.empty())
       return Collected;
-    const auto Arity = libc::libcArityForSymbol(Name);
-    if (!Arity)
-      return Collected;
-    const size_t N = static_cast<size_t>(std::max(0, Arity->IntArgs) +
-                                         std::max(0, Arity->FpArgs));
+    size_t N = 0;
+    if (const libc::WindowsKernelPrototype *Proto =
+            Win64 ? libc::windowsKernelPrototype(Name) : nullptr) {
+      // A WDK prototype fixes the stack arguments too: outgoing-area stores
+      // for a later call are not arguments of this one.
+      N = Proto->ArgCount;
+    } else {
+      const auto Arity = libc::libcArityForSymbol(Name);
+      if (!Arity)
+        return Collected;
+      N = static_cast<size_t>(std::max(0, Arity->IntArgs) +
+                              std::max(0, Arity->FpArgs));
+    }
     if (Collected.size() > N)
       Collected.resize(N);
     return Collected;
@@ -1020,7 +1204,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
       for (size_t I = Hinted.size(); I < End; ++I)
         Hinted.push_back(Found[I]);
     }
-    return Hinted;
+    return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();
   for (int K = 0; K < MaxArgs; ++K) {

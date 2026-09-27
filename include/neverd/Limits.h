@@ -147,17 +147,27 @@ constexpr uint32_t kMaxJumpTableModuloRecipeSymbolEvidenceWork = 262144;
 /// 160 Mi-unit ceiling leaves 24,367,665 units of bounded headroom without
 /// granting fresh per-phase or per-round allowances.
 constexpr uint32_t kMaxJumpTableMaskFixedPointEvidenceWork = 167772160;
+/// One jump-table candidate's whole evidence account.  Large kernel functions
+/// (thousands of instructions with cold chunks) can spend most of the mask
+/// fixed-point allowance on inventory prepayment alone, so the candidate keeps
+/// a larger allowance for its remaining guard, role and claim proofs.
+/// The MSVC two-level table in ntoskrnl 0x1406216C0 (97 cases, index table in
+/// PAGE) needs about 320 million units; its proof runs in well under a second,
+/// the units being conservative container-work prepayments.
+constexpr uint32_t kMaxJumpTableCandidateEvidenceWork = 536870912;
+static_assert(kMaxJumpTableCandidateEvidenceWork >=
+              kMaxJumpTableMaskFixedPointEvidenceWork);
 
 /// Aggregate allowance for one transactional multi-candidate resolver stage.
 /// A real function can contain several exact branch occurrences that consume
 /// the same physical table (peeled loops and computed-goto dispatch relays are
 /// common examples).  Each occurrence remains independently capped by
-/// kMaxJumpTableMaskFixedPointEvidenceWork; this larger, still finite account
+/// kMaxJumpTableCandidateEvidenceWork; this larger, still finite account
 /// retains four-candidate headroom so the stage can validate a complete
 /// sibling batch before committing it.
-constexpr uint32_t kMaxJumpTableProposalStageEvidenceWork = 671088640;
+constexpr uint32_t kMaxJumpTableProposalStageEvidenceWork = 2147483648u;
 static_assert(uint64_t{kMaxJumpTableProposalStageEvidenceWork} >=
-              uint64_t{kMaxJumpTableMaskFixedPointEvidenceWork} * 4);
+              uint64_t{kMaxJumpTableCandidateEvidenceWork} * 4);
 
 /// Aggregate allowance for proving that one authenticated Med jump-table
 /// target load is consumed exclusively by its recovered terminal branch.
@@ -326,6 +336,13 @@ constexpr int kMaxVerifyInsns = 64;
 /// with an already-detected function.
 constexpr uint64_t kMaxOverlapDistance = 0x10000;
 
+/// Callee register-effect summaries lift callees that the pipeline did not
+/// already lift (a single-function decompile lifts only its own body).  A
+/// callee deeper than this many calls, or past this many extra lifts, keeps
+/// the ABI clobber set.
+constexpr int kMaxCallEffectCalleeDepth = 4;
+constexpr size_t kMaxCallEffectExtraLifts = 256;
+
 /// `--func` may attach out-of-line catch/unwind pdata, but a malformed or
 /// merged runtime-function range must not import that owner's entire EH
 /// graph.  Real MSVC methods stay well below 1 MiB.
@@ -350,6 +367,11 @@ constexpr size_t kMaxStructurableMedBlocks = 1024;
 /// on a megafunction, while Med type inference still uses \c kMaxSSANodes.
 constexpr size_t kMaxStructurableMedOps =
     static_cast<size_t>(kMaxSSANodes) * 2u;
+
+/// Build SSA and run the MedIR optimizations for functions up to this many
+/// operations.  HighIR structuring keeps its own, smaller limit; a larger
+/// SSA function is still lowered to statements, block by block.
+constexpr size_t kMaxSSAFunctionOps = 400000;
 
 /// Maximum estimated stack frame size.
 constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
@@ -536,6 +558,23 @@ constexpr size_t kMaxIfElseStructuringBlocks = 500;
 
 /// HighIR statement count above which loop/if structuring is treated as mega.
 constexpr size_t kMaxStructuredHighStmts = 4000;
+/// Top-level statement bound for the late goto-reduction phases.  Their
+/// scans are near-linear per round; oversized block-by-block functions
+/// stay within a few seconds at this size.
+constexpr size_t kMaxLateGotoReductionStmts = 400000;
+
+/// Statements before a branch whose assignments are substituted into its
+/// condition when comparing it with an earlier branch.  Substitution only
+/// exposes equal subexpressions, so a shorter window finds fewer implied
+/// conditions but never an unsound one; scanning the whole prefix for every
+/// branch was cubic on long bodies.
+constexpr size_t kMaxComposedWorkAssigns = 64;
+
+/// HighC value forwarding (folding a single-use temporary into its use)
+/// rescans every statement for each candidate.  Larger bodies, which only
+/// arise when an oversized function is lowered block by block, keep their
+/// temporaries.
+constexpr size_t kMaxValueForwardSites = 8192;
 
 /// if/else folding passes for ordinary vs large CFGs.
 constexpr int kIfElseStructuringPasses = 10;

@@ -1841,8 +1841,8 @@ private:
       const std::vector<LowOp> &Ops, int LoadIdx, uint16_t EntryWidth,
       va_t &TableAddr, uint64_t &IndexReg, uint32_t &Scale,
       NdVar *IndexValue = nullptr, va_t *IndexUseAddr = nullptr,
-      int *IndexUseSeq = nullptr,
-      std::function<bool(size_t)> ConsumeWork = {}) const;
+      int *IndexUseSeq = nullptr, std::function<bool(size_t)> ConsumeWork = {},
+      JumpTableDisplacedAddressRole *Displaced = nullptr) const;
   /// Fold a register to a loader-mapped address.  Callers may explicitly admit
   /// an unmapped scalar candidate, while the narrower COFF exception admits
   /// only the exact PE image base.  Both exceptions still require
@@ -2043,11 +2043,12 @@ private:
   /// required candidate-local budget is shared by initial proof and final
   /// revalidation; no graph, alias, or value query may restart a private
   /// aggregate allowance.
-  bool inferBoundsFromPreciseGuards(const InsnRecord &Rec, JumpTableInfo &Info,
-                                    size_t *CandidateEvidenceBudget,
-                                    bool UseDefinedAlternativesAsRoots = false,
-                                    const std::map<va_t, std::vector<va_t>>
-                                        *CertifiedEdgeOverrides = nullptr);
+  bool inferBoundsFromPreciseGuards(
+      const InsnRecord &Rec, JumpTableInfo &Info,
+      size_t *CandidateEvidenceBudget,
+      bool UseDefinedAlternativesAsRoots = false,
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
+      bool AllowSparseDomain = false);
   bool guardUsesInclusiveCompare(const InsnRecord &Rec,
                                  const JumpTableInfo &Info,
                                  uint64_t Bound) const;
@@ -2593,6 +2594,15 @@ private:
   const libc::NoReturnTargetIndex *NoReturnTargets = nullptr;
   const detail::AbsoluteRelocationRootIndex *AbsoluteRelocationRoots = nullptr;
   const ExecutableCodeOwnerIndex *ExecutableCodeOwners = nullptr;
+  /// Sorted normalized addresses of \ref BinaryImage function symbols, so a
+  /// jump-table target check is a lookup, not a scan of every symbol.  Rebuilt
+  /// when the image or its symbol vector changes.
+  std::vector<va_t> FunctionSymbolIndex;
+  const BinaryImage *FunctionSymbolIndexImage = nullptr;
+  const void *FunctionSymbolIndexData = nullptr;
+  size_t FunctionSymbolIndexCount = 0;
+  /// Same answer as BinaryImage::hasFunctionSymbolAt.
+  bool hasFunctionSymbolAtIndexed(const BinaryImage &Img, va_t Addr);
   const std::set<va_t> *CrossFunctionContinuationRoots = nullptr;
   const std::set<va_t> *ProtectedJumpTableRelocationSlots = nullptr;
   /// Owned one-shot history for the next build, plus the snapshot active in

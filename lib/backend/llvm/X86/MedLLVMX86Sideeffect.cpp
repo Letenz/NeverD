@@ -45,6 +45,10 @@ bool MedLLVMEmitter::emitX86DebugTrap(const MedOp &Op, Intrinsic IC,
     return true;
   }
   case I::IntN: {
+    // An interrupt with a register result is value-producing; the value
+    // emitter binds that result.
+    if (Op.Output.Size > 0)
+      return false;
     auto *VoidTy = llvm::Type::getVoidTy(*Ctx);
     // Windows `int 0x29` is `__fastfail(ecx)`.  Emit a named noreturn call
     // so LLVMC prints the intrinsic and does not treat the interrupt vector
@@ -203,9 +207,8 @@ bool MedLLVMEmitter::emitX86CacheOp(const MedOp &Op, Intrinsic IC,
   case I::Xsaveopt64:
   case I::Xrstor64:
   case I::Xrstors64:
-    llvm::report_fatal_error(
-        "x86 state save/restore requires an explicit architectural state "
-        "layout; host inline asm is not a sound lowering");
+    emitX86StateSnapshot(Op, IC, Builder);
+    return true;
   default:
     break;
   }
@@ -257,6 +260,118 @@ void MedLLVMEmitter::emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
       AsmFnTy, std::string(Mn) + " " + Segment + "($0)", Constraints,
       /*hasSideEffects=*/true);
   Builder.CreateCall(IA, ParamVals);
+}
+
+// The processor's x87/SSE/AVX state, as the source's _xsave64/_fxrstor
+// intrinsics name it.  Lifted values live in SSA registers, not in that
+// state, so HighC marks the statement; here the LLVM intrinsic is the same
+// source operation.
+void MedLLVMEmitter::emitX86StateSnapshot(const MedOp &Op, Intrinsic IC,
+                                          llvm::IRBuilder<> &Builder) {
+  using I = Intrinsic;
+  llvm::Intrinsic::ID ID = llvm::Intrinsic::not_intrinsic;
+  bool TakesMask = true;
+  switch (IC) {
+  case I::Fxsave:
+    ID = llvm::Intrinsic::x86_fxsave;
+    TakesMask = false;
+    break;
+  case I::Fxrstor:
+    ID = llvm::Intrinsic::x86_fxrstor;
+    TakesMask = false;
+    break;
+  case I::Fxsave64Mem:
+    ID = llvm::Intrinsic::x86_fxsave64;
+    TakesMask = false;
+    break;
+  case I::Fxrstor64Mem:
+    ID = llvm::Intrinsic::x86_fxrstor64;
+    TakesMask = false;
+    break;
+  case I::Xsave:
+    ID = llvm::Intrinsic::x86_xsave;
+    break;
+  case I::Xsavec:
+    ID = llvm::Intrinsic::x86_xsavec;
+    break;
+  case I::Xsaves:
+    ID = llvm::Intrinsic::x86_xsaves;
+    break;
+  case I::Xsaveopt:
+    ID = llvm::Intrinsic::x86_xsaveopt;
+    break;
+  case I::Xrstor:
+    ID = llvm::Intrinsic::x86_xrstor;
+    break;
+  case I::Xrstors:
+    ID = llvm::Intrinsic::x86_xrstors;
+    break;
+  case I::Xsave64:
+    ID = llvm::Intrinsic::x86_xsave64;
+    break;
+  case I::Xsavec64:
+    ID = llvm::Intrinsic::x86_xsavec64;
+    break;
+  case I::Xsaves64:
+    ID = llvm::Intrinsic::x86_xsaves64;
+    break;
+  case I::Xsaveopt64:
+    ID = llvm::Intrinsic::x86_xsaveopt64;
+    break;
+  case I::Xrstor64:
+    ID = llvm::Intrinsic::x86_xrstor64;
+    break;
+  case I::Xrstors64:
+    ID = llvm::Intrinsic::x86_xrstors64;
+    break;
+  default:
+    // x87 environment forms have no LLVM intrinsic.
+    emitX86MemPtrAsm(intrinsicAsmMnemonic(IC), Op, Builder);
+    return;
+  }
+  if (Op.NumInputs < (TakesMask ? 4 : 2))
+    llvm::report_fatal_error(
+        "x86 state save/restore intrinsic is missing its operands");
+  if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
+    if (!TakesMask) {
+      emitX86MemPtrAsm(intrinsicAsmMnemonic(IC), Op, Builder);
+      return;
+    }
+    // No intrinsic takes a segment-relative area; keep the override in asm.
+    auto *I32 = llvm::Type::getInt32Ty(*Ctx);
+    llvm::Value *Offset = getRawSegmentOffset(Op.Inputs[1], Builder);
+    auto *OffsetTy = llvm::Type::getInt64Ty(*Ctx);
+    if (Offset->getType()->isPointerTy())
+      Offset = Builder.CreatePtrToInt(Offset, OffsetTy, "state_offset");
+    Offset = Builder.CreateZExtOrTrunc(Offset, OffsetTy, "state_offset");
+    llvm::Value *Lo =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I32, "lo");
+    llvm::Value *Hi =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[3], Builder), I32, "hi");
+    const char *Segment =
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS ? "%fs:" : "%gs:";
+    auto *AsmTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
+                                          {OffsetTy, I32, I32}, false);
+    auto *IA = llvm::InlineAsm::get(
+        AsmTy, std::string(intrinsicAsmMnemonic(IC)) + " " + Segment + "($0)",
+        "r,{eax},{edx},~{memory}", /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, {Offset, Lo, Hi});
+    return;
+  }
+  llvm::Value *Addr = getVar(Op.Inputs[1], Builder);
+  auto *PtrTy = llvm::PointerType::getUnqual(*Ctx);
+  if (!Addr->getType()->isPointerTy())
+    Addr = Builder.CreateIntToPtr(Addr, PtrTy, "state_area");
+  std::vector<llvm::Value *> Args{Addr};
+  if (TakesMask) {
+    auto *I32 = llvm::Type::getInt32Ty(*Ctx);
+    // LLVM's XSAVE intrinsics take the EDX half first, then EAX.
+    Args.push_back(
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[3], Builder), I32, "hi"));
+    Args.push_back(
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I32, "lo"));
+  }
+  Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, ID), Args);
 }
 
 bool MedLLVMEmitter::emitX86SystemAsm(const MedOp &Op, Intrinsic IC,
@@ -475,6 +590,28 @@ static bool isX86MpxOrTransactional(Intrinsic IC) {
 
 bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
                                        llvm::IRBuilder<> &Builder) {
+  const bool SystemRegisterWrite =
+      IC == Intrinsic::WriteCr0 || IC == Intrinsic::WriteCr2 ||
+      IC == Intrinsic::WriteCr3 || IC == Intrinsic::WriteCr4 ||
+      IC == Intrinsic::WriteCr8 || IC == Intrinsic::WriteDr;
+  if (auto Reg = !SystemRegisterWrite
+                     ? std::nullopt
+                     : x86SystemRegisterName(IC, Op.NumInputs > 1 &&
+                                                         Op.Inputs[1].isConst()
+                                                     ? Op.Inputs[1].ConstVal
+                                                     : UINT64_MAX)) {
+    // WriteDr carries the register number before the value.
+    const uint16_t ValueInput = IC == Intrinsic::WriteDr ? 2 : 1;
+    if (Op.NumInputs <= ValueInput)
+      llvm::report_fatal_error("x86 system register write has no value");
+    llvm::Value *Value = getVar(Op.Inputs[ValueInput], Builder);
+    auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
+                                         {Value->getType()}, false);
+    auto *IA = llvm::InlineAsm::get(FnTy, "mov $0, " + *Reg, "r,~{memory}",
+                                    /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, {Value});
+    return true;
+  }
   using I = Intrinsic;
   if (IC == I::Insb || IC == I::Insw || IC == I::Insd) {
     if (Op.NumInputs < 5 || Op.Output.Size != 0 ||
@@ -599,10 +736,49 @@ bool MedLLVMEmitter::emitX86Privileged(const MedOp &Op, Intrinsic IC,
     return true;
   }
 
+  // POPF writes the whole EFLAGS image, including the system flags.
+  if (IC == I::Popf) {
+    if (Op.NumInputs != 2)
+      llvm::report_fatal_error("x86 POPF has no EFLAGS image");
+    const bool Wide = TargetArch == Arch::X64;
+    auto *AsmTy =
+        Wide ? llvm::Type::getInt64Ty(*Ctx) : llvm::Type::getInt32Ty(*Ctx);
+    llvm::Value *Flags =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), AsmTy);
+    auto *FnTy =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx), {AsmTy}, false);
+    auto *IA = llvm::InlineAsm::get(
+        FnTy, Wide ? "pushq $0\n\tpopfq" : "pushl $0\n\tpopfl",
+        "r,~{memory},~{cc},~{dirflag},~{flags}", /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, {Flags});
+    return true;
+  }
+
+  // WRMSR writes EDX:EAX to the MSR selected by ECX.
+  if (IC == I::Wrmsr) {
+    if (Op.NumInputs != 3)
+      llvm::report_fatal_error("x86 WRMSR has an invalid operand shape");
+    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
+    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+    llvm::Value *Selector =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
+    llvm::Value *Value =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2], Builder), I64Ty);
+    llvm::Value *Lo = Builder.CreateTrunc(Value, I32Ty, "msr_lo");
+    llvm::Value *Hi =
+        Builder.CreateTrunc(Builder.CreateLShr(Value, 32), I32Ty, "msr_hi");
+    auto *FnTy = llvm::FunctionType::get(llvm::Type::getVoidTy(*Ctx),
+                                         {I32Ty, I32Ty, I32Ty}, false);
+    auto *IA =
+        llvm::InlineAsm::get(FnTy, "wrmsr", "{ecx},{eax},{edx},~{memory}",
+                             /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, {Selector, Lo, Hi});
+    return true;
+  }
+
   switch (IC) {
   case I::Cli:
   case I::Sti:
-  case I::Wrmsr:
   case I::Wrpkru:
   case I::Swapgs:
   case I::Wbinvd:
@@ -728,10 +904,21 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
     Builder.SetInsertPoint(Continue);
     return true;
   }
-  if (IC == Intrinsic::X86Invalidate)
-    llvm::report_fatal_error(
-        "x86 address-translation invalidation requires an authenticated "
-        "architectural execution environment");
+  if (IC == Intrinsic::X86Invalidate) {
+    if (!intrinsicX86InvalidateShapeIsValid(IC, x86InvalidateMedShape(Op)))
+      llvm::report_fatal_error(
+          "x86 invalidation intrinsic has an invalid operand contract");
+    // INVPCID, as the source's _invpcid(type, descriptor) compiles to.
+    llvm::Value *Descriptor = getVar(Op.Inputs[1], Builder);
+    llvm::Value *Type = getVar(Op.Inputs[3], Builder);
+    auto *FnTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(*Ctx), {Type->getType(), Descriptor->getType()},
+        false);
+    auto *IA = llvm::InlineAsm::get(FnTy, "invpcid ($1), $0", "r,r,~{memory}",
+                                    /*hasSideEffects=*/true);
+    Builder.CreateCall(IA, {Type, Descriptor});
+    return true;
+  }
   if (IC == Intrinsic::X86MsrAccess) {
     if (!intrinsicX86MsrAccessShapeIsValid(IC, x86MsrAccessMedShape(Op)))
       llvm::report_fatal_error(

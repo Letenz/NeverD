@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
@@ -30,6 +31,7 @@
 #include "llvm/TargetParser/Triple.h"
 
 #include <cassert>
+#include <iterator>
 #include <string>
 
 namespace neverd {
@@ -696,18 +698,113 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
   if (IC == I::Rdtsc || IC == I::Rdtscp)
     return emitRdtscValue(Op, IC, Builder);
 
+  // TSX: XTEST reports whether execution is transactional; XBEGIN returns
+  // its abort status (or ~0 when the transaction starts).
+  if ((IC == I::Xtest || IC == I::Xbegin) && Op.Output.Size > 0) {
+    auto *Fn = llvm::Intrinsic::getOrInsertDeclaration(
+        Mod, IC == I::Xtest ? llvm::Intrinsic::x86_xtest
+                            : llvm::Intrinsic::x86_xbegin);
+    llvm::Value *Value = Builder.CreateCall(Fn, {}, "tsx");
+    return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
+  }
+
+  // RDMSR reads the MSR selected by ECX into EDX:EAX; the lifter hands the
+  // selector in and splits the 64-bit result itself.  The asm returns the
+  // combined value so it reads as one `__readmsr(ecx)`.
+  if (IC == I::Rdmsr && Op.Output.Size > 0) {
+    if (Op.NumInputs != 2)
+      llvm::report_fatal_error("x86 RDMSR has no MSR selector");
+    auto *I32Ty = llvm::Type::getInt32Ty(*Ctx);
+    auto *I64Ty = llvm::Type::getInt64Ty(*Ctx);
+    llvm::Value *Selector =
+        Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), I32Ty);
+    auto *FnTy = llvm::FunctionType::get(I64Ty, {I32Ty}, false);
+    auto *IA = TargetArch == Arch::X64
+                   ? llvm::InlineAsm::get(
+                         FnTy, "rdmsr\n\tshlq $$32, %rdx\n\torq %rdx, %rax",
+                         "={rax},{ecx},~{rdx},~{memory}",
+                         /*hasSideEffects=*/true)
+                   : llvm::InlineAsm::get(FnTy, "rdmsr", "=A,{ecx},~{memory}",
+                                          /*hasSideEffects=*/true);
+    llvm::Value *Value = Builder.CreateCall(IA, {Selector}, "msr");
+    return Builder.CreateZExtOrTrunc(Value, sizeToType(Op.Output.Size));
+  }
+
+  // `int imm8` with a register result, and the x64 debug service (`int 2Dh`),
+  // which also reads RAX, RCX, RDX, R8 and R9 in the lifter's input order.
+  if ((IC == I::IntN || IC == I::DebugService) && Op.Output.Size > 0) {
+    static const char *const DebugServiceRegs[] = {"{rax}", "{rcx}", "{rdx}",
+                                                   "{r8}", "{r9}"};
+    unsigned Vector = 0x2D;
+    uint16_t FirstReg = 1;
+    if (IC == I::IntN) {
+      if (Op.NumInputs != 2 || !Op.Inputs[1].isConst())
+        llvm::report_fatal_error("x86 INT has no immediate vector");
+      Vector = Op.Inputs[1].ConstVal & 0xFF;
+      FirstReg = 2;
+    } else if (TargetArch != Arch::X64 ||
+               Op.NumInputs != 1 + std::size(DebugServiceRegs)) {
+      llvm::report_fatal_error(
+          "x64 debug service has an invalid operand shape");
+    }
+    auto *OutTy = sizeToType(Op.Output.Size);
+    // i386 has no RAX: read EAX and widen it to the lifted output.
+    const bool Wide = TargetArch == Arch::X64 && Op.Output.Size == 8;
+    auto *AsmTy = Wide ? OutTy : llvm::Type::getInt32Ty(*Ctx);
+    std::string Cons = Wide ? "={rax}" : "={eax}";
+    std::vector<llvm::Type *> Tys;
+    std::vector<llvm::Value *> Vals;
+    for (uint16_t I = FirstReg; I < Op.NumInputs; ++I) {
+      Vals.push_back(getVar(Op.Inputs[I], Builder));
+      Tys.push_back(Vals.back()->getType());
+      Cons += std::string(",") + DebugServiceRegs[I - FirstReg];
+    }
+    Cons += ",~{memory}";
+    auto *FnTy = llvm::FunctionType::get(AsmTy, Tys, false);
+    auto *IA = llvm::InlineAsm::get(FnTy, "int $$" + std::to_string(Vector),
+                                    Cons, /*hasSideEffects=*/true);
+    llvm::CallInst *Result = Builder.CreateCall(IA, Vals, "int");
+    // The debug service's status is a real return value, not a residue.
+    if (IC == I::DebugService)
+      llvm_value_provenance::markSemanticProducer(*Result);
+    return Builder.CreateZExtOrTrunc(Result, OutTy);
+  }
+
   if (IC == I::Stmxcsr && Op.Output.Size > 0)
     return llvm::ConstantInt::get(sizeToType(Op.Output.Size),
                                   limits::kDefaultMXCSR);
 
-  if (IC == I::Ldmxcsr || IC == I::Leave || IC == I::Enter || IC == I::Pushf ||
-      IC == I::Popf)
+  // PUSHF: the lifter merges the machine's unmodelled EFLAGS bits with the
+  // modelled arithmetic flags.
+  if (IC == I::Pushf && Op.Output.Size > 0) {
+    const bool Wide = TargetArch == Arch::X64;
+    auto *AsmTy =
+        Wide ? llvm::Type::getInt64Ty(*Ctx) : llvm::Type::getInt32Ty(*Ctx);
+    auto *FnTy = llvm::FunctionType::get(AsmTy, false);
+    auto *IA = llvm::InlineAsm::get(
+        FnTy, Wide ? "pushfq\n\tpopq $0" : "pushfl\n\tpopl $0", "=r,~{memory}",
+        /*hasSideEffects=*/true);
+    llvm::Value *Flags = Builder.CreateCall(IA, {}, "eflags");
+    return Builder.CreateZExtOrTrunc(Flags, sizeToType(Op.Output.Size));
+  }
+
+  if (IC == I::Ldmxcsr || IC == I::Leave || IC == I::Enter || IC == I::Popf)
     return (Op.Output.Size > 0)
                ? llvm::ConstantInt::get(sizeToType(Op.Output.Size), 0)
                : nullptr;
 
   if (IC == I::In)
     return emitX86PortIn(Op, Builder);
+
+  if (auto Reg = x86SystemRegisterName(
+          IC, Op.NumInputs > 1 && Op.Inputs[1].isConst() ? Op.Inputs[1].ConstVal
+                                                         : UINT64_MAX);
+      Reg && Op.Output.Size > 0) {
+    auto *FnTy = llvm::FunctionType::get(sizeToType(Op.Output.Size), false);
+    auto *IA = llvm::InlineAsm::get(FnTy, "mov " + *Reg + ", $0",
+                                    "=r,~{memory}", /*hasSideEffects=*/true);
+    return Builder.CreateCall(IA, {}, "sysreg");
+  }
 
   // SLDT/STR/SMSW with a register destination (no memory operand captured).
   if ((IC == I::Sldt || IC == I::Str || IC == I::Smsw) && Op.NumInputs <= 1)

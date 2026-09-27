@@ -472,6 +472,11 @@ struct BinaryImage {
   /// Includes BOTH primary RUNTIME_FUNCTION entries and chained-info
   /// continuation chunks.
   std::vector<std::pair<va_t, va_t>> KnownCodeRanges;
+  /// Starts of KnownCodeRanges that continue another function rather than
+  /// begin one: x64 RUNTIME_FUNCTIONs whose unwind info carries
+  /// UNW_FLAG_CHAININFO (hot/cold split and shrink-wrapped chunks).  A jump
+  /// to one of these stays inside the jumping function.
+  std::set<va_t> ContinuationCodeStarts;
   /// When nonempty, PE language-table decode and x64 unwind materialization
   /// are limited to these entries and the catch/unwind funclets they name.
   /// KnownCodeRanges keeps the requested bodies plus immediate `.pdata`
@@ -505,6 +510,26 @@ struct BinaryImage {
     for (const auto &Sym : Symbols)
       Addrs.insert(Sym.Addr);
     return Addrs;
+  }
+
+  /// Function starts whose only evidence is a padding-boundary guess: no
+  /// other symbol names the address and no primary unwind record begins
+  /// there.  See Symbol::IsBoundaryGuess.
+  std::set<va_t> boundaryGuessFunctionStarts() const {
+    std::set<va_t> Guesses, Confirmed;
+    // Debug info renames a guessed symbol in place; a real name confirms it.
+    for (const auto &Sym : Symbols)
+      (Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name) ? Guesses
+                                                              : Confirmed)
+          .insert(Sym.Addr);
+    for (const auto &[Start, End] : KnownCodeRanges)
+      if (!ContinuationCodeStarts.count(Start))
+        Confirmed.insert(Start);
+    std::set<va_t> Result;
+    for (va_t Addr : Guesses)
+      if (!Confirmed.count(Addr))
+        Result.insert(Addr);
+    return Result;
   }
 
   const uint8_t *readVA(va_t Addr, size_t Len) const {

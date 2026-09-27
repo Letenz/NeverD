@@ -16,6 +16,8 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/SourceRegisterCopy.h"
@@ -147,6 +149,116 @@ void LowToMedConverter::neutralizeStackProbeCalls(MedFunc &Func) {
       Op.PreservesCallerSaved = true;
     }
   }
+}
+
+namespace {
+/// A function whose first instruction is also a loop header enters a block
+/// that has predecessors.  SSA can place no PHI for the machine-entry edge,
+/// so the loop-carried value would be lost (`for (p = arg; ...; p = p->next)`
+/// kept rereading `arg`).  Give the function an empty entry block that falls
+/// into the header; every other block moves up one index, so the header
+/// still directly follows the entry.
+void splitEntryLoopHeader(MedFunc &Func) {
+  if (Func.Blocks.empty())
+    return;
+  bool EntryHasPred = false;
+  for (const MedBlock &Block : Func.Blocks) {
+    for (int Succ : Block.Succs)
+      EntryHasPred |= Succ == 0;
+    for (const ExceptionalEdge &Edge : Block.ExceptionalSuccs)
+      EntryHasPred |= Edge.BlockId == 0;
+  }
+  if (!EntryHasPred)
+    return;
+  auto Shift = [](int &Id) {
+    if (Id >= 0)
+      ++Id;
+  };
+  for (MedBlock &Block : Func.Blocks) {
+    Shift(Block.Id);
+    for (int &Succ : Block.Succs)
+      Shift(Succ);
+    for (int &Pred : Block.Preds)
+      Shift(Pred);
+    for (ExceptionalEdge &Edge : Block.ExceptionalSuccs)
+      Shift(Edge.BlockId);
+    for (ExceptionalEdge &Edge : Block.ExceptionalPreds)
+      Shift(Edge.BlockId);
+  }
+  Func.Blocks.front().Preds.push_back(0);
+  MedBlock Entry;
+  Entry.Id = 0;
+  // The entry holds no instruction; an address would alias the header's
+  // label and block lookups.
+  Entry.StartAddr = InvalidVA;
+  Entry.EndAddr = InvalidVA;
+  Entry.Succs.push_back(1);
+  Func.Blocks.insert(Func.Blocks.begin(), std::move(Entry));
+}
+
+} // namespace
+
+void LowToMedConverter::applyCallRegisterEffect(MedOp &MOp, const LowOp &LOp) {
+  if (LOp.Opcode != NdOp::CALL || LOp.NumInputs == 0 ||
+      !LOp.Inputs[0].isConst())
+    return;
+  // Publish the Win64 register arguments the callee reads as uses, so SSA
+  // sees a pass-through argument and the call site knows its arity.  Mach-O
+  // source-call binding owns single-input calls, hence COFF only.
+  // A Control Flow Guard dispatcher is an indirect call to RAX: its
+  // arguments are the registers this function set before the call, the rule
+  // IDA uses.  A register only passed through from this function's entry is
+  // not taken as an argument.
+  if (CallDispatchThunks && TargetArch == Arch::X64 &&
+      TargetFormat == BinaryFormat::COFF && MOp.NumInputs == 1 &&
+      CallDispatchThunks->count(LOp.Inputs[0].Offset)) {
+    static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
+                                             x86reg::R8, x86reg::R9};
+    int8_t Count = 0;
+    for (int8_t I = 0; I < 4; ++I)
+      if ((DispatchCallDefinedArgs >> I) & 1)
+        Count = I + 1;
+    for (int8_t I = 0; I < Count; ++I)
+      MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], 8)));
+    MOp.CalleeRegisterArgs = Count;
+  } else if (CallEntryReadGPRs && TargetArch == Arch::X64 &&
+             TargetFormat == BinaryFormat::COFF && MOp.NumInputs == 1)
+    if (auto R = CallEntryReadGPRs->find(LOp.Inputs[0].Offset);
+        R != CallEntryReadGPRs->end()) {
+      static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
+                                               x86reg::R8, x86reg::R9};
+      int8_t Count = 0;
+      for (int8_t I = 0; I < 4; ++I)
+        if (R->second[Win64Args[I] / 8])
+          Count = I + 1;
+      // Pass exactly the bytes the callee reads (DL for a KIRQL), so the
+      // bytes it ignores do not become an unknown incoming value.  An unread
+      // slot below the last read one is still an argument position.
+      for (int8_t I = 0; I < Count; ++I) {
+        const uint8_t Width = R->second[Win64Args[I] / 8];
+        const uint16_t Size = Width <= 1   ? 1
+                              : Width <= 2 ? 2
+                              : Width <= 4 ? 4
+                                           : 8;
+        MOp.addInput(ndVarToMedVar(NdVar::reg(Win64Args[I], Size)));
+      }
+      MOp.CalleeRegisterArgs = Count;
+    }
+  if (!CallMayWriteGPRs)
+    return;
+  auto It = CallMayWriteGPRs->find(LOp.Inputs[0].Offset);
+  if (It == CallMayWriteGPRs->end())
+    return;
+  MOp.CallPreservedGPRs = ~It->second;
+  // A callee that writes neither the integer nor the floating-point return
+  // register returns nothing: the register still holds the caller's value.
+  if (MOp.Output.Kind == MedVar::Reg && !(It->second & kFPReturnWriteBit))
+    if (auto Family = gprFamilyOf(TargetArch, MOp.Output.RegOff);
+        Family && (MOp.CallPreservedGPRs >> *Family) & 1) {
+      MOp.Output = MedVar{};
+      MOp.Output.Id = -1;
+      MOp.Output.Size = 0;
+    }
 }
 
 MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
@@ -287,7 +399,64 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     Func.ClassGetterCallFacts = sourceClassGetterCalls(*Image, Low);
   }
 
+  // Win64 argument registers written on every path from entry, per block,
+  // for Control Flow Guard dispatcher calls.  A call clobbers them.
+  std::vector<uint8_t> DispatchDefinedIn;
+  const bool TrackDispatchArgs =
+      CallDispatchThunks && !CallDispatchThunks->empty() &&
+      TheArch == Arch::X64 && Fmt == BinaryFormat::COFF;
+  auto ArgBit = [](const NdVar &V) -> uint8_t {
+    if (!V.isReg())
+      return 0;
+    static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
+                                             x86reg::R8, x86reg::R9};
+    for (unsigned I = 0; I < 4; ++I)
+      if (V.Offset >= Win64Args[I] && V.Offset < Win64Args[I] + 8)
+        return uint8_t(1u << I);
+    return 0;
+  };
+  auto StepDefined = [&](uint8_t Defined, const LowOp &Op) {
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+      return uint8_t(0);
+    return uint8_t(Defined | ArgBit(Op.Output));
+  };
+  if (TrackDispatchArgs) {
+    std::map<int, size_t> IndexOf;
+    for (size_t B = 0; B < Low.Blocks.size(); ++B)
+      IndexOf[Low.Blocks[B].Id] = B;
+    DispatchDefinedIn.assign(Low.Blocks.size(), 0xF);
+    if (!DispatchDefinedIn.empty())
+      DispatchDefinedIn[0] = 0;
+    for (bool Changed = true; Changed;) {
+      Changed = false;
+      for (size_t B = 0; B < Low.Blocks.size(); ++B) {
+        uint8_t In = B == 0 ? 0 : 0xF;
+        bool AnyPred = false;
+        for (int P : Low.Blocks[B].Preds) {
+          auto It = IndexOf.find(P);
+          if (It == IndexOf.end())
+            continue;
+          uint8_t Out = DispatchDefinedIn[It->second];
+          for (const LowOp &Op : Low.Blocks[It->second].Ops)
+            Out = StepDefined(Out, Op);
+          In &= Out;
+          AnyPred = true;
+        }
+        if (B != 0 && !AnyPred)
+          In = 0;
+        if (In != DispatchDefinedIn[B]) {
+          DispatchDefinedIn[B] = In;
+          Changed = true;
+        }
+      }
+    }
+  }
+  size_t LowBlockIndex = 0;
+
   for (const auto &LB : Low.Blocks) {
+    uint8_t DispatchDefined =
+        TrackDispatchArgs ? DispatchDefinedIn[LowBlockIndex] : 0;
+    ++LowBlockIndex;
     MedBlock MB;
     MB.Id = LB.Id;
     MB.StartAddr = LB.StartAddr;
@@ -390,14 +559,49 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           (LOp.Inputs[0].isReg() || LOp.Inputs[0].isTemp()) &&
           LOp.Inputs[0] == LOp.Inputs[1] &&
           LOp.Output.Size == LOp.Inputs[0].Size;
+      // `or r, -1` and `and r, 0` (MSVC sets a register to all ones or zero
+      // this way) do not depend on the register's old value.  Folding them
+      // here keeps that value from becoming a read before SSA: otherwise a
+      // path where it is undefined merges `0 /* unknown */` into it.
+      const auto AbsorbingConstant = [&]() -> std::optional<uint64_t> {
+        if ((LOp.Opcode != NdOp::INT_OR && LOp.Opcode != NdOp::INT_AND) ||
+            LOp.NumInputs != 2 ||
+            LOp.MemoryOrdering != NdMemoryOrdering::None ||
+            LOp.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+            !(LOp.Output.isReg() || LOp.Output.isTemp()) || !LOp.Output.Size ||
+            LOp.Output.Size > 8)
+          return std::nullopt;
+        const uint64_t Mask = LOp.Output.Size == 8
+                                  ? ~uint64_t{0}
+                                  : (uint64_t{1} << (8 * LOp.Output.Size)) - 1;
+        for (unsigned I = 0; I < 2; ++I) {
+          const NdVar &C = LOp.Inputs[I];
+          if (!C.isConst())
+            continue;
+          const uint64_t V = C.Offset & Mask;
+          if (LOp.Opcode == NdOp::INT_OR && V == Mask)
+            return Mask;
+          if (LOp.Opcode == NdOp::INT_AND && V == 0)
+            return 0;
+        }
+        return std::nullopt;
+      }();
       if (SelfXor) {
         MOp.Opcode = NdOp::COPY;
         MOp.addInput(MedVar::makeConst(0, LOp.Output.Size,
+                                       ConstantAddressProvenance::Scalar));
+      } else if (AbsorbingConstant) {
+        MOp.Opcode = NdOp::COPY;
+        MOp.addInput(MedVar::makeConst(*AbsorbingConstant, LOp.Output.Size,
                                        ConstantAddressProvenance::Scalar));
       } else {
         for (uint8_t I = 0; I < LOp.NumInputs; ++I)
           MOp.addInput(ndVarToMedVar(LOp.Inputs[I]));
       }
+      DispatchCallDefinedArgs = DispatchDefined;
+      applyCallRegisterEffect(MOp, LOp);
+      if (TrackDispatchArgs)
+        DispatchDefined = StepDefined(DispatchDefined, LOp);
 
       if (LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs > 0 &&
           LOp.Inputs[0].isConst()) {
@@ -487,8 +691,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   for (const auto &Block : Func.Blocks)
     CopiedOps += Block.Ops.size();
   if (Low.DecodedInstructionCount >
-          static_cast<uint64_t>(limits::kMaxSSANodes) ||
-      CopiedOps > static_cast<size_t>(limits::kMaxSSANodes)) {
+          static_cast<uint64_t>(limits::kMaxSSAFunctionOps) ||
+      CopiedOps > limits::kMaxSSAFunctionOps) {
     LLVM_DEBUG(llvm::dbgs() << "LowIR -> MedIR: skipping SSA for " << Func.Name
                             << " insns=" << Low.DecodedInstructionCount
                             << " ops=" << CopiedOps << "\n");
@@ -496,6 +700,10 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         Low.ExceptionMetadata->SEH)
       throw LowToMedConversionError(
           "Windows SEH establisher frame: SSA size limit prevents proof");
+    // The unoptimized ops still carry their LowIR occurrences, so switch
+    // selectors bind exactly as they would after the full pipeline.
+    resolveSwitchSelectorPlans(Func);
+    Func.SkippedSSA = true;
     return Func;
   }
 
@@ -527,6 +735,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
     neutralizeStackProbeCalls(Func);
     debugVerifyMedFunc(Func, "neutralizeStackProbeCalls");
 
+    splitEntryLoopHeader(Func);
+    debugVerifyMedFunc(Func, "splitEntryLoopHeader");
     buildSsa(Func, Low);
     debugVerifyMedFunc(Func, "buildSsa");
 

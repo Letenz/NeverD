@@ -33,7 +33,10 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
+#include <algorithm>
 #include <optional>
+#include <regex>
+#include <tuple>
 
 #ifndef NEVERD_RUNTIME_FIXTURE_COMPILER
 #define NEVERD_RUNTIME_FIXTURE_COMPILER ""
@@ -3678,6 +3681,213 @@ TEST(COFFExceptionIR, StructuresSingleBlockSEHHandlerBody) {
   EXPECT_EQ(Source.find("sub_140009000();", Marker + 1), std::string::npos);
 }
 
+TEST(COFFExceptionIR, KeepsSEHHandlerPlacedAfterReturn) {
+  // IovBuildAsynchronousFsdRequest: the __except handler follows the return
+  // and its first instruction leaves no statement.  Only the exception
+  // dispatcher enters it, so no goto anchors its address; it must still keep
+  // its code and label.
+  constexpr va_t FunctionVA = 0x140001000;
+  constexpr va_t ReturnVA = FunctionVA + 0x10;
+  constexpr va_t HandlerVA = FunctionVA + 0x20;
+  constexpr va_t HandlerCallVA = HandlerVA + 0xC;
+
+  MedFunc Func;
+  Func.Entry = FunctionVA;
+  Func.Name = "seh_handler_after_return";
+  Func.ReturnType = NdType::makeVoid();
+
+  MedBlock Protected;
+  Protected.Id = 0;
+  Protected.StartAddr = FunctionVA;
+  Protected.EndAddr = ReturnVA;
+  Protected.Succs = {1};
+  MedOp ProtectedCall;
+  ProtectedCall.Opcode = NdOp::CALL;
+  ProtectedCall.Addr = FunctionVA + 4;
+  ProtectedCall.addInput(MedVar::makeConst(0x140008000, 8));
+  Protected.Ops.push_back(std::move(ProtectedCall));
+  Func.Blocks.push_back(std::move(Protected));
+
+  MedBlock Exit;
+  Exit.Id = 1;
+  Exit.StartAddr = ReturnVA;
+  Exit.EndAddr = ReturnVA + 1;
+  Exit.Preds = {0};
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = ReturnVA;
+  Exit.Ops.push_back(std::move(Return));
+  Func.Blocks.push_back(std::move(Exit));
+
+  MedBlock Handler;
+  Handler.Id = 2;
+  Handler.StartAddr = HandlerVA;
+  Handler.EndAddr = HandlerCallVA + 5;
+  MedOp Folded;
+  Folded.Opcode = NdOp::NOP;
+  Folded.Addr = HandlerVA;
+  Handler.Ops.push_back(std::move(Folded));
+  MedOp HandlerCall;
+  HandlerCall.Opcode = NdOp::CALL;
+  HandlerCall.Addr = HandlerCallVA;
+  HandlerCall.addInput(MedVar::makeConst(0x140009000, 8));
+  Handler.Ops.push_back(std::move(HandlerCall));
+  Func.Blocks.push_back(std::move(Handler));
+
+  ExceptionFunction EH;
+  EH.CodeRange = {FunctionVA, HandlerCallVA + 5};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {FunctionVA, ReturnVA};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = HandlerVA;
+  SEHExceptionInfo SEH;
+  SEH.Scopes.push_back(std::move(Scope));
+  EH.SEH = std::move(SEH);
+  Func.ExceptionMetadata = std::move(EH);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream));
+  Stream.flush();
+  EXPECT_NE(Source.find("sub_140009000();"), std::string::npos) << Source;
+  if (Source.find("goto L_140001020") != std::string::npos)
+    EXPECT_NE(Source.find("L_140001020:"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, SharedHandlerAndColdEntryKeepTheirPaths) {
+  // RtlGuardIsValidStackPointer: a cold block jumps back to the start of the
+  // protected range, and normal flow falls into the handler's code.  The
+  // label must sit before `__try` (C forbids jumping into it) and the
+  // shared handler block must stay reachable from the ordinary path.
+  constexpr va_t F = 0x140001000;
+  constexpr va_t Protected = F + 0x10;
+  constexpr va_t Shared = F + 0x20;
+  constexpr va_t Cold = F + 0x30;
+
+  MedFunc Func;
+  Func.Entry = F;
+  Func.Name = "shared_handler";
+  Func.ReturnType = NdType::makeVoid();
+  auto AddBlock = [&](int Id, va_t Start, va_t End, std::vector<int> Succs,
+                      std::vector<int> Preds) -> MedBlock & {
+    MedBlock Block;
+    Block.Id = Id;
+    Block.StartAddr = Start;
+    Block.EndAddr = End;
+    Block.Succs = std::move(Succs);
+    Block.Preds = std::move(Preds);
+    Func.Blocks.push_back(std::move(Block));
+    return Func.Blocks.back();
+  };
+  auto Op = [](NdOp Code, va_t Addr, uint64_t Const) {
+    MedOp O;
+    O.Opcode = Code;
+    O.Addr = Addr;
+    O.addInput(MedVar::makeConst(Const, 8));
+    return O;
+  };
+  AddBlock(0, F, F + 4, {3}, {}).Ops.push_back(Op(NdOp::BRANCH, F, Cold));
+  {
+    MedBlock &B = AddBlock(1, Protected, Protected + 8, {2}, {3});
+    B.Ops.push_back(Op(NdOp::CALL, Protected, 0x140008000));
+    B.Ops.push_back(Op(NdOp::BRANCH, Protected + 5, Shared));
+  }
+  {
+    MedBlock &B = AddBlock(2, Shared, Shared + 8, {}, {1});
+    B.Ops.push_back(Op(NdOp::CALL, Shared, 0x140009000));
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = Shared + 5;
+    B.Ops.push_back(std::move(Return));
+  }
+  AddBlock(3, Cold, Cold + 4, {1}, {0})
+      .Ops.push_back(Op(NdOp::BRANCH, Cold, Protected));
+
+  ExceptionFunction EH;
+  EH.CodeRange = {F, Cold + 4};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Protected, Protected + 8};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Shared;
+  SEHExceptionInfo SEH;
+  SEH.Scopes.push_back(std::move(Scope));
+  EH.SEH = std::move(SEH);
+  Func.ExceptionMetadata = std::move(EH);
+
+  HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream));
+  Stream.flush();
+  const size_t Try = Source.find("__try");
+  ASSERT_NE(Try, std::string::npos) << Source;
+  const size_t Label = Source.find("L_140001010:");
+  ASSERT_NE(Label, std::string::npos) << Source;
+  EXPECT_LT(Label, Try) << Source;
+  EXPECT_EQ(Source.find("L_140001010:", Label + 1), std::string::npos)
+      << Source;
+  // The shared block is printed once, outside the __except body.  Search the
+  // body only; the file also declares the callee.
+  const size_t Body = Source.find("neverd.entry");
+  ASSERT_NE(Body, std::string::npos) << Source;
+  const size_t Marker = Source.find("sub_140009000();", Body);
+  ASSERT_NE(Marker, std::string::npos) << Source;
+  EXPECT_EQ(Source.find("sub_140009000();", Marker + 1), std::string::npos)
+      << Source;
+  EXPECT_GT(Marker, Source.find("__except")) << Source;
+}
+
+TEST(COFFExceptionIR, GotoIntoTryBodySplitsTheTry) {
+  // NtSetSystemTime: a cold path branches into the middle of a protected
+  // range.  C forbids jumping into __try; x64 SEH protection is by address,
+  // so the writer prints two consecutive tries with the label between them.
+  constexpr va_t F = 0x140001000;
+  HighFunc Func;
+  Func.Name = "split_try";
+  Func.Entry = F;
+  Func.ReturnType = NdType::makeInt(4);
+  auto Return = [](va_t Addr, uint64_t Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Return;
+    S.Addr = Addr;
+    S.RetVal = HighExpr::makeConst(Value, 4);
+    return S;
+  };
+  HighStmt Goto;
+  Goto.Kind = StmtKind::Goto;
+  Goto.Addr = F;
+  Goto.GotoTarget = F + 0x14;
+  Func.Body.push_back(std::move(Goto));
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = F + 0x10;
+  Try.EHRange = {F + 0x10, F + 0x18};
+  Try.EHIsReducible = true;
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::SEHExcept;
+  Clause.HandlerVA = F + 0x20;
+  Try.EHClauses.push_back(Clause);
+  Try.EHClauseBodies.emplace_back();
+  Try.Body.push_back(Return(F + 0x10, 1));
+  Try.Body.push_back(Return(F + 0x14, 2));
+  Func.Body.push_back(std::move(Try));
+
+  const std::string Source = emitHighC({Func});
+  const size_t First = Source.find("__try");
+  const size_t Label = Source.find("L_140001014:");
+  ASSERT_NE(First, std::string::npos) << Source;
+  ASSERT_NE(Label, std::string::npos) << Source;
+  EXPECT_LT(Source.find("__except", First), Label) << Source;
+  EXPECT_NE(Source.find("__try", Label), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("L_140001014:", Label + 1), std::string::npos)
+      << Source;
+}
+
 TEST(COFFExceptionIR, StructuresSingleBlockFH3CatchBody) {
   constexpr va_t FunctionVA = 0x140001000;
   constexpr va_t HandlerVA = FunctionVA + 0x20;
@@ -4305,3 +4515,493 @@ TEST(COFFExceptionIR, OnlyFunctionEntriesSkipsInteriorUnwindAction) {
 }
 
 } // namespace
+
+TEST(COFFExceptionIR, LoneJumpAtTryExitKeepsItsLabel) {
+  // DbgkpSuppressDbgMsg: two paths in a __try jump to a block that holds only
+  // `jmp done`, where the protected range ends.  Removing that jump as
+  // redundant must keep the label the other gotos name.
+  constexpr va_t F = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = F;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x18,                   // sub rsp, 18h
+      0xc7, 0x04, 0x24, 0x00, 0x00, 0x00, 0x00, // mov dword [rsp], 0
+      0x85, 0xc9,                               // try: test ecx, ecx
+      0x79, 0x09,                               // jns checks
+      0xc7, 0x04, 0x24, 0x01, 0x00, 0x00, 0x00, // mov dword [rsp], 1
+      0xeb, 0x10,                               // jmp exit
+      0x85, 0xd2,                               // checks: test edx, edx
+      0x74, 0x0c,                               // je exit
+      0x45, 0x85, 0xc0,                         // test r8d, r8d
+      0x74, 0x07,                               // je exit
+      0xc7, 0x04, 0x24, 0x02, 0x00, 0x00, 0x00, // mov dword [rsp], 2
+      0xeb, 0x00,                               // exit: jmp done
+      0x8b, 0x04, 0x24,                         // done: mov eax, [rsp]
+      0x48, 0x83, 0xc4, 0x18,                   // add rsp, 18h
+      0xc3,                                     // ret
+      0xc7, 0x04, 0x24, 0x03, 0x00, 0x00, 0x00, // handler: mov dword [rsp], 3
+      0xeb, 0xef};                              // jmp done
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = F;
+  Text.Size = 0x40;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  std::copy(Code.begin(), Code.end(), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = F;
+  TextSection.Size = 0x40;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(TextSection));
+  Img.KnownCodeRanges.emplace_back(F, F + Code.size());
+  Img.Symbols.push_back(Symbol::makeFunc(F, Code.size()));
+  ExceptionFunction EH;
+  EH.CodeRange = {F, F + Code.size()};
+  EH.Kind = RuntimeFunctionKind::Primary;
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.UnwindVersion = 1;
+  EH.UnwindFlags = 1;
+  EH.PrologueSize = 4;
+  UnwindOperation Alloc;
+  Alloc.Kind = UnwindOperationKind::AllocateSmall;
+  Alloc.CodeOffset = 4;
+  Alloc.StackOffset = 0x18;
+  EH.UnwindOperations.push_back(Alloc);
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {F + 0x0b, F + 0x2a};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = F + 0x32;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.ExceptionMetadata.rebuildIndex();
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(F);
+  auto Result = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
+  OS.flush();
+  std::smatch Goto;
+  for (auto It = Source.cbegin(); std::regex_search(
+           It, Source.cend(), Goto, std::regex(R"(goto (L_\w+);)"));
+       It = Goto.suffix().first)
+    EXPECT_NE(Source.find(Goto[1].str() + ":"), std::string::npos)
+        << Goto[1] << " has no label\n"
+        << Source;
+}
+
+TEST(COFFExceptionIR, ExceptHandlerSeesTheEstablishedFrame) {
+  // PnpInsertEventInQueue: the unwinder enters an __except handler with RSP
+  // at the function body's frame.  The handler's `[rsp+30h]` is the RCX home
+  // slot the prologue wrote, not a stack argument of the entry frame.
+  constexpr va_t F = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = F;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x89, 0x4c, 0x24, 0x08, // mov [rsp+8], rcx
+      0x53,                         // push rbx
+      0x48, 0x83, 0xec, 0x20,       // sub rsp, 20h
+      0x8b, 0x01,                   // try: mov eax, [rcx]
+      0xeb, 0x07,                   // jmp done
+      0x48, 0x8b, 0x44, 0x24, 0x30, // handler: mov rax, [rsp+30h]
+      0x8b, 0x00,                   // mov eax, [rax]
+      0x48, 0x83, 0xc4, 0x20,       // done: add rsp, 20h
+      0x5b,                         // pop rbx
+      0xc3};                        // ret
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = F;
+  Text.Size = 0x40;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  std::copy(Code.begin(), Code.end(), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = F;
+  TextSection.Size = 0x40;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(TextSection));
+  Img.KnownCodeRanges.emplace_back(F, F + Code.size());
+  Img.Symbols.push_back(Symbol::makeFunc(F, Code.size()));
+  ExceptionFunction EH;
+  EH.CodeRange = {F, F + Code.size()};
+  EH.Kind = RuntimeFunctionKind::Primary;
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.UnwindVersion = 1;
+  EH.UnwindFlags = 1;
+  EH.PrologueSize = 10;
+  UnwindOperation Alloc;
+  Alloc.Kind = UnwindOperationKind::AllocateSmall;
+  Alloc.CodeOffset = 10;
+  Alloc.StackOffset = 0x20;
+  EH.UnwindOperations.push_back(Alloc);
+  UnwindOperation Push;
+  Push.Kind = UnwindOperationKind::PushNonVolatile;
+  Push.CodeOffset = 6;
+  Push.Register = 3;
+  EH.UnwindOperations.push_back(Push);
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {F + 0x0a, F + 0x0e};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = F + 0x0e;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.ExceptionMetadata.rebuildIndex();
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(F);
+  auto Result = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
+  OS.flush();
+  // The handler dereferences the value stored in the RCX home slot.  With RSP
+  // at the entry value it read a stack argument the function does not have;
+  // rebasing twice named an unwritten local instead.
+  EXPECT_EQ(Source.find("arg1"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("var_m"), std::string::npos) << Source;
+  EXPECT_TRUE(std::regex_search(Source, std::regex(R"(= (\(uintptr_t\))?arg0;)")))
+      << Source;
+}
+
+TEST(COFFExceptionIR, HandlerWhoseFirstCopyIsDeadKeepsItsLabel) {
+  // PsOpenThread: the __except handler starts with `mov edi, eax`, whose
+  // value nothing reads.  The empty __except arm prints as a goto to the
+  // handler, so dropping that copy must keep the handler's label.
+  constexpr va_t F = 0x140001000;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = F;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+      0x31, 0xff,                   // xor edi, edi
+      0x85, 0xc9,                   // try: test ecx, ecx
+      0x75, 0x11,                   // jne ok
+      0xe8, 0x19, 0x00, 0x00, 0x00, // call fail
+      0x90,                         // nop
+      0xeb, 0x0e,                   // jmp done
+      0x89, 0xc6,                   // handler: mov esi, eax
+      0xbf, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+      0xeb, 0x05,                   // jmp done
+      0xbf, 0x01, 0x00, 0x00, 0x00, // ok: mov edi, 1
+      0x89, 0xf8,                   // done: mov eax, edi
+      0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+      0xc3};                        // ret
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = F;
+  Text.Size = 0x40;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  std::copy(Code.begin(), Code.end(), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Section TextSection;
+  TextSection.Name = ".text";
+  TextSection.VA = F;
+  TextSection.Size = 0x40;
+  TextSection.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(TextSection));
+  Img.KnownCodeRanges.emplace_back(F, F + Code.size());
+  Img.Symbols.push_back(Symbol::makeFunc(F, Code.size()));
+  Img.Segments.front().Data[0x28] = 0xc3; // fail: ret
+  Img.KnownCodeRanges.emplace_back(F + 0x28, F + 0x29);
+  Img.Symbols.push_back(Symbol::makeFunc(F + 0x28, 1));
+  ExceptionFunction EH;
+  EH.CodeRange = {F, F + Code.size()};
+  EH.Kind = RuntimeFunctionKind::Primary;
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.UnwindVersion = 1;
+  EH.UnwindFlags = 1;
+  EH.PrologueSize = 4;
+  UnwindOperation Alloc;
+  Alloc.Kind = UnwindOperationKind::AllocateSmall;
+  Alloc.CodeOffset = 4;
+  Alloc.StackOffset = 0x28;
+  EH.UnwindOperations.push_back(Alloc);
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {F + 0x06, F + 0x12};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = F + 0x12;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  Img.ExceptionMetadata.rebuildIndex();
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(F);
+  auto Result = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
+  OS.flush();
+  std::smatch Goto;
+  for (auto It = Source.cbegin(); std::regex_search(
+           It, Source.cend(), Goto, std::regex(R"(goto (L_\w+);)"));
+       It = Goto.suffix().first)
+    EXPECT_NE(Source.find(Goto[1].str() + ":"), std::string::npos)
+        << Goto[1] << " has no label\n"
+        << Source;
+}
+
+TEST(COFFExceptionIR, LargeImageStillResolvesAnImageRelativeJumpTable) {
+  // ntoskrnl: with 35k unwind entries, a switch of a few dozen cases priced
+  // each target as a scan of every function's metadata and was rejected,
+  // losing the whole switch.  The code-owner index prices it as a lookup.
+  constexpr va_t Base = 0x140000000;
+  constexpr va_t F = 0x140001000;
+  constexpr va_t Table = 0x140003000;
+  constexpr unsigned Cases = 40;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = Base;
+  Img.Entry = F;
+  std::vector<uint8_t> Code = {
+      0x83, 0xf9, Cases - 1,                // cmp ecx, Cases-1
+      0x0f, 0x87, 0,         0,    0, 0,    // ja default (patched)
+      0x4c, 0x8d, 0x0d,      0,    0, 0, 0, // lea r9, [rip+Base-next] (patched)
+      0x8b, 0xc1,                           // mov eax, ecx
+      0x41, 0x8b, 0x84,      0x81, 0, 0, 0,
+      0,                // mov eax, [r9+rax*4+Table] (patched)
+      0x4c, 0x01, 0xc8, // add rax, r9
+      0xff, 0xe0};      // jmp rax
+  auto Put32 = [&](size_t At, uint32_t V) {
+    for (unsigned I = 0; I < 4; ++I)
+      Code[At + I] = static_cast<uint8_t>(V >> (8 * I));
+  };
+  Put32(12, static_cast<uint32_t>(Base - (F + 16)));
+  Put32(22, static_cast<uint32_t>(Table - Base));
+  std::vector<uint32_t> Entries;
+  for (unsigned I = 0; I < Cases; ++I) {
+    Entries.push_back(static_cast<uint32_t>(F + Code.size() - Base));
+    Code.insert(Code.end(), {0xb8, static_cast<uint8_t>(0x10 + I), 0, 0, 0,
+                             0xc3}); // mov eax, 10h+I; ret
+  }
+  const size_t Default = Code.size();
+  Put32(5, static_cast<uint32_t>(Default - 9));
+  Code.insert(Code.end(), {0x31, 0xc0, 0xc3}); // default: xor eax, eax; ret
+
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = F;
+  Text.Size = 0x1000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  std::copy(Code.begin(), Code.end(), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Segment RData;
+  RData.Name = ".rdata";
+  RData.VA = Table;
+  RData.Size = 0x1000;
+  RData.Flags = SegmentFlags::Readable;
+  RData.Data.assign(RData.Size, 0);
+  for (unsigned I = 0; I < Cases; ++I)
+    for (unsigned B = 0; B < 4; ++B)
+      RData.Data[4 * I + B] = static_cast<uint8_t>(Entries[I] >> (8 * B));
+  Img.Segments.push_back(std::move(RData));
+  // Many one-byte functions elsewhere, each with its own unwind entry.
+  constexpr va_t Filler = 0x140100000;
+  constexpr size_t FillerCount = 40000;
+  Segment Pad;
+  Pad.Name = ".text2";
+  Pad.VA = Filler;
+  Pad.Size = FillerCount;
+  Pad.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Pad.Data.assign(Pad.Size, 0xc3);
+  Img.Segments.push_back(std::move(Pad));
+  for (const auto &[Name, VA, Size, Flags] :
+       {std::tuple{".text", F, uint64_t{0x1000},
+                   SegmentFlags::Readable | SegmentFlags::Executable},
+        std::tuple{".rdata", Table, uint64_t{0x1000}, SegmentFlags::Readable},
+        std::tuple{".text2", Filler, uint64_t{FillerCount},
+                   SegmentFlags::Readable | SegmentFlags::Executable}}) {
+    Section Sec;
+    Sec.Name = Name;
+    Sec.VA = VA;
+    Sec.Size = Size;
+    Sec.Flags = Flags;
+    Img.Sections.push_back(std::move(Sec));
+  }
+  Img.KnownCodeRanges.emplace_back(F, F + Code.size());
+  Img.Symbols.push_back(Symbol::makeFunc(F, Code.size()));
+  ExceptionFunction EH;
+  EH.CodeRange = {F, F + Code.size()};
+  EH.Kind = RuntimeFunctionKind::Primary;
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  for (size_t I = 0; I < FillerCount; ++I) {
+    ExceptionFunction Leaf;
+    Leaf.CodeRange = {Filler + I, Filler + I + 1};
+    Leaf.Kind = RuntimeFunctionKind::Primary;
+    Img.ExceptionMetadata.Functions.push_back(std::move(Leaf));
+  }
+  Img.ExceptionMetadata.rebuildIndex();
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(F);
+  auto Result = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
+  OS.flush();
+  EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
+  // Every case keeps its return value.
+  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+}
+
+TEST(COFFExceptionIR, SymbolHeavyImageStillResolvesAnImageRelativeJumpTable) {
+  // ntoskrnl: 41k symbols.  Checking whether each target is a function
+  // symbol was priced as a scan of every symbol, which exhausted the proof
+  // budget for a 43-case switch.  It is a lookup in a sorted index.
+  constexpr va_t Base = 0x140000000;
+  constexpr va_t F = 0x140001000;
+  constexpr va_t Table = 0x140003000;
+  constexpr unsigned Cases = 40;
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = Base;
+  Img.Entry = F;
+  std::vector<uint8_t> Code = {
+      0x83, 0xf9, Cases - 1,                // cmp ecx, Cases-1
+      0x0f, 0x87, 0,         0,    0, 0,    // ja default (patched)
+      0x4c, 0x8d, 0x0d,      0,    0, 0, 0, // lea r9, [rip+Base-next] (patched)
+      0x8b, 0xc1,                           // mov eax, ecx
+      0x41, 0x8b, 0x84,      0x81, 0, 0, 0,
+      0,                // mov eax, [r9+rax*4+Table] (patched)
+      0x4c, 0x01, 0xc8, // add rax, r9
+      0xff, 0xe0};      // jmp rax
+  auto Put32 = [&](size_t At, uint32_t V) {
+    for (unsigned I = 0; I < 4; ++I)
+      Code[At + I] = static_cast<uint8_t>(V >> (8 * I));
+  };
+  Put32(12, static_cast<uint32_t>(Base - (F + 16)));
+  Put32(22, static_cast<uint32_t>(Table - Base));
+  std::vector<uint32_t> Entries;
+  for (unsigned I = 0; I < Cases; ++I) {
+    Entries.push_back(static_cast<uint32_t>(F + Code.size() - Base));
+    Code.insert(Code.end(), {0xb8, static_cast<uint8_t>(0x10 + I), 0, 0, 0,
+                             0xc3}); // mov eax, 10h+I; ret
+  }
+  const size_t Default = Code.size();
+  Put32(5, static_cast<uint32_t>(Default - 9));
+  Code.insert(Code.end(), {0x31, 0xc0, 0xc3}); // default: xor eax, eax; ret
+
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = F;
+  Text.Size = 0x1000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  std::copy(Code.begin(), Code.end(), Text.Data.begin());
+  Img.Segments.push_back(std::move(Text));
+  Segment RData;
+  RData.Name = ".rdata";
+  RData.VA = Table;
+  RData.Size = 0x1000;
+  RData.Flags = SegmentFlags::Readable;
+  RData.Data.assign(RData.Size, 0);
+  for (unsigned I = 0; I < Cases; ++I)
+    for (unsigned B = 0; B < 4; ++B)
+      RData.Data[4 * I + B] = static_cast<uint8_t>(Entries[I] >> (8 * B));
+  Img.Segments.push_back(std::move(RData));
+  // Many one-byte functions elsewhere, each with its own unwind entry.
+  constexpr va_t Filler = 0x140100000;
+  constexpr size_t FillerCount = 16;
+  Segment Pad;
+  Pad.Name = ".text2";
+  Pad.VA = Filler;
+  Pad.Size = FillerCount;
+  Pad.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Pad.Data.assign(Pad.Size, 0xc3);
+  Img.Segments.push_back(std::move(Pad));
+  for (const auto &[Name, VA, Size, Flags] :
+       {std::tuple{".text", F, uint64_t{0x1000},
+                   SegmentFlags::Readable | SegmentFlags::Executable},
+        std::tuple{".rdata", Table, uint64_t{0x1000}, SegmentFlags::Readable},
+        std::tuple{".text2", Filler, uint64_t{FillerCount},
+                   SegmentFlags::Readable | SegmentFlags::Executable}}) {
+    Section Sec;
+    Sec.Name = Name;
+    Sec.VA = VA;
+    Sec.Size = Size;
+    Sec.Flags = Flags;
+    Img.Sections.push_back(std::move(Sec));
+  }
+  Img.KnownCodeRanges.emplace_back(F, F + Code.size());
+  Img.Symbols.push_back(Symbol::makeFunc(F, Code.size()));
+  ExceptionFunction EH;
+  EH.CodeRange = {F, F + Code.size()};
+  EH.Kind = RuntimeFunctionKind::Primary;
+  Img.ExceptionMetadata.Functions.push_back(std::move(EH));
+  for (size_t I = 0; I < FillerCount; ++I) {
+    ExceptionFunction Leaf;
+    Leaf.CodeRange = {Filler + I, Filler + I + 1};
+    Leaf.Kind = RuntimeFunctionKind::Primary;
+    Img.ExceptionMetadata.Functions.push_back(std::move(Leaf));
+  }
+  for (size_t I = 0; I < 250000; ++I) {
+    Symbol Label;
+    Label.Addr = 0x140200000 + I;
+    Label.IsFunc = true;
+    Img.Symbols.push_back(std::move(Label));
+  }
+  Img.ExceptionMetadata.rebuildIndex();
+
+  llvm::LLVMContext Ctx;
+  PipelineOptions One;
+  One.EmitDumpOutput = false;
+  One.OnlyFunctionEntries.insert(F);
+  auto Result = Pipeline().run(Img, Ctx, One);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_EQ(Result.HighFuncs.size(), 1u);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
+  OS.flush();
+  EXPECT_EQ(Source.find("L_FFFFFFFFFFFFFFFF"), std::string::npos) << Source;
+  // Every case keeps its return value.
+  EXPECT_NE(Source.find("return 16;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("return 55;"), std::string::npos) << Source;
+}

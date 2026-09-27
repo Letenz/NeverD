@@ -86,10 +86,57 @@ const char *lookupX86AsmToC(const char *Mnem) {
   return nullptr;
 }
 
-InlineAsmRender
-renderX86InlineAsm(const std::string &AsmStr, const std::string &Mnemonic,
-                   bool IsStructReturn, const std::string &ResultName,
-                   bool ResultLive, const std::vector<std::string> &Args) {
+InlineAsmRender renderX86InlineAsm(Arch TheArch, const std::string &AsmStr,
+                                   const std::string &Mnemonic,
+                                   bool IsStructReturn,
+                                   const std::string &ResultName,
+                                   bool ResultLive,
+                                   const std::vector<std::string> &Args) {
+  // A value-returning `int $$N`, as MedLLVM emits it with register operands.
+  {
+    llvm::StringRef Text(AsmStr);
+    unsigned Vector = 0;
+    if (Text.consume_front("int $$") && !Text.getAsInteger(10, Vector) &&
+        Vector <= 0xFF) {
+      const auto Regs = x86DebugServiceRegisters();
+      if (Args.empty() || (TheArch == Arch::X64 && Vector == 0x2D &&
+                           Args.size() == Regs.size())) {
+        std::vector<std::pair<const char *, std::string>> Inputs;
+        for (size_t I = 0; I < Args.size(); ++I)
+          Inputs.emplace_back(Regs[I], Args[I]);
+        return {
+            renderX86InterruptAsm(Vector, Inputs,
+                                  ResultLive ? llvm::StringRef(ResultName) : "",
+                                  TheArch == Arch::X64 ? "rax" : "eax"),
+            false};
+      }
+    }
+  }
+
+  // RDMSR/WRMSR as MedLLVM emits them: the selector in ECX, the value as
+  // one 64-bit result (read) or as its EAX/EDX halves (write).
+  if (llvm::StringRef(AsmStr).starts_with("rdmsr") && Args.size() == 1) {
+    std::string Result;
+    if (ResultLive && !ResultName.empty())
+      Result = ResultName + " = ";
+    return {Result + "__readmsr(" + Args[0] + ");\n", true};
+  }
+  if (AsmStr == "wrmsr" && Args.size() == 3)
+    return {"__writemsr(" + Args[0] + ", ((unsigned __int64)(" + Args[2] +
+                ") << 32) | (uint32_t)(" + Args[1] + "));\n",
+            true};
+
+  // PUSHF/POPF of the whole EFLAGS image, as MedLLVM emits them.
+  if (llvm::StringRef(AsmStr).starts_with("pushf") && Args.empty()) {
+    std::string Result;
+    if (ResultLive && !ResultName.empty())
+      Result = ResultName + " = ";
+    return {Result + "__readeflags();\n", true};
+  }
+  if ((AsmStr == "pushq $0\n\tpopfq" || AsmStr == "pushl $0\n\tpopfl") &&
+      Args.size() == 1)
+    return {"__writeeflags(" + Args[0] + ");\n", true};
+
   if (Mnemonic == "cpuid") {
     std::string Leaf = Args.empty() ? "0" : Args[0];
     if (IsStructReturn)
@@ -110,6 +157,38 @@ renderX86InlineAsm(const std::string &AsmStr, const std::string &Mnemonic,
       Result = ResultName + " = ";
     Result += "_xgetbv(" + ECX + ");\n";
     return {Result, true};
+  }
+
+  // MOV to/from a control or debug register, as MedLLVM emits it
+  // (`mov %cr8, $0` / `mov $0, %cr8`): print the MSVC intrinsic.
+  {
+    llvm::StringRef Text(AsmStr);
+    if (Text.consume_front("mov ")) {
+      auto [First, Second] = Text.split(',');
+      First = First.trim();
+      Second = Second.trim();
+      const bool Read = Second == "$0";
+      const llvm::StringRef Reg = Read ? First : Second;
+      const bool IsCr = Reg.starts_with("%cr");
+      const bool IsDr = Reg.starts_with("%dr");
+      unsigned N = 0;
+      if ((IsCr || IsDr) && !Reg.drop_front(3).getAsInteger(10, N) && N <= 15 &&
+          (Read || First == "$0")) {
+        const std::string Index = std::to_string(N);
+        std::string Result;
+        if (Read) {
+          if (ResultLive && !ResultName.empty())
+            Result = ResultName + " = ";
+          Result +=
+              IsCr ? "__readcr" + Index + "()" : "__readdr(" + Index + ")";
+        } else {
+          const std::string Value = Args.empty() ? "0" : Args[0];
+          Result = IsCr ? "__writecr" + Index + "(" + Value + ")"
+                        : "__writedr(" + Index + ", " + Value + ")";
+        }
+        return {Result + ";\n", true};
+      }
+    }
   }
 
   const char *X86C = lookupX86AsmToC(AsmStr.c_str());

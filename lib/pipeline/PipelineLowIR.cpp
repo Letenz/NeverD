@@ -17,7 +17,9 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/loader/PointerRelocation.h"
@@ -430,6 +432,11 @@ struct ModuleAddressFacts {
   bool MayBeNonFrame = false;
   bool Imprecise = false;
   bool ExactValuesWidened = false;
+  /// FrameOffsets grew past its finite bound (a pointer walking the frame in
+  /// a loop).  The set then holds a single placeholder offset: the value is
+  /// some frame address at an unknown offset, and MayBeNonFrame/Imprecise
+  /// make every consumer treat it as such.
+  bool FrameOffsetsWidened = false;
 
   bool empty() const { return Roots.empty() && ExactValues.empty(); }
   bool hasState() const {
@@ -446,7 +453,8 @@ struct ModuleAddressFacts {
            FrameCellOutgoingSeed == Other.FrameCellOutgoingSeed &&
            MayBeNonFrame == Other.MayBeNonFrame &&
            Imprecise == Other.Imprecise &&
-           ExactValuesWidened == Other.ExactValuesWidened;
+           ExactValuesWidened == Other.ExactValuesWidened &&
+           FrameOffsetsWidened == Other.FrameOffsetsWidened;
   }
 };
 using ModuleAddressState = std::map<LowValueKey, ModuleAddressFacts>;
@@ -518,7 +526,7 @@ std::optional<int64_t> signedConstantAtArithmeticWidth(uint64_t Value,
 
 bool adjustFrameOffsets(ModuleAddressFacts &Facts, uint64_t RawDelta,
                         uint16_t ArithmeticSize, bool Subtract) {
-  if (Facts.FrameOffsets.empty())
+  if (Facts.FrameOffsets.empty() || Facts.FrameOffsetsWidened)
     return true;
   const std::optional<int64_t> Delta =
       signedConstantAtArithmeticWidth(RawDelta, ArithmeticSize);
@@ -743,6 +751,9 @@ bool collectLowAddressUses(
   // Keep finite exact alternatives for slot-precise LOAD/STORE decisions.
   // Larger joins widen to the durable owner-summary lattice above.
   constexpr size_t kMaxExactAddressAlternatives = 16;
+  // Frame offsets widen the same way; without a bound a frame-walking loop
+  // adds one offset per fixpoint round.
+  constexpr size_t kMaxFrameOffsetAlternatives = 64;
   for (size_t FuncIndex = 0; FuncIndex < Funcs.size(); ++FuncIndex) {
     const LowFunc &Func = Funcs[FuncIndex];
     const size_t BlockCount = Func.Blocks.size();
@@ -842,6 +853,15 @@ bool collectLowAddressUses(
           Into.ExactValues.size() > kMaxExactAddressAlternatives) {
         Into.ExactValues.clear();
         Into.ExactValuesWidened = true;
+        Into.Imprecise = true;
+      }
+      Into.FrameOffsetsWidened |= From.FrameOffsetsWidened;
+      if (!Into.FrameOffsets.empty() &&
+          (Into.FrameOffsetsWidened ||
+           Into.FrameOffsets.size() > kMaxFrameOffsetAlternatives)) {
+        Into.FrameOffsets = {0};
+        Into.FrameOffsetsWidened = true;
+        Into.MayBeNonFrame = true;
         Into.Imprecise = true;
       }
       const bool Complete =
@@ -2801,6 +2821,104 @@ WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
 // buildLowIR — Phase 1
 //===----------------------------------------------------------------------===//
 
+namespace {
+/// Summarize which GPRs each direct callee may write (CallRegisterEffects.h).
+/// Callees outside Result.LowFuncs are lifted here with the same CFG settings,
+/// up to the Limits.h depth and count; beyond those they stay unsummarized.
+void computeCallRegisterEffects(
+    const BinaryImage &Img, const std::set<va_t> &FuncEntries,
+    const libc::NoReturnTargetIndex &NoReturnTargets,
+    const detail::AbsoluteRelocationRootIndex &AbsoluteRelocationRoots,
+    const ExecutableCodeOwnerIndex *CodeOwnerIndex, PipelineResult &Result) {
+  if (Img.Arch != Arch::X64)
+    return;
+  std::map<va_t, LocalRegisterEffect> Effects;
+  std::map<va_t, int> Depth;
+  std::vector<va_t> Work;
+  for (const LowFunc &LF : Result.LowFuncs) {
+    Effects[LF.Entry] = localRegisterEffect(Img, LF);
+    Depth[LF.Entry] = 0;
+    Work.push_back(LF.Entry);
+  }
+  Decoder ExtraDec;
+  if (!ExtraDec.init(Img.Arch, Img.Mode))
+    return;
+  CFGBuilder ExtraCFG;
+  ExtraCFG.setKnownFuncEntries(&FuncEntries);
+  ExtraCFG.setNoReturnTargetIndex(&NoReturnTargets);
+  ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
+  ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
+  size_t ExtraLifts = 0;
+  while (!Work.empty()) {
+    const va_t Caller = Work.back();
+    Work.pop_back();
+    const int CalleeDepth = Depth[Caller] + 1;
+    const std::set<va_t> Callees = Effects[Caller].Callees;
+    for (va_t Callee : Callees) {
+      if (Effects.count(Callee) ||
+          CalleeDepth > limits::kMaxCallEffectCalleeDepth ||
+          ExtraLifts >= limits::kMaxCallEffectExtraLifts ||
+          !Img.hasExecutableCodeOwnerAt(Callee))
+        continue;
+      ++ExtraLifts;
+      LowFunc Body =
+          ExtraCFG.build(Img, ExtraDec, Callee, Img.getFunctionNameAt(Callee));
+      Effects[Callee] = localRegisterEffect(Img, Body);
+      Depth[Callee] = CalleeDepth;
+      Work.push_back(Callee);
+    }
+  }
+  auto Family = [](uint64_t RegOff) {
+    return GPRFamilyMask(1) << (RegOff / 8);
+  };
+  const bool Win64 = Img.Format == BinaryFormat::COFF;
+  GPRFamilyMask Volatile = Family(x86reg::RAX) | Family(x86reg::RCX) |
+                           Family(x86reg::RDX) | Family(x86reg::R8) |
+                           Family(x86reg::R9) | Family(x86reg::R10) |
+                           Family(x86reg::R11);
+  GPRFamilyMask Arguments = Family(x86reg::RCX) | Family(x86reg::RDX) |
+                            Family(x86reg::R8) | Family(x86reg::R9);
+  if (!Win64) {
+    Volatile |= Family(x86reg::RSI) | Family(x86reg::RDI);
+    Arguments |= Family(x86reg::RSI) | Family(x86reg::RDI);
+  }
+  // Documented contracts (WindowsKernelRoutines.inc): a Control Flow Guard
+  // dispatcher is an indirect call, and a WDK routine reads exactly its
+  // prototype's parameters however its body forwards registers.
+  std::set<va_t> DispatchThunks;
+  std::map<va_t, GPRReadWidths> FixedEntryReads;
+  if (Win64) {
+    auto Classify = [&](va_t Entry, llvm::StringRef Name) {
+      if (Name.empty() || Entry == InvalidVA)
+        return;
+      if (libc::isIndirectCallDispatchThunk(Name)) {
+        DispatchThunks.insert(Entry);
+        return;
+      }
+      const libc::WindowsKernelPrototype *Proto =
+          libc::windowsKernelPrototype(Name);
+      if (!Proto)
+        return;
+      static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
+                                               x86reg::R8, x86reg::R9};
+      GPRReadWidths Widths{};
+      for (unsigned I = 0; I < 4 && I < Proto->ArgCount; ++I)
+        Widths[Win64Args[I] / 8] = Proto->ArgWidths[I];
+      FixedEntryReads[Entry] = Widths;
+    };
+    for (const auto &[Entry, Effect] : Effects)
+      Classify(Entry, Img.getFunctionNameAt(Entry));
+    for (const Import &Imp : Img.Imports)
+      Classify(Imp.IATAddr, Imp.Name);
+  }
+  CallRegisterSummaries Summaries = solveCallRegisterEffects(
+      Effects, Volatile, Arguments, DispatchThunks, FixedEntryReads);
+  Result.CallDispatchThunks = std::move(DispatchThunks);
+  Result.CallMayWriteGPRs = std::move(Summaries.MayWrite);
+  Result.CallEntryReadGPRs = std::move(Summaries.EntryReads);
+}
+} // namespace
+
 void Pipeline::buildLowIR(
     const BinaryImage &Img,
     const std::vector<std::pair<va_t, std::string>> &Candidates,
@@ -2815,20 +2933,33 @@ void Pipeline::buildLowIR(
   const ExecutableCodeOwnerIndex ExecutableCodeOwners(Img);
   const ExecutableCodeOwnerIndex *CodeOwnerIndex = &ExecutableCodeOwners;
 
-  // Detected candidates plus, on a full-image run, every symbol/pdata start.
-  // `--func` keeps only the requested entries here; CFGBuilder queries
+  // Detected candidates plus, on a full-image run, every symbol/pdata start
+  // (PE symbols on every run, below).  `--func` otherwise keeps only the
+  // requested entries here; CFGBuilder queries
   // RuntimeFunctionAddrs / KnownCodeRanges / ExceptionMetadata live so a
   // tail `jmp` to `_report_gsfailure` still becomes call+ret.
+  // A padding-boundary guess is not a tail-call target: MSVC separates
+  // hot/cold chunks of one function with the same int3 padding, and a jump
+  // into such a chunk must keep its code in the jumping function.
+  const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
   std::set<va_t> FuncEntries;
   for (const auto &C : Candidates)
-    FuncEntries.insert(C.first);
-  if (Opts.OnlyFunctionEntries.empty()) {
+    if (!BoundaryGuesses.count(C.first))
+      FuncEntries.insert(C.first);
+  // A PE function symbol (PDB or export) names a real start, and a leaf
+  // function has no `.pdata` range for the live query to find.  Without the
+  // symbol, a single-function run falls through into the next function and
+  // decodes it as its own body, so PE keeps symbols on every run.
+  if (Opts.OnlyFunctionEntries.empty() || Img.Format == BinaryFormat::COFF)
     for (const auto &Sym : Img.Symbols)
-      if (Sym.IsFunc)
+      if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
         FuncEntries.insert(Sym.Addr);
+  if (Opts.OnlyFunctionEntries.empty()) {
+    // A chained-unwind continuation is part of its parent function: a jump
+    // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
-      if (Start != 0)
+      if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
         FuncEntries.insert(Start);
     }
   }
@@ -3224,6 +3355,9 @@ void Pipeline::buildLowIR(
       AuditIt->HasLowIR = true;
     ++FuncCount;
   }
+
+  computeCallRegisterEffects(Img, FuncEntries, NoReturnTargets,
+                             AbsoluteRelocationRoots, CodeOwnerIndex, Result);
 }
 
 } // namespace neverd

@@ -1449,6 +1449,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
   // unrelated exploration roots from inheriting another edge's permission.
   std::queue<std::pair<va_t, std::optional<va_t>>> Worklist;
   Worklist.push({Addr, std::nullopt});
+  // Known entries reached by a conditional branch or by falling through.
+  std::vector<va_t> TailCallEntries;
 
   while (!Worklist.empty()) {
     auto [Cur, SourceBranch] = Worklist.front();
@@ -1464,8 +1466,14 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
           !isCurrentExceptionalEntry(Cur) && !isCurrentOwnedFragment(Cur) &&
           (!SourceBranch ||
            !isBackwardSharedEpilogue(Img, CurrentFuncEntry, *SourceBranch, Cur,
-                                     KnownFuncEntries)))
+                                     KnownFuncEntries))) {
+        // Reaching it is a tail call, whether by a conditional branch or by
+        // falling through (see the stubs after this walk).  A disposable
+        // proof snapshot keeps its decode-only accounting.
+        if (!CandidateFiniteProofDecodeOnly)
+          TailCallEntries.push_back(Cur);
         break;
+      }
       SourceBranch.reset();
       if (CandidateFiniteProofDecodeOnly) {
         // This builder is a disposable proof snapshot.  Charge each attempted
@@ -1880,6 +1888,22 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
 
       Cur = Next;
     }
+  }
+  // Model each such edge at the entry as `call target; ret`, like an
+  // unconditional jump there; otherwise the edge has no block.  An
+  // authenticated B later in this walk may have decoded the entry as a shared
+  // epilogue instead, and then every edge keeps that real block.
+  for (va_t Entry : TailCallEntries) {
+    if (Insns.count(Entry))
+      continue;
+    InsnRecord Stub;
+    Stub.Addr = Entry;
+    Stub.Size = 1;
+    Stub.Mode = effectiveInstructionMode(Img.Arch, Img.Mode);
+    Stub.BranchTarget = Entry;
+    rewriteAsTailCall(Stub);
+    Insns[Entry] = std::move(Stub);
+    ExploredAddrs.insert(Entry);
   }
 }
 

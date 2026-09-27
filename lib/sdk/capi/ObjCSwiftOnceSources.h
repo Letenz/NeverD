@@ -1965,10 +1965,22 @@ discoverSwiftOnceSources(const BinaryImage &Image,
                   *E->Operands[Getter->second.Initializer]);
               if (Target && Functions.count(*Target) &&
                   Image.isCodeAddress(*Target) &&
-                  !DirectTargets.count(*Target) &&
-                  (Getter->second.parameterCount() != 5 ||
-                   ignoresContext(*Functions.at(*Target))))
-                Plan.CallbackHints.emplace(*Target, callbackHint(Image.Arch));
+                  !DirectTargets.count(*Target)) {
+                const auto &Callback = *Functions.at(*Target);
+                bool Independent = Getter->second.parameterCount() != 5 ||
+                                   ignoresContext(Callback);
+                if (!Independent) {
+                  const auto Nested = nestedCallbackContract(Callback, Image);
+                  const auto Leaf = Nested ? Functions.find(Nested->Initializer)
+                                           : Functions.end();
+                  Independent = Nested && Nested->Initializer != *Target &&
+                                !DirectTargets.count(Nested->Initializer) &&
+                                Leaf != Functions.end() && Leaf->second &&
+                                ignoresContext(*Leaf->second);
+                }
+                if (Independent)
+                  Plan.CallbackHints.emplace(*Target, callbackHint(Image.Arch));
+              }
             }
           }
           Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());

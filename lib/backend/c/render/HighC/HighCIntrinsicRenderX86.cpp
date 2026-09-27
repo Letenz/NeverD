@@ -16,8 +16,10 @@
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <cctype>
 #include <string>
 #include <utility>
 
@@ -54,6 +56,38 @@ const char *x86SegmentedReadIntrinsic(bool GS, unsigned SizeBytes) {
   default:
     return nullptr;
   }
+}
+
+llvm::ArrayRef<const char *> x86DebugServiceRegisters() {
+  static const char *const Regs[] = {"rax", "rcx", "rdx", "r8", "r9"};
+  return Regs;
+}
+
+std::string renderX86InterruptAsm(
+    unsigned Vector,
+    llvm::ArrayRef<std::pair<const char *, std::string>> Inputs,
+    llvm::StringRef ResultVar, llvm::StringRef ResultReg,
+    llvm::StringRef Instruction) {
+  // MASM hex: a leading digit, then an `h` suffix (`int 2Dh`, `int 0CCh`).
+  std::string Hex = llvm::utohexstr(Vector & 0xFF);
+  if (!std::isdigit(static_cast<unsigned char>(Hex.front())))
+    Hex = "0" + Hex;
+  const std::string Pad = Inputs.empty() ? "" : "    ";
+  std::string Asm = Pad + "__asm {\n";
+  for (const auto &[Reg, Value] : Inputs)
+    Asm += Pad + "    mov " + std::string(Reg) + ", _" + Reg + "\n";
+  Asm += Pad + "    " +
+         (Instruction.empty() ? "int " + Hex + "h" : Instruction.str()) + "\n";
+  if (!ResultVar.empty())
+    Asm += Pad + "    mov " + ResultVar.str() + ", " + ResultReg.str() + "\n";
+  Asm += Pad + "}\n";
+  if (Inputs.empty())
+    return Asm;
+  std::string Result = "{\n";
+  for (const auto &[Reg, Value] : Inputs)
+    Result +=
+        "    uint64_t _" + std::string(Reg) + " = (uint64_t)(" + Value + ");\n";
+  return Result + Asm + "}\n";
 }
 
 namespace {
@@ -211,9 +245,6 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
       (!PrimaryDst || PrimaryDst->Kind != ExprKind::Var))
     llvm::report_fatal_error(
         "x86 REP string intrinsic is missing an architectural result");
-  if ((IsCmps || IsScas) && Call.IntrinsicOutputs.empty())
-    llvm::report_fatal_error(
-        "x86 REP string intrinsic is missing its flags result");
   if (*Segment != '\0' && (IsStos || IsScas || IsIns))
     llvm::report_fatal_error(
         "x86 REP string intrinsic has an invalid segment override");
@@ -295,36 +326,50 @@ renderSegmentedString(Arch TheArch, const HighExpr &Call,
     Result += "            : \"memory\", \"cc\");\n";
   };
 
-  Result += "    if (" + ExprFn(*Call.Operands[3]) + ") {\n";
-  if (IsCmps || IsScas) {
+  // A constant direction (DF is clear on entry) or repeat condition selects
+  // one form; print only that one.
+  auto ConstOperand = [&](size_t I) -> std::optional<bool> {
+    if (I < Call.Operands.size() && Call.Operands[I] &&
+        Call.Operands[I]->Kind == ExprKind::Const)
+      return Call.Operands[I]->ConstVal != 0;
+    return std::nullopt;
+  };
+  auto EmitDirection = [&](bool Backward) {
+    if (!(IsCmps || IsScas)) {
+      EmitAsm("rep", Backward);
+      return;
+    }
+    if (auto Repne = ConstOperand(4)) {
+      EmitAsm(*Repne ? "repnz" : "repz", Backward);
+      return;
+    }
     Result += "        if (" + ExprFn(*Call.Operands[4]) + ") {\n";
-    EmitAsm("repnz", true);
+    EmitAsm("repnz", Backward);
     Result += "        } else {\n";
-    EmitAsm("repz", true);
+    EmitAsm("repz", Backward);
     Result += "        }\n";
+  };
+  if (auto Backward = ConstOperand(3)) {
+    EmitDirection(*Backward);
   } else {
-    EmitAsm("rep", true);
+    Result += "    if (" + ExprFn(*Call.Operands[3]) + ") {\n";
+    EmitDirection(true);
+    Result += "    } else {\n";
+    EmitDirection(false);
+    Result += "    }\n";
   }
-  Result += "    } else {\n";
-  if (IsCmps || IsScas) {
-    Result += "        if (" + ExprFn(*Call.Operands[4]) + ") {\n";
-    EmitAsm("repnz", false);
-    Result += "        } else {\n";
-    EmitAsm("repz", false);
-    Result += "        }\n";
-  } else {
-    EmitAsm("rep", false);
-  }
-  Result += "    }\n";
 
   if (IsLods)
     Result += assignPrimary(PrimaryDst, "neverd_ax", ExprFn, IsAlive);
   if (IsCmps || IsScas) {
     Result += assignPrimary(PrimaryDst, "neverd_cx", ExprFn, IsAlive);
-    const MedVar &Flags = Call.IntrinsicOutputs.front();
-    if (!IsAlive || IsAlive(Flags))
-      Result += "    " + VarFn(Flags) + " = (uint16_t)" +
-                (IsScas ? "neverd_ax" : "neverd_flags") + ";\n";
+    // No flag snapshot when no later instruction reads the flags.
+    if (!Call.IntrinsicOutputs.empty()) {
+      const MedVar &Flags = Call.IntrinsicOutputs.front();
+      if (!IsAlive || IsAlive(Flags))
+        Result += "    " + VarFn(Flags) + " = (uint16_t)" +
+                  (IsScas ? "neverd_ax" : "neverd_flags") + ";\n";
+    }
   }
   Result += "} while (0);\n";
   return Result;
@@ -650,13 +695,129 @@ bool isStateSnapshotMemoryIntrinsic(Intrinsic Id) {
   }
 }
 
+/// The <immintrin.h> spelling of a state save/restore instruction, or null
+/// for the x87 environment forms, which have no compiler intrinsic.
+const char *stateSnapshotCIntrinsic(Intrinsic Id) {
+  using I = Intrinsic;
+  switch (Id) {
+  case I::Fxsave:
+    return "_fxsave";
+  case I::Fxrstor:
+    return "_fxrstor";
+  case I::Fxsave64Mem:
+    return "_fxsave64";
+  case I::Fxrstor64Mem:
+    return "_fxrstor64";
+  case I::Xsave:
+    return "_xsave";
+  case I::Xsavec:
+    return "_xsavec";
+  case I::Xsaves:
+    return "_xsaves";
+  case I::Xsaveopt:
+    return "_xsaveopt";
+  case I::Xrstor:
+    return "_xrstor";
+  case I::Xrstors:
+    return "_xrstors";
+  case I::Xsave64:
+    return "_xsave64";
+  case I::Xsavec64:
+    return "_xsavec64";
+  case I::Xsaves64:
+    return "_xsaves64";
+  case I::Xsaveopt64:
+    return "_xsaveopt64";
+  case I::Xrstor64:
+    return "_xrstor64";
+  case I::Xrstors64:
+    return "_xrstors64";
+  default:
+    return nullptr;
+  }
+}
+
+/// XSAVE-family forms take the EDX:EAX requested-feature bitmap.
+bool stateSnapshotTakesMask(Intrinsic Id) {
+  using I = Intrinsic;
+  switch (Id) {
+  case I::Xsave:
+  case I::Xsavec:
+  case I::Xsaves:
+  case I::Xsaveopt:
+  case I::Xrstor:
+  case I::Xrstors:
+  case I::Xsave64:
+  case I::Xsavec64:
+  case I::Xsaves64:
+  case I::Xsaveopt64:
+  case I::Xrstor64:
+  case I::Xrstors64:
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// These instructions move the processor's own x87/SSE/AVX state.  Lifted
+/// code keeps that state in C locals, so the emitted statement says which
+/// state it touches instead of pretending the locals are saved or restored.
+constexpr const char *kHardwareStateNote =
+    "/* neverd: hardware x87/SSE/AVX state, not the lifted locals */\n";
+
+std::string
+renderStateSnapshot(const HighExpr &Call,
+                    std::function<std::string(const HighExpr &)> ExprFn) {
+  const bool TakesMask = stateSnapshotTakesMask(Call.IntrinsicId);
+  const size_t Required = TakesMask ? 3 : 1;
+  if (Call.Operands.size() < Required)
+    llvm::report_fatal_error(
+        "x86 state save/restore intrinsic is missing its operands");
+  for (size_t I = 0; I < Required; ++I)
+    if (!Call.Operands[I])
+      llvm::report_fatal_error(
+          "x86 state save/restore intrinsic is missing its operands");
+  const char *Segment = segmentPrefix(Call.MemoryAddressSpace);
+  if (!Segment)
+    llvm::report_fatal_error(
+        "x86 state save/restore intrinsic has an unknown memory address space");
+  const std::string Address = ExprFn(*Call.Operands[0]);
+  const std::string Mask =
+      TakesMask ? "((uint64_t)(uint32_t)(" + ExprFn(*Call.Operands[2]) +
+                      ") << 32 | (uint32_t)(" + ExprFn(*Call.Operands[1]) + "))"
+                : std::string();
+
+  const char *CName = stateSnapshotCIntrinsic(Call.IntrinsicId);
+  if (CName && *Segment == '\0')
+    return std::string(kHardwareStateNote) + CName + "((void *)(uintptr_t)(" +
+           Address + ")" + (TakesMask ? ", " + Mask : std::string()) + ");\n";
+
+  const char *Mnemonic = intrinsicAsmMnemonic(Call.IntrinsicId);
+  if (!Mnemonic)
+    llvm::report_fatal_error(
+        "x86 state save/restore intrinsic has no assembler mnemonic");
+  const std::string MemoryOperand =
+      *Segment == '\0' ? "(%[address])"
+                       : "%%" + std::string(Segment) + ":(%[address])";
+  std::string Result = std::string(kHardwareStateNote) + "do {\n";
+  Result += "    uintptr_t neverd_address = (uintptr_t)(" + Address + ");\n";
+  if (TakesMask)
+    Result += "    uint64_t neverd_mask = " + Mask + ";\n";
+  Result += "    __asm__ volatile(\"" + std::string(Mnemonic) + " " +
+            MemoryOperand +
+            "\"\n        :\n        : [address] \"r\"(neverd_address)";
+  if (TakesMask)
+    Result += ", \"a\"((uint32_t)neverd_mask), "
+              "\"d\"((uint32_t)(neverd_mask >> 32))";
+  Result += "\n        : \"memory\");\n} while (0);\n";
+  return Result;
+}
+
 std::string
 renderMemoryIntrinsic(Arch TheArch, const HighExpr &Call,
                       std::function<std::string(const HighExpr &)> ExprFn) {
   if (isStateSnapshotMemoryIntrinsic(Call.IntrinsicId))
-    llvm::report_fatal_error(
-        "x86 state save/restore requires an explicit architectural state "
-        "layout; host inline asm is not a sound High-C lowering");
+    return renderStateSnapshot(Call, ExprFn);
 
   // Flat cache-maintenance operands already have portable C intrinsic
   // spellings.  Leave those to the ordinary call renderer; this path is only
@@ -709,14 +870,16 @@ std::string renderCpuid(const std::vector<MedVar> &Outs,
                         std::function<std::string(const MedVar &)> VarFn,
                         const IsAliveFn &IsAlive) {
   std::string Leaf = Ops.empty() ? "0" : ExprFn(*Ops[0]);
-  std::string Result = "int cpuInfo[4];\n";
+  // A block scope, so a second CPUID in the function does not redeclare
+  // cpuInfo.
+  std::string Result = "{\n    int cpuInfo[4];\n";
   Result += "    __cpuid(cpuInfo, " + Leaf + ");\n";
   const char *Names[] = {"cpuInfo[0]", "cpuInfo[1]", "cpuInfo[2]",
                          "cpuInfo[3]"};
   for (size_t I = 0; I < Outs.size() && I < 4; ++I)
     if (isAlive(Outs[I], IsAlive))
       Result += "    " + VarFn(Outs[I]) + " = " + Names[I] + ";\n";
-  return Result;
+  return Result + "}\n";
 }
 
 std::string renderXgetbv(const std::vector<MedVar> &Outs,
@@ -731,12 +894,13 @@ std::string renderXgetbv(const std::vector<MedVar> &Outs,
   bool HiAlive = isAlive(Outs[1], IsAlive);
   if (!LoAlive && !HiAlive)
     return "_xgetbv(" + ECX + ");\n";
-  std::string Result = "uint64_t _xcr = _xgetbv(" + ECX + ");\n";
+  // Block scope: a function may read an extended control register twice.
+  std::string Result = "{\n    uint64_t _xcr = _xgetbv(" + ECX + ");\n";
   if (LoAlive)
     Result += "    " + VarFn(Outs[0]) + " = (uint32_t)_xcr;\n";
   if (HiAlive)
     Result += "    " + VarFn(Outs[1]) + " = (uint32_t)(_xcr >> 32);\n";
-  return Result;
+  return Result + "}\n";
 }
 
 std::string renderRdtsc(const std::vector<MedVar> &Outs, const char *FnName,
@@ -749,12 +913,14 @@ std::string renderRdtsc(const std::vector<MedVar> &Outs, const char *FnName,
   bool HiAlive = isAlive(Outs[1], IsAlive);
   if (!LoAlive && !HiAlive)
     return std::string("__") + FnName + "();\n";
-  std::string Result = std::string("uint64_t _tsc = __") + FnName + "();\n";
+  // Block scope: a function may read the counter more than once.
+  std::string Result =
+      std::string("{\n    uint64_t _tsc = __") + FnName + "();\n";
   if (LoAlive)
     Result += "    " + VarFn(Outs[0]) + " = (uint32_t)_tsc;\n";
   if (HiAlive)
     Result += "    " + VarFn(Outs[1]) + " = (uint32_t)(_tsc >> 32);\n";
-  return Result;
+  return Result + "}\n";
 }
 
 std::string renderRdtscp(const std::vector<MedVar> &Outs,
@@ -764,7 +930,7 @@ std::string renderRdtscp(const std::vector<MedVar> &Outs,
                          const IsAliveFn &IsAlive) {
   if (Outs.size() < 3)
     return renderRdtsc(Outs, "rdtscp", ExprFn, VarFn, IsAlive);
-  std::string Result = "uint32_t _aux;\n";
+  std::string Result = "{\n    uint32_t _aux;\n";
   Result += "    uint64_t _tsc = __rdtscp(&_aux);\n";
   if (isAlive(Outs[0], IsAlive))
     Result += "    " + VarFn(Outs[0]) + " = (uint32_t)_tsc;\n";
@@ -772,7 +938,7 @@ std::string renderRdtscp(const std::vector<MedVar> &Outs,
     Result += "    " + VarFn(Outs[1]) + " = (uint32_t)(_tsc >> 32);\n";
   if (isAlive(Outs[2], IsAlive))
     Result += "    " + VarFn(Outs[2]) + " = _aux;\n";
-  return Result;
+  return Result + "}\n";
 }
 
 const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
@@ -801,6 +967,40 @@ bool isX86FastFailCall(const HighExpr &E) {
     return false;
   const HighExpr *Vec = unwrapX86IntegerView(E.Operands[0].get());
   return Vec && Vec->Kind == ExprKind::Const && (Vec->ConstVal & 0xFF) == 0x29;
+}
+
+std::string renderX86InterruptStatement(
+    Arch TheArch, const HighExpr &Call, llvm::StringRef ResultVar,
+    unsigned ResultSize, std::function<std::string(const HighExpr &)> ExprFn) {
+  if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
+      Call.Kind != ExprKind::Call)
+    return {};
+  const char *Reg = ResultSize == 1                           ? "al"
+                    : ResultSize == 2                         ? "ax"
+                    : ResultSize == 4 || TheArch == Arch::X86 ? "eax"
+                                                              : "rax";
+  if (Call.IntrinsicId == Intrinsic::DebugService) {
+    const auto Regs = x86DebugServiceRegisters();
+    if (TheArch != Arch::X64 || Call.Operands.size() != Regs.size())
+      llvm::report_fatal_error(
+          "x64 debug service has an invalid operand shape");
+    std::vector<std::pair<const char *, std::string>> Inputs;
+    for (size_t I = 0; I < Regs.size(); ++I) {
+      if (!Call.Operands[I])
+        llvm::report_fatal_error("x64 debug service has a missing operand");
+      Inputs.emplace_back(Regs[I], ExprFn(*Call.Operands[I]));
+    }
+    return renderX86InterruptAsm(0x2D, Inputs, ResultVar, Reg);
+  }
+  if (Call.IntrinsicId == Intrinsic::Syscall && Call.Operands.empty())
+    return renderX86InterruptAsm(0, {}, ResultVar, Reg, "syscall");
+  if (Call.IntrinsicId != Intrinsic::IntN || Call.Operands.size() != 1 ||
+      !Call.Operands[0] || isX86FastFailCall(Call))
+    return {};
+  const HighExpr *Vec = unwrapX86IntegerView(Call.Operands[0].get());
+  if (!Vec || Vec->Kind != ExprKind::Const)
+    return {};
+  return renderX86InterruptAsm(Vec->ConstVal & 0xFF, {}, ResultVar, Reg);
 }
 
 std::string renderX86MsvcSegmentedLoad(Arch TheArch, unsigned SizeBytes,
@@ -843,6 +1043,29 @@ renderX86TypedIntrinsicCall(Arch TheArch, const HighExpr &Call,
       Code = ExprFn(*Call.Operands[1]);
     HasCIntrinsics = true;
     return "__fastfail(" + Code + ")";
+  }
+  if (Call.IntrinsicId == I::IntN && !Call.Operands.empty() &&
+      Call.Operands[0]) {
+    const HighExpr *Vec = unwrapX86IntegerView(Call.Operands[0].get());
+    if (Vec && Vec->Kind == ExprKind::Const && (Vec->ConstVal & 0xFF) == 0x2C) {
+      HasCIntrinsics = true;
+      return "__int2c()";
+    }
+  }
+  // Shadow-stack writes take C operands through the MSVC intrinsics; an
+  // inline-asm operand cannot be a C expression.
+  if ((Call.IntrinsicId == I::CetWrss || Call.IntrinsicId == I::CetWruss) &&
+      Call.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+      Call.Operands.size() == 2 && Call.Operands[0] && Call.Operands[1] &&
+      Call.Operands[1]->Type &&
+      (Call.Operands[1]->Type->Size == 4 ||
+       Call.Operands[1]->Type->Size == 8)) {
+    const bool Is64 = Call.Operands[1]->Type->Size == 8;
+    HasCIntrinsics = true;
+    return std::string(Call.IntrinsicId == I::CetWrss ? "_wrss" : "_wruss") +
+           (Is64 ? "q((unsigned __int64)(" : "d((unsigned int)(") +
+           ExprFn(*Call.Operands[1]) + "), (void *)(uintptr_t)(" +
+           ExprFn(*Call.Operands[0]) + "))";
   }
   const bool IsGfni = Call.IntrinsicId == I::Gf2p8MulB ||
                       Call.IntrinsicId == I::Gf2p8AffineQb ||
@@ -972,9 +1195,6 @@ const char *x86HighCIntrinsicFatalReason(Intrinsic Id) {
   case I::X86MsrAccess:
     return "x86 MSR access requires an authenticated architectural execution "
            "environment";
-  case I::X86Invalidate:
-    return "x86 address-translation invalidation requires an authenticated "
-           "architectural execution environment";
   case I::X86RequireDivPrecondition:
     return "x86 division precondition requires an architectural fault "
            "environment";
@@ -994,10 +1214,20 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
 
   using I = Intrinsic;
   switch (Id) {
+  case I::X86Invalidate: {
+    // Operands: descriptor address, invalidation kind, type register.  The
+    // source spells INVPCID as the MSVC intrinsic _invpcid(type, descriptor).
+    if (Ops.size() != 3 || Ops[1] != std::to_string(static_cast<unsigned>(
+                                         X86InvalidateKind::Invpcid)))
+      llvm::report_fatal_error("x86 invalidation has an unknown kind");
+    HasCIntrinsics = true;
+    return "_invpcid((unsigned int)(" + Ops[2] + "), (void *)(uintptr_t)(" +
+           Ops[0] + "))";
+  }
   case I::Cpuid: {
     std::string Leaf = Ops.empty() ? "0" : Ops[0];
     HasCIntrinsics = true;
-    return "{{ int cpuInfo[4]; __cpuid(cpuInfo, " + Leaf + "); }}";
+    return "{ int cpuInfo[4]; __cpuid(cpuInfo, " + Leaf + "); }";
   }
   case I::Rdtscp: {
     HasCIntrinsics = true;
@@ -1028,7 +1258,7 @@ std::string renderX86AsmStatement(const char *Mnemonic,
     AsmStmt += (I == 0 ? " " : ", ");
     AsmStmt += Ops[I];
   }
-  return "__asm {{ " + AsmStmt + " }}";
+  return "__asm { " + AsmStmt + " }";
 }
 
 } // namespace neverd

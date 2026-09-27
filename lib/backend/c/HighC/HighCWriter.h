@@ -32,6 +32,7 @@
 #include <utility>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 namespace neverd {
@@ -41,6 +42,29 @@ namespace neverd {
 /// HighCFuncWriter.cpp (function rendering), HighCStmtWriter.cpp (statement
 /// rendering), HighCExprWriter.cpp (general expression rendering), and
 /// HighCExprBinOp.cpp (binary operator rendering).
+/// An unbuffered stream that forwards to a replaceable target.  HighCWriter
+/// renders a function body into a buffer first, so the declarations it prints
+/// before the body can follow what the body actually names.
+class RedirectableStream : public llvm::raw_ostream {
+public:
+  explicit RedirectableStream(llvm::raw_ostream &Target) : Target(&Target) {
+    SetUnbuffered();
+  }
+  /// Send output to \p Next; returns the previous target.
+  llvm::raw_ostream *redirect(llvm::raw_ostream *Next) {
+    flush();
+    std::swap(Target, Next);
+    return Next;
+  }
+
+private:
+  void write_impl(const char *Ptr, size_t Size) override {
+    Target->write(Ptr, Size);
+  }
+  uint64_t current_pos() const override { return Target->tell(); }
+  llvm::raw_ostream *Target;
+};
+
 class HighCWriter {
 public:
   static llvm::StringRef
@@ -49,7 +73,7 @@ public:
   sourceParameterType(const SourceParameterTypeHint &Parameter);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
-      : OS(OS), Opts(Opts), Dbg(Dbg),
+      : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
@@ -127,8 +151,10 @@ public:
   void writeTryBodyUnisolated(const std::vector<HighStmt> &Stmts, int Indent);
   bool isCompilerEHConstant(const HighExpr &Val) const;
   void emitIndent(int Indent);
+  /// Emit a possibly multi-line rendered statement, indenting every line.
+  void emitRenderedStatement(int Indent, llvm::StringRef Text);
   void collectGotoTargets(const std::vector<HighStmt> &Stmts,
-                         bool DropTrailingGoto = false);
+                          bool DropTrailingGoto = false);
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
@@ -235,7 +261,11 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
-  std::optional<std::string> namedFrameSlot(const HighExpr &E) const;
+  /// The C lvalue for the frame slot at \p E.  When \p Access is narrower
+  /// than the slot, the access goes through the slot's address so it
+  /// changes only those bytes.
+  std::optional<std::string> namedFrameSlot(const HighExpr &E,
+                                            const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
   std::string formatReturnExpr(const HighExpr &Expr);
@@ -333,7 +363,18 @@ public:
   std::string renderBinOp(const HighExpr &E, int ParentPrec);
 
   //--- State ---
+  RedirectableStream Out;
   llvm::raw_ostream &OS;
+  /// Declarations skipped because copy forwarding or liveness predicted the
+  /// name would not be printed.  Emitted if the rendered body names it anyway.
+  /// The C text is built only then: a name that is never printed may carry a
+  /// type with no C spelling (a scalable vector temporary).
+  struct DeferredDecl {
+    TypeRef Type;
+    /// Exact declaration text; when empty, `declarationToC(Type, name)`.
+    std::string Text;
+  };
+  std::map<std::string, DeferredDecl> DeferredDecls;
   CEmitterOptions Opts;
   DebugContext *Dbg;
   bool GuardAnalysisOnlyFunctions;
@@ -343,6 +384,19 @@ public:
 
   std::set<std::string> ExternFuncs;
   std::map<std::string, const HighFunc *> DefinedFuncs;
+  /// True when \p Name is a function this file or the image defines, not a
+  /// libc routine of the same name (ntoskrnl implements its own `setjmp`).
+  /// A call to the function being written when it is printed as void: its
+  /// result cannot be assigned.
+  bool isVoidSelfCall(const HighExpr &E) const {
+    return E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None &&
+           CurrentFunc && InferredVoid &&
+           (E.CallAddr == CurrentFunc->Entry ||
+            (!E.CallTarget.empty() && E.CallTarget == CurrentFunc->Name));
+  }
+  bool isOwnFunctionName(llvm::StringRef Name,
+                         const std::vector<HighFunc> &Funcs);
+  std::optional<std::set<std::string>> ImageFunctionNames;
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
@@ -355,6 +409,10 @@ public:
   std::map<std::string, std::set<std::string>> ExternalCallSources;
   std::map<std::string, std::string> ExternalSourceIdentifiers;
   std::set<va_t> GotoTargets;
+  /// How many gotos target each address in the current function.
+  std::map<va_t, unsigned> GotoTargetUses;
+  /// Labels already printed in the current function; C allows each once.
+  std::set<va_t> EmittedLabels;
   bool HasCIntrinsics = false;
   bool NeedsX87FpremHelpers = false;
   bool NeedsX64SyscallHelper = false;
@@ -421,12 +479,26 @@ public:
     TypeRef CallType;
     bool AddressTaken = false;
     bool UsedAsMemory = false;
+    /// For a slot that shares bytes with others: the name of the storage that
+    /// holds them all, this slot's byte offset in it, and its access through
+    /// it, `(*(T *)((char *)&outer + k))`.
+    std::string Outer;
+    int64_t OuterOffset = 0;
+    std::string Interior;
+    /// When no single slot covers an overlapping group, the group's first
+    /// slot declares the storage as this many bytes.
+    int64_t RegionBytes = 0;
+    /// Width of the narrowest store at this displacement, 0 if none.
+    unsigned MinStoreSize = 0;
   };
   std::map<int64_t, NamedFrameSlot> FrameSlots;
   /// Slot identity retained for value forwarding and catch-object recovery
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
   std::map<std::string, int64_t> FrameAliases;
+  /// Slot names and interior accesses that share storage with another slot;
+  /// copy forwarding must not treat them as independent variables.
+  std::set<std::string> SharedFrameStorage;
   /// A dynamic address derived from a known frame alias uses the same byte
   /// storage as fixed stack accesses. Keep the alias displacement at uses.
   bool ProjectFrameAliasesIntoStorage = false;
@@ -443,6 +515,11 @@ public:
   std::map<std::string, TypeRef> PointerArgDestTypes;
   /// Single-use call / image-global loads print at the use, not as a temp.
   std::map<std::string, const HighExpr *> ValueForward;
+  /// Values assigned to each printed variable name in the current function,
+  /// built on first use by incrementBaseMatchesAddr.
+  mutable std::unordered_map<std::string, std::vector<const HighExpr *>>
+      AssignedValuesByName;
+  mutable bool AssignedValuesIndexed = false;
   /// Multi-use ATL ctor dests print as the this operand (`&var`), not `v21`.
   std::map<std::string, const HighExpr *> CtorThisForward;
   /// Assigned call results that stay as temps take a Get* stem (`FontColor`).
@@ -454,6 +531,11 @@ public:
   };
   std::map<const HighStmt *, CxxThrowPrint> CxxThrowPrints;
   std::map<const HighEHClause *, std::string> CxxCatchNames;
+  /// Frame displacement of each named catch object's slot.
+  std::map<int64_t, std::string> CxxCatchObjectDisps;
+  /// Catch objects in scope at the statement being written: the clauses
+  /// whose bodies enclose it.
+  std::vector<std::string> OpenCatchObjects;
   std::set<std::string> HiddenCxxCtorIdentifiers;
   std::set<std::string> CatchAliasTemps;
   /// Destinations whose only assignments are Undef / unknown copies of those.

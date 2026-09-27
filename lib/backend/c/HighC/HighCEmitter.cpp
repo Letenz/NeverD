@@ -421,9 +421,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       if (E.MemoryOrdering != NdMemoryOrdering::None)
         AtomicStoreTypes.insert({Type, E.MemoryOrdering, E.MemoryAddressSpace});
     }
-    for (const ExprPtr &Operand : E.Operands)
-      if (Operand)
-        Visit(*Operand);
+    // An indirect call prints its callee expression too.
+    E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
   };
 
   for (const HighFunc &Func : Funcs) {
@@ -1071,6 +1070,29 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
   }
 }
 
+bool HighCWriter::isOwnFunctionName(llvm::StringRef Name,
+                                    const std::vector<HighFunc> &Funcs) {
+  llvm::StringRef Clean = Name;
+  Clean.consume_front("_");
+  for (const HighFunc &F : Funcs) {
+    llvm::StringRef Own = F.Name;
+    if (Own == Name || Own == Clean || (Own.consume_front("_") && Own == Clean))
+      return true;
+  }
+  if (!Opts.Image)
+    return false;
+  if (!ImageFunctionNames) {
+    ImageFunctionNames.emplace();
+    for (const Symbol &Sym : Opts.Image->Symbols)
+      if (Sym.IsFunc && !Sym.Name.empty() &&
+          !Opts.Image->findImportAt(Sym.Addr))
+        ImageFunctionNames->insert(Sym.Name);
+  }
+  return ImageFunctionNames->count(Name.str()) ||
+         ImageFunctionNames->count(Clean.str()) ||
+         ImageFunctionNames->count(("_" + Clean).str());
+}
+
 void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // Block copy/dispose helpers can carry the runtime's opaque
   // _Block_object pointer in debug types. Block.h does not declare this
@@ -1130,10 +1152,14 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     Headers.insert("string.h");
 
   std::set<std::string> CallTargets;
+  // An analysis-only function prints as ordinary C too, so its callees need
+  // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
 
   for (auto &Name : CallTargets) {
+    if (isOwnFunctionName(Name, Funcs))
+      continue;
     if (const char *Hdr = libc::headerFor(Name))
       Headers.insert(Hdr);
   }
@@ -1181,6 +1207,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   }
 
   std::set<std::string> CallTargets;
+  // An analysis-only function prints as ordinary C too, so its callees need
+  // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
 
@@ -1244,8 +1272,6 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         !Prototyped.insert(Definition->second).second)
       continue;
     const auto &Function = *Definition->second;
-    if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(Function))
-      continue;
     CurrentFunc = &Function;
     Analysis = {};
     runAnalysisPasses(Function);
@@ -1276,8 +1302,6 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   for (const auto *Function : SourceAddressDefinitions) {
     if (!Prototyped.insert(Function).second)
       continue;
-    if (GuardAnalysisOnlyFunctions && isAnalysisOnlyFunction(*Function))
-      continue;
     std::string Declarator = functionIdentifier(*Function) + "(";
     const size_t ParamCount = emittedParamCount(*Function);
     for (size_t I = 0; I < ParamCount; ++I) {
@@ -1299,7 +1323,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
          DefinedFunctionsByIdentifier.count(Name)) &&
         !SourceRuntimeLinkNames.count(Name))
       continue;
-    if (libc::isKnownFunction(Name))
+    if (libc::isKnownFunction(Name) && !isOwnFunctionName(Name, Funcs))
       continue;
     if (CIntrinsicNames.count(Name))
       continue;
@@ -1307,7 +1331,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')
       CleanName = CleanName.substr(1);
-    if (libc::isKnownFunction(CleanName))
+    if (libc::isKnownFunction(CleanName) && !isOwnFunctionName(Name, Funcs))
       continue;
 
     ExternFuncs.insert(Name);

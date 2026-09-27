@@ -11,6 +11,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/MsvcAtlCallee.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/debug/PDBLoader.h"
@@ -50,6 +51,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -10227,7 +10229,12 @@ TEST(HighCPointerAddresses, UnusedCallAliasesUndeclaredStore) {
   Ret.RetVal = HighExpr::makeLoad(SlotAddr, NdType::makeInt(8));
   Func.Body = {Call, Store, Ret};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("= GetLength(arg0)"), std::string::npos) << Source;
+  // The call's result is the value the store writes.  The store fills only
+  // four of the eight bytes the return reads, so it may write the frame bytes
+  // instead of assigning the whole slot.
+  EXPECT_TRUE(Source.find("= GetLength(arg0)") != std::string::npos ||
+              Source.find(", GetLength(arg0))") != std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("\n    GetLength(arg0);"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v99"), std::string::npos) << Source;
 }
@@ -32349,7 +32356,14 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   EXPECT_NE(Store->Address.find("frame_base"), std::string_view::npos)
       << Source;
   EXPECT_NE(Load.find("frame_base"), std::string_view::npos) << Source;
-  const auto LoadArgs = lastCallArguments(Load, "neverd_mem_load_2");
+  // The byte load is the outermost helper call on its line; the helper's
+  // index depends on which other memory types the function uses.
+  const std::string LoadLine(Load);
+  std::smatch LoadHelper;
+  ASSERT_TRUE(std::regex_search(LoadLine, LoadHelper,
+                                std::regex(R"(neverd_mem_load_\d+)")))
+      << Source;
+  const auto LoadArgs = lastCallArguments(Load, LoadHelper.str());
   ASSERT_TRUE(LoadArgs.has_value()) << Source;
   ASSERT_EQ(LoadArgs->size(), 1u) << Source;
   EXPECT_EQ(Store->Address, (*LoadArgs)[0]) << Source;
@@ -38134,3 +38148,1597 @@ int main(void) {
 }
 
 } // namespace
+
+BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Seg;
+  Seg.Name = ".text";
+  Seg.VA = Entry;
+  Seg.Size = Bytes.size();
+  Seg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Seg.Data = std::move(Bytes);
+  Img.Segments.push_back(std::move(Seg));
+  return Img;
+}
+
+TEST(HighCPointerAddresses, StateSnapshotPrintsSourceIntrinsics) {
+  // RtlXSave/RtlXRestore in ntoskrnl: the source used _xsave64/_xrstor64.
+  // Both routes print that operation instead of aborting the function.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x0f, 0xae, 0x21, // xsave64  [rcx]
+                                     0x48, 0x0f, 0xae, 0x29, // xrstor64 [rcx]
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_xsave64((void *)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("_xrstor64((void *)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("hardware x87/SSE/AVX state"), std::string::npos)
+      << HighC;
+  EXPECT_EQ(HighC.find("__asm__"), std::string::npos) << HighC;
+
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(LLVMC.find("xsave64"), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("xrstor64"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, OddWideIntegerSlicePrintsBitInt) {
+  // A YMM value shifted by one 32-bit lane leaves a 224-bit slice.
+  EXPECT_EQ(typeToC(NdType::makeInt(28, false)), "unsigned _BitInt(224)");
+  EXPECT_EQ(typeToC(NdType::makeInt(32, false)), "uint256_t");
+  EXPECT_THROW(typeToC(NdType::makeInt(65, false)), std::invalid_argument);
+}
+
+// Caller keeps RDX live across a direct call, as MSVC /LTCG does when the
+// callee provably leaves RDX alone (PsGetJobSilo -> PspGetJobSilo).
+std::vector<uint8_t> callerKeepsRdxAcrossCall(std::vector<uint8_t> Callee) {
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28, // sub  rsp, 28h
+                               0xe8, 0x17, 0x00, 0x00,
+                               0x00,             // call +0x17 -> 0x140001020
+                               0x48, 0x89, 0x02, // mov  [rdx], rax
+                               0x48, 0x83, 0xc4, 0x28, // add  rsp, 28h
+                               0xc3};                  // ret
+  Code.resize(0x20, 0xcc);
+  Code.insert(Code.end(), Callee.begin(), Callee.end());
+  return Code;
+}
+
+TEST(HighCPointerAddresses, CalleeThatLeavesRdxAloneKeepsCallerValue) {
+  constexpr va_t Entry = 0x140001000;
+  const auto Code = callerKeepsRdxAcrossCall({0x48, 0x8b, 0xc1, // mov rax, rcx
+                                              0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("arg1"), std::string::npos) << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(LLVMC.find("unknown"), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("arg1"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, CalleeThatWritesRdxOrCallsIndirectlyClobbersIt) {
+  constexpr va_t Entry = 0x140001000;
+  for (const auto &Callee : std::vector<std::vector<uint8_t>>{
+           {0x33, 0xd2, 0x48, 0x8b, 0xc1, 0xc3}, // xor edx, edx; mov rax, rcx
+           {0xff, 0xd1, 0xc3},                   // call rcx
+           {0x31, 0xc0, 0x0f, 0xa2, 0xc3}}) {    // xor eax, eax; cpuid
+    const std::string HighC = highcOnlyFunction(
+        makeCodeFixture(Entry, callerKeepsRdxAcrossCall(Callee)), Entry);
+    EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+  }
+}
+
+TEST(HighCPointerAddresses, LoopCarriedCopyKeepsItsEntryAssignment) {
+  // `for (p = arg0; !check(p); p = p->next) ; return p;` with p in RCX across
+  // a callee that leaves RCX alone.  The variable has two definitions, so
+  // HighC must not rename its uses to the in-loop load temp.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub  rsp, 28h
+                               0x48, 0x85, 0xc9,             // test rcx, rcx
+                               0x75, 0x08,                   // jne  0x140001011
+                               0x33, 0xc0,                   // xor  eax, eax
+                               0x48, 0x83, 0xc4, 0x28,       // add  rsp, 28h
+                               0xc3,                         // ret
+                               0xcc,                         // int3
+                               0xe8, 0x8a, 0x00, 0x00, 0x00, // call 0x1400010A0
+                               0x84, 0xc0,                   // test al, al
+                               0x75, 0x09,                   // jne  0x140001023
+                               0x48, 0x8b, 0x89, 0x78, 0x04,
+                               0x00, 0x00,       // mov  rcx, [rcx+478h]
+                               0xeb, 0xee,       // jmp  0x140001011
+                               0x48, 0x8b, 0xc1, // mov  rax, rcx
+                               0xeb, 0xe3};      // jmp  0x14000100B
+  Code.resize(0xA0, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x85, 0xc9, // test rcx, rcx
+                           0x0f, 0x94, 0xc0, // sete al
+                           0xc3});           // ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  std::smatch Call;
+  ASSERT_TRUE(
+      std::regex_search(HighC, Call, std::regex(R"(sub_1400010A0\((\w+)\))")))
+      << HighC;
+  const std::string Carried = Call[1].str();
+  EXPECT_NE(HighC.find(Carried + " = arg0;"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, Win64RdiSurvivesAnUnsummarizedCall) {
+  // The callee makes an indirect call, so only the Win64 ABI speaks for it:
+  // RDI is nonvolatile there, unlike SysV.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {0x57,                         // push rdi
+                               0x48, 0x83, 0xec, 0x20,       // sub  rsp, 20h
+                               0x48, 0x8b, 0xf9,             // mov  rdi, rcx
+                               0xe8, 0x13, 0x00, 0x00, 0x00, // call 0x140001020
+                               0x48, 0x8b, 0x07,             // mov  rax, [rdi]
+                               0x48, 0x83, 0xc4, 0x20,       // add  rsp, 20h
+                               0x5f,                         // pop  rdi
+                               0xc3};                        // ret
+  Code.resize(0x20, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x83, 0xec, 0x28, // sub  rsp, 28h
+                           0xff, 0xd2,             // call rdx
+                           0x48, 0x83, 0xc4, 0x28, // add  rsp, 28h
+                           0xc3});                 // ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("arg0"), std::string::npos) << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(LLVMC.find("RDI"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, UnwindlessNonLeafCandidateIsNotAFunction) {
+  // In an x64 PE with an exception directory every function that moves RSP
+  // or calls has a RUNTIME_FUNCTION.  An unnamed candidate without one is
+  // data or a chunk remnant; an unnamed leaf without one stays a function.
+  constexpr va_t Primary = 0x140001000;
+  constexpr va_t NonLeaf = 0x140001010;
+  constexpr va_t Leaf = 0x140001020;
+  std::vector<uint8_t> Code = {0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), {0x54, 0x5c, 0xc3}); // push rsp; pop rsp; ret
+  Code.resize(0x20, 0xcc);
+  Code.insert(Code.end(), {0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3}); // mov eax,1
+  BinaryImage Img = makeCodeFixture(Primary, Code);
+  Img.KnownCodeRanges.push_back({Primary, Primary + 1});
+
+  auto DispositionOf = [&](va_t Entry) {
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    Opts.OnlyFunctionEntries.insert(Entry);
+    auto Result = Pipeline().run(Img, Ctx, Opts);
+    for (const auto &Audit : Result.FunctionAudits)
+      if (Audit.Entry == Entry)
+        return Audit.Disposition;
+    return PipelineFunctionDisposition::Candidate;
+  };
+  EXPECT_EQ(DispositionOf(NonLeaf),
+            PipelineFunctionDisposition::RejectedUnwindlessNonLeaf);
+  EXPECT_EQ(DispositionOf(Leaf), PipelineFunctionDisposition::Accepted);
+}
+
+TEST(HighCPointerAddresses, CalleeBranchToAnotherFunctionCountsItsWrites) {
+  // The callee leaves through `jz g` to a separate function that clears
+  // EDX.  The CFG keeps no block for g, so the summary must follow it.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001040;
+  std::vector<uint8_t> Code = callerKeepsRdxAcrossCall(
+      {0x48, 0x85, 0xc9,                   // test rcx, rcx
+       0x0f, 0x84, 0x17, 0x00, 0x00, 0x00, // jz   0x140001040
+       0x48, 0x8b, 0xc1,                   // mov  rax, rcx
+       0xc3});                             // ret
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x33, 0xd2, 0xc3}); // xor edx, edx; ret
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "clear_rdx";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, CalleeByteArgumentPassesOnlyTheByte) {
+  // IoReleaseVpbSpinLock: `mov dl, cl` forwards a KIRQL to a callee that
+  // reads only DL.  The untouched upper RDX bytes are not an argument.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001040;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x88, 0xca,                   // mov dl, cl
+                               0xb9, 0x09, 0x00, 0x00, 0x00, // mov ecx, 9
+                               0xe8, 0x30, 0x00, 0x00, 0x00, // call G
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x0f, 0xb6, 0xc2, 0xc3}); // movzx eax, dl; ret
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "take_irql";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("take_irql("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("arg0"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, Win64TwelveArgumentCallKeepsEveryStackArgument) {
+  // HalGetScatterGatherList passes twelve arguments; the outgoing-area
+  // stores span far more ops than a short scan window.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001080;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x68}; // sub rsp, 68h
+  for (uint8_t K = 0; K < 8; ++K) // mov qword [rsp+20h+8K], K+1
+    Code.insert(Code.end(),
+                {0x48, 0xc7, 0x44, 0x24, static_cast<uint8_t>(0x20 + 8 * K),
+                 static_cast<uint8_t>(K + 1), 0x00, 0x00, 0x00});
+  Code.insert(Code.end(), {0x33, 0xc9,       // xor ecx, ecx
+                           0x33, 0xd2,       // xor edx, edx
+                           0x45, 0x33, 0xc0, // xor r8d, r8d
+                           0x45, 0x33, 0xc9, // xor r9d, r9d
+                           0xe8});           // call G
+  const int32_t Rel = static_cast<int32_t>(G - (Entry + Code.size() + 4));
+  for (int I = 0; I < 4; ++I)
+    Code.push_back(static_cast<uint8_t>(Rel >> (8 * I)));
+  Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x68, 0xc3}); // add rsp; ret
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0x60, // mov rax, [rsp+60h]
+                           0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "twelve";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("twelve(0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8)"),
+            std::string::npos)
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, SlotStoredOnTwoPathsKeepsItsDeclaration) {
+  // Two calls on two paths store different arguments to the same outgoing
+  // slot; neither store may be forwarded away from its declaration.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001080;
+  std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x38,       // sub rsp, 38h
+      0x85, 0xc9,                   // test ecx, ecx
+      0x74, 0x0f,                   // jz +15
+      0x4c, 0x89, 0x4c, 0x24, 0x20, // mov [rsp+20h], r9
+      0xe8, 0x6e, 0x00, 0x00, 0x00, // call G (0x140001080)
+      0x48, 0x83, 0xc4, 0x38, 0xc3, // add rsp, 38h; ret
+      0x4c, 0x89, 0x44, 0x24, 0x20, // mov [rsp+20h], r8
+      0xe8, 0x5f, 0x00, 0x00, 0x00, // call G
+      0x48, 0x83, 0xc4, 0x38, 0xc3};
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0x28, // mov rax, [rsp+28h]
+                           0x48, 0x03, 0xc1,             // add rax, rcx
+                           0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "five";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  for (size_t Pos = HighC.find("var_m"); Pos != std::string::npos;
+       Pos = HighC.find("var_m", Pos + 1)) {
+    const std::string Name = HighC.substr(
+        Pos, HighC.find_first_not_of("var_m0123456789ABCDEF", Pos) - Pos);
+    EXPECT_NE(HighC.find(" " + Name + ";"), std::string::npos)
+        << Name << " is used but not declared\n"
+        << HighC;
+  }
+  EXPECT_NE(HighC.find("five(arg0, "), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, EntryLoopHeaderKeepsLoopCarriedValue) {
+  // PopDirectedDripsFlushDeviceQueue: the first instruction is the loop
+  // header, so the entry block has a back-edge predecessor.  The loop must
+  // still advance RCX to [rcx+8] and test it on every iteration, including
+  // the first.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x85, 0xc9, // loop: test rcx, rcx
+                                     0x74, 0x15,       // je ret
+                                     0x48, 0x8b, 0x01, // mov rax, [rcx]
+                                     0x48, 0x3b, 0xc1, // cmp rax, rcx
+                                     0x75, 0x06,       // jne fail
+                                     0x48, 0x8b, 0x49, 0x08, // mov rcx, [rcx+8]
+                                     0xeb, 0xed,             // jmp loop
+                                     0xb9, 0x03, 0x00, 0x00,
+                                     0x00,       // fail: mov ecx, 3
+                                     0xcd, 0x29, // int 29h
+                                     0xc3};      // ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__fastfail(3)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("+ 8)"), std::string::npos) << HighC;
+  // The null test comes before the first load.
+  const size_t Body = HighC.find("neverd.entry");
+  ASSERT_NE(Body, std::string::npos) << HighC;
+  EXPECT_LT(HighC.find("== 0", Body), HighC.find("neverd_mem_load_", Body))
+      << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(LLVMC.find("+ 8"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, LabeledCodeAfterFastFailKeepsItsLabel) {
+  // VmpFreeMemoryRanges: the loop exit lands on code placed right after
+  // `int 29h`.  That code is reached by a goto, so its label must survive.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x53,             // push rbx
+                                     0x48, 0x8b, 0xd9, // mov rbx, rcx
+                                     0x48, 0x8b, 0x0b, // loop: mov rcx, [rbx]
+                                     0x48, 0x3b, 0xcb, // cmp rcx, rbx
+                                     0x74, 0x15,       // je done
+                                     0x48, 0x39, 0x59, 0x08, // cmp [rcx+8], rbx
+                                     0x75, 0x08,             // jne fail
+                                     0x48, 0x8b, 0x09,       // mov rcx, [rcx]
+                                     0x48, 0x89, 0x0b,       // mov [rbx], rcx
+                                     0xeb, 0xea,             // jmp loop
+                                     0xb9, 0x03, 0x00, 0x00,
+                                     0x00,             // fail: mov ecx, 3
+                                     0xcd, 0x29,       // int 29h
+                                     0x48, 0x8b, 0xc3, // done: mov rax, rbx
+                                     0x5b,             // pop rbx
+                                     0xc3};            // ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__fastfail(3)"), std::string::npos) << HighC;
+  std::smatch Goto;
+  for (auto It = HighC.cbegin(); std::regex_search(
+           It, HighC.cend(), Goto, std::regex(R"(goto (L_\w+);)"));
+       It = Goto.suffix().first)
+    EXPECT_NE(HighC.find(Goto[1].str() + ":"), std::string::npos)
+        << Goto[1] << " has no label\n"
+        << HighC;
+  EXPECT_NE(HighC.find("return"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, SummarizedCalleeNeverGetsGuessedPassThrough) {
+  // The callee reads no register, so its summary publishes no argument.
+  // RCX holds 0xC9 at the call; it must not print as the caller's arg0.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001040;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28, // sub rsp, 28h
+                               0x48, 0x89, 0x0d, 0xf5, 0x0f, 0x00,
+                               0x00, // mov [rip+..], rcx
+                               0xb9, 0xc9, 0x00, 0x00, 0x00, // mov ecx, 0C9h
+                               0xe8, 0x2b, 0x00, 0x00, 0x00, // call G
+                               0x48, 0x83, 0xc4, 0x28, 0xc3};
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x33, 0xc0, 0xc3}); // xor eax, eax; ret
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "reads_nothing";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("reads_nothing("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("reads_nothing(arg0)"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, SwitchCasesSharingATargetShareOneBody) {
+  // FsRtlIsTotalDeviceFailure: three compares branch to one `xor al, al`.
+  // Each case used to get its own copy of that block, label included.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x85, 0xc9,                         // test ecx, ecx
+      0x79, 0x1c,                         // jns zero
+      0x81, 0xf9, 0x3f, 0x00, 0x00, 0xc0, // cmp ecx, 0C000003Fh
+      0x74, 0x14,                         // je zero
+      0x81, 0xf9, 0x9c, 0x00, 0x00, 0xc0, // cmp ecx, 0C000009Ch
+      0x74, 0x0c,                         // je zero
+      0x81, 0xf9, 0x70, 0x04, 0x00, 0xc0, // cmp ecx, 0C0000470h
+      0x74, 0x04,                         // je zero
+      0xb0, 0x01,                         // mov al, 1
+      0xc3,                               // ret
+      0xcc,                               // int3
+      0x32, 0xc0,                         // zero: xor al, al
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  std::smatch Label;
+  std::map<std::string, int> Labels;
+  for (auto It = HighC.cbegin();
+       std::regex_search(It, HighC.cend(), Label, std::regex(R"((L_\w+):)"));
+       It = Label.suffix().first)
+    EXPECT_EQ(++Labels[Label[1].str()], 1) << Label[1] << "\n" << HighC;
+  // The switch value is a signed 32-bit NTSTATUS; either hex spelling of the
+  // case value is the same C constant after conversion.
+  EXPECT_NE(HighC.find("C000003F"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("C0000470"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, ControlAndDebugRegisterMovesUseMsvcIntrinsics) {
+  // Inlined KeRaiseIrql/KeLowerIrql move CR8; ntoskrnl rejected ~2000
+  // functions while these MOVs had no lift.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x44, 0x0f, 0x20, 0xc0, // mov rax, cr8
+                                     0x44, 0x0f, 0x22, 0xc1, // mov cr8, rcx
+                                     0x0f, 0x21, 0xfa,       // mov rdx, dr7
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__readcr8()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__writecr8("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__readdr(7)"), std::string::npos) << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(LLVMC.find("cr8"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, DisplacedInvpcidDescriptorPrintsSourceIntrinsic) {
+  // ntoskrnl builds the INVPCID descriptor on the stack: [rsp+20h].  The
+  // address is computed, never loaded, and the source spelling is printed.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x38, // sub rsp, 38h
+                                     0x66, 0x0f, 0x38, 0x82,
+                                     0x44, 0x24, 0x20, // invpcid rax, [rsp+20h]
+                                     0x48, 0x83, 0xc4, 0x38, // add rsp, 38h
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_invpcid("), std::string::npos) << HighC;
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(LLVMC.find("invpcid"), std::string::npos) << LLVMC;
+}
+
+TEST(HighCPointerAddresses, Win64StackArgumentsFollowTheHomeArea) {
+  // ObReferenceObjectByHandle-style call: RCX passes the caller's own first
+  // argument through, [rsp+20h]/[rsp+28h] carry arguments 4 and 5.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x48,       // sub rsp, 48h
+      0x48, 0x8d, 0x44, 0x24, 0x40, // lea rax, [rsp+40h]
+      0x48, 0xc7, 0x44, 0x24, 0x28, 0x00, 0x00, 0x00, 0x00, // mov [rsp+28h], 0
+      0x48, 0x89, 0x44, 0x24, 0x20,       // mov [rsp+20h], rax
+      0x41, 0xb9, 0x01, 0x00, 0x00, 0x00, // mov r9d, 1
+      0x41, 0xb8, 0x02, 0x00, 0x00, 0x00, // mov r8d, 2
+      0xba, 0x03, 0x00, 0x00, 0x00,       // mov edx, 3
+      0xe8, 0x13, 0x00, 0x00, 0x00,       // call 0x140001040
+      0x48, 0x83, 0xc4, 0x48,             // add rsp, 48h
+      0xc3};
+  Code.resize(0x40, 0xcc);
+  // The callee reads all six arguments.
+  Code.insert(Code.end(), {0x48, 0x8b, 0xc1,             // mov rax, rcx
+                           0x48, 0x03, 0xc2,             // add rax, rdx
+                           0x49, 0x03, 0xc0,             // add rax, r8
+                           0x49, 0x03, 0xc1,             // add rax, r9
+                           0x48, 0x03, 0x44, 0x24, 0x28, // add rax, [rsp+28h]
+                           0x48, 0x03, 0x44, 0x24, 0x30, // add rax, [rsp+30h]
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // The call may be assigned, returned or a statement; the prototype
+  // `sub_140001040()` has no arguments and does not match.
+  std::smatch Call;
+  ASSERT_TRUE(std::regex_search(
+      HighC, Call, std::regex(R"(sub_140001040\(([^;)][^;]*)\);)")))
+      << HighC;
+  const std::string Args = Call[1].str();
+  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 5) << HighC;
+  EXPECT_EQ(Args.rfind("arg0", 0), 0u) << HighC;
+  EXPECT_EQ(Args.substr(Args.size() - 1), "0") << HighC;
+}
+
+TEST(HighCPointerAddresses, SummarizedCalleeTakesOnlyTheArgumentsItReads) {
+  // PsGetJobSilo -> PspGetJobSilo: the caller holds two arguments, the
+  // callee reads RCX only, so the call passes one.
+  constexpr va_t Entry = 0x140001000;
+  const auto Code = callerKeepsRdxAcrossCall({0x48, 0x8b, 0xc1, // mov rax, rcx
+                                              0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("sub_140001020(arg0);"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, Win64StackArgumentsThroughEntryStackCopy) {
+  // RtlQueryPackageIdentity: `mov r11, rsp` addresses the outgoing slots,
+  // and slot 5 is never written.  All seven arguments are still passed; the
+  // local at [r11-18h], stored before the call and read after, is not one.
+  constexpr va_t Entry = 0x140001000;
+  std::vector<uint8_t> Code = {
+      0x4c, 0x8b, 0xdc,                               // mov r11, rsp
+      0x48, 0x83, 0xec, 0x58,                         // sub rsp, 58h
+      0x49, 0xc7, 0x43, 0xe8, 0x00, 0x00, 0x00, 0x00, // mov [r11-18h], 0
+      0x49, 0x8d, 0x43, 0xe8,                         // lea rax, [r11-18h]
+      0x49, 0x89, 0x43, 0xd8,                         // mov [r11-28h], rax
+      0x49, 0xc7, 0x43, 0xc8, 0x05, 0x00, 0x00, 0x00, // mov [r11-38h], 5
+      0xe8, 0x1c, 0x00, 0x00, 0x00,                   // call 0x140001040
+      0x48, 0x8b, 0x44, 0x24, 0x40,                   // mov rax, [rsp+40h]
+      0x48, 0x83, 0xc4, 0x58,                         // add rsp, 58h
+      0xc3};
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0xc1,             // mov rax, rcx
+                           0x48, 0x03, 0xc2,             // add rax, rdx
+                           0x49, 0x03, 0xc0,             // add rax, r8
+                           0x49, 0x03, 0xc1,             // add rax, r9
+                           0x48, 0x03, 0x44, 0x24, 0x28, // add rax, [rsp+28h]
+                           0x48, 0x03, 0x44, 0x24, 0x30, // add rax, [rsp+30h]
+                           0x48, 0x03, 0x44, 0x24, 0x38, // add rax, [rsp+38h]
+                           0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // The call may be assigned, returned or a statement; the prototype
+  // `sub_140001040()` has no arguments and does not match.
+  std::smatch Call;
+  ASSERT_TRUE(std::regex_search(
+      HighC, Call, std::regex(R"(sub_140001040\(([^;)][^;]*)\);)")))
+      << HighC;
+  const std::string Args = Call[1].str();
+  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 6) << HighC;
+  EXPECT_NE(Args.find(", 5, "), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, GotoToSmallReturnTailBecomesItsCopy) {
+  // MmIsWriteErrorFatal: many paths `goto` a shared `result = 1; return`.
+  MedVar Result;
+  Result.Kind = MedVar::Temp;
+  Result.Id = 7;
+  Result.Size = 8;
+  auto Assign = [&](uint64_t Value, va_t Addr) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Addr;
+    S.Dst = HighExpr::makeVar(Result);
+    S.Val = HighExpr::makeConst(Value, 8);
+    return S;
+  };
+  auto Return = [&](va_t Addr) {
+    HighStmt S;
+    S.Kind = StmtKind::Return;
+    S.Addr = Addr;
+    S.RetVal = HighExpr::makeVar(Result);
+    return S;
+  };
+  HighStmt Goto;
+  Goto.Kind = StmtKind::Goto;
+  Goto.Addr = 0x1010;
+  Goto.GotoTarget = 0x1040;
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = 0x1000;
+  If.Cond = HighExpr::makeConst(1, 1);
+  If.Body.push_back(Goto);
+
+  std::vector<HighStmt> Body;
+  Body.push_back(If);
+  Body.push_back(Assign(0, 0x1020));
+  Body.push_back(Return(0x1030));
+  Body.push_back(Assign(1, 0x1040));
+  Body.push_back(Return(0x1044));
+
+  ASSERT_TRUE(duplicateSmallReturnTails(Body));
+  ASSERT_EQ(Body[0].Body.size(), 2u);
+  EXPECT_EQ(Body[0].Body[0].Kind, StmtKind::Assign);
+  EXPECT_EQ(Body[0].Body[0].Val->ConstVal, 1u);
+  EXPECT_EQ(Body[0].Body[1].Kind, StmtKind::Return);
+  // The labelled original is kept for any other path.
+  ASSERT_EQ(Body.size(), 5u);
+  EXPECT_EQ(Body[3].Addr, 0x1040u);
+
+  // A direct call assignment is copied too: each path still runs exactly
+  // one copy of it.
+  std::vector<HighStmt> Calling = Body;
+  Calling[0].Body = {Goto};
+  Calling[3].Val = HighExpr::makeCall("f", 0x2000, {});
+  EXPECT_TRUE(duplicateSmallReturnTails(Calling));
+
+  // A tail that stores to memory is not duplicated.
+  std::vector<HighStmt> Storing = Body;
+  Storing[0].Body = {Goto};
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.Addr = 0x1040;
+  Store.StoreAddr = HighExpr::makeConst(0x5000, 8);
+  Store.StoreVal = HighExpr::makeConst(1, 8);
+  Storing[3] = Store;
+  EXPECT_FALSE(duplicateSmallReturnTails(Storing));
+}
+
+namespace {
+HighStmt condGoto(va_t Addr, uint64_t Cond, va_t Target) {
+  HighStmt Goto;
+  Goto.Kind = StmtKind::Goto;
+  Goto.GotoTarget = Target;
+  HighStmt If;
+  If.Kind = StmtKind::If;
+  If.Addr = Addr;
+  If.Cond = HighExpr::makeConst(Cond, 1);
+  If.Body.push_back(Goto);
+  return If;
+}
+HighStmt assignConst(va_t Addr, int Id, uint64_t Value) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = Id;
+  V.Size = 8;
+  HighStmt S;
+  S.Kind = StmtKind::Assign;
+  S.Addr = Addr;
+  S.Dst = HighExpr::makeVar(V);
+  S.Val = HighExpr::makeConst(Value, 8);
+  return S;
+}
+HighStmt returnAt(va_t Addr) {
+  HighStmt S;
+  S.Kind = StmtKind::Return;
+  S.Addr = Addr;
+  return S;
+}
+HighStmt gotoAt(va_t Addr, va_t Target) {
+  HighStmt S;
+  S.Kind = StmtKind::Goto;
+  S.Addr = Addr;
+  S.GotoTarget = Target;
+  return S;
+}
+unsigned countGotos(const std::vector<HighStmt> &Body) {
+  unsigned N = 0;
+  walkStmts(Body, [&](const HighStmt &S) { N += S.Kind == StmtKind::Goto; });
+  return N;
+}
+} // namespace
+
+TEST(HighCPointerAddresses, ReduceGotosHoistsLabelFromTheMiddleOfAnElse) {
+  // if (c) { goto M; } else { a = 1; M: b = 2; } return;
+  HighStmt IfElse;
+  IfElse.Kind = StmtKind::IfElse;
+  IfElse.Addr = 0x1000;
+  IfElse.Cond = HighExpr::makeConst(1, 1);
+  IfElse.Body.push_back(gotoAt(0x1004, 0x1020));
+  IfElse.ElseBody = {assignConst(0x1010, 1, 1), assignConst(0x1020, 2, 2)};
+  std::vector<HighStmt> Body = {IfElse, returnAt(0x1030)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body.size(), 3u);
+  // `if (!c) { a = 1; }` then the hoisted `M: b = 2;`.
+  EXPECT_EQ(Body[0].Kind, StmtKind::If);
+  ASSERT_TRUE(Body[0].Cond);
+  EXPECT_EQ(Body[0].Cond->Op, NdOp::BOOL_NOT);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+  EXPECT_EQ(Body[1].Addr, 0x1020u);
+  EXPECT_EQ(Body[2].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, ReturnTailContinuesPastTheEndOfAnArm) {
+  // if (c) goto E; ...; if (d) { E: r = 1; } else { r = 2; } return r;
+  HighStmt Arm;
+  Arm.Kind = StmtKind::IfElse;
+  Arm.Addr = 0x1020;
+  Arm.Cond = HighExpr::makeConst(1, 1);
+  Arm.Body = {assignConst(0x1030, 1, 1)};
+  Arm.ElseBody = {assignConst(0x1040, 1, 2)};
+  MedVar R;
+  R.Kind = MedVar::Temp;
+  R.Id = 1;
+  R.Size = 8;
+  HighStmt Ret = returnAt(0x1050);
+  Ret.RetVal = HighExpr::makeVar(R);
+  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1030),
+                                assignConst(0x1010, 2, 0), Arm, Ret};
+  ASSERT_TRUE(duplicateSmallReturnTails(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  // The jump became `r = 1; return r;`.
+  ASSERT_EQ(Body[0].Body.size(), 2u);
+  EXPECT_EQ(Body[0].Body[0].Val->ConstVal, 1u);
+  EXPECT_EQ(Body[0].Body[1].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, ReduceGotosUnrotatesAJumpIntoTheLoopTest) {
+  // goto X; do { a = 1; X: } while (c); return;
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = 0x1020;
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Addr = 0x1010;
+  Loop.Cond = HighExpr::makeConst(1, 1);
+  Loop.Body = {assignConst(0x1010, 1, 1), Anchor};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1020), Loop, returnAt(0x1030)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body.size(), 2u);
+  EXPECT_EQ(Body[0].Kind, StmtKind::While);
+  ASSERT_TRUE(Body[0].Cond);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+}
+
+TEST(HighCPointerAddresses, LoopifyTurnsNestedBackJumpsIntoContinue) {
+  // x = 0; X: x = 1; if (c) goto X; return;
+  std::vector<HighStmt> Body = {assignConst(0x1000, 1, 0),
+                                assignConst(0x1010, 1, 1),
+                                condGoto(0x1018, 1, 0x1010), returnAt(0x1020)};
+  ASSERT_TRUE(loopifyBackwardGotos(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body.size(), 3u);
+  ASSERT_EQ(Body[1].Kind, StmtKind::While);
+  EXPECT_FALSE(Body[1].Cond);
+  const auto &Loop = Body[1].Body;
+  ASSERT_EQ(Loop.size(), 3u);
+  EXPECT_EQ(Loop[1].Body[0].Kind, StmtKind::Continue);
+  EXPECT_EQ(Loop[2].Kind, StmtKind::Break);
+  EXPECT_EQ(Body[2].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, LoopifyRefusesJumpsFromNestedLoopsOrOutside) {
+  // A goto X inside an inner loop cannot become `continue`.
+  HighStmt Inner;
+  Inner.Kind = StmtKind::While;
+  Inner.Cond = HighExpr::makeConst(1, 1);
+  Inner.Body.push_back(condGoto(0x1018, 1, 0x1010));
+  std::vector<HighStmt> Nested = {assignConst(0x1010, 1, 1), Inner,
+                                  returnAt(0x1020)};
+  EXPECT_FALSE(loopifyBackwardGotos(Nested));
+  EXPECT_EQ(countGotos(Nested), 1u);
+  // A jump to X from before X keeps the label as a plain label.
+  std::vector<HighStmt> Outside = {
+      condGoto(0x1000, 1, 0x1010), assignConst(0x1010, 1, 1),
+      condGoto(0x1018, 1, 0x1010), returnAt(0x1020)};
+  EXPECT_FALSE(loopifyBackwardGotos(Outside));
+  EXPECT_EQ(countGotos(Outside), 2u);
+}
+
+TEST(HighCPointerAddresses, GroupSwitchCasesSharesBodiesAndDropsDefaultCopies) {
+  // switch (v) { case 1: goto A; case 2: goto D; case 3: goto A;
+  //   case 4: goto N; case 5: return; case 6: return; default: goto D; }
+  // N: x = 0; return;  A: x = 1; return;  D: x = 2; return;
+  MedVar Sel;
+  Sel.Kind = MedVar::Temp;
+  Sel.Id = 9;
+  Sel.Size = 4;
+  HighStmt Sw;
+  Sw.Kind = StmtKind::Switch;
+  Sw.Addr = 0x1000;
+  Sw.SwitchExpr = HighExpr::makeVar(Sel);
+  auto addCase = [&](uint64_t Value, HighStmt Body) {
+    SwitchCase C;
+    C.Value = Value;
+    C.Body.push_back(std::move(Body));
+    Sw.Cases.push_back(std::move(C));
+  };
+  addCase(1, gotoAt(0, 0x1040));
+  addCase(2, gotoAt(0, 0x1050));
+  addCase(3, gotoAt(0, 0x1040));
+  addCase(4, gotoAt(0, 0x1030));
+  addCase(5, returnAt(0));
+  addCase(6, returnAt(0));
+  Sw.DefaultBody.push_back(gotoAt(0, 0x1050));
+  std::vector<HighStmt> Body = {Sw,
+                                assignConst(0x1030, 1, 0),
+                                returnAt(0x1038),
+                                assignConst(0x1040, 1, 1),
+                                returnAt(0x1048),
+                                assignConst(0x1050, 1, 2),
+                                returnAt(0x1058)};
+  ASSERT_TRUE(groupSwitchCases(Body));
+  const auto &Cases = Body[0].Cases;
+  // Case 2 does what default does; 1 and 3 share one goto; 4 leaves the
+  // switch for the next statement; 5 and 6 share one return.
+  ASSERT_EQ(Cases.size(), 5u);
+  EXPECT_EQ(Cases[0].Value, 1u);
+  EXPECT_TRUE(Cases[0].FallsThrough);
+  EXPECT_EQ(Cases[1].Value, 3u);
+  ASSERT_EQ(Cases[1].Body.size(), 1u);
+  EXPECT_EQ(Cases[1].Body[0].GotoTarget, 0x1040u);
+  EXPECT_EQ(Cases[2].Value, 4u);
+  ASSERT_EQ(Cases[2].Body.size(), 1u);
+  EXPECT_EQ(Cases[2].Body[0].Kind, StmtKind::Break);
+  EXPECT_EQ(Cases[3].Value, 5u);
+  EXPECT_TRUE(Cases[3].FallsThrough);
+  EXPECT_EQ(Cases[4].Value, 6u);
+  EXPECT_EQ(Cases[4].Body[0].Kind, StmtKind::Return);
+  EXPECT_EQ(countGotos(Body), 2u);
+}
+
+TEST(HighCPointerAddresses, GroupSwitchCasesKeepsLabeledCaseBodies) {
+  // A case whose goto is itself a label target keeps its own body.
+  MedVar Sel;
+  Sel.Kind = MedVar::Temp;
+  Sel.Id = 9;
+  Sel.Size = 4;
+  HighStmt Sw;
+  Sw.Kind = StmtKind::Switch;
+  Sw.Addr = 0x1000;
+  Sw.SwitchExpr = HighExpr::makeVar(Sel);
+  for (uint64_t V : {1u, 2u}) {
+    SwitchCase C;
+    C.Value = V;
+    C.Body.push_back(gotoAt(V == 1 ? 0x1010 : 0x1018, 0x1040));
+    Sw.Cases.push_back(std::move(C));
+  }
+  std::vector<HighStmt> Body = {gotoAt(0x0ff0, 0x1018),    Sw,
+                                assignConst(0x1030, 1, 0), returnAt(0x1038),
+                                assignConst(0x1040, 1, 1), returnAt(0x1048)};
+  groupSwitchCases(Body);
+  const auto &Cases = Body[1].Cases;
+  ASSERT_EQ(Cases.size(), 2u);
+  EXPECT_FALSE(Cases[0].FallsThrough);
+  EXPECT_FALSE(Cases[1].FallsThrough);
+  ASSERT_EQ(Cases[1].Body.size(), 1u);
+  EXPECT_EQ(Cases[1].Body[0].Addr, 0x1018u);
+}
+
+TEST(HighCPointerAddresses, ReduceGotosMergesJumpsToOneTarget) {
+  // if (a) goto L; if (b) goto L; x = 0; return; L: x = 1; return;
+  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1040),
+                                condGoto(0x1008, 0, 0x1040),
+                                assignConst(0x1010, 1, 0), returnAt(0x1018),
+                                assignConst(0x1040, 1, 1), returnAt(0x1048)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body));
+  // The two jumps merge, and the single-use block moves into the `if`.
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body[0].Kind, StmtKind::If);
+  ASSERT_TRUE(Body[0].Cond);
+  EXPECT_EQ(Body[0].Cond->Op, NdOp::BOOL_OR);
+  ASSERT_EQ(Body[0].Body.size(), 2u);
+  EXPECT_EQ(Body[0].Body[0].Val->ConstVal, 1u);
+  EXPECT_EQ(Body[0].Body[1].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, ReduceGotosBuildsIfElseAroundJoin) {
+  // if (c) goto X; a = 1; J: b = 2; return; X: a = 3; goto J;
+  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1040),
+                                assignConst(0x1008, 1, 1),
+                                assignConst(0x1010, 2, 2), returnAt(0x1018),
+                                assignConst(0x1040, 1, 3),
+                                gotoAt(0x1048, 0x1010)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body[0].Kind, StmtKind::IfElse);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+  EXPECT_EQ(Body[0].Body[0].Val->ConstVal, 3u);
+  ASSERT_EQ(Body[0].ElseBody.size(), 1u);
+  EXPECT_EQ(Body[0].ElseBody[0].Val->ConstVal, 1u);
+  // The join stays after the if/else, reached by both arms.
+  ASSERT_GE(Body.size(), 3u);
+  EXPECT_EQ(Body[1].Addr, 0x1010u);
+}
+
+TEST(HighCPointerAddresses, ReduceGotosKeepsLabelOfRemovedGoto) {
+  // A goto that is itself a branch target keeps its label when a transform
+  // drops it:  if (c) goto J;  if (d) { a = 1; K: goto J; }  J: return;
+  // and another path jumps to K.
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Addr = 0x1008;
+  Inner.Cond = HighExpr::makeConst(0, 1);
+  Inner.Body = {assignConst(0x1010, 1, 1), gotoAt(0x1018, 0x1030)};
+  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1018), Inner,
+                                returnAt(0x1030)};
+  reduceSingleUseGotos(Body);
+  bool LabelKept = false;
+  bool JumpKept = false;
+  walkStmts(Body, [&](const HighStmt &S) {
+    LabelKept |= S.Addr == 0x1018;
+    JumpKept |= S.Kind == StmtKind::Goto && S.GotoTarget == 0x1018;
+  });
+  EXPECT_TRUE(!JumpKept || LabelKept);
+}
+
+TEST(HighCPointerAddresses, ReduceGotosFormsLoopFromBackEdge) {
+  // H: a = 1; if (c) goto H; return;   ->   do { a = 1; } while (c); return;
+  std::vector<HighStmt> Body = {assignConst(0x1000, 1, 1),
+                                condGoto(0x1008, 1, 0x1000),
+                                returnAt(0x1010)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_EQ(Body[0].Kind, StmtKind::DoWhile);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Return);
+
+  // A break inside the range would rebind to the new loop: no loop.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  std::vector<HighStmt> WithBreak = {assignConst(0x1000, 1, 1), Break,
+                                     condGoto(0x1008, 1, 0x1000),
+                                     returnAt(0x1010)};
+  reduceSingleUseGotos(WithBreak);
+  EXPECT_EQ(countGotos(WithBreak), 1u);
+}
+
+TEST(HighCPointerAddresses, TsxEndAndTestDoNotClobberRax) {
+  // XEND writes no register and XTEST writes only ZF; a live RAX survives.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc1, // mov rax, rcx
+                                     0x0f, 0x01, 0xd5, // xend
+                                     0x0f, 0x01, 0xd6, // xtest
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_xend()"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("= _xend()"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(return .*arg0)")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, InterruptFlagChangesDoNotClobberRax) {
+  // Zw* stubs save RSP in RAX and then execute CLI.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xc1, // mov rax, rcx
+                                     0xfa,             // cli
+                                     0xfb,             // sti
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_disable();"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("= _disable()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("return arg0;"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, DirectionFlagIsClearOnEntry) {
+  // Both x86 ABIs enter with DF clear, so REP MOVSB copies forward only.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x8b, 0xf9, // mov rdi, rcx
+                                     0x48, 0x8b, 0xf2, // mov rsi, rdx
+                                     0x49, 0x8b, 0xc8, // mov rcx, r8
+                                     0xf3, 0xa4,       // rep movsb
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("rep movsb"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("std"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, RepeatedCpuidAndRdtscDoNotRedeclareLocals) {
+  // KiDetectHardwareFeatures-style code runs CPUID and RDTSC more than once.
+  // Each expansion declares its scratch local, so it needs its own scope.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x53,                         // push rbx
+                                     0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+                                     0x0f, 0xa2,                   // cpuid
+                                     0x44, 0x8b, 0xc0, // mov r8d, eax
+                                     0xb8, 0x07, 0x00, 0x00, 0x00, // mov eax, 7
+                                     0x33, 0xc9,       // xor ecx, ecx
+                                     0x0f, 0xa2,       // cpuid
+                                     0x41, 0x03, 0xc0, // add eax, r8d
+                                     0x44, 0x8b, 0xc8, // mov r9d, eax
+                                     0x0f, 0x31,       // rdtsc
+                                     0x44, 0x8b, 0xd0, // mov r10d, eax
+                                     0x0f, 0x31,       // rdtsc
+                                     0x41, 0x03, 0xc2, // add eax, r10d
+                                     0x41, 0x03, 0xc1, // add eax, r9d
+                                     0xcd, 0x2c,       // int 2Ch
+                                     0x5b,             // pop rbx
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("{{"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__cpuid(cpuInfo, 1)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__cpuid(cpuInfo, 7)"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__int2c()"), std::string::npos) << HighC;
+  // Every scratch declaration opens a block of its own.
+  for (const char *Decl : {"int cpuInfo[4];", "uint64_t _tsc ="}) {
+    size_t Count = 0;
+    for (size_t Pos = HighC.find(Decl); Pos != std::string::npos;
+         Pos = HighC.find(Decl, Pos + 1)) {
+      ++Count;
+      const size_t LineStart = HighC.rfind('\n', Pos);
+      const size_t PrevLine = HighC.rfind('\n', LineStart - 1);
+      EXPECT_EQ(
+          llvm::StringRef(HighC).slice(PrevLine + 1, LineStart).trim().str(),
+          "{")
+          << Decl << " is not the first statement of a block\n"
+          << HighC;
+    }
+    EXPECT_EQ(Count, 2u) << Decl << "\n" << HighC;
+  }
+}
+
+// Syntax-check C as the ntoskrnl scorer does: MSVC target, `__asm` blocks.
+static void expectCompilesForMsvc(const std::string &Function) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-msvc", "c", SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-msvc", "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream OS(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    // The typed memory helpers call memcpy, which the MSVC CRT's <string.h>
+    // declares; the freestanding test target has no CRT headers.
+    OS << "#include <stddef.h>\n#include <stdint.h>\n"
+          "void *memcpy(void *, const void *, size_t);\n"
+       << Function;
+  }
+  llvm::SmallVector<llvm::StringRef, 10> Arguments{
+      Compiler,
+      "-fsyntax-only",
+      "--target=x86_64-pc-windows-msvc",
+      "-fms-extensions",
+      "-ffreestanding",
+      "-x",
+      "c",
+      "-std=gnu17",
+      SourcePath};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int Status = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(Status, 0) << Error
+                       << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "")
+                       << "\n"
+                       << Function;
+}
+
+TEST(HighCPointerAddresses, DebugServiceInterruptKeepsItsRegisterInputs) {
+  // DebugService2: `int 2Dh` reads the service code in EAX and its arguments
+  // in RCX, RDX, R8 and R9, and returns a status in RAX.  The moves and loads
+  // that set them up are the whole function; none may be dropped.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x66, 0x44, 0x8b, 0x4a, 0x02, // mov r9w, [rdx+2]
+      0x4c, 0x8b, 0x42, 0x08,       // mov r8, [rdx+8]
+      0x66, 0x8b, 0x11,             // mov dx, [rcx]
+      0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+      0xb8, 0x02, 0x00, 0x00, 0x00, // mov eax, 2
+      0xcd, 0x2d,                   // int 2Dh
+      0xcc,                         // int 3
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  for (const std::string *Source : {&HighC, &LLVMC}) {
+    EXPECT_NE(Source->find("int 2Dh"), std::string::npos) << *Source;
+    for (const char *Reg : {"rax", "rcx", "rdx", "r8", "r9"}) {
+      const std::string Name = std::string("_") + Reg;
+      EXPECT_NE(Source->find("uint64_t " + Name + " = "), std::string::npos)
+          << Name << "\n"
+          << *Source;
+      EXPECT_NE(Source->find(std::string("mov ") + Reg + ", " + Name),
+                std::string::npos)
+          << Name << "\n"
+          << *Source;
+    }
+    EXPECT_EQ(Source->find("{{"), std::string::npos) << *Source;
+  }
+  // The service code and the pointer loads survive.
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(_rax = .*\b2\)+;)")))
+      << HighC;
+  EXPECT_NE(HighC.find("+ 8)"), std::string::npos) << HighC;
+  // The service status in RAX is the function's return value.
+  for (const std::string *Source : {&HighC, &LLVMC})
+    EXPECT_EQ(Source->find("void sub_140001000"), std::string::npos) << *Source;
+  // `mov r9w` keeps the caller's upper R9 bytes, so R9 is a parameter.
+  EXPECT_NE(HighC.find("arg3"), std::string::npos) << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, MsrAccessKeepsSelectorAndValue) {
+  // RDMSR reads the MSR selected by ECX into EDX:EAX; WRMSR writes EDX:EAX
+  // to the MSR selected by ECX.  Neither the selector nor the written value
+  // may be dropped.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0xb9, 0x84, 0x00, 0x00, 0xc0, // mov ecx, 0C0000084h
+      0x0f, 0x32,                   // rdmsr
+      0x25, 0xff, 0xfe, 0xff, 0xff, // and eax, 0FFFFFEFFh
+      0x0f, 0x30,                   // wrmsr
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("0xC0000084"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(__readmsr\(\S)")))
+      << HighC;
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(__writemsr\(\S.*, )")))
+      << HighC;
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"((-257|0xFFFFFEFF))")))
+      << HighC;
+  EXPECT_EQ(HighC.find("__readmsr()"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("__writemsr()"), std::string::npos) << HighC;
+  // LLVM-to-C spells the i32 selector 0xC0000084 as unsigned or signed.
+  EXPECT_TRUE(std::regex_search(
+      LLVMC, std::regex(R"(__readmsr\(((\(uint32_t\))?3221225604|-1073741692)\))")))
+      << LLVMC;
+  EXPECT_TRUE(std::regex_search(
+      LLVMC,
+      std::regex(R"(__writemsr\(((\(uint32_t\))?3221225604|-1073741692), )")))
+      << LLVMC;
+  expectCompilesForMsvc("#include <intrin.h>\n" + HighC);
+}
+
+TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
+  // A double result reaches the shared `ret` through an XMM0 merge; RAX is
+  // never written.  The rounding path must survive and the float compare must
+  // reinterpret the register bits rather than convert them numerically.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x66, 0x0f, 0x57, 0xc9,       // xorpd xmm1, xmm1
+      0x66, 0x0f, 0x2e, 0xc1,       // ucomisd xmm0, xmm1
+      0x76, 0x0a,                   // jbe ret
+      0xf2, 0x48, 0x0f, 0x2d, 0xc8, // cvtsd2si rcx, xmm0
+      0xf2, 0x48, 0x0f, 0x2a, 0xc1, // cvtsi2sd xmm0, rcx
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
+      << HighC;
+  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+      << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(return __builtin_bit_cast\(double)")))
+      << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, IntegerVectorIntrinsicsTakeVectorOperands) {
+  // HighC carries vector registers as integers; `_mm*_shuffle_epi8` takes
+  // and returns __m128i/__m256i, and the VEX.256 form is the _mm256 spelling.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x66, 0x0f, 0x38, 0x00, 0xc1, // pshufb xmm0, xmm1
+      0xf3, 0x0f, 0x7f, 0x01,       // movdqu [rcx], xmm0
+      0xc4, 0xe2, 0x75, 0x00, 0xda, // vpshufb ymm3, ymm1, ymm2
+      0xc5, 0xfe, 0x7f, 0x1a,       // vmovdqu [rdx], ymm3
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("_mm_shuffle_epi8(__builtin_bit_cast(__m128i, "),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(HighC.find("_mm256_shuffle_epi8(__builtin_bit_cast(__m256i, "),
+            std::string::npos)
+      << HighC;
+  expectCompilesForMsvc("#include <intrin.h>\n" + HighC);
+}
+
+TEST(HighCPointerAddresses, SelfLoopTargetKeepsItsLabel) {
+  // `jmp $` spins forever.  The branch into it must stay a jump to a label
+  // whose statement loops, not fall through or reference a missing label.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x85, 0xc9, // test ecx, ecx
+                                     0x74, 0x03, // je spin
+                                     0x31, 0xc0, // xor eax, eax
+                                     0xc3,       // ret
+                                     0xeb, 0xfe, // spin: jmp spin
+                                     0xcc};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_TRUE(std::regex_search(
+      HighC,
+      std::regex(
+          R"re((L_140001007:\s*goto L_140001007;|while \(1\) \{\s*\}))re")))
+      << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, EarlyReturnFoldKeepsTakenEdgeTarget) {
+  // `jne rest; ...; ret; other: ...; jmp head; rest: ...; ret`.  Folding the
+  // early return into `if (eq) { ...; return; }` must still send the taken
+  // edge to `rest`, not fall into the unrelated `other` block (which loops
+  // back to the head).
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x39, 0x0a,       // 00: cmp [rdx], rcx
+      0x75, 0x09,             // 03: jne other (0x0e)
+      0x48, 0x89, 0x12,       // 05: head: mov [rdx], rdx
+      0x48, 0x3b, 0x0a,       // 08: cmp rcx, [rdx]
+      0x75, 0x0a,             // 0b: jne rest (0x17)
+      0xc3,                   // 0d: ret
+      0x48, 0x89, 0x0a,       // 0e: other: mov [rdx], rcx
+      0x48, 0x89, 0x51, 0x08, // 11: mov [rcx+8], rdx
+      0xeb, 0xee,             // 15: jmp head (0x05)
+      0x48, 0x89, 0x4a, 0x10, // 17: rest: mov [rdx+16], rcx
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // The store at `rest` must stay reachable: it may not follow an
+  // unconditional goto or return without a label of its own.
+  const size_t Store = HighC.find("+ 16)");
+  ASSERT_NE(Store, std::string::npos) << HighC;
+  const size_t LineStart = HighC.rfind('\n', Store);
+  const size_t PrevStart = HighC.rfind('\n', LineStart - 1);
+  const std::string Prev =
+      HighC.substr(PrevStart + 1, LineStart - PrevStart - 1);
+  EXPECT_EQ(Prev.find("goto "), std::string::npos) << HighC;
+  EXPECT_EQ(Prev.find("return"), std::string::npos) << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, PopfRestoresSystemFlags) {
+  // `pushfq; cli; ...; popfq` restores the interrupt flag through the saved
+  // EFLAGS image.  The system flags are not modelled as registers, so the
+  // save must read the machine flags and the restore must write them back.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x9c,             // pushfq
+                                     0xfa,             // cli
+                                     0x48, 0x8b, 0x01, // mov rax, [rcx]
+                                     0x9d,             // popfq
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  const std::string LLVMC =
+      llvmcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__readeflags()"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("__writeeflags("), std::string::npos) << HighC;
+  EXPECT_LT(HighC.find("__readeflags()"), HighC.find("_disable()")) << HighC;
+  EXPECT_LT(HighC.find("_disable()"), HighC.find("__writeeflags(")) << HighC;
+  EXPECT_NE(LLVMC.find("__readeflags()"), std::string::npos) << LLVMC;
+  EXPECT_NE(LLVMC.find("__writeeflags("), std::string::npos) << LLVMC;
+  expectCompilesForMsvc("#include <intrin.h>\n" + HighC);
+}
+
+TEST(HighCPointerAddresses,
+     GotoTargetKeepsItsLabelWhenItsFramePointerWriteIsFolded) {
+  // RtlUnicodeStringCat: a cold block after the return only sets EBP to a
+  // status and jumps to the join, whose PHI takes that constant.  Dropping
+  // the folded RBP write must not drop the label the loop's goto names.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x33, 0xed,       // xor ebp, ebp
+                                     0x48, 0x8b, 0x01, // loop: mov rax, [rcx]
+                                     0x48, 0x85, 0xc0, // test rax, rax
+                                     0x74, 0x12,       // je cold
+                                     0x48, 0x3b, 0xc2, // cmp rax, rdx
+                                     0x74, 0x07,       // je join
+                                     0x48, 0x8b, 0xc8, // mov rcx, rax
+                                     0xff, 0xc5,       // inc ebp
+                                     0xeb, 0xec,       // jmp loop
+                                     0x8b, 0xc5,       // join: mov eax, ebp
+                                     0xc3,             // ret
+                                     0xcc, 0xcc, 0xcc, //
+                                     0xbd, 0x0d, 0x00,
+                                     0x00, 0xc0,  // cold: mov ebp, 0C000000Dh
+                                     0xeb, 0xf3}; // jmp join
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  const size_t Status = HighC.find("0xC000000D");
+  ASSERT_NE(Status, std::string::npos) << HighC;
+  // When the cold block keeps its label, the label comes first: a goto to it
+  // must still run the status copy before reaching the join.
+  if (const size_t Label = HighC.find("L_14000101C:");
+      Label != std::string::npos)
+    EXPECT_LT(Label, Status) << HighC;
+  std::smatch Goto;
+  for (auto It = HighC.cbegin(); std::regex_search(
+           It, HighC.cend(), Goto, std::regex(R"(goto (L_\w+);)"));
+       It = Goto.suffix().first)
+    EXPECT_NE(HighC.find(Goto[1].str() + ":"), std::string::npos)
+        << Goto[1] << " has no label\n"
+        << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, ByteStoreInsideAWiderSlotChangesThatSlot) {
+  // MiGetPage: a byte stored at -0x82 lies inside the eight bytes read back
+  // from -0x84.  It is not a separate variable; the read must see it.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+      0x48, 0x89, 0x4c, 0x24, 0x08, // mov [rsp+8], rcx
+      0x88, 0x54, 0x24, 0x0a,       // mov [rsp+0Ah], dl
+      0x48, 0x8d, 0x4c, 0x24, 0x08, // lea rcx, [rsp+8]
+      0xe8, 0x0b, 0x00, 0x00, 0x00, // call use
+      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+      0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+      0xc3,                         // ret
+      0xc3};                        // use: ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // Either the slot is one object written through its interior, or (the
+  // frame address escapes to `use`) the frame stays bytes and the byte store
+  // and the eight-byte read address the same storage.
+  const bool Interior = std::regex_search(
+      HighC,
+      std::regex(R"(\(\*\(int8_t \*\)\(\(char \*\)&var_\w+ \+ 2\)\) =)"));
+  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
+                          HighC.find("+ 10), arg1)") != std::string::npos &&
+                          HighC.find("+ 8));") != std::string::npos;
+  EXPECT_TRUE(Interior || FrameBytes) << HighC;
+  EXPECT_FALSE(std::regex_search(HighC, std::regex(R"(\bint8_t var_\w+;)")))
+      << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, NarrowStoreToAWiderSlotChangesOnlyItsBytes) {
+  // A byte stored at the start of an eight-byte slot leaves the other seven
+  // bytes as they were; the later eight-byte read sees both.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+      0x48, 0x89, 0x4c, 0x24, 0x08, // mov [rsp+8], rcx
+      0x88, 0x54, 0x24, 0x08,       // mov [rsp+8], dl
+      0x48, 0x8d, 0x4c, 0x24, 0x08, // lea rcx, [rsp+8]
+      0xe8, 0x0b, 0x00, 0x00, 0x00, // call use
+      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+      0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+      0xc3,                         // ret
+      0xc3};                        // use: ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // Either a byte write through the slot, or frame bytes that the byte store
+  // and the eight-byte read share.
+  const bool Interior = std::regex_search(
+      HighC, std::regex(R"(\(\*\(int8_t \*\)&var_\w+\) =)"));
+  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
+                          HighC.find("+ 8), arg1)") != std::string::npos &&
+                          HighC.find("+ 8));") != std::string::npos;
+  EXPECT_TRUE(Interior || FrameBytes) << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, PartlyOverlappingSlotsShareOneStorage) {
+  // MiGetPage: eight bytes at -0x84 and eight bytes at -0x82 share six bytes.
+  // Neither covers the other, so both live in one declared region.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x38,       // sub rsp, 38h
+      0x48, 0x89, 0x4c, 0x24, 0x08, // mov [rsp+8], rcx
+      0x48, 0x89, 0x54, 0x24, 0x0a, // mov [rsp+0Ah], rdx
+      0x48, 0x8d, 0x4c, 0x24, 0x08, // lea rcx, [rsp+8]
+      0xe8, 0x0b, 0x00, 0x00, 0x00, // call use
+      0x48, 0x8b, 0x44, 0x24, 0x08, // mov rax, [rsp+8]
+      0x48, 0x83, 0xc4, 0x38,       // add rsp, 38h
+      0xc3,                         // ret
+      0xc3};                        // use: ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // Either one ten-byte region holding both slots, or frame bytes that both
+  // stores and the read share.
+  const bool Region =
+      std::regex_search(HighC, std::regex(R"(\buint8_t var_\w+\[10\];)")) &&
+      std::regex_search(
+          HighC,
+          std::regex(R"(\(\*\(int64_t \*\)\(\(char \*\)&var_\w+ \+ 2\)\) =)"));
+  const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
+                          HighC.find("+ 10), arg1)") != std::string::npos &&
+                          HighC.find("+ 8));") != std::string::npos;
+  EXPECT_TRUE(Region || FrameBytes) << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, ConditionalJumpIntoAnotherFunctionIsATailCall) {
+  // KiCallUserMode: `jne KiKernelSysretExit` continues in another function.
+  // That edge is a tail call, not a goto to a label this function lacks.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001010;
+  std::vector<uint8_t> Code = {0x85, 0xc9, // test ecx, ecx
+                               0x0f, 0x85, 0x08, 0x00, 0x00,
+                               0x00,       // jne G
+                               0x33, 0xc0, // xor eax, eax
+                               0xc3};      // ret
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+                           0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "sysret_exit";
+  Img.Symbols.push_back(GSym);
+  // Both functions have `.pdata` ranges, which a single-function run still
+  // consults for entries.
+  Img.KnownCodeRanges = {{Entry, Entry + 11}, {G, G + 6}};
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("sysret_exit("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("goto"), std::string::npos) << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, FastFailEndsTheColdPath) {
+  // CmpDrainDelayDerefContext: a cold path ends with `int 29h; int3`, and
+  // the bytes after it belong to another function.  __fastfail never
+  // returns, so that code must not be pulled into this function.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x85, 0xc9,                   // test ecx, ecx
+      0x75, 0x03,                   // jne cold
+      0x31, 0xc0,                   // xor eax, eax
+      0xc3,                         // ret
+      0xb9, 0x03, 0x00, 0x00, 0x00, // cold: mov ecx, 3
+      0xcd, 0x29,                   // int 29h
+      0xcc,                         // int3
+      0x85, 0xd2,                   // (other function) test edx, edx
+      0x75, 0x05,                   // jne other_ret
+      0xb8, 0x77, 0x00, 0x00, 0x00, // mov eax, 77h
+      0xc3};                        // other_ret: ret
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("__fastfail(3)"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("0x77"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("119"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, ExRaiseStatusEndsTheColdPath) {
+  // sub_14022B640: a cold path ends with `call ExRaiseStatus; int3`, and the
+  // bytes after it belong to another function.  ExRaiseStatus is
+  // DECLSPEC_NORETURN, so that code must not be pulled into this function.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Raise = 0x140001040;
+  std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+      0x85, 0xc9,                   // test ecx, ecx
+      0x75, 0x07,                   // jne cold
+      0x31, 0xc0,                   // xor eax, eax
+      0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+      0xc3,                         // ret
+      0xb9, 0x9a, 0x00, 0x00, 0xc0, // cold: mov ecx, 0C000009Ah
+      0xe8, 0x27, 0x00, 0x00, 0x00, // call ExRaiseStatus
+      0xcc,                         // int3
+      0x85, 0xd2,                   // (other function) test edx, edx
+      0x75, 0x05,                   // jne other_ret
+      0xb8, 0x77, 0x00, 0x00, 0x00, // mov eax, 77h
+      0xc3};                        // other_ret: ret
+  Code.resize(Raise - Entry, 0xcc);
+  Code.push_back(0xc3);
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol RaiseSym = Symbol::makeFunc(Raise);
+  RaiseSym.Name = "ExRaiseStatus";
+  Img.Symbols.push_back(RaiseSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_NE(HighC.find("ExRaiseStatus("), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("119"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("0x77"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, GuardDispatchPassesOnlyRegistersTheCallerSet) {
+  // ObpRemoveObjectRoutine: an indirect call through _guard_dispatch_icall
+  // sets only RCX.  The dispatcher jumps to RAX with whatever registers it
+  // is given, but R8 and R9 here are just the caller's incoming values, so
+  // they are neither arguments of the call nor parameters of the caller.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Dispatch = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x01,             // mov rax, [rcx]
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x10, 0x00, 0x00, 0x00, // call dispatch
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Dispatch - Entry, 0xcc);
+  Code.insert(Code.end(), {0xff, 0xe0}); // jmp rax
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol DSym = Symbol::makeFunc(Dispatch);
+  DSym.Name = "_guard_dispatch_icall";
+  Img.Symbols.push_back(DSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("arg1"), std::string::npos) << HighC;
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(guard_dispatch_icall\([^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, DocumentedKernelRoutineTakesItsPrototypeArguments) {
+  // ExReleaseResourceLite(PERESOURCE) takes one argument.  Its body here
+  // also reads R8, which liveness alone would call a third parameter; the
+  // WDK prototype decides both the definition and every call.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Routine = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+                               0xe8, 0x13, 0x00, 0x00, 0x00, // call routine
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(Routine - Entry, 0xcc);
+  Code.insert(Code.end(), {0x4c, 0x89, 0xc0, // mov rax, r8
+                           0x48, 0x01, 0xc8, // add rax, rcx
+                           0xc3});
+  auto Build = [&] {
+    BinaryImage Img = makeCodeFixture(Entry, Code);
+    Symbol RSym = Symbol::makeFunc(Routine);
+    RSym.Name = "ExReleaseResourceLite";
+    Img.Symbols.push_back(RSym);
+    return Img;
+  };
+  const std::string Caller = highcOnlyFunction(Build(), Entry);
+  EXPECT_EQ(Caller.find("arg1"), std::string::npos) << Caller;
+  EXPECT_TRUE(std::regex_search(
+      Caller, std::regex(R"(ExReleaseResourceLite\([^,()]+\))")))
+      << Caller;
+  const std::string Definition = highcOnlyFunction(Build(), Routine);
+  EXPECT_NE(Definition.find("ExReleaseResourceLite(int64_t arg0)"),
+            std::string::npos)
+      << Definition;
+}
+
+TEST(HighCPointerAddresses, OrWithAllOnesDoesNotReadTheRegister) {
+  // PspStorageEmptyArrayNonReadonly: `or ecx, -1` sets ECX to all ones.
+  // After an unknown call ECX holds no defined value, so the OR must not
+  // read it.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28, // sub rsp, 28h
+                                     0x85, 0xd2,             // test edx, edx
+                                     0x74, 0x06,             // je skip
+                                     0xff, 0x15, 0x00, 0x10,
+                                     0x00, 0x00,             // call [rip+1000h]
+                                     0x83, 0xc9, 0xff,       // skip: or ecx, -1
+                                     0x8b, 0xc1,             // mov eax, ecx
+                                     0x48, 0x83, 0xc4, 0x28, // add rsp, 28h
+                                     0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("unknown"), std::string::npos) << HighC;
+  EXPECT_TRUE(HighC.find("-1") != std::string::npos ||
+              HighC.find("0xFFFFFFFF") != std::string::npos)
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {
+  // A value stored in the outgoing argument area is not an argument of a
+  // call whose WDK prototype takes one parameter (ExAcquireFastMutexUnsafe).
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t Routine = 0x140001030;
+  std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x48,       // sub rsp, 48h
+      0x48, 0x89, 0x54, 0x24, 0x20, // mov [rsp+20h], rdx
+      0x48, 0x89, 0x54, 0x24, 0x28, // mov [rsp+28h], rdx
+      0x48, 0x8b, 0x49, 0x08,       // mov rcx, [rcx+8]
+      0xe8, 0x19, 0x00, 0x00, 0x00, // call routine
+      0x48, 0x83, 0xc4, 0x48,       // add rsp, 48h
+      0xc3};
+  Code.resize(Routine - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0xc1, 0xc3}); // mov rax, rcx; ret
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol RSym = Symbol::makeFunc(Routine);
+  RSym.Name = "ExAcquireFastMutexUnsafe";
+  Img.Symbols.push_back(RSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_TRUE(std::regex_search(
+      HighC, std::regex(R"(ExAcquireFastMutexUnsafe\([^,()]+\))")))
+      << HighC;
+}
+
+TEST(HighCPointerAddresses, RecursiveCallMatchesItsOwnSignature) {
+  // MiFindActualFaultingPte: a value stored into the outgoing argument area
+  // before a recursive call is not an extra argument; the call takes the
+  // parameters of the definition it calls.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = {
+      0x48, 0x83, 0xec, 0x48,                      // sub rsp, 48h
+      0x48, 0xc7, 0x44, 0x24, 0x20, 0x05, 0, 0, 0, // mov qword [rsp+20h], 5
+      0x48, 0x85, 0xc9,                            // test rcx, rcx
+      0x74, 0x08,                                  // je done
+      0x48, 0x8b, 0x09,                            // mov rcx, [rcx]
+      0xe8, 0xe6, 0xff, 0xff, 0xff,                // call entry
+      0x48, 0x83, 0xc4, 0x48,                      // done: add rsp, 48h
+      0xc3};
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  // One argument, converted to the definition's pointer parameter.
+  EXPECT_TRUE(std::regex_search(
+      HighC,
+      std::regex(R"(= sub_140001000\(\(void\*\)\(uintptr_t\)\([^,]+\)\);)")))
+      << HighC;
+  expectCompilesForMsvc(HighC);
+}
+
+TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
+  // ntoskrnl implements its own two-argument `setjmp`.  A call to it is a
+  // call to that function, not to <setjmp.h>'s declaration.
+  constexpr va_t Entry = 0x140001000;
+  constexpr va_t G = 0x140001020;
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xec, 0x28,       // sub rsp, 28h
+                               0x48, 0x89, 0xe2,             // mov rdx, rsp
+                               0xe8, 0x14, 0x00, 0x00, 0x00, // call setjmp
+                               0x48, 0x83, 0xc4, 0x28,       // add rsp, 28h
+                               0xc3};
+  Code.resize(G - Entry, 0xcc);
+  Code.insert(Code.end(), {0x48, 0x8b, 0xc1, // mov rax, rcx
+                           0x48, 0x01, 0xd0, // add rax, rdx
+                           0xc3});
+  BinaryImage Img = makeCodeFixture(Entry, Code);
+  Symbol GSym = Symbol::makeFunc(G);
+  GSym.Name = "setjmp";
+  Img.Symbols.push_back(GSym);
+  const std::string HighC = highcOnlyFunction(std::move(Img), Entry);
+  EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("extern int setjmp()"), std::string::npos) << HighC;
+}

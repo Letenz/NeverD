@@ -336,13 +336,15 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
 
   // --- INT1 (ICEBP) ---
   case X86_INS_INT1:
-    S.emitIntrinsic(Intrinsic::Int1);
+    S.emitIntrinsic(Intrinsic::Int1, NdVar());
     break;
 
   // --- CLI / STI ---
   case X86_INS_CLI:
   case X86_INS_STI:
-    S.emitIntrinsic(InsnId == X86_INS_CLI ? Intrinsic::Cli : Intrinsic::Sti);
+    // CLI/STI only change IF; the default intrinsic output would clobber RAX.
+    S.emitIntrinsic(InsnId == X86_INS_CLI ? Intrinsic::Cli : Intrinsic::Sti,
+                    NdVar());
     break;
 
   // --- UD0 / UD1 ---
@@ -501,45 +503,58 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   // page fault follows feature, privilege, type and descriptor checks owned by
   // an authenticated architectural execution environment.
   case X86_INS_INVPCID: {
+    // In 64-bit mode the type operand is always read as a 64-bit register;
+    // a disassembler may still print its 32-bit name.
     const uint16_t TypeSize = TargetArch == Arch::X64   ? uint16_t{8}
                               : TargetArch == Arch::X86 ? uint16_t{4}
                                                         : uint16_t{0};
     if (TypeSize == 0 || X86.op_count != 2 ||
         X86.operands[0].type != X86_OP_REG ||
-        X86.operands[0].size != TypeSize ||
+        (X86.operands[0].size != TypeSize &&
+         !(TargetArch == Arch::X64 && X86.operands[0].size == 4)) ||
         X86.operands[1].type != X86_OP_MEM || X86.operands[1].size != 16)
       return false;
     const cs_x86_op &Descriptor = X86.operands[1];
 
     // The invalidation environment, rather than ordinary LowIR, owns every
-    // check and fault associated with the m128 descriptor.  computeEA emits
-    // arithmetic (including a COPY for plain [reg]), which would place an
-    // observable operation before the opaque invalidation.  A native-width,
-    // base-only address already has an exact scalar NdVar representation, so
-    // preserve it directly.  Indexed, displaced, RIP/EIP-relative,
-    // relocated, and address-size-overridden forms need address computation;
-    // fail closed until LowIR can carry such an expression atomically.
+    // check and fault associated with the m128 descriptor, so the descriptor
+    // stays an address input and is never loaded.  A native-width base-only
+    // address is used directly; a displaced or indexed one is computed first
+    // with pure address arithmetic, which cannot fault or be observed.
+    // Relocated, ambiguous-GOT and address-size-overridden forms still fail
+    // closed.
     if (TargetArch != Arch::X64 || S.AddressSize != 8 ||
-        S.RelocatedDisplacement ||
-        S.HasAmbiguousI386GOTOFFDisplacement ||
-        X86.encoding.disp_offset != 0 || X86.encoding.disp_size != 0 ||
-        X86.disp != 0 ||
+        S.RelocatedDisplacement || S.HasAmbiguousI386GOTOFFDisplacement ||
         Descriptor.mem.base == X86_REG_INVALID ||
         Descriptor.mem.base == X86_REG_RIP ||
-        Descriptor.mem.base == X86_REG_EIP ||
-        Descriptor.mem.index != X86_REG_INVALID || Descriptor.mem.disp != 0)
+        Descriptor.mem.base == X86_REG_EIP)
       return false;
-    const RegInfo DescriptorBase =
-        mapCapstoneReg(static_cast<x86_reg>(Descriptor.mem.base));
-    if (DescriptorBase.Size != 8)
-      return false;
+    const bool BaseOnly = X86.encoding.disp_offset == 0 &&
+                          X86.encoding.disp_size == 0 && X86.disp == 0 &&
+                          Descriptor.mem.index == X86_REG_INVALID &&
+                          Descriptor.mem.disp == 0;
+    NdVar Address;
+    if (BaseOnly) {
+      const RegInfo DescriptorBase =
+          mapCapstoneReg(static_cast<x86_reg>(Descriptor.mem.base));
+      if (DescriptorBase.Size != 8)
+        return false;
+      Address = NdVar::reg(DescriptorBase.Offset, DescriptorBase.Size);
+    } else {
+      Address = S.computeEA(Descriptor, /*ForMemoryAccess=*/false);
+      if (!(Address.isReg() || Address.isTemp()) || Address.Size != 8)
+        return false;
+    }
 
-    const NdVar Type = operandRead(S, X86.operands[0]);
-    if (!Type.isReg() || Type.Size != TypeSize)
+    RegInfo TypeReg = mapCapstoneReg(static_cast<x86_reg>(X86.operands[0].reg));
+    if (TypeReg.Size == 4 && TargetArch == Arch::X64)
+      TypeReg.Size = 8;
+    const NdVar Type = NdVar::reg(TypeReg.Offset, TypeReg.Size);
+    if (TypeReg.Offset == 0xFFFF || Type.Size != TypeSize)
       return false;
     S.emitIntrinsic(
         Intrinsic::X86Invalidate, NdVar(),
-        {NdVar::reg(DescriptorBase.Offset, DescriptorBase.Size),
+        {Address,
          NdVar::scalar(static_cast<uint64_t>(X86InvalidateKind::Invpcid), 1),
          Type},
         NdMemoryOrdering::None, LiftState::memoryAddressSpace(Descriptor));
@@ -557,7 +572,23 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   // remains on its original intrinsic.
   case X86_INS_RDMSR:
     if (X86.op_count == 0) {
-      S.emitIntrinsic(Intrinsic::Rdmsr);
+      // ECX selects the MSR; its 64-bit value lands in EDX:EAX. In 64-bit
+      // mode the 32-bit writes zero-extend into RAX/RDX.
+      const NdVar Value = S.makeTemp(8);
+      S.emitIntrinsic(Intrinsic::Rdmsr, Value, {NdVar::reg(x86reg::RCX, 4)});
+      const NdVar Lo = S.makeTemp(4);
+      S.emit(NdOp::SUBBYTES, Lo, {Value, NdVar::cst(0, 4)});
+      const NdVar Shifted = S.makeTemp(8);
+      S.emit(NdOp::INT_RIGHT, Shifted, {Value, NdVar::cst(32, 8)});
+      const NdVar Hi = S.makeTemp(4);
+      S.emit(NdOp::SUBBYTES, Hi, {Shifted, NdVar::cst(0, 4)});
+      if (TargetArch == Arch::X64) {
+        S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RAX, 8), {Lo});
+        S.emit(NdOp::INT_ZEXT, NdVar::reg(x86reg::RDX, 8), {Hi});
+      } else {
+        S.emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 4), {Lo});
+        S.emit(NdOp::COPY, NdVar::reg(x86reg::RDX, 4), {Hi});
+      }
       break;
     }
     [[fallthrough]];
@@ -591,7 +622,15 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     }
     break;
   }
-  case X86_INS_WRMSR:
+  case X86_INS_WRMSR: {
+    // ECX selects the MSR; EDX:EAX is the value written.
+    const NdVar Value = S.makeTemp(8);
+    S.emit(NdOp::CONCAT, Value,
+           {NdVar::reg(x86reg::RDX, 4), NdVar::reg(x86reg::RAX, 4)});
+    S.emitIntrinsic(Intrinsic::Wrmsr, NdVar(),
+                    {NdVar::reg(x86reg::RCX, 4), Value});
+    break;
+  }
   case X86_INS_RDPMC:
   case X86_INS_RDPID:
   case X86_INS_RDRAND:
@@ -642,9 +681,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_UMWAIT: {
     Intrinsic Id;
     switch (InsnId) {
-    case X86_INS_WRMSR:
-      Id = Intrinsic::Wrmsr;
-      break;
     case X86_INS_RDPMC:
       Id = Intrinsic::Rdpmc;
       break;

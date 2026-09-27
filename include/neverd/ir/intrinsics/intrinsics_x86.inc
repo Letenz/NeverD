@@ -346,3 +346,14 @@ X87Wait, X87Ffree, X87Fincstp,
 // returned RAX in its low half and the kernel-returned R11 in its high half.
 // SYSENTER/SYSEXIT/SYSRET retain their separate, unsupported legacy shape.
 X64Syscall,
+
+// Append-only: MOV to/from control and debug registers.  Each control
+// register has its own MSVC intrinsic (__readcr8/__writecr8); debug-register
+// moves carry the register number as their first operand
+// (__readdr(n)/__writedr(n, value)).
+ReadCr0, ReadCr2, ReadCr3, ReadCr4, ReadCr8,
+WriteCr0, WriteCr2, WriteCr3, WriteCr4, WriteCr8,
+ReadDr, WriteDr,
+// x64 Windows `int 2Dh` debug service (DebugPrint, DebugPrompt, ...).
+// Inputs: RAX (service code), RCX, RDX, R8, R9; output: RAX (status).
+DebugService,

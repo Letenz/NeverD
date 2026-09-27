@@ -21,6 +21,8 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <optional>
+#include <set>
 #include <vector>
 
 namespace neverd {
@@ -67,11 +69,26 @@ struct CallArgScan {
   std::vector<OpWindow> ExtraWindows;
   llvm::function_ref<ExprPtr(const MedVar &)> ToExpr;
   llvm::function_ref<bool(const MedVar &)> IsCalleeSave;
+  /// The value register argument \p Index holds at the call, for filling a
+  /// register slot the call did not visibly write (nullptr when unknown).
+  llvm::function_ref<ExprPtr(int)> ReachingRegArg;
+  /// Offset of an address from the stack pointer at function entry, when it
+  /// resolves through copies and constant adjustments (an `r11 = rsp`
+  /// frame); nullopt otherwise.
+  llvm::function_ref<std::optional<int64_t>(const MedVar &)> EntryOffsetOf;
+  /// Bytes the prologue moved the stack pointer below its entry value.
+  int64_t FrameSize = 0;
+  /// Entry-relative stack slots the function loads; see MedToHigh.h.
+  const std::set<int64_t> *LoadedEntrySlots = nullptr;
   /// Window resolve that peels COPY/SUBBYTES to a defining CALL. Used for
   /// dangling callee-save SSA (`ESI.51`) whose `medvarToExpr` is a clobber.
   llvm::function_ref<ExprPtr(const MedVar &, const std::vector<MedOp> &, int)>
       ResolveWindow;
 };
+
+/// Win64 passes arguments 0-3 in RCX, RDX, R8, R9 above a 32-byte home area;
+/// argument 4 + K is the 8-byte slot at [rsp + 32 + 8K] at the call.
+bool isWin64(const CallArgScan &Scan);
 
 /// True only for a same-SSA no-op (`COPY rcx = rcx`).  `COPY rcx.3 = rcx`
 /// restores the entry value into a new SSA version and is a real call-arg

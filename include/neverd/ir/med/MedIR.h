@@ -185,6 +185,12 @@ struct MedOp {
   std::shared_ptr<const SourceCallTypeHint> SourceCallHint;
   bool Dead = false;
   bool PreservesCallerSaved = false;
+  /// GPR families (see CallRegisterEffects.h) the direct callee provably
+  /// never writes, so SSA keeps their pre-call values across this call.
+  uint32_t CallPreservedGPRs = 0;
+  /// Win64 register arguments the direct callee reads (RCX, RDX, R8, R9 in
+  /// order), published as Inputs[1..N]; -1 when the callee is unsummarized.
+  int8_t CalleeRegisterArgs = -1;
   /// The source instruction is a proven no-return call.  This is explicit MedIR
   /// control provenance: consumers must not infer it again from a mutable name.
   bool DoesNotReturn = false;
@@ -417,6 +423,9 @@ struct MedFunc {
         return &CI;
     return nullptr;
   }
+  /// LowToMed kept the unoptimized, non-SSA form (the function exceeded the
+  /// SSA size limit): a register variable has no unique definition.
+  bool SkippedSSA = false;
 };
 
 } // namespace neverd

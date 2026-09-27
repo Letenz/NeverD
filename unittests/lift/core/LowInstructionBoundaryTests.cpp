@@ -883,7 +883,20 @@ TEST(LowInstructionBoundary, BackwardSharedEpilogueKeepsOtherPhysicalEdges) {
       ((uint32_t((int64_t(F.Tail) - int64_t(F.Entry + 16)) / 4) & 0x7ffff) << 5);
   F.word(F.Entry + 16, Conditional); // cbz x0, tail
   F.word(F.Entry + 20, 0xd65f03c0);
-  EXPECT_EQ(findBlock(F.build(), F.Tail), nullptr);
+  // Without an authenticating B the other function's epilogue is not decoded
+  // here; the conditional edge is a tail call into that function.
+  {
+    const auto ConditionalOnly = F.build();
+    if (const auto *Stub = findBlock(ConditionalOnly, F.Tail)) {
+      unsigned Calls = 0;
+      for (const auto &Op : Stub->Ops) {
+        EXPECT_NE(Op.Opcode, NdOp::LOAD);
+        Calls += Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+                 Op.Inputs[0].isConst() && Op.Inputs[0].Offset == F.Tail;
+      }
+      EXPECT_EQ(Calls, 1U);
+    }
+  }
   F.word(F.Entry + 20, F.branch(F.Entry + 20, F.Tail));
   const auto ConditionalAndB = F.build();
   const auto *Tail = findBlock(ConditionalAndB, F.Tail);
@@ -2324,8 +2337,9 @@ TEST(LowInstructionBoundary,
 
   // State snapshots need an explicit bridge between the lifted XMM/x87/MXCSR
   // variables and the architectural memory layout.  Until that representation
-  // exists, every consumer fails closed instead of reading/writing incidental
-  // host registers through raw inline asm.
+  // exists, the emulator fails closed.  The C and LLVM emitters print the
+  // source's own _xsave/_fxrstor operation and HighC marks it as hardware
+  // state rather than the lifted locals.
   NdOpEmulator UnsupportedStateEmulator(SemanticImage);
   UnsupportedStateEmulator.setStrictMode(true);
   ASSERT_TRUE(UnsupportedStateEmulator.setMemoryAddressSpaceBase(

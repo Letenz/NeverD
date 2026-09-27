@@ -17,6 +17,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/loader/BinaryImage.h"
@@ -108,6 +109,8 @@ enum class PipelineFunctionDisposition {
   RejectedLowIR,
   RejectedIncomplete,
   RemovedJumpTableTarget,
+  AbsorbedFunctionChunk,
+  RejectedUnwindlessNonLeaf,
   MedIRFailed,
   Accepted,
 };
@@ -129,6 +132,10 @@ pipelineFunctionDispositionName(PipelineFunctionDisposition Value) {
     return "rejected-incomplete";
   case PipelineFunctionDisposition::RemovedJumpTableTarget:
     return "removed-jump-table-target";
+  case PipelineFunctionDisposition::AbsorbedFunctionChunk:
+    return "absorbed-function-chunk";
+  case PipelineFunctionDisposition::RejectedUnwindlessNonLeaf:
+    return "rejected-unwindless-non-leaf";
   case PipelineFunctionDisposition::MedIRFailed:
     return "med-ir-failed";
   case PipelineFunctionDisposition::Accepted:
@@ -160,6 +167,15 @@ struct PipelineResult {
   /// image's segment, symbol, and object metadata.
   const BinaryImage *SourceImage = nullptr;
   std::vector<LowFunc> LowFuncs;
+  /// Direct-callee GPR write summaries (see CallRegisterEffects.h), keyed by
+  /// callee entry.  Absent entries keep the ABI clobber set.
+  std::map<va_t, uint32_t> CallMayWriteGPRs;
+  /// Bytes of each GPR family a lifted callee reads before writing (its
+  /// register arguments, including pass-throughs), keyed by callee entry.
+  std::map<va_t, GPRReadWidths> CallEntryReadGPRs;
+  /// Entries of indirect-call dispatchers (`_guard_dispatch_icall`): a call to
+  /// one passes the argument registers its caller set.
+  std::set<va_t> CallDispatchThunks;
   std::vector<MedFunc> MedFuncs;
   std::vector<HighFunc> HighFuncs;
   std::unique_ptr<llvm::Module> LlvmModule;

@@ -421,7 +421,7 @@ TEST(MedSEHEstablisherFrame, RejectsUncertifiedFramesWithoutAborting) {
           Low.Blocks.front().Succs.push_back(B.Id);
     }
     if (Case == 10)
-      Low.DecodedInstructionCount = uint64_t(limits::kMaxSSANodes) + 1;
+      Low.DecodedInstructionCount = uint64_t(limits::kMaxSSAFunctionOps) + 1;
     EXPECT_THROW(
         LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
         LowToMedConversionError);

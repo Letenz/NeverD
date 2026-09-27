@@ -192,6 +192,34 @@ void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
 // Single-function decompilation
 // ===--------------------------------------------------------------------===//
 
+namespace {
+/// Why \p Entry has no HighIR, naming the pipeline's audit disposition when
+/// it recorded one (for example a rejected or absorbed candidate).
+std::string missingHighFunctionReason(const PipelineResult &Result,
+                                      neverd_va_t Entry) {
+  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits) {
+    if (Audit.Entry != Entry ||
+        Audit.Disposition == PipelineFunctionDisposition::Accepted)
+      continue;
+    std::string Reason = std::string("function not found in HighIR (") +
+                         pipelineFunctionDispositionName(Audit.Disposition);
+    auto Name = [&](const char *What, const std::vector<va_t> &Addrs) {
+      if (Addrs.empty())
+        return;
+      Reason += std::string("; ") + What + " at";
+      for (size_t I = 0; I < Addrs.size() && I < 4; ++I)
+        Reason += " 0x" + llvm::utohexstr(Addrs[I]);
+      if (Addrs.size() > 4)
+        Reason += " ...";
+    };
+    Name("unsupported instruction", Audit.UnsupportedInstructions);
+    Name("decode failure", Audit.DecodeFailures);
+    return Reason + ")";
+  }
+  return "function not found in HighIR";
+}
+} // namespace
+
 const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
@@ -230,7 +258,7 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
 
   const HighFunc *HF = S->findHighFunc(FuncEntry);
   if (!HF) {
-    S->setError("function not found in HighIR");
+    S->setError(missingHighFunctionReason(S->PipeResult, FuncEntry));
     return dupStr(std::string());
   }
 
@@ -481,7 +509,7 @@ const char *neverd_ir_high(neverd_session_t Sess, neverd_va_t FuncEntry) {
 
   const HighFunc *HF = S->findHighFunc(FuncEntry);
   if (!HF) {
-    S->setError("function not found in HighIR");
+    S->setError(missingHighFunctionReason(S->PipeResult, FuncEntry));
     return dupStr(std::string());
   }
 

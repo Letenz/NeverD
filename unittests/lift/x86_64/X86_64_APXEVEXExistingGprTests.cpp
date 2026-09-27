@@ -15,6 +15,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <optional>
+#include <string>
 #include <vector>
 
 using namespace neverd;
@@ -5377,9 +5378,20 @@ void expectExplicitMsrInvalidateAndHighCFailClosed() {
   EXPECT_STREQ(x86HighCIntrinsicFatalReason(Intrinsic::X86MsrAccess),
                "x86 MSR access requires an authenticated architectural "
                "execution environment");
-  EXPECT_STREQ(x86HighCIntrinsicFatalReason(Intrinsic::X86Invalidate),
-               "x86 address-translation invalidation requires an "
-               "authenticated architectural execution environment");
+  // INVPCID is the one invalidation kind, and the MSVC/Clang `_invpcid`
+  // intrinsic executes exactly that instruction.
+  EXPECT_EQ(x86HighCIntrinsicFatalReason(Intrinsic::X86Invalidate), nullptr);
+  {
+    bool HasCIntrinsics = false;
+    const std::string Invpcid = renderX86IntrinsicCall(
+        Intrinsic::X86Invalidate,
+        {"desc",
+         std::to_string(static_cast<unsigned>(X86InvalidateKind::Invpcid)),
+         "type"},
+        HasCIntrinsics);
+    EXPECT_EQ(Invpcid, "_invpcid((unsigned int)(type), (void *)(uintptr_t)(desc))");
+    EXPECT_TRUE(HasCIntrinsics);
+  }
   EXPECT_STREQ(
       x86HighCIntrinsicFatalReason(Intrinsic::X86RequireDivPrecondition),
       "x86 division precondition requires an architectural fault environment");

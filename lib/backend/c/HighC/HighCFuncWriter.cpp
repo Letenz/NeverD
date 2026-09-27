@@ -32,7 +32,9 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <string_view>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -241,6 +243,12 @@ bool HighCWriter::isAnalysisOnlyFunction(const HighFunc &Func) const {
 
 void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
   GotoTargets.clear();
+  EmittedLabels.clear();
+  GotoTargetUses.clear();
+  walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+    if (Stmt.Kind == StmtKind::Goto)
+      ++GotoTargetUses[Stmt.GotoTarget];
+  });
   collectGotoTargets(Func.Body);
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
@@ -532,6 +540,23 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     });
   }
 
+  // Every variable the IR mentions, under its own and its forwarded name, is
+  // a candidate for a late declaration if the rendered body names it.
+  {
+    std::map<std::string, TypeRef> AllVars;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      forEachExpr(S, [&](const ExprPtr &E) {
+        if (!E)
+          return;
+        collectUsedVarsExpr(*E, AllVars, VarFn);
+        collectUsedVarsExpr(*E, AllVars, PrintedVarFn);
+      });
+    });
+    for (const auto &[Name, Ty] : AllVars)
+      if (!Name.empty() && !UsedVars.count(Name))
+        DeferredDecls.emplace(Name, DeferredDecl{Ty, {}});
+  }
+
   std::set<std::string> DeclaredNames(ParamNames);
   for (auto &Local : Func.Locals) {
     MedVar StackVar;
@@ -545,8 +570,10 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         UsedVars.find(Local.Name) == UsedVars.end())
       continue;
     if ((CopyForward.count(Name) || CopyForward.count(Local.Name)) &&
-        !VisibleAssigned.count(Name) && !VisibleAssigned.count(Local.Name))
+        !VisibleAssigned.count(Name) && !VisibleAssigned.count(Local.Name)) {
+      DeferredDecls.emplace(Name, DeferredDecl{Local.Type, {}});
       continue;
+    }
     DeclaredNames.insert(Name);
     emitIndent(1);
     TypeRef Ty = Local.Type;
@@ -599,8 +626,14 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
         (ProjectFrameAliasesIntoStorage && FrameAliases.count(Name) &&
          !VisibleAssigned.count(Name)))
       continue;
-    if (CopyForward.count(Name) && !VisibleAssigned.count(Name))
+    if (CopyForward.count(Name) && !VisibleAssigned.count(Name)) {
+      auto ExplicitTy = ExplicitDeclarations.find(Name);
+      DeferredDecls.emplace(
+          Name, DeferredDecl{Ty, ExplicitTy == ExplicitDeclarations.end()
+                                     ? std::string()
+                                     : ExplicitTy->second});
       continue;
+    }
     // Frame-pointer temps and other HighIR names that never appear as a
     // C assignment must not be declared (`v2` inside `&var_m48`).
     // A join dest can still be used after both arm writes were hidden.
@@ -852,7 +885,7 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   CollectAliases();
   std::map<int64_t, TypeRef> InferredSlotTypes;
   auto Note = [&](const HighExpr *Addr, const TypeRef &Ty,
-                  bool AddressTaken = false) {
+                  bool AddressTaken = false, bool IsStore = false) {
     if (!Addr)
       return;
     const auto Disp = frameDisplacement(*Addr);
@@ -887,6 +920,9 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
                Ty->Kind == NdTypeKind::Struct &&
                Slot.Type->Kind != NdTypeKind::Struct)))
       Slot.Type = cDisplayType(Ty);
+    if (IsStore && Ty && Ty->Size &&
+        (!Slot.MinStoreSize || Ty->Size < Slot.MinStoreSize))
+      Slot.MinStoreSize = Ty->Size;
   };
   // A frame displacement used as a value prints as `&var_N`. Mark it
   // address-taken so copy-forward/DeadVars cannot drop the declaration.
@@ -898,7 +934,8 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
       return;
     }
     if (E.Kind == ExprKind::Store && E.Operands.size() >= 2) {
-      Note(E.Operands[0].get(), E.Operands[1] ? E.Operands[1]->Type : nullptr);
+      Note(E.Operands[0].get(), E.Operands[1] ? E.Operands[1]->Type : nullptr,
+           /*AddressTaken=*/false, /*IsStore=*/true);
       if (E.Operands[0])
         Walk(*E.Operands[0], true);
       if (E.Operands[1])
@@ -929,10 +966,12 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     for (const HighStmt &S : Stmts) {
       if (!Analysis.DeadStmts.count(&S) && !stmtHiddenFromC(S)) {
         if (S.Kind == StmtKind::Store && S.StoreAddr)
-          Note(S.StoreAddr.get(), S.StoreVal ? S.StoreVal->Type : nullptr);
+          Note(S.StoreAddr.get(), S.StoreVal ? S.StoreVal->Type : nullptr,
+               /*AddressTaken=*/false, /*IsStore=*/true);
         if (S.Kind == StmtKind::Assign && S.Dst &&
             S.Dst->Kind == ExprKind::Load && !S.Dst->Operands.empty())
-          Note(S.Dst->Operands[0].get(), S.Dst->Type);
+          Note(S.Dst->Operands[0].get(), S.Dst->Type, /*AddressTaken=*/false,
+               /*IsStore=*/true);
         if (S.StoreAddr)
           Walk(*S.StoreAddr, true);
         if (S.StoreVal)
@@ -1004,6 +1043,49 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   for (auto &[Disp, Slot] : FrameSlots)
     if (!Slot.Type)
       Slot.Type = NdType::makeInt(4);
+
+  // Slots that share bytes are one object, not separate variables: a byte
+  // stored at -0x82 changes what a later read of the eight bytes at -0x84
+  // sees.  Each group of overlapping slots lives in one storage, the group's
+  // first slot; when that slot does not cover the whole group it is declared
+  // as a byte array (the binary guarantees no alignment for it).  The other slots are accessed through it.
+  SharedFrameStorage.clear();
+  auto SlotEnd = [](const std::pair<const int64_t, NamedFrameSlot> &Entry) {
+    return Entry.first +
+           static_cast<int64_t>(std::max<uint64_t>(Entry.second.Type->Size, 1));
+  };
+  for (auto It = FrameSlots.begin(); It != FrameSlots.end();) {
+    auto First = It;
+    int64_t End = SlotEnd(*It);
+    for (++It; It != FrameSlots.end() && It->first < End; ++It)
+      End = std::max(End, SlotEnd(*It));
+    if (std::next(First) == It)
+      continue;
+    NamedFrameSlot &Owner = First->second;
+    const bool Covers = SlotEnd(*First) >= End;
+    if (!Covers)
+      Owner.RegionBytes = End - First->first;
+    for (auto Member = First; Member != It; ++Member) {
+      if (Member == First && Covers)
+        continue;
+      NamedFrameSlot &Slot = Member->second;
+      Slot.Outer = Owner.Name;
+      Slot.OuterOffset = Member->first - First->first;
+      Slot.Interior = "(*(" + memoryTypeName(Slot.Type) + " *)((char *)&" +
+                      Slot.Outer + " + " + std::to_string(Slot.OuterOffset) +
+                      "))";
+      SharedFrameStorage.insert(Slot.Interior);
+    }
+    SharedFrameStorage.insert(Owner.Name);
+  }
+  // A store narrower than its slot changes only some of the slot's bytes.
+  for (auto &[Disp, Slot] : FrameSlots)
+    if (Slot.Interior.empty() && Slot.MinStoreSize &&
+        Slot.MinStoreSize < Slot.Type->Size)
+      SharedFrameStorage.insert(Slot.Name);
+  for (auto &[Disp, Slot] : FrameSlots)
+    if (SharedFrameStorage.count(Slot.Name))
+      Slot.AddressTaken = true;
 }
 
 void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
@@ -2308,6 +2390,15 @@ HighCWriter::cxxCatchPointerName(const HighExpr &E) const {
             It != FrameStorageSlots.end() &&
             isCxxCatchObjectName(It->second.Name))
           return It->second.Name;
+    // Inside a catch body a load of its object's slot, even one folded into
+    // a larger expression, is the object that clause names.  The slot may
+    // since have moved into backing storage, so match its displacement.
+    if (!OpenCatchObjects.empty())
+      if (const auto Disp = frameDisplacement(*Cur->Operands[0]))
+        if (auto It = CxxCatchObjectDisps.find(*Disp);
+            It != CxxCatchObjectDisps.end() &&
+            llvm::is_contained(OpenCatchObjects, It->second))
+          return It->second;
     if (auto Slot = namedFrameSlot(*Cur->Operands[0]);
         Slot && isCxxCatchObjectName(*Slot))
       return *Slot;
@@ -2855,6 +2946,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     CandidateStmts.insert(Stmt);
   }
 
+  // Each candidate below rescans every site.  Forwarding only folds
+  // single-use temporaries into their use, so a body this large keeps them.
+  if (Sites.size() > limits::kMaxValueForwardSites)
+    return;
   auto scalarSourceRedefined = [&](const Candidate &C) {
     if (!C.Stmt->Val)
       return true;
@@ -4073,6 +4168,8 @@ void HighCWriter::discoverHiddenCxxThrowCtors(const std::vector<HighFunc> &Funcs
 
 void HighCWriter::nameCxxCatchObjects(const HighFunc &Func) {
   CxxCatchNames.clear();
+  CxxCatchObjectDisps.clear();
+  OpenCatchObjects.clear();
   auto nameTaken = [&](const std::string &Name) {
     if (Name.empty())
       return true;
@@ -4143,6 +4240,7 @@ void HighCWriter::nameCxxCatchObjects(const HighFunc &Func) {
               const std::string Name = allocateName();
               FrameSlots[*Disp].Name = Name;
               CxxCatchNames[&Clause] = Name;
+              CxxCatchObjectDisps[*Disp] = Name;
             }
           }
           Walk(S.Body);
@@ -4288,6 +4386,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   PointerArgDestTypes.clear();
   AmbiguousFrameAliases.clear();
   ValueForward.clear();
+  AssignedValuesByName.clear();
+  AssignedValuesIndexed = false;
   CallResultNames.clear();
   CallResultTypes.clear();
   UnknownOnlyNames.clear();
@@ -4983,21 +5083,76 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     };
     HideHomes(Func.Body, false);
   }
+  // An enclosing slot is printed whenever one of its interior accesses is.
+  for (const auto &[Disp, Slot] : FrameSlots)
+    if (!Slot.Interior.empty() && (PrintedAddrSlots.count(Slot.Interior) ||
+                                   PrintedSlotStores.count(Slot.Interior) ||
+                                   PrintedSlotLoads.count(Slot.Interior)))
+      PrintedAddrSlots.insert(Slot.Outer);
   for (const auto &[Disp, Slot] : FrameSlots) {
+    if (!Slot.Interior.empty() && !Slot.RegionBytes)
+      continue;
     if (ParamNames.count(Slot.Name))
       continue;
-    if (!PrintedAddrSlots.count(Slot.Name) &&
-        !PrintedSlotStores.count(Slot.Name) &&
-        !PrintedSlotLoads.count(Slot.Name))
+    DeferredDecl Decl;
+    if (Slot.RegionBytes)
+      Decl.Text = "uint8_t " + Slot.Name + "[" +
+                  std::to_string(Slot.RegionBytes) + "]";
+    else
+      Decl.Type = cDisplayType(Slot.Type);
+    const bool Printed = PrintedAddrSlots.count(Slot.Name) ||
+                         PrintedSlotStores.count(Slot.Name) ||
+                         PrintedSlotLoads.count(Slot.Name);
+    if (!Printed ||
+        (!Slot.AddressTaken && (CopyForward.count(Slot.Name) ||
+                                Analysis.DeadVars.count(Slot.Name)))) {
+      DeferredDecls.emplace(Slot.Name, std::move(Decl));
       continue;
+    }
     ParamNames.insert(Slot.Name);
     DeclaredCNames.insert(Slot.Name);
     emitIndent(1);
-    OS << declarationToC(cDisplayType(Slot.Type), Slot.Name) << ";\n";
+    OS << (Decl.Text.empty() ? declarationToC(Decl.Type, Slot.Name) : Decl.Text)
+       << ";\n";
   }
   emitLocalDecls(Func, ParamNames);
 
-  writeStmts(Func.Body, 1);
+  // Render the body first: a name the declaration pass expected to be
+  // forwarded or dead may still be printed, and it must be declared.
+  std::string Body;
+  {
+    llvm::raw_string_ostream BodyOS(Body);
+    llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
+    writeStmts(Func.Body, 1);
+    Out.redirect(Saved);
+  }
+  std::unordered_set<std::string_view> BodyIdents;
+  if (!DeferredDecls.empty()) {
+    auto IsIdent = [](char C) {
+      return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
+    };
+    for (size_t Pos = 0; Pos < Body.size();) {
+      if (!IsIdent(Body[Pos])) {
+        ++Pos;
+        continue;
+      }
+      size_t End = Pos;
+      while (End < Body.size() && IsIdent(Body[End]))
+        ++End;
+      BodyIdents.insert(std::string_view(Body).substr(Pos, End - Pos));
+      Pos = End;
+    }
+  }
+  for (const auto &[Name, Decl] : DeferredDecls) {
+    if (ParamNames.count(Name) || !BodyIdents.count(Name))
+      continue;
+    ParamNames.insert(Name);
+    emitIndent(1);
+    OS << (Decl.Text.empty() ? declarationToC(Decl.Type, Name) : Decl.Text)
+       << ";\n";
+  }
+  DeferredDecls.clear();
+  OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {
     emitIndent(1);

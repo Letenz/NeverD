@@ -712,7 +712,16 @@ void recoverCallAbi(MedFunc &Func, Arch TheArch,
           // Else-edge `mov r9d, 0` sunk into the join must not beat the r9
           // PHI. A same-block copy of a then-arm incoming (`p->field`)
           // is the same leftover: the lookup key is the join, not one arm.
-          if (Found[K].isConst() || phiCarriesIncoming(*Phi, Found[K])) {
+          // A value this block itself computes before the call still reaches
+          // it, even when a loop back edge also carries it into the PHI.
+          const bool DefinedHere =
+              !Found[K].isConst() &&
+              std::any_of(Blk.Ops.begin(), Blk.Ops.begin() + OI,
+                          [&](const MedOp &Def) {
+                            return Def.Output == Found[K];
+                          });
+          if (!DefinedHere &&
+              (Found[K].isConst() || phiCarriesIncoming(*Phi, Found[K]))) {
             Found[K] = Phi->Output;
             FoundMask[K] = true;
           }

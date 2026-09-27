@@ -19,7 +19,9 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include <map>
 #include <set>
+#include <tuple>
 
 namespace neverd {
 
@@ -53,6 +55,31 @@ void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 /// Fold shared branch continuations after dead assignments have been removed.
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
+
+/// Replace `goto L` with a copy of L's tail when L is at most three pure
+/// assignments followed by a return.  The original stays for other paths.
+/// Returns true when a goto was replaced.
+bool duplicateSmallReturnTails(std::vector<HighStmt> &Body);
+
+/// Late goto reduction: merge conditional jumps to one target, move a block
+/// entered by a single forward jump into that `if`, and turn a jump over the
+/// fall-through path into `if`/`else`.  Returns true when anything changed.
+/// With \p SpliceRegions, a single-use label may also start a multi-block
+/// region that is entered only from inside itself; that region moves too.
+bool reduceSingleUseGotos(std::vector<HighStmt> &Body,
+                          bool SpliceRegions = false);
+/// Share one body among switch cases that go to the same place, and drop
+/// cases that go where `default` goes.
+bool groupSwitchCases(std::vector<HighStmt> &Body);
+/// `X: S...` whose every jump to X comes from inside S becomes
+/// `while (1) { S...; break; }` with those jumps as `continue`.
+bool loopifyBackwardGotos(std::vector<HighStmt> &Body);
+/// A label on the first statement of a `while (1)` or do-while body that is
+/// entered only from outside the loop moves onto the loop statement.
+bool hoistLoopEntryLabels(std::vector<HighStmt> &Body);
+/// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
+/// becomes `while (c) { S.. }` in place of the test.
+bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);
 
 /// Emit a label-per-block goto/return skeleton.  Used when structuring would
 /// exceed SSA limits, or when conversion fails and identity alone would leave
@@ -168,6 +195,14 @@ private:
   std::vector<SourceABIParameter> SourceParameters;
   VarKeySet CallOutputs;
   VarKeySet PhiOutputVars;
+  /// Per-function indexes for the Win64 callee-save parameter mapping in
+  /// medvarToExpr: register COPYs whose source is an entry parameter (in
+  /// block/op order, with that parameter's index), and every (Id, SSAVer)
+  /// with a computed def (anything but a COPY of a register or parameter).
+  /// Built lazily for \c ParamCopyIndexFunc.
+  const MedFunc *ParamCopyIndexFunc = nullptr;
+  std::vector<std::pair<const MedOp *, int>> ParamSourceCopies;
+  std::set<std::pair<int, int>> ComputedVersions;
   /// A native read is evaluated at its statement, then used as an SSA value.
   /// Re-expanding it at a use could cross an aliasing write or repeat the read.
   VarKeySet MemoryReadOutputs;
@@ -175,7 +210,19 @@ private:
   /// collectCallArgs can resolve a register argument that is live-in to the
   /// call block (loop-carried via a header PHI) rather than written before the
   /// call.
+  /// Late goto reduction on the finished statement tree (tail duplication,
+  /// splices, if/else joins, loop recovery), bounded by statement count.
+  void reduceLateGotos(HighFunc &Func);
   const MedFunc *CurMed = nullptr;
+  /// Entry-relative stack slots CurMed loads anywhere or whose address
+  /// escapes; such a slot is a local, not an outgoing argument (cached per
+  /// function).
+  std::set<int64_t> LoadedEntrySlots;
+  const MedFunc *LoadedEntrySlotsFor = nullptr;
+  /// Unique SSA definition of each (kind, id, version) in EntryOffsetDefsFor;
+  /// nullptr marks a value with more than one definition.
+  std::map<std::tuple<int, int, int>, const MedOp *> EntryOffsetDefs;
+  const MedFunc *EntryOffsetDefsFor = nullptr;
   const BinaryImage *Image = nullptr;
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;

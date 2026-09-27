@@ -231,9 +231,13 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
       if (S.Kind == StmtKind::Switch) {
         const auto Selector = Value(S.SwitchExpr);
         const std::vector<HighStmt> *Selected = &S.DefaultBody;
-        for (const auto &Case : S.Cases)
-          if (Case.Value == Selector) {
-            Selected = &Case.Body;
+        for (size_t I = 0; I < S.Cases.size(); ++I)
+          if (S.Cases[I].Value == Selector) {
+            // `case A: case B: body` shares the next non-empty body.
+            size_t J = I;
+            while (J + 1 < S.Cases.size() && S.Cases[J].FallsThrough)
+              ++J;
+            Selected = &S.Cases[J].Body;
             break;
           }
         auto R = Run(*Selected);
@@ -241,7 +245,8 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
           return R;
       }
       if (S.Kind == StmtKind::While) {
-        while (Value(S.Cond)) {
+        // `while (1)` has no condition expression.
+        while (!S.Cond || Value(S.Cond)) {
           if (!Budget--)
             throw std::runtime_error(
                 "control-flow oracle exceeded its loop budget");
@@ -1732,6 +1737,66 @@ MedOp operation(NdOp Opcode, va_t Address, MedVar Output,
   for (const auto &Input : Inputs)
     O.addInput(Input);
   return O;
+}
+
+TEST(HighControlFlowSemantics, GotoToReturnBlockKeepsItsStoreAndLoad) {
+  // Both arms jump to `sink = v; r = sink; return r;`.  Folding the jump into
+  // `return r` would skip the store and read an undefined value.
+  const Arch Architecture = Arch::X64;
+  MedFunc M;
+  M.Entry = 0x1000;
+  M.Name = "store_load_return_tail";
+  M.ReturnType = NdType::makeInt(8, false);
+  auto Input = machineValue(0, Architecture);
+  Input.Kind = MedVar::Param;
+  Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+  M.Params = {Input};
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  M.Blocks.resize(4);
+  for (int I = 0; I < 4; ++I) {
+    M.Blocks[I].Id = I;
+    M.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+    M.Blocks[I].EndAddr = M.Blocks[I].StartAddr + 0x20;
+  }
+  M.Blocks[0].Succs = {1, 2};
+  M.Blocks[0].Ops = {operation(NdOp::INDIR_BR, 0x1000, {}, {Input})};
+  M.SwitchSelectorPlans[0x1000] = {};
+  M.SwitchSelectorPlans[0x1000].Selector = Input;
+  M.SwitchSelectorPlans[0x1000].ResultSize = 8;
+  for (int I = 1; I < 3; ++I) {
+    M.Blocks[I].Preds = {0};
+    M.Blocks[I].Succs = {3};
+    M.Blocks[I].Ops = {
+        operation(NdOp::BRANCH, M.Blocks[I].StartAddr, {}, {C(0x1300)})};
+  }
+  auto Joined = machineValue(1, Architecture);
+  auto Loaded = machineValue(2, Architecture);
+  auto Return = machineValue(3, Architecture);
+  Return.Kind = MedVar::Reg;
+  Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+  Return.SSAVer = 1;
+  M.Blocks[3].Preds = {1, 2};
+  M.Blocks[3].Phis = {{Joined, {{1, C(17)}, {2, C(23)}}}};
+  M.Blocks[3].Ops = {operation(NdOp::STORE, 0x1300, {}, {C(0x8000), Joined}),
+                     operation(NdOp::LOAD, 0x1304, Loaded, {C(0x8000)}),
+                     operation(NdOp::COPY, 0x1308, Return, {Loaded}),
+                     operation(NdOp::RETURN, 0x130c, {}, {Return})};
+  JumpTable Table;
+  Table.InsnAddr = 0x1000;
+  Table.Targets = {0x1100, 0x1200};
+  Table.CaseLabels = {0, 1};
+  MedToHighConverter Converter;
+  Converter.setJumpTables({Table});
+  const auto F = Converter.convert(M, Architecture);
+  unsigned Stores = 0;
+  walkStmts(F.Body,
+            [&](const HighStmt &S) { Stores += S.Kind == StmtKind::Store; });
+  EXPECT_GE(Stores, 1u);
+  for (uint64_t Condition : {0u, 1u}) {
+    SCOPED_TRACE(Condition);
+    EXPECT_NO_THROW(
+        EXPECT_EQ(execute(F, Condition, true), Condition ? 23u : 17u));
+  }
 }
 
 TEST(HighControlFlowSemantics, FlagPhisKeepTheirReachingDefinitions) {

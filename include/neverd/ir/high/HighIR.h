@@ -258,6 +258,9 @@ struct HighEHClause {
 struct SwitchCase {
   uint64_t Value = 0;
   std::vector<struct HighStmt> Body;
+  /// An empty case that shares the next case's body (`case A: case B:`)
+  /// instead of ending with a break.
+  bool FallsThrough = false;
 };
 
 struct HighStmt {
@@ -412,6 +415,40 @@ void walkStmts(const std::vector<HighStmt> &Stmts, F &&Fn) {
   }
 }
 
+/// Erase the statements of \p Stmts that \p ShouldErase selects.  One whose
+/// address a goto in \p Targets still names leaves an empty block behind, so
+/// the label keeps its place.
+template <typename Pred>
+void eraseKeepingBranchEntries(std::vector<HighStmt> &Stmts,
+                               const std::set<va_t> &Targets,
+                               Pred &&ShouldErase) {
+  std::vector<HighStmt> Result;
+  Result.reserve(Stmts.size());
+  for (auto &S : Stmts) {
+    if (!ShouldErase(S)) {
+      Result.push_back(std::move(S));
+      continue;
+    }
+    if (S.Addr != 0 && S.Addr != InvalidVA && Targets.count(S.Addr)) {
+      HighStmt Anchor;
+      Anchor.Kind = StmtKind::Block;
+      Anchor.Addr = S.Addr;
+      Result.push_back(std::move(Anchor));
+    }
+  }
+  Stmts = std::move(Result);
+}
+
+/// The addresses goto statements in \p Stmts jump to.
+inline std::set<va_t> gotoTargets(const std::vector<HighStmt> &Stmts) {
+  std::set<va_t> Targets;
+  walkStmts(Stmts, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      Targets.insert(S.GotoTarget);
+  });
+  return Targets;
+}
+
 //===----------------------------------------------------------------------===//
 // High-level function
 //===----------------------------------------------------------------------===//
@@ -435,7 +472,7 @@ inline bool switchAlwaysReturns(const HighStmt &Stmt) {
   if (!Returns(Stmt.DefaultBody))
     return false;
   for (const auto &Case : Stmt.Cases)
-    if (!Returns(Case.Body))
+    if (!Case.FallsThrough && !Returns(Case.Body))
       return false;
   return true;
 }

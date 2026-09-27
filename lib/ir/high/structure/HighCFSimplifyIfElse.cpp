@@ -1002,27 +1002,46 @@ static bool sameMedVar(const MedVar &A, const MedVar &B) {
   return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer;
 }
 
+// HighIR shares subexpressions, and substituting assigned values into a
+// condition (composeWorkAssigns) shares them heavily.  Both walks below visit
+// each shared node once; a tree walk of that DAG is exponential.
 static bool exprUsesVar(const HighExpr *E, const MedVar &V) {
-  if (!E)
-    return false;
-  if (E->Kind == ExprKind::Var && sameMedVar(E->Var, V))
-    return true;
-  for (const auto &Op : E->Operands)
-    if (exprUsesVar(Op.get(), V))
+  std::set<const HighExpr *> Seen;
+  std::vector<const HighExpr *> Work;
+  if (E)
+    Work.push_back(E);
+  while (!Work.empty()) {
+    const HighExpr *Cur = Work.back();
+    Work.pop_back();
+    if (!Seen.insert(Cur).second)
+      continue;
+    if (Cur->Kind == ExprKind::Var && sameMedVar(Cur->Var, V))
       return true;
+    for (const auto &Op : Cur->Operands)
+      if (Op)
+        Work.push_back(Op.get());
+  }
   return false;
 }
 
 static ExprPtr replaceVarInExpr(const ExprPtr &E, const MedVar &V,
                                 const ExprPtr &With) {
-  if (!E)
-    return E;
-  if (E->Kind == ExprKind::Var && sameMedVar(E->Var, V))
-    return With;
-  auto Copy = std::make_shared<HighExpr>(*E);
-  for (auto &Op : Copy->Operands)
-    Op = replaceVarInExpr(Op, V, With);
-  return Copy;
+  std::unordered_map<const HighExpr *, ExprPtr> Replaced;
+  std::function<ExprPtr(const ExprPtr &)> Replace =
+      [&](const ExprPtr &X) -> ExprPtr {
+    if (!X)
+      return X;
+    if (X->Kind == ExprKind::Var && sameMedVar(X->Var, V))
+      return With;
+    if (auto It = Replaced.find(X.get()); It != Replaced.end())
+      return It->second;
+    auto Copy = std::make_shared<HighExpr>(*X);
+    for (auto &Op : Copy->Operands)
+      Op = Replace(Op);
+    Replaced.emplace(X.get(), Copy);
+    return Copy;
+  };
+  return Replace(E);
 }
 
 static bool isValueAssign(const HighStmt &S, MedVar &Dest, ExprPtr &Val) {
@@ -1775,6 +1794,8 @@ static ExprPtr composeWorkAssigns(const std::vector<HighStmt> &Body,
                                   size_t Begin, size_t End, ExprPtr Cond) {
   if (!Cond || Begin > End)
     return Cond;
+  if (End - Begin > limits::kMaxComposedWorkAssigns)
+    Begin = End - limits::kMaxComposedWorkAssigns;
   for (size_t N = End; N > Begin; --N) {
     const HighStmt &S = Body[N - 1];
     if (S.Kind == StmtKind::Nop ||
@@ -3083,9 +3104,13 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         while (J < Body.size() && isJoinClutter(Body[J], Cur) &&
                (!Join || Body[J].Addr != Join))
           ++J;
+        // With a goto in Prev, the join is that goto's target.  A call or
+        // return that merely reads the value elsewhere does not turn an
+        // unrelated jump (into a loop, say) into a join edge.
         if (J < Body.size() &&
             ((Join && Body[J].Addr == Join) ||
-             ((Body[J].Kind == StmtKind::Call ||
+             (!Join &&
+              (Body[J].Kind == StmtKind::Call ||
                Body[J].Kind == StmtKind::Return) &&
               stmtUsesJoinDest(Body[J], Cur)))) {
           // Keep the last join-used assign. An earlier same-RegOff copy

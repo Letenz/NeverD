@@ -12,7 +12,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/X86Regs.h"
+#include "neverd/loader/ExceptionInfo.h"
 #include "neverd/ir/med/LowToMedError.h"
 
 #include "llvm/Support/Debug.h"
@@ -21,6 +24,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
 
@@ -512,6 +516,10 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       if (TRI.isFrameOrLinkReg(RegOff) || TRI.isStackPointer(RegOff) ||
           (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff))
         continue;
+      if (Op.CallPreservedGPRs)
+        if (auto Family = gprFamilyOf(TRI.TheArch, RegOff);
+            Family && (Op.CallPreservedGPRs >> *Family) & 1)
+          continue;
       for (int Id : Ids) {
         auto It = RegVarOfId.find(Id);
         if (It == RegVarOfId.end() ||
@@ -554,8 +562,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           auto It = RegVarOfId.find(Id);
           if (It == RegVarOfId.end())
             continue;
-          uint16_t Prefix =
-              TRI.callPreservedPrefixSize(It->second.RegOff, It->second.Size);
+          uint16_t Prefix = TRI.callPreservedPrefixSize(
+              It->second.RegOff, It->second.Size, TargetFormat);
           if (Prefix > 0 && Prefix < It->second.Size && !Kill.count(Id)) {
             UEVar[B].insert(Id);
             VarOfId.emplace(Id, It->second);
@@ -566,7 +574,17 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           if (Op.Output.Kind == MedVar::Reg) {
             auto It = RegOffToIds.find(Op.Output.RegOff);
             if (It != RegOffToIds.end())
-              Kill.insert(It->second.begin(), It->second.end());
+              for (int Id : It->second) {
+                // A partial write (`mov r9w, ...`) leaves the upper bytes of
+                // a wider view live: a later full read still takes them from
+                // the caller.  Only x64 takes such a value as incoming; an
+                // i386 register live on entry would become a regparm
+                // parameter that a cdecl caller never passes.
+                auto View = RegVarOfId.find(Id);
+                if (TargetArch != Arch::X64 || View == RegVarOfId.end() ||
+                    View->second.Size <= Op.Output.Size)
+                  Kill.insert(Id);
+              }
           }
         }
         for (const MedVar &Aux : Op.IntrinsicOutputs)
@@ -656,6 +674,16 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           Input.SSAVer = 0;
           Input.Size = 4;
         }
+        // Both x86 calling conventions enter a function with DF clear, so
+        // its incoming value is known rather than a parameter.  Only the
+        // function entry has that guarantee; an exception landing pad does
+        // not.
+        if ((TargetArch == Arch::X86 || TargetArch == Arch::X64) &&
+            (Input.Kind == MedVar::Reg || Input.Kind == MedVar::Flag) &&
+            Input.RegOff == x86reg::DF &&
+            Func.Blocks[Root].ExceptionalPreds.empty() && Root == 0)
+          Input = MedVar::makeConst(0, Input.Size,
+                                    ConstantAddressProvenance::Scalar);
         Init.addInput(Input);
         if (Input.Kind == MedVar::Reg && Input.RegOff == TRI.StackPointer) {
           auto Offset = SEHFrameOffsets.find(Root);
@@ -810,8 +838,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         MedVar PreservedInput;
         uint16_t PreservedPrefixSize = 0;
         if (It != RegVarOfId.end()) {
-          PreservedPrefixSize =
-              TRI.callPreservedPrefixSize(It->second.RegOff, It->second.Size);
+          PreservedPrefixSize = TRI.callPreservedPrefixSize(
+              It->second.RegOff, It->second.Size, TargetFormat);
           if (PreservedPrefixSize > 0 &&
               PreservedPrefixSize < It->second.Size) {
             PreservedInput = It->second;

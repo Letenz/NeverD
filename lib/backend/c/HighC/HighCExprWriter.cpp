@@ -547,6 +547,49 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         OpStrs.push_back(GPRBytes == 8 ? "1" : "0");
     }
 
+    // An x86 integer-vector intrinsic takes and returns __m128i/__m256i/
+    // __m512i; HighC carries vector registers as same-width integers.
+    if ((Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) && E.Type &&
+        E.Type->Kind == NdTypeKind::Int &&
+        (E.Type->Size == 16 || E.Type->Size == 32 || E.Type->Size == 64))
+      if (const char *CName = intrinsicCName(E.IntrinsicId)) {
+        const llvm::StringRef Callee(CName);
+        if (Callee.starts_with("_mm") &&
+            (Callee.contains("_epi") || Callee.contains("_epu") ||
+             Callee.ends_with("_si128") || Callee.ends_with("_si256") ||
+             Callee.ends_with("_si512"))) {
+          const uint16_t Width = E.Type->Size;
+          const std::string Raw = typeToC(NdType::makeInt(Width, false));
+          const char *Vector = Width == 16   ? "__m128i"
+                               : Width == 32 ? "__m256i"
+                                             : "__m512i";
+          // A VEX/EVEX-widened form shares the SSE intrinsic ID; spell the
+          // intrinsic for the register width.
+          std::string Spelled = CName;
+          if (Width != 16 && Callee.starts_with("_mm_"))
+            Spelled = (Width == 32 ? "_mm256_" : "_mm512_") +
+                      Callee.drop_front(4).str();
+          std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
+          for (size_t I = 0; I < E.Operands.size(); ++I) {
+            const HighExpr *Op = E.Operands[I].get();
+            if (I > 0)
+              S += ", ";
+            if (!Op) {
+              S += "0";
+              continue;
+            }
+            if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+                Op->Type->Size == Width)
+              S += std::string("__builtin_bit_cast(") + Vector + ", (" + Raw +
+                   ")(" + exprStr(*Op) + "))";
+            else
+              S += exprStr(*Op);
+          }
+          HasCIntrinsics = true;
+          return S + "))";
+        }
+      }
+
     auto Rendered = renderIntrinsicCall(
         E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
         HasCIntrinsics);
@@ -560,13 +603,32 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       (Name.empty() || Name == "indirect" || Name == "indirect_call"))
     Name = indirectCalleeStr(*E.IndirectTarget);
 
+  // A callee defined in this file has a prototype: convert between pointer
+  // and integer arguments the way the machine passed them, in the register.
+  const HighFunc *Defined = nullptr;
+  if (E.IntrinsicId == Intrinsic::None && !E.CallTarget.empty())
+    if (auto It = DefinedFuncs.find(E.CallTarget); It != DefinedFuncs.end())
+      Defined = It->second;
+  // Its printed signature also fixes how many arguments the call passes: a
+  // value past its parameters is not read by it, and a parameter the call
+  // site did not determine is an unknown value.
+  const size_t ArgCount = Defined && !Defined->SourceTypeHint
+                              ? emittedParamCount(*Defined)
+                              : E.Operands.size();
   std::string S = Name + "(";
   const auto Callee = debugCallee(E);
   const MsvcAtlCallee *Atl = msvcAtlCallee(Name);
-  const size_t PrintedArgs = debugCallArgLimit(E);
+  // A callee printed in this file fixes the count by its signature; otherwise
+  // debug info and ATL knowledge may trim ABI-only extra operands.
+  const size_t PrintedArgs =
+      Defined && !Defined->SourceTypeHint ? ArgCount : debugCallArgLimit(E);
   for (size_t I = 0; I < PrintedArgs; ++I) {
     if (I > 0)
       S += ", ";
+    if (I >= E.Operands.size()) {
+      S += "0 /* unknown */";
+      continue;
+    }
     const HighExpr *Op = E.Operands[I].get();
     if (!Op) {
       S += "0";
@@ -642,10 +704,20 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       }
       return nullptr;
     };
-    if (const HighExpr *Imm = Immediate(Immediate, *Op, 0))
-      S += exprStr(*Imm);
-    else
-      S += exprStr(*Op);
+    const HighExpr *Imm = Immediate(Immediate, *Op, 0);
+    std::string Arg = exprStr(Imm ? *Imm : *Op);
+    // A callee printed in this file has a prototype: convert between pointer
+    // and integer arguments the way the machine passed them, in a register.
+    if (Defined && I < Defined->Params.size() && Defined->Params[I].Type &&
+        Op->Type) {
+      const TypeRef &Param = Defined->Params[I].Type;
+      const bool ParamPtr = Param->Kind == NdTypeKind::Ptr;
+      const bool ArgPtr = Op->Type->Kind == NdTypeKind::Ptr;
+      if (ParamPtr != ArgPtr && (ParamPtr ? Op->Type->Kind == NdTypeKind::Int
+                                          : Param->Kind == NdTypeKind::Int))
+        Arg = "(" + typeToC(Param) + ")(uintptr_t)(" + Arg + ")";
+    }
+    S += Arg;
   }
   S += ")";
   return S;
@@ -1370,7 +1442,10 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     Emit(msvcAtlSyntheticThis(Identifier, *Atl), "this");
   if (Atl && Emitted == 1 && msvcAtlTypesCallArgAsPointer(*Atl, 1))
     Emit(msvcAtlSyntheticThis(Identifier, *Atl), "src");
-  if (Emitted == 0)
+  // A debug signature without parameters says nothing about them:
+  // debugCallArgLimit keeps every recovered argument for such a callee, so
+  // `(void)` would reject the call.  Leave the declaration unprototyped.
+  if (Emitted == 0 && !FS.Params.empty())
     Declarator += "void";
   std::string Prefix = "extern ";
   if (Opts.TheArch == Arch::X64 &&
@@ -2451,14 +2526,24 @@ std::optional<int64_t> HighCWriter::certifiedFrameStorageDisplacement(
 }
 
 std::optional<std::string>
-HighCWriter::namedFrameSlot(const HighExpr &E) const {
+HighCWriter::namedFrameSlot(const HighExpr &E, const TypeRef &Access) const {
   const auto Disp = frameDisplacement(E);
   if (!Disp)
     return std::nullopt;
   const auto It = FrameSlots.find(*Disp);
   if (It == FrameSlots.end())
     return std::nullopt;
-  return It->second.Name;
+  const NamedFrameSlot &Slot = It->second;
+  const bool Narrow =
+      Access && Access->Size && Slot.Type && Access->Size < Slot.Type->Size;
+  if (!Slot.Interior.empty())
+    return Narrow
+               ? "(*(" + memoryTypeName(Access) + " *)((char *)&" + Slot.Outer +
+                     " + " + std::to_string(Slot.OuterOffset) + "))"
+               : Slot.Interior;
+  if (Narrow)
+    return "(*(" + memoryTypeName(Access) + " *)&" + Slot.Name + ")";
+  return Slot.Name;
 }
 
 bool HighCWriter::isNamedFrameMemory(const HighExpr &E) const {
@@ -2495,6 +2580,14 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     auto DeclaredType = declaredParamType(E.Var);
     const std::string RawName = varName(E.Var);
     std::string Name = copyForwardName(RawName);
+    // A copy forwarded to a parameter prints as that parameter, so it has
+    // the parameter's declared type.
+    if (!DeclaredType && CurrentFunc)
+      for (const HighParam &Param : CurrentFunc->Params)
+        if (Param.Name == Name) {
+          DeclaredType = Param.Type;
+          break;
+        }
     if (auto Reach = ReachingCatchFields.find(Name);
         Reach != ReachingCatchFields.end())
       return Reach->second;

@@ -189,6 +189,16 @@ void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
 
 void HighCWriter::emitIndent(int Indent) { emitCIndent(OS, Indent); }
 
+void HighCWriter::emitRenderedStatement(int Indent, llvm::StringRef Text) {
+  while (!Text.empty()) {
+    auto [Line, Rest] = Text.split('\n');
+    if (!Line.empty())
+      emitIndent(Indent);
+    OS << Line << '\n';
+    Text = Rest;
+  }
+}
+
 void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
                                     const HighExpr &ThrowCall) {
   OS << "throw";
@@ -335,7 +345,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     }
     // A call with custom statement rendering can have live auxiliary outputs
     // even when its primary result is unused. Render those effects first.
-    if (isNoreturnCallExpr(*Stmt.Val) ||
+    // A self call of a function printed `void` has no value to assign.
+    if (isNoreturnCallExpr(*Stmt.Val) || isVoidSelfCall(*Stmt.Val) ||
         Analysis.OmittedCallResults.count(&Stmt) ||
         (Stmt.Val->Kind == ExprKind::Call && Stmt.Dst &&
          (Stmt.Dst->Kind == ExprKind::Var ||
@@ -350,6 +361,19 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     }
     bool DeadIntrinsicResult = Stmt.Dst->Kind == ExprKind::Var &&
                                Analysis.DeadVars.count(varName(Stmt.Dst->Var));
+    // A software interrupt (`int 2Dh`, the debug service) has no C spelling:
+    // an asm block loads its register inputs and moves the result out.
+    if (Stmt.Dst->Kind == ExprKind::Var) {
+      const std::string Rendered = renderX86InterruptStatement(
+          Opts.TheArch, *Stmt.Val,
+          DeadIntrinsicResult ? "" : varName(Stmt.Dst->Var),
+          Stmt.Dst->Type ? Stmt.Dst->Type->Size : 8,
+          [this](const HighExpr &E) { return exprStr(E); });
+      if (!Rendered.empty()) {
+        emitRenderedStatement(Indent, Rendered);
+        break;
+      }
+    }
     if (Stmt.Val->Kind == ExprKind::Call &&
         Stmt.Val->IntrinsicId != Intrinsic::None && DeadIntrinsicResult &&
         (isSideeffectIntrinsic(Stmt.Val->IntrinsicId) ||
@@ -363,7 +387,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         return;
       if (Stmt.Dst->MemoryOrdering == NdMemoryOrdering::None &&
           Stmt.Dst->MemoryAddressSpace == NdMemoryAddressSpace::Default)
-        if (auto Slot = namedFrameSlot(*Stmt.Dst->Operands[0])) {
+        if (auto Slot =
+                namedFrameSlot(*Stmt.Dst->Operands[0], Stmt.Dst->Type)) {
           if (isCompilerEHConstant(*Stmt.Val))
             break;
           if (isParamCopy(*Stmt.Val)) {
@@ -406,7 +431,10 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           TypeRef ProjectedDestType = Stmt.Dst->Type;
           if (auto Disp = frameDisplacement(*Stmt.Dst->Operands[0])) {
             auto ProjectedSlot = FrameSlots.find(*Disp);
-            if (ProjectedSlot != FrameSlots.end() && ProjectedSlot->second.Type)
+            if (ProjectedSlot != FrameSlots.end() &&
+                ProjectedSlot->second.Type &&
+                !(ProjectedDestType &&
+                  ProjectedDestType->Size < ProjectedSlot->second.Type->Size))
               ProjectedDestType = ProjectedSlot->second.Type;
           }
           if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
@@ -637,7 +665,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Slot = namedFrameSlot(*Stmt.StoreAddr)) {
+      if (auto Slot = namedFrameSlot(*Stmt.StoreAddr, Stmt.StoreVal->Type)) {
         if (isParamCopy(*Stmt.StoreVal)) {
           if (auto Src = copyForwardSource(*Stmt.StoreVal)) {
             auto It = CopyForward.find(*Slot);
@@ -659,7 +687,9 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         TypeRef ProjectedDestType = Stmt.StoreVal->Type;
         if (auto Disp = frameDisplacement(*Stmt.StoreAddr)) {
           auto ProjectedSlot = FrameSlots.find(*Disp);
-          if (ProjectedSlot != FrameSlots.end() && ProjectedSlot->second.Type)
+          if (ProjectedSlot != FrameSlots.end() && ProjectedSlot->second.Type &&
+              !(ProjectedDestType &&
+                ProjectedDestType->Size < ProjectedSlot->second.Type->Size))
             ProjectedDestType = ProjectedSlot->second.Type;
         }
         if (isUnknownCallOperand(Stmt.StoreVal.get()))
@@ -850,28 +880,43 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     OS << "}\n";
     break;
 
-  case StmtKind::Switch:
+  case StmtKind::Switch: {
     if (!Stmt.SwitchExpr)
       return;
     emitIndent(Indent);
     OS << "switch (" << exprStr(*Stmt.SwitchExpr) << ") {\n";
+    // A body that already leaves the case needs no `break` after it.
+    auto endsInJump = [&](const std::vector<HighStmt> &Body) {
+      if (Body.empty() || Analysis.DeadStmts.count(&Body.back()))
+        return false;
+      const StmtKind K = Body.back().Kind;
+      return K == StmtKind::Return || K == StmtKind::Goto ||
+             K == StmtKind::Break || K == StmtKind::Continue;
+    };
     for (auto &C : Stmt.Cases) {
       emitIndent(Indent);
       OS << "case " << constStr(C.Value, Stmt.SwitchExpr->Type) << ":\n";
+      if (C.FallsThrough)
+        continue;
       writeStmtsIsolated(C.Body, Indent + 1);
-      emitIndent(Indent + 1);
-      OS << "break;\n";
+      if (!endsInJump(C.Body)) {
+        emitIndent(Indent + 1);
+        OS << "break;\n";
+      }
     }
     if (!Stmt.DefaultBody.empty()) {
       emitIndent(Indent);
       OS << "default:\n";
       writeStmtsIsolated(Stmt.DefaultBody, Indent + 1);
-      emitIndent(Indent + 1);
-      OS << "break;\n";
+      if (!endsInJump(Stmt.DefaultBody)) {
+        emitIndent(Indent + 1);
+        OS << "break;\n";
+      }
     }
     emitIndent(Indent);
     OS << "}\n";
     break;
+  }
 
   case StmtKind::Goto:
     emitIndent(Indent);
@@ -915,6 +960,41 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     break;
 
   case StmtKind::SEHTry: {
+    // C forbids a goto into a __try body, but machine code may branch into
+    // the middle of a protected range.  x64 SEH protection is by address,
+    // so splitting an __except try at that entry into two consecutive tries
+    // is equivalent and puts the label between them.  An inline handler body
+    // would be copied, so only out-of-line handlers are split.  A __finally
+    // runs on normal exit too, but an out-of-line one prints an empty body
+    // (its normal-exit call is already explicit code), so each piece runs
+    // nothing extra.
+    if (Stmt.Body.size() >= 2 && !Stmt.EHClauses.empty() &&
+        std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
+                    [](const HighEHClause &Clause) {
+                      return Clause.Kind == HighEHClauseKind::SEHExcept ||
+                             Clause.Kind == HighEHClauseKind::SEHFinally;
+                    }) &&
+        std::all_of(Stmt.EHClauseBodies.begin(), Stmt.EHClauseBodies.end(),
+                    [](const auto &Body) { return Body.empty(); })) {
+      std::map<va_t, unsigned> Inner;
+      walkStmts(Stmt.Body, [&](const HighStmt &Child) {
+        if (Child.Kind == StmtKind::Goto)
+          ++Inner[Child.GotoTarget];
+      });
+      for (size_t K = 1; K < Stmt.Body.size(); ++K) {
+        const va_t Addr = Stmt.Body[K].Addr;
+        auto Uses = GotoTargetUses.find(Addr);
+        if (Addr == 0 || Addr == InvalidVA || Uses == GotoTargetUses.end() ||
+            Uses->second <= Inner[Addr])
+          continue;
+        std::vector<HighStmt> Split(2, Stmt);
+        Split[0].Body.assign(Stmt.Body.begin(), Stmt.Body.begin() + K);
+        Split[1].Body.assign(Stmt.Body.begin() + K, Stmt.Body.end());
+        Split[1].Addr = Addr;
+        writeStmts(Split, Indent);
+        return;
+      }
+    }
     if (!Stmt.EHIsReducible || Stmt.EHClauses.size() != 1 ||
         Stmt.EHClauseBodies.size() != 1) {
       emitIndent(Indent);
@@ -1039,7 +1119,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       if (I < Stmt.EHClauseBodies.size()) {
         const bool SavedHandler = InEHClauseBody;
         InEHClauseBody = true;
+        const auto Named = CxxCatchNames.find(&Clause);
+        if (Named != CxxCatchNames.end())
+          OpenCatchObjects.push_back(Named->second);
         writeStmtsIsolated(Stmt.EHClauseBodies[I], Indent + 1);
+        if (Named != CxxCatchNames.end())
+          OpenCatchObjects.pop_back();
         InEHClauseBody = SavedHandler;
         if (Stmt.EHClauseBodies[I].empty() && Clause.HandlerVA) {
           emitIndent(Indent + 1);
@@ -1361,6 +1446,16 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         return K;
     return SIZE_MAX;
   };
+  // A goto can still reach a statement placed after a noreturn call (the
+  // `ret` that follows `int 29h`), so a labeled one is live code.
+  std::function<bool(const HighStmt &)> CarriesLabel = [&](const HighStmt &S) {
+    if (S.Addr != 0 && S.Addr != InvalidVA && GotoTargets.count(S.Addr))
+      return true;
+    for (const HighStmt &Child : S.Body)
+      if (CarriesLabel(Child))
+        return true;
+    return false;
+  };
   for (size_t I = 0; I < End; ++I) {
     const HighStmt &S = Stmts[I];
     if (S.Kind == StmtKind::If && S.Cond && I + 1 < End &&
@@ -1409,7 +1504,12 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
           if (C < Try.EHClauseBodies.size()) {
             const bool SavedHandler = InEHClauseBody;
             InEHClauseBody = true;
+            const auto Named = CxxCatchNames.find(&Clause);
+            if (Named != CxxCatchNames.end())
+              OpenCatchObjects.push_back(Named->second);
             writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
+            if (Named != CxxCatchNames.end())
+              OpenCatchObjects.pop_back();
             InEHClauseBody = SavedHandler;
             if (Try.EHClauseBodies[C].empty() && Clause.HandlerVA) {
               emitIndent(Indent + 1);
@@ -1576,7 +1676,12 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
           if (C < Try.EHClauseBodies.size()) {
             const bool SavedHandler = InEHClauseBody;
             InEHClauseBody = true;
+            const auto Named = CxxCatchNames.find(&Clause);
+            if (Named != CxxCatchNames.end())
+              OpenCatchObjects.push_back(Named->second);
             writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
+            if (Named != CxxCatchNames.end())
+              OpenCatchObjects.pop_back();
             InEHClauseBody = SavedHandler;
             if (Try.EHClauseBodies[C].empty() && Clause.HandlerVA) {
               emitIndent(Indent + 1);
@@ -1617,7 +1722,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       const bool JoinLabel = NestedJoin ||
           (IsGotoTarget(S.Addr) && S.Addr != LastLabel) ||
           (S.Kind == StmtKind::While && IsGotoTarget(S.LoopHeaderAddr) &&
-           S.LoopHeaderAddr != LastLabel);
+           S.LoopHeaderAddr != LastLabel) ||
+          llvm::any_of(S.Body, CarriesLabel);
       if (!JoinLabel)
         continue;
       AfterNoReturn = false;
@@ -1693,10 +1799,16 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         const HighStmt *ThenLiveAssign = nullptr;
         size_t ElseLive = 0;
         size_t ThenLive = 0;
+        // The join assignments are what this rewrite sinks into `return`, so
+        // they do not count as other live work whether or not a copy
+        // forward already hides them.
+        size_t ThenOther = 0;
         for (const HighStmt &E : S.Body) {
           if (stmtHiddenFromC(E))
             continue;
           ++ThenLive;
+          if (&E != ThenJoin)
+            ++ThenOther;
           if (E.Kind == StmtKind::Assign && E.Dst && E.Val &&
               E.Dst->Kind == ExprKind::Var)
             ThenLiveAssign = &E;
@@ -1704,10 +1816,12 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         for (const HighStmt &E : S.ElseBody) {
           if (stmtHiddenFromC(E))
             continue;
-          ++ElseLive;
           if (E.Kind == StmtKind::Assign && E.Dst && E.Val &&
               E.Dst->Kind == ExprKind::Var && E.Val->Kind == ExprKind::Call)
             AssignCall = &E;
+          if (&E == ElseJoin && E.Val && E.Val->Kind == ExprKind::Var)
+            continue;
+          ++ElseLive;
         }
         bool MatchesCall = false;
         if (AssignCall) {
@@ -1726,8 +1840,10 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                  ThenLiveAssign->Val->Kind != ExprKind::Call &&
                  ThenLiveAssign->Val->Kind != ExprKind::Undef)
           ThenVal = ThenLiveAssign->Val.get();
-        if ((ThenLive == 0 || (ThenLive == 1 && ThenVal)) && ElseLive == 1 &&
-            AssignCall && MatchesCall) {
+        const bool ThenSinks =
+            ThenJoin ? ThenOther == 0
+                     : (ThenLive == 0 || (ThenLive == 1 && ThenVal));
+        if (ThenSinks && ElseLive == 1 && AssignCall && MatchesCall) {
           emitIndent(Indent);
           OS << "if (" << invertCondStr(*S.Cond) << ")\n";
           emitIndent(Indent + 1);
@@ -1744,9 +1860,15 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         }
       }
     }
+    // The first label wins.  A try statement shares its address with its
+    // first statement; labelling the try itself keeps a goto from outside
+    // (or a loop back-edge) legal, since C forbids jumping into __try and
+    // x64 SEH protection is by address, not by entry.
     bool EmittedLabel = false;
     auto EmitLabel = [&](va_t Addr) {
-      if (!IsGotoTarget(Addr) || Addr == LastLabel)
+      // C allows one definition per label, even when a tail is printed twice.
+      if (!IsGotoTarget(Addr) || Addr == LastLabel ||
+          !EmittedLabels.insert(Addr).second)
         return;
       OS << "L_" + llvm::utohexstr(Addr) + ":\n";
       LastLabel = Addr;
@@ -1880,7 +2002,11 @@ void HighCWriter::writeTryBodyUnisolated(const std::vector<HighStmt> &Stmts,
       --End;
       continue;
     }
-    if (Last.Kind == StmtKind::Goto) {
+    // A trailing goto leaves the try for the code after it.  One that is
+    // itself a branch target still owns that label; jumping out of __try is
+    // legal, so keep it.
+    if (Last.Kind == StmtKind::Goto &&
+        !(Last.Addr != 0 && GotoTargets.count(Last.Addr))) {
       --End;
       continue;
     }
@@ -1911,6 +2037,45 @@ bool HighCWriter::isCompilerEHConstant(const HighExpr &Val) const {
 }
 
 void HighCWriter::collectCopyForward(const HighFunc &Func) {
+  // Forwarding a copy renames every use of its destination.  That is only
+  // the same value when the destination is assigned once and its source is
+  // never reassigned; a loop-carried variable (`v = arg0; ... v = next;`)
+  // has several definitions and must keep its own name.
+  std::map<std::string, unsigned> Definitions;
+  std::map<std::string, unsigned> SlotStores;
+  std::function<void(const std::vector<HighStmt> &)> CountDefinitions =
+      [&](const std::vector<HighStmt> &Stmts) {
+        for (const HighStmt &Stmt : Stmts) {
+          if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
+              (Stmt.Dst->Kind == ExprKind::Var ||
+               Stmt.Dst->Kind == ExprKind::Phi))
+            ++Definitions[varName(Stmt.Dst->Var)];
+          // A named frame slot stored on two paths (outgoing arguments of
+          // two calls) is not one copy either.
+          const HighExpr *SlotAddr = nullptr;
+          if (Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
+              Stmt.Dst->Kind == ExprKind::Load && !Stmt.Dst->Operands.empty())
+            SlotAddr = Stmt.Dst->Operands[0].get();
+          else if (Stmt.Kind == StmtKind::Store)
+            SlotAddr = Stmt.StoreAddr.get();
+          if (SlotAddr)
+            if (auto Slot = namedFrameSlot(*SlotAddr))
+              ++SlotStores[*Slot];
+          CountDefinitions(Stmt.Body);
+          CountDefinitions(Stmt.ElseBody);
+          for (const auto &C : Stmt.Cases)
+            CountDefinitions(C.Body);
+          CountDefinitions(Stmt.DefaultBody);
+          for (const auto &ClauseBody : Stmt.EHClauseBodies)
+            CountDefinitions(ClauseBody);
+        }
+      };
+  CountDefinitions(Func.Body);
+  auto DefinitionCount = [&](const std::string &Name) {
+    auto It = Definitions.find(Name);
+    return It == Definitions.end() ? 0u : It->second;
+  };
+
   std::set<std::string> SeenLoad;
   std::map<std::string, std::vector<TypeRef>> SlotLoadTypes;
   std::map<std::string, std::vector<TypeRef>> SlotStoreTypes;
@@ -1945,8 +2110,9 @@ void HighCWriter::collectCopyForward(const HighFunc &Func) {
         SlotStoreTypes[*Slot].push_back(Val.Type);
         // Pointer/float homes are C objects.  Copy-forwarding them through an
         // integer load would drop a bitcast (`return arg0` for float→int).
-        if (Nested || SeenLoad.count(*Slot) || isAddressTakenSlot(*Slot) ||
-            !isParamCopy(Val) || !Val.Type ||
+        if (Nested || SharedFrameStorage.count(*Slot) ||
+            SeenLoad.count(*Slot) || SlotStores[*Slot] != 1 ||
+            isAddressTakenSlot(*Slot) || !isParamCopy(Val) || !Val.Type ||
             Val.Type->Kind != NdTypeKind::Int) {
           CopyForward.erase(*Slot);
           Analysis.DeadVars.erase(*Slot);
@@ -1990,6 +2156,9 @@ void HighCWriter::collectCopyForward(const HighFunc &Func) {
                  Stmt.Dst->Type->Size != Stmt.Val->Type->Size))
               Src.reset();
           }
+          if (Src &&
+              (DefinitionCount(DstName) != 1 || DefinitionCount(*Src) > 1))
+            Src.reset();
           if (Src) {
             CopyForward[DstName] = *Src;
             Analysis.DeadVars.insert(DstName);
@@ -2243,23 +2412,27 @@ bool HighCWriter::incrementBaseMatchesAddr(const HighExpr &Base,
     return Fwd && Fwd->Kind == ExprKind::Load && !Fwd->Operands.empty() &&
            Fwd->Operands[0] && samePeeledAddr(*Fwd->Operands[0], Addr);
   };
-  auto It = ValueForward.find(varName(B->Var));
+  const std::string Name = varName(B->Var);
+  auto It = ValueForward.find(Name);
   if (It != ValueForward.end() && It->second && MatchesLoad(It->second))
     return true;
   if (!CurrentFunc)
     return false;
-  bool Found = false;
-  walkStmts(CurrentFunc->Body, [&](const HighStmt &S) {
-    if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
-      return;
-    if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
-      return;
-    if (varName(S.Dst->Var) != varName(B->Var))
-      return;
-    if (MatchesLoad(S.Val.get()))
-      Found = true;
-  });
-  return Found;
+  // Every increment store asks this; index the function's assignments once.
+  if (!AssignedValuesIndexed) {
+    AssignedValuesIndexed = true;
+    walkStmts(CurrentFunc->Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val)
+        return;
+      if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
+        return;
+      AssignedValuesByName[varName(S.Dst->Var)].push_back(S.Val.get());
+    });
+  }
+  auto Assigned = AssignedValuesByName.find(Name);
+  if (Assigned == AssignedValuesByName.end())
+    return false;
+  return llvm::any_of(Assigned->second, MatchesLoad);
 }
 
 const HighExpr *HighCWriter::asAndWithConst(const HighExpr &Val,
@@ -2376,6 +2549,22 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
     };
     return Walk(E);
   };
+  // Only a load whose variable is the base of some in-place add can be
+  // hidden.  Find those names once rather than rescanning the body for every
+  // load assignment.
+  std::set<std::string> IncrementBaseNames;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (Analysis.DeadStmts.count(&S))
+      return;
+    int64_t Delta = 0;
+    if (!isInplaceAddStore(S, Delta))
+      return;
+    const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
+    if (Base && (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi))
+      IncrementBaseNames.insert(varName(Base->Var));
+  });
+  if (IncrementBaseNames.empty())
+    return;
   walkStmts(Func.Body, [&](const HighStmt &Assign) {
     if (Analysis.DeadStmts.count(&Assign))
       return;
@@ -2389,7 +2578,8 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
     if (Assign.Val->MemoryOrdering != NdMemoryOrdering::None)
       return;
     const std::string Name = varName(Assign.Dst->Var);
-    if (Name.empty() || isEmittedParamName(Name))
+    if (Name.empty() || isEmittedParamName(Name) ||
+        !IncrementBaseNames.count(Name))
       return;
     unsigned IncrementStores = 0;
     bool OtherUse = false;

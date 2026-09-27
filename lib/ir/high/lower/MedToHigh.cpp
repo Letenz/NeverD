@@ -417,22 +417,36 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // deletes that edge.
   if (CurMed && V.Kind == MedVar::Reg && TargetArch == Arch::X64 && Image &&
       Image->Format == BinaryFormat::COFF && !PhiOutputVars.count(varKey(V))) {
+    if (ParamCopyIndexFunc != CurMed) {
+      // One pass over the function instead of one per variable reference.
+      ParamCopyIndexFunc = CurMed;
+      ParamSourceCopies.clear();
+      ComputedVersions.clear();
+      for (const auto &Blk : CurMed->Blocks)
+        for (const auto &Op : Blk.Ops) {
+          // Any def but a COPY of a register or parameter computes a value.
+          if (Op.Opcode != NdOp::COPY ||
+              (Op.NumInputs >= 1 && Op.Inputs[0].Kind != MedVar::Reg &&
+               Op.Inputs[0].Kind != MedVar::Param))
+            ComputedVersions.insert({Op.Output.Id, Op.Output.SSAVer});
+          if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1 ||
+              Op.Output.Kind != MedVar::Reg)
+            continue;
+          const MedVar &Src = Op.Inputs[0];
+          int Idx = -1;
+          if (Src.Kind == MedVar::Param)
+            Idx = abiParamIndex(Src);
+          else if (Src.Kind == MedVar::Reg && Src.SSAVer == 0)
+            Idx = regToArgIdx(Src.RegOff);
+          if (Idx >= 0 && static_cast<size_t>(Idx) < CurMed->Params.size())
+            ParamSourceCopies.push_back({&Op, Idx});
+        }
+    }
     int Fallback = -1;
-    for (const auto &Blk : CurMed->Blocks) {
-      for (const auto &Op : Blk.Ops) {
-        if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1)
-          continue;
-        if (Op.Output.Kind != MedVar::Reg)
-          continue;
+    for (const auto &[OpPtr, Idx] : ParamSourceCopies) {
+      {
+        const MedOp &Op = *OpPtr;
         if (Op.Output.Id != V.Id && Op.Output.RegOff != V.RegOff)
-          continue;
-        const MedVar &Src = Op.Inputs[0];
-        int Idx = -1;
-        if (Src.Kind == MedVar::Param)
-          Idx = abiParamIndex(Src);
-        else if (Src.Kind == MedVar::Reg && Src.SSAVer == 0)
-          Idx = regToArgIdx(Src.RegOff);
-        if (Idx < 0 || static_cast<size_t>(Idx) >= CurMed->Params.size())
           continue;
         if (Op.Output.Id == V.Id && Op.Output.SSAVer == V.SSAVer) {
           MedVar Param = V;
@@ -450,24 +464,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
         // `mov rax, [bins+i]` must not remap RAX.3 onto arg1.  That deleted
         // Typed map bucket walks.
         if (Fallback < 0 && regToArgIdx(V.RegOff) < 0) {
-          bool Computed = PhiOutputVars.count(varKey(V));
-          for (const auto &B2 : CurMed->Blocks) {
-            if (Computed)
-              break;
-            for (const auto &O2 : B2.Ops) {
-              if (O2.Output.Id != V.Id || O2.Output.SSAVer != V.SSAVer)
-                continue;
-              if (O2.Opcode != NdOp::COPY) {
-                Computed = true;
-                break;
-              }
-              if (O2.NumInputs >= 1 && O2.Inputs[0].Kind != MedVar::Reg &&
-                  O2.Inputs[0].Kind != MedVar::Param) {
-                Computed = true;
-                break;
-              }
-            }
-          }
+          const bool Computed = PhiOutputVars.count(varKey(V)) ||
+                                ComputedVersions.count({V.Id, V.SSAVer});
           if (!Computed)
             Fallback = Idx;
         }
@@ -739,12 +737,50 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
 // convert — top-level MedIR to HighIR pipeline
 //===----------------------------------------------------------------------===//
 
+void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
+  if (Func.Body.size() > limits::kMaxLateGotoReductionStmts)
+    return;
+  bool Changed = duplicateSmallReturnTails(Func.Body);
+  // Region splices nest whole multi-block regions, so they run only after
+  // the local rewrites have settled.  The late rewrites can leave new jumps
+  // to a small return tail; those get one more tail-duplication pass.
+  // Backward jumps become loops last, once fall-through joins no longer need
+  // explicit jumps.
+  for (int Phase = 0; Phase < 5; ++Phase) {
+    // Dead copies left by earlier rewrites can sit between a jump and
+    // its label; clear them before the next phase looks.
+    if (Phase != 0 && Changed)
+      eliminateDeadStmts(Func);
+    if (Phase == 2 && !duplicateSmallReturnTails(Func.Body))
+      continue;
+    if (Phase == 3 && !loopifyBackwardGotos(Func.Body))
+      continue;
+    if (Phase == 4 && !duplicateSmallReturnTails(Func.Body))
+      break;
+    Changed |= Phase >= 2;
+    for (int Round = 0; Round < 8; ++Round) {
+      const bool Grouped = groupSwitchCases(Func.Body) |
+                           (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
+                           (Phase != 0 && loopifyTrailingArmBodies(Func.Body));
+      if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
+          !Grouped)
+        break;
+      Changed = true;
+    }
+  }
+  if (Changed)
+    eliminateDeadStmts(Func);
+}
+
 HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   HighConversionTrace Trace(Med, TheArch);
   Trace.med();
   auto TStart = std::chrono::steady_clock::now();
   TargetArch = TheArch;
   CurMed = &Med;
+  ParamCopyIndexFunc = nullptr;
+  LoadedEntrySlotsFor = nullptr;
+  EntryOffsetDefsFor = nullptr;
   SourceParameters = Med.SourceTypeHint
                          ? sourceABIParameters(*Med.SourceTypeHint)
                          : std::vector<SourceABIParameter>{};
@@ -799,7 +835,28 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
     MedOps += Block.Ops.size();
   if (Med.Blocks.size() > limits::kMaxStructurableMedBlocks ||
       MedOps > limits::kMaxStructurableMedOps) {
-    fillUnstructuredGotoSkeleton(Func, Med);
+    // Too large to structure: still lower every operation, block by block,
+    // with explicit gotos between blocks.  MedIR that skipped SSA cannot be
+    // lowered this way (a register has no unique definition), so it keeps the
+    // skeleton.
+    if (Med.SkippedSSA) {
+      fillUnstructuredGotoSkeleton(Func, Med);
+      return Func;
+    }
+    buildExpressions(Med);
+    structureControlFlow(Func, Med);
+    Trace.high(Func, "structured");
+    inferTypes(Func);
+    eraseKeepingBranchEntries(
+        Func.Body, gotoTargets(Func.Body), [](const HighStmt &S) {
+          return S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+                 S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Var &&
+                 S.Dst->Var == S.Val->Var;
+        });
+    ensureTrailingReturn(Func, Med);
+    structureExceptionRegions(Func, Med);
+    reduceLateGotos(Func);
+    Trace.high(Func, "after-exceptions");
     return Func;
   }
 
@@ -815,17 +872,12 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   inferTypes(Func);
   auto TPost = std::chrono::steady_clock::now();
 
-  Func.Body.erase(std::remove_if(Func.Body.begin(), Func.Body.end(),
-                                 [](const HighStmt &S) {
-                                   if (S.Kind != StmtKind::Assign || !S.Dst ||
-                                       !S.Val)
-                                     return false;
-                                   if (S.Dst->Kind == ExprKind::Var &&
-                                       S.Val->Kind == ExprKind::Var)
-                                     return S.Dst->Var == S.Val->Var;
-                                   return false;
-                                 }),
-                  Func.Body.end());
+  eraseKeepingBranchEntries(
+      Func.Body, gotoTargets(Func.Body), [](const HighStmt &S) {
+        return S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+               S.Dst->Kind == ExprKind::Var && S.Val->Kind == ExprKind::Var &&
+               S.Dst->Var == S.Val->Var;
+      });
 
   stripPrologueEpilogue(Func);
   ensureTrailingReturn(Func, Med);
@@ -845,6 +897,7 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
   foldStructuredContinuations(Func, &Med);
   coalesceBranchEntryStatements(Func);
   eliminateHighDeadPhiCopies(Func);
+  reduceLateGotos(Func);
   Trace.high(Func, "after-exceptions");
   auto TEnd = std::chrono::steady_clock::now();
 
