@@ -207,8 +207,20 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
                      Policy.Idle && Policy.Idle->Enabled &&
                      Policy.Idle->CanWake &&
                      Policy.Armed == KernelPowerPolicy::WakeSource::None;
-  const bool ArmSx = !Entering && !ReleasesHardware && Policy.SystemSleeping &&
-                     Policy.Wake && Policy.Wake->Enabled;
+  if (!Entering && !ReleasesHardware && Policy.SystemSleeping && Policy.Wake) {
+    auto Children = armedWakeChildren(Handle->second);
+    if (!Children)
+      return Children.takeError();
+    Transition.WakeChildren = std::move(*Children);
+    Transition.DeviceWakeEnabled = Policy.Wake->Enabled;
+    Transition.ChildrenArmedForWake =
+        Policy.Wake->ArmForChildren && !Transition.WakeChildren.empty();
+  }
+  const bool ArmSx =
+      Transition.DeviceWakeEnabled || Transition.ChildrenArmedForWake;
+  if (ArmSx)
+    if (auto E = validateWakeEnrollment(Handle->second))
+      return E;
   if (ArmS0)
     Transition.Remaining.push_back({PnpPhase::ArmWakeFromS0});
   if (ArmSx)
@@ -486,6 +498,21 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
         return llvm::Error::success();
       continue;
     }
+    if (Phase == PnpPhase::DisarmWakeParents) {
+      while (!Transition.WakeParentsToDisarm.empty()) {
+        const uint64_t Parent = Transition.WakeParentsToDisarm.front();
+        Transition.WakeParentsToDisarm.pop_front();
+        const uint64_t Callback =
+            Devices.at(Parent).Policy.Events.DisarmWakeFromSx;
+        if (!Callback)
+          continue;
+        if (!Transition.WakeParentsToDisarm.empty())
+          Transition.Remaining.push_front({PnpPhase::DisarmWakeParents});
+        PendingCall = GuestCall{Token, Callback, {Parent}};
+        return llvm::Error::success();
+      }
+      continue;
+    }
     if (Phase == PnpPhase::WakeInterrupts) {
       D.InD0 = true;
       if (hasPendingWakeInterrupts(Transition.Device)) {
@@ -513,12 +540,14 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
         return E;
     }
     if (Disarm) {
-      if (!PowerHost.FinishWake)
-        return invalid("wake disarm requires the retained WAIT_WAKE bridge");
-      if (auto E = PowerHost.FinishWake(D.Wdm, false))
+      if (auto E = retireChildWake(Transition.Device, Transition))
         return E;
       D.Policy.Armed = KernelPowerPolicy::WakeSource::None;
+      D.Policy.ArmedForDevice = false;
+      D.Policy.ArmedChildren.clear();
       D.Policy.WakeTriggered = false;
+      if (!Transition.WakeParentsToDisarm.empty())
+        Transition.Remaining.push_front({PnpPhase::DisarmWakeParents});
     }
     uint64_t Callback = 0;
     switch (Transition.Current.Phase) {
@@ -544,6 +573,7 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     case PnpPhase::PoFxStart:
     case PnpPhase::PoFxQuiesce:
     case PnpPhase::PoFxUnregister:
+    case PnpPhase::DisarmWakeParents:
       break;
     }
     std::vector<uint64_t> Arguments{Transition.Device};
@@ -556,11 +586,12 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     case PnpPhase::PoFxStart:
     case PnpPhase::PoFxQuiesce:
     case PnpPhase::PoFxUnregister:
+    case PnpPhase::DisarmWakeParents:
       llvm_unreachable(
           "internal interrupt phase handled before guest dispatch");
     case PnpPhase::ArmWakeFromSxWithReason:
-      Arguments.push_back(1);
-      Arguments.push_back(0);
+      Arguments.push_back(Transition.DeviceWakeEnabled);
+      Arguments.push_back(Transition.ChildrenArmedForWake);
       break;
     case PnpPhase::ArmWakeFromS0:
     case PnpPhase::ArmWakeFromSx:
@@ -629,9 +660,12 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
       break;
     }
     if (!Callback && (ArmS0 || ArmSx || Disarm)) {
-      if (ArmS0 || ArmSx)
+      if (ArmS0 || ArmSx) {
         D.Policy.Armed = ArmS0 ? KernelPowerPolicy::WakeSource::S0
                                : KernelPowerPolicy::WakeSource::Sx;
+        D.Policy.ArmedForDevice = ArmS0 || Transition.DeviceWakeEnabled;
+        D.Policy.ArmedChildren = std::move(Transition.WakeChildren);
+      }
       continue;
     }
     if (!Callback)
@@ -688,6 +722,7 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       case PnpPhase::PoFxStart:
       case PnpPhase::PoFxQuiesce:
       case PnpPhase::PoFxUnregister:
+      case PnpPhase::DisarmWakeParents:
       case PnpPhase::IoStop:
       case PnpPhase::IoResume:
         VoidResult = true;
@@ -723,6 +758,8 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
         if (!Failed) {
           Policy.Armed = ArmS0 ? KernelPowerPolicy::WakeSource::S0
                                : KernelPowerPolicy::WakeSource::Sx;
+          Policy.ArmedForDevice = ArmS0 || State.DeviceWakeEnabled;
+          Policy.ArmedChildren = std::move(State.WakeChildren);
         } else {
           if (auto E = PowerHost.FinishWake(Device->second.Wdm, false))
             return E;

@@ -233,8 +233,16 @@ KernelModel::dispatchPreparedPowerRequest(const Invocation &Call) {
                                : callProviderDriver(Call.Argument0, Call.IRP);
   if (!Status)
     return Status.takeError();
-  return Request->FrameworkTransitionAwaiting ? StatusPending
-                                              : uint32_t(*Status);
+  if (FrameworkPower) {
+    // An inline device-power completion may already have released the system
+    // IRP's policy hold. Its pending bit still governs the dispatch return.
+    auto Pending = dispatchPending(*Request, Request->StackCount - 1);
+    if (!Pending)
+      return Pending.takeError();
+    if (*Pending)
+      return StatusPending;
+  }
+  return uint32_t(*Status);
 }
 
 llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {

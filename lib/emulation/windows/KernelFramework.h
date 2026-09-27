@@ -277,6 +277,10 @@ public:
     std::function<llvm::Expected<bool>(uint64_t, bool)> CanWake;
     std::function<llvm::Error(uint64_t, bool)> ArmWake;
     std::function<llvm::Error(uint64_t, bool)> FinishWake;
+    std::function<llvm::Expected<std::vector<uint64_t>>(uint64_t)> Children;
+    std::function<llvm::Error(uint64_t, llvm::ArrayRef<uint64_t>)>
+        CompleteWakes;
+    std::function<llvm::Error(llvm::ArrayRef<uint64_t>)> CancelWakes;
     std::function<llvm::Error(uint64_t, bool, uint64_t)> ManagedIdle;
     std::function<llvm::Error(uint64_t)> RemoveManaged;
     std::function<llvm::Expected<bool>(uint64_t, bool, bool, uint32_t)>
@@ -667,6 +671,10 @@ private:
   llvm::Error unregisterPoFx(uint64_t Device);
   llvm::Error holdForPoFxComponent(uint64_t Device);
   bool powerPolicyBusy(uint64_t Device) const;
+  llvm::Expected<std::vector<KernelPowerPolicy::WakeChild>>
+  armedWakeChildren(uint64_t Device) const;
+  bool isLiveWakeChild(const KernelPowerPolicy::WakeChild &Child) const;
+  llvm::Error validateWakeEnrollment(uint64_t Device) const;
   llvm::Error restartIdleTimer(uint64_t Device);
   llvm::Error beginIdlePowerDown(uint64_t Device);
   llvm::Expected<std::optional<uint64_t>>
@@ -688,7 +696,8 @@ private:
     PoFxRegister,
     PoFxStart,
     PoFxQuiesce,
-    PoFxUnregister
+    PoFxUnregister,
+    DisarmWakeParents
   };
   struct PnpStep {
     PnpPhase Phase;
@@ -714,6 +723,10 @@ private:
     uint32_t PowerState = framework::PowerDeviceD3Final;
     bool SuspendAfterQueues = false;
     uint64_t CurrentInterrupt = 0;
+    bool DeviceWakeEnabled = false;
+    bool ChildrenArmedForWake = false;
+    std::vector<KernelPowerPolicy::WakeChild> WakeChildren;
+    std::deque<uint64_t> WakeParentsToDisarm;
     bool nextPrecedesRequestDrain() const {
       if (Remaining.empty())
         return false;
@@ -723,6 +736,7 @@ private:
     }
   };
   std::map<uint64_t, PnpTransition> PnpTransitions;
+  llvm::Error retireChildWake(uint64_t Device, PnpTransition &Transition);
   std::optional<PnpCompletion> CompletedPnp;
   std::optional<GuestCall> PendingCall;
 

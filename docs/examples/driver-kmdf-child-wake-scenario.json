@@ -1,0 +1,250 @@
+{
+  "service_name": "NeverDKmdfChildWake",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "wake-parent",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "wake_capabilities": {
+        "s0": false,
+        "sx": true
+      },
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D3",
+          "power_action": "sleep",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        }
+      ]
+    },
+    {
+      "id": "wake-child",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "wake_capabilities": {
+        "s0": false,
+        "sx": true
+      },
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D3",
+          "power_action": "sleep",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        }
+      ],
+      "parent_id": "wake-parent"
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "wake-parent",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "wake-parent",
+      "file": 1
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "wake-parent",
+      "file": 1,
+      "code": "0x222004",
+      "input": "0000010100"
+    },
+    {
+      "kind": "pnp",
+      "device_id": "wake-child",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "wake-child",
+      "file": 2
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "wake-child",
+      "file": 2,
+      "code": "0x222004",
+      "input": "0101000000"
+    },
+    {
+      "kind": "power",
+      "device_id": "wake-child",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "sleeping3",
+      "power_action": "sleep",
+      "system_context": 0,
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "power",
+      "device_id": "wake-parent",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "sleeping3",
+      "power_action": "sleep",
+      "system_context": 0,
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "wake-parent",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 44,
+      "power_policy_events": [
+        {
+          "device_id": "wake-parent",
+          "after_100ns": 0,
+          "action": "wake"
+        }
+      ]
+    },
+    {
+      "kind": "power",
+      "device_id": "wake-parent",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "working",
+      "power_action": "none",
+      "system_context": 0,
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "power",
+      "device_id": "wake-child",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "working",
+      "power_action": "none",
+      "system_context": 0,
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "wake-parent",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 44
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "wake-child",
+      "file": 2,
+      "code": "0x222000",
+      "output_size": 44
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "wake-child",
+      "file": 2
+    },
+    {
+      "kind": "close",
+      "device_id": "wake-child",
+      "file": 2
+    },
+    {
+      "kind": "pnp",
+      "device_id": "wake-child",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "wake-child",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "wake-parent",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "wake-parent",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "wake-parent",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "wake-parent",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0
+      }
+    }
+  ]
+}

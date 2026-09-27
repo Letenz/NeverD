@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace neverd::emulation {
 namespace power_policy {
@@ -36,6 +37,12 @@ struct KernelPowerPolicy {
   };
   struct WakeSettings {
     bool Enabled = false;
+    bool ArmForChildren = false;
+    bool PropagateParentWake = false;
+  };
+  struct WakeChild {
+    uint64_t PDO = 0;
+    uint64_t Epoch = 0;
   };
   enum class WakeSource { None, S0, Sx };
   std::optional<IdleSettings> Idle;
@@ -45,6 +52,8 @@ struct KernelPowerPolicy {
   std::optional<uint64_t> IdleSince;
   std::optional<uint64_t> Deadline;
   WakeSource Armed = WakeSource::None;
+  bool ArmedForDevice = false;
+  std::vector<WakeChild> ArmedChildren;
   bool WakeTriggered = false;
   bool Started = false;
   bool SystemSleeping = false;

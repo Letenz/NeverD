@@ -977,7 +977,8 @@ pnpDevices(const llvm::json::Value &Value) {
     if (!Object)
       return invalid("each pnp_devices entry must be an object");
     if (auto E = fields(*Object,
-                        {field::ID, field::Bus, field::InitialDevicePower,
+                        {field::ID, field::ParentID, field::Bus,
+                         field::InitialDevicePower,
                          field::InitialSystemPower,
                          field::InitialReportedDevicePower,
                          field::RequestedDevicePower, resourceField::Resources,
@@ -994,6 +995,12 @@ pnpDevices(const llvm::json::Value &Value) {
           "and initial_system_power strings");
     DriverPnpDevice Device;
     Device.ID = ID->str();
+    if (const auto *Parent = Object->get(field::ParentID)) {
+      auto ParentID = Parent->getAsString();
+      if (!ParentID)
+        return invalid("pnp parent_id must be a string when present");
+      Device.ParentID = ParentID->str();
+    }
     if (const auto *Wake = Object->get(policyField::WakeCapabilities)) {
       const auto *Facts = Wake->getAsObject();
       if (!Facts)
@@ -1685,6 +1692,36 @@ llvm::Error validateDriverDma(llvm::ArrayRef<DriverPnpDevice> Devices) {
 }
 
 namespace {
+llvm::Error validatePnpTopology(llvm::ArrayRef<DriverPnpDevice> Devices) {
+  std::map<llvm::StringRef, const DriverPnpDevice *> ByID;
+  for (const auto &Device : Devices)
+    ByID.emplace(Device.ID, &Device);
+  for (const auto &Device : Devices) {
+    if (!Device.ParentID)
+      continue;
+    if (!validDeviceID(*Device.ParentID))
+      return invalid("pnp parent_id must be a bounded ASCII identifier");
+    if (*Device.ParentID == Device.ID)
+      return invalid("pnp parent_id cannot name the device itself");
+    if (!ByID.contains(*Device.ParentID))
+      return invalid("pnp parent_id must name a configured device");
+  }
+  // Each node has at most one parent. Mark complete paths so shared ancestors
+  // are visited once without recursion or a second authoritative graph.
+  std::set<llvm::StringRef> Complete;
+  for (const auto &Device : Devices) {
+    std::set<llvm::StringRef> Path;
+    const auto *Current = &Device;
+    while (Current && !Complete.contains(Current->ID)) {
+      if (!Path.insert(Current->ID).second)
+        return invalid("pnp parent_id relationships contain a cycle");
+      Current = Current->ParentID ? ByID.at(*Current->ParentID) : nullptr;
+    }
+    Complete.insert(Path.begin(), Path.end());
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error validateDmaEvents(const DriverOptions &Options) {
   size_t Count = 0;
   uint64_t Bytes = 0;
@@ -1973,6 +2010,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       if (auto E = validateDriverPowerOperation(Operation, true))
         return E;
   }
+  if (auto E = validatePnpTopology(Options.PnpDevices))
+    return E;
   if (Options.Requests.size() > DriverScenarioRequestLimit)
     return invalid("at most 64 requests are permitted");
   if (auto E = validateDmaEvents(Options))

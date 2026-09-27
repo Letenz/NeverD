@@ -26,6 +26,47 @@ llvm::Error pnpError(const llvm::Twine &Message) {
 }
 } // namespace
 
+llvm::Error
+KernelModel::validatePnpTopologyTransition(uint64_t PDO,
+                                           DevicePnpRequest Minor) const {
+  const auto *Provider = pnpDeviceForPDO(PDO);
+  if (!Provider)
+    return pnpError("topology transition lost its provider");
+  if (Minor == DevicePnpRequest::Start && Provider->ParentPDO) {
+    if (!isProviderDevice(Provider->ParentPDO))
+      return pnpError("child START requires a live parent provider");
+    auto Parent = Lifecycle.snapshot(Provider->ParentPDO);
+    if (!Parent)
+      return Parent.takeError();
+    if (Parent->Pnp != DevicePnpState::Started || Parent->PnpOperation)
+      return pnpError("child START requires its parent's completed START");
+    if (Parent->DevicePower != DevicePowerState::D0 ||
+        Parent->DevicePowerOperation || Parent->SystemPowerOperation)
+      return pnpError("child START requires its parent's stable D0 state");
+  }
+  if (Minor != DevicePnpRequest::Stop && Minor != DevicePnpRequest::Remove &&
+      Minor != DevicePnpRequest::SurpriseRemoval)
+    return llvm::Error::success();
+  for (const auto &[ID, Child] : PnpDevices) {
+    if (Child.ParentPDO != PDO || !isProviderDevice(Child.PDO))
+      continue;
+    if (Minor == DevicePnpRequest::Remove)
+      return pnpError("parent REMOVE requires all child providers to retire");
+    auto State = Lifecycle.snapshot(Child.PDO);
+    if (!State)
+      return State.takeError();
+    if (State->PnpOperation || State->DevicePowerOperation ||
+        State->SystemPowerOperation || FrameworkWakeIRPs.contains(Child.PDO))
+      return pnpError("parent teardown requires child transitions and wake "
+                      "obligations to drain");
+    if (State->Pnp == DevicePnpState::Started ||
+        State->Pnp == DevicePnpState::StopPending ||
+        State->Pnp == DevicePnpState::RemovePending)
+      return pnpError("parent teardown requires children to stop first");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<KernelModel::Invocation>
 KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
   if (!Input.Pnp || Input.Power || Input.DeviceID.empty() ||
@@ -47,6 +88,8 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
   const uint64_t PDO = Found->second.PDO;
   if (!Devices.count(PDO))
     return pnpError("request targets a removed provider device");
+  if (auto E = validatePnpTopologyTransition(PDO, Minor))
+    return E;
   auto State = Lifecycle.snapshot(PDO);
   if (!State)
     return State.takeError();
