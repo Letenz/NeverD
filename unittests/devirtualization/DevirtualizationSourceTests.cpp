@@ -386,6 +386,16 @@ TEST_F(DevirtualizationSourceTest, RefusesUndecodedCoveringExceptionHandler) {
   EXPECT_EQ(Result.Status, analysis::SpecializationStatus::Unsupported);
   EXPECT_TRUE(Result.Residual.Blocks.empty());
   EXPECT_FALSE(Result.Diagnostic.empty());
+
+  // The first x64 prologue instruction spans multiple bytes. A malformed
+  // runtime-function boundary inside it must not escape the overlap check.
+  Parent.CodeRange = {Entry + 1, Entry + 2};
+  Image->ExceptionMetadata.Functions = {Parent};
+  Image->ExceptionMetadata.rebuildIndex();
+  const auto Interior =
+      analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
+  EXPECT_EQ(Interior.Status, analysis::SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Interior.Residual.Blocks.empty());
 }
 
 TEST_F(DevirtualizationSourceTest, RefusesIncompleteExceptionMetadata) {

@@ -92,17 +92,6 @@ public:
     if (Cursor.Mode != InstructionMode::Default)
       return llvm::createStringError(llvm::errc::not_supported,
                                      "unsupported instruction mode");
-    // Check every covering record: a narrow fragment must not hide its
-    // containing parent's language handler or incomplete table parse.
-    for (const auto &EH : Image.ExceptionMetadata.Functions)
-      if (EH.CodeRange.contains(Cursor.Address) &&
-          (EH.hasLanguageTable() || EH.PersonalityVA || EH.HandlerDataVA ||
-           EH.Personality != ExceptionPersonality::None ||
-           EH.ParseStatus != ExceptionParseStatus::Complete ||
-           EH.PrimaryFunctionIndex || EH.ChainedPrimaryRange))
-        return llvm::createStringError(
-            llvm::errc::not_supported,
-            "exception edges require a recovery contract");
     const auto *S = immutableMapping(Cursor.Address, 1, true);
     if (!S)
       return llvm::createStringError(
@@ -116,6 +105,20 @@ public:
         !immutableMapping(Cursor.Address, Insn.Size, true))
       return llvm::createStringError(llvm::errc::invalid_argument,
                                      "instruction decode or mapping failed");
+    // Check the entire instruction against every record: an overlapping
+    // fragment, including one starting inside the instruction's bytes, must
+    // not hide its containing parent's handler or incomplete table parse.
+    const ExceptionAddressRange InstructionRange{Cursor.Address,
+                                                 Cursor.Address + Insn.Size};
+    for (const auto &EH : Image.ExceptionMetadata.Functions)
+      if (EH.CodeRange.overlaps(InstructionRange) &&
+          (EH.hasLanguageTable() || EH.PersonalityVA || EH.HandlerDataVA ||
+           EH.Personality != ExceptionPersonality::None ||
+           EH.ParseStatus != ExceptionParseStatus::Complete ||
+           EH.PrimaryFunctionIndex || EH.ChainedPrimaryRange))
+        return llvm::createStringError(
+            llvm::errc::not_supported,
+            "exception edges require a recovery contract");
     // x87 and other sequence-dependent lifter state are outside this adapter's
     // integer contract; the core rejects their opaque/FP LowOps.
     Decode.resetX86FpuState();
