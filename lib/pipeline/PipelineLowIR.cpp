@@ -2849,9 +2849,11 @@ void computeCallRegisterEffects(
   ExtraCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
   ExtraCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
   size_t ExtraLifts = 0;
-  while (!Work.empty()) {
-    const va_t Caller = Work.back();
-    Work.pop_back();
+  // Walk callees breadth-first. A direct callee's summary needs its own
+  // callees, so the lift budget goes to shallow callees before one deep chain
+  // exhausts it and leaves a pass-through argument unsummarized.
+  for (size_t Next = 0; Next < Work.size(); ++Next) {
+    const va_t Caller = Work[Next];
     const int CalleeDepth = Depth[Caller] + 1;
     const std::set<va_t> Callees = Effects[Caller].Callees;
     for (va_t Callee : Callees) {
