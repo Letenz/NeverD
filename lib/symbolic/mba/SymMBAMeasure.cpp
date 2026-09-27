@@ -346,8 +346,38 @@ bool doesNotGrow(const SymContext &Ctx, SymRef Candidate, SymRef Input) {
 
 bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
                     unsigned Samples) {
+  if (!Samples)
+    return true;
   SymEvalPlan PlanA(Ctx, A);
   SymEvalPlan PlanB(Ctx, B);
+
+  if (PlanA.fitsU64() && PlanB.fitsU64()) {
+    llvm::SmallVector<uint64_t, 8> Masks;
+    for (size_t I = 0; I < Ctx.numVars(); ++I) {
+      const uint32_t Width = Ctx.varInfo(uint32_t(I)).Width;
+      if (Width > 64)
+        break;
+      Masks.push_back(~uint64_t(0) >> (64 - Width));
+    }
+    // Unused variables also consume the deterministic random stream. Keep the
+    // arbitrary-width path whenever any such input needs more than one word.
+    if (Masks.size() == Ctx.numVars()) {
+      llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
+      std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
+      for (unsigned S = 0; S < Samples; ++S) {
+        // These widths use exactly one generator word per random assignment,
+        // with the same truncation and three corners as the general path.
+        for (size_t I = 0; I < Assignment.size(); ++I)
+          Assignment[I] = S == 0   ? 0
+                          : S == 1 ? Masks[I]
+                          : S == 2 ? 1
+                                   : Rng() & Masks[I];
+        if (PlanA.evalU64(Assignment) != PlanB.evalU64(Assignment))
+          return false;
+      }
+      return true;
+    }
+  }
 
   std::vector<llvm::APInt> Assignment;
   Assignment.reserve(Ctx.numVars());

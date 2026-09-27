@@ -1367,6 +1367,9 @@ it never expands shared trees into strings to compare them. Public size
 counters report the first component; an equal-size rewrite can improve the
 second component. These counters are not directly comparable with older
 versions that counted n-ary nodes once and omitted all all-ones literals.
+Verification samples reuse the compiled evaluator's word-sized path when both
+plans and all context variables fit in 64 bits. Corner assignments and the
+random stream stay unchanged; wider inputs retain arbitrary-width evaluation.
 Region candidates are independently proved over the completed abstraction,
 then instantiated with that abstraction's hidden-input mapping. The identity
 holds for arbitrary independent inputs, so restoring related sources cannot

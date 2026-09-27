@@ -23,6 +23,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBAParityTests.cpp
   SymMBAPolynomialTests.cpp
   SymMBARestoredTests.cpp
+  SymMBASampleTests.cpp
   SymMBASelectorTests.cpp
   SymMBAStressTests.cpp
   SymMBAFactorCostTests.cpp
