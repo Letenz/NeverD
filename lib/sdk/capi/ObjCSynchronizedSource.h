@@ -23,6 +23,7 @@ struct ObjCSynchronizedSourceProof {
   va_t ExitCall = 0;
   va_t LandingPad = 0;
   va_t ResumeTarget = 0;
+  bool GuardStopsAtRelease = false;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -174,12 +175,21 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
     return objcSynchronizedCallIs(Image, Address, Name);
   };
   const va_t EnterCall = Region->Begin - 4;
-  const va_t ExitCall = Region->End + 4;
   const va_t Landing = Region->Landing;
+  const bool ExitImmediately =
+      Word(Region->End) == 0xaa1303e0U &&
+      HasCall(Region->End + 4, "_objc_sync_exit");
+  const bool ReleaseBeforeExit =
+      Word(Region->End) == 0xaa0003f4U &&
+      Word(Region->End + 4) == 0xaa1503e0U &&
+      HasCall(Region->End + 8, "_objc_release") &&
+      Word(Region->End + 12) == 0xaa1303e0U &&
+      HasCall(Region->End + 16, "_objc_sync_exit");
+  const va_t ExitCall = Region->End + (ReleaseBeforeExit ? 16 : 4);
   if (Word(EnterCall - 4) != 0xaa1303e0U ||
       !HasCall(EnterCall, "_objc_sync_enter") ||
-      Word(Region->End) != 0xaa1303e0U ||
-      !HasCall(ExitCall, "_objc_sync_exit") || Word(Landing) != 0xaa0003f4U ||
+      (!ExitImmediately && !ReleaseBeforeExit) ||
+      Word(Landing) != 0xaa0003f4U ||
       Word(Landing + 4) != 0xaa1303e0U ||
       !HasCall(Landing + 8, "_objc_sync_exit") ||
       Word(Landing + 12) != 0xaa1403e0U ||
@@ -229,10 +239,15 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
     if (Address > EnterCall &&
         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP))
       return std::nullopt;
+    if (ReleaseBeforeExit && Address > EnterCall &&
+        Address < Region->End &&
+        HasCall(Address, "_objc_release"))
+      return std::nullopt;
   }
   return ObjCSynchronizedSourceProof{
-      EnterCall, ExitCall, ExitCall, Landing,
-      objcSynchronizedBranchTarget(Image, Landing + 16)};
+      EnterCall, ReleaseBeforeExit ? Region->End + 8 : ExitCall, ExitCall,
+      Landing, objcSynchronizedBranchTarget(Image, Landing + 16),
+      ReleaseBeforeExit};
 }
 
 inline std::optional<ObjCSynchronizedSourceProof>
@@ -312,7 +327,11 @@ inline bool omitProvenObjCSynchronizedLandingPad(
              (It->Addr == Landing + 4 || It->Addr == Landing + 8))
       continue;
     else if (It + 1 == Body.end() && It->Addr == 0 &&
-             It->Kind == StmtKind::Return && !It->RetVal)
+             It->Kind == StmtKind::Return &&
+             (!It->RetVal ||
+              (It->RetVal->Operands.empty() &&
+               (It->RetVal->Kind == ExprKind::Var ||
+                It->RetVal->Kind == ExprKind::Undef))))
       continue;
     else
       return false;
@@ -335,6 +354,7 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const std::string EnterName = "neverd_darwin_objc_sync_enter(";
   const std::string DispatchName = "neverd_darwin_dispatch_group_enter(";
   const std::string ExitName = "neverd_darwin_objc_sync_exit(";
+  const std::string ReleaseName = "objc_release(";
   const size_t Method = Source.find("neverd_objc_imp_");
   const size_t Open = Method == std::string::npos ? std::string::npos
                                                   : Source.find('{', Method);
@@ -344,11 +364,19 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const size_t Dispatch = Source.find(DispatchName, Open);
   const size_t Exit = Source.find(ExitName, Open);
   const bool StopAtExit = Proof.GuardStopCall == Proof.ExitCall;
-  const size_t Stop = StopAtExit ? Exit : Dispatch;
+  const size_t Release = Proof.GuardStopsAtRelease
+                             ? Source.find(ReleaseName, Open)
+                             : std::string::npos;
+  const size_t Stop = StopAtExit ? Exit
+                      : Proof.GuardStopsAtRelease ? Release
+                                                   : Dispatch;
   if (Enter == std::string::npos || Stop == std::string::npos ||
       Exit == std::string::npos ||
       Source.find(EnterName, Enter + 1) != std::string::npos ||
       Source.find(ExitName, Exit + 1) != std::string::npos ||
+      (Proof.GuardStopsAtRelease &&
+       (Release <= Enter || Release >= Exit ||
+        Source.find(ReleaseName, Release + 1) <= Exit)) ||
       (!StopAtExit &&
        Source.find(DispatchName, Dispatch + 1) != std::string::npos) ||
       Enter >= Stop || Stop > Exit)

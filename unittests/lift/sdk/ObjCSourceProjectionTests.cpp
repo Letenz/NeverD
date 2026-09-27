@@ -1453,6 +1453,19 @@ TEST(ObjCSourceProjection, ProvenSynchronizedPadIsOnlyRemovedAfterReturn) {
   WithNormalEdge = Function;
   WithNormalEdge.Body[1].Addr += 4;
   EXPECT_FALSE(omitProvenObjCSynchronizedLandingPad(WithNormalEdge, Proof));
+  HighFunc WithValueReturn = Function;
+  MedVar SyntheticValue;
+  SyntheticValue.Kind = MedVar::Reg;
+  SyntheticValue.Size = 8;
+  WithValueReturn.Body.back().RetVal =
+      HighExpr::makeVar(SyntheticValue, NdType::makeInt(8));
+  EXPECT_TRUE(
+      omitProvenObjCSynchronizedLandingPad(WithValueReturn, Proof));
+  WithValueReturn = Function;
+  WithValueReturn.Body.back().RetVal =
+      HighExpr::makeCall("unexpected", 0x2030, {});
+  EXPECT_FALSE(
+      omitProvenObjCSynchronizedLandingPad(WithValueReturn, Proof));
   EXPECT_TRUE(omitProvenObjCSynchronizedLandingPad(Function, Proof));
   ASSERT_EQ(Function.Body.size(), 1U);
   EXPECT_EQ(Function.Body.front().Kind, StmtKind::Return);
@@ -1527,6 +1540,26 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverNeedsStableSelf) {
   llvm::support::endian::write32le(Image.Segments[0].Data.data() + 0x24,
                                    0xaa0003f3U); // overwrite x19
   EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function));
+  const auto Rewrite = [&](va_t Address, uint32_t Word) {
+    llvm::support::endian::write32le(Image.Segments[0].Data.data() +
+                                         Address - 0x3000,
+                                     Word);
+  };
+  Rewrite(0x3024, 0x94000000U | ((0x4020 - 0x3024) / 4));
+  Rewrite(0x3028, 0xaa0003f4U); // preserve the protected call result
+  Rewrite(0x302c, 0xaa1503e0U); // release x21 outside the protected range
+  Rewrite(0x3030, 0x94000000U | ((0x4050 - 0x3030) / 4));
+  Rewrite(0x3034, 0xaa1303e0U);
+  Rewrite(0x3038, 0x94000000U | ((0x4030 - 0x3038) / 4));
+  auto Release = Symbol::makeFunc(0x4050);
+  Release.Name = "_objc_release";
+  Image.Symbols.push_back(std::move(Release));
+  const auto ReleasedProof =
+      proveObjCSynchronizedReceiverCleanup(Image, Function);
+  ASSERT_TRUE(ReleasedProof);
+  EXPECT_TRUE(ReleasedProof->GuardStopsAtRelease);
+  EXPECT_EQ(ReleasedProof->GuardStopCall, 0x3030U);
+  EXPECT_EQ(ReleasedProof->ExitCall, 0x3038U);
 }
 
 TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
@@ -1543,4 +1576,21 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
   ASSERT_TRUE(Result);
   EXPECT_LT(Result->find("neverd_objc_sync_guard = 0;"),
             Result->find("neverd_darwin_objc_sync_exit(objc_self);"));
+  const char *ReleaseSource =
+      "void neverd_objc_imp_3000(void* objc_self) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));\n"
+      "    work();\n"
+      "    objc_release(v2);\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "    objc_release(objc_self);\n"
+      "}\n";
+  const auto Released = addObjCSynchronizedReceiverCleanup(
+      ReleaseSource,
+      ObjCSynchronizedSourceProof{0x301c, 0x3030, 0x3038, 0x3050, 0x4040,
+                                  true});
+  ASSERT_TRUE(Released);
+  EXPECT_LT(Released->find("neverd_objc_sync_guard = 0;"),
+            Released->find("objc_release(v2);"));
+  EXPECT_LT(Released->find("objc_release(v2);"),
+            Released->find("neverd_darwin_objc_sync_exit(objc_self);"));
 }
