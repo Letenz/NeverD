@@ -258,6 +258,58 @@ TEST(SymMBAAffineResidual, PreservesMinimalUnaryAnswersAcrossBudgets) {
   }
 }
 
+TEST(SymMBAAffineResidual, StopsAtDistinctFreeVariableProducts) {
+  for (unsigned Width : {1u, 2u, 8u, 64u, 256u, 4096u}) {
+    for (unsigned Count : {2u, 3u, 4u, 6u}) {
+      SymContext Ctx;
+      llvm::SmallVector<SymRef, 8> Factors;
+      for (unsigned I = 0; I < Count; ++I)
+        Factors.push_back(Ctx.mkVar("v" + std::to_string(I), Width));
+      SymRef E = Ctx.mkMul(Factors);
+      for (size_t Limit : {size_t(0), size_t(1), size_t(128)}) {
+        MBAOptions Options;
+        Options.MaxWork = Limit;
+        Options.MaxAtoms = Count;
+        Options.VerifySamples = 0;
+        detail::WorkBudget Budget(Limit);
+        detail::SolveReport Report;
+        SymRef Result = detail::solveOneRegion(Ctx, E, Options, Budget, Report);
+        EXPECT_EQ(Result, E);
+        EXPECT_EQ(Ctx.readabilityCost(Result), Count + 1);
+        EXPECT_EQ(Budget.used(), 0u);
+        EXPECT_FALSE(Budget.exhausted());
+        EXPECT_EQ(Report.Outcome, MBAOutcome::AlreadyShortest);
+      }
+    }
+  }
+}
+
+TEST(SymMBAAffineResidual, DoesNotAssumeEveryProductIsMinimal) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  SymRef Z = Ctx.mkVar("z", 8);
+  for (SymRef E : {Ctx.mkMul(X, X), Ctx.mkMul({Ctx.mkConst(8, 3), X, Y}),
+                   Ctx.mkMul(Ctx.mkUDiv(X, Y), Z)}) {
+    MBAOptions Options;
+    Options.MaxWork = 128;
+    Options.VerifySamples = 0;
+    detail::WorkBudget Budget(Options.MaxWork);
+    detail::SolveReport Report;
+    detail::solveOneRegion(Ctx, E, Options, Budget, Report);
+    EXPECT_GT(Budget.used(), 0u);
+    EXPECT_LE(Budget.used(), Options.MaxWork);
+  }
+  // The cheap recognition stays within the existing per-region input ceiling.
+  MBAOptions Options;
+  Options.MaxAtoms = 2;
+  Options.MaxWork = 128;
+  detail::WorkBudget Budget(Options.MaxWork);
+  detail::SolveReport Report;
+  detail::solveOneRegion(Ctx, Ctx.mkMul({X, Y, Z}), Options, Budget, Report);
+  EXPECT_TRUE(Report.TooWide);
+  EXPECT_LE(Budget.used(), Options.MaxWork);
+}
+
 TEST(SymMBAAffineResidual, EnforcesArityWorkAndActualCostLimits) {
   for (unsigned Count : {1u, 2u, 3u, 4u}) {
     SymContext Ctx;

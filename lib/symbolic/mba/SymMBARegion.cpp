@@ -63,6 +63,25 @@ bool isMinimalUnaryVariable(const SymContext &Ctx, SymRef E) {
          Ctx.op(Ctx.operand(E, 1)) == SymOp::Var;
 }
 
+bool isMinimalVariableProduct(const SymContext &Ctx, SymRef E,
+                              const SolverLimits &Limits) {
+  if (Ctx.op(E) != SymOp::Mul || Ctx.numOperands(E) > Limits.MaxAtoms)
+    return false;
+  // Setting every other factor to one shows that each distinct free input
+  // affects the product. It therefore needs all these leaves and an operation,
+  // exactly the cost of this n-ary multiplication. Constants, repeated inputs
+  // and opaque factors do not establish this lower bound.
+  SymRef Previous;
+  for (SymRef Factor : Ctx.operands(E)) {
+    // Canonical multiplication sorts its factors, so equal variables are
+    // adjacent and checking uniqueness needs no allocation.
+    if (Ctx.op(Factor) != SymOp::Var || Factor == Previous)
+      return false;
+    Previous = Factor;
+  }
+  return true;
+}
+
 bool isMinimalVariableSum(const SymContext &Ctx, SymRef E,
                           const SolverLimits &Limits) {
   if (Ctx.op(E) != SymOp::Add || Ctx.width(E) == 1)
@@ -445,6 +464,13 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       (Arithmetic != E && Ctx.op(Arithmetic) == SymOp::Var) ||
       isMinimalUnaryVariable(Ctx, Arithmetic)) {
     Rep = ArithmeticRep;
+    return Arithmetic;
+  }
+
+  if (isMinimalVariableProduct(Ctx, Arithmetic, resolveLimits(Opts))) {
+    Rep = ArithmeticRep;
+    if (Arithmetic == E)
+      Rep.Outcome = MBAOutcome::AlreadyShortest;
     return Arithmetic;
   }
 
