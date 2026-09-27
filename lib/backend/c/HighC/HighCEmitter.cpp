@@ -1075,6 +1075,16 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
   }
 }
 
+static std::unordered_set<std::string_view>
+collectImageFunctionNameViews(const BinaryImage &Image) {
+  std::unordered_set<std::string_view> Names;
+  Names.reserve(Image.Symbols.size());
+  for (const Symbol &Sym : Image.Symbols)
+    if (Sym.IsFunc && !Sym.Name.empty() && !Image.findImportAt(Sym.Addr))
+      Names.insert(Sym.Name);
+  return Names;
+}
+
 bool HighCWriter::isOwnFunctionName(llvm::StringRef Name,
                                     const std::vector<HighFunc> &Funcs) {
   llvm::StringRef Clean = Name;
@@ -1086,16 +1096,15 @@ bool HighCWriter::isOwnFunctionName(llvm::StringRef Name,
   }
   if (!Opts.Image)
     return false;
-  if (!ImageFunctionNames) {
-    ImageFunctionNames.emplace();
-    for (const Symbol &Sym : Opts.Image->Symbols)
-      if (Sym.IsFunc && !Sym.Name.empty() &&
-          !Opts.Image->findImportAt(Sym.Addr))
-        ImageFunctionNames->insert(Sym.Name);
+  const auto *Names = SharedImageFunctionNames;
+  if (!Names) {
+    if (!ImageFunctionNames)
+      ImageFunctionNames.emplace(collectImageFunctionNameViews(*Opts.Image));
+    Names = &*ImageFunctionNames;
   }
-  return ImageFunctionNames->count(Name.str()) ||
-         ImageFunctionNames->count(Clean.str()) ||
-         ImageFunctionNames->count(("_" + Clean).str());
+  return Names->count({Name.data(), Name.size()}) ||
+         Names->count({Clean.data(), Clean.size()}) ||
+         Names->count(("_" + Clean).str());
 }
 
 void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
@@ -1815,12 +1824,21 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 // Public API
 //===----------------------------------------------------------------------===//
 
+void HighCEmitter::prepareImageFunctionNames(const BinaryImage &Image) {
+  PreparedImage = nullptr;
+  PreparedImageFunctionNames = collectImageFunctionNameViews(Image);
+  PreparedImage = &Image;
+}
+
 bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                         llvm::raw_ostream &Out, const CEmitterOptions &Opts,
                         DebugContext *Dbg) {
   std::vector<HighFunc> Working = Funcs;
   attachCxxFuncletBodies(Working);
-  HighCWriter W(Out, Opts, Dbg);
+  HighCWriter W(Out, Opts, Dbg, true,
+                Opts.Image && Opts.Image == PreparedImage
+                    ? &PreparedImageFunctionNames
+                    : nullptr);
   W.writeAll(Working);
   return true;
 }

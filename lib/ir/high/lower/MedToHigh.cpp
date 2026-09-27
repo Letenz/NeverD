@@ -18,6 +18,8 @@
 
 #include "neverd/ir/high/MedToHigh.h"
 
+#include "../pass/HighDCEDetail.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -784,9 +786,10 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   // explicit jumps.
   for (int Phase = 0; Phase < 5; ++Phase) {
     // Dead copies left by earlier rewrites can sit between a jump and
-    // its label; clear them before the next phase looks.
+    // its label. Clear them with the liveness pass before the next phase;
+    // the full DCE below runs after the structural rewrites settle.
     if (Phase != 0 && Dirty) {
-      eliminateDeadStmts(Func);
+      eliminateUnusedValues(Func.Body);
       Dirty = false;
     }
     if (Phase >= 2) {
