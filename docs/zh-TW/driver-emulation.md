@@ -121,7 +121,7 @@ DriverEntry 成功後，每個設定的 PDO 執行一次 `AddDevice`，提供者
 
 可選的 `parent_id` 以設定 ID 宣告裝置提供者的父節點；父節點可在陣列中較晚出現，省略則代表獨立根節點。原生與 JSON 預檢會在建立 PDO 前拒絕未知父節點、自我參照、循環及無效 ID。此圖不建立 WDM 附加鏈或 WDF 物件父子關係。報告中的 `parent_id` 與 `parent_pdo` 在任一提供者退役後仍保留原身分。 子節點 START 要求父節點仍存在、已 Started、處於實體 D0，且無未完成生命週期或電源轉換。父節點 STOP／SurpriseRemoval 要求子節點已離開活動 PnP 狀態並排空轉換與 WAIT_WAKE；父節點 REMOVE 要求所有子提供者先退役。不會隱含級聯處理。
 
-除了 Removing/Removed，裝置仍存在時，一般 CREATE/READ/WRITE/IOCTL/CLEANUP/CLOSE 會進入真正客體派送。模型不根據 Stopped、StopPending、RemovePending 或電源狀態虛構失敗；驅動程式可依自身程式碼完成軟體 I/O、拒絕或保留要求。公開執行器仍為循序；目前保留 IRP 若無可用生產者，不能靠後續情境中的 start 或 cleanup 喚醒，會以停滯 `model_error` 結束。Remove 前關閉檔案、排空先前要求是目前設定的限制。`query_stop` 的最終 `STATUS_RESOURCE_REQUIREMENTS_CHANGED` (0x119) 要求尚未實作的資源重新查詢，因此情境預檢與客體最終完成都明確拒絕；參見 [Microsoft QUERY_STOP 合約](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-query-stop-device)。停止／重啟及突然移除不代表一般資源重新配置、一般電源管理或 一般 KMDF PnP 支援。
+除了 Removing/Removed，裝置仍存在時，一般 CREATE/READ/WRITE/IOCTL/CLEANUP/CLOSE 會進入真正客體派送。模型不根據 Stopped、StopPending、RemovePending 或電源狀態虛構失敗；驅動程式可依自身程式碼完成軟體 I/O、拒絕或保留要求。公開執行器仍為循序；目前保留 IRP 若無可用生產者，不能靠後續情境中的 start 或 cleanup 喚醒，會以停滯 `model_error` 結束。Remove 前關閉檔案、排空先前要求是目前設定的限制。`query_stop` 的最終 `STATUS_RESOURCE_REQUIREMENTS_CHANGED` (0x119) 要求尚未實作的資源重新查詢，因此情境預檢與客體最終完成都明確拒絕；參見 [Microsoft QUERY_STOP 合約](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-query-stop-device)。停止／重啟及突然移除不實作資源重新配置。
 
 無資源 PnP 使用原創真正 WDK `driver_wdm_pnp.c`、選用的 `NEVERD_WDM_PNP_FIXTURE`／`NEVERD_WDM_PNP_CFG_FIXTURE`，並提供原生及 C API／CLI 測試；缺少產物時明確略過，執行證據仍僅來自 Linux。
 

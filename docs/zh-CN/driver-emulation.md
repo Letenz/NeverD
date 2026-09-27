@@ -121,7 +121,7 @@ DriverEntry 成功后，每个配置的 PDO 执行一次 `AddDevice`，提供者
 
 可选 `parent_id` 通过配置 ID 声明设备提供方的父节点；父节点可在数组中后出现，省略则表示独立根节点。原生与 JSON 预检在创建 PDO 前拒绝未知父节点、自引用、循环及无效 ID。该图不建立 WDM 附加链或 WDF 对象父子关系。报告中的 `parent_id` 和 `parent_pdo` 在任一提供方退出后仍保留原身份。 子节点 START 要求父节点仍存在、已 Started、处于物理 D0，且无未完成生命周期或电源转换。父节点 STOP／SurpriseRemoval 要求子节点已退出活动 PnP 状态并排空转换与 WAIT_WAKE；父节点 REMOVE 要求所有子提供方先退出。不会隐式级联处理。
 
-除 Removing/Removed 外，设备仍存在时，普通 CREATE/READ/WRITE/IOCTL/CLEANUP/CLOSE 会进入真实来宾派发。模型不根据 Stopped、StopPending、RemovePending 或电源状态虚构失败；驱动可按自身代码完成软件 I/O、拒绝或保留请求。公开执行器默认串行；跨文件或同一异步文件上的挂起 WDM 传输可显式批量提交。当前保留 IRP 若无可用生产者，不能靠后续场景中的 start 或 cleanup 唤醒，会以停滞 `model_error` 结束。Remove 前关闭文件、排空先前请求是当前配置的限制。`query_stop` 的最终 `STATUS_RESOURCE_REQUIREMENTS_CHANGED` (0x119) 要求尚未实现的资源重新查询，因此场景预检和来宾最终完成都明确拒绝；参见 [Microsoft QUERY_STOP 合约](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-query-stop-device)。停止／重启及突然移除不代表资源重平衡、通用电源管理 或 通用 KMDF PnP 支持。
+除 Removing/Removed 外，设备仍存在时，普通 CREATE/READ/WRITE/IOCTL/CLEANUP/CLOSE 会进入真实来宾派发。模型不根据 Stopped、StopPending、RemovePending 或电源状态虚构失败；驱动可按自身代码完成软件 I/O、拒绝或保留请求。公开执行器默认串行；跨文件或同一异步文件上的挂起 WDM 传输可显式批量提交。当前保留 IRP 若无可用生产者，不能靠后续场景中的 start 或 cleanup 唤醒，会以停滞 `model_error` 结束。Remove 前关闭文件、排空先前请求是当前配置的限制。`query_stop` 的最终 `STATUS_RESOURCE_REQUIREMENTS_CHANGED` (0x119) 要求尚未实现的资源重新查询，因此场景预检和来宾最终完成都明确拒绝；参见 [Microsoft QUERY_STOP 合约](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-query-stop-device)。停止／重启及突然移除不实现资源重平衡。
 
 无资源 PnP 使用原创真实 WDK `driver_wdm_pnp.c`、可选 `NEVERD_WDM_PNP_FIXTURE`／`NEVERD_WDM_PNP_CFG_FIXTURE`，并提供原生及 C API／CLI 测试；缺少产物会明确跳过，执行证据仍仅来自 Linux。
 
