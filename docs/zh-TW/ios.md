@@ -205,7 +205,7 @@ recovered-ios/
 
 最外層 `status: "success"` 表示已釋出通過校驗的輸出。方法覆蓋 `recovered`、`partial`、`unrecovered`、`no-methods` 描述的是已發現清單，不是語義等價或原程式完整性。每個未恢復方法都有原因。Objective-C 的 `recovered` 還要求執行階段中繼資料完整。空清單不能證明原程式沒有方法。
 
-從已證明的 `@synchronized` 清理流程還原的 Objective-C 方法，其方法列可能包含 `required_cflags: ["-fexceptions"]`。編譯該方法的 C 原始碼時，必須使用所列選項，才能在受保護呼叫因例外而展開堆疊時執行清理並釋放同步鎖。已證明的例外 landing pad 尾段，只有在原始碼中沒有任何正常控制流程邊可到達時，才會從一般 C 本體中省略；其中的解鎖操作由清理處理常式表達。無法證明 landing pad 或保護範圍的方法仍標示為 `unrecovered`。
+從已證明的 `@synchronized` 清理流程還原的 Objective-C 方法，其方法列可能包含 `required_cflags: ["-fexceptions"]`。編譯該方法的 C 原始碼時，必須使用所列選項，才能在受保護呼叫因例外而展開堆疊時執行清理並釋放同步鎖。若機器碼和原始碼中的進鎖、解鎖呼叫一致，受保護物件可以是 `objc_self`，也可以是獨立保留的區域值。守衛會在第一個不受保護的呼叫之前結束；若機器碼與原始碼的確切順序均已證明，該呼叫也可以是連續一至兩次 ARC 釋放中的第一次。已證明的例外 landing pad 尾段，只有在原始碼中沒有任何正常控制流程邊可到達時，才會從一般 C 本體中省略；其中的解鎖操作由清理處理常式表達。無法證明 landing pad 或保護範圍的方法仍標示為 `unrecovered`。
 
 未恢復的 Objective-C 方法列可能包含 `native_backend: {status, reason, diagnostics}`，前提是唯一的後端結果與執行階段身分完全相符。這個有大小限制的選用摘要會保留後端的中間結果，即使宣告或配置檢查先失敗。方法列的主要狀態、原因和還原計數仍為最終依據；沒有摘要表示該證據無法取得。
 
