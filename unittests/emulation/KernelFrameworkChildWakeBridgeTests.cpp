@@ -194,6 +194,24 @@ protected:
 };
 
 TEST_F(KernelFrameworkChildWakeBridge,
+       NativeWakeCannotAcquireAFrameworkRouteOrPublishAnOutputPacket) {
+  systemPower("parent", SystemPowerState::Working);
+  const auto Count = Result.Requests.size();
+  const uint64_t Output = Scratch + 0x500;
+  put(Output, UINT64_MAX);
+  auto Call = Model->call(
+      "PoRequestPowerIrp",
+      {Result.PnpDevices.front().PDO, uint8_t(DevicePowerRequest::WaitWake),
+       uint32_t(SystemPowerState::Sleeping3), 0, 0, Output});
+  ASSERT_FALSE(bool(Call));
+  EXPECT_NE(llvm::toString(Call.takeError()).find("framework"),
+            std::string::npos);
+  EXPECT_EQ(Result.Requests.size(), Count);
+  EXPECT_EQ(get(Output), UINT64_MAX);
+  EXPECT_FALSE(Model->takeGuestCall());
+}
+
+TEST_F(KernelFrameworkChildWakeBridge,
        InvalidChildPacketLeavesEveryRetainedWakeAvailableForRetry) {
   const auto ChildIRP = wake("child-b").IRP;
   const auto Cursor = get(ChildIRP + IRPStackPointerOffset);

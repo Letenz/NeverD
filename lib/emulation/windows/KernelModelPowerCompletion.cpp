@@ -34,13 +34,21 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   if (CurrentIRQL != scheduler::PassiveLevel)
     return powerError("this profile requires PASSIVE_LEVEL PoRequestPowerIrp");
   const auto Minor = static_cast<DevicePowerRequest>(uint8_t(Arguments[1]));
-  if (Minor != DevicePowerRequest::Set && Minor != DevicePowerRequest::Query) {
-    if (!uint8_t(Arguments[1]))
-      return powerError("WAIT_WAKE is outside the requested power profile");
+  const bool WaitWake = Minor == DevicePowerRequest::WaitWake;
+  if (!WaitWake && Minor != DevicePowerRequest::Set &&
+      Minor != DevicePowerRequest::Query)
     return StatusInvalidParameter2;
+  if (Arguments[5]) {
+    if (!WaitWake)
+      return powerError("Query/Set power requires a null output IRP pointer");
+    if (auto E = validateGuestAccess(Arguments[5], profile::PointerSize, true))
+      return E;
+    auto Writable = Memory.canAccess(Arguments[5], profile::PointerSize, Write);
+    if (!Writable)
+      return Writable.takeError();
+    if (!*Writable)
+      return powerError("WAIT_WAKE output IRP pointer must be writable");
   }
-  if (Arguments[5])
-    return powerError("Query/Set power requires a null output IRP pointer");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return powerError("cannot replace a pending guest callback");
   if (NextIRPCall == UINT64_MAX)
@@ -54,13 +62,25 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
       Devices.at(Device).DeletePending)
     return powerError("request requires a live configured PDO or FDO");
   const uint32_t Index = Provider->RequestedPowerIndex;
-  if (Index >= Provider->RequestedDevicePower.size())
-    return powerError("requested_device_power response FIFO is exhausted");
-  const auto &Operation = Provider->RequestedDevicePower[Index];
-  if (Operation.Type != DriverPowerType::Device || Operation.Minor != Minor ||
-      Operation.State != uint32_t(Arguments[2]))
-    return powerError("PoRequestPowerIrp does not match the next explicit "
-                      "requested_device_power response");
+  DriverPowerOperation Operation;
+  if (WaitWake) {
+    Operation.Minor = Minor;
+    Operation.Type = DriverPowerType::System;
+    Operation.State = uint32_t(Arguments[2]);
+  } else {
+    if (Index >= Provider->RequestedDevicePower.size())
+      return powerError("requested_device_power response FIFO is exhausted");
+    Operation = Provider->RequestedDevicePower[Index];
+    if (Operation.Type != DriverPowerType::Device || Operation.Minor != Minor ||
+        Operation.State != uint32_t(Arguments[2]))
+      return powerError("PoRequestPowerIrp does not match the next explicit "
+                        "requested_device_power response");
+  }
+  auto Space = canAllocatePowerRequest(Device, Arguments[3] != 0);
+  if (!Space)
+    return Space.takeError();
+  if (!*Space)
+    return StatusInsufficientResources;
   DriverRequest Input;
   Input.Kind = DriverRequestKind::Power;
   Input.DeviceID = Result.PnpDevices[Provider->ResultIndex].ID;
@@ -75,8 +95,12 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
     return Invocation.takeError();
   // Preparation publishes a distinct packet/result only after validation.
   // The immutable provider record remains live through the retained route.
-  ++Provider->RequestedPowerIndex;
+  if (!WaitWake)
+    ++Provider->RequestedPowerIndex;
   const uint64_t IRP = Invocation->IRP;
+  if (Arguments[5])
+    if (auto E = Memory.writeInteger(Arguments[5], IRP, profile::PointerSize))
+      return E;
   if (Invocation->PC) {
     const uint64_t Token = NextIRPCall++;
     IRPCalls.emplace(Token,

@@ -356,7 +356,8 @@ llvm::Error KernelModel::completeRequest(uint64_t IRP, uint8_t PriorityBoost) {
 
 llvm::Expected<KernelModel::IRPCompletionPlan>
 KernelModel::planIRPCompletion(uint64_t IRP,
-                               std::optional<uint32_t> StatusOverride) const {
+                               std::optional<uint32_t> StatusOverride,
+                               std::optional<bool> CancelOverride) const {
   auto Cursor = requestStackCursor(IRP);
   if (!Cursor)
     return Cursor.takeError();
@@ -364,9 +365,21 @@ KernelModel::planIRPCompletion(uint64_t IRP,
   llvm::Expected<uint64_t> Status =
       StatusOverride ? llvm::Expected<uint64_t>(*StatusOverride)
                      : Memory.readInteger(IRP + IRPStatusOffset, 4);
-  auto Cancel = Memory.readInteger(IRP + IRPCancelOffset, 1);
+  llvm::Expected<uint64_t> Cancel =
+      CancelOverride ? llvm::Expected<uint64_t>(*CancelOverride)
+                     : Memory.readInteger(IRP + IRPCancelOffset, 1);
   if (!Status || !Cancel)
     return llvm::joinErrors(Status.takeError(), Cancel.takeError());
+  if (!StatusOverride && Request.PowerOperation &&
+      Request.PowerOperation->Minor == DevicePowerRequest::WaitWake &&
+      !(uint32_t(*Status) & profile::NTStatusFailureMask)) {
+    const auto &Observation = Result.Requests[Request.ResultIndex].Power;
+    if (!Observation || !Observation->BusReceivedAt100ns ||
+        !Observation->BusCompletedAt100ns || !Observation->BusStatus ||
+        (*Observation->BusStatus & profile::NTStatusFailureMask))
+      return stackError("successful WAIT_WAKE requires actual successful "
+                        "provider completion");
+  }
   IRPCompletionPlan Plan;
   Plan.StartSlot = *Cursor;
   bool PropagatePending = false;
@@ -551,6 +564,8 @@ KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
     CancelLock = {};
     IRPCalls.erase(Call);
     if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizePowerRequest(IRP))
       return E;
     return std::optional<uint64_t>{1};
   }

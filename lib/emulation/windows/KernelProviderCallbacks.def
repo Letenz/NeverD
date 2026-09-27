@@ -1,0 +1,12 @@
+//===- KernelProviderCallbacks.def - Provider callback identities ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// Name and guest ABI arity for callbacks owned by an explicit bus provider.
+// These addresses are scoped to a PDO and are never public kernel exports.
+//
+//===----------------------------------------------------------------------===//
+
+NEVERD_PROVIDER_CALLBACK(CancelWaitWake, 2)

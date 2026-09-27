@@ -20,6 +20,10 @@ set(NEVERD_WDM_OWNED_IRP_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK caller-allocated internal IRP fixture")
 set(NEVERD_WDM_OWNED_IRP_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK caller-allocated internal IRP fixture with active CFG")
+set(NEVERD_WDM_WAIT_WAKE_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK native wait/wake fixture")
+set(NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK native wait/wake fixture with active CFG")
 set(NEVERD_WDM_STACK_FIXTURE "" CACHE FILEPATH
   "Optional original WDM device-stack fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_STACK_CFG_FIXTURE "" CACHE FILEPATH
@@ -273,6 +277,31 @@ foreach(_driver_owned_irp_variable NEVERD_WDM_OWNED_IRP_FIXTURE
     message(STATUS "Driver WDM caller-owned IRP fixture ${_driver_owned_irp_variable}: ${_driver_owned_irp_path}")
   else()
     message(STATUS "Driver WDM caller-owned IRP tests requiring ${_driver_owned_irp_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
+set(_driver_wdm_wait_wake_definitions)
+set(_driver_has_wdm_wait_wake_fixture FALSE)
+foreach(_driver_wait_wake_variable NEVERD_WDM_WAIT_WAKE_FIXTURE
+    NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE)
+  if(_driver_wait_wake_variable STREQUAL "NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE"
+      AND NOT _driver_has_wdm_wait_wake_fixture)
+    message(STATUS "Driver WDM native wait/wake CFG tests skipped: NEVERD_WDM_WAIT_WAKE_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_wait_wake_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_wait_wake_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_wait_wake_variable}}")
+    get_filename_component(_driver_wait_wake_path
+      "${${_driver_wait_wake_variable}}" ABSOLUTE)
+    list(APPEND _driver_wdm_wait_wake_definitions
+      "${_driver_wait_wake_variable}=\"${_driver_wait_wake_path}\"")
+    if(_driver_wait_wake_variable STREQUAL "NEVERD_WDM_WAIT_WAKE_FIXTURE")
+      set(_driver_has_wdm_wait_wake_fixture TRUE)
+    endif()
+    message(STATUS "Driver WDM native wait/wake fixture ${_driver_wait_wake_variable}: ${_driver_wait_wake_path}")
+  else()
+    message(STATUS "Driver WDM native wait/wake tests requiring ${_driver_wait_wake_variable} skipped: optional fixture is missing")
   endif()
 endforeach()
 
@@ -651,6 +680,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverKMDFLockTests.cpp
   DriverWDMStackTests.cpp
   DriverWDMOwnedIRPTests.cpp
+  DriverWdmWaitWakeTests.cpp
   DriverWDMPnpTests.cpp
   DriverWDMPowerTests.cpp
   DriverWDMPoFxTests.cpp
@@ -715,6 +745,8 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelPnpCompletionTests.cpp
   KernelPowerRequestTests.cpp
   KernelPowerCompletionTests.cpp
+  KernelWdmWakeEventTests.cpp
+  KernelProviderWaitWakeTests.cpp
   KernelRemoveLocksTests.cpp
   KernelRemoveLockBridgeTests.cpp
   BackendFaultTests.cpp
@@ -744,6 +776,7 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}
@@ -765,6 +798,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   add_neverd_unittest(NeverDDriverEmulationPublicTests
     DriverEmulationPublicTests.cpp
     DriverScenarioPublicTests.cpp
+    DriverWdmWaitWakePublicTests.cpp
   DriverD3ColdPublicTests.cpp
     LINK_LIBS neverd_shared)
   target_include_directories(NeverDDriverEmulationPublicTests PRIVATE
@@ -772,12 +806,14 @@ if(TARGET neverd_shared AND TARGET neverd)
   target_compile_definitions(NeverDDriverEmulationPublicTests PRIVATE
     NEVERD_DRIVER_NESTED_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-nested-user-scenario.json"
     NEVERD_DRIVER_D2_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-d2-power-scenario.json"
+    NEVERD_DRIVER_WDM_WAIT_WAKE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-wait-wake-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
     NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
     NEVERD_DRIVER_CLI="$<TARGET_FILE:neverd>"
     ${_driver_kmdf_definitions}
     ${_driver_wdm_stack_definitions}
   ${_driver_wdm_owned_irp_definitions}
+  ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}

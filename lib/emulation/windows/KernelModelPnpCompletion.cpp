@@ -209,19 +209,7 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
     return providerError("configured bus response was already dispatched");
   if (Request->PowerOperation &&
       Request->PowerOperation->Minor == DevicePowerRequest::WaitWake) {
-    if (!Request->ChildPower ||
-        Request->ChildPower->Origin != DriverRequestOrigin::FrameworkWaitWake ||
-        FrameworkWakeIRPs.contains(Device) || !Framework)
-      return providerError(
-          "WAIT_WAKE requires one framework-owned provider request");
-    auto Epoch = Framework->powerPolicyEpoch(Device);
-    if (!Epoch)
-      return Epoch.takeError();
-    if (auto E = markRequestPending(IRP))
-      return E;
-    Observation.Power->BusReceivedAt100ns = Scheduler.now100ns();
-    FrameworkWakeIRPs.emplace(Device, FrameworkWake{IRP, *Epoch});
-    return StatusPending;
+    return retainProviderWake(Device, IRP);
   }
   auto Deadline = Scheduler.computeDeadline(-int64_t(Response->Delay100ns));
   if (!Deadline)
