@@ -1442,7 +1442,10 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
     Emit(msvcAtlSyntheticThis(Identifier, *Atl), "this");
   if (Atl && Emitted == 1 && msvcAtlTypesCallArgAsPointer(*Atl, 1))
     Emit(msvcAtlSyntheticThis(Identifier, *Atl), "src");
-  if (Emitted == 0)
+  // A debug signature without parameters says nothing about them:
+  // debugCallArgLimit keeps every recovered argument for such a callee, so
+  // `(void)` would reject the call.  Leave the declaration unprototyped.
+  if (Emitted == 0 && !FS.Params.empty())
     Declarator += "void";
   std::string Prefix = "extern ";
   if (Opts.TheArch == Arch::X64 &&
