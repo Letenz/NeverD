@@ -303,23 +303,27 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
         Width == 64 ? ~uint64_t(0) : (uint64_t(1) << Width) - 1;
     std::vector<uint64_t> Assignment(Ctx.numVars(), 0);
     for (size_t K = 0; K < *Corners; ++K) {
-      for (unsigned J = 0; J < NumAtoms; ++J)
-        Assignment[Atoms[J]] = (K >> J) & 1 ? Ones : 0;
+      // Consecutive Gray corners change one input. Store each reading at its
+      // ordinary binary index so coefficient and selector consumers keep the
+      // same table convention without rewriting every atom at every corner.
+      if (K != 0)
+        Assignment[Atoms[std::countr_zero(K)]] ^= Ones;
+      const size_t Pattern = K ^ (K >> 1);
       // The corner value is the negated weight, so negating is what turns a
       // reading into a weight.
-      Weights[K] = -llvm::APInt(Width, Plan.evalU64(Assignment),
-                                /*isSigned=*/false, /*implicitTrunc=*/true);
+      Weights[Pattern] =
+          -llvm::APInt(Width, Plan.evalU64(Assignment),
+                       /*isSigned=*/false, /*implicitTrunc=*/true);
     }
     return Weights;
   }
 
   const llvm::APInt Zero(Width, 0);
-  const llvm::APInt Ones = llvm::APInt::getAllOnes(Width);
   std::vector<llvm::APInt> Assignment(Ctx.numVars(), Zero);
   for (size_t K = 0; K < *Corners; ++K) {
-    for (unsigned J = 0; J < NumAtoms; ++J)
-      Assignment[Atoms[J]] = (K >> J) & 1 ? Ones : Zero;
-    Weights[K] = -Plan.eval(Assignment);
+    if (K != 0)
+      Assignment[Atoms[std::countr_zero(K)]].flipAllBits();
+    Weights[K ^ (K >> 1)] = -Plan.eval(Assignment);
   }
   return Weights;
 }

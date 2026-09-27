@@ -14,6 +14,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBACandidateSelectionTests.cpp
   SymMBAComplementArithmeticTests.cpp
   SymMBAConstantRegionTests.cpp
+  SymMBAMeasureTests.cpp
   SymMBAOffsetTests.cpp
   SymMBAOutcomeTests.cpp
   SymMBAParityTests.cpp
