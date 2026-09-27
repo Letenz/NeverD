@@ -121,9 +121,9 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       if (Linear->AtomIds.empty())
         Forms.push_back(Linear->Abstract.Body);
       else
-        linearCandidates(Ctx,
-                         measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
-                         Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+        linearCandidates(
+            Ctx, measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
+            Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
       for (SymRef Form : Forms) {
         // Prove the identity over independent inputs before restoring their
         // sources. Restoration may combine coefficients and erase the shared
