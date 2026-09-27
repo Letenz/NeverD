@@ -265,17 +265,16 @@ void LLVMCWriter::scanReferencedBlocks(llvm::Function &Fn) {
                 llvm::cast<llvm::CondBrInst>(Pred->getTerminator());
             const llvm::BasicBlock *Target = Out->getSuccessor(0);
             const auto *Nested =
-                Target ? llvm::dyn_cast<llvm::CondBrInst>(
-                             Target->getTerminator())
-                       : nullptr;
+                Target
+                    ? llvm::dyn_cast<llvm::CondBrInst>(Target->getTerminator())
+                    : nullptr;
             const bool InlinedCheck =
                 Nested && Target->getSinglePredecessor() == &BB &&
                 straightLineFalseSkip(Target, Nested->getSuccessor(1)) &&
                 printBranchTarget(Nested->getSuccessor(0)) ==
                     printBranchTarget(FromBr->getSuccessor(0));
-            if (!InlinedCheck &&
-                printBranchTarget(Target) !=
-                    printBranchTarget(FromBr->getSuccessor(0)))
+            if (!InlinedCheck && printBranchTarget(Target) !=
+                                     printBranchTarget(FromBr->getSuccessor(0)))
               Note(Target);
           }
           continue;
@@ -328,9 +327,10 @@ void LLVMCWriter::scanReferencedBlocks(llvm::Function &Fn) {
         continue;
       }
       auto NoteTrue = [&](const llvm::BasicBlock *Edge) {
-        if (const llvm::BasicBlock *Body = straightLineTrueArm(&BB, Edge, true)) {
-          if (const auto *Out = llvm::dyn_cast<llvm::UncondBrInst>(
-                  Body->getTerminator())) {
+        if (const llvm::BasicBlock *Body =
+                straightLineTrueArm(&BB, Edge, true)) {
+          if (const auto *Out =
+                  llvm::dyn_cast<llvm::UncondBrInst>(Body->getTerminator())) {
             llvm::SmallVector<const llvm::BasicBlock *, 4> Chain;
             if (singleEntryUncondTail(&BB, Body, Out->getSuccessor(0), Chain)) {
               for (const llvm::BasicBlock *Tail : Chain)
@@ -401,8 +401,8 @@ void LLVMCWriter::scanReferencedBlocks(llvm::Function &Fn) {
               llvm::cast<llvm::CondBrInst>(And->getTerminator());
           if (const llvm::BasicBlock *Body =
                   straightLineTrueArm(And, AndBr->getSuccessor(0))) {
-            if (const auto *Out = llvm::dyn_cast<llvm::UncondBrInst>(
-                    Body->getTerminator()))
+            if (const auto *Out =
+                    llvm::dyn_cast<llvm::UncondBrInst>(Body->getTerminator()))
               if (!joinPrintsNext(And, Out->getSuccessor(0)))
                 Note(Out->getSuccessor(0));
           }
@@ -580,119 +580,114 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       llvm::SmallPtrSet<const llvm::Instruction *, 32> Seen;
       llvm::SmallPtrSet<const llvm::Instruction *, 4> Sinks;
       bool Blocked = false;
-      std::function<void(const llvm::Value *)> Walk =
-          [&](const llvm::Value *V) {
-            if (!V || Blocked)
-              return;
-            for (const llvm::User *U : V->users()) {
-              if (Blocked)
-                return;
-              const auto *I = llvm::dyn_cast<llvm::Instruction>(U);
-              if (!I ||
-                  llvm::isa<llvm::PHINode, llvm::InvokeInst, llvm::SelectInst>(
-                      I)) {
-                Blocked = true;
-                return;
-              }
-              if (!Seen.insert(I).second)
-                continue;
-              if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(I)) {
-                if (Analysis.DeadFrameStores.count(SI))
-                  continue;
-                if (SI->getValueOperand() == V) {
-                  if (const llvm::AllocaInst *Slot =
-                          asAllocaPointer(SI->getPointerOperand())) {
-                    if (isJoinCallArgAlloca(Slot)) {
-                      Blocked = true;
-                      return;
+      std::function<void(const llvm::Value *)> Walk = [&](const llvm::Value
+                                                              *V) {
+        if (!V || Blocked)
+          return;
+        for (const llvm::User *U : V->users()) {
+          if (Blocked)
+            return;
+          const auto *I = llvm::dyn_cast<llvm::Instruction>(U);
+          if (!I ||
+              llvm::isa<llvm::PHINode, llvm::InvokeInst, llvm::SelectInst>(I)) {
+            Blocked = true;
+            return;
+          }
+          if (!Seen.insert(I).second)
+            continue;
+          if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(I)) {
+            if (Analysis.DeadFrameStores.count(SI))
+              continue;
+            if (SI->getValueOperand() == V) {
+              if (const llvm::AllocaInst *Slot =
+                      asAllocaPointer(SI->getPointerOperand())) {
+                if (isJoinCallArgAlloca(Slot)) {
+                  Blocked = true;
+                  return;
+                }
+                // A store that is not printed is not a second use. An
+                // unread copy into a typed slot otherwise blocks the
+                // one printed condition.
+                const bool Forward =
+                    !instructionIsPrinted(*SI) ||
+                    (!allocaAddressTaken(Slot) && !isJoinArmStore(SI) &&
+                     !isTypedRecordCursorSlot(Slot));
+                if (Forward) {
+                  llvm::SmallVector<const llvm::LoadInst *, 4> Window;
+                  bool After = false;
+                  bool Killed = false;
+                  for (const llvm::Instruction &Cur : *SI->getParent()) {
+                    if (&Cur == SI) {
+                      After = true;
+                      continue;
                     }
-                    // A store that is not printed is not a second use. An
-                    // unread copy into a typed slot otherwise blocks the
-                    // one printed condition.
-                    const bool Forward =
-                        !instructionIsPrinted(*SI) ||
-                        (!allocaAddressTaken(Slot) && !isJoinArmStore(SI) &&
-                         !isTypedRecordCursorSlot(Slot));
-                    if (Forward) {
-                      llvm::SmallVector<const llvm::LoadInst *, 4> Window;
-                      bool After = false;
-                      bool Killed = false;
-                      for (const llvm::Instruction &Cur : *SI->getParent()) {
-                        if (&Cur == SI) {
-                          After = true;
-                          continue;
-                        }
-                        if (!After)
-                          continue;
+                    if (!After)
+                      continue;
+                    if (const auto *Next =
+                            llvm::dyn_cast<llvm::StoreInst>(&Cur)) {
+                      if (asAllocaPointer(Next->getPointerOperand()) == Slot) {
+                        Killed = true;
+                        break;
+                      }
+                    }
+                    if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Cur))
+                      if (asAllocaPointer(LI->getPointerOperand()) == Slot)
+                        Window.push_back(LI);
+                  }
+                  if (!Killed) {
+                    for (const llvm::User *SU : Slot->users()) {
+                      const auto *LI = llvm::dyn_cast<llvm::LoadInst>(SU);
+                      if (!LI || LI->getParent() == SI->getParent())
+                        continue;
+                      bool Sees = true;
+                      for (const llvm::Instruction &Cur : *LI->getParent()) {
+                        if (&Cur == LI)
+                          break;
                         if (const auto *Next =
                                 llvm::dyn_cast<llvm::StoreInst>(&Cur)) {
                           if (asAllocaPointer(Next->getPointerOperand()) ==
                               Slot) {
-                            Killed = true;
+                            Sees = false;
                             break;
                           }
                         }
-                        if (const auto *LI =
-                                llvm::dyn_cast<llvm::LoadInst>(&Cur))
-                          if (asAllocaPointer(LI->getPointerOperand()) == Slot)
-                            Window.push_back(LI);
                       }
-                      if (!Killed) {
-                        for (const llvm::User *SU : Slot->users()) {
-                          const auto *LI = llvm::dyn_cast<llvm::LoadInst>(SU);
-                          if (!LI || LI->getParent() == SI->getParent())
-                            continue;
-                          bool Sees = true;
-                          for (const llvm::Instruction &Cur : *LI->getParent()) {
-                            if (&Cur == LI)
-                              break;
-                            if (const auto *Next =
-                                    llvm::dyn_cast<llvm::StoreInst>(&Cur)) {
-                              if (asAllocaPointer(Next->getPointerOperand()) ==
-                                  Slot) {
-                                Sees = false;
-                                break;
-                              }
-                            }
-                          }
-                          if (Sees)
-                            Window.push_back(LI);
-                        }
-                      }
-                      for (const llvm::LoadInst *LI : Window)
-                        Walk(LI);
-                      continue;
+                      if (Sees)
+                        Window.push_back(LI);
                     }
                   }
+                  for (const llvm::LoadInst *LI : Window)
+                    Walk(LI);
+                  continue;
                 }
               }
-              if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(I)) {
-                bool Used = CB->getCalledOperand() == V;
-                const unsigned Limit =
-                    printedCallArgLimit(*CB, printedCalleeName(*CB));
-                for (unsigned Arg = 0; Arg < Limit && Arg < CB->arg_size();
-                     ++Arg)
-                  if (CB->getArgOperand(Arg) == V)
-                    Used = true;
-                if (Used)
-                  Sinks.insert(CB);
-                continue;
-              }
-              // C comparison operands have no evaluation order. Retain the
-              // LLVM call order even when the comparison itself is inlined.
-              if (llvm::isa<llvm::FCmpInst>(I)) {
-                Blocked = true;
-                continue;
-              }
-              if (llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::LoadInst>(
-                      I) ||
-                  Analysis.Inlinable.count(I)) {
-                Walk(I);
-                continue;
-              }
-              Sinks.insert(I);
             }
-          };
+          }
+          if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(I)) {
+            bool Used = CB->getCalledOperand() == V;
+            const unsigned Limit =
+                printedCallArgLimit(*CB, printedCalleeName(*CB));
+            for (unsigned Arg = 0; Arg < Limit && Arg < CB->arg_size(); ++Arg)
+              if (CB->getArgOperand(Arg) == V)
+                Used = true;
+            if (Used)
+              Sinks.insert(CB);
+            continue;
+          }
+          // C comparison operands have no evaluation order. Retain the
+          // LLVM call order even when the comparison itself is inlined.
+          if (llvm::isa<llvm::FCmpInst>(I)) {
+            Blocked = true;
+            continue;
+          }
+          if (llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::LoadInst>(I) ||
+              Analysis.Inlinable.count(I)) {
+            Walk(I);
+            continue;
+          }
+          Sinks.insert(I);
+        }
+      };
       Walk(Call);
       if (!Blocked && Sinks.size() == 1 &&
           !sameSlotDestructorBetween(*Call, **Sinks.begin()))
@@ -720,8 +715,7 @@ bool isEHTokenNone(const llvm::Value *V) {
   return !V || llvm::isa<llvm::ConstantTokenNone>(V);
 }
 
-const llvm::CatchPadInst *
-firstCatchPad(const llvm::CatchSwitchInst &CS) {
+const llvm::CatchPadInst *firstCatchPad(const llvm::CatchSwitchInst &CS) {
   if (CS.getNumHandlers() == 0)
     return nullptr;
   const llvm::BasicBlock *PadBB = *CS.handler_begin();
@@ -753,8 +747,9 @@ const llvm::BasicBlock *catchRetDest(const llvm::CatchSwitchInst &CS) {
   return nullptr;
 }
 
-void collectNormalReachable(const llvm::Function &Fn,
-                            llvm::SmallPtrSet<const llvm::BasicBlock *, 16> &Out) {
+void collectNormalReachable(
+    const llvm::Function &Fn,
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 16> &Out) {
   llvm::SmallVector<const llvm::BasicBlock *, 16> Work;
   Work.push_back(&Fn.getEntryBlock());
   Out.insert(&Fn.getEntryBlock());
@@ -843,8 +838,7 @@ bool hasDisplayField(const TypeRef &Ty, int64_t Off, llvm::StringRef Name) {
   if (!Ty || Ty->FieldDisplayOffsets.size() != Ty->FieldDisplayNames.size())
     return false;
   for (size_t I = 0; I < Ty->FieldDisplayOffsets.size(); ++I) {
-    if (Ty->FieldDisplayOffsets[I] == Off &&
-        Ty->FieldDisplayNames[I] == Name)
+    if (Ty->FieldDisplayOffsets[I] == Off && Ty->FieldDisplayNames[I] == Name)
       return true;
   }
   return false;
@@ -852,9 +846,8 @@ bool hasDisplayField(const TypeRef &Ty, int64_t Off, llvm::StringRef Name) {
 
 bool isArgListRecord(const TypeRef &Ty) {
   return isNamedRecordDisplay(Ty) &&
-         (Ty->SourceName == "ArgList" ||
-          (hasDisplayField(Ty, 0, "types_") &&
-           hasDisplayField(Ty, 8, "values_")));
+         (Ty->SourceName == "ArgList" || (hasDisplayField(Ty, 0, "types_") &&
+                                          hasDisplayField(Ty, 8, "values_")));
 }
 
 TypeRef debugCallArgPointer(const FunctionSym &FS, unsigned Index) {
@@ -918,8 +911,8 @@ LLVMCWriter::collectWindowsEHWraps(const llvm::Function &Fn) {
   auto Finally = [&](const llvm::CleanupPadInst *Pad = nullptr) {
     EHWrapClause Clause;
     Clause.Cleanup = Pad;
-    Clause.Kind = Cxx ? EHWrapClause::Kind::CxxCleanup
-                      : EHWrapClause::Kind::SEHFinally;
+    Clause.Kind =
+        Cxx ? EHWrapClause::Kind::CxxCleanup : EHWrapClause::Kind::SEHFinally;
     return Clause;
   };
   auto AttachBodies = [&](std::vector<EHWrapClause> Wraps) {
@@ -1096,8 +1089,7 @@ void LLVMCWriter::writeBasicBlock(const llvm::BasicBlock &BB, int Indent) {
       ConditionChainBodies.count(&BB) || DuplicatedAssignBlocks.count(&BB))
     return;
   if (BB.getParent() && &BB != &BB.getParent()->getEntryBlock() &&
-      isPrintPassthrough(&BB) &&
-      !EHPrintedPassthroughHandlers.count(&BB))
+      isPrintPassthrough(&BB) && !EHPrintedPassthroughHandlers.count(&BB))
     return;
   const llvm::BasicBlock *LoopLatch = nullptr;
   const llvm::BasicBlock *LoopExit = nullptr;
@@ -1217,8 +1209,7 @@ bool LLVMCWriter::functionNeedsAnalysisOnlyEHWrap(
       Fn.getMetadata(windows_eh_md::FunctionAttachment);
   if (!Payload)
     Payload = Fn.getMetadata(windows_eh_md::NativeAttachment);
-  if (Payload &&
-      windows_eh_md::PersonalityName < Payload->getNumOperands()) {
+  if (Payload && windows_eh_md::PersonalityName < Payload->getNumOperands()) {
     if (const auto *Name = llvm::dyn_cast<llvm::MDString>(
             Payload->getOperand(windows_eh_md::PersonalityName)))
       if (LanguageEHName(Name->getString()))
@@ -2025,8 +2016,7 @@ bool LLVMCWriter::usersOnlySeeImmediate(const llvm::Value *V) const {
         return false;
       }
       if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(UI)) {
-        if (foldImmediate(LI) ||
-            asAllocaPointer(LI->getPointerOperand()))
+        if (foldImmediate(LI) || asAllocaPointer(LI->getPointerOperand()))
           continue;
         return false;
       }
@@ -2370,8 +2360,8 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       if (isLifetimeOrDbgUser(User))
         continue;
       const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User);
-      if (!Store || Store->getPointerOperand() != Slot ||
-          Store->isVolatile() || Store->isAtomic())
+      if (!Store || Store->getPointerOperand() != Slot || Store->isVolatile() ||
+          Store->isAtomic())
         return false;
     }
     return true;
@@ -2396,8 +2386,7 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(UI)) {
         if (CB->getCalledOperand() == Cur)
           return true;
-        const unsigned Limit =
-            printedCallArgLimit(*CB, printedCalleeName(*CB));
+        const unsigned Limit = printedCallArgLimit(*CB, printedCalleeName(*CB));
         for (unsigned I = 0; I < CB->arg_size(); ++I) {
           if (CB->getArgOperand(I) != Cur || I >= Limit)
             continue;
@@ -2431,8 +2420,7 @@ bool LLVMCWriter::valueFeedsPrintedUse(const llvm::Value *V) {
       if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(UI)) {
         if (SI->getValueOperand() != Cur)
           return true;
-        const llvm::AllocaInst *Dest =
-            asAllocaPointer(SI->getPointerOperand());
+        const llvm::AllocaInst *Dest = asAllocaPointer(SI->getPointerOperand());
         // A typed cursor may still be a register copy sink.  Type inference
         // does not make a slot observable when every use only writes it.
         if (WriteOnlyAlloca(Dest))
@@ -2515,8 +2503,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   const unsigned Have = Call.arg_size();
   const MsvcAtlCallee *Atl = msvcAtlCallee(CalleeName);
   auto Clamp = [&](size_t Limit) {
-    return static_cast<unsigned>(
-        std::min(Limit, static_cast<size_t>(Have)));
+    return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));
   };
   if (Atl && Atl->Kind == MsvcAtlCalleeKind::Format && Have >= 2) {
     if (auto VA = imageDataVA(Call.getArgOperand(1))) {
@@ -2688,8 +2675,8 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
   AllocaLastValues.clear();
   AllocaImmediates.clear();
 
-  auto expectedCallArgType =
-      [&](const llvm::CallBase &Call, unsigned Index) -> TypeRef {
+  auto expectedCallArgType = [&](const llvm::CallBase &Call,
+                                 unsigned Index) -> TypeRef {
     if (auto FS = debugCallee(Call))
       if (TypeRef Ty = cDisplayType(debugCallArgPointer(*FS, Index)))
         return Ty;
@@ -2733,9 +2720,8 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         Next->FieldDisplayNames.size() >=
             It->second.CallType->FieldDisplayNames.size())
       It->second.CallType = Next;
-    if (It->second.Type &&
-        It->second.Type->FieldDisplayNames.size() >
-            Next->FieldDisplayNames.size())
+    if (It->second.Type && It->second.Type->FieldDisplayNames.size() >
+                               Next->FieldDisplayNames.size())
       return;
     It->second.Type = std::move(Next);
   };
@@ -2819,8 +2805,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           StoredImageAddrs.insert(*VA);
     }
   }
-  const uint16_t PtrWidth =
-      (Img && Img->Bits == Bitness::Bits32) ? 4u : 8u;
+  const uint16_t PtrWidth = (Img && Img->Bits == Bitness::Bits32) ? 4u : 8u;
 
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
@@ -2846,8 +2831,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           if (auto It = AllocaTypes.find(Slot); It != AllocaTypes.end()) {
             ValueTypes[LI] = It->second;
             if (!isTypedRecordCursorSlot(Slot)) {
-              if (auto Text = AllocaTexts.find(Slot);
-                  Text != AllocaTexts.end())
+              if (auto Text = AllocaTexts.find(Slot); Text != AllocaTexts.end())
                 ValueTexts[LI] = Text->second;
             }
           }
@@ -2937,8 +2921,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
         auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
         if (!SI)
           continue;
-        const llvm::AllocaInst *Slot =
-            asAllocaPointer(SI->getPointerOperand());
+        const llvm::AllocaInst *Slot = asAllocaPointer(SI->getPointerOperand());
         if (!Slot)
           continue;
         TypeRef Ty = typeOfValue(SI->getValueOperand());
@@ -2990,8 +2973,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
           Changed = true;
           continue;
         }
-        const llvm::AllocaInst *Slot =
-            asAllocaPointer(LI->getPointerOperand());
+        const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
         if (!Slot)
           continue;
         if (auto Text = AllocaTexts.find(Slot);
@@ -3031,9 +3013,10 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
       const uint64_t Rel =
           Dest->second >= Owner->Off ? Dest->second - Owner->Off : 0;
       TypeRef Src = argListOf(*Owner);
-      if (!Src || (!hasDisplayField(Src, static_cast<int64_t>(Rel), "values_") &&
-                   !hasDisplayField(Owner->CallType, static_cast<int64_t>(Rel),
-                                    "values_")))
+      if (!Src ||
+          (!hasDisplayField(Src, static_cast<int64_t>(Rel), "values_") &&
+           !hasDisplayField(Owner->CallType, static_cast<int64_t>(Rel),
+                            "values_")))
         continue;
       applyCallTypeOnly(*SrcOff, Src);
       if (NamedFrameSlot *Taken = findOwnerSlot(*SrcOff)) {
@@ -3068,10 +3051,9 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
       TypeRef SrcCall = argListOf(SrcIt->second);
       if (!SrcCall && isArgListRecord(SrcTy))
         SrcCall = SrcTy;
-      if (SrcCall &&
-          (!DestIt->second.CallType ||
-           SrcCall->FieldDisplayNames.size() >=
-               DestIt->second.CallType->FieldDisplayNames.size()))
+      if (SrcCall && (!DestIt->second.CallType ||
+                      SrcCall->FieldDisplayNames.size() >=
+                          DestIt->second.CallType->FieldDisplayNames.size()))
         DestIt->second.CallType = SrcCall;
     }
   }
@@ -3186,8 +3168,7 @@ void LLVMCWriter::collectTypedHomes(llvm::Function &Fn) {
       const auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst);
       if (!CB)
         continue;
-      const unsigned Limit =
-          printedCallArgLimit(*CB, printedCalleeName(*CB));
+      const unsigned Limit = printedCallArgLimit(*CB, printedCalleeName(*CB));
       for (unsigned I = 0; I < Limit; ++I) {
         if (const llvm::AllocaInst *Slot =
                 joinAllocaForCallArg(CB->getArgOperand(I), *CB)) {
@@ -3698,8 +3679,8 @@ bool LLVMCWriter::allocaOnlyHoldsImmediates(
   return HasStore;
 }
 
-bool LLVMCWriter::isKilledEntryZeroStore(
-    const llvm::StoreInst *Store, const llvm::AllocaInst *Slot) const {
+bool LLVMCWriter::isKilledEntryZeroStore(const llvm::StoreInst *Store,
+                                         const llvm::AllocaInst *Slot) const {
   if (!Store || !Slot ||
       Store->getParent() != &Slot->getFunction()->getEntryBlock() ||
       Store->getPointerOperand() != Slot || Store->isVolatile() ||
@@ -3983,7 +3964,8 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
       if (!LI)
         return false;
       auto Text = ValueTexts.find(LI);
-      if (Text != ValueTexts.end() && Text->second.find("->") != std::string::npos)
+      if (Text != ValueTexts.end() &&
+          Text->second.find("->") != std::string::npos)
         return true;
       if (auto Peeled = peelPointerOffset(LI->getPointerOperand());
           Peeled && Peeled->second != 0)
@@ -4022,7 +4004,8 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
         }
       }
       const llvm::AllocaInst *Home = asAllocaPointer(LI->getPointerOperand());
-      auto HomeVal = Home ? AllocaHomeValues.find(Home) : AllocaHomeValues.end();
+      auto HomeVal =
+          Home ? AllocaHomeValues.find(Home) : AllocaHomeValues.end();
       if (HomeVal == AllocaHomeValues.end() || !HomeVal->second ||
           HomeVal->second == Src)
         return false;
@@ -4143,8 +4126,7 @@ bool LLVMCWriter::allocaStoreIsHidden(const llvm::AllocaInst *Slot,
     if (HasSeparateStoreBlocks) {
       for (const llvm::User *U : Slot->users())
         if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(U))
-          if (llvm::pred_size(LI->getParent()) > 1 &&
-              valueFeedsPrintedUse(LI))
+          if (llvm::pred_size(LI->getParent()) > 1 && valueFeedsPrintedUse(LI))
             return false;
     }
   }
@@ -4192,14 +4174,15 @@ bool LLVMCWriter::allocaStoreIsHidden(const llvm::AllocaInst *Slot,
         Text != ValueTexts.end() && !Text->second.empty())
       return true;
   }
-  if (!allocaHasLoad(Slot) || imageDataVA(Stored) || isComposedRemValue(Stored) ||
+  if (!allocaHasLoad(Slot) || imageDataVA(Stored) ||
+      isComposedRemValue(Stored) ||
       (foldImmediate(Stored) && UniqueHomes.count(Slot) &&
        allocaOnlyHoldsImmediates(Slot)) ||
       (llvm::isa<llvm::Instruction>(Stored) && foldImmediate(Stored) &&
        usersOnlySeeImmediate(Stored) &&
        (!ExceptionalJoin || !allocaHasPrintedLoad(Slot))) ||
-      allocaHomeIsNamedParam(Slot) ||
-      isThisFieldAddress(Stored) || isThisFieldValueHome(Slot) ||
+      allocaHomeIsNamedParam(Slot) || isThisFieldAddress(Stored) ||
+      isThisFieldValueHome(Slot) ||
       (allocaOnlyHoldsImmediates(Slot) && allocaLoadsComposeImmediate(Slot)) ||
       isDeadImmediateInit(Slot, Stored) ||
       (!isJoinCallArgAlloca(Slot) && !isTypedRecordCursorSlot(Slot) &&
@@ -4221,13 +4204,13 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
     if (!Load->isSimple())
       return true;
   if (llvm::isa<llvm::DbgInfoIntrinsic, llvm::AllocaInst, llvm::PHINode,
-                llvm::CatchPadInst, llvm::CleanupPadInst, llvm::CatchSwitchInst>(
-          &Inst))
+                llvm::CatchPadInst, llvm::CleanupPadInst,
+                llvm::CatchSwitchInst>(&Inst))
     return false;
   if (const auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(&Inst))
     return !Freeze->use_empty() && !isCallClobberValue(Freeze);
-  if (Analysis.Inlinable.count(&Inst) || Analysis.DeadFrameStores.count(&Inst) ||
-      isUnusedCallClobber(Inst))
+  if (Analysis.Inlinable.count(&Inst) ||
+      Analysis.DeadFrameStores.count(&Inst) || isUnusedCallClobber(Inst))
     return false;
   if ((llvm::isa<llvm::CastInst, llvm::FreezeInst>(&Inst) ||
        isUnknownCopyInst(Inst)) &&
@@ -4258,18 +4241,19 @@ bool LLVMCWriter::instructionIsPrinted(const llvm::Instruction &Inst) {
       return false;
     if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
         Slot && !allocaAddressTaken(Slot) &&
-        (allocaHomeIsNamedParam(Slot) ||
-         (allocaOnlyHoldsImmediates(Slot) &&
-          allocaLoadsComposeImmediate(Slot))))
+        (allocaHomeIsNamedParam(Slot) || (allocaOnlyHoldsImmediates(Slot) &&
+                                          allocaLoadsComposeImmediate(Slot))))
       return false;
     return true;
   }
   if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(SI->getPointerOperand())) {
+    if (const llvm::AllocaInst *Slot =
+            asAllocaPointer(SI->getPointerOperand())) {
       if (isKilledEntryZeroStore(SI, Slot))
         return false;
       if (std::optional<std::string> Def = joinFieldDefaultText(Slot)) {
-        if (auto Imm = foldImmediate(SI->getValueOperand()); Imm && *Imm == *Def)
+        if (auto Imm = foldImmediate(SI->getValueOperand());
+            Imm && *Imm == *Def)
           return false;
       }
       if (isJoinArmStore(SI))
@@ -4510,7 +4494,8 @@ bool LLVMCWriter::singleEntryUncondTail(
           isCatchPadBlock(*Cur) || hasCleanupPad(*Cur) ||
           !Hops.insert(Cur).second || Cur->getSinglePredecessor() != Pred)
         return false;
-      const auto *Hop = llvm::dyn_cast<llvm::UncondBrInst>(Cur->getTerminator());
+      const auto *Hop =
+          llvm::dyn_cast<llvm::UncondBrInst>(Cur->getTerminator());
       if (!Hop || !Hop->getSuccessor(0) || Hop->getSuccessor(0) == Cur)
         return false;
       Pred = Cur;
@@ -4600,8 +4585,7 @@ bool LLVMCWriter::singleEntryCondRegion(
     Cur = Hop->getSuccessor(0);
   }
   if (!Cur || Cur->getSinglePredecessor() != Pred || Cur->isLandingPad() ||
-      isCatchPadBlock(*Cur) || hasCleanupPad(*Cur) ||
-      FoldedJoinArms.count(Cur))
+      isCatchPadBlock(*Cur) || hasCleanupPad(*Cur) || FoldedJoinArms.count(Cur))
     return false;
   const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
   if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1))
@@ -4627,10 +4611,10 @@ bool LLVMCWriter::singleEntryCondRegion(
 }
 
 bool LLVMCWriter::cursorForLoop(const llvm::BasicBlock *Header,
-                                 const llvm::BasicBlock *&Latch,
-                                 const llvm::BasicBlock *&Exit,
-                                 const llvm::BasicBlock *&Body,
-                                 const llvm::AllocaInst *&Slot) {
+                                const llvm::BasicBlock *&Latch,
+                                const llvm::BasicBlock *&Exit,
+                                const llvm::BasicBlock *&Body,
+                                const llvm::AllocaInst *&Slot) {
   Latch = nullptr;
   Exit = nullptr;
   Body = nullptr;
@@ -4731,7 +4715,7 @@ bool LLVMCWriter::cursorForLoop(const llvm::BasicBlock *Header,
 }
 
 std::string LLVMCWriter::cursorFieldIncText(const llvm::BasicBlock *BB,
-                                             const llvm::Instruction *Stop) {
+                                            const llvm::Instruction *Stop) {
   if (!BB)
     return {};
   // Field peels walk address temps. Replay this block's stores so a later
@@ -4779,8 +4763,7 @@ void LLVMCWriter::writeCursorFor(const llvm::BasicBlock *Header,
     const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
     if (!SI || SI->getParent() != Header)
       continue;
-    if (const llvm::AllocaInst *Home =
-            asAllocaPointer(SI->getPointerOperand()))
+    if (const llvm::AllocaInst *Home = asAllocaPointer(SI->getPointerOperand()))
       AllocaLastValues[Home] = SI->getValueOperand();
   }
   std::string Cond = condStr(Br->getCondition());
@@ -4798,8 +4781,7 @@ void LLVMCWriter::writeCursorFor(const llvm::BasicBlock *Header,
     const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
     if (!SI)
       continue;
-    if (const llvm::AllocaInst *Home =
-            asAllocaPointer(SI->getPointerOperand()))
+    if (const llvm::AllocaInst *Home = asAllocaPointer(SI->getPointerOperand()))
       AllocaLastValues[Home] = SI->getValueOperand();
   }
   std::string Rhs =
@@ -4822,8 +4804,8 @@ void LLVMCWriter::writeCursorFor(const llvm::BasicBlock *Header,
   const std::string Lhs = getName(const_cast<llvm::AllocaInst *>(Slot));
   AllocaLastValues = SavedLast;
   AllocaImmediates = SavedImm;
-  const bool ExitOnTrue = printBranchTarget(Br->getSuccessor(0)) ==
-                          printBranchTarget(Exit);
+  const bool ExitOnTrue =
+      printBranchTarget(Br->getSuccessor(0)) == printBranchTarget(Exit);
   std::string ForCond = Cond;
   if (ExitOnTrue) {
     if (Cond.size() >= 3 && Cond[0] == '!' && Cond[1] == '(' &&
@@ -4919,8 +4901,7 @@ bool LLVMCWriter::cursorCopyLatch(const llvm::BasicBlock *BB) {
     Slot = Home;
     Store = SI;
   }
-  if (!Slot || !Store ||
-      !llvm::isa<llvm::LoadInst>(Store->getValueOperand()))
+  if (!Slot || !Store || !llvm::isa<llvm::LoadInst>(Store->getValueOperand()))
     return false;
   for (const llvm::Instruction &Inst : *Succ) {
     const auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst);
@@ -5224,148 +5205,149 @@ bool LLVMCWriter::blockOnlyFeedsBranch(const llvm::BasicBlock *BB) {
 }
 
 bool LLVMCWriter::conditionChainElse(
-    const llvm::BasicBlock *From,
-    std::vector<const llvm::BasicBlock *> &Conds, const llvm::BasicBlock *&Arm,
-    const llvm::BasicBlock *&Def, const llvm::BasicBlock *&Join,
-    bool &InvertCond) {
+    const llvm::BasicBlock *From, std::vector<const llvm::BasicBlock *> &Conds,
+    const llvm::BasicBlock *&Arm, const llvm::BasicBlock *&Def,
+    const llvm::BasicBlock *&Join, bool &InvertCond) {
   auto Attempt = [&](bool ContinueOnFalse) -> bool {
-  Conds.clear();
-  Arm = nullptr;
-  Def = nullptr;
-  Join = nullptr;
-  InvertCond = ContinueOnFalse;
-  if (!From || !From->getParent())
-    return false;
-  const llvm::BasicBlock *Cur = From;
-  const llvm::BasicBlock *Prev = nullptr;
-  const llvm::BasicBlock *Default = nullptr;
-  llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
-  while (Cur && Seen.insert(Cur).second && Conds.size() < 4) {
-    if (Prev && Cur->getSinglePredecessor() != Prev)
+    Conds.clear();
+    Arm = nullptr;
+    Def = nullptr;
+    Join = nullptr;
+    InvertCond = ContinueOnFalse;
+    if (!From || !From->getParent())
       return false;
-    if (Cur->isLandingPad() || isCatchPadBlock(*Cur) || hasCleanupPad(*Cur))
-      return false;
-    const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
-    if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1))
-      return false;
-    if (!blockOnlyFeedsBranch(Cur))
-      return false;
-    const unsigned ContIdx = ContinueOnFalse ? 1 : 0;
-    const unsigned DefIdx = ContinueOnFalse ? 0 : 1;
-    const llvm::BasicBlock *ContEdge = Br->getSuccessor(ContIdx);
-    const llvm::BasicBlock *DefT = printBranchTarget(Br->getSuccessor(DefIdx));
-    if (!ContEdge || !DefT || DefT == ContEdge)
-      return false;
-    if (edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
-        edgePrintsPhiCopy(Cur, Br->getSuccessor(1)))
-      return false;
-    if (!Default)
-      Default = DefT;
-    else if (DefT != Default)
-      return false;
-    Conds.push_back(Cur);
-    // The arm may be the next block. These other edges go to Default.
-    const llvm::BasicBlock *Body = nullptr;
-    if (ContEdge->getSinglePredecessor() == Cur &&
-        !ContEdge->isLandingPad() && !isPrintPassthrough(ContEdge) &&
-        !FoldedJoinArms.count(ContEdge) && !isCatchPadBlock(*ContEdge) &&
-        !hasCleanupPad(*ContEdge)) {
-      bool Phi = false;
-      bool Printed = false;
-      for (const llvm::Instruction &Inst : *ContEdge) {
-        if (llvm::isa<llvm::PHINode>(Inst))
-          Phi = true;
-        else if (!Inst.isTerminator() && instructionIsPrinted(Inst))
-          Printed = true;
-      }
-      const auto *Out =
-          llvm::dyn_cast<llvm::UncondBrInst>(ContEdge->getTerminator());
-      bool Later = false;
-      bool SeenCur = false;
-      for (const llvm::BasicBlock &BB : *Cur->getParent()) {
-        if (&BB == Cur)
-          SeenCur = true;
-        else if (SeenCur && &BB == ContEdge)
-          Later = true;
-      }
-      if (!Phi && Printed && Later && Out && Out->getSuccessor(0) &&
-          Out->getSuccessor(0) != ContEdge &&
-          !edgePrintsPhiCopy(ContEdge, Out->getSuccessor(0)))
-        Body = ContEdge;
-    }
-    if (Body) {
-      const auto *Out = llvm::cast<llvm::UncondBrInst>(Body->getTerminator());
-      Arm = Body;
-      Join = printBranchTarget(Out->getSuccessor(0));
-      break;
-    }
-    const llvm::BasicBlock *Next = printBranchTarget(ContEdge);
-    if (!Next || Next == Cur ||
-        !llvm::isa<llvm::CondBrInst>(Next->getTerminator()))
-      return false;
-    Prev = Cur;
-    Cur = Next;
-  }
-  if (!Arm || !Default || !Join || Conds.size() < 2 || Default == Join ||
-      Default == Arm || Join == Arm)
-    return false;
-  if (Default->isLandingPad() || isCatchPadBlock(*Default) ||
-      hasCleanupPad(*Default))
-    return false;
-  const auto *DefBr = llvm::dyn_cast<llvm::UncondBrInst>(Default->getTerminator());
-  if (!DefBr || printBranchTarget(DefBr->getSuccessor(0)) != Join)
-    return false;
-  if (edgePrintsPhiCopy(Default, DefBr->getSuccessor(0)))
-    return false;
-  bool DefPrints = false;
-  for (const llvm::Instruction &Inst : *Default) {
-    if (Inst.isTerminator())
-      continue;
-    if (instructionIsPrinted(Inst))
-      DefPrints = true;
-  }
-  if (!DefPrints)
-    return false;
-  bool ArmPrints = false;
-  for (const llvm::Instruction &Inst : *Arm) {
-    if (Inst.isTerminator())
-      continue;
-    if (instructionIsPrinted(Inst))
-      ArmPrints = true;
-  }
-  if (!ArmPrints)
-    return false;
-  auto FromChain = [&](const llvm::BasicBlock *Pred) {
-    llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Hop;
-    while (Pred && Hop.insert(Pred).second) {
-      if (llvm::is_contained(Conds, Pred))
-        return true;
-      if (!isPrintPassthrough(Pred))
+    const llvm::BasicBlock *Cur = From;
+    const llvm::BasicBlock *Prev = nullptr;
+    const llvm::BasicBlock *Default = nullptr;
+    llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
+    while (Cur && Seen.insert(Cur).second && Conds.size() < 4) {
+      if (Prev && Cur->getSinglePredecessor() != Prev)
         return false;
-      Pred = Pred->getSinglePredecessor();
+      if (Cur->isLandingPad() || isCatchPadBlock(*Cur) || hasCleanupPad(*Cur))
+        return false;
+      const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
+      if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1))
+        return false;
+      if (!blockOnlyFeedsBranch(Cur))
+        return false;
+      const unsigned ContIdx = ContinueOnFalse ? 1 : 0;
+      const unsigned DefIdx = ContinueOnFalse ? 0 : 1;
+      const llvm::BasicBlock *ContEdge = Br->getSuccessor(ContIdx);
+      const llvm::BasicBlock *DefT =
+          printBranchTarget(Br->getSuccessor(DefIdx));
+      if (!ContEdge || !DefT || DefT == ContEdge)
+        return false;
+      if (edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
+          edgePrintsPhiCopy(Cur, Br->getSuccessor(1)))
+        return false;
+      if (!Default)
+        Default = DefT;
+      else if (DefT != Default)
+        return false;
+      Conds.push_back(Cur);
+      // The arm may be the next block. These other edges go to Default.
+      const llvm::BasicBlock *Body = nullptr;
+      if (ContEdge->getSinglePredecessor() == Cur &&
+          !ContEdge->isLandingPad() && !isPrintPassthrough(ContEdge) &&
+          !FoldedJoinArms.count(ContEdge) && !isCatchPadBlock(*ContEdge) &&
+          !hasCleanupPad(*ContEdge)) {
+        bool Phi = false;
+        bool Printed = false;
+        for (const llvm::Instruction &Inst : *ContEdge) {
+          if (llvm::isa<llvm::PHINode>(Inst))
+            Phi = true;
+          else if (!Inst.isTerminator() && instructionIsPrinted(Inst))
+            Printed = true;
+        }
+        const auto *Out =
+            llvm::dyn_cast<llvm::UncondBrInst>(ContEdge->getTerminator());
+        bool Later = false;
+        bool SeenCur = false;
+        for (const llvm::BasicBlock &BB : *Cur->getParent()) {
+          if (&BB == Cur)
+            SeenCur = true;
+          else if (SeenCur && &BB == ContEdge)
+            Later = true;
+        }
+        if (!Phi && Printed && Later && Out && Out->getSuccessor(0) &&
+            Out->getSuccessor(0) != ContEdge &&
+            !edgePrintsPhiCopy(ContEdge, Out->getSuccessor(0)))
+          Body = ContEdge;
+      }
+      if (Body) {
+        const auto *Out = llvm::cast<llvm::UncondBrInst>(Body->getTerminator());
+        Arm = Body;
+        Join = printBranchTarget(Out->getSuccessor(0));
+        break;
+      }
+      const llvm::BasicBlock *Next = printBranchTarget(ContEdge);
+      if (!Next || Next == Cur ||
+          !llvm::isa<llvm::CondBrInst>(Next->getTerminator()))
+        return false;
+      Prev = Cur;
+      Cur = Next;
     }
-    return false;
-  };
-  unsigned Preds = 0;
-  for (const llvm::BasicBlock *Pred : llvm::predecessors(Default)) {
-    ++Preds;
-    if (!FromChain(Pred))
+    if (!Arm || !Default || !Join || Conds.size() < 2 || Default == Join ||
+        Default == Arm || Join == Arm)
       return false;
-  }
-  if (Preds == 0)
-    return false;
-  bool SeenFrom = false;
-  bool DefAfter = false;
-  for (const llvm::BasicBlock &BB : *From->getParent()) {
-    if (&BB == From)
-      SeenFrom = true;
-    else if (SeenFrom && &BB == Default)
-      DefAfter = true;
-  }
-  if (!DefAfter)
-    return false;
-  Def = Default;
-  return true;
+    if (Default->isLandingPad() || isCatchPadBlock(*Default) ||
+        hasCleanupPad(*Default))
+      return false;
+    const auto *DefBr =
+        llvm::dyn_cast<llvm::UncondBrInst>(Default->getTerminator());
+    if (!DefBr || printBranchTarget(DefBr->getSuccessor(0)) != Join)
+      return false;
+    if (edgePrintsPhiCopy(Default, DefBr->getSuccessor(0)))
+      return false;
+    bool DefPrints = false;
+    for (const llvm::Instruction &Inst : *Default) {
+      if (Inst.isTerminator())
+        continue;
+      if (instructionIsPrinted(Inst))
+        DefPrints = true;
+    }
+    if (!DefPrints)
+      return false;
+    bool ArmPrints = false;
+    for (const llvm::Instruction &Inst : *Arm) {
+      if (Inst.isTerminator())
+        continue;
+      if (instructionIsPrinted(Inst))
+        ArmPrints = true;
+    }
+    if (!ArmPrints)
+      return false;
+    auto FromChain = [&](const llvm::BasicBlock *Pred) {
+      llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Hop;
+      while (Pred && Hop.insert(Pred).second) {
+        if (llvm::is_contained(Conds, Pred))
+          return true;
+        if (!isPrintPassthrough(Pred))
+          return false;
+        Pred = Pred->getSinglePredecessor();
+      }
+      return false;
+    };
+    unsigned Preds = 0;
+    for (const llvm::BasicBlock *Pred : llvm::predecessors(Default)) {
+      ++Preds;
+      if (!FromChain(Pred))
+        return false;
+    }
+    if (Preds == 0)
+      return false;
+    bool SeenFrom = false;
+    bool DefAfter = false;
+    for (const llvm::BasicBlock &BB : *From->getParent()) {
+      if (&BB == From)
+        SeenFrom = true;
+      else if (SeenFrom && &BB == Default)
+        DefAfter = true;
+    }
+    if (!DefAfter)
+      return false;
+    Def = Default;
+    return true;
   };
   return Attempt(false) || Attempt(true);
 }
@@ -5392,7 +5374,8 @@ bool LLVMCWriter::sharedAssignElse(const llvm::BasicBlock *From,
   if (!Def || Def == Alt || Def == Body || Def == From ||
       Def != printBranchTarget(FromBr->getSuccessor(0)))
     return false;
-  auto AssignJoin = [&](const llvm::BasicBlock *Arm) -> const llvm::BasicBlock * {
+  auto AssignJoin =
+      [&](const llvm::BasicBlock *Arm) -> const llvm::BasicBlock * {
     if (!Arm || Arm->isLandingPad() || isCatchPadBlock(*Arm) ||
         hasCleanupPad(*Arm))
       return nullptr;
@@ -5613,8 +5596,7 @@ LLVMCWriter::straightLineFalseSkip(const llvm::BasicBlock *From,
         }
         if (FoldedJoinArms.count(&BB) || InlinedFallthroughBlocks.count(&BB))
           continue;
-        if (&BB != &From->getParent()->getEntryBlock() &&
-            llvm::pred_empty(&BB))
+        if (&BB != &From->getParent()->getEntryBlock() && llvm::pred_empty(&BB))
           continue;
         if (isPrintPassthrough(&BB) || isCatchPadBlock(BB) ||
             hasCleanupPad(BB) ||
@@ -5663,7 +5645,8 @@ bool LLVMCWriter::sameTargetReleaseRegion(
   if (!Then || edgePrintsPhiCopy(From, Then) || edgePrintsPhiCopy(From, Else))
     return false;
   Join = printBranchTarget(Then);
-  if (!Join || Join == From || Join == Else || Join->getParent() != From->getParent())
+  if (!Join || Join == From || Join == Else ||
+      Join->getParent() != From->getParent())
     return false;
   if (!joinPrintsNext(From, Else) || straightLineFalseSkip(From, Else) ||
       straightLineTrueArm(From, Then) || andRejoinTest(From, Else))
@@ -5855,9 +5838,9 @@ bool LLVMCWriter::exclusiveSkipElseIf(
     }
     return false;
   };
-  auto DirectShared =
-      [&](const llvm::BasicBlock *Header, const llvm::BasicBlock *Edge,
-          llvm::SmallVectorImpl<const llvm::BasicBlock *> &Hops)
+  auto DirectShared = [&](const llvm::BasicBlock *Header,
+                          const llvm::BasicBlock *Edge,
+                          llvm::SmallVectorImpl<const llvm::BasicBlock *> &Hops)
       -> const llvm::BasicBlock * {
     Hops.clear();
     if (!Header || !Edge || edgePrintsPhiCopy(Header, Edge))
@@ -5940,7 +5923,8 @@ bool LLVMCWriter::exclusiveSkipElseIf(
         if (isPrintPassthrough(Cand)) {
           const auto *HopBr =
               llvm::dyn_cast<llvm::UncondBrInst>(Cand->getTerminator());
-          const llvm::BasicBlock *Dest = HopBr ? HopBr->getSuccessor(0) : nullptr;
+          const llvm::BasicBlock *Dest =
+              HopBr ? HopBr->getSuccessor(0) : nullptr;
           bool Shared = false;
           if (Dest) {
             for (const llvm::BasicBlock *Pred : llvm::predecessors(Dest)) {
@@ -6006,8 +5990,7 @@ bool LLVMCWriter::exclusiveSkipElseIf(
             const llvm::BasicBlock *Origin = Pred;
             llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
             while (Origin && !In.count(Origin) && isPrintPassthrough(Origin) &&
-                   Origin->getSinglePredecessor() &&
-                   Seen.insert(Origin).second)
+                   Origin->getSinglePredecessor() && Seen.insert(Origin).second)
               Origin = Origin->getSinglePredecessor();
             if (In.count(Origin) || Origin == Header)
               continue;
@@ -6381,7 +6364,8 @@ bool LLVMCWriter::exclusiveSkipElseIf(
   {
     const llvm::BasicBlock *Cursor = From;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> SeenClause;
-    while (Done.Headers.size() < 4 && Cursor && SeenClause.insert(Cursor).second) {
+    while (Done.Headers.size() < 4 && Cursor &&
+           SeenClause.insert(Cursor).second) {
       llvm::SmallVector<const llvm::BasicBlock *, 4> Conds;
       llvm::SmallVector<char, 4> Taken;
       llvm::SmallVector<const llvm::BasicBlock *, 4> Hops;
@@ -6391,8 +6375,8 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       bool ClauseOk = true;
       while (Conds.size() < 4 && Cur) {
         const auto *Br = llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator());
-        if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1) || BadBlock(Cur) ||
-            edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
+        if (!Br || Br->getSuccessor(0) == Br->getSuccessor(1) ||
+            BadBlock(Cur) || edgePrintsPhiCopy(Cur, Br->getSuccessor(0)) ||
             edgePrintsPhiCopy(Cur, Br->getSuccessor(1))) {
           ClauseOk = false;
           break;
@@ -6414,16 +6398,19 @@ bool LLVMCWriter::exclusiveSkipElseIf(
           return Dest->getSinglePredecessor() == Pred;
         };
         const bool TrueShared = TrueDest && !TrueDest->getSinglePredecessor();
-        const bool FalseShared = FalseDest && !FalseDest->getSinglePredecessor();
+        const bool FalseShared =
+            FalseDest && !FalseDest->getSinglePredecessor();
         const llvm::BasicBlock *Share = nullptr;
         const llvm::BasicBlock *Priv = nullptr;
         bool TakenTrue = false;
-        const llvm::SmallVector<const llvm::BasicBlock *, 4> *ShareHops = nullptr;
+        const llvm::SmallVector<const llvm::BasicBlock *, 4> *ShareHops =
+            nullptr;
         if (TrueShared && Private(Cur, FalseDest, FalseHops) && !FalseShared) {
           Share = TrueDest;
           Priv = FalseDest;
           ShareHops = &TrueHops;
-        } else if (FalseShared && Private(Cur, TrueDest, TrueHops) && !TrueShared) {
+        } else if (FalseShared && Private(Cur, TrueDest, TrueHops) &&
+                   !TrueShared) {
           Share = FalseDest;
           Priv = TrueDest;
           TakenTrue = true;
@@ -6474,8 +6461,7 @@ bool LLVMCWriter::exclusiveSkipElseIf(
           !Arm.Start) {
         // ArmEdge is the private successor of the last consumed cond.
         if (Conds.back() == ArmEdge ||
-            !CollectArm(Conds.back(), ArmEdge, Arm, Miss) ||
-            !Arm.Start)
+            !CollectArm(Conds.back(), ArmEdge, Arm, Miss) || !Arm.Start)
           break;
       }
       const llvm::BasicBlock *Fall = nullptr;
@@ -6496,15 +6482,14 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       if (!ExitOk || !Fall)
         break;
       const bool Last = Fall == Miss;
-      if (!Last &&
-          (!llvm::isa<llvm::CondBrInst>(Miss->getTerminator()) ||
-           BadBlock(Miss)))
+      if (!Last && (!llvm::isa<llvm::CondBrInst>(Miss->getTerminator()) ||
+                    BadBlock(Miss)))
         break;
       const llvm::BasicBlock *Limit = Last ? Fall : Miss;
       if (!LayoutOk(Conds.back(), Arm, Limit) || !After(Conds.front(), Limit))
         break;
-      if (Arm.Blocks.count(Miss) || Arm.Blocks.count(Fall) && Fall != Miss &&
-                                         Arm.Blocks.count(Fall))
+      if (Arm.Blocks.count(Miss) ||
+          Arm.Blocks.count(Fall) && Fall != Miss && Arm.Blocks.count(Fall))
         break;
       if (!Last && !After(Arm.Start, Miss))
         break;
@@ -6546,8 +6531,8 @@ bool LLVMCWriter::exclusiveSkipElseIf(
       if (Count >= 2)
         Wide = true;
     if (Done.AndChain && Wide && Done.Tail) {
-      llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Have(
-          Done.Owned.begin(), Done.Owned.end());
+      llvm::SmallPtrSet<const llvm::BasicBlock *, 32> Have(Done.Owned.begin(),
+                                                           Done.Owned.end());
       for (const llvm::BasicBlock *Header : Done.Headers)
         Have.insert(Header);
       Have.insert(From);
@@ -6745,7 +6730,8 @@ bool LLVMCWriter::privateJoinElseIf(
       Blocks.append(Chain.begin(), Chain.end());
       Exits.insert(Chain.back());
     } else {
-      const auto *HBr = llvm::dyn_cast<llvm::CondBrInst>(Header->getTerminator());
+      const auto *HBr =
+          llvm::dyn_cast<llvm::CondBrInst>(Header->getTerminator());
       const llvm::BasicBlock *Region = nullptr;
       llvm::SmallVector<const llvm::BasicBlock *, 4> TrueChain;
       llvm::SmallVector<const llvm::BasicBlock *, 4> FalseChain;
@@ -6810,8 +6796,8 @@ bool LLVMCWriter::privateJoinElseIf(
     if (!Next || Next == Cur || Next == JoinCand ||
         !llvm::isa<llvm::CondBrInst>(Next->getTerminator()))
       return false;
-    if (!Claim(Next) || (Next != Br->getSuccessor(1) &&
-                         !Claim(Br->getSuccessor(1))))
+    if (!Claim(Next) ||
+        (Next != Br->getSuccessor(1) && !Claim(Br->getSuccessor(1))))
       return false;
     Cur = Next;
   }
@@ -6858,7 +6844,8 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     const llvm::BasicBlock *&SkipTarget) {
   Region.clear();
   SkipTarget = nullptr;
-  if (!From || !Else || !From->getParent() || Else->getParent() != From->getParent())
+  if (!From || !Else || !From->getParent() ||
+      Else->getParent() != From->getParent())
     return false;
   const auto *FromBr = llvm::dyn_cast<llvm::CondBrInst>(From->getTerminator());
   if (!FromBr || FromBr->getSuccessor(1) != Else ||
@@ -6901,12 +6888,10 @@ bool LLVMCWriter::regionBeforeSkipTarget(
   const bool ThroughHop =
       isPrintPassthrough(FromBr->getSuccessor(0)) && !SkipAssigns;
   while (ThroughHop && RegionStart &&
-         InlinedFallthroughBlocks.count(RegionStart) &&
-         SkipChain.size() < 4) {
+         InlinedFallthroughBlocks.count(RegionStart) && SkipChain.size() < 4) {
     const auto *ChainBr =
         llvm::dyn_cast<llvm::CondBrInst>(RegionStart->getTerminator());
-    if (!ChainBr ||
-        printBranchTarget(ChainBr->getSuccessor(0)) != SkipTarget ||
+    if (!ChainBr || printBranchTarget(ChainBr->getSuccessor(0)) != SkipTarget ||
         edgePrintsPhiCopy(RegionStart, ChainBr->getSuccessor(0)) ||
         edgePrintsPhiCopy(RegionStart, ChainBr->getSuccessor(1)))
       break;
@@ -6915,8 +6900,7 @@ bool LLVMCWriter::regionBeforeSkipTarget(
   }
   if (!RegionStart || RegionStart == SkipTarget || RegionStart == From ||
       !joinPrintsNext(From, RegionStart) ||
-      edgePrintsPhiCopy(From, RegionStart) ||
-      !Before(RegionStart, SkipTarget))
+      edgePrintsPhiCopy(From, RegionStart) || !Before(RegionStart, SkipTarget))
     return false;
   {
     // A true edge that is already a conditional region is printed by that
@@ -6953,9 +6937,9 @@ bool LLVMCWriter::regionBeforeSkipTarget(
       continue;
     // An empty hop, or a single-entry block with real instructions, may be
     // laid out after the shared exit and still fall into a block before it.
-    const bool LateFromRegion =
-        !Before(Cur, SkipTarget) && Cur->getSinglePredecessor() &&
-        In.count(Cur->getSinglePredecessor());
+    const bool LateFromRegion = !Before(Cur, SkipTarget) &&
+                                Cur->getSinglePredecessor() &&
+                                In.count(Cur->getSinglePredecessor());
     const bool LateFallthrough = LateFromRegion && isPrintPassthrough(Cur);
     const bool LateBody = LateFromRegion && !isPrintPassthrough(Cur) &&
                           llvm::isa<llvm::UncondBrInst>(Cur->getTerminator());
@@ -6972,10 +6956,10 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     if (Cur->isLandingPad() || isCatchPadBlock(*Cur) || hasCleanupPad(*Cur))
       return false;
     const llvm::Instruction *Term = Cur->getTerminator();
-    if (!Term || llvm::isa<llvm::SwitchInst, llvm::InvokeInst,
-                           llvm::IndirectBrInst, llvm::CallBrInst,
-                           llvm::ResumeInst, llvm::CatchReturnInst,
-                           llvm::CleanupReturnInst>(Term))
+    if (!Term ||
+        llvm::isa<llvm::SwitchInst, llvm::InvokeInst, llvm::IndirectBrInst,
+                  llvm::CallBrInst, llvm::ResumeInst, llvm::CatchReturnInst,
+                  llvm::CleanupReturnInst>(Term))
       return false;
     In.insert(Cur);
     for (const llvm::BasicBlock *Succ : llvm::successors(Cur)) {
@@ -7014,10 +6998,9 @@ bool LLVMCWriter::regionBeforeSkipTarget(
               WorkEdge = FalseT;
             else if (FalseT == SkipTarget && TrueT && Before(TrueT, SkipTarget))
               WorkEdge = TrueT;
-            const auto *WorkBr =
-                WorkEdge ? llvm::dyn_cast<llvm::UncondBrInst>(
-                               WorkEdge->getTerminator())
-                         : nullptr;
+            const auto *WorkBr = WorkEdge ? llvm::dyn_cast<llvm::UncondBrInst>(
+                                                WorkEdge->getTerminator())
+                                          : nullptr;
             if (WorkEdge && WorkEdge->getSinglePredecessor() == Succ &&
                 joinPrintsNext(Cur, WorkEdge) && WorkBr &&
                 printBranchTarget(WorkBr->getSuccessor(0)) == SkipTarget &&
@@ -7090,7 +7073,8 @@ bool LLVMCWriter::regionBeforeSkipTarget(
       if (!Cur || !In.count(Cur) || !Reach.insert(Cur).second)
         continue;
       for (const llvm::BasicBlock *Succ : llvm::successors(Cur)) {
-        if (!Succ || Succ == SkipTarget || printBranchTarget(Succ) == SkipTarget)
+        if (!Succ || Succ == SkipTarget ||
+            printBranchTarget(Succ) == SkipTarget)
           continue;
         if (In.count(Succ))
           Left.push_back(Succ);
@@ -7112,7 +7096,8 @@ bool LLVMCWriter::regionBeforeSkipTarget(
     if (!Br)
       return false;
     const llvm::BasicBlock *TrueTarget = printBranchTarget(Br->getSuccessor(0));
-    const llvm::BasicBlock *FalseTarget = printBranchTarget(Br->getSuccessor(1));
+    const llvm::BasicBlock *FalseTarget =
+        printBranchTarget(Br->getSuccessor(1));
     if (TrueTarget != SkipTarget && FalseTarget != SkipTarget)
       return false;
     const llvm::BasicBlock *Other =
@@ -7239,7 +7224,8 @@ bool LLVMCWriter::laterTrueArmJoinsFallthrough(
       straightLineTrueArm(From, FromBr->getSuccessor(0), true);
   if (!Body)
     return false;
-  const auto *BodyBr = llvm::dyn_cast<llvm::UncondBrInst>(Body->getTerminator());
+  const auto *BodyBr =
+      llvm::dyn_cast<llvm::UncondBrInst>(Body->getTerminator());
   if (!BodyBr || !BodyBr->getSuccessor(0) || BodyBr->getSuccessor(0) == Body)
     return false;
   if (edgePrintsPhiCopy(Body, BodyBr->getSuccessor(0)))
@@ -7657,8 +7643,7 @@ bool LLVMCWriter::storeFeedsPhiCallTail(const llvm::StoreInst *SI) {
     const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
     if (!Call || !instructionIsPrinted(Inst))
       continue;
-    const unsigned Limit =
-        printedCallArgLimit(*Call, printedCalleeName(*Call));
+    const unsigned Limit = printedCallArgLimit(*Call, printedCalleeName(*Call));
     for (unsigned I = 0; I < Limit && I < Call->arg_size(); ++I)
       if (joinAllocaForCallArg(Call->getArgOperand(I), *Call) == Slot)
         return true;
@@ -7694,9 +7679,9 @@ LLVMCWriter::duplicatedCallTail(const llvm::BasicBlock *Edge) {
     if (!isPrintPassthrough(Pred) || edgePrintsPhiCopy(Pred, BB))
       return nullptr;
     const llvm::BasicBlock *Origin = Pred->getSinglePredecessor();
-    const auto *Cond = Origin ? llvm::dyn_cast<llvm::CondBrInst>(
-                                    Origin->getTerminator())
-                              : nullptr;
+    const auto *Cond =
+        Origin ? llvm::dyn_cast<llvm::CondBrInst>(Origin->getTerminator())
+               : nullptr;
     if (!Cond || (printBranchTarget(Cond->getSuccessor(0)) != BB &&
                   printBranchTarget(Cond->getSuccessor(1)) != BB))
       return nullptr;
@@ -7715,7 +7700,7 @@ bool LLVMCWriter::cursorForExitsAt(const llvm::BasicBlock *Succ) {
 }
 
 bool LLVMCWriter::redundantLoopElseContinue(const llvm::BasicBlock *From,
-                                           const llvm::BasicBlock *Else) {
+                                            const llvm::BasicBlock *Else) {
   const CursorForContinue &State = cursorForContinue();
   if (!State.Depth || !From || !Else || !From->getParent())
     return false;
@@ -7767,9 +7752,9 @@ bool LLVMCWriter::redundantLoopElseContinue(const llvm::BasicBlock *From,
 }
 
 bool LLVMCWriter::isReservedEHNormalTarget(const llvm::BasicBlock *BB) const {
-  return BB && std::any_of(EHInvokeNormalGotos.begin(),
-                           EHInvokeNormalGotos.end(),
-                           [&](const auto &Edge) { return Edge.second == BB; });
+  return BB &&
+         std::any_of(EHInvokeNormalGotos.begin(), EHInvokeNormalGotos.end(),
+                     [&](const auto &Edge) { return Edge.second == BB; });
 }
 
 void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
@@ -7781,8 +7766,7 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
   const llvm::BasicBlock *CurFrom = From;
   const llvm::BasicBlock *CurTo = To;
   auto EmptyUncondBridge = [&](const llvm::BasicBlock *BB) {
-    if (!cursorForContinue().Depth || !BB ||
-        isReservedEHNormalTarget(BB))
+    if (!cursorForContinue().Depth || !BB || isReservedEHNormalTarget(BB))
       return false;
     const CursorForContinue &State = cursorForContinue();
     if (BB == State.Latch || BB == State.Step)
@@ -7887,8 +7871,8 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
     return;
   }
   if (CurTo && backEdgeCallBeforeHeader(CurTo) &&
-      !InlinedFallthroughBlocks.count(CurTo) &&
-      !FoldedJoinArms.count(CurTo) && !DuplicatedAssignBlocks.count(CurTo) &&
+      !InlinedFallthroughBlocks.count(CurTo) && !FoldedJoinArms.count(CurTo) &&
+      !DuplicatedAssignBlocks.count(CurTo) &&
       !ConditionChainBodies.count(CurTo)) {
     InlinedFallthroughBlocks.insert(CurTo);
     for (llvm::Instruction &Inst : *const_cast<llvm::BasicBlock *>(CurTo)) {
@@ -7898,8 +7882,7 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
         continue;
       writeInstruction(Inst, Indent);
     }
-    const auto *BackBr =
-        llvm::cast<llvm::UncondBrInst>(CurTo->getTerminator());
+    const auto *BackBr = llvm::cast<llvm::UncondBrInst>(CurTo->getTerminator());
     writeGoto(CurTo, BackBr->getSuccessor(0), Indent, true);
     return;
   }
@@ -7939,14 +7922,12 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
         isTypedRecordCursorSlot(Slot))
       continue;
     if (allocaHomeIsNamedParam(Slot) ||
-        (allocaOnlyHoldsImmediates(Slot) &&
-         allocaLoadsComposeImmediate(Slot)))
+        (allocaOnlyHoldsImmediates(Slot) && allocaLoadsComposeImmediate(Slot)))
       continue;
     // A value folded from the current print path cannot prove that every
     // predecessor stores the same value into this home. Normal branches and
     // EH joins both need their distinct stores visible in C.
-    if (foldImmediate(LI) && !LI->use_empty() &&
-        uniqueAllocaImmediate(Slot))
+    if (foldImmediate(LI) && !LI->use_empty() && uniqueAllocaImmediate(Slot))
       continue;
     if (!valueFeedsPrintedUse(LI))
       continue;
@@ -8000,88 +7981,89 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
                   asAllocaPointer(SI->getPointerOperand()))
             AllocaLastValues[Slot] = SI->getValueOperand();
         }
-      // writeInstruction still emits `name = ...` for unused non-calls
-      // (they are not inlinable when use_empty).  Skip only values that
-      // the statement writer does not assign.
-      if (Inst.getType()->isVoidTy() || Inst.getType()->isTokenTy())
-        continue;
-      if (llvm::isa<llvm::AllocaInst>(&Inst))
-        continue;
-      if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchPadInst,
-                    llvm::CleanupPadInst>(&Inst))
-        continue;
-      if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
-        if (classifyX86RepStos(Opts.TheArch, *Call))
+        // writeInstruction still emits `name = ...` for unused non-calls
+        // (they are not inlinable when use_empty).  Skip only values that
+        // the statement writer does not assign.
+        if (Inst.getType()->isVoidTy() || Inst.getType()->isTokenTy())
           continue;
-      if (Analysis.IntrinsicStructVals.count(&Inst))
-        continue;
-      if (auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst))
-        if (Analysis.IntrinsicStructNames.count(EV->getAggregateOperand()))
+        if (llvm::isa<llvm::AllocaInst>(&Inst))
           continue;
-      if (Analysis.Inlinable.count(&Inst))
-        continue;
-      if (Analysis.DeadFrameStores.count(&Inst))
-        continue;
-      if (isUnusedCallClobber(Inst))
-        continue;
-      if ((llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode>(&Inst) ||
-           isUnknownCopyInst(Inst)) &&
-          usersAreDeadCopies(&Inst)) {
-        const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
-        if (!Phi || !phiPrintedAsJoinCallArg(Phi))
+        if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchPadInst,
+                      llvm::CleanupPadInst>(&Inst))
           continue;
-      }
-      if (auto Imm = foldImmediate(&Inst)) {
-        (void)Imm;
-        if (!Inst.use_empty() || imageDataVA(&Inst))
-          continue;
-      }
-      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
-        if (!LI->isSimple()) {
-          NeedsDecl.insert(LI);
-          continue;
-        }
-        if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
-            typedRecordAccess(LI->getPointerOperand(),
-                              llvmAccessSize(LI->getType())) ||
-            frameSlotAccess(LI->getPointerOperand(),
-                            llvmAccessSize(LI->getType()),
-                            /*AddressOf=*/false) ||
-            typedIndexAccess(LI->getPointerOperand()) ||
-            joinFieldDefaultText(asAllocaPointer(LI->getPointerOperand())) ||
-            isTypedRecordCursorSlot(
-                asAllocaPointer(LI->getPointerOperand())) ||
-            isJoinCallArgAlloca(asAllocaPointer(LI->getPointerOperand())))
-          continue;
-        if (!valueFeedsPrintedUse(LI))
-          continue;
-        if (const llvm::AllocaInst *ImmSlot =
-                asAllocaPointer(LI->getPointerOperand());
-            ImmSlot && allocaOnlyHoldsImmediates(ImmSlot) &&
-            loadOnlyUsedAsCallArgs(LI))
-          continue;
-        if (auto Text = ValueTexts.find(LI);
-            Text != ValueTexts.end() && !Text->second.empty())
-          continue;
-        if (const llvm::AllocaInst *Slot =
-                asAllocaPointer(LI->getPointerOperand());
-            Slot && !allocaAddressTaken(Slot) &&
-            (OmittedInlined.count(Slot) || allocaHomeIsNamedParam(Slot) ||
-             (allocaOnlyHoldsImmediates(Slot) &&
-              allocaLoadsComposeImmediate(Slot))))
-          continue;
-      }
-      if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
-        if (callDoesNotReturn(*CB) || !ctorThisAddress(*CB).empty() ||
-            unreadAtlThisReturn(*CB))
-          continue;
-      }
-      if (InferredVoid) {
-        if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
-          if (!isCallResultLive(Analysis, CI))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
+          if (classifyX86RepStos(Opts.TheArch, *Call))
             continue;
-      }
-      NeedsDecl.insert(&Inst);
+        if (Analysis.IntrinsicStructVals.count(&Inst))
+          continue;
+        if (auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst))
+          if (Analysis.IntrinsicStructNames.count(EV->getAggregateOperand()))
+            continue;
+        if (Analysis.Inlinable.count(&Inst))
+          continue;
+        if (Analysis.DeadFrameStores.count(&Inst))
+          continue;
+        if (isUnusedCallClobber(Inst))
+          continue;
+        if ((llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::PHINode>(
+                 &Inst) ||
+             isUnknownCopyInst(Inst)) &&
+            usersAreDeadCopies(&Inst)) {
+          const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);
+          if (!Phi || !phiPrintedAsJoinCallArg(Phi))
+            continue;
+        }
+        if (auto Imm = foldImmediate(&Inst)) {
+          (void)Imm;
+          if (!Inst.use_empty() || imageDataVA(&Inst))
+            continue;
+        }
+        if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+          if (!LI->isSimple()) {
+            NeedsDecl.insert(LI);
+            continue;
+          }
+          if (isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
+              typedRecordAccess(LI->getPointerOperand(),
+                                llvmAccessSize(LI->getType())) ||
+              frameSlotAccess(LI->getPointerOperand(),
+                              llvmAccessSize(LI->getType()),
+                              /*AddressOf=*/false) ||
+              typedIndexAccess(LI->getPointerOperand()) ||
+              joinFieldDefaultText(asAllocaPointer(LI->getPointerOperand())) ||
+              isTypedRecordCursorSlot(
+                  asAllocaPointer(LI->getPointerOperand())) ||
+              isJoinCallArgAlloca(asAllocaPointer(LI->getPointerOperand())))
+            continue;
+          if (!valueFeedsPrintedUse(LI))
+            continue;
+          if (const llvm::AllocaInst *ImmSlot =
+                  asAllocaPointer(LI->getPointerOperand());
+              ImmSlot && allocaOnlyHoldsImmediates(ImmSlot) &&
+              loadOnlyUsedAsCallArgs(LI))
+            continue;
+          if (auto Text = ValueTexts.find(LI);
+              Text != ValueTexts.end() && !Text->second.empty())
+            continue;
+          if (const llvm::AllocaInst *Slot =
+                  asAllocaPointer(LI->getPointerOperand());
+              Slot && !allocaAddressTaken(Slot) &&
+              (OmittedInlined.count(Slot) || allocaHomeIsNamedParam(Slot) ||
+               (allocaOnlyHoldsImmediates(Slot) &&
+                allocaLoadsComposeImmediate(Slot))))
+            continue;
+        }
+        if (auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          if (callDoesNotReturn(*CB) || !ctorThisAddress(*CB).empty() ||
+              unreadAtlThisReturn(*CB))
+            continue;
+        }
+        if (InferredVoid) {
+          if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst))
+            if (!isCallResultLive(Analysis, CI))
+              continue;
+        }
+        NeedsDecl.insert(&Inst);
       }
     }
   };
@@ -8141,9 +8123,9 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
           OS << typeToCLLVM(ArrTy->getElementType()) << " " << AllocName << "["
              << ArrTy->getNumElements() << "];\n";
         } else {
-          if (auto It = AllocaTypes.find(AI); It != AllocaTypes.end() &&
-              It->second && It->second->Kind == NdTypeKind::Ptr &&
-              It->second->Pointee &&
+          if (auto It = AllocaTypes.find(AI);
+              It != AllocaTypes.end() && It->second &&
+              It->second->Kind == NdTypeKind::Ptr && It->second->Pointee &&
               It->second->Pointee->Kind == NdTypeKind::Struct &&
               !It->second->Pointee->SourceName.empty()) {
             const std::string Tag =
@@ -8187,8 +8169,8 @@ bool lineDeclaresName(llvm::StringRef Line, llvm::StringRef Name,
     const bool Left =
         At == 0 || !isCIdentChar(static_cast<unsigned char>(Line[At - 1]));
     const size_t End = At + Name.size();
-    const bool Right =
-        End >= Line.size() || !isCIdentChar(static_cast<unsigned char>(Line[End]));
+    const bool Right = End >= Line.size() ||
+                       !isCIdentChar(static_cast<unsigned char>(Line[End]));
     if (Left && Right) {
       Found = true;
       size_t I = End;
@@ -8210,7 +8192,7 @@ bool lineDeclaresName(llvm::StringRef Line, llvm::StringRef Name,
 
 std::optional<size_t>
 firstNameUseOutsideDecl(llvm::StringRef Text, llvm::StringRef Name,
-                       llvm::StringRef ArrayDeclaration = {}) {
+                        llvm::StringRef ArrayDeclaration = {}) {
   size_t Pos = 0;
   while (Pos < Text.size()) {
     const size_t At = Text.find(Name, Pos);
@@ -8236,9 +8218,9 @@ firstNameUseOutsideDecl(llvm::StringRef Text, llvm::StringRef Name,
   return std::nullopt;
 }
 
-std::string dropUnusedCallDecls(
-    std::string Text, llvm::ArrayRef<std::string> Names,
-    const llvm::StringMap<std::string> &ArrayDeclarations) {
+std::string
+dropUnusedCallDecls(std::string Text, llvm::ArrayRef<std::string> Names,
+                    const llvm::StringMap<std::string> &ArrayDeclarations) {
   for (const std::string &Name : Names) {
     const auto Array = ArrayDeclarations.find(Name);
     const llvm::StringRef ArrayDeclaration =
@@ -8263,8 +8245,9 @@ std::string dropUnusedCallDecls(
   return Text;
 }
 
-std::string dropUnreferencedFallthroughEHLabels(
-    std::string Text, llvm::ArrayRef<std::string> Labels) {
+std::string
+dropUnreferencedFallthroughEHLabels(std::string Text,
+                                    llvm::ArrayRef<std::string> Labels) {
   struct Mention {
     size_t Count = 0;
     size_t Definition = std::string::npos;
@@ -8272,9 +8255,8 @@ std::string dropUnreferencedFallthroughEHLabels(
   llvm::StringMap<Mention> Mentions;
   for (const std::string &Label : Labels) {
     if (!Label.empty() &&
-        std::all_of(Label.begin(), Label.end(), [](unsigned char C) {
-          return isCIdentChar(C);
-        }))
+        std::all_of(Label.begin(), Label.end(),
+                    [](unsigned char C) { return isCIdentChar(C); }))
       Mentions[Label];
   }
   if (Mentions.empty())
@@ -8296,9 +8278,8 @@ std::string dropUnreferencedFallthroughEHLabels(
     if (It == Mentions.end())
       continue;
     ++It->second.Count;
-    if ((Start == 0 || Source[Start - 1] == '\n') &&
-        Pos + 1 < Source.size() && Source[Pos] == ':' &&
-        Source[Pos + 1] == '\n')
+    if ((Start == 0 || Source[Start - 1] == '\n') && Pos + 1 < Source.size() &&
+        Source[Pos] == ':' && Source[Pos + 1] == '\n')
       It->second.Definition = Start;
   }
 
@@ -8362,9 +8343,9 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
 
   const bool IndirectReturn =
       DebugFn && isMsvcIndirectReturn(DebugFn->ReturnType);
-  const bool MemberIndirectReturn =
-      IndirectReturn && !DebugFn->Params.empty() &&
-      DebugFn->Params[0].first == "this";
+  const bool MemberIndirectReturn = IndirectReturn &&
+                                    !DebugFn->Params.empty() &&
+                                    DebugFn->Params[0].first == "this";
   const int SretParamIdx =
       !IndirectReturn ? -1 : (MemberIndirectReturn ? 1 : 0);
   if (IndirectReturn)
@@ -8727,15 +8708,14 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
           Blocks.push_back(&BB);
       return Blocks;
     };
-    auto NormalPrintTarget = [&](const llvm::InvokeInst &Invoke)
-        -> const llvm::BasicBlock * {
+    auto NormalPrintTarget =
+        [&](const llvm::InvokeInst &Invoke) -> const llvm::BasicBlock * {
       const llvm::BasicBlock *Target = Invoke.getNormalDest();
       llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Seen;
       while (Target && isPrintPassthrough(Target)) {
         if (!Seen.insert(Target).second)
           return nullptr;
-        const llvm::BasicBlock *Next =
-            Target->getTerminator()->getSuccessor(0);
+        const llvm::BasicBlock *Next = Target->getTerminator()->getSuccessor(0);
         // The invoke printer walks this same path and prints PHI copies on
         // each skipped edge before reaching the printed target.
         Target = Next;
@@ -8787,8 +8767,8 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
         const auto *Invoke =
             llvm::cast<llvm::InvokeInst>(InvokeBB->getTerminator());
         const llvm::BasicBlock *NormalDest = NormalPrintTarget(*Invoke);
-        const bool ExitsTry = AfterWrap.count(Invoke->getNormalDest()) &&
-                              NormalDest == FirstCont;
+        const bool ExitsTry =
+            AfterWrap.count(Invoke->getNormalDest()) && NormalDest == FirstCont;
         HasNormalExit |= ExitsTry;
         if (!ExitsTry && !TryRegion.count(Invoke->getNormalDest())) {
           Ok = false;
@@ -8806,8 +8786,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
           // The invoke printer falls through after the call and PHI copies.
           // Preserve an internal normal edge that is not the next statement.
           if (Invoke->getNormalDest() != NormalDest ||
-              std::next(It) == MainWalk.end() ||
-              *std::next(It) != NormalDest)
+              std::next(It) == MainWalk.end() || *std::next(It) != NormalDest)
             NeedGoto.emplace(InvokeBB, NormalDest);
           continue;
         }
@@ -8884,9 +8863,9 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
           ReferencedBlocks.insert(Handler);
           continue;
         }
-        const bool EmitsGoto = llvm::isa<llvm::CatchReturnInst>(HandlerTerm) ||
-                               (HandlerBr &&
-                                !joinPrintsNext(Handler, Successor));
+        const bool EmitsGoto =
+            llvm::isa<llvm::CatchReturnInst>(HandlerTerm) ||
+            (HandlerBr && !joinPrintsNext(Handler, Successor));
         const bool ReturnsInline =
             EmitsGoto && sharedReturnEpilogue(Successor) == Successor;
         if (!ReturnsInline)
@@ -8938,8 +8917,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
     collectNormalReachable(Fn, Normal);
     llvm::SmallPtrSet<const llvm::BasicBlock *, 16> InvokeBlocks;
     for (const llvm::BasicBlock &BB : Fn) {
-      const auto *Invoke =
-          llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
+      const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
       if (!Invoke || Invoke->getUnwindDest() != CleanupBB)
         continue;
       InvokeBlocks.insert(&BB);
@@ -9185,18 +9163,17 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
           Declaration = "    " + Type + " " + It->second + ";\n";
         }
       } else {
-        Declaration = "    " + typeToCLLVM(Inst.getType()) + " " + It->second +
-                      ";\n";
+        Declaration =
+            "    " + typeToCLLVM(Inst.getType()) + " " + It->second + ";\n";
       }
       MissingDecls.emplace_back(*FirstUse, std::move(Declaration));
       DeclaredNames.insert(It->second);
     }
   }
   if (!MissingDecls.empty()) {
-    std::stable_sort(MissingDecls.begin(), MissingDecls.end(),
-                     [](const auto &A, const auto &B) {
-                       return A.first < B.first;
-                     });
+    std::stable_sort(
+        MissingDecls.begin(), MissingDecls.end(),
+        [](const auto &A, const auto &B) { return A.first < B.first; });
     std::string Declarations;
     for (const auto &[_, Decl] : MissingDecls)
       Declarations += Decl;
