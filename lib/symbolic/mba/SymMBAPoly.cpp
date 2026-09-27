@@ -220,6 +220,47 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
     return Table;
   };
 
+  // A failed expansion discards the entire form. Check the combined cost of
+  // its products before inserting any monomials: individually affordable
+  // terms can otherwise fill a large hash table only for a later term to run
+  // out of work. Keep the same term order and charge the work already passed
+  // when a factor is invalid, matching the expansion below.
+  if (!Budget.unlimited()) {
+    size_t Pending = 0;
+    for (const PolyTerm &Term : Terms) {
+      if (Term.Factors.empty())
+        continue;
+      size_t ProductSize = 1;
+      bool ZeroProduct = false;
+      for (SymRef Factor : Term.Factors) {
+        std::optional<TruthTable> Table = tableOf(Factor);
+        if (!Table) {
+          Budget.consume(Pending);
+          return std::nullopt;
+        }
+        if (Term.Factors.size() < 2)
+          continue;
+        const size_t Choices = Table->count();
+        if (Choices == 0) {
+          ZeroProduct = true;
+          continue;
+        }
+        if (Choices > std::numeric_limits<size_t>::max() / ProductSize)
+          ProductSize = std::numeric_limits<size_t>::max();
+        else
+          ProductSize *= Choices;
+      }
+      if (Term.Factors.size() < 2 || ZeroProduct)
+        continue;
+      if (ProductSize > std::numeric_limits<size_t>::max() - Pending ||
+          !Budget.canConsume(Pending + ProductSize)) {
+        Budget.consume(std::numeric_limits<size_t>::max());
+        return std::nullopt;
+      }
+      Pending += ProductSize;
+    }
+  }
+
   llvm::SmallVector<llvm::SmallVector<MintermIndex, 8>, 4> Selected;
   for (const PolyTerm &Term : Terms) {
     if (Term.Factors.empty()) {

@@ -769,7 +769,7 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
 void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   if (Func.Body.size() > limits::kMaxLateGotoReductionStmts)
     return;
-  bool Changed = duplicateSmallReturnTails(Func.Body);
+  bool Dirty = duplicateSmallReturnTails(Func.Body);
   // Region splices nest whole multi-block regions, so they run only after
   // the local rewrites have settled.  The late rewrites can leave new jumps
   // to a small return tail; those get one more tail-duplication pass.
@@ -778,15 +778,20 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
   for (int Phase = 0; Phase < 5; ++Phase) {
     // Dead copies left by earlier rewrites can sit between a jump and
     // its label; clear them before the next phase looks.
-    if (Phase != 0 && Changed)
+    if (Phase != 0 && Dirty) {
       eliminateDeadStmts(Func);
-    if (Phase == 2 && !duplicateSmallReturnTails(Func.Body))
-      continue;
-    if (Phase == 3 && !loopifyBackwardGotos(Func.Body))
-      continue;
-    if (Phase == 4 && !duplicateSmallReturnTails(Func.Body))
-      break;
-    Changed |= Phase >= 2;
+      Dirty = false;
+    }
+    if (Phase >= 2) {
+      const bool Rewritten = Phase == 3 ? loopifyBackwardGotos(Func.Body)
+                                        : duplicateSmallReturnTails(Func.Body);
+      if (!Rewritten) {
+        if (Phase == 4)
+          break;
+        continue;
+      }
+      Dirty = true;
+    }
     for (int Round = 0; Round < 8; ++Round) {
       const bool Grouped = groupSwitchCases(Func.Body) |
                            (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
@@ -794,10 +799,10 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&
           !Grouped)
         break;
-      Changed = true;
+      Dirty = true;
     }
   }
-  if (Changed)
+  if (Dirty)
     eliminateDeadStmts(Func);
 }
 

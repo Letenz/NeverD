@@ -1200,6 +1200,76 @@ TEST(ObjCSourceBindings,
                std::runtime_error);
 }
 
+TEST(ObjCSourceBindings, SwiftWitnessTableNeedsOneExactReadOnlyExport) {
+  constexpr va_t Address = 0x6020;
+  const std::string Symbol = "_$sSo12NSURLSessionC7WMFData13WMFURLSessionACWP";
+  auto Fixture = [&] {
+    BinaryImage Image;
+    Image.Format = BinaryFormat::MachO;
+    Image.Arch = Arch::AArch64;
+    Image.Bits = Bitness::Bits64;
+    Image.MachOTwoLevelNamespace = true;
+    Segment Data;
+    Data.VA = Data.FileOff = 0x6000;
+    Data.Size = Data.FileSz = 0x100;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Data.ReadOnlyAfterRelocations = true;
+    Data.Data.resize(0x100);
+    Image.Segments.push_back(Data);
+    Section Section;
+    Section.VA = Section.FileOff = 0x6000;
+    Section.Size = Section.FileSz = 0x100;
+    Section.Flags = Data.Flags;
+    Image.Sections.push_back(Section);
+    Image.Symbols.push_back({Symbol, Address, 0, false});
+    Image.Exports.push_back({Symbol, 0, Address});
+    return Image;
+  };
+  auto Image = Fixture();
+  HighFunc Function;
+  Function.ReturnType = NdType::makeInt(8, false);
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+  Function.Body = {Return};
+  auto Result = bindObjCSourceReferences(Function, Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  ASSERT_EQ(Result.SwiftWitnessTables.size(), 1U);
+  EXPECT_EQ(Result.SwiftWitnessTables.at(Address), Symbol);
+  const auto Bound = Result.Function.Body[0].RetVal;
+  ASSERT_TRUE(Bound->SourceCallHint);
+  EXPECT_EQ(Bound->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress);
+  EXPECT_TRUE(objcSourceCallBound(*Bound, Image, {}));
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCSwiftWitnessTableHelpers(
+      Image, Result.SwiftWitnessTables, Helpers);
+  EXPECT_NE(Source.find("__asm__(\"" + Symbol + "\")"), std::string::npos);
+  EXPECT_TRUE(Helpers.count("neverd_swift_witness_table_6020_address"));
+
+  Image.Exports.clear();
+  EXPECT_FALSE(objcSourceCallBound(*Bound, Image, {}));
+  EXPECT_FALSE(
+      objc_binding_detail::swiftWitnessTableAddressHint(Image, Address));
+  Image = Fixture();
+  Image.Exports.push_back({"_alias", 0, Address});
+  EXPECT_FALSE(
+      objc_binding_detail::swiftWitnessTableAddressHint(Image, Address));
+  Image = Fixture();
+  Image.Segments[0].ReadOnlyAfterRelocations = false;
+  EXPECT_FALSE(
+      objc_binding_detail::swiftWitnessTableAddressHint(Image, Address));
+  Image = Fixture();
+  Image.Symbols[0].Name = "_$s7WMFData13WMFURLSessionMp";
+  EXPECT_FALSE(
+      objc_binding_detail::swiftWitnessTableAddressHint(Image, Address));
+  Image = Fixture();
+  Function.Body[0].RetVal->ConstProvenance = ConstantAddressProvenance::Scalar;
+  EXPECT_TRUE(
+      bindObjCSourceReferences(Function, Image).SwiftWitnessTables.empty());
+}
+
 TEST(ObjCSourceBindings, SwiftSingletonMetadataRejectsForgedProvider) {
   SwiftSingletonDescriptorFixture F;
   F.Image.DyldBindSlots[F.RuntimeSlot].Module = "/tmp/foreign.dylib";

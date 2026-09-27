@@ -141,6 +141,9 @@ struct SourceCallTypeHint {
     /// a value-witness call. The metadata and its nominal descriptor remain
     /// owned by the original linked image; source only names their identity.
     RuntimeSwiftNominalMetadataAddress,
+    /// The exact address of a uniquely exported Swift protocol witness table.
+    /// The table stays owned by the linked image; source names its symbol.
+    RuntimeSwiftWitnessTableAddress,
     /// The zero-initialized pointer cache of a compiler-emitted Swift lazy
     /// witness-table accessor. The containing accessor proves the exact
     /// swift_getWitnessTable call, external descriptor/metadata identities,

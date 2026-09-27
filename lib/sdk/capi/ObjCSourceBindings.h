@@ -59,6 +59,7 @@ struct ObjCSourceBindingResult {
       SwiftTypeMetadataPairs;
   std::map<va_t, std::string> SwiftNominalDescriptors;
   std::map<va_t, std::string> SwiftNominalMetadata;
+  std::map<va_t, std::string> SwiftWitnessTables;
   /// Cache address -> exact accessor entry, revalidated when helpers render.
   std::map<va_t, va_t> SwiftWitnessCaches;
   /// Exact compiler-emitted Swift lazy global addressors used by this body.
@@ -1016,6 +1017,72 @@ swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
       SourceCallTypeHint::Kind::RuntimeSwiftNominalDescriptorAddress;
   Hint.TargetAddress = Address;
   Hint.TargetName = *Symbol;
+  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  if (!assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason))
+    return std::nullopt;
+  return Hint;
+}
+
+inline std::optional<SourceCallTypeHint>
+swiftWitnessTableAddressHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  if (!Section || !Segment || !Section->isReadable() ||
+      !Segment->isReadable() || !Segment->ReadOnlyAfterRelocations ||
+      Image.hasExecutableCodeOwnerAt(Address))
+    return std::nullopt;
+  const Symbol *Table = nullptr;
+  for (const auto &Candidate : Image.Symbols) {
+    if (Candidate.Addr != Address || Candidate.IsFunc || Candidate.Name.empty())
+      continue;
+    if (Table)
+      return std::nullopt;
+    Table = &Candidate;
+  }
+  if (!Table || !llvm::StringRef(Table->Name).starts_with("_$s") ||
+      !llvm::StringRef(Table->Name).ends_with("WP"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 8000;
+  Options.MaxNodes = 1024;
+  Options.MaxDepth = 64;
+  Options.MaxMemoryBytes = 1024 * 1024;
+  Options.MaxOperations = 100000;
+  const auto Parsed =
+      llvm::swiftDemangle(llvm::StringRef(Table->Name).drop_front(1), Options);
+  if (!Parsed.Root || !Parsed.Error.empty() || Parsed.Root->Kind != "Global" ||
+      Parsed.Root->Text || Parsed.Root->Index ||
+      Parsed.Root->Children.size() != 1 ||
+      Parsed.Root->Children[0].Kind != "ProtocolWitnessTable" ||
+      Parsed.Root->Children[0].Text || Parsed.Root->Children[0].Index ||
+      Parsed.Root->Children[0].Children.size() != 1 ||
+      Parsed.Root->Children[0].Children[0].Kind != "ProtocolConformance" ||
+      Parsed.Root->Children[0].Children[0].Text ||
+      Parsed.Root->Children[0].Children[0].Index ||
+      Parsed.Root->Children[0].Children[0].Children.size() != 3 ||
+      Parsed.Root->Children[0].Children[0].Children[0].Kind != "Type" ||
+      Parsed.Root->Children[0].Children[0].Children[1].Kind != "Type" ||
+      Parsed.Root->Children[0].Children[0].Children[2].Kind != "Module")
+    return std::nullopt;
+  size_t MatchingExports = 0;
+  for (const auto &Export : Image.Exports) {
+    if (Export.Addr == Address && Export.Name == Table->Name)
+      ++MatchingExports;
+    else if (Export.Addr == Address || Export.Name == Table->Name)
+      return std::nullopt;
+  }
+  if (MatchingExports != 1)
+    return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress;
+  Hint.TargetAddress = Address;
+  Hint.TargetName = Table->Name;
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftRuntime;
   Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
   std::string Reason;
@@ -3440,6 +3507,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Result.StaticIdentities.insert(*Address);
           return Expression;
         }
+      if (ObjectAddress && Address)
+        if (auto Table = swiftWitnessTableAddressHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Table));
+          Result.SwiftWitnessTables[*Address] =
+              Expression->SourceCallHint->TargetName;
+          return Expression;
+        }
       if (Address)
         if (auto Storage = swiftSmallStringStorageHint(Image, *Address)) {
           *Expression = *HighExpr::makeCall({}, 0, {});
@@ -4871,6 +4948,19 @@ inline bool objcSourceCallBound(
            objc_projection_detail::sameHint(Expected->Signature, Hint);
   }
   if (Binding.CallKind ==
+      SourceCallTypeHint::Kind::RuntimeSwiftWitnessTableAddress) {
+    const auto Expected =
+        swiftWitnessTableAddressHint(Image, Binding.TargetAddress);
+    return Expected && Binding.TargetName == Expected->TargetName &&
+           Binding.Selector.empty() && Binding.OwnerClass.empty() &&
+           !Binding.SelectorReferenceAddress && !Binding.ByteCount &&
+           Binding.BorrowedByteInputs.empty() &&
+           Binding.SwiftStringInputs.empty() && !Expression.IsIndirectCall &&
+           !Expression.CallAddr && Expression.CallTarget.empty() &&
+           Expression.IntrinsicOutputs.empty() &&
+           objc_projection_detail::sameHint(Expected->Signature, Hint);
+  }
+  if (Binding.CallKind ==
       SourceCallTypeHint::Kind::RuntimeSwiftWitnessCacheAddress) {
     const HighFunc *ProofFunction = ContainingFunction;
     if (ContainingFunction) {
@@ -5844,6 +5934,29 @@ inline std::string renderObjCSwiftNominalMetadataHelpers(
       throw std::runtime_error("Swift nominal metadata is no longer valid");
     const std::string Stem =
         "neverd_swift_nominal_metadata_" + llvm::utohexstr(Address, true);
+    SharedFunctions.insert(Stem + "_address");
+    Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
+              Symbol + "\");\n";
+    Source += "uintptr_t " + Stem +
+              "_address(void) {\n"
+              "  return (uintptr_t)" +
+              Stem + "_bytes;\n}\n";
+  }
+  return Source;
+}
+
+inline std::string
+renderObjCSwiftWitnessTableHelpers(const BinaryImage &Image,
+                                   const std::map<va_t, std::string> &Tables,
+                                   std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  for (const auto &[Address, Symbol] : Tables) {
+    const auto Expected =
+        objc_binding_detail::swiftWitnessTableAddressHint(Image, Address);
+    if (!Expected || Expected->TargetName != Symbol)
+      throw std::runtime_error("Swift witness table is no longer valid");
+    const std::string Stem =
+        "neverd_swift_witness_table_" + llvm::utohexstr(Address, true);
     SharedFunctions.insert(Stem + "_address");
     Source += "\nextern unsigned char " + Stem + "_bytes[] __asm__(\"" +
               Symbol + "\");\n";
