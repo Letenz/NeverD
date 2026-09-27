@@ -1058,9 +1058,10 @@ swiftMangledObjCOptionalStringGetterSourceABI(const BinaryImage &Image,
 
 // An ObjC class extension getter for Optional<UInt64> returns its payload
 // in x0 and the enum tag in x1. An optional imported ObjC class instead uses
-// its null pointer as the empty case and returns only x0. Both getters take
-// their receiver in swiftself. Match the complete mangled result so no other
-// optional value layout inherits either register contract.
+// its null pointer as the empty case and returns only x0, including when the
+// getter belongs to a Swift class. Both receivers live in swiftself. Match
+// the complete mangled result so no other optional value layout inherits
+// either register contract.
 inline std::optional<SourceFunctionTypeHint>
 swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
     const BinaryImage &Image, va_t Entry) {
@@ -1109,20 +1110,26 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
       !Shape(Parsed.Root->Children[0].Children[0], "Variable", 3))
     return std::nullopt;
   const auto &Variable = Parsed.Root->Children[0].Children[0];
-  const auto &Extension = Variable.Children[0];
+  const auto &Owner = Variable.Children[0];
   const auto &Property = Variable.Children[1];
   const auto &Type = Variable.Children[2];
-  if (!Shape(Extension, "Extension", 2) ||
-      Extension.Children[0].Kind != "Module" || !Extension.Children[0].Text ||
-      Extension.Children[0].Text->empty() || Extension.Children[0].Index ||
-      !Extension.Children[0].Children.empty() ||
-      !Shape(Extension.Children[1], "Class", 2) ||
-      !Text(Extension.Children[1].Children[0], "Module", "__C") ||
-      Extension.Children[1].Children[1].Kind != "Identifier" ||
-      !Extension.Children[1].Children[1].Text ||
-      Extension.Children[1].Children[1].Text->empty() ||
-      Extension.Children[1].Children[1].Index ||
-      !Extension.Children[1].Children[1].Children.empty() ||
+  const auto ValidModule = [](const Node &N) {
+    return N.Kind == "Module" && N.Text && !N.Text->empty() && !N.Index &&
+           N.Children.empty();
+  };
+  const auto ValidIdentifier = [](const Node &N) {
+    return N.Kind == "Identifier" && N.Text && !N.Text->empty() &&
+           !N.Index && N.Children.empty();
+  };
+  const bool ExtensionOwner =
+      Shape(Owner, "Extension", 2) && ValidModule(Owner.Children[0]) &&
+      Shape(Owner.Children[1], "Class", 2) &&
+      Text(Owner.Children[1].Children[0], "Module", "__C") &&
+      ValidIdentifier(Owner.Children[1].Children[1]);
+  const bool SwiftClassOwner =
+      Shape(Owner, "Class", 2) && ValidModule(Owner.Children[0]) &&
+      ValidIdentifier(Owner.Children[1]);
+  if ((!ExtensionOwner && !SwiftClassOwner) ||
       Property.Kind != "Identifier" || !Property.Text ||
       Property.Text->empty() || Property.Index || !Property.Children.empty() ||
       !Shape(Type, "Type", 1) ||
@@ -1142,7 +1149,7 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
       Value.Children[1].Kind == "Identifier" && Value.Children[1].Text &&
       !Value.Children[1].Text->empty() && !Value.Children[1].Index &&
       Value.Children[1].Children.empty();
-  if (!UInt64 && !ObjCClass)
+  if ((!UInt64 && !ObjCClass) || (SwiftClassOwner && !ObjCClass))
     return std::nullopt;
 
   SourceFunctionTypeHint Hint;

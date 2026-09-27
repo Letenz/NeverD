@@ -814,6 +814,19 @@ TEST(NativeSourceHints, OptionalUInt64AndObjCClassGettersKeepTheirReturns) {
   EXPECT_EQ(Class->Parameters[0].Location.RegisterOffset, a64reg::X20);
   EXPECT_TRUE(validateSourceABI(*Class, Error)) << Error;
 
+  Image.Symbols[0].Name =
+      "_$s3WMF5ThemeC26searchFieldBackgroundImageSo7UIImageCSgvg";
+  const auto ClassMember =
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(ClassMember);
+  EXPECT_EQ(ClassMember->ReturnType->Size, 8U);
+  EXPECT_EQ(ClassMember->ReturnLocation.RegisterOffset, a64reg::X0);
+  ASSERT_EQ(ClassMember->Parameters.size(), 1U);
+  EXPECT_EQ(ClassMember->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(ClassMember->Parameters[0].Location.RegisterOffset, a64reg::X20);
+  EXPECT_TRUE(validateSourceABI(*ClassMember, Error)) << Error;
+
   auto Wrong = Image;
   Wrong.Symbols[0].Name += "To";
   EXPECT_FALSE(sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
