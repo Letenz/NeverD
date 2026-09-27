@@ -96,6 +96,46 @@ TEST(SymExpr, ShiftsByConstantsBecomeProductsSoSumsCanCollectThem) {
   EXPECT_EQ(Ctx.mkLShr(X, Ctx.mkConst(W32, 99)), Ctx.mkZero(W32));
 }
 
+TEST(SymExpr, XorClearsBitsForcedByTheSameOrMask) {
+  for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    SymRef Y = Ctx.mkVar("y", Width);
+    llvm::APInt Mask(Width, 0);
+    for (unsigned I = 0; I < Width; I += 2)
+      Mask.setBit(I);
+    SymRef M = Ctx.mkConst(Mask);
+    SymRef Keep = Ctx.mkConst(~Mask);
+    EXPECT_EQ(Ctx.mkXor(Ctx.mkOr(X, M), M), Ctx.mkAnd(X, Keep));
+    EXPECT_EQ(Ctx.mkXor(M, Ctx.mkOr({M, X, Y})),
+              Ctx.mkAnd(Ctx.mkOr(X, Y), Keep));
+    EXPECT_EQ(Ctx.mkXor(Ctx.mkOr(X, Ctx.mkZero(Width)), Ctx.mkZero(Width)), X);
+    EXPECT_EQ(Ctx.mkXor(Ctx.mkOr(X, Ctx.mkOnes(Width)), Ctx.mkOnes(Width)),
+              Ctx.mkZero(Width));
+    llvm::APInt Values[] = {llvm::APInt::getAllOnes(Width), Mask};
+    SymRef DifferentMask = Ctx.mkXor(Ctx.mkOr(X, M), Keep);
+    EXPECT_EQ(Ctx.eval(DifferentMask, Values), (Values[0] | Mask) ^ ~Mask);
+    EXPECT_NE(Ctx.eval(DifferentMask, Values), Values[0] & ~Mask);
+  }
+}
+
+TEST(SymExpr, ForcedOrBitClearingMatchesSmallWordArithmetic) {
+  for (unsigned Width : {1u, 2u, 3u, 4u}) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    unsigned Limit = 1u << Width;
+    for (unsigned Mask = 0; Mask < Limit; ++Mask) {
+      SymRef M = Ctx.mkConst(Width, Mask);
+      SymRef Result = Ctx.mkXor(Ctx.mkOr(X, M), M);
+      for (unsigned Value = 0; Value < Limit; ++Value) {
+        uint64_t Values[] = {Value};
+        EXPECT_EQ(Ctx.evalU64(Result, Values), (Value | Mask) ^ Mask);
+      }
+    }
+  }
+}
+
 TEST(SymExpr, RotatesAcceptIndependentlySizedAmounts) {
   struct Case {
     uint32_t Width;

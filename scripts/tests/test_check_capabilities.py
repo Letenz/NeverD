@@ -3224,11 +3224,16 @@ class RepositoryCapabilityTests(unittest.TestCase):
             },
             "semantic.synthesis.candidate": {
                 "c": [
+                    "neverd_solver_backend_available",
                     "neverd_synthesize_expr",
                     "neverd_synthesize_expr_json_v1",
                 ],
                 "python": ["synthesize_expression"],
-                "cli": ["neverd simplify --synthesize"],
+                "cli": [
+                    "neverd simplify --synthesize",
+                    "neverd simplify --solver",
+                    "neverd simplify --solver-timeout-ms",
+                ],
                 "json": ["neverd_synthesize_expr_json_v1"],
             },
             "symbolic.execution.path-exploration": {

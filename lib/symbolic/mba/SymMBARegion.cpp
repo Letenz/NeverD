@@ -119,12 +119,16 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                        measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
                        Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
       for (SymRef Form : Forms) {
+        // Prove the identity over independent inputs before restoring their
+        // sources. Restoration may combine coefficients and erase the shared
+        // input spelling, but instantiating a proved identity remains exact.
+        if (!proveLinearIdentity(Ctx, Linear->Abstract.Body, Form,
+                                 Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+          continue;
         SymRef Rewritten = Linear->Abstract.Hidden.empty()
                                ? Form
                                : Ctx.substitute(Form, Linear->Abstract.Hidden);
-        if (proveLinearIdentity(Ctx, E, Rewritten, Limits.MaxAtoms, Budget,
-                                Opts.MaxTableBytes))
-          Candidates.push_back({Rewritten, NumAtoms, true});
+        Candidates.push_back({Rewritten, NumAtoms, true});
       }
     }
   }
@@ -135,13 +139,15 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     if (std::optional<SymRef> Form =
             solvePolynomial(Ctx, Poly->Abstract.Body, Poly->AtomIds,
                             Poly->Atoms, Opts, Budget)) {
-      SymRef Rewritten = Poly->Abstract.Hidden.empty()
-                             ? *Form
-                             : Ctx.substitute(*Form, Poly->Abstract.Hidden);
-      if (provePolynomialIdentity(Ctx, E, Rewritten, Limits.MaxAtoms, Budget,
-                                  Opts.MaxTableBytes))
+      if (provePolynomialIdentity(Ctx, Poly->Abstract.Body, *Form,
+                                  Limits.MaxAtoms, Budget,
+                                  Opts.MaxTableBytes)) {
+        SymRef Rewritten = Poly->Abstract.Hidden.empty()
+                               ? *Form
+                               : Ctx.substitute(*Form, Poly->Abstract.Hidden);
         Candidates.push_back(
             {Rewritten, static_cast<unsigned>(Poly->AtomIds.size()), true});
+      }
     }
   }
   Rep.BudgetExhausted |= Budget.exhausted();

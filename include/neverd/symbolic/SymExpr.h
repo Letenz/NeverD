@@ -434,6 +434,16 @@ private:
   /// This is what lets \c mkAdd collect `x + 2*x` into `3*x`.
   void splitCoefficient(SymRef R, llvm::APInt &Coeff, SymRef &Base) const;
 
+  /// Local mask rules inspect immediate operands, never recursive sources.
+  bool mergeMaskedOperands(llvm::SmallVectorImpl<SymRef> &Terms,
+                           bool RequireDisjoint);
+  /// Equivalent to Sum only after retaining the caller's low-bit Mask.
+  SymRef simplifyLowMaskedAdd(SymRef Sum, const llvm::APInt &Mask);
+  /// Intern already canonical AND factors with a replacement constant mask.
+  /// Do not re-enter demand simplification when local mask rules compose.
+  SymRef internMaskedSource(llvm::ArrayRef<SymRef> Source,
+                            const llvm::APInt &Mask);
+
   llvm::APInt maskToWidth(const llvm::APInt &V, uint32_t Width) const;
 
   std::vector<SymNode> Nodes;
