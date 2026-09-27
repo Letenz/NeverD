@@ -173,7 +173,7 @@ keeps in a release:
 - Visual Studio 2026 (its default toolset and 14.50) for x86, x64 and ARM64.
 - Visual Studio 2022 (v143), 2019 (v142) and 2017 (v141) for x86, x64, ARM32
   and ARM64.
-- Visual Studio 2015 (v140) for x86 and x64.
+- Visual Studio 2015 (v140) for x86, x64 and ARM32.
 - Windows SDK 10.0.17763 through 10.0.26100: the Universal CRT and the
   user-mode libraries.
 
@@ -182,7 +182,7 @@ cmake --build build --target neverd-sigmaker
 gh release download <tag> --repo NeverSight/signatures --dir assets
 python3 scripts/signatures/build_msvc_signatures.py \
     --sigmaker build/bin/neverd-sigmaker \
-    --assets assets --output signatures --merge-existing
+    --assets assets --output signatures
 ```
 
 Each asset runs through the signature maker with `--machine` set to its
@@ -190,11 +190,18 @@ architecture and a tail that covers every function to its end. Lines from
 every servicing toolset of one Visual Studio year go into the same file, and
 so do lines from every SDK version.
 
-`--merge-existing` keeps the lines a file already has, so regenerating from a
-newer toolset adds coverage rather than replacing it. When two lines state the
-same bytes under different names, all of them are dropped and the count is
-reported: the pattern cannot tell those routines apart, and picking one name
-would be a guess.
+A file is rebuilt from its assets alone, so the lines it held before are
+replaced; download every release before running the script, as the
+signatures repository's `msvc-signatures.yml` does.
+
+When two lines state the same bytes under different names, all of them are
+dropped and the count is reported: the pattern cannot tell those routines
+apart, and picking one name would be a guess. The loader applies every file
+of a directory together, so the rule spans the directory. Bytes that one
+file's libraries give several names are dropped from every file there, and so
+are bytes that two files name differently. Without this, a debug-CRT wrapper
+that is unique among the SDK's libraries would still name the byte-identical
+template instantiations that `vs2026.pat` had dropped as ambiguous.
 
 Every file written is read back through `neverd-sigmaker --verify`, which uses
 the loader's parser, because one bad line makes the loader reject its whole

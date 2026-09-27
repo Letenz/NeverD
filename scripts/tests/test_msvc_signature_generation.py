@@ -19,10 +19,10 @@ from pathlib import Path
 from scripts.signatures.build_msvc_signatures import (
     Asset,
     BuildError,
+    fold,
     main,
-    merge,
-    merge_provenance,
     parse_line,
+    settle_directory,
 )
 
 
@@ -48,46 +48,81 @@ class ParseLineTests(unittest.TestCase):
             parse_line("AABB 00 0000 0002 CCDD EEFF")
 
 
-class MergeTests(unittest.TestCase):
+class FoldTests(unittest.TestCase):
     def test_identical_lines_fold(self) -> None:
         line = "AABBCCDD 00 0000 0004 :0000 f"
-        result = merge([line], [line, line])
-        self.assertEqual(result.lines, [line])
+        result = fold([line, line, line])
+        self.assertEqual(result.texts, [line])
         self.assertEqual(result.duplicates, 2)
-        self.assertEqual(result.kept_existing, 1)
-        self.assertEqual(result.added, 0)
 
-    def test_same_bytes_under_different_names_are_dropped_on_both_sides(self) -> None:
-        existing = [
-            "AABBCCDD 00 0000 0004 :0000 ??$size@H@vector@@QEBA_KXZ",
-            "11223344 00 0000 0004 :0000 kept",
-        ]
-        generated = [
-            "AABBCCDD 00 0000 0004 :0000 ??$size@I@vector@@QEBA_KXZ",
-            "55667788 00 0000 0004 :0000 added",
-        ]
-        result = merge(existing, generated)
-        self.assertEqual(
-            result.lines,
-            ["11223344 00 0000 0004 :0000 kept", "55667788 00 0000 0004 :0000 added"],
+    def test_same_bytes_under_different_names_are_all_dropped(self) -> None:
+        result = fold(
+            [
+                "AABBCCDD 00 0000 0004 :0000 ??$size@H@vector@@QEBA_KXZ",
+                "11223344 00 0000 0004 :0000 kept",
+                "AABBCCDD 00 0000 0004 :0000 ??$size@I@vector@@QEBA_KXZ",
+            ]
         )
+        self.assertEqual(result.texts, ["11223344 00 0000 0004 :0000 kept"])
         self.assertEqual(result.conflicting_groups, 1)
         self.assertEqual(result.conflicting_lines, 2)
-        self.assertEqual(result.kept_existing, 1)
-        self.assertEqual(result.added, 1)
+        self.assertEqual(result.ambiguous_keys, {"AABBCCDD 00 0000 0004"})
 
     def test_names_that_differ_only_in_spelling_are_still_different_names(self) -> None:
-        # The loader compares names exactly, so the merge does too.
-        result = merge(
-            ["AABBCCDD 00 0000 0004 :0000 _Close_CFile__UEAAXXZ"],
-            ["AABBCCDD 00 0000 0004 :0000 ?Close@CFile@@UEAAXXZ"],
+        # The loader compares names exactly, so the fold does too.
+        result = fold(
+            [
+                "AABBCCDD 00 0000 0004 :0000 _Close_CFile__UEAAXXZ",
+                "AABBCCDD 00 0000 0004 :0000 ?Close@CFile@@UEAAXXZ",
+            ]
         )
-        self.assertEqual(result.lines, [])
+        self.assertEqual(result.texts, [])
         self.assertEqual(result.conflicting_groups, 1)
 
     def test_output_is_sorted(self) -> None:
-        result = merge([], ["BB 00 0000 0004 :0000 b", "AA 00 0000 0004 :0000 a"])
-        self.assertEqual(result.lines, ["AA 00 0000 0004 :0000 a", "BB 00 0000 0004 :0000 b"])
+        result = fold(["BB 00 0000 0004 :0000 b", "AA 00 0000 0004 :0000 a"])
+        self.assertEqual(result.texts, ["AA 00 0000 0004 :0000 a", "BB 00 0000 0004 :0000 b"])
+
+
+class SettleDirectoryTests(unittest.TestCase):
+    def test_bytes_one_file_found_ambiguous_are_dropped_from_the_others(self) -> None:
+        # The debug CRT's wrapper is unique among the SDK's libraries, but the
+        # toolset's libraries hold the same bytes under several names.
+        toolset = fold(
+            [
+                "AABBCCDD 00 0000 0004 :0000 ??$_Allocate_at_least_helper@D@std@@YAXXZ",
+                "AABBCCDD 00 0000 0004 :0000 ??$_Allocate_at_least_helper@H@std@@YAXXZ",
+                "11223344 00 0000 0004 :0000 memcpy",
+            ]
+        )
+        sdk = fold(
+            [
+                "AABBCCDD 00 0000 0004 :0000 ??$set_environment_variable@D@@YAXXZ",
+                "55667788 00 0000 0004 :0000 _wsetenv",
+            ]
+        )
+        results = {Path("vs2026.pat"): toolset, Path("winsdk.pat"): sdk}
+        settle_directory(results)
+        self.assertEqual(toolset.texts, ["11223344 00 0000 0004 :0000 memcpy"])
+        self.assertEqual(sdk.texts, ["55667788 00 0000 0004 :0000 _wsetenv"])
+        self.assertEqual(toolset.dropped_across_files, 0)
+        self.assertEqual(sdk.dropped_across_files, 1)
+
+    def test_bytes_two_files_name_differently_are_dropped_from_both(self) -> None:
+        older = fold(["AABBCCDD 00 0000 0004 :0000 _fseeki64_nolock"])
+        newer = fold(["AABBCCDD 00 0000 0004 :0000 _fseeki64"])
+        settle_directory({Path("vs2017.pat"): older, Path("vs2026.pat"): newer})
+        self.assertEqual(older.texts, [])
+        self.assertEqual(newer.texts, [])
+        self.assertEqual(older.dropped_across_files, 1)
+        self.assertEqual(newer.dropped_across_files, 1)
+
+    def test_a_claim_several_files_repeat_under_one_name_is_kept(self) -> None:
+        line = "11223344 00 0000 0004 :0000 memcpy"
+        older, newer = fold([line]), fold([line])
+        settle_directory({Path("vs2022.pat"): older, Path("vs2026.pat"): newer})
+        self.assertEqual(older.texts, [line])
+        self.assertEqual(newer.texts, [line])
 
 
 class AssetTests(unittest.TestCase):
@@ -124,23 +159,6 @@ class AssetTests(unittest.TestCase):
         asset = self._asset({"asset": "x", "kind": "driver-kit", "arch": "x64"})
         with self.assertRaises(BuildError):
             _ = asset.output
-
-
-class ProvenanceTests(unittest.TestCase):
-    def test_sources_accumulate_across_regenerations(self) -> None:
-        previous = {"sources": [{"asset": "vs2026-14.50.1-x64", "archive_sha256": "aa"}]}
-        update = {
-            "file": "pe/x86/64/vs2026.pat",
-            "sources": [
-                {"asset": "vs2026-14.51.2-x64", "archive_sha256": "bb"},
-                {"asset": "vs2026-14.50.1-x64", "archive_sha256": "aa"},
-            ],
-        }
-        merged = merge_provenance(previous, update)
-        self.assertEqual(
-            [entry["asset"] for entry in merged["sources"]],
-            ["vs2026-14.50.1-x64", "vs2026-14.51.2-x64"],
-        )
 
 
 FAKE_SIGMAKER = textwrap.dedent(
@@ -216,7 +234,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(status, 0, out.getvalue())
         return out.getvalue()
 
-    def test_servicing_toolsets_share_a_file_and_existing_lines_survive(self) -> None:
+    def test_servicing_toolsets_share_a_file_that_is_rebuilt_from_them(self) -> None:
         toolset = {"kind": "toolset", "arch": "arm64", "visual_studio": {"year": 2026}}
         self._asset(
             "vs2026-14.50.1-arm64",
@@ -228,27 +246,37 @@ class BuildTests(unittest.TestCase):
             dict(toolset, toolset_version="14.51.2"),
             {"vc/lib/arm64/libcpmt.lib": b"b", "vc/lib/arm64/chkstk.obj": b"c"},
         )
+        self._asset(
+            "winsdk-10.0.26100.0-arm64",
+            {"kind": "winsdk", "arch": "arm64", "windows_sdk_version": "10.0.26100.0"},
+            {"winsdk/ucrt/arm64/ucrt64.lib": b"u", "winsdk/um/arm64/kernel32.lib": b"k"},
+        )
         existing = self.root / "sigs/pe/arm/64/vs2026.pat"
         existing.parent.mkdir(parents=True)
-        existing.write_text("01020304 00 0000 0004 :0000 older_servicing_build\n")
+        existing.write_text("01020304 00 0000 0004 :0000 imported_from_elsewhere\n")
 
-        report = self._run("--merge-existing")
+        report = self._run()
 
-        lines = existing.read_text().splitlines()
+        # The earlier line is gone: the file holds what its assets say.
         # libcmt and chkstk make the same byte claim, as do the two folded
-        # template instantiations: both groups are ambiguous and dropped.
+        # template instantiations, so both groups are ambiguous and dropped.
         self.assertEqual(
-            lines,
-            [
-                "01020304 00 0000 0004 :0000 older_servicing_build",
-                "AA07CCDD 00 0000 0004 :0000 arm64_libcpmt",
-            ],
+            existing.read_text().splitlines(),
+            ["AA07CCDD 00 0000 0004 :0000 arm64_libcpmt"],
+        )
+        # ucrt64 makes the claim that was ambiguous in vs2026.pat, so the
+        # directory drops it from winsdk.pat as well.
+        self.assertEqual(
+            (self.root / "sigs/pe/arm/64/winsdk.pat").read_text().splitlines(),
+            ["AA08CCDD 00 0000 0004 :0000 arm64_kernel32"],
         )
         self.assertIn("ambiguous groups dropped", report)
+        self.assertIn("1 dropped for bytes another file of pe/arm/64 names differently", report)
 
         provenance = json.loads(existing.with_suffix(".sources.json").read_text())
         self.assertEqual(provenance["file"], "pe/arm/64/vs2026.pat")
         self.assertEqual(provenance["generator"]["neverd_ref"], "abc123")
+        self.assertEqual(provenance["lines"], 1)
         self.assertEqual(
             [source["asset"] for source in provenance["sources"]],
             ["vs2026-14.50.1-arm64", "vs2026-14.51.2-arm64"],

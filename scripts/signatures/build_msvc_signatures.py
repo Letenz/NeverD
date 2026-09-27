@@ -23,15 +23,18 @@ Four rules decide what a file holds:
   * Names are the linkage names the libraries' symbol tables spell.  Nothing
     here renames anything.
 
-  * A line already in the output file is kept (`--merge-existing`), so
-    regenerating from a newer toolset adds to a file instead of forgetting
-    the servicing builds it was made from before.
+  * A file is rebuilt from its assets alone.  Lines it held before, from an
+    earlier run or from another tool, are replaced, so give the script every
+    asset of a directory at once.
 
   * When lines state the same bytes under different names, all of them are
     dropped.  The pattern cannot tell those routines apart -- MSVC folds
     identical template instantiations, for one -- and any single name chosen
-    among them would be a guess presented as an identification.  The count
-    is reported.
+    among them would be a guess presented as an identification.  The loader
+    reads every file of a directory together, so this holds across the
+    directory: bytes that one file's libraries give two names are dropped
+    from every file of it, and so are bytes two files name differently.
+    Both counts are reported.
 
 Every file written is read back through `neverd-sigmaker --verify`, the
 loader's own parser: the loader rejects a whole directory for one bad line.
@@ -41,8 +44,7 @@ Usage:
     python3 scripts/signatures/build_msvc_signatures.py \\
         --sigmaker build/bin/neverd-sigmaker \\
         --assets release-assets/ \\
-        --output signatures \\
-        --merge-existing
+        --output signatures
 """
 
 from __future__ import annotations
@@ -213,56 +215,81 @@ def parse_line(text: str) -> PatternLine | None:
 
 
 @dataclass
-class MergeResult:
-    lines: list[str]
+class FoldResult:
+    """One file's lines once identical lines fold and ambiguous claims drop."""
+
+    lines: list[PatternLine]
+    ambiguous_keys: set[str] = field(default_factory=set)
     duplicates: int = 0
     conflicting_lines: int = 0
     conflicting_groups: int = 0
-    kept_existing: int = 0
-    added: int = 0
     conflict_examples: list[list[str]] = field(default_factory=list)
+    dropped_across_files: int = 0
+
+    @property
+    def texts(self) -> list[str]:
+        return [line.text for line in self.lines]
 
 
-def merge(existing: list[str], generated: list[str]) -> MergeResult:
-    """Union two sets of lines, dropping every ambiguous byte claim.
+def fold(lines: list[str]) -> FoldResult:
+    """Fold identical lines and drop every ambiguous byte claim.
 
     A group of lines with the same key but more than one set of names is
     ambiguous: the bytes cannot say which routine they are.  All of its
-    lines are dropped, whichever side they came from.
+    lines are dropped, and the key is kept so that `settle_directory` can
+    drop the same bytes from the other files of the directory.
     """
 
-    groups: dict[str, dict[tuple[str, ...], str]] = {}
-    origin_existing: set[str] = set()
+    groups: dict[str, dict[tuple[str, ...], PatternLine]] = {}
     seen = 0
-    for source, lines in (("existing", existing), ("generated", generated)):
-        for raw in lines:
-            parsed = parse_line(raw)
-            if parsed is None:
-                continue
-            seen += 1
-            variants = groups.setdefault(parsed.key, {})
-            if parsed.names not in variants:
-                variants[parsed.names] = parsed.text
-                if source == "existing":
-                    origin_existing.add(parsed.text)
+    for raw in lines:
+        parsed = parse_line(raw)
+        if parsed is None:
+            continue
+        seen += 1
+        groups.setdefault(parsed.key, {}).setdefault(parsed.names, parsed)
 
-    result = MergeResult(lines=[])
+    result = FoldResult(lines=[])
     for key, variants in groups.items():
         if len(variants) > 1:
+            result.ambiguous_keys.add(key)
             result.conflicting_groups += 1
             result.conflicting_lines += len(variants)
             if len(result.conflict_examples) < 20:
                 result.conflict_examples.append(sorted(" ".join(n) for n in variants))
             continue
-        (text,) = variants.values()
-        result.lines.append(text)
-        if text in origin_existing:
-            result.kept_existing += 1
-        else:
-            result.added += 1
-    result.lines.sort()
+        (line,) = variants.values()
+        result.lines.append(line)
+    result.lines.sort(key=lambda line: line.text)
     result.duplicates = seen - sum(len(v) for v in groups.values())
     return result
+
+
+def settle_directory(results: dict[Path, FoldResult]) -> None:
+    """Drop lines whose bytes another file of the same directory contradicts.
+
+    The loader applies every file of a directory together.  A line one file
+    keeps is therefore only an identification if no library behind any file
+    of the directory gives the same bytes another name: when another file
+    states them under other names, or dropped them as ambiguous, the line
+    is dropped too.  Lines that repeat a claim with the same names, such as
+    a CRT routine that several toolsets share unchanged, are kept.
+    """
+
+    claims: dict[str, tuple[str, ...] | None] = {}
+    for result in results.values():
+        for key in result.ambiguous_keys:
+            claims[key] = None
+    for result in results.values():
+        for line in result.lines:
+            if line.key not in claims:
+                claims[line.key] = line.names
+            elif claims[line.key] != line.names:
+                claims[line.key] = None
+    for result in results.values():
+        kept = [line for line in result.lines if claims[line.key] is not None]
+        result.dropped_across_files = len(result.lines) - len(kept)
+        result.lines = kept
 
 
 # --- generation -------------------------------------------------------------------
@@ -301,86 +328,86 @@ def verify(sigmaker: Path, path: Path) -> None:
         )
 
 
-def merge_provenance(previous: dict | None, update: dict) -> dict:
-    """Keep the sources a file was built from across regenerations."""
+def generate(
+    args: argparse.Namespace, members: list[Asset], work_root: Path
+) -> tuple[list[str], list[dict]]:
+    """Every line neverd-sigmaker writes for one file's assets, and their sources."""
 
-    sources = {}
-    for entry in (previous or {}).get("sources", []) + update["sources"]:
-        sources[(entry["asset"], entry["archive_sha256"])] = entry
-    merged = dict(update)
-    merged["sources"] = sorted(
-        sources.values(), key=lambda entry: (entry["asset"], entry["archive_sha256"])
+    generated: list[str] = []
+    sources = []
+    for asset in members:
+        libraries = extract(asset, work_root / asset.name)
+        pat = work_root / f"{asset.name}.pat"
+        summary = run_sigmaker(args.sigmaker, libraries, asset.machine, args.tail, pat)
+        lines = pat.read_text(encoding="utf-8").splitlines()
+        print(f"{asset.name}: {len(libraries)} libraries; {summary}", flush=True)
+        if not lines:
+            raise BuildError(f"{asset.name} produced no signatures")
+        generated.extend(lines)
+        entry = asset.provenance()
+        entry["sigmaker"] = summary
+        sources.append(entry)
+        shutil.rmtree(work_root / asset.name)
+        pat.unlink()
+    return generated, sources
+
+
+def write(
+    args: argparse.Namespace, relative: Path, result: FoldResult, sources: list[dict]
+) -> None:
+    if not result.lines:
+        raise BuildError(f"{relative}: nothing left to write")
+    destination = args.output / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text("\n".join(result.texts) + "\n", encoding="utf-8")
+    verify(args.sigmaker, destination)
+
+    provenance = {
+        "file": relative.as_posix(),
+        "generator": {
+            "neverd_ref": args.neverd_ref,
+            "release": args.release,
+            "tail": args.tail,
+        },
+        "sources": sorted(
+            sources, key=lambda entry: (entry["asset"], entry["archive_sha256"])
+        ),
+        "lines": len(result.lines),
+    }
+    destination.with_suffix(".sources.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    return merged
+    print(
+        f"{relative}: {len(result.lines)} lines "
+        f"({result.duplicates} duplicates folded, "
+        f"{result.conflicting_lines} lines in {result.conflicting_groups} "
+        f"ambiguous groups dropped, "
+        f"{result.dropped_across_files} dropped for bytes another file of "
+        f"{relative.parent.as_posix()} names differently)",
+        flush=True,
+    )
+    for example in result.conflict_examples[:5]:
+        print(f"  ambiguous: {', '.join(example)[:200]}", flush=True)
 
 
 def build(args: argparse.Namespace) -> int:
     assets = load_assets(args.assets, args.asset)
-    by_output: dict[Path, list[Asset]] = {}
+    by_directory: dict[Path, dict[Path, list[Asset]]] = {}
     for asset in assets:
-        by_output.setdefault(asset.output, []).append(asset)
+        by_directory.setdefault(asset.directory, {}).setdefault(asset.output, []).append(asset)
 
     work_root = Path(tempfile.mkdtemp(prefix="neverd-msvc-sigs-", dir=args.work))
     try:
-        for relative, members in sorted(by_output.items()):
-            generated: list[str] = []
-            sources = []
-            for asset in members:
-                libraries = extract(asset, work_root / asset.name)
-                pat = work_root / f"{asset.name}.pat"
-                summary = run_sigmaker(args.sigmaker, libraries, asset.machine, args.tail, pat)
-                lines = pat.read_text(encoding="utf-8").splitlines()
-                print(f"{asset.name}: {len(libraries)} libraries; {summary}", flush=True)
-                if not lines:
-                    raise BuildError(f"{asset.name} produced no signatures")
-                generated.extend(lines)
-                entry = asset.provenance()
-                entry["sigmaker"] = summary
-                sources.append(entry)
-                shutil.rmtree(work_root / asset.name)
-                pat.unlink()
-
-            destination = args.output / relative
-            existing: list[str] = []
-            if args.merge_existing and destination.is_file():
-                existing = destination.read_text(encoding="utf-8").splitlines()
-            result = merge(existing, generated)
-            if not result.lines:
-                raise BuildError(f"{relative}: nothing left to write")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text("\n".join(result.lines) + "\n", encoding="utf-8")
-            verify(args.sigmaker, destination)
-
-            provenance_path = destination.with_suffix(".sources.json")
-            previous = None
-            if args.merge_existing and provenance_path.is_file():
-                previous = json.loads(provenance_path.read_text(encoding="utf-8"))
-            provenance = merge_provenance(
-                previous,
-                {
-                    "file": relative.as_posix(),
-                    "generator": {
-                        "neverd_ref": args.neverd_ref,
-                        "release": args.release,
-                        "tail": args.tail,
-                    },
-                    "sources": sources,
-                    "lines": len(result.lines),
-                },
-            )
-            provenance_path.write_text(
-                json.dumps(provenance, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
-            print(
-                f"{relative}: {len(result.lines)} lines "
-                f"({result.added} new, {result.kept_existing} kept, "
-                f"{result.duplicates} duplicates folded, "
-                f"{result.conflicting_lines} lines in {result.conflicting_groups} "
-                f"ambiguous groups dropped)",
-                flush=True,
-            )
-            for example in result.conflict_examples[:5]:
-                print(f"  ambiguous: {', '.join(example)[:200]}", flush=True)
+        for _, outputs in sorted(by_directory.items()):
+            results: dict[Path, FoldResult] = {}
+            sources: dict[Path, list[dict]] = {}
+            for relative, members in sorted(outputs.items()):
+                generated, sources[relative] = generate(args, members, work_root)
+                results[relative] = fold(generated)
+                del generated
+            settle_directory(results)
+            for relative, result in sorted(results.items()):
+                write(args, relative, result, sources[relative])
     finally:
         shutil.rmtree(work_root, ignore_errors=True)
     return 0
@@ -395,8 +422,6 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
                         help="only assets whose name matches this glob (repeatable)")
     parser.add_argument("--output", type=Path, required=True,
                         help="signature tree root; files land under pe/")
-    parser.add_argument("--merge-existing", action="store_true",
-                        help="keep the lines already in each output file")
     parser.add_argument("--tail", type=int, default=FULL_COVERAGE_TAIL)
     parser.add_argument("--neverd-ref", default=None,
                         help="NeverD revision of the signature maker, for provenance")
