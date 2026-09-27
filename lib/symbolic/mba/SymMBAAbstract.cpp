@@ -458,6 +458,100 @@ std::optional<llvm::APInt> inverseOdd(const llvm::APInt &Coefficient,
   return Inverse;
 }
 
+struct WeightedInput {
+  SymRef Hidden;
+  llvm::APInt Coefficient;
+  unsigned Shift;
+  std::optional<llvm::APInt> Inverse;
+};
+
+using WeightedInputs = llvm::DenseMap<uint32_t, WeightedInput>;
+
+bool recordWeightedInput(
+    const SymContext &Ctx, uint32_t Index,
+    const llvm::DenseMap<uint32_t, SymRef> &OriginalRewritten,
+    WeightedInputs &Inputs, AffineResources &Resources) {
+  SymRef R(Index);
+  llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+  if (Ctx.op(R) != SymOp::Mul || Ops.size() != 2 || !Ctx.isConst(Ops[0]))
+    return true;
+  const llvm::APInt &Coefficient = Ctx.constValue(Ops[0]);
+  // Odd coefficients already have the stronger whole-base inverse recovery.
+  if (Coefficient[0])
+    return true;
+  if (!Resources.charge(Coefficient.getNumWords()))
+    return false;
+  if (Coefficient.isZero())
+    return true;
+  const unsigned Shift = Coefficient.countr_zero();
+  SymRef Base = OriginalRewritten.lookup(Ops[1].index());
+  auto It = Inputs.find(Base.index());
+  // The smallest power of two dividing a coefficient admits every weighted
+  // use admitted by the others. Keep one stable relation per complete base,
+  // rather than comparing every hidden input with every arithmetic term.
+  if (It != Inputs.end() && It->second.Shift <= Shift)
+    return true;
+  if (!Resources.charge(1, 128) ||
+      !Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+    return false;
+  WeightedInput Input{OriginalRewritten.lookup(Index), Coefficient, Shift,
+                      std::nullopt};
+  if (It == Inputs.end())
+    Inputs.try_emplace(Base.index(), std::move(Input));
+  else
+    It->second = std::move(Input);
+  return true;
+}
+
+/// Recover d*T from P=k*T only when the constant congruence k*q=d is soluble.
+/// This never recovers T itself from an even multiple. Arithmetic stays at
+/// the original width; only the constant inverse uses the reduced modulus.
+std::optional<llvm::APInt> weightedQuotient(WeightedInput &Input,
+                                            const llvm::APInt &Coefficient,
+                                            AffineResources &Resources,
+                                            bool &Complete) {
+  auto refuse = [&]() -> std::optional<llvm::APInt> {
+    Complete = false;
+    return std::nullopt;
+  };
+  if (!Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+    return refuse();
+  if (Coefficient.countr_zero() < Input.Shift)
+    return std::nullopt;
+  const unsigned Width = Coefficient.getBitWidth();
+  llvm::APInt Quotient(Width, 1);
+  if (Coefficient != Input.Coefficient) {
+    if (!Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+      return refuse();
+    if (Coefficient == -Input.Coefficient) {
+      Quotient = llvm::APInt::getAllOnes(Width);
+    } else {
+      const unsigned ReducedWidth = Width - Input.Shift;
+      if (!Resources.array(Coefficient.getNumWords(), 2 * sizeof(uint64_t)))
+        return refuse();
+      if (!Input.Inverse) {
+        auto Inverse = inverseOdd(
+            Input.Coefficient.lshr(Input.Shift).trunc(ReducedWidth), Resources);
+        if (!Inverse)
+          return refuse();
+        Input.Inverse = std::move(*Inverse);
+      }
+      if (!Resources.product(*Input.Inverse))
+        return refuse();
+      llvm::APInt Reduced =
+          Coefficient.lshr(Input.Shift).trunc(ReducedWidth) * *Input.Inverse;
+      // Both lifts solve the same congruence. Prefer one itself to its
+      // negative alias at reduced width one; otherwise keep the signed lift.
+      Quotient = Reduced.isOne() ? llvm::APInt(Width, 1) : Reduced.sext(Width);
+    }
+  }
+  if (!Resources.product(Coefficient))
+    return refuse();
+  if (Input.Coefficient * Quotient != Coefficient)
+    return std::nullopt;
+  return Quotient;
+}
+
 bool affineOrder(const SymContext &Ctx, SymRef Root,
                  std::vector<uint32_t> &Order, AffineResources &Resources) {
   llvm::SmallVector<SymRef, 32> Pending;
@@ -531,7 +625,11 @@ SymRef restoreAffineRelations(
                                Resources))
     return Body;
   llvm::SmallVector<std::pair<uint32_t, AffineInput>, 4> Inputs;
+  WeightedInputs Weighted;
   for (uint32_t Index : Roots) {
+    if (!recordWeightedInput(Ctx, Index, OriginalRewritten, Weighted,
+                             Resources))
+      return Body;
     auto Input = affineInput(Ctx, SymRef(Index), ForcedAtoms, OriginalRoles,
                              Cache, Resources);
     if (!Input)
@@ -544,7 +642,7 @@ SymRef restoreAffineRelations(
       return Body;
     Inputs.emplace_back(Index, std::move(*Input));
   }
-  if (Inputs.empty())
+  if (Inputs.empty() && Weighted.empty())
     return Body;
 
   std::vector<uint32_t> Order;
@@ -628,7 +726,7 @@ SymRef restoreAffineRelations(
     SymRef Alias = Ctx.mkMul(Factors);
     Aliases[OriginalRewritten.lookup(Pivot->first).index()] = Alias;
   }
-  if (Aliases.empty())
+  if (Aliases.empty() && Weighted.empty())
     return Body;
 
   // Templates use only the completed original abstraction, never one another.
@@ -653,6 +751,27 @@ SymRef restoreAffineRelations(
     Rewritten[Index] = Rebuilt;
     auto It = Aliases.find(Index);
     Arithmetic[Index] = It == Aliases.end() ? Rebuilt : It->second;
+    if (IsArithmetic && Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+        Ctx.isConst(Ctx.operand(R, 0))) {
+      auto WeightedIt = Weighted.find(Ctx.operand(R, 1).index());
+      if (WeightedIt == Weighted.end())
+        continue;
+      bool Complete = true;
+      auto Quotient = weightedQuotient(WeightedIt->second,
+                                       Ctx.constValue(Ctx.operand(R, 0)),
+                                       Resources, Complete);
+      if (!Complete)
+        return Body;
+      if (!Quotient)
+        continue;
+      if (!Resources.charge(1, 128) ||
+          !Resources.array(Quotient->getNumWords(), sizeof(uint64_t)))
+        return Body;
+      SymRef Factors[] = {Ctx.mkConst(*Quotient), WeightedIt->second.Hidden};
+      if (!chargeAffineNode(Ctx, SymOp::Mul, Factors, Resources))
+        return Body;
+      Arithmetic[Index] = Ctx.mkMul(Factors);
+    }
   }
   return Rewritten.lookup(Body.index());
 }
