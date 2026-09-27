@@ -29,6 +29,32 @@ std::string generatedFunction(const std::string &Source,
   return {};
 }
 
+void expectIntrinsicStyle(const std::string &Source) {
+  // Linux SYSCALL has no equivalent MSVC intrinsic: its established C
+  // projection uses GNU constraints to preserve the Linux register ABI.
+  // Other system instructions must continue to use the existing C intrinsics.
+  const std::string SyscallAsm = "__asm__ volatile(\"syscall\"";
+  size_t Search = 0;
+  unsigned Syscalls = 0;
+  while ((Search = Source.find("__asm__ volatile", Search)) !=
+         std::string::npos) {
+    EXPECT_EQ(Source.compare(Search, SyscallAsm.size(), SyscallAsm), 0)
+        << Source.substr(Search, 200);
+    Search += SyscallAsm.size();
+    ++Syscalls;
+  }
+  EXPECT_EQ(Syscalls, 1u) << Source;
+  for (const char *Name : {"test_rdtsc_intrinsic", "test_pause_intrinsic",
+                           "test_mfence_intrinsic", "test_lfence_intrinsic",
+                           "test_sfence_intrinsic", "test_cpuid_intrinsic",
+                           "test_clflush_intrinsic", "test_xgetbv_intrinsic",
+                           "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
+    const auto Body = generatedFunction(Source, Name);
+    ASSERT_FALSE(Body.empty()) << Name;
+    EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
+  }
+}
+
 constexpr const char *CpuidStub = R"C(
 static unsigned stub_calls;
 static int stub_leaf;
@@ -140,10 +166,7 @@ TEST_F(X86_64_Intrinsics, Decompile_UsesCorrectStyle) {
   auto r = decompileToHighC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled_high.c");
-  EXPECT_TRUE(content.find("__asm__ volatile") == std::string::npos)
-      << "Found GNU __asm__ volatile in x86 decompile — should use MSVC "
-         "__asm{} or C intrinsics:\n"
-      << content.substr(0, 3000);
+  expectIntrinsicStyle(content);
 }
 
 TEST_F(X86_64_Intrinsics, Decompile_CpuidUsesIntrinsic) {
@@ -191,10 +214,7 @@ TEST_F(X86_64_Intrinsics, LlvmC_UsesCorrectStyle) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("__asm__ volatile") == std::string::npos)
-      << "Found GNU __asm__ volatile in x86 LLVM C decompile — should use MSVC "
-         "__asm{} or C intrinsics:\n"
-      << content.substr(0, 3000);
+  expectIntrinsicStyle(content);
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_CpuidUsesIntrinsic) {

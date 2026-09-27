@@ -37,8 +37,7 @@ std::string typeToC(const TypeRef &Ty);
 /// Readonly printable C/wchar image bytes as `"..."` / `L"..."`.
 /// Non-ASCII or writable/executable bytes stay unnamed. Empty NUL-only
 /// strings stay unnamed unless \p AllowEmpty (MSVC `??_C@` publics).
-std::optional<std::string> imageStringLiteral(const BinaryImage *Img,
-                                              va_t Addr,
+std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
 
 /// Named class/struct returned by value.  MSVC x64 passes that object through
@@ -85,6 +84,8 @@ std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator);
 std::string typeToCLLVM(llvm::Type *Ty);
 /// Fixed, power-of-two integer vectors with native C lane widths.
 bool isCIntegerVectorType(llvm::Type *Ty);
+/// Native C integer, float, double, and bfloat vector storage types.
+bool isCVectorType(llvm::Type *Ty);
 std::string llvmStructName(llvm::StructType *ST);
 
 std::string escapeCString(llvm::StringRef Str);

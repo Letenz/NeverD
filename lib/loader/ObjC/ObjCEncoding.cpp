@@ -99,8 +99,7 @@ std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
   return Encoding.str();
 }
 
-std::optional<std::string>
-objcEncodedObjectProtocol(llvm::StringRef Encoding) {
+std::optional<std::string> objcEncodedObjectProtocol(llvm::StringRef Encoding) {
   if (Encoding.size() > 4096)
     return std::nullopt;
   while (!Encoding.empty() &&
@@ -113,17 +112,17 @@ objcEncodedObjectProtocol(llvm::StringRef Encoding) {
     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_';
   };
   if (!Letter(Encoding.front()) ||
-      !std::all_of(Encoding.begin(), Encoding.end(), [&](char C) {
-        return Letter(C) || (C >= '0' && C <= '9');
-      }))
+      !std::all_of(Encoding.begin(), Encoding.end(),
+                   [&](char C) { return Letter(C) || (C >= '0' && C <= '9'); }))
     return std::nullopt;
   return Encoding.str();
 }
 
+namespace {
 // Declaration syntax and natural record layout are independent of physical
 // calling conventions. SourceABI must separately accept each value carrier.
-TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
-                            unsigned Depth) {
+TypeRef parseSourceType(llvm::StringRef Encoding, size_t &I, unsigned Depth,
+                        bool AllowOpaqueFunctionPointers) {
   if (Depth > 16 || Encoding.size() > 4096)
     return nullptr;
   while (I < Encoding.size() &&
@@ -191,7 +190,8 @@ TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
     while (I < Encoding.size() && Encoding[I] != '}') {
       if (Fields.size() >= 64 || (Encoding[I] == '"' && !quoted(Encoding, I)))
         return nullptr;
-      auto Field = parseObjCSourceType(Encoding, I, Depth + 1);
+      auto Field =
+          parseSourceType(Encoding, I, Depth + 1, AllowOpaqueFunctionPointers);
       if (!Field)
         return nullptr;
       Fields.push_back(std::move(Field));
@@ -206,6 +206,8 @@ TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
            llvm::StringRef("rnNoORV").contains(Encoding[Start]))
       ++Start;
     if (Start < Encoding.size() && Encoding[Start] == '?') {
+      if (!AllowOpaqueFunctionPointers)
+        return nullptr;
       I = Start + 1; // An IMP pointer does not encode its invocation ABI.
       return NdType::makePtr(NdType::makeVoid());
     }
@@ -215,12 +217,20 @@ TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
         return nullptr;
       return NdType::makePtr(NdType::makeVoid());
     }
-    auto Pointee = parseObjCSourceType(Encoding, I, Depth + 1);
+    auto Pointee =
+        parseSourceType(Encoding, I, Depth + 1, AllowOpaqueFunctionPointers);
     return Pointee ? NdType::makePtr(Pointee) : nullptr;
   }
   default:
     return nullptr;
   }
+}
+} // namespace
+
+TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
+                            unsigned Depth) {
+  return parseSourceType(Encoding, I, Depth,
+                         /*AllowOpaqueFunctionPointers=*/true);
 }
 
 TypeRef parseObjCScalarType(llvm::StringRef Encoding, size_t &Offset,
@@ -270,11 +280,16 @@ parseObjCFunctionEncoding(llvm::StringRef Encoding) {
     return std::nullopt;
   size_t I = 0;
   SourceFunctionTypeHint Hint;
-  Hint.ReturnType = parseObjCSourceType(Encoding, I);
+  // An opaque IMP carrier is useful in method metadata, but cannot establish
+  // the complete callback prototype required by a fixed C declaration. Keep
+  // that distinction through nested pointers and fields passed by value.
+  Hint.ReturnType = parseSourceType(Encoding, I, 0,
+                                    /*AllowOpaqueFunctionPointers=*/false);
   if (!Hint.ReturnType || !digits(Encoding, I, true))
     return std::nullopt;
   while (I < Encoding.size() && Hint.Parameters.size() < 64) {
-    auto Type = parseObjCSourceType(Encoding, I);
+    auto Type = parseSourceType(Encoding, I, 0,
+                                /*AllowOpaqueFunctionPointers=*/false);
     if (!Type || Type->Kind == NdTypeKind::Void || !digits(Encoding, I, true))
       return std::nullopt;
     Hint.Parameters.push_back(

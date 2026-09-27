@@ -317,6 +317,8 @@ TEST(ObjCSourceProjection, OrdinaryDarwinUnwindDoesNotImplyExceptionCode) {
     else
       Metadata.Dwarf.emplace();
     EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+    Metadata.ObjC.emplace();
+    EXPECT_TRUE(P.limitation().empty()) << P.limitation();
   }
 }
 
@@ -346,9 +348,18 @@ TEST(ObjCSourceProjection,
   EXPECT_EQ(LocalThrow.ObjC->RuntimeCalls[0].CallVA, 0x1104U);
   EXPECT_FALSE(isPlainSourceUnwind(LocalThrow));
 
-  EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000})
-                .ObjC->RuntimeCalls.size(),
-            2U);
+  // The first method can end before the record does: the later throw belongs
+  // to an adjacent entry, even though this method starts at CodeRange.Begin.
+  const auto First =
+      sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000, 0x1008});
+  EXPECT_FALSE(First.ObjC);
+  EXPECT_TRUE(isPlainSourceUnwind(First));
+  const auto FirstWithThrow =
+      sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000, 0x1004});
+  ASSERT_TRUE(FirstWithThrow.ObjC);
+  ASSERT_EQ(FirstWithThrow.ObjC->RuntimeCalls.size(), 1U);
+  EXPECT_EQ(FirstWithThrow.ObjC->RuntimeCalls[0].CallVA, 0x1004U);
+  EXPECT_FALSE(isPlainSourceUnwind(FirstWithThrow));
   EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1100, {0x1104})
                 .ObjC->RuntimeCalls.size(),
             2U);
@@ -374,7 +385,14 @@ TEST(ObjCSourceProjection,
        [](auto &M) { M.PersonalityName = "__objc_personality_v0"; }},
       {"handler data", [](auto &M) { M.HandlerDataVA = 0x2000; }},
       {"language table", [](auto &M) { M.Itanium.emplace(); }},
-      {"objc dispatch", [](auto &M) { M.ObjC.emplace(); }},
+      {"objc dispatch",
+       [](auto &M) { M.ObjC.emplace().LandingPads.emplace_back(); }},
+      {"objc runtime throw",
+       [](auto &M) {
+         M.ObjC.emplace().RuntimeCalls.push_back(
+             {0x1010, 0x2000, "objc_exception_throw",
+              ObjCRuntimeCallKind::Throw});
+       }},
       {"compact personality",
        [](auto &M) { M.Compact->PersonalityVA = 0x2000; }},
       {"compact LSDA flag", [](auto &M) { M.Compact->HasLSDA = true; }},
@@ -1581,6 +1599,123 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverNeedsStableSelf) {
       proveObjCSynchronizedReceiverCleanup(Image, Function);
   ASSERT_TRUE(LocalReceiver);
   EXPECT_TRUE(LocalReceiver->ReceiverIsSavedLocal);
+}
+
+TEST(ObjCSourceProjection, BranchedSynchronizedTokenMutationNeedsStableLock) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  Segment Code;
+  Code.VA = 0x3000;
+  Code.Size = 0xbc;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.assign(Code.Size, 0);
+  const auto Put = [&](va_t Address, uint32_t Word) {
+    llvm::support::endian::write32le(Code.Data.data() + Address - Code.VA,
+                                     Word);
+  };
+  for (va_t Address = Code.VA; Address < Code.VA + Code.Size; Address += 4)
+    Put(Address, 0xd503201fU); // nop
+  const auto BL = [&](va_t From, va_t To) {
+    Put(From, 0x94000000U | ((To - From) / 4));
+  };
+  Put(0x3000, 0xa9bd57f6U); // save x22/x21
+  Put(0x3004, 0xa9014ff4U); // save x20/x19
+  Put(0x3008, 0xa9027bfdU); // save fp/lr
+  Put(0x300c, 0x910083fdU);
+  Put(0x3010, 0xaa0203f3U); // x19 = argument
+  Put(0x3014, 0xaa0003f5U); // x21 = objc_self
+  Put(0x3018, 0xaa0203e0U);
+  BL(0x301c, 0x4000);       // objc_retain(argument)
+  Put(0x3030, 0xb40002b3U); // cbz x19, 0x3084
+  Put(0x3034, 0xaa1503e0U);
+  BL(0x3038, 0x4010); // runningTokens
+  Put(0x303c, 0xaa1d03fdU);
+  BL(0x3040, 0x4020);       // objc_retainAutoreleasedReturnValue
+  Put(0x3044, 0xaa0003f4U); // x20 = retained lock
+  BL(0x3048, 0x4030);       // objc_sync_enter
+  Put(0x304c, 0xaa1503e0U);
+  BL(0x3050, 0x4010);       // runningTokens
+  BL(0x3058, 0x4020);       // objc_retainAutoreleasedReturnValue
+  Put(0x305c, 0xaa0003f5U); // x21 = retained mutation receiver
+  Put(0x3060, 0xaa1303e2U); // x2 = argument
+  BL(0x3064, 0x4040);       // addObject:
+  Put(0x3068, 0xaa1503e0U);
+  BL(0x306c, 0x4050); // release mutation receiver
+  Put(0x3070, 0xaa1403e0U);
+  BL(0x3074, 0x4060); // normal objc_sync_exit
+  Put(0x3078, 0xaa1403e0U);
+  BL(0x307c, 0x4050);       // release lock
+  Put(0x3080, 0x14000005U); // join null path at 0x3094
+  Put(0x3094, 0xaa1303e0U);
+  Put(0x3098, 0xa9427bfdU);
+  Put(0x309c, 0xa9414ff4U);
+  Put(0x30a0, 0xa8c357f6U);
+  Put(0x30a4, 0x14000000U | ((0x4050 - 0x30a4) / 4));
+  Put(0x30a8, 0xaa0003f3U); // preserve exception
+  Put(0x30ac, 0xaa1403e0U); // same lock
+  BL(0x30b0, 0x4060);       // exceptional objc_sync_exit
+  Put(0x30b4, 0xaa1303e0U);
+  BL(0x30b8, 0x4070); // __Unwind_Resume
+  Image.Segments.push_back(std::move(Code));
+  for (const auto &[Address, Name] :
+       {std::pair<va_t, const char *>{0x4000, "_objc_retain"},
+        {0x4010, "_objc_msgSend$runningTokens"},
+        {0x4020, "_objc_retainAutoreleasedReturnValue"},
+        {0x4030, "_objc_sync_enter"},
+        {0x4040, "_objc_msgSend$addObject:"},
+        {0x4050, "_objc_release"},
+        {0x4060, "_objc_sync_exit"},
+        {0x4070, "__Unwind_Resume"}}) {
+    auto Symbol = Symbol::makeFunc(Address);
+    Symbol.Name = Name;
+    Image.Symbols.push_back(std::move(Symbol));
+  }
+  HighFunc Function;
+  Function.Entry = 0x3000;
+  Function.Params.push_back({"objc_self", NdType::makePtr(NdType::makeVoid())});
+  auto &EH = Function.ExceptionMetadata.emplace();
+  EH.CodeRange = {0x3000, 0x30bc};
+  EH.Personality = ExceptionPersonality::ObjCPersonalityV0;
+  auto &LSDA = EH.Itanium.emplace();
+  LSDA.CallSites.resize(3);
+  LSDA.CallSites[0].GuardedRange = {0x3000, 0x304c};
+  LSDA.CallSites[1].GuardedRange = {0x304c, 0x3068};
+  LSDA.CallSites[1].LandingPadVA = 0x30a8;
+  LSDA.CallSites[2].GuardedRange = {0x3068, 0x30bc};
+  auto &ObjC = EH.ObjC.emplace();
+  ObjC.LandingPads.push_back(
+      {{0x304c, 0x3068}, 0x30a8, ObjCPadKind::SynchronizedExit, {}});
+
+  const auto Proof = proveObjCSynchronizedReceiverCleanup(Image, Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->EnterCall, 0x3048U);
+  EXPECT_EQ(Proof->GuardStopCall, 0x306cU);
+  EXPECT_EQ(Proof->ExitCall, 0x3074U);
+  EXPECT_EQ(Proof->LandingPad, 0x30a8U);
+  EXPECT_EQ(Proof->UnprotectedReleases, 1U);
+  EXPECT_TRUE(Proof->ReceiverIsSavedLocal);
+  const auto Rewrite = [&](va_t Address, uint32_t Word) {
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + Address - 0x3000, Word);
+  };
+  const auto RejectMutation = [&](va_t Address, uint32_t Word) {
+    const uint32_t Original = *objcSynchronizedWord(Image, Address);
+    Rewrite(Address, Word);
+    EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function))
+        << "unexpected proof with mutation at " << std::hex << Address;
+    Rewrite(Address, Original);
+  };
+  RejectMutation(0x3030, 0xb40000b3U); // null argument enters the lock
+  RejectMutation(0x3038, 0x94000000U | ((0x4040 - 0x3038) / 4));
+  RejectMutation(0x3054, 0xaa0003f4U); // overwrite saved lock
+  RejectMutation(0x3064, 0x94000000U | ((0x4060 - 0x3064) / 4));
+  RejectMutation(0x3080, 0x14000006U); // normal path enters skip block
+  RejectMutation(0x30a4, 0x14000001U); // tail no longer releases argument
+  RejectMutation(0x30ac, 0xaa1303e0U); // pad unlocks wrong object
+  LSDA.CallSites[1].FirstActionOffset = 1;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function));
 }
 
 TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {

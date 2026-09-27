@@ -43,6 +43,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cassert>
 #include <limits>
@@ -405,7 +406,10 @@ void affineResidualCandidates(SymContext &Ctx,
                               llvm::ArrayRef<llvm::APInt> Weights,
                               llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
                               const SolverLimits &Limits, WorkBudget &Budget,
-                              llvm::SmallVectorImpl<SymRef> &Out) {
+                              llvm::SmallVectorImpl<SymRef> &Out,
+                              bool *MayHaveBooleanPair) {
+  if (MayHaveBooleanPair)
+    *MayHaveBooleanPair = false;
   const unsigned Count = static_cast<unsigned>(Atoms.size());
   // This search reuses only the existing small exact Boolean recipes. A
   // larger caller ceiling must not trigger the four-input optimal table here.
@@ -445,6 +449,11 @@ void affineResidualCandidates(SymContext &Ctx,
   // operation. This bound does not assume a particular Boolean form.
   if (TermBudget < Support + 1)
     return;
+
+  // Reuse this charged classification in the later pair reading. Most
+  // regions cannot have that form and should not scan their weights twice.
+  if (MayHaveBooleanPair)
+    *MayHaveBooleanPair = Support == 3 && Values.size() == 4;
 
   llvm::DenseMap<uint32_t, SymRef> Synthesized;
 
@@ -546,6 +555,125 @@ void affineResidualCandidates(SymContext &Ctx,
       }
     }
   }
+}
+
+void booleanResidualCandidates(SymContext &Ctx,
+                               llvm::ArrayRef<llvm::APInt> Weights,
+                               llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
+                               const SolverLimits &Limits, WorkBudget &Budget,
+                               llvm::SmallVectorImpl<SymRef> &Out) {
+  const unsigned Count = static_cast<unsigned>(Atoms.size());
+  // With two effective inputs, four different weights require both selectors
+  // to be balanced. The balanced tables are the inputs, their complements,
+  // XOR and its complement. Two XOR tables cannot give four value pairs, so
+  // one selector is an affine atom already covered by the earlier reading.
+  if (Count < 3 ||
+      Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+                        Limits.MaxSynthesisAtoms}) ||
+      TermBudget < 3)
+    return;
+  assert(Weights.size() == (size_t(1) << Count));
+  if (!Budget.consume(Weights.size()))
+    return;
+  llvm::SmallVector<llvm::APInt, 4> Values;
+  for (const llvm::APInt &Value : Weights) {
+    if (llvm::is_contained(Values, Value))
+      continue;
+    if (Values.size() == 4)
+      return;
+    Values.push_back(Value);
+  }
+  // Repeated values leave choices in how a selector should split a group.
+  // This bounded reading handles only the unambiguous four-value case.
+  if (Values.size() != 4)
+    return;
+  // Four values have only three possible pairs of opposite corners. Reject
+  // nonrectangular tables before computing support or constructing selectors.
+  if (!Budget.consume(3))
+    return;
+  if (Values[0] + Values[1] != Values[2] + Values[3] &&
+      Values[0] + Values[2] != Values[1] + Values[3] &&
+      Values[0] + Values[3] != Values[1] + Values[2])
+    return;
+  if (!Budget.consume(Count * Weights.size()))
+    return;
+  unsigned Support = 0;
+  for (unsigned Axis = 0; Axis < Count; ++Axis) {
+    const size_t Bit = size_t(1) << Axis;
+    for (size_t K = 0; K < Weights.size(); ++K)
+      if (!(K & Bit) && Weights[K] != Weights[K | Bit]) {
+        ++Support;
+        break;
+      }
+  }
+  if (Support < 3 || TermBudget < Support + 1)
+    return;
+
+  llvm::DenseMap<uint32_t, SymRef> Synthesized;
+  auto selector = [&](const TruthTable &Table) -> std::optional<SymRef> {
+    const uint32_t Key = static_cast<uint32_t>(Table.packed());
+    auto Found = Synthesized.find(Key);
+    if (Found == Synthesized.end()) {
+      const unsigned Arity = std::popcount(truthTableSupport(Table));
+      const size_t Functions = size_t(1) << (size_t(1) << Arity);
+      const size_t Work = Functions * Functions;
+      if (Work > Limits.SynthesisWork)
+        return std::nullopt;
+      if (!Budget.consume(Work))
+        return std::nullopt;
+      BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+      Synthesis.MaxOptimalAtoms = Count;
+      Synthesis.MaxWork = Work;
+      auto Built = synthesizeBitwise(Ctx, Table, Atoms, Synthesis);
+      Found = Synthesized.try_emplace(Key, Built.value_or(SymRef())).first;
+    }
+    if (!Found->second.isValid())
+      return std::nullopt;
+    return Found->second;
+  };
+
+  // Label the four values as 00, 10, 01, 11. They form an additive rectangle
+  // precisely when opposite sums agree modulo the word width. No division is
+  // involved, so even coefficients and wrapping sums follow the same rule.
+  // There are 24 labelings and only six possible selectors: each joins two
+  // of the four value groups. Cache those tables for this reading.
+  std::array<unsigned, 4> Order{0, 1, 2, 3};
+  do {
+    if (!Budget.consume())
+      return;
+    const llvm::APInt &Base = Values[Order[0]];
+    if (Base + Values[Order[3]] != Values[Order[1]] + Values[Order[2]])
+      continue;
+    if (!Budget.consume(Weights.size()))
+      return;
+    TruthTable Left = TruthTable::zero(Count);
+    TruthTable Right = TruthTable::zero(Count);
+    for (size_t K = 0; K < Weights.size(); ++K) {
+      if (Weights[K] == Values[Order[1]] || Weights[K] == Values[Order[3]])
+        Left.set(K);
+      if (Weights[K] == Values[Order[2]] || Weights[K] == Values[Order[3]])
+        Right.set(K);
+    }
+    if (!Budget.consume(2 * Count * Weights.size()))
+      return;
+    if (std::popcount(truthTableSupport(Left)) < 2 ||
+        std::popcount(truthTableSupport(Right)) < 2)
+      continue;
+    auto L = selector(Left);
+    if (!L)
+      continue;
+    auto R = selector(Right);
+    if (!R)
+      continue;
+    if (!Budget.consume(Weights.size()))
+      return;
+    SymRef Form =
+        Ctx.mkAdd({Ctx.mkConst(-Base),
+                   Ctx.mkMul(Ctx.mkConst(Values[Order[1]] - Base), *L),
+                   Ctx.mkMul(Ctx.mkConst(Values[Order[2]] - Base), *R)});
+    if (readingCost(Ctx, Form) <= TermBudget && !llvm::is_contained(Out, Form))
+      Out.push_back(Form);
+  } while (std::next_permutation(Order.begin(), Order.end()));
 }
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates) {

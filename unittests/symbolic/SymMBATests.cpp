@@ -115,8 +115,8 @@ TEST(SymMBA, RecoversAnExpressionOverThreeVariables) {
 }
 
 TEST(SymMBA, HandlesACoefficientOtherThanOne) {
-  simplifiesTo("3 * (x ^ y) + 6 * (x & y)", "3 * x + 3 * y");
-  simplifiesTo("(x ^ y) * 2 + (x & y) * 4", "2 * x + 2 * y");
+  simplifiesTo("3 * (x ^ y) + 6 * (x & y)", "3 * (x + y)");
+  simplifiesTo("(x ^ y) * 2 + (x & y) * 4", "2 * (x + y)");
 }
 
 //===----------------------------------------------------------------------===//

@@ -444,6 +444,33 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
   SolveReport Rep;
   Result.Expr = solveRegionOrSplit(Ctx, E, Opts, Budget, Rep);
+  if (!Budget.exhausted() && readingCost(Ctx, Result.Expr) > 2) {
+    SolveReport Factored;
+    SymRef Candidate = solveStructuralFactors(Ctx, E, Opts, Budget, Factored);
+    if (readingCost(Ctx, Candidate) < readingCost(Ctx, Result.Expr)) {
+      Result.Expr = Candidate;
+      Rep.NumAtoms = Factored.NumAtoms;
+      Rep.Outcome = Factored.Outcome;
+      Rep.Evidence = Factored.Evidence;
+    }
+    Rep.BudgetExhausted |= Factored.BudgetExhausted;
+    if (Result.Expr == E && Factored.BudgetExhausted)
+      Rep.Outcome = MBAOutcome::BudgetExhausted;
+  }
+  if (!Budget.exhausted()) {
+    SolveReport Final;
+    SymRef Factored =
+        solveCoefficientFactors(Ctx, Result.Expr, Opts, Budget, Final);
+    if (Factored != Result.Expr) {
+      Result.Expr = Factored;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Final.NumAtoms);
+      Rep.Outcome = MBAOutcome::Rewritten;
+      if (Rep.Evidence != MBAEvidence::Samples)
+        Rep.Evidence = Final.Evidence;
+    } else if (Final.BudgetExhausted && Result.Expr == E) {
+      Rep.Outcome = MBAOutcome::BudgetExhausted;
+    }
+  }
   Result.Work = Budget.used();
   Result.NumAtoms = Rep.NumAtoms;
   Result.Outcome = Rep.Outcome;
@@ -581,11 +608,30 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     } else {
       Skipped = true;
     }
+    if (!Budget.exhausted() && readingCost(Ctx, Rebuilt) > 2) {
+      SolveReport Factored;
+      // Use the original node: a child rewrite may already have expanded one
+      // occurrence of a complemented factor while leaving its products whole.
+      SymRef Candidate = solveStructuralFactors(Ctx, R, Opts, Budget, Factored);
+      if (readingCost(Ctx, Candidate) < readingCost(Ctx, Rebuilt)) {
+        Rebuilt = Candidate;
+        Result.NumAtoms = std::max(Result.NumAtoms, Factored.NumAtoms);
+      }
+      Skipped |= Factored.BudgetExhausted;
+      Complete &= !Factored.BudgetExhausted;
+    }
     Remember(Index, Rebuilt, Complete);
   }
 
-  Result.Work = Budget.used();
   SymRef Out = Solved.lookup(E.index());
+  if (!Budget.exhausted()) {
+    SolveReport Final;
+    Out = solveCoefficientFactors(Ctx, Out, Opts, Budget, Final);
+    Result.NumAtoms = std::max(Result.NumAtoms, Final.NumAtoms);
+    AnySampled |= Final.Evidence == MBAEvidence::Samples;
+    Skipped |= Final.BudgetExhausted;
+  }
+  Result.Work = Budget.used();
 
   // Every layer refused to grow and every layer was checked on its own, but
   // what the caller receives is the composition of all of them, and that is

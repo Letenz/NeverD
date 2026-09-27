@@ -24,7 +24,7 @@ inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
     // the presence of a language annotation alone does not imply a handler.
     if (ObjC.Runtime != ObjCRuntimeKind::AppleNonFragile ||
         ObjC.UsesFragileSetjmp || ObjC.UsesMSVCTables ||
-        !ObjC.LandingPads.empty() || ObjC.RuntimeCalls.empty())
+        !ObjC.LandingPads.empty())
       return false;
     for (const auto &Call : ObjC.RuntimeCalls)
       if (Call.Kind != ObjCRuntimeCallKind::SyncEnter &&
@@ -50,21 +50,21 @@ inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
   return !Metadata.Dwarf || Metadata.Dwarf->LSDAVA == 0;
 }
 
-/// An unwind record can enclose several independently decoded Mach-O entries.
-/// Its Objective-C runtime-call inventory belongs to the whole record, not to
-/// every subentry. Only when the frame has no language dispatch or landing pads
-/// may a complete source projection use the calls present in this entry's
-/// decoded instructions. Keep the structural record and every other language
-/// annotation intact; an incomplete function audit is rejected separately.
+/// An unwind record can enclose several independently decoded Mach-O entries,
+/// including when the first entry begins at the record's start. Its Objective-C
+/// runtime-call inventory belongs to the whole record, not to each function.
+/// Only when the frame has no language dispatch or landing pads may a complete
+/// source projection use the calls in that function's decoded instructions.
+/// Keep the structural record and every other language annotation intact; an
+/// incomplete function audit is rejected separately.
 inline ExceptionFunction sourceUnwindForDecodedSubentry(
     const ExceptionFunction &Metadata, va_t Entry,
     const std::set<va_t> &DecodedInstructions) {
-  if (Entry == Metadata.CodeRange.Begin ||
-      !Metadata.CodeRange.contains(Entry) ||
+  if (!Metadata.CodeRange.contains(Entry) ||
       !DecodedInstructions.count(Entry) || !Metadata.ObjC ||
       Metadata.ObjC->RuntimeCalls.empty() ||
-      !Metadata.ObjC->LandingPads.empty() ||
-      Metadata.ObjC->UsesFragileSetjmp || Metadata.ObjC->UsesMSVCTables)
+      !Metadata.ObjC->LandingPads.empty() || Metadata.ObjC->UsesFragileSetjmp ||
+      Metadata.ObjC->UsesMSVCTables)
     return Metadata;
   ExceptionFunction Scoped = Metadata;
   Scoped.ObjC.reset();
