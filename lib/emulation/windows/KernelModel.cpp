@@ -490,6 +490,9 @@ llvm::Error KernelModel::deleteDevice(uint64_t Address) {
     return E;
   if (auto E = Interrupts.canReleaseRange(Address, Device->second.Size))
     return E;
+  for (const auto &[Handle, Owner] : PoFxDeviceObjects)
+    if (Owner == Address)
+      return modelError("IoDeleteDevice requires PoFxUnregisterDevice first");
   Device->second.DeletePending = true;
   return retireDeviceIfUnreferenced(Address);
 }
@@ -654,6 +657,10 @@ llvm::Expected<uint64_t> KernelModel::call(
 #include "KernelInterruptAPIs.def"
 #undef NEVERD_KERNEL_INTERRUPT_API
     return callInterruptAPI(Name, A);
+#define NEVERD_KERNEL_POFX_API(Symbol, Arity, IRQL) case KernelAPIKind::Symbol:
+#include "KernelPoFxAPIs.def"
+#undef NEVERD_KERNEL_POFX_API
+    return callPoFxAPI(Name, A);
   case KernelAPIKind::MmMapIoSpace:
   case KernelAPIKind::MmMapIoSpaceEx:
     return MMIO.map(A[0], A[1], uint32_t(A[2]),
@@ -1158,6 +1165,9 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   if (Size > UINT64_MAX - Address)
     return modelError("overflowing guest access in Windows model");
   const uint64_t End = Address + Size;
+  if (Address < profile::ProcessorEnvironmentBase + profile::PageSize &&
+      profile::ProcessorEnvironmentBase < End)
+    return modelError("guest access to the private processor view");
   if (Address < profile::UserProbeLimit) {
     if (auto E = validateUserMdlViewAccess(Address, Size, IsWrite))
       return E;
@@ -1228,6 +1238,9 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque process object");
   for (const auto &[Object, Thread] : SystemThreads)
+    if (Address < Object + profile::ProcessTokenSize && Object < End)
+      return modelError("guest access to an opaque thread object");
+  for (const auto &[Thread, Object] : CurrentThreadObjects)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque thread object");
   for (const auto &Attachment : ProcessAttachments)
@@ -1351,6 +1364,7 @@ KernelModel::executionProcessContext() const {
            KernelScheduler::CallbackKind::FrameworkInterruptWorkItem ||
        Scheduler.active()->Kind ==
            KernelScheduler::CallbackKind::FrameworkDeferred ||
+       Scheduler.active()->Kind == KernelScheduler::CallbackKind::PoFx ||
        Scheduler.active()->Kind == KernelScheduler::CallbackKind::SystemThread))
     return ExecutionProcessContext{Attached ? CurrentUserProcessID
                                             : uint32_t(SystemProcessID),

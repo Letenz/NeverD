@@ -61,6 +61,8 @@ build-release/bin/neverd emulate-driver path/to/driver.sys \
 
 配接器使用 Unicorn 的虛擬 TLB 模式保留客體虛擬位址，包括規範的高位核心位址，無須合成 Windows 頁表。初始 RFLAGS 為 `0x202`；軟體裝置設定採用固定的 64 位元組快取列。這些都是本執行情境的明確屬性。行內 x64 CR8 讀取觀察到相同的 `PASSIVE_LEVEL` / `DISPATCH_LEVEL`；CR8 寫入與其他控制暫存器操作仍不受支援。
 
+僅絕對定址、唯讀的 8 位元組 `GS:[0x188]` 存取提供目前邏輯執行緒的借用不透明身分。編譯器產生的 `MOV`、`CMP` 等形式由後端執行原始指令，保留各自的暫存器與旗標語意。同執行緒巢狀回呼維持身分，不同執行緒互異，已建模系統執行緒共用原物件。私有處理器檢視僅提供該欄位，不建模完整 KPCR，也不授予執行緒結構存取權或參考所有權。其他 GS 位移、所有 FS 存取、索引或部分寬度讀取及寫入仍不支援。
+
 未知匯入項目繫結至延遲陷阱。未使用的匯入項目不會阻止執行；執行其 thunk 或讀取未建模的匯出資料值時，會以 `unsupported_api` 停止。不支援的 CPU 環境效果也會明確停止。NeverD 不會用成功傳回值替代未實作的呼叫。格式錯誤的映像或不支援的載入需求會在執行前失敗。
 
 排入佇列的 `DelayedWorkQueue` 工作項目在 `PASSIVE_LEVEL` 執行，客體 DPC 回呼在 `DISPATCH_LEVEL` 接收規定的四個參數。CPU0 在呼叫傳回及阻塞等待邊界進行確定性的合作排程。相對、絕對與週期計時器使用虛擬時間；沒有可執行的框架時，時間推進至下一計時器、等待或取消期限。通知型與同步型事件／計時器保留各自的訊號消耗語意。每個回呼擁有獨立的客體堆疊；多個阻塞框架保留區域變數及完整 CPU 內容，客體記憶體仍共用。Win64 回呼入口將前四個參數放入暫存器，其餘放入堆疊。請求仍循序處理：標記 IRP 為待處理的派送函式必須傳回 `STATUS_PENDING`，且完成後才能開始下一個請求。待處理請求或無限等待沒有可用來源時，以停滯的 `model_error` 停止。指令、記憶體、觀察記錄與實際時間預算仍共用。
@@ -121,7 +123,7 @@ AndWait 關閉取得入口、釋放一次符合的取得，並暫停真正客體
 
 合成 `bus: "register_bank"` 為 PDO 加入明確的固定記憶體資源。若提供 `resources` 陣列，則包含 `id`、`raw_start`、`translated_start`、`length` 和 `registers`；每個暫存器必須有 `offset`、`width`、`access`（`read_only` 或 `read_write`）及初始 `value`。`DriverResources.h`／`DriverResources.def` 定義 C++ 與 JSON 的共用契約。資源 ID 遵循有界 ASCII 識別碼規則，在每個 PDO 內唯一。限制為每 PDO 8 個／總計 32 個資源、每資源 256 個／總計 4096 個暫存器，以及每資源 1–1048576 位元組。僅支援自然對齊、精確 1／2／4 位元組存取，數值必須符合寬度。兩種實體區間皆不可溢位；同 PDO 的原始範圍不可重疊，轉譯範圍則全域不可重疊。空 `registers` 明確表示整組皆不可存取。位址與初值是宣告，不是主機硬體或預設填零的記憶體。`resource_free` 維持省略資源清單與 null START 指標。
 
-START 取得分開配置且唯讀的原始與轉譯 `CM_RESOURCE_LIST`，包含順序對應的 Memory 描述子：一個完整描述子、Internal 介面、匯流排 0、版本／修訂 1、DeviceExclusive 共用方式和 READ_WRITE 範圍旗標。個別暫存器的 RO 權限獨立存在。下層 START 成功後，資源配置先於上層完成回呼可用；每次從 NotStarted／Stopped 發起 START 都以相同固定配置建立新的資源世代。暫存器值只在每個 PDO 初始化一次，解除映射、STOP 和重新啟動皆保留。START 失敗及 STOP／REMOVE 成功時，驅動程式必須在 IRP 最終完成前釋放映射，不會靜默清理。意外移除立即禁止新映射及暫存器存取，但仍允許解除既有映射。提供者實際成功完成裝置 SET 時變更硬體可存取性：D3 阻止存取，D0 僅在資源配置可用時允許存取；D3 仍可建立映射但不可存取暫存器，電源變更不會丟棄映射或重設數值。
+START 取得分開配置且唯讀的原始與轉譯 `CM_RESOURCE_LIST`，包含順序對應的 Memory 描述子：一個完整描述子、Internal 介面、匯流排 0、版本／修訂 1、DeviceExclusive 共用方式和 READ_WRITE 範圍旗標。個別暫存器的 RO 權限獨立存在。下層 START 成功後，資源配置先於上層完成回呼可用；每次從 NotStarted／Stopped 發起 START 都以相同固定配置建立新的資源世代。暫存器值於建立 PDO 時依設定初始化，解除映射、STOP 和重新啟動皆保留。START 失敗及 STOP／REMOVE 成功時，驅動程式必須在 IRP 最終完成前釋放映射，不會靜默清理。意外移除立即禁止新映射及暫存器存取，但仍允許解除既有映射。提供者實際成功完成裝置 SET 時變更硬體可存取性：D3 阻止存取，D0 僅在資源配置可用時允許存取；D3 仍可建立映射但不可存取暫存器，D3hot 保留映射及數值；明確 D3cold 週期於 D0 存取前恢復設定的暫存器值。
 
 `MmMapIoSpace` 支援 NonCached；`MmMapIoSpaceEx` 支援 PAGE_NOCACHE 搭配 PAGE_READONLY 或 PAGE_READWRITE。兩者僅接受單一配置內已宣告的轉譯子範圍，保留頁內偏移。映射別名共用一組暫存器、保有獨立權限，並要求 `MmUnmapIoSpace` 使用完全相同的原始基址與長度。映射數量、視窗或設定的記憶體預算耗盡時傳回 NULL；後端錯誤仍明確失敗。已解除的位址不會因之後建立映射而重新有效。純量與真正 REP 暫存器緩衝區指令經過 CPU MMIO 檢查；未宣告區域、錯誤寬度、不對齊、RO 寫入、跨映射存取及執行都會在影響暫存器前失敗。模型 API 的記憶體存取也必須符合單次對齊的 1／2／4 位元組交易；較大的範圍會明確失敗，不會拆成多次暫存器存取。不實作任意實體 RAM、資源重新平衡、連接埠、其他 DMA 介面或一般硬體行為。
 
@@ -163,15 +165,21 @@ READ／WRITE／IOCTL 可宣告 `interrupt_events`，每項指定 `after_100ns`�
 
 [完整電源情境](../examples/driver-power-scenario.json) 可透過 `--scenario` 執行真正範例，包含啟動、系統查詢／睡眠／喚醒、移除及三個明確子回應。
 
-KMDF 1.33 支援使用精確的 1.33.0 ABI：458 個函式槽具有穩定的客體識別，下列 114 個 API 實作了執行語義。`WdfVersionBind` 與 `WdfVersionUnbind` 在真實 WDK `FxDriverEntry` 包裝函式前後管理客體繫結。`WdfGetDriver` 讀取公用驅動程式全域結構。非 PnP 驅動程式、一般物件、控制裝置、佇列和傳入請求共用具型別內容、參考計數，以及實際執行的清理／銷毀／卸載回呼。除了鎖 API、自動序列化回呼、中斷 DDI 及下文明列支援其他 IRQL 的要求／物件操作，已建模的框架呼叫與回呼仍要求 `PASSIVE_LEVEL`；清理完成後新增參考仍不在此設定的支援範圍內。未建模的函式槽、`WdfLdrQueryInterface`、類別擴充和 UMDF 會明確停止。
+KMDF 1.33 支援使用精確的 1.33.0 ABI：458 個函式槽具有穩定的客體識別，下列 116 個 API 實作了執行語義。`WdfVersionBind` 與 `WdfVersionUnbind` 在真實 WDK `FxDriverEntry` 包裝函式前後管理客體繫結。`WdfGetDriver` 讀取公用驅動程式全域結構。非 PnP 驅動程式、一般物件、控制裝置、佇列和傳入請求共用具型別內容、參考計數，以及實際執行的清理／銷毀／卸載回呼。除了鎖 API、自動序列化回呼、中斷 DDI 及下文明列支援其他 IRQL 的要求／物件操作，已建模的框架呼叫與回呼仍要求 `PASSIVE_LEVEL`；清理完成後新增參考仍不在此設定的支援範圍內。未建模的函式槽、`WdfLdrQueryInterface`、類別擴充和 UMDF 會明確停止。
 
 中斷 API: `WdfInterruptCreate`, `WdfInterruptQueueDpcForIsr`, `WdfInterruptQueueWorkItemForIsr`, `WdfInterruptSynchronize`, `WdfInterruptAcquireLock`, `WdfInterruptReleaseLock`, `WdfInterruptEnable`, `WdfInterruptDisable`, `WdfInterruptWdmGetInterrupt`, `WdfInterruptGetInfo`, `WdfInterruptGetDevice`.
 
-框架中斷物件共用已指派的線路中斷或 MSI 資源及內部中斷鎖。ISR 與同步回呼在指派的 DIRQL 執行，被動中斷則在 `PASSIVE_LEVEL` 執行；`WdfInterruptGetInfo` 如實回報被動 IRQL。DPC 在 `DISPATCH_LEVEL` 執行，工作項目在 `PASSIVE_LEVEL` 執行。尚在佇列中的重複請求會合併，暫停與恢復保留回呼所有權直到返回。上電於 D0Entry 後連接並啟用中斷；斷電先停用並斷線，再等待延後回呼排空，最後執行 D0Exit 與資源釋放。明確啟用／停用執行真正的驅動回呼，不憑空產生硬體中斷。喚醒中斷及保留的 inactive 連線仍不支援；失敗裝置自動重新列舉仍未建模。
+框架中斷共用已指派的線路／MSI 資源、連線及鎖；ISR 使用 DIRQL 或 `PASSIVE_LEVEL`，`WdfInterruptGetInfo` 如實回報，DPC／工作項目分別使用 `DISPATCH_LEVEL`／`PASSIVE_LEVEL`。暫停回呼保留所有權直到返回，排隊重複項會合併。普通中斷於 D0Entry 後啟用，D0Exit 前停用並排空回呼。`ReportInactiveOnPowerDown` 保留 inactive 連線，`WdfInterruptReportInactive`／`WdfInterruptReportActive` 使用同一狀態管理，最終釋放硬體才斷線。被動 `CanWakeDevice` 要求指派資源的 `wake_capable: true` 且已 arm，Dx 保持啟用而不回報 inactive。明確脈衝請求喚醒，ISR 等待實際 D0 與成功 D0Entry；不虛構硬體信號。
 
 鎖 API：`WdfSpinLockCreate`, `WdfSpinLockAcquire`, `WdfSpinLockRelease`, `WdfWaitLockCreate`, `WdfWaitLockAcquire`, `WdfWaitLockRelease`, `WdfObjectAcquireLock`, `WdfObjectReleaseLock`。外部 `WDFSPINLOCK`／`WDFWAITLOCK` 與中斷共用 executive／dispatcher 鎖狀態，刪除會檢查持有者、等待者及父物件參考。自旋鎖提升並還原 IRQL；等待鎖由實際執行緒擁有，等待／持有期間停用一般核心 APC，支援無限、相對、絕對與零逾時。零逾時要求低於 `DISPATCH_LEVEL`，其他等待要求 `PASSIVE_LEVEL`。中斷使用的自旋鎖必須透過中斷鎖 API。裝置／佇列同步範圍依繼承執行層級序列化 I/O、檔案、取消和中斷延後回呼；被動鎖可等待，dispatch 鎖不可阻塞。自動回呼允許同執行緒巢狀執行，明確物件鎖不可遞迴；DPC／工作項目必須符合父物件執行層級。
 
-電源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驅動管理的閒置策略要求明確的正毫秒逾時、D3hot、`IdleCannotWake`／`IdleCanWake`、無使用者覆寫及 `ExcludeD3Cold=True`。S0／Sleeping3 以實際保留的 `WAIT_WAKE` IRP 執行 arm、triggered、disarm 回呼。StopIdle／ResumeIdle 參考必須配對且可巢狀；TRUE 在 `PASSIVE_LEVEL` 以真實呼叫框架等待 D0，FALSE／ResumeIdle／設定 API 允許至 `DISPATCH_LEVEL`，註冊回呼要求 `PASSIVE_LEVEL`。受電源管理佇列回呼或斷電期間同步 StopIdle 會報告死結。Sx 喚醒仍需明確的系統 Working 請求。PoFx、系統管理逾時、D3cold、USB、子裝置喚醒、硬體喚醒中斷及保留 inactive 中斷連線不支援。
+電源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驅動管理的閒置策略要求明確的正毫秒逾時、`IdleCannotWake`／`IdleCanWake` 及無使用者覆寫。S0／Sleeping3 以實際保留的 `WAIT_WAKE` IRP 執行 arm、triggered、disarm 回呼。StopIdle／ResumeIdle 參考必須配對且可巢狀；TRUE 在 `PASSIVE_LEVEL` 以真實呼叫框架等待 D0，FALSE／ResumeIdle／設定 API 允許至 `DISPATCH_LEVEL`，註冊回呼要求 `PASSIVE_LEVEL`。受電源管理佇列回呼或斷電期間同步 StopIdle 會報告死結。Sx 喚醒仍需明確的系統 Working 請求。USB 閒置策略、子裝置喚醒、自訂 KMDF PoFx 元件、一般 PEP／平台策略及失敗裝置自動重新列舉仍不支援。
+
+WDM PoFx v1 複製元件／閒置狀態，管理配對參考及真實回呼；進入、確認與返回各自保留所有權，阻塞呼叫延續原執行緒。API：`PoFxRegisterDevice`, `PoFxUnregisterDevice`, `PoFxStartDevicePowerManagement`, `PoFxActivateComponent`, `PoFxIdleComponent`, `PoFxCompleteIdleCondition`, `PoFxCompleteIdleState`, `PoFxCompleteDevicePowerNotRequired`, `PoFxReportDevicePoweredOn`, `PoFxSetComponentLatency`, `PoFxSetComponentResidency`, `PoFxSetComponentWake`, `PoFxSetDeviceIdleTimeout`。`SystemManagedIdleTimeout`／`SystemManagedIdleTimeoutWithHint` 使用框架擁有的單 F0 元件，STOP／REMOVE 取消註冊，重啟重新註冊。idle 或逾時提示不會虛構 OS 決策。`power_policy_events` 的 `component_idle_state` 要求 `component` 與 `state`，`power_not_required` 不接受兩欄位；決策要求目前註冊與捕獲的 START 世代，延遲、駐留及喚醒提示限制轉換。PoFx v2／v3、定向電源管理與任意平台電源控制未支援。
+
+真正 WDK 範例 `driver_wdm_pofx.c` 透過選用 CMake 路徑 `NEVERD_WDM_POFX_FIXTURE`／`NEVERD_WDM_POFX_CFG_FIXTURE` 指定一般／CFG 映像；[PoFx 情境](../examples/driver-pofx-scenario.json)執行 F1 後返回 F0。缺少映像時明確略過，執行證據僅來自 Linux。
+
+選用 PDO `d3cold: {supported, enabled_by_default, wake_s0, wake_sx}` 的四個布林值描述獨立電源，冷喚醒還要求對應的 `wake_capabilities`。`ExcludeD3Cold` True 保持 D3hot，False 允許明確支援的冷狀態，Default 依提供者預設；缺少冷喚醒能力時保持 D3hot。只有成功 D3hot→D3cold 才改變電源代數，D0 存取前恢復設定的暫存器值；資源世代與 MMIO 別名保留。MMIO／DMA 仍需實際 D0；未結束 DMA 交易、映射或通道所有權阻止冷斷電，閒置配接器與共用 RAM 緩衝區可保留。不推斷共用電源軌或韌體能力。
 
 場景以布林值宣告 PDO `wake_capabilities: {s0, sx}`；READ／WRITE／IOCTL 的 `power_policy_events: [{device_id, after_100ns, action}]` 支援 `idle`／`active`／`wake`。報告保留捕獲的 `device_epoch`，不重綁至重新啟動。D0／D3 消費 `requested_device_power` 並報告 `framework_power_policy`；獨立 `framework_wait_wake` 保留真實 WAIT_WAKE 至喚醒或取消，取消完成是合法結果。[完整場景](../examples/driver-kmdf-power-policy-scenario.json)。
 
@@ -382,7 +390,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令計數。它保留停止前收集的 API 呼叫及可觀察狀態，包括裝置物件與驅動程式回呼位址。客體位址以十六進位字串表示，避免 JSON 使用端遺失 64 位元精確度。
 
-`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v76`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
+`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v77`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
 
 工作項目觀察記錄使用 `callback:N` 階段。待處理請求的 `dispatch_status` 保留 `STATUS_PENDING`，最終完成狀態分別記錄於 `io_status`，並據此計算該請求對 `scenario_success` 的影響。
 

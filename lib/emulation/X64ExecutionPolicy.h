@@ -30,11 +30,17 @@ public:
   X64ExecutionPolicy &operator=(const X64ExecutionPolicy &) = delete;
   ~X64ExecutionPolicy();
   llvm::Error initialize();
-  /// An admitted CR8 read requires an exact model action. The decoder names
-  /// its full-width destination; the executor supplies the authoritative CR8.
+  struct Action {
+    enum class Kind { ReadIRQL, ReadCurrentThread };
+    Kind Source;
+    std::optional<X64Register> Destination;
+    bool operator==(const Action &) const = default;
+  };
+  /// Environment reads require an exact model action. CR8 names its full-width
+  /// destination; current-thread reads require the modeled processor field.
   /// Ordinary admitted instructions return nullopt and execute in the backend.
-  llvm::Expected<std::optional<X64Register>>
-  inspect(llvm::ArrayRef<uint8_t> Bytes, uint64_t PC);
+  llvm::Expected<std::optional<Action>> inspect(llvm::ArrayRef<uint8_t> Bytes,
+                                                uint64_t PC);
   llvm::Error validate(llvm::ArrayRef<uint8_t> Bytes, uint64_t PC);
 
 private:

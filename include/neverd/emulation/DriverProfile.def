@@ -32,6 +32,8 @@ NEVERD_DRIVER_PROFILE(UserAliasBase, 0x75000000)
 NEVERD_DRIVER_PROFILE(UserAliasSize, 0x1000000)
 NEVERD_DRIVER_PROFILE(KernelArenaBase, 0x70000000)
 NEVERD_DRIVER_PROFILE(KernelArenaSize, 0x100000)
+NEVERD_DRIVER_PROFILE(ProcessorEnvironmentBase,
+                      KernelArenaBase + KernelArenaSize)
 NEVERD_DRIVER_PROFILE(WorkItemTokenSize, 16)
 NEVERD_DRIVER_PROFILE(ProcessTokenSize, 16)
 NEVERD_DRIVER_PROFILE(DelayedWorkQueue, 1)

@@ -1,0 +1,18 @@
+//===- DriverD3Cold.def - Explicit cold power provider fields -----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Canonical scenario field names for dedicated cold-power providers.
+///
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_DRIVER_D3COLD_FIELD
+NEVERD_DRIVER_D3COLD_FIELD(D3Cold, "d3cold")
+NEVERD_DRIVER_D3COLD_FIELD(Supported, "supported")
+NEVERD_DRIVER_D3COLD_FIELD(EnabledByDefault, "enabled_by_default")
+NEVERD_DRIVER_D3COLD_FIELD(WakeS0, "wake_s0")
+NEVERD_DRIVER_D3COLD_FIELD(WakeSx, "wake_sx")
+#endif

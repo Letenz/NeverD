@@ -363,6 +363,12 @@ KernelModel::callInterruptAPI(llvm::StringRef Name,
 llvm::Error KernelModel::beginGuestCall(GuestCallToken Token) {
   if (!Token.ID)
     return apiError("guest callback has no continuation identity");
+  if (Token.Owner == GuestCallOwner::PoFx) {
+    const auto *Call = PoFx.callback(Token.ID);
+    if (Call && Call->Thread && Call->Thread != CurrentThreadKey)
+      return apiError("PoFx callback must enter on its blocking caller thread");
+    return PoFx.beginCallback(Token.ID);
+  }
   if (Token.Owner == GuestCallOwner::DMA)
     return beginDMACall(Token.ID);
   if (Token.Owner != GuestCallOwner::Interrupt)

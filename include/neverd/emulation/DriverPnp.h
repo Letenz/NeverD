@@ -13,6 +13,7 @@
 #ifndef NEVERD_EMULATION_DRIVERPNP_H
 #define NEVERD_EMULATION_DRIVERPNP_H
 
+#include "neverd/emulation/DriverD3Cold.h"
 #include "neverd/emulation/DriverDMA.h"
 #include "neverd/emulation/DriverInterrupts.h"
 #include "neverd/emulation/DriverPowerPolicy.h"
@@ -127,6 +128,8 @@ struct DriverPnpDevice {
   /// Optional explicit bus-master capability and independent logical domain.
   std::optional<DriverDmaConfig> Dma = std::nullopt;
   std::optional<DriverWakeCapabilities> WakeCapabilities;
+  /// Omission preserves a powered D3hot bus; cold power is never inferred.
+  std::optional<DriverD3ColdCapabilities> D3Cold;
 };
 
 struct DriverPnpOperation {

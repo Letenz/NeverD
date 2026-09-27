@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../DriverScenario.h"
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
@@ -13,6 +14,27 @@ namespace {
 llvm::Error policyError(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "power policy: " + Text);
+}
+llvm::Expected<uint64_t> componentPolicyEpoch(const KernelResources &Resources,
+                                              const KernelFramework *Framework,
+                                              const KernelPoFx &PoFx,
+                                              uint64_t PDO) {
+  const auto Handle = PoFx.handleForPDO(PDO);
+  if (!Handle)
+    return policyError("PoFx decision requires a live registration");
+  if (PoFx.registration(*Handle)->InternalCallbacks) {
+    if (!Framework)
+      return policyError("internal registration lost its framework owner");
+    return Framework->powerPolicyEpoch(PDO);
+  }
+  if (const auto *Resource = Resources.find(PDO)) {
+    if (!Resource->Present || !Resource->Assigned)
+      return policyError("PoFx decision requires an assigned START epoch");
+    return Resource->Epoch;
+  }
+  // Resource-free WDM devices have no resource assignment epoch. Their unique
+  // captured registration is retired before a successful STOP or REMOVE.
+  return 0;
 }
 } // namespace
 
@@ -39,6 +61,26 @@ void KernelModel::configureFrameworkPowerPolicyHost() {
   };
   Host.FinishWake = [this](uint64_t Device, bool Triggered) {
     return finishFrameworkWake(Device, Triggered);
+  };
+  Host.ManagedIdle = [this](uint64_t Device, bool Idle, uint64_t Timeout) {
+    return setFrameworkPoFxIdle(Device, Idle, Timeout);
+  };
+  Host.RemoveManaged = [this](uint64_t Device) {
+    return retireFrameworkPoFx(Device);
+  };
+  Host.ColdAllowed = [this](uint64_t Device, bool RequireWake, bool Sleeping,
+                            uint32_t Exclude) -> llvm::Expected<bool> {
+    auto PDO = pnpDeviceForRoute(Device);
+    if (!PDO)
+      return PDO.takeError();
+    const auto *Resource = Resources.find(*PDO);
+    if (!Resource || !Resource->D3Cold || !Resource->D3Cold->Supported ||
+        Exclude == power_policy::True ||
+        (Exclude == power_policy::UseDefault &&
+         !Resource->D3Cold->EnabledByDefault))
+      return false;
+    return !RequireWake ||
+           (Sleeping ? Resource->D3Cold->WakeSx : Resource->D3Cold->WakeS0);
   };
   Framework->setPowerPolicyHost(std::move(Host));
 }
@@ -161,15 +203,38 @@ llvm::Error KernelModel::canArmPowerPolicyEvents(
   if (Events.size() > DriverPowerPolicyEventLimit - PowerPolicyEvents.size())
     return policyError("event limit exceeded");
   for (const auto &Event : Events) {
+    if (auto E = validateDriverPowerPolicyEvent(Event))
+      return E;
     auto Provider = PnpDevices.find(Event.DeviceID);
-    if (!Framework || Provider == PnpDevices.end() ||
-        !Provider->second.FrameworkAdd || !Provider->second.AddDeviceStatus ||
+    if (Provider == PnpDevices.end() || !Provider->second.AddDeviceStatus ||
         (*Provider->second.AddDeviceStatus & profile::NTStatusFailureMask))
-      return policyError(
-          "event requires a successfully added framework device");
-    auto Epoch = Framework->powerPolicyEpoch(Provider->second.PDO);
-    if (!Epoch)
-      return Epoch.takeError();
+      return policyError("event requires a successfully added device");
+    if (isPoFxPowerPolicyAction(Event.Action)) {
+      const uint64_t PDO = Provider->second.PDO;
+      const auto Handle = PoFx.handleForPDO(PDO);
+      auto State = Lifecycle.snapshot(PDO);
+      if (!State)
+        return State.takeError();
+      if (State->Pnp != DevicePnpState::Started || !Handle)
+        return policyError("PoFx decision requires a registered START epoch");
+      auto Epoch = componentPolicyEpoch(Resources, Framework.get(), PoFx, PDO);
+      if (!Epoch)
+        return Epoch.takeError();
+      if (Event.Action == DriverPowerPolicyAction::ComponentIdleState) {
+        const auto &Components = PoFx.registration(*Handle)->Components;
+        if (*Event.Component >= Components.size() ||
+            *Event.State >= Components[*Event.Component].IdleStates.size())
+          return policyError(
+              "PoFx decision names an unknown component or state");
+      }
+    } else {
+      if (!Framework || !Provider->second.FrameworkAdd)
+        return policyError(
+            "event requires a successfully added framework device");
+      auto Epoch = Framework->powerPolicyEpoch(Provider->second.PDO);
+      if (!Epoch)
+        return Epoch.takeError();
+    }
     if (Event.After100ns > uint64_t(INT64_MAX) - Scheduler.now100ns())
       return policyError("event deadline exceeds the virtual clock range");
     if (Event.Action == DriverPowerPolicyAction::Wake &&
@@ -186,20 +251,30 @@ KernelModel::armPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events,
   for (size_t I = 0; I < Events.size(); ++I) {
     const auto &Event = Events[I];
     const auto &Provider = PnpDevices.at(Event.DeviceID);
-    auto Epoch = Framework->powerPolicyEpoch(Provider.PDO);
-    if (!Epoch)
-      return Epoch.takeError();
+    uint64_t Epoch = 0, Handle = 0;
+    if (isPoFxPowerPolicyAction(Event.Action)) {
+      auto Captured =
+          componentPolicyEpoch(Resources, Framework.get(), PoFx, Provider.PDO);
+      if (!Captured)
+        return Captured.takeError();
+      Epoch = *Captured;
+      Handle = *PoFx.handleForPDO(Provider.PDO);
+    } else {
+      auto Captured = Framework->powerPolicyEpoch(Provider.PDO);
+      if (!Captured)
+        return Captured.takeError();
+      Epoch = *Captured;
+    }
     PowerPolicyEvents.push_back(
-        {Provider.PDO, *Epoch, Result.PowerPolicyEvents.size()});
+        {Provider.PDO, Epoch, Result.PowerPolicyEvents.size(), Handle});
     Result.PowerPolicyEvents.push_back(
         {uint32_t(SourceIndex), uint32_t(I), Event.DeviceID, Event.Action,
-         Scheduler.now100ns() + Event.After100ns, std::nullopt, *Epoch});
+         Scheduler.now100ns() + Event.After100ns, std::nullopt, Epoch,
+         Event.Component, Event.State});
   }
   return llvm::Error::success();
 }
 llvm::Error KernelModel::processPowerPolicyEvents() {
-  if (!Framework)
-    return llvm::Error::success();
   for (auto &Event : PowerPolicyEvents) {
     auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
     if (Observation.OccurredAt100ns ||
@@ -207,11 +282,35 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
       continue;
     if (!isProviderDevice(Event.PDO))
       return policyError("event reached a retired provider");
-    auto Epoch = Framework->powerPolicyEpoch(Event.PDO);
-    if (!Epoch)
-      return Epoch.takeError();
-    if (*Epoch != Event.Epoch)
-      return policyError("event belongs to an earlier START epoch");
+    if (isPoFxPowerPolicyAction(Observation.Action)) {
+      auto Epoch =
+          componentPolicyEpoch(Resources, Framework.get(), PoFx, Event.PDO);
+      if (!Epoch)
+        return Epoch.takeError();
+      auto State = Lifecycle.snapshot(Event.PDO);
+      if (!State)
+        return State.takeError();
+      if (State->Pnp != DevicePnpState::Started || *Epoch != Event.Epoch)
+        return policyError("event belongs to an earlier START epoch");
+      if (PoFx.handleForPDO(Event.PDO) != Event.PoFxHandle)
+        return policyError("event belongs to a retired PoFx registration");
+      const auto *Resource = Resources.find(Event.PDO);
+      if (State->DevicePower != DevicePowerState::D0 ||
+          (Resource &&
+           (Resource->Power != DevicePowerState::D0 || Resource->Cold)))
+        return policyError(
+            "PoFx decision requires a physically powered device");
+      if (auto E = PoFx.process(Scheduler.now100ns()))
+        return E;
+    } else {
+      if (!Framework)
+        return policyError("framework event lost its power-policy owner");
+      auto Epoch = Framework->powerPolicyEpoch(Event.PDO);
+      if (!Epoch)
+        return Epoch.takeError();
+      if (*Epoch != Event.Epoch)
+        return policyError("event belongs to an earlier START epoch");
+    }
     llvm::Error E = llvm::Error::success();
     switch (Observation.Action) {
     case DriverPowerPolicyAction::Idle:
@@ -223,11 +322,22 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
     case DriverPowerPolicyAction::Wake:
       E = Framework->powerPolicyWake(Event.PDO);
       break;
+    case DriverPowerPolicyAction::ComponentIdleState:
+      E = PoFx.requestIdleState(Event.PoFxHandle, *Observation.Component,
+                                *Observation.State);
+      break;
+    case DriverPowerPolicyAction::PowerNotRequired:
+      E = PoFx.requestDevicePowerNotRequired(Event.PoFxHandle);
+      break;
     }
     if (E)
       return E;
     Observation.OccurredAt100ns = Scheduler.now100ns();
   }
+  if (auto E = queuePoFxCallbacks())
+    return E;
+  if (!Framework)
+    return llvm::Error::success();
   if (auto E = Framework->processPowerPolicy())
     return E;
   return completeFrameworkTransitionIfReady();

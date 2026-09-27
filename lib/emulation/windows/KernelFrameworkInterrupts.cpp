@@ -37,7 +37,10 @@ bool isInterruptAPI(llvm::StringRef Name) {
          Name == api::WdfInterruptReleaseLock ||
          Name == api::WdfInterruptEnable || Name == api::WdfInterruptDisable ||
          Name == api::WdfInterruptWdmGetInterrupt ||
-         Name == api::WdfInterruptGetInfo || Name == api::WdfInterruptGetDevice;
+         Name == api::WdfInterruptGetInfo ||
+         Name == api::WdfInterruptGetDevice ||
+         Name == api::WdfInterruptReportActive ||
+         Name == api::WdfInterruptReportInactive;
 }
 } // namespace
 
@@ -87,9 +90,13 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
       *Inactive > InterruptTriDefault || (*DPC && *WorkItem) ||
       (*Passive && *SpinLock) || (!*Passive && *WaitLock))
     return InvalidParameter;
-  if (*Wake || *Inactive == InterruptTriTrue)
-    return invalid("wake-armed and retained inactive interrupt connections are "
-                   "not modeled");
+  if (*Wake && (!*Passive || !D.PowerPolicyOwner))
+    return InvalidParameter;
+  if (*Wake && (!D.Policy.Idle || !D.Policy.Idle->Enabled ||
+                !D.Policy.Idle->CanWake || !InterruptsHost.HasPendingWake))
+    return invalid("wake interrupts require enabled idle wake policy");
+  if (*Inactive == InterruptTriTrue && !InterruptsHost.SetActive)
+    return invalid("retained interrupt connection host is unavailable");
   // FloatingSave is ignored by Windows on x64; register state is preserved by
   // the execution backend for both ordinary and interrupt callbacks.
   auto Validation = attributes(A[3], AttributesUse::Object);
@@ -139,6 +146,9 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   if ((Preparing && (!*Raw || !*Translated)) ||
       (!Preparing && (*Raw || *Translated || D.HardwarePrepared || D.InD0)))
     return InvalidDeviceState;
+  if (*Wake && !Preparing)
+    return invalid(
+        "wake interrupts require assigned prepare-hardware resources");
   Interrupt Item;
   Item.Device = A[1];
   Item.AssociatedObject = Attrs.Parent;
@@ -149,8 +159,11 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   Item.WorkItem = *WorkItem;
   Item.Enable = *Enable;
   Item.Disable = *Disable;
+  Item.ReportInactiveOnPowerDown = *Inactive == InterruptTriTrue;
   Item.Selection.PDO = D.PDO;
   Item.Selection.Passive = bool(*Passive);
+  Item.Selection.CanWake = bool(*Wake);
+  Item.CanWake = bool(*Wake);
   if (ExternalLock) {
     if (*Passive)
       Item.Selection.WaitLock = LockObjects.at(ExternalLock).Storage;
@@ -190,6 +203,13 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   if (!InterruptsHost.Connect || !InterruptsHost.Describe ||
       !InterruptsHost.Disconnect || !InterruptsHost.PrepareCall)
     return invalid("framework interrupt host is unavailable");
+  if (*Wake) {
+    auto Assigned = InterruptsHost.Describe(Item.Selection);
+    if (!Assigned)
+      return Assigned.takeError();
+    if (!*Assigned)
+      return invalid("wake interrupt has no assigned hardware resource");
+  }
   if (auto E = writable(A[4], 8))
     return E;
   if (auto E = Memory.writeInteger(A[4], 0, 8))
@@ -252,6 +272,20 @@ KernelFramework::callInterrupt(llvm::StringRef Name, Binding &B,
     return std::optional<uint64_t>{I.Device};
   if (Name == api::WdfInterruptWdmGetInterrupt)
     return std::optional<uint64_t>{I.Connection ? I.Connection->Token : 0};
+  if (Name == api::WdfInterruptReportActive ||
+      Name == api::WdfInterruptReportInactive) {
+    if (IRQL > scheduler::DispatchLevel)
+      return invalid(
+          "interrupt activity reports require IRQL <= DISPATCH_LEVEL");
+    if (!I.Connection || !InterruptsHost.SetActive)
+      return invalid("interrupt activity reports require a live connection");
+    if (I.ChangingState)
+      return invalid("interrupt activity report overlaps a state callback");
+    if (auto E = InterruptsHost.SetActive(
+            I.Connection->Token, Name == api::WdfInterruptReportActive))
+      return E;
+    return std::optional<uint64_t>{0};
+  }
   if (Name == api::WdfInterruptGetInfo) {
     if (IRQL > scheduler::DispatchLevel)
       return invalid("WdfInterruptGetInfo requires IRQL <= DISPATCH_LEVEL");
@@ -395,6 +429,30 @@ KernelFramework::finishInterruptCallback(uint64_t Token, uint64_t Result) {
                      : std::optional<uint64_t>{ReturnValue};
 }
 
+bool KernelFramework::canDeliverWakeInterrupt(uint64_t PDO) const {
+  const auto Handle = PnpDeviceHandles.find(PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return false;
+  const auto Device = Devices.find(Handle->second);
+  if (Device == Devices.end() || !Device->second.InD0 ||
+      !Device->second.ResourcesActive)
+    return false;
+  return std::any_of(
+      PnpTransitions.begin(), PnpTransitions.end(), [&](const auto &Entry) {
+        const auto &Transition = Entry.second;
+        return Transition.Device == Handle->second &&
+               Transition.Current.Phase == PnpPhase::WakeInterrupts &&
+               Transition.WaitingForWakeInterrupts &&
+               !(Transition.Status & profile::NTStatusFailureMask);
+      });
+}
+
+bool KernelFramework::hasPendingWakeInterrupts(uint64_t Device) const {
+  const auto Entry = Devices.find(Device);
+  return Entry != Devices.end() && InterruptsHost.HasPendingWake &&
+         InterruptsHost.HasPendingWake(Entry->second.PDO);
+}
+
 bool KernelFramework::hasDeferredInterrupts(uint64_t Device) const {
   return std::any_of(InterruptObjects.begin(), InterruptObjects.end(),
                      [&](const auto &Entry) {
@@ -405,15 +463,23 @@ bool KernelFramework::hasDeferredInterrupts(uint64_t Device) const {
                      });
 }
 
-llvm::Error KernelFramework::disconnectInterrupts(uint64_t Device) {
+llvm::Error KernelFramework::disconnectInterrupts(uint64_t Device,
+                                                  bool RetainInactive) {
   for (auto &[Handle, I] : InterruptObjects) {
     if (I.Device != Device || !I.Connection)
       continue;
     if (I.ChangingState)
       return invalid("interrupt disconnect overlaps a state callback");
-    if (auto E = InterruptsHost.Disconnect(I.Connection->Token))
-      return E;
-    I.Connection.reset();
+    if (RetainInactive && I.CanWake)
+      continue;
+    if (RetainInactive && I.ReportInactiveOnPowerDown) {
+      if (auto E = InterruptsHost.SetActive(I.Connection->Token, false))
+        return E;
+    } else {
+      if (auto E = InterruptsHost.Disconnect(I.Connection->Token))
+        return E;
+      I.Connection.reset();
+    }
     I.Enabled = false;
   }
   return llvm::Error::success();
@@ -426,6 +492,8 @@ llvm::Expected<bool> KernelFramework::advancePnpInterrupts(uint64_t Token,
     if (I.Device != Transition.Device || Handle <= Transition.CurrentInterrupt)
       continue;
     Transition.CurrentInterrupt = Handle;
+    if (!Enable && !Transition.ReleasesHardware && I.CanWake)
+      continue;
     if (Enable && !I.Connection) {
       if (I.Selection.SpinLock) {
         uint8_t MaximumIRQL = 0;
@@ -448,6 +516,9 @@ llvm::Expected<bool> KernelFramework::advancePnpInterrupts(uint64_t Token,
     }
     if (!I.Connection || I.Enabled == Enable)
       continue;
+    if (Enable && I.ReportInactiveOnPowerDown)
+      if (auto E = InterruptsHost.SetActive(I.Connection->Token, true))
+        return E;
     const uint64_t Routine = Enable ? I.Enable : I.Disable;
     if (!Routine) {
       I.Enabled = Enable;
@@ -461,7 +532,8 @@ llvm::Expected<bool> KernelFramework::advancePnpInterrupts(uint64_t Token,
   }
   Transition.CurrentInterrupt = 0;
   if (!Enable)
-    if (auto E = disconnectInterrupts(Transition.Device))
+    if (auto E = disconnectInterrupts(Transition.Device,
+                                      !Transition.ReleasesHardware))
       return E;
   return false;
 }

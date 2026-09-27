@@ -28,6 +28,11 @@ struct KernelPowerPolicy {
     bool CanWake = false;
     bool PowerUpOnSystemWake = false;
     uint64_t Timeout100ns = 0;
+    uint32_t TimeoutType = power_policy::DriverManagedTimeout;
+    bool systemManaged() const {
+      return TimeoutType != power_policy::DriverManagedTimeout;
+    }
+    uint32_t ExcludeD3Cold = power_policy::True;
   };
   struct WakeSettings {
     bool Enabled = false;
@@ -46,6 +51,7 @@ struct KernelPowerPolicy {
   bool IdlePowerDown = false;
   bool PowerUpRequested = false;
   bool DevicePowerPending = false;
+  bool ManagedPowerNotRequired = false;
   std::optional<uint32_t> Failure;
 };
 } // namespace neverd::emulation

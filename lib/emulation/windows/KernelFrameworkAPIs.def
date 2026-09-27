@@ -111,6 +111,8 @@ NEVERD_FRAMEWORK_API(WdfInterruptEnable, 2)
 NEVERD_FRAMEWORK_API(WdfInterruptDisable, 2)
 NEVERD_FRAMEWORK_API(WdfInterruptWdmGetInterrupt, 2)
 NEVERD_FRAMEWORK_API(WdfInterruptGetInfo, 3)
+NEVERD_FRAMEWORK_API(WdfInterruptReportActive, 2)
+NEVERD_FRAMEWORK_API(WdfInterruptReportInactive, 2)
 NEVERD_FRAMEWORK_API(WdfInterruptGetDevice, 2)
 
 NEVERD_FRAMEWORK_API(WdfSpinLockCreate, 3)

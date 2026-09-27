@@ -241,6 +241,19 @@ protected:
   }
 };
 
+TEST_F(DriverKernelDMAChannel, PowerDownRequiresReturnedChannelRelease) {
+  const auto Channel = allocate();
+  bad(Model.canPowerDownPDO(PDO), "DMA channel");
+  good(Model.beginCallback(Channel.Request.Object));
+  returned(Channel.Request.Object, dma::DeallocateObjectKeepRegisters);
+  bad(Model.canPowerDownPDO(PDO), "DMA channel");
+  auto Release = take(Model.planFreeRegisters(AdapterID, Channel.Request.Object,
+                                              Channel.Request.Registers));
+  good(Model.freeRegisters(Release));
+  good(Model.canPowerDownPDO(PDO));
+  ASSERT_NE(Model.adapter(AdapterID), nullptr);
+}
+
 TEST_F(DriverKernelDMAChannel, SharedQuotaPromotesChannelBeforeLaterSG) {
   const auto Common = publish(plan(1, Page, true));
   const auto SG = publish(plan(1, Page));

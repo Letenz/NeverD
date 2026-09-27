@@ -344,6 +344,30 @@ llvm::Error KernelDMA::finishCallback(uint64_t Object) {
   return llvm::Error::success();
 }
 
+llvm::Error KernelDMA::canPowerDownPDO(uint64_t PDO) const {
+  for (const auto &[ID, Callback] : Callbacks) {
+    (void)ID;
+    if (Callback.Arguments.PDO == PDO && !Callback.Returned)
+      return dmaError("power-down has an accepted DMA callback");
+  }
+  for (const auto &[ID, Map] : Mappings) {
+    (void)ID;
+    if (Map.PDO == PDO && !Map.Common)
+      return dmaError("power-down has an outstanding packet DMA mapping");
+  }
+  for (const auto &[ID, Channel] : Channels) {
+    (void)ID;
+    if (Channel.PDO == PDO && (!Channel.Released || !Channel.Returned))
+      return dmaError("power-down has an outstanding DMA channel");
+  }
+  for (const auto &[ID, Event] : Events) {
+    (void)ID;
+    if (Event.PDO == PDO)
+      return dmaError("power-down has an explicit DMA transaction");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error KernelDMA::canReleasePDO(uint64_t PDO) const {
   for (const auto &[ID, Adapter] : Adapters) {
     (void)ID;

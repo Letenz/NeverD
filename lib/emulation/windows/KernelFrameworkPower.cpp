@@ -223,18 +223,30 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
       Transition.Remaining.push_back({PnpPhase::PrepareHardware});
     if (D.Callbacks.D0Entry)
       Transition.Remaining.push_back({PnpPhase::D0Entry});
-    Transition.Remaining.push_back({PnpPhase::EnableInterrupts});
-    if (D.Callbacks.D0EntryPostInterruptsEnabled)
-      Transition.Remaining.push_back({PnpPhase::D0EntryPostInterruptsEnabled});
-    if (Policy.Armed != KernelPowerPolicy::WakeSource::None) {
+    Transition.Remaining.push_back({PnpPhase::WakeInterrupts});
+    const bool InterruptWake = hasPendingWakeInterrupts(Handle->second);
+    const auto AppendWakeCallbacks = [&] {
+      if (Policy.Armed == KernelPowerPolicy::WakeSource::None)
+        return;
       const bool S0 = Policy.Armed == KernelPowerPolicy::WakeSource::S0;
+      const PnpStep Disarm{S0 ? PnpPhase::DisarmWakeFromS0
+                              : PnpPhase::DisarmWakeFromSx};
+      if (InterruptWake)
+        Transition.Remaining.push_back(Disarm);
       if (Policy.WakeTriggered && (S0 ? Policy.Events.WakeFromS0Triggered
                                       : Policy.Events.WakeFromSxTriggered))
         Transition.Remaining.push_back({S0 ? PnpPhase::WakeFromS0Triggered
                                            : PnpPhase::WakeFromSxTriggered});
-      Transition.Remaining.push_back(
-          {S0 ? PnpPhase::DisarmWakeFromS0 : PnpPhase::DisarmWakeFromSx});
-    }
+      if (!InterruptWake)
+        Transition.Remaining.push_back(Disarm);
+    };
+    if (InterruptWake)
+      AppendWakeCallbacks();
+    Transition.Remaining.push_back({PnpPhase::EnableInterrupts});
+    if (D.Callbacks.D0EntryPostInterruptsEnabled)
+      Transition.Remaining.push_back({PnpPhase::D0EntryPostInterruptsEnabled});
+    if (!InterruptWake)
+      AppendWakeCallbacks();
     Transition.Remaining.insert(Transition.Remaining.end(), Resumes.begin(),
                                 Resumes.end());
     if (D.SelfManagedIo == SelfManagedIoState::Uninitialized &&
@@ -366,6 +378,16 @@ llvm::Error KernelFramework::finalizePnpCallbacks(uint64_t Token) {
     Device->second.Policy.Deadline.reset();
     Device->second.Policy.IdleSince.reset();
   }
+  if (Ready) {
+    if (auto E = restartIdleTimer(Transition->second.Device))
+      return E;
+  } else if (Transition->second.ReleasesHardware &&
+             Device->second.Policy.Idle &&
+             Device->second.Policy.Idle->systemManaged() &&
+             PowerHost.RemoveManaged) {
+    if (auto E = PowerHost.RemoveManaged(Device->second.Wdm))
+      return E;
+  }
   Transition->second.CallbacksComplete = true;
   return llvm::Error::success();
 }
@@ -378,12 +400,16 @@ llvm::Error KernelFramework::resumePausedPnp() {
   for (auto Transition = PnpTransitions.begin();
        Transition != PnpTransitions.end(); ++Transition) {
     auto &State = Transition->second;
-    if ((!State.WaitingForRequests && !State.WaitingForInterrupts) ||
+    if ((!State.WaitingForRequests && !State.WaitingForInterrupts &&
+         !State.WaitingForWakeInterrupts) ||
         !State.WaitingRequests.empty() ||
-        (State.WaitingForInterrupts && hasDeferredInterrupts(State.Device)))
+        (State.WaitingForInterrupts && hasDeferredInterrupts(State.Device)) ||
+        (State.WaitingForWakeInterrupts &&
+         hasPendingWakeInterrupts(State.Device)))
       continue;
     State.WaitingForRequests = false;
     State.WaitingForInterrupts = false;
+    State.WaitingForWakeInterrupts = false;
     const uint64_t Token = Transition->first;
     if (!State.Remaining.empty()) {
       if (auto E = schedulePnpCallback(Token))
@@ -423,6 +449,14 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
         return Scheduled.takeError();
       if (*Scheduled)
         return llvm::Error::success();
+      continue;
+    }
+    if (Phase == PnpPhase::WakeInterrupts) {
+      D.InD0 = true;
+      if (hasPendingWakeInterrupts(Transition.Device)) {
+        Transition.WaitingForWakeInterrupts = true;
+        return llvm::Error::success();
+      }
       continue;
     }
     if (Phase == PnpPhase::DrainInterrupts) {
@@ -469,6 +503,7 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     case PnpPhase::IoResume:
     case PnpPhase::EnableInterrupts:
     case PnpPhase::DisableInterrupts:
+    case PnpPhase::WakeInterrupts:
     case PnpPhase::DrainInterrupts:
       break;
     }
@@ -476,6 +511,7 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     switch (Transition.Current.Phase) {
     case PnpPhase::EnableInterrupts:
     case PnpPhase::DisableInterrupts:
+    case PnpPhase::WakeInterrupts:
     case PnpPhase::DrainInterrupts:
       llvm_unreachable(
           "internal interrupt phase handled before guest dispatch");
@@ -601,6 +637,7 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       case PnpPhase::EnableInterrupts:
       case PnpPhase::DisableInterrupts:
         break;
+      case PnpPhase::WakeInterrupts:
       case PnpPhase::DrainInterrupts:
       case PnpPhase::IoStop:
       case PnpPhase::IoResume:
@@ -724,9 +761,10 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       if (State.nextPrecedesRequestDrain()) {
         if (auto E = schedulePnpCallback(Token))
           return E;
-        return State.CallbacksComplete      ? PnpCallbackProgress::Continue
-               : State.WaitingForInterrupts ? PnpCallbackProgress::Waiting
-                                            : PnpCallbackProgress::Scheduled;
+        return State.CallbacksComplete ? PnpCallbackProgress::Continue
+               : (State.WaitingForInterrupts || State.WaitingForWakeInterrupts)
+                   ? PnpCallbackProgress::Waiting
+                   : PnpCallbackProgress::Scheduled;
       }
       if (!State.WaitingRequests.empty()) {
         State.WaitingForRequests = true;
@@ -735,9 +773,10 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       if (!State.Remaining.empty()) {
         if (auto E = schedulePnpCallback(Token))
           return E;
-        return State.CallbacksComplete      ? PnpCallbackProgress::Continue
-               : State.WaitingForInterrupts ? PnpCallbackProgress::Waiting
-                                            : PnpCallbackProgress::Scheduled;
+        return State.CallbacksComplete ? PnpCallbackProgress::Continue
+               : (State.WaitingForInterrupts || State.WaitingForWakeInterrupts)
+                   ? PnpCallbackProgress::Waiting
+                   : PnpCallbackProgress::Scheduled;
       }
       if (auto E = finalizePnpCallbacks(Token))
         return E;

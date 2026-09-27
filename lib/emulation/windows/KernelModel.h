@@ -19,6 +19,7 @@
 #include "KernelGuestCall.h"
 #include "KernelInterrupts.h"
 #include "KernelMMIO.h"
+#include "KernelPoFx.h"
 #include "KernelRegistry.h"
 #include "KernelRemoveLocks.h"
 #include "KernelScheduler.h"
@@ -27,6 +28,7 @@
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -47,7 +49,8 @@ public:
                     // DMA adapter acquisition in AddDevice precedes START.
                     return llvm::joinErrors(MMIO.canRemove(PDO),
                                             Interrupts.canRelease(PDO));
-                  }),
+                  },
+                  [this](uint64_t PDO) { return DMA.canPowerDownPDO(PDO); }),
         MMIO(Memory, Resources), Interrupts(Resources, Result),
         Physical(Memory), DMA(Physical, Resources, Result) {}
   KernelModel(const KernelModel &) = delete;
@@ -70,6 +73,7 @@ public:
        llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
   std::optional<KernelGuestCall> takeGuestCall();
+  std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
   llvm::Error beginGuestCall(GuestCallToken Token);
   llvm::Expected<bool> enterFrameworkCallback(uint64_t ScheduledID,
                                               GuestCallToken Token,
@@ -143,6 +147,8 @@ public:
       FrameworkQueueEmpty,
       FrameworkFileSend,
       FrameworkIdle,
+      PoFxActive,
+      PoFxIdle,
       InterruptSynchronization,
       FrameworkInterruptLock,
       FrameworkWaitLock,
@@ -207,10 +213,13 @@ public:
   }
   bool hasPendingHardwareWork() const {
     return Interrupts.hasPendingEvents() || DMA.hasPendingEvents() ||
-           DMA.hasPendingCallbacks() || hasPendingPowerPolicyEvents() ||
+           DMA.hasPendingCallbacks() || PoFx.hasPendingCallbacks() ||
+           PoFx.nextDeadline().has_value() || hasPendingPowerPolicyEvents() ||
            (Framework && Framework->hasPendingPowerPolicy());
   }
   uint8_t currentIRQL() const { return CurrentIRQL; }
+  /// Return a borrowed, opaque identity for the current kernel thread.
+  llvm::Expected<uint64_t> currentThreadObject();
   llvm::Expected<Invocation> beginUnload();
   llvm::Error finishUnload();
   /// Reject CPU accesses whose environment semantics this profile does not own.
@@ -222,6 +231,32 @@ private:
   DriverResult &Result;
   KernelExportRegistry *Exports;
   std::unique_ptr<KernelFramework> Framework;
+  KernelPoFx PoFx;
+  std::map<uint64_t, uint64_t> PoFxDeviceObjects;
+  std::map<uint64_t, bool> FrameworkPoFxPowerWaits;
+  struct BlockingPoFxOperation {
+    uint64_t Handle = 0, Thread = 0;
+    uint32_t Component = 0;
+    bool Active = false;
+    std::deque<KernelGuestCall> Calls;
+    std::optional<uint64_t> TerminalCallback;
+    bool Completed = false;
+    uint64_t CompletionGeneration = 0;
+  };
+  std::map<uint64_t, BlockingPoFxOperation> BlockingPoFx;
+  llvm::Error waitForPoFxOperation(uint64_t Thread);
+  llvm::Expected<uint64_t> callPoFxAPI(llvm::StringRef Name,
+                                       llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<KernelPoFx::Registration>
+  readPoFxRegistration(uint64_t PDO, uint64_t Address);
+  llvm::Error queuePoFxCallbacks();
+  llvm::Error processPoFxCallbacks();
+  llvm::Expected<std::optional<uint64_t>> finishPoFxCall(uint64_t Token);
+  llvm::Error processInternalPoFxCallback(const KernelPoFx::Callback &Call);
+  llvm::Error setFrameworkPoFxIdle(uint64_t Device, bool Idle,
+                                   uint64_t Timeout);
+  llvm::Error retireFrameworkPoFx(uint64_t Device);
+
   std::optional<KernelGuestCall> takeWdmGuestCall();
   llvm::Expected<std::optional<uint64_t>> finishWdmGuestCall(uint64_t Token,
                                                              uint64_t Result);
@@ -244,6 +279,7 @@ private:
     uint64_t PDO = 0;
     uint64_t Epoch = 0;
     size_t ResultIndex = 0;
+    uint64_t PoFxHandle = 0;
   };
   std::vector<PowerPolicyEvent> PowerPolicyEvents;
   std::map<uint64_t, uint64_t> FrameworkWakeIRPs;
@@ -289,8 +325,11 @@ private:
   std::optional<KernelGuestCall> PendingDMACall;
   std::set<uint64_t> InlineDMACalls;
   bool hasPendingModelGuestCall() const {
-    return PendingWdmCall || PendingInterruptCall || PendingDMACall ||
-           (Framework && Framework->hasPendingGuestCall());
+    auto Operation = BlockingPoFx.find(CurrentThreadKey);
+    const bool HasPoFxCall =
+        Operation != BlockingPoFx.end() && !Operation->second.Calls.empty();
+    return HasPoFxCall || PendingWdmCall || PendingInterruptCall ||
+           PendingDMACall || (Framework && Framework->hasPendingGuestCall());
   }
   static std::optional<unsigned> dmaArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t>
@@ -432,6 +471,7 @@ private:
     bool Terminating = false;
   };
   std::map<uint64_t, SystemThread> SystemThreads;
+  std::map<uint64_t, uint64_t> CurrentThreadObjects;
   std::map<uint64_t, uint64_t> ThreadHandles;
   uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;

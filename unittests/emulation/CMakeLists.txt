@@ -28,6 +28,10 @@ set(NEVERD_WDM_POWER_FIXTURE "" CACHE FILEPATH
   "Optional original WDM power fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_POWER_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK power fixture linked with active CFG")
+set(NEVERD_WDM_POFX_FIXTURE "" CACHE FILEPATH
+  "Optional original WDM component power fixture linked with genuine WDK libraries")
+set(NEVERD_WDM_POFX_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK component power fixture linked with active CFG")
 set(NEVERD_WDM_RESOURCE_FIXTURE "" CACHE FILEPATH
   "Optional original WDM resource/MMIO fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_RESOURCE_CFG_FIXTURE "" CACHE FILEPATH
@@ -310,6 +314,31 @@ foreach(_driver_power_variable NEVERD_WDM_POWER_FIXTURE
   endif()
 endforeach()
 
+set(_driver_wdm_pofx_definitions)
+set(_driver_has_wdm_pofx_fixture FALSE)
+foreach(_driver_pofx_variable NEVERD_WDM_POFX_FIXTURE
+    NEVERD_WDM_POFX_CFG_FIXTURE)
+  if(_driver_pofx_variable STREQUAL "NEVERD_WDM_POFX_CFG_FIXTURE"
+      AND NOT _driver_has_wdm_pofx_fixture)
+    message(STATUS "Driver WDM component power CFG tests skipped: NEVERD_WDM_POFX_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_pofx_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_pofx_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_pofx_variable}}")
+    get_filename_component(_driver_pofx_path
+      "${${_driver_pofx_variable}}" ABSOLUTE)
+    list(APPEND _driver_wdm_pofx_definitions
+      "${_driver_pofx_variable}=\"${_driver_pofx_path}\"")
+    if(_driver_pofx_variable STREQUAL "NEVERD_WDM_POFX_FIXTURE")
+      set(_driver_has_wdm_pofx_fixture TRUE)
+    endif()
+    message(STATUS "Driver WDM component power fixture ${_driver_pofx_variable}: ${_driver_pofx_path}")
+  else()
+    message(STATUS "Driver WDM component power tests requiring ${_driver_pofx_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
 set(_driver_wdm_remove_lock_definitions)
 set(_driver_has_wdm_remove_lock_fixture FALSE)
 foreach(_driver_remove_lock_variable NEVERD_WDM_REMOVE_LOCK_FIXTURE
@@ -536,6 +565,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverWDMStackTests.cpp
   DriverWDMPnpTests.cpp
   DriverWDMPowerTests.cpp
+  DriverWDMPoFxTests.cpp
   DriverWDMInterruptTests.cpp
   DriverInterruptScenarioTests.cpp
   SchedulerInterruptTests.cpp
@@ -557,6 +587,15 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelCancellationTests.cpp
   KernelFrameworkTests.cpp
   KernelFrameworkPowerPolicyTests.cpp
+  KernelPoFxTests.cpp
+  KernelPoFxAPITests.cpp
+  KernelFrameworkPoFxPolicyTests.cpp
+  KernelD3ColdResourceTests.cpp
+  DriverD3ColdScenarioTests.cpp
+  DriverPoFxScenarioTests.cpp
+  DriverKMDFD3ColdTests.cpp
+  DriverKMDFPoFxTests.cpp
+  KernelInterruptActivityTests.cpp
   KernelFrameworkInterruptTests.cpp
   KernelFrameworkLockTests.cpp
   KernelFrameworkControlTests.cpp
@@ -607,6 +646,7 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   ${_driver_wdm_stack_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
+  ${_driver_wdm_pofx_definitions}
   ${_driver_wdm_remove_lock_definitions}
   ${_driver_wdm_resource_definitions}
   ${_driver_wdm_interrupt_definitions}
@@ -623,6 +663,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   add_neverd_unittest(NeverDDriverEmulationPublicTests
     DriverEmulationPublicTests.cpp
     DriverScenarioPublicTests.cpp
+  DriverD3ColdPublicTests.cpp
     LINK_LIBS neverd_shared)
   target_include_directories(NeverDDriverEmulationPublicTests PRIVATE
     ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
@@ -635,6 +676,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     ${_driver_wdm_stack_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
+  ${_driver_wdm_pofx_definitions}
   ${_driver_wdm_remove_lock_definitions}
   ${_driver_wdm_resource_definitions}
   ${_driver_wdm_interrupt_definitions}

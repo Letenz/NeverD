@@ -33,9 +33,28 @@ bool KernelFramework::powerPolicyBusy(uint64_t Device) const {
 llvm::Error KernelFramework::restartIdleTimer(uint64_t Device) {
   auto &D = Devices.at(Device);
   auto &P = D.Policy;
-  if (!P.IdleSince || !P.Idle || !P.Idle->Enabled || P.References ||
-      P.SystemSleeping || !D.InD0 || D.PowerQueuesHeld ||
-      powerPolicyBusy(Device)) {
+  if (!P.Idle) {
+    P.Deadline.reset();
+    return llvm::Error::success();
+  }
+  const bool Active = !P.IdleSince || !P.Idle->Enabled || P.References ||
+                      powerPolicyBusy(Device);
+  const bool CanIdle = !P.SystemSleeping && D.InD0 && !D.PowerQueuesHeld;
+  if (P.Idle->systemManaged()) {
+    // A device that has already entered Dx remains idle until there is actual
+    // activity. Its inability to start another timer is not a PoFx activation.
+    if (P.Started && (Active || CanIdle)) {
+      if (!PowerHost.ManagedIdle)
+        return policyError("system-managed idle requires the PoFx authority");
+      if (auto E = PowerHost.ManagedIdle(D.Wdm, !Active, P.Idle->Timeout100ns))
+        return E;
+    }
+    if (Active)
+      P.ManagedPowerNotRequired = false;
+    P.Deadline.reset();
+    return llvm::Error::success();
+  }
+  if (Active || !CanIdle) {
     P.Deadline.reset();
     return llvm::Error::success();
   }
@@ -139,12 +158,24 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
           Field(policy::IdleCapabilities) != policy::CanWake)
         return policyError("USB and unknown idle capabilities are unsupported");
       if (Field(policy::IdleDxState) != uint32_t(DevicePowerState::D3) ||
-          !Field(policy::IdleTimeout) ||
-          Field(policy::IdleTimeoutType) != policy::DriverManagedTimeout ||
+          (Field(policy::IdleTimeoutType) == policy::DriverManagedTimeout &&
+           !Field(policy::IdleTimeout)) ||
+          Field(policy::IdleTimeoutType) >
+              policy::SystemManagedTimeoutWithHint ||
           Field(policy::IdleUserControl) != policy::NoUserControl ||
-          Field(policy::IdleExcludeD3Cold) != policy::True)
-        return policyError("idle requires explicit D3hot, driver timeout and "
-                           "no user override");
+          Field(policy::IdleExcludeD3Cold) > policy::UseDefault)
+        return policyError("idle requires explicit D3, a valid timeout policy "
+                           "and no user override");
+      const bool Managed =
+          Field(policy::IdleTimeoutType) != policy::DriverManagedTimeout;
+      if (Managed && !PowerHost.ManagedIdle)
+        return policyError("system-managed idle requires the PoFx authority");
+      if (P.Idle && P.Idle->TimeoutType != Field(policy::IdleTimeoutType))
+        return policyError(
+            "idle timeout type cannot change after initial assignment");
+      if (Managed && !P.Idle && (P.Started || D->second.InD0))
+        return policyError(
+            "system-managed policy must precede first D0 entry completion");
       if (Field(policy::IdleEnabled) > policy::UseDefault ||
           Field(policy::IdlePowerUpOnSystemWake) > policy::UseDefault)
         return Result{windows::StatusInvalidParameter};
@@ -162,8 +193,15 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
       P.Idle = KernelPowerPolicy::IdleSettings{
           Field(policy::IdleEnabled) != 0,
           Field(policy::IdleCapabilities) == policy::CanWake,
-          Field(policy::IdlePowerUpOnSystemWake) == policy::True,
-          uint64_t(Field(policy::IdleTimeout)) * policy::TicksPerMillisecond};
+          Previous ? Previous->PowerUpOnSystemWake
+                   : Field(policy::IdlePowerUpOnSystemWake) == policy::True,
+          Field(policy::IdleTimeoutType) == policy::SystemManagedTimeout
+              ? 0
+              : uint64_t(Field(policy::IdleTimeout)) *
+                    policy::TicksPerMillisecond,
+          uint32_t(Field(policy::IdleTimeoutType)),
+          Previous ? Previous->ExcludeD3Cold
+                   : uint32_t(Field(policy::IdleExcludeD3Cold))};
       if (auto E = restartIdleTimer(A[1])) {
         P.Idle = Previous;
         return E;
@@ -203,8 +241,13 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     for (const auto &[Token, Transition] : PnpTransitions)
       if (Wait && Transition.Device == A[1] && !Transition.Entering)
         return policyError("StopIdle(TRUE) during power down would deadlock");
+    if (P.Idle && P.Idle->systemManaged())
+      if (auto E =
+              PowerHost.ManagedIdle(D->second.Wdm, false, P.Idle->Timeout100ns))
+        return E;
     ++P.References;
     P.Deadline.reset();
+    P.ManagedPowerNotRequired = false;
     if (D->second.InD0 && !D->second.PowerQueuesHeld)
       return Result{windows::StatusSuccess};
     P.PowerUpRequested = true;
@@ -242,8 +285,13 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
   if (Handle == PnpDeviceHandles.end())
     return policyError("activity requires a framework PDO");
   auto &D = Devices.at(Handle->second);
+  if (D.Policy.Idle && D.Policy.Idle->systemManaged() && D.Policy.Started)
+    if (auto E =
+            PowerHost.ManagedIdle(D.Wdm, false, D.Policy.Idle->Timeout100ns))
+      return E;
   D.Policy.IdleSince.reset();
   D.Policy.Deadline.reset();
+  D.Policy.ManagedPowerNotRequired = false;
   if (D.Policy.Started &&
       (!D.InD0 || D.PowerQueuesHeld || D.Policy.SystemSleeping))
     D.Policy.PowerUpRequested = true;
@@ -297,7 +345,9 @@ llvm::Error KernelFramework::processPowerPolicy() {
     if (!P.Deadline && P.IdleSince && P.Started && !P.Failure)
       if (auto E = restartIdleTimer(Handle))
         return E;
-    if (!P.Deadline || *P.Deadline > Now)
+    const bool ManagedReady =
+        P.Idle && P.Idle->systemManaged() && P.ManagedPowerNotRequired;
+    if (!ManagedReady && (!P.Deadline || *P.Deadline > Now))
       continue;
     if (!D.InD0 || P.References || P.SystemSleeping || P.Failure ||
         powerPolicyBusy(Handle)) {
@@ -308,6 +358,7 @@ llvm::Error KernelFramework::processPowerPolicy() {
         P.Armed == KernelPowerPolicy::WakeSource::None)
       return beginIdlePowerDown(Handle);
     P.IdlePowerDown = true;
+    P.ManagedPowerNotRequired = false;
     if (auto E = PowerHost.Request(D.Wdm, DevicePowerState::D3,
                                    PowerPolicyHost::RequestMode::Issue)) {
       P.IdlePowerDown = false;
@@ -325,6 +376,9 @@ std::optional<uint64_t> KernelFramework::nextPowerPolicyTime() const {
       continue;
     if (D.Policy.Deadline && (!Next || *D.Policy.Deadline < *Next))
       Next = D.Policy.Deadline;
+    if (D.Policy.ManagedPowerNotRequired && D.InD0 && !D.Policy.References &&
+        !D.Policy.SystemSleeping && !D.Policy.Failure && PowerHost.Now)
+      Next = PowerHost.Now();
     if (D.Policy.PowerUpRequested && !D.Policy.SystemSleeping &&
         !D.Policy.Failure && PnpTransitions.empty() && PowerHost.Now)
       Next = PowerHost.Now();
@@ -434,6 +488,7 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
     return llvm::Error::success();
   }
   D->second.Policy.IdlePowerDown = true;
+  D->second.Policy.ManagedPowerNotRequired = false;
   return PowerHost.Request(D->second.Wdm, DevicePowerState::D3,
                            PowerPolicyHost::RequestMode::Issue);
 }
@@ -451,4 +506,47 @@ llvm::Error KernelFramework::finishPowerPolicyRequest(uint64_t PDO,
     P.Failure = Status;
   return llvm::Error::success();
 }
+llvm::Error KernelFramework::powerPolicyPermission(uint64_t PDO,
+                                                   bool NotRequired) {
+  const auto Handle = PnpDeviceHandles.find(PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("PoFx decision lost its framework device");
+  auto &D = Devices.at(Handle->second);
+  if (!D.Policy.Idle || !D.Policy.Idle->systemManaged() || !D.Policy.Started)
+    return policyError(
+        "PoFx decision requires a started system-managed policy");
+  if (NotRequired && (!D.Policy.Idle->Enabled || !D.Policy.IdleSince ||
+                      D.Policy.References || powerPolicyBusy(Handle->second)))
+    return policyError("PoFx power-down decision raced with device activity");
+  D.Policy.ManagedPowerNotRequired = NotRequired;
+  if (!NotRequired)
+    D.Policy.PowerUpRequested = true;
+  return llvm::Error::success();
+}
+
+llvm::Expected<bool>
+KernelFramework::powerPolicyDeviceReady(uint64_t PDO, bool Required) const {
+  const auto Handle = PnpDeviceHandles.find(PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("PoFx completion lost its framework device");
+  const auto &D = Devices.at(Handle->second);
+  if (D.Policy.Failure)
+    return policyError("PoFx device power transaction failed");
+  return D.Policy.Started && !D.Policy.DevicePowerPending &&
+         (Required ? D.InD0 && !D.PowerQueuesHeld : !D.InD0);
+}
+
+llvm::Expected<bool> KernelFramework::allowsD3Cold(uint64_t PDO) const {
+  const auto Handle = PnpDeviceHandles.find(PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return false;
+  const auto &D = Devices.at(Handle->second);
+  if (!D.Policy.Idle || D.Policy.Idle->ExcludeD3Cold == power_policy::True ||
+      !PowerHost.ColdAllowed)
+    return false;
+  return PowerHost.ColdAllowed(
+      D.Wdm, D.Policy.Armed != KernelPowerPolicy::WakeSource::None,
+      D.Policy.SystemSleeping, D.Policy.Idle->ExcludeD3Cold);
+}
+
 } // namespace neverd::emulation

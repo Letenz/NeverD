@@ -92,11 +92,52 @@ TEST_F(DriverExecutionPolicy, NormalizesCR8ReadsToEveryFullWidthGPR) {
         uint8_t(I < 8 ? 0x44 : 0x45), 0x0f, 0x20, uint8_t(0xc0 | (I & 7))};
     auto Action = Policy.inspect(Bytes, 0x1000);
     ASSERT_TRUE(bool(Action)) << llvm::toString(Action.takeError());
-    EXPECT_EQ(*Action, std::optional<X64Register>(Registers[I]));
+    ASSERT_TRUE(*Action);
+    EXPECT_EQ((**Action).Destination, Registers[I]);
+    EXPECT_EQ((**Action).Source, X64ExecutionPolicy::Action::Kind::ReadIRQL);
   }
   auto Ordinary = Policy.inspect({0x48, 0x89, 0xd8}, 0x1000);
   ASSERT_TRUE(bool(Ordinary)) << llvm::toString(Ordinary.takeError());
   EXPECT_FALSE(*Ordinary);
+}
+
+TEST_F(DriverExecutionPolicy, RecognizesOnlyExactFullWidthCurrentThreadReads) {
+  constexpr std::array<X64Register, 16> Registers = {
+      X64Register::AX,  X64Register::CX,  X64Register::DX,  X64Register::BX,
+      X64Register::SP,  X64Register::BP,  X64Register::SI,  X64Register::DI,
+      X64Register::R8,  X64Register::R9,  X64Register::R10, X64Register::R11,
+      X64Register::R12, X64Register::R13, X64Register::R14, X64Register::R15};
+  for (unsigned I = 0; I < Registers.size(); ++I) {
+    SCOPED_TRACE(I);
+    // WDK KeGetCurrentThread emits MOV r64, GS:[0x188].
+    const std::array<uint8_t, 9> Bytes = {0x65, uint8_t(I < 8 ? 0x48 : 0x4c),
+                                          0x8b, uint8_t(0x04 | ((I & 7) << 3)),
+                                          0x25, 0x88,
+                                          0x01, 0,
+                                          0};
+    auto Action = Policy.inspect(Bytes, 0x1000);
+    ASSERT_TRUE(bool(Action)) << llvm::toString(Action.takeError());
+    ASSERT_TRUE(*Action);
+    EXPECT_EQ((**Action).Source,
+              X64ExecutionPolicy::Action::Kind::ReadCurrentThread);
+    EXPECT_FALSE((**Action).Destination);
+  }
+  // The compiler may fold the same intrinsic into a comparison. The backend
+  // must execute CMP against the modeled field to preserve arithmetic flags.
+  auto Compare =
+      Policy.inspect({0x65, 0x48, 0x3b, 0x04, 0x25, 0x88, 0x01, 0, 0}, 0x1000);
+  ASSERT_TRUE(bool(Compare)) << llvm::toString(Compare.takeError());
+  ASSERT_TRUE(*Compare);
+  EXPECT_EQ((**Compare).Source,
+            X64ExecutionPolicy::Action::Kind::ReadCurrentThread);
+  EXPECT_FALSE((**Compare).Destination);
+  // Other segment identities, offsets, widths, stores and indexed addresses
+  // must not turn into a current-thread query.
+  rejectsThreadAccess({0x64, 0x48, 0x8b, 0x04, 0x25, 0x88, 0x01, 0, 0});
+  rejectsThreadAccess({0x65, 0x48, 0x8b, 0x04, 0x25, 0x80, 0x01, 0, 0});
+  rejectsThreadAccess({0x65, 0x8b, 0x04, 0x25, 0x88, 0x01, 0, 0});
+  rejectsThreadAccess({0x65, 0x48, 0x89, 0x04, 0x25, 0x88, 0x01, 0, 0});
+  rejectsThreadAccess({0x65, 0x48, 0x8b, 0x80, 0x88, 0x01, 0, 0});
 }
 
 TEST_F(DriverExecutionPolicy, RejectedControlAccessCannotProduceAnAction) {
@@ -146,7 +187,9 @@ TEST_F(DriverExecutionPolicy,
       ASSERT_TRUE(bool(Action)) << llvm::toString(Action.takeError());
       ++Instructions;
       if (*Action) {
-        Pending = **Action;
+        EXPECT_EQ((**Action).Source,
+                  X64ExecutionPolicy::Action::Kind::ReadIRQL);
+        Pending = (**Action).Destination;
         NextPC = PC + Size;
         ++Actions;
         CPU.stop();

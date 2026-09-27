@@ -80,6 +80,8 @@ struct DriverInterruptResource {
   /// Nonempty for message resources. Entries in one raw descriptor share a
   /// message address; multiple descriptors can declare distinct addresses.
   std::vector<DriverInterruptMessage> Messages;
+  /// Explicit provider ability to signal wake while the device is in Dx.
+  bool WakeCapable = false;
 };
 
 struct DriverInterruptEvent {

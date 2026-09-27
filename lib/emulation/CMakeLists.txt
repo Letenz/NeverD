@@ -20,6 +20,9 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelFrameworkPower.cpp
   windows/KernelFrameworkPowerPolicy.cpp
   windows/KernelModelPowerPolicy.cpp
+  windows/KernelPoFx.cpp
+  windows/KernelModelPoFx.cpp
+  windows/KernelModelPoFxPolicy.cpp
   windows/KernelFrameworkControl.cpp
   windows/KernelFrameworkFiles.cpp
   windows/KernelFrameworkQueue.cpp

@@ -193,6 +193,7 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
   if (Kind != KernelScheduler::CallbackKind::FrameworkCancel &&
       Kind != KernelScheduler::CallbackKind::FrameworkCompletion &&
       Kind != KernelScheduler::CallbackKind::FrameworkDeferred &&
+      Kind != KernelScheduler::CallbackKind::PoFx &&
       !KernelScheduler::isFrameworkInterruptCallbackKind(Kind) &&
       Kind != KernelScheduler::CallbackKind::WDMCompletion &&
       Kind != KernelScheduler::CallbackKind::Interrupt &&
@@ -207,6 +208,7 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
        Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
        KernelScheduler::isFrameworkInterruptCallbackKind(Kind))
           ? GuestCallOwner::Framework
+      : Kind == KernelScheduler::CallbackKind::PoFx ? GuestCallOwner::PoFx
       : Kind == KernelScheduler::CallbackKind::Interrupt
           ? GuestCallOwner::Interrupt
       : KernelScheduler::isDMACallbackKind(Kind) ? GuestCallOwner::DMA
