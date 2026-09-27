@@ -282,6 +282,49 @@ llvm::Error KernelModel::updateDeviceReferences(uint64_t Device) {
 }
 
 llvm::Expected<std::optional<KernelScheduler::Invocation>>
+KernelModel::dispatchScheduledPowerProvider(
+    const KernelScheduler::Invocation &Call) {
+  auto Token = ScheduledModelContinuations.find(Call.ID);
+  if (Token == ScheduledModelContinuations.end() ||
+      Token->second.Owner != GuestCallOwner::WDM)
+    return schedulingError("provider power dispatch lost its continuation");
+  auto Dispatch = IRPCalls.find(Token->second.ID);
+  const auto *Request = requestForIRP(Call.Object);
+  if (Call.Kind != KernelScheduler::CallbackKind::WDMProviderDispatch ||
+      Call.PC || Call.IRQL != scheduler::PassiveLevel ||
+      Call.Arguments.size() != 2 || Call.Arguments[0] != Call.Owner ||
+      Call.Arguments[1] != Call.Object || !Request || !Request->ChildPower ||
+      Request->DispatchReturned || Request->Device != Call.Owner ||
+      Request->PnpDevice != Call.Owner || Dispatch == IRPCalls.end() ||
+      Dispatch->second.IRP != Call.Object ||
+      Dispatch->second.Kind != IRPCallKind::PowerDispatch ||
+      !Dispatch->second.AwaitingCallback)
+    return schedulingError("provider power dispatch lost its captured request");
+  CurrentIRQL = scheduler::PassiveLevel;
+  auto Status = callProviderDriver(Call.Owner, Call.Object);
+  if (!Status)
+    return Status.takeError();
+  auto Returned = finishWdmGuestCall(Token->second.ID, *Status);
+  if (!Returned)
+    return Returned.takeError();
+  if (!*Returned)
+    return schedulingError("provider power dispatch did not record its return");
+  if (auto Completion = takeWdmGuestCall()) {
+    auto Next = Scheduler.beginWDMProviderCompletion(
+        Call.ID, {Call.Object, Call.Owner, Call.Thread, Completion->PC,
+                  std::move(Completion->Arguments)});
+    if (!Next)
+      return Next.takeError();
+    Token->second = Completion->Token;
+    return std::optional<KernelScheduler::Invocation>{std::move(*Next)};
+  }
+  ScheduledModelContinuations.erase(Token);
+  if (auto E = finishScheduled(Call.ID))
+    return E;
+  return std::optional<KernelScheduler::Invocation>{};
+}
+
+llvm::Expected<std::optional<KernelScheduler::Invocation>>
 KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
   if (Scheduler.active())
     return schedulingError("cannot dispatch with an unfinished callback");
@@ -311,7 +354,25 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
     return E;
   // Admission and time advancement never dequeue. In particular, an ISR due
   // with a timer must be present before selecting that timer's lower-IRQL DPC.
-  auto Next = Scheduler.next(false, Deadline);
+  auto SelectReady =
+      [&]() -> llvm::Expected<std::optional<KernelScheduler::Invocation>> {
+    // Each model-only dispatch consumes the same bounded scheduler budget as
+    // guest dispatch. Only actual guest callbacks reach the execution engine.
+    for (;;) {
+      auto Next = Scheduler.next(false, Deadline);
+      if (!Next)
+        return Next.takeError();
+      if (!*Next ||
+          (**Next).Kind != KernelScheduler::CallbackKind::WDMProviderDispatch)
+        return std::move(*Next);
+      auto Completion = dispatchScheduledPowerProvider(**Next);
+      if (!Completion)
+        return Completion.takeError();
+      if (*Completion)
+        return std::move(*Completion);
+    }
+  };
+  auto Next = SelectReady();
   if (!Next)
     return Next.takeError();
   if (!*Next && AdvanceTime) {
@@ -321,7 +382,7 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
     if (Boundary && *Boundary > Scheduler.now100ns()) {
       if (auto E = ProcessBoundary(*Boundary))
         return E;
-      Next = Scheduler.next(false, Deadline);
+      Next = SelectReady();
       if (!Next)
         return Next.takeError();
     }
@@ -434,6 +495,8 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
       KernelScheduler::isFrameworkInterruptCallbackKind(Invocation.Kind) ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
+      Invocation.Kind == KernelScheduler::CallbackKind::WDMDispatch ||
+      Invocation.Kind == KernelScheduler::CallbackKind::WDMProviderDispatch ||
       Invocation.Kind == KernelScheduler::CallbackKind::Interrupt ||
       KernelScheduler::isDMACallbackKind(Invocation.Kind))
     return retireDeviceIfUnreferenced(Invocation.Owner);

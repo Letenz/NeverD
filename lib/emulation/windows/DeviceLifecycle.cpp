@@ -327,6 +327,8 @@ DeviceLifecycle::validateDevicePowerRequest(uint64_t Identity,
   if (Request == DevicePowerRequest::Set && D.DevicePower != Target &&
       D.DevicePower != DevicePowerState::D0 && Target != DevicePowerState::D0)
     return lifecycleError("low-power transitions require an intermediate D0");
+  if (NextSequence == std::numeric_limits<uint64_t>::max())
+    return lifecycleError("operation ticket limit exhausted");
   return llvm::Error::success();
 }
 
@@ -343,9 +345,10 @@ DeviceLifecycle::beginDevicePower(uint64_t Identity, DevicePowerRequest Request,
   return *Ticket;
 }
 
-llvm::Expected<DeviceLifecycleTicket>
-DeviceLifecycle::beginSystemPower(uint64_t Identity, DevicePowerRequest Request,
-                                  SystemPowerState Target) {
+llvm::Error
+DeviceLifecycle::validateSystemPowerRequest(uint64_t Identity,
+                                            DevicePowerRequest Request,
+                                            SystemPowerState Target) const {
   if (!valid(Request) || !valid(Target))
     return lifecycleError("unsupported system power request or state");
   if (Request == DevicePowerRequest::Query &&
@@ -354,15 +357,25 @@ DeviceLifecycle::beginSystemPower(uint64_t Identity, DevicePowerRequest Request,
   auto Found = lookup(Identity);
   if (!Found)
     return Found.takeError();
-  Device &D = **Found;
+  const Device &D = **Found;
   if (absent(D.Pnp))
     return lifecycleError("device is being removed");
   if (D.SystemPowerPending)
     return lifecycleError("a system power operation is already active");
+  if (NextSequence == std::numeric_limits<uint64_t>::max())
+    return lifecycleError("operation ticket limit exhausted");
+  return llvm::Error::success();
+}
+
+llvm::Expected<DeviceLifecycleTicket>
+DeviceLifecycle::beginSystemPower(uint64_t Identity, DevicePowerRequest Request,
+                                  SystemPowerState Target) {
+  if (auto E = validateSystemPowerRequest(Identity, Request, Target))
+    return std::move(E);
   auto Ticket = nextTicket(Identity);
   if (!Ticket)
     return Ticket.takeError();
-  D.SystemPowerPending =
+  Devices.at(Identity).SystemPowerPending =
       PowerOperation<SystemPowerState>{*Ticket, Request, Target};
   return *Ticket;
 }

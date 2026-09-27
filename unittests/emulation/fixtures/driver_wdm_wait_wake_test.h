@@ -9,9 +9,16 @@
 enum {
   WdmWakeSnapshotIoctl = 0x222000,
   WdmWakeCommandIoctl = 0x222004,
+  WdmWakeExtendedSnapshotIoctl = 0x222008,
   WdmWakeRearm = 'A',
   WdmWakeCancel = 'C',
   WdmWakeCancelDpc = 'D',
+  WdmWakeCancelDpcDirect = 'E',
+  WdmWakeQueryDpc = 'Q',
+  WdmWakeSetDpc = 'T',
+  WdmWakeQueryApc = 'q',
+  WdmWakeSetApc = 's',
+  WdmWakeWaitWakeDpc = 'Z',
   WdmWakeCancelRearm = 'X',
   WdmWakeRearmOnSuccess = 'R',
   WdmWakeD0OnSuccess = 'P',
@@ -42,7 +49,25 @@ enum {
   WdmWakeIRPLow,
   WdmWakeIRPHigh,
   WdmWakeHasCancelRoutine,
-  WdmWakeSnapshotWords
+  WdmWakeSnapshotWords,
+  WdmWakeQueuedSubmissions = WdmWakeSnapshotWords,
+  WdmWakeQueuedCompletions,
+  WdmWakeCallerIrqlBefore,
+  WdmWakeCallerIrqlAfter,
+  WdmWakeCallerCR8Before,
+  WdmWakeCallerCR8After,
+  WdmWakePowerDispatchIrql,
+  WdmWakePowerDispatchCR8,
+  WdmWakePowerCallbackIrql,
+  WdmWakePowerCallbackCR8,
+  WdmWakeCallerReturnOrder,
+  WdmWakePowerDispatchOrder,
+  WdmWakePowerCallbackOrder,
+  WdmWakeQueuedMinor,
+  WdmWakeQueuedDeviceState,
+  WdmWakeQueuedAPIStatus,
+  WdmWakeQueuedDispatches,
+  WdmWakeExtendedSnapshotWords
 };
 
 #endif // NEVERD_TESTS_DRIVER_WDM_WAIT_WAKE_H

@@ -26,17 +26,10 @@ llvm::Error powerError(const llvm::Twine &Message) {
 }
 } // namespace
 
-llvm::Expected<bool> KernelModel::canAllocatePowerRequest(uint64_t Device,
-                                                          bool Callback) const {
-  auto Top = topAttachedDevice(Device);
-  if (!Top)
-    return Top.takeError();
-  auto Count = Memory.readInteger(*Top + DeviceStackCountOffset, 1);
-  if (!Count)
-    return Count.takeError();
-  if (!*Count || *Count > MaxIRPStackCount)
-    return powerError("power route requires a positive bounded stack count");
-  const uint64_t PacketSize = IRPSize + *Count * StackSize;
+llvm::Expected<bool>
+KernelModel::canAllocatePowerRequest(const PowerRequestPlan &Plan,
+                                     bool Callback) const {
+  const uint64_t PacketSize = IRPSize + Plan.StackCount * StackSize;
   const uint64_t Packet =
       (NextAllocation + PoolAlignment - 1) & ~(PoolAlignment - 1);
   if (Packet > AllocationEnd || PacketSize > AllocationEnd - Packet)
@@ -57,9 +50,10 @@ llvm::Expected<bool> KernelModel::canAllocatePowerRequest(uint64_t Device,
   return true;
 }
 
-llvm::Expected<KernelModel::Invocation>
-KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
-                                 std::optional<RequestedPower> Child) {
+llvm::Expected<KernelModel::PowerRequestPlan>
+KernelModel::planPowerRequest(const DriverRequest &Input, size_t Index,
+                              const std::optional<RequestedPower> &Child,
+                              PowerRequestDelivery Delivery) const {
   if (Input.Kind != DriverRequestKind::Power || !Input.Power || Input.Pnp ||
       Input.DeviceID.empty() || !Input.Device.empty() || Input.File ||
       Input.ControlCode || !Input.Input.empty() || !Input.DirectInput.empty() ||
@@ -69,10 +63,22 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   if ((Child && Index != Result.Requests.size()) ||
       (!Child && Index >= Result.Requests.size()))
     return powerError("power request lost its independent result identity");
-  if (Unloading || Unloaded || CurrentIRQL != scheduler::PassiveLevel)
-    return powerError("pageable power dispatch requires PASSIVE_LEVEL before "
-                      "unload");
+  if (Unloading || Unloaded)
+    return powerError("power preparation requires a live driver before unload");
   const auto &Operation = *Input.Power;
+  if (Delivery == PowerRequestDelivery::Queued) {
+    if (!Child || Child->Origin != DriverRequestOrigin::PoRequestPowerIrp ||
+        Operation.Type != DriverPowerType::Device ||
+        (Operation.Minor != DevicePowerRequest::Query &&
+         Operation.Minor != DevicePowerRequest::Set) ||
+        CurrentIRQL <= scheduler::PassiveLevel ||
+        CurrentIRQL > scheduler::DispatchLevel)
+      return powerError("queued power preparation requires elevated native "
+                        "device Query/Set");
+  } else if (CurrentIRQL != scheduler::PassiveLevel) {
+    return powerError("pageable power dispatch requires PASSIVE_LEVEL");
+  }
+  PowerRequestPlan Plan;
   const bool WaitWake =
       Child && Operation.Minor == DevicePowerRequest::WaitWake &&
       (Child->Origin == DriverRequestOrigin::FrameworkWaitWake ||
@@ -109,7 +115,7 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     auto Epoch = waitWakeStartEpoch(PDO, true);
     if (!Epoch)
       return Epoch.takeError();
-    Child->StartEpoch = *Epoch;
+    Plan.StartEpoch = *Epoch;
   }
   auto Top = topAttachedDevice(PDO);
   if (!Top)
@@ -174,11 +180,36 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     return powerError("framework power requires an explicit FDO/PDO request");
   if (*Top != PDO && !PC && !FrameworkPower)
     return powerError("attached driver did not register DispatchPower");
-  if (!WaitWake && Operation.Type == DriverPowerType::Device)
-    if (auto E = Lifecycle.validateDevicePowerRequest(
-            PDO, Operation.Minor, DevicePowerState(Operation.State)))
-      return E;
-  auto Packet = allocate(IRPSize + *Count * StackSize, PoolAlignment);
+  if (!WaitWake) {
+    auto Valid =
+        Operation.Type == DriverPowerType::Device
+            ? Lifecycle.validateDevicePowerRequest(
+                  PDO, Operation.Minor, DevicePowerState(Operation.State))
+            : Lifecycle.validateSystemPowerRequest(
+                  PDO, Operation.Minor, SystemPowerState(Operation.State));
+    if (Valid)
+      return std::move(Valid);
+  }
+  Plan.PDO = PDO;
+  Plan.Top = *Top;
+  Plan.PC = *Top == PDO || FrameworkPower ? 0 : PC;
+  Plan.StackCount = uint8_t(*Count);
+  Plan.Before = *State;
+  Plan.Route = std::move(*Route);
+  Plan.WaitWake = WaitWake;
+  Plan.FrameworkPower = FrameworkPower;
+  return Plan;
+}
+
+llvm::Expected<KernelModel::Invocation>
+KernelModel::commitPowerRequest(const DriverRequest &Input, size_t Index,
+                                std::optional<RequestedPower> Child,
+                                PowerRequestPlan Plan) {
+  const auto &Operation = *Input.Power;
+  const uint64_t PDO = Plan.PDO;
+  if (Child && Plan.StartEpoch)
+    Child->StartEpoch = Plan.StartEpoch;
+  auto Packet = allocate(IRPSize + Plan.StackCount * StackSize, PoolAlignment);
   if (!Packet)
     return Packet.takeError();
   if (Child) {
@@ -191,7 +222,7 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     }
   }
   std::optional<DeviceLifecycleTicket> Ticket;
-  if (!WaitWake) {
+  if (!Plan.WaitWake) {
     auto Started =
         Operation.Type == DriverPowerType::Device
             ? Lifecycle.beginDevicePower(PDO, Operation.Minor,
@@ -209,10 +240,10 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   Record.PowerTicket = Ticket;
   Record.PowerOperation = Operation;
   Record.ChildPower = Child;
-  Record.StackCount = *Count;
-  Record.Stack = *Packet + IRPSize + (*Count - 1) * StackSize;
-  Record.DeviceRoute = std::move(*Route);
-  Record.UnwoundPending.resize(*Count);
+  Record.StackCount = Plan.StackCount;
+  Record.Stack = *Packet + IRPSize + (Plan.StackCount - 1) * StackSize;
+  Record.DeviceRoute = std::move(Plan.Route);
+  Record.UnwoundPending.resize(Plan.StackCount);
   auto &Request = Requests.emplace(*Packet, std::move(Record)).first->second;
   for (uint64_t Device : Request.DeviceRoute)
     if (auto E = retainDevice(Device))
@@ -224,7 +255,7 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     Observation.Kind = DriverRequestKind::Power;
     Observation.DeviceID = Input.DeviceID;
     Observation.Origin = Child->Origin;
-    if (!WaitWake)
+    if (!Plan.WaitWake)
       Observation.ResponseIndex = Child->ResponseIndex;
     Result.Requests.push_back(std::move(Observation));
   }
@@ -236,17 +267,32 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   Power.State = Operation.State;
   Power.SystemContext = Operation.SystemContext;
   Power.Action = Operation.Action;
-  Power.DeviceStateBefore = Power.DeviceStateAfter = State->DevicePower;
-  Power.SystemStateBefore = Power.SystemStateAfter = State->SystemPower;
+  Power.DeviceStateBefore = Power.DeviceStateAfter = Plan.Before.DevicePower;
+  Power.SystemStateBefore = Power.SystemStateAfter = Plan.Before.SystemPower;
   if (Child)
     Power.RequestedDeviceObject = Child->RequestDevice;
   Observation.Power = Power;
-  if (FrameworkPower && Operation.Type == DriverPowerType::Device)
+  if (Plan.FrameworkPower && Operation.Type == DriverPowerType::Device)
     if (auto E = Framework->beginPowerPolicyRequest(PDO))
       return E;
-  Invocation Call{*Top == PDO || FrameworkPower ? 0 : PC, *Top, *Packet};
+  Invocation Call{Plan.PC, Plan.Top, *Packet};
   Call.IRP = *Packet;
   return Call;
+}
+
+llvm::Expected<KernelModel::Invocation>
+KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
+                                 std::optional<RequestedPower> Child) {
+  auto Plan =
+      planPowerRequest(Input, Index, Child, PowerRequestDelivery::Inline);
+  if (!Plan)
+    return Plan.takeError();
+  auto Space = canAllocatePowerRequest(*Plan, Child && Child->Callback);
+  if (!Space)
+    return Space.takeError();
+  if (!*Space)
+    return powerError("power packet exceeds the available kernel arena");
+  return commitPowerRequest(Input, Index, std::move(Child), std::move(*Plan));
 }
 
 llvm::Expected<KernelModel::Invocation>

@@ -57,6 +57,208 @@ void expectError(llvm::Error E, llvm::StringRef Text) {
   EXPECT_NE(llvm::toString(std::move(E)).find(Text.str()), std::string::npos);
 }
 
+Scheduler::Callback dispatch(uint64_t IRP, uint64_t Device = 100) {
+  auto Call = work(IRP, Device);
+  Call.Arguments = {Device, IRP};
+  return Call;
+}
+
+TEST(DriverKernelScheduler,
+     WDMDispatchesSharePassiveWorkerOrderWithoutWorkItemCancellation) {
+  Scheduler S;
+  const auto First = take(S.enqueueWorkItem(work(1)));
+  const auto Guest = take(S.enqueueWDMDispatch(dispatch(2)));
+  const auto Provider = take(S.enqueueWDMProviderDispatch(3, 101, 200));
+  const auto Last = take(S.enqueueWorkItem(work(4)));
+  EXPECT_FALSE(S.cancelWorkItem(2));
+  EXPECT_FALSE(S.cancelWorkItem(3));
+  EXPECT_FALSE(S.isWorkItemQueued(2));
+  EXPECT_TRUE(take(S.queueDPC(dpc(5))));
+  auto DPC = take(S.next());
+  ASSERT_TRUE(DPC);
+  EXPECT_EQ(DPC->Kind, Scheduler::CallbackKind::DPC);
+  success(S.finish(DPC->ID));
+  for (const auto &[ID, Kind] :
+       std::vector<std::pair<uint64_t, Scheduler::CallbackKind>>{
+           {First, Scheduler::CallbackKind::WorkItem},
+           {Guest, Scheduler::CallbackKind::WDMDispatch},
+           {Provider, Scheduler::CallbackKind::WDMProviderDispatch},
+           {Last, Scheduler::CallbackKind::WorkItem}}) {
+    auto Call = take(S.next());
+    ASSERT_TRUE(Call);
+    EXPECT_EQ(Call->ID, ID);
+    EXPECT_EQ(Call->Kind, Kind);
+    EXPECT_EQ(Call->IRQL, scheduler::PassiveLevel);
+    if (ID == Guest) {
+      EXPECT_EQ(Call->PC, dispatch(2).PC);
+      EXPECT_EQ(Call->Arguments, (std::vector<uint64_t>{100, 2}));
+    }
+    if (ID == Provider) {
+      EXPECT_EQ(Call->PC, 0u);
+      EXPECT_EQ(Call->Arguments, (std::vector<uint64_t>{101, 3}));
+      EXPECT_TRUE(S.hasOutstanding(101));
+    }
+    success(S.finish(ID));
+  }
+  EXPECT_FALSE(S.hasPending());
+  EXPECT_EQ(S.dispatchCount(), 5u);
+}
+
+TEST(DriverKernelScheduler,
+     WDMDispatchAdmissionCountsActiveDPCAndDoesNotReserveIdentity) {
+  Scheduler::Limits Limits;
+  Limits.MaxPendingCallbacks = 1;
+  Scheduler S(Limits);
+  success(S.canEnqueueWDMDispatch());
+  success(S.canEnqueueWDMDispatch());
+  EXPECT_FALSE(S.hasPending());
+  EXPECT_TRUE(take(S.queueDPC(dpc(1))));
+  auto DPC = take(S.next());
+  ASSERT_TRUE(DPC);
+  EXPECT_EQ(DPC->ID, 1u);
+  expectError(S.canEnqueueWDMDispatch(), "pending callback limit");
+  expectError(S.enqueueWDMDispatch(dispatch(2)), "pending callback limit");
+  expectError(S.enqueueWDMProviderDispatch(2, 100, 200),
+              "pending callback limit");
+  EXPECT_EQ(S.queuedCallbackCount(), 0u);
+  success(S.finish(DPC->ID));
+  success(S.canEnqueueWDMDispatch());
+  EXPECT_EQ(take(S.enqueueWDMProviderDispatch(2, 100, 200)), 2u);
+  auto Provider = take(S.next());
+  ASSERT_TRUE(Provider);
+  success(S.suspend(Provider->ID));
+  expectError(S.canEnqueueWDMDispatch(), "pending callback limit");
+  success(S.resume(Provider->ID));
+  success(S.finish(Provider->ID));
+  success(S.canEnqueueWDMDispatch());
+  EXPECT_EQ(take(S.enqueueWDMDispatch(dispatch(3))), 3u);
+}
+
+TEST(DriverKernelScheduler,
+     OnlyTypedProviderDispatchCanCarryNoGuestPCAndInvalidPayloadIsAtomic) {
+  Scheduler S;
+  auto Bad = dispatch(1);
+  Bad.PC = 0;
+  expectError(S.enqueueWDMDispatch(Bad), "nonzero");
+  expectError(S.enqueueWorkItem(Bad), "nonzero");
+  expectError(S.enqueueWDMCompletion(Bad), "nonzero");
+  Bad = dispatch(1);
+  Bad.Arguments = {1, 100};
+  expectError(S.enqueueWDMDispatch(Bad), "device and IRP");
+  Bad = dispatch(1);
+  Bad.SynchronizationObject = 77;
+  expectError(S.enqueueWDMDispatch(Bad), "device and IRP");
+  expectError(S.enqueueWDMProviderDispatch(0, 100, 200), "nonzero");
+  expectError(S.enqueueWDMProviderDispatch(1, 0, 200), "nonzero");
+  expectError(S.enqueueWDMProviderDispatch(1, 100, 0), "nonzero");
+  EXPECT_FALSE(S.hasPending());
+  EXPECT_EQ(take(S.enqueueWDMProviderDispatch(1, 100, 200)), 1u);
+}
+
+TEST(DriverKernelScheduler,
+     WDMDispatchPacketCannotBeQueuedTwiceWhileQueuedActiveOrSuspended) {
+  Scheduler S;
+  const auto ID = take(S.enqueueWDMDispatch(dispatch(1)));
+  expectError(S.enqueueWDMProviderDispatch(1, 100, 200), "outstanding");
+  auto Call = take(S.next());
+  ASSERT_TRUE(Call);
+  expectError(S.enqueueWDMDispatch(dispatch(1)), "outstanding");
+  success(S.suspend(ID));
+  expectError(S.enqueueWDMProviderDispatch(1, 101, 201), "outstanding");
+  EXPECT_TRUE(S.hasOutstanding(100));
+  EXPECT_FALSE(S.hasOutstanding(101));
+  success(S.resume(ID));
+  success(S.finish(ID));
+  EXPECT_FALSE(S.hasOutstanding(100));
+  EXPECT_EQ(take(S.enqueueWDMProviderDispatch(2, 101, 201)), ID + 1);
+}
+
+TEST(DriverKernelScheduler,
+     ProviderCompletionReusesFullSlotIdentityTimeAndDispatchBudget) {
+  Scheduler::Limits Limits;
+  Limits.MaxPendingCallbacks = 1;
+  Limits.MaxDispatches = 1;
+  Limits.InitialTime100ns = 123;
+  Scheduler S(Limits);
+  const auto ID = take(S.enqueueWDMProviderDispatch(1, 100, 200));
+  auto Provider = take(S.next());
+  ASSERT_TRUE(Provider);
+  auto Completion = work(1);
+  Completion.Arguments = {100, 1, 42};
+  expectError(S.enqueueWDMCompletion(Completion), "pending callback limit");
+  const auto Continued = take(S.beginWDMProviderCompletion(ID, Completion));
+  EXPECT_EQ(Continued.ID, ID);
+  EXPECT_EQ(Continued.Kind, Scheduler::CallbackKind::WDMCompletion);
+  EXPECT_EQ(Continued.IRQL, scheduler::PassiveLevel);
+  EXPECT_EQ(Continued.DueTime100ns, Provider->DueTime100ns);
+  EXPECT_EQ(Continued.DueTime100ns, 123u);
+  EXPECT_EQ(Continued.Object, Provider->Object);
+  EXPECT_EQ(Continued.Owner, Provider->Owner);
+  EXPECT_EQ(Continued.Thread, Provider->Thread);
+  EXPECT_EQ(Continued.PC, Completion.PC);
+  EXPECT_EQ(Continued.Arguments, Completion.Arguments);
+  EXPECT_EQ(S.active()->Kind, Scheduler::CallbackKind::WDMCompletion);
+  EXPECT_EQ(S.queuedCallbackCount(), 0u);
+  EXPECT_EQ(S.dispatchCount(), 1u);
+  success(S.suspend(ID));
+  EXPECT_TRUE(S.hasOutstanding(100));
+  success(S.resume(ID));
+  EXPECT_EQ(S.active()->Arguments, Completion.Arguments);
+  success(S.finish(ID));
+  EXPECT_EQ(take(S.enqueueWorkItem(work(2))), ID + 1);
+  expectError(S.next(), "dispatch limit");
+}
+
+TEST(DriverKernelScheduler,
+     InvalidProviderCompletionTransferPreservesItsOriginalTask) {
+  Scheduler S;
+  const auto ID = take(S.enqueueWDMProviderDispatch(1, 100, 200));
+  expectError(S.beginWDMProviderCompletion(ID, work(1)), "identity mismatch");
+  auto Provider = take(S.next());
+  ASSERT_TRUE(Provider);
+  expectError(S.beginWDMProviderCompletion(ID + 1, work(1)),
+              "identity mismatch");
+  for (unsigned Field = 0; Field != 6; ++Field) {
+    auto Bad = work(1);
+    switch (Field) {
+    case 0:
+      ++Bad.Object;
+      break;
+    case 1:
+      ++Bad.Owner;
+      break;
+    case 2:
+      ++Bad.Thread;
+      break;
+    case 3:
+      Bad.PC = 0;
+      break;
+    case 4:
+      Bad.Arguments.resize(scheduler::MaxArguments + 1);
+      break;
+    case 5:
+      Bad.SynchronizationObject = 5;
+      break;
+    }
+    auto Attempt = S.beginWDMProviderCompletion(ID, Bad);
+    ASSERT_FALSE(bool(Attempt));
+    llvm::consumeError(Attempt.takeError());
+    ASSERT_TRUE(S.active());
+    EXPECT_EQ(S.active()->ID, ID);
+    EXPECT_EQ(S.active()->Kind, Scheduler::CallbackKind::WDMProviderDispatch);
+    EXPECT_EQ(S.active()->PC, 0u);
+    EXPECT_EQ(S.active()->Arguments, Provider->Arguments);
+    EXPECT_EQ(S.dispatchCount(), 1u);
+  }
+  take(S.beginWDMProviderCompletion(ID, work(1)));
+  expectError(S.beginWDMProviderCompletion(ID, work(1)), "active provider");
+  success(S.finish(ID));
+  const auto Guest = take(S.enqueueWDMDispatch(dispatch(2)));
+  ASSERT_TRUE(take(S.next()));
+  expectError(S.beginWDMProviderCompletion(Guest, work(2)), "active provider");
+  EXPECT_EQ(S.active()->Kind, Scheduler::CallbackKind::WDMDispatch);
+}
+
 TEST(DriverKernelScheduler,
      FrameworkInterruptCallbacksCoalesceWithoutAliasingKernelObjects) {
   Scheduler S;

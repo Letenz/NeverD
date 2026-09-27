@@ -645,5 +645,35 @@ TEST_F(DriverDeviceLifecycle, ExplicitDeviceLimitLeavesExistingObjectsIntact) {
   failure(Many.snapshot(Limit + 1), "unknown device");
 }
 
+TEST_F(DriverDeviceLifecycle,
+       PureSystemPreflightDoesNotConsumeOrReplaceTickets) {
+  start();
+  success(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Sleeping3));
+  EXPECT_FALSE(state().SystemPowerOperation);
+  EXPECT_EQ(state().SystemPower, SystemPowerState::Working);
+  failure(Model.validateSystemPowerRequest(FirstDevice,
+                                           DevicePowerRequest::Query,
+                                           SystemPowerState::Working),
+          "does not use a query");
+  const auto System =
+      systemPower(DevicePowerRequest::Set, SystemPowerState::Sleeping3);
+  failure(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Working),
+          "already active");
+  EXPECT_EQ(state().SystemPowerOperation, System);
+  success(Model.finishSystemPower(System, Success));
+  success(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Working));
+  const auto Resume =
+      systemPower(DevicePowerRequest::Set, SystemPowerState::Working);
+  EXPECT_EQ(Resume.Sequence, System.Sequence + 1);
+  success(Model.finishSystemPower(Resume, Success));
+  pnp(DevicePnpRequest::SurpriseRemoval);
+  failure(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Sleeping3),
+          "being removed");
+  EXPECT_FALSE(state().SystemPowerOperation);
+}
 } // namespace
 } // namespace neverd::emulation

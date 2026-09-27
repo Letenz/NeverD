@@ -807,6 +807,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     NEVERD_DRIVER_NESTED_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-nested-user-scenario.json"
     NEVERD_DRIVER_D2_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-d2-power-scenario.json"
     NEVERD_DRIVER_WDM_WAIT_WAKE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-wait-wake-scenario.json"
+    NEVERD_DRIVER_WDM_ELEVATED_POWER_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-elevated-power-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
     NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
     NEVERD_DRIVER_CLI="$<TARGET_FILE:neverd>"

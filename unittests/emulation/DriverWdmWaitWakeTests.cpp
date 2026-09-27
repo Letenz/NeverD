@@ -62,6 +62,13 @@ DriverRequest snapshot(bool Wake = false) {
   return Request;
 }
 
+DriverRequest extendedSnapshot() {
+  auto Request = snapshot();
+  Request.ControlCode = WdmWakeExtendedSnapshotIoctl;
+  Request.OutputSize = WdmWakeExtendedSnapshotWords * sizeof(uint32_t);
+  return Request;
+}
+
 DriverPowerOperation operation(DevicePowerState State) {
   DriverPowerOperation Power;
   Power.State = uint32_t(State);
@@ -160,6 +167,36 @@ void expectSnapshot(const DriverResult &Result, size_t Index, unsigned Sends,
   EXPECT_EQ(word(*Snapshot, WdmWakeCallbacks), Callbacks);
   EXPECT_EQ(word(*Snapshot, WdmWakeActive), unsigned(Active));
   EXPECT_EQ(word(*Snapshot, WdmWakeHasCancelRoutine), unsigned(Active));
+}
+
+void expectQueuedSnapshot(const DriverResult &Result, size_t Index,
+                          uint32_t Irql, unsigned Submissions,
+                          DevicePowerRequest Minor, DevicePowerState State) {
+  const auto *Snapshot = scenario(Result, Index);
+  ASSERT_NE(Snapshot, nullptr);
+  ASSERT_EQ(Snapshot->Output.size(),
+            WdmWakeExtendedSnapshotWords * sizeof(uint32_t));
+  EXPECT_EQ(word(*Snapshot, WdmWakeFailures), 0u);
+  EXPECT_EQ(word(*Snapshot, WdmWakeWorkers), 0u);
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedSubmissions), Submissions);
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedCompletions), Submissions);
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedDispatches), Submissions);
+  EXPECT_EQ(word(*Snapshot, WdmWakeCallerIrqlBefore), Irql);
+  EXPECT_EQ(word(*Snapshot, WdmWakeCallerIrqlAfter), Irql);
+  EXPECT_EQ(word(*Snapshot, WdmWakeCallerCR8Before), Irql);
+  EXPECT_EQ(word(*Snapshot, WdmWakeCallerCR8After), Irql);
+  EXPECT_EQ(word(*Snapshot, WdmWakePowerDispatchIrql), 0u);
+  EXPECT_EQ(word(*Snapshot, WdmWakePowerDispatchCR8), 0u);
+  EXPECT_EQ(word(*Snapshot, WdmWakePowerCallbackIrql), 0u);
+  EXPECT_EQ(word(*Snapshot, WdmWakePowerCallbackCR8), 0u);
+  EXPECT_NE(word(*Snapshot, WdmWakeCallerReturnOrder), 0u);
+  EXPECT_LT(word(*Snapshot, WdmWakeCallerReturnOrder),
+            word(*Snapshot, WdmWakePowerDispatchOrder));
+  EXPECT_LT(word(*Snapshot, WdmWakePowerDispatchOrder),
+            word(*Snapshot, WdmWakePowerCallbackOrder));
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedMinor), uint32_t(Minor));
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedDeviceState), uint32_t(State));
+  EXPECT_EQ(word(*Snapshot, WdmWakeQueuedAPIStatus), windows::StatusPending);
 }
 #endif
 
@@ -384,6 +421,140 @@ TEST(DriverWdmWaitWake, DpcCancellationPreservesIrqlAndQueuesPassiveD0) {
       ASSERT_FALSE(Result->PnpDevices.empty());
       EXPECT_EQ(Result->PnpDevices.front().DevicePower, DevicePowerState::D0);
     }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_WAIT_WAKE_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST(DriverWdmWaitWake, DpcTerminalCallbackDirectlyQueuesD0AtPassive) {
+#ifdef NEVERD_WDM_WAIT_WAKE_FIXTURE
+  for (const auto *Image : images())
+    for (uint64_t Base : {uint64_t(0), uint64_t(0x190000000)})
+      for (uint64_t Delay : {uint64_t(0), uint64_t(11)}) {
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Base);
+        SCOPED_TRACE(Delay);
+        auto Input = options();
+        Input.LoadAddress = Base;
+        auto D0 = operation(DevicePowerState::D0);
+        D0.BusCompletion.Delay100ns = Delay;
+        Input.PnpDevices.front().RequestedDevicePower = {D0};
+        Input.Requests.insert(Input.Requests.end(),
+                              {power(DevicePowerState::D2),
+                               command(WdmWakeCancelDpcDirect),
+                               extendedSnapshot()});
+        finish(Input);
+        auto Result = emulateDriver(Image, Input);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        clean(*Result);
+        ASSERT_FALSE(HasFatalFailure());
+        expectQueuedSnapshot(*Result, 4, 2, 1, DevicePowerRequest::Set,
+                             DevicePowerState::D0);
+        const auto *Snapshot = scenario(*Result, 4);
+        ASSERT_NE(Snapshot, nullptr);
+        EXPECT_EQ(word(*Snapshot, WdmWakeLastIoIrql), 2u);
+        EXPECT_EQ(word(*Snapshot, WdmWakeLastCallbackIrql), 2u);
+        EXPECT_EQ(word(*Snapshot, WdmWakeD0Callbacks), 1u);
+        EXPECT_EQ(word(*Snapshot, WdmWakeCancelTrue), 1u);
+        EXPECT_EQ(word(*Snapshot, WdmWakeActive), 0u);
+        const auto *Outer = scenario(*Result, 3);
+        ASSERT_NE(Outer, nullptr);
+        EXPECT_EQ(Outer->DispatchStatus, windows::StatusPending);
+        const auto Wake = wakes(*Result);
+        ASSERT_EQ(Wake.size(), 1u);
+        EXPECT_EQ(Wake.front()->IOStatus, WdmWakeCancelledStatus);
+        EXPECT_EQ(Wake.front()->Power->DeviceStateAfter, DevicePowerState::D2);
+        const auto Child = std::find_if(
+            Result->Requests.begin(), Result->Requests.end(),
+            [](const auto &Request) { return Request.ResponseIndex == 0; });
+        ASSERT_NE(Child, Result->Requests.end());
+        ASSERT_TRUE(Child->Power);
+        EXPECT_EQ(Child->Origin, DriverRequestOrigin::PoRequestPowerIrp);
+        EXPECT_EQ(Child->Power->DeviceStateBefore, DevicePowerState::D2);
+        EXPECT_EQ(Child->Power->DeviceStateAfter, DevicePowerState::D0);
+        EXPECT_NE(Child->IRP, Wake.front()->IRP);
+        ASSERT_TRUE(Child->Power->BusReceivedAt100ns);
+        ASSERT_TRUE(Child->Power->BusCompletedAt100ns);
+        EXPECT_EQ(*Child->Power->BusCompletedAt100ns -
+                      *Child->Power->BusReceivedAt100ns,
+                  Delay);
+      }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_WAIT_WAKE_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST(DriverWdmWaitWake, DpcAndApcQueryThenSetKeepTheirCallerIrql) {
+#ifdef NEVERD_WDM_WAIT_WAKE_FIXTURE
+  constexpr std::array Commands{
+      std::array<uint8_t, 2>{WdmWakeQueryDpc, WdmWakeSetDpc},
+      std::array<uint8_t, 2>{WdmWakeQueryApc, WdmWakeSetApc}};
+  for (const auto *Image : images())
+    for (uint64_t Base : {uint64_t(0), uint64_t(0x190000000)})
+      for (const auto &Pair : Commands) {
+        SCOPED_TRACE(Image);
+        SCOPED_TRACE(Base);
+        SCOPED_TRACE(char(Pair[0]));
+        auto Input = options();
+        Input.LoadAddress = Base;
+        auto Query = operation(DevicePowerState::D2);
+        Query.Minor = DevicePowerRequest::Query;
+        Query.BusCompletion.Delay100ns = 0;
+        Input.PnpDevices.front().RequestedDevicePower = {
+            Query, operation(DevicePowerState::D2)};
+        Input.Requests.insert(Input.Requests.end(),
+                              {command(Pair[0]), extendedSnapshot(),
+                               command(Pair[1]), extendedSnapshot()});
+        finish(Input);
+        auto Result = emulateDriver(Image, Input);
+        ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+        clean(*Result);
+        ASSERT_FALSE(HasFatalFailure());
+        const unsigned Irql = Pair[0] == WdmWakeQueryDpc ? 2 : 1;
+        expectQueuedSnapshot(*Result, 3, Irql, 1, DevicePowerRequest::Query,
+                             DevicePowerState::D2);
+        expectQueuedSnapshot(*Result, 5, Irql, 2, DevicePowerRequest::Set,
+                             DevicePowerState::D2);
+        unsigned Children = 0;
+        for (const auto &Request : Result->Requests) {
+          if (!Request.ResponseIndex)
+            continue;
+          ASSERT_TRUE(Request.Power);
+          EXPECT_EQ(Request.ResponseIndex, Children);
+          EXPECT_EQ(Request.Origin, DriverRequestOrigin::PoRequestPowerIrp);
+          EXPECT_EQ(Request.Power->DeviceStateBefore, DevicePowerState::D0);
+          EXPECT_EQ(Request.Power->DeviceStateAfter,
+                    Children ? DevicePowerState::D2 : DevicePowerState::D0);
+          EXPECT_EQ(Request.Power->Minor, Children ? DevicePowerRequest::Set
+                                                   : DevicePowerRequest::Query);
+          ++Children;
+        }
+        EXPECT_EQ(Children, 2u);
+      }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_WAIT_WAKE_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST(DriverWdmWaitWake, WaitWakeFromDpcStillRejectsBeforePublishingAPacket) {
+#ifdef NEVERD_WDM_WAIT_WAKE_FIXTURE
+  for (const auto *Image : images()) {
+    auto Input = options();
+    Input.Requests.push_back(command(WdmWakeWaitWakeDpc));
+    Input.Unload = false;
+    auto Result = emulateDriver(Image, Input);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    EXPECT_EQ(Result->Stop, DriverStopReason::ModelError);
+    EXPECT_NE(Result->Diagnostic.find("PASSIVE"), std::string::npos)
+        << Result->Diagnostic;
+    const auto Wake = wakes(*Result);
+    ASSERT_EQ(Wake.size(), 1u);
+    EXPECT_TRUE(Wake.front()->Completed);
+    EXPECT_EQ(Wake.front()->IOStatus, WdmWakeCancelledStatus);
+    EXPECT_EQ(Result->Requests.size(), Input.Requests.size() + 1);
+    ASSERT_EQ(Result->PnpDevices.size(), 1u);
+    EXPECT_EQ(Result->PnpDevices.front().DevicePower, DevicePowerState::D0);
+  }
 #else
   GTEST_SKIP() << "NEVERD_WDM_WAIT_WAKE_FIXTURE requires a genuine WDK fixture";
 #endif
