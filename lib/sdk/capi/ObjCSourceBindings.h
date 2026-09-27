@@ -335,6 +335,35 @@ provenSourceInteger64Value(const ExprPtr &Value,
         Value->Operands[2], Definitions, Image, Budget, Active, Depth + 1);
     return Left && Right && equalSourceTypes(Left, Right) ? Left : TypeRef{};
   }
+  // Clang lowers a signed nonnegative clamp as x & ~(x >> 63). The mask
+  // changes the integer value, but not its 64-bit signed source carrier.
+  // Require the same SSA value on both sides and an independently declared
+  // integer result for x; an arbitrary bitwise operation proves no type.
+  if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::INT_AND &&
+      Value->Operands.size() == 2) {
+    const auto &Input = Value->Operands[0];
+    const auto &Mask = Value->Operands[1];
+    const auto Shift = Mask && Mask->Kind == ExprKind::UnaryOp &&
+                               Mask->Op == NdOp::INT_NOT &&
+                               Mask->Operands.size() == 1
+                           ? Mask->Operands[0]
+                           : ExprPtr{};
+    if (Input && Input->Kind == ExprKind::Var && Shift &&
+        Shift->Kind == ExprKind::BinOp && Shift->Op == NdOp::INT_ASHR &&
+        Shift->Operands.size() == 2 && Shift->Operands[0] &&
+        Shift->Operands[0]->Kind == ExprKind::Var &&
+        varKey(Input->Var) == varKey(Shift->Operands[0]->Var) &&
+        Shift->Operands[1] && Shift->Operands[1]->Kind == ExprKind::Const &&
+        Shift->Operands[1]->ConstVal == 63 && Shift->Operands[1]->Type &&
+        Shift->Operands[1]->Type->Size == 8 && Shift->Type &&
+        equalSourceTypes(Shift->Type, Value->Type) && Mask->Type &&
+        equalSourceTypes(Mask->Type, Value->Type)) {
+      const auto Type = provenSourceInteger64Value(Input, Definitions, Image,
+                                                   Budget, Active, Depth + 1);
+      if (Type && Type->IsSigned && equalSourceTypes(Type, Value->Type))
+        return Type;
+    }
+  }
   if (Value->Kind == ExprKind::Call && Value->SourceCallHint) {
     const auto &Binding = *Value->SourceCallHint;
     const auto &Signature = Binding.Signature;
