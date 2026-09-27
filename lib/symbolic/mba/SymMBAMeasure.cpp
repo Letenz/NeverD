@@ -30,14 +30,20 @@
 /// They are offered in that order and the caller keeps the cheapest, so the
 /// order they are appended in decides ties.
 ///
+/// A later small-region search subtracts one affine atom and synthesizes a
+/// two-valued residual. It spends the remaining shared budget only after the
+/// established linear and polynomial readings have been proved.
+///
 //===----------------------------------------------------------------------===//
 
 #include "SymMBADetail.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <limits>
 #include <map>
@@ -389,6 +395,153 @@ void linearCandidates(SymContext &Ctx, std::vector<llvm::APInt> Weights,
   // to displace a grouped or conjunction-basis answer.
   for (SymRef Form : Nested)
     append(Form);
+}
+
+void affineResidualCandidates(SymContext &Ctx,
+                              llvm::ArrayRef<llvm::APInt> Weights,
+                              llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
+                              const SolverLimits &Limits, WorkBudget &Budget,
+                              llvm::SmallVectorImpl<SymRef> &Out) {
+  const unsigned Count = static_cast<unsigned>(Atoms.size());
+  // This search reuses only the existing small exact Boolean recipes. A
+  // larger caller ceiling must not trigger the four-input optimal table here.
+  if (Count < 2 || Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+                                     Limits.MaxSynthesisAtoms}))
+    return;
+  if (TermBudget < 3)
+    return;
+  assert(Weights.size() == (size_t(1) << Count));
+  if (!Budget.consume(Weights.size()))
+    return;
+  llvm::SmallVector<llvm::APInt, 4> Values;
+  for (const llvm::APInt &Value : Weights) {
+    if (llvm::is_contained(Values, Value))
+      continue;
+    if (Values.size() == 4)
+      return;
+    Values.push_back(Value);
+  }
+  // At most two values already have the offset/selector readings above. A
+  // shifted two-valued residual can cover at most four original values.
+  if (Values.size() < 3)
+    return;
+
+  if (!Budget.consume(Count * Weights.size()))
+    return;
+  unsigned Support = 0;
+  for (unsigned Axis = 0; Axis < Count; ++Axis) {
+    const size_t Bit = size_t(1) << Axis;
+    for (size_t K = 0; K < Weights.size(); ++K)
+      if (!(K & Bit) && Weights[K] != Weights[K | Bit]) {
+        ++Support;
+        break;
+      }
+  }
+  // Every essential input needs a leaf, and a multi-input result needs an
+  // operation. This bound does not assume a particular Boolean form.
+  if (TermBudget < Support + 1)
+    return;
+
+  llvm::DenseMap<uint32_t, SymRef> Synthesized;
+
+  for (unsigned Axis = 0; Axis < Count; ++Axis) {
+    if (!Budget.consume(Weights.size()))
+      return;
+    llvm::SmallVector<llvm::APInt, 2> Low, High;
+    bool TooMany = false;
+    for (size_t K = 0; K < Weights.size(); ++K) {
+      auto &Half = (K & (size_t(1) << Axis)) ? High : Low;
+      if (llvm::is_contained(Half, Weights[K]))
+        continue;
+      if (Half.size() == 2) {
+        TooMany = true;
+        break;
+      }
+      Half.push_back(Weights[K]);
+    }
+    if (TooMany)
+      continue;
+
+    // Subtracting c*X leaves the low half unchanged and translates the high
+    // half by -c. If the low half has two values, any chosen high value must
+    // align with one of them. Otherwise one of the two high values must align
+    // with the single low value. Thus at most two coefficients suffice; edge
+    // differences alone miss valid translations. No inverse is needed, even
+    // for coefficients that are not units modulo the word width.
+    llvm::SmallVector<llvm::APInt, 2> Coefficients;
+    if (Low.size() == 2) {
+      Coefficients.push_back(High[0] - Low[0]);
+      Coefficients.push_back(High[0] - Low[1]);
+    } else {
+      for (const llvm::APInt &Value : High)
+        Coefficients.push_back(Value - Low[0]);
+    }
+    for (const llvm::APInt &Coefficient : Coefficients) {
+      if (Coefficient.isZero())
+        continue;
+      if (!Budget.consume(Weights.size()))
+        return;
+      llvm::SmallVector<llvm::APInt, 2> ResidualValues;
+      TruthTable Selector = TruthTable::zero(Count);
+      bool TwoValued = true;
+      for (size_t K = 0; K < Weights.size(); ++K) {
+        llvm::APInt Value = Weights[K];
+        if (K & (size_t(1) << Axis))
+          Value -= Coefficient;
+        if (ResidualValues.empty())
+          ResidualValues.push_back(Value);
+        if (Value == ResidualValues[0])
+          continue;
+        if (ResidualValues.size() == 1)
+          ResidualValues.push_back(Value);
+        if (Value != ResidualValues[1]) {
+          TwoValued = false;
+          break;
+        }
+        Selector.set(K);
+      }
+      if (!TwoValued || ResidualValues.size() != 2)
+        continue;
+
+      for (unsigned Orientation = 0; Orientation < 2; ++Orientation) {
+        // Pay for each construction, and prepay the small exact table on its
+        // first lookup in this region. Reusing an already-built selector does
+        // not restart its synthesis allowance.
+        if (!Budget.consume(Weights.size()))
+          return;
+        const TruthTable Table = Orientation == 0 ? Selector : ~Selector;
+        const uint32_t Key = static_cast<uint32_t>(Table.packed());
+        auto Found = Synthesized.find(Key);
+        if (Found == Synthesized.end()) {
+          const unsigned Arity = std::popcount(truthTableSupport(Table));
+          const size_t Functions = size_t(1) << (size_t(1) << Arity);
+          const size_t SynthesisWork = Functions * Functions;
+          if (SynthesisWork > Limits.SynthesisWork)
+            continue;
+          if (!Budget.consume(SynthesisWork))
+            return;
+          BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+          Synthesis.MaxOptimalAtoms = Count;
+          Synthesis.MaxWork = SynthesisWork;
+          std::optional<SymRef> Boolean =
+              synthesizeBitwise(Ctx, Table, Atoms, Synthesis);
+          Found =
+              Synthesized.try_emplace(Key, Boolean.value_or(SymRef())).first;
+        }
+        if (!Found->second.isValid())
+          continue;
+        const llvm::APInt &Base = ResidualValues[Orientation];
+        const llvm::APInt &Other = ResidualValues[1 - Orientation];
+        SymRef Form =
+            Ctx.mkAdd({Ctx.mkConst(-Base),
+                       Ctx.mkMul(Ctx.mkConst(Other - Base), Found->second),
+                       Ctx.mkMul(Ctx.mkConst(Coefficient), Atoms[Axis])});
+        if (readingCost(Ctx, Form) <= TermBudget &&
+            !llvm::is_contained(Out, Form))
+          Out.push_back(Form);
+      }
+    }
+  }
 }
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates) {

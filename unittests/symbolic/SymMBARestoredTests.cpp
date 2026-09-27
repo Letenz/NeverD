@@ -15,6 +15,17 @@ SymRef carrySum(SymContext &Ctx, SymRef X, SymRef Y) {
                    Ctx.mkMul(Ctx.mkConst(Ctx.width(X), 2), Ctx.mkAnd(X, Y)));
 }
 
+void expectSameOrShorterProved(SymContext &Ctx, SymRef Actual,
+                               SymRef Expected) {
+  if (Actual == Expected)
+    return;
+  EXPECT_LT(Ctx.readabilityCost(Actual), Ctx.readabilityCost(Expected))
+      << Ctx.toString(Actual);
+  detail::WorkBudget Proof(MBAOptions::UnlimitedWork);
+  EXPECT_TRUE(detail::proveLinearIdentity(Ctx, Actual, Expected, 2, Proof))
+      << Ctx.toString(Actual);
+}
+
 TEST(SymMBARestored, FinishesNewLinearOpportunityInOneCall) {
   for (unsigned Width : {1u, 3u, 8u, 32u, 64u, 128u, 256u}) {
     for (bool Deep : {false, true}) {
@@ -31,7 +42,7 @@ TEST(SymMBARestored, FinishesNewLinearOpportunityInOneCall) {
       Opts.VerifySamples = 0;
       MBAResult R = Deep ? simplifyMBADeep(Ctx, Input, Opts)
                          : simplifyMBA(Ctx, Input, Opts);
-      EXPECT_EQ(R.Expr, Expected) << Ctx.toString(R.Expr);
+      expectSameOrShorterProved(Ctx, R.Expr, Expected);
       EXPECT_LE(R.SizeAfter, R.SizeBefore);
       EXPECT_LE(R.Work, Opts.MaxWork);
       if (Width > 1)
@@ -116,7 +127,7 @@ TEST(SymMBARestored, GrowthModeStillAcceptsTheShorterRestoredForm) {
   Opts.VerifySamples = 0;
   Opts.AllowGrowth = true;
   MBAResult R = simplifyMBA(Ctx, P.Root, Opts);
-  EXPECT_EQ(R.Expr, Expected.Root);
+  expectSameOrShorterProved(Ctx, R.Expr, Expected.Root);
   EXPECT_LT(R.SizeAfter, R.SizeBefore);
 }
 
@@ -147,7 +158,7 @@ TEST(SymMBARestored, RefinesInputsWithASharedOpaqueTail) {
   Opts.VerifySamples = 0;
   const size_t Nodes = Ctx.numNodes();
   MBAResult R = simplifyMBADeep(Ctx, Input, Opts);
-  EXPECT_EQ(R.Expr, Expected);
+  expectSameOrShorterProved(Ctx, R.Expr, Expected);
   EXPECT_LE(R.Work, Opts.MaxWork);
   EXPECT_LT(Ctx.numNodes() - Nodes, 2 * Nodes);
 }

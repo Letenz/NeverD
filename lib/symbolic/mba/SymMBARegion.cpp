@@ -105,6 +105,8 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   llvm::SmallVector<Candidate, 6> Candidates;
   bool Measured = false;
+  std::optional<Region> ResidualRegion;
+  std::vector<llvm::APInt> ResidualWeights;
 
   if (std::optional<Region> Linear =
           readRegion(Ctx, E, Opts, /*AllowProducts=*/false, Budget, Rep)) {
@@ -120,10 +122,26 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       // one-corner budget charge and the same proof and selection gates below.
       if (Linear->AtomIds.empty())
         Forms.push_back(Linear->Abstract.Body);
-      else
-        linearCandidates(
-            Ctx, measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
-            Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+      else {
+        std::vector<llvm::APInt> Weights =
+            measure(Ctx, Linear->Abstract.Body, Linear->AtomIds);
+        // A tiny corner count can still hold very wide heap-backed APInts.
+        // Reserve room for the retained weights, half sets, coefficients,
+        // residuals and arithmetic temporaries before making the extra copy.
+        // The conservative word count also covers their container overhead.
+        const size_t Width = Ctx.width(Linear->Abstract.Body);
+        const size_t WordBytes =
+            sizeof(llvm::APInt) +
+            (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
+        const bool ResidualStorageFits = WordBytes <= Opts.MaxTableBytes / 64;
+        if (NumAtoms >= 2 &&
+            NumAtoms <= std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+                                  Limits.MaxSynthesisAtoms}) &&
+            ResidualStorageFits)
+          ResidualWeights = Weights;
+        linearCandidates(Ctx, std::move(Weights), Linear->Atoms,
+                         termBudget(Ctx, E, Opts), Limits, Forms);
+      }
       for (SymRef Form : Forms) {
         // Prove the identity over independent inputs before restoring their
         // sources. Restoration may combine coefficients and erase the shared
@@ -136,6 +154,8 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                                : Ctx.substitute(Form, Linear->Abstract.Hidden);
         Candidates.push_back({Rewritten, NumAtoms, true});
       }
+      if (!ResidualWeights.empty())
+        ResidualRegion = std::move(Linear);
     }
   }
 
@@ -154,6 +174,39 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
         Candidates.push_back(
             {Rewritten, static_cast<unsigned>(Poly->AtomIds.size()), true});
       }
+    }
+  }
+
+  // Additional readings spend only what remains after the established linear
+  // and polynomial candidates have been proved. Refusing the optional search
+  // therefore cannot erase a candidate already available at this budget.
+  if (ResidualRegion && !Budget.exhausted()) {
+    llvm::SmallVector<SymRef, 8> Forms;
+    size_t MaxCost = termBudget(Ctx, E, Opts);
+    if (ResidualRegion->Abstract.Hidden.empty()) {
+      for (const Candidate &C : Candidates)
+        MaxCost = std::min(MaxCost, readingCost(Ctx, C.Expr));
+      if (MaxCost)
+        --MaxCost;
+    }
+    affineResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
+                             MaxCost, Limits, Budget, Forms);
+    for (SymRef Form : Forms) {
+      if (Budget.exhausted())
+        break;
+      if (!proveLinearIdentity(Ctx, ResidualRegion->Abstract.Body, Form,
+                               Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+        continue;
+      if (!ResidualRegion->Abstract.Hidden.empty() &&
+          !Budget.consume(Ctx.dagSize(Form)))
+        break;
+      SymRef Rewritten =
+          ResidualRegion->Abstract.Hidden.empty()
+              ? Form
+              : Ctx.substitute(Form, ResidualRegion->Abstract.Hidden);
+      Candidates.push_back({Rewritten,
+                            static_cast<unsigned>(ResidualRegion->Atoms.size()),
+                            true});
     }
   }
   Rep.BudgetExhausted |= Budget.exhausted();

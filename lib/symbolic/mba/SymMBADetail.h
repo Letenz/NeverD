@@ -201,6 +201,15 @@ void linearCandidates(SymContext &Ctx, std::vector<llvm::APInt> Weights,
                       const SolverLimits &Limits,
                       llvm::SmallVectorImpl<SymRef> &Out);
 
+/// Additional small linear readings obtained by subtracting one affine atom
+/// and synthesizing its two-valued residual. Every scan and small-table lookup
+/// spends the shared budget; callers prove the returned forms independently.
+void affineResidualCandidates(SymContext &Ctx,
+                              llvm::ArrayRef<llvm::APInt> Weights,
+                              llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
+                              const SolverLimits &Limits, WorkBudget &Budget,
+                              llvm::SmallVectorImpl<SymRef> &Out);
+
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates);
 
 //===----------------------------------------------------------------------===//
