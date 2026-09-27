@@ -954,16 +954,27 @@ bool hasOnlyScalarLiteralInputs(const ExprPtr &Root,
       return false;
     if (!Seen.insert(Current.get()).second)
       continue;
-    if (Current->Kind == ExprKind::Const &&
-        (Current->ConstProvenance != ConstantAddressProvenance::Scalar ||
-         Current->AddressOwnerVA != InvalidVA))
-      return false;
+    if (Current->Kind == ExprKind::Const) {
+      if (Current->ConstProvenance != ConstantAddressProvenance::Scalar ||
+          Current->AddressOwnerVA != InvalidVA)
+        return false;
+      continue;
+    }
     if (isScalarLocal(Current)) {
       auto It = Definitions.find(highSourceLocalIdentity(Current->Var));
-      if (It != Definitions.end())
+      if (It != Definitions.end() &&
+          bitWidthOf(It->second.Value) == bitWidthOf(Current))
         Work.push_back(It->second.Value);
     }
-    Work.insert(Work.end(), Current->Operands.begin(), Current->Operands.end());
+    // Match Translator::in: a slice reads its source but uses the second
+    // operand only as an extraction index. Unsupported nodes are opaque, so
+    // literals inside their operands cannot contribute to a folded constant.
+    if (isIntegerConversion(Current) || isIntegerSlice(Current)) {
+      Work.push_back(Current->Operands[0]);
+    } else if (canTranslateOperands(Current, bitWidthOf)) {
+      Work.insert(Work.end(), Current->Operands.begin(),
+                  Current->Operands.end());
+    }
   }
   return true;
 }
