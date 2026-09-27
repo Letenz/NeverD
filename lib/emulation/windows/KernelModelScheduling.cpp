@@ -304,11 +304,19 @@ KernelModel::dispatchScheduledPowerProvider(
   auto Status = callProviderDriver(Call.Owner, Call.Object);
   if (!Status)
     return Status.takeError();
-  auto Returned = finishWdmGuestCall(Token->second.ID, *Status);
-  if (!Returned)
-    return Returned.takeError();
-  if (!*Returned)
-    return schedulingError("provider power dispatch did not record its return");
+  if (auto Receipt = ProviderReceipts.find(Call.Object);
+      Receipt != ProviderReceipts.end()) {
+    if (!PendingWdmCall || Receipt->second.ScheduledDispatchToken)
+      return schedulingError("provider receipt lost its suspended return");
+    Receipt->second.ScheduledDispatchToken = Token->second.ID;
+  } else {
+    auto Returned = finishWdmGuestCall(Token->second.ID, *Status);
+    if (!Returned)
+      return Returned.takeError();
+    if (!*Returned)
+      return schedulingError(
+          "provider power dispatch did not record its return");
+  }
   if (auto Completion = takeWdmGuestCall()) {
     auto Next = Scheduler.beginWDMProviderCompletion(
         Call.ID, {Call.Object, Call.Owner, Call.Thread, Completion->PC,
@@ -428,6 +436,14 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
         if (auto E = beginGuestCall(Token->second))
           return E;
       }
+      if ((**Next).Kind == KernelScheduler::CallbackKind::UsbIdle) {
+        auto Token = ScheduledModelContinuations.find((**Next).ID);
+        if (Token == ScheduledModelContinuations.end() ||
+            Token->second.Owner != GuestCallOwner::UsbIdle)
+          return schedulingError("USB idle callback lost its continuation");
+        if (auto E = beginUsbIdleCallback(Token->second.ID))
+          return E;
+      }
       if (KernelScheduler::isDMACallbackKind((**Next).Kind)) {
         auto Token = ScheduledModelContinuations.find((**Next).ID);
         if (Token == ScheduledModelContinuations.end() ||
@@ -497,6 +513,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMDispatch ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMProviderDispatch ||
+      Invocation.Kind == KernelScheduler::CallbackKind::UsbIdle ||
       Invocation.Kind == KernelScheduler::CallbackKind::Interrupt ||
       KernelScheduler::isDMACallbackKind(Invocation.Kind))
     return retireDeviceIfUnreferenced(Invocation.Owner);
@@ -767,6 +784,8 @@ llvm::Error KernelModel::canRevokeVirtualRange(uint64_t Base,
   if (auto E = DMA.canReleaseRange(Base, Size))
     return E;
   if (auto E = Interrupts.canReleaseRange(Base, Size))
+    return E;
+  if (auto E = UsbIdle.canReleaseRange(Base, Size))
     return E;
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))

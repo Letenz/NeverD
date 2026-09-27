@@ -59,6 +59,13 @@ KernelModel::capturePowerEventOwner(const DriverPowerPolicyEvent &Event) const {
     return policyError("event requires a live provider");
   if (Event.After100ns > uint64_t(INT64_MAX) - Scheduler.now100ns())
     return policyError("event deadline exceeds the virtual clock range");
+  if (Event.Action == DriverPowerPolicyAction::UsbIdlePermission) {
+    auto Epoch = deviceStartEpoch(PDO, false);
+    auto Members = captureUsbIdlePermission(PDO);
+    if (!Epoch || !Members)
+      return llvm::joinErrors(Epoch.takeError(), Members.takeError());
+    return PowerEventOwner{UsbIdlePermissionEvent{*Epoch, std::move(*Members)}};
+  }
   if (isPoFxPowerPolicyAction(Event.Action)) {
     const auto Handle = PoFx.handleForPDO(PDO);
     auto State = Lifecycle.snapshot(PDO);
@@ -97,7 +104,7 @@ KernelModel::capturePowerEventOwner(const DriverPowerPolicyEvent &Event) const {
   if (!Request || Request->Completed || !Request->ChildPower ||
       Request->ChildPower->Origin != DriverRequestOrigin::PoRequestPowerIrp)
     return policyError("native wake event lost its originating power request");
-  auto Epoch = waitWakeStartEpoch(PDO, false);
+  auto Epoch = deviceStartEpoch(PDO, false);
   if (!Epoch)
     return Epoch.takeError();
   if (*Epoch != Wake->second.StartEpoch)
@@ -147,6 +154,15 @@ KernelModel::armPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events,
         {uint32_t(SourceIndex), uint32_t(I), Event.DeviceID, Event.Action,
          Scheduler.now100ns() + Event.After100ns, std::nullopt, Epoch,
          Event.Component, Event.State});
+    if (const auto *Usb = std::get_if<UsbIdlePermissionEvent>(
+            &PowerPolicyEvents.back().Owner)) {
+      auto &Facts = Result.PowerPolicyEvents.back().UsbIdleMembers;
+      for (const auto &Key : Usb->Members) {
+        const auto *Member = pnpDeviceForPDO(Key.PDO);
+        Facts.push_back({Result.PnpDevices[Member->ResultIndex].ID, Key.PDO,
+                         Key.IRP, Key.StartEpoch});
+      }
+    }
   }
   return llvm::Error::success();
 }
@@ -155,13 +171,37 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
   // Each capture owns one packet, even if its callback later rearms the PDO.
   std::map<uint64_t, IRPCompletionPlan> NativePlans;
   std::vector<KernelScheduler::Callback> Callbacks;
+  std::vector<UsbIdleKey> UsbKeys;
   for (const auto &Event : PowerPolicyEvents) {
     const auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
+    if (Observation.OccurredAt100ns ||
+        Observation.DueAt100ns > Scheduler.now100ns())
+      continue;
+    if (const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner)) {
+      auto Epoch = deviceStartEpoch(Event.PDO, false);
+      if (!Epoch)
+        return Epoch.takeError();
+      if (*Epoch != Usb->Epoch)
+        return policyError(
+            "USB permission belongs to an earlier coordinator START");
+      if (auto E = validateUsbIdlePermission(Usb->Members))
+        return E;
+      UsbKeys.insert(UsbKeys.end(), Usb->Members.begin(), Usb->Members.end());
+      for (const auto &Key : Usb->Members) {
+        const auto &Submission = *UsbIdle.submission(Key.PDO);
+        Callbacks.push_back({Key.IRP,
+                             Key.PDO,
+                             profile::WorkerThreadIdentity,
+                             Submission.Callback,
+                             {Submission.Context}});
+      }
+      continue;
+    }
     const auto *Wake = std::get_if<WdmWakeEvent>(&Event.Owner);
     if (!Wake || Observation.OccurredAt100ns ||
         Observation.DueAt100ns > Scheduler.now100ns())
       continue;
-    auto Epoch = waitWakeStartEpoch(Event.PDO, false);
+    auto Epoch = deviceStartEpoch(Event.PDO, false);
     if (!Epoch)
       return Epoch.takeError();
     if (*Epoch != Wake->StartEpoch)
@@ -182,6 +222,9 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
   }
   if (NativePlans.size() > UINT64_MAX - NextIRPCall)
     return policyError("wake completion identity exhausted");
+  if (!UsbKeys.empty())
+    if (auto E = UsbIdle.canQueueCallbacks(UsbKeys))
+      return E;
   if (auto E = Scheduler.canEnqueueCompletions(Callbacks))
     return E;
   for (auto &Event : PowerPolicyEvents) {
@@ -191,6 +234,12 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
       continue;
     if (!isProviderDevice(Event.PDO))
       return policyError("event reached a retired provider");
+    if (const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner)) {
+      if (auto E = queueUsbIdlePermission(Usb->Members))
+        return E;
+      Observation.OccurredAt100ns = Scheduler.now100ns();
+      continue;
+    }
     if (const auto *Wake = std::get_if<WdmWakeEvent>(&Event.Owner)) {
       const auto &Plan = NativePlans.at(Wake->IRP);
       if (auto E = completeProviderWake(Event.PDO, Wake->IRP,
@@ -260,6 +309,8 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
       E = PoFx.requestDevicePowerNotRequired(
           std::get<PoFxPowerEvent>(Event.Owner).Handle);
       break;
+    case DriverPowerPolicyAction::UsbIdlePermission:
+      llvm_unreachable("USB permission has its captured owner path");
     }
     if (E)
       return E;

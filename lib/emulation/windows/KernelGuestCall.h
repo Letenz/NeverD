@@ -19,7 +19,7 @@
 
 namespace neverd::emulation {
 
-enum class GuestCallOwner { Framework, WDM, Interrupt, DMA, PoFx };
+enum class GuestCallOwner { Framework, WDM, Interrupt, DMA, PoFx, UsbIdle };
 
 struct GuestCallToken {
   GuestCallOwner Owner = GuestCallOwner::Framework;

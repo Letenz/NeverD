@@ -18,6 +18,7 @@
 #include "neverd/emulation/DriverInterrupts.h"
 #include "neverd/emulation/DriverPowerPolicy.h"
 #include "neverd/emulation/DriverResources.h"
+#include "neverd/emulation/DriverUsbIdle.h"
 
 #include <cstdint>
 #include <optional>
@@ -148,6 +149,8 @@ struct DriverPnpDevice {
   /// parents. Omission declares a root; the provider never infers a parent
   /// device.
   std::optional<std::string> ParentID;
+  /// Explicit selective-idle role; resource transport does not imply USB.
+  std::optional<DriverUsbIdleConfig> UsbIdle;
 };
 
 struct DriverPnpOperation {

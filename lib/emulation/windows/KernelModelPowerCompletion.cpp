@@ -64,6 +64,17 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   if (!*PDO || !Provider || !Devices.count(Device) ||
       Devices.at(Device).DeletePending)
     return powerError("request requires a live configured PDO or FDO");
+  const uint64_t UsbToken = CurrentGuestCall.Owner == GuestCallOwner::UsbIdle
+                                ? CurrentGuestCall.ID
+                                : 0;
+  if (UsbToken && !WaitWake) {
+    const auto *Idle = UsbIdle.callback(UsbToken);
+    if (!Idle || Idle->Key.PDO != *PDO)
+      return powerError("USB idle callback must power its own provider");
+    if (auto E = UsbIdle.canIssueDevicePower(UsbToken, Minor,
+                                             DevicePowerState(Arguments[2])))
+      return E;
+  }
   const uint32_t Index = Provider->RequestedPowerIndex;
   DriverPowerOperation Operation;
   if (WaitWake) {
@@ -94,8 +105,13 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   auto Space = canAllocatePowerRequest(*Plan, Child.Callback != 0);
   if (!Space)
     return Space.takeError();
-  if (!*Space)
+  if (!*Space) {
+    if (UsbToken && !WaitWake)
+      if (auto E = UsbIdle.failedDevicePowerAdmission(
+              UsbToken, StatusInsufficientResources))
+        return E;
     return StatusInsufficientResources;
+  }
   if (Delivery == PowerRequestDelivery::Queued)
     if (auto E = Scheduler.canEnqueueWDMDispatch())
       return E;
@@ -106,6 +122,13 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   // The real packet and its lifecycle ticket reserve the captured route before
   // an elevated caller returns, without changing that caller's execution level.
   const uint64_t IRP = Invocation->IRP;
+  if (UsbToken && !WaitWake) {
+    const auto Key = UsbIdle.callback(UsbToken)->Key;
+    if (auto E = UsbIdle.issuedDevicePower(UsbToken, IRP))
+      return E;
+    const auto *Idle = requestForIRP(Key.IRP);
+    Result.Requests[Idle->ResultIndex].UsbIdle->D2IRP = IRP;
+  }
   if (Arguments[5])
     if (auto E = Memory.writeInteger(Arguments[5], IRP, profile::PointerSize))
       return E;

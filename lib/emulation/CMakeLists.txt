@@ -23,6 +23,9 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelFrameworkPoFx.cpp
   windows/KernelModelPowerPolicy.cpp
   windows/KernelModelPowerEvents.cpp
+  windows/KernelUsbIdle.cpp
+  windows/KernelModelUsbIdle.cpp
+  windows/KernelModelProviderReceipt.cpp
   windows/KernelModelDriverIRP.cpp
   windows/KernelModelDriverIRPRequests.cpp
   windows/KernelPoFx.cpp

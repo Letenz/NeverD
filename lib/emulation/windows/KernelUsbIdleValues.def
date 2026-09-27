@@ -1,0 +1,14 @@
+//===- KernelUsbIdleValues.def - Bounded USB idle ABI ---------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#ifdef NEVERD_KERNEL_USB_IDLE_VALUE
+NEVERD_KERNEL_USB_IDLE_VALUE(SubmitIdleNotification, 0x220027)
+NEVERD_KERNEL_USB_IDLE_VALUE(CallbackInfoSize, 16)
+NEVERD_KERNEL_USB_IDLE_VALUE(CallbackOffset, 0)
+NEVERD_KERNEL_USB_IDLE_VALUE(ContextOffset, 8)
+NEVERD_KERNEL_USB_IDLE_VALUE(StatusPowerStateInvalid, 0xc00002d3)
+NEVERD_KERNEL_USB_IDLE_VALUE(DefaultMaxRegistrations, 64)
+#endif

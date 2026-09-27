@@ -55,6 +55,7 @@ public:
     FrameworkCompletion,
     FrameworkDeferred,
     PoFx,
+    UsbIdle,
     FrameworkInterruptDPC,
     FrameworkInterruptWorkItem,
     Interrupt,
@@ -112,6 +113,14 @@ public:
   llvm::Error canEnqueueSystemThread(const Callback &Thread) const;
   llvm::Expected<uint64_t> enqueueSystemThread(Callback Thread);
   llvm::Expected<uint64_t> enqueuePoFx(Callback Call);
+  /// USB permission callbacks have their own identity namespace and carry
+  /// exactly one opaque context argument. Admission of a composite group is
+  /// pure; the bridge publishes the complete preflighted batch serially.
+  llvm::Error
+  canEnqueueUsbIdleCallbacks(llvm::ArrayRef<Callback> Calls) const;
+  llvm::Expected<uint64_t> enqueueUsbIdleCallback(Callback Call);
+  llvm::Error canWithdrawUsbIdleCallback(uint64_t ID) const;
+  llvm::Error withdrawUsbIdleCallback(uint64_t ID);
   bool cancelWorkItem(uint64_t Object);
   bool isWorkItemQueued(uint64_t Object) const;
 

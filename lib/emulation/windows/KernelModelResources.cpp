@@ -63,6 +63,11 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
       (!Failed &&
        (Minor == DevicePnpRequest::Stop || Minor == DevicePnpRequest::Remove ||
         Minor == DevicePnpRequest::SurpriseRemoval));
+  if (RetiresStart && !ProviderProbe &&
+      UsbIdle.hasOutstanding(Request.PnpDevice))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "PnP completion must drain USB idle registration");
   if (RetiresStart)
     for (const auto &[IRP, Other] : Requests) {
       (void)IRP;

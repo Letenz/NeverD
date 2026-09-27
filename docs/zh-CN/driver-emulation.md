@@ -82,11 +82,11 @@ WDM 设备栈可以包含同一来宾驱动拥有的多个设备对象。`IoAtta
 
 `IofCallDriver` 和 `IoCallDriver` 辅助入口调用保存路径中的确切目标。真实内联 `IoCopyCurrentIrpStackLocationToNext`、`IoSkipCurrentIrpStackLocation` 和 `IoSetCompletionRoutine` 操作原始来宾 IRP；模型验证游标、数量和控制标志。下层派发返回真实状态，与 `IoStatus` 及完成回调返回值分开。完成展开先推进游标，按成功／错误／取消标志选择回调并向上传递 pending 状态；执行完成回调时，回调负责传播 pending，包括派发已返回 `STATUS_PENDING` 后的传播。`STATUS_MORE_PROCESSING_REQUIRED` 暂停展开并保留 IRP、MDL 和缓冲区，后续完成调用可以继续。嵌套完成要求外层返回停止结果，最终展开只释放一次存储。带所属子系统标记的续接保留嵌套 WDM／WDF 调用帧和继承的 IRQL。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。
 
-`IoAllocateIrp` 与 `IoFreeIrp` 支持调用方拥有的 IRP，允许至 `DISPATCH_LEVEL`，要求 `ChargeQuota=FALSE`。首次 `IoCallDriver` 验证包并保存精确的下层设备路径。本范围支持内核 `IRP_MJ_INTERNAL_DEVICE_CONTROL` 与驱动拥有的 `METHOD_NEITHER` 缓冲区，不创建用户文件或复制用户缓冲区。来宾执行真实完成及取消回调。在完成回调内释放包必须返回 `STATUS_MORE_PROCESSING_REQUIRED`；包访问立即失效，派发与回调元数据保留至调用帧返回。未发送包可直接释放；泄漏、重复释放、外来或仍被占有的包明确失败。任意重用、其他调用方请求格式、`IoBuildDeviceIoControlRequest`、USB idle notification 及 USB selective suspend 仍不支持。
+`IoAllocateIrp` 与 `IoFreeIrp` 支持调用方拥有的 IRP，允许至 `DISPATCH_LEVEL`，要求 `ChargeQuota=FALSE`。首次 `IoCallDriver` 验证包并保存精确的下层设备路径。本范围支持内核 `IRP_MJ_INTERNAL_DEVICE_CONTROL` 与驱动拥有的 `METHOD_NEITHER` 缓冲区，不创建用户文件或复制用户缓冲区。来宾执行真实完成及取消回调。在完成回调内释放包必须返回 `STATUS_MORE_PROCESSING_REQUIRED`；包访问立即失效，派发与回调元数据保留至调用帧返回。未发送包可直接释放；泄漏、重复释放、外来或仍被占有的包明确失败。任意重用、其他调用方请求格式、`IoBuildDeviceIoControlRequest` 仍不支持。
 
 调用方请求报告使用 `kind: "internal_ioctl"`、`origin: "driver_allocated_irp"`、`file: null`，保留 `code`、`irp`、派发／I/O 状态、取消时间与精确 `information_hex`。原生与 JSON 场景在加载映像前拒绝 `internal_ioctl`；只有真实来宾分配与派发才产生这些记录。
 
-下层目标必须是存活的来宾 WDM 设备，完成回调必须同时启用成功、错误和取消条件。真实 `driver_wdm_owned_irp.c` 样例使用 `NEVERD_WDM_OWNED_IRP_FIXTURE`／`NEVERD_WDM_OWNED_IRP_CFG_FIXTURE`。[调用方 IRP 场景](../examples/driver-owned-irp-scenario.json) 验证延迟完成。普通／active-CFG 映像覆盖首选／重定位地址，C API／CLI 保留独立内核来源记录。缺失产物明确跳过，执行证据仅来自 Linux。
+除下述 USB idle 协议外，下层目标必须是存活的来宾 WDM 设备，完成回调必须同时启用成功、错误和取消条件。真实 `driver_wdm_owned_irp.c` 样例使用 `NEVERD_WDM_OWNED_IRP_FIXTURE`／`NEVERD_WDM_OWNED_IRP_CFG_FIXTURE`。[调用方 IRP 场景](../examples/driver-owned-irp-scenario.json) 验证延迟完成。普通／active-CFG 映像覆盖首选／重定位地址，C API／CLI 保留独立内核来源记录。缺失产物明确跳过，执行证据仅来自 Linux。
 
 示例会主动取消一个子请求，因此 CLI 退出码 2 和 `scenario_success: false` 属于预期；同时应有 `stop_reason: "returned"`、正常卸载及零样例错误。完成后的内核输出可快照到 `output_hex`，缓冲区仍由驱动拥有。
 
@@ -175,7 +175,13 @@ Query/Set `PoRequestPowerIrp` 接受最高 `DISPATCH_LEVEL` 的调用方。在 A
 
 每个提供方只保留一个原生或框架 WAIT_WAKE。缺少或全假的 `wake_capabilities` 以 `STATUS_NOT_SUPPORTED` 完成，超出支持的系统唤醒范围以 `STATUS_INVALID_DEVICE_STATE` 完成，重复请求以 `STATUS_DEVICE_BUSY` 完成。真实提供方完成先执行普通 IoCompletion 链（包括 `STATUS_MORE_PROCESSING_REQUIRED`），再执行最终五参数 void `REQUEST_POWER_COMPLETE`；独立 `IO_STATUS_BLOCK` 快照有效至回调返回。上层不能凭空成功完成唤醒。`IoCancelIrp` 遵循真实取消锁协议调用已安装的提供方取消例程，仅在实际调用时返回 TRUE；完成过程保留调用方 IRQL。 成功事件还须按实际 Working／Sleeping3 状态分别验证提供方独立的 S0／Sx 能力；IRP 的 Sleeping3 上限不授予 S0 唤醒能力。
 
-原生 `wake` 事件捕获已经保留的精确 IRP 及成功 START 身份，取消／重发和 STOP／重启不能改变事件目标。唤醒记录 `wake_source_device_id`／`wake_source_pdo`，不改变 D0/D2/D3 或 Working/Sleeping3；驱动须另发电源请求。原始提交驱动须在不兼容的拆除前取消并等待 WAIT_WAKE 和回调结束。只有带实际取消观测且由提供方取消完成的原生 WAIT_WAKE 才算预期控制流。USB 选择性挂起、`IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION`及原始 WDM 子设备唤醒传播仍不支持。
+原生 `wake` 事件捕获已经保留的精确 IRP 及成功 START 身份，取消／重发和 STOP／重启不能改变事件目标。唤醒记录 `wake_source_device_id`／`wake_source_pdo`，不改变 D0/D2/D3 或 Working/Sleeping3；驱动须另发电源请求。原始提交驱动须在不兼容的拆除前取消并等待 WAIT_WAKE 和回调结束。只有带实际取消观测且由提供方取消完成的原生 WAIT_WAKE 才算预期控制流。原始 WDM 子设备唤醒传播仍不支持。
+
+原生 WDM USB 选择性空闲要求独立于 `bus` 的显式 `usb_idle` 配置：`role` 为 `independent_function`、`composite_parent` 或 `composite_function`；组合功能的直接 `parent_id` 必须指向组合父级。`remote_wake` 默认为 false，true 还须声明通用 `wake_capabilities`，实际 USB 唤醒要求 D2；不能仅凭 D3hot 能力推导 USB 唤醒。`power_policy_events` 的 `usb_idle_permission` 指向独立功能或组合父级，不接受 `component`／`state`，捕获所有成员保留的 IRP 与成功 START 身份。任一组合功能缺少注册时整批拒绝；取消重发或重启不会改变已捕获目标。
+
+驱动在稳定 S0/D0、`PASSIVE_LEVEL` 分配并发送真实 `IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION`：内核 `METHOD_NEITHER`、恰好 16 字节回调信息、无输出，可直达显式 provider 或经来宾 FDO 转发。provider 借用信息记录至完成，捕获的 context 保持不透明且可为 NULL。许可在 PASSIVE 执行单参数 void 回调；回调须发出一次真实 SET D2 并等待其终端完成，实际分配失败允许取消后返回。之后 idle IRP 继续挂起。进入前取消撤销排队回调；进入后取消等待回调返回。D0 收到时先成功完成 idle，再独立确认 D0；D3 收到时以 `STATUS_POWER_STATE_INVALID` 完成，S3／移除收到时取消。最终 IoCompletion 沿用真实释放／`STATUS_MORE_PROCESSING_REQUIRED` 所有权。
+
+请求 `usb_idle` 记录 `start_epoch`、实际收到、回调进入／返回、`d2_irp` 及结果、`completion_cause`、认领与最终完成时间，未观测字段为 null。事件 `usb_idle_members` 保留精确设备／PDO／IRP／START 身份，不伪造电源转换。只有实际 provider 与原因匹配的取消／D3 失效才算预期控制流，重复注册的 `STATUS_DEVICE_BUSY` 仍使场景失败。[USB idle 场景](../examples/driver-wdm-usb-idle-scenario.json) 使用 `NEVERD_WDM_USB_IDLE_FIXTURE`／`NEVERD_WDM_USB_IDLE_CFG_FIXTURE`。KMDF `IdleUsbSelectiveSuspend`、USB 描述符、URB、管道与传输目标仍不支持。
 
 [原生 WAIT_WAKE 场景](../examples/driver-wdm-wait-wake-scenario.json) 使用真实 WDK `driver_wdm_wait_wake.c`，通过 `NEVERD_WDM_WAIT_WAKE_FIXTURE`／`NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE` 运行。测试覆盖实际 START 中提交、回调参数、唤醒不自动 D0、重发、取消、MPR、DPC 取消后工作线程提交 D0、精确事件捕获和独立提供方。普通／active-CFG 及首选／重定位地址执行证据仅来自 Linux；缺少文件明确跳过。
 
@@ -199,7 +205,7 @@ KMDF 1.33 支持使用精确的 1.33.0 ABI：458 个函数槽具有稳定的来�
 
 锁 API：`WdfSpinLockCreate`, `WdfSpinLockAcquire`, `WdfSpinLockRelease`, `WdfWaitLockCreate`, `WdfWaitLockAcquire`, `WdfWaitLockRelease`, `WdfObjectAcquireLock`, `WdfObjectReleaseLock`。外部 `WDFSPINLOCK`／`WDFWAITLOCK` 与中断对象复用 executive／dispatcher 锁状态，删除前验证持有者、等待者和父对象引用。自旋锁提升到 `DISPATCH_LEVEL` 并恢复原 IRQL；等待锁归实际线程所有，等待及持有期间禁用普通内核 APC，支持无限、相对、绝对和零超时。零超时要求低于 `DISPATCH_LEVEL`，其他等待要求 `PASSIVE_LEVEL`。已分配给中断的自旋锁必须使用中断锁 API。设备／队列同步范围和继承执行级别通过所选父锁串行化 I/O、文件、取消及中断延后回调，挂起期间保留所有权。被动回调锁可以等待，dispatch 回调锁提升 IRQL，并拒绝无法阻塞的争用。自动回调允许同线程嵌套，显式对象锁不可递归。中断 DPC／工作项自动串行化要求兼容的父执行级别；ISR 独立使用中断锁。
 
-电源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驱动管理的空闲策略要求明确的正数毫秒超时、`IdleCannotWake`／`IdleCanWake` 和无用户覆盖。S0 与 Sleeping3 唤醒围绕实际保留的 `WAIT_WAKE` IRP 执行 arm、triggered、disarm 回调。StopIdle／ResumeIdle 使用成对、可嵌套的电源引用；`StopIdle(TRUE)` 要求 `PASSIVE_LEVEL`，真实调用帧等待 D0 完成；FALSE、ResumeIdle 和设置 API 允许至 `DISPATCH_LEVEL`，回调注册要求 `PASSIVE_LEVEL`。电源管理队列回调或断电期间同步 StopIdle 会明确报告死锁。Sx 唤醒只记录信号，仍须显式系统 Working 请求。`PowerUpIdleDeviceOnSystemWake` 决定不能唤醒的空闲设备是否保持 Dx 至出现活动。USB 空闲策略、通用 PEP／平台策略及失败设备自动重新枚举仍不支持。
+电源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驱动管理的空闲策略要求明确的正数毫秒超时、`IdleCannotWake`／`IdleCanWake` 和无用户覆盖。S0 与 Sleeping3 唤醒围绕实际保留的 `WAIT_WAKE` IRP 执行 arm、triggered、disarm 回调。StopIdle／ResumeIdle 使用成对、可嵌套的电源引用；`StopIdle(TRUE)` 要求 `PASSIVE_LEVEL`，真实调用帧等待 D0 完成；FALSE、ResumeIdle 和设置 API 允许至 `DISPATCH_LEVEL`，回调注册要求 `PASSIVE_LEVEL`。电源管理队列回调或断电期间同步 StopIdle 会明确报告死锁。Sx 唤醒只记录信号，仍须显式系统 Working 请求。`PowerUpIdleDeviceOnSystemWake` 决定不能唤醒的空闲设备是否保持 Dx 至出现活动。KMDF USB 空闲策略、通用 PEP／平台策略及失败设备自动重新枚举仍不支持。
 
 声明的 `parent_id` 关系支持 KMDF Sx 子设备唤醒。`ArmForWakeIfChildrenAreArmedForWake` 与 `IndicateChildWakeOnParentWake` 是独立布尔设置。`EvtDeviceArmWakeFromSxWithReason` 分别接收自身与子设备原因，仅子设备需要唤醒时为 `(FALSE, TRUE)`。只有成功完成 Sx arm 且保留真实 `WAIT_WAKE` 的子设备参与；父节点捕获其 PDO 与 START 代次。父唤醒先预检整个完成批次，再完成这些 IRP，且只通过启用传播的节点递归。禁用、已解除、arm 失败或已重新启动的子设备不会被虚构唤醒。成功 WAIT_WAKE 的可空 `wake_source_device_id` 与 `wake_source_pdo` 记录原始来源；每个设备仍须通过自己的响应 FIFO 显式执行 Working 与 D0 请求。
 
@@ -422,7 +428,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令计数。它保留停止前收集的 API 调用和可观察状态，包括设备对象与驱动回调地址。来宾地址以十六进制字符串表示，避免 JSON 使用方丢失 64 位精度。
 
-`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v83`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
+`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v84`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
 
 工作项观察记录使用 `callback:N` 阶段。待处理请求的 `dispatch_status` 保留 `STATUS_PENDING`，最终完成状态单独记录在 `io_status`，并据此计算该请求对 `scenario_success` 的影响。
 

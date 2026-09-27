@@ -38,6 +38,8 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
     return providerError("dispatch requires its configured provider IRP");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return providerError("cannot replace a pending guest callback");
+  if (Request->Kind == DriverRequestKind::InternalDeviceControl)
+    return receiveUsbIdle(Device, IRP);
   const DriverBusCompletion *Response = nullptr;
   uint8_t ExpectedMinor = 0;
   const bool FileLifecycle = Request->Kind == DriverRequestKind::Create ||
@@ -221,50 +223,30 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
     return Plan.takeError();
   if (NextIRPCall == UINT64_MAX || NextProviderSequence == UINT64_MAX)
     return providerError("completion identity exhausted");
-  if (Response->Delay100ns) {
-    if (auto E = markRequestPending(IRP))
+  auto Idle = planUsbIdleReceipt(Device, IRP);
+  if (!Idle)
+    return Idle.takeError();
+  if (ProviderReceipts.contains(IRP))
+    return providerError("request already owns a suspended provider receipt");
+  // Claim the whole captured set before entering any guest completion. A
+  // reentrant cancellation cannot replace another member's winning cause.
+  for (const auto &Claim : *Idle)
+    if (auto E = UsbIdle.claimCompletion(Claim))
       return E;
-    ProviderCompletions.emplace(IRP, ProviderCompletion{Device, *Deadline,
-                                                        NextProviderSequence++,
-                                                        *Response->Status});
-    if (Observation.Pnp)
-      Observation.Pnp->BusReceivedAt100ns = Scheduler.now100ns();
-    else
-      Observation.Power->BusReceivedAt100ns = Scheduler.now100ns();
-    return StatusPending;
-  }
-  // Completion can finalize a generated child; preserve the configured value
-  // before any operation that can retire its owning request record.
-  const uint32_t Status = *Response->Status;
-  if (auto E = Memory.writeInteger(IRP + IRPStatusOffset, Status, 4))
-    return E;
-  if (auto E = Memory.writeInteger(IRP + IRPInformationOffset, 0, 8))
-    return E;
-  Request->IOStatusWritten.fill(true);
-  auto Publish = [&](auto &Bus) {
-    Bus.BusReceivedAt100ns = Scheduler.now100ns();
-    Bus.BusStatus = Status;
-    Bus.BusCompletedAt100ns = Scheduler.now100ns();
-  };
   if (Observation.Pnp)
-    Publish(*Observation.Pnp);
+    Observation.Pnp->BusReceivedAt100ns = Scheduler.now100ns();
   else
-    Publish(*Observation.Power);
-  if (Request->PowerOperation &&
-      Request->PowerOperation->Type == DriverPowerType::Device &&
-      Request->PowerOperation->Minor == DevicePowerRequest::Set &&
-      !(Status & profile::NTStatusFailureMask))
-    Devices.at(Device).ReportedDevicePower =
-        static_cast<DevicePowerState>(Request->PowerOperation->State);
-  if (auto E = publishProviderHardware(*Request, Status))
-    return E;
-  if (auto E = completeRequest(IRP, 0))
-    return E;
-  if (Request->FrameworkTransitionAwaiting)
-    return StatusPending;
-  if (PendingWdmCall)
-    IRPCalls.at(PendingWdmCall->Token.ID).ReturnValue = Status;
-  return Status;
+    Observation.Power->BusReceivedAt100ns = Scheduler.now100ns();
+  if (Idle->empty())
+    return completeProviderReceipt(Device, IRP, *Deadline);
+  ProviderReceipts.emplace(
+      IRP, ProviderReceipt{Device, *Deadline, std::move(*Idle)});
+  auto Continued = continueProviderReceipt(IRP);
+  if (!Continued)
+    return Continued.takeError();
+  // An idle IoCompletion is still executing inside this provider dispatch.
+  // Its continuation resumes the receipt and supplies the actual return.
+  return Continued->value_or(StatusPending);
 }
 
 llvm::Error KernelModel::processProviderCompletions() {

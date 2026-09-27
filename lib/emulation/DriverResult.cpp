@@ -21,6 +21,13 @@
 namespace neverd::emulation {
 namespace {
 
+namespace usbField {
+#define NEVERD_DRIVER_USB_IDLE_FIELD(Name, Spelling)                           \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_FIELD
+} // namespace usbField
+
 namespace coldField {
 #define NEVERD_DRIVER_D3COLD_FIELD(Name, Spelling)                             \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -47,6 +54,13 @@ namespace requestStatus {
 #include "windows/KernelFrameworkRequestValues.def"
 #undef NEVERD_FRAMEWORK_VALUE
 } // namespace requestStatus
+
+namespace usbValue {
+#define NEVERD_KERNEL_USB_IDLE_VALUE(Name, Value)                              \
+  constexpr uint64_t Name = Value;
+#include "windows/KernelUsbIdleValues.def"
+#undef NEVERD_KERNEL_USB_IDLE_VALUE
+} // namespace usbValue
 
 namespace policyField {
 #define NEVERD_POWER_POLICY_FIELD(Name, Spelling)                              \
@@ -143,6 +157,26 @@ bool scenarioSucceeded(const DriverResult &Result) {
         Request.Power->BusStatus == requestStatus::RequestCancelled &&
         Request.Power->BusCompletedAt100ns)
       return true;
+    if (Request.Origin == DriverRequestOrigin::DriverAllocatedIRP &&
+        Request.Kind == DriverRequestKind::InternalDeviceControl &&
+        Request.ControlCode == usbValue::SubmitIdleNotification &&
+        Request.UsbIdle && Request.UsbIdle->BusReceivedAt100ns &&
+        Request.UsbIdle->CompletionCause) {
+      switch (*Request.UsbIdle->CompletionCause) {
+      case DriverUsbIdleCompletionCause::Cancel:
+      case DriverUsbIdleCompletionCause::SystemSleep:
+      case DriverUsbIdleCompletionCause::Remove:
+        if (*Request.IOStatus == requestStatus::RequestCancelled)
+          return true;
+        break;
+      case DriverUsbIdleCompletionCause::DeviceD3:
+        if (*Request.IOStatus == usbValue::StatusPowerStateInvalid)
+          return true;
+        break;
+      case DriverUsbIdleCompletionCause::DeviceD0:
+        break;
+      }
+    }
     return !(*Request.IOStatus & profile::NTStatusFailureMask);
   });
 }
@@ -437,6 +471,28 @@ const char *powerPolicyActionName(DriverPowerPolicyAction Action) {
   llvm_unreachable("invalid power policy action");
 }
 
+const char *usbIdleRoleName(DriverUsbIdleRole Role) {
+  switch (Role) {
+#define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling)                            \
+  case DriverUsbIdleRole::Name:                                                \
+    return Spelling;
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_ROLE
+  }
+  llvm_unreachable("invalid USB idle role");
+}
+
+const char *usbIdleCompletionName(DriverUsbIdleCompletionCause Cause) {
+  switch (Cause) {
+#define NEVERD_DRIVER_USB_IDLE_COMPLETION_CAUSE(Name, Spelling)                \
+  case DriverUsbIdleCompletionCause::Name:                                     \
+    return Spelling;
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_COMPLETION_CAUSE
+  }
+  llvm_unreachable("invalid USB idle completion cause");
+}
+
 llvm::json::Array powerPolicyConfigurationJSON(const DriverOptions &Options) {
   llvm::json::Array Result;
   for (size_t I = 0; I < Options.Requests.size(); ++I) {
@@ -614,6 +670,10 @@ llvm::json::Array pnpConfigurationJSON(const DriverOptions &Options) {
       Item[policyField::WakeCapabilities] =
           llvm::json::Object{{policyField::S0, Device.WakeCapabilities->S0},
                              {policyField::Sx, Device.WakeCapabilities->Sx}};
+    if (Device.UsbIdle)
+      Item[usbField::UsbIdle] = llvm::json::Object{
+          {usbField::Role, usbIdleRoleName(Device.UsbIdle->Role)},
+          {usbField::RemoteWake, Device.UsbIdle->RemoteWake}};
     if (Device.D3Cold) {
       const auto &Cold = *Device.D3Cold;
       Item[coldField::D3Cold] = llvm::json::Object{
@@ -723,6 +783,16 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[policyField::Component] = *Event.Component;
     if (Event.State)
       Item[policyField::State] = *Event.State;
+    if (Event.Action == DriverPowerPolicyAction::UsbIdlePermission) {
+      llvm::json::Array Members;
+      for (const auto &Member : Event.UsbIdleMembers)
+        Members.push_back(
+            llvm::json::Object{{field::DeviceID, Member.DeviceID},
+                               {field::PDO, Address(Member.PDO)},
+                               {field::IRP, Address(Member.IRP)},
+                               {usbField::StartEpoch, Member.StartEpoch}});
+      Item[usbField::UsbIdleMembers] = std::move(Members);
+    }
     PolicyEvents.push_back(std::move(Item));
   }
   Root[policyField::Events] = std::move(PolicyEvents);
@@ -904,6 +974,7 @@ std::string driverResultJSON(const DriverResult &Result) {
         {field::DeviceID, nullptr},
         {field::Pnp, nullptr},
         {field::Power, nullptr},
+        {usbField::UsbIdle, nullptr},
         {field::Origin, requestOriginName(Request.Origin)},
         {field::ResponseIndex, nullptr},
         {field::File, Request.File},
@@ -979,6 +1050,38 @@ std::string driverResultJSON(const DriverResult &Result) {
       if (Power.BusCompletedAt100ns)
         Observation[field::BusCompletedAt100ns] = *Power.BusCompletedAt100ns;
       Item[field::Power] = std::move(Observation);
+    }
+    if (Request.UsbIdle) {
+      const auto &Usb = *Request.UsbIdle;
+      llvm::json::Object Observation{
+          {usbField::StartEpoch, Usb.StartEpoch},
+          {field::BusReceivedAt100ns, nullptr},
+          {usbField::CallbackEnteredAt100ns, nullptr},
+          {usbField::CallbackReturnedAt100ns, nullptr},
+          {usbField::D2IRP, nullptr},
+          {usbField::D2Status, nullptr},
+          {usbField::D2CompletedAt100ns, nullptr},
+          {usbField::CompletionCause, nullptr},
+          {usbField::CompletionClaimedAt100ns, nullptr},
+          {usbField::CompletedAt100ns, nullptr}};
+      const std::pair<llvm::StringRef, std::optional<uint64_t>> Times[] = {
+          {field::BusReceivedAt100ns, Usb.BusReceivedAt100ns},
+          {usbField::CallbackEnteredAt100ns, Usb.CallbackEnteredAt100ns},
+          {usbField::CallbackReturnedAt100ns, Usb.CallbackReturnedAt100ns},
+          {usbField::D2CompletedAt100ns, Usb.D2CompletedAt100ns},
+          {usbField::CompletionClaimedAt100ns, Usb.CompletionClaimedAt100ns},
+          {usbField::CompletedAt100ns, Usb.CompletedAt100ns}};
+      for (const auto &[Name, Time] : Times)
+        if (Time)
+          Observation[Name] = *Time;
+      if (Usb.D2IRP)
+        Observation[usbField::D2IRP] = Address(*Usb.D2IRP);
+      if (Usb.D2Status)
+        Observation[usbField::D2Status] = *Usb.D2Status;
+      if (Usb.CompletionCause)
+        Observation[usbField::CompletionCause] =
+            usbIdleCompletionName(*Usb.CompletionCause);
+      Item[usbField::UsbIdle] = std::move(Observation);
     }
     if (Request.DispatchStatus)
       Item[field::DispatchStatus] = *Request.DispatchStatus;

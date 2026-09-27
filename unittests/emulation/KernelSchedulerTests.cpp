@@ -63,6 +63,115 @@ Scheduler::Callback dispatch(uint64_t IRP, uint64_t Device = 100) {
   return Call;
 }
 
+Scheduler::Callback usbIdle(uint64_t Token, uint64_t Context = 0) {
+  auto Call = work(Token);
+  Call.Arguments = {Context};
+  return Call;
+}
+
+TEST(DriverKernelScheduler, UsbIdleBatchAdmissionPreservesCapacityAndIdentity) {
+  Scheduler::Limits Limits;
+  Limits.MaxPendingCallbacks = 2;
+  Scheduler S(Limits);
+  success(S.canEnqueueUsbIdleCallbacks({usbIdle(1), usbIdle(2)}));
+  EXPECT_FALSE(S.hasPending());
+  auto First = take(S.enqueueWorkItem(work(1)));
+  EXPECT_EQ(First, 1u);
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(1), usbIdle(2)}),
+              "pending callback limit");
+  EXPECT_EQ(S.queuedCallbackCount(), 1u);
+  EXPECT_EQ(take(S.enqueueUsbIdleCallback(usbIdle(1))), 2u);
+  auto Call = take(S.next());
+  ASSERT_TRUE(Call);
+  EXPECT_EQ(Call->ID, First);
+  success(S.suspend(First));
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(2)}),
+              "pending callback limit");
+  success(S.resume(First));
+  success(S.finish(First));
+  success(S.canEnqueueUsbIdleCallbacks({usbIdle(2)}));
+}
+
+TEST(DriverKernelScheduler, UsbIdleCallbackUsesPassiveWorkerOrderAndNullContext) {
+  Scheduler S;
+  auto First = take(S.enqueueWorkItem(work(1)));
+  auto Idle = take(S.enqueueUsbIdleCallback(usbIdle(2)));
+  auto Last = take(S.enqueuePoFx(work(3)));
+  EXPECT_FALSE(S.cancelWorkItem(2));
+  for (uint64_t ID : {First, Idle, Last}) {
+    auto Call = take(S.next());
+    ASSERT_TRUE(Call);
+    EXPECT_EQ(Call->ID, ID);
+    EXPECT_EQ(Call->IRQL, scheduler::PassiveLevel);
+    if (ID == Idle) {
+      EXPECT_EQ(Call->Kind, Scheduler::CallbackKind::UsbIdle);
+      EXPECT_EQ(Call->Arguments, std::vector<uint64_t>{0});
+    }
+    success(S.finish(ID));
+  }
+}
+
+TEST(DriverKernelScheduler, UsbIdleBatchRejectsInvalidPayloadWithoutMutation) {
+  Scheduler S;
+  auto Bad = usbIdle(2);
+  Bad.PC = 0;
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(1), Bad}), "nonzero");
+  Bad = usbIdle(2);
+  Bad.Arguments = {};
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(1), Bad}), "one context");
+  Bad.Arguments = {0, 1};
+  expectError(S.enqueueUsbIdleCallback(Bad), "one context");
+  Bad = usbIdle(2);
+  Bad.SynchronizationObject = 100;
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(1), Bad}), "synchronization");
+  expectError(S.canEnqueueUsbIdleCallbacks({usbIdle(1), usbIdle(1)}),
+              "outstanding");
+  EXPECT_FALSE(S.hasPending());
+  EXPECT_EQ(take(S.enqueueUsbIdleCallback(usbIdle(1))), 1u);
+}
+
+TEST(DriverKernelScheduler, UsbIdleIdentityRemainsOwnedWhileActiveOrSuspended) {
+  Scheduler S;
+  const uint64_t ID = take(S.enqueueUsbIdleCallback(usbIdle(1)));
+  expectError(S.enqueueUsbIdleCallback(usbIdle(1)), "outstanding");
+  auto Call = take(S.next());
+  ASSERT_TRUE(Call);
+  expectError(S.enqueueUsbIdleCallback(usbIdle(1)), "outstanding");
+  expectError(S.withdrawUsbIdleCallback(ID), "exact queued");
+  success(S.suspend(ID));
+  expectError(S.enqueueUsbIdleCallback(usbIdle(1)), "outstanding");
+  expectError(S.withdrawUsbIdleCallback(ID), "exact queued");
+  EXPECT_TRUE(S.hasOutstanding(100));
+  success(S.resume(ID));
+  success(S.finish(ID));
+  EXPECT_FALSE(S.hasOutstanding(100));
+  EXPECT_EQ(take(S.enqueueUsbIdleCallback(usbIdle(1))), ID + 1);
+}
+
+TEST(DriverKernelScheduler, UsbIdleWithdrawalUsesExactQueuedKindAndIdentity) {
+  Scheduler::Limits Limits;
+  Limits.MaxPendingCallbacks = 3;
+  Scheduler S(Limits);
+  const uint64_t Work = take(S.enqueueWorkItem(work(1)));
+  const uint64_t First = take(S.enqueueUsbIdleCallback(usbIdle(1)));
+  const uint64_t Second = take(S.enqueueUsbIdleCallback(usbIdle(2)));
+  expectError(S.withdrawUsbIdleCallback(Work), "exact queued");
+  expectError(S.withdrawUsbIdleCallback(Second + 1), "exact queued");
+  success(S.canWithdrawUsbIdleCallback(First));
+  EXPECT_EQ(S.queuedCallbackCount(), 3u);
+  success(S.withdrawUsbIdleCallback(First));
+  expectError(S.withdrawUsbIdleCallback(First), "exact queued");
+  EXPECT_EQ(S.queuedCallbackCount(), 2u);
+  EXPECT_EQ(take(S.enqueueUsbIdleCallback(usbIdle(3))), Second + 1);
+  for (uint64_t ID : {Work, Second, Second + 1}) {
+    auto Call = take(S.next());
+    ASSERT_TRUE(Call);
+    EXPECT_EQ(Call->ID, ID);
+    success(S.finish(ID));
+  }
+  EXPECT_FALSE(S.hasPending());
+}
+
 TEST(DriverKernelScheduler,
      WDMDispatchesSharePassiveWorkerOrderWithoutWorkItemCancellation) {
   Scheduler S;

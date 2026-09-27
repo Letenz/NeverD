@@ -45,9 +45,12 @@ KernelModel::callProviderExport(const KernelExportRegistry::Export &Export,
                                 llvm::ArrayRef<uint64_t> Arguments) {
   const auto Arity = providerArgumentCount(Export.Name);
   if (Export.Kind != KernelExportRegistry::ExportKind::ProviderFunction ||
-      !Arity || Arguments.size() != *Arity ||
-      Export.Name != callback::CancelWaitWake)
+      !Arity || Arguments.size() != *Arity)
     return policyError("unknown provider callback or invalid argument count");
+  if (Export.Name == callback::CancelUsbIdle)
+    return cancelUsbIdle(Export, Arguments);
+  if (Export.Name != callback::CancelWaitWake)
+    return policyError("unsupported provider callback");
   const uint64_t PDO = Arguments[0], IRP = Arguments[1];
   const auto Wake = ProviderWakeIRPs.find(PDO);
   const auto Call = IRPCalls.find(CurrentGuestCall.ID);
@@ -81,7 +84,7 @@ llvm::Expected<uint64_t> KernelModel::retainProviderWake(uint64_t PDO,
   if (!Managed &&
       Request->ChildPower->Origin != DriverRequestOrigin::PoRequestPowerIrp)
     return policyError("WAIT_WAKE has an unsupported issuing owner");
-  auto StartEpoch = waitWakeStartEpoch(PDO, true);
+  auto StartEpoch = deviceStartEpoch(PDO, true);
   if (!StartEpoch)
     return StartEpoch.takeError();
   ProviderWake Wake;
@@ -112,6 +115,8 @@ llvm::Expected<uint64_t> KernelModel::retainProviderWake(uint64_t PDO,
       Status = windows::StatusInvalidDeviceState;
     else if (ProviderWakeIRPs.contains(PDO))
       Status = windows::StatusDeviceBusy;
+    else if (const auto *Usb = usbIdleConfig(PDO); Usb && !Usb->RemoteWake)
+      Status = windows::StatusNotSupported;
     else if (!Provider->WakeCapabilities || (!Provider->WakeCapabilities->S0 &&
                                              !Provider->WakeCapabilities->Sx))
       Status = windows::StatusNotSupported;
@@ -381,7 +386,9 @@ KernelModel::preflightProviderWake(uint64_t PDO, uint64_t IRP,
       Observation->BusCompletedAt100ns)
     return policyError("wait/wake completion lost its provider retention");
   if (Status == windows::StatusSuccess) {
-    auto Epoch = waitWakeStartEpoch(PDO, false);
+    if (auto E = validateUsbRemoteWake(PDO))
+      return E;
+    auto Epoch = deviceStartEpoch(PDO, false);
     if (!Epoch)
       return Epoch.takeError();
     if (*Epoch != Wake.StartEpoch)

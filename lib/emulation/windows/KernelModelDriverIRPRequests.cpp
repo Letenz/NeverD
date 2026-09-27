@@ -38,7 +38,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
     return driverIRPError("submission cannot replace a pending callback");
   auto Target = Devices.find(Device);
   if (Target == Devices.end() || Target->second.DeletePending ||
-      isProviderDevice(Device) || FrameworkDevices.contains(Device))
+      FrameworkDevices.contains(Device))
     return driverIRPError(
         "internal submission requires a live guest WDM target");
   auto Route = deviceStack(Device);
@@ -108,19 +108,35 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
   if (*Major != InternalMajor || (*Code & IoControlMethodMask) != MethodNeither)
     return driverIRPError("caller packets support kernel METHOD_NEITHER "
                           "internal device control");
+  const bool Usb = *Code == usb_idle::SubmitIdleNotification;
+  uint64_t PDO = 0;
+  if (Usb) {
+    auto Provider = pnpDeviceForRoute(Device);
+    if (!Provider)
+      return Provider.takeError();
+    PDO = *Provider;
+    auto Plan = planUsbIdleSubmission(PDO, IRP, *Input, *InputSize, *OutputSize,
+                                      *Output);
+    if (!Plan)
+      return Plan.takeError();
+  } else if (isProviderDevice(Device)) {
+    return driverIRPError("internal provider submission requires USB idle");
+  }
   constexpr uint64_t CompletionFlags =
       StackInvokeOnSuccess | StackInvokeOnError | StackInvokeOnCancel;
   if (!*Completion || (*Control & ~CompletionFlags) ||
       (*Control & CompletionFlags) != CompletionFlags)
     return driverIRPError("caller packets require a completion routine for "
                           "success, error and cancellation");
-  auto PC =
-      Memory.readInteger(Target->second.OwnerDriver + DriverDispatchOffset +
-                             InternalMajor * sizeof(uint64_t),
-                         sizeof(uint64_t));
+  auto PC = isProviderDevice(Device)
+                ? llvm::Expected<uint64_t>(0)
+                : Memory.readInteger(Target->second.OwnerDriver +
+                                         DriverDispatchOffset +
+                                         InternalMajor * sizeof(uint64_t),
+                                     sizeof(uint64_t));
   if (!PC)
     return PC.takeError();
-  if (!*PC)
+  if (!*PC && !isProviderDevice(Device))
     return driverIRPError(
         "internal target requires a registered dispatch routine");
   uint64_t CompletionDevice = 0;
@@ -167,6 +183,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
                         Result.Requests.size()};
   Request.IRP = IRP;
   Request.Device = Device;
+  Request.PnpDevice = PDO;
   Request.StackCount = Storage.StackCount;
   Request.Stack = Stack;
   Request.DeviceRoute = std::move(*Route);
@@ -183,6 +200,9 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
   Observation.Origin = DriverRequestOrigin::DriverAllocatedIRP;
   Observation.IRP = IRP;
   Observation.ControlCode = uint32_t(*Code);
+  if (PDO)
+    Observation.DeviceID =
+        Result.PnpDevices[pnpDeviceForPDO(PDO)->ResultIndex].ID;
   for (uint64_t Member : Request.DeviceRoute)
     if (auto E = retainDevice(Member))
       return E;
@@ -255,6 +275,8 @@ llvm::Error KernelModel::captureDriverIRPCompletion(uint64_t IRP) {
   Observation.IOStatus = uint32_t(*Status);
   Observation.Information = *Information;
   Observation.Completed = true;
+  if (Observation.UsbIdle)
+    Observation.UsbIdle->CompletedAt100ns = Scheduler.now100ns();
   Request->Completed = true;
   Request->PendingMarked = *Pending;
   Request->CancelDeadline.reset();
@@ -313,6 +335,13 @@ llvm::Error KernelModel::recordDriverIRPDispatchReturn(uint64_t IRP,
 llvm::Error KernelModel::tryFinalizeDriverIRP(uint64_t IRP) {
   auto Allocation = DriverIRPs.find(IRP);
   const auto *Request = requestForIRP(IRP);
+  if (Allocation != DriverIRPs.end() && Request && Request->Completed &&
+      !Request->DispatchReturned && Allocation->second.ProviderDispatchReturn) {
+    if (auto E = recordDriverIRPDispatchReturn(
+            IRP, *Allocation->second.ProviderDispatchReturn))
+      return E;
+    Allocation->second.ProviderDispatchReturn.reset();
+  }
   if (Allocation == DriverIRPs.end() || !Allocation->second.StorageReleased ||
       !Request || !Request->Completed || !Request->DispatchReturned)
     return llvm::Error::success();

@@ -59,6 +59,9 @@ std::string guestCallPhase(const GuestCallToken &Token) {
   case GuestCallOwner::Interrupt:
     Prefix = InterruptCallbackPhase;
     break;
+  case GuestCallOwner::UsbIdle:
+    Prefix = UsbIdleCallbackPhase;
+    break;
   }
   return std::string(Prefix) + std::to_string(Token.ID);
 }
@@ -648,7 +651,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     while (Owner->ExceptionCallback && Owner->Parent)
       Owner = Owner->Parent.get();
     Kernel.enterExecution(Frame.Base, Frame.ID ? Frame.ID : profile::StackBase,
-                          Owner->ReturnToken);
+                          Owner->ReturnToken.ID
+                              ? Owner->ReturnToken
+                              : Kernel.scheduledGuestCall(Owner->ID));
     if (Frame.Context) {
       if (auto E = CPU.restoreContext(*Frame.Context))
         return E;

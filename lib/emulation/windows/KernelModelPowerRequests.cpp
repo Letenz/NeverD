@@ -112,7 +112,7 @@ KernelModel::planPowerRequest(const DriverRequest &Input, size_t Index,
         State->DevicePowerOperation || State->SystemPowerOperation)
       return powerError("WAIT_WAKE issuance requires stable D0 without another "
                         "power operation");
-    auto Epoch = waitWakeStartEpoch(PDO, true);
+    auto Epoch = deviceStartEpoch(PDO, true);
     if (!Epoch)
       return Epoch.takeError();
     Plan.StartEpoch = *Epoch;

@@ -193,6 +193,8 @@ bool KernelModel::requestPending(uint64_t IRP,
       return false;
     if (Scope == PendingRequestScope::All)
       return true;
+    if (UsbIdle.isParked(Request.IRP))
+      return false;
     if (!Request.Completed && Request.PowerOperation &&
         Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) {
       const auto Wake = ProviderWakeIRPs.find(Request.PnpDevice);
