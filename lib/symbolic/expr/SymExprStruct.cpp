@@ -16,6 +16,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprCompare.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -34,6 +36,9 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
     return A;
   if (isConst(A))
     return mkConst(constValue(A).extractBits(Width, Low));
+  if (Width == 1 && Low == width(A) - 1)
+    if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+      return Predicate;
   // extract(extract(x, l1), l2) == extract(x, l1 + l2)
   if (op(A) == SymOp::Extract)
     return mkExtract(operand(A, 0), static_cast<uint32_t>(node(A).Aux) + Low,
@@ -277,6 +282,13 @@ SymRef SymContext::mkSlt(SymRef A, SymRef B) {
     return mkFalse();
   if (isConst(A) && isConst(B))
     return constValue(A).slt(constValue(B)) ? mkTrue() : mkFalse();
+  // A one-bit signed word orders one before zero.
+  if (width(A) == 1)
+    return isConstZero(B) ? A : mkUlt(B, A);
+  if (isConstZero(B) && isBitwise(op(A))) {
+    if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+      return Predicate;
+  }
   return intern(SymOp::Slt, 1, {A, B}, 0);
 }
 

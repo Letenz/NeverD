@@ -1314,7 +1314,19 @@ assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
 rewrite. See [bitvector proof backends](solver.md) for build and validation.
 
+Shared symbolic expression builders recover comparisons from bounded
+highest-bit Boolean networks. They check an exact modular subtraction relation
+before replacing a sign/overflow or borrow observation with a predicate. The
+same local matcher handles split sign flags and their byte-sized Boolean
+carriers. Width adapters preserve zero extension versus sign extension;
+full-word consumers retain their original values. Node/edge limits and unknown
+shapes leave the original expression intact without invoking a solver.
+
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Region candidates are independently proved over the completed abstraction,
+then instantiated with that abstraction's hidden-input mapping. The identity
+holds for arbitrary independent inputs, so restoring related sources cannot
+invalidate it even when canonical builders combine their coefficients.
 Independent summand groups are measured separately before a whole-region
 truth table is attempted. Add/Mul regions also have a bounded sparse
 polynomial reading over integers modulo the word width; other operations
@@ -1331,6 +1343,16 @@ counterexamples and validation-grid mismatches for canonical candidates, but
 never caches inconclusive proof results or shares rejections across requests.
 Repeated offers still spend search work; only actual verifier calls count as
 proof queries.
+
+The expression builders own local word-mask normalization shared by execution,
+MBA simplification, and expression rebuilding. Constant-masked copies of an
+identical source merge under OR, or under addition when every mask is disjoint.
+A retained low-prefix mask can remove redundant masks from immediate addends;
+this changes only the masked consumer, not other users of the complete sum.
+Matching power-of-two multiplication and logical right shifts reconstruct a
+masked word using the original shift-count width. These rules inspect immediate
+operands and leave deeper sources opaque. They do not recursively normalize a
+whole DAG to a fixed point or relax MBA's mask-column independence checks.
 
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone

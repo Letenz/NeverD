@@ -5,9 +5,11 @@ add_neverd_component_library(NeverDSymbolic
   exec/SymExplore.cpp
   exec/SymState.cpp
   expr/SymExpr.cpp
+  expr/SymExprCompare.cpp
   expr/SymExprArith.cpp
   expr/SymExprEval.cpp
   expr/SymExprLogic.cpp
+  expr/SymExprMask.cpp
   expr/SymExprStruct.cpp
   expr/SymExprWalk.cpp
   mba/SymBitwise.cpp
