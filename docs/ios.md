@@ -236,6 +236,8 @@ A shortened illustrative report deliberately shows partial recovery:
 
 Outer `status: "success"` means validated output was published. Method coverage `recovered`, `partial`, `unrecovered`, or `no-methods` describes the discovered inventory, not semantic equivalence or original-program completeness. Every unrecovered method has a reason. Objective-C `recovered` additionally requires complete runtime metadata. An empty inventory cannot prove there were no methods.
 
+An Objective-C method recovered from a proved `@synchronized` cleanup may list `required_cflags: ["-fexceptions"]`. Compile that method's C source with the listed flag so its cleanup handler releases the synchronization lock when a protected call unwinds. Methods whose landing pad or protected range cannot be proved remain `unrecovered`.
+
 An unrecovered Objective-C row may include `native_backend: {status, reason, diagnostics}` when a unique backend result exactly matches its runtime identity. This bounded optional summary preserves the backend's intermediate result even when a declaration or layout check fails. The row's primary status, reason and recovery counts remain authoritative; an absent summary means the evidence was unavailable.
 
 Swift `coverage_status` counts classified callables only. Overall Swift `status` also accounts for unknown symbols and can be `unclassified`, `unsupported-architecture`, or `no-symbols`. Non-callable metadata is listed under `non_method_symbols` with `not-callable`; unknown symbols use `unclassified`. `types`, `type_metadata_count`, and `source_type_count` count type metadata/emitted type units independently and must not inflate method counts.
