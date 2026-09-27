@@ -1597,8 +1597,24 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
     };
     if (AfterNoReturn) {
       // Dead junk after `throw` / RaiseException, including leftover assigns.
-      // A later addressed join is live again because other edges jump there.
-      const bool JoinLabel =
+      // A later addressed join, including one nested in a structured branch,
+      // is live again because another edge jumps into that branch.
+      bool NestedJoin = false;
+      auto CheckNested = [&](const std::vector<HighStmt> &Body) {
+        walkStmts(Body, [&](const HighStmt &N) {
+          NestedJoin |= IsGotoTarget(N.Addr) ||
+                        (N.Kind == StmtKind::While &&
+                         IsGotoTarget(N.LoopHeaderAddr));
+        });
+      };
+      CheckNested(S.Body);
+      CheckNested(S.ElseBody);
+      for (const auto &Case : S.Cases)
+        CheckNested(Case.Body);
+      CheckNested(S.DefaultBody);
+      for (const auto &ClauseBody : S.EHClauseBodies)
+        CheckNested(ClauseBody);
+      const bool JoinLabel = NestedJoin ||
           (IsGotoTarget(S.Addr) && S.Addr != LastLabel) ||
           (S.Kind == StmtKind::While && IsGotoTarget(S.LoopHeaderAddr) &&
            S.LoopHeaderAddr != LastLabel);

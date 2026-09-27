@@ -827,6 +827,38 @@ TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
   EXPECT_EQ(Source.find("\"hi\""), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, NestedGotoLabelAfterReturnIsEmitted) {
+  HighFunc Func;
+  Func.Name = "nested_join_after_return";
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"flag", NdType::makeInt(1, false)}};
+
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x120;
+  HighStmt EarlyReturn;
+  EarlyReturn.Kind = StmtKind::Return;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = 0x120;
+  HighStmt ElseReturn;
+  ElseReturn.Kind = StmtKind::Return;
+  HighStmt Conditional;
+  Conditional.Kind = StmtKind::IfElse;
+  Conditional.Addr = 0x110;
+  Conditional.Cond = parameter(0, NdType::makeInt(1, false));
+  Conditional.Body = {Join};
+  Conditional.ElseBody = {ElseReturn};
+  Func.Body = {Jump, EarlyReturn, Conditional};
+
+  const auto Source = emitFunctions({Func});
+  const auto GotoAt = Source.find("goto L_120;");
+  const auto JoinAt = Source.find("L_120:");
+  ASSERT_NE(GotoAt, std::string::npos) << Source;
+  ASSERT_NE(JoinAt, std::string::npos) << Source;
+  EXPECT_LT(GotoAt, JoinAt) << Source;
+}
+
 TEST(HighCPointerAddresses, NonAsciiImageBytesStayAddress) {
   BinaryImage Img =
       makeImageObjectFixture(0x140003600, {0xE4, 0xB8, 0xAD, 0}, false);
