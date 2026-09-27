@@ -275,7 +275,7 @@ TEST(SymMBAAffineResidual, StopsAtDistinctFreeVariableProducts) {
         detail::SolveReport Report;
         SymRef Result = detail::solveOneRegion(Ctx, E, Options, Budget, Report);
         EXPECT_EQ(Result, E);
-        EXPECT_EQ(Ctx.readabilityCost(Result), Count + 1);
+        EXPECT_EQ(Ctx.readabilityCost(Result), 2 * Count - 1);
         EXPECT_EQ(Budget.used(), 0u);
         EXPECT_FALSE(Budget.exhausted());
         EXPECT_EQ(Report.Outcome, MBAOutcome::AlreadyShortest);

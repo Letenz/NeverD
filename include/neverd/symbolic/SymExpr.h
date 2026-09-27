@@ -41,6 +41,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Endian.h"
 
+#include <compare>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -49,6 +50,16 @@
 #include <vector>
 
 namespace neverd::symbolic {
+
+/// Size of an expanded expression spelling, then its operation count.
+/// Signed literals count as one leaf; width annotations are not operations.
+/// Sharing is charged per appearance. Saturated sizes cannot win a tie.
+struct SymReadability {
+  size_t Nodes = 0;
+  size_t Operations = 0;
+
+  auto operator<=>(const SymReadability &) const = default;
+};
 
 /// Operators of the bitvector expression language.
 ///
@@ -367,13 +378,15 @@ public:
 
   /// Cost of rendering the expression tree rooted at \p R.
   ///
-  /// A shared node is charged once per appearance because a textual expression
-  /// prints it once per path.  The all-ones literal is free: it represents the
-  /// sign of a negation or the mask of a complement rather than a quantity.
-  /// Costs are cached as nodes are appended, so asking repeatedly while a
-  /// solver builds candidates remains linear in the total number of nodes
-  /// interned in this context.
+  /// Count the printed operators and leaves, including additive all-ones
+  /// literals. Implicit unit coefficients, binary subtraction, and inequality
+  /// use their rendered shape. Shared subterms count once per appearance.
   size_t readabilityCost(SymRef R) const;
+
+  /// The same size, with fewer operations breaking equal-size ties.
+  /// A prefix cache extends in amortized linear time as nodes and edges are
+  /// appended; neither query expands the tree or constructs its text.
+  SymReadability readability(SymRef R) const;
 
   /// Every variable reachable from \p R, in ascending variable-id order.
   void collectVars(SymRef R, llvm::SmallVectorImpl<uint32_t> &Out) const;
@@ -450,7 +463,7 @@ private:
   std::vector<SymRef> OperandPool;
   std::vector<SymVarInfo> Vars;
   /// One readability cost per prefix of \c Nodes, filled lazily.
-  mutable std::vector<size_t> ReadabilityCosts;
+  mutable std::vector<SymReadability> ReadabilityCosts;
   /// Literals wider than 64 bits, referenced by index from SymNode::Aux.
   std::vector<llvm::APInt> WideConsts;
 

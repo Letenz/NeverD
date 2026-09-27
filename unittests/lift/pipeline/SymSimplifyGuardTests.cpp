@@ -95,6 +95,25 @@ llvm::Function *buildCarrySaveAdd(llvm::Module &M) {
   return F;
 }
 
+llvm::Function *buildCarrySaveAddShift(llvm::Module &M) {
+  llvm::LLVMContext &C = M.getContext();
+  auto *I64 = llvm::Type::getInt64Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(I64, {Ptr, I64}, /*isVarArg=*/false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "shift_f", &M);
+
+  auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(BB);
+  llvm::Value *X = B.CreateLoad(I64, F->getArg(0));
+  llvm::Value *Y = F->getArg(1);
+  llvm::Value *Xor = B.CreateXor(X, Y);
+  llvm::Value *And = B.CreateAnd(X, Y);
+  llvm::Value *Two = B.CreateShl(And, llvm::ConstantInt::get(I64, 1));
+  B.CreateRet(B.CreateAdd(Xor, Two));
+  return F;
+}
+
 /// The smallest expression for which semantic measurement can improve on the
 /// canonical builders: `~x + 1 == -x`.
 llvm::Function *buildComplementPlusOne(llvm::Module &M) {
@@ -259,6 +278,17 @@ TEST(SymSimplifyGuard, RewritesMixedBooleanArithmeticWhenUnstamped) {
   llvm::Function *F = buildCarrySaveAdd(M);
 
   EXPECT_GT(SymSimplifyPass::simplify(*F), 0u);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, RewritesCarrySaveAdditionWithAConstantLeftShift) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildCarrySaveAddShift(M);
+
+  EXPECT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+  for (const llvm::Instruction &I : llvm::instructions(*F))
+    EXPECT_NE(I.getOpcode(), llvm::Instruction::Xor) << printFunction(*F);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
@@ -882,6 +912,38 @@ TEST(SymSimplifyGuard, OpaqueLoadMayBeRetainedWhileArithmeticAroundItShrinks) {
   unsigned Loads = 0;
   for (const llvm::Instruction &I : llvm::instructions(*F))
     Loads += llvm::isa<llvm::LoadInst>(&I);
+  EXPECT_EQ(Loads, 1u) << printFunction(*F);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, OpaqueLoadDoesNotExposeItsPoisoningAddressArithmetic) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  auto *I64 = llvm::Type::getInt64Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(I64, {Ptr, I64}, /*isVarArg=*/false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "retained_address_load", &M);
+
+  auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(BB);
+  llvm::Value *Address = B.CreatePtrToInt(F->getArg(0), I64);
+  Address = B.CreateNSWAdd(Address, llvm::ConstantInt::get(I64, 8));
+  llvm::Value *Loaded = B.CreateLoad(I64, B.CreateIntToPtr(Address, Ptr));
+  llvm::Value *X = F->getArg(1);
+  llvm::Value *Xor = B.CreateXor(Loaded, X);
+  llvm::Value *And = B.CreateAnd(Loaded, X);
+  llvm::Value *Two = B.CreateShl(And, llvm::ConstantInt::get(I64, 1));
+  B.CreateRet(B.CreateAdd(Xor, Two));
+
+  EXPECT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+  unsigned Loads = 0;
+  for (const llvm::Instruction &I : llvm::instructions(*F)) {
+    Loads += llvm::isa<llvm::LoadInst>(&I);
+    EXPECT_NE(I.getOpcode(), llvm::Instruction::Xor) << printFunction(*F);
+    EXPECT_NE(I.getOpcode(), llvm::Instruction::And) << printFunction(*F);
+    EXPECT_NE(I.getOpcode(), llvm::Instruction::Shl) << printFunction(*F);
+  }
   EXPECT_EQ(Loads, 1u) << printFunction(*F);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }

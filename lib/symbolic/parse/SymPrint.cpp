@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../SymPrintShape.h"
 #include "SymParseDetail.h"
 
 #include "neverd/symbolic/SymExpr.h"
@@ -141,13 +142,9 @@ std::string Printer::call(const char *Name, llvm::ArrayRef<SymRef> Ops) const {
 /// The magnitude of \p V, when writing it behind a minus sign is faithful.
 std::optional<Fragment> Printer::negatedLiteral(const llvm::APInt &V) const {
   // At one bit, -1 and 1 are the same value and the minus sign only confuses.
-  if (V.getBitWidth() == 1 || !V.isNegative())
+  if (!print_detail::hasSignedMagnitude(V))
     return std::nullopt;
   llvm::APInt Mag = -V;
-  // The most negative value negates to itself, so there is no magnitude to
-  // put after the sign.
-  if (Mag.isNegative())
-    return std::nullopt;
   return literal(Mag, V.getBitWidth());
 }
 
@@ -232,16 +229,7 @@ Fragment Printer::render(SymRef R) const {
   }
 
   case SymOp::Add: {
-    unsigned Lead = 0;
-    // A positive term lets an earlier negative product use binary
-    // subtraction, avoiding a separate unary sign. Literal prefixes keep
-    // their established ordering; node identities remain unchanged.
-    if (!Ctx.isConst(Ops[0]) && negatedTerm(Ops[0]))
-      for (unsigned I = 1; I < Ops.size(); ++I)
-        if (!negatedTerm(Ops[I])) {
-          Lead = I;
-          break;
-        }
+    unsigned Lead = print_detail::leadingAddOperand(Ctx, Ops);
     std::optional<Magnitude> First = negatedTerm(Ops[Lead]);
     std::string T =
         First ? negate(*First) : wrap(frag(Ops[Lead]), PrecAdditive);

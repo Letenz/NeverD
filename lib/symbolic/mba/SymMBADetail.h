@@ -31,6 +31,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -109,6 +110,10 @@ bool canMeasureAtRoot(const SymContext &Ctx, SymRef R);
 /// that puts the hidden subterms back.
 struct Abstraction {
   SymRef Body;
+  /// The same hidden inputs before recovering their affine relations. Keep
+  /// this reading available when rebinding an arithmetic use would obscure
+  /// its independent occurrence inside a bitwise operator.
+  SymRef IndependentBody;
   /// Placeholder variable node index to the subterm it stands for.
   std::unordered_map<uint32_t, SymRef> Hidden;
 };
@@ -149,28 +154,18 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
 // Ranking and checking
 //===----------------------------------------------------------------------===//
 
-/// What an expression costs whoever reads it.
-///
-/// Two things make this different from the size of the graph.
-///
-/// The first is sharing.  A subterm reachable by three paths is one node in
-/// the graph and three appearances in anything that writes the expression out,
-/// because writing it out is a walk of the tree the graph denotes.  Ranking by
-/// graph size therefore calls an expression that says the same thing three
-/// times cheaper than one that says two things once each, which is backwards.
-/// So this counts the tree.
-///
-/// The second is the all-ones literal, which costs nothing.  It is never a
-/// quantity: it is the sign of a negation — which is how negation is stored —
-/// or the mask of a complement.  Charging for it would make `x - y` dearer
-/// than `~(~x + y)` and rank the bitwise form above the arithmetic one this
-/// exists to recover.
-///
-/// SymContext caches this per node.  Candidate generation appends nodes to the
-/// context and asks for their costs repeatedly; extending one prefix cache
-/// keeps all of those queries linear in the number of nodes built, while the
-/// number returned still describes the tree a reader sees.
+/// The node component of the context's cached printed-tree score, used by
+/// candidate construction bounds; actual storage has its own byte budget.
+/// Shared expressions count once per printed appearance;
+/// signs and n-ary joins follow the same spelling rules as the printer.
 size_t readingCost(const SymContext &Ctx, SymRef R);
+
+/// Rank completed candidates by printed tree nodes, then printed operations.
+SymReadability readingScore(const SymContext &Ctx, SymRef R);
+
+/// Whether a completed candidate is no larger than its input. Saturated node
+/// counts cannot establish this relation, even when both scores are saturated.
+bool doesNotGrow(const SymContext &Ctx, SymRef Candidate, SymRef Input);
 
 /// Compare two expressions at random points.
 ///
@@ -260,6 +255,9 @@ public:
 
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
+  bool canConsume(size_t Units) const {
+    return Unlimited || Units <= Remaining;
+  }
 
 private:
   size_t Remaining;
@@ -287,14 +285,23 @@ splitIntoTerms(const SymContext &Ctx, SymRef Body);
 
 /// A monomial of arbitrary degree: the minterms whose product it is, sorted.
 ///
-/// The old packed integer key made degree a property of storage width.  A
-/// vector key costs a small allocation only for higher-degree terms and lets
-/// the resource budget, rather than an eight-byte container, decide how far a
-/// search goes.
+/// The old packed integer key made degree a property of storage width. Small
+/// inline storage avoids an allocation for common low-degree products while
+/// still letting the resource budget decide how far a search goes.
 using MintermIndex = uint32_t;
 static_assert(kMaxTruthTableAtoms <= std::numeric_limits<MintermIndex>::digits,
               "a minterm index must address every truth-table entry");
-using Monomial = std::vector<MintermIndex>;
+using Monomial = llvm::SmallVector<MintermIndex, 4>;
+
+struct MonomialHash {
+  size_t operator()(const Monomial &Key) const {
+    return static_cast<size_t>(
+        llvm::hash_combine_range(Key.begin(), Key.end()));
+  }
+};
+
+using HigherCoefficients =
+    std::unordered_map<Monomial, llvm::APInt, MonomialHash>;
 
 Monomial makeMonomial(llvm::ArrayRef<MintermIndex> Sorted);
 
@@ -304,10 +311,12 @@ unsigned monomialDegree(const Monomial &Key);
 TruthTable monomialSupport(const Monomial &Key, unsigned NumVars);
 
 /// An expression's coefficients over the minterm basis: the degree-one part
-/// indexed by minterm, and every higher monomial keyed by its packing.
+/// indexed by minterm, and every higher monomial keyed by its packing. The
+/// product search orders factor candidates explicitly; coefficient iteration
+/// order has no bearing on which rewrite wins.
 struct PolyForm {
   std::vector<llvm::APInt> Linear;
-  std::map<Monomial, llvm::APInt> Higher;
+  HigherCoefficients Higher;
   /// True when some term was a product, even if the products then cancelled.
   /// That is the difference between "linear all along", which the measurement
   /// already handled, and "quadratic and above but it came to nothing", which

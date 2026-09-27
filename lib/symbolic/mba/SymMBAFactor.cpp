@@ -214,7 +214,7 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Rest.push_back(Ctx.mkMul(Factor, Value));
       SymRef Candidate = Ctx.mkAdd(Rest);
       Rest.pop_back();
-      if (readingCost(Ctx, Candidate) < readingCost(Ctx, Best)) {
+      if (readingScore(Ctx, Candidate) < readingScore(Ctx, Best)) {
         Best = Candidate;
         Rep.NumAtoms = NumAtoms;
         Rep.Outcome = MBAOutcome::Rewritten;

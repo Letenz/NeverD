@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <vector>
@@ -204,6 +205,9 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
   const size_t Corners = *CornerCount;
   PolyForm Form;
   Form.Linear.assign(Corners, llvm::APInt(Width, 0));
+  // Products often revisit the same sorted monomial through different factor
+  // choices. Keep the coefficients in a hash table through the search, since
+  // neither accumulation nor product matching depends on iteration order.
 
   llvm::DenseMap<uint32_t, TruthTable> Cache;
   auto tableOf = [&](SymRef F) -> std::optional<TruthTable> {
@@ -246,6 +250,21 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
                      [](llvm::ArrayRef<MintermIndex> S) { return S.empty(); }))
       continue;
 
+    // This expansion keeps every monomial and discards the whole form when
+    // the budget runs out. Count the Cartesian product first so an oversized
+    // product cannot spend the remaining budget building a partial map.
+    size_t ProductSize = 1;
+    for (const auto &Choices : Selected) {
+      if (Choices.size() > std::numeric_limits<size_t>::max() / ProductSize) {
+        ProductSize = std::numeric_limits<size_t>::max();
+        break;
+      }
+      ProductSize *= Choices.size();
+    }
+    if (!Budget.canConsume(ProductSize)) {
+      Budget.consume(ProductSize);
+      return std::nullopt;
+    }
     forEachMonomial(Selected, Budget, [&](const Monomial &Key) {
       auto It = Form.Higher.try_emplace(Key, llvm::APInt(Width, 0)).first;
       It->second += Term.Coeff;
@@ -257,10 +276,14 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
 
   // Cancellation can leave a monomial at zero, and a zero is not part of the
   // shape the search has to explain.
-  for (auto It = Form.Higher.begin(); It != Form.Higher.end();)
-    It = It->second.isZero() ? Form.Higher.erase(It) : std::next(It);
-  for (const auto &[Key, Coeff] : Form.Higher)
-    Form.Degree = std::max(Form.Degree, monomialDegree(Key));
+  for (auto It = Form.Higher.begin(); It != Form.Higher.end();) {
+    if (It->second.isZero()) {
+      It = Form.Higher.erase(It);
+      continue;
+    }
+    Form.Degree = std::max(Form.Degree, monomialDegree(It->first));
+    ++It;
+  }
   return Form;
 }
 
