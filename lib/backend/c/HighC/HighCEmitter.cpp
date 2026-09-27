@@ -1072,7 +1072,38 @@ void HighCWriter::collectCallTargets(const std::vector<HighStmt> &Stmts,
 }
 
 void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
+  // Block copy/dispose helpers can carry the runtime's opaque
+  // _Block_object pointer in debug types. Block.h does not declare this
+  // private type, so provide only the incomplete name needed for pointer
+  // declarations and casts in a standalone translation unit.
+  bool NeedsBlockObject = false;
+  const auto CheckType = [&](const TypeRef &Type) {
+    TypeRef Current = Type;
+    while (Current && Current->Kind == NdTypeKind::Ptr)
+      Current = Current->Pointee;
+    NeedsBlockObject |=
+        Current && Current->Kind == NdTypeKind::Struct && !Current->IsEnum &&
+        cNamedTypeSpelling(Current->SourceName) == "_Block_object";
+  };
+  std::set<const HighExpr *> Seen;
+  std::function<void(const ExprPtr &)> CheckExpr = [&](const ExprPtr &Expr) {
+    if (!Expr || !Seen.insert(Expr.get()).second)
+      return;
+    CheckType(Expr->Type);
+    for (const auto &Operand : Expr->Operands)
+      CheckExpr(Operand);
+  };
+  for (const auto &Function : Funcs) {
+    CheckType(Function.ReturnType);
+    for (const auto &Parameter : Function.Params)
+      CheckType(Parameter.Type);
+    walkStmts(Function.Body, [&](const HighStmt &Statement) {
+      forEachExpr(Statement, CheckExpr);
+    });
+  }
   if (!Opts.EmitIncludes) {
+    if (NeedsBlockObject)
+      OS << "typedef struct _Block_object _Block_object;\n\n";
     if (Has256BitInteger)
       OS << "typedef unsigned _BitInt(256) uint256_t;\n"
             "typedef _BitInt(256) int256_t;\n\n";
@@ -1113,6 +1144,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
   OS << "\n";
+  if (NeedsBlockObject)
+    OS << "typedef struct _Block_object _Block_object;\n\n";
   if (Has256BitInteger)
     OS << "typedef unsigned _BitInt(256) uint256_t;\n"
           "typedef _BitInt(256) int256_t;\n\n";

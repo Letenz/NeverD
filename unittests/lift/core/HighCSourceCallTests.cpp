@@ -139,6 +139,21 @@ void compileAndRun(const std::string &Source,
                     << Source;
 }
 
+TEST(HighCSourceCalls, DeclaresOpaqueBlockObjectPointerUsedByHelpers) {
+  const auto Opaque =
+      NdType::makePtr(NdType::makeNamedRecord("_Block_object", 8));
+  const auto Function =
+      returning("opaque_block_identity", parameter(0, Opaque), {Opaque});
+  for (const bool Includes : {true, false}) {
+    const auto Source = emit({Function}, Includes);
+    EXPECT_NE(Source.find("typedef struct _Block_object _Block_object;"),
+              std::string::npos);
+    compileAndRun(
+        (Includes ? "" : "#include <stdint.h>\n") + Source +
+        "\nint main(void) { return opaque_block_identity(0) != 0; }\n");
+  }
+}
+
 TEST(HighCSourceCalls,
      UntypedStoresPreserveUnalignedBytesAndExpressionResults) {
   const auto Word = NdType::makeInt(8, false);

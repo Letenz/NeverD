@@ -482,17 +482,19 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
             // The assignment still names its destination (`t8_1 = var_m10`).
             const std::string Name =
                 printedForwardedVar(varName(S.Dst->Var), 0);
-            const bool Identifier = !Name.empty() &&
+            const bool Identifier =
+                !Name.empty() &&
                 (std::isalpha(static_cast<unsigned char>(Name.front())) ||
                  Name.front() == '_') &&
                 std::all_of(Name.begin(), Name.end(), [](char C) {
                   return std::isalnum(static_cast<unsigned char>(C)) ||
                          C == '_';
                 });
+            // A frame alias that still prints as an ordinary assignment needs
+            // its own C local. Only assignments projected to a storage slot
+            // are suppressed by stmtHiddenFromC above.
             if (Identifier && !ParamNames.count(Name) &&
-                !IsStorageSlotName(Name) &&
-                !(ProjectFrameAliasesIntoStorage &&
-                  FrameAliases.count(varName(S.Dst->Var)))) {
+                !IsStorageSlotName(Name)) {
               UsedVars.try_emplace(Name, S.Dst->Type);
               VisibleAssigned.insert(Name);
             }
@@ -593,9 +595,9 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
              Ty->Pointee->SourceName.empty()))))
         Ty = Fwd;
     }
-    if (Name.empty() || DeclaredNames.count(Name) ||
-        IsStorageSlotName(Name) ||
-        (ProjectFrameAliasesIntoStorage && FrameAliases.count(Name)))
+    if (Name.empty() || DeclaredNames.count(Name) || IsStorageSlotName(Name) ||
+        (ProjectFrameAliasesIntoStorage && FrameAliases.count(Name) &&
+         !VisibleAssigned.count(Name)))
       continue;
     if (CopyForward.count(Name) && !VisibleAssigned.count(Name))
       continue;
