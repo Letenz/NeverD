@@ -1307,6 +1307,14 @@ assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
 rewrite. See [bitvector proof backends](solver.md) for build and validation.
 
+Shared symbolic expression builders recover comparisons from bounded
+highest-bit Boolean networks. They check an exact modular subtraction relation
+before replacing a sign/overflow or borrow observation with a predicate. The
+same local matcher handles split sign flags and their byte-sized Boolean
+carriers. Width adapters preserve zero extension versus sign extension;
+full-word consumers retain their original values. Node/edge limits and unknown
+shapes leave the original expression intact without invoking a solver.
+
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
 Region candidates are independently proved over the completed abstraction,
 then instantiated with that abstraction's hidden-input mapping. The identity

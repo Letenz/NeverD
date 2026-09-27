@@ -14,6 +14,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprCompare.h"
 #include "SymExprMask.h"
 
 #include "neverd/symbolic/SymExpr.h"
@@ -84,6 +85,11 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (W == 1)
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::And, Rest, Acc))
+      return Predicate;
 
   // A small masked OR can expose known bits without expanding the general
   // expression. In particular, a status bit remains constant when every
@@ -180,6 +186,11 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
   if (Rest.empty())
     return mkConst(Acc);
 
+  if (W == 1)
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::Or, Rest, Acc))
+      return Predicate;
+
   if (Acc.isZero()) {
     if (Rest.size() == 1)
       return Rest[0];
@@ -248,6 +259,11 @@ SymRef SymContext::mkXor(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (W == 1 || !isVar(Rest[0]))
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::Xor, Rest, Acc))
+      return Predicate;
 
   // Bits forced by OR disappear when XOR uses the same constant mask.
   if (!Acc.isZero() && Rest.size() == 1 && op(Rest[0]) == SymOp::Or) {
@@ -324,6 +340,9 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       if (auto K = detail::matchingShiftPower(*this, B, Factor))
         return mkAnd(Source, mkConst(llvm::APInt::getLowBitsSet(W, W - *K)));
     }
+    if (Amt == W - 1)
+      if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+        return mkZExt(Predicate, W);
   }
   if (isConstZero(A))
     return mkZero(W);
@@ -332,6 +351,8 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
 
 SymRef SymContext::mkAShr(SymRef A, SymRef B) {
   uint32_t W = width(A);
+  if (W == 1)
+    return A;
   if (isConst(B)) {
     llvm::APInt Amt = constValue(B);
     if (isConst(A)) {
@@ -342,6 +363,9 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
     }
     if (Amt.isZero())
       return A;
+    if (Amt.uge(W - 1))
+      if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+        return mkSExt(Predicate, W);
   }
   if (isConstZero(A))
     return mkZero(W);

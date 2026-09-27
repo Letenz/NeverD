@@ -780,6 +780,30 @@ TEST(SymExec, TheCarryAndOverflowFlagsAreExpressionsLikeAnythingElse) {
   EXPECT_EQ(Ctx.constValue(Overflow).getZExtValue(), 1u) << "127 + 1 overflows";
 }
 
+TEST(SymExec, SubtractionSignAndOverflowRecoverTheSignedPredicate) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u, 16u, 32u}) {
+    SymContext Ctx;
+    SymState State(Ctx);
+    SymRef X = Ctx.mkVar("x", Bytes * 8), Y = Ctx.mkVar("y", Bytes * 8);
+    State.write(SymSpace::Register, 0, X);
+    State.write(SymSpace::Register, 64, Y);
+    for (NdOp Logic : {NdOp::BOOL_XOR, NdOp::INT_XOR}) {
+      SymRef Result =
+          execute(Ctx, State,
+                  {op(NdOp::INT_SUB, NdVar::reg(128, Bytes),
+                      {NdVar::reg(0, Bytes), NdVar::reg(64, Bytes)}),
+                   op(NdOp::INT_SBOR, NdVar::reg(192, 1),
+                      {NdVar::reg(0, Bytes), NdVar::reg(64, Bytes)}),
+                   op(NdOp::INT_SLESS, NdVar::reg(193, 1),
+                      {NdVar::reg(128, Bytes), NdVar::cst(0, Bytes)}),
+                   op(Logic, NdVar::reg(194, 1),
+                      {NdVar::reg(192, 1), NdVar::reg(193, 1)})},
+                  194, 1);
+      EXPECT_EQ(Result, Ctx.mkZExt(Ctx.mkSlt(X, Y), 8));
+    }
+  }
+}
+
 TEST(SymExec, ExtensionAndTruncationKeepTheirMeanings) {
   SymContext Ctx;
   SymState State(Ctx);
