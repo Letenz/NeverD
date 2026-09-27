@@ -914,6 +914,80 @@ SwiftTypeMetadataFixture swiftManagedBufferTypeMetadataFixture() {
   return F;
 }
 
+SwiftTypeMetadataFixture swiftImportedLockTypeMetadataFixture() {
+  auto F = swiftManagedBufferTypeMetadataFixture();
+  constexpr va_t Module = 0x4060;
+  constexpr va_t Name = 0x4080;
+  constexpr va_t Accessor = 0x5020;
+  auto AddMapping = [&](llvm::StringRef SectionName, va_t Address,
+                        SegmentFlags Flags) {
+    Segment Mapping;
+    Mapping.Name = SectionName.str();
+    Mapping.VA = Mapping.FileOff = Address;
+    Mapping.Size = Mapping.FileSz = 0x100;
+    Mapping.Flags = Flags;
+    Mapping.Data.resize(0x100);
+    F.Image.Segments.push_back(std::move(Mapping));
+    Section Data;
+    Data.Name = SectionName.str();
+    Data.SegmentName = SectionName.str();
+    Data.VA = Data.FileOff = Address;
+    Data.Size = Data.FileSz = 0x100;
+    Data.Flags = Flags;
+    if (Flags == (SegmentFlags::Readable | SegmentFlags::Executable))
+      Data.Type = llvm::MachO::S_ATTR_PURE_INSTRUCTIONS;
+    F.Image.Sections.push_back(std::move(Data));
+  };
+  AddMapping("__constg_swiftt", 0x4000, SegmentFlags::Readable);
+  AddMapping("__text", 0x5000,
+             SegmentFlags::Readable | SegmentFlags::Executable);
+
+  constexpr llvm::StringLiteral Payload = "ySDySSSo8NSBundleCG";
+  constexpr llvm::StringLiteral Base =
+      "_$ss13ManagedBufferCySDySSSo8NSBundleCGSo16os_unfair_lock_sVG";
+  F.Image.Symbols[0].Name = Base.str() + "MR";
+  F.Image.Symbols[1].Name = Base.str() + "Md";
+  auto &Reference = F.Image.Segments[0].Data;
+  const uint32_t DirectOffset = 5 + Payload.size();
+  const uint32_t Length = DirectOffset + 6;
+  llvm::support::endian::write32le(
+      Reference.data() + SwiftTypeMetadataFixture::Reference + 4 - 0x1000,
+      Length);
+  auto *Type =
+      Reference.data() + SwiftTypeMetadataFixture::TypeReference - 0x1000;
+  std::memcpy(Type + 5, Payload.data(), Payload.size());
+  Type[DirectOffset] = 1;
+  llvm::support::endian::write32le(
+      Type + DirectOffset + 1,
+      static_cast<uint32_t>(static_cast<int32_t>(
+          SwiftTypeMetadataFixture::LocalDescriptor -
+          (SwiftTypeMetadataFixture::TypeReference + DirectOffset + 1))));
+  Type[DirectOffset + 5] = 'G';
+  Type[Length] = 0;
+
+  auto &Descriptor = F.Image.Segments[3].Data;
+  llvm::support::endian::write32le(Descriptor.data() + 0x20, 0x20011);
+  llvm::support::endian::write32le(
+      Descriptor.data() + 0x24,
+      static_cast<uint32_t>(static_cast<int32_t>(
+          Module - (SwiftTypeMetadataFixture::LocalDescriptor + 4))));
+  llvm::support::endian::write32le(
+      Descriptor.data() + 0x28,
+      static_cast<uint32_t>(static_cast<int32_t>(
+          Name - (SwiftTypeMetadataFixture::LocalDescriptor + 8))));
+  llvm::support::endian::write32le(
+      Descriptor.data() + 0x2c,
+      static_cast<uint32_t>(static_cast<int32_t>(
+          Accessor - (SwiftTypeMetadataFixture::LocalDescriptor + 12))));
+  std::memcpy(Descriptor.data() + 0x80, "os_unfair_lock_s", 17);
+  F.Image.Symbols.push_back({"_$sSo16os_unfair_lock_sVMn",
+                             SwiftTypeMetadataFixture::LocalDescriptor, 0,
+                             false});
+  F.Image.Symbols.push_back({"_$sSoMXM", Module, 0, false});
+  F.Image.Symbols.push_back({"_$sSo16os_unfair_lock_sVMa", Accessor, 0, true});
+  return F;
+}
+
 SwiftTypeMetadataFixture
 printableSwiftTypeMetadataFixture(Arch Architecture,
                                   llvm::StringRef TypeReference) {
@@ -2002,6 +2076,135 @@ TEST(ObjCSourceBindings, SwiftDictionaryStorageMetadataUsesExactStrongImport) {
   Result = bindObjCSourceReferences(F.Function, F.Image);
   EXPECT_TRUE(Result.SwiftTypeMetadataPairs.empty());
   EXPECT_FALSE(Result.Limitation.empty());
+}
+
+TEST(ObjCSourceBindings,
+     SwiftImportedLockMetadataRebuildsPrivateDescriptorAsText) {
+  auto F = swiftImportedLockTypeMetadataFixture();
+  EXPECT_TRUE(objc_binding_detail::swiftLocalImportedLockType(
+      F.Image, SwiftTypeMetadataFixture::LocalDescriptor));
+  EXPECT_TRUE(objc_binding_detail::swiftTypeMetadataDescriptor(
+      F.Image, SwiftTypeMetadataFixture::DescriptorSlot));
+  const auto Proof = objc_binding_detail::swiftTypeMetadataPairProof(
+      F.Image, F.Cache, F.Reference);
+  ASSERT_TRUE(Proof);
+  ASSERT_EQ(Proof->Descriptors.size(), 1U);
+  EXPECT_EQ(Proof->Descriptors.front().Symbol, "_$ss13ManagedBufferCMn");
+  EXPECT_EQ(Proof->Address.Suffix, "ySDySSSo8NSBundleCGSo16os_unfair_lock_sVG");
+  EXPECT_EQ(Proof->TypeReference.size(),
+            5U + std::string("ySDySSSo8NSBundleCG"
+                             "So16os_unfair_lock_sV"
+                             "G")
+                     .size());
+  const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+  std::set<std::string> Shared;
+  const auto Source = renderObjCSwiftTypeMetadataHelpers(
+      F.Image, Result.SwiftTypeMetadataPairs, Shared);
+  EXPECT_NE(Source.find("_$ss13ManagedBufferCMn"), std::string::npos);
+  EXPECT_EQ(Source.find("_$sSo16os_unfair_lock_sVMn"), std::string::npos);
+  EXPECT_NE(Source.find(".reference.length = " +
+                        std::to_string(Proof->TypeReference.size())),
+            std::string::npos);
+}
+
+TEST(ObjCSourceBindings, SwiftImportedLockMetadataRecipeExecutes) {
+  auto F = swiftImportedLockTypeMetadataFixture();
+  const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+  std::set<std::string> Shared;
+  std::string Source = "#include <stdint.h>\n#include <string.h>\n" +
+                       renderObjCSwiftTypeMetadataHelpers(
+                           F.Image, Result.SwiftTypeMetadataPairs, Shared);
+  Source += R"(
+unsigned char descriptor[1] __asm__("_$ss13ManagedBufferCMn") = { 0 };
+int main(void) {
+  void **cache = (void **)neverd_swift_type_metadata_2020_1020_cache_address();
+  const unsigned char *reference = (const void *)
+      neverd_swift_type_metadata_2020_1020_reference_address();
+  int32_t relative; uint32_t length;
+  memcpy(&relative, reference, 4);
+  memcpy(&length, reference + 4, 4);
+  const unsigned char *type = reference + relative;
+  const char *suffix = "ySDySSSo8NSBundleCGSo16os_unfair_lock_sVG";
+  if (length != 5 + strlen(suffix) || type[0] != 2 || *cache) return 1;
+  if (memcmp(type + 5, suffix, strlen(suffix))) return 2;
+  memcpy(&relative, type + 1, 4);
+  const void *resolved;
+  memcpy(&resolved, type + 1 + relative, sizeof(resolved));
+  if (resolved != descriptor) return 3;
+  *cache = descriptor;
+  if ((void **)neverd_swift_type_metadata_2020_1020_cache_address() != cache ||
+      *cache != descriptor) return 4;
+  return 0;
+}
+)";
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-lock-metadata", Directory));
+  const std::filesystem::path Work(Directory.str().str());
+  struct Cleanup {
+    std::filesystem::path Work;
+    ~Cleanup() {
+      std::error_code Error;
+      std::filesystem::remove_all(Work, Error);
+    }
+  } Cleanup{Work};
+  const auto Path = (Work / "metadata.c").string();
+  const auto Executable = (Work / "metadata").string();
+  const auto ErrorPath = (Work / "stderr").string();
+  std::ofstream(Path) << Source;
+  const std::string Compiler = NEVERD_TEST_CLANG;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    const std::vector<std::string> Arguments{
+        Compiler, "-std=c11", Optimization, "-Werror", Path, "-o", Executable};
+    std::vector<llvm::StringRef> Refs(Arguments.begin(), Arguments.end());
+    const std::optional<llvm::StringRef> Redirects[] = {
+        std::nullopt, std::nullopt, ErrorPath};
+    std::string Error;
+    const auto Status = llvm::sys::ExecuteAndWait(Compiler, Refs, std::nullopt,
+                                                  Redirects, 60, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Status, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "");
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(Executable, {Executable}, std::nullopt,
+                                        Redirects, 30, 0, &Error),
+              0)
+        << Error;
+  }
+}
+
+TEST(ObjCSourceBindings,
+     SwiftImportedLockMetadataRejectsChangedPrivateDescriptor) {
+  for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = swiftImportedLockTypeMetadataFixture();
+    auto &Descriptor = F.Image.Segments[3].Data;
+    if (Mutation == 0)
+      Descriptor[0x20] = 0;
+    if (Mutation == 1)
+      Descriptor[0x80] = 'x';
+    if (Mutation == 2)
+      F.Image.Symbols.back().Name = "_$sSo16os_unfair_lock_sVMr";
+    if (Mutation == 3)
+      F.Image.Symbols[F.Image.Symbols.size() - 2].Name = "_$sBadModuleMXM";
+    if (Mutation == 4)
+      F.Image.Exports.push_back(
+          {"_$sOther", 0, SwiftTypeMetadataFixture::LocalDescriptor});
+    if (Mutation == 5)
+      llvm::support::endian::write32le(Descriptor.data() + 0x2c, 0);
+    if (Mutation == 6)
+      llvm::support::endian::write32le(Descriptor.data() + 0x24, 0);
+    if (Mutation == 7)
+      F.Image.DataPtrRelocSlots.insert(
+          SwiftTypeMetadataFixture::LocalDescriptor);
+    EXPECT_FALSE(objc_binding_detail::swiftTypeMetadataPairProof(
+        F.Image, F.Cache, F.Reference));
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_TRUE(Result.SwiftTypeMetadataPairs.empty());
+    EXPECT_FALSE(Result.Limitation.empty());
+  }
 }
 
 TEST(ObjCSourceBindings, SwiftMetadataPairInFourArgumentValueHelper) {

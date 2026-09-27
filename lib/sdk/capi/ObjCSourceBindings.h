@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <optional>
 
 namespace neverd::sdk {
@@ -1003,6 +1004,72 @@ swiftDirectTypeMetadataDescriptor(const BinaryImage &Image,
                               : std::nullopt;
 }
 
+/// Swift emits a private descriptor for the imported Darwin lock record in
+/// each image. Its public textual mangling resolves that same record metadata
+/// without linking the image-private descriptor into recovered source.
+inline std::optional<std::string>
+swiftLocalImportedLockType(const BinaryImage &Image, va_t Address) {
+  if (Image.Arch != Arch::AArch64 || Address > InvalidVA - 16 ||
+      Image.hasExecutableCodeOwnerAt(Address) ||
+      overlapsPointerStorage(Image, Address, 16))
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  const auto *Bytes = Image.readVA(Address, 16);
+  if (!Section || !Segment || !Bytes || !Section->isReadable() ||
+      Section->isWritable() || !Segment->isReadable() ||
+      Segment->isWritable() ||
+      llvm::support::endian::read32le(Bytes) != 0x20011)
+    return std::nullopt;
+  constexpr llvm::StringLiteral Descriptor = "_$sSo16os_unfair_lock_sVMn";
+  constexpr llvm::StringLiteral Module = "_$sSoMXM";
+  constexpr llvm::StringLiteral Accessor = "_$sSo16os_unfair_lock_sVMa";
+  const auto Parent = swiftRelativeAddress(Image, Address + 4);
+  const auto Name = swiftRelativeAddress(Image, Address + 8);
+  const auto Access = swiftRelativeAddress(Image, Address + 12);
+  const auto *NameBytes = Name ? Image.readVA(*Name, 17) : nullptr;
+  if (!Parent || !Name || !Access || !NameBytes ||
+      std::memcmp(NameBytes, "os_unfair_lock_s", 17) != 0 ||
+      !Image.isCodeAddress(*Access))
+    return std::nullopt;
+  const auto ImmutableData = [&](va_t Target, uint64_t Width) {
+    const auto *DataSection = Image.getSectionFor(Target);
+    const auto *DataSegment = Image.getSegmentFor(Target);
+    return DataSection && DataSegment && Width &&
+           Target <= InvalidVA - (Width - 1) &&
+           Image.getSectionFor(Target + Width - 1) == DataSection &&
+           DataSection->isReadable() && !DataSection->isWritable() &&
+           DataSegment->isReadable() && !DataSegment->isWritable() &&
+           !Image.hasExecutableCodeOwnerAt(Target) &&
+           !overlapsPointerStorage(Image, Target, Width);
+  };
+  if (!ImmutableData(*Parent, 4) || !ImmutableData(*Name, 17))
+    return std::nullopt;
+  auto UniqueSymbol = [&](va_t Target, llvm::StringRef Expected,
+                          bool IsFunction) {
+    size_t Matches = 0;
+    for (const auto &Candidate : Image.Symbols)
+      if (Candidate.Addr == Target) {
+        if (Candidate.Name != Expected || Candidate.IsFunc != IsFunction)
+          return false;
+        ++Matches;
+      }
+    return Matches == 1;
+  };
+  if (!UniqueSymbol(Address, Descriptor, false) ||
+      !UniqueSymbol(*Parent, Module, false) ||
+      !UniqueSymbol(*Access, Accessor, true))
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr == Address || Export.Name == Descriptor)
+      return std::nullopt;
+  const auto *ParentBytes = Image.readVA(*Parent, 4);
+  if (!ParentBytes ||
+      (llvm::support::endian::read32le(ParentBytes) & 0x1f) != 0)
+    return std::nullopt;
+  return "So16os_unfair_lock_sV";
+}
+
 inline std::optional<SourceCallTypeHint>
 swiftNominalDescriptorAddressHint(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -1311,16 +1378,19 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     return std::nullopt;
 
   constexpr size_t MaxDescriptors = 8;
+  size_t SymbolicReferences = 0;
   std::vector<SwiftTypeMetadataDescriptorReference> Descriptors;
   std::string Expanded = "$s";
+  std::string Rebuilt;
   for (uint32_t I = 0; I < Length;) {
     if (TypeBytes[I] != 1 && TypeBytes[I] != 2) {
       if (TypeBytes[I] < 0x21 || TypeBytes[I] > 0x7e)
         return std::nullopt;
-      Expanded.push_back(static_cast<char>(TypeBytes[I++]));
+      Expanded.push_back(static_cast<char>(TypeBytes[I]));
+      Rebuilt.push_back(static_cast<char>(TypeBytes[I++]));
       continue;
     }
-    if (Length - I < 5 || Descriptors.size() >= MaxDescriptors)
+    if (Length - I < 5 || ++SymbolicReferences > MaxDescriptors)
       return std::nullopt;
     const auto DescriptorAddress =
         swiftRelativeAddress(Image, *TypeReference + I + 1);
@@ -1329,7 +1399,18 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
         : TypeBytes[I] == 1
             ? swiftDirectTypeMetadataDescriptor(Image, *DescriptorAddress)
             : swiftTypeMetadataDescriptor(Image, *DescriptorAddress);
-    if (!DescriptorAddress || !DescriptorSymbol)
+    if (!DescriptorAddress)
+      return std::nullopt;
+    if (!DescriptorSymbol && TypeBytes[I] == 1) {
+      const auto Inline = swiftLocalImportedLockType(Image, *DescriptorAddress);
+      if (!Inline)
+        return std::nullopt;
+      Expanded += *Inline;
+      Rebuilt += *Inline;
+      I += 5;
+      continue;
+    }
+    if (!DescriptorSymbol)
       return std::nullopt;
     llvm::StringRef Descriptor(*DescriptorSymbol);
     Descriptor.consume_front("_");
@@ -1340,22 +1421,23 @@ swiftTypeMetadataPairProof(const BinaryImage &Image, va_t CacheAddress,
     // Rebuild direct local descriptors through a private pointer cell too.
     // Swift's indirect symbolic-reference kind resolves the same exported
     // descriptor without requiring a new relative relocation at link time.
-    Descriptors.push_back({I, *DescriptorAddress, *DescriptorSymbol});
+    Descriptors.push_back({static_cast<uint32_t>(Rebuilt.size()),
+                           *DescriptorAddress, *DescriptorSymbol});
+    Rebuilt.append(reinterpret_cast<const char *>(TypeBytes + I), 5);
     I += 5;
   }
-  if (Expanded != Base || !swiftMangledType(Expanded))
+  if (Rebuilt.size() > 256 || Expanded != Base || !swiftMangledType(Expanded))
     return std::nullopt;
 
-  const std::string TypeReferenceBytes(
-      reinterpret_cast<const char *>(TypeBytes), Length);
   return SwiftTypeMetadataPairProof{
       SourceCallTypeHint::SwiftTypeMetadataAddress{
           Cache->Addr, Reference->Addr, *TypeReference,
           Descriptors.empty() ? 0 : Descriptors.front().Target,
           Descriptors.empty() ? std::string{} : Descriptors.front().Symbol,
-          Descriptors.empty() ? TypeReferenceBytes
-                              : TypeReferenceBytes.substr(5)},
-      std::move(Descriptors), TypeReferenceBytes};
+          Descriptors.empty() || Descriptors.front().Offset != 0
+              ? Rebuilt
+              : Rebuilt.substr(5)},
+      std::move(Descriptors), std::move(Rebuilt)};
 }
 
 inline std::optional<SourceCallTypeHint::SwiftTypeMetadataAddress>

@@ -655,16 +655,19 @@ It emits the authenticated runtime lookup directly and retains no image cache.
 A Swift concrete-metadata cache/reference pair may rebuild its mangled type
 reference only when the zero cache, immutable metadata-reference record, every
 relative descriptor slot, and the exact `MR`/`Md` symbol spelling agree. The
-type reference consists of printable mangling bytes and at most eight indirect
-`0x02` context descriptors; expanding every descriptor must reproduce a
+type reference consists of printable mangling bytes and at most eight symbolic
+context descriptors; expanding every descriptor must reproduce a
 complete symbol name that itself passes a bounded Swift type demangle. Imported
 nominal descriptors require a bounded demangle and the exact system-framework
 install name derived from the declared module.
 Local protocols and bounded module/class/structure/enum nominal paths require a
 resolved read-only relocation to one unique data symbol with exactly one
-matching export. Direct `0x01` or other symbolic references, unexported private
-contexts, weak or mismatched providers, malformed records, and ambiguous
-symbols remain unsupported.
+matching export. On AArch64, the exact private imported Darwin
+`os_unfair_lock_s` descriptor may instead be converted from a direct `0x01`
+reference to its public textual mangling after checking its immutable flags,
+parent module, name, accessor, and unique local symbols. Other direct `0x01`
+or symbolic references, unexported private contexts, weak or mismatched
+providers, malformed records, and ambiguous symbols remain unsupported.
 When the exact pair passes that proof but its addresses travel through local
 variables, source projection may bind the defining constants. Each local must
 have one direct constant definition, be definitely assigned before use, and be
