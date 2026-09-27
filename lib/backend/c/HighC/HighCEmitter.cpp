@@ -1337,6 +1337,25 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     ExternFuncs.insert(Name);
   }
 
+  // A synthetic C++ special-member prototype names its class record. Declare
+  // that record as an incomplete type so the prototype and casts to it are
+  // valid C, unless the name is already an ordinary identifier.
+  std::set<std::string> DeclaredSyntheticRecords;
+  auto DeclareSyntheticThis = [&](llvm::StringRef Identifier) {
+    const MsvcAtlCallee *Atl = msvcAtlCallee(Identifier);
+    if (!Atl)
+      return;
+    const TypeRef This = msvcAtlSyntheticThis(Identifier, *Atl);
+    if (!This || This->Kind != NdTypeKind::Ptr || !This->Pointee ||
+        This->Pointee->Kind != NdTypeKind::Struct || This->Pointee->IsEnum)
+      return;
+    const std::string Record = cNamedTypeSpelling(This->Pointee->SourceName);
+    if (Record.empty() || ExternFuncs.count(Record) ||
+        isOwnFunctionName(Record, Funcs) ||
+        !DeclaredSyntheticRecords.insert(Record).second)
+      return;
+    OS << "typedef struct " << Record << " " << Record << ";\n";
+  };
   for (const std::string &Name : ExternFuncs) {
     // CallTargets already contains the C identifier returned by
     // functionIdentifier (or the source-call projection).  Removing another
@@ -1390,10 +1409,12 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     } else if (!ConflictingSourceNativeSignatures.count(Name) &&
                !ConflictingDebugExternSigs.count(Name) &&
                DebugExternSigs.count(Name)) {
+      DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(DebugExternSigs[Name], Identifier, Name)
          << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name) &&
                msvcAtlCallee(Identifier)) {
+      DeclareSyntheticThis(Identifier);
       OS << debugExternPrototype(FunctionSym{}, Identifier) << ";\n";
     } else if (!ConflictingSourceNativeSignatures.count(Name)) {
       OS << "extern int " << Identifier << "(";

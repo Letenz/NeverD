@@ -29492,6 +29492,21 @@ TEST(HighCPointerAddresses, JoinSinkKeepsEarlyExitBeforeLaterWork) {
   EXPECT_FALSE(Falls);
 }
 
+TEST(HighCPointerAddresses, SyntheticSpecialMemberDeclaresItsRecord) {
+  // `Widget_dtor(Widget* this)` names a class record no header declares.
+  HighFunc Func;
+  Func.Name = "destroy_widget";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Body = {callStmt("Widget_dtor", 0x140002000, {parameter(0)})};
+  const std::string Source = emitFunctions({Func});
+  const size_t Typedef = Source.find("typedef struct Widget Widget;");
+  const size_t Prototype = Source.find("Widget_dtor(Widget* this)");
+  ASSERT_NE(Typedef, std::string::npos) << Source;
+  ASSERT_NE(Prototype, std::string::npos) << Source;
+  EXPECT_LT(Typedef, Prototype) << Source;
+}
+
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
   HighFunc Func;
   Func.Name = "aux_len";
