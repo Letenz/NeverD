@@ -814,6 +814,48 @@ TEST(SwiftOnceSources,
   EXPECT_EQ(Caller.Dependencies, std::set<va_t>{Original.Entry});
 }
 
+TEST(SwiftOnceSources, NestedCallbackPreservesRetainInIgnoredReturn) {
+  NestedCallbackFixture F;
+  constexpr va_t RetainSlot = 0x2088;
+  F.Image.ImportPtrSlots[RetainSlot] = "_objc_retain";
+  F.Image.DynInfo.NeededLibs.push_back("/usr/lib/libobjc.A.dylib");
+  F.Image.DyldBindSlots[RetainSlot] = {"_objc_retain", 0,
+                                       "/usr/lib/libobjc.A.dylib", false};
+  const auto Hint = objcRuntimeSourceCallHint(F.Image, RetainSlot);
+  ASSERT_TRUE(Hint);
+  auto &Outer = F.Pipeline.HighFuncs[1];
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Retain = HighExpr::makeCall(
+      "objc_retain", RetainSlot,
+      {HighExpr::makeConst(0x2010, 8, ConstantAddressProvenance::DataAddress)});
+  Retain->Type = Pointer;
+  Retain->SourceCallHint = std::make_shared<SourceCallTypeHint>(*Hint);
+  Outer.ReturnType = Pointer;
+  Outer.Body.back().RetVal = Retain;
+
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.NestedCallbacks.count(Outer.Entry), 1U);
+  const auto Projected =
+      projectSwiftOnceNestedCallback(Outer, F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  ASSERT_GE(Projected->Function.Body.size(), 2U);
+  const auto &Effect =
+      Projected->Function.Body[Projected->Function.Body.size() - 2];
+  EXPECT_EQ(Effect.Kind, StmtKind::Call);
+  EXPECT_EQ(Effect.CallExpr->SourceCallHint->TargetName, "objc_retain");
+  const auto &Return = Projected->Function.Body.back();
+  EXPECT_EQ(Return.Kind, StmtKind::Return);
+  EXPECT_FALSE(Return.RetVal);
+  EXPECT_EQ(Projected->Function.ReturnType->Kind, NdTypeKind::Void);
+
+  auto Forged = std::make_shared<SourceCallTypeHint>(
+      *Outer.Body.back().RetVal->SourceCallHint);
+  Forged->TargetName = "objc_release";
+  Outer.Body.back().RetVal->SourceCallHint = std::move(Forged);
+  EXPECT_FALSE(
+      swift_once_source_detail::nestedCallbackContract(Outer, F.Image));
+}
+
 TEST(SwiftOnceSources, NestedCallbacksRequireExactIndependentLeafEvidence) {
   for (unsigned Case = 0; Case != 9; ++Case) {
     SCOPED_TRACE(Case);

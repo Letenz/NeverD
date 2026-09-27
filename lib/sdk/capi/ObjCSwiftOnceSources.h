@@ -1273,6 +1273,31 @@ inline bool discardableCallbackReturn(ExprPtr Value) {
                                             Value->Var.Kind == MedVar::Temp)));
 }
 
+// A once callback's result is ignored, but evaluating that result can still
+// retain an object. Admit this exact runtime call only when its effect can be
+// kept as a separate statement before changing the callback to return void.
+inline ExprPtr retainedCallbackReturn(ExprPtr Value, const BinaryImage &Image) {
+  unsigned Depth = 0;
+  while (Value &&
+         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+         Value->Operands.size() == 1 && Depth++ < 16)
+    Value = Value->Operands.front();
+  if (!Value || Value->Kind != ExprKind::Call || Value->IsIndirectCall ||
+      Value->Operands.size() != 1 || !Value->SourceCallHint ||
+      Value->IntrinsicId != Intrinsic::None ||
+      !Value->IntrinsicOutputs.empty() ||
+      Value->MemoryOrdering != NdMemoryOrdering::None ||
+      Value->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return {};
+  const auto Expected =
+      objcRuntimeSourceCallHint(Image, Value->SourceCallHint->TargetAddress);
+  if (!Expected || Expected->TargetName != "objc_retain" ||
+      !objc_binding_detail::runtimeBindingMatches(*Value->SourceCallHint,
+                                                  *Expected))
+    return {};
+  return Value;
+}
+
 /// A callback already rooted by an authenticated once call can itself forward
 /// an undeclared x2 to one nested once initializer. Its only entry use must be
 /// that context; the independent leaf callback proof owns whether it is
@@ -1305,6 +1330,11 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   size_t ContextUses = 0;
   const HighExpr *Once = nullptr;
   bool Valid = true;
+  const HighStmt *RetainedReturn =
+      !F.Body.empty() && F.Body.back().Kind == StmtKind::Return &&
+              retainedCallbackReturn(F.Body.back().RetVal, Image)
+          ? &F.Body.back()
+          : nullptr;
   std::function<void(const ExprPtr &, unsigned)> Visit = [&](const ExprPtr &E,
                                                              unsigned Depth) {
     if (!Valid)
@@ -1330,7 +1360,8 @@ nestedCallbackContract(const HighFunc &F, const BinaryImage &Image) {
   };
   walkStmts(F.Body, [&](const HighStmt &Statement) {
     if (Statement.Kind == StmtKind::Return &&
-        !discardableCallbackReturn(Statement.RetVal))
+        !discardableCallbackReturn(Statement.RetVal) &&
+        &Statement != RetainedReturn)
       Valid = false;
     forEachExpr(Statement, [&](const ExprPtr &E) { Visit(E, 0); });
   });
@@ -2557,14 +2588,36 @@ inline std::optional<ObjCSourceBindingResult> projectSwiftOnceNestedCallback(
       !Result.LocalStorageExtents.count(Current->Predicate) ||
       !swift_once_source_detail::ignoresContext(Result.Function))
     return std::nullopt;
-  // Failure to bind the extra context may leave the generic x0 return in
-  // HighIR even after callback discovery. The once callback ABI returns void.
-  // Discard only a side-effect-free scalar carrier, keeping every preceding
-  // call and memory operation; an embedded load/call must not disappear.
+  // The once callback ABI returns void. Preserve a verified objc_retain in
+  // the final return as a call statement; its ownership effect is observable
+  // even though the return register is ignored by the once runtime.
+  if (!Result.Function.Body.empty()) {
+    auto &Return = Result.Function.Body.back();
+    if (Return.Kind == StmtKind::Return &&
+        !swift_once_source_detail::discardableCallbackReturn(Return.RetVal)) {
+      auto Retain = swift_once_source_detail::retainedCallbackReturn(
+          Return.RetVal, Image);
+      if (!Retain)
+        return std::nullopt;
+      HighStmt Effect;
+      Effect.Kind = StmtKind::Call;
+      Effect.Addr = Return.Addr;
+      Effect.CallExpr = std::move(Retain);
+      Return.RetVal.reset();
+      Result.Function.Body.insert(Result.Function.Body.end() - 1,
+                                  std::move(Effect));
+    }
+  }
+  bool ReturnValid = true;
   walkStmts(Result.Function.Body, [&](HighStmt &Statement) {
-    if (Statement.Kind == StmtKind::Return)
+    if (Statement.Kind == StmtKind::Return) {
+      ReturnValid &=
+          swift_once_source_detail::discardableCallbackReturn(Statement.RetVal);
       Statement.RetVal.reset();
+    }
   });
+  if (!ReturnValid)
+    return std::nullopt;
   Result.Function.Params = {
       {"once_context", NdType::makePtr(NdType::makeVoid())}};
   Result.Function.ReturnType = Current->Signature.ReturnType;
