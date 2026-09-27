@@ -1486,6 +1486,41 @@ TEST(HighCSourceCalls, NativeTargetAddressesDisambiguateRepeatedSymbols) {
                 "int main(void) { return invoke_second(-37) != -37; }\n");
 }
 
+TEST(HighCSourceCalls, PreparedImageFunctionNamesPreserveEmission) {
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  const auto I64 = NdType::makeInt(8, false);
+  auto Call = HighExpr::makeCall("_strlen", 0x4000, {parameter(0, Pointer)});
+  Call->Type = I64;
+  auto Caller = returning("length_of_string", Call, {Pointer});
+  Caller.Entry = 0x1000;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Symbols.push_back({"_strlen", 0x4000, 0, true});
+  const auto Emit = [&](HighCEmitter &Emitter, const BinaryImage &Current) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::ELF;
+    Options.Image = &Current;
+    EXPECT_TRUE(Emitter.emit({Caller}, OS, Options));
+    return Source;
+  };
+  HighCEmitter Plain;
+  HighCEmitter Prepared;
+  Prepared.prepareImageFunctionNames(Image);
+  const auto Source = Emit(Prepared, Image);
+  EXPECT_EQ(Source, Emit(Plain, Image));
+  EXPECT_EQ(Source.find("bad source call"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("strlen("), std::string::npos) << Source;
+
+  BinaryImage Other;
+  Other.Arch = Arch::X64;
+  Other.Format = BinaryFormat::ELF;
+  EXPECT_EQ(Emit(Prepared, Other), Emit(Plain, Other));
+}
+
 TEST(HighCSourceCalls,
      TypedBlockDispatchExecutesCapturedIntegerAndMixedFloatValues) {
   auto Pointer = NdType::makePtr(NdType::makeVoid());

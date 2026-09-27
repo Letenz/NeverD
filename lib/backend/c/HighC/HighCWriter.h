@@ -29,10 +29,12 @@
 #include <map>
 #include <optional>
 #include <set>
-#include <utility>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -75,9 +77,11 @@ public:
   static std::string
   sourceParameterType(const SourceParameterTypeHint &Parameter);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
-              DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
+              DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
+              const std::unordered_set<std::string_view> *SharedNames = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
-        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions) {}
+        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
+        SharedImageFunctionNames(SharedNames) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -418,7 +422,10 @@ public:
   }
   bool isOwnFunctionName(llvm::StringRef Name,
                          const std::vector<HighFunc> &Funcs);
-  std::optional<std::set<std::string>> ImageFunctionNames;
+  /// Views remain valid for this writer because its BinaryImage is immutable
+  /// for the duration of one emission.
+  std::optional<std::unordered_set<std::string_view>> ImageFunctionNames;
+  const std::unordered_set<std::string_view> *SharedImageFunctionNames;
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
