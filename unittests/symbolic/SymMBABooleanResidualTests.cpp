@@ -115,8 +115,9 @@ TEST(SymMBABooleanResidual, RetainsExactBehaviorAtEverySmallBudget) {
           SymRef X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
           SymRef Z = Ctx.mkVar("z", Width);
           SymRef First = Hidden ? Ctx.mkUDiv(X, Y) : X;
-          SymRef E = expandedPair(Ctx, First, Y, Z, llvm::APInt(Width, 2),
-                                  llvm::APInt(Width, 5));
+          SymRef E =
+              expandedPair(Ctx, First, Y, Z, llvm::APInt(64, 2).trunc(Width),
+                           llvm::APInt(64, 5).trunc(Width));
           MBAOptions Options;
           Options.MaxWork = Limit;
           Options.VerifySamples = 0;
