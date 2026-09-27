@@ -316,6 +316,19 @@ bool isCIntegerVectorType(llvm::Type *Ty) {
              limits::kMaxCIntegerVectorBytes;
 }
 
+bool isCVectorType(llvm::Type *Ty) {
+  if (isCIntegerVectorType(Ty))
+    return true;
+  const auto *Vector = llvm::dyn_cast<llvm::FixedVectorType>(Ty);
+  if (!Vector || !llvm::isPowerOf2_32(Vector->getNumElements()))
+    return false;
+  auto *Element = Vector->getElementType();
+  return (Element->isFloatTy() || Element->isDoubleTy() ||
+          Element->isBFloatTy()) &&
+         Vector->getPrimitiveSizeInBits() / 8 <=
+             limits::kMaxCIntegerVectorBytes;
+}
+
 std::string typeToCLLVM(llvm::Type *Ty) {
   if (!Ty)
     return "void";
@@ -346,6 +359,8 @@ std::string typeToCLLVM(llvm::Type *Ty) {
       return "__uint128_t";
     return "uint64_t";
   }
+  if (Ty->isBFloatTy())
+    return "__bf16";
   if (Ty->isFloatTy())
     return "float";
   if (Ty->isDoubleTy())
@@ -359,11 +374,10 @@ std::string typeToCLLVM(llvm::Type *Ty) {
     return llvmStructName(ST);
 
   if (auto *VT = llvm::dyn_cast<llvm::FixedVectorType>(Ty)) {
-    if (!isCIntegerVectorType(VT))
+    if (!isCVectorType(VT))
       throw std::invalid_argument(
           "C vector has no supported lane type or size");
-    const unsigned Bytes =
-        VT->getNumElements() * VT->getElementType()->getIntegerBitWidth() / 8;
+    const unsigned Bytes = VT->getPrimitiveSizeInBits() / 8;
     return typeToCLLVM(VT->getElementType()) + " __attribute__((vector_size(" +
            std::to_string(Bytes) + ")))";
   }

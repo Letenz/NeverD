@@ -84,6 +84,46 @@ TEST(SourceAggregate, RecordEncodingSeparatesShapeFromPhysicalABI) {
   EXPECT_FALSE(assignDarwinObjCSourceABI(*Mixed, Arch::AArch64, Error));
 }
 
+TEST(SourceAggregate, FixedCEncodingRejectsUnknownCallbackPrototypes) {
+  for (const char *Encoding :
+       {"^?0", "^r?0", "v8^?0", "v8r^?0", "v8^r?0", "v8^^?0", "{Callback=^?}0",
+        "v8{Callback=^?}0", "v8{Outer={Inner=^?}}0"})
+    EXPECT_FALSE(parseObjCFunctionEncoding(Encoding)) << Encoding;
+}
+
+TEST(SourceAggregate, OpaqueMethodIMPPointersRetainOnlyTheirValueCarrier) {
+  for (const char *Type : {"^?", "^r?", "r^?"}) {
+    SCOPED_TRACE(Type);
+    const auto Result = parseObjCMethodEncoding(
+        "methodForSelector:", std::string(Type) + "24@0:8:16");
+    ASSERT_TRUE(Result);
+    ASSERT_EQ(Result->ReturnType->Kind, NdTypeKind::Ptr);
+    ASSERT_TRUE(Result->ReturnType->Pointee);
+    EXPECT_EQ(Result->ReturnType->Pointee->Kind, NdTypeKind::Void);
+    const auto Parameter = parseObjCMethodEncoding(
+        "setImplementation:", "v24@0:8" + std::string(Type) + "16");
+    ASSERT_TRUE(Parameter);
+    ASSERT_EQ(Parameter->Parameters.size(), 3U);
+    EXPECT_TRUE(
+        equalSourceTypes(Parameter->Parameters[2].Type, Result->ReturnType));
+  }
+  EXPECT_FALSE(parseObjCMethodEncoding("methodForSelector:", "^??24@0:8:16"));
+}
+
+TEST(SourceAggregate, FixedCOpaqueStorageDoesNotInterpretCallbackFields) {
+  // Aggregate pointees and block objects have no inferred invocation ABI.
+  // Callback types inside opaque storage are syntax, not passed value types.
+  for (const char *Encoding : {"v8^{Context=^?}0", "v8^[2^?]0", "v8@?0"}) {
+    SCOPED_TRACE(Encoding);
+    const auto Hint = parseObjCFunctionEncoding(Encoding);
+    ASSERT_TRUE(Hint);
+    ASSERT_EQ(Hint->Parameters.size(), 1U);
+    ASSERT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Ptr);
+    ASSERT_TRUE(Hint->Parameters[0].Type->Pointee);
+    EXPECT_EQ(Hint->Parameters[0].Type->Pointee->Kind, NdTypeKind::Void);
+  }
+}
+
 TEST(SourceAggregate, FixedCRecordsAllocateOnlyExplicitParameters) {
   for (Arch A : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(A);

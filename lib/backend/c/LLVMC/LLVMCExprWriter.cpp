@@ -18,6 +18,7 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/NdTypes.h"
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ConstantFolding.h"
@@ -441,7 +442,7 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
 std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   if (const auto *Vector =
           llvm::dyn_cast<llvm::FixedVectorType>(C->getType())) {
-    if (!isCIntegerVectorType(C->getType()))
+    if (!isCVectorType(C->getType()))
       throw std::runtime_error(
           "LLVM C constant has an unsupported vector type");
     std::string Text = "(" + typeToCLLVM(C->getType()) + "){";
@@ -453,9 +454,21 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         throw std::runtime_error("LLVM C vector constant has no lane value");
       // Undefined lanes permit a stable zero choice, without observing or
       // inventing a value for any defined lane.
-      Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
-                  ? "0"
-                  : constStr(Element);
+      if (const auto *FP = llvm::dyn_cast<llvm::ConstantFP>(Element)) {
+        const auto Bits = FP->getValueAPF().bitcastToAPInt();
+        auto *Integer =
+            llvm::IntegerType::get(C->getContext(), Bits.getBitWidth());
+        // C union member access preserves the representation, including NaN
+        // payloads and signed zero, without compiler-specific bit-cast support.
+        Text += "((union { " + typeToCLLVM(Integer) + " bits; " +
+                typeToCLLVM(Element->getType()) +
+                " value; }){ .bits = 0x" +
+                llvm::utohexstr(Bits.getZExtValue()) + "ULL }).value";
+      } else {
+        Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
+                    ? "0"
+                    : constStr(Element);
+      }
     }
     return Text + "}";
   }
@@ -497,18 +510,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       std::string Image = imageDataCName(CE);
       if (!Image.empty())
         return "&" + Image;
-      if (CE->getNumOperands() >= 3) {
-        if (auto *GV =
-                llvm::dyn_cast<llvm::GlobalVariable>(CE->getOperand(0))) {
-          if (GV->hasInitializer()) {
-            if (auto *CDA = llvm::dyn_cast<llvm::ConstantDataArray>(
-                    GV->getInitializer())) {
-              if (CDA->isString())
-                return "\"" + escapeCString(CDA->getAsString()) + "\"";
-            }
-          }
-        }
-      }
+      return gepExpr(*llvm::cast<llvm::GEPOperator>(CE));
     }
     if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
       auto *Src = CE->getOperand(0);
@@ -2702,7 +2704,8 @@ bool LLVMCWriter::isFloatingPointBitcast(const llvm::Instruction &Inst) {
   const auto *Destination = Cast->getDestTy();
   const auto *Float = Source->isIntegerTy() ? Destination : Source;
   const auto *Integer = Source->isIntegerTy() ? Source : Destination;
-  return (Float->isFloatTy() || Float->isDoubleTy() || Float->isX86_FP80Ty()) &&
+  return (Float->isFloatTy() || Float->isDoubleTy() || Float->isBFloatTy() ||
+          Float->isX86_FP80Ty()) &&
          Integer->isIntegerTy() &&
          Float->getPrimitiveSizeInBits() == Integer->getPrimitiveSizeInBits();
 }
@@ -2766,6 +2769,38 @@ std::string LLVMCWriter::fcmpInlineText(const llvm::FCmpInst &Compare) {
   return std::string(Negate ? "!" : "") + Builtin + "(" +
          valueStr(Compare.getOperand(0)) + ", " +
          valueStr(Compare.getOperand(1)) + ")";
+}
+
+std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
+  const auto &Layout = CurMod->getDataLayout();
+  const unsigned AddressSpace = GEP.getPointerAddressSpace();
+  const unsigned Bits = Layout.getIndexSizeInBits(AddressSpace);
+  if (AddressSpace != 0 || (Bits != 32 && Bits != 64) ||
+      Bits != Layout.getPointerSizeInBits(AddressSpace))
+    throw std::runtime_error("unsupported LLVM C GEP pointer layout");
+  llvm::SmallMapVector<llvm::Value *, llvm::APInt, 4> Variables;
+  llvm::APInt Offset(Bits, 0);
+  if (!GEP.collectOffset(Layout, Bits, Variables, Offset))
+    throw std::runtime_error("unsupported LLVM C GEP offset");
+  const std::string Carrier = "uint" + std::to_string(Bits) + "_t";
+  std::string Base = valueStr(GEP.getPointerOperand());
+  if (const auto *Global =
+          llvm::dyn_cast<llvm::GlobalVariable>(GEP.getPointerOperand());
+      Global && !Global->getValueType()->isArrayTy())
+    Base = "&" + Base;
+  std::string Sum = "(" + Carrier + ")(uintptr_t)(" + Base + ")";
+  if (!Offset.isZero())
+    Sum += " + (" + Carrier + ")0x" + llvm::utohexstr(Offset.getZExtValue()) +
+           "ULL";
+  for (const auto &[Index, Scale] : Variables) {
+    // GEP indices are signed at their original width, then sign extended or
+    // truncated to the pointer index width. Unsigned carrier arithmetic keeps
+    // address/offset multiplication wrapping without C signed-overflow UB.
+    Sum += " + (" + Carrier + ")(" +
+           signedIntegerOperand(Index, valueStr(Index)) + ") * (" + Carrier +
+           ")0x" + llvm::utohexstr(Scale.getZExtValue()) + "ULL";
+  }
+  return "(void*)(uintptr_t)(" + Carrier + ")(" + Sum + ")";
 }
 
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
@@ -2850,35 +2885,8 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
     return castStr(Inst.getOpcode(), Src, Inst.getOperand(0)->getType(),
                    Inst.getType());
   }
-  if (auto *GEP = llvm::dyn_cast<llvm::GetElementPtrInst>(&Inst)) {
-    if (const llvm::AllocaInst *Slot =
-            llvm::dyn_cast<llvm::AllocaInst>(GEP->getPointerOperand())) {
-      const std::string Local = getName(Slot);
-      if (GEP->getNumIndices() == 1) {
-        const std::string Idx = valueStr(GEP->getOperand(1));
-        return Idx == "0" ? "&" + Local
-                          : "(void*)((char*)&" + Local + " + " + Idx + ")";
-      }
-      if (GEP->getNumIndices() == 2 && valueStr(GEP->getOperand(1)) == "0")
-        return "&" + Local + "[" + valueStr(GEP->getOperand(2)) + "]";
-    }
-    auto Base = valueStr(GEP->getPointerOperand());
-    if (GEP->getNumIndices() == 1)
-      return "(void*)((char*)" + Base + " + " + valueStr(GEP->getOperand(1)) +
-             ")";
-    if (GEP->getNumIndices() == 2) {
-      auto Idx0 = valueStr(GEP->getOperand(1));
-      auto Idx1 = valueStr(GEP->getOperand(2));
-      if (Idx0 == "0") {
-        if (auto *AT =
-                llvm::dyn_cast<llvm::ArrayType>(GEP->getSourceElementType()))
-          return "&((" + typeToCLLVM(AT->getElementType()) + "*)" + Base +
-                 ")[" + Idx1 + "]";
-      }
-      return "(void*)((char*)" + Base + " + " + Idx1 + ")";
-    }
-    return "(void*)" + Base;
-  }
+  if (llvm::isa<llvm::GetElementPtrInst>(Inst))
+    return gepExpr(*llvm::cast<llvm::GEPOperator>(&Inst));
   if (auto *Sel = llvm::dyn_cast<llvm::SelectInst>(&Inst)) {
     if (auto Condition = foldImmediate(Sel->getCondition());
         Condition && (*Condition == "0" || *Condition == "1"))

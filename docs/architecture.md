@@ -494,6 +494,11 @@ header set and intersects all four macOS/iOS architecture profiles with SDK
 export evidence. Public `notify.h` functions use this path, including exact
 `libSystem` and `libsystem_notify` providers; a header declaration alone cannot
 authorize a call.
+The shared type parser can preserve an Objective-C `^?` value as an opaque IMP
+carrier, but fixed C declarations reject unknown function-pointer prototypes,
+including nested pointers and by-value record fields. Exact runtime contracts
+may supply a complete callback prototype independently. Opaque aggregate
+pointees remain uninterpreted storage.
 
 Fixed Darwin C imports may use a public declaration outside the generated
 command-line-tools catalog only at an exact symbol and dyld provider boundary.
@@ -712,6 +717,20 @@ MedIR owns bounded invariant-constant propagation across same-width SSA copies a
 | `lift` | Binary -> LowIR -> MedIR -> LLVM IR | `.ll` |
 | `decompile --llvm` | Binary -> LowIR -> MedIR -> LLVM IR | LLVM-derived C |
 | `patch` | Binary -> LowIR -> MedIR -> LLVM IR -> codegen | Rewritten binary |
+
+LLVMC normalizes ordinary vector memory accesses and lane operations on a
+private module clone. Packed vector casts use the source data layout both
+before and after scalarization, since scalarization can introduce new casts
+when lane widths change. Volatile vector memory, unsupported vector operations,
+vector global/local storage, and floating-vector function interfaces remain
+rejected. Selected-function emission also rejects referenced vector storage,
+including storage reached through opaque pointers; unrelated globals do not
+expand the selected function's scope. The exact AArch64
+BFMMLA intrinsic retains native float/bfloat lanes and emits the ACLE operation;
+its matrix arithmetic is not approximated with scalar multiply/add.
+Inline and materialized LLVM GEP expressions share data-layout-derived byte
+offsets, including nested aggregates and signed dynamic indices. Ordinary raw
+scalar accesses with insufficient alignment use exact-width byte copies.
 
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline

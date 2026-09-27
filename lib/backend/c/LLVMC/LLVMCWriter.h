@@ -100,7 +100,10 @@ public:
   void scanReferencedBlocks(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
   static bool isFloatingPointBitcast(const llvm::Instruction &Inst);
+  static bool isNativeVectorIntrinsic(const llvm::CallBase &Call, Arch TheArch);
   std::string fcmpInlineText(const llvm::FCmpInst &Compare);
+  std::string gepExpr(const llvm::GEPOperator &GEP);
+  bool writeRawMemoryCopy(llvm::Instruction &Inst, int Indent);
   /// A call whose result is printed at exactly one later instruction is
   /// inlined there. Ctor returns, noreturn, and values with two printed
   /// uses stay assigned. A call that mentions a slot is not moved past a

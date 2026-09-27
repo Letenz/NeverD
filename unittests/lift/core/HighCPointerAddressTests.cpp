@@ -37222,6 +37222,30 @@ void expectCapturedSehExceptionCode(const std::string &Source) {
       << Source;
 }
 
+struct CapturedImageStore {
+  size_t Position;
+  std::string Value;
+};
+
+// Image scalars share byte-array storage with overlapping accesses. Follow the
+// captured value through all four volatile bytes instead of expecting a second
+// scalar global at the sink address. Backreferences keep the capture and byte
+// index tied to the actual store without depending on their generated names.
+std::optional<CapturedImageStore>
+capturedVolatileImageStore(const std::string &Source, const std::string &Base,
+                           unsigned Offset) {
+  const std::regex Store(
+      R"(\{ uint32_t (\w+) = (\w+);\s*)"
+      R"(for \(unsigned (\w+) = 0; \3 < 4; \+\+\3\)\s*)"
+      R"(\(\(volatile uint8_t\*\)\()" +
+      Base + " \\+ " + std::to_string(Offset) +
+      R"(\)\)\[\3\] = \(\(const uint8_t\*\)&\1\)\[\3\];\s*\})");
+  std::smatch Match;
+  if (!std::regex_search(Source, Match, Store))
+    return std::nullopt;
+  return CapturedImageStore{static_cast<size_t>(Match.position()), Match[2]};
+}
+
 TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -37243,7 +37267,8 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   EXPECT_NE(ExceptAt, std::string::npos) << Source;
   EXPECT_NE(HandlerAt, std::string::npos) << Source;
   EXPECT_LT(ExceptAt, HandlerAt) << Source;
-  EXPECT_EQ(Source.find("/* recovered handler labels remain in the protected body */"),
+  EXPECT_EQ(Source.find(
+                "/* recovered handler labels remain in the protected body */"),
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("_call_clobber"), std::string::npos) << Source;
@@ -37280,12 +37305,9 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   // the object that both branches wrote, never a separate byte-frame slot.
   EXPECT_NE(Join.find(NormalSlot), std::string::npos) << Source;
   EXPECT_EQ(Join.find("*(uint32_t*)"), std::string::npos) << Source;
-  const auto SinkLine = sourceLineContaining(Join, "g_1400050E0 = ");
-  ASSERT_FALSE(SinkLine.empty()) << Source;
-  constexpr std::string_view SinkPrefix = "g_1400050E0 = ";
-  const size_t SinkValueAt = SinkLine.find(SinkPrefix) + SinkPrefix.size();
-  const std::string SinkValue(SinkLine.substr(
-      SinkValueAt, SinkLine.find(';', SinkValueAt) - SinkValueAt));
+  const auto Sink = capturedVolatileImageStore(Join, "g_140005000", 224);
+  ASSERT_TRUE(Sink.has_value()) << Source;
+  const std::string &SinkValue = Sink->Value;
   if (SinkValue != NormalSlot)
     EXPECT_NE(Join.find(SinkValue + " = " + NormalSlot + ";"),
               std::string::npos)
@@ -37299,18 +37321,17 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
   const std::string Compiler = *FoundCompiler;
 #endif
   llvm::SmallString<128> SourcePath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-seh-join", "c",
-                                                  SourcePath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-seh-join", "c", SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-seh-join", "err",
-                                                  ErrorPath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-seh-join", "err", ErrorPath));
   llvm::FileRemover RemoveError(ErrorPath);
   std::error_code EC;
   {
     llvm::raw_fd_ostream File(SourcePath, EC);
     ASSERT_FALSE(EC) << EC.message();
     File << "#include <stdint.h>\n"
-            "extern uint32_t g_1400050E0;\n"
             "extern void RaiseException(uint32_t, uint32_t, uint32_t, "
             "uint32_t);\n"
             "extern int sub_1400024E0(void *);\n"
@@ -37318,8 +37339,10 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeLlvmcExceptContainsHandler) {
          << Source;
   }
   llvm::SmallVector<llvm::StringRef, 8> Arguments{
-      Compiler, "--target=x86_64-pc-windows-msvc", "-fms-extensions",
-      "-std=c11", "-fsyntax-only", "-Werror=uninitialized", SourcePath};
+      Compiler,          "--target=x86_64-pc-windows-msvc",
+      "-fms-extensions", "-std=c11",
+      "-fsyntax-only",   "-Werror=uninitialized",
+      SourcePath};
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
   std::string Error;
@@ -37381,13 +37404,13 @@ TEST(LLVMCPointerAddresses, CorpusOptimizedSehResultIsAssignedOnBothPaths) {
     ASSERT_FALSE(NormalHome.empty()) << Source;
     const std::string HandlerHome = AssignedName(HandlerValue);
     ASSERT_FALSE(HandlerHome.empty()) << Source;
-    const size_t SinkAt = Source.find("g_1400030A0 = ");
-    ASSERT_NE(SinkAt, std::string::npos) << Source;
-    const size_t SinkValueAt = SinkAt + std::string("g_1400030A0 = ").size();
-    const size_t SinkEnd = Source.find(';', SinkValueAt);
-    ASSERT_NE(SinkEnd, std::string::npos) << Source;
-    const std::string SinkHome =
-        Source.substr(SinkValueAt, SinkEnd - SinkValueAt);
+    const auto Sink = capturedVolatileImageStore(Source, "g_140003000", 160);
+    ASSERT_TRUE(Sink.has_value()) << Source;
+    const size_t SinkAt = Sink->Position;
+    const std::string &SinkHome = Sink->Value;
+    const size_t ExceptCloseAt = Source.find("\n    }\n", ExceptAt);
+    ASSERT_NE(ExceptCloseAt, std::string::npos) << Source;
+    EXPECT_LT(ExceptCloseAt, SinkAt) << Source;
     // Parallel PHI copies use one temporary per edge. Both edge values must
     // reach the same post-SEH sink, with each copy inside its own path.
     if (SinkHome != NormalHome) {
@@ -37437,8 +37460,19 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   const size_t ExceptAt = Source.find("} __except");
   expectCapturedSehExceptionCode(Source);
   const size_t RaiseAt = Source.find("RaiseException(");
-  const size_t SuccessAt = Source.find("= -100;");
-  const size_t HandlerAt = Source.find("= 41;");
+  // Both paths write the same four frame bytes. Under-aligned accesses copy
+  // a captured uint32_t rather than dereferencing a typed frame pointer.
+  auto FrameStoreAt = [&](const std::string &Value) -> size_t {
+    const std::regex Store(
+        R"(\{ uint32_t (\w+) = )" + Value +
+        R"(;\s*__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 48\)\), &\1, 4\);\s*\})");
+    std::smatch Match;
+    return std::regex_search(Source, Match, Store)
+               ? static_cast<size_t>(Match.position())
+               : std::string::npos;
+  };
+  const size_t SuccessAt = FrameStoreAt("-100");
+  const size_t HandlerAt = FrameStoreAt("41");
   ASSERT_NE(TryAt, std::string::npos) << Source;
   ASSERT_NE(ExceptAt, std::string::npos) << Source;
   ASSERT_NE(RaiseAt, std::string::npos) << Source;
@@ -37453,11 +37487,9 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   // Both paths use the proven post-prologue stack pointer and the same local.
   // Their stores must alias the later load through the joined carrier.
   EXPECT_NE(Source.find("uint8_t frame0["), std::string::npos) << Source;
-  EXPECT_NE(Source.find("((char*)&frame0 + 48) = -100;"), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("((char*)&frame0 + 48) = 41;", ExceptAt),
-            std::string::npos)
-      << Source;
+  const size_t ExceptCloseAt = Source.find("\n    }\n", ExceptAt);
+  ASSERT_NE(ExceptCloseAt, std::string::npos) << Source;
+  EXPECT_LT(HandlerAt, ExceptCloseAt) << Source;
   const size_t NormalCarrier =
       Source.find("= (uintptr_t)((char*)&frame0 + 16);");
   const size_t HandlerCarrier =
@@ -37587,19 +37619,13 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
     if (Handler.find(" += 20;") == std::string::npos) {
       // Conservatively retained frame loads can print the same update as
       // load/add/store. Require that the handler writes back to the exact slot
-      // from which that temporary was loaded, before leaving __except.
-      const auto AddAt = Handler.find(" + 20);");
-      ASSERT_NE(AddAt, std::string::npos) << Source;
-      const auto LineStart = Handler.rfind('\n', AddAt) + 1;
-      const auto AssignAt = Handler.find(" = (", LineStart);
-      ASSERT_LT(AssignAt, AddAt) << Source;
-      const std::string Slot =
-          llvm::StringRef(Handler).slice(LineStart, AssignAt).trim().str();
-      const std::string Loaded =
-          Handler.substr(AssignAt + 4, AddAt - AssignAt - 4);
-      const auto LoadAt = Handler.find(Loaded + " = " + Slot + ";");
-      ASSERT_NE(LoadAt, std::string::npos) << Source;
-      EXPECT_LT(LoadAt, LineStart) << Source;
+      // from which that temporary was loaded, before leaving __except. Bind
+      // the loaded value, frame address, and captured sum across both copies.
+      const std::regex Update(
+          R"(__builtin_memcpy\(&(\w+), \(const void\*\)\((\(\(char\*\)&frame0 \+ [0-9]+\))\), 4\);\s*)"
+          R"(\{ uint32_t (\w+) = \(\1 \+ 20\);\s*)"
+          R"(__builtin_memcpy\(\(void\*\)\(\2\), &\3, 4\);\s*\})");
+      EXPECT_TRUE(std::regex_search(Handler, Update)) << Source;
     }
   }
 }

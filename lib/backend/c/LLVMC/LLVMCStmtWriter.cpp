@@ -1431,6 +1431,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       ValueTexts[&Inst] = Index->Text;
       return;
     }
+    if (writeRawMemoryCopy(Inst, Indent))
+      return;
     emitIndent(Indent);
     if (std::string Seg = renderX86SegmentedLoad(
             Opts.TheArch, *LI,
@@ -1812,6 +1814,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         }
         if (zeroPastAddressTakenByteObject())
           return;
+        if (writeRawMemoryCopy(Inst, Indent))
+          return;
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
            << valueStr(SI->getPointerOperand()) << " = "
@@ -1827,6 +1831,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             return;
         }
         if (zeroPastAddressTakenByteObject())
+          return;
+        if (writeRawMemoryCopy(Inst, Indent))
           return;
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
@@ -3107,6 +3113,50 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   OS << OpName << " */\n";
 }
 
+bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
+  auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+  auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
+  if ((!Load || !Load->isSimple() || Load->getPointerAddressSpace() != 0) &&
+      (!Store || !Store->isSimple() || Store->getPointerAddressSpace() != 0))
+    return false;
+  auto *Type = Load ? Load->getType() : Store->getValueOperand()->getType();
+  // These carriers have exact C object representations. Partial-width
+  // integers and x87 have their separate exact-byte paths.
+  const bool Integer = Type->isIntegerTy(8) || Type->isIntegerTy(16) ||
+                       Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
+                       Type->isIntegerTy(128);
+  if (!Integer && !Type->isFloatTy() && !Type->isDoubleTy() &&
+      !Type->isBFloatTy())
+    return false;
+  const auto &Layout = CurMod->getDataLayout();
+  const auto Alignment = Load ? Load->getAlign() : Store->getAlign();
+  const auto Size = Layout.getTypeStoreSize(Type);
+  // The source ABI can allow weaker alignment than the emitted C carrier
+  // (for example i64:32). Its exact object size is a conservative alignment
+  // bound for each native scalar type admitted above.
+  if (Size.isScalable() || Alignment.value() >= Size.getFixedValue())
+    return false;
+  const auto *Address = Load ? Load->getPointerOperand() : Store->getPointerOperand();
+  std::string Pointer = valueStr(Address);
+  if (std::string Image = imageDataCName(Address); !Image.empty())
+    Pointer = "&" + Image;
+  emitIndent(Indent);
+  if (Load) {
+    OS << "__builtin_memcpy(&" << getName(Load) << ", (const void*)(" << Pointer
+       << "), " << Size.getFixedValue() << ");\n";
+  } else {
+    const std::string Value = freshVar("memory_value");
+    OS << "{ " << typeToCLLVM(Type) << " " << Value << " = "
+       << valueStr(Store->getValueOperand()) << ";\n";
+    emitIndent(Indent + 1);
+    OS << "__builtin_memcpy((void*)(" << Pointer << "), &" << Value << ", "
+       << Size.getFixedValue() << ");\n";
+    emitIndent(Indent);
+    OS << "}\n";
+  }
+  return true;
+}
+
 void LLVMCWriter::writeGEP(llvm::GetElementPtrInst &GEP,
                            const std::string &Name, int Indent) {
   if (SyntheticFrame && GEP.getFunction() &&
@@ -3128,51 +3178,7 @@ void LLVMCWriter::writeGEP(llvm::GetElementPtrInst &GEP,
     }
   }
   emitIndent(Indent);
-  if (const llvm::AllocaInst *Slot = asAllocaPointer(GEP.getPointerOperand())) {
-    const std::string Local = getName(Slot);
-    if (GEP.getNumIndices() == 1) {
-      const std::string Idx = valueStr(GEP.getOperand(1));
-      if (Idx == "0")
-        OS << Name << " = &" << Local << ";\n";
-      else
-        OS << Name << " = (void*)((char*)&" << Local << " + " << Idx << ");\n";
-      return;
-    }
-    if (GEP.getNumIndices() == 2 && valueStr(GEP.getOperand(1)) == "0") {
-      OS << Name << " = &" << Local << "[" << valueStr(GEP.getOperand(2))
-         << "];\n";
-      return;
-    }
-  }
-  auto Base = valueStr(GEP.getPointerOperand());
-  if (GEP.getNumIndices() == 1) {
-    OS << Name << " = (void*)((char*)" << Base << " + "
-       << valueStr(GEP.getOperand(1)) << ");\n";
-  } else if (GEP.getNumIndices() == 2) {
-    auto Idx0 = valueStr(GEP.getOperand(1));
-    auto Idx1 = valueStr(GEP.getOperand(2));
-    if (Idx0 == "0") {
-      auto *SrcTy = GEP.getSourceElementType();
-      if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(SrcTy)) {
-        OS << Name << " = &((" << typeToCLLVM(AT->getElementType()) << "*)"
-           << Base << ")[" << Idx1 << "];\n";
-      } else if (auto *ST = llvm::dyn_cast<llvm::StructType>(SrcTy)) {
-        if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(GEP.getOperand(2))) {
-          OS << Name << " = &((" << llvmStructName(ST) << "*)" << Base
-             << ")->field_" << CI->getZExtValue() << ";\n";
-        } else {
-          OS << Name << " = (void*)((char*)" << Base << " + " << Idx1 << ");\n";
-        }
-      } else {
-        OS << Name << " = (void*)((char*)" << Base << " + " << Idx1 << ");\n";
-      }
-    } else {
-      OS << Name << " = (void*)((char*)" << Base << " + " << Idx0 << " + "
-         << Idx1 << ");\n";
-    }
-  } else {
-    OS << Name << " = (void*)" << Base << "; /* complex GEP */\n";
-  }
+  OS << Name << " = " << gepExpr(*llvm::cast<llvm::GEPOperator>(&GEP)) << ";\n";
 }
 
 bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
@@ -3181,6 +3187,16 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
+    if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
+      throw std::runtime_error("BFMMLA requires an AArch64 C projection");
+    emitIndent(Indent);
+    OS << getName(&Call) << " = vbfmmlaq_f32("
+       << valueStr(Call.getArgOperand(0)) << ", "
+       << valueStr(Call.getArgOperand(1)) << ", "
+       << valueStr(Call.getArgOperand(2)) << ");\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::experimental_constrained_sitofp &&
       Call.getType()->isX86_FP80Ty()) {
     if (Call.arg_size() != 3)

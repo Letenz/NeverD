@@ -62,6 +62,10 @@ analysis and comparison output belong outside the repository.
   return epilogue can be inlined in `__except` without such a jump. Public
   synthetic SEH fixtures cover the PHI join, fallback jumps and inlined
   handler return, and unsafe cross-scope case.
+- Public SEH sink checks follow the captured result through the exact four-byte
+  volatile store into shared image storage. Both normal and handler values must
+  reach that common sink after `__except`, including optimized PHI copies; a
+  separate scalar global at the interior image address is no longer expected.
 
 ## Established rules
 
