@@ -76,6 +76,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/android.md"),
                 Path("docs/ios.md"),
                 Path("docs/driver-emulation.md"),
+                Path("docs/interpreter-recovery.md"),
             },
         )
 
