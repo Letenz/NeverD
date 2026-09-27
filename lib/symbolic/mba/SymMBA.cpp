@@ -421,7 +421,114 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return readingScore(Ctx, Best) < readingScore(Ctx, E) ? Best : E;
 }
 
+bool isDirectComplement(const SymContext &Ctx, SymRef A, SymRef B) {
+  return (Ctx.op(A) == SymOp::Not && Ctx.operand(A, 0) == B) ||
+         (Ctx.op(B) == SymOp::Not && Ctx.operand(B, 0) == A);
+}
+
+bool isBitwiseComplement(const SymContext &Ctx, SymRef A, SymRef B) {
+  if (isDirectComplement(Ctx, A, B))
+    return true;
+  if (Ctx.op(A) == SymOp::And)
+    std::swap(A, B);
+  if (Ctx.op(A) != SymOp::Or || Ctx.op(B) != SymOp::And)
+    return false;
+  llvm::ArrayRef<SymRef> OrTerms = Ctx.operands(A);
+  llvm::ArrayRef<SymRef> AndTerms = Ctx.operands(B);
+  if (OrTerms.size() != AndTerms.size() || OrTerms.size() > 8)
+    return false;
+  return llvm::all_of(OrTerms, [&](SymRef R) {
+    return llvm::any_of(
+        AndTerms, [&](SymRef S) { return isDirectComplement(Ctx, R, S); });
+  });
+}
+
+SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
+  if (Ctx.op(R) != SymOp::Add)
+    return R;
+  llvm::ArrayRef<SymRef> Terms = Ctx.operands(R);
+  llvm::APInt Offset(Ctx.width(R), 0);
+  SymRef A, B;
+  for (SymRef Term : Terms) {
+    if (Ctx.isConst(Term)) {
+      Offset += Ctx.constValue(Term);
+    } else if (!A.isValid()) {
+      A = Term;
+    } else if (!B.isValid()) {
+      B = Term;
+    } else {
+      return R;
+    }
+  }
+  if (!A.isValid() || !B.isValid() || !isBitwiseComplement(Ctx, A, B))
+    return R;
+  return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(R), 1));
+}
+
 } // namespace
+
+SymRef detail::completeComplementarySums(SymContext &Ctx, SymRef Root,
+                                         const MBAOptions &Opts,
+                                         WorkBudget &Budget) {
+  // This runs only on a completed answer. A local builder rule would change
+  // earlier search choices, while a second region search would repeat them.
+  constexpr size_t MaxNodes = 64;
+  constexpr size_t MaxEdges = 128;
+  const size_t Cost = readingCost(Ctx, Root);
+  if (Cost > MaxNodes || Opts.MaxTableBytes < 4096 ||
+      !Budget.canConsume(2 * MaxNodes + MaxEdges))
+    return Root;
+  llvm::SmallVector<uint32_t, MaxNodes> Order;
+  llvm::SmallVector<SymRef, MaxEdges> Work{Root};
+  size_t Edges = 0;
+  while (!Work.empty()) {
+    SymRef R = Work.pop_back_val();
+    if (llvm::is_contained(Order, R.index()))
+      continue;
+    if (Order.size() == MaxNodes)
+      return Root;
+    Order.push_back(R.index());
+    llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+    if (Ops.size() > MaxEdges - Edges)
+      return Root;
+    Edges += Ops.size();
+    Work.append(Ops.begin(), Ops.end());
+  }
+  llvm::sort(Order);
+  Budget.consume(2 * Order.size() + Edges);
+
+  bool HasPair = false;
+  for (uint32_t Index : Order)
+    if (foldComplementaryAdd(Ctx, SymRef(Index)) != SymRef(Index)) {
+      HasPair = true;
+      break;
+    }
+  if (!HasPair)
+    return Root;
+
+  llvm::DenseMap<uint32_t, SymRef> Done;
+  for (uint32_t Index : Order) {
+    SymRef R(Index);
+    llvm::ArrayRef<SymRef> OldOps = Ctx.operands(R);
+    llvm::SmallVector<SymRef, 8> NewOps;
+    bool Changed = false;
+    for (SymRef Child : OldOps) {
+      SymRef Replaced = Done.lookup(Child.index());
+      if (!Replaced.isValid())
+        Replaced = Child;
+      Changed |= Replaced != Child;
+      NewOps.push_back(Replaced);
+    }
+    SymRef Rebuilt = Changed ? Ctx.rebuild(R, NewOps) : R;
+    SymRef Folded = foldComplementaryAdd(Ctx, Rebuilt);
+    if (Folded != R)
+      Done[Index] = Folded;
+  }
+  SymRef Answer = Done.lookup(Root.index());
+  return Answer.isValid() && readingScore(Ctx, Answer) < readingScore(Ctx, Root)
+             ? Answer
+             : Root;
+}
 
 const char *mbaOutcomeName(MBAOutcome Outcome) {
   switch (Outcome) {
@@ -495,6 +602,8 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       Rep.Outcome = MBAOutcome::BudgetExhausted;
     }
   }
+  if (Result.Expr != E && !Budget.exhausted())
+    Result.Expr = completeComplementarySums(Ctx, Result.Expr, Opts, Budget);
   if (Result.Expr != E && !Opts.AllowGrowth &&
       !doesNotGrow(Ctx, Result.Expr, E)) {
     Result.Expr = E;
@@ -664,6 +773,8 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     AnySampled |= Final.Evidence == MBAEvidence::Samples;
     Skipped |= Final.BudgetExhausted;
   }
+  if (Out != E && !Budget.exhausted())
+    Out = completeComplementarySums(Ctx, Out, Opts, Budget);
   Result.Work = Budget.used();
 
   // Every layer refused to grow and every layer was checked on its own, but
