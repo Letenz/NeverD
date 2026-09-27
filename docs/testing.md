@@ -40,7 +40,10 @@ prebuilt-LLVM guidance.
 
 `SymReadability.*` covers subtraction and complement spelling, n-ary operator
 cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
-and exhaustive three-bit equivalence with sampling disabled. Candidate quality
+and exhaustive three-bit equivalence with sampling disabled. `SymMBASample.*`
+compares narrow and arbitrary-width verification against the AP evaluator,
+including all operators, deterministic assignments, and unused wide inputs.
+Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 

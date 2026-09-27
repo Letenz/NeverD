@@ -1159,9 +1159,10 @@ std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
     Rewritten[Index] = Ctx.rebuild(R, NewOps);
   }
 
-  Out.Body = restoreAffineRelations(Ctx, Rewritten.lookup(Root.index()), Order,
-                                    ForcedAtoms, Roles, Rewritten,
-                                    AllowProducts, Budget, MaxBytes);
+  Out.IndependentBody = Rewritten.lookup(Root.index());
+  Out.Body =
+      restoreAffineRelations(Ctx, Out.IndependentBody, Order, ForcedAtoms,
+                             Roles, Rewritten, AllowProducts, Budget, MaxBytes);
   return Out;
 }
 

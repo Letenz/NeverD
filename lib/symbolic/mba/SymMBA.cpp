@@ -295,6 +295,30 @@ bool hasBitwiseInteraction(const SymContext &Ctx, SymRef R) {
          (Ctx.op(R) == SymOp::Add && llvm::any_of(Ctx.operands(R), Bitwise));
 }
 
+// A child may improve a complement of a product into an arithmetic sum and
+// thereby hide its relation to the product's other bitwise uses. Preserve one
+// original reading at sums of bitwise products, including a complemented sum.
+// This only inspects the immediate sum/product frontier; it does not revisit
+// the graph or broaden the emitted-candidate refinement below.
+bool hasBitwiseProductSum(const SymContext &Ctx, SymRef R) {
+  if (Ctx.op(R) == SymOp::Not)
+    R = Ctx.operand(R, 0);
+  if (Ctx.op(R) != SymOp::Add)
+    return false;
+  for (SymRef Term : Ctx.operands(R)) {
+    if (Ctx.op(Term) != SymOp::Mul)
+      continue;
+    unsigned BitwiseFactors = 0;
+    for (SymRef Factor : Ctx.operands(Term)) {
+      SymOp Op = Ctx.op(Factor);
+      if ((Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor) &&
+          ++BitwiseFactors == 2)
+        return true;
+    }
+  }
+  return false;
+}
+
 // A candidate can introduce a factored sum that was absent from the original
 // postorder. Visit its unmeasured nodes once, reusing exact child replacements.
 // The snapshot below is deliberately not extended with nodes emitted by this
@@ -579,7 +603,9 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       // the original region as a second exact reading before discarding it.
       // The main reading gets first use of the shared work budget.
       SolveReport OriginalRep;
-      const bool WholeRegion = ChildrenChanged && hasBitwiseInteraction(Ctx, R);
+      const bool WholeRegion =
+          ChildrenChanged &&
+          (hasBitwiseInteraction(Ctx, R) || hasBitwiseProductSum(Ctx, R));
       SymRef Original = R;
       if (ChildrenChanged && !Budget.exhausted())
         Original = WholeRegion

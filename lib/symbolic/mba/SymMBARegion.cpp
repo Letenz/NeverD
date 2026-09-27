@@ -136,7 +136,7 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   llvm::SmallVector<Candidate, 6> Candidates;
   bool Measured = false;
-  std::optional<Region> ResidualRegion;
+  std::optional<Region> LinearRegion;
   std::vector<llvm::APInt> ResidualWeights;
 
   if (std::optional<Region> Linear =
@@ -185,8 +185,11 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                                : Ctx.substitute(Form, Linear->Abstract.Hidden);
         Candidates.push_back({Rewritten, NumAtoms, true});
       }
-      if (!ResidualWeights.empty())
-        ResidualRegion = std::move(Linear);
+      if (!ResidualWeights.empty() ||
+          (Linear->Abstract.IndependentBody != Linear->Abstract.Body &&
+           readingScore(Ctx, Linear->Abstract.IndependentBody) <
+               readingScore(Ctx, Linear->Abstract.Body)))
+        LinearRegion = std::move(Linear);
     }
   }
 
@@ -211,11 +214,57 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   // Additional readings spend only what remains after the established linear
   // and polynomial candidates have been proved. Refusing the optional search
   // therefore cannot erase a candidate already available at this budget.
-  if (ResidualRegion && !Budget.exhausted()) {
+  if (LinearRegion && !Budget.exhausted() &&
+      LinearRegion->Abstract.IndependentBody != LinearRegion->Abstract.Body &&
+      readingScore(Ctx, LinearRegion->Abstract.IndependentBody) <
+          readingScore(Ctx, LinearRegion->Abstract.Body)) {
+    // An affine relation can shorten arithmetic while hiding a bitwise
+    // identity that used the original independent inputs. Retain that one
+    // reading when it is smaller, with the same opaque-input substitution.
+    const Abstraction &Abstract = LinearRegion->Abstract;
+    llvm::SmallVector<uint32_t, 16> AtomIds;
+    if (Budget.consume(Ctx.dagSize(Abstract.IndependentBody))) {
+      Ctx.collectVars(Abstract.IndependentBody, AtomIds);
+      std::optional<size_t> Corners = cornerCount(AtomIds.size());
+      const size_t Width = Ctx.width(Abstract.IndependentBody);
+      const size_t WordBytes =
+          sizeof(llvm::APInt) +
+          (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
+      // Cover measurement and basis-transform scratch before allocating the
+      // additional reading. The opaque-input map remains owned by LinearRegion.
+      const bool StorageFits =
+          Corners && *Corners <= Opts.MaxTableBytes / 8 / WordBytes;
+      if (AtomIds.size() <= Limits.MaxAtoms && StorageFits &&
+          Budget.consume(*Corners)) {
+        llvm::SmallVector<SymRef, 16> Atoms;
+        for (uint32_t Id : AtomIds)
+          Atoms.push_back(Ctx.varRef(Id));
+        llvm::SmallVector<SymRef, 4> Forms;
+        if (AtomIds.empty())
+          Forms.push_back(Abstract.IndependentBody);
+        else
+          linearCandidates(Ctx, measure(Ctx, Abstract.IndependentBody, AtomIds),
+                           Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+        for (SymRef Form : Forms) {
+          if (!proveLinearIdentity(Ctx, Abstract.IndependentBody, Form,
+                                   Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+            continue;
+          if (!Abstract.Hidden.empty() && !Budget.consume(Ctx.dagSize(Form)))
+            break;
+          SymRef Rewritten = Abstract.Hidden.empty()
+                                 ? Form
+                                 : Ctx.substitute(Form, Abstract.Hidden);
+          Candidates.push_back(
+              {Rewritten, static_cast<unsigned>(Atoms.size()), true});
+        }
+      }
+    }
+  }
+  if (LinearRegion && !ResidualWeights.empty() && !Budget.exhausted()) {
     llvm::SmallVector<SymRef, 8> Forms;
     auto optionalTermBudget = [&]() {
       size_t MaxCost = termBudget(Ctx, E, Opts);
-      if (!ResidualRegion->Abstract.Hidden.empty())
+      if (!LinearRegion->Abstract.Hidden.empty())
         return MaxCost;
       auto tighten = [&](SymRef Reference) {
         const SymReadability Score = readingScore(Ctx, Reference);
@@ -236,25 +285,23 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     };
     size_t MaxCost = optionalTermBudget();
     bool MayHaveBooleanPair = false;
-    affineResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
-                             MaxCost, Limits, Budget, Forms,
-                             &MayHaveBooleanPair);
+    affineResidualCandidates(Ctx, ResidualWeights, LinearRegion->Atoms, MaxCost,
+                             Limits, Budget, Forms, &MayHaveBooleanPair);
     for (SymRef Form : Forms) {
       if (Budget.exhausted())
         break;
-      if (!proveLinearIdentity(Ctx, ResidualRegion->Abstract.Body, Form,
+      if (!proveLinearIdentity(Ctx, LinearRegion->Abstract.Body, Form,
                                Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
         continue;
-      if (!ResidualRegion->Abstract.Hidden.empty() &&
+      if (!LinearRegion->Abstract.Hidden.empty() &&
           !Budget.consume(Ctx.dagSize(Form)))
         break;
       SymRef Rewritten =
-          ResidualRegion->Abstract.Hidden.empty()
+          LinearRegion->Abstract.Hidden.empty()
               ? Form
-              : Ctx.substitute(Form, ResidualRegion->Abstract.Hidden);
-      Candidates.push_back({Rewritten,
-                            static_cast<unsigned>(ResidualRegion->Atoms.size()),
-                            true});
+              : Ctx.substitute(Form, LinearRegion->Abstract.Hidden);
+      Candidates.push_back(
+          {Rewritten, static_cast<unsigned>(LinearRegion->Atoms.size()), true});
     }
     // Keep the older affine residual proofs before spending anything on this
     // additional reading. Both searches reuse the small retained weight table
@@ -262,24 +309,24 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     if (MayHaveBooleanPair && !Budget.exhausted()) {
       Forms.clear();
       MaxCost = optionalTermBudget();
-      booleanResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
+      booleanResidualCandidates(Ctx, ResidualWeights, LinearRegion->Atoms,
                                 MaxCost, Limits, Budget, Forms);
       for (SymRef Form : Forms) {
         if (Budget.exhausted())
           break;
-        if (!proveLinearIdentity(Ctx, ResidualRegion->Abstract.Body, Form,
+        if (!proveLinearIdentity(Ctx, LinearRegion->Abstract.Body, Form,
                                  Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
           continue;
-        if (!ResidualRegion->Abstract.Hidden.empty() &&
+        if (!LinearRegion->Abstract.Hidden.empty() &&
             !Budget.consume(Ctx.dagSize(Form)))
           break;
         SymRef Rewritten =
-            ResidualRegion->Abstract.Hidden.empty()
+            LinearRegion->Abstract.Hidden.empty()
                 ? Form
-                : Ctx.substitute(Form, ResidualRegion->Abstract.Hidden);
-        Candidates.push_back(
-            {Rewritten, static_cast<unsigned>(ResidualRegion->Atoms.size()),
-             true});
+                : Ctx.substitute(Form, LinearRegion->Abstract.Hidden);
+        Candidates.push_back({Rewritten,
+                              static_cast<unsigned>(LinearRegion->Atoms.size()),
+                              true});
       }
     }
   }
@@ -300,9 +347,25 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
   const Candidate *Best = nullptr;
   SymReadability BestCost;
-  for (const Candidate &C : Candidates) {
+  llvm::SmallVector<std::pair<SymRef, SymRef>, 8> FactoredForms;
+  for (Candidate &C : Candidates) {
     if (!C.Proven)
       continue;
+    // Compare completed forms: a slightly larger basis expansion can expose
+    // repeated coefficients whose factored spelling beats the shorter basis.
+    // Normalize each unique proved form once, retaining it on refusal.
+    auto Found = llvm::find_if(FactoredForms, [&](const auto &Entry) {
+      return Entry.first == C.Expr;
+    });
+    if (Found != FactoredForms.end())
+      C.Expr = Found->second;
+    else if (!Budget.exhausted()) {
+      const SymRef Before = C.Expr;
+      SolveReport Factored;
+      C.Expr = solveCoefficientFactors(Ctx, Before, Opts, Budget, Factored);
+      Rep.BudgetExhausted |= Factored.BudgetExhausted;
+      FactoredForms.emplace_back(Before, C.Expr);
+    }
     SymReadability Cost = readingScore(Ctx, C.Expr);
     if (!Best || Cost < BestCost) {
       Best = &C;

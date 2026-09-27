@@ -109,6 +109,10 @@ bool canMeasureAtRoot(const SymContext &Ctx, SymRef R);
 /// that puts the hidden subterms back.
 struct Abstraction {
   SymRef Body;
+  /// The same hidden inputs before recovering their affine relations. Keep
+  /// this reading available when rebinding an arithmetic use would obscure
+  /// its independent occurrence inside a bitwise operator.
+  SymRef IndependentBody;
   /// Placeholder variable node index to the subterm it stands for.
   std::unordered_map<uint32_t, SymRef> Hidden;
 };

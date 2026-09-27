@@ -37,6 +37,79 @@ RootCase productCarry(SymContext &Ctx, unsigned Width, unsigned Scale) {
   return {Input, Ctx.mkXor(Mask, Target), X, Z};
 }
 
+SymRef bitwiseProduct(SymContext &Ctx, SymRef A, SymRef B) {
+  return Ctx.mkAdd(
+      Ctx.mkMul(Ctx.mkAnd(A, B), Ctx.mkOr(A, B)),
+      Ctx.mkMul(Ctx.mkAnd(A, Ctx.mkNot(B)), Ctx.mkAnd(Ctx.mkNot(A), B)));
+}
+
+TEST(SymMBACandidateRoot, ReadsOriginalProductsAfterComplementImprovements) {
+  for (unsigned Width : {3u, 8u, 64u, 128u}) {
+    for (unsigned Scale : {1u, 2u, 3u}) {
+      for (bool Repeated : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(Scale);
+        SCOPED_TRACE(Repeated);
+        SymContext Ctx;
+        SymRef X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        SymRef Product =
+            Ctx.mkMul({Ctx.mkConst(Width, Scale), X, Repeated ? X : Y});
+        SymRef Other = Ctx.mkAdd(Ctx.mkConst(Width, 1), Ctx.mkNot(Product));
+        SymRef Input =
+            Ctx.mkNot(Ctx.mkAdd(Ctx.mkConst(llvm::APInt::getAllOnes(Width)),
+                                bitwiseProduct(Ctx, X, Other)));
+        SymRef Expected = Ctx.mkMul(X, Product);
+        MBAOptions Options;
+        Options.VerifySamples = 0;
+        auto Result = simplifyMBADeep(Ctx, Input, Options);
+        EXPECT_LE(Ctx.readability(Result.Expr), Ctx.readability(Expected))
+            << Ctx.toString(Result.Expr);
+        EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+        EXPECT_LT(Result.Work, size_t(1) << 20);
+        if (Width == 3) {
+          std::vector<uint64_t> Values(Ctx.numVars(), 0);
+          for (unsigned XV = 0; XV < 8; ++XV)
+            for (unsigned YV = 0; YV < 8; ++YV) {
+              Values[Ctx.varId(X)] = XV;
+              Values[Ctx.varId(Y)] = YV;
+              EXPECT_EQ(Ctx.evalU64(Input, Values),
+                        Ctx.evalU64(Result.Expr, Values));
+            }
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBACandidateRoot, ComparesCoefficientFactorsBeforeDiscardingBases) {
+  for (unsigned Width : {8u, 32u, 64u, 128u}) {
+    for (unsigned Scale : {2u, 3u, 5u}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Scale);
+      SymContext Ctx;
+      SymRef X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      SymRef Input =
+          Ctx.mkAdd({Ctx.mkMul(Ctx.mkConst(Width, Scale), Ctx.mkXor(X, Y)),
+                     Ctx.mkMul(Ctx.mkConst(Width, 2 * Scale + 1),
+                               Ctx.mkNot(Ctx.mkOr(X, Y))),
+                     bitwiseProduct(Ctx, X, Y), Ctx.mkNeg(Ctx.mkMul(X, Y))});
+      SymRef Expected = Ctx.mkAdd(
+          {Ctx.mkNeg(Ctx.mkConst(Width, 2 * Scale + 1)), Ctx.mkAnd(X, Y),
+           Ctx.mkNeg(
+               Ctx.mkMul(Ctx.mkConst(Width, Scale + 1), Ctx.mkAdd(X, Y)))});
+      MBAOptions Options;
+      Options.VerifySamples = 0;
+      for (bool Deep : {false, true}) {
+        auto Result = Deep ? simplifyMBADeep(Ctx, Input, Options)
+                           : simplifyMBA(Ctx, Input, Options);
+        EXPECT_LE(Ctx.readability(Result.Expr), Ctx.readability(Expected))
+            << Ctx.toString(Result.Expr);
+        EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      }
+    }
+  }
+}
+
 TEST(SymMBACandidateRoot, MeasuresAnExposedAddRootAfterProductRecovery) {
   for (unsigned Width : {3u, 8u, 64u, 128u}) {
     for (unsigned Scale : {2u, 3u, 6u}) {
