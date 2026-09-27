@@ -330,8 +330,8 @@ enum class InstructionMode : uint8_t {
   Default,
   ARM,
   Thumb,
-  /// Image metadata with distinct ARM and Thumb code regions. A single
-  /// instruction decoder or code generator cannot consume this image mode.
+  /// Image metadata with distinct ARM and Thumb code regions. Consumers must
+  /// select a concrete mode for each authenticated instruction address.
   MixedARMThumb
 };
 

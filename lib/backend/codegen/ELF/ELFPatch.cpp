@@ -344,15 +344,17 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
 PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                               const std::filesystem::path &OutputPath,
                               llvm::Module &Mod, Arch TargetArch) {
-  if (!isSingleInstructionMode(CachedMode)) {
-    llvm::WithColor::error()
-        << "elf_patch: rewriting requires a single instruction mode (got "
-        << getInstructionModeName(CachedMode) << ")\n";
-    return PatchResult{};
-  }
   if (!archELFPatchSupported(TargetArch)) {
     llvm::WithColor::error()
         << "elf_patch: unsupported arch " << getArchName(TargetArch) << "\n";
+    return PatchResult{};
+  }
+  if (!isSingleInstructionMode(CachedMode) &&
+      !(CachedMode == InstructionMode::MixedARMThumb &&
+        TargetArch == Arch::ARM)) {
+    llvm::WithColor::error()
+        << "elf_patch: rewriting requires a single instruction mode (got "
+        << getInstructionModeName(CachedMode) << ")\n";
     return PatchResult{};
   }
 
@@ -385,10 +387,17 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
           return false;
         }
 
-        InstructionMode ResolveMode = CachedMode;
-        auto SerializeResolvedCode = [&](uint64_t VA, bool IsCode) {
-          return IsCode ? serializeCodePointer(VA, TargetArch, ResolveMode)
-                        : VA;
+        auto SerializeResolvedCode =
+            [&](uint64_t VA, bool IsCode) -> std::optional<uint64_t> {
+          if (!IsCode)
+            return VA;
+          if (CachedImage) {
+            const auto Mode = CachedImage->instructionModeAt(VA);
+            if (!Mode)
+              return std::nullopt;
+            return serializeCodePointer(VA, TargetArch, *Mode);
+          }
+          return serializeCodePointer(VA, TargetArch, CachedMode);
         };
         auto IsExecutable = [&](uint64_t VA) {
           return CachedImage && CachedImage->isCodeAddress(VA);
@@ -417,6 +426,15 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
             for (const auto &S : *CachedSymbols)
               if (S.IsFunc && S.Name == Name)
                 return SerializeResolvedCode(S.Addr, true);
+          }
+          if (CachedImage && isSynthesizedFuncName(Name)) {
+            llvm::StringRef Spelling(Name);
+            if (Spelling.consume_front(kAutoFuncPrefix)) {
+              va_t Address = 0;
+              if (!Spelling.getAsInteger(16, Address) &&
+                  CachedImage->hasAuthenticatedFunctionEntryAt(Address))
+                return SerializeResolvedCode(Address, true);
+            }
           }
           if (auto VA = parseNdDataSymbol(Name)) {
             return CachedImage
@@ -459,6 +477,13 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
               << "elf_patch: compileImageForPatch failed (success="
               << Img.Success << ", code bytes=" << Img.Bytes.size()
               << ", sections=" << Img.Sections.size() << ")\n";
+          return false;
+        }
+        if (CachedImage &&
+            !repairMixedARMInterworkingCalls(Img, *CachedImage, SourceDetail)) {
+          llvm::WithColor::error()
+              << "elf_patch: ARM interworking validation failed: "
+              << SourceDetail << "\n";
           return false;
         }
 
@@ -520,7 +545,7 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 /*PatchedOriginalEntries=*/nullptr,
                 /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,
-                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs);
+                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs, CachedImage);
           if (!validatePatchedSourceTrampolineClosure(
                   TrampolinePlan, InstalledFunctions, TrampCount,
                   SourceDetail)) {
@@ -535,7 +560,8 @@ PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
               Layout.TextFileOff, /*ImageBase=*/0, TargetArch, CachedMode,
               CachedSymbols, CachedCodeRanges, TrampolineExports,
               /*PatchedOriginalEntries=*/nullptr,
-              /*PatchedEntryMappings=*/nullptr, &InstalledFunctions);
+              /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,
+              CachedImage);
         }
 
         Result.Success = true;

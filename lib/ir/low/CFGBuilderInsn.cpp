@@ -18,6 +18,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
+#include "neverd/support/ISAEncoding.h"
 
 namespace neverd {
 
@@ -166,6 +169,38 @@ void CFGBuilder::classifyInsn(InsnRecord &Rec) {
 bool CFGBuilder::resolveConstantIndirectBranch(const BinaryImage &Img,
                                                uint32_t InsnId,
                                                InsnRecord &Rec) {
+  // This exact A32 veneer reads the adjacent immutable literal into PC.
+  // Decode its file-backed target as a direct edge so a patched entry can be
+  // analyzed again, including a Thumb target selected by pointer bit 0.
+  if (Img.Arch == Arch::ARM && Rec.Mode == InstructionMode::ARM &&
+      InsnId == ARM_INS_LDR && Rec.IsBranch && Rec.IsIndirect && !Rec.IsCall &&
+      !Rec.IsCond) {
+    const auto Bytes =
+        readImmutableCodeBytes(Img, Rec.Addr, arm::kLdrPCTrampLen);
+    if (Bytes && readLE<uint32_t>(Bytes->data()) == arm::kLdrPC) {
+      const uint32_t TaggedTarget =
+          readLE<uint32_t>(Bytes->data() + arm::kInsnSize);
+      const va_t Target = clearThumbBit(TaggedTarget);
+      const InstructionMode TargetMode =
+          (TaggedTarget & 1u) ? InstructionMode::Thumb : InstructionMode::ARM;
+      if (Img.hasExecutableCodeOwnerAt(Target) &&
+          Img.instructionModeAt(Target, TargetMode) == TargetMode) {
+        for (LowOp &Op : Rec.Ops) {
+          if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs < 1)
+            continue;
+          Op.Opcode = NdOp::BRANCH;
+          Op.Inputs[0] = NdVar::cst(Target, 4);
+          Rec.IsIndirect = false;
+          Rec.BranchTarget = Target;
+          Rec.TargetMode = TargetMode == InstructionMode::Thumb
+                               ? LowInstructionTargetMode::Thumb
+                               : LowInstructionTargetMode::ARM;
+          return true;
+        }
+      }
+    }
+  }
+
   // Only AArch64 RET with an explicit non-LR register is lifted as INDIR_BR
   // for this purpose.  Folding an ordinary BR/jump here can sample a dynamic
   // table load at its default index and collapse a real jump table to one arm.

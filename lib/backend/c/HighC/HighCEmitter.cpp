@@ -1322,6 +1322,35 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
   }
 
+  // Direct calls can precede the callee's body in address order. Declare the
+  // recovered internal signature before any body so C does not infer an
+  // obsolete implicit int/no-parameter declaration at that call site.
+  for (const auto &[Name, Function] : DefinedFunctionsByIdentifier) {
+    if (!CallTargets.count(Name) || !Prototyped.insert(Function).second)
+      continue;
+    CurrentFunc = Function;
+    Analysis = {};
+    runAnalysisPasses(*Function);
+    const auto ReturnType =
+        InferredVoid ? NdType::makeVoid() : Function->ReturnType;
+    if (Function->SourceTypeHint)
+      OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
+    if (Function->DoesNotReturn)
+      OS << "_Noreturn ";
+    std::string Declarator = Name + "(";
+    const size_t ParamCount = emittedParamCount(*Function);
+    for (size_t I = 0; I < ParamCount; ++I) {
+      if (I)
+        Declarator += ", ";
+      Declarator += typeToC(Function->Params[I].Type);
+    }
+    if (ParamCount == 0)
+      Declarator += "void";
+    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+  }
+  CurrentFunc = nullptr;
+  Analysis = {};
+
   for (auto &Name : CallTargets) {
     if (HiddenCxxCtorIdentifiers.count(Name))
       continue;

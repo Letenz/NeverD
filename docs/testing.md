@@ -88,13 +88,21 @@ store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
 checks load identity/order, volatile/atomic state and poison boundaries.
 `ELFARM32ModeTest.*` checks authenticated ARM/Thumb selection, normalized
-function addresses, mapping-only objects, mixed-image metadata preservation and
-rejection of contradictory modes at one address. The existing mixed-mode
-MOVW/MOVT relocation fixture remains loadable; decoding requires a single mode.
-`ELFARM32ModeCAPITest.*` replaces a Thumb image with mixed metadata in one SDK
-session, checks explicit disassembly/HighC/LLVMC errors, and reloads Thumb to
-verify decoder recovery. `InstructionMode.*` covers the corresponding decoder,
+function addresses, mapping-only objects, mixed-image decoding, cross-mode
+calls, wide Thumb branches, HighC/LLVMC execution, forwarded argument chains,
+halfword-aligned interworking targets, and rejection of contradictory modes at
+one address.
+`ELFARM32ModeCAPITest.*` checks that mixed-mode SDK disassembly and both C
+backends work after replacing a Thumb image in the same session, then reloads
+Thumb to verify decoder recovery. `ARM32InterworkingPatchRT.*` links a generic
+mixed ARM/Thumb ELF and executes all four entries in Unicorn before and after
+both section and in-place rewriting. `InstructionMode.*` covers the decoder,
 code-pointer, direct-branch and code-generation boundaries.
+
+```sh
+cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
+build-release/bin/NeverDARM32InterworkingTests
+```
 
 ## Driver emulation checks
 

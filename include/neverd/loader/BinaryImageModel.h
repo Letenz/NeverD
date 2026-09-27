@@ -117,6 +117,17 @@ struct RuntimeCallablePointerSlot {
   bool operator==(const RuntimeCallablePointerSlot &Other) const = default;
 };
 
+/// An ELF mapping symbol owns the bytes up to the next mapping symbol in the
+/// same executable section. Data in an executable section is not an instruction
+/// in either AArch32 execution state.
+enum class ARMCodeRegionKind : uint8_t { ARM, Thumb, Data };
+
+struct ARMCodeRegion {
+  va_t Start = 0;
+  va_t End = 0;
+  ARMCodeRegionKind Kind = ARMCodeRegionKind::Data;
+};
+
 /// Exact encoded relocation field that materializes a complete address
 /// operand. EncodedValue is the canonical unsigned value written to Width
 /// bytes; TargetVA is the mapped address it denotes. Keeping both prevents a
@@ -229,6 +240,12 @@ struct BinaryImage {
   // -Wchanges-meaning hard error under GCC.  All consumers still read `.Arch`.
   neverd::Arch Arch = neverd::Arch::Unknown;
   InstructionMode Mode = InstructionMode::Default;
+  /// Entry and function-symbol evidence identifies one exact instruction
+  /// address. It does not authorize decoding the rest of a function in that
+  /// mode when mapping symbols are absent.
+  std::map<va_t, InstructionMode> ARMCodeModeEntries;
+  /// Sorted, disjoint section-relative ELF mapping intervals, including $d.
+  std::vector<ARMCodeRegion> ARMCodeRegions;
   BinaryFormat Format = BinaryFormat::Unknown;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
@@ -503,6 +520,48 @@ struct BinaryImage {
   bool is256Bit() const { return neverd::is256Bit(Bits); }
   uint32_t getPointerSize() const {
     return getBitnessValue(Bits) / kBitsPerByte;
+  }
+
+  /// The loader's address-specific AArch32 evidence. An unknown byte in a
+  /// mixed image, or a $d interval, cannot be decoded by guessing a mode.
+  std::optional<InstructionMode>
+  instructionModeAt(va_t Addr,
+                    std::optional<InstructionMode> IncomingMode = {}) const {
+    if (Arch != neverd::Arch::ARM)
+      return Mode;
+    if (!isCodeAddress(Addr))
+      return std::nullopt;
+    std::optional<InstructionMode> ProvenMode;
+    const auto It =
+        std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+                         [](va_t Address, const ARMCodeRegion &Region) {
+                           return Address < Region.Start;
+                         });
+    if (It != ARMCodeRegions.begin()) {
+      const ARMCodeRegion &Region = *std::prev(It);
+      if (Addr < Region.End) {
+        if (Region.Kind == ARMCodeRegionKind::Data)
+          return std::nullopt;
+        ProvenMode = Region.Kind == ARMCodeRegionKind::Thumb
+                         ? InstructionMode::Thumb
+                         : InstructionMode::ARM;
+      }
+    }
+    if (const auto Entry = ARMCodeModeEntries.find(Addr);
+        Entry != ARMCodeModeEntries.end()) {
+      if (ProvenMode && *ProvenMode != Entry->second)
+        return std::nullopt;
+      ProvenMode = Entry->second;
+    }
+    if (ProvenMode && IncomingMode && *ProvenMode != *IncomingMode)
+      return std::nullopt;
+    if (ProvenMode)
+      return ProvenMode;
+    if (IncomingMode)
+      return IncomingMode;
+    if (Mode == InstructionMode::MixedARMThumb)
+      return std::nullopt;
+    return Mode == InstructionMode::Default ? InstructionMode::ARM : Mode;
   }
 
   std::set<va_t> getSymbolAddresses() const {

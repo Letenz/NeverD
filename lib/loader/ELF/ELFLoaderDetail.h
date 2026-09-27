@@ -94,11 +94,11 @@ void collectRelocations(const llvm::object::ELFFile<ELFT> &ELF,
 /// segment bytes the lifter reads and recording the address-taken targets and
 /// pointer slots the emitter needs in order to symbolize them again.
 template <typename ELFT>
-void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
-                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
-                      const uint8_t *Data, size_t Size,
-                      const std::vector<va_t> &SecBase, bool IsRelocatable,
-                      BinaryImage &Img);
+llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
+                             llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                             const uint8_t *Data, size_t Size,
+                             const std::vector<va_t> &SecBase,
+                             bool IsRelocatable, BinaryImage &Img);
 
 /// Apply full-width dynamic-loader-relative relocations in a linked ELF image
 /// at its link-time virtual addresses, and normalize their pointer provenance

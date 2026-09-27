@@ -12,6 +12,12 @@ bool supportedImage(const BinaryImage &Image) {
          (Image.Arch == Arch::AArch64 || Image.Arch == Arch::X64);
 }
 
+bool supportedImmutableCodeImage(const BinaryImage &Image) {
+  return supportedImage(Image) ||
+         (Image.Format == BinaryFormat::ELF && !Image.IsRelocatable &&
+          Image.Arch == Arch::ARM && Image.Bits == Bitness::Bits32);
+}
+
 bool overlaps(va_t Address, uint64_t Extent, va_t Base, uint64_t Width) {
   return Width && Extent &&
          (Base <= Address ? Address - Base < Width : Base - Address < Extent);
@@ -37,10 +43,12 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
       Section->FileOff < Segment->FileOff ||
       Section->FileOff - Segment->FileOff != Section->VA - Segment->VA)
     return nullptr;
-  const auto Type = Section->Type & llvm::MachO::SECTION_TYPE;
-  if (Type == llvm::MachO::S_ZEROFILL || Type == llvm::MachO::S_GB_ZEROFILL ||
-      Type == llvm::MachO::S_THREAD_LOCAL_ZEROFILL)
-    return nullptr;
+  if (Image.Format == BinaryFormat::MachO) {
+    const auto Type = Section->Type & llvm::MachO::SECTION_TYPE;
+    if (Type == llvm::MachO::S_ZEROFILL || Type == llvm::MachO::S_GB_ZEROFILL ||
+        Type == llvm::MachO::S_THREAD_LOCAL_ZEROFILL)
+      return nullptr;
+  }
   for (const auto &Other : Image.Sections)
     if (&Other != Section && overlaps(Address, Extent, Other.VA, Other.Size))
       return nullptr;
@@ -108,7 +116,7 @@ readImmutableImageBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
 
 std::optional<std::vector<uint8_t>>
 readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
-  if (!supportedImage(Image) || !Size || Size > 1024 * 1024)
+  if (!supportedImmutableCodeImage(Image) || !Size || Size > 1024 * 1024)
     return std::nullopt;
   const auto *Bytes = mappedBytes(Image, Address, Size, true, true);
   if (!Bytes || hasConflictingFixups(Image, Address, Size, false))

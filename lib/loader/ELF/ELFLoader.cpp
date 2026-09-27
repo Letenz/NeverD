@@ -149,10 +149,11 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
   // --- Apply relocations for relocatable objects (.o files) ---
   // PC-relative references in .text to .rodata need fixup so the lifter
   // sees correct displacements for constant pool loads.
-  if (IsRelocatable)
-    elf_loader::detail::applyRelocations<ELFT>(ELF, *SectionsOr, Data, Size,
-                                               SecBase, IsRelocatable, Img);
-  else
+  if (IsRelocatable) {
+    if (llvm::Error E = elf_loader::detail::applyRelocations<ELFT>(
+            ELF, *SectionsOr, Data, Size, SecBase, IsRelocatable, Img))
+      return E;
+  } else
     elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
                                                               Data, Size, Img);
 

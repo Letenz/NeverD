@@ -57,7 +57,10 @@ size_t scanThumbImportThunks(BinaryImage &Img, const Segment &Seg,
     if (TargetIt == Targets.end())
       continue;
     va_t ThunkVA = normalizeCodeAddress(Seg.VA + I, Img.Arch, Img.Mode);
-    if (!Img.isCodeRange(ThunkVA, arm::kThumbImportThunkLen))
+    if (!Img.isCodeRange(ThunkVA, arm::kThumbImportThunkLen) ||
+        Img.instructionModeAt(ThunkVA) != InstructionMode::Thumb ||
+        Img.instructionModeAt(ThunkVA + arm::kThumbImportThunkLen - 1) !=
+            InstructionMode::Thumb)
       continue;
     Img.recordImportStub(ThunkVA, TargetIt->second);
     if (!Existing.insert(ThunkVA).second)
@@ -73,8 +76,6 @@ size_t scanThumbImportThunks(BinaryImage &Img, const Segment &Seg,
 size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
                            const std::map<va_t, size_t> &Targets,
                            std::set<va_t> &Existing) {
-  if (!isSingleInstructionMode(Img.Mode))
-    return 0;
   if (Img.Mode == InstructionMode::Thumb)
     return scanThumbImportThunks(Img, Seg, Targets, Existing);
 
@@ -94,7 +95,8 @@ size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
     if (TargetIt == Targets.end())
       continue;
     va_t InsnVA = Seg.VA + I;
-    if (!Img.isCodeRange(InsnVA, arm::kLdrPCTrampLen))
+    if (!Img.isCodeRange(InsnVA, arm::kLdrPCTrampLen) ||
+        Img.instructionModeAt(InsnVA) != InstructionMode::ARM)
       continue;
     Img.recordImportStub(InsnVA, TargetIt->second);
     if (!Existing.insert(InsnVA).second)
@@ -102,6 +104,8 @@ size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
     Img.Symbols.push_back(Symbol::makeFunc(InsnVA, arm::kLdrPCTrampLen));
     ++Added;
   }
+  if (Img.Mode == InstructionMode::MixedARMThumb)
+    Added += scanThumbImportThunks(Img, Seg, Targets, Existing);
   return Added;
 }
 

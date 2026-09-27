@@ -12,7 +12,9 @@
 #include "neverd/Common.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/NdTypes.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedABIPass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
@@ -20,9 +22,12 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <map>
+#include <queue>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -39,6 +44,73 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
                            const PipelineOptions & /*Opts*/,
                            PipelineResult &Result, DebugContext *Dbg) {
   auto AllFuncNames = buildFuncNameMap(Img, Result);
+  if (Img.Arch == Arch::ARM) {
+    const auto &TRI = getTargetRegInfo(Img.Arch);
+    std::map<va_t, int> RegisterArity;
+    std::map<va_t, int> TotalArity;
+    for (const MedFunc &MF : Result.MedFuncs) {
+      int MaxRegister = -1;
+      for (const MedVar &Param : MF.Params)
+        MaxRegister = std::max(
+            MaxRegister,
+            TRI.integerArgumentLayout(false).registerIndex(Param.RegOff));
+      RegisterArity[MF.Entry] = MaxRegister + 1;
+      TotalArity[MF.Entry] = static_cast<int>(MF.Params.size());
+    }
+    // A wrapper may only forward its live-in registers to another wrapper.
+    // Probe calls to a fixed point before mutating the real MedIR so an
+    // outer -> middle -> leaf chain is independent of function order.
+    std::map<va_t, std::vector<size_t>> DirectCallers;
+    std::set<va_t> Entries;
+    for (const MedFunc &MF : Result.MedFuncs)
+      Entries.insert(MF.Entry);
+    for (size_t I = 0; I < Result.MedFuncs.size(); ++I)
+      for (const MedBlock &Block : Result.MedFuncs[I].Blocks)
+        for (const MedOp &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL && Op.NumInputs > 0 &&
+              Op.Inputs[0].isConst() &&
+              Entries.count(Op.Inputs[0].ConstVal) != 0)
+            DirectCallers[Op.Inputs[0].ConstVal].push_back(I);
+    std::queue<size_t> Work;
+    std::vector<bool> Queued(Result.MedFuncs.size(), true);
+    for (size_t I = 0; I < Result.MedFuncs.size(); ++I)
+      Work.push(I);
+    while (!Work.empty()) {
+      const size_t I = Work.front();
+      Work.pop();
+      Queued[I] = false;
+      MedFunc Probe = Result.MedFuncs[I];
+      recoverCallAbi(Probe, Img.Arch, AllFuncNames, &Img, &RegisterArity,
+                     &TotalArity);
+      int MaxRegister = -1;
+      int MaxIndex = -1;
+      for (const MedVar &Param : Probe.Params) {
+        if (Param.RegOff != kNoParamReg) {
+          const int Index =
+              TRI.integerArgumentLayout(false).registerIndex(Param.RegOff);
+          MaxRegister = std::max(MaxRegister, Index);
+          MaxIndex = std::max(MaxIndex, Index);
+        } else if (Param.Kind == MedVar::Param) {
+          MaxIndex = std::max(MaxIndex, Param.Id);
+        }
+      }
+      const bool Grew = MaxRegister + 1 > RegisterArity[Probe.Entry] ||
+                        MaxIndex + 1 > TotalArity[Probe.Entry];
+      RegisterArity[Probe.Entry] =
+          std::max(RegisterArity[Probe.Entry], MaxRegister + 1);
+      TotalArity[Probe.Entry] = std::max(TotalArity[Probe.Entry], MaxIndex + 1);
+      if (!Grew)
+        continue;
+      for (size_t Caller : DirectCallers[Probe.Entry])
+        if (!Queued[Caller]) {
+          Queued[Caller] = true;
+          Work.push(Caller);
+        }
+    }
+    for (MedFunc &MF : Result.MedFuncs)
+      recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
+                     &TotalArity);
+  }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
       if (auto DF = Dbg->functionName(MF.Entry); DF && !DF->empty()) {

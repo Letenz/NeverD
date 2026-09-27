@@ -412,11 +412,11 @@ void applyDynamicRelativeRelocations(
 }
 
 template <typename ELFT>
-void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
-                      llvm::ArrayRef<typename ELFT::Shdr> Sections,
-                      const uint8_t *Data, size_t Size,
-                      const std::vector<va_t> &SecBase, bool IsRelocatable,
-                      BinaryImage &Img) {
+llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
+                             llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                             const uint8_t *Data, size_t Size,
+                             const std::vector<va_t> &SecBase,
+                             bool IsRelocatable, BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -639,6 +639,7 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
 
       va_t SymVal = 0;
       va_t SymOwnerVA = InvalidVA;
+      bool SymIsFunction = false;
       if (SymSH2 && RSym > 0) {
         auto SymsOr = ELF.symbols(SymSH2);
         if (!SymsOr) {
@@ -646,6 +647,8 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
         } else if (RSym < SymsOr->size()) {
           const Elf_Sym &Sym = (*SymsOr)[RSym];
           SymVal = Sym.st_value;
+          SymIsFunction =
+              Sym.getType() == STT_FUNC || Sym.getType() == STT_GNU_IFUNC;
           if (Sym.st_shndx != SHN_UNDEF && Sym.st_shndx < SHN_LORESERVE) {
             if (const Elf_Shdr *TSH = getShdr<ELFT>(Sections, Sym.st_shndx)) {
               SymOwnerVA =
@@ -1228,24 +1231,121 @@ void applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
           }
         } else if (RType == R_ARM_CALL || RType == R_ARM_JUMP24 ||
                    RType == R_ARM_PC24) {
-          // ARM `bl`/`b`/`bcc`: the low 24 bits hold the target as a signed
-          // word offset from PC+8.  The in-place addend is that imm24 field
-          // (<<2), not the whole instruction word, so extract it directly
-          // rather than from the generic 32-bit InPlace read.  (<<8 then >>6
-          // sign-extends imm24 and rescales to bytes in one step.)  The top
-          // byte carries the condition + opcode and is preserved.  ARM-state
-          // callee only — Thumb interworking (BLX) is not modelled.
+          // Branch REL addends occupy the signed imm24 field, not the whole
+          // instruction word. A function symbol's low bit selects the target
+          // state; an unconditional call may change BL to BLX or back.
           uint32_t Insn;
           std::memcpy(&Insn, ApplySeg->Data.data() + RAddr, 4);
-          int32_t Addend = static_cast<int32_t>(Insn << 8) >> 6;
+          const int64_t Addend =
+              IsRela ? RAddend : static_cast<int32_t>(Insn << 8) >> 6;
+          const va_t BranchS = SymIsFunction ? clearThumbBit(S) : S;
+          const int64_t Disp =
+              static_cast<int64_t>(BranchS) + Addend - static_cast<int64_t>(P);
+          const bool WasBLX = (Insn & 0xfe000000u) == 0xfa000000u;
+          const bool ToThumb = SymIsFunction ? (S & 1u) != 0 : WasBLX;
+          if (Disp < -(int64_t{1} << 25) || Disp >= (int64_t{1} << 25))
+            return llvm::make_error<llvm::StringError>(
+                "elf: ARM branch relocation exceeds direct range",
+                llvm::inconvertibleErrorCode());
+          if (RType == R_ARM_CALL) {
+            if (ToThumb) {
+              Put32(0xfa000000u | ((static_cast<uint32_t>(Disp) & 2u) << 23) |
+                    ((static_cast<uint32_t>(Disp) >> 2) & 0x00ffffffu));
+            } else {
+              if ((Disp & 3) != 0)
+                return llvm::make_error<llvm::StringError>(
+                    "elf: unaligned ARM call relocation",
+                    llvm::inconvertibleErrorCode());
+              Put32(0xeb000000u |
+                    ((static_cast<uint32_t>(Disp) >> 2) & 0x00ffffffu));
+            }
+          } else {
+            if (ToThumb || (Disp & 3) != 0)
+              return llvm::make_error<llvm::StringError>(
+                  "elf: ARM branch needs an unsupported interworking veneer",
+                  llvm::inconvertibleErrorCode());
+            Put32((Insn & 0xff000000u) |
+                  ((static_cast<uint32_t>(Disp) >> 2) & 0x00ffffffu));
+          }
+        } else if (RType == R_ARM_THM_CALL || RType == R_ARM_THM_JUMP24 ||
+                   RType == R_ARM_THM_JUMP19) {
+          uint16_t Hi, Lo;
+          std::memcpy(&Hi, ApplySeg->Data.data() + RAddr, 2);
+          std::memcpy(&Lo, ApplySeg->Data.data() + RAddr + 2, 2);
+          const bool Conditional = RType == R_ARM_THM_JUMP19;
+          if ((Hi & 0xf800u) != 0xf000u ||
+              (Conditional               ? (Lo & 0xd000u) != 0x8000u
+               : RType == R_ARM_THM_CALL ? (Lo & 0xc000u) != 0xc000u
+                                         : (Lo & 0xd000u) != 0x9000u))
+            return llvm::make_error<llvm::StringError>(
+                "elf: malformed Thumb branch relocation",
+                llvm::inconvertibleErrorCode());
+          if (RType != R_ARM_THM_CALL && SymIsFunction && !(S & 1u))
+            return llvm::make_error<llvm::StringError>(
+                "elf: Thumb branch needs an unsupported interworking veneer",
+                llvm::inconvertibleErrorCode());
+          if (Conditional) {
+            const uint32_t Encoded =
+                ((Hi & 0x0400u) << 10) | ((Lo & 0x0800u) << 8) |
+                ((Lo & 0x2000u) << 5) | ((Hi & 0x003fu) << 12) |
+                ((Lo & 0x07ffu) << 1);
+            const int64_t Addend =
+                IsRela ? RAddend : static_cast<int32_t>(Encoded << 12) >> 12;
+            const va_t BranchS = SymIsFunction ? clearThumbBit(S) : S;
+            const int64_t Disp = static_cast<int64_t>(BranchS) + Addend -
+                                 static_cast<int64_t>(P);
+            if (Disp < -(int64_t{1} << 20) || Disp >= (int64_t{1} << 20))
+              return llvm::make_error<llvm::StringError>(
+                  "elf: Thumb conditional branch exceeds direct range",
+                  llvm::inconvertibleErrorCode());
+            const uint32_t Value = static_cast<uint32_t>(Disp);
+            Hi = static_cast<uint16_t>((Hi & 0xfbc0u) |
+                                       ((Value >> 10) & 0x0400u) |
+                                       ((Value >> 12) & 0x003fu));
+            Lo = static_cast<uint16_t>(0x8000u | ((Value >> 8) & 0x0800u) |
+                                       ((Value >> 5) & 0x2000u) |
+                                       ((Value >> 1) & 0x07ffu));
+            std::memcpy(ApplySeg->Data.data() + RAddr, &Hi, 2);
+            std::memcpy(ApplySeg->Data.data() + RAddr + 2, &Lo, 2);
+            continue;
+          }
+          const uint32_t Sign = (Hi >> 10) & 1u;
+          const uint32_t I1 = (~((Lo >> 13) ^ Sign)) & 1u;
+          const uint32_t I2 = (~((Lo >> 11) ^ Sign)) & 1u;
+          const uint32_t Encoded = (Sign << 24) | (I1 << 23) | (I2 << 22) |
+                                   ((Hi & 0x03ffu) << 12) |
+                                   ((Lo & 0x07ffu) << 1);
+          const int64_t Addend =
+              IsRela ? RAddend : static_cast<int32_t>(Encoded << 7) >> 7;
+          const va_t BranchS = SymIsFunction ? clearThumbBit(S) : S;
           int64_t Disp =
-              static_cast<int64_t>(S) + Addend - static_cast<int64_t>(P);
-          Put32((Insn & 0xFF000000u) |
-                (static_cast<uint32_t>(Disp >> 2) & 0x00FFFFFFu));
+              static_cast<int64_t>(BranchS) + Addend - static_cast<int64_t>(P);
+          const bool WasBLX = (Lo & 0x1000u) == 0;
+          const bool ToARM = RType == R_ARM_THM_CALL &&
+                             (SymIsFunction ? (S & 1u) == 0 : WasBLX);
+          if (ToARM)
+            Disp += (4 - (Disp & 3)) & 3;
+          if (Disp < -(int64_t{1} << 24) || Disp >= (int64_t{1} << 24))
+            return llvm::make_error<llvm::StringError>(
+                "elf: Thumb call relocation exceeds direct range",
+                llvm::inconvertibleErrorCode());
+          const uint32_t Value = static_cast<uint32_t>(Disp);
+          Hi = static_cast<uint16_t>(0xf000u | ((Value >> 14) & 0x0400u) |
+                                     ((Value >> 12) & 0x03ffu));
+          Lo = static_cast<uint16_t>(
+              (RType == R_ARM_THM_JUMP24 ? 0x9000u
+               : ToARM                   ? 0xc000u
+                                         : 0xd000u) |
+              (((~(Value >> 10)) ^ (Value >> 11)) & 0x2000u) |
+              (((~(Value >> 11)) ^ (Value >> 13)) & 0x0800u) |
+              ((Value >> 1) & 0x07ffu));
+          std::memcpy(ApplySeg->Data.data() + RAddr, &Hi, 2);
+          std::memcpy(ApplySeg->Data.data() + RAddr + 2, &Lo, 2);
         }
       }
     }
   }
+  return llvm::Error::success();
 }
 
 // ===--------------------------------------------------------------------===//
@@ -1261,11 +1361,11 @@ template void collectRelocations<llvm::object::ELF64LE>(
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, llvm::StringRef,
     const uint8_t *, size_t, bool, BinaryImage &);
 
-template void applyRelocations<llvm::object::ELF32LE>(
+template llvm::Error applyRelocations<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, const uint8_t *, size_t,
     const std::vector<va_t> &, bool, BinaryImage &);
-template void applyRelocations<llvm::object::ELF64LE>(
+template llvm::Error applyRelocations<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, const uint8_t *, size_t,
     const std::vector<va_t> &, bool, BinaryImage &);
