@@ -348,9 +348,18 @@ TEST(ObjCSourceProjection,
   EXPECT_EQ(LocalThrow.ObjC->RuntimeCalls[0].CallVA, 0x1104U);
   EXPECT_FALSE(isPlainSourceUnwind(LocalThrow));
 
-  EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000})
-                .ObjC->RuntimeCalls.size(),
-            2U);
+  // The first method can end before the record does: the later throw belongs
+  // to an adjacent entry, even though this method starts at CodeRange.Begin.
+  const auto First =
+      sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000, 0x1008});
+  EXPECT_FALSE(First.ObjC);
+  EXPECT_TRUE(isPlainSourceUnwind(First));
+  const auto FirstWithThrow =
+      sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000, 0x1004});
+  ASSERT_TRUE(FirstWithThrow.ObjC);
+  ASSERT_EQ(FirstWithThrow.ObjC->RuntimeCalls.size(), 1U);
+  EXPECT_EQ(FirstWithThrow.ObjC->RuntimeCalls[0].CallVA, 0x1004U);
+  EXPECT_FALSE(isPlainSourceUnwind(FirstWithThrow));
   EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1100, {0x1104})
                 .ObjC->RuntimeCalls.size(),
             2U);
