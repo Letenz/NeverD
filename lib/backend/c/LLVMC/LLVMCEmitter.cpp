@@ -25,6 +25,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Debug.h"
@@ -41,6 +42,24 @@
 #include <stdexcept>
 
 namespace neverd {
+
+bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
+                                          Arch TheArch) {
+  const auto *Callee = Call.getCalledFunction();
+  if (TheArch != Arch::AArch64 || !Callee ||
+      Callee->getIntrinsicID() != llvm::Intrinsic::aarch64_neon_bfmmla ||
+      Call.arg_size() != 3)
+    return false;
+  auto &Context = Call.getContext();
+  auto *Accumulator =
+      llvm::FixedVectorType::get(llvm::Type::getFloatTy(Context), 4);
+  auto *Input = llvm::FixedVectorType::get(llvm::Type::getBFloatTy(Context), 8);
+  return Call.getType() == Accumulator &&
+         Call.getArgOperand(0)->getType() == Accumulator &&
+         Call.getArgOperand(1)->getType() == Input &&
+         Call.getArgOperand(2)->getType() == Input &&
+         Call.getFunctionType() == Callee->getFunctionType();
+}
 
 void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   GlobalIdentifierAllocator = CProjectionIdentifierAllocator{};
@@ -148,6 +167,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             if (const char *Header = libc::headerFor(Mapped))
               Headers.insert(Header);
           }
+          if (isNativeVectorIntrinsic(*CI, Opts.TheArch))
+            HasCIntrinsics = true;
           if (isX86FastFailName(Name))
             HasCIntrinsics = true;
 
@@ -342,8 +363,7 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
     }
     llvm::StringRef Raw = Name;
     if (Raw.starts_with("__imp_") || Raw.starts_with("_imp_") ||
-        Raw.starts_with("??") || Raw.starts_with("ord_") ||
-        Raw.contains("??"))
+        Raw.starts_with("??") || Raw.starts_with("ord_") || Raw.contains("??"))
       return;
     auto It = Objs.find(Name);
     if (It == Objs.end() ||
@@ -368,8 +388,8 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
       OS << "static ";
     if (GV->isConstant())
       OS << "const ";
-    OS << "uint8_t " << namedImageObject(Base) << "["
-       << Array->getNumElements() << "] = {0};\n";
+    OS << "uint8_t " << namedImageObject(Base) << "[" << Array->getNumElements()
+       << "] = {0};\n";
   }
   if (!Objs.empty() || !ByteArrays.empty())
     OS << "\n";
@@ -415,8 +435,8 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     if (libc::isKnownFunction(Name))
       continue;
     if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name)) {
-      OS << msvcAtlSyntheticPrototype(Name, *Atl,
-                                      Opts.TheArch == Arch::X64 && Atl->FastCall)
+      OS << msvcAtlSyntheticPrototype(
+                Name, *Atl, Opts.TheArch == Arch::X64 && Atl->FastCall)
          << ";\n";
       continue;
     }
@@ -495,7 +515,7 @@ static llvm::Value *balancedOr(llvm::IRBuilder<> &B,
   return Values.front();
 }
 
-static void lowerIntegerVectorBitcasts(llvm::Module &Mod) {
+static void lowerPackedVectorBitcasts(llvm::Module &Mod) {
   llvm::SmallVector<llvm::BitCastInst *> Work;
   for (auto &F : Mod)
     for (auto &BB : F)
@@ -504,19 +524,27 @@ static void lowerIntegerVectorBitcasts(llvm::Module &Mod) {
           Work.push_back(Cast);
   for (auto *Cast : Work) {
     auto *Vector = llvm::dyn_cast<llvm::FixedVectorType>(Cast->getSrcTy());
-    auto *Integer = llvm::dyn_cast<llvm::IntegerType>(Cast->getDestTy());
-    bool Pack = Vector && Integer;
-    if (!Pack) {
+    const bool Pack = Vector != nullptr;
+    auto *Scalar = Pack ? Cast->getDestTy() : Cast->getSrcTy();
+    if (!Pack)
       Vector = llvm::dyn_cast<llvm::FixedVectorType>(Cast->getDestTy());
-      Integer = llvm::dyn_cast<llvm::IntegerType>(Cast->getSrcTy());
-    }
-    if (!Vector || !Integer || !Vector->getElementType()->isIntegerTy())
+    auto IsLane = [](llvm::Type *Type) {
+      return Type->isIntegerTy() || Type->isFloatTy() || Type->isDoubleTy() ||
+             Type->isBFloatTy();
+    };
+    if (!Vector || !IsLane(Scalar) || !IsLane(Vector->getElementType()))
       continue;
-    unsigned Count = Vector->getNumElements();
-    unsigned Bits = Vector->getElementType()->getIntegerBitWidth();
-    if (uint64_t(Count) * Bits != Integer->getBitWidth())
+    const unsigned ScalarBits = Scalar->getPrimitiveSizeInBits();
+    const unsigned Count = Vector->getNumElements();
+    const unsigned Bits = Vector->getElementType()->getPrimitiveSizeInBits();
+    if (ScalarBits > 128 || uint64_t(Count) * Bits != ScalarBits)
       continue;
+    auto *Integer = llvm::IntegerType::get(Mod.getContext(), ScalarBits);
+    auto *LaneInteger = llvm::IntegerType::get(Mod.getContext(), Bits);
     llvm::IRBuilder<> B(Cast);
+    auto *Input = Cast->getOperand(0);
+    if (!Pack && !Scalar->isIntegerTy())
+      Input = B.CreateBitCast(Input, Integer);
     llvm::SmallVector<llvm::Value *> Parts;
     llvm::Value *Value =
         Pack ? static_cast<llvm::Value *>(llvm::ConstantInt::get(Integer, 0))
@@ -526,21 +554,28 @@ static void lowerIntegerVectorBitcasts(llvm::Module &Mod) {
           (Mod.getDataLayout().isLittleEndian() ? Lane : Count - Lane - 1) *
           Bits;
       if (Pack) {
-        auto *Part = B.CreateZExtOrTrunc(
-            B.CreateExtractElement(Cast->getOperand(0), Lane), Integer);
+        auto *Part = B.CreateExtractElement(Input, Lane);
+        if (!Part->getType()->isIntegerTy())
+          Part = B.CreateBitCast(Part, LaneInteger);
+        Part = B.CreateZExtOrTrunc(Part, Integer);
         if (Shift)
           Part = B.CreateShl(Part, llvm::ConstantInt::get(Integer, Shift));
         Parts.push_back(Part);
       } else {
-        auto *Part = Cast->getOperand(0);
+        auto *Part = Input;
         if (Shift)
           Part = B.CreateLShr(Part, llvm::ConstantInt::get(Integer, Shift));
-        Part = B.CreateZExtOrTrunc(Part, Vector->getElementType());
+        Part = B.CreateZExtOrTrunc(Part, LaneInteger);
+        if (!Vector->getElementType()->isIntegerTy())
+          Part = B.CreateBitCast(Part, Vector->getElementType());
         Value = B.CreateInsertElement(Value, Part, Lane);
       }
     }
-    if (Pack)
+    if (Pack) {
       Value = balancedOr(B, std::move(Parts));
+      if (!Scalar->isIntegerTy())
+        Value = B.CreateBitCast(Value, Scalar);
+    }
     Cast->replaceAllUsesWith(Value);
     Cast->eraseFromParent();
   }
@@ -576,6 +611,28 @@ static bool containsVectorType(llvm::Type *Type) {
   return containsVectorType(Type, Seen);
 }
 
+static bool referencesVectorGlobal(const llvm::Function &Function) {
+  llvm::SmallVector<const llvm::Value *, 32> Work;
+  llvm::SmallPtrSet<const llvm::Value *, 32> Seen;
+  for (const auto &Block : Function)
+    for (const auto &Instruction : Block)
+      Work.push_back(&Instruction);
+  while (!Work.empty()) {
+    const auto *Value = Work.pop_back_val();
+    if (!Seen.insert(Value).second || llvm::isa<llvm::Function>(Value))
+      continue;
+    if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Value))
+      if (containsVectorType(Global->getValueType()))
+        return true;
+    // Follow constant GEPs, casts, aliases and pointer-valued initializers as
+    // well as direct uses; opaque pointers do not reveal the storage type.
+    if (const auto *User = llvm::dyn_cast<llvm::User>(Value))
+      for (const auto &Operand : User->operands())
+        Work.push_back(Operand.get());
+  }
+  return false;
+}
+
 static bool isCVectorBoundaryType(llvm::Type *Type) {
   return isCIntegerVectorType(Type) || !containsVectorType(Type);
 }
@@ -585,10 +642,14 @@ static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
          llvm::all_of(Type->params(), isCVectorBoundaryType);
 }
 
-static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst) {
-  if (!isCVectorBoundaryType(Inst.getType()) ||
-      !llvm::all_of(Inst.operands(), [](const llvm::Use &Operand) {
-        return isCVectorBoundaryType(Operand->getType());
+static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
+                                         Arch TheArch) {
+  auto IsLocalType = [](llvm::Type *Type) {
+    return isCVectorType(Type) || !containsVectorType(Type);
+  };
+  if (!IsLocalType(Inst.getType()) ||
+      !llvm::all_of(Inst.operands(), [&](const llvm::Use &Operand) {
+        return IsLocalType(Operand->getType());
       }))
     return false;
   // The scalarizer retains gathers/scatters at function boundaries. C vector
@@ -601,6 +662,8 @@ static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst) {
     return Select->getCondition()->getType()->isIntegerTy(1);
   if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
     const auto *Callee = Call->getCalledFunction();
+    if (LLVMCWriter::isNativeVectorIntrinsic(*Call, TheArch))
+      return true;
     return Callee && !Callee->isIntrinsic() &&
            isCVectorBoundarySignature(Call->getFunctionType());
   }
@@ -610,6 +673,9 @@ static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst) {
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
+  if (Only && referencesVectorGlobal(*Only))
+    throw std::runtime_error(
+        "C projection references unsupported vector global storage");
   bool HasVectors = false;
   if (!Only)
     for (const auto &Global : Mod.globals())
@@ -620,6 +686,9 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
+        if (const auto *Allocation =
+                llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
+          HasVectors |= containsVectorType(Allocation->getAllocatedType());
         HasVectors |= Instruction.getType()->isVectorTy();
         for (const auto &Operand : Instruction.operands())
           HasVectors |= Operand->getType()->isVectorTy();
@@ -628,6 +697,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   std::unique_ptr<llvm::Module> Projection;
   const llvm::Function *ProjectionOnly = Only;
   if (HasVectors) {
+    if (llvm::verifyModule(Mod, &llvm::errs()))
+      return false;
     // Normalize vector operations on a clone so C emission preserves the
     // caller's IR while the scalar writer receives explicit lane semantics.
     llvm::ValueToValueMapTy ValueMap;
@@ -640,7 +711,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
             "C projection could not map the selected function into its clone");
     }
     lowerCIntegerReductions(*Projection);
-    lowerIntegerVectorBitcasts(*Projection);
+    lowerPackedVectorBitcasts(*Projection);
     llvm::LoopAnalysisManager Loops;
     llvm::FunctionAnalysisManager Functions;
     llvm::CGSCCAnalysisManager CallGraph;
@@ -652,11 +723,21 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     Passes.registerLoopAnalyses(Loops);
     Passes.crossRegisterProxies(Loops, Functions, CallGraph, Modules);
     llvm::FunctionPassManager Normalize;
-    Normalize.addPass(llvm::ScalarizerPass());
+    llvm::ScalarizerPassOptions ScalarOptions;
+    // LLVM only splits simple accesses: volatile and atomic vectors still
+    // reach the unsupported-instruction guard below.
+    ScalarOptions.ScalarizeLoadStore = true;
+    Normalize.addPass(llvm::ScalarizerPass(ScalarOptions));
     Normalize.addPass(llvm::DCEPass());
     llvm::ModulePassManager Pipeline;
     Pipeline.addPass(
         llvm::createModuleToFunctionPassAdaptor(std::move(Normalize)));
+    Pipeline.run(*Projection, Modules);
+    // Lane-width-changing vector casts create new scalar/vector bitcasts in
+    // Scalarizer. Lower those with the source layout before scalarizing their
+    // explicit lane gathers, too. The second pass introduces no new casts.
+    lowerPackedVectorBitcasts(*Projection);
+    Modules.invalidate(*Projection, llvm::PreservedAnalyses::none());
     Pipeline.run(*Projection, Modules);
     if (llvm::verifyModule(*Projection, &llvm::errs()))
       return false;
@@ -674,15 +755,20 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         throw std::runtime_error(
             "C projection retains an unsupported vector signature");
       for (const auto &BB : F)
-        for (const auto &I : BB)
+        for (const auto &I : BB) {
+          if (const auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(&I))
+            if (containsVectorType(Allocation->getAllocatedType()))
+              throw std::runtime_error(
+                  "C projection retains unsupported vector local storage");
           if ((containsVectorType(I.getType()) ||
                llvm::any_of(I.operands(),
                             [](const llvm::Use &Operand) {
                               return containsVectorType(Operand->getType());
                             })) &&
-              !isCVectorBoundaryInstruction(I))
+              !isCVectorBoundaryInstruction(I, Opts.TheArch))
             throw std::runtime_error(
                 "C projection retains an unsupported vector instruction");
+        }
     }
   }
   LLVMCWriter W(Out, Opts, Dbg, Img);

@@ -245,6 +245,38 @@ TEST_F(AArch64_FP, BfmmlaHighCUsesACLEAndCompiles) {
   expectPairedClangSyntax(cFile, source);
 }
 
+TEST_F(AArch64_FP, BfmmlaLLVMCUsesACLEAndCompiles) {
+  auto Result = decompileToC(testObj());
+  ASSERT_EQ(Result.exitCode, 0) << Result.err;
+  const auto CFile = tmpFile("decompiled.c");
+  std::ifstream Input(CFile);
+  ASSERT_TRUE(Input.good());
+  const std::string Source((std::istreambuf_iterator<char>(Input)),
+                           std::istreambuf_iterator<char>());
+  const auto Function = functionSource(Source, "test_bfmmla_a64");
+  ASSERT_FALSE(Function.empty()) << Source;
+  EXPECT_NE(Function.find("vbfmmlaq_f32"), std::string::npos) << Function;
+  EXPECT_NE(Source.find("arm_neon.h"), std::string::npos) << Source;
+  // Compile the exact projection of this function. Other FPCR-sensitive
+  // functions in the fixture have independent C projection contracts.
+  const auto Fragment = tmpFile("bfmmla_llvmc.c");
+  std::ofstream Output(Fragment);
+  Output << "#include <stdint.h>\n#include <arm_neon.h>\n" << Function << '\n';
+  Output.close();
+  expectPairedClangSyntax(Fragment, Function);
+  const auto Assembly = tmpFile("bfmmla_llvmc.s");
+  auto Compile =
+      exec("clang", {"-target", "aarch64-none-elf", "-ffreestanding",
+                     "-march=armv8.6-a+bf16", "-std=gnu11", "-O2", "-S",
+                     Fragment.string(), "-o", Assembly.string()});
+  ASSERT_EQ(Compile.exitCode, 0) << Compile.err << Function;
+  std::ifstream AsmInput(Assembly);
+  const std::string Text((std::istreambuf_iterator<char>(AsmInput)),
+                         std::istreambuf_iterator<char>());
+  EXPECT_TRUE(std::regex_search(Text, std::regex(R"(\bbfmmla\s+v[0-9]+\.4s)")))
+      << Text;
+}
+
 TEST_F(AArch64_FP, FrintiPreservesDynamicFPCRInLLVMIR) {
   auto r = liftToLLVMIR(testObj());
   ASSERT_EQ(r.exitCode, 0) << r.err;

@@ -282,7 +282,8 @@ void LLVMCWriter::noteAllocaStore(const llvm::AllocaInst *Slot,
   }
 }
 
-bool LLVMCWriter::computedAllocaLoadIsForwarded(const llvm::LoadInst *LI) const {
+bool LLVMCWriter::computedAllocaLoadIsForwarded(
+    const llvm::LoadInst *LI) const {
   if (!LI)
     return false;
   const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
@@ -402,9 +403,8 @@ bool LLVMCWriter::isLeftoverArgListSibling(uint64_t Off) const {
     if (Slot.first >= Off || !Slot.second.AddressTaken ||
         !slotIsArgList(Slot.first))
       continue;
-    uint16_t Size = Slot.second.Type && Slot.second.Type->Size
-                        ? Slot.second.Type->Size
-                        : 0;
+    uint16_t Size =
+        Slot.second.Type && Slot.second.Type->Size ? Slot.second.Type->Size : 0;
     if (!Size && Slot.second.CallType)
       Size = Slot.second.CallType->Size;
     if (Size < 8)
@@ -473,8 +473,8 @@ LLVMCWriter::leftoverPackedCallResult(const llvm::BasicBlock *BB) const {
   };
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Seen;
   const llvm::BasicBlock *Cur = BB;
-  auto uniqueNormalPred = [](const llvm::BasicBlock *Block)
-      -> const llvm::BasicBlock * {
+  auto uniqueNormalPred =
+      [](const llvm::BasicBlock *Block) -> const llvm::BasicBlock * {
     const llvm::BasicBlock *Found = nullptr;
     for (const llvm::BasicBlock *P : llvm::predecessors(Block)) {
       if (P->isEHPad())
@@ -617,8 +617,8 @@ bool LLVMCWriter::priorUnknownStoreTo(const llvm::Instruction *SI,
   if (!SI)
     return false;
   unsigned Looked = 0;
-  for (const llvm::Instruction *Prev = SI->getPrevNode();
-       Prev && Looked < 12; Prev = Prev->getPrevNode()) {
+  for (const llvm::Instruction *Prev = SI->getPrevNode(); Prev && Looked < 12;
+       Prev = Prev->getPrevNode()) {
     const auto *St = llvm::dyn_cast<llvm::StoreInst>(Prev);
     if (!St) {
       if (llvm::isa<llvm::AllocaInst, llvm::GetElementPtrInst, llvm::CastInst,
@@ -804,14 +804,13 @@ void LLVMCWriter::collectLeftoverNarrowCallStores(llvm::Function &Fn) {
         auto WideOff = syntheticFrameOwnerOff(St->getPointerOperand());
         if (!SrcOff || !WideOff || *SrcOff != *DestOff || *WideOff == *DestOff)
           continue;
-        auto Member = frameSlotAccess(St->getPointerOperand(),
-                                      FillSize ? FillSize : 4,
-                                      /*AddressOf=*/false,
-                                      /*Synthesize=*/false,
-                                      /*Overlay=*/true);
-        if (!Member ||
-            !(llvm::StringRef(Member->Text).ends_with(".types_") ||
-              llvm::StringRef(Member->Text).ends_with("->types_")))
+        auto Member =
+            frameSlotAccess(St->getPointerOperand(), FillSize ? FillSize : 4,
+                            /*AddressOf=*/false,
+                            /*Synthesize=*/false,
+                            /*Overlay=*/true);
+        if (!Member || !(llvm::StringRef(Member->Text).ends_with(".types_") ||
+                         llvm::StringRef(Member->Text).ends_with("->types_")))
           continue;
         if (!ArgListCopy)
           ArgListCopy = St;
@@ -927,9 +926,8 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
         if (const auto *AsCmp = llvm::dyn_cast<llvm::ICmpInst>(Peeled))
           InnerCmp = AsCmp;
       }
-    if (InnerCmp &&
-        (InnerCmp->getPredicate() == llvm::CmpInst::ICMP_EQ ||
-         InnerCmp->getPredicate() == llvm::CmpInst::ICMP_NE)) {
+    if (InnerCmp && (InnerCmp->getPredicate() == llvm::CmpInst::ICMP_EQ ||
+                     InnerCmp->getPredicate() == llvm::CmpInst::ICMP_NE)) {
       const llvm::Value *PtrVal = nullptr;
       if (const auto *CI =
               llvm::dyn_cast<llvm::ConstantInt>(InnerCmp->getOperand(1));
@@ -939,12 +937,14 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
                    llvm::dyn_cast<llvm::ConstantInt>(InnerCmp->getOperand(0));
                CI && CI->isZero())
         PtrVal = InnerCmp->getOperand(1);
-      while (const auto *Cast = llvm::dyn_cast_or_null<llvm::CastInst>(PtrVal)) {
+      while (const auto *Cast =
+                 llvm::dyn_cast_or_null<llvm::CastInst>(PtrVal)) {
         if (!llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast))
           break;
         PtrVal = Cast->getOperand(0);
       }
-      if (const auto *PtrLoad = llvm::dyn_cast_or_null<llvm::LoadInst>(PtrVal)) {
+      if (const auto *PtrLoad =
+              llvm::dyn_cast_or_null<llvm::LoadInst>(PtrVal)) {
         if (const std::optional<Key> K = Canonical(PtrLoad)) {
           const bool InnerNonZero =
               InnerCmp->getPredicate() == llvm::CmpInst::ICMP_NE;
@@ -988,8 +988,10 @@ LLVMCWriter::impliedPointerSuccessor(const llvm::CondBrInst *Br) const {
     const llvm::BasicBlock *Pred = Cur->getSinglePredecessor();
     if (!Pred || !Seen.insert(Pred).second)
       return nullptr;
-    if (const auto *PBr = llvm::dyn_cast<llvm::CondBrInst>(Pred->getTerminator())) {
-      if (const auto *Dom = llvm::dyn_cast<llvm::ICmpInst>(PBr->getCondition())) {
+    if (const auto *PBr =
+            llvm::dyn_cast<llvm::CondBrInst>(Pred->getTerminator())) {
+      if (const auto *Dom =
+              llvm::dyn_cast<llvm::ICmpInst>(PBr->getCondition())) {
         const std::optional<Fact> DomFact = ZeroTest(Dom);
         const bool TrueEdge = PBr->getSuccessor(0) == Cur;
         const bool FalseEdge = PBr->getSuccessor(1) == Cur;
@@ -1018,9 +1020,8 @@ bool LLVMCWriter::deadNullAssignBlocks(
   Blocks.clear();
   if (!Br || !Taken)
     return false;
-  const llvm::BasicBlock *Other = Taken == Br->getSuccessor(0)
-                                      ? Br->getSuccessor(1)
-                                      : Br->getSuccessor(0);
+  const llvm::BasicBlock *Other =
+      Taken == Br->getSuccessor(0) ? Br->getSuccessor(1) : Br->getSuccessor(0);
   if (!Other || Other == Taken || Other == Br->getParent())
     return false;
   if (Other->getSinglePredecessor() != Br->getParent())
@@ -1333,10 +1334,10 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         Inst.getOpcode() == llvm::Instruction::Or ||
         Inst.getOpcode() == llvm::Instruction::Add ||
         Inst.getOpcode() == llvm::Instruction::Sub;
-    auto LHS = logicalShiftLhs(
-        Inst, NeedsIntegerPointerOperand
-                  ? integerPointerOperandStr(Inst.getOperand(0))
-                  : valueStr(Inst.getOperand(0)));
+    auto LHS =
+        logicalShiftLhs(Inst, NeedsIntegerPointerOperand
+                                  ? integerPointerOperandStr(Inst.getOperand(0))
+                                  : valueStr(Inst.getOperand(0)));
     auto RHS = NeedsIntegerPointerOperand
                    ? integerPointerOperandStr(Inst.getOperand(1))
                    : valueStr(Inst.getOperand(1));
@@ -1398,11 +1399,11 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       return;
     if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand());
         Slot && !allocaAddressTaken(Slot) &&
-        (allocaHomeIsNamedParam(Slot) ||
-         (allocaOnlyHoldsImmediates(Slot) &&
-          allocaLoadsComposeImmediate(Slot))))
+        (allocaHomeIsNamedParam(Slot) || (allocaOnlyHoldsImmediates(Slot) &&
+                                          allocaLoadsComposeImmediate(Slot))))
       return;
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand())) {
+    if (const llvm::AllocaInst *Slot =
+            asAllocaPointer(LI->getPointerOperand())) {
       if (auto It = AllocaTypes.find(Slot); It != AllocaTypes.end())
         ValueTypes[&Inst] = It->second;
       if (isTypedRecordCursorSlot(Slot))
@@ -1431,6 +1432,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       ValueTexts[&Inst] = Index->Text;
       return;
     }
+    if (writeRawMemoryCopy(Inst, Indent))
+      return;
     emitIndent(Indent);
     if (std::string Seg = renderX86SegmentedLoad(
             Opts.TheArch, *LI,
@@ -1461,15 +1464,15 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       else
         OS << Name << " = *(" << typeToCLLVM(LI->getType()) << "*)"
            << valueStr(LI->getPointerOperand()) << ";\n";
-    }
-    else
+    } else
       OS << Name << " = *(" << typeToCLLVM(LI->getType()) << "*)"
          << valueStr(LI->getPointerOperand()) << ";\n";
     return;
   }
 
   if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(SI->getPointerOperand())) {
+    if (const llvm::AllocaInst *Slot =
+            asAllocaPointer(SI->getPointerOperand())) {
       const llvm::Value *Stored = SI->getValueOperand();
       noteAllocaStore(Slot, Stored);
       if (isKilledEntryZeroStore(SI, Slot))
@@ -1496,62 +1499,64 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
                 return true;
               auto Ty = AllocaTypes.find(Src);
               return Ty != AllocaTypes.end() && Ty->second &&
-                     Ty->second->Kind == NdTypeKind::Ptr && Ty->second->Pointee &&
+                     Ty->second->Kind == NdTypeKind::Ptr &&
+                     Ty->second->Pointee &&
                      Ty->second->Pointee->Kind == NdTypeKind::Struct &&
                      !Ty->second->Pointee->SourceName.empty() &&
                      !Ty->second->Pointee->IsEnum;
             };
             if (SrcTyped()) {
-            auto SameText = [&](const llvm::Value *Value) {
-              if (!Value || Text.empty())
-                return false;
-              auto Cached = ValueTexts.find(Value);
-              return Cached != ValueTexts.end() && Cached->second == Text;
-            };
-            bool UseName = Text.empty() ||
-                           Text.find("m_ppBins[") != std::string::npos;
-            if (!UseName) {
-              if (auto Cached = AllocaTexts.find(Src);
-                  Cached != AllocaTexts.end() && Cached->second == Text)
-                UseName = true;
+              auto SameText = [&](const llvm::Value *Value) {
+                if (!Value || Text.empty())
+                  return false;
+                auto Cached = ValueTexts.find(Value);
+                return Cached != ValueTexts.end() && Cached->second == Text;
+              };
+              bool UseName =
+                  Text.empty() || Text.find("m_ppBins[") != std::string::npos;
               if (!UseName) {
-                if (auto Home = AllocaHomeValues.find(Src);
-                    Home != AllocaHomeValues.end())
-                  UseName = SameText(Home->second);
-              }
-            }
-            const llvm::AllocaInst *Named = nullptr;
-            if (UseName) {
-              const llvm::AllocaInst *Cur = Src;
-              llvm::SmallPtrSet<const llvm::AllocaInst *, 8> Seen;
-              while (Cur && Seen.insert(Cur).second) {
-                const llvm::Value *HomeVal = nullptr;
-                if (auto Home = AllocaHomeValues.find(Cur);
-                    Home != AllocaHomeValues.end())
-                  HomeVal = Home->second;
-                if (HomeVal && !allocaStoreIsHidden(Cur, HomeVal)) {
-                  Named = Cur;
-                  break;
+                if (auto Cached = AllocaTexts.find(Src);
+                    Cached != AllocaTexts.end() && Cached->second == Text)
+                  UseName = true;
+                if (!UseName) {
+                  if (auto Home = AllocaHomeValues.find(Src);
+                      Home != AllocaHomeValues.end())
+                    UseName = SameText(Home->second);
                 }
-                const auto *HomeLoad = llvm::dyn_cast_or_null<llvm::LoadInst>(HomeVal);
-                const llvm::AllocaInst *Next =
-                    HomeLoad ? asAllocaPointer(HomeLoad->getPointerOperand())
-                             : nullptr;
-                if (!Next || Next == Slot)
-                  break;
-                Cur = Next;
               }
-            }
-            if (Named) {
-              std::string SrcName;
-              if (auto Name = ValNames.find(Named);
-                  Name != ValNames.end() && !Name->second.empty())
-                SrcName = Name->second;
-              else
-                SrcName = getName(const_cast<llvm::AllocaInst *>(Named));
-              if (!SrcName.empty() && SrcName != getName(Slot))
-                Text = std::move(SrcName);
-            }
+              const llvm::AllocaInst *Named = nullptr;
+              if (UseName) {
+                const llvm::AllocaInst *Cur = Src;
+                llvm::SmallPtrSet<const llvm::AllocaInst *, 8> Seen;
+                while (Cur && Seen.insert(Cur).second) {
+                  const llvm::Value *HomeVal = nullptr;
+                  if (auto Home = AllocaHomeValues.find(Cur);
+                      Home != AllocaHomeValues.end())
+                    HomeVal = Home->second;
+                  if (HomeVal && !allocaStoreIsHidden(Cur, HomeVal)) {
+                    Named = Cur;
+                    break;
+                  }
+                  const auto *HomeLoad =
+                      llvm::dyn_cast_or_null<llvm::LoadInst>(HomeVal);
+                  const llvm::AllocaInst *Next =
+                      HomeLoad ? asAllocaPointer(HomeLoad->getPointerOperand())
+                               : nullptr;
+                  if (!Next || Next == Slot)
+                    break;
+                  Cur = Next;
+                }
+              }
+              if (Named) {
+                std::string SrcName;
+                if (auto Name = ValNames.find(Named);
+                    Name != ValNames.end() && !Name->second.empty())
+                  SrcName = Name->second;
+                else
+                  SrcName = getName(const_cast<llvm::AllocaInst *>(Named));
+                if (!SrcName.empty() && SrcName != getName(Slot))
+                  Text = std::move(SrcName);
+              }
             }
           }
         }
@@ -1674,10 +1679,10 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           while (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Source))
             Source = Cast->getOperand(0);
           if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(Source)) {
-            auto SourceRecord = frameSlotAccess(Load->getPointerOperand(),
-                                                Size, /*AddressOf=*/false);
-            auto SourceAddress = frameSlotAccess(Load->getPointerOperand(),
-                                                 0, /*AddressOf=*/true);
+            auto SourceRecord = frameSlotAccess(Load->getPointerOperand(), Size,
+                                                /*AddressOf=*/false);
+            auto SourceAddress = frameSlotAccess(Load->getPointerOperand(), 0,
+                                                 /*AddressOf=*/true);
             const bool SameRecord =
                 SourceRecord && SourceRecord->Type &&
                 SourceRecord->Type->Kind == NdTypeKind::Struct &&
@@ -1716,21 +1721,20 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         // the lifted store carries i64 machine bits. Keep the call expression
         // readable, but make the field assignment's conversion explicit.
         const llvm::StringRef MemberText(Member->Text);
-        const bool ArgListField =
-            MemberText.ends_with(".types_") ||
-            MemberText.ends_with("->types_") ||
-            MemberText.ends_with(".values_") ||
-            MemberText.ends_with("->values_");
+        const bool ArgListField = MemberText.ends_with(".types_") ||
+                                  MemberText.ends_with("->types_") ||
+                                  MemberText.ends_with(".values_") ||
+                                  MemberText.ends_with("->values_");
         if (ArgListField && Size == 8 && Member->Type &&
             Member->Type->Size == Size) {
           const llvm::Value *Root = Stored;
           std::set<const llvm::Value *> Seen;
-          for (unsigned Depth = 0; Root && Depth < 8 && Seen.insert(Root).second;
-               ++Depth) {
+          for (unsigned Depth = 0;
+               Root && Depth < 8 && Seen.insert(Root).second; ++Depth) {
             if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Root)) {
-              if (llvm::isa<llvm::SExtInst, llvm::ZExtInst,
-                            llvm::TruncInst, llvm::PtrToIntInst,
-                            llvm::IntToPtrInst, llvm::BitCastInst>(Cast)) {
+              if (llvm::isa<llvm::SExtInst, llvm::ZExtInst, llvm::TruncInst,
+                            llvm::PtrToIntInst, llvm::IntToPtrInst,
+                            llvm::BitCastInst>(Cast)) {
                 Root = Cast->getOperand(0);
                 continue;
               }
@@ -1764,8 +1768,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             if (!ReturnType && Call->getType()->isPointerTy())
               ReturnType = NdType::makePtr();
             if (!ReturnType && Call->getType()->isIntegerTy())
-              ReturnType = NdType::makeInt(
-                  llvmAccessSize(Call->getType()), false);
+              ReturnType =
+                  NdType::makeInt(llvmAccessSize(Call->getType()), false);
             if (Member->Type->Kind == NdTypeKind::Ptr &&
                 Stored->getType()->isIntegerTy()) {
               // Preserve all LLVM truncation and extension in StoredText;
@@ -1797,8 +1801,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
                                           /*Synthesize=*/true,
                                           /*Overlay=*/false)) {
           emitIndent(Indent);
-          OS << Member->Text << " = " << integerCallStoredText(Stored)
-             << ";\n";
+          OS << Member->Text << " = " << integerCallStoredText(Stored) << ";\n";
           return;
         }
         const auto *Init =
@@ -1811,6 +1814,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             return;
         }
         if (zeroPastAddressTakenByteObject())
+          return;
+        if (writeRawMemoryCopy(Inst, Indent))
           return;
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
@@ -1827,6 +1832,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             return;
         }
         if (zeroPastAddressTakenByteObject())
+          return;
+        if (writeRawMemoryCopy(Inst, Indent))
           return;
         emitIndent(Indent);
         OS << "*(" << typeToCLLVM(SI->getValueOperand()->getType()) << "*)"
@@ -1918,9 +1925,9 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     const llvm::BasicBlock *Then = Br->getSuccessor(0);
     const llvm::BasicBlock *Else = Br->getSuccessor(1);
     if (const llvm::BasicBlock *Taken = impliedPointerSuccessor(Br)) {
-      const llvm::BasicBlock *Body =
-          Taken == Then ? straightLineTrueArm(From, Then, true)
-                        : straightLineFalseSkip(From, Else);
+      const llvm::BasicBlock *Body = Taken == Then
+                                         ? straightLineTrueArm(From, Then, true)
+                                         : straightLineFalseSkip(From, Else);
       const llvm::BasicBlock *Other = Taken == Then ? Else : Then;
       llvm::SmallVector<const llvm::BasicBlock *, 4> DeadNull;
       if (deadNullAssignBlocks(Br, Taken, DeadNull)) {
@@ -1939,8 +1946,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           const llvm::BasicBlock *Succ = Go->getSuccessor(0);
           // Both edges already meet, so the continuation prints after this if.
           if (Succ && printBranchTarget(Succ) != printBranchTarget(Other)) {
-            const bool Falls = joinPrintsNext(From, Succ) &&
-                               !cursorForExitsAt(Succ);
+            const bool Falls =
+                joinPrintsNext(From, Succ) && !cursorForExitsAt(Succ);
             writeGoto(Body, Succ, Indent, !Falls);
           }
         } else if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(
@@ -2063,8 +2070,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     const llvm::BasicBlock *ThenJoin = straightAssignArmJoin(Then);
     const llvm::BasicBlock *ElseJoin = straightAssignArmJoin(Else);
     if (Then && Else && Then != Else && ThenJoin && ThenJoin == ElseJoin) {
-      auto PrintedStore = [&](const llvm::BasicBlock *Arm)
-          -> const llvm::StoreInst * {
+      auto PrintedStore =
+          [&](const llvm::BasicBlock *Arm) -> const llvm::StoreInst * {
         const llvm::StoreInst *Store = nullptr;
         for (const llvm::Instruction &Local : *Arm) {
           if (Local.isTerminator())
@@ -2094,7 +2101,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
            foldImmediate(ElseStore->getValueOperand()).has_value());
       if (ThenSlot && ThenSlot == ElseSlot && !allocaAddressTaken(ThenSlot) &&
           OneImm) {
-        auto LastStore = [&](const llvm::BasicBlock *BB) -> const llvm::StoreInst * {
+        auto LastStore =
+            [&](const llvm::BasicBlock *BB) -> const llvm::StoreInst * {
           const llvm::StoreInst *Last = nullptr;
           for (const llvm::Instruction &Local : *BB) {
             const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Local);
@@ -2297,9 +2305,9 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             size_t Pos = 0;
             while ((Pos = NextCond.find(Name, Pos)) != std::string::npos) {
               const bool Left =
-                  Pos == 0 ||
-                  (!std::isalnum(static_cast<unsigned char>(NextCond[Pos - 1])) &&
-                   NextCond[Pos - 1] != '_');
+                  Pos == 0 || (!std::isalnum(static_cast<unsigned char>(
+                                   NextCond[Pos - 1])) &&
+                               NextCond[Pos - 1] != '_');
               const size_t End = Pos + Name.size();
               const bool Right =
                   End == NextCond.size() ||
@@ -2328,7 +2336,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       }
       if (!InlinedFallthroughBlocks.count(Else)) {
         if (const llvm::BasicBlock *And = andRejoinTest(From, Else)) {
-          const auto *AndBr = llvm::cast<llvm::CondBrInst>(And->getTerminator());
+          const auto *AndBr =
+              llvm::cast<llvm::CondBrInst>(And->getTerminator());
           std::string Inv;
           if (std::optional<std::string> Swapped =
                   invertedRelationalText(Br->getCondition()))
@@ -2361,9 +2370,9 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
             size_t Pos = 0;
             while ((Pos = AndCond.find(Name, Pos)) != std::string::npos) {
               const bool Left =
-                  Pos == 0 ||
-                  (!std::isalnum(static_cast<unsigned char>(AndCond[Pos - 1])) &&
-                   AndCond[Pos - 1] != '_');
+                  Pos == 0 || (!std::isalnum(static_cast<unsigned char>(
+                                   AndCond[Pos - 1])) &&
+                               AndCond[Pos - 1] != '_');
               const size_t End = Pos + Name.size();
               const bool Right =
                   End == AndCond.size() ||
@@ -2532,8 +2541,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           OS << "} else {\n";
           int Depth = Indent + 1;
           for (size_t I = 1; I < JoinConds.size(); ++I) {
-            const auto *PrevBr = llvm::cast<llvm::CondBrInst>(
-                JoinConds[I - 1]->getTerminator());
+            const auto *PrevBr =
+                llvm::cast<llvm::CondBrInst>(JoinConds[I - 1]->getTerminator());
             const llvm::BasicBlock *Hop = PrevBr->getSuccessor(1);
             llvm::SmallPtrSet<const llvm::BasicBlock *, 8> HopSeen;
             while (Hop && Hop != JoinConds[I] && HopSeen.insert(Hop).second) {
@@ -2655,8 +2664,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
       const llvm::BasicBlock *JoinArm = nullptr;
       const llvm::BasicBlock *JoinTarget = nullptr;
       if (!Cond.empty() &&
-          laterTrueArmJoinsFallthrough(From, Else, JoinRegion, JoinSide, JoinArm,
-                                       JoinTarget)) {
+          laterTrueArmJoinsFallthrough(From, Else, JoinRegion, JoinSide,
+                                       JoinArm, JoinTarget)) {
         llvm::SmallPtrSet<const llvm::BasicBlock *, 16> JoinSet(
             JoinRegion.begin(), JoinRegion.end());
         for (const llvm::BasicBlock *Block : JoinRegion)
@@ -2742,8 +2751,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
               return true;
             }
             auto InChain = [&](const llvm::BasicBlock *Edge) {
-              return Edge == From || Edge == SelectHead || OrSkips.count(Edge) ||
-                     llvm::is_contained(SelConds, Edge);
+              return Edge == From || Edge == SelectHead ||
+                     OrSkips.count(Edge) || llvm::is_contained(SelConds, Edge);
             };
             if (const auto *Br =
                     llvm::dyn_cast<llvm::CondBrInst>(Cur->getTerminator())) {
@@ -2780,8 +2789,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
           OS << "if (" << Cond << ") {\n";
           for (llvm::Instruction &DefInst :
                *const_cast<llvm::BasicBlock *>(SelDef)) {
-            if (DefInst.isTerminator() ||
-                llvm::isa<llvm::AllocaInst>(&DefInst))
+            if (DefInst.isTerminator() || llvm::isa<llvm::AllocaInst>(&DefInst))
               continue;
             writeInstruction(DefInst, Indent + 1);
           }
@@ -2826,7 +2834,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     // inside the arm that reaches it.
     if (Else && Else->getSinglePredecessor() == From &&
         !edgePrintsPhiCopy(From, Else)) {
-      const auto *LateBr = llvm::dyn_cast<llvm::CondBrInst>(Else->getTerminator());
+      const auto *LateBr =
+          llvm::dyn_cast<llvm::CondBrInst>(Else->getTerminator());
       if (LateBr && !edgePrintsPhiCopy(Else, LateBr->getSuccessor(0)) &&
           !edgePrintsPhiCopy(Else, LateBr->getSuccessor(1))) {
         const llvm::BasicBlock *TrueT =
@@ -2968,13 +2977,14 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
                 return false;
               if (splitPhiCursorLoop(BB, LoopLatch, LoopStep, LoopSlot))
                 return true;
-              const auto *Hop = llvm::dyn_cast<llvm::UncondBrInst>(
-                  BB->getTerminator());
+              const auto *Hop =
+                  llvm::dyn_cast<llvm::UncondBrInst>(BB->getTerminator());
               return Hop && Hop->getSuccessor(0) &&
                      splitPhiCursorLoop(printBranchTarget(Hop->getSuccessor(0)),
                                         LoopLatch, LoopStep, LoopSlot);
             };
-            const bool LoopOwnsNull = EntersLoop(LoopHead) || EntersLoop(FallEdge);
+            const bool LoopOwnsNull =
+                EntersLoop(LoopHead) || EntersLoop(FallEdge);
             if (!LoopOwnsNull) {
               emitIndent(Indent);
               OS << "if (" << LateCond << ") {\n";
@@ -3107,6 +3117,53 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   OS << OpName << " */\n";
 }
 
+bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
+  auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
+  auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst);
+  if ((!Load || !Load->isSimple() || Load->getPointerAddressSpace() != 0) &&
+      (!Store || !Store->isSimple() || Store->getPointerAddressSpace() != 0))
+    return false;
+  auto *Type = Load ? Load->getType() : Store->getValueOperand()->getType();
+  // These carriers have exact C object representations. Partial-width
+  // integers and x87 have their separate exact-byte paths.
+  const bool Integer = Type->isIntegerTy(8) || Type->isIntegerTy(16) ||
+                       Type->isIntegerTy(32) || Type->isIntegerTy(64) ||
+                       Type->isIntegerTy(128);
+  if (!Integer && !Type->isFloatTy() && !Type->isDoubleTy() &&
+      !Type->isBFloatTy())
+    return false;
+  const auto &Layout = CurMod->getDataLayout();
+  const auto Alignment = Load ? Load->getAlign() : Store->getAlign();
+  const auto Size = Layout.getTypeStoreSize(Type);
+  // The source ABI can allow weaker alignment than the emitted C carrier
+  // (for example i64:32). Its exact object size is a conservative alignment
+  // bound for each native scalar type admitted above.
+  if (Size.isScalable() || Alignment.value() >= Size.getFixedValue())
+    return false;
+  const auto *Address =
+      Load ? Load->getPointerOperand() : Store->getPointerOperand();
+  std::string Pointer = valueStr(Address);
+  if (std::string Image = imageDataCName(Address); !Image.empty())
+    Pointer = "&" + Image;
+  emitIndent(Indent);
+  if (Load) {
+    OS << "__builtin_memcpy(&" << getName(Load) << ", (const void*)(" << Pointer
+       << "), " << Size.getFixedValue() << ");\n";
+  } else {
+    const std::string Value = freshVar("memory_value");
+    OS << "{ " << typeToCLLVM(Type) << " " << Value << " = "
+       << (Integer ? integerPointerOperandStr(Store->getValueOperand())
+                   : valueStr(Store->getValueOperand()))
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << "__builtin_memcpy((void*)(" << Pointer << "), &" << Value << ", "
+       << Size.getFixedValue() << ");\n";
+    emitIndent(Indent);
+    OS << "}\n";
+  }
+  return true;
+}
+
 void LLVMCWriter::writeGEP(llvm::GetElementPtrInst &GEP,
                            const std::string &Name, int Indent) {
   if (SyntheticFrame && GEP.getFunction() &&
@@ -3128,51 +3185,7 @@ void LLVMCWriter::writeGEP(llvm::GetElementPtrInst &GEP,
     }
   }
   emitIndent(Indent);
-  if (const llvm::AllocaInst *Slot = asAllocaPointer(GEP.getPointerOperand())) {
-    const std::string Local = getName(Slot);
-    if (GEP.getNumIndices() == 1) {
-      const std::string Idx = valueStr(GEP.getOperand(1));
-      if (Idx == "0")
-        OS << Name << " = &" << Local << ";\n";
-      else
-        OS << Name << " = (void*)((char*)&" << Local << " + " << Idx << ");\n";
-      return;
-    }
-    if (GEP.getNumIndices() == 2 && valueStr(GEP.getOperand(1)) == "0") {
-      OS << Name << " = &" << Local << "[" << valueStr(GEP.getOperand(2))
-         << "];\n";
-      return;
-    }
-  }
-  auto Base = valueStr(GEP.getPointerOperand());
-  if (GEP.getNumIndices() == 1) {
-    OS << Name << " = (void*)((char*)" << Base << " + "
-       << valueStr(GEP.getOperand(1)) << ");\n";
-  } else if (GEP.getNumIndices() == 2) {
-    auto Idx0 = valueStr(GEP.getOperand(1));
-    auto Idx1 = valueStr(GEP.getOperand(2));
-    if (Idx0 == "0") {
-      auto *SrcTy = GEP.getSourceElementType();
-      if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(SrcTy)) {
-        OS << Name << " = &((" << typeToCLLVM(AT->getElementType()) << "*)"
-           << Base << ")[" << Idx1 << "];\n";
-      } else if (auto *ST = llvm::dyn_cast<llvm::StructType>(SrcTy)) {
-        if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(GEP.getOperand(2))) {
-          OS << Name << " = &((" << llvmStructName(ST) << "*)" << Base
-             << ")->field_" << CI->getZExtValue() << ";\n";
-        } else {
-          OS << Name << " = (void*)((char*)" << Base << " + " << Idx1 << ");\n";
-        }
-      } else {
-        OS << Name << " = (void*)((char*)" << Base << " + " << Idx1 << ");\n";
-      }
-    } else {
-      OS << Name << " = (void*)((char*)" << Base << " + " << Idx0 << " + "
-         << Idx1 << ");\n";
-    }
-  } else {
-    OS << Name << " = (void*)" << Base << "; /* complex GEP */\n";
-  }
+  OS << Name << " = " << gepExpr(*llvm::cast<llvm::GEPOperator>(&GEP)) << ";\n";
 }
 
 bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
@@ -3181,6 +3194,16 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::aarch64_neon_bfmmla) {
+    if (!isNativeVectorIntrinsic(Call, Opts.TheArch))
+      throw std::runtime_error("BFMMLA requires an AArch64 C projection");
+    emitIndent(Indent);
+    OS << getName(&Call) << " = vbfmmlaq_f32("
+       << valueStr(Call.getArgOperand(0)) << ", "
+       << valueStr(Call.getArgOperand(1)) << ", "
+       << valueStr(Call.getArgOperand(2)) << ");\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::experimental_constrained_sitofp &&
       Call.getType()->isX86_FP80Ty()) {
     if (Call.arg_size() != 3)
@@ -3348,7 +3371,8 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       llvm::report_fatal_error("invalid Linux x64 syscall C projection");
     if (Opts.Format != BinaryFormat::Unknown &&
         Opts.Format != BinaryFormat::ELF)
-      llvm::report_fatal_error("Linux x64 syscall requires an ELF C projection");
+      llvm::report_fatal_error(
+          "Linux x64 syscall requires an ELF C projection");
     const std::string Rax = freshVar("syscall_rax");
     const std::string Rdi = freshVar("syscall_rdi");
     const std::string Rsi = freshVar("syscall_rsi");
@@ -3372,18 +3396,16 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         {"r10", R10}, {"r8", R8}, {"r9", R9}};
     for (unsigned Index = 0; Index < 3; ++Index) {
       emitIndent(Indent + 1);
-      OS << "register uint64_t " << FixedInputs[Index].second
-         << " __asm__(\"" << FixedInputs[Index].first << "\") = "
-         << valueStr(Call.getArgOperand(Index + 4)) << ";\n";
+      OS << "register uint64_t " << FixedInputs[Index].second << " __asm__(\""
+         << FixedInputs[Index].first
+         << "\") = " << valueStr(Call.getArgOperand(Index + 4)) << ";\n";
     }
     emitIndent(Indent + 1);
     OS << "register uint64_t " << R11 << " __asm__(\"r11\");\n";
     emitIndent(Indent + 1);
-    OS << "__asm__ volatile(\"syscall\" : \"+a\"(" << Rax
-       << "), \"=r\"(" << R11 << ") : \"D\"(" << Rdi
-       << "), \"S\"(" << Rsi << "), \"d\"(" << Rdx
-       << "), \"r\"(" << R10 << "), \"r\"(" << R8
-       << "), \"r\"(" << R9
+    OS << "__asm__ volatile(\"syscall\" : \"+a\"(" << Rax << "), \"=r\"(" << R11
+       << ") : \"D\"(" << Rdi << "), \"S\"(" << Rsi << "), \"d\"(" << Rdx
+       << "), \"r\"(" << R10 << "), \"r\"(" << R8 << "), \"r\"(" << R9
        << ") : \"rcx\", \"memory\", \"cc\");\n";
     if (ResultLive) {
       emitIndent(Indent + 1);
@@ -3421,8 +3443,8 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         const std::string Temp = freshVar("x87_operand");
         const std::string Bits = freshVar("x87_source");
         emitIndent(Indent);
-        OS << "__uint128_t " << Bits << " = "
-           << valueStr(Cast->getOperand(0)) << ";\n";
+        OS << "__uint128_t " << Bits << " = " << valueStr(Cast->getOperand(0))
+           << ";\n";
         emitIndent(Indent);
         OS << "long double " << Temp << " = 0;\n";
         emitIndent(Indent);
@@ -3432,16 +3454,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       return valueStr(Arg);
     };
     const auto *PairType = llvm::dyn_cast<llvm::StructType>(Call.getType());
-    if ((AsmStr == "fprem\n\tfnstsw $1" ||
-         AsmStr == "fprem1\n\tfnstsw $1") &&
+    if ((AsmStr == "fprem\n\tfnstsw $1" || AsmStr == "fprem1\n\tfnstsw $1") &&
         PairType && PairType->getNumElements() == 2 &&
         PairType->getElementType(0)->isX86_FP80Ty() &&
-        PairType->getElementType(1)->isIntegerTy(16) &&
-        Call.arg_size() == 2 &&
+        PairType->getElementType(1)->isIntegerTy(16) && Call.arg_size() == 2 &&
         Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&
         Call.getArgOperand(1)->getType()->isX86_FP80Ty() &&
-        Constraints ==
-            "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}") {
+        Constraints == "=&{st},={ax},0,{st(1)},~{dirflag},~{fpsr},~{flags}") {
       const std::string Dividend = X87Operand(0);
       const std::string Divisor = X87Operand(1);
       const std::string Result =
@@ -3454,10 +3473,9 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
           llvm::StringRef(AsmStr).find('\n'));
       emitIndent(Indent);
       OS << "__asm__ volatile(\"" << Mnemonic
-         << "\\n\\tfnstsw %%ax\" : \"=&t\"(" << Result
-         << ".field_0), \"=a\"(" << Result
-         << ".field_1) : \"0\"(" << Dividend << "), \"u\"("
-         << Divisor << ") : \"cc\");\n";
+         << "\\n\\tfnstsw %%ax\" : \"=&t\"(" << Result << ".field_0), \"=a\"("
+         << Result << ".field_1) : \"0\"(" << Dividend << "), \"u\"(" << Divisor
+         << ") : \"cc\");\n";
       return true;
     }
     if ((AsmStr == "fprem" || AsmStr == "fprem1") &&
@@ -3475,11 +3493,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       }
       const llvm::CallInst *Status = nullptr;
       const llvm::Instruction *Next = Call.getNextNode();
-      while (Next &&
-             (llvm::isa<llvm::BitCastInst>(Next) ||
-              llvm::isa<llvm::DbgInfoIntrinsic>(Next)))
+      while (Next && (llvm::isa<llvm::BitCastInst>(Next) ||
+                      llvm::isa<llvm::DbgInfoIntrinsic>(Next)))
         Next = Next->getNextNode();
-      if (const auto *Candidate = llvm::dyn_cast_or_null<llvm::CallInst>(Next)) {
+      if (const auto *Candidate =
+              llvm::dyn_cast_or_null<llvm::CallInst>(Next)) {
         const auto *StatusAsm =
             llvm::dyn_cast<llvm::InlineAsm>(Candidate->getCalledOperand());
         if (StatusAsm && !Candidate->use_empty() &&
@@ -3522,8 +3540,7 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
          ((AsmStr == "fwait" || AsmStr == "fincstp" ||
            (AsmStr.size() == 12 &&
             llvm::StringRef(AsmStr).starts_with("ffree %st(") &&
-            AsmStr[10] >= '0' && AsmStr[10] <= '7' &&
-            AsmStr[11] == ')')) &&
+            AsmStr[10] >= '0' && AsmStr[10] <= '7' && AsmStr[11] == ')')) &&
           Constraints == "~{memory},~{dirflag},~{fpsr},~{flags}"))) {
       std::string Template = AsmStr;
       if (llvm::StringRef(AsmStr).starts_with("ffree %st("))
@@ -3788,8 +3805,8 @@ bool LLVMCWriter::mixedPredLastStores(const llvm::AllocaInst *Slot,
     ++Wrote;
     if (storedTypedMemberLoad(Last))
       Field = true;
-    else if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
-                 peelCastFreeze(Last))) {
+    else if (const auto *CI =
+                 llvm::dyn_cast<llvm::ConstantInt>(peelCastFreeze(Last))) {
       Imm = true;
       const std::string Folded = std::to_string(CI->getZExtValue());
       if (!FirstImm)
@@ -3931,7 +3948,7 @@ const llvm::Value *peelIntCast(const llvm::Value *V) {
 } // namespace
 
 std::optional<std::string> LLVMCWriter::enumeratorDisplay(const TypeRef &Ty,
-                                                         uint64_t Val) const {
+                                                          uint64_t Val) const {
   if (!Ty || Ty->Kind != NdTypeKind::Struct || !Ty->IsEnum)
     return std::nullopt;
   if (Dbg)
@@ -3944,8 +3961,7 @@ std::optional<std::string> LLVMCWriter::enumeratorDisplay(const TypeRef &Ty,
   return Name;
 }
 
-TypeRef
-LLVMCWriter::enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const {
+TypeRef LLVMCWriter::enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const {
   if (!Slot || !Dbg)
     return {};
   for (const llvm::User *SlotUser : Slot->users()) {
@@ -3983,21 +3999,24 @@ LLVMCWriter::enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const {
 }
 
 std::string LLVMCWriter::inplaceIntegerUpdate(const llvm::StoreInst &SI,
-                                                llvm::StringRef Dest,
-                                                const llvm::Value *Stored) {
+                                              llvm::StringRef Dest,
+                                              const llvm::Value *Stored) {
   (void)SI;
   const llvm::Value *V = Stored;
   std::set<const llvm::Value *> Seen;
   while (V && Seen.insert(V).second) {
     const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V);
-    if (Cast && llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast)) {
+    if (Cast &&
+        llvm::isa<llvm::ZExtInst, llvm::SExtInst, llvm::TruncInst>(Cast)) {
       // A compound assignment evaluates in the destination's width. It cannot
       // replace arithmetic that deliberately narrows or extends its result.
       return {};
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::AllocaInst *Home = asAllocaPointer(LI->getPointerOperand())) {
-        if (const llvm::Value *Prev = allocaStoredValue(Home); Prev && Prev != V) {
+      if (const llvm::AllocaInst *Home =
+              asAllocaPointer(LI->getPointerOperand())) {
+        if (const llvm::Value *Prev = allocaStoredValue(Home);
+            Prev && Prev != V) {
           V = Prev;
           continue;
         }
@@ -4030,8 +4049,8 @@ std::string LLVMCWriter::inplaceIntegerUpdate(const llvm::StoreInst &SI,
     return {};
   if (BO->getType() != Stored->getType() || valueStr(Base) != Dest)
     return {};
-  const uint64_t Abs = Delta > 0 ? static_cast<uint64_t>(Delta)
-                                 : static_cast<uint64_t>(-Delta);
+  const uint64_t Abs =
+      Delta > 0 ? static_cast<uint64_t>(Delta) : static_cast<uint64_t>(-Delta);
   return Dest.str() + (Delta > 0 ? " += " : " -= ") + std::to_string(Abs);
 }
 
@@ -4066,7 +4085,7 @@ std::string LLVMCWriter::integerCallStoredText(const llvm::Value *Stored) {
 }
 
 std::string LLVMCWriter::enumStoredText(const llvm::AllocaInst *Slot,
-                                      const llvm::Value *Stored) {
+                                        const llvm::Value *Stored) {
   const std::string RHS = valueStr(Stored);
   if (!Slot)
     return RHS;
@@ -4088,18 +4107,18 @@ std::string LLVMCWriter::enumStoredText(const llvm::AllocaInst *Slot,
 }
 
 std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
-                                            const llvm::Value *Other) {
+                                             const llvm::Value *Other) {
   const std::string Text = valueStr(peelIntegerView(V));
-  const auto *CI =
-      llvm::dyn_cast_or_null<llvm::ConstantInt>(peelIntCast(peelIntegerView(V)));
+  const auto *CI = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+      peelIntCast(peelIntegerView(V)));
   if (!CI || !Other)
     return Text;
   const llvm::Value *Typed = peelIntCast(peelIntegerView(Other));
   const auto *LI = llvm::dyn_cast_or_null<llvm::LoadInst>(Typed);
   if (!LI)
     return Text;
-  auto Acc = typedRecordAccess(LI->getPointerOperand(),
-                               llvmAccessSize(LI->getType()));
+  auto Acc =
+      typedRecordAccess(LI->getPointerOperand(), llvmAccessSize(LI->getType()));
   if (!Acc)
     return Text;
   if (auto Name = enumeratorDisplay(Acc->Type, CI->getZExtValue()))
@@ -4137,7 +4156,7 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
           llvm::dyn_cast<llvm::ConstantInt>(peelIntegerView(Arg))) {
     if (const auto FS = debugCallee(Call))
       if (auto Name = enumeratorDisplay(debugCallArgType(*FS, ArgIdx),
-                                       CI->getZExtValue()))
+                                        CI->getZExtValue()))
         return *Name;
   }
   if (auto Imm = foldImmediate(Arg)) {
@@ -4186,7 +4205,8 @@ bool LLVMCWriter::writeExclusiveSkip(
       const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Local);
       if (!SI)
         continue;
-      if (const llvm::AllocaInst *Slot = asAllocaPointer(SI->getPointerOperand()))
+      if (const llvm::AllocaInst *Slot =
+              asAllocaPointer(SI->getPointerOperand()))
         AllocaLastValues[Slot] = SI->getValueOperand();
     }
     llvm::SmallVector<const llvm::CallInst *, 4> Added;
@@ -4371,8 +4391,8 @@ void LLVMCWriter::writeExclusiveArm(
     const llvm::BasicBlock *Pred = BB;
     const llvm::BasicBlock *Cur = Raw;
     llvm::SmallPtrSet<const llvm::BasicBlock *, 8> Hop;
-    while (Cur && isPrintPassthrough(Cur) && Cur->getSinglePredecessor() == Pred &&
-           Hop.insert(Cur).second) {
+    while (Cur && isPrintPassthrough(Cur) &&
+           Cur->getSinglePredecessor() == Pred && Hop.insert(Cur).second) {
       Pred = Cur;
       const auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(Cur->getTerminator());
       if (!Br)
@@ -4542,7 +4562,8 @@ void LLVMCWriter::writeExclusiveArm(
           if (instructionIsPrinted(Inst))
             return false;
         }
-        const auto *Go = llvm::dyn_cast<llvm::UncondBrInst>(Cur->getTerminator());
+        const auto *Go =
+            llvm::dyn_cast<llvm::UncondBrInst>(Cur->getTerminator());
         if (!Go)
           return true;
         const llvm::BasicBlock *Next = Go->getSuccessor(0);
@@ -4637,7 +4658,7 @@ void LLVMCWriter::writeExclusiveArm(
     OS << "}\n";
     return;
   }
-  if (( !TrueT || TrueT == Tail || TrueT == Stop) &&
+  if ((!TrueT || TrueT == Tail || TrueT == Stop) &&
       (!FalseT || FalseT == Tail || FalseT == Stop))
     return;
   if (!TrueT || TrueT == Tail || TrueT == Stop) {
@@ -4667,8 +4688,8 @@ void LLVMCWriter::writeExclusiveArm(
 }
 
 void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
-                                          const llvm::BasicBlock *Else,
-                                          int Indent) {
+                                         const llvm::BasicBlock *Else,
+                                         int Indent) {
   const llvm::BasicBlock *Body = straightLineFalseSkip(From, Else);
   if (!Body)
     return;
@@ -4710,8 +4731,7 @@ void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
       const auto SavedImm = AllocaImmediates;
       AllocaLastValues.clear();
       AllocaImmediates.clear();
-      for (llvm::Instruction &ArmInst :
-           *const_cast<llvm::BasicBlock *>(Arm)) {
+      for (llvm::Instruction &ArmInst : *const_cast<llvm::BasicBlock *>(Arm)) {
         if (ArmInst.isTerminator() || llvm::isa<llvm::AllocaInst>(&ArmInst))
           continue;
         writeInstruction(ArmInst, ArmIndent);
@@ -4797,15 +4817,15 @@ void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
       writeInstruction(*const_cast<llvm::CondBrInst *>(CheckBr), Indent + 1);
       InlinedFallthroughBlocks.insert(Check);
     } else {
-      const bool FallsThrough = printBranchTarget(Br->getSuccessor(0)) ==
-                                printBranchTarget(Then);
+      const bool FallsThrough =
+          printBranchTarget(Br->getSuccessor(0)) == printBranchTarget(Then);
       writeGoto(Body, Br->getSuccessor(0), Indent + 1, !FallsThrough);
     }
-  } else if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(
-                 Body->getTerminator())) {
+  } else if (auto *Ret =
+                 llvm::dyn_cast<llvm::ReturnInst>(Body->getTerminator())) {
     writeInstruction(*const_cast<llvm::ReturnInst *>(Ret), Indent + 1);
-  } else if (auto *Inner = llvm::dyn_cast<llvm::CondBrInst>(
-                 Body->getTerminator())) {
+  } else if (auto *Inner =
+                 llvm::dyn_cast<llvm::CondBrInst>(Body->getTerminator())) {
     const llvm::BasicBlock *Alt = nullptr;
     const llvm::BasicBlock *Def = nullptr;
     const llvm::BasicBlock *Join = nullptr;
@@ -4815,8 +4835,7 @@ void LLVMCWriter::writeInvertedFalseSkip(const llvm::BasicBlock *From,
       InnerShown = *Swapped;
     else
       InnerShown = Inverted(std::move(InnerShown));
-    if (!InnerShown.empty() &&
-        sharedAssignElse(From, Body, Alt, Def, Join)) {
+    if (!InnerShown.empty() && sharedAssignElse(From, Body, Alt, Def, Join)) {
       auto WriteArm = [&](const llvm::BasicBlock *Arm, int ArmIndent) {
         const auto SavedLast = AllocaLastValues;
         AllocaLastValues.clear();
@@ -4984,8 +5003,8 @@ void LLVMCWriter::writeCondTrueEdge(const llvm::BasicBlock *From,
       const bool FallsThrough = FallsIntoNext(Br->getSuccessor(0));
       writeGoto(Body, Br->getSuccessor(0), Indent, !FallsThrough);
     }
-  } else if (auto *Ret = llvm::dyn_cast<llvm::ReturnInst>(
-                 Body->getTerminator())) {
+  } else if (auto *Ret =
+                 llvm::dyn_cast<llvm::ReturnInst>(Body->getTerminator())) {
     writeInstruction(*const_cast<llvm::ReturnInst *>(Ret), Indent);
   } else if (llvm::isa<llvm::UnreachableInst>(Body->getTerminator())) {
     writeInstruction(*const_cast<llvm::Instruction *>(Body->getTerminator()),
@@ -5022,8 +5041,7 @@ bool LLVMCWriter::phiIncomingIsPrinted(const llvm::PHINode *Phi,
       !phiPrintedAsJoinCallArg(Phi))
     return false;
   if (!ForceMaterialized && Phi->getParent()->getSinglePredecessor() &&
-      foldImmediate(Incoming) &&
-      usersOnlySeeImmediate(Phi) &&
+      foldImmediate(Incoming) && usersOnlySeeImmediate(Phi) &&
       !phiPrintedAsJoinCallArg(Phi))
     return false;
   if ((isUnknownPlaceholder(Incoming) || isCallClobberValue(Incoming)) &&
@@ -5192,8 +5210,7 @@ LLVMCWriter::resolveImportCalleeName(const llvm::Value *Callee) const {
 
   auto nameFromSlot = [&](va_t Slot) -> std::string {
     if (Dbg) {
-      if (auto Data = Dbg->resolveDataObject(Slot);
-          Data && !Data->Name.empty())
+      if (auto Data = Dbg->resolveDataObject(Slot); Data && !Data->Name.empty())
         return canonicalizeCProjectionIdentifier(Data->Name, "nd_import");
       if (auto FS = Dbg->resolveFunction(Slot); FS && !FS->Name.empty())
         return canonicalizeCProjectionIdentifier(FS->Name, "nd_import");
