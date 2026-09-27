@@ -178,8 +178,10 @@ public:
   llvm::Error activateStack(uint64_t Base, uint64_t Size);
   llvm::Error retireStack(uint64_t Base, uint64_t Size);
   void enterForeground() { CurrentIRQL = 0; }
-  void enterExecution(uint64_t Identity, uint64_t ThreadKey = 0) {
+  void enterExecution(uint64_t Identity, uint64_t ThreadKey = 0,
+                      GuestCallToken Call = {}) {
     CurrentExecution = Identity;
+    CurrentGuestCall = Call;
     CurrentThreadKey = ThreadKey ? ThreadKey : Identity;
     ExecutionThreadKeys[Identity] = CurrentThreadKey;
     if (EnteringPassiveInterrupt) {
@@ -375,6 +377,7 @@ private:
                                                         uint64_t Result);
 
   uint64_t CurrentExecution = 0;
+  GuestCallToken CurrentGuestCall;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
   struct ExecutionProcessContext {
@@ -643,6 +646,32 @@ private:
     uint64_t Address;
     uint32_t Size;
   };
+  struct DriverIRPAllocation {
+    uint64_t Size = 0;
+    uint8_t StackCount = 0;
+    bool Submitted = false;
+    bool StorageReleased = false;
+    bool CompletionHeld = false;
+    uint32_t DispatchSlot = 0;
+    uint64_t CompletionDevice = 0;
+    std::optional<uint64_t> InitialDispatchToken;
+    std::optional<uint64_t> FreeCompletionToken;
+    mutable std::array<bool, 16> IOStatusWritten{};
+  };
+  std::map<uint64_t, DriverIRPAllocation> DriverIRPs;
+  llvm::Expected<uint64_t>
+  allocateDriverIRP(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Error initializeIRPHeader(uint64_t IRP, uint8_t StackCount,
+                                  uint8_t CurrentLocation);
+  llvm::Error freeDriverIRP(uint64_t IRP);
+  llvm::Error releaseDriverIRPStorage(uint64_t IRP);
+  llvm::Error freeSubmittedDriverIRP(uint64_t IRP);
+  llvm::Error adoptDriverIRP(uint64_t Device, uint64_t IRP);
+  llvm::Error validateDriverIRPCompletion(uint64_t IRP, uint32_t Status,
+                                          uint64_t Information) const;
+  llvm::Error captureDriverIRPCompletion(uint64_t IRP);
+  llvm::Error recordDriverIRPDispatchReturn(uint64_t IRP, uint32_t Status);
+  llvm::Error tryFinalizeDriverIRP(uint64_t IRP);
   struct ActiveRequest {
     DriverRequestKind Kind;
     size_t ResultIndex;

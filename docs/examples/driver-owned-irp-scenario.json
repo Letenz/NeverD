@@ -1,0 +1,103 @@
+{
+  "service_name": "NeverDOwnedIrp",
+  "load_address": "0x190000000",
+  "unload": true,
+  "requests": [
+    {
+      "kind": "create",
+      "device": "\\Device\\NeverDOwnedIrp",
+      "file": 1
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "4900"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "5701"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "4800"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222008"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "4301"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "4e00"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222000",
+      "input": "5501"
+    },
+    {
+      "kind": "ioctl",
+      "file": 1,
+      "code": "0x222004",
+      "output_size": 56
+    },
+    {
+      "kind": "cleanup",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "file": 1
+    }
+  ]
+}

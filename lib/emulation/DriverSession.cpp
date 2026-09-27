@@ -636,7 +636,11 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     return llvm::Error::success();
   };
   auto RunExecution = [&](Execution &Frame) -> llvm::Error {
-    Kernel.enterExecution(Frame.Base, Frame.ID ? Frame.ID : profile::StackBase);
+    const Execution *Owner = &Frame;
+    while (Owner->ExceptionCallback && Owner->Parent)
+      Owner = Owner->Parent.get();
+    Kernel.enterExecution(Frame.Base, Frame.ID ? Frame.ID : profile::StackBase,
+                          Owner->ReturnToken);
     if (Frame.Context) {
       if (auto E = CPU.restoreContext(*Frame.Context))
         return E;

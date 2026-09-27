@@ -128,6 +128,11 @@ NEVERD_KERNEL_IRQL_API(ExAllocatePool2, Dispatch)
 NEVERD_KERNEL_IRQL_API(ExFreePoolWithTag, Dispatch)
 NEVERD_KERNEL_IRQL_API(ExFreePool, Dispatch)
 
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioallocateirp
+// https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-iofreeirp
+NEVERD_KERNEL_IRQL_API(IoAllocateIrp, Dispatch)
+NEVERD_KERNEL_IRQL_API(IoFreeIrp, Dispatch)
+
 // User mappings additionally require <= APC_LEVEL; the supported mapping
 // subset is KernelMode. RtlInitUnicodeString requires resident storage at 2.
 // https://learn.microsoft.com/windows-hardware/drivers/ddi/wdm/nf-wdm-ioallocatemdl

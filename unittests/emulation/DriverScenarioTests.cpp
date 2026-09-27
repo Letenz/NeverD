@@ -63,6 +63,80 @@ TEST(DriverScenario, RejectsUnknownFieldsTypesAndRequestKinds) {
   }
 }
 
+TEST(DriverScenario, KernelGeneratedRequestsFailBeforeImageLoading) {
+  for (const char *JSON :
+       {R"({"requests":[{"kind":"internal_ioctl"}]})",
+        R"({"requests":[{"kind":"internal_ioctl","code":3,"file":7}]})"}) {
+    SCOPED_TRACE(JSON);
+    auto Parsed = driverOptionsFromScenarioJSON(JSON);
+    ASSERT_FALSE(bool(Parsed));
+    EXPECT_NE(llvm::toString(Parsed.takeError()).find("kernel-generated"),
+              std::string::npos);
+  }
+  DriverOptions Input;
+  DriverRequest Request;
+  Request.Kind = DriverRequestKind::InternalDeviceControl;
+  Request.ControlCode = 3;
+  Input.Requests.push_back(Request);
+  auto Inherited = driverOptionsFromScenarioJSON("{}", Input);
+  ASSERT_FALSE(bool(Inherited));
+  EXPECT_NE(llvm::toString(Inherited.takeError()).find("kernel-generated"),
+            std::string::npos);
+  auto Executed =
+      emulateDriver("missing-kernel-request-preflight-image.sys", Input);
+  ASSERT_FALSE(bool(Executed));
+  EXPECT_NE(llvm::toString(Executed.takeError()).find("kernel-generated"),
+            std::string::npos);
+}
+
+TEST(DriverScenario, DriverAllocatedReportsPreserveKernelOriginWithoutAFile) {
+  DriverResult Result;
+  Result.Stop = DriverStopReason::Returned;
+  Result.NTStatus = 0;
+  DriverRequest Input;
+  Input.File = 7;
+  Result.Configuration.Requests.push_back(Input);
+  DriverRequestResult Outer;
+  Outer.File = 7;
+  Outer.RequestorProcessID = DriverRequest::DefaultRequestorProcessID;
+  Outer.Completed = true;
+  Outer.DispatchStatus = 0;
+  Outer.IOStatus = 0;
+  Result.Requests.push_back(Outer);
+  DriverRequestResult Child;
+  Child.Kind = DriverRequestKind::InternalDeviceControl;
+  Child.Origin = DriverRequestOrigin::DriverAllocatedIRP;
+  Child.IRP = 0xfffff80000001000;
+  Child.ControlCode = 0x222003;
+  Child.Completed = true;
+  Child.DispatchStatus = 0;
+  Child.IOStatus = 0;
+  Child.Information = 0x100000001;
+  Result.Requests.push_back(Child);
+  auto JSON = llvm::json::parse(driverResultJSON(Result));
+  ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+  const auto *Root = JSON->getAsObject();
+  ASSERT_NE(Root, nullptr);
+  EXPECT_EQ(Root->getBoolean("scenario_success"), true);
+  const auto *Requests = Root->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  ASSERT_EQ(Requests->size(), 2u);
+  EXPECT_EQ((*Requests)[0].getAsObject()->getInteger("file"), 7);
+  const auto *Observed = (*Requests)[1].getAsObject();
+  EXPECT_EQ(Observed->getString("kind"), "internal_ioctl");
+  EXPECT_EQ(Observed->getString("origin"), "driver_allocated_irp");
+  EXPECT_EQ(Observed->getString("irp"), "0xFFFFF80000001000");
+  EXPECT_EQ(Observed->getInteger("code"), Child.ControlCode);
+  EXPECT_EQ(Observed->getInteger("information"), Child.Information);
+  EXPECT_EQ(Observed->getString("information_hex"), "0x100000001");
+  EXPECT_EQ(Observed->getString("output_hex"), "");
+  for (const auto *Field : {"file", "requestor_process_id", "response_index"}) {
+    SCOPED_TRACE(Field);
+    ASSERT_NE(Observed->get(Field), nullptr);
+    EXPECT_EQ(Observed->get(Field)->kind(), llvm::json::Value::Null);
+  }
+}
+
 TEST(DriverScenario, ParsesIndependentFilesDirectBuffersAndReadWriteOffsets) {
   auto Result = driverOptionsFromScenarioJSON(R"({
     "kernel_exports":{"ExAllocatePool2":true,"OptionalKernelRoutine":false},
