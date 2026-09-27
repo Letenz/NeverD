@@ -2136,8 +2136,7 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
             Owner = &Candidate;
           }
           if (Owner && isFunctionEntry(Owner->CodeRange.Begin) &&
-              !isFunctionEntry(Target) &&
-              Img.hasExecutableCodeOwnerAt(Target))
+              !isFunctionEntry(Target) && Img.hasExecutableCodeOwnerAt(Target))
             Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
         }
   }

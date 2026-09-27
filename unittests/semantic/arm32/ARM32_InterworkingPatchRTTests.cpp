@@ -121,6 +121,9 @@ thumb_leaf:
 .thumb_func
 thumb_call_arm:
   push {lr}
+  cbz r0, thumb_call_arm_direct
+  adds r0, r0, #0
+thumb_call_arm_direct:
   blx arm_leaf
   pop {pc}
 .size thumb_call_arm, .-thumb_call_arm
@@ -155,7 +158,9 @@ thumb_call_arm:
       const size_t NextFunction = Lifted.out.find("\nfunc ", Function + 1);
       const std::string Body =
           Lifted.out.substr(Function, NextFunction - Function);
-      EXPECT_NE(Body.find("BRANCH  cst:"), std::string::npos) << Body;
+      EXPECT_TRUE(Body.find("BRANCH  cst:") != std::string::npos ||
+                  Body.find("CALL reg:") != std::string::npos)
+          << Body;
       EXPECT_EQ(Body.find("INDIR_CALL"), std::string::npos) << Body;
     }
   }

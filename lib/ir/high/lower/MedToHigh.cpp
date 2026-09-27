@@ -731,6 +731,13 @@ void MedToHighConverter::buildExpressions(const MedFunc &Med) {
         PhiOutputVars.insert(varKey(Phi.Output));
     }
   }
+  // ABI recovery binds call operands after SSA, outside the MedOp input
+  // array. They are real uses of their reaching definitions: omitting them
+  // makes a computed outgoing register look dead before HighIR builds calls.
+  for (const MedCallInfo &Call : Med.CallInfos)
+    for (const MedVar &Arg : Call.Args)
+      if (Arg.Id >= 0)
+        UseCount[varKey(Arg)]++;
 
   for (auto &Blk : Med.Blocks) {
     for (auto &Op : Blk.Ops) {
@@ -853,6 +860,11 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
       HP.Name = "arg" + std::to_string(PI);
       if (Med.SourceTypeHint && PI < Med.TypedParams.size()) {
         HP.Name = Med.TypedParams[PI].Name;
+        HP.Type = Med.TypedParams[PI].Type;
+      } else if (PI < Med.TypedParams.size() && Med.TypedParams[PI].Type &&
+                 Med.TypedParams[PI].Type->Kind == NdTypeKind::Ptr) {
+        // Direct memory uses and exact forwarded call roles share the MedIR
+        // parameter certificate with the LLVM backend.
         HP.Type = Med.TypedParams[PI].Type;
       } else if ((PtrParamRegOffs.count(MP.RegOff) &&
                   MP.RegOff != kNoParamReg &&

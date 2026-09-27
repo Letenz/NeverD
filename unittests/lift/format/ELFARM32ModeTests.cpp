@@ -8,8 +8,11 @@
 
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/ELF/ELFLoader.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Support/Error.h"
@@ -232,6 +235,402 @@ thumb_target:
   ASSERT_TRUE(Dec.init(*Image));
   ASSERT_TRUE(Dec.selectMode(*Image, 0x1008, InstructionMode::Thumb));
   EXPECT_EQ(Dec.currentMode(), InstructionMode::Thumb);
+}
+
+TEST_F(ELFARM32ModeTest, FindsDirectInterworkingCallsWithoutSectionMetadata) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  const auto Assembly = tmpFile("stripped-interworking.s");
+  std::ofstream(Assembly) << R"(
+.syntax unified
+.text
+.arm
+.globl arm_wrapper
+.type arm_wrapper,%function
+arm_wrapper:
+  push {lr}
+  blx thumb_leaf
+  pop {pc}
+.size arm_wrapper, .-arm_wrapper
+.word 0xe0800001
+.thumb
+.globl thumb_leaf
+.type thumb_leaf,%function
+.thumb_func
+thumb_leaf:
+  push {lr}
+  cbz r0, thumb_call
+  adds r0, r0, #0
+thumb_call:
+  blx arm_leaf
+  pop {pc}
+.size thumb_leaf, .-thumb_leaf
+.arm
+.p2align 2
+.globl arm_leaf
+.type arm_leaf,%function
+arm_leaf:
+  add r0, r0, r1
+  bx lr
+.size arm_leaf, .-arm_leaf
+)";
+  const auto Object = tmpFile("stripped-interworking.o");
+  const auto Linked = tmpFile("linked-interworking.elf");
+  const auto Stripped = tmpFile("stripped-interworking.elf");
+  ASSERT_TRUE(
+      exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                               Assembly.string(), "-o", Object.string()})
+          .ok());
+  ASSERT_TRUE(exec("ld.lld", {"-m", "armelf_linux_eabi", "-e", "arm_wrapper",
+                              Object.string(), "-o", Linked.string()})
+                  .ok());
+
+  auto LinkedImage = ELFLoader().load(Linked);
+  ASSERT_TRUE(static_cast<bool>(LinkedImage))
+      << llvm::toString(LinkedImage.takeError());
+  const auto Functions = LinkedImage->getFunctionSymbols();
+  const auto Leaf = std::find_if(
+      Functions.begin(), Functions.end(),
+      [](const Symbol *Function) { return Function->Name == "thumb_leaf"; });
+  ASSERT_NE(Leaf, Functions.end());
+  const va_t LeafVA = (*Leaf)->Addr;
+  const auto ARMLeaf = std::find_if(
+      Functions.begin(), Functions.end(),
+      [](const Symbol *Function) { return Function->Name == "arm_leaf"; });
+  ASSERT_NE(ARMLeaf, Functions.end());
+  const va_t ARMLeafVA = (*ARMLeaf)->Addr;
+  const auto Wrapper = std::find_if(
+      Functions.begin(), Functions.end(),
+      [](const Symbol *Function) { return Function->Name == "arm_wrapper"; });
+  ASSERT_NE(Wrapper, Functions.end());
+
+  std::ifstream Input(Linked, std::ios::binary);
+  std::vector<uint8_t> Bytes(std::istreambuf_iterator<char>(Input), {});
+  llvm::object::ELF32LE::Ehdr Header;
+  ASSERT_GE(Bytes.size(), sizeof(Header));
+  std::memcpy(&Header, Bytes.data(), sizeof(Header));
+  Header.e_shoff = 0;
+  Header.e_shnum = 0;
+  Header.e_shentsize = 0;
+  Header.e_shstrndx = llvm::ELF::SHN_UNDEF;
+  std::memcpy(Bytes.data(), &Header, sizeof(Header));
+  std::ofstream Output(Stripped, std::ios::binary);
+  Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+  Output.close();
+
+  auto Image = ELFLoader().load(Stripped);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  ASSERT_TRUE(Image->Sections.empty());
+  EXPECT_EQ(Image->Mode, InstructionMode::MixedARMThumb);
+  EXPECT_EQ(Image->instructionModeAt(LeafVA), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(LeafVA + 4), InstructionMode::Thumb);
+  EXPECT_EQ(Image->instructionModeAt(ARMLeafVA), InstructionMode::ARM);
+  EXPECT_FALSE(Image->instructionModeAt((*Wrapper)->Addr + 12));
+  const auto Lifted = exec(ndBin(), {"lift", "--dump-low", Stripped.string()});
+  ASSERT_TRUE(Lifted.ok()) << Lifted.err;
+  EXPECT_NE(Lifted.out.find(" @ 0x" + llvm::utohexstr(LeafVA)),
+            std::string::npos)
+      << Lifted.out;
+  EXPECT_NE(Lifted.out.find(" @ 0x" + llvm::utohexstr(ARMLeafVA)),
+            std::string::npos)
+      << Lifted.out;
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+    const auto CFile = tmpFile(LLVM ? "stripped-llvm.c" : "stripped-high.c");
+    std::vector<std::string> Arguments{"decompile"};
+    if (LLVM)
+      Arguments.push_back("--llvm");
+    Arguments.insert(Arguments.end(),
+                     {"-o", CFile.string(), Stripped.string()});
+    const auto Decompiled = exec(ndBin(), Arguments);
+    ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+    std::ifstream Input(CFile);
+    const std::string Source(std::istreambuf_iterator<char>(Input), {});
+    for (va_t FunctionVA : {(*Wrapper)->Addr, LeafVA, ARMLeafVA})
+      EXPECT_NE(Source.find("sub_" + llvm::utohexstr(FunctionVA) + "("),
+                std::string::npos)
+          << Source;
+    EXPECT_EQ(Source.find("/* unknown"), std::string::npos) << Source;
+    {
+      std::ofstream Append(CFile, std::ios::app);
+      Append << "\nint main(void) { return sub_"
+             << llvm::utohexstr((*Wrapper)->Addr)
+             << "(7, 5) == 12 ? 0 : 1; }\n";
+    }
+    const auto Executable = tmpFile(LLVM ? "stripped-llvm" : "stripped-high");
+    const auto Compiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", "-Werror=implicit-function-declaration",
+                            "-O0", CFile.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+    EXPECT_TRUE(exec(Executable.string(), {}).ok());
+  }
+
+  const auto Patched = tmpFile("stripped-patched.elf");
+  const auto Patch = exec(ndBin(), {"patch", "--mode=section", "-o",
+                                    Patched.string(), Stripped.string()});
+  ASSERT_TRUE(Patch.ok()) << Patch.err;
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "patched LLVMC" : "patched HighC");
+    const auto CFile =
+        tmpFile(LLVM ? "patched-stripped-llvm.c" : "patched-stripped-high.c");
+    std::vector<std::string> Arguments{"decompile"};
+    if (LLVM)
+      Arguments.push_back("--llvm");
+    Arguments.insert(Arguments.end(), {"-o", CFile.string(), Patched.string()});
+    const auto Decompiled = exec(ndBin(), Arguments);
+    ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+    std::ifstream Input(CFile);
+    const std::string Source(std::istreambuf_iterator<char>(Input), {});
+    EXPECT_EQ(Source.find("/* unknown"), std::string::npos) << Source;
+    {
+      std::ofstream Append(CFile, std::ios::app);
+      Append << "\nint main(void) { return sub_"
+             << llvm::utohexstr((*Wrapper)->Addr)
+             << "(7, 5) == 12 ? 0 : 1; }\n";
+    }
+    const auto Executable =
+        tmpFile(LLVM ? "patched-stripped-llvm" : "patched-stripped-high");
+    const auto Compiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", "-Werror=implicit-function-declaration",
+                            "-O0", CFile.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+    EXPECT_TRUE(exec(Executable.string(), {}).ok());
+  }
+
+  // A mapped original can still gain generated executable bytes beyond every
+  // section. Re-load those bytes and compile both C views of the full image.
+  const auto MappedPatched = tmpFile("mapped-patched.elf");
+  const auto MappedPatch =
+      exec(ndBin(), {"patch", "--mode=section", "-o", MappedPatched.string(),
+                     Linked.string()});
+  ASSERT_TRUE(MappedPatch.ok()) << MappedPatch.err;
+  auto MappedImage = ELFLoader().load(MappedPatched);
+  ASSERT_TRUE(static_cast<bool>(MappedImage))
+      << llvm::toString(MappedImage.takeError());
+  EXPECT_EQ(MappedImage->Mode, InstructionMode::MixedARMThumb);
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "mapped LLVMC" : "mapped HighC");
+    const auto CFile =
+        tmpFile(LLVM ? "mapped-patched-llvm.c" : "mapped-patched-high.c");
+    std::vector<std::string> Arguments{"decompile"};
+    if (LLVM)
+      Arguments.push_back("--llvm");
+    Arguments.insert(Arguments.end(),
+                     {"-o", CFile.string(), MappedPatched.string()});
+    const auto Decompiled = exec(ndBin(), Arguments);
+    ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+    std::ifstream Input(CFile);
+    const std::string Source(std::istreambuf_iterator<char>(Input), {});
+    EXPECT_EQ(Source.find("/* unknown"), std::string::npos) << Source;
+    {
+      std::ofstream Append(CFile, std::ios::app);
+      Append << "\nint main(void) { return arm_wrapper(7, 5) == 12 && "
+                "thumb_leaf(7, 5) == 12 && arm_leaf(7, 5) == 12 "
+                "? 0 : 1; }\n";
+    }
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile(
+          std::string(LLVM ? "mapped-llvm" : "mapped-high") + Optimization);
+      const auto Compiled =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", "-Werror=implicit-function-declaration",
+                Optimization, CFile.string(), "-o", Executable.string()});
+      ASSERT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+      EXPECT_TRUE(exec(Executable.string(), {}).ok());
+    }
+  }
+}
+
+TEST_F(ELFARM32ModeTest, AlignedThumbFrameEscapesToARMCall) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  const auto Assembly = tmpFile("aligned-frame.s");
+  std::ofstream(Assembly) << R"(
+.syntax unified
+.text
+.arm
+.p2align 2
+.globl arm_load
+.type arm_load,%function
+arm_load:
+  ldr r0, [r0]
+  bx lr
+.size arm_load, .-arm_load
+.thumb
+.p2align 1
+.globl align_wrapper
+.type align_wrapper,%function
+.thumb_func
+align_wrapper:
+  push {r4,lr}
+  sub sp, sp, #32
+  mov r4, sp
+  bfc r4, #0, #4
+  str r0, [r4, #12]
+  add r0, r4, #12
+  blx arm_load
+  add sp, sp, #32
+  pop {r4,pc}
+.size align_wrapper, .-align_wrapper
+)";
+  const auto Object = tmpFile("aligned-frame.o");
+  const auto Linked = tmpFile("aligned-frame.elf");
+  ASSERT_TRUE(
+      exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                               Assembly.string(), "-o", Object.string()})
+          .ok());
+  ASSERT_TRUE(exec("ld.lld", {"-m", "armelf_linux_eabi", "-e", "align_wrapper",
+                              Object.string(), "-o", Linked.string()})
+                  .ok());
+
+  const auto Patched = tmpFile("aligned-frame-patched.elf");
+  const auto Patch = exec(ndBin(), {"patch", "--mode=section", "-o",
+                                    Patched.string(), Linked.string()});
+  ASSERT_TRUE(Patch.ok()) << Patch.err;
+  for (const auto &Image : {Linked, Patched}) {
+    SCOPED_TRACE(Image.string());
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      const auto CFile =
+          tmpFile(LLVM ? "aligned-frame-llvm.c" : "aligned-frame-high.c");
+      std::vector<std::string> Arguments{"decompile"};
+      if (LLVM)
+        Arguments.push_back("--llvm");
+      Arguments.insert(Arguments.end(), {"-o", CFile.string(), Image.string()});
+      const auto Decompiled = exec(ndBin(), Arguments);
+      ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+      std::ifstream Input(CFile);
+      const std::string Source(std::istreambuf_iterator<char>(Input), {});
+      EXPECT_EQ(Source.find("/* unknown"), std::string::npos) << Source;
+      {
+        std::ofstream Append(CFile, std::ios::app);
+        Append << "\nint main(void) { return align_wrapper(17) == 17 && "
+                  "align_wrapper(0x12345678) == 0x12345678 ? 0 : 1; }\n";
+      }
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile(
+            std::string(LLVM ? "aligned-llvm" : "aligned-high") + Optimization);
+        const auto Compiled =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", "-Werror=implicit-function-declaration",
+                  Optimization, CFile.string(), "-o", Executable.string()});
+        ASSERT_TRUE(Compiled.ok()) << Compiled.err << "\n" << Source;
+        EXPECT_TRUE(exec(Executable.string(), {}).ok());
+      }
+    }
+  }
+}
+
+TEST_F(ELFARM32ModeTest, PointerRoleFollowsOnlyExactEntryForwarding) {
+  const uint64_t R0 =
+      getTargetRegInfo(Arch::ARM).integerArgumentLayout(false).Registers[0];
+  MedVar Entry;
+  Entry.Kind = MedVar::Param;
+  Entry.Id = -1;
+  Entry.RegOff = R0;
+  Entry.Size = 4;
+  auto MakeFunction = [&](va_t Address) {
+    MedFunc Func;
+    Func.Entry = Address;
+    Func.Params.push_back(Entry);
+    return Func;
+  };
+  auto AddForward = [&](MedFunc &Func, va_t Target, MedVar Arg) {
+    MedCallInfo Call;
+    Call.TargetAddr = Target;
+    Call.Args.push_back(Arg);
+    Func.CallInfos.push_back(std::move(Call));
+  };
+
+  MedFunc Outer = MakeFunction(0x1000);
+  AddForward(Outer, 0x2000, Entry);
+  MedFunc Middle = MakeFunction(0x2000);
+  AddForward(Middle, 0x3000, Entry);
+  MedFunc Leaf = MakeFunction(0x3000);
+  MedBlock Body;
+  MedOp Load;
+  Load.Opcode = NdOp::LOAD;
+  Load.NumInputs = 1;
+  Load.Inputs[0] = Entry;
+  Body.Ops.push_back(Load);
+  Leaf.Blocks.push_back(std::move(Body));
+  MedFunc Redefined = MakeFunction(0x4000);
+  MedVar Later = Entry;
+  Later.Kind = MedVar::Reg;
+  Later.SSAVer = 1;
+  AddForward(Redefined, 0x3000, Later);
+
+  std::vector<MedFunc> Functions{Outer, Middle, Leaf, Redefined};
+  propagateARMForwardedPointerParams(Functions);
+  for (size_t I : {0u, 1u, 2u}) {
+    ASSERT_EQ(Functions[I].TypedParams.size(), 1u);
+    ASSERT_TRUE(Functions[I].TypedParams[0].Type);
+    EXPECT_EQ(Functions[I].TypedParams[0].Type->Kind, NdTypeKind::Ptr);
+  }
+  ASSERT_EQ(Functions[3].TypedParams.size(), 1u);
+  ASSERT_TRUE(Functions[3].TypedParams[0].Type);
+  EXPECT_EQ(Functions[3].TypedParams[0].Type->Kind, NdTypeKind::Int);
+}
+
+TEST_F(ELFARM32ModeTest, DoesNotAssignModeToUnreachedBytesInStrippedELF) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM fixture requires cross-target clang";
+  if (!exec("ld.lld", {"--version"}).ok())
+    GTEST_SKIP() << "ARM ELF linker is unavailable";
+
+  const auto Assembly = tmpFile("unreached.s");
+  std::ofstream(Assembly) << R"(
+.syntax unified
+.text
+.arm
+.globl arm_entry
+.type arm_entry,%function
+arm_entry:
+  add r0, r0, r1
+  bx lr
+.size arm_entry, .-arm_entry
+.word 0xe0800001
+)";
+  const auto Object = tmpFile("unreached.o");
+  const auto Linked = tmpFile("unreached-linked.elf");
+  const auto Stripped = tmpFile("unreached-stripped.elf");
+  ASSERT_TRUE(
+      exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                               Assembly.string(), "-o", Object.string()})
+          .ok());
+  ASSERT_TRUE(exec("ld.lld", {"-m", "armelf_linux_eabi", "-e", "arm_entry",
+                              Object.string(), "-o", Linked.string()})
+                  .ok());
+  std::ifstream Input(Linked, std::ios::binary);
+  std::vector<uint8_t> Bytes(std::istreambuf_iterator<char>(Input), {});
+  llvm::object::ELF32LE::Ehdr Header;
+  ASSERT_GE(Bytes.size(), sizeof(Header));
+  std::memcpy(&Header, Bytes.data(), sizeof(Header));
+  Header.e_shoff = 0;
+  Header.e_shnum = 0;
+  Header.e_shentsize = 0;
+  Header.e_shstrndx = llvm::ELF::SHN_UNDEF;
+  std::memcpy(Bytes.data(), &Header, sizeof(Header));
+  std::ofstream Output(Stripped, std::ios::binary);
+  Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+  Output.close();
+
+  auto Image = ELFLoader().load(Stripped);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  EXPECT_EQ(Image->Mode, InstructionMode::ARM);
+  EXPECT_EQ(Image->instructionModeAt(Image->Entry), InstructionMode::ARM);
+  EXPECT_FALSE(Image->instructionModeAt(Image->Entry + 8));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(*Image));
+  EXPECT_FALSE(Dec.selectMode(*Image, Image->Entry + 8));
 }
 
 TEST_F(ELFARM32ModeTest, UsesAddressSpecificModesInMixedImages) {
@@ -606,6 +1005,71 @@ thumb_callee:
   EXPECT_EQ(BLX, 0xfb000000u);
 
   const uint32_t PackedBranch = 0xea000000u;
+  std::memcpy(Compiled.Bytes.data(), &PackedBranch, sizeof(PackedBranch));
+  Detail.clear();
+  EXPECT_FALSE(repairMixedARMInterworkingCalls(Compiled, *Source, Detail));
+  EXPECT_NE(Detail.find("interworking veneer"), std::string::npos);
+  uint32_t Unchanged = 0;
+  std::memcpy(&Unchanged, Compiled.Bytes.data(), sizeof(Unchanged));
+  EXPECT_EQ(Unchanged, PackedBranch);
+}
+
+TEST_F(ELFARM32ModeTest, RepairsHalfwordAlignedGeneratedThumbToARMCall) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";
+  auto Source = loadAssembly(R"(
+.syntax unified
+.text
+.thumb
+.globl thumb_caller
+.type thumb_caller,%function
+.thumb_func
+thumb_caller:
+  bx lr
+  nop
+.size thumb_caller, .-thumb_caller
+.arm
+.globl arm_callee
+.type arm_callee,%function
+arm_callee:
+  bx lr
+.size arm_callee, .-arm_callee
+)");
+  ASSERT_TRUE(static_cast<bool>(Source)) << llvm::toString(Source.takeError());
+  ASSERT_EQ(Source->Mode, InstructionMode::MixedARMThumb);
+
+  CompiledImage Compiled;
+  Compiled.Bytes.resize(10);
+  const uint32_t PackedBL = 0xf801f000u;
+  std::memcpy(Compiled.Bytes.data(), &PackedBL, sizeof(PackedBL));
+  CompiledSection Code;
+  Code.Name = ".text";
+  Code.VA = 0x2002;
+  Code.Size = Compiled.Bytes.size();
+  Code.Kind = llvm::mc_rewrite::RewriteSectionKind::Code;
+  CompiledFixupReference Call;
+  Call.Offset = 0;
+  Call.Symbol = "arm_callee";
+  Call.IsPCRel = true;
+  Call.IsResolved = true;
+  Call.BitWidth = 32;
+  Call.ResolvedValue = 6; // BL reaches 0x2008 without changing mode.
+  Code.FixupReferences.push_back(Call);
+  Compiled.Sections.push_back(Code);
+  Compiled.SourceFunctionOwners.push_back(
+      {"thumb_caller", "thumb_caller", 0x2002});
+  Compiled.SourceFunctionOwners.push_back({"arm_callee", "arm_callee", 0x2008});
+  Compiled.SourceFunctionOriginalVAs["thumb_caller"] = 0;
+  Compiled.SourceFunctionOriginalVAs["arm_callee"] = 4;
+
+  std::string Detail;
+  ASSERT_TRUE(repairMixedARMInterworkingCalls(Compiled, *Source, Detail))
+      << Detail;
+  uint32_t BLX = 0;
+  std::memcpy(&BLX, Compiled.Bytes.data(), sizeof(BLX));
+  EXPECT_EQ(BLX, 0xe802f000u);
+
+  const uint32_t PackedBranch = 0xb801f000u;
   std::memcpy(Compiled.Bytes.data(), &PackedBranch, sizeof(PackedBranch));
   Detail.clear();
   EXPECT_FALSE(repairMixedARMInterworkingCalls(Compiled, *Source, Detail));

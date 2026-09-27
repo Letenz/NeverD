@@ -15,6 +15,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/Parallel.h"
@@ -110,6 +111,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     for (MedFunc &MF : Result.MedFuncs)
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &RegisterArity,
                      &TotalArity);
+    propagateARMForwardedPointerParams(Result.MedFuncs);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {

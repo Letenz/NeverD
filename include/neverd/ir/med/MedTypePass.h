@@ -19,6 +19,10 @@ namespace neverd {
 
 void inferMedTypes(MedFunc &Func, Arch TheArch);
 
+/// Refresh recovered ARM parameters and propagate a callee's proven pointer
+/// role through exact entry-register forwarding calls to a fixed point.
+void propagateARMForwardedPointerParams(std::vector<MedFunc> &Funcs);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDTYPEPASS_H

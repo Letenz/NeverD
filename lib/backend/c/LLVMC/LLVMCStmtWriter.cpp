@@ -1322,6 +1322,12 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   auto Name = Inst.getType()->isVoidTy() ? "" : getName(&Inst);
 
   if (Inst.isBinaryOp()) {
+    if (auto Identity =
+            targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Identity << ";\n";
+      return;
+    }
     if (Inst.getOpcode() == llvm::Instruction::URem ||
         Inst.getOpcode() == llvm::Instruction::SRem) {
       if (std::string Rem = indexExprStr(&Inst); !Rem.empty()) {
@@ -1330,10 +1336,7 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
         return;
       }
     }
-    const bool NeedsIntegerPointerOperand =
-        Inst.getOpcode() == llvm::Instruction::Or ||
-        Inst.getOpcode() == llvm::Instruction::Add ||
-        Inst.getOpcode() == llvm::Instruction::Sub;
+    const bool NeedsIntegerPointerOperand = Inst.getType()->isIntegerTy();
     auto LHS =
         logicalShiftLhs(Inst, NeedsIntegerPointerOperand
                                   ? integerPointerOperandStr(Inst.getOperand(0))

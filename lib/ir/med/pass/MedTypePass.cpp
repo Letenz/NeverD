@@ -19,10 +19,12 @@
 #include "neverd/ir/med/MedSourceParameterUses.h"
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace neverd {
 
@@ -922,6 +924,85 @@ void inferMedTypes(MedFunc &Func, Arch TheArch) {
   Func.SourceTypeHint = std::move(Hint);
   Func.SourceParametersBound = true;
   Func.FPReturnViaX87 = false;
+}
+
+void propagateARMForwardedPointerParams(std::vector<MedFunc> &Funcs) {
+  const auto &TRI = getTargetRegInfo(Arch::ARM);
+  std::map<va_t, size_t> ByEntry;
+  for (size_t I = 0; I < Funcs.size(); ++I) {
+    ByEntry.emplace(Funcs[I].Entry, I);
+    // Call-ABI recovery may add a parameter after the local type pass. Keep
+    // source declarations authoritative, and refresh only inferred signatures.
+    if (!Funcs[I].SourceTypeHint)
+      inferParamTypes(Funcs[I], TRI);
+  }
+
+  std::map<va_t, std::vector<size_t>> DirectCallers;
+  for (size_t I = 0; I < Funcs.size(); ++I)
+    for (const MedCallInfo &Call : Funcs[I].CallInfos)
+      if (!Call.IsIndirect && ByEntry.count(Call.TargetAddr))
+        DirectCallers[Call.TargetAddr].push_back(I);
+
+  std::deque<size_t> Work;
+  std::vector<bool> Queued(Funcs.size());
+  for (size_t I = 0; I < Funcs.size(); ++I)
+    for (const MedTypedParam &Param : Funcs[I].TypedParams)
+      if (Param.Type && Param.Type->Kind == NdTypeKind::Ptr) {
+        Work.push_back(I);
+        Queued[I] = true;
+        break;
+      }
+
+  while (!Work.empty()) {
+    const size_t CalleeIndex = Work.front();
+    Work.pop_front();
+    Queued[CalleeIndex] = false;
+    const MedFunc &Callee = Funcs[CalleeIndex];
+    for (size_t CallerIndex : DirectCallers[Callee.Entry]) {
+      MedFunc &Caller = Funcs[CallerIndex];
+      if (Caller.SourceTypeHint ||
+          Caller.TypedParams.size() != Caller.Params.size())
+        continue;
+      bool Changed = false;
+      for (const MedCallInfo &Call : Caller.CallInfos) {
+        if (Call.IsIndirect || Call.TargetAddr != Callee.Entry)
+          continue;
+        const size_t Count =
+            std::min(Call.Args.size(), Callee.TypedParams.size());
+        for (size_t ArgIndex = 0; ArgIndex < Count; ++ArgIndex) {
+          const TypeRef &Type = Callee.TypedParams[ArgIndex].Type;
+          if (!Type || Type->Kind != NdTypeKind::Ptr)
+            continue;
+          const MedVar &Arg = Call.Args[ArgIndex];
+          if (Arg.SSAVer != 0 || Arg.Size != TRI.PointerSize)
+            continue;
+          for (size_t ParamIndex = 0; ParamIndex < Caller.Params.size();
+               ++ParamIndex) {
+            const MedVar &Param = Caller.Params[ParamIndex];
+            const bool SameEntryRegister =
+                Param.RegOff != kNoParamReg && Arg.RegOff == Param.RegOff &&
+                (Arg.Kind == MedVar::Reg ||
+                 (Arg.Kind == MedVar::Param && Param.Kind == MedVar::Param &&
+                  Arg.Id == Param.Id));
+            const bool SameEntryStackSlot =
+                Arg.Kind == MedVar::Param && Param.Kind == MedVar::Param &&
+                Arg.Id == Param.Id && Arg.RegOff == kNoParamReg &&
+                Param.RegOff == kNoParamReg;
+            if ((!SameEntryRegister && !SameEntryStackSlot) ||
+                (Caller.TypedParams[ParamIndex].Type &&
+                 Caller.TypedParams[ParamIndex].Type->Kind == NdTypeKind::Ptr))
+              continue;
+            Caller.TypedParams[ParamIndex].Type = NdType::makePtr();
+            Changed = true;
+          }
+        }
+      }
+      if (Changed && !Queued[CallerIndex]) {
+        Work.push_back(CallerIndex);
+        Queued[CallerIndex] = true;
+      }
+    }
+  }
 }
 
 } // namespace neverd

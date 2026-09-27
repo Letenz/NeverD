@@ -4505,6 +4505,21 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // a stack Block). Separate C locals do not preserve offsets or adjacency.
   bool NeedsFrameStorage = llvm::any_of(
       FrameSlots, [](const auto &Entry) { return Entry.second.AddressTaken; });
+  auto ContainsAlignedFrame = [&](auto &&Self, const HighExpr &Expr,
+                                  unsigned Depth) -> bool {
+    if (Depth == limits::kMaxFrameDisplacementDepth)
+      return false;
+    const HighExpr *Inner = unwrapIntegerView(&Expr);
+    if (!Inner)
+      return false;
+    if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_AND &&
+        certifiedFrameStorageDisplacement(*Inner))
+      return true;
+    for (const ExprPtr &Operand : Inner->Operands)
+      if (Operand && Self(Self, *Operand, Depth + 1))
+        return true;
+    return false;
+  };
   auto VisitFrameUses = [&](auto &&Self, const HighExpr &Expr) -> void {
     if (NeedsFrameStorage && ProjectFrameAliasesIntoStorage)
       return;
@@ -4549,6 +4564,20 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     if ((NeedsFrameStorage && ProjectFrameAliasesIntoStorage) ||
         Analysis.DeadStmts.count(&Stmt) ||
         (InferredVoid && Stmt.Kind == StmtKind::Return))
+      return;
+    // A masked alignment of an authenticated frame address still needs the
+    // aligned byte backing, even when an enclosing constant offset or a named
+    // slot would otherwise stop the ordinary frame-use walk early.
+    auto NoteAlignedFrame = [&](const ExprPtr &Expr) {
+      if (Expr && ContainsAlignedFrame(ContainsAlignedFrame, *Expr, 0)) {
+        NeedsFrameStorage = true;
+        ProjectFrameAliasesIntoStorage = true;
+      }
+    };
+    NoteAlignedFrame(Stmt.Dst);
+    NoteAlignedFrame(Stmt.StoreAddr);
+    forEachRhsExpr(Stmt, NoteAlignedFrame);
+    if (NeedsFrameStorage && ProjectFrameAliasesIntoStorage)
       return;
     if (Stmt.Kind == StmtKind::Assign && Stmt.Dst && Stmt.Val &&
         Stmt.Dst->Kind == ExprKind::Var &&

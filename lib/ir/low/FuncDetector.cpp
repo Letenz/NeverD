@@ -268,6 +268,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
+    if (Img.Arch == Arch::ARM)
+      Entries.insert(Img.ARMVeneerTargets.begin(), Img.ARMVeneerTargets.end());
     if (IsX86LinkedCOFF)
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
   }

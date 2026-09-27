@@ -29,6 +29,19 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
     return nullptr;
   const auto *Section = Image.getSectionFor(Address);
   const auto *Segment = Image.getSegmentFor(Address);
+  if (!Section && Code && Image.Format == BinaryFormat::ELF &&
+      Image.Arch == Arch::ARM && Image.ARMReachabilityConstrained && Segment &&
+      Segment->isReadable() && Segment->isExecutable() &&
+      Image.instructionModeAt(Address) &&
+      (!Immutable || Segment->ReadOnlyAfterRelocations ||
+       !Segment->isWritable()) &&
+      rangeInBounds(Address - Segment->VA, Extent, Segment->Size) &&
+      rangeInBounds(Address - Segment->VA, Extent, Segment->FileSz)) {
+    for (const auto &Other : Image.Segments)
+      if (&Other != Segment && overlaps(Address, Extent, Other.VA, Other.Size))
+        return nullptr;
+    return Image.readVA(Address, Extent);
+  }
   if (!Section || !Segment || !Section->isReadable() ||
       !Segment->isReadable() || Image.isCodeAddress(Address) != Code ||
       (Code && (!Section->isExecutable() || !Segment->isExecutable())) ||
@@ -125,7 +138,7 @@ readImmutableCodeBytes(const BinaryImage &Image, va_t Address, uint32_t Size) {
 }
 
 std::optional<uint64_t> readImmutableChainedImageValue(const BinaryImage &Image,
-                                                    va_t Address) {
+                                                       va_t Address) {
   if (!supportedImage(Image) || !Image.MachOHasChainedFixups ||
       !Image.MachOResolvedChainedPointerSlots.count(Address))
     return std::nullopt;

@@ -307,10 +307,9 @@ bool CFGBuilder::isTailCallTarget(va_t Target) const {
   // set. An explicit transfer to such a symbol still names a tail callee.
   // Symbol identity alone must not stop ordinary fallthrough exploration:
   // x86 call-next/POP retains its architectural push even at a named address.
-  const bool FunctionEntry =
-      isKnownFunctionEntry(Target) ||
-      (CurrentImg &&
-       CurrentImg->hasFunctionSymbolAt(Target, ExecutableCodeOwners));
+  const bool FunctionEntry = isKnownFunctionEntry(Target) ||
+                             (CurrentImg && CurrentImg->hasFunctionSymbolAt(
+                                                Target, ExecutableCodeOwners));
   if (FunctionEntry && !isCurrentExceptionalEntry(Target) &&
       !isCurrentOwnedFragment(Target))
     return true;

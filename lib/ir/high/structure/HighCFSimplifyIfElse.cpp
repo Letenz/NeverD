@@ -391,13 +391,14 @@ static bool rangeHasObservableWork(const std::vector<HighStmt> &Body,
   return false;
 }
 
-static size_t findSkipTargetInList(const std::vector<HighStmt> &Body, size_t After,
-                                   va_t Target) {
+static size_t findSkipTargetInList(const std::vector<HighStmt> &Body,
+                                   size_t After, va_t Target) {
   if (!Target || Target == InvalidVA)
     return SIZE_MAX;
   for (size_t K = After; K < Body.size(); ++K) {
     const va_t Address = AddrMap::entryAddress(Body[K]);
-    if (Address == Target || (Address && Address >= Target && Address < Target + 32))
+    if (Address == Target ||
+        (Address && Address >= Target && Address < Target + 32))
       return K;
   }
   return SIZE_MAX;
@@ -622,7 +623,8 @@ static size_t findTargetIndexOrBlock(AddrMap &AM, va_t Target,
     if (Start != Target)
       continue;
     Block = &Candidate;
-    BlockEnd = Candidate.Ops.empty() ? Start + 1 : Candidate.Ops.back().Addr + 1;
+    BlockEnd =
+        Candidate.Ops.empty() ? Start + 1 : Candidate.Ops.back().Addr + 1;
     break;
   }
   if (!Block)
@@ -965,8 +967,7 @@ static bool exprIsScalarMove(const HighExpr *E, bool AllowConst) {
   case ExprKind::Cast:
   case ExprKind::BitCast:
   case ExprKind::UnaryOp:
-    return !E->Operands.empty() &&
-           exprIsScalarMove(E->Operands[0].get(), true);
+    return !E->Operands.empty() && exprIsScalarMove(E->Operands[0].get(), true);
   default:
     return false;
   }
@@ -1173,7 +1174,8 @@ static bool isValueAssign(const HighStmt &S, MedVar &Dest, ExprPtr &Val) {
   return false;
 }
 
-static void replaceVarInStmt(HighStmt &S, const MedVar &V, const ExprPtr &With) {
+static void replaceVarInStmt(HighStmt &S, const MedVar &V,
+                             const ExprPtr &With) {
   auto Repl = [&](ExprPtr &E) { E = replaceVarInExpr(E, V, With); };
   auto Apply = [&](HighStmt &T) {
     Repl(T.Cond);
@@ -1293,8 +1295,7 @@ static bool condStructEq(const HighExpr *A, const HighExpr *B,
   bool NonZeroA = false;
   bool NonZeroB = false;
   if (condAsZeroTest(A, VA, NonZeroA) && condAsZeroTest(B, VB, NonZeroB))
-    return NonZeroA == NonZeroB &&
-           condStructEq(VA, VB, SameTempId);
+    return NonZeroA == NonZeroB && condStructEq(VA, VB, SameTempId);
   if (!A || !B || A->Kind != B->Kind || A->Op != B->Op)
     return false;
   if (A->Kind == ExprKind::Var || A->Kind == ExprKind::Phi) {
@@ -1510,11 +1511,10 @@ static void collectAndConjuncts(const HighExpr *E,
   Out.push_back(E);
 }
 
-static std::optional<ExprPtr> dropAndPrefix(const HighExpr *Prefix,
-                                            const ExprPtr &Inner,
-                                            bool SameTempId = false,
-                                            const FieldLoadDefs *FieldLoads =
-                                                nullptr) {
+static std::optional<ExprPtr>
+dropAndPrefix(const HighExpr *Prefix, const ExprPtr &Inner,
+              bool SameTempId = false,
+              const FieldLoadDefs *FieldLoads = nullptr) {
   if (!Prefix || !Inner)
     return std::nullopt;
   std::vector<const HighExpr *> Head;
@@ -1549,11 +1549,10 @@ static std::optional<ExprPtr> dropAndPrefix(const HighExpr *Prefix,
   return Out;
 }
 
-static std::optional<ExprPtr> dropAndPrefix(const ExprPtr &Prefix,
-                                            const ExprPtr &Inner,
-                                            bool SameTempId = false,
-                                            const FieldLoadDefs *FieldLoads =
-                                                nullptr) {
+static std::optional<ExprPtr>
+dropAndPrefix(const ExprPtr &Prefix, const ExprPtr &Inner,
+              bool SameTempId = false,
+              const FieldLoadDefs *FieldLoads = nullptr) {
   return dropAndPrefix(Prefix.get(), Inner, SameTempId, FieldLoads);
 }
 
@@ -1588,8 +1587,7 @@ static ExprPtr invertHighCond(ExprPtr C) {
   if (P && P->Kind == ExprKind::BinOp && P->Operands.size() == 2 &&
       P->Operands[0] && P->Operands[1] && isEqNeTree(P)) {
     if (P->Op == NdOp::BOOL_OR || P->Op == NdOp::INT_OR)
-      return HighExpr::makeBinop(NdOp::BOOL_AND,
-                                 invertHighCond(P->Operands[0]),
+      return HighExpr::makeBinop(NdOp::BOOL_AND, invertHighCond(P->Operands[0]),
                                  invertHighCond(P->Operands[1]));
     if (P->Op == NdOp::BOOL_AND || P->Op == NdOp::INT_AND)
       return HighExpr::makeBinop(NdOp::BOOL_OR, invertHighCond(P->Operands[0]),
@@ -1627,8 +1625,7 @@ static bool storeWritesCondPointer(const HighExpr *Addr, const HighExpr *Cond,
   const HighExpr *P = condPointerValue(Cond);
   if (!P)
     return false;
-  if (sameFieldPath(Addr, P) ||
-      sameFieldPath(Addr, asFieldLoad(P, FieldLoads)))
+  if (sameFieldPath(Addr, P) || sameFieldPath(Addr, asFieldLoad(P, FieldLoads)))
     return true;
   if (P->Kind == ExprKind::Load && !P->Operands.empty() && P->Operands[0] &&
       condStructEq(peelCond(P->Operands[0].get()), peelCond(Addr)))
@@ -1709,9 +1706,9 @@ static ImpliedAct peelAgainstOuters(HighStmt &S,
       Partial = true;
       continue;
     }
-    if (auto OrRest = dropOrDisjunct(
-            invertHighCond(std::make_shared<HighExpr>(*Outer)), Cur, false,
-            FieldLoads)) {
+    if (auto OrRest =
+            dropOrDisjunct(invertHighCond(std::make_shared<HighExpr>(*Outer)),
+                           Cur, false, FieldLoads)) {
       Cur = std::move(*OrRest);
       Partial = true;
       continue;
@@ -1741,8 +1738,7 @@ static bool flattenInList(std::vector<HighStmt> &List,
     const ImpliedAct Act = peelAgainstOuters(List[J], Live, FieldLoads);
     if (Act == ImpliedAct::FlattenThen || Act == ImpliedAct::FlattenElse) {
       HighStmt Taken = std::move(List[J]);
-      auto &Src =
-          Act == ImpliedAct::FlattenThen ? Taken.Body : Taken.ElseBody;
+      auto &Src = Act == ImpliedAct::FlattenThen ? Taken.Body : Taken.ElseBody;
       List.erase(List.begin() + static_cast<long>(J));
       List.insert(List.begin() + static_cast<long>(J),
                   std::make_move_iterator(Src.begin()),
@@ -1757,15 +1753,17 @@ static bool flattenInList(std::vector<HighStmt> &List,
   return Changed;
 }
 
-static bool dropImpliedInnerConds(
-    std::vector<HighStmt> &Body, const FieldLoadDefs *FieldLoads,
-    const std::vector<const HighExpr *> &Ancestors) {
+static bool
+dropImpliedInnerConds(std::vector<HighStmt> &Body,
+                      const FieldLoadDefs *FieldLoads,
+                      const std::vector<const HighExpr *> &Ancestors) {
   return flattenInList(Body, Ancestors, FieldLoads);
 }
 
-static void dropImpliedInnerCondsIn(
-    std::vector<HighStmt> &Body, const FieldLoadDefs *FieldLoads,
-    const std::vector<const HighExpr *> &Ancestors) {
+static void
+dropImpliedInnerCondsIn(std::vector<HighStmt> &Body,
+                        const FieldLoadDefs *FieldLoads,
+                        const std::vector<const HighExpr *> &Ancestors) {
   dropImpliedInnerConds(Body, FieldLoads, Ancestors);
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
@@ -1819,8 +1817,7 @@ static bool impliedCondMatch(const HighExpr *Conjunct, const HighExpr *Outer,
       NA == NB &&
       (samePredCall(atomPredCall(VA), atomPredCall(VB)) ||
        sameFieldPath(VA, VB) ||
-       sameFieldPath(asFieldLoad(VA, FieldLoads),
-                     asFieldLoad(VB, FieldLoads))))
+       sameFieldPath(asFieldLoad(VA, FieldLoads), asFieldLoad(VB, FieldLoads))))
     return true;
   if (!samePredCall(atomPredCall(Conjunct), atomPredCall(Outer)))
     return false;
@@ -1835,9 +1832,10 @@ static bool impliedCondMatch(const HighExpr *Conjunct, const HighExpr *Outer,
 
 /// Drop OR disjuncts that match \p FalsePrefix. Fallthrough after
 /// `if (P) { always exit }` proves P is false, so `P || rest` is `rest`.
-static std::optional<ExprPtr>
-dropOrDisjunct(const ExprPtr &FalsePrefix, const ExprPtr &Inner,
-               bool SameTempId, const FieldLoadDefs *FieldLoads) {
+static std::optional<ExprPtr> dropOrDisjunct(const ExprPtr &FalsePrefix,
+                                             const ExprPtr &Inner,
+                                             bool SameTempId,
+                                             const FieldLoadDefs *FieldLoads) {
   if (!FalsePrefix || !Inner)
     return std::nullopt;
   std::vector<const HighExpr *> Head;
@@ -1948,10 +1946,10 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
     if ((Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
         !Next.Cond)
       continue;
-    ExprPtr Head = composeWorkAssigns(
-        Body, 0, I, std::make_shared<HighExpr>(*S.Cond));
-    ExprPtr Inner = composeWorkAssigns(
-        Body, 0, J, std::make_shared<HighExpr>(*Next.Cond));
+    ExprPtr Head =
+        composeWorkAssigns(Body, 0, I, std::make_shared<HighExpr>(*S.Cond));
+    ExprPtr Inner =
+        composeWorkAssigns(Body, 0, J, std::make_shared<HighExpr>(*Next.Cond));
     auto Rest = dropOrDisjunct(Head, Inner, false, FieldLoads);
     if (!Rest) {
       const HighExpr *P = peelCond(Inner.get());
@@ -2134,13 +2132,13 @@ static bool rewriteGuardedCallThis(std::vector<HighStmt> &Body) {
     HighStmt &S = Body[I];
     if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) && S.Cond) {
       // A nonzero guard alone does not identify the receiver of calls in its
-      // arm: the guard can be a Boolean result while those calls still use self.
+      // arm: the guard can be a Boolean result while those calls still use
+      // self.
       const HighExpr *Val = nullptr;
       bool NonZero = false;
-      const bool NullThen =
-          condAsZeroTest(S.Cond.get(), Val, NonZero) && Val &&
-          Val->Kind != ExprKind::Call && !NonZero &&
-          !stmtListFallsThrough(S.Body);
+      const bool NullThen = condAsZeroTest(S.Cond.get(), Val, NonZero) && Val &&
+                            Val->Kind != ExprKind::Call && !NonZero &&
+                            !stmtListFallsThrough(S.Body);
       if (NullThen) {
         // `if (!p) { ...; return; } vcall(parent_this)` is still guarded by
         // `p`. Retarget only the first fallthrough indirect call so a later
@@ -2399,7 +2397,8 @@ static bool exprReadsVarReal(const HighExpr *E, const MedVar &V) {
 }
 
 static bool stmtReadsVarReal(const HighStmt &S, const MedVar &V) {
-  if (exprReadsVarReal(S.Cond.get(), V) || exprReadsVarReal(S.RetVal.get(), V) ||
+  if (exprReadsVarReal(S.Cond.get(), V) ||
+      exprReadsVarReal(S.RetVal.get(), V) ||
       exprReadsVarReal(S.StoreAddr.get(), V) ||
       exprReadsVarReal(S.StoreVal.get(), V) ||
       exprReadsVarReal(S.SwitchExpr.get(), V))
@@ -2455,8 +2454,7 @@ static bool destHasRealUse(const std::vector<HighStmt> &Body, size_t Skip,
 }
 
 static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
-                                      const ExprPtr &Pred,
-                                      const MedFunc *Med) {
+                                      const ExprPtr &Pred, const MedFunc *Med) {
   // This local cleanup recognizes Win64 predicate copies. Other ABIs need a
   // function-wide reaching-use proof before a nested assignment can be dropped.
   if (Med && Med->CC != CallingConv::Win64)
@@ -2482,8 +2480,9 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
         continue;
       break;
     }
-    const bool PredCall = Val->Kind == ExprKind::Call &&
-                          exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
+    const bool PredCall =
+        Val->Kind == ExprKind::Call &&
+        exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
     const bool IsLoad = Val->Kind == ExprKind::Load;
     // Only a predicate call or a load can be dropped; other values keep their
     // assignment whether or not anything reads it.
@@ -2514,9 +2513,9 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
   }
 }
 
-static std::optional<ExprPtr> peelInnerAgainstOuter(
-    const HighStmt &Stmt, size_t OuterI, const std::vector<HighStmt> &Parent,
-    size_t J) {
+static std::optional<ExprPtr>
+peelInnerAgainstOuter(const HighStmt &Stmt, size_t OuterI,
+                      const std::vector<HighStmt> &Parent, size_t J) {
   if (J >= Stmt.Body.size())
     return std::nullopt;
   const HighStmt &Inner = Stmt.Body[J];
@@ -2543,16 +2542,14 @@ composePrefixesIntoCond(const std::vector<HighStmt> &Body, size_t Begin,
     const size_t I = N - 1;
     MedVar Dest;
     ExprPtr Val;
-    if (!isValueAssign(Body[I], Dest, Val) ||
-        !exprUsesVar(Cond.get(), Dest))
+    if (!isValueAssign(Body[I], Dest, Val) || !exprUsesVar(Cond.get(), Dest))
       continue;
     Cond = replaceVarInExpr(Cond, Dest, Val);
   }
   for (size_t I = Begin; I < End; ++I) {
     MedVar Dest;
     ExprPtr Val;
-    if (isValueAssign(Body[I], Dest, Val) &&
-        exprUsesVar(Cond.get(), Dest))
+    if (isValueAssign(Body[I], Dest, Val) && exprUsesVar(Cond.get(), Dest))
       return std::nullopt;
     if (Body[I].Kind == StmtKind::Assign && Body[I].Dst &&
         Body[I].Dst->Kind == ExprKind::Var &&
@@ -2620,8 +2617,7 @@ collectPredChainFromList(const std::vector<HighStmt> &Body, va_t Join,
       continue;
     MedVar Dest;
     ExprPtr Val;
-    if (isValueAssign(Body[I], Dest, Val) &&
-        exprUsesVar(LastCond.get(), Dest))
+    if (isValueAssign(Body[I], Dest, Val) && exprUsesVar(LastCond.get(), Dest))
       return std::nullopt;
     if (Body[I].Kind == StmtKind::Assign && Body[I].Dst &&
         Body[I].Dst->Kind == ExprKind::Var &&
@@ -2753,9 +2749,8 @@ static bool stmtUsesJoinDest(const HighStmt &S, const MedVar &Dest) {
   // Join values may be consumed by a return, condition, or store as well as
   // by an assignment. A missed read here can erase an entire PHI edge.
   bool Used = exprUsesJoinDest(S.Dst.get(), Dest);
-  forEachRhsExpr(S, [&](const ExprPtr &E) {
-    Used |= exprUsesJoinDest(E.get(), Dest);
-  });
+  forEachRhsExpr(
+      S, [&](const ExprPtr &E) { Used |= exprUsesJoinDest(E.get(), Dest); });
   return Used;
 }
 
@@ -2774,7 +2769,8 @@ static bool destBeforeJoinGoto(const std::vector<HighStmt> &Stmts, size_t GotoI,
                                const MedVar *Wanted = nullptr);
 
 static bool destBeforeJoinGoto(const std::vector<HighStmt> &Stmts, size_t GotoI,
-                               MedVar &V, size_t *AssignI, const MedVar *Wanted) {
+                               MedVar &V, size_t *AssignI,
+                               const MedVar *Wanted) {
   for (size_t J = GotoI; J > 0;) {
     --J;
     if (isSkippablePad(Stmts[J]) || Stmts[J].Kind == StmtKind::Goto)
@@ -3170,8 +3166,9 @@ static bool peelJoinDefaultAssign(const HighStmt &S, MedVar &Dest,
   return Found;
 }
 
-static bool isJoinValueGotoIf(const HighStmt &S, va_t Join, const MedVar *Wanted,
-                              MedVar *Dest, std::vector<HighStmt> *ThenWork) {
+static bool isJoinValueGotoIf(const HighStmt &S, va_t Join,
+                              const MedVar *Wanted, MedVar *Dest,
+                              std::vector<HighStmt> *ThenWork) {
   if (S.Kind != StmtKind::If || !S.Cond || !S.ElseBody.empty() ||
       S.Body.empty() || S.Body.back().Kind != StmtKind::Goto)
     return false;
@@ -3225,9 +3222,9 @@ static bool isJoinValueGotoIf(const HighStmt &S, va_t Join, const MedVar *Wanted
   return true;
 }
 
-/// `if (c1) { dest=a; goto L; } if (c2) { dest=b; goto L; } dest=def; use(dest)`
-/// plus an optional skip-goto to the default label. Turns the join into
-/// if/else-if/else so later invert-skip does not see sibling gotos.
+/// `if (c1) { dest=a; goto L; } if (c2) { dest=b; goto L; } dest=def;
+/// use(dest)` plus an optional skip-goto to the default label. Turns the join
+/// into if/else-if/else so later invert-skip does not see sibling gotos.
 static bool foldJoinValueGotoChain(std::vector<HighStmt> &Body) {
   for (size_t I = 0; I < Body.size(); ++I) {
     va_t Join = 0;
@@ -3418,12 +3415,11 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         // With a goto in Prev, the join is that goto's target.  A call or
         // return that merely reads the value elsewhere does not turn an
         // unrelated jump (into a loop, say) into a join edge.
-        if (J < Body.size() &&
-            ((Join && Body[J].Addr == Join) ||
-             (!Join &&
-              (Body[J].Kind == StmtKind::Call ||
-               Body[J].Kind == StmtKind::Return) &&
-              stmtUsesJoinDest(Body[J], Cur)))) {
+        if (J < Body.size() && ((Join && Body[J].Addr == Join) ||
+                                (!Join &&
+                                 (Body[J].Kind == StmtKind::Call ||
+                                  Body[J].Kind == StmtKind::Return) &&
+                                 stmtUsesJoinDest(Body[J], Cur)))) {
           // Keep the last join-used assign. An earlier same-RegOff copy
           // (a fallthrough `lea` that still feeds another PHI) is not the
           // default; retargeting incoming onto that SSA leaves the call
@@ -3546,8 +3542,8 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     }
     if (!PrefixSafe)
       continue;
-    auto NextCond = composePrefixesIntoCond(
-        Body, static_cast<size_t>(I) + 1, J, Body[J].Cond);
+    auto NextCond = composePrefixesIntoCond(Body, static_cast<size_t>(I) + 1, J,
+                                            Body[J].Cond);
     const bool Same =
         NextCond && condStructEq(Stmt.Cond.get(), NextCond->get());
     if (Same) {
@@ -3559,8 +3555,8 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     }
     if (!NextCond)
       continue;
-    Stmt.Cond = HighExpr::makeBinop(NdOp::BOOL_OR, Stmt.Cond,
-                                    std::move(*NextCond));
+    Stmt.Cond =
+        HighExpr::makeBinop(NdOp::BOOL_OR, Stmt.Cond, std::move(*NextCond));
     Body.erase(Body.begin() + static_cast<long>(I) + 1,
                Body.begin() + static_cast<long>(J) + 1);
     Changed = true;
@@ -3611,9 +3607,8 @@ static bool invertEmptyThenAssignCall(std::vector<HighStmt> &Body) {
            (Body[K].Kind == StmtKind::Nop ||
             (Body[K].Kind == StmtKind::Block && Body[K].Body.empty())))
       ++K;
-    if (K >= Body.size() || K - NextI > 8 ||
-        Body[K].Kind != StmtKind::Assign || !Body[K].Val ||
-        Body[K].Val->Kind != ExprKind::Call)
+    if (K >= Body.size() || K - NextI > 8 || Body[K].Kind != StmtKind::Assign ||
+        !Body[K].Val || Body[K].Val->Kind != ExprKind::Call)
       continue;
     const size_t TargetIndex = K + 1;
     Stmt.Kind = StmtKind::If;
@@ -3669,8 +3664,7 @@ static bool invertExternalSkipGoto(std::vector<HighStmt> &Body) {
       continue;
     AddrMap AM;
     AM.rebuild(Body);
-    if (!ownsRunHighIR(Body, AM, {NextI, CleanupI + 1},
-                       static_cast<size_t>(I)))
+    if (!ownsRunHighIR(Body, AM, {NextI, CleanupI + 1}, static_cast<size_t>(I)))
       continue;
     std::vector<HighStmt> ThenBody;
     for (size_t K = NextI; K <= CleanupI; ++K)
@@ -4077,7 +4071,6 @@ static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
   structureIfElseList(Stmts, MaxPasses, Med);
 }
 
-
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
   const std::set<va_t> Targets = gotoTargets(Func.Body);
   const std::set<va_t> *Saved = IfElseFunctionTargets;
@@ -4108,9 +4101,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
     Changed = false;
     AM.rebuild(Body);
     for (int Sinks = 0;
-         Sinks < 32 &&
-         ((CanSinkWin64Join && sinkJoinDefaultAssign(Body)) ||
-          foldJoinValueGotoChain(Body));
+         Sinks < 32 && ((CanSinkWin64Join && sinkJoinDefaultAssign(Body)) ||
+                        foldJoinValueGotoChain(Body));
          ++Sinks) {
       Changed = true;
       AM.rebuild(Body);
@@ -4201,10 +4193,10 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           const bool Drop = Stmt.Body.empty() && Stmt.ElseBody.empty();
           if (Drop)
             Body.erase(Body.begin() + I);
-          size_t At = Drop ? static_cast<size_t>(I) : static_cast<size_t>(I + 1);
+          size_t At =
+              Drop ? static_cast<size_t>(I) : static_cast<size_t>(I + 1);
           for (auto It = Joins.rbegin(); It != Joins.rend(); ++It)
-            Body.insert(Body.begin() + static_cast<long>(At++),
-                        std::move(*It));
+            Body.insert(Body.begin() + static_cast<long>(At++), std::move(*It));
           Changed = true;
           continue;
         }
@@ -4244,7 +4236,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       // `goto Join` along the trailing spine is redundant when Join is next.
       if (Stmt.Kind == StmtKind::IfElse && Stmt.Cond) {
         va_t SpineJoin = 0;
-        auto SpineGoto = [&](auto &&Self, const std::vector<HighStmt> &Arm) -> va_t {
+        auto SpineGoto = [&](auto &&Self,
+                             const std::vector<HighStmt> &Arm) -> va_t {
           if (Arm.empty())
             return 0;
           const HighStmt &Last = Arm.back();
@@ -4330,8 +4323,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             AM.rebuild(Body);
             const size_t TargetIndex = findTargetIndex(AM, Target);
             const size_t NextI = static_cast<size_t>(I) + 1;
-            if (TargetIndex != SIZE_MAX && TargetIndex > static_cast<size_t>(I) &&
-                NextI <= TargetIndex) {
+            if (TargetIndex != SIZE_MAX &&
+                TargetIndex > static_cast<size_t>(I) && NextI <= TargetIndex) {
               size_t PrefixEnd = NextI;
               size_t PhiCount = 0;
               while (PrefixEnd < Body.size()) {
@@ -4348,8 +4341,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                 break;
               }
               if (PhiCount > 0 && TargetIndex <= PrefixEnd &&
-                  ownsRun(Body, AM, {NextI, PrefixEnd},
-                          static_cast<size_t>(I), Med)) {
+                  ownsRun(Body, AM, {NextI, PrefixEnd}, static_cast<size_t>(I),
+                          Med)) {
                 bool GotoIsEntry = LiveTargets.count(Taken.back().Addr) != 0;
                 if (Med && Taken.back().Addr) {
                   for (const auto &Block : Med->Blocks) {
@@ -4371,10 +4364,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                     Stmt.Body = std::move(Prefix);
                   else
                     Stmt.ElseBody = std::move(Prefix);
-                  Body.erase(Body.begin() +
-                                      static_cast<long>(NextI),
-                                  Body.begin() +
-                                      static_cast<long>(PrefixEnd));
+                  Body.erase(Body.begin() + static_cast<long>(NextI),
+                             Body.begin() + static_cast<long>(PrefixEnd));
                   Changed = true;
                   continue;
                 }
@@ -4448,8 +4439,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                 UsedLater = true;
             }
             ExprPtr Before = Inner.Cond;
-            auto Folded = composePrefixesIntoCond(Stmt.Body, 0, InnerI,
-                                                  Inner.Cond);
+            auto Folded =
+                composePrefixesIntoCond(Stmt.Body, 0, InnerI, Inner.Cond);
             if (!Folded || UsedLater)
               FoldPrefix = false;
             else {
@@ -4457,8 +4448,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
               DidCompose = !condStructEq(Before.get(), Inner.Cond.get());
             }
           }
-          const bool SameTempId =
-              prefixesAllowSameTempId(Stmt.Body, 0, InnerI);
+          const bool SameTempId = prefixesAllowSameTempId(Stmt.Body, 0, InnerI);
           ExprPtr OuterForPeel =
               outerCondFromSiblings(Body, static_cast<size_t>(I), Stmt.Cond);
           ExprPtr PredForDce = OuterForPeel ? OuterForPeel : Stmt.Cond;
@@ -4504,8 +4494,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                 continue;
               Prefix.push_back(std::move(Stmt.Body[K]));
             }
-            Stmt.Cond = HighExpr::makeBinop(NdOp::BOOL_AND, std::move(Stmt.Cond),
-                                            std::move(Inner.Cond));
+            Stmt.Cond = HighExpr::makeBinop(
+                NdOp::BOOL_AND, std::move(Stmt.Cond), std::move(Inner.Cond));
             for (HighStmt &Nested : Inner.Body)
               Prefix.push_back(std::move(Nested));
             Stmt.Body = std::move(Prefix);
@@ -4521,8 +4511,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           ExprPtr PredForDce =
               outerCondFromSiblings(Body, static_cast<size_t>(I), Stmt.Cond);
           for (size_t J = 0; J < Stmt.Body.size();) {
-            auto Rest = peelInnerAgainstOuter(Stmt, static_cast<size_t>(I),
-                                              Body, J);
+            auto Rest =
+                peelInnerAgainstOuter(Stmt, static_cast<size_t>(I), Body, J);
             if (!Rest) {
               dropUnusedTrailingAssigns(Stmt.Body, J, PredForDce, Med);
               ++J;
@@ -4563,8 +4553,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       // `if (c) { work; goto Join; } elseWork; Join:` and the title shape
       // where every then-exit is `goto Join` (nested ifs included). Invert-skip
       // still owns `if (c) goto L` with only PHI copies in the body.
-      if (Stmt.Kind == StmtKind::If && Stmt.Cond &&
-          !Stmt.Body.empty() && !ifBodyIsOnlyGoto(Stmt.Body)) {
+      if (Stmt.Kind == StmtKind::If && Stmt.Cond && !Stmt.Body.empty() &&
+          !ifBodyIsOnlyGoto(Stmt.Body)) {
         const va_t Join = uniqueExitGoto(Stmt.Body);
         if (Join) {
           bool HasEnteredTransfer = false;
@@ -4576,8 +4566,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             continue;
           AM.rebuild(Body);
           const size_t NextI = static_cast<size_t>(I) + 1;
-          const size_t JoinIdx =
-              findTargetIndexOrBlock(AM, Join, Body, Med);
+          const size_t JoinIdx = findTargetIndexOrBlock(AM, Join, Body, Med);
           if (JoinIdx != SIZE_MAX && JoinIdx < NextI) {
             // Join is above this if; leave the gotos in place.
           } else if (JoinIdx == NextI) {
@@ -4585,15 +4574,13 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             Changed = true;
             continue;
           } else {
-            const bool JoinInList =
-                JoinIdx != SIZE_MAX && JoinIdx > NextI;
+            const bool JoinInList = JoinIdx != SIZE_MAX && JoinIdx > NextI;
             const size_t ElseEnd = JoinInList ? JoinIdx : Body.size();
             if (ElseEnd > NextI && !rangeHasLoop(Body, NextI, ElseEnd)) {
               bool RestOk = JoinInList;
               if (!JoinInList) {
-                std::vector<HighStmt> Rest(Body.begin() +
-                                               static_cast<long>(NextI),
-                                           Body.end());
+                std::vector<HighStmt> Rest(
+                    Body.begin() + static_cast<long>(NextI), Body.end());
                 const va_t RestJoin = uniqueExitGoto(Rest);
                 RestOk = RestJoin == Join || stmtListFallsThrough(Rest);
               }
@@ -4651,9 +4638,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                     LiveTargets.count(Address))
                   SharedLabel = true;
               }
-              if (!SharedLabel ||
-                  ownsRunHighIR(Body, AM, {NextI, JoinIdx},
-                                static_cast<size_t>(I))) {
+              if (!SharedLabel || ownsRunHighIR(Body, AM, {NextI, JoinIdx},
+                                                static_cast<size_t>(I))) {
                 Stmt.Kind = StmtKind::IfElse;
                 Stmt.Cond = std::move(Chain->Cond);
                 Stmt.Body = std::move(Chain->Work);
@@ -4703,7 +4689,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
         continue;
 
       // A later `goto Join` that lands inside (NextI, TargetIndex) is the
-      // else arm of `if (c) goto L_else; then; Join: ...; L_else: else; goto Join`.
+      // else arm of `if (c) goto L_else; then; Join: ...; L_else: else; goto
+      // Join`.
       size_t BackEdgeGoto = SIZE_MAX;
       va_t JoinAddr = 0;
       if (TakenCopies.empty()) {
@@ -4763,10 +4750,10 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             JoinAddr = Body[K].GotoTarget;
           }
         }
-        const size_t JoinIdx =
-            findTargetIndexOrBlock(AM, JoinAddr, Body, Med);
+        const size_t JoinIdx = findTargetIndexOrBlock(AM, JoinAddr, Body, Med);
         bool AdjacentElse = ThenGoto != SIZE_MAX && ThenGoto + 1 == TargetIndex;
-        if (!AdjacentElse && ThenGoto != SIZE_MAX && ThenGoto + 1 < TargetIndex) {
+        if (!AdjacentElse && ThenGoto != SIZE_MAX &&
+            ThenGoto + 1 < TargetIndex) {
           AdjacentElse = true;
           for (size_t K = ThenGoto + 1; K < TargetIndex; ++K) {
             if (Body[K].Kind != StmtKind::Nop &&
@@ -4817,10 +4804,10 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           if (ElseEnd != SIZE_MAX && ElseEnd > TargetIndex &&
               rangeHasObservableWork(Body, NextI, ThenGoto) &&
               rangeHasObservableWork(Body, TargetIndex, ElseEnd) &&
-              ownsRun(Body, AM, {NextI, ThenGoto},
-                      static_cast<size_t>(I), Med) &&
-              ownsRun(Body, AM, {TargetIndex, ElseEnd},
-                      static_cast<size_t>(I), Med)) {
+              ownsRun(Body, AM, {NextI, ThenGoto}, static_cast<size_t>(I),
+                      Med) &&
+              ownsRun(Body, AM, {TargetIndex, ElseEnd}, static_cast<size_t>(I),
+                      Med)) {
             const bool JoinFollowsElse = ElseEnd == JoinIdx;
             size_t ElseTake = ElseEnd;
             if (JoinFollowsElse && ElseTake > TargetIndex &&
@@ -4830,8 +4817,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             Stmt.Kind = StmtKind::IfElse;
             Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
             std::vector<HighStmt> ThenBody;
-            const size_t ThenTake =
-                JoinFollowsElse ? ThenGoto : ThenGoto + 1;
+            const size_t ThenTake = JoinFollowsElse ? ThenGoto : ThenGoto + 1;
             for (size_t K = NextI; K < ThenTake; ++K)
               ThenBody.push_back(std::move(Body[K]));
             std::vector<HighStmt> ElseBody;
@@ -4950,22 +4936,20 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             Stmt.ElseBody.push_back(std::move(Body[K]));
         }
         Body.erase(Body.begin() + static_cast<long>(NextI),
-                        Body.begin() +
-                            static_cast<long>(Else.GotoIdx + TargetFollows));
+                   Body.begin() +
+                       static_cast<long>(Else.GotoIdx + TargetFollows));
         Changed = true;
         continue;
       }
 
       // General if/else structuring with merge-point inference.
       va_t IfDest = findGotoDestination(Body, AM, IfTarget);
-      va_t ElseDest = Else.Target != 0
-                          ? findGotoDestination(Body, AM, Else.Target)
-                          : 0;
+      va_t ElseDest =
+          Else.Target != 0 ? findGotoDestination(Body, AM, Else.Target) : 0;
       va_t MergeTarget =
           inferMergeTarget(IfTarget, IfDest, Else.Target, ElseDest);
 
-      auto IfResult =
-          collectStmtsForTarget(Body, AM, IfTarget, MergeTarget);
+      auto IfResult = collectStmtsForTarget(Body, AM, IfTarget, MergeTarget);
       const size_t InlineEnd = Else.Target != 0 ? Else.GotoIdx + 1 : NextI;
       auto FoldSharedTail = [&]() {
         if (TargetIndex > NextI &&
@@ -4980,12 +4964,11 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
         Stmt.Body = std::move(TakenCopies);
         Stmt.ElseBody = std::move(FalseBody);
         Body.erase(Body.begin() + static_cast<long>(NextI),
-                        Body.begin() + static_cast<long>(TargetIndex));
+                   Body.begin() + static_cast<long>(TargetIndex));
         return true;
       };
       // The immediately following target also belongs to the false edge.
-      if (IfResult.Start == NextI ||
-          !ownsRun(Body, AM, IfResult, I, Med) ||
+      if (IfResult.Start == NextI || !ownsRun(Body, AM, IfResult, I, Med) ||
           (InlineEnd > NextI &&
            (!ownsRun(Body, AM, {NextI, InlineEnd}, I, Med) ||
             (IfResult.Start < InlineEnd && IfResult.End > NextI)))) {
@@ -4998,12 +4981,10 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       // PHI copies belong to the fallthrough edge, not to an instruction
       // entry. Their address can be the loop latch still inside the moved run;
       // naming it would reenter the latch or create a second label for it.
-      const bool NeedsSuccessor =
-          !endsWithTransfer(Body[IfResult.End - 1]);
-      const va_t Successor =
-          IfResult.End < Body.size()
-              ? AddrMap::entryAddress(Body[IfResult.End])
-              : 0;
+      const bool NeedsSuccessor = !endsWithTransfer(Body[IfResult.End - 1]);
+      const va_t Successor = IfResult.End < Body.size()
+                                 ? AddrMap::entryAddress(Body[IfResult.End])
+                                 : 0;
       if (NeedsSuccessor && (!Successor || Body[IfResult.End].IsPhiCopy)) {
         Changed |= FoldSharedTail();
         continue;
@@ -5050,7 +5031,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       for (auto &[Start, End] : Ranges) {
         if (End <= Body.size())
           Body.erase(Body.begin() + static_cast<long>(Start),
-                          Body.begin() + static_cast<long>(End));
+                     Body.begin() + static_cast<long>(End));
       }
 
       Changed = true;
@@ -5069,8 +5050,7 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       continue;
     ExprPtr Pred = outerCondFromSiblings(Body, I, S.Cond);
     for (size_t J = 0; J < S.Body.size(); ++J)
-      if (S.Body[J].Kind == StmtKind::If ||
-          S.Body[J].Kind == StmtKind::IfElse)
+      if (S.Body[J].Kind == StmtKind::If || S.Body[J].Kind == StmtKind::IfElse)
         dropUnusedTrailingAssigns(S.Body, J, Pred, Med);
   }
   for (HighStmt &S : Body) {

@@ -91,7 +91,14 @@ checks load identity/order, volatile/atomic state and poison boundaries.
 function addresses, mapping-only objects, mixed-image decoding, cross-mode
 calls, wide Thumb branches, HighC/LLVMC execution, forwarded argument chains,
 halfword-aligned interworking targets, and rejection of contradictory modes at
-one address.
+one address. A sectionless and symbolless linked ELF also checks both
+directions of direct ARM/Thumb calls, conditional Thumb fallthrough, unknown
+unreached bytes, and executable HighC/LLVMC output before and after rewriting.
+A mapped ELF checks generated executable bytes outside its section table,
+Thumb-to-ARM call repair, and both C backends at `-O0` and `-O2`. An aligned
+Thumb stack frame passed to an ARM callee checks live pointer preservation in
+both C backends before and after rewriting; a MedIR contract test also checks
+multi-hop pointer forwarding and rejects a redefined argument register.
 `ELFARM32ModeCAPITest.*` checks that mixed-mode SDK disassembly and both C
 backends work after replacing a Thumb image in the same session, then reloads
 Thumb to verify decoder recovery. `ARM32InterworkingPatchRT.*` links a generic

@@ -51,7 +51,12 @@ metadata; `BinaryImage::instructionModeAt` is the shared address-specific mode
 contract for discovery, decoding, lifting, SDK disassembly and rewriting.
 Conflicting evidence at one address is rejected, and `$d` mapping intervals
 cannot be decoded as instructions. CFG edges carry their incoming mode when
-the target lacks stronger mapping evidence. ELF section and in-place rewriting
+the target lacks stronger mapping evidence. For linked ELF images without
+mapping symbols, the loader follows direct branches from exact code entries
+and records only the decoded instruction spans. Unreached gaps remain unknown
+even when all reached instructions use one mode. An exact ARM literal branch
+veneer may supply an additional executable target, but function discovery must
+verify it before treating it as callable. ELF section and in-place rewriting
 compile each authenticated source function in its own mode, encode Thumb code
 pointers with bit 0, and validate final direct calls before publication.
 Unsupported cross-state branches that need a veneer fail clearly. Loading a
@@ -59,6 +64,15 @@ new image into an SDK session resets its previous decoder state; data symbols
 and unrelated names do not select a decoder mode. A fully stripped image can
 leave an indirect target's state unknowable from static bytes alone; the
 file-level default is not proof that all of its executable bytes use one mode.
+
+After ARM call-arity recovery, MedIR propagates a proven pointer parameter
+through direct calls only when the argument is the exact incoming parameter;
+computed register versions do not inherit that role. HighC uses the same
+parameter type as LLVM emission. For private frame addresses, HighC projects a
+power-of-two alignment only when the input is a certified entry-stack offset
+within the synthetic frame. LLVMC preserves a host pointer through a mask
+that is an identity at the target pointer width, so generated C does not
+truncate valid host address bits.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination

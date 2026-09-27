@@ -26,6 +26,7 @@
 #include "neverd/backend/codegen/MachO/MachOInplace.h"
 #include "neverd/backend/codegen/MachO/MachOPatch.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/object/MachOLayout.h"
 #include "neverd/object/PELayout.h"
@@ -58,10 +59,10 @@ namespace neverd {
 
 // LLVM's final-image assembler can resolve an internal ARM BL against a
 // private label before ELF symbol flags are available. The immediate then
-// reaches the Thumb entry but leaves the CPU in ARM state. Reconcile direct
-// calls against the exact source-owner receipts and rewrite only a proven
-// unconditional ARM-to-Thumb call into BLX. All other branch forms retain
-// their compiler encoding; an ambiguous cross-state edge fails closed.
+// reaches the target but leaves the CPU in the caller's state. Reconcile
+// direct calls against exact source-owner receipts and rewrite only a proven
+// cross-state BL into BLX. Other branch forms retain their compiler encoding;
+// an ambiguous cross-state edge fails closed.
 bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
                                      const BinaryImage &Source,
                                      std::string &Detail) {
@@ -95,7 +96,7 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         !Section.IsInImage)
       continue;
     for (const CompiledFixupReference &Fixup : Section.FixupReferences) {
-      if (!Fixup.IsPCRel || Fixup.BitWidth != 24 ||
+      if (!Fixup.IsPCRel || (Fixup.BitWidth != 24 && Fixup.BitWidth != 32) ||
           Fixup.Offset > Section.Size || Section.Size - Fixup.Offset < 4 ||
           Section.Offset > Compiled.Bytes.size() ||
           Fixup.Offset > Compiled.Bytes.size() - Section.Offset ||
@@ -112,13 +113,27 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         Detail = "generated ARM branch is outside its source function";
         return false;
       }
-      if (Caller->second != InstructionMode::ARM || (Site & 3u) != 0)
+      const InstructionMode CallerMode = Caller->second;
+      if ((CallerMode == InstructionMode::ARM &&
+           (Fixup.BitWidth != 24 || (Site & 3u) != 0)) ||
+          (CallerMode == InstructionMode::Thumb &&
+           (Fixup.BitWidth != 32 || (Site & 1u) != 0)))
         continue;
 
       const size_t Offset = Section.Offset + Fixup.Offset;
       const uint32_t Insn = readLE<uint32_t>(Compiled.Bytes.data() + Offset);
-      if ((Insn & 0x0e000000u) != 0x0a000000u)
-        continue;
+      std::optional<va_t> ThumbPackedTarget;
+      if (CallerMode == InstructionMode::ARM) {
+        if ((Insn & 0x0e000000u) != 0x0a000000u)
+          continue;
+      } else {
+        size_t Length = 0;
+        ThumbPackedTarget = decodeDirectBranchTarget(
+            Arch::ARM, InstructionMode::Thumb, Compiled.Bytes.data() + Offset,
+            4, Site, Length);
+        if (!ThumbPackedTarget || Length != 4)
+          continue;
+      }
       if (!Fixup.IsResolved) {
         Detail = "generated ARM branch has no resolved target";
         return false;
@@ -134,16 +149,6 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
         return false;
       }
       const int64_t ExactDestination = static_cast<int64_t>(Site) + ExactDelta;
-      const int64_t PackedDisplacement =
-          static_cast<int32_t>((Insn & 0x00ffffffu) << 8) >> 6;
-      const bool IsBLX = (Insn & 0xfe000000u) == 0xfa000000u;
-      const int64_t PackedDestination =
-          static_cast<int64_t>(Site) + 8 + PackedDisplacement +
-          (IsBLX ? static_cast<int64_t>((Insn >> 23) & 2u) : 0);
-      if (PackedDestination < 0 || PackedDestination > UINT32_MAX) {
-        Detail = "generated ARM branch target is outside AArch32";
-        return false;
-      }
       const va_t Target = static_cast<va_t>(ExactDestination);
       std::optional<InstructionMode> TargetMode;
       if (auto Exact = OwnerModes.find(Target); Exact != OwnerModes.end())
@@ -160,6 +165,51 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
       }
       if (!TargetMode) {
         Detail = "generated ARM branch target has no authenticated mode";
+        return false;
+      }
+      if (CallerMode == InstructionMode::Thumb) {
+        const uint16_t Low =
+            readLE<uint16_t>(Compiled.Bytes.data() + Offset + 2);
+        const bool IsBL = (Low & 0xD000u) == 0xD000u;
+        const bool IsBLX = (Low & 0xD000u) == 0xC000u;
+        if (*TargetMode == InstructionMode::Thumb) {
+          if (IsBLX || *ThumbPackedTarget != Target) {
+            Detail = "generated Thumb branch does not encode its Thumb target";
+            return false;
+          }
+          continue;
+        }
+        if (IsBLX && *ThumbPackedTarget == Target)
+          continue;
+        const int64_t Base = (static_cast<int64_t>(Site) + 4) & ~int64_t{3};
+        const int64_t Displacement = ExactDestination - Base;
+        if (!IsBL || *ThumbPackedTarget != Target || (Target & 3u) != 0 ||
+            Displacement < -(int64_t{1} << 24) ||
+            Displacement > (int64_t{1} << 24) - 4 || (Displacement & 3u) != 0) {
+          Detail = "generated Thumb-to-ARM branch needs an interworking veneer";
+          return false;
+        }
+        const uint32_t Imm = static_cast<uint32_t>(Displacement);
+        const uint32_t S = (Imm >> 24) & 1u;
+        const uint32_t I1 = (Imm >> 23) & 1u;
+        const uint32_t I2 = (Imm >> 22) & 1u;
+        const uint32_t J1 = (~(I1 ^ S)) & 1u;
+        const uint32_t J2 = (~(I2 ^ S)) & 1u;
+        const uint16_t BLXHigh = 0xf000u | (S << 10) | ((Imm >> 12) & 0x03ffu);
+        const uint16_t BLXLow =
+            0xc000u | (J1 << 13) | (J2 << 11) | ((Imm >> 1) & 0x07feu);
+        writeLE<uint16_t>(Compiled.Bytes.data() + Offset, BLXHigh);
+        writeLE<uint16_t>(Compiled.Bytes.data() + Offset + 2, BLXLow);
+        continue;
+      }
+      const int64_t PackedDisplacement =
+          static_cast<int32_t>((Insn & 0x00ffffffu) << 8) >> 6;
+      const bool IsBLX = (Insn & 0xfe000000u) == 0xfa000000u;
+      const int64_t PackedDestination =
+          static_cast<int64_t>(Site) + 8 + PackedDisplacement +
+          (IsBLX ? static_cast<int64_t>((Insn >> 23) & 2u) : 0);
+      if (PackedDestination < 0 || PackedDestination > UINT32_MAX) {
+        Detail = "generated ARM branch target is outside AArch32";
         return false;
       }
       if (*TargetMode != InstructionMode::Thumb) {
@@ -750,8 +800,8 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
   if (WindowsEHTable) {
     RetainedWindowsEHRows.reserve(WindowsEHTable->getNumOperands());
     for (llvm::MDNode *Row : WindowsEHTable->operands()) {
-      const auto *FunctionValue = llvm::dyn_cast<llvm::ValueAsMetadata>(
-          Row->getOperand(0).get());
+      const auto *FunctionValue =
+          llvm::dyn_cast<llvm::ValueAsMetadata>(Row->getOperand(0).get());
       const auto *Function =
           llvm::cast<llvm::Function>(FunctionValue->getValue());
       if (FunctionsToExternalize.contains(Function)) {
@@ -775,8 +825,7 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
     if (Image && Image->Format == BinaryFormat::COFF) {
       Candidate.Function->setMetadata(windows_eh_md::FunctionAttachment,
                                       nullptr);
-      Candidate.Function->setMetadata(windows_eh_md::NativeAttachment,
-                                      nullptr);
+      Candidate.Function->setMetadata(windows_eh_md::NativeAttachment, nullptr);
     }
     Candidate.Function->deleteBody();
     Candidate.Function->setLinkage(llvm::GlobalValue::ExternalLinkage);

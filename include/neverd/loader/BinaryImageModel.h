@@ -34,8 +34,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <iterator>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -246,6 +246,16 @@ struct BinaryImage {
   std::map<va_t, InstructionMode> ARMCodeModeEntries;
   /// Sorted, disjoint section-relative ELF mapping intervals, including $d.
   std::vector<ARMCodeRegion> ARMCodeRegions;
+  /// Decoded instruction spans reachable from exact AArch32 code entries.
+  /// Unlike mapping intervals, these do not claim the gaps between paths.
+  std::vector<ARMCodeRegion> ARMReachableCodeRegions;
+  /// When reachability supplies the only interval evidence, the file-level
+  /// mode does not establish a mode for instruction bytes outside those spans.
+  bool ARMReachabilityConstrained = false;
+  /// Exact executable targets of decoded ARM literal branch veneers. They
+  /// remain function candidates until the bounded function verifier accepts
+  /// them; a pointer-sized literal alone does not authenticate an entry.
+  std::set<va_t> ARMVeneerTargets;
   BinaryFormat Format = BinaryFormat::Unknown;
   Bitness Bits = Bitness::Unknown;
   bool IsRelocatable = false;
@@ -547,6 +557,22 @@ struct BinaryImage {
                          : InstructionMode::ARM;
       }
     }
+    const auto Reachable = std::upper_bound(
+        ARMReachableCodeRegions.begin(), ARMReachableCodeRegions.end(), Addr,
+        [](va_t Address, const ARMCodeRegion &Region) {
+          return Address < Region.Start;
+        });
+    if (Reachable != ARMReachableCodeRegions.begin()) {
+      const ARMCodeRegion &Region = *std::prev(Reachable);
+      if (Addr < Region.End) {
+        const InstructionMode DecodedMode =
+            Region.Kind == ARMCodeRegionKind::Thumb ? InstructionMode::Thumb
+                                                    : InstructionMode::ARM;
+        if (ProvenMode && *ProvenMode != DecodedMode)
+          return std::nullopt;
+        ProvenMode = DecodedMode;
+      }
+    }
     if (const auto Entry = ARMCodeModeEntries.find(Addr);
         Entry != ARMCodeModeEntries.end()) {
       if (ProvenMode && *ProvenMode != Entry->second)
@@ -559,6 +585,8 @@ struct BinaryImage {
       return ProvenMode;
     if (IncomingMode)
       return IncomingMode;
+    if (ARMReachabilityConstrained)
+      return std::nullopt;
     if (Mode == InstructionMode::MixedARMThumb)
       return std::nullopt;
     return Mode == InstructionMode::Default ? InstructionMode::ARM : Mode;
@@ -1121,8 +1149,9 @@ struct BinaryImage {
   /// An operation-scoped index makes repeated CFG queries logarithmic without
   /// mutating this publicly editable image from parallel workers. An absent or
   /// foreign index reads the current Symbols directly.
-  bool hasFunctionSymbolAt(
-      va_t Addr, const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  bool
+  hasFunctionSymbolAt(va_t Addr,
+                      const ExecutableCodeOwnerIndex *Index = nullptr) const;
 
   /// Largest non-function symbol size defined exactly at \p Addr (0 if none).
   /// Distinguishes a sized data object (a const array/table) from a bare label,
@@ -1508,11 +1537,11 @@ struct BinaryImage {
     if (RVA64 > std::numeric_limits<uint32_t>::max())
       return false;
     const uint32_t RVA = static_cast<uint32_t>(RVA64);
-    const auto It = std::lower_bound(
-        COFFPDataRecords.begin(), COFFPDataRecords.end(), RVA,
-        [](const COFFPDataRecord &Rec, uint32_t Needle) {
-          return Rec.BeginRVA < Needle;
-        });
+    const auto It =
+        std::lower_bound(COFFPDataRecords.begin(), COFFPDataRecords.end(), RVA,
+                         [](const COFFPDataRecord &Rec, uint32_t Needle) {
+                           return Rec.BeginRVA < Needle;
+                         });
     return It != COFFPDataRecords.end() && It->BeginRVA == RVA &&
            It->BeginRVA < It->EndRVA;
   }
@@ -1524,12 +1553,12 @@ struct BinaryImage {
     const uint64_t AfterRVA = static_cast<uint64_t>(Addr - Base) + 1;
     if (AfterRVA > std::numeric_limits<uint32_t>::max())
       return InvalidVA;
-    const auto It = std::lower_bound(
-        COFFPDataRecords.begin(), COFFPDataRecords.end(),
-        static_cast<uint32_t>(AfterRVA),
-        [](const COFFPDataRecord &Rec, uint32_t RVA) {
-          return Rec.BeginRVA < RVA;
-        });
+    const auto It =
+        std::lower_bound(COFFPDataRecords.begin(), COFFPDataRecords.end(),
+                         static_cast<uint32_t>(AfterRVA),
+                         [](const COFFPDataRecord &Rec, uint32_t RVA) {
+                           return Rec.BeginRVA < RVA;
+                         });
     for (auto Cur = It; Cur != COFFPDataRecords.end(); ++Cur)
       if (Cur->BeginRVA < Cur->EndRVA)
         return Base + Cur->BeginRVA;
@@ -1581,14 +1610,15 @@ struct BinaryImage {
     if (auto It = RuntimeFunctionAddrs.upper_bound(Addr);
         It != RuntimeFunctionAddrs.end())
       Consider(*It);
-    if (const ExceptionFunction *Next = ExceptionMetadata.nextFunctionAfter(Addr))
+    if (const ExceptionFunction *Next =
+            ExceptionMetadata.nextFunctionAfter(Addr))
       Consider(Next->CodeRange.Begin);
     if (!KnownCodeRanges.empty()) {
-      const auto It = std::upper_bound(
-          KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
-          [](va_t Needle, const std::pair<va_t, va_t> &Range) {
-            return Needle < Range.first;
-          });
+      const auto It =
+          std::upper_bound(KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
+                           [](va_t Needle, const std::pair<va_t, va_t> &Range) {
+                             return Needle < Range.first;
+                           });
       for (auto Cur = It; Cur != KnownCodeRanges.end(); ++Cur)
         if (hasKnownFunctionEntryAt(Cur->first)) {
           Consider(Cur->first);
