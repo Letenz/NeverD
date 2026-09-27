@@ -210,6 +210,16 @@ SymRef SymContext::mkXor(llvm::ArrayRef<SymRef> Ops) {
   if (Rest.empty())
     return mkConst(Acc);
 
+  // Bits forced by OR disappear when XOR uses the same constant mask.
+  if (!Acc.isZero() && Rest.size() == 1 && op(Rest[0]) == SymOp::Or) {
+    auto Factors = operands(Rest[0]);
+    if (isConst(Factors[0]) && constValue(Factors[0]) == Acc) {
+      llvm::SmallVector<SymRef, 8> Source(Factors.begin() + 1, Factors.end());
+      SymRef Value = Source.size() == 1 ? Source[0] : mkOr(Source);
+      return mkAnd(Value, mkConst(~Acc));
+    }
+  }
+
   // x ^ -1 == ~x: prefer the complement, which the bitwise laws above and the
   // MBA solver's boolean domain both recognise.
   if (Acc.isAllOnes()) {
