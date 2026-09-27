@@ -75,6 +75,19 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
   std::sort(Rest.begin(), Rest.end());
   Rest.erase(std::unique(Rest.begin(), Rest.end()), Rest.end());
 
+  // Absorption is independent of what computes an operand: x & (x | y)
+  // equals x even when x is arithmetic or otherwise opaque to MBA measurement.
+  llvm::SmallVector<SymRef, 8> Unabsorbed;
+  for (SymRef R : Rest) {
+    bool Absorbed =
+        op(R) == SymOp::Or && llvm::any_of(operands(R), [&](SymRef C) {
+          return std::binary_search(Rest.begin(), Rest.end(), C);
+        });
+    if (!Absorbed)
+      Unabsorbed.push_back(R);
+  }
+  Rest = std::move(Unabsorbed);
+
   // x & ~x == 0.  Testing the Not operands against the set avoids interning a
   // complement just to look it up.
   for (SymRef R : Rest) {
@@ -175,6 +188,18 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
 
   std::sort(Rest.begin(), Rest.end());
   Rest.erase(std::unique(Rest.begin(), Rest.end()), Rest.end());
+
+  // Dual absorption: x | (x & y) == x, including compound x.
+  llvm::SmallVector<SymRef, 8> Unabsorbed;
+  for (SymRef R : Rest) {
+    bool Absorbed =
+        op(R) == SymOp::And && llvm::any_of(operands(R), [&](SymRef C) {
+          return std::binary_search(Rest.begin(), Rest.end(), C);
+        });
+    if (!Absorbed)
+      Unabsorbed.push_back(R);
+  }
+  Rest = std::move(Unabsorbed);
 
   // x | ~x == -1.
   for (SymRef R : Rest) {

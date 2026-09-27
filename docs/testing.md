@@ -36,6 +36,29 @@ backend evidence, not as semantic success.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
+## Modular MBA simplification
+
+Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
+roundtrips together when changing shared bitvector simplification:
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests --gtest_filter='HighSymSimplify.*'
+build-release/bin/NeverDMBASourceTests
+```
+
+`NeverDMBASourceTests` assembles generic 8/16/32/64-bit arithmetic and shared
+Boolean identities as ELF, COFF, and Mach-O. It checks both HighC and LLVMC for
+remaining MBA, recompiles their C at `-O0` and `-O2` with undefined-behavior
+traps, and compares results with unsigned arithmetic, parity, and memory-store
+oracles. A full-product counterexample ensures low-word rules do not discard
+observable upper bits. The symbolic and HighIR tests additionally check signed
+extension, carry boundaries, shared-DAG traversal, and effect preservation.
+Missing cross-target Clang is a skip, not evidence for that format.
+
 ## Driver emulation checks
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`

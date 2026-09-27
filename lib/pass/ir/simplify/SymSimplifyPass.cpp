@@ -18,8 +18,8 @@
 /// Translation in both directions is deliberately narrow.  Only the operators
 /// that are bitvector arithmetic on a whole word are carried across; a load, a
 /// call, an argument, a comparison, a PHI -- each becomes one opaque input and
-/// comes back untouched.  A value with more than one use also stays opaque, so
-/// a subterm the obfuscator shares is measured as one input on every side.
+/// comes back untouched. A shared value stays opaque when any use escapes the
+/// measured region, so external work is not duplicated.
 /// Every opaque instruction input must remain in the result, and rebuilding
 /// reuses it rather than duplicating or erasing computation the CFG already
 /// has.

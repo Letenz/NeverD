@@ -17,13 +17,14 @@
 ///
 /// Translation in both directions is deliberately narrow.  Only the operators
 /// that are bitvector arithmetic on a whole word are carried across; a load, a
-/// call, a cast, a comparison, anything of a width the engine cannot see —
+/// call, a comparison, anything of a width the engine cannot see —
 /// each becomes one opaque input, and comes back untouched.  Everything the
 /// pass does not understand it therefore preserves exactly, and the part it
 /// does understand it reasons about exactly.
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/symbolic/SymMBA.h"
 
@@ -31,7 +32,11 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
+#include <limits>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -193,13 +198,161 @@ BinKind binKindOf(NdOp Op) {
   }
 }
 
+/// A conversion is numeric only when both sides explicitly describe integers.
+/// Widening a C cast extends according to its source signedness; the target's
+/// signedness only interprets the resulting bits. Machine extensions instead
+/// specify their extension kind in the opcode.
+bool isIntegerConversion(const ExprPtr &E) {
+  if (!E || !E->Type || E->Type->Kind != NdTypeKind::Int ||
+      !widthFromBytes(E->Type->Size) || E->Operands.size() != 1 ||
+      !E->Operands[0] || !E->Operands[0]->Type ||
+      E->Operands[0]->Type->Kind != NdTypeKind::Int ||
+      !widthFromBytes(E->Operands[0]->Type->Size))
+    return false;
+  if (E->Kind == ExprKind::Cast)
+    return E->CastTo && E->CastTo->Kind == NdTypeKind::Int &&
+           E->CastTo->Size == E->Type->Size &&
+           E->CastTo->IsSigned == E->Type->IsSigned;
+  return E->Kind == ExprKind::UnaryOp &&
+         (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT) &&
+         E->Type->Size >= E->Operands[0]->Type->Size;
+}
+
+bool isIntegerSlice(const ExprPtr &E) {
+  if (!E || E->Kind != ExprKind::BinOp || E->Op != NdOp::SUBBYTES || !E->Type ||
+      E->Type->Kind != NdTypeKind::Int || !widthFromBytes(E->Type->Size) ||
+      E->Operands.size() != 2 || !E->Operands[0] || !E->Operands[0]->Type ||
+      E->Operands[0]->Type->Kind != NdTypeKind::Int ||
+      !widthFromBytes(E->Operands[0]->Type->Size) || !E->Operands[1] ||
+      E->Operands[1]->Kind != ExprKind::Const)
+    return false;
+  const auto &Offset = E->Operands[1];
+  return bitWidthOf(Offset) != 0 &&
+         literalAt(*Offset, bitWidthOf(Offset), bitWidthOf(Offset)) &&
+         Offset->ConstVal <= E->Operands[0]->Type->Size &&
+         E->Type->Size <= E->Operands[0]->Type->Size - Offset->ConstVal;
+}
+
+/// Rewriting arithmetic must not erase an observation or manufacture pointer
+/// or unknown-value facts. Descendants are checked separately by the DAG walk.
+bool isRewriteableNode(const ExprPtr &E) {
+  if (!E || (E->Type && E->Type->Kind != NdTypeKind::Int) ||
+      E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+      E->IndirectTarget)
+    return false;
+  switch (E->Kind) {
+  case ExprKind::Const:
+  case ExprKind::Var:
+    return E->Operands.empty();
+  case ExprKind::Cast:
+    return isIntegerConversion(E);
+  case ExprKind::BinOp:
+    if (E->Op == NdOp::SUBBYTES && !isIntegerSlice(E))
+      return false;
+    return E->Op != NdOp::INT_DIV && E->Op != NdOp::INT_SDIV &&
+           E->Op != NdOp::INT_REM && E->Op != NdOp::INT_SREM &&
+           E->Op != NdOp::ATOMIC_ADD && E->Op != NdOp::ATOMIC_XCHG &&
+           E->Op != NdOp::ATOMIC_CMPXCHG;
+  case ExprKind::UnaryOp:
+    return (E->Op != NdOp::INT_ZEXT && E->Op != NdOp::INT_SEXT) ||
+           isIntegerConversion(E);
+  case ExprKind::BitCast:
+    return E->Type && E->Operands.size() == 1 && E->Operands[0] &&
+           E->Operands[0]->Type && E->Type->Size != 0 &&
+           E->Type->Size == E->Operands[0]->Type->Size;
+  default:
+    return false;
+  }
+}
+
+template <typename WidthFn>
+bool canTranslateOperands(const ExprPtr &E, const WidthFn &WidthOf) {
+  const uint32_t Width = WidthOf(E);
+  if (!Width)
+    return false;
+  if (isIntegerConversion(E) || isIntegerSlice(E))
+    return true;
+  if (E->Kind == ExprKind::UnaryOp && E->Operands.size() == 1 &&
+      (E->Op == NdOp::INT_NOT || E->Op == NdOp::INT_NEGATE ||
+       E->Op == NdOp::INT_NEG2))
+    return WidthOf(E->Operands[0]) == Width;
+  if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      binKindOf(E->Op) == BinKind::None)
+    return false;
+  for (const auto &Operand : E->Operands) {
+    if (!Operand)
+      return false;
+    const uint32_t Have = WidthOf(Operand);
+    if (Have == Width)
+      continue;
+    if (Operand->Kind != ExprKind::Const || Have == 0 || Have >= Width ||
+        !literalAt(*Operand, Have, Width))
+      return false;
+  }
+  return true;
+}
+
+/// Count the rendered tree without expanding shared subgraphs. Algebra may
+/// discard or repeat any input, so an effect, unknown value, trapping operator,
+/// or noninteger source excludes the complete root from this rewrite.
+std::optional<size_t> expressionCost(const ExprPtr &Root) {
+  struct Item {
+    ExprPtr Expr;
+    bool ChildrenReady = false;
+  };
+  llvm::SmallVector<Item, 64> Work{{Root, false}};
+  std::unordered_map<const HighExpr *, size_t> Costs;
+  std::unordered_set<const HighExpr *> Active;
+  constexpr size_t Limit = std::numeric_limits<size_t>::max() / 2;
+  while (!Work.empty()) {
+    Item Current = Work.pop_back_val();
+    const auto &E = Current.Expr;
+    if (!E)
+      return std::nullopt;
+    if (Costs.count(E.get()))
+      continue;
+    if (!Current.ChildrenReady) {
+      if (!Active.insert(E.get()).second || !isRewriteableNode(E))
+        return std::nullopt;
+      Work.push_back({E, true});
+      for (auto It = E->Operands.rbegin(); It != E->Operands.rend(); ++It)
+        Work.push_back({*It, false});
+      continue;
+    }
+    Active.erase(E.get());
+    size_t Cost = 1;
+    for (const ExprPtr &Operand : E->Operands)
+      Cost += std::min(Limit - Cost, Costs.at(Operand.get()));
+    Costs.emplace(E.get(), Cost);
+  }
+  return Costs.at(Root.get());
+}
+
+using LocalIdentity = HighSourceLocalIdentity;
+struct AvailableDefinition {
+  ExprPtr Value;
+  std::set<LocalIdentity> Dependencies;
+};
+using AvailableDefinitions = std::map<LocalIdentity, AvailableDefinition>;
+
+bool isScalarLocal(const ExprPtr &E) {
+  return E && E->Kind == ExprKind::Var && isRewriteableNode(E) && E->Type &&
+         E->Type->Kind == NdTypeKind::Int && widthFromBytes(E->Type->Size) &&
+         E->Type->Size == E->Var.Size &&
+         (E->Var.Kind == MedVar::Reg || E->Var.Kind == MedVar::Temp ||
+          E->Var.Kind == MedVar::Param);
+}
+
 //===----------------------------------------------------------------------===//
 // HighIR to the engine
 //===----------------------------------------------------------------------===//
 
 class Translator {
 public:
-  explicit Translator(sym::SymContext &Ctx) : Ctx(Ctx) {}
+  Translator(sym::SymContext &Ctx, const AvailableDefinitions &Definitions)
+      : Ctx(Ctx), Definitions(Definitions) {}
 
   sym::SymRef in(const ExprPtr &E);
   /// Rebuild a HighIR expression, or nothing when the result holds an operator
@@ -271,7 +424,55 @@ private:
 
   sym::SymRef applyBinary(BinKind Kind, sym::SymRef A, sym::SymRef B);
 
+  ExprPtr definitionFor(const ExprPtr &E) {
+    if (!isScalarLocal(E))
+      return nullptr;
+    auto It = Definitions.find(highSourceLocalIdentity(E->Var));
+    return It != Definitions.end() && widthOf(It->second.Value) == widthOf(E)
+               ? It->second.Value
+               : nullptr;
+  }
+
+  /// Formal integer parameter occurrences can select different low prefixes
+  /// of the same incoming value. One unconstrained widest carrier preserves
+  /// that relation without supplying values for its unknown upper bits.
+  void prepareParameterViews(const ExprPtr &Root) {
+    if (ParametersPrepared)
+      return;
+    ParametersPrepared = true;
+    std::vector<ExprPtr> Work{Root};
+    std::unordered_set<const HighExpr *> Seen;
+    std::set<LocalIdentity> Conflicts;
+    while (!Work.empty()) {
+      auto E = Work.back();
+      Work.pop_back();
+      if (!E || !Seen.insert(E.get()).second)
+        continue;
+      if (ExprPtr Definition = definitionFor(E))
+        Work.push_back(Definition);
+      if (isScalarLocal(E) && E->Var.Kind == MedVar::Param &&
+          E->Var.RenameTag < 0) {
+        const auto Key = highSourceLocalIdentity(E->Var);
+        if (!Conflicts.count(Key)) {
+          auto It = ParameterViews.find(Key);
+          if (It != ParameterViews.end() &&
+              It->second->Var.TheArch != E->Var.TheArch) {
+            ParameterViews.erase(It);
+            Conflicts.insert(Key);
+          } else if (It == ParameterViews.end() ||
+                     widthOf(It->second) < widthOf(E)) {
+            ParameterViews[Key] = E;
+          }
+        }
+      }
+      E->forEachChildExpr([&](const ExprPtr &Child) { Work.push_back(Child); });
+    }
+  }
+
   sym::SymContext &Ctx;
+  const AvailableDefinitions &Definitions;
+  bool ParametersPrepared = false;
+  std::map<LocalIdentity, ExprPtr> ParameterViews;
   std::unordered_map<const HighExpr *, sym::SymRef> Memo;
   std::unordered_map<const HighExpr *, uint32_t> Widths;
   /// Engine variable node to the HighIR it stands for, for the way back.
@@ -327,6 +528,7 @@ sym::SymRef Translator::applyBinary(BinKind Kind, sym::SymRef A,
 }
 
 sym::SymRef Translator::in(const ExprPtr &E) {
+  prepareParameterViews(E);
   auto Cached = Memo.find(E.get());
   if (Cached != Memo.end())
     return Cached->second;
@@ -365,9 +567,13 @@ sym::SymRef Translator::in(const ExprPtr &E) {
 
       Work.push_back({Current, true});
       llvm::SmallVector<ExprPtr, 2> Dependencies;
-      if (Width != 0 && Current->Kind == ExprKind::BinOp &&
-          binKindOf(Current->Op) != BinKind::None &&
-          Current->Operands.size() == 2) {
+      if (ExprPtr Definition = definitionFor(Current)) {
+        Dependencies.push_back(Definition);
+      } else if (isIntegerConversion(Current) || isIntegerSlice(Current)) {
+        Dependencies.push_back(Current->Operands[0]);
+      } else if (Width != 0 && Current->Kind == ExprKind::BinOp &&
+                 binKindOf(Current->Op) != BinKind::None &&
+                 Current->Operands.size() == 2) {
         for (const ExprPtr &Operand : Current->Operands)
           if (widthOf(Operand) == Width)
             Dependencies.push_back(Operand);
@@ -404,22 +610,38 @@ sym::SymRef Translator::in(const ExprPtr &E) {
     }
 
     case ExprKind::Var:
-      // Use the same disjoint parameter namespace as HighIR SSA.  A lowered
-      // arg1 and a temp with Id 1 can otherwise become the same symbolic
-      // variable, letting simplification replace a memory-read snapshot with
-      // the argument's value.
-      {
-        const VarKey Key = varKey(Current->Var);
-        Result = Ctx.mkVar("v" + std::to_string(Key.first) + "_" +
-                               std::to_string(Key.second),
-                           Width);
+      if (ExprPtr Definition = definitionFor(Current)) {
+        Result = in(Definition);
+        break;
       }
-      // Recorded like an opaque input, because the way back cannot tell the two
-      // apart: both are engine variables that have to become HighIR again.
-      Sources.emplace(Result.index(), Current);
+      // The pass runs after source renaming. Distinct SSA versions can now
+      // denote the same mutable C local, while different unrenamed kinds
+      // must remain distinct. Share the source-flow identity policy.
+      {
+        const auto Key = highSourceLocalIdentity(Current->Var);
+        const auto [Kind, Id, Version, Offset] = Key;
+        auto Parameter = ParameterViews.find(Key);
+        const bool UseParameter =
+            Parameter != ParameterViews.end() && isScalarLocal(Current) &&
+            widthOf(Parameter->second) >= Width &&
+            Parameter->second->Var.TheArch == Current->Var.TheArch;
+        const auto &Source = UseParameter ? Parameter->second : Current;
+        Result = Ctx.mkVar(
+            "v" + std::to_string(Kind) + "_" + std::to_string(Id) + "_" +
+                std::to_string(Version) + "_" + std::to_string(Offset),
+            widthOf(Source));
+        Sources.emplace(Result.index(), Source);
+        if (widthOf(Source) > Width)
+          Result = Ctx.mkExtract(Result, 0, Width);
+      }
       break;
 
     case ExprKind::BinOp: {
+      if (isIntegerSlice(Current)) {
+        Result = Ctx.mkExtract(in(Current->Operands[0]),
+                               Current->Operands[1]->ConstVal * 8, Width);
+        break;
+      }
       BinKind Kind = binKindOf(Current->Op);
       if (Kind == BinKind::None || Current->Operands.size() != 2) {
         Result = opaque(Current, Width);
@@ -436,20 +658,27 @@ sym::SymRef Translator::in(const ExprPtr &E) {
     }
 
     case ExprKind::Cast: {
-      // A literal wearing a cast is still a literal, and a very common one:
-      // leaving `(int32_t)0` opaque costs the engine every fold that depends on
-      // knowing a term is zero.  Anything else a cast wraps stays opaque, since
-      // what a narrowing or widening means is exactly what this pass declines
-      // to guess at.
-      std::optional<llvm::APInt> Val;
-      if (Current->Operands.size() == 1 &&
-          Current->Operands[0]->Kind == ExprKind::Const)
-        Val = literalAt(*Current->Operands[0], Width, Width);
-      Result = Val ? Ctx.mkConst(*Val) : opaque(Current, Width);
+      if (!isIntegerConversion(Current)) {
+        Result = opaque(Current, Width);
+        break;
+      }
+      sym::SymRef Operand = in(Current->Operands[0]);
+      if (Ctx.width(Operand) >= Width)
+        Result = Ctx.mkExtract(Operand, 0, Width);
+      else if (Current->Operands[0]->Type->IsSigned)
+        Result = Ctx.mkSExt(Operand, Width);
+      else
+        Result = Ctx.mkZExt(Operand, Width);
       break;
     }
 
     case ExprKind::UnaryOp: {
+      if (isIntegerConversion(Current)) {
+        sym::SymRef Operand = in(Current->Operands[0]);
+        Result = Current->Op == NdOp::INT_SEXT ? Ctx.mkSExt(Operand, Width)
+                                               : Ctx.mkZExt(Operand, Width);
+        break;
+      }
       bool Complement =
           Current->Op == NdOp::INT_NOT || Current->Op == NdOp::INT_NEGATE;
       bool Negate = Current->Op == NdOp::INT_NEG2;
@@ -656,9 +885,39 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
       Result = binop(NdOp::INT_SREM, Ctx.operands(Item.Ref));
       break;
 
+    case sym::SymOp::Extract: {
+      ExprPtr Operand = get(Ctx.operand(Item.Ref, 0));
+      const uint64_t Low = Ctx.node(Item.Ref).Aux;
+      if (!Operand || Low % 8 != 0)
+        break;
+      Result = std::make_shared<HighExpr>();
+      Result->Type = NdType::makeInt(ByteSize, false);
+      if (Low == 0) {
+        Result->Kind = ExprKind::Cast;
+        Result->CastTo = Result->Type;
+        Result->Operands = {Operand};
+      } else {
+        Result->Kind = ExprKind::BinOp;
+        Result->Op = NdOp::SUBBYTES;
+        Result->Operands = {Operand, HighExpr::makeConst(Low / 8, 4)};
+      }
+      break;
+    }
+    case sym::SymOp::ZExt:
+    case sym::SymOp::SExt: {
+      ExprPtr Operand = get(Ctx.operand(Item.Ref, 0));
+      if (Operand) {
+        Result = HighExpr::makeUnary(Ctx.op(Item.Ref) == sym::SymOp::ZExt
+                                         ? NdOp::INT_ZEXT
+                                         : NdOp::INT_SEXT,
+                                     Operand);
+        Result->Type = NdType::makeInt(ByteSize, false);
+      }
+      break;
+    }
+
     default:
-      // Extract, Concat, the casts, the select and the predicates never come
-      // back out, because nothing on the way in ever puts one in.
+      // Concatenation, selects and predicates have no input mapping here.
       Result = nullptr;
       break;
     }
@@ -671,46 +930,273 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
 }
 
 /// Simplify one expression, in place, if there is anything to gain.
-void simplifyOne(ExprPtr &E) {
+void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   const uint32_t Width = bitWidthOf(E);
   if (Width == 0)
     return;
 
-  sym::SymContext Ctx;
-  Translator Xlat(Ctx);
-  sym::SymRef Before = Xlat.in(E);
-  if (Ctx.dagSize(Before) < kMinInterestingNodes)
+  const std::optional<size_t> BeforeCost = expressionCost(E);
+  if (!BeforeCost ||
+      (*BeforeCost < kMinInterestingNodes && Definitions.empty()))
     return;
 
-  // The iterative walk has no nesting cutoff.  Its default budget applies only
-  // to exponential corner measurements and product search, keeping automatic
-  // decompilation bounded while the public API still offers an explicit
-  // exhaustive policy for trusted inputs.
+  sym::SymContext Ctx;
+  Translator Xlat(Ctx, Definitions);
+  sym::SymRef Before = Xlat.in(E);
+
+  // Constructor identities can already recover the result while translating
+  // exact slices and extensions. Compare the final HighIR tree with the input,
+  // including that work, rather than requiring another solver rewrite.
   sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before);
-  // Shorter by enough to be worth it.  The engine settles a tie towards its
-  // own canonical form, which is the right answer to what an expression *is*;
-  // the question here is what to show someone, and a rewrite that saves
-  // nothing only churns the output.
-  if (!Result.Changed || Result.Evidence != sym::MBAEvidence::Derivation ||
-      Result.SizeBefore < Result.SizeAfter + kMinGain)
+  if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
 
   ExprPtr After = Xlat.out(Result.Expr, Width);
   if (!After)
     return;
-  // The engine measured a width, not a type.  Keep the one the expression
-  // already carried, which type inference has more to say about than this pass
-  // does.
-  After->Type = E->Type;
+  if (After->Kind == ExprKind::Var && E->Type && After->Type &&
+      E->Type->IsSigned != After->Type->IsSigned) {
+    auto Cast = std::make_shared<HighExpr>();
+    Cast->Kind = ExprKind::Cast;
+    Cast->Type = Cast->CastTo = E->Type;
+    Cast->Operands = {After};
+    After = std::move(Cast);
+  } else {
+    // A solver variable may be a shared source node. Do not change its type
+    // at another use when preserving the enclosing expression's result type.
+    After = std::make_shared<HighExpr>(*After);
+    if (E->Type) {
+      After->Type = E->Type;
+      if (After->Kind == ExprKind::Cast)
+        After->CastTo = E->Type;
+    }
+  }
+  const std::optional<size_t> AfterCost = expressionCost(After);
+  if (!AfterCost || *BeforeCost < *AfterCost + kMinGain)
+    return;
   E = After;
+}
+
+/// Simplify maximal numeric regions, including those beneath opaque operators
+/// such as POPCOUNT and comparisons. Rebuild only changed ancestor nodes so a
+/// call, memory access, pointer cast, or other boundary stays in its original
+/// evaluation position. Each numeric region reaches the solver once.
+void simplifyRegions(ExprPtr &Root, const AvailableDefinitions &Definitions) {
+  struct Item {
+    ExprPtr Expr;
+    bool ChildrenReady = false;
+  };
+  llvm::SmallVector<Item, 64> Work{{Root, false}};
+  std::unordered_set<const HighExpr *> Active;
+  std::unordered_map<const HighExpr *, bool> Safe;
+  std::unordered_map<const HighExpr *, uint32_t> Widths;
+  std::vector<ExprPtr> Order;
+  while (!Work.empty()) {
+    Item Current = Work.pop_back_val();
+    const auto &E = Current.Expr;
+    if (!E || Safe.count(E.get()))
+      continue;
+    if (!Current.ChildrenReady) {
+      if (!Active.insert(E.get()).second)
+        return;
+      Work.push_back({E, true});
+      E->forEachChildExpr(
+          [&](const ExprPtr &Child) { Work.push_back({Child, false}); });
+      continue;
+    }
+    Active.erase(E.get());
+    bool IsSafe = isRewriteableNode(E);
+    for (const auto &Child : E->Operands)
+      IsSafe &= Child && Safe.at(Child.get());
+    Safe.emplace(E.get(), IsSafe);
+    uint16_t Bytes = E->Type ? E->Type->Size : 0;
+    if (!Bytes && E->Kind == ExprKind::Var)
+      Bytes = E->Var.Size;
+    uint32_t Width = widthFromBytes(Bytes);
+    if (!Bytes && !E->Operands.empty() && E->Operands[0] &&
+        (E->Kind == ExprKind::BinOp || E->Kind == ExprKind::UnaryOp))
+      Width = Widths.at(E->Operands[0].get());
+    Widths.emplace(E.get(), Width);
+    Order.push_back(E);
+  }
+  if (!Root)
+    return;
+
+  auto WidthOf = [&](const ExprPtr &E) {
+    return E ? Widths.at(E.get()) : uint32_t(0);
+  };
+  std::unordered_set<const HighExpr *> Regions{Root.get()}, Numeric;
+  for (const auto &E : Order) {
+    const bool Translatable = canTranslateOperands(E, WidthOf);
+    if (Translatable)
+      Numeric.insert(E.get());
+    if (!Safe.at(E.get()) || !Translatable)
+      E->forEachChildExpr(
+          [&](const ExprPtr &Child) { Regions.insert(Child.get()); });
+  }
+
+  std::unordered_map<const HighExpr *, ExprPtr> Rebuilt;
+  for (const auto &E : Order) {
+    ExprPtr Result = E;
+    bool Changed = false;
+    E->forEachChildExpr([&](const ExprPtr &Child) {
+      Changed |= Rebuilt.at(Child.get()) != Child;
+    });
+    if (Changed) {
+      Result = std::make_shared<HighExpr>(*E);
+      for (auto &Child : Result->Operands)
+        if (Child)
+          Child = Rebuilt.at(Child.get());
+      if (Result->IndirectTarget)
+        Result->IndirectTarget = Rebuilt.at(Result->IndirectTarget.get());
+    }
+    if (Safe.at(E.get()) && Regions.count(E.get()) && Numeric.count(E.get()))
+      simplifyOne(Result, Definitions);
+    Rebuilt.emplace(E.get(), std::move(Result));
+  }
+  Root = Rebuilt.at(Root.get());
+}
+
+/// Keep only bounded, scalar dependencies that remain stable at every use.
+/// Definitions stay in HighIR; only their symbolic reading is expanded. The
+/// transitive dependency set invalidates that reading after any local write.
+std::optional<std::set<LocalIdentity>>
+definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
+                 const std::set<LocalIdentity> &Escaped) {
+  const auto Cost = expressionCost(Value);
+  if (!Cost || *Cost > 4096)
+    return std::nullopt;
+  std::set<LocalIdentity> Inputs;
+  std::vector<ExprPtr> Work{Value};
+  std::unordered_set<const HighExpr *> Seen;
+  while (!Work.empty()) {
+    auto E = Work.back();
+    Work.pop_back();
+    if (!Seen.insert(E.get()).second)
+      continue;
+    if (E->Kind == ExprKind::Var) {
+      if (!isScalarLocal(E))
+        return std::nullopt;
+      const auto Key = highSourceLocalIdentity(E->Var);
+      if (Escaped.count(Key))
+        return std::nullopt;
+      Inputs.insert(Key);
+      auto It = Definitions.find(Key);
+      if (It != Definitions.end())
+        Inputs.insert(It->second.Dependencies.begin(),
+                      It->second.Dependencies.end());
+      if (Inputs.size() > 256)
+        return std::nullopt;
+    }
+    Work.insert(Work.end(), E->Operands.begin(), E->Operands.end());
+  }
+  return Inputs;
+}
+
+void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
+  std::set<LocalIdentity> Escaped;
+  std::unordered_set<va_t> Entries;
+  std::unordered_set<const HighExpr *> Seen;
+  walkStmts(Stmts, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      Entries.insert(S.GotoTarget);
+    for (const auto &Clause : S.EHClauses) {
+      Entries.insert(Clause.HandlerVA);
+      Entries.insert(Clause.LandingPadVAs.begin(), Clause.LandingPadVAs.end());
+      Entries.insert(Clause.ContinuationVAs.begin(),
+                     Clause.ContinuationVAs.end());
+    }
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::vector<ExprPtr> Work{Root};
+      while (!Work.empty()) {
+        auto E = Work.back();
+        Work.pop_back();
+        if (!E || !Seen.insert(E.get()).second)
+          continue;
+        if (E->Kind == ExprKind::Addr) {
+          std::vector<ExprPtr> AddressWork{E};
+          std::unordered_set<const HighExpr *> AddressSeen;
+          while (!AddressWork.empty()) {
+            auto A = AddressWork.back();
+            AddressWork.pop_back();
+            if (!A || !AddressSeen.insert(A.get()).second)
+              continue;
+            if (A->Kind == ExprKind::Var)
+              Escaped.insert(highSourceLocalIdentity(A->Var));
+            A->forEachChildExpr(
+                [&](const ExprPtr &Child) { AddressWork.push_back(Child); });
+          }
+        }
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Work.push_back(Child); });
+      }
+    });
+  });
+  Entries.erase(0);
+  Entries.erase(InvalidVA);
+
+  std::vector<std::vector<HighStmt> *> Scopes{&Stmts};
+  while (!Scopes.empty()) {
+    auto *Scope = Scopes.back();
+    Scopes.pop_back();
+    AvailableDefinitions Definitions;
+    for (auto &S : *Scope) {
+      for (auto *Body : {&S.Body, &S.ElseBody, &S.DefaultBody})
+        if (!Body->empty())
+          Scopes.push_back(Body);
+      for (auto &Case : S.Cases)
+        Scopes.push_back(&Case.Body);
+      for (auto &Body : S.EHClauseBodies)
+        Scopes.push_back(&Body);
+
+      const bool Straight =
+          (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
+           S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop) &&
+          S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
+          S.DefaultBody.empty() && S.EHClauses.empty() &&
+          S.EHClauseBodies.empty() && !S.IsPhiCopy &&
+          S.MemoryOrdering == NdMemoryOrdering::None &&
+          S.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+      bool Pure = true;
+      forEachRhsExpr(
+          S, [&](const ExprPtr &E) { Pure &= expressionCost(E).has_value(); });
+      if (!Straight || !Pure || Entries.count(S.Addr) ||
+          (S.Kind == StmtKind::Assign && !isScalarLocal(S.Dst)))
+        Definitions.clear();
+      forEachRhsExpr(S, [&](ExprPtr &E) { simplifyRegions(E, Definitions); });
+      if (!Straight || !Pure || S.Kind == StmtKind::Return) {
+        Definitions.clear();
+        continue;
+      }
+      if (S.Kind != StmtKind::Assign)
+        continue;
+      if (!isScalarLocal(S.Dst)) {
+        Definitions.clear();
+        continue;
+      }
+
+      const auto Key = highSourceLocalIdentity(S.Dst->Var);
+      auto Inputs = definitionInputs(S.Val, Definitions, Escaped);
+      for (auto It = Definitions.begin(); It != Definitions.end();) {
+        if (It->first == Key || It->second.Dependencies.count(Key))
+          It = Definitions.erase(It);
+        else
+          ++It;
+      }
+      if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
+          Definitions.size() < 256 && S.Val && S.Val->Type &&
+          S.Val->Type->Size == S.Dst->Type->Size &&
+          S.Val->Type->IsSigned == S.Dst->Type->IsSigned)
+        Definitions.emplace(Key,
+                            AvailableDefinition{S.Val, std::move(*Inputs)});
+    }
+  }
 }
 
 } // namespace
 
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts) {
-  walkStmts(Stmts, [](HighStmt &S) {
-    forEachRhsExpr(S, [](ExprPtr &E) { simplifyOne(E); });
-  });
+  simplifyStatementRegions(Stmts);
 }
 
 } // namespace neverd
