@@ -255,6 +255,7 @@ public:
 
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
+  bool unlimited() const { return Unlimited; }
   bool canConsume(size_t Units) const {
     return Unlimited || Units <= Remaining;
   }

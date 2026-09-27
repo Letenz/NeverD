@@ -947,7 +947,13 @@ void simplifyOne(ExprPtr &E, const AvailableDefinitions &Definitions) {
   // Constructor identities can already recover the result while translating
   // exact slices and extensions. Compare the final HighIR tree with the input,
   // including that work, rather than requiring another solver rewrite.
-  sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before);
+  // This pass visits every source expression, including large copy-propagated
+  // compiler output. Give each optional rewrite a bounded share of work;
+  // callers explicitly simplifying an obfuscated MBA retain the solver's
+  // larger default budget. Exhausted regions remain unchanged.
+  sym::MBAOptions Options;
+  Options.MaxWork = size_t(1) << 16;
+  sym::MBAResult Result = sym::simplifyMBADeep(Ctx, Before, Options);
   if (Result.Changed && Result.Evidence != sym::MBAEvidence::Derivation)
     return;
 
