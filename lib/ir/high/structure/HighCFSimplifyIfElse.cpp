@@ -3484,23 +3484,24 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
     if (Entered)
       continue;
     bool PrefixSafe = true;
+    // The fold erases the prefix and the second guard. A jump out of this
+    // list can reach a reader elsewhere, so no statement outside that range
+    // may read a prefix value.
+    std::set<const HighStmt *> FoldedRange;
+    for (size_t K = static_cast<size_t>(I) + 1; K <= J; ++K)
+      walkStatementTree(Body[K],
+                        [&](const HighStmt &N) { FoldedRange.insert(&N); });
     for (size_t K = static_cast<size_t>(I) + 1; K < J; ++K) {
       const HighStmt &Prefix = Body[K];
       if (isEmptyLabel(Prefix))
         continue;
       if (Prefix.Kind != StmtKind::Assign || !Prefix.Dst ||
           Prefix.Dst->Kind != ExprKind::Var ||
-          exprHasObservableEffect(Prefix.Val.get())) {
+          exprHasObservableEffect(Prefix.Val.get()) ||
+          functionReadsVar(Body, Prefix.Dst->Var, FoldedRange)) {
         PrefixSafe = false;
         break;
       }
-      for (size_t Tail = J + 1; Tail < Body.size(); ++Tail)
-        if (stmtTreeUsesVar(Body[Tail], Prefix.Dst->Var)) {
-          PrefixSafe = false;
-          break;
-        }
-      if (!PrefixSafe)
-        break;
     }
     if (!PrefixSafe)
       continue;

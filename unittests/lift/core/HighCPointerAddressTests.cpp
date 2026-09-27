@@ -29539,6 +29539,46 @@ TEST(HighCPointerAddresses, IndirectCallThroughIntegerUsesFunctionPointer) {
   EXPECT_EQ(Source.find("(*(int64_t)"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, DuplicateSkipFoldKeepsPrefixReadAfterJump) {
+  // `if (a) { if (b) goto L; t = *p; if (t == 0) goto L; work(); } L: use(t)`.
+  // Folding the two skips erases `t = *p`, but the jump target reads t.
+  HighFunc Func;
+  Func.Name = "duplicate_skip_reader";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const va_t Label = 0x140001080;
+  const MedVar Loaded = temporary(38, 34);
+  auto Skip = [&](ExprPtr Cond) {
+    HighStmt Jump;
+    Jump.Kind = StmtKind::Goto;
+    Jump.GotoTarget = Label;
+    HighStmt S;
+    S.Kind = StmtKind::If;
+    S.Cond = std::move(Cond);
+    S.Body = {Jump};
+    return S;
+  };
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {
+      Skip(HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(1),
+                               HighExpr::makeConst(0, 8))),
+      assignTo(Loaded, HighExpr::makeLoad(
+                           HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
+                                               HighExpr::makeConst(8, 8)),
+                           NdType::makeInt(8))),
+      Skip(HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Loaded),
+                               HighExpr::makeConst(0, 8))),
+      callStmt("Work", 0x140002000, {})};
+  HighStmt Use = callStmt("Use", 0x140002100, {HighExpr::makeVar(Loaded)});
+  Use.Addr = Label;
+  Func.Body = {Outer, Use};
+  invertSkipGotos(Func);
+  EXPECT_TRUE(everyReadTempIsAssigned(Func));
+}
+
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
   HighFunc Func;
   Func.Name = "aux_len";
