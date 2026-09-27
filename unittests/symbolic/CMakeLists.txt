@@ -6,6 +6,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExploreTests.cpp
   SymExprTests.cpp
   SymExprCompareTests.cpp
+  SymExprComplementTests.cpp
   SymExprMaskTests.cpp
   SymMBAArithmeticTests.cpp
   SymMBAComplementArithmeticTests.cpp

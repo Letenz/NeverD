@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <limits>
 
 namespace neverd::symbolic {
 
@@ -300,6 +301,45 @@ SymRef SymContext::mkNot(SymRef A) {
     return mkConst(~constValue(A));
   if (op(A) == SymOp::Not)
     return operand(A, 0);
+  // One-bit flag networks retain their Boolean spelling for comparison
+  // recovery; affine word normalization belongs to wider arithmetic.
+  if (W > 1 && op(A) == SymOp::Add) {
+    // ~(c + sum(k*x)) = ~c + sum(-k*x), at the original word width.
+    // Estimate only the immediate spelling change before allocating anything:
+    // negating a bare term adds a product, while -1*x loses its product.
+    // Other products keep their operator. Do not expand their factors.
+    llvm::ArrayRef<SymRef> Terms = operands(A);
+    const bool HasConstant = isConst(Terms.front());
+    const llvm::APInt Offset =
+        HasConstant ? ~constValue(Terms.front()) : llvm::APInt::getAllOnes(W);
+    size_t Added = 0;
+    size_t Removed = 1; // The outer complement disappears.
+    for (SymRef Term : Terms.drop_front(HasConstant ? 1 : 0)) {
+      if (op(Term) != SymOp::Mul) {
+        ++Added;
+      } else if (numOperands(Term) == 2 && isConstOnes(operand(Term, 0))) {
+        ++Removed;
+      }
+    }
+    if (Offset.isZero() && Terms.size() == 2 && HasConstant)
+      ++Removed; // One surviving term needs no sum.
+    if (Removed > Added) {
+      // Builders may intern and reallocate the operand pool. Copy immediate
+      // operands, keeping deeper/shared sources opaque throughout this step.
+      llvm::SmallVector<SymRef, 8> Negated(Terms.begin(), Terms.end());
+      if (HasConstant)
+        Negated.erase(Negated.begin());
+      for (SymRef &Term : Negated)
+        Term = mkNeg(Term);
+      if (!Offset.isZero())
+        Negated.push_back(mkConst(Offset));
+      SymRef Reduced = mkAdd(Negated);
+      const size_t Cost = readabilityCost(A);
+      if (Cost != std::numeric_limits<size_t>::max() &&
+          readabilityCost(Reduced) < Cost + 1)
+        return Reduced;
+    }
+  }
   return intern(SymOp::Not, W, {A}, 0);
 }
 

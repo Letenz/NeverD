@@ -1391,6 +1391,12 @@ masked word using the original shift-count width. These rules inspect immediate
 operands and leave deeper sources opaque. They do not recursively normalize a
 whole DAG to a fixed point or relax MBA's mask-column independence checks.
 
+The word-complement builder can negate a sum's immediate coefficients and
+complement its constant offset when that spelling is strictly cheaper.
+It estimates the operator change before construction and rechecks the actual
+reading cost afterwards. Deeper factors stay opaque, and one-bit flag networks
+retain the Boolean structure used by comparison recovery.
+
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
 libraries supplied by the CMake helper.
