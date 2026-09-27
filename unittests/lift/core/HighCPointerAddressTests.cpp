@@ -811,6 +811,22 @@ TEST(HighCPointerAddresses, ReadonlyNarrowImageStringPrintsLiteral) {
   EXPECT_EQ(Source.find("L\"hi\""), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
+  constexpr va_t Value = 0x140003500;
+  BinaryImage Img = makeImageObjectFixture(Value, {'h', 'i', 0}, false);
+  HighFunc Func;
+  Func.Name = "masked_numeric";
+  Func.ReturnType = NdType::makeInt(8, false);
+  returnValue(Func, HighExpr::makeBinop(
+                        NdOp::INT_OR,
+                        HighExpr::makeConst(
+                            Value, 8, ConstantAddressProvenance::Scalar),
+                        HighExpr::makeConst(1, 8)));
+  const auto Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(Source.find("0x140003500"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("\"hi\""), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, NonAsciiImageBytesStayAddress) {
   BinaryImage Img =
       makeImageObjectFixture(0x140003600, {0xE4, 0xB8, 0xAD, 0}, false);

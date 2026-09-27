@@ -1090,6 +1090,17 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     if (!Expr || !Seen.insert(Expr.get()).second)
       return;
     CheckType(Expr->Type);
+    CheckType(Expr->CastTo);
+    if (Expr->Kind == ExprKind::Call) {
+      if (Expr->SourceCallHint) {
+        CheckType(Expr->SourceCallHint->Signature.ReturnType);
+        for (const auto &Parameter : Expr->SourceCallHint->Signature.Parameters)
+          CheckType(Parameter.Type);
+      }
+      for (size_t I = 0; I < Expr->Operands.size() &&
+                         I < debugCallArgLimit(*Expr); ++I)
+        CheckType(displayCallArgType(*Expr, I));
+    }
     for (const auto &Operand : Expr->Operands)
       CheckExpr(Operand);
   };
