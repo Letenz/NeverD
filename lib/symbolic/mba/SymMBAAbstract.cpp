@@ -594,6 +594,83 @@ bool chargeAffineNode(const SymContext &Ctx, SymOp Op,
   return Resources.charge(1, 128) && Resources.array(Count, 32);
 }
 
+std::optional<SymRef> weightedTerm(SymContext &Ctx, SymRef R,
+                                   WeightedInputs &Inputs,
+                                   AffineResources &Resources, bool &Complete) {
+  if (Ctx.op(R) != SymOp::Mul || Ctx.numOperands(R) != 2 ||
+      !Ctx.isConst(Ctx.operand(R, 0)))
+    return std::nullopt;
+  auto It = Inputs.find(Ctx.operand(R, 1).index());
+  if (It == Inputs.end())
+    return std::nullopt;
+  auto Quotient = weightedQuotient(
+      It->second, Ctx.constValue(Ctx.operand(R, 0)), Resources, Complete);
+  if (!Quotient)
+    return std::nullopt;
+  if (!Resources.charge(1, 128) ||
+      !Resources.array(Quotient->getNumWords(), sizeof(uint64_t))) {
+    Complete = false;
+    return std::nullopt;
+  }
+  SymRef Factors[] = {Ctx.mkConst(*Quotient), It->second.Hidden};
+  if (!chargeAffineNode(Ctx, SymOp::Mul, Factors, Resources)) {
+    Complete = false;
+    return std::nullopt;
+  }
+  return Ctx.mkMul(Factors);
+}
+
+SymRef restoreWeightedUses(SymContext &Ctx, SymRef Body,
+                           llvm::ArrayRef<uint32_t> Order,
+                           WeightedInputs &Inputs, AffineResources &Resources) {
+  llvm::DenseMap<uint32_t, SymRef> Changed;
+  for (uint32_t Index : Order) {
+    if (!Resources.charge(1))
+      return Body;
+    SymRef R(Index);
+    // The completed abstraction has already hidden arithmetic bitwise
+    // operands and expanded arithmetic complements. Only sums and constant
+    // products can carry a recovered term to their arithmetic consumers.
+    const bool Product = Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+                         Ctx.isConst(Ctx.operand(R, 0));
+    if (Ctx.op(R) != SymOp::Add && !Product)
+      continue;
+    bool Complete = true;
+    auto Replacement = Product
+                           ? weightedTerm(Ctx, R, Inputs, Resources, Complete)
+                           : std::nullopt;
+    if (!Complete)
+      return Body;
+    if (!Replacement) {
+      bool HasChanged = false;
+      for (SymRef C : Ctx.operands(R)) {
+        if (!Resources.charge(1))
+          return Body;
+        HasChanged |= Changed.contains(C.index());
+      }
+      if (!HasChanged)
+        continue;
+      if (!Resources.array(Ctx.numOperands(R), 2 * sizeof(SymRef)))
+        return Body;
+      llvm::SmallVector<SymRef, 8> Ops;
+      for (SymRef C : Ctx.operands(R)) {
+        auto It = Changed.find(C.index());
+        Ops.push_back(It == Changed.end() ? C : It->second);
+      }
+      if (!chargeAffineNode(Ctx, Ctx.op(R), Ops, Resources))
+        return Body;
+      Replacement = Ctx.rebuild(R, Ops);
+    }
+    if (*Replacement != R) {
+      if (!Resources.charge(1, 128))
+        return Body;
+      Changed[Index] = *Replacement;
+    }
+  }
+  auto It = Changed.find(Body.index());
+  return It == Changed.end() ? Body : It->second;
+}
+
 /// Recover arithmetic uses of bases from exact hidden affine relations.
 /// Subtracting a candidate may fold -(-x) to x, or flatten a+(a+b) to 2*a+b.
 /// Reabstracting those forms must not forget the relation to the hidden input.
@@ -646,8 +723,11 @@ SymRef restoreAffineRelations(
     return Body;
 
   std::vector<uint32_t> Order;
-  if (!affineOrder(Ctx, Body, Order, Resources) ||
-      !Resources.array(Order.size(), 320))
+  if (!affineOrder(Ctx, Body, Order, Resources))
+    return Body;
+  if (Inputs.empty())
+    return restoreWeightedUses(Ctx, Body, Order, Weighted, Resources);
+  if (!Resources.array(Order.size(), 320))
     return Body;
   llvm::DenseMap<uint32_t, Role> Roles;
   classify(Ctx, Order, {}, AllowProducts, Roles);
@@ -751,26 +831,13 @@ SymRef restoreAffineRelations(
     Rewritten[Index] = Rebuilt;
     auto It = Aliases.find(Index);
     Arithmetic[Index] = It == Aliases.end() ? Rebuilt : It->second;
-    if (IsArithmetic && Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
-        Ctx.isConst(Ctx.operand(R, 0))) {
-      auto WeightedIt = Weighted.find(Ctx.operand(R, 1).index());
-      if (WeightedIt == Weighted.end())
-        continue;
+    if (IsArithmetic) {
       bool Complete = true;
-      auto Quotient = weightedQuotient(WeightedIt->second,
-                                       Ctx.constValue(Ctx.operand(R, 0)),
-                                       Resources, Complete);
+      auto Replacement = weightedTerm(Ctx, R, Weighted, Resources, Complete);
       if (!Complete)
         return Body;
-      if (!Quotient)
-        continue;
-      if (!Resources.charge(1, 128) ||
-          !Resources.array(Quotient->getNumWords(), sizeof(uint64_t)))
-        return Body;
-      SymRef Factors[] = {Ctx.mkConst(*Quotient), WeightedIt->second.Hidden};
-      if (!chargeAffineNode(Ctx, SymOp::Mul, Factors, Resources))
-        return Body;
-      Arithmetic[Index] = Ctx.mkMul(Factors);
+      if (Replacement)
+        Arithmetic[Index] = *Replacement;
     }
   }
   return Rewritten.lookup(Body.index());
