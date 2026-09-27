@@ -15,7 +15,7 @@
 /// correct, and for exclusive-or it produces `x + y - 2 * (x & y)`.  Searching
 /// the space of small expressions instead produces `x ^ y`.
 ///
-/// Three constructions are offered, and which one wins is a question of cost
+/// Several constructions are offered, and which one wins is a question of cost
 /// rather than of arity.  Below a tabulation ceiling the shortest expression
 /// that exists is found outright.  Above it a function is written either as a
 /// sum of products, which is short when it is close to a union of cubes, or as
@@ -25,6 +25,8 @@
 /// sixty-four products of seven literals — so both are costed and the cheaper
 /// is kept.  Both are exact, so the choice between them is only ever about how
 /// the answer reads.
+/// Removing independent parity arms can expose a kernel of at most three
+/// inputs, which reuses the small exact recipes without enlarging their table.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -215,6 +217,8 @@ struct BitwiseSynthesisLimits {
 /// increasing size.  Above that, both a cover by prime implicants and an
 /// exclusive-or normal form are costed and the cheaper is built: each is
 /// correct, and each is the short one for a different family of functions.
+/// The normal form may also expose an exact small kernel after independent
+/// parity arms are removed; this candidate shares its work and cost limits.
 ///
 /// Returns nothing when no form fits the limits.  That is a resource answer
 /// rather than a claim about the function, and the caller's response is to

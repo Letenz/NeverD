@@ -20,6 +20,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
@@ -240,29 +241,32 @@ class AffineResources {
   WorkBudget Fallback{MBAOptions{}.MaxWork};
   WorkBudget &Work;
   size_t Bytes;
+  bool Complete = true;
 
 public:
   AffineResources(WorkBudget *Budget, size_t MaxBytes)
       : Work(Budget ? *Budget : Fallback), Bytes(MaxBytes) {}
 
   bool charge(size_t Units, size_t Storage = 0) {
-    if (Storage > Bytes || !Work.consume(Units))
-      return false;
+    if (!Complete || Storage > Bytes || !Work.consume(Units))
+      return Complete = false;
     Bytes -= Storage;
     return true;
   }
 
+  bool complete() const { return Complete; }
+
   bool array(size_t Count, size_t ElementBytes) {
     if (ElementBytes &&
         Count > std::numeric_limits<size_t>::max() / ElementBytes)
-      return false;
+      return Complete = false;
     return charge(Count, Count * ElementBytes);
   }
 
   bool product(const llvm::APInt &Value) {
     const size_t Words = Value.getNumWords();
     if (Words > std::numeric_limits<size_t>::max() / Words)
-      return false;
+      return Complete = false;
     return charge(Words * Words, Words * sizeof(uint64_t));
   }
 
@@ -271,7 +275,7 @@ public:
     for (size_t N = Count ? Count - 1 : 0; N; N >>= 1)
       ++Levels;
     if (Levels && Count > std::numeric_limits<size_t>::max() / Levels)
-      return false;
+      return Complete = false;
     return charge(Count * Levels);
   }
 
@@ -671,6 +675,137 @@ SymRef restoreWeightedUses(SymContext &Ctx, SymRef Body,
   return It == Changed.end() ? Body : It->second;
 }
 
+using AffineInputs = llvm::SmallVector<std::pair<uint32_t, AffineInput>, 4>;
+
+std::optional<size_t> affineHash(const AffineInput &Input, bool Complement,
+                                 AffineResources &Resources) {
+  if (!Resources.array(Input.Offset.getNumWords(), sizeof(uint64_t)))
+    return std::nullopt;
+  llvm::hash_code Hash = llvm::hash_combine(
+      Input.Offset.getBitWidth(),
+      llvm::hash_value(Complement ? ~Input.Offset : Input.Offset));
+  for (const auto &[Base, Coefficient] : Input.Terms) {
+    if (!Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+      return std::nullopt;
+    Hash = llvm::hash_combine(
+        Hash, Base, llvm::hash_value(Complement ? -Coefficient : Coefficient));
+  }
+  return static_cast<size_t>(Hash);
+}
+
+bool areComplements(const AffineInput &A, const AffineInput &B,
+                    AffineResources &Resources) {
+  if (A.Offset.getBitWidth() != B.Offset.getBitWidth() ||
+      A.Terms.size() != B.Terms.size())
+    return false;
+  if (!Resources.array(A.Offset.getNumWords(), sizeof(uint64_t)) ||
+      A.Offset != ~B.Offset)
+    return false;
+  auto Other = B.Terms.begin();
+  for (const auto &[Base, Coefficient] : A.Terms) {
+    if (!Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)) ||
+        Base != Other->first || Coefficient != -Other->second)
+      return false;
+    ++Other;
+  }
+  return true;
+}
+
+/// Index complete affine inputs, including even multiples. Only the exact
+/// identity F+G=-1 permits identifying their bitwise uses as complements; no
+/// inverse of either input is needed or inferred.
+class ComplementInputs {
+  std::unordered_multimap<size_t, size_t> ByHash;
+  llvm::DenseMap<uint32_t, SymRef> Sources;
+
+public:
+  bool record(const AffineInputs &Inputs, uint32_t Index,
+              const AffineInput &Input,
+              const llvm::DenseSet<uint32_t> &ForcedAtoms,
+              const llvm::DenseMap<uint32_t, SymRef> &OriginalRewritten,
+              AffineResources &Resources) {
+    auto Opposite = affineHash(Input, true, Resources);
+    auto Hash = affineHash(Input, false, Resources);
+    if (!Opposite || !Hash)
+      return false;
+    SymRef Source;
+    auto [First, Last] = ByHash.equal_range(*Opposite);
+    for (auto It = First; It != Last; ++It) {
+      if (!Resources.charge(1))
+        return false;
+      const auto &[Earlier, Candidate] = Inputs[It->second];
+      if (areComplements(Input, Candidate, Resources)) {
+        Source = OriginalRewritten.lookup(Earlier);
+        break;
+      }
+      if (!Resources.complete())
+        return false;
+    }
+    // A previously forced complete source is an affine boundary. Recognise
+    // its direct complement without expanding that source or chasing aliases.
+    if (!Source && Input.Terms.size() == 1 && Input.Offset.isAllOnes() &&
+        Input.Terms.begin()->second.isAllOnes() &&
+        ForcedAtoms.contains(Input.Terms.begin()->first))
+      Source = OriginalRewritten.lookup(Input.Terms.begin()->first);
+    if (Source) {
+      if (!Resources.charge(1, 128))
+        return false;
+      Sources[OriginalRewritten.lookup(Index).index()] = Source;
+    }
+    if (!Resources.charge(1, 128))
+      return false;
+    ByHash.emplace(*Hash, Inputs.size());
+    return true;
+  }
+
+  SymRef apply(SymContext &Ctx, SymRef Body, AffineResources &Resources) {
+    if (Sources.empty() || !Resources.complete())
+      return Body;
+    std::vector<uint32_t> Order;
+    if (!affineOrder(Ctx, Body, Order, Resources))
+      return Body;
+    llvm::DenseMap<uint32_t, SymRef> Changed;
+    for (uint32_t Index : Order) {
+      if (!Resources.charge(1))
+        return Body;
+      SymRef R(Index);
+      auto Source = Sources.find(Index);
+      SymRef Replacement = R;
+      if (Source != Sources.end()) {
+        if (!Resources.charge(1, 128))
+          return Body;
+        Replacement = Ctx.mkNot(Source->second);
+      } else {
+        bool HasChanged = false;
+        for (SymRef C : Ctx.operands(R)) {
+          if (!Resources.charge(1))
+            return Body;
+          HasChanged |= Changed.contains(C.index());
+        }
+        if (!HasChanged)
+          continue;
+        if (!Resources.array(Ctx.numOperands(R), 2 * sizeof(SymRef)))
+          return Body;
+        llvm::SmallVector<SymRef, 8> Ops;
+        for (SymRef C : Ctx.operands(R)) {
+          auto It = Changed.find(C.index());
+          Ops.push_back(It == Changed.end() ? C : It->second);
+        }
+        if (!chargeAffineNode(Ctx, Ctx.op(R), Ops, Resources))
+          return Body;
+        Replacement = Ctx.rebuild(R, Ops);
+      }
+      if (Replacement != R) {
+        if (!Resources.charge(1, 128))
+          return Body;
+        Changed[Index] = Replacement;
+      }
+    }
+    auto It = Changed.find(Body.index());
+    return It == Changed.end() ? Body : It->second;
+  }
+};
+
 /// Recover arithmetic uses of bases from exact hidden affine relations.
 /// Subtracting a candidate may fold -(-x) to x, or flatten a+(a+b) to 2*a+b.
 /// Reabstracting those forms must not forget the relation to the hidden input.
@@ -697,11 +832,27 @@ SymRef restoreAffineRelations(
       Roots.push_back(Index);
     }
   }
+  // Pure scaled atomic inputs have zero affine offsets, so none can sum to
+  // -1. Avoid the relation index entirely for that common miss shape.
+  bool MayComplement = false;
+  if (Roots.size() > 1)
+    for (uint32_t Index : Roots) {
+      if (!Resources.charge(1))
+        return Body;
+      SymRef R(Index);
+      MayComplement |= Ctx.op(R) == SymOp::Add || Ctx.op(R) == SymOp::Not;
+      if (Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+          Ctx.isConst(Ctx.operand(R, 0)))
+        MayComplement |=
+            OriginalRoles.lookup(Ctx.operand(R, 1).index()) == Role::Linear;
+    }
   AffineCache Cache;
   if (!cacheSharedAffineInputs(Ctx, Roots, ForcedAtoms, OriginalRoles, Cache,
                                Resources))
     return Body;
-  llvm::SmallVector<std::pair<uint32_t, AffineInput>, 4> Inputs;
+  AffineInputs Inputs;
+  ComplementInputs Complements;
+  bool HasOddInputs = false;
   WeightedInputs Weighted;
   for (uint32_t Index : Roots) {
     if (!recordWeightedInput(Ctx, Index, OriginalRewritten, Weighted,
@@ -711,22 +862,32 @@ SymRef restoreAffineRelations(
                              Cache, Resources);
     if (!Input)
       return Body;
-    if (Input->Terms.contains(Index) ||
-        llvm::none_of(Input->Terms,
-                      [](const auto &Term) { return Term.second[0]; }))
+    if (Input->Terms.contains(Index))
       continue;
+    const bool HasOdd = llvm::any_of(
+        Input->Terms, [](const auto &Term) { return Term.second[0]; });
+    if (MayComplement && !Complements.record(Inputs, Index, *Input, ForcedAtoms,
+                                             OriginalRewritten, Resources))
+      return Body;
+    if (!HasOdd && !MayComplement)
+      continue;
+    HasOddInputs |= HasOdd;
     if (!Resources.array(1, 2 * sizeof(std::pair<uint32_t, AffineInput>)))
       return Body;
     Inputs.emplace_back(Index, std::move(*Input));
   }
-  if (Inputs.empty() && Weighted.empty())
-    return Body;
+  auto finish = [&](SymRef Result) {
+    Result = Complements.apply(Ctx, Result, Resources);
+    return Resources.complete() ? Result : Body;
+  };
+  if (!HasOddInputs && Weighted.empty())
+    return finish(Body);
 
   std::vector<uint32_t> Order;
   if (!affineOrder(Ctx, Body, Order, Resources))
     return Body;
-  if (Inputs.empty())
-    return restoreWeightedUses(Ctx, Body, Order, Weighted, Resources);
+  if (!HasOddInputs)
+    return finish(restoreWeightedUses(Ctx, Body, Order, Weighted, Resources));
   if (!Resources.array(Order.size(), 320))
     return Body;
   llvm::DenseMap<uint32_t, Role> Roles;
@@ -807,7 +968,7 @@ SymRef restoreAffineRelations(
     Aliases[OriginalRewritten.lookup(Pivot->first).index()] = Alias;
   }
   if (Aliases.empty() && Weighted.empty())
-    return Body;
+    return finish(Body);
 
   // Templates use only the completed original abstraction, never one another.
   // The fixed traversal excludes newly built templates, so shared pivots and
@@ -840,7 +1001,7 @@ SymRef restoreAffineRelations(
         Arithmetic[Index] = *Replacement;
     }
   }
-  return Rewritten.lookup(Body.index());
+  return finish(Rewritten.lookup(Body.index()));
 }
 
 } // namespace
