@@ -249,7 +249,7 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     if (Stmt.Kind == StmtKind::Goto)
       ++GotoTargetUses[Stmt.GotoTarget];
   });
-  collectGotoTargets(Func.Body);
+  // Handler labels first: a try body keeps a trailing goto that owns one.
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     for (const HighEHClause &Clause : Stmt.EHClauses) {
       auto Reachable = [&](va_t Address) {
@@ -273,6 +273,14 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
           GotoTargets.insert(Pad);
     }
   });
+  FallthroughTryExits.clear();
+  {
+    std::set<std::pair<va_t, va_t>> Kept;
+    decideTryExits(Func.Body, {}, Kept);
+    for (const auto &Exit : Kept)
+      FallthroughTryExits.erase(Exit);
+  }
+  collectGotoTargets(Func.Body);
 
   auto VarFn = [this](const MedVar &V) { return varName(V); };
   auto ExprFn = [this](const HighExpr &E) { return exprStr(E); };

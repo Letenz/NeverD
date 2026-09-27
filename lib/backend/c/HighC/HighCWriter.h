@@ -157,7 +157,21 @@ public:
   /// Emit a possibly multi-line rendered statement, indenting every line.
   void emitRenderedStatement(int Indent, llvm::StringRef Text);
   void collectGotoTargets(const std::vector<HighStmt> &Stmts,
-                          bool DropTrailingGoto = false);
+                          bool TryBody = false);
+  /// True when a printed goto may name \p Addr: some goto of the function
+  /// targets it, or a handler clause jumps there.
+  bool isLabelAddress(va_t Addr) const;
+  /// A try body's trailing goto that lands where the try falls through, so
+  /// it is not printed.
+  bool isFallthroughTryExit(const HighStmt &Stmt) const;
+  /// Addresses control reaches by falling off Stmts[Index]; the end of the
+  /// list reaches \p Continuation.
+  std::vector<va_t>
+  fallthroughAddresses(const std::vector<HighStmt> &Stmts, size_t Index,
+                       const std::vector<va_t> &Continuation) const;
+  void decideTryExits(const std::vector<HighStmt> &Stmts,
+                      const std::vector<va_t> &Continuation,
+                      std::set<std::pair<va_t, va_t>> &Kept);
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
@@ -419,6 +433,8 @@ public:
   std::set<va_t> GotoTargets;
   /// How many gotos target each address in the current function.
   std::map<va_t, unsigned> GotoTargetUses;
+  /// (address, target) of try-body gotos left out as fall-through exits.
+  std::set<std::pair<va_t, va_t>> FallthroughTryExits;
   /// Labels already printed in the current function; C allows each once.
   std::set<va_t> EmittedLabels;
   bool HasCIntrinsics = false;

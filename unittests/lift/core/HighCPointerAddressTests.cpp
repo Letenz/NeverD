@@ -29723,6 +29723,86 @@ TEST(HighCPointerAddresses, DeadTrailingLoadKeepsJumpLabel) {
   EXPECT_TRUE(Labeled);
 }
 
+HighStmt gotoStmt(va_t Addr, va_t Target) {
+  HighStmt S;
+  S.Kind = StmtKind::Goto;
+  S.Addr = Addr;
+  S.GotoTarget = Target;
+  return S;
+}
+
+HighStmt exceptTry(std::vector<HighStmt> Body, std::vector<HighStmt> Handler) {
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.EHIsReducible = true;
+  Try.Body = std::move(Body);
+  HighEHClause Except;
+  Except.Kind = HighEHClauseKind::SEHExcept;
+  Except.HandlerVA = 0x14000104C;
+  Try.EHClauses.push_back(Except);
+  Try.EHClauseBodies.push_back(std::move(Handler));
+  return Try;
+}
+
+TEST(HighCPointerAddresses, TryExitToNextStatementKeepsCodeAfterTry) {
+  // The try body jumps to the code right after the try and the __except arm
+  // jumps past it.  The body's goto is printed as a fall-through, so the try
+  // does not always exit and the unlabeled work after it stays.
+  HighFunc Func;
+  Func.Name = "try_exit_next";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const va_t NextVA = 0x140001050;
+  const va_t EndVA = 0x140001080;
+  HighStmt Work = callStmt("Work", 0x140002200, {});
+  Work.Addr = NextVA;
+  HighStmt End;
+  End.Kind = StmtKind::Return;
+  End.Addr = EndVA;
+  Func.Body = {
+      exceptTry(
+          {callStmt("Probe", 0x140002000, {}), gotoStmt(0x14000104A, NextVA)},
+          {callStmt("Recover", 0x140002100, {}), gotoStmt(0x14000104E, EndVA)}),
+      Work, End};
+  const std::string Source = emitFunctions({Func});
+  const size_t BodyAt = Source.find("try_exit_next(void) {");
+  ASSERT_NE(BodyAt, std::string::npos) << Source;
+  const size_t ExceptAt = Source.find("__except", BodyAt);
+  ASSERT_NE(ExceptAt, std::string::npos) << Source;
+  EXPECT_NE(Source.find("Work();", ExceptAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_140001050;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("L_140001080:"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, TryExitPastHandlerJoinStaysPrinted) {
+  // Only the __except arm reaches the join after the try.  The body jumps
+  // past it, so its goto is not a fall-through and must stay.
+  HighFunc Func;
+  Func.Name = "try_exit_past_join";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const va_t JoinVA = 0x140001050;
+  const va_t EndVA = 0x140001080;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = JoinVA;
+  HighStmt End;
+  End.Kind = StmtKind::Return;
+  End.Addr = EndVA;
+  Func.Body = {exceptTry({callStmt("Probe", 0x140002000, {}),
+                          gotoStmt(0x14000104A, EndVA)},
+                         {gotoStmt(0x14000104E, JoinVA)}),
+               Join, callStmt("Recover", 0x140002100, {}), End};
+  const std::string Source = emitFunctions({Func});
+  const size_t BodyAt = Source.find("try_exit_past_join(void) {");
+  ASSERT_NE(BodyAt, std::string::npos) << Source;
+  const size_t ExitAt = Source.find("goto L_140001080;", BodyAt);
+  ASSERT_NE(ExitAt, std::string::npos) << Source;
+  EXPECT_LT(ExitAt, Source.find("__except", BodyAt)) << Source;
+  EXPECT_NE(Source.find("L_140001080:", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("Recover();", BodyAt), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
   HighFunc Func;
   Func.Name = "aux_len";
