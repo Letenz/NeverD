@@ -307,9 +307,8 @@ inline size_t inferObjCNativeDependencies(
         ++Added;
         continue;
       }
-      if (auto Mangled =
-              swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Image,
-                                                                  Target)) {
+      if (auto Mangled = swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
+              Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;

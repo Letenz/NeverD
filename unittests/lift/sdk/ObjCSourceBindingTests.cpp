@@ -853,12 +853,10 @@ struct SwiftWitnessAccessorFixture {
     Data.VA = Data.FileOff = 0x4000;
     Data.Flags = Mapping.Flags;
     Image.Sections.push_back(Data);
-    const char *CacheName =
-        SubstringSequence ? "_$sS2sSTsWL" : "_$sS2SSysWL";
+    const char *CacheName = SubstringSequence ? "_$sS2sSTsWL" : "_$sS2SSysWL";
     const char *AccessorName =
         SubstringSequence ? "_$sS2sSTsWl" : "_$sS2SSysWl";
-    const char *Conformance =
-        SubstringSequence ? "_$sSsSTsMc" : "_$sSSSysMc";
+    const char *Conformance = SubstringSequence ? "_$sSsSTsMc" : "_$sSSSysMc";
     const char *Metadata = SubstringSequence ? "_$sSsN" : "_$sSSN";
     Image.Symbols.push_back({CacheName, Cache, 8, false});
     Image.Symbols.push_back({AccessorName, AccessorAddress, 0x40, true});
@@ -1016,8 +1014,7 @@ TEST(ObjCSourceBindings, SubstringSequenceWitnessKeepsExactMetadataPair) {
     std::set<std::string> Helpers;
     const auto Source = renderObjCSwiftWitnessCacheHelpers(
         F.Image, Result.SwiftWitnessCaches, Functions, Helpers);
-    EXPECT_NE(Source.find("__asm__(\"_$sSsSTsMc\")"),
-              std::string::npos);
+    EXPECT_NE(Source.find("__asm__(\"_$sSsSTsMc\")"), std::string::npos);
     EXPECT_NE(Source.find("__asm__(\"_$sSsN\")"), std::string::npos);
     EXPECT_NE(Source.find("(void *)0"), std::string::npos);
 
@@ -2570,17 +2567,15 @@ TEST(ObjCSourceBindings, ReadOnlyTablesNormalizeBoundedFixedAddressBias) {
       auto &Load = F.Function.Body[0].Body[0].RetVal;
       auto &Address = Load->Operands[0];
       auto Indexed = Address->Operands[1];
-      Address->Operands[0] =
-          HighExpr::makeConst(Subtract ? 0x1042 : 0x103e, 8);
-      Address->Operands[1] = HighExpr::makeBinop(
-          Subtract ? NdOp::INT_SUB : NdOp::INT_ADD, Indexed,
-          HighExpr::makeConst(2, 8));
+      Address->Operands[0] = HighExpr::makeConst(Subtract ? 0x1042 : 0x103e, 8);
+      Address->Operands[1] =
+          HighExpr::makeBinop(Subtract ? NdOp::INT_SUB : NdOp::INT_ADD, Indexed,
+                              HighExpr::makeConst(2, 8));
 
       auto Bound = bindObjCSourceReferences(F.Function, F.Image);
       ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
       ASSERT_EQ(Bound.BorrowedBytes.size(), 1U);
-      EXPECT_EQ(*Bound.BorrowedBytes.begin(),
-                (BorrowedByteRange{0x1040, 3}));
+      EXPECT_EQ(*Bound.BorrowedBytes.begin(), (BorrowedByteRange{0x1040, 3}));
       auto Result = Bound.Function.Body[0].Body[0].RetVal;
       ASSERT_EQ(Result->Kind, ExprKind::Load);
       ASSERT_EQ(Result->Operands[0]->Operands.size(), 2U);
@@ -2591,9 +2586,9 @@ TEST(ObjCSourceBindings, ReadOnlyTablesNormalizeBoundedFixedAddressBias) {
       const auto Allowed = readOnlyScalarSourceHelpers(Bound.Function, F.Image);
       ASSERT_EQ(Allowed.size(), 1U);
       EXPECT_TRUE(objcSourceCallBound(*Helper, F.Image, {}, nullptr, &Allowed));
-      Result->Operands[0]->Operands[1] = HighExpr::makeBinop(
-          NdOp::INT_ADD, Result->Operands[0]->Operands[1],
-          HighExpr::makeConst(2, 8));
+      Result->Operands[0]->Operands[1] =
+          HighExpr::makeBinop(NdOp::INT_ADD, Result->Operands[0]->Operands[1],
+                              HighExpr::makeConst(2, 8));
       EXPECT_TRUE(readOnlyScalarSourceHelpers(Bound.Function, F.Image).empty());
 
       auto Invalid = readonlyTableFixture(1);
@@ -2601,10 +2596,10 @@ TEST(ObjCSourceBindings, ReadOnlyTablesNormalizeBoundedFixedAddressBias) {
       auto &InvalidAddress =
           Invalid.Function.Body[0].Body[0].RetVal->Operands[0];
       InvalidAddress->Operands[1] = HighExpr::makeBinop(
-          Subtract ? NdOp::INT_SUB : NdOp::INT_ADD,
-          InvalidAddress->Operands[1], HighExpr::makeConst(65537, 8));
-      const auto Rejected = bindObjCSourceReferences(Invalid.Function,
-                                                    Invalid.Image);
+          Subtract ? NdOp::INT_SUB : NdOp::INT_ADD, InvalidAddress->Operands[1],
+          HighExpr::makeConst(65537, 8));
+      const auto Rejected =
+          bindObjCSourceReferences(Invalid.Function, Invalid.Image);
       EXPECT_FALSE(Rejected.Limitation.empty());
       EXPECT_TRUE(Rejected.BorrowedBytes.empty());
     }
@@ -2933,8 +2928,7 @@ TEST(ObjCSourceBindings, TaggedCStringInPointerCarrierKeepsSharedPool) {
   PointerCarrier->Operands = {Tagged};
   HighStmt Store;
   Store.Kind = StmtKind::Store;
-  Store.StoreAddr =
-      HighExpr::makeVar(MedVar{.Kind = MedVar::Param, .Size = 8});
+  Store.StoreAddr = HighExpr::makeVar(MedVar{.Kind = MedVar::Param, .Size = 8});
   Store.StoreVal = PointerCarrier;
   F.Function.Body = {Store};
 
@@ -2944,8 +2938,7 @@ TEST(ObjCSourceBindings, TaggedCStringInPointerCarrierKeepsSharedPool) {
   const auto Relocated = Bound.Function.Body[0].StoreVal->Operands[0];
   ASSERT_EQ(Relocated->Kind, ExprKind::BinOp);
   EXPECT_EQ(Relocated->Op, NdOp::INT_OR);
-  EXPECT_EQ(Relocated->Operands[1]->ConstVal,
-            SwiftLiteralString::ImmortalTag);
+  EXPECT_EQ(Relocated->Operands[1]->ConstVal, SwiftLiteralString::ImmortalTag);
   ASSERT_EQ(Relocated->Operands[0]->Kind, ExprKind::BinOp);
   EXPECT_EQ(Relocated->Operands[0]->Op, NdOp::INT_ADD);
   EXPECT_EQ(Relocated->Operands[0]->Operands[1]->ConstVal, 0x40U);
@@ -3163,17 +3156,16 @@ TEST(ObjCSourceBindings, BooleanConditionsDoNotTurnScalarReadsIntoAddresses) {
     Fixture F;
     F.Image.Arch = Architecture;
     F.Image.ObjCSourceReferences.clear();
-    llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
-                                     7);
+    llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40, 7);
     MedVar Parameter;
     Parameter.Kind = MedVar::Param;
     Parameter.Id = 0;
     Parameter.Size = 8;
     auto Pointer = HighExpr::makeVar(Parameter, NdType::makePtr());
-    auto Load = HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8),
-                                   NdType::makeInt(8));
-    auto Compare = HighExpr::makeBinop(NdOp::INT_EQUAL, Load,
-                                       HighExpr::makeConst(7, 8));
+    auto Load =
+        HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8), NdType::makeInt(8));
+    auto Compare =
+        HighExpr::makeBinop(NdOp::INT_EQUAL, Load, HighExpr::makeConst(7, 8));
     auto Condition = HighExpr::makeBinop(NdOp::BOOL_OR, Pointer, Compare);
     ASSERT_EQ(Compare->Type->Kind, NdTypeKind::Int);
     ASSERT_EQ(Compare->Type->Size, 1U);
@@ -5293,8 +5285,8 @@ TEST(ObjCSourceBindings, WritableAssociationKeysRequireExactNamedIdentity) {
   constexpr va_t Slot = 0x1020;
   constexpr va_t Address = 0x1040;
   for (auto Architecture : {Arch::AArch64, Arch::X64})
-    for (const char *Name : {"objc_getAssociatedObject",
-                             "objc_setAssociatedObject"}) {
+    for (const char *Name :
+         {"objc_getAssociatedObject", "objc_setAssociatedObject"}) {
       SCOPED_TRACE(static_cast<unsigned>(Architecture));
       SCOPED_TRACE(Name);
       Fixture F;
@@ -5555,8 +5547,8 @@ TEST(ObjCSourceBindings,
     HighStmt Define;
     Define.Kind = StmtKind::Assign;
     Define.Dst = HighExpr::makeVar(Local, NdType::makePtr());
-    Define.Val = HighExpr::makeConst(
-        Address, 8, ConstantAddressProvenance::DataAddress);
+    Define.Val =
+        HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
     F.Function.Body.insert(F.Function.Body.begin(), Define);
     auto LocalValue = HighExpr::makeVar(Local, NdType::makePtr());
     F.Function.Body[1].RetVal =
@@ -5568,11 +5560,9 @@ TEST(ObjCSourceBindings,
     EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
               SourceCallTypeHint::Kind::RuntimeKVOContext);
 
-    F.Function.Body[1].RetVal =
-        HighExpr::makeBinop(NdOp::BOOL_OR,
-                            HighExpr::makeBinop(NdOp::INT_EQUAL, Context,
-                                               LocalValue),
-                            LocalValue);
+    F.Function.Body[1].RetVal = HighExpr::makeBinop(
+        NdOp::BOOL_OR,
+        HighExpr::makeBinop(NdOp::INT_EQUAL, Context, LocalValue), LocalValue);
     Bound = bindObjCSourceReferences(F.Function, F.Image);
     EXPECT_FALSE(Bound.Limitation.empty());
     EXPECT_TRUE(Bound.KVOContexts.empty());
@@ -6319,9 +6309,8 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
   HighStmt DirectStatement;
   DirectStatement.Kind = StmtKind::ExprStmt;
   DirectStatement.CallExpr = Direct;
-  const auto Registration =
-      objcSelectorSourceTypeHint(F.Image,
-                                 "addObserver:forKeyPath:options:context:");
+  const auto Registration = objcSelectorSourceTypeHint(
+      F.Image, "addObserver:forKeyPath:options:context:");
   ASSERT_TRUE(Registration);
   auto RegistrationHint = std::make_shared<SourceCallTypeHint>();
   RegistrationHint->CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -6330,10 +6319,10 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
   RegistrationHint->Signature = *Registration;
   std::vector<ExprPtr> RegistrationArgs;
   for (size_t Index = 0; Index < Registration->Parameters.size(); ++Index)
-    RegistrationArgs.push_back(HighExpr::makeConst(
-        Index == 5 ? Address : 0, 8,
-        Index == 5 ? ConstantAddressProvenance::DataAddress
-                   : ConstantAddressProvenance::Unknown));
+    RegistrationArgs.push_back(
+        HighExpr::makeConst(Index == 5 ? Address : 0, 8,
+                            Index == 5 ? ConstantAddressProvenance::DataAddress
+                                       : ConstantAddressProvenance::Unknown));
   auto Register = HighExpr::makeCall("objc_msgSend", 0, RegistrationArgs);
   Register->Type = Registration->ReturnType;
   Register->SourceCallHint = RegistrationHint;
@@ -6343,8 +6332,8 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
   HighStmt Return;
   Return.Kind = StmtKind::Return;
   F.Function.ReturnType = NdType::makeVoid();
-  F.Function.Body = {Assign, AccessStatement, SetStatement, DirectStatement,
-                     RegistrationStatement, Return};
+  F.Function.Body = {Assign,          AccessStatement,       SetStatement,
+                     DirectStatement, RegistrationStatement, Return};
 
   const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
   ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
@@ -6365,8 +6354,7 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
   EXPECT_EQ(DirectKey->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeLocalStorageAddress);
   EXPECT_EQ(DirectKey->SourceCallHint->TargetAddress, Address);
-  const auto RegisteredContext =
-      Bound.Function.Body[4].CallExpr->Operands[5];
+  const auto RegisteredContext = Bound.Function.Body[4].CallExpr->Operands[5];
   ASSERT_TRUE(RegisteredContext->SourceCallHint);
   EXPECT_EQ(RegisteredContext->SourceCallHint->CallKind,
             SourceCallTypeHint::Kind::RuntimeLocalStorageAddress);
@@ -6400,8 +6388,8 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
       parseObjCMethodEncoding(Callback.Selector, Callback.TypeEncoding);
   ASSERT_TRUE(Callback.TypeHint);
   std::string Reason;
-  ASSERT_TRUE(assignDarwinObjCSourceABI(*Callback.TypeHint, F.Image.Arch,
-                                       Reason))
+  ASSERT_TRUE(
+      assignDarwinObjCSourceABI(*Callback.TypeHint, F.Image.Arch, Reason))
       << Reason;
   auto CallbackImage = F.Image;
   CallbackImage.ObjCMethods = {Callback};
@@ -6420,8 +6408,7 @@ TEST(ObjCSourceBindings, PrivateSwiftScalarAliasesKeepOneAssociationKey) {
       NdOp::INT_EQUAL,
       HighExpr::makeVar(ContextParameter,
                         Callback.TypeHint->Parameters[5].Type),
-      HighExpr::makeConst(Address, 8,
-                          ConstantAddressProvenance::DataAddress));
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress));
   CallbackFunction.Body = {Compare};
   const auto Compared =
       bindObjCSourceReferences(CallbackFunction, CallbackImage);
@@ -7372,8 +7359,7 @@ TEST(ObjCSourceBindings,
   EXPECT_FALSE(objcSourceCallBound(*Call, Image, {}));
 }
 
-TEST(ObjCSourceBindings,
-     ObjectConsumedArgumentTypeIsRevalidatedAtPublication) {
+TEST(ObjCSourceBindings, ObjectConsumedArgumentTypeIsRevalidatedAtPublication) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
   Image.Arch = Arch::AArch64;
@@ -7401,8 +7387,8 @@ TEST(ObjCSourceBindings,
   Use.Source.RegisterOffset = a64reg::X2;
   Use.Source.ValueBytes = 8;
   Use.ConsumedAsObject = true;
-  const auto Signature = objcSelectorSourceTypeHintForArgumentTypeUse(
-      Image, Setter.Selector, Use);
+  const auto Signature =
+      objcSelectorSourceTypeHintForArgumentTypeUse(Image, Setter.Selector, Use);
   ASSERT_TRUE(Signature);
   auto Binding = std::make_shared<SourceCallTypeHint>();
   Binding->CallKind = SourceCallTypeHint::Kind::ObjCMessage;
@@ -7422,8 +7408,7 @@ TEST(ObjCSourceBindings,
   EXPECT_FALSE(objcSourceCallBound(*Call, Image, {}));
 }
 
-TEST(ObjCSourceBindings,
-     ExactSelectorForwardingIsRevalidatedAtPublication) {
+TEST(ObjCSourceBindings, ExactSelectorForwardingIsRevalidatedAtPublication) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
   Image.Arch = Arch::AArch64;
@@ -7433,8 +7418,7 @@ TEST(ObjCSourceBindings,
   Caller.IsClassMethod = true;
   Caller.Selector = "setLevel:forClass:";
   Caller.Implementation = 0x1200;
-  Caller.TypeHint =
-      parseObjCMethodEncoding(Caller.Selector, "v32@0:8q16#24");
+  Caller.TypeHint = parseObjCMethodEncoding(Caller.Selector, "v32@0:8q16#24");
   ASSERT_TRUE(Caller.TypeHint);
   Image.ObjCMethods.push_back(Caller);
 
@@ -7442,8 +7426,8 @@ TEST(ObjCSourceBindings,
   Use.MethodEntry = Caller.Implementation;
   Use.ReceiverSourceParameter = 3;
   Use.ArgumentSourceParameters = {2};
-  const auto Signature = objcSelectorSourceTypeHintForForwardingUse(
-      Image, "ddSetLogLevel:", Use);
+  const auto Signature =
+      objcSelectorSourceTypeHintForForwardingUse(Image, "ddSetLogLevel:", Use);
   ASSERT_TRUE(Signature);
   auto Binding = std::make_shared<SourceCallTypeHint>();
   Binding->CallKind = SourceCallTypeHint::Kind::ObjCMessage;

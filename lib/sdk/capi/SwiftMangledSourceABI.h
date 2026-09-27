@@ -188,25 +188,23 @@ swiftMangledObjCBoolMemberSourceABI(const BinaryImage &Image, va_t Entry) {
     return std::nullopt;
   const auto &Root = Parsed.Root->Children[0];
   const Node *Member = nullptr, *Result = nullptr;
-  if (Shape(Root, "Getter", 1) &&
-      Shape(Root.Children[0], "Variable", 3)) {
+  if (Shape(Root, "Getter", 1) && Shape(Root.Children[0], "Variable", 3)) {
     Member = &Root.Children[0];
     if (Shape(Member->Children[2], "Type", 1))
       Result = &Member->Children[2].Children[0];
   } else if (Shape(Root, "Function", 3)) {
     Member = &Root;
     const auto &Type = Root.Children[2];
-    if (Shape(Type, "Type", 1) &&
-        Shape(Type.Children[0], "FunctionType", 2) &&
+    if (Shape(Type, "Type", 1) && Shape(Type.Children[0], "FunctionType", 2) &&
         Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) &&
         Shape(Type.Children[0].Children[0].Children[0], "Type", 1) &&
-        Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple", 0) &&
+        Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+              0) &&
         Shape(Type.Children[0].Children[1], "ReturnType", 1) &&
         Shape(Type.Children[0].Children[1].Children[0], "Type", 1))
       Result = &Type.Children[0].Children[1].Children[0].Children[0];
   }
-  if (!Member || !Result ||
-      !Shape(Member->Children[0], "Extension", 2) ||
+  if (!Member || !Result || !Shape(Member->Children[0], "Extension", 2) ||
       Member->Children[0].Children[0].Kind != "Module" ||
       !Member->Children[0].Children[0].Text ||
       Member->Children[0].Children[0].Text->empty() ||
@@ -219,9 +217,9 @@ swiftMangledObjCBoolMemberSourceABI(const BinaryImage &Image, va_t Entry) {
       Member->Children[0].Children[1].Children[1].Text->empty() ||
       Member->Children[0].Children[1].Children[1].Index ||
       !Member->Children[0].Children[1].Children[1].Children.empty() ||
-      Member->Children[1].Kind != "Identifier" ||
-      !Member->Children[1].Text || Member->Children[1].Text->empty() ||
-      Member->Children[1].Index || !Member->Children[1].Children.empty() ||
+      Member->Children[1].Kind != "Identifier" || !Member->Children[1].Text ||
+      Member->Children[1].Text->empty() || Member->Children[1].Index ||
+      !Member->Children[1].Children.empty() ||
       !Shape(*Result, "Structure", 2) ||
       !Text(Result->Children[0], "Module", "Swift") ||
       !Text(Result->Children[1], "Identifier", "Bool"))
@@ -850,12 +848,10 @@ swiftMangledClassScalarGetterSourceABI(const BinaryImage &Image, va_t Entry) {
     return std::nullopt;
   const auto &Value = Type.Children[0];
   const bool Swift = Text(Value.Children[0], "Module", "Swift");
-  const bool IsBool =
-      Swift && Text(Value.Children[1], "Identifier", "Bool");
+  const bool IsBool = Swift && Text(Value.Children[1], "Identifier", "Bool");
   const bool IsInt = Swift && Text(Value.Children[1], "Identifier", "Int");
-  const bool IsCGFloat =
-      Text(Value.Children[0], "Module", "CoreGraphics") &&
-      Text(Value.Children[1], "Identifier", "CGFloat");
+  const bool IsCGFloat = Text(Value.Children[0], "Module", "CoreGraphics") &&
+                         Text(Value.Children[1], "Identifier", "CGFloat");
   if (!IsBool && !IsInt && !IsCGFloat)
     return std::nullopt;
 
@@ -920,16 +916,13 @@ swiftMangledClassReferenceGetterSourceABI(const BinaryImage &Image,
   const auto &Owner = Variable.Children[0];
   const auto &Property = Variable.Children[1];
   const auto &Type = Variable.Children[2];
-  const bool NamedProperty =
-      Named(Property, "Identifier") ||
-      (Shape(Property, "PrivateDeclName", 2) &&
-       Named(Property.Children[0], "Identifier") &&
-       Named(Property.Children[1], "Identifier"));
-  if (!Shape(Owner, "Class", 2) ||
-      !Named(Owner.Children[0], "Module") ||
-      !Named(Owner.Children[1], "Identifier") ||
-      !NamedProperty || !Shape(Type, "Type", 1) ||
-      !Shape(Type.Children[0], "Class", 2) ||
+  const bool NamedProperty = Named(Property, "Identifier") ||
+                             (Shape(Property, "PrivateDeclName", 2) &&
+                              Named(Property.Children[0], "Identifier") &&
+                              Named(Property.Children[1], "Identifier"));
+  if (!Shape(Owner, "Class", 2) || !Named(Owner.Children[0], "Module") ||
+      !Named(Owner.Children[1], "Identifier") || !NamedProperty ||
+      !Shape(Type, "Type", 1) || !Shape(Type.Children[0], "Class", 2) ||
       !Named(Type.Children[0].Children[0], "Module") ||
       !Named(Type.Children[0].Children[1], "Identifier"))
     return std::nullopt;
@@ -1006,21 +999,19 @@ swiftMangledClassScalarSetterSourceABI(const BinaryImage &Image, va_t Entry) {
     return std::nullopt;
   const auto &Value = Type.Children[0];
   const bool Swift = Text(Value.Children[0], "Module", "Swift");
-  const bool IsBool =
-      Swift && Text(Value.Children[1], "Identifier", "Bool");
+  const bool IsBool = Swift && Text(Value.Children[1], "Identifier", "Bool");
   const bool IsInt = Swift && Text(Value.Children[1], "Identifier", "Int");
-  const bool IsCGFloat =
-      Text(Value.Children[0], "Module", "CoreGraphics") &&
-      Text(Value.Children[1], "Identifier", "CGFloat");
+  const bool IsCGFloat = Text(Value.Children[0], "Module", "CoreGraphics") &&
+                         Text(Value.Children[1], "Identifier", "CGFloat");
   if (!IsBool && !IsInt && !IsCGFloat)
     return std::nullopt;
 
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
   Hint.ReturnType = NdType::makeVoid();
-  Hint.Parameters = {{"value", IsCGFloat ? NdType::makeFloat(8)
-                                          : NdType::makeInt(IsBool ? 1 : 8,
-                                                            !IsBool)},
+  Hint.Parameters = {{"value", IsCGFloat
+                                   ? NdType::makeFloat(8)
+                                   : NdType::makeInt(IsBool ? 1 : 8, !IsBool)},
                      {"self", NdType::makePtr(NdType::makeVoid())}};
   Hint.Parameters[1].TheRole = SourceParameterTypeHint::Role::SwiftContext;
   std::string Error;
@@ -1124,7 +1115,7 @@ swiftMangledAnyClassInitializerSourceABI(const BinaryImage &Image, va_t Entry) {
 // remain separate source-projection requirements.
 inline std::optional<SourceFunctionTypeHint>
 swiftMangledObjCOptionalStringGetterSourceABI(const BinaryImage &Image,
-                                               va_t Entry) {
+                                              va_t Entry) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
@@ -1218,8 +1209,8 @@ swiftMangledObjCOptionalStringGetterSourceABI(const BinaryImage &Image,
 // the complete mangled result so no other optional value layout inherits
 // either register contract.
 inline std::optional<SourceFunctionTypeHint>
-swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
-    const BinaryImage &Image, va_t Entry) {
+swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(const BinaryImage &Image,
+                                                     va_t Entry) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
@@ -1273,21 +1264,20 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
            N.Children.empty();
   };
   const auto ValidIdentifier = [](const Node &N) {
-    return N.Kind == "Identifier" && N.Text && !N.Text->empty() &&
-           !N.Index && N.Children.empty();
+    return N.Kind == "Identifier" && N.Text && !N.Text->empty() && !N.Index &&
+           N.Children.empty();
   };
   const bool ExtensionOwner =
       Shape(Owner, "Extension", 2) && ValidModule(Owner.Children[0]) &&
       Shape(Owner.Children[1], "Class", 2) &&
       Text(Owner.Children[1].Children[0], "Module", "__C") &&
       ValidIdentifier(Owner.Children[1].Children[1]);
-  const bool SwiftClassOwner =
-      Shape(Owner, "Class", 2) && ValidModule(Owner.Children[0]) &&
-      ValidIdentifier(Owner.Children[1]);
-  if ((!ExtensionOwner && !SwiftClassOwner) ||
-      Property.Kind != "Identifier" || !Property.Text ||
-      Property.Text->empty() || Property.Index || !Property.Children.empty() ||
-      !Shape(Type, "Type", 1) ||
+  const bool SwiftClassOwner = Shape(Owner, "Class", 2) &&
+                               ValidModule(Owner.Children[0]) &&
+                               ValidIdentifier(Owner.Children[1]);
+  if ((!ExtensionOwner && !SwiftClassOwner) || Property.Kind != "Identifier" ||
+      !Property.Text || Property.Text->empty() || Property.Index ||
+      !Property.Children.empty() || !Shape(Type, "Type", 1) ||
       !Shape(Type.Children[0], "BoundGenericEnum", 2))
     return std::nullopt;
   const auto &Optional = Type.Children[0];
@@ -1299,8 +1289,7 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
   const auto &Value = Optional.Children[1].Children[0].Children[0];
   const bool UInt64 = Nominal(Value, "Structure", "Swift", "UInt64");
   const bool ObjCClass =
-      Shape(Value, "Class", 2) &&
-      Text(Value.Children[0], "Module", "__C") &&
+      Shape(Value, "Class", 2) && Text(Value.Children[0], "Module", "__C") &&
       Value.Children[1].Kind == "Identifier" && Value.Children[1].Text &&
       !Value.Children[1].Text->empty() && !Value.Children[1].Index &&
       Value.Children[1].Children.empty();
@@ -1309,10 +1298,9 @@ swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(
 
   SourceFunctionTypeHint Hint;
   Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
-  Hint.ReturnType = UInt64
-                        ? NdType::makeStruct({NdType::makeInt(8, false),
-                                              NdType::makeInt(8, false)})
-                        : NdType::makePtr(NdType::makeVoid());
+  Hint.ReturnType = UInt64 ? NdType::makeStruct({NdType::makeInt(8, false),
+                                                 NdType::makeInt(8, false)})
+                           : NdType::makePtr(NdType::makeVoid());
   Hint.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
   Hint.Parameters[0].TheRole = SourceParameterTypeHint::Role::SwiftContext;
   std::string Error;
@@ -1580,20 +1568,18 @@ swiftMangledCGRectClassInitializerSourceABI(const BinaryImage &Image,
   const auto &Class = Constructor.Children[0];
   const auto &Labels = Constructor.Children[1];
   const auto &Type = Constructor.Children[2];
-  if (!Shape(Class, "Class", 2) ||
-      Class.Children[0].Kind != "Module" || !Class.Children[0].Text ||
-      Class.Children[0].Text->empty() || Class.Children[0].Index ||
-      !Class.Children[0].Children.empty() ||
+  if (!Shape(Class, "Class", 2) || Class.Children[0].Kind != "Module" ||
+      !Class.Children[0].Text || Class.Children[0].Text->empty() ||
+      Class.Children[0].Index || !Class.Children[0].Children.empty() ||
       Class.Children[1].Kind != "Identifier" || !Class.Children[1].Text ||
       Class.Children[1].Text->empty() || Class.Children[1].Index ||
-      !Class.Children[1].Children.empty() ||
-      !Shape(Labels, "LabelList", 1) ||
+      !Class.Children[1].Children.empty() || !Shape(Labels, "LabelList", 1) ||
       !Text(Labels.Children[0], "Identifier", "frame") ||
-      !Shape(Type, "Type", 1) ||
-      !Shape(Type.Children[0], "FunctionType", 2) ||
+      !Shape(Type, "Type", 1) || !Shape(Type.Children[0], "FunctionType", 2) ||
       !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
       !Shape(Type.Children[0].Children[0].Children[0], "Type", 1) ||
-      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+             1) ||
       !Shape(Type.Children[0].Children[1], "ReturnType", 1) ||
       !Shape(Type.Children[0].Children[1].Children[0], "Type", 1))
     return std::nullopt;
@@ -1606,9 +1592,9 @@ swiftMangledCGRectClassInitializerSourceABI(const BinaryImage &Image,
       !Text(Argument.Children[0].Children[0].Children[0], "Module", "__C") ||
       !Text(Argument.Children[0].Children[0].Children[1], "Identifier",
             "CGRect") ||
-      !Shape(Result, "Class", 2) ||
-      Result.Children[0].Kind != "Module" || !Result.Children[0].Text ||
-      Result.Children[0].Index || !Result.Children[0].Children.empty() ||
+      !Shape(Result, "Class", 2) || Result.Children[0].Kind != "Module" ||
+      !Result.Children[0].Text || Result.Children[0].Index ||
+      !Result.Children[0].Children.empty() ||
       Result.Children[1].Kind != "Identifier" || !Result.Children[1].Text ||
       Result.Children[1].Index || !Result.Children[1].Children.empty() ||
       *Result.Children[0].Text != *Class.Children[0].Text ||
@@ -1663,8 +1649,7 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
   const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
   using Node = llvm::SwiftDemangleNode;
   const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
-    return N.Kind == Kind && !N.Text && !N.Index &&
-           N.Children.size() == Count;
+    return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Count;
   };
   const auto Named = [](const Node &N, llvm::StringRef Kind,
                         llvm::StringRef Value) {
@@ -1679,20 +1664,18 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
   const auto &Class = Constructor.Children[0];
   const auto &Labels = Constructor.Children[1];
   const auto &Type = Constructor.Children[2];
-  if (!Shape(Class, "Class", 2) ||
-      Class.Children[0].Kind != "Module" || !Class.Children[0].Text ||
-      Class.Children[0].Text->empty() || Class.Children[0].Index ||
-      !Class.Children[0].Children.empty() ||
+  if (!Shape(Class, "Class", 2) || Class.Children[0].Kind != "Module" ||
+      !Class.Children[0].Text || Class.Children[0].Text->empty() ||
+      Class.Children[0].Index || !Class.Children[0].Children.empty() ||
       Class.Children[1].Kind != "Identifier" || !Class.Children[1].Text ||
       Class.Children[1].Text->empty() || Class.Children[1].Index ||
-      !Class.Children[1].Children.empty() ||
-      !Shape(Labels, "LabelList", 1) ||
+      !Class.Children[1].Children.empty() || !Shape(Labels, "LabelList", 1) ||
       !Named(Labels.Children[0], "Identifier", "coder") ||
-      !Shape(Type, "Type", 1) ||
-      !Shape(Type.Children[0], "FunctionType", 2) ||
+      !Shape(Type, "Type", 1) || !Shape(Type.Children[0], "FunctionType", 2) ||
       !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
       !Shape(Type.Children[0].Children[0].Children[0], "Type", 1) ||
-      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+             1) ||
       !Shape(Type.Children[0].Children[1], "ReturnType", 1) ||
       !Shape(Type.Children[0].Children[1].Children[0], "Type", 1))
     return std::nullopt;
@@ -1743,7 +1726,7 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
 // same nominal class; other constructor layouts need separate evidence.
 inline std::optional<SourceFunctionTypeHint>
 swiftMangledZeroArgClassInitializerSourceABI(const BinaryImage &Image,
-                                              va_t Entry) {
+                                             va_t Entry) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
       !Image.isCodeAddress(Entry))
@@ -1780,18 +1763,17 @@ swiftMangledZeroArgClassInitializerSourceABI(const BinaryImage &Image,
   const auto &Constructor = Parsed.Root->Children[0];
   const auto &Class = Constructor.Children[0];
   const auto &Type = Constructor.Children[1];
-  if (!Shape(Class, "Class", 2) ||
-      Class.Children[0].Kind != "Module" ||
+  if (!Shape(Class, "Class", 2) || Class.Children[0].Kind != "Module" ||
       !Class.Children[0].Text || Class.Children[0].Text->empty() ||
       Class.Children[0].Index || !Class.Children[0].Children.empty() ||
-      Class.Children[1].Kind != "Identifier" ||
-      !Class.Children[1].Text || Class.Children[1].Text->empty() ||
-      Class.Children[1].Index || !Class.Children[1].Children.empty() ||
-      !Shape(Type, "Type", 1) ||
+      Class.Children[1].Kind != "Identifier" || !Class.Children[1].Text ||
+      Class.Children[1].Text->empty() || Class.Children[1].Index ||
+      !Class.Children[1].Children.empty() || !Shape(Type, "Type", 1) ||
       !Shape(Type.Children[0], "FunctionType", 2) ||
       !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
       !Shape(Type.Children[0].Children[0].Children[0], "Type", 1) ||
-      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple", 0) ||
+      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+             0) ||
       !Shape(Type.Children[0].Children[1], "ReturnType", 1) ||
       !Shape(Type.Children[0].Children[1].Children[0], "Type", 1) ||
       !Shape(Type.Children[0].Children[1].Children[0].Children[0], "Class", 2))
