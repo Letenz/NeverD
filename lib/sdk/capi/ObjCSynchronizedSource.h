@@ -25,6 +25,7 @@ struct ObjCSynchronizedSourceProof {
   va_t LandingPad = 0;
   va_t ResumeTarget = 0;
   uint8_t UnprotectedReleases = 0;
+  bool ReceiverIsSavedLocal = false;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -177,6 +178,11 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   };
   const va_t EnterCall = Region->Begin - 4;
   const va_t Landing = Region->Landing;
+  const bool ReceiverFromRetainResult =
+      EnterCall >= Function.Entry + 8 &&
+      Word(EnterCall - 4) == 0xaa0003f3U &&
+      HasCall(EnterCall - 8, "_objc_retainAutoreleasedReturnValue");
+  const bool ReceiverFromSelf = Word(EnterCall - 4) == 0xaa1303e0U;
   va_t Normal = Region->End;
   if (Word(Normal) == 0xaa0003f4U || Word(Normal) == 0xaa0003f5U)
     Normal += 4; // retain an already computed result across ARC releases
@@ -193,7 +199,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
     Normal += 8;
   }
   const va_t ExitCall = Normal + 4;
-  if (Word(EnterCall - 4) != 0xaa1303e0U ||
+  if ((!ReceiverFromSelf && !ReceiverFromRetainResult) ||
       !HasCall(EnterCall, "_objc_sync_enter") ||
       Normal >= Landing - 4 || Word(Normal) != 0xaa1303e0U ||
       !HasCall(ExitCall, "_objc_sync_exit") ||
@@ -204,16 +210,19 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
       !HasCall(Landing + 16, "__Unwind_Resume"))
     return std::nullopt;
 
-  va_t SavedSelf = 0;
-  for (va_t Address = Function.Entry; Address + 4 < EnterCall; Address += 4) {
-    if (Word(Address) != 0xaa0003f3U)
-      continue;
-    if (SavedSelf || Address > Function.Entry + 32)
+  va_t SavedReceiver = ReceiverFromRetainResult ? EnterCall - 4 : 0;
+  if (ReceiverFromSelf) {
+    for (va_t Address = Function.Entry; Address + 4 < EnterCall;
+         Address += 4) {
+      if (Word(Address) != 0xaa0003f3U)
+        continue;
+      if (SavedReceiver || Address > Function.Entry + 32)
+        return std::nullopt;
+      SavedReceiver = Address;
+    }
+    if (!SavedReceiver)
       return std::nullopt;
-    SavedSelf = Address;
   }
-  if (!SavedSelf)
-    return std::nullopt;
 
   Decoder Decoder;
   if (!Decoder.init(Arch::AArch64))
@@ -230,10 +239,10 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
                        Writes, &WriteCount) != CS_ERR_OK)
       return std::nullopt;
     for (uint8_t I = 0; I < WriteCount; ++I) {
-      if (Address < SavedSelf &&
+      if (ReceiverFromSelf && Address < SavedReceiver &&
           (Writes[I] == ARM64_REG_X0 || Writes[I] == ARM64_REG_W0))
         return std::nullopt;
-      if (Address > SavedSelf &&
+      if (Address > SavedReceiver &&
           (Writes[I] == ARM64_REG_X19 || Writes[I] == ARM64_REG_W19))
         return std::nullopt;
     }
@@ -241,7 +250,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
     if (Address < EnterCall &&
         (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) ||
          cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET) ||
-         (Address < SavedSelf &&
+         (ReceiverFromSelf && Address < SavedReceiver &&
           cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL))))
       return std::nullopt;
     if (Address > EnterCall &&
@@ -256,7 +265,7 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   return ObjCSynchronizedSourceProof{
       EnterCall, UnprotectedReleases ? FirstRelease : ExitCall, ExitCall,
       Landing, objcSynchronizedBranchTarget(Image, Landing + 16),
-      UnprotectedReleases};
+      UnprotectedReleases, ReceiverFromRetainResult};
 }
 
 inline std::optional<ObjCSynchronizedSourceProof>
@@ -354,6 +363,46 @@ inline bool omitProvenObjCSynchronizedLandingPad(
   return true;
 }
 
+inline std::optional<std::string> objcSynchronizedSavedLocalArgument(
+    llvm::StringRef Source, size_t Call, llvm::StringRef Name) {
+  if (Call == std::string::npos)
+    return std::nullopt;
+  const size_t Begin = Call + Name.size();
+  unsigned Depth = 0;
+  size_t End = Begin;
+  for (; End < Source.size() && End - Begin < 128; ++End) {
+    const char Character = Source[End];
+    if (Character == '(')
+      ++Depth;
+    else if (Character == ')') {
+      if (!Depth)
+        break;
+      --Depth;
+    } else if (Character == '\n' || Character == ';' || Character == ',' ||
+               Character == '"' || Character == '\'')
+      return std::nullopt;
+  }
+  if (End == Source.size() || End - Begin >= 128)
+    return std::nullopt;
+  const llvm::StringRef Argument = Source.slice(Begin, End);
+  const llvm::StringRef Prefix = "(void*)(uintptr_t)(";
+  if (!Argument.starts_with(Prefix) || !Argument.ends_with(')'))
+    return std::nullopt;
+  const llvm::StringRef NameOnly =
+      Argument.drop_front(Prefix.size()).drop_back();
+  const auto Alpha = [](char C) {
+    return (C >= 'A' && C <= 'Z') || (C >= 'a' && C <= 'z') || C == '_';
+  };
+  const auto Digit = [](char C) { return C >= '0' && C <= '9'; };
+  if (NameOnly.empty() || NameOnly == "objc_self" ||
+      !Alpha(NameOnly.front()))
+    return std::nullopt;
+  for (char Character : NameOnly)
+    if (!Alpha(Character) && !Digit(Character))
+      return std::nullopt;
+  return Argument.str();
+}
+
 // The emitter has already rendered and checked the method. This constrained
 // edit adds only the exceptional unlock around the two uniquely rendered
 // runtime calls; every other statement retains its existing source binding.
@@ -398,6 +447,24 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
       return std::nullopt;
   }
   const size_t EnterEnd = Source.find(';', Enter);
+  if (EnterEnd == std::string::npos)
+    return std::nullopt;
+  std::string Receiver = "objc_self";
+  if (Proof.ReceiverIsSavedLocal) {
+    const auto EnterArg =
+        objcSynchronizedSavedLocalArgument(Source, Enter, EnterName);
+    const auto ExitArg =
+        objcSynchronizedSavedLocalArgument(Source, Exit, ExitName);
+    if (!EnterArg || !ExitArg || *EnterArg != *ExitArg)
+      return std::nullopt;
+    const llvm::StringRef Local =
+        llvm::StringRef(*EnterArg)
+            .drop_front(llvm::StringRef("(void*)(uintptr_t)(").size())
+            .drop_back();
+    if (Source.slice(EnterEnd + 1, Exit).contains(Local))
+      return std::nullopt;
+    Receiver = *EnterArg;
+  }
   const size_t StopLine = Source.rfind('\n', Stop);
   const size_t ExitLine = Source.rfind('\n', Exit);
   if (EnterEnd == std::string::npos || StopLine == std::string::npos ||
@@ -409,7 +476,8 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
     return std::nullopt;
   std::string Result = Source.str();
   Result.insert(StopLine + 1, "    neverd_objc_sync_guard = 0;\n");
-  Result.insert(EnterEnd + 1, "\n    neverd_objc_sync_guard = objc_self;");
+  Result.insert(EnterEnd + 1,
+                "\n    neverd_objc_sync_guard = " + Receiver + ";");
   Result.insert(Open + 1,
                 "\n    void *neverd_objc_sync_guard "
                 "__attribute__((cleanup(neverd_objc_sync_cleanup))) = 0;");

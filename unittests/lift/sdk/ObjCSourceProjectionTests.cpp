@@ -1572,6 +1572,15 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverNeedsStableSelf) {
   EXPECT_EQ(TwoReleases->UnprotectedReleases, 2U);
   EXPECT_EQ(TwoReleases->GuardStopCall, 0x302cU);
   EXPECT_EQ(TwoReleases->ExitCall, 0x303cU);
+  Rewrite(0x3014, 0x94000000U | ((0x4060 - 0x3014) / 4));
+  Rewrite(0x3018, 0xaa0003f3U); // save the retained lock, not objc_self
+  auto RetainedLock = Symbol::makeFunc(0x4060);
+  RetainedLock.Name = "_objc_retainAutoreleasedReturnValue";
+  Image.Symbols.push_back(std::move(RetainedLock));
+  const auto LocalReceiver =
+      proveObjCSynchronizedReceiverCleanup(Image, Function);
+  ASSERT_TRUE(LocalReceiver);
+  EXPECT_TRUE(LocalReceiver->ReceiverIsSavedLocal);
 }
 
 TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
@@ -1621,4 +1630,35 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
   ASSERT_TRUE(Twice);
   EXPECT_LT(Twice->find("neverd_objc_sync_guard = 0;"),
             Twice->find("objc_release(v2);"));
+  const char *LocalReceiverSource =
+      "void neverd_objc_imp_3000(void* objc_self) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_enter((void*)(uintptr_t)(v1)));\n"
+      "    work();\n"
+      "    objc_release(v2);\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit((void*)(uintptr_t)(v1)));\n"
+      "}\n";
+  const auto LocalReceiver = addObjCSynchronizedReceiverCleanup(
+      LocalReceiverSource,
+      ObjCSynchronizedSourceProof{0x301c, 0x3030, 0x3038, 0x3050, 0x4040,
+                                  1, true});
+  ASSERT_TRUE(LocalReceiver);
+  EXPECT_NE(LocalReceiver->find(
+                "neverd_objc_sync_guard = (void*)(uintptr_t)(v1);"),
+            std::string::npos);
+  std::string ChangedExit = LocalReceiverSource;
+  const size_t ExitArgument = ChangedExit.rfind("(v1)");
+  ASSERT_NE(ExitArgument, std::string::npos);
+  ChangedExit.replace(ExitArgument, 4, "(v2)");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(
+      ChangedExit,
+      ObjCSynchronizedSourceProof{0x301c, 0x3030, 0x3038, 0x3050, 0x4040,
+                                  1, true}));
+  std::string ChangedLock = LocalReceiverSource;
+  const size_t ProtectedWork = ChangedLock.find("    work();");
+  ASSERT_NE(ProtectedWork, std::string::npos);
+  ChangedLock.insert(ProtectedWork, "    v1 = another_lock();\n");
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup(
+      ChangedLock,
+      ObjCSynchronizedSourceProof{0x301c, 0x3030, 0x3038, 0x3050, 0x4040,
+                                  1, true}));
 }
