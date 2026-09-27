@@ -556,7 +556,7 @@ TEST_F(DriverKernelFrameworkUsbIdle,
   put(IdleConfig + policy::IdleTimeoutType, policy::SystemManagedTimeout, 4);
   expectError(
       invoke(api::WdfDeviceAssignS0IdleSettings, {Globals, Device, IdleConfig}),
-      "driver-managed timeout");
+      "PoFx response bridge");
   EXPECT_EQ(Registration, Key);
   EXPECT_EQ(Cancellations, 0u);
   EXPECT_TRUE(Requests.empty());
@@ -705,6 +705,271 @@ TEST_F(DriverKernelFrameworkUsbIdle,
   EXPECT_FALSE(Model.hasPendingGuestCall());
   EXPECT_EQ(take(invoke(api::WdfDeviceStopIdleNoTrack, {Globals, Device, 1})),
             windows::StatusSuccess);
+}
+
+class DriverKernelFrameworkUsbPoFx : public DriverKernelFrameworkUsbIdle {
+protected:
+  bool ComponentReady = true, ComponentReferenced = true;
+  bool ResponsePending = false, RejectResponse = false;
+  unsigned Responses = 0;
+  uint64_t LastHint = UINT64_MAX;
+
+  void SetUp() override {
+    DriverKernelFrameworkUsbIdle::SetUp();
+    Policy.ManagedIdle = [this](uint64_t Wdm, bool Idle, uint64_t Hint) {
+      EXPECT_EQ(Wdm, FDO);
+      LastHint = Hint;
+      ComponentReferenced = !Idle;
+      if (Idle)
+        ComponentReady = false;
+      return llvm::Error::success();
+    };
+    Policy.CompletePowerNotRequired = [this](uint64_t Wdm,
+                                             Mode Action) -> llvm::Error {
+      EXPECT_EQ(Wdm, FDO);
+      if (!ResponsePending || RejectResponse)
+        return failure("PoFx response ownership unavailable");
+      if (Action == Mode::Issue) {
+        ++Responses;
+        ResponsePending = false;
+      }
+      return llvm::Error::success();
+    };
+    Model.setPowerPolicyHost(Policy);
+    KernelFramework::PoFxHost Host;
+    Host.Register = [](uint64_t, const KernelFrameworkPoFxSettings &)
+        -> llvm::Expected<uint64_t> { return Driver + 0x5000; };
+    Host.Start = [](uint64_t) { return llvm::Error::success(); };
+    Host.ComponentReady = [this](uint64_t) -> llvm::Expected<bool> {
+      return ComponentReady;
+    };
+    Host.Quiesce = [](uint64_t) { return llvm::Error::success(); };
+    Host.CanUnregister = [](uint64_t) -> llvm::Expected<bool> { return true; };
+    Host.Unregister = [](uint64_t) { return llvm::Error::success(); };
+    Model.setPoFxHost(std::move(Host));
+    put(IdleConfig + policy::IdleTimeoutType, policy::SystemManagedTimeout, 4);
+  }
+  void grant() {
+    ResponsePending = true;
+    success(Model.powerPolicyPermission(PDO, true));
+    success(Model.processPowerPolicy());
+  }
+  void activateComponent() {
+    ComponentReady = true;
+    success(Model.resumePoFxTransitions());
+  }
+};
+
+TEST_F(DriverKernelFrameworkUsbPoFx, DoublePermissionKeepsNotRequiredInD0) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  Now += 100 * policy::TicksPerMillisecond;
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(LastHint, 0u);
+  EXPECT_FALSE(Registration);
+  EXPECT_EQ(Submissions, 0u);
+  grant();
+  ASSERT_TRUE(Registration);
+  EXPECT_EQ(Responses, 1u);
+  EXPECT_FALSE(ResponsePending);
+  EXPECT_TRUE(Requests.empty());
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, false)));
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(Submissions, 1u);
+  EXPECT_EQ(Responses, 1u);
+  permission();
+  EXPECT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx, HintIsPassedToPoFxWithoutLocalTimer) {
+  put(IdleConfig + policy::IdleTimeoutType,
+      policy::SystemManagedTimeoutWithHint, 4);
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  EXPECT_EQ(LastHint, policy::TicksPerMillisecond);
+  Now += 100 * policy::TicksPerMillisecond;
+  success(Model.processPowerPolicy());
+  EXPECT_FALSE(Registration);
+  EXPECT_FALSE(Model.nextPowerPolicyTime());
+  grant();
+  EXPECT_EQ(Submissions, 1u);
+  EXPECT_EQ(Responses, 1u);
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       ResponseValidationFailureDoesNotSubmitOrConsumeGrant) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  ResponsePending = true;
+  success(Model.powerPolicyPermission(PDO, true));
+  RejectResponse = true;
+  expectError(Model.processPowerPolicy(), "response ownership");
+  EXPECT_TRUE(ResponsePending);
+  EXPECT_EQ(Submissions, 0u);
+  EXPECT_FALSE(Registration);
+  RejectResponse = false;
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(Submissions, 1u);
+  EXPECT_EQ(Responses, 1u);
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       ActivityWithdrawsUnconsumedGrantBeforeActivatingComponent) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  ResponsePending = true;
+  success(Model.powerPolicyPermission(PDO, true));
+  success(Model.powerPolicyActive(PDO));
+  EXPECT_EQ(Responses, 1u);
+  EXPECT_FALSE(ResponsePending);
+  EXPECT_TRUE(ComponentReferenced);
+  EXPECT_FALSE(Registration);
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(Submissions, 0u);
+  EXPECT_TRUE(Requests.empty());
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       LateNotRequiredIsAcknowledgedAsDeclinedAfterActivity) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  success(Model.powerPolicyActive(PDO));
+  ResponsePending = true;
+  success(Model.powerPolicyPermission(PDO, true));
+  EXPECT_EQ(Responses, 1u);
+  EXPECT_FALSE(ResponsePending);
+  success(Model.processPowerPolicy());
+  EXPECT_FALSE(Registration);
+  EXPECT_EQ(Submissions, 0u);
+  EXPECT_TRUE(Requests.empty());
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       RequiredCancelsParkedUsbAndAcknowledgesD0BeforeComponentActive) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  success(Model.powerPolicyPermission(PDO, false));
+  EXPECT_EQ(Cancellations, 1u);
+  EXPECT_FALSE(Registration);
+  EXPECT_FALSE(ComponentReady);
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  EXPECT_TRUE(Requests.empty());
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       StopIdleStaysPendingUntilComponentActiveWithoutRedundantD0) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  EXPECT_EQ(take(invoke(api::WdfDeviceStopIdleNoTrack, {Globals, Device, 1})),
+            windows::StatusPending);
+  EXPECT_EQ(Cancellations, 1u);
+  EXPECT_TRUE(ComponentReferenced);
+  EXPECT_FALSE(take(Model.powerPolicyWait(Device)));
+  success(Model.powerPolicyPermission(PDO, false));
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  success(Model.processPowerPolicy());
+  EXPECT_TRUE(Requests.empty());
+  activateComponent();
+  EXPECT_EQ(take(Model.powerPolicyWait(Device)), windows::StatusSuccess);
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       ForwardedManagedReadWaitsForComponentAfterPhysicalD0) {
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  permission();
+  expectCall(Exit, 0, DevicePowerState::D2);
+  acknowledgePower();
+  Entered = false;
+  const auto Request = routedRead();
+  ASSERT_NE(Request, 0u);
+  EXPECT_EQ(take(invoke(api::WdfRequestForwardToIoQueue,
+                        {Globals, Request, ManagedQueue})),
+            windows::StatusSuccess);
+  EXPECT_EQ(Cancellations, 1u);
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+  success(Model.powerPolicyPermission(PDO, false));
+  success(Model.processPowerPolicy());
+  expectCall(Entry, 0, DevicePowerState::D2);
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+  acknowledgePower();
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  EXPECT_FALSE(ComponentReady);
+  activateComponent();
+  const auto Presented = callback();
+  EXPECT_EQ(Presented.Arguments,
+            (std::vector<uint64_t>{ManagedQueue, Request, 4}));
+  finish(Presented);
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       ComponentCompletionCannotReleaseAnEnteredUsbArmHold) {
+  RemoteWake = true;
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  permission();
+  ComponentReady = true;
+  success(Model.resumePoFxTransitions());
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  expectCall(Arm);
+  EXPECT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       RequiredDuringEnteredCallbackWaitsForD2ThenSeparateD0) {
+  RemoteWake = true;
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  permission();
+  success(Model.powerPolicyPermission(PDO, false));
+  EXPECT_EQ(Cancellations, 1u);
+  EXPECT_TRUE(Registration);
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  expectCall(Arm);
+  expectCall(Exit, 0, DevicePowerState::D2);
+  acknowledgePower();
+  EXPECT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  retire();
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(Requests,
+            (std::vector{DevicePowerState::D2, DevicePowerState::D0}));
+  expectCall(Entry, 0, DevicePowerState::D2);
+  expectCall(Disarm);
+  acknowledgePower();
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
+}
+
+TEST_F(DriverKernelFrameworkUsbPoFx,
+       ArmFailureRestoresComponentReferenceWithoutSyntheticPower) {
+  RemoteWake = true;
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  grant();
+  permission();
+  expectCall(Arm, windows::StatusUnsuccessful);
+  EXPECT_EQ(Aborts, 1u);
+  EXPECT_FALSE(Registration);
+  EXPECT_TRUE(ComponentReferenced);
+  EXPECT_FALSE(ComponentReady);
+  EXPECT_TRUE(Requests.empty());
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
 }
 
 } // namespace

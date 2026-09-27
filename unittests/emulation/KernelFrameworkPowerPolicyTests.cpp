@@ -303,7 +303,12 @@ TEST_F(DriverKernelFrameworkPowerPolicy,
   success(Model.processPowerPolicy());
   expectCall(Entry, windows::StatusUnsuccessful);
   ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_FALSE(take(Model.powerPolicyDeviceCompletion(PDO, true)));
   success(Model.finishPowerPolicyRequest(PDO, windows::StatusUnsuccessful));
+  EXPECT_EQ(take(Model.powerPolicyDeviceCompletion(PDO, true)),
+            windows::StatusUnsuccessful);
+  expectError(Model.powerPolicyDeviceReady(PDO, true),
+              "device power transaction failed");
   EXPECT_EQ(take(Model.powerPolicyWait(Device)),
             policy::StatusPowerStateInvalid);
   expectError(invoke(api::WdfDeviceResumeIdleNoTrack, {Globals, Device}),

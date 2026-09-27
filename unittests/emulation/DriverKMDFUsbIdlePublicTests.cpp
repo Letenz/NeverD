@@ -56,7 +56,9 @@ protected:
     }
   }
 
-  void checkReport(llvm::StringRef Text) {
+  void checkReport(llvm::StringRef Text, bool DirectRead = false) {
+    const size_t Suspended = 5 + unsigned(DirectRead);
+    const size_t Resumed = 7 + unsigned(DirectRead);
     auto Parsed = llvm::json::parse(Text);
     ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
     const auto *Report = Parsed->getAsObject();
@@ -103,7 +105,7 @@ protected:
         continue;
       const size_t Index = ScenarioIndex++;
       EXPECT_EQ(Request->getInteger("io_status"), 0);
-      if (Index != 5 && Index != 7)
+      if (Index != Suspended && Index != Resumed)
         continue;
       std::string Bytes;
       ASSERT_TRUE(llvm::tryGetFromHex(
@@ -117,13 +119,18 @@ protected:
         return Value;
       };
       EXPECT_EQ(Word(KmdfUsbFailures), 0u);
-      EXPECT_EQ(Word(KmdfUsbD0Entries), Index == 5 ? 1u : 2u);
+      EXPECT_EQ(Word(KmdfUsbD0Entries), Index == Suspended ? 1u : 2u);
       EXPECT_EQ(Word(KmdfUsbD0Exits), 1u);
-      EXPECT_EQ(Word(KmdfUsbInD0), Index == 5 ? 0u : 1u);
-      EXPECT_EQ(Word(KmdfUsbReadsDelivered), Index == 5 ? 0u : 1u);
+      EXPECT_EQ(Word(KmdfUsbInD0), Index == Suspended ? 0u : 1u);
+      EXPECT_EQ(Word(KmdfUsbReadsDelivered), Index == Suspended ? 0u : 1u);
       EXPECT_EQ(Word(KmdfUsbArms), 0u);
-      if (Index == 7) {
-        EXPECT_LT(Word(KmdfUsbReadRouteSequence), Word(KmdfUsbEntrySequence));
+      EXPECT_EQ(Word(KmdfUsbReadsRouted),
+                Index == Suspended || DirectRead ? 0u : 1u);
+      if (Index == Resumed) {
+        if (DirectRead)
+          EXPECT_EQ(Word(KmdfUsbReadRouteSequence), 0u);
+        else
+          EXPECT_LT(Word(KmdfUsbReadRouteSequence), Word(KmdfUsbEntrySequence));
         EXPECT_LT(Word(KmdfUsbEntrySequence),
                   Word(KmdfUsbReadDeliverySequence));
       }
@@ -206,6 +213,57 @@ TEST_F(DriverKMDFUsbIdlePublic,
           0)
           << readFile(Error);
       checkReport(readFile(Output));
+    }
+#else
+  GTEST_SKIP() << "NEVERD_KMDF_USB_IDLE_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+TEST_F(DriverKMDFUsbIdlePublic, CAPIAndCLIRouteReadDirectlyAfterManagedD0) {
+#ifdef NEVERD_KMDF_USB_IDLE_FIXTURE
+  auto Parsed =
+      llvm::json::parse(readFile(NEVERD_DRIVER_KMDF_USB_IDLE_SCENARIO));
+  ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+  auto *Object = Parsed->getAsObject();
+  ASSERT_NE(Object, nullptr);
+  auto *Requests = Object->getArray("requests");
+  ASSERT_NE(Requests, nullptr);
+  Requests->insert(
+      Requests->begin() + 3,
+      llvm::json::Object{{"kind", "ioctl"},
+                         {"device_id", "usb-function"},
+                         {"file", 1},
+                         {"code", uint32_t(KmdfUsbDirectReadIoctl)}});
+  const std::vector<const char *> Images{
+      NEVERD_KMDF_USB_IDLE_FIXTURE,
+#ifdef NEVERD_KMDF_USB_IDLE_CFG_FIXTURE
+      NEVERD_KMDF_USB_IDLE_CFG_FIXTURE,
+#endif
+  };
+  for (const char *Image : Images)
+    for (const char *Base : {"0x0", "0x190000000"}) {
+      SCOPED_TRACE(Image);
+      SCOPED_TRACE(Base);
+      (*Object)["load_address"] = Base;
+      std::string Scenario;
+      llvm::raw_string_ostream(Scenario) << *Parsed;
+      const auto API = takeString(neverd_emulate_driver_scenario_json(
+          Session, Image, Scenario.c_str(), nullptr));
+      ASSERT_FALSE(API.empty()) << takeString(neverd_last_error(Session));
+      checkReport(API, true);
+      const auto Input = Directory / "usb-idle.json";
+      std::ofstream(Input) << Scenario;
+      const auto Output = Directory / "report.json";
+      const auto Error = Directory / "error.txt";
+      const auto Command =
+          neverd::test::shellQuote(NEVERD_DRIVER_CLI) + " emulate-driver " +
+          neverd::test::shellQuote(Image) + " --scenario " +
+          neverd::test::shellQuote(Input.string()) +
+          neverd::test::redirectOutput(Output.string(), Error.string());
+      EXPECT_EQ(
+          neverd::test::systemExitCode(neverd::test::runShellCommand(Command)),
+          0)
+          << readFile(Error);
+      checkReport(readFile(Output), true);
     }
 #else
   GTEST_SKIP() << "NEVERD_KMDF_USB_IDLE_FIXTURE requires a genuine WDK fixture";

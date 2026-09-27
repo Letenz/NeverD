@@ -300,15 +300,23 @@ KernelFramework::callControl(llvm::StringRef Name, Binding &B,
     auto Caller = CallerRequests.find(R->second.IRP);
     if (Caller == CallerRequests.end() || Caller->second != A[2] ||
         !R->second.InCallerContext || R->second.Enqueued ||
-        R->second.Device != A[1] || !D->second.DefaultQueue ||
-        !Queues.count(D->second.DefaultQueue) ||
-        Queues.at(D->second.DefaultQueue).Device != A[1])
+        R->second.Device != A[1])
       return controlError(
           "request must be enqueued once from its caller-context callback");
-    if (!Queues.at(D->second.DefaultQueue).Accepting)
+    if (!RequestsHost.View)
+      return controlError("request inspection host is unavailable");
+    auto View = RequestsHost.View(R->second.IRP);
+    if (!View)
+      return View.takeError();
+    const uint64_t QueueHandle = D->second.dispatchQueue(View->Major);
+    auto Q = Queues.find(QueueHandle);
+    if (Q == Queues.end() || Q->second.Device != A[1] ||
+        Objects.at(QueueHandle).Deleting)
+      return controlError("caller-context request has no live dispatch queue");
+    if (!Q->second.Accepting)
       return Result{QueueBusy};
     R->second.Enqueued = true;
-    R->second.Queue = D->second.DefaultQueue;
+    R->second.Queue = QueueHandle;
     return Result{0};
   }
   if (Name != api::WdfDeviceCreateSymbolicLink &&

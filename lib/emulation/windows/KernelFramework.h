@@ -296,6 +296,7 @@ public:
         CompleteWakes;
     std::function<llvm::Error(llvm::ArrayRef<uint64_t>)> CancelWakes;
     std::function<llvm::Error(uint64_t, bool, uint64_t)> ManagedIdle;
+    std::function<llvm::Error(uint64_t, RequestMode)> CompletePowerNotRequired;
     std::function<llvm::Error(uint64_t)> RemoveManaged;
     std::function<llvm::Expected<bool>(uint64_t, bool, bool, uint32_t)>
         ColdAllowed;
@@ -321,6 +322,8 @@ public:
   llvm::Error powerPolicyActive(uint64_t PDO);
   llvm::Error powerPolicyWake(uint64_t PDO);
   llvm::Error powerPolicyPermission(uint64_t PDO, bool NotRequired);
+  llvm::Expected<std::optional<uint32_t>>
+  powerPolicyDeviceCompletion(uint64_t PDO, bool Required) const;
   llvm::Expected<bool> powerPolicyDeviceReady(uint64_t PDO,
                                               bool Required) const;
   llvm::Expected<bool> allowsD3Cold(uint64_t PDO) const;
@@ -469,6 +472,7 @@ private:
     uint64_t Wdm = 0, PDO = 0;
     uint64_t LocalTarget = 0;
     uint64_t DefaultQueue = 0;
+    std::map<uint32_t, uint64_t> DispatchQueues;
     uint64_t CallerContext = 0;
     FileConfig Files;
     bool Filter = false;
@@ -485,6 +489,12 @@ private:
     bool ResourcesActive = false;
     bool InD0 = false;
     bool PowerQueuesHeld = true;
+    bool PoFxComponentHeld = false;
+    bool queuesHeld() const { return PowerQueuesHeld || PoFxComponentHeld; }
+    uint64_t dispatchQueue(uint32_t Major) const {
+      const auto Mapping = DispatchQueues.find(Major);
+      return Mapping == DispatchQueues.end() ? DefaultQueue : Mapping->second;
+    }
     SelfManagedIoState SelfManagedIo = SelfManagedIoState::Uninitialized;
   };
   std::map<uint64_t, Device> Devices;
@@ -700,6 +710,9 @@ private:
   llvm::Error validateWakeEnrollment(uint64_t Device) const;
   llvm::Error refreshUsbIdle(uint64_t Device);
   llvm::Error cancelUsbIdle(uint64_t Device);
+  llvm::Error completeManagedUsbPowerDown(uint64_t Device,
+                                          PowerPolicyHost::RequestMode Mode);
+  llvm::Error restoreManagedUsbActivity(uint64_t Device);
   llvm::Error requestIdleDevicePower(uint64_t Device,
                                      PowerPolicyHost::RequestMode Mode);
   llvm::Error restartIdleTimer(uint64_t Device);

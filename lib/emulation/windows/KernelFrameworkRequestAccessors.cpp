@@ -41,7 +41,7 @@ bool KernelFramework::isPowerParkedIRP(uint64_t IRP) const {
   if (Queue == Queues.end() || !Queue->second.PowerManaged)
     return false;
   auto Device = Devices.find(Queue->second.Device);
-  return Device != Devices.end() && Device->second.PowerQueuesHeld &&
+  return Device != Devices.end() && Device->second.queuesHeld() &&
          (Request->second.Queued || Request->second.PowerSuspended);
 }
 

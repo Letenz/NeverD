@@ -296,6 +296,8 @@ Windows 模型亦管理獨立的非分頁池 MDL；釋放描述符不會釋放�
 
 `KernelModelFrameworkUsbIdle` 擁有真正的框架封包／info 儲存與回收，複用 `KernelUsbIdle` 協定權威。原生回呼身分由型別化 provider 綁定驗證，不冒充可執行客體程式碼。`FrameworkUsbIdle` 排程工作在同一槽位轉為真正 WDF 回呼；D2 完成、回呼傳回、封包完成各保留獨立身分。策略從明確 DeviceWake 解析 Maximum，記錄精確 USB key／epoch，在活動或拆除前取消；組合成員整批預檢。直接與轉送至受管佇列的請求共用活動語意，真正 D0 確認和 D0Entry 才允許投遞。
 
+`KernelFramework::Device` 分開物理 `PowerQueuesHeld` 與 `PoFxComponentHeld`，`queuesHeld()` 僅組合投遞條件。Required 確認檢查真正 D0 就緒，不循環等待由此觸發的元件啟用。`CompletePowerNotRequired` 在保留 USB 封包或於 D0 明確拒絕後，驗證並結束精確 PoFx 回呼所有權；非 USB 閒置仍等真正 Dx 完成。USB 許可保留 IRP／START 身分。`DispatchQueues` 在發布前驗證路由；`WdfDeviceEnqueueRequest` 擷取當時佇列，續體保留已接收路由並轉移真正物件父子所有權。對應變更只影響新請求，不遷移保留請求或複製 IRP 所有者。 `RemovePending` D0 失敗以 `PoFxQuiesce` 中真正失敗的客體轉移及精確已返回 Required token，原子執行 quiesce／確認。原 IRP 保留失敗與剩餘硬體清理，不虛構 F0／ActiveCondition 或成功就緒。
+
 `KernelFramework` 管理 KMDF 1.33 繫結、函式表識別、WDF 物件與內容、控制裝置初始化記錄、循序預設佇列及要求控制代碼。其具型別的裝置與要求主控介面將 WDM 命名空間、儲存空間、封包狀態、MDL 對應及完成驗證交由 `KernelModel` 負責；雙方均不建立重複的裝置或 IRP。佇列路由將框架擁有的分派狀態與傳回型別為 `void` 的客體回呼返回分開記錄。完成接續流程先執行清理及子物件銷毀，再釋放 IRP；外部參考僅保留 WDF 內容。刪除待處理要求會在修改上層祖先物件之前遭到拒絕；刪除時自動取消或排空要求仍不受支援。`DriverSession` 在共用預算下執行巢狀回呼。`DriverImage` 驗證 CFG 中繼資料；`GuardControlFlow` 管理已宣告的映像／API 目標，CPU 介面卡保留檢查／分派呼叫狀態。PnP 裝置、一般佇列排程及其取消、類別擴充及 UMDF 仍不受支援。
 
 情境透過 `cancel_after_100ns` 為傳輸要求設定虛擬取消期限，`KernelModel` 的獨立 IRP 記錄管理此期限及實際發生的絕對 `cancel_requested_at_100ns`；公開情境仍循序提交要求。`KernelModel` 在框架路由後、客體 I/O 回呼前套用零延遲取消，保留完成先發生的結果，並在閒置時間推進時考慮正數取消期限。`KernelFramework` 管理標記／解除標記、排入佇列／已遞送狀態，以及保留至取消回呼傳回的內部參考。僅排入佇列的取消回呼不允許完成要求；遞送後，工作項目可在回呼等待期間協調完成。保留 WDF 物件不會恢復已失效的 IRP 儲存空間。`KernelScheduler` 將取消回呼與工作項目分開管理，在暫停／還原時保留回呼類別並共用容量與派送預算；DPC 優先，其後是 FIFO 取消回呼，再執行一般工作項目或還原就緒的被動等待框架。取消回呼在 `PASSIVE_LEVEL` 執行。此控制裝置契約不提供 WDM 取消常式或一般佇列排程器。

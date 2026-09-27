@@ -242,7 +242,11 @@ private:
   std::unique_ptr<KernelFramework> Framework;
   KernelPoFx PoFx;
   std::map<uint64_t, uint64_t> PoFxDeviceObjects;
-  std::map<uint64_t, bool> FrameworkPoFxPowerWaits;
+  struct FrameworkPoFxPowerWait {
+    uint64_t CallbackToken;
+    KernelPoFx::CallbackKind Kind;
+  };
+  std::map<uint64_t, FrameworkPoFxPowerWait> FrameworkPoFxPowerWaits;
   struct BlockingPoFxOperation {
     uint64_t Handle = 0, Thread = 0;
     uint32_t Component = 0;
@@ -268,6 +272,8 @@ private:
   llvm::Error setFrameworkPoFxIdle(uint64_t Device, bool Idle,
                                    uint64_t Timeout);
   llvm::Error retireFrameworkPoFx(uint64_t Device);
+  llvm::Error completeFrameworkPowerNotRequired(
+      uint64_t Device, KernelFramework::PowerPolicyHost::RequestMode Mode);
 
   std::optional<KernelGuestCall> takeWdmGuestCall();
   llvm::Expected<std::optional<uint64_t>> finishWdmGuestCall(uint64_t Token,

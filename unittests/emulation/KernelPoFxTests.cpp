@@ -714,6 +714,43 @@ TEST_F(DriverKernelPoFx, FrameworkQuiescencePreservesPendingPowerCompletion) {
   success(Model.unregisterDevice(Handle));
 }
 
+TEST_F(DriverKernelPoFx,
+       FailedFrameworkPowerUpQuiescesExactCallbackWithoutActivatingComponents) {
+  auto D = description();
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
+  D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+  success(Model.registerDevice(Handle, D));
+  success(Model.start(Handle));
+  complete(Kind::IdleCondition);
+  success(Model.requestIdleState(Handle, 0, 1));
+  complete(Kind::IdleState);
+  success(Model.requestDevicePowerNotRequired(Handle));
+  complete(Kind::DevicePowerNotRequired);
+  success(Model.activate(Handle, 0));
+  auto Pending = Model.nextCallback();
+  ASSERT_TRUE(Pending);
+  expectError(Model.quiesceFrameworkRegistration(Handle, Pending->Token),
+              "exact returned callback");
+  const auto Required = next(Kind::DevicePowerRequired);
+  expectError(Model.quiesceFrameworkRegistration(Handle, Required.Token),
+              "exact returned callback");
+  success(Model.finishCallback(Required.Token));
+  expectError(Model.quiesceFrameworkRegistration(Handle, Required.Token + 1),
+              "exact returned callback");
+  ASSERT_NE(Model.callback(Required.Token), nullptr);
+  EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+  success(Model.quiesceFrameworkRegistration(Handle, Required.Token));
+  EXPECT_EQ(Model.callback(Required.Token), nullptr);
+  EXPECT_FALSE(Model.nextCallback());
+  EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+  const auto Component = take(Model.component(Handle, 0));
+  EXPECT_FALSE(Component.Active);
+  EXPECT_EQ(Component.IdleState, 1u);
+  expectError(Model.quiesceFrameworkRegistration(Handle, Required.Token),
+              "exact returned callback");
+  success(Model.unregisterDevice(Handle));
+}
+
 TEST_F(DriverKernelPoFx, FrameworkQuiescenceDoesNotAlterDriverOwnership) {
   registerDevice();
   expectError(Model.quiesceFrameworkRegistration(Handle), "framework-owned");
@@ -853,6 +890,42 @@ TEST_F(DriverKernelPoFx,
   success(Model.requestDevicePowerNotRequired(Handle));
   complete(Kind::DevicePowerNotRequired);
   success(Model.unregisterDevice(Handle));
+}
+
+TEST_F(DriverKernelPoFx,
+       PowerAcknowledgementPreflightRetainsExactDeliveredCallback) {
+  startIdle();
+  success(Model.requestDevicePowerNotRequired(Handle));
+  const auto Call = Model.nextCallback();
+  ASSERT_TRUE(Call);
+  ASSERT_EQ(Call->Kind, Kind::DevicePowerNotRequired);
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token),
+              "delivered callback");
+  success(Model.submitCallback(Call->Token));
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token),
+              "delivered callback");
+  success(Model.beginCallback(Call->Token));
+  success(Model.finishCallback(Call->Token));
+  success(Model.activate(Handle, 0));
+  EXPECT_FALSE(Model.nextCallback());
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle + 1, Call->Token),
+              "exact callback");
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token + 1),
+              "exact callback");
+  success(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token));
+  success(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token));
+  EXPECT_TRUE(Model.callback(Call->Token));
+  EXPECT_FALSE(Model.nextCallback());
+  success(Model.completeDevicePowerNotRequired(Handle));
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle, Call->Token),
+              "exact callback");
+  const auto Required = next(Kind::DevicePowerRequired);
+  expectError(Model.canCompleteDevicePowerNotRequired(Handle, Required.Token),
+              "exact callback");
+  acknowledge(Required);
+  success(Model.finishCallback(Required.Token));
+  complete(Kind::ActiveCondition);
+  EXPECT_TRUE(take(Model.conditionReached(Handle, 0, true)));
 }
 
 } // namespace

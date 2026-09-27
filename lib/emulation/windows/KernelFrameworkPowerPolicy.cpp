@@ -44,22 +44,54 @@ llvm::Error KernelFramework::refreshUsbIdle(uint64_t Device) {
   return llvm::Error::success();
 }
 
+llvm::Error KernelFramework::completeManagedUsbPowerDown(
+    uint64_t Device, PowerPolicyHost::RequestMode Mode) {
+  auto &D = Devices.at(Device);
+  auto &P = D.Policy;
+  if (!P.Idle || !P.Idle->usesUsbIdle() || !P.Idle->systemManaged() ||
+      !P.ManagedPowerNotRequired)
+    return llvm::Error::success();
+  if (!PowerHost.CompletePowerNotRequired)
+    return policyError("managed USB requires its PoFx response bridge");
+  if (auto E = PowerHost.CompletePowerNotRequired(D.Wdm, Mode))
+    return E;
+  if (Mode == PowerPolicyHost::RequestMode::Issue)
+    P.ManagedPowerNotRequired = false;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::restoreManagedUsbActivity(uint64_t Device) {
+  auto &D = Devices.at(Device);
+  const auto &P = D.Policy;
+  if (!P.Idle || !P.Idle->usesUsbIdle() || !P.Idle->systemManaged())
+    return llvm::Error::success();
+  if (auto E = PowerHost.ManagedIdle(D.Wdm, false, P.Idle->Timeout100ns))
+    return E;
+  return holdForPoFxComponent(Device);
+}
+
 llvm::Error KernelFramework::cancelUsbIdle(uint64_t Device) {
   if (auto E = refreshUsbIdle(Device))
     return E;
+  if (auto E = completeManagedUsbPowerDown(
+          Device, PowerPolicyHost::RequestMode::Validate))
+    return E;
   auto &P = Devices.at(Device).Policy;
-  if (!P.UsbIdle)
-    return llvm::Error::success();
-  if (!PowerHost.CancelUsbIdle)
-    return policyError("USB idle cancellation requires its packet bridge");
-  const auto Key = P.UsbIdle->Key;
-  if (auto E =
-          PowerHost.CancelUsbIdle(Key, PowerPolicyHost::RequestMode::Validate))
-    return E;
-  if (auto E =
-          PowerHost.CancelUsbIdle(Key, PowerPolicyHost::RequestMode::Issue))
-    return E;
-  return refreshUsbIdle(Device);
+  if (P.UsbIdle) {
+    if (!PowerHost.CancelUsbIdle)
+      return policyError("USB idle cancellation requires its packet bridge");
+    const auto Key = P.UsbIdle->Key;
+    if (auto E = PowerHost.CancelUsbIdle(
+            Key, PowerPolicyHost::RequestMode::Validate))
+      return E;
+    if (auto E =
+            PowerHost.CancelUsbIdle(Key, PowerPolicyHost::RequestMode::Issue))
+      return E;
+    if (auto E = refreshUsbIdle(Device))
+      return E;
+  }
+  return completeManagedUsbPowerDown(Device,
+                                     PowerPolicyHost::RequestMode::Issue);
 }
 
 llvm::Error
@@ -82,7 +114,7 @@ llvm::Error KernelFramework::restartIdleTimer(uint64_t Device) {
   auto &P = D.Policy;
   if (auto E = refreshUsbIdle(Device))
     return E;
-  if (!P.Idle || P.UsbIdle) {
+  if (!P.Idle) {
     P.Deadline.reset();
     return llvm::Error::success();
   }
@@ -105,7 +137,7 @@ llvm::Error KernelFramework::restartIdleTimer(uint64_t Device) {
     P.Deadline.reset();
     return llvm::Error::success();
   }
-  if (Active || !CanIdle) {
+  if (P.UsbIdle || Active || !CanIdle) {
     P.Deadline.reset();
     return llvm::Error::success();
   }
@@ -226,9 +258,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
                            "override");
       const bool Managed =
           Field(policy::IdleTimeoutType) != policy::DriverManagedTimeout;
-      if (Usb && Managed)
-        return policyError("USB idle requires driver-managed timeout until the "
-                           "PoFx and USB permission authorities are combined");
+      if (Usb && Managed && !PowerHost.CompletePowerNotRequired)
+        return policyError("managed USB requires its PoFx response bridge");
       if (Managed && !PowerHost.ManagedIdle)
         return policyError("system-managed idle requires the PoFx authority");
       if (P.Idle && P.Idle->TimeoutType != Field(policy::IdleTimeoutType))
@@ -364,7 +395,7 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     ++P.References;
     P.Deadline.reset();
     P.ManagedPowerNotRequired = false;
-    if (D->second.InD0 && !D->second.PowerQueuesHeld && !P.DevicePowerPending &&
+    if (D->second.InD0 && !D->second.queuesHeld() && !P.DevicePowerPending &&
         !P.UsbIdle)
       return Result{windows::StatusSuccess};
     P.PowerUpRequested = true;
@@ -414,7 +445,7 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
   D.Policy.Deadline.reset();
   D.Policy.ManagedPowerNotRequired = false;
   if (D.Policy.Started &&
-      (!D.InD0 || D.PowerQueuesHeld || D.Policy.SystemSleeping ||
+      (!D.InD0 || D.queuesHeld() || D.Policy.SystemSleeping ||
        D.Policy.DevicePowerPending || D.Policy.UsbIdle))
     D.Policy.PowerUpRequested = true;
   return llvm::Error::success();
@@ -576,10 +607,16 @@ llvm::Error KernelFramework::processPowerPolicy() {
       continue;
     }
     if (P.Idle && P.Idle->usesUsbIdle()) {
+      if (auto E = completeManagedUsbPowerDown(
+              Handle, PowerPolicyHost::RequestMode::Validate))
+        return E;
       auto Key = PowerHost.SubmitUsbIdle(D.Wdm, P.Epoch);
       if (!Key)
         return Key.takeError();
       P.UsbIdle = KernelPowerPolicy::UsbIdleState{*Key, std::nullopt};
+      if (auto E = completeManagedUsbPowerDown(
+              Handle, PowerPolicyHost::RequestMode::Issue))
+        return E;
       P.Deadline.reset();
       P.ManagedPowerNotRequired = false;
       return llvm::Error::success();
@@ -629,7 +666,7 @@ KernelFramework::powerPolicyWait(uint64_t Device) {
   }
   if (auto E = refreshUsbIdle(Device))
     return E;
-  if (D->second.InD0 && !D->second.PowerQueuesHeld &&
+  if (D->second.InD0 && !D->second.queuesHeld() &&
       !D->second.Policy.DevicePowerPending && !D->second.Policy.UsbIdle)
     return std::optional<uint32_t>{windows::StatusSuccess};
   return std::optional<uint32_t>{};
@@ -752,8 +789,11 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
     if (D->second.Policy.UsbIdle)
       return policyError("USB allocation cleanup did not retire its packet");
     D->second.PowerQueuesHeld = false;
+    if (auto E = restoreManagedUsbActivity(Device))
+      return E;
     std::vector<Step> Presentations;
-    appendPowerQueuePresentations(Device, Presentations);
+    if (!D->second.queuesHeld())
+      appendPowerQueuePresentations(Device, Presentations);
     if (!Presentations.empty()) {
       auto Started = start(std::move(Presentations));
       if (!Started)
@@ -773,7 +813,7 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
     D->second.Policy.IdleSince.reset();
     D->second.Policy.Deadline.reset();
     D->second.PowerQueuesHeld = false;
-    return llvm::Error::success();
+    return restoreManagedUsbActivity(Device);
   }
   D->second.Policy.IdlePowerDown = true;
   D->second.Policy.ManagedPowerNotRequired = false;
@@ -791,6 +831,9 @@ llvm::Error KernelFramework::finishPowerPolicyRequest(uint64_t PDO,
   if (SetPower && (Status & profile::NTStatusFailureMask) &&
       !(P.IdlePowerDown && Devices.at(Handle->second).InD0))
     P.Failure = Status;
+  if (SetPower && !(Status & profile::NTStatusFailureMask) &&
+      Devices.at(Handle->second).InD0 && !P.SystemSleeping && !P.UsbIdle)
+    return restoreManagedUsbActivity(Handle->second);
   return llvm::Error::success();
 }
 llvm::Error KernelFramework::powerPolicyPermission(uint64_t PDO,
@@ -803,24 +846,63 @@ llvm::Error KernelFramework::powerPolicyPermission(uint64_t PDO,
     return policyError(
         "PoFx decision requires a started system-managed policy");
   if (NotRequired && (!D.Policy.Idle->Enabled || !D.Policy.IdleSince ||
-                      D.Policy.References || powerPolicyBusy(Handle->second)))
-    return policyError("PoFx power-down decision raced with device activity");
+                      D.Policy.References || powerPolicyBusy(Handle->second))) {
+    if (!D.Policy.Idle->usesUsbIdle())
+      return policyError("PoFx power-down decision raced with device activity");
+    if (!PowerHost.CompletePowerNotRequired)
+      return policyError("managed USB requires its PoFx response bridge");
+    if (auto E = PowerHost.CompletePowerNotRequired(
+            D.Wdm, PowerPolicyHost::RequestMode::Validate))
+      return E;
+    return PowerHost.CompletePowerNotRequired(
+        D.Wdm, PowerPolicyHost::RequestMode::Issue);
+  }
+  if (!NotRequired)
+    if (auto E = cancelUsbIdle(Handle->second))
+      return E;
   D.Policy.ManagedPowerNotRequired = NotRequired;
   if (!NotRequired)
     D.Policy.PowerUpRequested = true;
   return llvm::Error::success();
 }
 
-llvm::Expected<bool>
-KernelFramework::powerPolicyDeviceReady(uint64_t PDO, bool Required) const {
+llvm::Expected<std::optional<uint32_t>>
+KernelFramework::powerPolicyDeviceCompletion(uint64_t PDO,
+                                             bool Required) const {
   const auto Handle = PnpDeviceHandles.find(PDO);
   if (Handle == PnpDeviceHandles.end())
     return policyError("PoFx completion lost its framework device");
   const auto &D = Devices.at(Handle->second);
+  if (D.Policy.DevicePowerPending) {
+    // A failed entry must settle Required before its cleanup can unregister
+    // PoFx. The real guest failure is terminal even though the power IRP still
+    // owns the remaining hardware cleanup. Successful entry must wait for it.
+    if (Required)
+      for (const auto &[Token, Transition] : PnpTransitions)
+        if (Transition.Device == Handle->second && Transition.Entering &&
+            Transition.Current.Phase == PnpPhase::PoFxQuiesce &&
+            (Transition.Status & profile::NTStatusFailureMask))
+          return std::optional<uint32_t>{Transition.Status};
+    return std::optional<uint32_t>{};
+  }
   if (D.Policy.Failure)
+    return D.Policy.Failure;
+  if (!Required && D.Policy.Idle && D.Policy.Idle->usesUsbIdle())
+    return std::optional<uint32_t>{};
+  const bool Ready =
+      D.Policy.Started && (Required ? D.InD0 && !D.Policy.UsbIdle : !D.InD0);
+  return Ready ? std::optional<uint32_t>{windows::StatusSuccess}
+               : std::optional<uint32_t>{};
+}
+
+llvm::Expected<bool>
+KernelFramework::powerPolicyDeviceReady(uint64_t PDO, bool Required) const {
+  auto Completion = powerPolicyDeviceCompletion(PDO, Required);
+  if (!Completion)
+    return Completion.takeError();
+  if (*Completion && (**Completion & profile::NTStatusFailureMask))
     return policyError("PoFx device power transaction failed");
-  return D.Policy.Started && !D.Policy.DevicePowerPending &&
-         (Required ? D.InD0 : !D.InD0);
+  return Completion->has_value();
 }
 
 llvm::Expected<bool> KernelFramework::allowsD3Cold(uint64_t PDO) const {
