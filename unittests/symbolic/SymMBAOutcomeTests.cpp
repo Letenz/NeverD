@@ -134,6 +134,133 @@ TEST(SymMBA, TreatsAMaskInsideABitwiseOperatorAsOpaque) {
   EXPECT_EQ(Ctx.toString(R.Expr), "(255 & x) + y");
 }
 
+TEST(SymMBA, InstantiatesLinearProofsBeforeRestoringScaledInputs) {
+  MBAOptions ProofOnly;
+  ProofOnly.VerifySamples = 0;
+  for (unsigned Width : {3u, 8u, 32u, 64u, 128u, 256u}) {
+    for (unsigned Kind : {0u, 1u, 2u}) {
+      for (const llvm::APInt &Coefficient :
+           {llvm::APInt(Width, 2), llvm::APInt(Width, 6),
+            llvm::APInt::getSignMask(Width)}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(Kind);
+        SymContext Ctx;
+        SymRef X = Ctx.mkVar("x", Width);
+        SymRef Y = Ctx.mkVar("y", Width);
+        SymRef Source = Kind == 0   ? X
+                        : Kind == 1 ? Ctx.mkUDiv(X, Y)
+                                    : Ctx.mkAdd(X, Y);
+        SymRef Scaled = Ctx.mkMul(Ctx.mkConst(Coefficient), Source);
+        SymRef E = Ctx.mkAdd(
+            Ctx.mkXor(Source, Scaled),
+            Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(Source, Scaled)));
+        SymRef Expected = Ctx.mkMul(Ctx.mkConst(Coefficient + 1), Source);
+        MBAResult R = simplifyMBA(Ctx, E, ProofOnly);
+        if (Kind == 2) {
+          SymRef Expanded =
+              Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(Coefficient + 1), X),
+                        Ctx.mkMul(Ctx.mkConst(Coefficient + 1), Y));
+          EXPECT_TRUE(R.Expr == Expected || R.Expr == Expanded)
+              << Ctx.toString(R.Expr);
+        } else {
+          EXPECT_EQ(R.Expr, Expected) << Ctx.toString(R.Expr);
+        }
+        EXPECT_TRUE(R.Changed);
+        EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+      }
+    }
+  }
+}
+
+TEST(SymMBA, InstantiatesPolynomialProofsBeforeRestoringScaledInputs) {
+  MBAOptions ProofOnly;
+  ProofOnly.VerifySamples = 0;
+  for (unsigned Width : {3u, 8u, 32u, 64u, 128u, 256u}) {
+    for (bool Composite : {false, true}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Composite);
+      SymContext Ctx;
+      SymRef X = Ctx.mkVar("x", Width);
+      SymRef Y = Ctx.mkVar("y", Width);
+      SymRef Source = Composite ? Ctx.mkUDiv(X, Y) : X;
+      SymRef Scaled = Ctx.mkMul(Ctx.mkConst(Width, 2), Source);
+      SymRef E = Ctx.mkAdd(
+          Ctx.mkMul(Ctx.mkAnd(Source, Scaled), Ctx.mkOr(Source, Scaled)),
+          Ctx.mkMul(Ctx.mkAnd(Source, Ctx.mkNot(Scaled)),
+                    Ctx.mkAnd(Ctx.mkNot(Source), Scaled)));
+      MBAResult R = simplifyMBA(Ctx, E, ProofOnly);
+      EXPECT_EQ(R.Expr, Ctx.mkMul({Ctx.mkConst(Width, 2), Source, Source}))
+          << Ctx.toString(R.Expr);
+      EXPECT_TRUE(R.Changed);
+      EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+    }
+  }
+}
+
+TEST(SymMBA, ProofInstantiationRejectsRelatedButNonEquivalentInputs) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8);
+  SymRef Scaled = Ctx.mkMul(Ctx.mkConst(8, 2), X);
+  SymRef And = Ctx.mkAnd(X, Scaled);
+  SymRef Cross = Ctx.mkMul(Ctx.mkAnd(X, Ctx.mkNot(Scaled)),
+                           Ctx.mkAnd(Ctx.mkNot(X), Scaled));
+  SymRef Linear = Ctx.mkAdd(Ctx.mkXor(X, Scaled), And);
+  SymRef Polynomial = Ctx.mkAdd(Ctx.mkMul(And, Ctx.mkOr(X, Scaled)),
+                                Ctx.mkMul(Ctx.mkConst(8, 2), Cross));
+  MBAOptions ProofOnly;
+  ProofOnly.VerifySamples = 0;
+  MBAResult L = simplifyMBA(Ctx, Linear, ProofOnly);
+  MBAResult P = simplifyMBA(Ctx, Polynomial, ProofOnly);
+  EXPECT_NE(L.Expr, Ctx.mkMul(Ctx.mkConst(8, 3), X));
+  EXPECT_NE(P.Expr, Ctx.mkMul({Ctx.mkConst(8, 2), X, X}));
+  std::vector<llvm::APInt> Values(Ctx.numVars(), llvm::APInt(8, 0));
+  for (unsigned Value = 0; Value < 256; ++Value) {
+    Values[Ctx.varId(X)] = llvm::APInt(8, Value);
+    unsigned Twice = (2 * Value) & 255;
+    EXPECT_EQ(Ctx.eval(L.Expr, Values).getZExtValue(),
+              ((Value ^ Twice) + (Value & Twice)) & 255);
+    EXPECT_EQ(Ctx.eval(P.Expr, Values).getZExtValue(),
+              ((Value & Twice) * (Value | Twice) +
+               2 * (Value & ~Twice) * (~Value & Twice)) &
+                  255);
+  }
+}
+
+TEST(SymMBA, ProofInstantiationRespectsRefusalAndIndependentInputs) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 32);
+  SymRef Scaled = Ctx.mkMul(Ctx.mkConst(32, 2), X);
+  SymRef E = Ctx.mkAdd(Ctx.mkXor(X, Scaled),
+                       Ctx.mkMul(Ctx.mkConst(32, 2), Ctx.mkAnd(X, Scaled)));
+  MBAOptions Options;
+  Options.VerifySamples = 0;
+  detail::WorkBudget AbstractionBudget(Options.MaxWork);
+  auto Abstract = detail::abstractToMBA(Ctx, E, false, &AbstractionBudget,
+                                        Options.MaxTableBytes);
+  ASSERT_TRUE(Abstract);
+  ASSERT_EQ(Abstract->Hidden.size(), 1u);
+  SymRef Input(Abstract->Hidden.begin()->first);
+  SymRef Form = Ctx.mkAdd(X, Input);
+  detail::WorkBudget ProofBudget(Options.MaxWork);
+  EXPECT_TRUE(
+      detail::proveLinearIdentity(Ctx, Abstract->Body, Form, 2, ProofBudget));
+  detail::WorkBudget WrongBudget(Options.MaxWork);
+  EXPECT_FALSE(detail::proveLinearIdentity(
+      Ctx, Abstract->Body, Ctx.mkMul(Ctx.mkConst(32, 3), X), 2, WrongBudget));
+  detail::WorkBudget TinyBudget(3);
+  EXPECT_FALSE(
+      detail::proveLinearIdentity(Ctx, Abstract->Body, Form, 2, TinyBudget));
+  EXPECT_TRUE(TinyBudget.exhausted());
+  EXPECT_EQ(TinyBudget.used(), 3u);
+  for (size_t Limit : {size_t(0), size_t(1)}) {
+    Options.MaxWork = Limit;
+    EXPECT_EQ(simplifyMBA(Ctx, E, Options).Expr, E);
+  }
+  Options.MaxWork = MBAOptions{}.MaxWork;
+  Options.MaxTableBytes = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, E, Options).Expr, E);
+}
+
 TEST(SymMBA, PreservesInvertibleAffineInputsAcrossProofNormalization) {
   // Addition splits into AND + OR for arbitrary words.  Its second operand
   // may itself be affine, and subtracting the candidate must preserve that

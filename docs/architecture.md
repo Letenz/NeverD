@@ -1308,6 +1308,10 @@ through the existing verifier boundary; inconclusive results never authorize a
 rewrite. See [bitvector proof backends](solver.md) for build and validation.
 
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Region candidates are independently proved over the completed abstraction,
+then instantiated with that abstraction's hidden-input mapping. The identity
+holds for arbitrary independent inputs, so restoring related sources cannot
+invalidate it even when canonical builders combine their coefficients.
 Independent summand groups are measured separately before a whole-region
 truth table is attempted. Add/Mul regions also have a bounded sparse
 polynomial reading over integers modulo the word width; other operations
