@@ -81,6 +81,45 @@ modular_sub SYMBOL(mba_parity32), 32, 1
 modular_sub SYMBOL(mba_parity64), 64, 1
 modular_sub SYMBOL(mba_store64), 64, 0, 1
 
+// Keep the same inputs in private frame slots across repeated loads. This
+// exercises expression recovery after ordinary x64 register spilling.
+.macro spilled_mba name, subtract=0
+.globl \name
+#if defined(__ELF__)
+.type \name, @function
+#elif defined(_WIN32)
+.def \name; .scl 2; .type 32; .endef
+#endif
+\name:
+  subq $24, %rsp
+  movq ARG_X, 0(%rsp)
+  movq ARG_Y, 8(%rsp)
+  movq 0(%rsp), %r8
+  movq 8(%rsp), %r9
+  movq 0(%rsp), %r10
+  movq 8(%rsp), %r11
+  xorq %r9, %r8
+  .if \subtract
+    notq %r10
+  .endif
+  andq %r11, %r10
+  shlq $1, %r10
+  .if \subtract
+    subq %r10, %r8
+  .else
+    addq %r10, %r8
+  .endif
+  movq %r8, %rax
+  addq $24, %rsp
+  retq
+#if defined(__ELF__)
+.size \name, .-\name
+#endif
+.endm
+
+spilled_mba SYMBOL(mba_spilled_add)
+spilled_mba SYMBOL(mba_spilled_sub), 1
+
 // If t = x | y, then (t - x) | t = t. Preserve one shared computation of t
 // so the decompiler must reason through both of its uses.
 .macro absorbed_or name, width

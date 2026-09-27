@@ -19,6 +19,7 @@ add_neverd_component_library(NeverDIRHigh
   pass/HighDCE.cpp
   pass/HighDeadStoreElim.cpp
   pass/HighExprSimplify.cpp
+  pass/HighFrameStoreForwarding.cpp
   pass/HighSymSimplify.cpp
   pass/HighTypeInference.cpp
   pass/HighVarRename.cpp
