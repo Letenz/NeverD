@@ -9,6 +9,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExprComplementTests.cpp
   SymExprMaskTests.cpp
   SymMBAAffineResidualTests.cpp
+  SymMBABooleanResidualTests.cpp
   SymMBAArithmeticTests.cpp
   SymMBAAffineFastPathTests.cpp
   SymMBACandidateSelectionTests.cpp
