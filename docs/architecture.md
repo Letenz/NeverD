@@ -1344,9 +1344,8 @@ the cost of the complete restored expression. Add/Mul regions also have a
 bounded sparse polynomial reading over integers modulo the word width.
 Complements on those arithmetic paths are read as `~X = -1-X`; bitwise
 consumers and other operations remain opaque. The chosen spelling is
-re-expanded before acceptance. A proved complement or modular negation of one
-independent variable already has the minimum nontrivial reading cost, so later
-region search stops there.
+re-expanded before acceptance. Bounded checks stop further region search for
+proved minimal unary variables and products of distinct free variables.
 
 Hidden affine inputs may supply exact inverse relations when a coefficient
 is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic
