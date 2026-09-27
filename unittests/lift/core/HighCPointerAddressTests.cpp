@@ -35361,12 +35361,17 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("ArgList var_m8"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m18 = var_m8"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("types_ = 11"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(char*)&frame"), std::string::npos) << Source;
+  // The 16-, 8-, and 4-byte views overlap. They must share the backing frame
+  // instead of becoming independent ArgList locals that would lose writes.
+  EXPECT_EQ(Source.find("ArgList var_m8"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("ArgList var_m18"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint8_t frame0[168]"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((char*)&frame0 + 48)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((char*)&frame0 + 32)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(uint32_t*)((char*)&frame0 + 32) = 11;"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("sink_wide(used3)"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {

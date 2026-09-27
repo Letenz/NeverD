@@ -2504,10 +2504,10 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
       S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const TypeRef &Ty = S.StoreVal->Type;
-  // A signed compound assignment performs signed arithmetic before converting
-  // back to the lvalue. Keep the ordinary modular expression renderer for it,
-  // including its explicit bit reinterpretation of the unsigned result.
-  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->IsSigned || Ty->IsEnum)
+  // A signed compound assignment can overflow. It is safe to abbreviate a
+  // signed IR update only when the actual displayed lvalue is an unsigned
+  // field or named slot of the same width.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->IsEnum)
     return false;
   if (Ty->Size != 1 && Ty->Size != 2 && Ty->Size != 4 && Ty->Size != 8)
     return false;
@@ -2522,6 +2522,10 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
   if (DisplayType &&
       (DisplayType->Kind != NdTypeKind::Int || DisplayType->IsSigned ||
        DisplayType->IsEnum || DisplayType->Size != Ty->Size))
+    return false;
+  if (Ty->IsSigned &&
+      (!DisplayType || (!namedFrameSlot(*S.StoreAddr) &&
+                        !typedMemberAccess(*S.StoreAddr, Ty->Size))))
     return false;
   // Peeling a narrowing/widening view or a narrow signed immediate changes
   // the update's value. Only abbreviate an exact same-width arithmetic step.
