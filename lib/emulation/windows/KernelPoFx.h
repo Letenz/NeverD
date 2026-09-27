@@ -117,6 +117,8 @@ public:
                    uint64_t CallbackThread = 0);
   llvm::Error completeIdleCondition(uint64_t Handle, uint32_t Component);
   llvm::Error completeIdleState(uint64_t Handle, uint32_t Component);
+  llvm::Error canCompleteDevicePowerNotRequired(uint64_t Handle,
+                                                uint64_t CallbackToken) const;
   llvm::Error completeDevicePowerNotRequired(uint64_t Handle);
   llvm::Error reportDevicePoweredOn(uint64_t Handle);
   llvm::Error setLatency(uint64_t Handle, uint32_t Component, uint64_t Latency);
@@ -148,9 +150,11 @@ public:
                                         bool Active) const;
   llvm::Expected<bool> callbacksDrained(uint64_t Handle) const;
 
-  /// Stop new framework policy decisions before hardware teardown. Existing
-  /// callbacks still require their normal acknowledgement and return.
-  llvm::Error quiesceFrameworkRegistration(uint64_t Handle);
+  /// Stop new framework policy decisions before hardware teardown. A failed
+  /// power-up may settle its exact returned Required callback in this same
+  /// transition, without scheduling component activation.
+  llvm::Error quiesceFrameworkRegistration(
+      uint64_t Handle, std::optional<uint64_t> FailedPowerUp = std::nullopt);
   llvm::Error canUnregisterDevice(uint64_t Handle) const;
   llvm::Error unregisterDevice(uint64_t Handle);
   llvm::Error canReleasePDO(uint64_t PDO) const;

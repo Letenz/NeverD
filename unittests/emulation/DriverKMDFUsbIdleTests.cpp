@@ -257,6 +257,73 @@ TEST(DriverKMDFUsbIdle, PermissionWaitsForD2AndManagedReadWaitsForDelayedD0) {
     }
 }
 
+TEST(DriverKMDFUsbIdle, DirectReadBypassesRouterAndWaitsForDelayedD0) {
+  for (const auto *Image : images())
+    for (uint64_t Base : {uint64_t(0), uint64_t(0x190000000)}) {
+      auto Input = options(false, true);
+      Input.LoadAddress = Base;
+      Input.Requests.push_back(file(Function, DriverRequestKind::DeviceControl,
+                                    KmdfUsbDirectReadIoctl));
+      observe(Input, Function, DriverPowerPolicyAction::Idle);
+      observe(Input, Function, DriverPowerPolicyAction::UsbIdlePermission);
+      const auto Suspended = observe(Input);
+      const auto Read = Input.Requests.size();
+      Input.Requests.push_back(file(Function, DriverRequestKind::Read));
+      const auto Resumed = observe(Input);
+      remove(Input);
+      auto Result = emulateDriver(Image, Input);
+      ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+      clean(*Result);
+      const auto *Before = scenario(*Result, Suspended);
+      const auto *After = scenario(*Result, Resumed);
+      const auto *Data = scenario(*Result, Read);
+      ASSERT_NE(Before, nullptr);
+      ASSERT_NE(After, nullptr);
+      ASSERT_NE(Data, nullptr);
+      EXPECT_EQ(word(*Before, KmdfUsbInD0), 0u);
+      EXPECT_EQ(word(*Before, KmdfUsbTargetState),
+                uint32_t(DevicePowerState::D2));
+      EXPECT_EQ(word(*Before, KmdfUsbReadsDelivered), 0u);
+      EXPECT_EQ(word(*Data, 0), KmdfUsbReadMarker);
+      EXPECT_EQ(word(*After, KmdfUsbInD0), 1u);
+      EXPECT_EQ(word(*After, KmdfUsbPreviousState),
+                uint32_t(DevicePowerState::D2));
+      EXPECT_EQ(word(*After, KmdfUsbD0Entries), 2u);
+      EXPECT_EQ(word(*After, KmdfUsbReadsRouted), 0u);
+      EXPECT_EQ(word(*After, KmdfUsbReadsDelivered), 1u);
+      EXPECT_EQ(word(*After, KmdfUsbReadRouteSequence), 0u);
+      EXPECT_LT(word(*After, KmdfUsbEntrySequence),
+                word(*After, KmdfUsbReadDeliverySequence));
+      const auto *Idle = idle(*Result);
+      ASSERT_NE(Idle, nullptr);
+      ASSERT_TRUE(Idle->UsbIdle);
+      const auto Power = powers(*Result);
+      ASSERT_EQ(Power.size(), 2u);
+      ASSERT_TRUE(Power[0]->Power);
+      ASSERT_TRUE(Power[1]->Power);
+      EXPECT_EQ(Power[0]->ResponseIndex, 0u);
+      EXPECT_EQ(Power[1]->ResponseIndex, 1u);
+      EXPECT_EQ(Idle->UsbIdle->D2IRP, Power[0]->IRP);
+      EXPECT_EQ(Idle->UsbIdle->D2Status, windows::StatusSuccess);
+      EXPECT_EQ(Idle->UsbIdle->D2CompletedAt100ns,
+                Power[0]->Power->BusCompletedAt100ns);
+      EXPECT_EQ(Idle->UsbIdle->CompletionCause,
+                DriverUsbIdleCompletionCause::Cancel);
+      ASSERT_TRUE(Idle->UsbIdle->CompletedAt100ns);
+      ASSERT_TRUE(Power[1]->Power->BusReceivedAt100ns);
+      EXPECT_LE(*Idle->UsbIdle->CompletedAt100ns,
+                *Power[1]->Power->BusReceivedAt100ns);
+      EXPECT_EQ(Idle->IOStatus, windows::StatusCancelled);
+      ASSERT_TRUE(Idle->UsbIdle->CompletedAt100ns);
+      ASSERT_TRUE(Power[1]->Power->BusCompletedAt100ns);
+      EXPECT_LT(*Idle->UsbIdle->CompletedAt100ns,
+                *Power[1]->Power->BusCompletedAt100ns);
+      ASSERT_EQ(Result->PowerPolicyEvents.size(), 2u);
+      ASSERT_EQ(Result->PowerPolicyEvents[1].UsbIdleMembers.size(), 1u);
+      EXPECT_EQ(Result->PowerPolicyEvents[1].UsbIdleMembers[0].IRP, Idle->IRP);
+    }
+}
+
 TEST(DriverKMDFUsbIdle, ExplicitRemoteWakeCompletesWaitWakeBeforeDelayedD0) {
   for (const auto *Image : images()) {
     auto Input = options(true);

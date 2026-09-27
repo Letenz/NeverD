@@ -198,6 +198,11 @@ void KernelModel::configureFrameworkPowerPolicyHost() {
   Host.FinishUsbIdleCallback = [this](UsbIdleKey Key, uint64_t Token) {
     return finishFrameworkUsbIdleCallback(Key, Token);
   };
+  Host.CompletePowerNotRequired =
+      [this](uint64_t Device,
+             KernelFramework::PowerPolicyHost::RequestMode Mode) {
+        return completeFrameworkPowerNotRequired(Device, Mode);
+      };
   Host.Now = [this] { return Scheduler.now100ns(); };
   Host.Request = [this](uint64_t Device, DevicePowerState Target,
                         KernelFramework::PowerPolicyHost::RequestMode Mode) {

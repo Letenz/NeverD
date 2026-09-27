@@ -1,6 +1,7 @@
 //===- ObjCSourceProjectionTests.cpp - Objective-C projection boundaries --===//
 
 #include "../../../lib/sdk/capi/ObjCSourceProjection.h"
+#include "../../../lib/sdk/capi/ObjCSynchronizedSource.h"
 #include "../../../lib/sdk/capi/SourceProjectionEvidenceJSON.h"
 #include "gtest/gtest.h"
 
@@ -1320,4 +1321,101 @@ TEST(ObjCSourceProjection,
     EXPECT_EQ(P.limitation().empty(), Mutation == 0)
         << Mutation << ':' << P.limitation();
   }
+}
+
+TEST(ObjCSourceProjection, SynchronizedCleanupRequiresExactUnwindPad) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::MachO;
+  Segment Code;
+  Code.VA = 0x1000;
+  Code.Size = 0x70;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Code.Data.assign(Code.Size, 0);
+  auto Put = [&](va_t Address, uint32_t Word) {
+    llvm::support::endian::write32le(Code.Data.data() + Address - Code.VA,
+                                     Word);
+  };
+  auto BL = [&](va_t From, va_t To) {
+    Put(From, 0x94000000U | ((To - From) / 4));
+  };
+  Put(0x1010, 0xf90007e0U); // str x0, [sp, #8]
+  Put(0x1018, 0xf94007e0U); // ldr x0, [sp, #8]
+  BL(0x101c, 0x2000);       // objc_sync_enter
+  Put(0x1034, 0xf94007e0U);
+  Put(0x1038, 0xf9400400U);
+  BL(0x103c, 0x2030); // unprotected dispatch_group_enter
+  Put(0x1040, 0xf94007e0U);
+  BL(0x1044, 0x2010); // normal objc_sync_exit
+  Put(0x105c, 0xaa0003f3U);
+  Put(0x1060, 0xf94007e0U);
+  BL(0x1064, 0x2010); // exceptional objc_sync_exit
+  Put(0x1068, 0xaa1303e0U);
+  BL(0x106c, 0x2020); // _Unwind_Resume
+  Image.Segments.push_back(std::move(Code));
+  for (const auto &[Address, Name] :
+       {std::pair<va_t, const char *>{0x2000, "_objc_sync_enter"},
+        {0x2010, "_objc_sync_exit"},
+        {0x2020, "__Unwind_Resume"},
+        {0x2030, "_dispatch_group_enter"}}) {
+    auto Symbol = Symbol::makeFunc(Address);
+    Symbol.Name = Name;
+    Image.Symbols.push_back(std::move(Symbol));
+  }
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Params.push_back({"objc_self", NdType::makePtr(NdType::makeVoid())});
+  auto &EH = Function.ExceptionMetadata.emplace();
+  EH.CodeRange = {0x1000, 0x1070};
+  EH.Personality = ExceptionPersonality::ObjCPersonalityV0;
+  EH.PersonalityName = "__objc_personality_v0";
+  auto &LSDA = EH.Itanium.emplace();
+  LSDA.CallSites.resize(3);
+  LSDA.CallSites[0].GuardedRange = {0x1000, 0x1020};
+  LSDA.CallSites[1].GuardedRange = {0x1020, 0x1034};
+  LSDA.CallSites[1].LandingPadVA = 0x105c;
+  LSDA.CallSites[2].GuardedRange = {0x1034, 0x1070};
+  auto &ObjC = EH.ObjC.emplace();
+  ObjC.LandingPads.push_back(
+      {{0x1020, 0x1034}, 0x105c, ObjCPadKind::SynchronizedExit, {}});
+
+  auto Proof = proveObjCSynchronizedReceiverCleanup(Image, Function);
+  ASSERT_TRUE(Proof);
+  EXPECT_EQ(Proof->EnterCall, 0x101cU);
+  EXPECT_EQ(Proof->FirstUnprotectedCall, 0x103cU);
+  EXPECT_EQ(Proof->ExitCall, 0x1044U);
+  LSDA.CallSites[1].FirstActionOffset = 0;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function));
+  LSDA.CallSites[1].FirstActionOffset.reset();
+  Image.Segments[0].Data[0x1060 - 0x1000] ^= 1;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function));
+  Image.Segments[0].Data[0x1060 - 0x1000] ^= 1;
+  Image.Segments[0].Data[0x103c - 0x1000] ^= 1;
+  EXPECT_FALSE(proveObjCSynchronizedReceiverCleanup(Image, Function));
+}
+
+TEST(ObjCSourceProjection, SynchronizedCleanupSourceRequiresExceptionFlags) {
+  const char *Source =
+      "#include <stdint.h>\n"
+      "extern int32_t neverd_darwin_objc_sync_enter(void*);\n"
+      "extern void neverd_darwin_dispatch_group_enter(void*);\n"
+      "extern int32_t neverd_darwin_objc_sync_exit(void*);\n"
+      "void neverd_objc_imp_1000(void* objc_self) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));\n"
+      "    work();\n"
+      "    neverd_darwin_dispatch_group_enter(objc_self);\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "}\n";
+  const auto Result = addObjCSynchronizedReceiverCleanup(Source);
+  ASSERT_TRUE(Result);
+  EXPECT_NE(Result->find("#ifndef __EXCEPTIONS"), std::string::npos);
+  EXPECT_NE(Result->find("cleanup(neverd_objc_sync_cleanup)"),
+            std::string::npos);
+  EXPECT_NE(Result->find("neverd_objc_sync_guard = objc_self;"),
+            std::string::npos);
+  EXPECT_NE(Result->find("neverd_objc_sync_guard = 0;"), std::string::npos);
+  EXPECT_LT(Result->find("neverd_objc_sync_guard = 0;"),
+            Result->find("neverd_darwin_dispatch_group_enter(objc_self);"));
+  EXPECT_FALSE(addObjCSynchronizedReceiverCleanup("void f(void) {}"));
 }

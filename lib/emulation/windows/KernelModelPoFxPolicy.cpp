@@ -11,6 +11,8 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 namespace neverd::emulation {
 namespace {
 llvm::Error policyError(const llvm::Twine &Text) {
@@ -87,8 +89,25 @@ void KernelModel::configureFrameworkPoFxHost() {
       return false;
     return PoFx.callbacksDrained(Handle);
   };
-  Host.Quiesce = [this](uint64_t Handle) {
-    return PoFx.quiesceFrameworkRegistration(Handle);
+  Host.Quiesce = [this](uint64_t Handle) -> llvm::Error {
+    const auto Wait = FrameworkPoFxPowerWaits.find(Handle);
+    const auto *Registration = PoFx.registration(Handle);
+    if (Wait == FrameworkPoFxPowerWaits.end() || !Registration ||
+        Wait->second.Kind != KernelPoFx::CallbackKind::DevicePowerRequired)
+      return PoFx.quiesceFrameworkRegistration(Handle);
+    auto Completion =
+        Framework->powerPolicyDeviceCompletion(Registration->PDO, true);
+    if (!Completion)
+      return Completion.takeError();
+    if (!*Completion || !(**Completion & profile::NTStatusFailureMask))
+      return PoFx.quiesceFrameworkRegistration(Handle);
+    // Acknowledge the failed entry and suppress future component callbacks as
+    // one transaction. The power IRP retains its failure and cleanup owner.
+    if (auto E = PoFx.quiesceFrameworkRegistration(Handle,
+                                                   Wait->second.CallbackToken))
+      return E;
+    FrameworkPoFxPowerWaits.erase(Wait);
+    return llvm::Error::success();
   };
   Host.Unregister = [this](uint64_t Handle) -> llvm::Error {
     const auto Owner = PoFxDeviceObjects.find(Handle);
@@ -161,6 +180,34 @@ llvm::Error KernelModel::retireFrameworkPoFx(uint64_t Device) {
   return llvm::Error::success();
 }
 
+llvm::Error KernelModel::completeFrameworkPowerNotRequired(
+    uint64_t Device, KernelFramework::PowerPolicyHost::RequestMode Mode) {
+  auto PDO = pnpDeviceForRoute(Device);
+  if (!PDO)
+    return PDO.takeError();
+  const auto Handle = PoFx.handleForPDO(*PDO);
+  if (!Handle)
+    return policyError("USB idle response requires a live PoFx registration");
+  const auto Owner = PoFxDeviceObjects.find(*Handle);
+  const auto Wait = FrameworkPoFxPowerWaits.find(*Handle);
+  const auto *Registration = PoFx.registration(*Handle);
+  if (Owner == PoFxDeviceObjects.end() || Owner->second != Device ||
+      !Registration ||
+      Registration->Owner != KernelPoFx::RegistrationOwner::Framework ||
+      Wait == FrameworkPoFxPowerWaits.end() ||
+      Wait->second.Kind != KernelPoFx::CallbackKind::DevicePowerNotRequired)
+    return policyError("USB idle response lost its framework power callback");
+  if (auto E = PoFx.canCompleteDevicePowerNotRequired(
+          *Handle, Wait->second.CallbackToken))
+    return E;
+  if (Mode == KernelFramework::PowerPolicyHost::RequestMode::Validate)
+    return llvm::Error::success();
+  if (auto E = PoFx.completeDevicePowerNotRequired(*Handle))
+    return E;
+  FrameworkPoFxPowerWaits.erase(Wait);
+  return llvm::Error::success();
+}
+
 llvm::Error
 KernelModel::processInternalPoFxCallback(const KernelPoFx::Callback &Call) {
   if (!Framework)
@@ -178,11 +225,15 @@ KernelModel::processInternalPoFxCallback(const KernelPoFx::Callback &Call) {
         Call.Kind == KernelPoFx::CallbackKind::DevicePowerRequired;
     if (FrameworkPoFxPowerWaits.contains(Call.Handle))
       return policyError("device has overlapping power acknowledgements");
-    if (auto E = Framework->powerPolicyPermission(Call.PDO, !Required))
+    FrameworkPoFxPowerWaits.emplace(
+        Call.Handle, FrameworkPoFxPowerWait{Call.Token, Call.Kind});
+    if (auto E = Framework->powerPolicyPermission(Call.PDO, !Required)) {
+      FrameworkPoFxPowerWaits.erase(Call.Handle);
       return E;
-    // The typed internal callback returns now. Its acknowledgement and PoFx
-    // registration remain owned until the actual device-power IRP completes.
-    FrameworkPoFxPowerWaits.emplace(Call.Handle, Required);
+    }
+    // Returning the internal callback does not release its acknowledgement.
+    // Device power completes it, or managed USB explicitly accepts or declines
+    // NotRequired after retaining or cancelling its idle packet.
     return llvm::Error::success();
   }
   }
@@ -195,21 +246,28 @@ llvm::Error KernelModel::processPoFxCallbacks() {
   for (auto It = FrameworkPoFxPowerWaits.begin();
        It != FrameworkPoFxPowerWaits.end();) {
     const auto *Registration = PoFx.registration(It->first);
-    if (!Registration || !Framework)
+    const auto *Call = PoFx.callback(It->second.CallbackToken);
+    if (!Registration || !Framework || !Call || !Call->Internal ||
+        Call->Handle != It->first || Call->Kind != It->second.Kind)
       return policyError("pending power acknowledgement lost its owner");
-    auto Ready =
-        Framework->powerPolicyDeviceReady(Registration->PDO, It->second);
-    if (!Ready)
-      return Ready.takeError();
-    if (!*Ready) {
+    const bool Required =
+        It->second.Kind == KernelPoFx::CallbackKind::DevicePowerRequired;
+    auto Completion =
+        Framework->powerPolicyDeviceCompletion(Registration->PDO, Required);
+    if (!Completion)
+      return Completion.takeError();
+    if (!*Completion) {
       ++It;
       continue;
     }
-    auto E = It->second ? PoFx.reportDevicePoweredOn(It->first)
-                        : PoFx.completeDevicePowerNotRequired(It->first);
+    auto E = Required ? PoFx.reportDevicePoweredOn(It->first)
+                      : PoFx.completeDevicePowerNotRequired(It->first);
     if (E)
       return E;
     It = FrameworkPoFxPowerWaits.erase(It);
+    if (**Completion & profile::NTStatusFailureMask)
+      return policyError("device power transaction failed with NTSTATUS 0x" +
+                         llvm::utohexstr(**Completion));
   }
   if (auto E = queuePoFxCallbacks())
     return E;

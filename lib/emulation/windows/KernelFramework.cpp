@@ -1710,6 +1710,12 @@ KernelFramework::callImpl(const KernelExportRegistry::Export &Export,
       return invalid("WDFDRIVER cannot be deleted by the driver");
     if (O.Kind == ObjectKind::Queue && Queues.at(A[1]).IsDefault)
       return invalid("the default queue cannot be deleted by the driver");
+    if (O.Kind == ObjectKind::Queue) {
+      const auto &Routes = Devices.at(Queues.at(A[1]).Device).DispatchQueues;
+      if (std::any_of(Routes.begin(), Routes.end(),
+                      [&](const auto &Route) { return Route.second == A[1]; }))
+        return invalid("a dispatch queue cannot be deleted by the driver");
+    }
     if (O.Kind == ObjectKind::Request)
       return invalid("an incoming framework request is released by completion");
     if (O.Kind == ObjectKind::IoTarget)

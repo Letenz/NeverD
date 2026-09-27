@@ -13,6 +13,13 @@ enum {
   KmdfUsbConfigureIoctl = 0x222004,
   KmdfUsbStopIdleIoctl = 0x222008,
   KmdfUsbResumeIdleIoctl = 0x22200c,
+  KmdfUsbDirectReadIoctl = 0x222010,
+  KmdfUsbPoFxSnapshotIoctl = 0x222014,
+  KmdfUsbBehaviorIoctl = 0x222018,
+  KmdfUsbFailArmBehavior = 1,
+  KmdfUsbStopInArmBehavior = 2,
+  KmdfUsbSystemManagedMode = 'S',
+  KmdfUsbSystemManagedHintMode = 'H',
   KmdfUsbReadMarker = 0x55425349,
   KmdfUsbIdleTimeoutMilliseconds = 1,
   KmdfUsbIdleTimeout100ns = 10000,
@@ -41,6 +48,17 @@ enum {
   KmdfUsbEntrySequence,
   KmdfUsbReadRouteSequence,
   KmdfUsbReadDeliverySequence,
-  KmdfUsbSnapshotWords
+  KmdfUsbSnapshotWords,
+  KmdfUsbPoFxPosts = KmdfUsbSnapshotWords,
+  KmdfUsbPoFxPres,
+  KmdfUsbPoFxIdleConditions,
+  KmdfUsbPoFxActiveConditions,
+  KmdfUsbPoFxActive,
+  KmdfUsbPoFxActiveSequence,
+  KmdfUsbPoFxF0Transitions,
+  KmdfUsbPoFxF1Transitions,
+  KmdfUsbPoFxCurrentState,
+  KmdfUsbPoFxF0Sequence,
+  KmdfUsbPoFxSnapshotWords
 };
 #endif

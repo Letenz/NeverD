@@ -741,9 +741,11 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverWdmWaitWakeTests.cpp
   DriverWdmUsbIdleTests.cpp
   DriverKMDFUsbIdleTests.cpp
+  DriverKMDFUsbPoFxTests.cpp
   KernelFrameworkUsbIdleTests.cpp
   KernelFrameworkUsbIdleStorageTests.cpp
   KernelFrameworkUsbIdleBridgeTests.cpp
+  KernelFrameworkUsbPoFxBridgeTests.cpp
   DriverUsbIdleScenarioTests.cpp
   KernelUsbIdleTests.cpp
   KernelUsbIdleBridgeTests.cpp
@@ -870,6 +872,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     DriverWdmWaitWakePublicTests.cpp
     DriverWdmUsbIdlePublicTests.cpp
     DriverKMDFUsbIdlePublicTests.cpp
+    DriverKMDFUsbPoFxPublicTests.cpp
   DriverD3ColdPublicTests.cpp
     LINK_LIBS neverd_shared)
   target_include_directories(NeverDDriverEmulationPublicTests PRIVATE
@@ -879,6 +882,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     NEVERD_DRIVER_D2_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-d2-power-scenario.json"
     NEVERD_DRIVER_WDM_WAIT_WAKE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-wait-wake-scenario.json"
     NEVERD_DRIVER_KMDF_USB_IDLE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-kmdf-usb-idle-scenario.json"
+    NEVERD_DRIVER_KMDF_USB_POFX_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-kmdf-usb-pofx-scenario.json"
     NEVERD_DRIVER_WDM_USB_IDLE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-usb-idle-scenario.json"
     NEVERD_DRIVER_WDM_ELEVATED_POWER_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-elevated-power-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"

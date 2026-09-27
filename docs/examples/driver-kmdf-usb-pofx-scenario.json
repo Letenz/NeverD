@@ -1,0 +1,163 @@
+{
+  "service_name": "NeverDKmdfUsbIdleH",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "usb-function",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "wake_capabilities": {
+        "s0": false,
+        "sx": false
+      },
+      "usb_idle": {
+        "role": "independent_function",
+        "remote_wake": false,
+        "device_wake": "D2"
+      },
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D2",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 11
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 13
+          }
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "usb-function",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "usb-function",
+      "file": 1
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222010"
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222014",
+      "output_size": 116,
+      "power_policy_events": [
+        {
+          "after_100ns": 0,
+          "device_id": "usb-function",
+          "action": "idle"
+        },
+        {
+          "after_100ns": 3,
+          "device_id": "usb-function",
+          "action": "component_idle_state",
+          "component": 0,
+          "state": 1
+        },
+        {
+          "after_100ns": 10001,
+          "device_id": "usb-function",
+          "action": "power_not_required"
+        }
+      ]
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222014",
+      "output_size": 116
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222014",
+      "output_size": 116,
+      "power_policy_events": [
+        {
+          "after_100ns": 0,
+          "device_id": "usb-function",
+          "action": "usb_idle_permission"
+        }
+      ]
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222014",
+      "output_size": 116
+    },
+    {
+      "kind": "read",
+      "device_id": "usb-function",
+      "file": 1,
+      "output_size": 4
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "usb-function",
+      "file": 1,
+      "code": "0x222014",
+      "output_size": 116
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "usb-function",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "usb-function",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "usb-function",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "usb-function",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    }
+  ]
+}

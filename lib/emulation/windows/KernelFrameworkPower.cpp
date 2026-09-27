@@ -403,7 +403,7 @@ llvm::Error KernelFramework::finalizePnpCallbacks(uint64_t Token) {
   if (Ready) {
     if (auto E = holdForPoFxComponent(Transition->second.Device))
       return E;
-    if (!Device->second.PowerQueuesHeld)
+    if (!Device->second.queuesHeld())
       appendPowerQueuePresentations(Transition->second.Device,
                                     Continuations.at(Token).Steps);
   } else if (Transition->second.ReleasesHardware) {

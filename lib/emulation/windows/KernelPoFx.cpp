@@ -412,6 +412,19 @@ llvm::Error KernelPoFx::completePower(uint64_t Handle, CallbackKind Kind) {
   });
 }
 
+llvm::Error
+KernelPoFx::canCompleteDevicePowerNotRequired(uint64_t Handle,
+                                              uint64_t CallbackToken) const {
+  const auto *Call = callback(CallbackToken);
+  if (!Call || Call->Handle != Handle ||
+      Call->Kind != CallbackKind::DevicePowerNotRequired)
+    return powerError("power acknowledgement lost its exact callback");
+  // Replay the ordinary transition on a copy so capacity and reconciliation
+  // checks remain identical to commitment, including a newly required wake.
+  KernelPoFx Planned = *this;
+  return Planned.completeDevicePowerNotRequired(Handle);
+}
+
 llvm::Error KernelPoFx::completeDevicePowerNotRequired(uint64_t Handle) {
   return completePower(Handle, CallbackKind::DevicePowerNotRequired);
 }
@@ -516,11 +529,23 @@ llvm::Error KernelPoFx::requestDevicePowerNotRequired(uint64_t Handle) {
   });
 }
 
-llvm::Error KernelPoFx::quiesceFrameworkRegistration(uint64_t Handle) {
-  return mutate(Handle, [](Device &D) -> llvm::Error {
+llvm::Error KernelPoFx::quiesceFrameworkRegistration(
+    uint64_t Handle, std::optional<uint64_t> FailedPowerUp) {
+  return mutate(Handle, [&](Device &D) -> llvm::Error {
     if (D.Description.Owner != RegistrationOwner::Framework)
       return powerError("quiescence requires a framework-owned registration");
-    if (D.PowerCallback)
+    if (FailedPowerUp) {
+      auto Call = D.Callbacks.find(*FailedPowerUp);
+      if (D.PowerCallback != FailedPowerUp || Call == D.Callbacks.end() ||
+          Call->second.Call.Kind != CallbackKind::DevicePowerRequired ||
+          !Call->second.Call.Internal || !Call->second.Begun ||
+          !Call->second.Returned || Call->second.Completed)
+        return powerError(
+            "failed power-up requires its exact returned callback");
+      Call->second.Completed = true;
+      if (auto E = retireCallback(D, *FailedPowerUp))
+        return E;
+    } else if (D.PowerCallback)
       return powerError("framework teardown requires the device-power callback "
                         "to complete first");
     D.Quiescing = true;

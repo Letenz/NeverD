@@ -2262,6 +2262,8 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "NEVERD_WDM_USB_IDLE_FIXTURE", "NEVERD_WDM_USB_IDLE_CFG_FIXTURE",
         "NEVERD_KMDF_USB_IDLE_FIXTURE", "NEVERD_KMDF_USB_IDLE_CFG_FIXTURE",
         "driver-kmdf-usb-idle-scenario.json", "device_wake",
+        "driver-kmdf-usb-pofx-scenario.json", "STATUS_WDF_BUSY",
+        "WdfDeviceEnqueueRequest",
         "framework_usb_idle", "DriverManagedIdleTimeout",
         "WdfDeviceConfigureRequestDispatching",
         "driver-wdm-usb-idle-scenario.json",

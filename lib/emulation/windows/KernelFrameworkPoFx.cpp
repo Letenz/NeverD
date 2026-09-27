@@ -190,6 +190,7 @@ llvm::Error KernelFramework::unregisterPoFx(uint64_t Device) {
     return E;
   D.PoFxHandle = 0;
   D.PoFxStarted = false;
+  D.PoFxComponentHeld = false;
   return llvm::Error::success();
 }
 
@@ -200,8 +201,7 @@ llvm::Error KernelFramework::holdForPoFxComponent(uint64_t Device) {
   auto Ready = PowerFrameworkHost.ComponentReady(D.Wdm);
   if (!Ready)
     return Ready.takeError();
-  if (!*Ready)
-    D.PowerQueuesHeld = true;
+  D.PoFxComponentHeld = !*Ready;
   return llvm::Error::success();
 }
 
@@ -214,8 +214,8 @@ llvm::Error KernelFramework::resumePoFxTransitions() {
   std::vector<uint64_t> ReadyDevices;
   for (auto &[Handle, D] : Devices) {
     if (!D.PoFxHandle || !D.PoFxStarted || !D.InD0 || !D.Policy.Started ||
-        !D.PowerQueuesHeld || D.Policy.DevicePowerPending ||
-        !PowerFrameworkHost.ComponentReady ||
+        !D.PoFxComponentHeld || D.PowerQueuesHeld ||
+        D.Policy.DevicePowerPending || !PowerFrameworkHost.ComponentReady ||
         std::any_of(
             PnpTransitions.begin(), PnpTransitions.end(),
             [&](const auto &Entry) { return Entry.second.Device == Handle; }))
@@ -232,7 +232,7 @@ llvm::Error KernelFramework::resumePoFxTransitions() {
     if (auto E = preflightCancellationToken(0))
       return E;
   for (const uint64_t Handle : ReadyDevices)
-    Devices.at(Handle).PowerQueuesHeld = false;
+    Devices.at(Handle).PoFxComponentHeld = false;
   if (Steps.empty())
     return flushReadyNotifications();
   auto Started = start(std::move(Steps));
