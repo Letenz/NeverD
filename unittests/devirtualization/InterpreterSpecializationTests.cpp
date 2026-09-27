@@ -122,6 +122,7 @@ std::optional<uint64_t> execute(const LowFunc &Function,
                                 std::map<uint64_t, uint8_t> Memory = {}) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
+  bool Defined = true;
   const auto write = [&](NdVar Destination, uint64_t Value) {
     for (unsigned I = 0; I < Destination.Size; ++I)
       Bytes[{Destination.Space, Destination.Offset + I}] =
@@ -130,8 +131,14 @@ std::optional<uint64_t> execute(const LowFunc &Function,
   const auto read = [&](NdVar Value) {
     uint64_t Result = Value.isConst() ? Value.Offset : 0;
     if (!Value.isConst())
-      for (unsigned I = 0; I < Value.Size; ++I)
-        Result |= uint64_t{Bytes[{Value.Space, Value.Offset + I}]} << (I * 8);
+      for (unsigned I = 0; I < Value.Size; ++I) {
+        const auto Found = Bytes.find({Value.Space, Value.Offset + I});
+        if (Found == Bytes.end()) {
+          Defined = false;
+          return uint64_t{0};
+        }
+        Result |= uint64_t{Found->second} << (I * 8);
+      }
     if (Value.Size < 8)
       Result &= (uint64_t{1} << (8 * Value.Size)) - 1;
     return Result;
@@ -147,6 +154,7 @@ std::optional<uint64_t> execute(const LowFunc &Function,
       const auto B = [&] { return read(Op.Inputs[1]); };
       switch (Op.Opcode) {
       case NdOp::COPY:
+      case NdOp::INT_ZEXT:
         write(Op.Output, A());
         break;
       case NdOp::INT_ADD:
@@ -158,6 +166,20 @@ std::optional<uint64_t> execute(const LowFunc &Function,
       case NdOp::INT_XOR:
         write(Op.Output, A() ^ B());
         break;
+      case NdOp::INT_AND:
+        write(Op.Output, A() & B());
+        break;
+      case NdOp::INT_OR:
+        write(Op.Output, A() | B());
+        break;
+      case NdOp::INT_MULT:
+        write(Op.Output, A() * B());
+        break;
+      case NdOp::INT_LEFT: {
+        const auto Count = B();
+        write(Op.Output, Count >= Op.Inputs[0].Size * 8 ? 0 : A() << Count);
+        break;
+      }
       case NdOp::INT_LESS:
         write(Op.Output, A() < B());
         break;
@@ -171,8 +193,14 @@ std::optional<uint64_t> execute(const LowFunc &Function,
         const auto Access = lowMemoryOperands(Op);
         const uint64_t Address = read(*Access.Address);
         uint64_t Value = 0;
-        for (unsigned I = 0; I < Access.AccessSize; ++I)
-          Value |= uint64_t{Memory[Address + I]} << (8 * I);
+        for (unsigned I = 0; I < Access.AccessSize; ++I) {
+          const auto Found = Memory.find(Address + I);
+          if (Found == Memory.end()) {
+            Defined = false;
+            break;
+          }
+          Value |= uint64_t{Found->second} << (8 * I);
+        }
         write(Op.Output, Value);
         break;
       }
@@ -194,14 +222,18 @@ std::optional<uint64_t> execute(const LowFunc &Function,
           Next = Block.Succs.front();
         break;
       }
-      case NdOp::RETURN:
-        return read(reg(0));
+      case NdOp::RETURN: {
+        const auto Value = read(reg(0));
+        return Defined ? std::optional<uint64_t>(Value) : std::nullopt;
+      }
       case NdOp::NOP:
         break;
       default:
         ADD_FAILURE() << "oracle does not implement " << ndOpName(Op.Opcode);
         return std::nullopt;
       }
+      if (!Defined)
+        return std::nullopt;
     }
     if (Next < 0)
       return std::nullopt;
@@ -305,7 +337,7 @@ TEST(InterpreterSpecialization, OrdinaryMemoryReadIsRetained) {
   ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
   EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
   EXPECT_TRUE(Result.Reads.empty());
-  EXPECT_EQ(execute(Result.Residual, {{8, 0x300}}, {{0x300, 42}}), 42u);
+  EXPECT_EQ(execute(Result.Residual, {{0, 0}, {8, 0x300}}, {{0x300, 42}}), 42u);
 }
 
 TEST(InterpreterSpecialization, FiniteTargetBudgetAndUnknownArmFailClosed) {
@@ -688,6 +720,460 @@ TEST(InterpreterSpecialization, UndefinedTemporaryIsNotAnExternalABIInput) {
          op(NdOp::STORE, {}, {NdVar::tmp(0x10000, 8), constant(0)}), ret()});
   Result = specializeInterpreter(P, {0x100}, Options);
   EXPECT_TRUE(Result.complete()) << Result.Diagnostic;
+}
+
+void imageWord(Provider &P, va_t Address, uint64_t Value, unsigned Bytes = 8) {
+  for (unsigned I = 0; I < Bytes; ++I)
+    P.Image[Address + I] = static_cast<uint8_t>(Value >> (8 * I));
+}
+
+Provider finiteAddressProvider() {
+  Provider P;
+  imageWord(P, 0x800, 0x200);
+  imageWord(P, 0x808, 0x210);
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::LOAD, reg(24), {reg(16)}),
+                op(NdOp::INDIR_BR, {}, {reg(24)})});
+  P.add(0x200, {op(NdOp::INT_ADD, reg(0), {reg(8), constant(19)}), ret()});
+  P.add(0x210, {op(NdOp::INT_XOR, reg(0), {reg(8), constant(0xA5)}), ret()});
+  return P;
+}
+
+TEST(InterpreterSpecialization,
+     FiniteMaskedAddressesLowerToNumericSelectionsAndKeepBothInputCases) {
+  auto P = finiteAddressProvider();
+  auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 0u);
+  EXPECT_GT(count(Result.Residual, NdOp::SELECT), 0u);
+  EXPECT_EQ(count(Result.Residual, NdOp::INDIR_BR), 0u);
+  EXPECT_EQ(Result.Reads.size(), 2u);
+  EXPECT_GT(Result.SolverQueries, 0u);
+  for (uint64_t Input = 0; Input < 256; ++Input)
+    EXPECT_EQ(execute(Result.Residual, {{8, Input}}),
+              Input & 1 ? Input ^ 0xA5 : Input + 19);
+}
+
+TEST(InterpreterSpecialization,
+     FiniteReadNeedsEveryCertificateAndExhaustiveEnumeration) {
+  auto P = finiteAddressProvider();
+  P.Image.erase(0x80F);
+  auto Missing = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Missing.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Missing.Residual.Blocks.empty());
+  EXPECT_TRUE(Missing.Reads.empty());
+  P = finiteAddressProvider();
+  SpecializationOptions Options;
+  Options.MaxImmutableReadAddresses = 1;
+  auto Limited = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_FALSE(Limited.complete());
+  EXPECT_TRUE(Limited.Residual.Blocks.empty());
+  EXPECT_TRUE(Limited.Origins.empty());
+  EXPECT_TRUE(Limited.Reads.empty());
+  Options = {};
+  Options.MaxSolverQueries = 1;
+  auto Interrupted = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Interrupted.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_EQ(Interrupted.SolverQueries, 1u);
+  EXPECT_TRUE(Interrupted.Residual.Blocks.empty());
+  EXPECT_TRUE(Interrupted.Origins.empty());
+  EXPECT_TRUE(Interrupted.Reads.empty());
+}
+
+TEST(InterpreterSpecialization,
+     IncompleteOptionalReadProofRetainsOrdinaryRuntimeMemory) {
+  auto P = finiteAddressProvider();
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}), ret()});
+  SpecializationOptions Options;
+  Options.MaxImmutableReadAddresses = 1;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_TRUE(Result.Reads.empty());
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 0}}, P.Image), 0x200u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 1}}, P.Image), 0x210u);
+}
+
+// Two independent predecessors each carry a pair of correlated pointer/key
+// values. All records share one handler. Cross-pairing a pointer and key would
+// produce an unsupported destination, so a Cartesian product cannot pass.
+Provider correlatedControlsProvider() {
+  Provider P;
+  for (unsigned Lane = 0; Lane < 4; ++Lane) {
+    const uint64_t Key = 11 + 37 * Lane;
+    const uint64_t Target = 0x300 + 0x10 * Lane;
+    imageWord(P, 0x800 + 16 * Lane, 0x200);
+    imageWord(P, 0x808 + 16 * Lane, Target ^ Key);
+    P.add(Target,
+          {op(NdOp::INT_ADD, reg(0), {reg(8), constant(9 * Lane + 1)}), ret()});
+  }
+  P.add(0x100, {op(NdOp::COND_BR, {}, {constant(0x110), reg(72, 1)})}, 0x120);
+  for (unsigned Side = 0; Side < 2; ++Side)
+    P.add(Side == 0 ? 0x110 : 0x120,
+          {op(NdOp::INT_AND, reg(48), {reg(8), constant(1)}),
+           op(NdOp::INT_MULT, reg(16), {reg(48), constant(16)}),
+           op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800 + Side * 32)}),
+           op(NdOp::INT_MULT, reg(24), {reg(48), constant(37)}),
+           op(NdOp::INT_ADD, reg(24), {reg(24), constant(11 + Side * 74)}),
+           op(NdOp::LOAD, reg(40), {reg(16)}),
+           op(NdOp::INDIR_BR, {}, {reg(40)})});
+  P.add(0x200, {op(NdOp::INT_ADD, reg(56), {reg(16), constant(8)}),
+                op(NdOp::LOAD, reg(40), {reg(56)}),
+                op(NdOp::INT_XOR, reg(40), {reg(40), reg(24)}),
+                op(NdOp::INDIR_BR, {}, {reg(40)})});
+  return P;
+}
+
+TEST(InterpreterSpecialization,
+     JointControlTuplesPreserveCorrelationAcrossAJoinAndSharedHandler) {
+  auto P = correlatedControlsProvider();
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{16, 8}, {24, 8}};
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 0u);
+  EXPECT_GT(count(Result.Residual, NdOp::SELECT), 0u);
+  for (uint64_t Side : {0ULL, 1ULL})
+    for (uint64_t Input = 0; Input < 32; ++Input) {
+      const auto Lane = (Input & 1) + (Side ? 0 : 2);
+      EXPECT_EQ(execute(Result.Residual, {{8, Input}, {72, Side}}, P.Image),
+                Input + 9 * Lane + 1);
+    }
+}
+
+TEST(InterpreterSpecialization,
+     JointControlWideningCannotPublishTheEarlierPartialGraph) {
+  auto P = correlatedControlsProvider();
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{16, 8}, {24, 8}};
+  Options.MaxControlTuples = 2;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_FALSE(Result.complete());
+  EXPECT_GT(Result.RelationalWidenings, 0u);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+}
+
+TEST(InterpreterSpecialization,
+     ConditionalEdgesRefineCurrentValuesWithoutReusingAnOverwrittenInput) {
+  Provider P;
+  // Only the two addresses reachable under the actual edge predicates exist.
+  imageWord(P, 0x800, 0x300);
+  imageWord(P, 0x818, 0x310);
+  P.add(0x100,
+        {op(NdOp::INT_AND, reg(48), {reg(8), constant(1)}),
+         op(NdOp::INT_EQUAL, reg(64, 1), {reg(48), constant(1)}),
+         op(NdOp::INT_XOR, reg(48), {reg(48), constant(1)}),
+         op(NdOp::INT_MULT, reg(16), {reg(48), constant(8)}),
+         op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+         op(NdOp::COND_BR, {}, {constant(0x200), reg(64, 1)})},
+        0x210);
+  P.add(0x200, {op(NdOp::LOAD, reg(24), {reg(16)}),
+                op(NdOp::INDIR_BR, {}, {reg(24)})});
+  P.add(0x210, {op(NdOp::INT_ADD, reg(16), {reg(16), constant(16)}),
+                op(NdOp::LOAD, reg(24), {reg(16)}),
+                op(NdOp::INDIR_BR, {}, {reg(24)})});
+  P.add(0x300, {op(NdOp::COPY, reg(0), {constant(3)}), ret()});
+  P.add(0x310, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{16, 8}};
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  for (uint64_t Input = 0; Input < 256; ++Input)
+    EXPECT_EQ(execute(Result.Residual, {{8, Input}}, P.Image),
+              Input & 1 ? 3u : 7u);
+}
+
+TEST(InterpreterSpecialization,
+     AliasingStoreInvalidatesImportedFiniteFrameRelations) {
+  Provider P;
+  imageWord(P, 0x800, 0x300);
+  imageWord(P, 0x808, 0x310);
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::INT_ADD, reg(48), {reg(32), constant(16)}),
+                op(NdOp::STORE, {}, {reg(48), reg(16)}), jump(0x200)});
+  P.add(0x200,
+        {op(NdOp::STORE, {}, {reg(64), constant(0)}),
+         op(NdOp::LOAD, reg(16), {reg(48)}), op(NdOp::LOAD, reg(24), {reg(16)}),
+         op(NdOp::INDIR_BR, {}, {reg(24)})});
+  P.add(0x300, {op(NdOp::COPY, reg(0), {constant(3)}), ret()});
+  P.add(0x310, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  SpecializationOptions Options;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.ControlFrameSlots = {{16, 8}};
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+  // Removing the may-alias store establishes that it caused the lost proof.
+  P.Code.at(0x200).Ops[0] = op(NdOp::NOP, {}, {});
+  auto &NoStore = P.Code.at(0x200).Ops[0];
+  NoStore.Addr = 0x200;
+  NoStore.Seq = 0;
+  Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  for (uint64_t Input : {0ULL, 1ULL})
+    EXPECT_EQ(execute(Result.Residual, {{8, Input}, {32, 0x2000}}, P.Image),
+              Input ? 7u : 3u);
+}
+
+TEST(InterpreterSpecialization,
+     RelationalLoopConvergesWithoutEnumeratingTheBusinessCounter) {
+  Provider P;
+  for (unsigned Lane = 0; Lane < 2; ++Lane) {
+    imageWord(P, 0x900 + 16 * Lane, 0x200);
+    imageWord(P, 0x908 + 16 * Lane, (1 + 2 * Lane) ^ (17 + Lane));
+  }
+  P.add(0x100, {op(NdOp::COPY, reg(0), {constant(0)}),
+                op(NdOp::COPY, reg(88), {constant(0)}), jump(0x120)});
+  P.add(0x120, {op(NdOp::INT_XOR, reg(48), {reg(8), reg(88)}),
+                op(NdOp::INT_AND, reg(48), {reg(48), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(48), constant(16)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x900)}),
+                op(NdOp::INT_ADD, reg(24), {reg(48), constant(17)}),
+                op(NdOp::LOAD, reg(40), {reg(16)}),
+                op(NdOp::INDIR_BR, {}, {reg(40)})});
+  P.add(0x200,
+        {op(NdOp::INT_ADD, reg(56), {reg(16), constant(8)}),
+         op(NdOp::LOAD, reg(40), {reg(56)}),
+         op(NdOp::INT_XOR, reg(40), {reg(40), reg(24)}),
+         op(NdOp::INT_ADD, reg(0), {reg(0), reg(40)}),
+         op(NdOp::INT_ADD, reg(88), {reg(88), constant(1)}),
+         op(NdOp::INT_LESS, reg(80, 1), {reg(88), reg(64)}),
+         op(NdOp::COND_BR, {}, {constant(0x120), reg(80, 1)})},
+        0x300);
+  P.add(0x300, {ret()});
+  SpecializationOptions Options;
+  Options.ControlRegisters = {{16, 8}, {24, 8}};
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_LT(Result.Contexts, 12u);
+  EXPECT_LT(Result.NodeEvaluations, 30u);
+  for (uint64_t Input : {0ULL, 1ULL, 42ULL})
+    for (uint64_t Limit = 1; Limit < 20; ++Limit) {
+      uint64_t Expected = 0;
+      for (uint64_t I = 0; I < Limit; ++I)
+        Expected += 1 + 2 * ((Input ^ I) & 1);
+      EXPECT_EQ(execute(Result.Residual, {{8, Input}, {64, Limit}}, P.Image),
+                Expected);
+    }
+}
+
+TEST(InterpreterSpecialization, IndependentOracleRefusesMissingRuntimeInputs) {
+  Provider P;
+  P.add(0x100, {op(NdOp::LOAD, reg(0), {reg(8)}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_FALSE(execute(Result.Residual).has_value());
+  EXPECT_FALSE(execute(Result.Residual, {{8, 0x800}}).has_value());
+}
+
+TEST(InterpreterSpecialization,
+     ConditionalConstantProofDoesNotEraseTheEntryFrameOrigin) {
+  Provider P;
+  P.add(0x100,
+        {op(NdOp::INT_EQUAL, reg(64, 1), {reg(32), constant(0x1000)}),
+         op(NdOp::INT_EQUAL, reg(72, 1), {reg(8), constant(0)}),
+         op(NdOp::BOOL_AND, reg(80, 1), {reg(64, 1), reg(72, 1)}),
+         op(NdOp::COND_BR, {}, {constant(0x110), reg(80, 1)})},
+        0x120);
+  P.add(0x110, {op(NdOp::INT_XOR, reg(40), {reg(32), reg(8)}),
+                op(NdOp::STORE, {}, {reg(40), constant(0)}), ret()});
+  P.add(0x120, {ret()});
+  auto Options = ordinaryReturnOptions();
+  Options.ControlRegisters = {{32, 8}};
+  Options.ExternalStoresPreserveEntryReturnSlot = true;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_NE(Result.Diagnostic.find("address origin"), std::string::npos);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization,
+     IndirectTargetEqualityPreservesFrameOriginAndExternalStores) {
+  for (uint64_t TargetRegister : {32u, 48u}) {
+    Provider P;
+    P.add(0x100,
+          {op(NdOp::COPY, reg(TargetRegister), {reg(32)}),
+           op(NdOp::INT_EQUAL, reg(64, 1),
+              {reg(TargetRegister), constant(0x200)}),
+           op(NdOp::COND_BR, {}, {constant(0x110), reg(64, 1)})},
+          0x120);
+    P.add(0x110, {op(NdOp::INDIR_BR, {}, {reg(TargetRegister)})});
+    P.add(0x120, {op(NdOp::COPY, reg(0), {constant(9)}), ret()});
+    // With entry frame 0x200 and input zero, this writes the return slot.
+    // The indirect edge proves a number but must retain the frame provenance
+    // of either the frame register itself or an ordinary affine copy of it.
+    P.add(0x200, {op(NdOp::INT_XOR, reg(40), {reg(TargetRegister), reg(8)}),
+                  op(NdOp::STORE, {}, {reg(40), constant(17)}), ret()});
+    auto Options = ordinaryReturnOptions();
+    Options.ControlRegisters = {{TargetRegister, 8}};
+    Options.ExternalStoresPreserveEntryReturnSlot = true;
+    auto Result = specializeInterpreter(P, {0x100}, Options);
+    EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+    EXPECT_NE(Result.Diagnostic.find("address origin"), std::string::npos);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Origins.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+
+    // Keeping target provenance must not reject the recovered indirect edge
+    // itself, or a genuinely external output pointer under the ABI contract.
+    P.add(0x200, {op(NdOp::STORE, {}, {reg(8), constant(17)}),
+                  op(NdOp::COPY, reg(0), {constant(9)}), ret()});
+    Result = specializeInterpreter(P, {0x100}, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    EXPECT_EQ(count(Result.Residual, NdOp::INDIR_BR), 0u);
+    EXPECT_EQ(count(Result.Residual, NdOp::STORE), 1u);
+    EXPECT_EQ(execute(Result.Residual, {{32, 0x200}, {8, 0x300}}), 9u);
+    EXPECT_EQ(execute(Result.Residual, {{32, 0x800}, {8, 0x300}}), 9u);
+  }
+}
+
+TEST(InterpreterSpecialization,
+     TwoSatisfyingModelsDoNotReplaceTheRequiredExhaustionProof) {
+  auto P = finiteAddressProvider();
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0x800)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}), ret()});
+  SpecializationOptions Options;
+  Options.MaxImmutableReadAddresses = 2;
+  Options.MaxSolverQueries = 2;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_EQ(Result.SolverQueries, 2u);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+  Options.MaxSolverQueries = 3;
+  Result = specializeInterpreter(P, {0x100}, Options);
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(Result.SolverQueries, 3u);
+  EXPECT_EQ(Result.Reads.size(), 2u);
+}
+
+TEST(InterpreterSpecialization,
+     FiniteReadCapturesOverlappingRegisterAndTemporaryAddressBytes) {
+  for (uint16_t Width : {1, 2, 4, 8})
+    for (bool Temporary : {false, true}) {
+      Provider P;
+      const NdVar Address = Temporary ? NdVar::tmp(0x20000, 8) : reg(16);
+      NdVar Output = Address;
+      Output.Size = Width;
+      const uint64_t Mask =
+          Width == 8 ? ~uint64_t{0} : (uint64_t{1} << (Width * 8)) - 1;
+      const uint64_t A = UINT64_C(0x123456789ABCDEF0) & Mask;
+      const uint64_t B = UINT64_C(0xCBA9876543210012) & Mask;
+      imageWord(P, 0xA00, A, Width);
+      imageWord(P, 0xA08, B, Width);
+      P.add(0x100, {op(NdOp::INT_AND, reg(48), {reg(8), constant(1)}),
+                    op(NdOp::INT_MULT, Address, {reg(48), constant(8)}),
+                    op(NdOp::INT_ADD, Address, {Address, constant(0xA00)}),
+                    op(NdOp::LOAD, Output, {Address}),
+                    op(NdOp::COPY, reg(0), {Address}), ret()});
+      auto Result = specializeInterpreter(P, {0x100});
+      ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+      EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 0u);
+      EXPECT_EQ(Result.Reads.size(), 2u);
+      EXPECT_EQ(execute(Result.Residual, {{8, 0}}), (0xA00 & ~Mask) | A);
+      EXPECT_EQ(execute(Result.Residual, {{8, 1}}), (0xA08 & ~Mask) | B);
+      bool Capture = false;
+      for (const auto &Block : Result.Residual.Blocks)
+        for (const auto &Op : Block.Ops) {
+          if (Op.Opcode == NdOp::COPY && Op.Output.isTemp() &&
+              Op.Output.Offset >= (uint64_t{1} << 62)) {
+            EXPECT_EQ(Op.Inputs[0], Address);
+            Capture = true;
+          }
+          if (Op.Opcode == NdOp::SELECT)
+            EXPECT_EQ(Op.Inputs[1].Provenance,
+                      ConstantAddressProvenance::Scalar);
+          if (Op.Opcode == NdOp::INT_EQUAL)
+            EXPECT_EQ(Op.Inputs[1].Provenance,
+                      ConstantAddressProvenance::Scalar);
+        }
+      EXPECT_TRUE(Capture);
+    }
+}
+
+TEST(InterpreterSpecialization,
+     GeneratedReadSelectionsAreChargedAndReservedTempsCannotAliasNativeBytes) {
+  auto P = finiteAddressProvider();
+  SpecializationOptions Options;
+  Options.MaxOperations = 4;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_NE(Result.Diagnostic.find("lowering operation budget"),
+            std::string::npos);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_TRUE(Result.Origins.empty());
+  EXPECT_TRUE(Result.Reads.empty());
+  for (uint64_t Offset : {(uint64_t{1} << 62) - 1, (uint64_t{1} << 62) + 8}) {
+    Provider Collision;
+    Collision.add(
+        0x100,
+        {op(NdOp::COPY, NdVar::tmp(Offset, 2), {constant(0, 2)}), ret()});
+    Result = specializeInterpreter(Collision, {0x100});
+    EXPECT_EQ(Result.Status, SpecializationStatus::InvalidInput);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     ConsecutiveFiniteReadsReuseTempsWithoutLosingEarlierResults) {
+  Provider P;
+  imageWord(P, 0xA00, 17);
+  imageWord(P, 0xA08, 31);
+  imageWord(P, 0xA10, 101);
+  imageWord(P, 0xA18, 211);
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0xA00)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(16)}),
+                op(NdOp::LOAD, reg(24), {reg(16)}),
+                op(NdOp::INT_ADD, reg(0), {reg(0), reg(24)}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 0u);
+  EXPECT_EQ(count(Result.Residual, NdOp::SELECT), 2u);
+  EXPECT_EQ(Result.Reads.size(), 4u);
+  for (uint64_t Input = 0; Input < 256; ++Input)
+    EXPECT_EQ(execute(Result.Residual, {{8, Input}}), Input & 1 ? 242u : 118u);
+}
+
+TEST(InterpreterSpecialization,
+     EqualFiniteReadValuesStillNeedEveryCertificateBeforeCopy) {
+  Provider P;
+  imageWord(P, 0xA00, 71);
+  imageWord(P, 0xA08, 71);
+  P.add(0x100, {op(NdOp::INT_AND, reg(16), {reg(8), constant(1)}),
+                op(NdOp::INT_MULT, reg(16), {reg(16), constant(8)}),
+                op(NdOp::INT_ADD, reg(16), {reg(16), constant(0xA00)}),
+                op(NdOp::LOAD, reg(0), {reg(16)}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 0u);
+  EXPECT_EQ(count(Result.Residual, NdOp::SELECT), 0u);
+  EXPECT_EQ(Result.Reads.size(), 2u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 0}}), 71u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 1}}), 71u);
+  const auto RuntimeImage = P.Image;
+  P.Image.erase(0xA0F);
+  Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::LOAD), 1u);
+  EXPECT_EQ(count(Result.Residual, NdOp::SELECT), 0u);
+  EXPECT_TRUE(Result.Reads.empty());
+  EXPECT_EQ(execute(Result.Residual, {{8, 0}}, RuntimeImage), 71u);
+  EXPECT_EQ(execute(Result.Residual, {{8, 1}}, RuntimeImage), 71u);
 }
 
 } // namespace

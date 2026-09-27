@@ -43,6 +43,8 @@ typedef struct neverd_devirtualize_options_v1 {
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
 /// mutation and calls, and does not certify binary patching or unwind behavior.
+/// PE sessions must be loaded without neverd_session_restrict_function():
+/// recovery requires complete image-wide relocation and exception metadata.
 /// Ordinary ABI returns require every external-origin STORE target range to be
 /// disjoint from the entry return-address slot (a caller/environment
 /// precondition, also for computed external addresses). Frame-derived writes

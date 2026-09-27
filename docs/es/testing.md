@@ -42,16 +42,7 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
-Las pruebas del núcleo comprueban la separación de contextos, uniones de punto
-fijo, bucles dinámicos, registros superpuestos, invalidación de alias, despacho
-finito y rechazo sin sustitución parcial. Las pruebas de fuente ensamblan dos
-máquinas x64 originales e independientes, recuperan ambas rutas C, compilan
-con O0/O2 y trampas de comportamiento indefinido y comparan la ejecución con
-un oráculo de aritmética sin signo y memoria. También prueban la CLI pública
-y los informes de entradas no admitidas. Se necesitan Clang multidestino y LLD;
-ejecutar el ELF original requiere además un anfitrión Linux x64. La falta de
-herramientas o un anfitrión incompatible es cobertura omitida, no una prueba
-superada.
+Las pruebas del núcleo comprueban la separación de contextos, uniones de punto fijo, bucles dinámicos, registros solapados, invalidación de alias, despacho finito y rechazo sin sustituciones parciales. Las pruebas de código fuente ensamblan máquinas x64 originales de registros, de pila y de direcciones finitas; incluyen campos de control relacionados y un oráculo nativo independiente SysV/Win64. Ambas rutas C se compilan en O0/O2 con trampas de comportamiento indefinido y se comparan con un oráculo sin signo para cálculos, escrituras en memoria y centinelas de salida. Los casos negativos comprueban certificados ausentes y presupuestos insuficientes. La CLI pública y sus informes verifican controles, presupuestos, contadores y rechazos. Se necesitan Clang multicompilación y LLD; ejecutar el ELF original requiere además Linux x64. Una herramienta ausente o un host incompatible significa cobertura omitida, no éxito.
 
 ## Comprobaciones de emulación de controladores
 

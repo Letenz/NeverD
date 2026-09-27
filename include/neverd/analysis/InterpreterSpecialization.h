@@ -68,9 +68,9 @@ struct SpecializationFrameSlot {
 };
 
 struct SpecializationOptions {
-  /// A context contains only these control ranges. Unknown is a valid context
-  /// component, not an assumed zero. All other constant bytes join by
-  /// intersection, so changing business values do not unroll a loop forever.
+  /// Constant context keys and bounded joint relations use only these control
+  /// ranges. Unknown is valid, not an assumed zero. Other constant bytes join
+  /// by intersection, so changing business values do not unroll a loop forever.
   std::vector<symbolic::SymRegisterRange> ControlRegisters;
   /// Optional entry-relative frame identity. This enables affine pointer and
   /// constant frame-byte propagation, not a private/non-aliasing memory claim.
@@ -97,6 +97,20 @@ struct SpecializationOptions {
   uint64_t MaxOperations = 262144;
   uint32_t MaxNodeEvaluations = 16384;
   uint32_t MaxIndirectTargets = 16;
+  /// Maximum exhaustive value sets used for immutable addresses and joint
+  /// control-state projection. A partial solver enumeration is never a fact.
+  uint32_t MaxImmutableReadAddresses = 16;
+  uint32_t MaxControlTuples = 32;
+  uint32_t MaxControlFields = 16;
+  /// Global check count, per-query encoding/search limits, and per-node DAG
+  /// bound. These limits also apply in builds without the optional Z3 backend;
+  /// specialization uses the always-available built-in bitvector solver.
+  uint64_t MaxSolverQueries = 4096;
+  uint64_t MaxSolverGates = 262144;
+  uint64_t MaxSolverConflicts = 10000;
+  uint64_t MaxSolverPropagations = 1000000;
+  uint64_t MaxSolverWatchVisits = 10000000;
+  uint64_t MaxSymbolicNodes = 262144;
 };
 
 enum class SpecializationStatus : uint8_t {
@@ -127,16 +141,21 @@ struct SpecializationResult {
   std::vector<SpecializationOrigin> Origins;
   std::vector<SpecializationReadWitness> Reads;
   std::string Diagnostic;
+  /// Includes the additional pure operations generated for certified reads
+  /// and finite dispatch; fixed-point reevaluations are charged again.
   uint64_t EvaluatedOperations = 0;
   uint32_t NodeEvaluations = 0;
   uint32_t Contexts = 0;
+  uint64_t SolverQueries = 0;
+  uint32_t RelationalWidenings = 0;
 
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };
 
 /// Provider-neutral partial evaluation of strictly lifted integer/control
-/// LowIR. Dynamic operations and ordinary memory effects remain in the residual
-/// CFG. Calls, opaque semantics, ordered memory, and unsupported instruction
+/// LowIR. Uncertified ordinary memory effects remain in the residual CFG.
+/// Exhaustively covered, certified immutable reads may become pure selections.
+/// Calls, opaque semantics, ordered memory, and unsupported instruction
 /// guards are refused. Synthetic labels identify clones; NativeInstruction
 /// preserves provenance without copying stale address-occurrence certificates.
 SpecializationResult

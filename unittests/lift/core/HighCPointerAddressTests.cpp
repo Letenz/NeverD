@@ -591,7 +591,7 @@ TEST(HighCPointerAddresses, AtomicFetchAddComposesIntoCompare) {
       << Source;
 }
 
-TEST(HighCPointerAddresses, SameAddressIncrementStorePrintsPlusEquals) {
+TEST(HighCPointerAddresses, SameAddressSignedIncrementKeepsModularExpression) {
   auto Rec = NdType::makeNamedRecord("CAuxData", 16);
   const auto I32 = NdType::makeInt(4, true);
   const auto U32 = NdType::makeInt(4, false);
@@ -634,12 +634,11 @@ TEST(HighCPointerAddresses, SameAddressIncrementStorePrintsPlusEquals) {
   Store.StoreVal = AsI32;
   Func.Body = {Load, Store};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(uint32_t)((uint32_t)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("t94_8"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, InlinedSameAddressIncrementStorePrintsPlusEquals) {
+TEST(HighCPointerAddresses, InlinedSignedIncrementKeepsModularExpression) {
   auto Rec = NdType::makeNamedRecord("CAuxData", 16);
   const auto I32 = NdType::makeInt(4, true);
   HighFunc Func;
@@ -660,8 +659,9 @@ TEST(HighCPointerAddresses, InlinedSameAddressIncrementStorePrintsPlusEquals) {
   Store.StoreVal = Add;
   Func.Body = {Store};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("+= 1"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(uint32_t)((uint32_t)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
@@ -699,7 +699,9 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   Func.Body = {Load, Store};
   returnValue(Func, HighExpr::makeVar(T, I32));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("+= 1"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("+= 1"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_bit_cast(int32_t"), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("t94_8"), std::string::npos) << Source;
 }
 
@@ -836,6 +838,56 @@ TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
   const auto Source = emitFunctions({Func}, Arch::X64, &Img);
   EXPECT_NE(Source.find("0x140003500"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("\"hi\""), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, NumericConstantsDoNotAcquireImageObjectIdentity) {
+  using P = ConstantAddressProvenance;
+  constexpr va_t Value = 0x140003580;
+  for (bool Overlapping : {false, true}) {
+    BinaryImage Img =
+        makeImageObjectFixture(Value, std::vector<uint8_t>(16, 0xa5), true);
+    std::vector<HighFunc> Functions;
+    HighFunc Read;
+    Read.Name = "read_image_value";
+    Read.ReturnType = NdType::makeInt(4, false);
+    returnValue(
+        Read, HighExpr::makeLoad(HighExpr::makeConst(Value, 8, P::DataAddress),
+                                 Read.ReturnType));
+    Functions.push_back(std::move(Read));
+    if (Overlapping) {
+      HighFunc Other;
+      Other.Name = "read_overlapping_image_value";
+      Other.ReturnType = NdType::makeInt(8, false);
+      returnValue(Other, HighExpr::makeLoad(
+                             HighExpr::makeConst(Value + 2, 8, P::DataAddress),
+                             Other.ReturnType));
+      Functions.push_back(std::move(Other));
+    }
+    for (P Provenance : {P::Scalar, P::AddressFragment}) {
+      HighFunc Numeric;
+      Numeric.Name = Provenance == P::Scalar ? "return_scalar_number"
+                                             : "return_address_fragment";
+      Numeric.ReturnType = NdType::makeInt(8, false);
+      returnValue(Numeric, HighExpr::makeConst(Value, 8, Provenance));
+      Functions.push_back(std::move(Numeric));
+    }
+    const auto Source = emitFunctions(Functions, Arch::X64, &Img);
+    // Actual memory uses still materialize the named object or shared byte
+    // backing. Only the two independent numeric occurrences stay guest bits.
+    ASSERT_NE(Source.find("g_140003580"), std::string::npos) << Source;
+    if (Overlapping)
+      EXPECT_NE(Source.find("g_140003580_bytes"), std::string::npos) << Source;
+    for (const char *Name :
+         {"return_scalar_number", "return_address_fragment"}) {
+      const auto Start = Source.find(Name);
+      ASSERT_NE(Start, std::string::npos) << Source;
+      const auto End = Source.find('}', Start);
+      ASSERT_NE(End, std::string::npos) << Source;
+      const auto Body = Source.substr(Start, End - Start);
+      EXPECT_NE(Body.find("return 0x140003580"), std::string::npos) << Source;
+      EXPECT_EQ(Body.find("g_140003580"), std::string::npos) << Source;
+    }
+  }
 }
 
 TEST(HighCPointerAddresses, NestedGotoLabelAfterReturnIsEmitted) {
@@ -4026,14 +4078,9 @@ TEST(HighCPointerAddresses, MemberSretCallRecoversUnwrittenLiveInThis) {
   OS.flush();
   EXPECT_NE(Source.find("GetRecordName(this"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("GetRecordName(result"), std::string::npos) << Source;
-  const auto CallAt = Source.rfind("GetRecordName(");
-  ASSERT_NE(CallAt, std::string::npos) << Source;
-  const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
-  ASSERT_NE(Open, std::string::npos) << Source;
-  ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 1) << Source;
+  const auto Args = lastCallArguments(Source, "CRecord_GetRecordName");
+  ASSERT_TRUE(Args) << Source;
+  EXPECT_EQ(Args->size(), 2u) << Source;
 }
 
 TEST(HighCPointerAddresses, UnsignedFieldCompareOmitsWidthCast) {
@@ -33023,10 +33070,13 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeNestedCatchReturnsValues) {
       << Source;
   EXPECT_NE(Source.find("e_1.Value"), std::string::npos) << Source;
   EXPECT_NE(Source.find("e.Value"), std::string::npos) << Source;
-  EXPECT_TRUE(Source.find("e_1.Value + e.Value") != std::string::npos ||
-              Source.find("e.Value + e_1.Value") != std::string::npos)
+  // Unsigned operand views preserve machine-width overflow semantics. Keep
+  // both catch fields in the same sum without requiring unsafe signed C.
+  EXPECT_TRUE(std::regex_search(
+      Source,
+      std::regex(
+          R"((e_1\.Value[^\n;]* \+ [^\n;]*e\.Value|e\.Value[^\n;]* \+ [^\n;]*e_1\.Value))")))
       << Source;
-  EXPECT_EQ(Source.find("(uint32_t)(e"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t12_1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t26"), std::string::npos) << Source;
 }

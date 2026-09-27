@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -69,6 +70,30 @@ void compileAndRun(const std::string &Source) {
   ASSERT_EQ(Result, 0) << Error << '\n' << Source;
 }
 
+TEST(LLVMCValues, EscapedByteStringsPreserveAdjacentDigitsWhenExecuted) {
+  std::string Bytes;
+  for (unsigned Byte = 0; Byte < 256; ++Byte)
+    for (char Digit : llvm::StringRef("0123456789abcdefABCDEF")) {
+      Bytes += static_cast<char>(Byte);
+      Bytes += Digit;
+    }
+  Bytes += "?"
+           "?/"
+           "?"
+           "?=";
+  std::string Source = "static const unsigned char actual[] = \"" +
+                       neverd::escapeCString(Bytes) + "\";\n";
+  Source += "static const unsigned char expected[] = {";
+  for (unsigned char Byte : Bytes)
+    Source += std::to_string(Byte) + ",";
+  Source += "};\nint main(void) {\n"
+            "if (sizeof(actual) != sizeof(expected) + 1) return 1;\n"
+            "for (unsigned i = 0; i < sizeof(expected); ++i)\n"
+            "  if (actual[i] != expected[i]) return 2;\n"
+            "return actual[sizeof(expected)] != 0;\n}\n";
+  compileAndRun(Source);
+}
+
 TEST(LLVMCValues, WideIntegerConstantsRetainBothHalvesWhenExecuted) {
   llvm::LLVMContext Context;
   llvm::Module Module("wide-constants", Context);
@@ -121,11 +146,18 @@ TEST(LLVMCValues, WideIntegerConstantsRetainBothHalvesWhenExecuted) {
 TEST(LLVMCValues, FoldedIntegerViewsAndArithmeticKeepTheirWidths) {
   llvm::LLVMContext Context;
   llvm::Module Module("folded-integer-widths", Context);
-  auto *Signature = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context),
-      {llvm::PointerType::getUnqual(Context)}, false);
+  auto *Signature =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                              {llvm::PointerType::getUnqual(Context)}, false);
   std::string Main = "int main(void) { __uint128_t actual;\n";
-  enum class Case { ZeroExtend, SignExtend, Truncate, Add, Subtract, SignedAdd };
+  enum class Case {
+    ZeroExtend,
+    SignExtend,
+    Truncate,
+    Add,
+    Subtract,
+    SignedAdd
+  };
   unsigned Index = 0;
   for (unsigned Width : {8u, 16u, 32u, 64u}) {
     for (Case Kind : {Case::ZeroExtend, Case::SignExtend, Case::Truncate,
@@ -156,20 +188,20 @@ TEST(LLVMCValues, FoldedIntegerViewsAndArithmeticKeepTheirWidths) {
         Signed = true;
         break;
       case Case::Truncate: {
-        const llvm::APInt Wide(128, {0x1234567812345600ULL,
-                                     0xfedcba9876543210ULL});
+        const llvm::APInt Wide(128,
+                               {0x1234567812345600ULL, 0xfedcba9876543210ULL});
         Value = Builder.CreateTrunc(Constant(Wide), Type, "narrowed");
         Expected = Wide.trunc(Width);
         break;
       }
       case Case::Add:
-        Value = Builder.CreateAdd(Constant(Ones), Constant(llvm::APInt(Width, 1)),
-                                    "wrapped_add");
+        Value = Builder.CreateAdd(
+            Constant(Ones), Constant(llvm::APInt(Width, 1)), "wrapped_add");
         break;
       case Case::Subtract:
         Value = Builder.CreateSub(Constant(llvm::APInt(Width, 0)),
-                                    Constant(llvm::APInt(Width, 1)),
-                                    "wrapped_subtract");
+                                  Constant(llvm::APInt(Width, 1)),
+                                  "wrapped_subtract");
         Expected = Ones;
         break;
       case Case::SignedAdd:
@@ -294,7 +326,7 @@ TEST(LLVMCValues, ForwardedHomesKeepNarrowSignAndWideShiftSemantics) {
 
   auto *Function = llvm::Function::Create(
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                             {I64, I64, Pointer, Pointer, Pointer}, false),
+                              {I64, I64, Pointer, Pointer, Pointer}, false),
       llvm::GlobalValue::ExternalLinkage, "home_widths", Module);
   llvm::IRBuilder<llvm::NoFolder> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
@@ -357,8 +389,9 @@ TEST(LLVMCValues, WideIntegerPointerConstantKeepsItsPointerWidth) {
   std::string Source;
   llvm::raw_string_ostream Out(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
-  compileAndRun(Source +
-                "int main(void) { return (uintptr_t)wide_pointer() != 0x1234; }\n");
+  compileAndRun(
+      Source +
+      "int main(void) { return (uintptr_t)wide_pointer() != 0x1234; }\n");
 }
 
 TEST(LLVMCValues, ConstantsWiderThanTheCarrierAreRejected) {

@@ -184,6 +184,17 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
         "incomplete exception metadata prevents interpreter recovery";
     return Result;
   }
+  // Restricted PE loads deliberately omit image-wide relocations and unwind
+  // bodies outside the requested entry. An empty fixup/handler list there is
+  // absence of evidence, not proof that reachable bytes are immutable or that
+  // every reachable instruction has no exceptional successor.
+  if (Image.Format == BinaryFormat::COFF &&
+      !Image.LoadOnlyFunctionEntries.empty()) {
+    SpecializationResult Result;
+    Result.Status = SpecializationStatus::Unsupported;
+    Result.Diagnostic = "interpreter recovery requires a full PE metadata load";
+    return Result;
+  }
   // COPY relocations can write a whole object, not just a scalar slot. Until
   // the loader exposes their full write footprint, file bytes cannot certify
   // an immutable read in an image carrying one.
@@ -212,10 +223,8 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
   Effective.RequireRestoredFrameAtReturn = true;
   Effective.ExternalStoresPreserveEntryReturnSlot = true;
   auto Result = specializeInterpreter(Provider, {Entry, Image.Mode}, Effective);
-  if (Result.complete()) {
-    if (const auto *Symbol = Image.findSymbolAt(Entry))
-      Result.Residual.Name = Symbol->Name;
-  }
+  if (Result.complete())
+    Result.Residual.Name = Image.getFunctionNameAt(Entry);
   return Result;
 }
 } // namespace neverd::analysis

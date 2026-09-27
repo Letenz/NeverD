@@ -43,16 +43,7 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
-Die Kerntests prüfen Kontexttrennung, Fixpunkt-Zusammenführungen, dynamische
-Schleifen, überlappende Register, Alias-Invalidierung, endlichen Dispatch und
-Ablehnung ohne teilweisen Ersatz. Die Quelltexttests assemblieren zwei
-unabhängig entwickelte x64-Maschinen, rekonstruieren beide C-Pfade, kompilieren
-mit O0/O2 und Traps für undefiniertes Verhalten und vergleichen die Ausführung
-mit einem vorzeichenlosen Arithmetik- und Speicher-Oracle. Sie prüfen auch die
-öffentliche CLI und Berichte zu nicht unterstützten Eingaben. Clang mit
-Cross-Target-Unterstützung und LLD werden benötigt; die Ausführung des
-Original-ELF erfordert zusätzlich einen x64-Linux-Host. Fehlende Werkzeuge oder
-ein unpassender Host bedeuten ausgelassene Abdeckung, keinen bestandenen Test.
+Die Kerntests prüfen Kontexttrennung, Fixpunkt-Zusammenführungen, dynamische Schleifen, überlappende Register, Alias-Invalidierung, endlichen Dispatch und Ablehnung ohne teilweisen Ersatz. Die Quelltexttests assemblieren eigenständige x64-Maschinen mit Registern, Stack und endlichen Adressen; sie umfassen zusammenhängende Kontrollfelder und ein unabhängiges natives SysV-/Win64-Oracle. Beide C-Pfade werden unter O0/O2 mit Fallen für undefiniertes Verhalten kompiliert und mit einem vorzeichenlosen Oracle für Berechnungen, Speicherzugriffe und Ausgabewächter verglichen. Negative Fälle prüfen fehlende Zertifikate und unzureichende Budgets. Die öffentliche CLI und ihre Berichte prüfen Kontrollfelder, Budgets, Zähler und Ablehnungen. Benötigt werden Clang mit Cross-Target-Unterstützung und LLD; die Ausführung des ursprünglichen ELF erfordert außerdem einen x64-Linux-Host. Fehlende Werkzeuge oder ein ungeeigneter Host bedeuten übersprungene Abdeckung, keinen Erfolg.
 
 ## Prüfungen der Treiberemulation
 

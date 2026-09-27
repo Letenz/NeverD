@@ -42,15 +42,7 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
-I test del nucleo verificano separazione dei contesti, confluenze al punto
-fisso, cicli dinamici, registri sovrapposti, invalidazione degli alias, dispatch
-finito e rifiuto senza sostituzioni parziali. I test del sorgente assemblano due
-macchine x64 originali indipendenti, recuperano entrambi i percorsi C, compilano
-a O0/O2 con trap per comportamento indefinito e confrontano l’esecuzione con
-un oracolo di aritmetica senza segno e memoria. Verificano anche la CLI pubblica
-e i report degli input non supportati. Servono Clang con supporto cross-target
-e LLD; eseguire l’ELF originale richiede anche un host Linux x64. Strumenti
-mancanti o un host incompatibile indicano copertura saltata, non un test superato.
+I test del nucleo verificano separazione dei contesti, ricongiungimenti a punto fisso, cicli dinamici, registri sovrapposti, invalidazione degli alias, dispatch finito e rifiuto senza sostituzioni parziali. I test dei sorgenti assemblano macchine x64 originali a registri, a stack e a indirizzi finiti; includono campi di controllo correlati e un oracolo nativo indipendente SysV/Win64. Entrambi i percorsi C sono compilati in O0/O2 con trap per comportamento indefinito e confrontati con un oracolo senza segno per calcoli, scritture in memoria e sentinelle di uscita. I casi negativi verificano certificati mancanti e budget insufficienti. La CLI pubblica e i rapporti verificano controlli, budget, contatori e rifiuti. Servono Clang con supporto cross-target e LLD; eseguire l’ELF originale richiede anche un host Linux x64. Uno strumento assente o un host incompatibile indica copertura saltata, non successo.
 
 ## Verifiche dell’emulazione dei driver
 

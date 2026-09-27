@@ -221,8 +221,7 @@ void HighCWriter::writeCxxThrowExpr(const HighStmt &Stmt,
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   if (Analysis.DeadStmts.count(&Stmt) &&
       !(Stmt.Kind == StmtKind::Assign && Stmt.Dst &&
-        (Stmt.Dst->Kind == ExprKind::Var ||
-         Stmt.Dst->Kind == ExprKind::Phi) &&
+        (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
         AmbiguousFrameAliases.count(varName(Stmt.Dst->Var))))
     return;
   const bool HideEHRuntimeMemory =
@@ -281,8 +280,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
                 (Stmt.Dst->Kind == ExprKind::Var ||
                  Stmt.Dst->Kind == ExprKind::Phi) &&
                 Stmt.Dst->Var == V;
-            return !OmittedPrimary &&
-                   !Analysis.DeadVars.count(varName(V));
+            return !OmittedPrimary && !Analysis.DeadVars.count(varName(V));
           },
           [this](const HighExpr &E, uint16_t Width) {
             return isSameWidthUnsigned(E, Width);
@@ -313,21 +311,20 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       // SVC is rendered as a side-effecting asm statement. The lifted X0/R0
       // result cannot be assigned from a void asm expression. A use of that
       // result needs an explicit output model, rather than an invented value.
-      if (!CurrentFunc || (Stmt.Dst->Kind != ExprKind::Var &&
-                           Stmt.Dst->Kind != ExprKind::Phi))
+      if (!CurrentFunc ||
+          (Stmt.Dst->Kind != ExprKind::Var && Stmt.Dst->Kind != ExprKind::Phi))
         llvm::report_fatal_error("HighC cannot render an SVC result");
       bool ResultUsed = false;
       const MedVar Result = Stmt.Dst->Var;
-      std::function<void(const HighExpr &)> FindUse =
-          [&](const HighExpr &E) {
-            if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-                E.Var == Result)
-              ResultUsed = true;
-            E.forEachChildExpr([&](const ExprPtr &Child) {
-              if (Child)
-                FindUse(*Child);
-            });
-          };
+      std::function<void(const HighExpr &)> FindUse = [&](const HighExpr &E) {
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            E.Var == Result)
+          ResultUsed = true;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          if (Child)
+            FindUse(*Child);
+        });
+      };
       walkStmts(CurrentFunc->Body, [&](const HighStmt &Use) {
         if (&Use == &Stmt || Analysis.DeadStmts.count(&Use) ||
             (InferredVoid && Use.Kind == StmtKind::Return))
@@ -349,8 +346,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     if (isNoreturnCallExpr(*Stmt.Val) || isVoidSelfCall(*Stmt.Val) ||
         Analysis.OmittedCallResults.count(&Stmt) ||
         (Stmt.Val->Kind == ExprKind::Call && Stmt.Dst &&
-         (Stmt.Dst->Kind == ExprKind::Var ||
-          Stmt.Dst->Kind == ExprKind::Phi) &&
+         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
          !isEmittedParamName(varName(Stmt.Dst->Var)) &&
          !DeclaredCNames.count(varName(Stmt.Dst->Var)) &&
          !DeclaredCNames.count(
@@ -554,17 +550,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         if (DirectAddress)
           OS << "(" << typeToC(DeclaredType) << ")(" << ValueText << ")";
         else
-          OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)("
-             << ValueText << ")";
+          OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
+             << ")";
       } else if (DeclaredType && ProjectedValueType &&
-               DeclaredType->Kind == NdTypeKind::Int &&
-               ProjectedValueType->Kind == NdTypeKind::Ptr)
-        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)("
-           << ValueText << ")";
+                 DeclaredType->Kind == NdTypeKind::Int &&
+                 ProjectedValueType->Kind == NdTypeKind::Ptr)
+        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
+           << ")";
       else if (DeclaredType && DeclaredType->Kind == NdTypeKind::Int &&
                !ValueText.empty() && ValueText.front() == '&')
-        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)("
-           << ValueText << ")";
+        OS << "(" << typeToC(DeclaredType) << ")(uintptr_t)(" << ValueText
+           << ")";
       else if (isUnknownCallOperand(Stmt.Val.get()))
         OS << "0";
       else if (auto Enum = enumConstDisplay(varName(Stmt.Dst->Var), *Stmt.Val))
@@ -590,8 +586,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       const uint16_t AccessSize =
           Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size : 0;
       if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize)) {
-        const std::string ValS = exprStr(*Stmt.StoreVal);
-        if (ValS == *Member || ValS.find(*Member) != std::string::npos)
+        // Text containing a destination can still compute a new value (for
+        // example a modular increment). Only an exact, ordinary self-load
+        // proves this field assignment redundant.
+        const HighExpr &Value = *Stmt.StoreVal;
+        if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+            Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Value.Kind == ExprKind::Load &&
+            Value.MemoryOrdering == NdMemoryOrdering::None &&
+            Value.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Value.Operands.size() == 1 && Value.Operands[0] &&
+            Stmt.StoreAddr->structuralEq(*Value.Operands[0]))
           break;
       }
     }
@@ -624,10 +629,10 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
     }
     if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
         Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default)
-      if (auto Member = typedMemberAccess(
-              *Stmt.StoreAddr,
-              Stmt.StoreVal && Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size
-                                                   : 0);
+      if (auto Member = typedMemberAccess(*Stmt.StoreAddr,
+                                          Stmt.StoreVal && Stmt.StoreVal->Type
+                                              ? Stmt.StoreVal->Type->Size
+                                              : 0);
           Member && !namedFrameSlot(*Stmt.StoreAddr)) {
         bool Overlayed = false;
         if (auto Overlay =
@@ -647,16 +652,14 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
           // A sign/zero-extended integer call can reuse an 8-byte pointer
           // field. Make the C conversion explicit without widening the store.
           if (!Overlayed && isIntegerOverlayStore(*Stmt.StoreVal) &&
-              MemberType && MemberType->Kind == NdTypeKind::Ptr &&
-              StoredType && StoredType->Kind == NdTypeKind::Int &&
+              MemberType && MemberType->Kind == NdTypeKind::Ptr && StoredType &&
+              StoredType->Kind == NdTypeKind::Int &&
               StoredType->Size == MemberType->Size) {
-            const bool Signed =
-                StoredType->IsSigned ||
-                (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
-                 Stmt.StoreVal->Op == NdOp::INT_SEXT);
+            const bool Signed = StoredType->IsSigned ||
+                                (Stmt.StoreVal->Kind == ExprKind::UnaryOp &&
+                                 Stmt.StoreVal->Op == NdOp::INT_SEXT);
             Value = "(" + typeToC(MemberType) + ")(" +
-                    (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value +
-                    ")";
+                    (Signed ? "intptr_t" : "uintptr_t") + ")(" + Value + ")";
           }
           OS << Value;
         }
@@ -694,7 +697,8 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         }
         if (isUnknownCallOperand(Stmt.StoreVal.get()))
           OS << "0";
-        else if (ProjectedDestType && ProjectedDestType->Kind == NdTypeKind::Ptr)
+        else if (ProjectedDestType &&
+                 ProjectedDestType->Kind == NdTypeKind::Ptr)
           OS << "(" << typeToC(ProjectedDestType) << ")(uintptr_t)("
              << ValueText << ")";
         else
@@ -780,8 +784,7 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   case StmtKind::Return:
     emitIndent(Indent);
     if (!IndirectReturnName.empty() &&
-        (InferredVoid || !Stmt.RetVal ||
-         Stmt.RetVal->Kind == ExprKind::Undef ||
+        (InferredVoid || !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
          (Stmt.RetVal->Kind == ExprKind::Var &&
           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody))))
@@ -1234,9 +1237,8 @@ bool HighCWriter::tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts,
   if (Loop.Kind != StmtKind::While)
     return false;
   const HighExpr *WhileCond = peelIntegerViewOps(Loop.Cond.get());
-  if (Loop.Cond &&
-      !(WhileCond && WhileCond->Kind == ExprKind::Const &&
-        WhileCond->ConstVal != 0))
+  if (Loop.Cond && !(WhileCond && WhileCond->Kind == ExprKind::Const &&
+                     WhileCond->ConstVal != 0))
     return false;
 
   auto ExprNamesCursor = [&](const HighExpr &E) {
@@ -1583,13 +1585,12 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
         --LenIdx;
       if (NameIdx != SIZE_MAX && LenIdx > 0)
         --LenIdx;
-      const bool LenReady =
-          NameAt && NameIdx != SIZE_MAX && LenIdx < NameIdx &&
-          Try.Body[LenIdx].Kind == StmtKind::If && Try.Body[LenIdx].Cond;
+      const bool LenReady = NameAt && NameIdx != SIZE_MAX && LenIdx < NameIdx &&
+                            Try.Body[LenIdx].Kind == StmtKind::If &&
+                            Try.Body[LenIdx].Cond;
       const size_t JoinIdx = NameIdx == SIZE_MAX ? 0 : NameIdx + 1;
-      const va_t JoinAt = LenReady && JoinIdx < Try.Body.size()
-                              ? Try.Body[JoinIdx].Addr
-                              : 0;
+      const va_t JoinAt =
+          LenReady && JoinIdx < Try.Body.size() ? Try.Body[JoinIdx].Addr : 0;
       if (LenReady && JoinAt &&
           TrailingLiveGoto(Try.Body[LenIdx].Body) == JoinAt) {
         const HighStmt &LenIf = Try.Body[LenIdx];
@@ -1707,9 +1708,9 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       bool NestedJoin = false;
       auto CheckNested = [&](const std::vector<HighStmt> &Body) {
         walkStmts(Body, [&](const HighStmt &N) {
-          NestedJoin |= IsGotoTarget(N.Addr) ||
-                        (N.Kind == StmtKind::While &&
-                         IsGotoTarget(N.LoopHeaderAddr));
+          NestedJoin |=
+              IsGotoTarget(N.Addr) ||
+              (N.Kind == StmtKind::While && IsGotoTarget(N.LoopHeaderAddr));
         });
       };
       CheckNested(S.Body);
@@ -1719,8 +1720,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       CheckNested(S.DefaultBody);
       for (const auto &ClauseBody : S.EHClauseBodies)
         CheckNested(ClauseBody);
-      const bool JoinLabel = NestedJoin ||
-          (IsGotoTarget(S.Addr) && S.Addr != LastLabel) ||
+      const bool JoinLabel =
+          NestedJoin || (IsGotoTarget(S.Addr) && S.Addr != LastLabel) ||
           (S.Kind == StmtKind::While && IsGotoTarget(S.LoopHeaderAddr) &&
            S.LoopHeaderAddr != LastLabel) ||
           llvm::any_of(S.Body, CarriesLabel);
@@ -1875,8 +1876,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       EmittedLabel = true;
     };
     EmitLabel(S.Addr);
-    if (EmittedLabel &&
-        (Analysis.DeadStmts.count(&S) || stmtHiddenFromC(S))) {
+    if (EmittedLabel && (Analysis.DeadStmts.count(&S) || stmtHiddenFromC(S))) {
       emitIndent(Indent);
       OS << ";\n";
       continue;
@@ -1930,13 +1930,13 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
     if (InEHClauseBody && !InferredVoid) {
       if (const HighExpr *Stored = parentFrameStoredValue(S)) {
         size_t J = I + 1;
-        while (J < End && (stmtHiddenFromC(Stmts[J]) ||
-                           Stmts[J].Kind == StmtKind::Nop))
+        while (J < End &&
+               (stmtHiddenFromC(Stmts[J]) || Stmts[J].Kind == StmtKind::Nop))
           ++J;
         if (J < End && Stmts[J].Kind == StmtKind::Return) {
-          if (auto Slot = namedFrameSlot(
-                  S.Kind == StmtKind::Store ? *S.StoreAddr
-                                            : *S.Dst->Operands[0]))
+          if (auto Slot = namedFrameSlot(S.Kind == StmtKind::Store
+                                             ? *S.StoreAddr
+                                             : *S.Dst->Operands[0]))
             Analysis.DeadVars.insert(*Slot);
           emitIndent(Indent);
           OS << "return " << formatReturnExpr(*Stored) << ";\n";
@@ -2385,10 +2385,10 @@ const HighExpr *HighCWriter::asIncrementBase(const HighExpr &Val,
     Delta = static_cast<int64_t>(Imm | ~Mask);
   else
     Delta = static_cast<int64_t>(Imm);
-  if (Minus)
-    Delta = -Delta;
   if (Delta == 0 || Delta == std::numeric_limits<int64_t>::min())
     return nullptr;
+  if (Minus)
+    Delta = -Delta;
   const uint64_t Abs =
       Delta > 0 ? static_cast<uint64_t>(Delta) : static_cast<uint64_t>(-Delta);
   if (Abs > 0xFFFFu)
@@ -2402,15 +2402,13 @@ bool HighCWriter::incrementBaseMatchesAddr(const HighExpr &Base,
   if (!B)
     B = &Base;
   if (B->Kind == ExprKind::Load && !B->Operands.empty() && B->Operands[0])
-    return samePeeledAddr(*B->Operands[0], Addr);
+    return B->Operands[0]->structuralEq(Addr);
   if (B->Kind != ExprKind::Var && B->Kind != ExprKind::Phi)
     return false;
   auto MatchesLoad = [&](const HighExpr *E) {
-    const HighExpr *Fwd = peelIntegerViewOps(E);
-    if (!Fwd)
-      Fwd = E;
-    return Fwd && Fwd->Kind == ExprKind::Load && !Fwd->Operands.empty() &&
-           Fwd->Operands[0] && samePeeledAddr(*Fwd->Operands[0], Addr);
+    return E && E->Kind == ExprKind::Load && E->Type && B->Type &&
+           E->Type->Size == B->Type->Size && !E->Operands.empty() &&
+           E->Operands[0] && E->Operands[0]->structuralEq(Addr);
   };
   const std::string Name = varName(B->Var);
   auto It = ValueForward.find(Name);
@@ -2462,7 +2460,8 @@ std::string HighCWriter::formatBitAndMask(uint64_t Mask, unsigned Size) const {
   unsigned Bits = Size ? static_cast<unsigned>(Size) * 8 : 32;
   if (Bits > 64)
     Bits = 64;
-  const uint64_t Width = Bits == 64 ? ~uint64_t(0) : ((uint64_t(1) << Bits) - 1);
+  const uint64_t Width =
+      Bits == 64 ? ~uint64_t(0) : ((uint64_t(1) << Bits) - 1);
   Mask &= Width;
   const uint64_t Cleared = (~Mask) & Width;
   if (Cleared && (Cleared & (Cleared - 1)) == 0 && Mask == (Width ^ Cleared))
@@ -2473,8 +2472,8 @@ std::string HighCWriter::formatBitAndMask(uint64_t Mask, unsigned Size) const {
   return std::to_string(Signed);
 }
 
-std::string HighCWriter::formatInplaceAnd(const std::string &Dest, uint64_t Mask,
-                                          unsigned Size) const {
+std::string HighCWriter::formatInplaceAnd(const std::string &Dest,
+                                          uint64_t Mask, unsigned Size) const {
   return Dest + " &= " + formatBitAndMask(Mask, Size);
 }
 
@@ -2505,17 +2504,42 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
       S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const TypeRef &Ty = S.StoreVal->Type;
-  if (!Ty || Ty->Kind != NdTypeKind::Int)
+  // A signed compound assignment performs signed arithmetic before converting
+  // back to the lvalue. Keep the ordinary modular expression renderer for it,
+  // including its explicit bit reinterpretation of the unsigned result.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->IsSigned || Ty->IsEnum)
     return false;
   if (Ty->Size != 1 && Ty->Size != 2 && Ty->Size != 4 && Ty->Size != 8)
     return false;
+  // A displayed field/slot may have a different signedness from its IR view.
+  // Both load hiding and statement rendering must make the same decision.
+  TypeRef DisplayType = typedMemberType(*S.StoreAddr, Ty->Size);
+  if (auto Disp = frameDisplacement(*S.StoreAddr)) {
+    auto Slot = FrameSlots.find(*Disp);
+    if (Slot != FrameSlots.end())
+      DisplayType = Slot->second.Type;
+  }
+  if (DisplayType &&
+      (DisplayType->Kind != NdTypeKind::Int || DisplayType->IsSigned ||
+       DisplayType->IsEnum || DisplayType->Size != Ty->Size))
+    return false;
+  // Peeling a narrowing/widening view or a narrow signed immediate changes
+  // the update's value. Only abbreviate an exact same-width arithmetic step.
+  const auto *Arithmetic = peelIntegerViewOps(S.StoreVal.get());
+  if (Arithmetic != S.StoreVal.get() || !Arithmetic->Type ||
+      Arithmetic->Type->Size != Ty->Size || Arithmetic->Operands.size() != 2)
+    return false;
+  for (const auto &Operand : Arithmetic->Operands)
+    if (!Operand || !Operand->Type || Operand->Type->Kind != NdTypeKind::Int ||
+        Operand->Type->Size != Ty->Size ||
+        peelIntegerViewOps(Operand.get()) != Operand.get())
+      return false;
   const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
   return Base && incrementBaseMatchesAddr(*Base, *S.StoreAddr);
 }
 
 std::string HighCWriter::formatInplaceAdd(const TypeRef &Ty,
-                                          const HighExpr &Addr,
-                                          int64_t Delta) {
+                                          const HighExpr &Addr, int64_t Delta) {
   if (Delta == 0 || Delta == std::numeric_limits<int64_t>::min())
     return {};
   const char *Op = Delta > 0 ? " += " : " -= ";
@@ -2589,7 +2613,8 @@ void HighCWriter::hideIncrementOnlyLoads(const HighFunc &Func) {
       int64_t Delta = 0;
       if (isInplaceAddStore(S, Delta)) {
         const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
-        if (Base && (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
+        if (Base &&
+            (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi) &&
             varName(Base->Var) == Name &&
             samePeeledAddr(*Assign.Val->Operands[0], *S.StoreAddr)) {
           ++IncrementStores;
@@ -2699,8 +2724,8 @@ void HighCWriter::hideBitClearSlotCopies(const HighFunc &Func) {
     if (Handler)
       InCxxCleanupBody = true;
     for (const HighStmt &Assign : Stmts) {
-      if (!Analysis.DeadStmts.count(&Assign) && Assign.Kind == StmtKind::Assign &&
-          Assign.Dst && Assign.Val &&
+      if (!Analysis.DeadStmts.count(&Assign) &&
+          Assign.Kind == StmtKind::Assign && Assign.Dst && Assign.Val &&
           (Assign.Dst->Kind == ExprKind::Var ||
            Assign.Dst->Kind == ExprKind::Phi)) {
         const auto Slot = SlotOfCopy(*Assign.Val);
@@ -2854,8 +2879,7 @@ void HighCWriter::hideCleanupSlotCopyIntoCall(const HighFunc &Func) {
            Assign.Dst->Kind == ExprKind::Phi)) {
         const std::string Name = varName(Assign.Dst->Var);
         if (auto Src = namedSlotLoadDisplay(*Assign.Val);
-            Src && !Name.empty() && Name != *Src &&
-            !isEmittedParamName(Name)) {
+            Src && !Name.empty() && Name != *Src && !isEmittedParamName(Name)) {
           unsigned CallUses = 0;
           bool OtherUse = false;
           for (const HighStmt &S : Stmts) {
@@ -2863,8 +2887,8 @@ void HighCWriter::hideCleanupSlotCopyIntoCall(const HighFunc &Func) {
                 stmtHiddenFromC(S))
               continue;
             if (const HighExpr *This = CallThis(S);
-                This && (This->Kind == ExprKind::Var ||
-                         This->Kind == ExprKind::Phi) &&
+                This &&
+                (This->Kind == ExprKind::Var || This->Kind == ExprKind::Phi) &&
                 varName(This->Var) == Name) {
               ++CallUses;
               continue;
@@ -2919,7 +2943,7 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
   std::set<std::string> Observed;
   auto NoteUse = [&](const HighExpr &E) {
     std::function<void(const HighExpr &, bool)> Rec = [&](const HighExpr &N,
-                                                         bool AsAddress) {
+                                                          bool AsAddress) {
       if (N.Kind == ExprKind::Load && !N.Operands.empty() && N.Operands[0]) {
         if (auto Slot = namedFrameSlot(*N.Operands[0]))
           Observed.insert(*Slot);
@@ -3024,8 +3048,7 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
                 uint16_t ObsSize = Obs.Type ? Obs.Type->Size : 1;
                 if (ObsSize == 0)
                   ObsSize = 1;
-                const int64_t ObsEnd =
-                    ObsDisp + static_cast<int64_t>(ObsSize);
+                const int64_t ObsEnd = ObsDisp + static_cast<int64_t>(ObsSize);
                 if (Begin < ObsEnd && ObsDisp < End) {
                   OverlapsObserved = true;
                   break;
@@ -3039,11 +3062,10 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
                 const HighExpr *Inner = unwrapIntegerView(Val);
                 if (!Inner)
                   Inner = Val;
-                const bool PackedVal =
-                    Inner->Kind == ExprKind::Var ||
-                    Inner->Kind == ExprKind::Phi ||
-                    Inner->Kind == ExprKind::Call ||
-                    Inner->Kind == ExprKind::Load;
+                const bool PackedVal = Inner->Kind == ExprKind::Var ||
+                                       Inner->Kind == ExprKind::Phi ||
+                                       Inner->Kind == ExprKind::Call ||
+                                       Inner->Kind == ExprKind::Load;
                 if (PackedVal) {
                   for (const auto &[PrevDisp, Prev] : FrameSlots) {
                     if (!Prev.AddressTaken || !Observed.count(Prev.Name))
@@ -3079,7 +3101,7 @@ void HighCWriter::hideUnusedFrameSlotWrites(const HighFunc &Func) {
 }
 
 void HighCWriter::collectGotoTargets(const std::vector<HighStmt> &Stmts,
-                                    bool DropTrailingGoto) {
+                                     bool DropTrailingGoto) {
   size_t End = Stmts.size();
   if (DropTrailingGoto) {
     while (End > 0) {

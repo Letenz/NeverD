@@ -79,9 +79,10 @@ static int check_pair(uint64_t x, uint64_t y) {
 #endif
       if (got != want || storage[1] != want || storage[2] != status ||
           storage[0] != before || storage[3] != after) {
-        fprintf(stderr, "family=%u kind=%u x=%" PRIx64 " y=%" PRIx64
-                        " got=%" PRIx64 " expected=%" PRIx64
-                        " status=%" PRIu64 " expected_status=%" PRIu64 "\n",
+        fprintf(stderr,
+                "family=%u kind=%u x=%" PRIx64 " y=%" PRIx64 " got=%" PRIx64
+                " expected=%" PRIx64 " status=%" PRIu64
+                " expected_status=%" PRIu64 "\n",
                 family, kind, x, y, got, want, storage[2], status);
         return 1;
       }
@@ -91,11 +92,24 @@ static int check_pair(uint64_t x, uint64_t y) {
 }
 
 int main(void) {
-  static const uint64_t edges[] = {
-      0, 1, 2, 3, 7, 8, 15, 16, 0xff, 0x100, UINT64_C(0xffffffff),
-      UINT64_C(0x100000000), UINT64_C(0x7fffffffffffffff),
-      UINT64_C(0x8000000000000000), UINT64_MAX - 1, UINT64_MAX,
-      UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555555555)};
+  static const uint64_t edges[] = {0,
+                                   1,
+                                   2,
+                                   3,
+                                   7,
+                                   8,
+                                   15,
+                                   16,
+                                   0xff,
+                                   0x100,
+                                   UINT64_C(0xffffffff),
+                                   UINT64_C(0x100000000),
+                                   UINT64_C(0x7fffffffffffffff),
+                                   UINT64_C(0x8000000000000000),
+                                   UINT64_MAX - 1,
+                                   UINT64_MAX,
+                                   UINT64_C(0xaaaaaaaaaaaaaaaa),
+                                   UINT64_C(0x5555555555555555)};
   for (unsigned i = 0; i != sizeof(edges) / sizeof(edges[0]); ++i)
     for (unsigned j = 0; j != sizeof(edges) / sizeof(edges[0]); ++j)
       if (check_pair(edges[i], edges[j]))

@@ -13,26 +13,34 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/SHA256.h"
 
 #include <functional>
 #include <map>
-#include <tuple>
 
 namespace {
 
 using namespace neverd;
 
 std::string readSource(const fs::path &Path) {
-  std::ifstream Input(Path);
+  std::ifstream Input(Path, std::ios::binary);
   return std::string(std::istreambuf_iterator<char>(Input), {});
 }
 
 va_t functionEntry(const BinaryImage &Image, const std::string &Name) {
   for (const auto &Symbol : Image.Symbols)
     if (Symbol.Name == Name && Symbol.IsFunc)
+      return Symbol.Addr;
+  return InvalidVA;
+}
+
+va_t dataAddress(const BinaryImage &Image, const std::string &Name) {
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Name == Name)
       return Symbol.Addr;
   return InvalidVA;
 }
@@ -62,9 +70,11 @@ bool hasCycle(const LowFunc &Function) {
   return false;
 }
 
-analysis::SpecializationOptions recoveryOptions() {
+analysis::SpecializationOptions recoveryOptions(bool Finite = false) {
   analysis::SpecializationOptions Options;
   Options.ControlRegisters.push_back({x86reg::R10, 8});
+  if (Finite)
+    Options.ControlRegisters.push_back({x86reg::R9, 8});
   return Options;
 }
 
@@ -82,7 +92,8 @@ protected:
                                   "-static",
                                   "-Wl,-e,generic_vm_register_arithmetic",
                                   fixture("generic_vm_register.S").string(),
-                                  fixture("generic_vm_stack.S").string()};
+                                  fixture("generic_vm_stack.S").string(),
+                                  fixture("generic_vm_finite.S").string()};
     if (Extra)
       Args.push_back(fixture(Extra).string());
     Args.insert(Args.end(), {"-o", Output.string()});
@@ -90,7 +101,12 @@ protected:
   }
 };
 
-using SourceCase = std::tuple<const char *, unsigned, bool>;
+struct SourceCase {
+  const char *Name;
+  unsigned Kind;
+  bool LLVM;
+  bool Finite = false;
+};
 
 class DevirtualizationRoundTripTest
     : public DevirtualizationSourceTest,
@@ -99,7 +115,7 @@ class DevirtualizationRoundTripTest
 TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public VM source recovery requires clang";
-  const auto &[Name, Kind, LLVM] = GetParam();
+  const auto &[Name, Kind, LLVM, Finite] = GetParam();
   SCOPED_TRACE(Name);
   SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
   const auto Binary = tmpFile("generic-vm.elf");
@@ -112,7 +128,7 @@ TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
 
   llvm::LLVMContext Context;
   PipelineOptions Options;
-  Options.InterpreterSpecialization = recoveryOptions();
+  Options.InterpreterSpecialization = recoveryOptions(Finite);
   Options.OnlyFunctionEntries.insert(Entry);
   Options.LiftMode = LLVM;
   Options.EmitDumpOutput = false;
@@ -126,6 +142,19 @@ TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
   EXPECT_FALSE(Recovery.Reads.empty());
   EXPECT_FALSE(Recovery.Origins.empty());
+  if (Finite) {
+    const va_t Bytecode = dataAddress(*Image, std::string(Name) + "_bytecode");
+    ASSERT_NE(Bytecode, InvalidVA);
+    // Every possible record must be backed by immutable evidence. This does
+    // not prescribe whether joint controls use clones or one relational node.
+    for (unsigned Lane = 0; Lane < (Kind == 0 ? 4u : 2u); ++Lane)
+      EXPECT_TRUE(std::any_of(Recovery.Reads.begin(), Recovery.Reads.end(),
+                              [&](const auto &Read) {
+                                return Read.Address == Bytecode + Lane * 16 &&
+                                       Read.Bytes.size() == 4;
+                              }))
+          << "Missing immutable witness for bytecode record " << Lane;
+  }
   for (const auto &Block : Recovery.Residual.Blocks)
     for (const auto &Op : Block.Ops) {
       EXPECT_NE(Op.Opcode, NdOp::INDIR_BR);
@@ -155,7 +184,8 @@ TEST_P(DevirtualizationRoundTripTest, RecoversMachineAndPreservesExecution) {
   std::ofstream(Harness)
       << Source << "\n#define GENERIC_VM_SOURCE\n#define GENERIC_VM_FUNCTION "
       << Name << "\n#define GENERIC_VM_KIND " << Kind << "\n"
-      << readSource(fixture("generic_vm_reference.c"));
+      << readSource(fixture(Finite ? "generic_vm_finite_reference.c"
+                                   : "generic_vm_reference.c"));
   // The fixtures contain only scalar x64 operations.
   std::ofstream(tmpFile("immintrin.h")).close();
   for (const char *Optimization : {"-O0", "-O2"}) {
@@ -186,10 +216,17 @@ INSTANTIATE_TEST_SUITE_P(
                       SourceCase{"generic_vm_stack_branch", 1, false},
                       SourceCase{"generic_vm_stack_branch", 1, true},
                       SourceCase{"generic_vm_stack_loop", 2, false},
-                      SourceCase{"generic_vm_stack_loop", 2, true}),
+                      SourceCase{"generic_vm_stack_loop", 2, true},
+                      SourceCase{"generic_vm_finite_arithmetic", 0, false,
+                                 true},
+                      SourceCase{"generic_vm_finite_arithmetic", 0, true, true},
+                      SourceCase{"generic_vm_finite_branch", 1, false, true},
+                      SourceCase{"generic_vm_finite_branch", 1, true, true},
+                      SourceCase{"generic_vm_finite_loop", 2, false, true},
+                      SourceCase{"generic_vm_finite_loop", 2, true, true}),
     [](const ::testing::TestParamInfo<SourceCase> &Info) {
-      return std::string(std::get<0>(Info.param)) +
-             (std::get<2>(Info.param) ? "_LLVMC" : "_HighC");
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "_LLVMC" : "_HighC");
     });
 
 TEST_F(DevirtualizationSourceTest, RefusesUncertifiedControl) {
@@ -250,6 +287,77 @@ TEST_F(DevirtualizationSourceTest, RefusesNonNativeByteOrder) {
   EXPECT_EQ(Result.Status, analysis::SpecializationStatus::InvalidInput);
   EXPECT_TRUE(Result.Residual.Blocks.empty());
   EXPECT_FALSE(Result.Diagnostic.empty());
+}
+
+TEST_F(DevirtualizationSourceTest,
+       FiniteReadsRequireEveryCandidateCertificate) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public finite-read image contracts require clang";
+  const auto Binary = tmpFile("generic-vm-finite.elf");
+  const auto Compiled = buildFixture(Binary);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  for (bool Writable : {false, true}) {
+    SCOPED_TRACE(Writable ? "writable mapping" : "one missing candidate");
+    auto Image = loadBinary(Binary);
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const va_t Entry = functionEntry(*Image, "generic_vm_finite_arithmetic");
+    const va_t Bytecode =
+        dataAddress(*Image, "generic_vm_finite_arithmetic_bytecode");
+    ASSERT_NE(Entry, InvalidVA);
+    ASSERT_NE(Bytecode, InvalidVA);
+    bool Altered = false;
+    for (auto &Segment : Image->Segments)
+      if (Segment.contains(Bytecode)) {
+        ASSERT_FALSE(Segment.isWritable());
+        if (Writable)
+          Segment.Flags = Segment.Flags | SegmentFlags::Writable;
+        else {
+          // The first three records remain file-backed; the fourth does not.
+          const auto RetainedBytes = Bytecode - Segment.VA + 3 * 16;
+          ASSERT_LT(RetainedBytes, Segment.Data.size());
+          Segment.Data.resize(RetainedBytes);
+          Segment.FileSz = RetainedBytes;
+        }
+        Altered = true;
+      }
+    ASSERT_TRUE(Altered);
+    const auto Result = analysis::specializeBinaryInterpreter(
+        *Image, Entry, recoveryOptions(true));
+    EXPECT_FALSE(Result.complete());
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+    EXPECT_FALSE(Result.Diagnostic.empty());
+  }
+}
+
+TEST_F(DevirtualizationSourceTest, FiniteReadBudgetsNeverPublishPartialModels) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public finite-read budget contracts require clang";
+  const auto Binary = tmpFile("generic-vm-finite.elf");
+  const auto Compiled = buildFixture(Binary);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = functionEntry(*Image, "generic_vm_finite_arithmetic");
+  ASSERT_NE(Entry, InvalidVA);
+  for (bool QueryBudget : {false, true}) {
+    SCOPED_TRACE(QueryBudget ? "solver query budget" : "read address budget");
+    auto Options = recoveryOptions(true);
+    if (QueryBudget)
+      Options.MaxSolverQueries = 1;
+    else
+      Options.MaxImmutableReadAddresses = 1;
+    const auto Result =
+        analysis::specializeBinaryInterpreter(*Image, Entry, Options);
+    EXPECT_FALSE(Result.complete());
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
+    EXPECT_TRUE(Result.Reads.empty());
+    EXPECT_FALSE(Result.Diagnostic.empty());
+    if (QueryBudget) {
+      EXPECT_EQ(Result.Status, analysis::SpecializationStatus::BudgetExceeded);
+      EXPECT_LE(Result.SolverQueries, Options.MaxSolverQueries);
+    }
+  }
 }
 
 TEST_F(DevirtualizationSourceTest, RefusesUndecodedCoveringExceptionHandler) {
@@ -322,6 +430,23 @@ TEST_F(DevirtualizationSourceTest, CLIEmitsSourceAndEvidenceOnlyOnSuccess) {
   ASSERT_NE(Object, nullptr);
   EXPECT_EQ(Object->getBoolean("complete"), true);
   EXPECT_EQ(Object->getBoolean("controlComplete"), true);
+  for (const char *Key :
+       {"maxNodes", "maxContextsPerAddress", "maxOperations",
+        "maxNodeEvaluations", "maxIndirectTargets", "maxImmutableReadAddresses",
+        "maxControlTuples", "maxControlFields", "maxSolverQueries",
+        "maxSolverGates", "maxSolverConflicts", "maxSolverPropagations",
+        "maxSolverWatchVisits", "maxSymbolicNodes"}) {
+    SCOPED_TRACE(Key);
+    const auto Value = Object->getInteger(Key);
+    ASSERT_TRUE(Value.has_value());
+    EXPECT_GT(*Value, 0);
+  }
+  for (const char *Key : {"solverQueries", "relationalWidenings"}) {
+    SCOPED_TRACE(Key);
+    const auto Value = Object->getInteger(Key);
+    ASSERT_TRUE(Value.has_value());
+    EXPECT_GE(*Value, 0);
+  }
   const auto *Controls = Object->getArray("controlRegisters");
   ASSERT_NE(Controls, nullptr);
   ASSERT_EQ(Controls->size(), 1u);
@@ -344,6 +469,57 @@ TEST_F(DevirtualizationSourceTest, CLIEmitsSourceAndEvidenceOnlyOnSuccess) {
       << llvm::toString(InvalidJSON.takeError());
   ASSERT_NE(InvalidJSON->getAsObject(), nullptr);
   EXPECT_EQ(InvalidJSON->getAsObject()->getBoolean("complete"), false);
+}
+
+TEST_F(DevirtualizationSourceTest, PERecoveryRequiresFullMetadataAndFileHash) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public PE recovery requires clang and lld";
+  const auto Binary = tmpFile("generic-vm.exe");
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "x86_64-pc-windows-msvc", "-fuse-ld=lld", "-nostdlib",
+            "-Wl,/entry:generic_vm_register_arithmetic,/subsystem:console,/"
+            "nodefaultlib",
+            fixture("generic_vm_register.S").string(), "-o", Binary.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  ASSERT_EQ(Image->Format, BinaryFormat::COFF);
+  const auto Entry = Image->Entry;
+  ASSERT_NE(Entry, 0u);
+  BinaryLoadOptions RestrictedOptions;
+  RestrictedOptions.OnlyFunctionEntries.insert(Entry);
+  auto Restricted = loadBinary(Binary, RestrictedOptions);
+  ASSERT_TRUE(static_cast<bool>(Restricted))
+      << llvm::toString(Restricted.takeError());
+  ASSERT_FALSE(Restricted->LoadOnlyFunctionEntries.empty());
+  const auto Refused = analysis::specializeBinaryInterpreter(*Restricted, Entry,
+                                                             recoveryOptions());
+  EXPECT_EQ(Refused.Status, analysis::SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Refused.Residual.Blocks.empty());
+  EXPECT_TRUE(Refused.Reads.empty());
+  EXPECT_NE(Refused.Diagnostic.find("full PE metadata"), std::string::npos);
+
+  // A numeric --func must select the entry after loading all PE metadata.
+  const auto Source = tmpFile("generic-vm-pe.c");
+  const auto Report = tmpFile("generic-vm-pe.json");
+  const auto Recovered =
+      exec(ndBin(), {"decompile", "--func", "0x" + llvm::utohexstr(Entry),
+                     "--devirtualize", "--vm-control=r10",
+                     "--recovery-report=" + Report.string(), "-o",
+                     Source.string(), Binary.string()});
+  ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+  EXPECT_FALSE(readSource(Source).empty());
+  auto JSON = llvm::json::parse(readSource(Report));
+  ASSERT_TRUE(static_cast<bool>(JSON)) << llvm::toString(JSON.takeError());
+  const auto *Object = JSON->getAsObject();
+  ASSERT_NE(Object, nullptr);
+  EXPECT_EQ(Object->getBoolean("complete"), true);
+  const std::string Bytes = readSource(Binary);
+  ASSERT_FALSE(Bytes.empty());
+  const auto Hash = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()));
+  EXPECT_EQ(Object->getString("imageSha256"), llvm::toHex(Hash));
 }
 
 TEST_F(DevirtualizationSourceTest, LLVMCMixedFrameViewsPreserveUntouchedBytes) {
@@ -416,28 +592,35 @@ TEST_F(DevirtualizationSourceTest, OriginalMachinesMatchIndependentOracle) {
 #if !defined(__x86_64__) || !defined(__linux__)
   GTEST_SKIP() << "native x64 ELF execution requires an x64 Linux host";
 #else
-  for (bool MicrosoftABI : {false, true})
-    for (const char *Optimization : {"-O0", "-O2"}) {
-      SCOPED_TRACE(MicrosoftABI ? "Win64 ABI" : "SysV ABI");
-      SCOPED_TRACE(Optimization);
-      const auto Executable = tmpFile("generic-vm-native");
-      std::vector<std::string> Args{"-std=c11",
-                                    Optimization,
-                                    "-no-pie",
-                                    "-fsanitize=undefined",
-                                    "-fsanitize-trap=undefined",
-                                    fixture("generic_vm_register.S").string(),
-                                    fixture("generic_vm_stack.S").string(),
-                                    fixture("generic_vm_reference.c").string(),
-                                    "-o",
-                                    Executable.string()};
-      if (MicrosoftABI)
-        Args.push_back("-DGENERIC_VM_MS_ABI");
-      const auto Compiled = exec(NEVERD_TEST_CLANG, Args);
-      ASSERT_TRUE(Compiled.ok()) << Compiled.err;
-      const auto Ran = exec(Executable.string(), {});
-      EXPECT_TRUE(Ran.ok()) << Ran.err;
-    }
+  for (bool Finite : {false, true})
+    for (bool MicrosoftABI : {false, true})
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(MicrosoftABI ? "Win64 ABI" : "SysV ABI");
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile("generic-vm-native");
+        std::vector<std::string> Args{"-std=c11",
+                                      Optimization,
+                                      "-no-pie",
+                                      "-fsanitize=undefined",
+                                      "-fsanitize-trap=undefined",
+                                      "-o",
+                                      Executable.string()};
+        if (Finite) {
+          Args.push_back(fixture("generic_vm_finite.S").string());
+          Args.push_back(fixture("generic_vm_finite_reference.c").string());
+        } else {
+          Args.push_back(fixture("generic_vm_register.S").string());
+          Args.push_back(fixture("generic_vm_stack.S").string());
+          Args.push_back(fixture("generic_vm_reference.c").string());
+        }
+        SCOPED_TRACE(Finite ? "finite address VM" : "register/stack VMs");
+        if (MicrosoftABI)
+          Args.push_back("-DGENERIC_VM_MS_ABI");
+        const auto Compiled = exec(NEVERD_TEST_CLANG, Args);
+        ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+        const auto Ran = exec(Executable.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err;
+      }
 #endif
 }
 
@@ -447,7 +630,7 @@ TEST_F(DevirtualizationSourceTest, PublicMachinesAssembleForBothNativeABIs) {
   for (const char *Triple : {"x86_64-linux-gnu", "x86_64-pc-windows-msvc"}) {
     SCOPED_TRACE(Triple);
     for (const char *Name : {"generic_vm_register.S", "generic_vm_stack.S",
-                             "generic_vm_negative.S"}) {
+                             "generic_vm_finite.S", "generic_vm_negative.S"}) {
       SCOPED_TRACE(Name);
       const auto Compiled = exec(
           NEVERD_TEST_CLANG, {"-target", Triple, "-c", fixture(Name).string(),

@@ -722,14 +722,21 @@ sym::SymRef Translator::in(const ExprPtr &E) {
 /// high run of ones each leave a magnitude that fits.  Negation is tried first
 /// because `-1` is what a reader expects where `~0` would also do.
 ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes) {
+  // Only numeric literals enter this symbolic translation. Address-bearing
+  // expressions remain opaque and are restored from Sources instead. Mark
+  // newly synthesized literals as scalars so a coincident image/string VA
+  // cannot acquire pointer identity when a backend renders the result.
   if (std::optional<uint64_t> Direct = Val.tryZExtValue())
-    return HighExpr::makeConst(*Direct, Bytes);
+    return HighExpr::makeConst(*Direct, Bytes,
+                               ConstantAddressProvenance::Scalar);
   if (std::optional<uint64_t> Magnitude = (-Val).tryZExtValue())
-    return HighExpr::makeUnary(NdOp::INT_NEG2,
-                               HighExpr::makeConst(*Magnitude, Bytes));
+    return HighExpr::makeUnary(
+        NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes,
+                                            ConstantAddressProvenance::Scalar));
   if (std::optional<uint64_t> Complement = (~Val).tryZExtValue())
-    return HighExpr::makeUnary(NdOp::INT_NOT,
-                               HighExpr::makeConst(*Complement, Bytes));
+    return HighExpr::makeUnary(
+        NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes,
+                                           ConstantAddressProvenance::Scalar));
   return nullptr;
 }
 
@@ -821,8 +828,10 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
         Plus.push_back(Term);
       }
 
-      ExprPtr Acc = Plus.empty() ? HighExpr::makeConst(0, ByteSize)
-                                 : binop(NdOp::INT_ADD, Plus);
+      ExprPtr Acc = Plus.empty()
+                        ? HighExpr::makeConst(0, ByteSize,
+                                              ConstantAddressProvenance::Scalar)
+                        : binop(NdOp::INT_ADD, Plus);
       for (sym::SymRef Term : Minus) {
         if (!Acc)
           break;
@@ -899,7 +908,9 @@ ExprPtr Translator::out(sym::SymRef R, uint32_t /*Width*/) {
       } else {
         Result->Kind = ExprKind::BinOp;
         Result->Op = NdOp::SUBBYTES;
-        Result->Operands = {Operand, HighExpr::makeConst(Low / 8, 4)};
+        Result->Operands = {
+            Operand,
+            HighExpr::makeConst(Low / 8, 4, ConstantAddressProvenance::Scalar)};
       }
       break;
     }

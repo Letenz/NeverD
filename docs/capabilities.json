@@ -9370,7 +9370,8 @@
         "Fixed mapped bytes and permissions; immutable reads require mapping evidence.",
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
         "Calls, exception/reentry boundaries, mutable code, unresolved control and exhausted budgets refuse recovery.",
-        "Input-dependent bytecode addressing and decoder correlations are not generally resolved; source recovery does not certify binary replacement."
+        "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
+        "PE recovery requires complete image-wide relocation and exception metadata; source recovery does not certify binary replacement."
       ],
       "tests": [
         {
@@ -9400,6 +9401,28 @@
           "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
           "filter": "InterpreterSpecialization.UnknownIndirectAndOpaqueEffectsPublishNothing",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.JointControlTuplesPreserveCorrelationAcrossAJoinAndSharedHandler",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.TwoSatisfyingModelsDoNotReplaceTheRequiredExhaustionProof",
           "platforms": [
             "darwin",
             "linux",

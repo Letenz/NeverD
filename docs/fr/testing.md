@@ -43,16 +43,7 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
-Les tests du cœur vérifient la séparation des contextes, les jonctions au point
-fixe, les boucles dynamiques, les registres superposés, l’invalidation des alias,
-la distribution finie et le refus sans remplacement partiel. Les tests de
-source assemblent deux machines x64 originales indépendantes, récupèrent les
-deux parcours C, compilent en O0/O2 avec des pièges de comportement indéfini et
-comparent l’exécution à un oracle arithmétique non signé et mémoire. Ils testent
-aussi la CLI publique et les rapports d’entrées non prises en charge. Clang
-multicible et LLD sont requis ; exécuter l’ELF original exige aussi un hôte Linux
-x64. Un outil absent ou un hôte incompatible signifie une couverture ignorée,
-et non un succès.
+Les tests du cœur vérifient la séparation des contextes, les jonctions au point fixe, les boucles dynamiques, les registres superposés, l’invalidation des alias, la distribution finie et le refus sans remplacement partiel. Les tests de source assemblent des machines x64 originales à registres, à pile et à adresses finies ; ils incluent des champs de contrôle liés et un oracle natif indépendant SysV/Win64. Les deux parcours C sont compilés en O0/O2 avec pièges de comportement indéfini et comparés à un oracle non signé pour les calculs, écritures mémoire et sentinelles de sortie. Les cas négatifs vérifient les certificats manquants et les budgets insuffisants. La CLI publique et ses rapports vérifient les contrôles, budgets, compteurs et refus. Clang multicible et LLD sont requis ; l’exécution de l’ELF original exige aussi un hôte Linux x64. Un outil absent ou un hôte incompatible signifie une couverture ignorée, et non un succès.
 
 ## Vérifications de l’émulation des pilotes
 

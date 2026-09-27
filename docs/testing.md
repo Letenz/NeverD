@@ -77,14 +77,7 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
-The core tests check context splitting, fixed-point joins, dynamic loops,
-overlapping registers, alias invalidation, finite dispatch, and refusal without
-a partial replacement. Source tests assemble two independent original x64
-machines, recover both C routes, compile at O0/O2 with undefined-behavior traps,
-and compare execution with an unsigned arithmetic and memory oracle. They also
-exercise the public CLI and unsupported-input reports. Cross-target Clang and
-LLD are required; original ELF execution additionally requires an x64 Linux
-host. Missing tools or a nonmatching host are skipped coverage, not a pass.
+Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
 
 ## Driver emulation checks
 

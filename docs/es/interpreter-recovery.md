@@ -43,6 +43,8 @@ máquina alcanzable. Las instrucciones no admitidas, llamadas, operaciones
 opacas, accesos de memoria ordenados, control sin resolver y manejo de
 excepciones del lenguaje detienen la recuperación.
 
+La recuperación PE requiere todos los metadatos de la imagen, incluidas las reubicaciones globales y los registros de excepciones. La CLI los carga antes de aplicar `--func`; quienes usan la API C no deben restringir previamente la sesión mediante `neverd_session_restrict_function()`. El adaptador rechaza imágenes cargadas con un conjunto limitado de funciones, porque los metadatos omitidos no prueban la ausencia de correcciones ni de aristas de excepción.
+
 Solo los rangos completos de solo lectura respaldados por el archivo, sin
 mapeos superpuestos ni ajustes del cargador, pueden proporcionar lecturas
 constantes de la imagen. Las tablas modificables, relocaciones sin resolver y
@@ -68,15 +70,7 @@ los intérpretes o configuraciones de protección estén admitidos.
 
 ## Límites actuales
 
-Las direcciones de bytecode dependientes de las entradas y las relaciones entre
-estados del decodificador no se resuelven de forma general. Puede recuperarse
-una bifurcación o un bucle dinámico si se demuestran sus destinos de despacho,
-pero la cobertura de bifurcaciones ordinarias no demuestra compatibilidad con
-todos los esquemas de decodificación indirecta. El control sin resolver y los
-presupuestos agotados son fallos: no se publica código recuperado ni sustitución
-parcial. Las llamadas a funciones auxiliares nativas, los límites de excepciones
-y reentrada, el código modificable y otras arquitecturas quedan fuera del
-contrato de ejecución de este adaptador inicial.
+Las direcciones de bytecode dependientes de la entrada y las relaciones entre estados del decodificador solo se admiten cuando los dominios finitos y las correlaciones necesarios pueden demostrarse dentro de los límites configurados. Esto no demuestra compatibilidad con todos los esquemas de decodificación indirecta. Se pueden recuperar ramas y bucles dinámicos si se demuestra cada destino de despacho; la cobertura de ramas ordinarias no basta para probarlo. El control sin resolver o el agotamiento de un presupuesto de prueba necesario son fallos y no publican código recuperado ni sustituciones parciales. Las llamadas auxiliares nativas, los límites de excepciones o reentrada, el código mutable y otras arquitecturas siguen fuera del contrato del adaptador.
 
 ## Implementación compartida
 
@@ -86,18 +80,12 @@ semántica existente de `SymExec` para evaluar parcialmente operaciones enteras
 y de control. El adaptador binario se ocupa de los mapeos y la decodificación;
 no implementa un segundo evaluador de instrucciones.
 
-Cada nodo se identifica mediante su cursor nativo, modo de instrucción y las
-constantes seleccionadas de registros de control y espacios del marco de
-entrada. Los demás hechos a nivel de byte se combinan por intersección. Cuando
-se debilita un hecho entrante, se vuelve a evaluar el nodo. Así se conservan
-los bucles del programa, en lugar de expandir cada iteración observada. Todas
-las hojas de un destino indirecto deben formar un conjunto exacto y acotado de
-constantes; los destinos seleccionados se convierten en comparaciones
-residuales explícitas y aristas del CFG.
+Para una dirección simbólica de lectura con dominio finito, el solver de vectores de bits integrado enumera las direcciones candidatas bajo las restricciones actuales. Solo se acepta el conjunto tras un resultado UNSAT final que demuestre que no existen otras direcciones, y cada dirección debe contar con un certificado completo de lectura inmutable que no produzca un fallo de memoria. Esa lectura certificada puede sustituirse en LowIR por una captura de la dirección y una cadena exacta de SELECT; las lecturas ordinarias no certificadas siguen siendo dinámicas. Una muestra de direcciones nunca sustituye al conjunto completo. Los registros de control y las posiciones del marco de entrada seleccionados pueden conservar tuplas conjuntas acotadas entre nodos, como la relación entre un cursor y su clave de decodificación. Las uniones y ampliaciones siguen siendo conservadoras. Los modelos SAT parciales o los resultados desconocidos no prueban la exhaustividad de direcciones ni destinos. Este mecanismo no necesita el backend Z3 opcional.
+
+Cada nodo se identifica mediante su cursor nativo, modo de instrucción y las constantes seleccionadas de registros de control y espacios del marco de entrada. Los demás hechos a nivel de byte se combinan por intersección. Cuando se debilita un hecho entrante, se vuelve a evaluar el nodo. Así se conservan los bucles del programa, en lugar de expandir cada iteración observada. Todos los valores alcanzables de un destino indirecto deben pertenecer a un conjunto acotado cuya exhaustividad esté demostrada; los destinos seleccionados se convierten en comparaciones residuales explícitas y aristas del CFG.
 
 Las operaciones dinámicas y las lecturas/escrituras ordinarias permanecen en
-LowIR. Solo las lecturas inmutables certificadas se convierten en constantes.
-Las constantes escalares, los punteros afines relativos al marco de entrada y
+LowIR. Las constantes escalares, los punteros afines relativos al marco de entrada y
 los bytes del marco cuya constancia se haya probado pueden pasar entre nodos;
 las demás expresiones se descartan en lugar de expandirse sin límite. La
 memoria del marco utiliza la invalidación conservadora de alias del estado
@@ -120,6 +108,8 @@ aparece semántica no admitida, no se publica ninguna función residual. Un graf
 de control completo no equivale a una emisión de código fuente correcta;
 la API pública comprueba ambos resultados e informa de la diferencia.
 
+Los conjuntos finitos de direcciones de lectura, las tuplas conjuntas de control y el número de campos de control también tienen límites explícitos. Un límite global de consultas al solver y límites por consulta de puertas, conflictos, propagaciones y visitas a literales vigilados acotan el trabajo de prueba; el límite de nodos simbólicos acota el crecimiento de las expresiones. El informe JSON incluye esos presupuestos junto con `solverQueries` y `relationalWidenings`.
+
 ## Evidencias y pruebas
 
 El informe JSON local opcional incluye el hash de entrada, controles elegidos,
@@ -136,5 +126,7 @@ HighC y LLVMC recuperado se compila con O0/O2 y trampas de comportamiento
 indefinido, y se ejecuta frente al oráculo. Los casos negativos cubren el
 despacho sin resolver o modificable, el orden de bytes incompatible, los
 metadatos de excepciones y los presupuestos.
+
+Otras fixtures originales de direcciones finitas usan registros de datos de solo lectura elegidos por la entrada, campos de control cursor/clave relacionados y un mismo handler en distintas posiciones virtuales. Cubren ramas con uniones y bucles cuya selección de registro depende del estado actual del programa. Su oráculo nativo independiente usa las convenciones SysV y Win64; ambas rutas C recuperadas se comprueban en O0/O2 con trampas de comportamiento indefinido y centinelas de salida. La falta de certificados de lectura o de presupuesto de prueba no debe publicar resultados parciales.
 
 Consulte [testing.md](testing.md) para los objetivos de prueba específicos.

@@ -117,7 +117,12 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
       PO.NoOpt = Options->no_opt != 0;
     }
     llvm::LLVMContext Context;
-    Evidence["imageSha256"] = llvm::toHex(llvm::SHA256::hash(S->Img.Raw));
+    if (S->Img.InputFileSHA256)
+      Evidence["imageSha256"] = llvm::toHex(*S->Img.InputFileSHA256);
+    else if (!S->Img.Raw.empty())
+      Evidence["imageSha256"] = llvm::toHex(llvm::SHA256::hash(S->Img.Raw));
+    else
+      Evidence["imageSha256"] = nullptr;
     llvm::json::Array Controls;
     for (const auto &Range : Config.ControlRegisters)
       Controls.push_back(
@@ -140,6 +145,20 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
     Evidence["maxOperations"] = static_cast<int64_t>(Config.MaxOperations);
     Evidence["maxNodeEvaluations"] = Config.MaxNodeEvaluations;
     Evidence["maxIndirectTargets"] = Config.MaxIndirectTargets;
+    Evidence["maxImmutableReadAddresses"] = Config.MaxImmutableReadAddresses;
+    Evidence["maxControlTuples"] = Config.MaxControlTuples;
+    Evidence["maxControlFields"] = Config.MaxControlFields;
+    Evidence["maxSolverQueries"] =
+        static_cast<int64_t>(Config.MaxSolverQueries);
+    Evidence["maxSolverGates"] = static_cast<int64_t>(Config.MaxSolverGates);
+    Evidence["maxSolverConflicts"] =
+        static_cast<int64_t>(Config.MaxSolverConflicts);
+    Evidence["maxSolverPropagations"] =
+        static_cast<int64_t>(Config.MaxSolverPropagations);
+    Evidence["maxSolverWatchVisits"] =
+        static_cast<int64_t>(Config.MaxSolverWatchVisits);
+    Evidence["maxSymbolicNodes"] =
+        static_cast<int64_t>(Config.MaxSymbolicNodes);
     Pipeline P;
     auto Result = P.run(S->Img, Context, PO);
     if (Result.InterpreterRecovery) {
@@ -150,12 +169,15 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
       Evidence["nodeEvaluations"] = static_cast<int64_t>(R.NodeEvaluations);
       Evidence["evaluatedOperations"] =
           static_cast<int64_t>(R.EvaluatedOperations);
+      Evidence["solverQueries"] = static_cast<int64_t>(R.SolverQueries);
+      Evidence["relationalWidenings"] = R.RelationalWidenings;
       Evidence["residualBlocks"] =
           static_cast<int64_t>(R.Residual.Blocks.size());
       llvm::json::Array Reads;
       for (const auto &Read : R.Reads)
         Reads.push_back(llvm::json::Object{
             {"instruction", vaHex(Read.InstructionAddress)},
+            {"operation", Read.OpSeq},
             {"address", vaHex(Read.Address)},
             {"bytes", llvm::toHex(llvm::ArrayRef<uint8_t>(Read.Bytes))},
             {"evidence", Read.Evidence}});

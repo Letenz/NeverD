@@ -130,9 +130,11 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
       return Op;
     const HighExpr *A = unwrapIntegerView(Op->Operands[0].get());
     const HighExpr *B = unwrapIntegerView(Op->Operands[1].get());
-    if (A && A->Kind == ExprKind::BinOp && IsCompareOp(A->Op) && IsZeroLike(Op->Operands[1]))
+    if (A && A->Kind == ExprKind::BinOp && IsCompareOp(A->Op) &&
+        IsZeroLike(Op->Operands[1]))
       return A;
-    if (B && B->Kind == ExprKind::BinOp && IsCompareOp(B->Op) && IsZeroLike(Op->Operands[0]))
+    if (B && B->Kind == ExprKind::BinOp && IsCompareOp(B->Op) &&
+        IsZeroLike(Op->Operands[0]))
       return B;
     return Op;
   };
@@ -320,44 +322,6 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
 
   if ((E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB ||
        E.Op == NdOp::INT_MULT) &&
-      E.Operands.size() == 2 && E.Operands[0] && E.Operands[1]) {
-    auto DisplayField = [&](const HighExpr &Op) -> std::optional<std::string> {
-      const HighExpr *Inner = unwrapIntegerView(&Op);
-      if (!Inner)
-        return std::nullopt;
-      if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
-          Inner->Operands[0]) {
-        if (auto Field = cxxCatchFieldAccess(*Inner->Operands[0]))
-          return Field;
-        if (auto Member = typedMemberAccess(
-                *Inner->Operands[0], Inner->Type ? Inner->Type->Size : 0))
-          return Member;
-      }
-      if (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) {
-        const std::string Name = copyForwardName(varName(Inner->Var));
-        if (auto It = ReachingCatchFields.find(Name);
-            It != ReachingCatchFields.end())
-          return It->second;
-        if (auto It = FieldForward.find(Name); It != FieldForward.end())
-          return It->second;
-      }
-      return std::nullopt;
-    };
-    if (auto Left = DisplayField(*E.Operands[0])) {
-      if (auto Right = DisplayField(*E.Operands[1])) {
-        const char *Symbol = E.Op == NdOp::INT_ADD   ? " + "
-                             : E.Op == NdOp::INT_SUB ? " - "
-                                                     : " * ";
-        std::string S = *Left + Symbol + *Right;
-        if (ParentPrec >= getOpPrecedence(E.Op))
-          return "(" + S + ")";
-        return S;
-      }
-    }
-  }
-
-  if ((E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB ||
-       E.Op == NdOp::INT_MULT) &&
       E.Type && E.Type->Kind == NdTypeKind::Int) {
     const uint16_t Size = E.Type->Size;
     // A declared uint32_t/uint64_t operand makes the whole C operation
@@ -418,7 +382,7 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
         const std::string Value =
             exprStr(*E.Operands[0]) + Symbol + exprStr(*E.Operands[1]);
         if (E.Type->IsSigned)
-          return "(" + typeToC(E.Type) + ")(" + Value + ")";
+          return "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")";
         return ParentPrec >= getOpPrecedence(E.Op) ? "(" + Value + ")" : Value;
       }
     }
@@ -446,8 +410,9 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
                                                    : " * ";
       const auto Value = "(" + Unsigned + ")(" + Operand(E.Operands[0]) +
                          Symbol + Operand(E.Operands[1]) + ")";
-      return E.Type->IsSigned ? "(" + typeToC(E.Type) + ")" + Value
-                              : "(" + Value + ")";
+      return E.Type->IsSigned
+                 ? "__builtin_bit_cast(" + typeToC(E.Type) + ", " + Value + ")"
+                 : "(" + Value + ")";
     }
   }
 
@@ -583,8 +548,8 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
     const auto SignedType = typeToC(NdType::makeInt(Size, true));
     const auto UnsignedType = typeToC(NdType::makeInt(Size, false));
     const auto SignedBits = [&](const HighExpr &Operand) {
-      return "__builtin_bit_cast(" + SignedType + ", (" + UnsignedType +
-             ")(" + exprStr(Operand) + "))";
+      return "__builtin_bit_cast(" + SignedType + ", (" + UnsignedType + ")(" +
+             exprStr(Operand) + "))";
     };
     return std::string(E.Op == NdOp::INT_SOVF ? "__builtin_add_overflow("
                                               : "__builtin_sub_overflow(") +
@@ -715,7 +680,8 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
                          bool ConstOnRight) {
       if (!Typed || !Const || Const->Kind != ExprKind::Const)
         return false;
-      if (auto Name = enumeratorDisplay(enumTypeOfExpr(*Typed), Const->ConstVal)) {
+      if (auto Name =
+              enumeratorDisplay(enumTypeOfExpr(*Typed), Const->ConstVal)) {
         if (ConstOnRight)
           RHS = *Name;
         else
@@ -729,7 +695,7 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
 
   if (NeedsUnsignedCast || NeedsSignedCast) {
     uint16_t CmpSize = E.Operands[0]->Type ? E.Operands[0]->Type->Size
-                                         : (E.Type ? E.Type->Size : 4);
+                                           : (E.Type ? E.Type->Size : 4);
     // An inverted comparison can put a narrow immediate before its wider
     // machine operand. Preserve the common width before simplifying views.
     const bool Comparison =
@@ -780,7 +746,8 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
            (Op->Kind == ExprKind::BinOp && Op->Op == NdOp::SUBBYTES)) &&
           !Op->Operands.empty() && Op->Operands[0])
         return Self(Self, Op->Operands[0].get(), Depth + 1);
-      if (Op->Kind == ExprKind::Load && !Op->Operands.empty() && Op->Operands[0])
+      if (Op->Kind == ExprKind::Load && !Op->Operands.empty() &&
+          Op->Operands[0])
         if (TypeRef Ty = typedMemberType(*Op->Operands[0]);
             Ty && (Ty->Kind == NdTypeKind::Int || Ty->IsEnum))
           return Ty;
@@ -832,9 +799,8 @@ std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
           Op->Type ? Op->Type->Size
                    : (Op->Kind == ExprKind::Var ? Op->Var.Size : 0);
       if (Comparison && OpSize && OpSize < CmpSize)
-        return "(" + UTy + ")(" +
-               typeToC(NdType::makeInt(OpSize, false)) + ")" +
-               exprStr(*Op, 99);
+        return "(" + UTy + ")(" + typeToC(NdType::makeInt(OpSize, false)) +
+               ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&

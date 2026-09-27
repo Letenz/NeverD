@@ -33,9 +33,10 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
-#include <iterator>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <optional>
@@ -497,6 +498,10 @@ struct BinaryImage {
   /// Empty for formats/targets without a supported exception directory.
   ExceptionInfo ExceptionMetadata;
   std::vector<uint8_t> Raw;
+  /// Digest of the exact file buffer consumed by the loader. Kept when a
+  /// restricted load omits Raw; never recomputed by reopening a mutable path.
+  /// Absent for in-memory synthetic images or loaders without file evidence.
+  std::optional<std::array<uint8_t, 32>> InputFileSHA256;
 
   bool is64Bit() const { return neverd::is64Bit(Bits); }
   bool is32Bit() const { return neverd::is32Bit(Bits); }
@@ -1062,8 +1067,9 @@ struct BinaryImage {
   /// An operation-scoped index makes repeated CFG queries logarithmic without
   /// mutating this publicly editable image from parallel workers. An absent or
   /// foreign index reads the current Symbols directly.
-  bool hasFunctionSymbolAt(
-      va_t Addr, const ExecutableCodeOwnerIndex *Index = nullptr) const;
+  bool
+  hasFunctionSymbolAt(va_t Addr,
+                      const ExecutableCodeOwnerIndex *Index = nullptr) const;
 
   /// Largest non-function symbol size defined exactly at \p Addr (0 if none).
   /// Distinguishes a sized data object (a const array/table) from a bare label,
@@ -1449,11 +1455,11 @@ struct BinaryImage {
     if (RVA64 > std::numeric_limits<uint32_t>::max())
       return false;
     const uint32_t RVA = static_cast<uint32_t>(RVA64);
-    const auto It = std::lower_bound(
-        COFFPDataRecords.begin(), COFFPDataRecords.end(), RVA,
-        [](const COFFPDataRecord &Rec, uint32_t Needle) {
-          return Rec.BeginRVA < Needle;
-        });
+    const auto It =
+        std::lower_bound(COFFPDataRecords.begin(), COFFPDataRecords.end(), RVA,
+                         [](const COFFPDataRecord &Rec, uint32_t Needle) {
+                           return Rec.BeginRVA < Needle;
+                         });
     return It != COFFPDataRecords.end() && It->BeginRVA == RVA &&
            It->BeginRVA < It->EndRVA;
   }
@@ -1465,12 +1471,12 @@ struct BinaryImage {
     const uint64_t AfterRVA = static_cast<uint64_t>(Addr - Base) + 1;
     if (AfterRVA > std::numeric_limits<uint32_t>::max())
       return InvalidVA;
-    const auto It = std::lower_bound(
-        COFFPDataRecords.begin(), COFFPDataRecords.end(),
-        static_cast<uint32_t>(AfterRVA),
-        [](const COFFPDataRecord &Rec, uint32_t RVA) {
-          return Rec.BeginRVA < RVA;
-        });
+    const auto It =
+        std::lower_bound(COFFPDataRecords.begin(), COFFPDataRecords.end(),
+                         static_cast<uint32_t>(AfterRVA),
+                         [](const COFFPDataRecord &Rec, uint32_t RVA) {
+                           return Rec.BeginRVA < RVA;
+                         });
     for (auto Cur = It; Cur != COFFPDataRecords.end(); ++Cur)
       if (Cur->BeginRVA < Cur->EndRVA)
         return Base + Cur->BeginRVA;
@@ -1522,14 +1528,15 @@ struct BinaryImage {
     if (auto It = RuntimeFunctionAddrs.upper_bound(Addr);
         It != RuntimeFunctionAddrs.end())
       Consider(*It);
-    if (const ExceptionFunction *Next = ExceptionMetadata.nextFunctionAfter(Addr))
+    if (const ExceptionFunction *Next =
+            ExceptionMetadata.nextFunctionAfter(Addr))
       Consider(Next->CodeRange.Begin);
     if (!KnownCodeRanges.empty()) {
-      const auto It = std::upper_bound(
-          KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
-          [](va_t Needle, const std::pair<va_t, va_t> &Range) {
-            return Needle < Range.first;
-          });
+      const auto It =
+          std::upper_bound(KnownCodeRanges.begin(), KnownCodeRanges.end(), Addr,
+                           [](va_t Needle, const std::pair<va_t, va_t> &Range) {
+                             return Needle < Range.first;
+                           });
       for (auto Cur = It; Cur != KnownCodeRanges.end(); ++Cur)
         if (hasKnownFunctionEntryAt(Cur->first)) {
           Consider(Cur->first);

@@ -45,6 +45,8 @@ Aufrufe, undurchsichtige Operationen, geordnete Speicherzugriffe, nicht
 aufgelöster Kontrollfluss und sprachabhängige Ausnahmebehandlung stoppen die
 Rekonstruktion.
 
+Die PE-Rekonstruktion erfordert vollständige Abbildmetadaten einschließlich aller Relokationen und Ausnahmeeinträge. Die CLI lädt sie vor der Anwendung von `--func`; C-API-Aufrufer dürfen die Sitzung nicht zuvor mit `neverd_session_restrict_function()` einschränken. Der Binäradapter lehnt Abbilder ab, die mit einer eingeschränkten Funktionsmenge geladen wurden: Ausgelassene Metadaten beweisen weder die Abwesenheit von Fixups noch die von Ausnahmekanten.
+
 Nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
 überlappende Mappings oder Loader-Fixups dürfen konstante Abbildlesevorgänge
 begründen. Schreibbare Tabellen, nicht aufgelöste Relokationen und punktuelle
@@ -70,15 +72,7 @@ oder Schutzkonfigurationen wird nicht zugesichert.
 
 ## Aktuelle Grenzen
 
-Eingabeabhängige Bytecode-Adressen und Beziehungen zwischen Decoder-Zuständen
-werden nicht allgemein aufgelöst. Dynamische Verzweigungen oder Schleifen
-können rekonstruiert werden, wenn ihre Dispatch-Ziele nachgewiesen sind. Die
-Abdeckung gewöhnlicher Verzweigungen belegt jedoch nicht die Unterstützung
-jedes indirekten Decodierschemas. Nicht aufgelöster Kontrollfluss und
-ausgeschöpfte Budgets sind Fehler; es wird weder rekonstruierter Quelltext noch
-ein teilweiser Ersatz veröffentlicht. Native Hilfsaufrufe, Grenzen von Ausnahmen
-und Wiedereintritten, veränderlicher Code und andere Architekturen liegen
-außerhalb des Ausführungsvertrags dieses ersten Adapters.
+Eingabeabhängige Bytecode-Adressen und Beziehungen zwischen Decoder-Zuständen werden nur unterstützt, wenn die erforderlichen endlichen Wertebereiche und Korrelationen innerhalb der konfigurierten Grenzen nachweisbar sind. Daraus folgt keine Unterstützung beliebiger indirekter Decodierschemata. Dynamische Verzweigungen und Schleifen können rekonstruiert werden, wenn jedes Dispatch-Ziel bewiesen ist; gewöhnliche Zweigabdeckung genügt dafür nicht. Nicht aufgelöster Kontrollfluss und ausgeschöpfte erforderliche Beweisbudgets sind Fehler: Es wird weder rekonstruierter Quelltext noch ein teilweiser Ersatz veröffentlicht. Native Hilfsaufrufe, Ausnahme- und Wiedereintrittsgrenzen, veränderlicher Code und andere Architekturen bleiben außerhalb des Ausführungsvertrags.
 
 ## Gemeinsame Implementierung
 
@@ -88,18 +82,12 @@ verwendet die vorhandene `SymExec`-Semantik zur partiellen Auswertung von
 Ganzzahl- und Kontrolloperationen. Der Binäradapter verantwortet Mappings und
 Instruktionsdecodierung; er implementiert keinen zweiten Instruktionsauswerter.
 
-Ein Knoten wird durch seinen nativen Cursor, den Instruktionsmodus und die
-ausgewählten konstanten Kontrollregister und Eintritts-Frame-Slots bestimmt.
-Weitere byteweise Fakten werden durch Schnittmengenbildung zusammengeführt.
-Schwächt sich ein eingehender Fakt ab, wird der Knoten erneut ausgewertet. So
-bleiben Programmschleifen als Schleifen erhalten, statt jede beobachtete
-Iteration einzeln zu entfalten. Alle Blätter eines indirekten Ziels müssen eine
-begrenzte, exakte Konstantenmenge bilden. Die ausgewählten Ziele werden zu
-expliziten Vergleichen im Restprogramm und zu CFG-Kanten.
+Bei einer symbolischen Leseadresse mit endlichem Wertebereich zählt der integrierte Bitvektor-Solver unter den aktuellen Bedingungen mögliche Adressen auf. Die Menge wird erst akzeptiert, wenn ein abschließendes UNSAT beweist, dass keine weitere Adresse möglich ist, und für jede Adresse ein vollständiger Nachweis eines unveränderlichen, nicht fehlschlagenden Lesezugriffs vorliegt. Ein solcher Zugriff kann in LowIR durch die einmalige Erfassung der Adresse und eine exakte SELECT-Kette ersetzt werden; gewöhnliche nicht zertifizierte Lesezugriffe bleiben dynamisch. Stichproben ersetzen niemals die vollständige Menge. Ausgewählte Kontrollregister und Eintritts-Frame-Slots können begrenzte gemeinsame Wertetupel über Knotengrenzen bewahren, etwa die Beziehung zwischen Cursor und Decodierschlüssel. Zusammenführungen und Erweiterungen bleiben konservativ. Einzelne SAT-Modelle oder unbekannte Solver-Ergebnisse beweisen keine vollständige Adress- oder Zielmenge. Der optionale Z3-Backend wird dafür nicht benötigt.
+
+Ein Knoten wird durch seinen nativen Cursor, den Instruktionsmodus und die ausgewählten konstanten Kontrollregister und Eintritts-Frame-Slots bestimmt. Weitere byteweise Fakten werden durch Schnittmengenbildung zusammengeführt. Schwächt sich ein eingehender Fakt ab, wird der Knoten erneut ausgewertet. So bleiben Programmschleifen als Schleifen erhalten, statt jede beobachtete Iteration einzeln zu entfalten. Alle erreichbaren Werte eines indirekten Ziels müssen zu einer begrenzten, nachweislich vollständigen Menge gehören. Die ausgewählten Ziele werden zu expliziten Vergleichen im Restprogramm und zu CFG-Kanten.
 
 Dynamische Operationen sowie gewöhnliche Lese- und Schreibzugriffe verbleiben
-in LowIR. Nur nachweislich unveränderliche Lesezugriffe werden zu Konstanten.
-Skalare Konstanten, affine Zeiger relativ zum Eintrittsframe und nachweislich
+in LowIR. Skalare Konstanten, affine Zeiger relativ zum Eintrittsframe und nachweislich
 konstante Frame-Bytes dürfen Knotengrenzen überschreiten. Andere Ausdrücke
 werden verworfen, statt sie unbegrenzt zu erweitern. Frame-Speicher verwendet
 die konservative Alias-Invalidierung des vorhandenen symbolischen Zustands.
@@ -122,6 +110,8 @@ Semantik wird keine Restfunktion veröffentlicht. Ein vollständiger
 Kontrollflussgraph ist von erfolgreicher Quelltextausgabe zu unterscheiden;
 die öffentliche API prüft beide Ergebnisse und meldet sie getrennt.
 
+Endliche Leseadressmengen, gemeinsame Kontrolltupel und die Anzahl der Kontrollfelder haben eigene Grenzen. Ein globales Limit für Solver-Abfragen sowie Limits pro Abfrage für Gatter, Konflikte, Propagationen und Besuche überwachter Literale begrenzen den Beweisaufwand; ein Limit für symbolische Knoten begrenzt das Ausdruckswachstum. Der JSON-Bericht enthält diese Budgets sowie `solverQueries` und `relationalWidenings`.
+
 ## Nachweise und Tests
 
 Der optionale lokale JSON-Bericht enthält den Eingabehash, gewählte
@@ -138,5 +128,7 @@ Ausgabeschutzwerte. Rekonstruierte HighC- und LLVMC-Quellen werden mit O0/O2 und
 Traps für undefiniertes Verhalten kompiliert und gegen dieses Oracle ausgeführt.
 Negativfälle prüfen nicht aufgelösten und schreibbaren Dispatch, inkompatible
 Byte-Reihenfolge, Ausnahmemetadaten und Budgets.
+
+Weitere eigenständige Fixtures mit endlichen Adressen verwenden eingabeabhängig gewählte schreibgeschützte Datensätze, zusammenhängende Cursor-/Schlüsselfelder und denselben Handler an verschiedenen virtuellen Positionen. Sie decken Verzweigungen mit Zusammenführung und Schleifen ab, deren Datensatzauswahl vom aktuellen Programmzustand abhängt. Ihr unabhängiges natives Oracle verwendet SysV und Win64; beide rekonstruierten C-Pfade werden unter O0/O2 mit Fallen für undefiniertes Verhalten und Ausgabewächtern geprüft. Fehlende Lesezertifikate oder unzureichende Beweisbudgets dürfen kein Teilergebnis veröffentlichen.
 
 Gezielte Testziele stehen in [testing.md](testing.md).

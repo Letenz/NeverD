@@ -128,7 +128,9 @@ static int realMain(int Argc, char *Argv[]) {
   // same one-function PE path as a known hex address.  The hint is checked
   // against the loaded name table below; normal loading remains authoritative.
   neverd_va_t NameHint = 0;
-  if (!ExportFunc.empty()) {
+  // Interpreter recovery follows dispatch outside the selected function and
+  // needs image-wide relocation and exception evidence from the loader.
+  if (!ExportFunc.empty() && !Devirtualize) {
     StringRef FuncRef(ExportFunc.getValue());
     if (FuncRef.consume_front("0x") || FuncRef.consume_front("0X")) {
       uint64_t Addr = 0;
@@ -192,8 +194,7 @@ static int realMain(int Argc, char *Argv[]) {
       if (!neverd_session_load(Sess, InputFile.getValue().c_str())) {
         if (!JsonOutput)
           errs() << "\n";
-        WithColor::error() << "failed to load: " << takeLastError(Sess)
-                           << "\n";
+        WithColor::error() << "failed to load: " << takeLastError(Sess) << "\n";
         return 1;
       }
     }

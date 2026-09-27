@@ -43,6 +43,8 @@ code machine accessible. Les instructions non prises en charge, appels,
 opérations opaques, accès mémoire ordonnés, contrôles non résolus et traitements
 des exceptions du langage arrêtent la récupération.
 
+La récupération PE exige toutes les métadonnées de l’image, y compris les relocations globales et les enregistrements d’exceptions. La CLI les charge avant d’appliquer `--func` ; les appelants de l’API C ne doivent pas restreindre d’abord la session avec `neverd_session_restrict_function()`. L’adaptateur refuse les images chargées avec un ensemble limité de fonctions, car des métadonnées omises ne prouvent pas l’absence de corrections ni d’arêtes d’exception.
+
 Seules des plages complètes en lecture seule, adossées au fichier et dépourvues
 de mappages superposés ou de corrections du chargeur, peuvent fournir des
 lectures constantes de l’image. Les tables modifiables, relocations non résolues
@@ -69,15 +71,7 @@ n’est pas garantie.
 
 ## Limites actuelles
 
-Les adresses de bytecode dépendant des entrées et les relations entre états du
-décodeur ne sont pas résolues dans le cas général. Une branche ou une boucle
-dynamique peut être récupérée lorsque ses cibles de distribution sont prouvées,
-mais la couverture des branches ordinaires ne démontre pas la prise en charge
-de tous les schémas de décodage indirect. Un contrôle non résolu ou un budget
-épuisé constitue un échec : aucun source récupéré ni remplacement partiel n’est
-publié. Les appels à des fonctions auxiliaires natives, frontières d’exception
-ou de réentrée, code modifiable et autres architectures restent hors du contrat
-d’exécution de cet adaptateur initial.
+Les adresses de bytecode dépendant des entrées et les relations entre états du décodeur sont prises en charge uniquement lorsque les domaines finis et les corrélations nécessaires peuvent être prouvés dans les limites configurées. Cela ne démontre pas la prise en charge de tous les schémas de décodage indirect. Les branches et boucles dynamiques peuvent être récupérées si chaque cible de distribution est prouvée ; la couverture des branches ordinaires ne suffit pas à établir cette propriété. Un contrôle non résolu ou l’épuisement d’un budget de preuve requis entraîne un échec, sans source récupéré ni remplacement partiel. Les appels auxiliaires natifs, frontières d’exception ou de réentrée, code modifiable et autres architectures restent hors du contrat de cet adaptateur.
 
 ## Implémentation partagée
 
@@ -87,17 +81,12 @@ utilise la sémantique existante de `SymExec` pour évaluer partiellement les
 opérations entières et de contrôle. L’adaptateur binaire gère le mappage et le
 décodage ; il n’implémente pas un second évaluateur d’instructions.
 
-Un nœud est identifié par son curseur natif, le mode d’instruction et les
-constantes sélectionnées des registres de contrôle et des emplacements du cadre
-d’entrée. Les autres faits à l’échelle de l’octet se combinent par intersection.
-Lorsqu’un fait entrant s’affaiblit, le nœud est réévalué. Ainsi, les boucles du
-programme restent des boucles au lieu de développer chaque itération observée.
-Toutes les feuilles d’une destination indirecte doivent former un ensemble
-exact et borné de constantes ; les cibles retenues deviennent des comparaisons
-résiduelles explicites et des arêtes du CFG.
+Pour une adresse de lecture symbolique finie, le solveur de vecteurs de bits intégré énumère les adresses candidates sous les contraintes courantes. L’ensemble n’est accepté qu’après un résultat UNSAT final prouvant qu’aucune autre adresse n’est possible, et chaque adresse doit disposer d’un certificat complet de lecture immuable sans faute mémoire. Une telle lecture certifiée peut être remplacée dans LowIR par une capture de l’adresse et une chaîne exacte de SELECT ; les lectures ordinaires non certifiées restent dynamiques. Un échantillon d’adresses ne remplace jamais l’ensemble complet. Les registres de contrôle et emplacements du cadre d’entrée sélectionnés peuvent conserver des tuples conjoints bornés entre les nœuds, notamment la relation entre un curseur et sa clé de décodage. Jonctions et élargissements restent conservatifs. Des modèles SAT partiels ou un résultat inconnu ne prouvent pas l’exhaustivité des adresses ou des cibles. Ce mécanisme ne nécessite pas le backend Z3 facultatif.
+
+Un nœud est identifié par son curseur natif, le mode d’instruction et les constantes sélectionnées des registres de contrôle et des emplacements du cadre d’entrée. Les autres faits à l’échelle de l’octet se combinent par intersection. Lorsqu’un fait entrant s’affaiblit, le nœud est réévalué. Ainsi, les boucles du programme restent des boucles au lieu de développer chaque itération observée. Toutes les valeurs accessibles d’une destination indirecte doivent appartenir à un ensemble borné dont l’exhaustivité est prouvée ; les cibles retenues deviennent des comparaisons résiduelles explicites et des arêtes du CFG.
 
 Les opérations dynamiques et les lectures/écritures ordinaires restent dans
-LowIR. Seules les lectures immuables certifiées deviennent des constantes. Les
+LowIR. Les
 constantes scalaires, pointeurs affines relatifs au cadre d’entrée et octets du
 cadre prouvés constants peuvent traverser les nœuds ; les autres expressions
 sont abandonnées plutôt que développées sans limite. La mémoire du cadre utilise
@@ -120,6 +109,8 @@ ne publie aucune fonction résiduelle. Un graphe de contrôle complet ne signifi
 pas que l’émission du source a réussi ; l’API publique vérifie et distingue les
 deux résultats.
 
+Les ensembles finis d’adresses de lecture, les tuples conjoints de contrôle et le nombre de champs de contrôle ont aussi des limites explicites. Un plafond global de requêtes au solveur et des plafonds par requête sur les portes, conflits, propagations et visites de littéraux surveillés bornent le travail de preuve ; le nombre de nœuds symboliques borne la croissance des expressions. Le rapport JSON contient ces budgets ainsi que `solverQueries` et `relationalWidenings`.
+
 ## Preuves et tests
 
 Le rapport JSON local facultatif contient le hachage de l’entrée, les contrôles
@@ -136,5 +127,7 @@ Les sources HighC et LLVMC récupérées sont compilées en O0/O2 avec détectio
 piégeante des comportements indéfinis, puis exécutées face à cet oracle. Les cas
 négatifs couvrent la distribution non résolue ou modifiable, un ordre des octets
 incompatible, les métadonnées d’exceptions et les budgets.
+
+Des fixtures originales supplémentaires utilisent des enregistrements en lecture seule choisis par l’entrée, des champs de contrôle curseur/clé liés et un même handler à plusieurs positions virtuelles. Elles couvrent les branches avec jonctions et les boucles dont le choix d’enregistrement dépend de l’état courant du programme. Leur oracle natif indépendant utilise les conventions SysV et Win64 ; les deux parcours C récupérés sont vérifiés en O0/O2 avec pièges de comportement indéfini et sentinelles de sortie. Des certificats incomplets ou des budgets de preuve insuffisants ne doivent publier aucun résultat partiel.
 
 Voir [testing.md](testing.md) pour les cibles de test ciblées.

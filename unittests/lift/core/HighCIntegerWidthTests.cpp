@@ -84,7 +84,8 @@ void appendCheck(std::string &Checks, const std::string &Name,
 }
 
 void compileAndExecute(const std::string &Source, bool CheckShiftUB,
-                       bool CheckArithmeticUB = false) {
+                       bool CheckArithmeticUB = false,
+                       llvm::StringRef Optimization = "-O1") {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;
 #else
@@ -109,7 +110,7 @@ void compileAndExecute(const std::string &Source, bool CheckShiftUB,
     OS << Source;
   }
   llvm::SmallVector<llvm::StringRef, 16> Arguments{
-      Compiler, "-std=c11", "-O1", "-fno-inline", "-Werror=return-type"};
+      Compiler, "-std=c11", Optimization, "-fno-inline", "-Werror=return-type"};
   if (CheckShiftUB) {
     // Trap mode requires no platform sanitizer runtime. An unsupported
     // compiler is a real test failure rather than an unreported skip.
@@ -188,7 +189,8 @@ TEST(HighCIntegerWidths, UnsignedMachineWidthArithmeticUsesDeclaredType) {
       << Source;
   EXPECT_NE(Body("natural_u64_add").find("return arg0 + 1;"), std::string::npos)
       << Source;
-  EXPECT_NE(Body("natural_u32_to_s32").find("return (int32_t)(arg0 + 1);"),
+  EXPECT_NE(Body("natural_u32_to_s32")
+                .find("return __builtin_bit_cast(int32_t, arg0 + 1);"),
             std::string::npos)
       << Source;
   EXPECT_EQ(Body("narrow_u16_add").find("return arg0 + 1;"), std::string::npos)
@@ -291,6 +293,242 @@ TEST(HighCIntegerWidths, ArithmeticWrapsBeforeWideningWithoutSignedOverflow) {
                     true);
 }
 
+TEST(HighCIntegerWidths, MemoryUpdatesWrapAtTheirStoredWidth) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    const unsigned Bits = Width * 8;
+    const llvm::APInt Max = llvm::APInt::getAllOnes(Bits);
+    const llvm::APInt Values[] = {llvm::APInt(Bits, 0), llvm::APInt(Bits, 1),
+                                  Max.lshr(1), Max.lshr(1) + 1, Max};
+    for (bool Signed : {false, true})
+      for (bool ThroughLocal : {false, true})
+        for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB}) {
+          const auto Type = NdType::makeInt(Width, Signed);
+          const auto Pointer = NdType::makePtr(NdType::makeVoid());
+          HighFunc Func;
+          Func.Name = "update" + std::to_string(Bits) + (Signed ? "_s" : "_u") +
+                      (ThroughLocal ? "_local" : "_direct") +
+                      (Op == NdOp::INT_ADD ? "_add" : "_sub");
+          Func.ReturnType = NdType::makeVoid();
+          Func.Params = {{"arg0", Pointer}};
+          auto Address = parameter(0, Pointer);
+          auto Base = HighExpr::makeLoad(Address, Type);
+          if (ThroughLocal) {
+            MedVar Local;
+            Local.Kind = MedVar::Temp;
+            Local.Id = 17;
+            Local.Size = Width;
+            Local.TheArch = Arch::X64;
+            HighStmt Load;
+            Load.Kind = StmtKind::Assign;
+            Load.Dst = HighExpr::makeVar(Local, Type);
+            Load.Val = Base;
+            Func.Body.push_back(std::move(Load));
+            Base = HighExpr::makeVar(Local, Type);
+          }
+          auto Updated =
+              HighExpr::makeBinop(Op, Base, HighExpr::makeConst(3, Width));
+          Updated->Type = Type;
+          HighStmt Store;
+          Store.Kind = StmtKind::Store;
+          Store.StoreAddr = Address;
+          Store.StoreVal = Updated;
+          Func.Body.push_back(std::move(Store));
+          for (const auto &Value : Values) {
+            const auto Expected = Op == NdOp::INT_ADD ? Value + 3 : Value - 3;
+            Checks +=
+                "    { " + typeToC(Type) + " value = " +
+                argument(Type, std::to_string(Value.getZExtValue()).c_str()) +
+                "; " + Func.Name + "(&value); check_value(\"" + Func.Name +
+                "\", (uint64_t)(" + typeToC(NdType::makeInt(Width, false)) +
+                ")value, UINT64_C(" + std::to_string(Expected.getZExtValue()) +
+                ")); }\n";
+          }
+          Functions.push_back(std::move(Func));
+        }
+  }
+  const auto Source = emitFunctions(Functions) + executionHarness(Checks);
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndExecute(Source, false, true, Optimization);
+}
+
+TEST(HighCIntegerWidths, NamedFieldArithmeticUsesModularOperations) {
+  std::vector<HighFunc> Functions;
+  std::string Declarations = "#include <stdint.h>\n";
+  std::string Checks;
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    const unsigned Bits = Width * 8;
+    const llvm::APInt Max = llvm::APInt::getAllOnes(Bits);
+    const llvm::APInt Values[] = {llvm::APInt(Bits, 0), llvm::APInt(Bits, 1),
+                                  Max.lshr(1), Max.lshr(1) + 1, Max};
+    for (bool Signed : {false, true}) {
+      const auto Type = NdType::makeInt(Width, Signed);
+      const auto RecordName =
+          "ArithmeticPair" + std::to_string(Bits) + (Signed ? "S" : "U");
+      auto Record = NdType::makeNamedRecord(RecordName, Width * 2);
+      Record->FieldDisplayNames = {"left", "right"};
+      Record->FieldDisplayOffsets = {0, Width};
+      Record->FieldDisplayTypes = {Type, Type};
+      const auto Pointer = NdType::makePtr(Record);
+      Declarations += "typedef struct { " + typeToC(Type) + " left, right; } " +
+                      RecordName + ";\n";
+      for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB, NdOp::INT_MULT}) {
+        HighFunc Func;
+        Func.Name = "field" + std::to_string(Bits) + (Signed ? "_s" : "_u") +
+                    std::to_string(static_cast<int>(Op));
+        Func.ReturnType = Type;
+        Func.Params = {{"arg0", Pointer}};
+        auto RightAddress =
+            HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
+                                HighExpr::makeConst(Width, 8));
+        RightAddress->Type = NdType::makeInt(8, false);
+        auto Value = HighExpr::makeBinop(
+            Op, HighExpr::makeLoad(parameter(0, Pointer), Type),
+            HighExpr::makeLoad(RightAddress, Type));
+        Value->Type = Type;
+        returnValue(Func, Value);
+        for (const auto &Left : Values)
+          for (const auto &Right : Values) {
+            const auto Expected = Op == NdOp::INT_ADD   ? Left + Right
+                                  : Op == NdOp::INT_SUB ? Left - Right
+                                                        : Left * Right;
+            Checks +=
+                "    { " + RecordName + " pair = {" +
+                argument(Type, std::to_string(Left.getZExtValue()).c_str()) +
+                ", " +
+                argument(Type, std::to_string(Right.getZExtValue()).c_str()) +
+                "}; check_value(\"" + Func.Name + "\", (uint64_t)(" +
+                typeToC(NdType::makeInt(Width, false)) + ")" + Func.Name +
+                "(&pair), UINT64_C(" + std::to_string(Expected.getZExtValue()) +
+                ")); }\n";
+          }
+        Functions.push_back(std::move(Func));
+      }
+    }
+  }
+  const auto Source =
+      Declarations + emitFunctions(Functions) + executionHarness(Checks);
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndExecute(Source, false, true, Optimization);
+}
+
+TEST(HighCIntegerWidths, MemoryUpdateRetainsNarrowedOperandViews) {
+  std::vector<HighFunc> Functions;
+  std::string Checks;
+  const auto U8 = NdType::makeInt(1, false);
+  const auto U64 = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  for (bool ThroughLocal : {false, true}) {
+    HighFunc Func;
+    Func.Name = ThroughLocal ? "update_narrow_local" : "update_narrow_direct";
+    Func.ReturnType = NdType::makeVoid();
+    Func.Params = {{"arg0", Pointer}};
+    auto Address = parameter(0, Pointer);
+    auto Narrow = std::make_shared<HighExpr>();
+    Narrow->Kind = ExprKind::Cast;
+    Narrow->Type = Narrow->CastTo = U8;
+    Narrow->Operands = {HighExpr::makeLoad(Address, U64)};
+    auto Base = HighExpr::makeUnary(NdOp::INT_ZEXT, Narrow);
+    Base->Type = U64;
+    if (ThroughLocal) {
+      MedVar Local;
+      Local.Kind = MedVar::Temp;
+      Local.Id = 23;
+      Local.Size = 8;
+      Local.TheArch = Arch::X64;
+      HighStmt Load;
+      Load.Kind = StmtKind::Assign;
+      Load.Dst = HighExpr::makeVar(Local, U64);
+      Load.Val = Base;
+      Func.Body.push_back(std::move(Load));
+      Base = HighExpr::makeVar(Local, U64);
+    }
+    auto Updated =
+        HighExpr::makeBinop(NdOp::INT_ADD, Base, HighExpr::makeConst(3, 8));
+    Updated->Type = U64;
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = Address;
+    Store.StoreVal = Updated;
+    Func.Body.push_back(std::move(Store));
+    for (uint64_t Input : {UINT64_C(0x180), UINT64_C(0xffff)})
+      Checks += "    { uint64_t value = UINT64_C(" + std::to_string(Input) +
+                "); " + Func.Name + "(&value); check_value(\"" + Func.Name +
+                "\", value, UINT64_C(" + std::to_string((Input & 0xff) + 3) +
+                ")); }\n";
+    Functions.push_back(std::move(Func));
+  }
+  const auto Source = emitFunctions(Functions) + executionHarness(Checks);
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndExecute(Source, false, true, Optimization);
+}
+
+TEST(HighCIntegerWidths, NamedFieldUpdatesPreserveAdjacentFields) {
+  std::vector<HighFunc> Functions;
+  std::string Declarations = "#include <stdint.h>\n";
+  std::string Checks;
+  for (uint16_t Width : {1, 2, 4, 8}) {
+    const unsigned Bits = Width * 8;
+    const llvm::APInt Max = llvm::APInt::getAllOnes(Bits);
+    const llvm::APInt Values[] = {llvm::APInt(Bits, 0), llvm::APInt(Bits, 1),
+                                  Max.lshr(1), Max.lshr(1) + 1, Max};
+    for (bool Signed : {false, true}) {
+      const auto Type = NdType::makeInt(Width, Signed);
+      const auto Unsigned = typeToC(NdType::makeInt(Width, false));
+      const auto RecordName =
+          "UpdateFields" + std::to_string(Bits) + (Signed ? "S" : "U");
+      auto Record = NdType::makeNamedRecord(RecordName, Width * 3);
+      Record->FieldDisplayNames = {"before", "value", "after"};
+      Record->FieldDisplayOffsets = {0, Width,
+                                     static_cast<uint16_t>(Width * 2)};
+      Record->FieldDisplayTypes = {Type, Type, Type};
+      const auto Pointer = NdType::makePtr(Record);
+      Declarations += "typedef struct { " + typeToC(Type) +
+                      " before, value, after; } " + RecordName + ";\n";
+      for (NdOp Op : {NdOp::INT_ADD, NdOp::INT_SUB}) {
+        HighFunc Func;
+        Func.Name = "update_fields" + std::to_string(Bits) +
+                    (Signed ? "_s" : "_u") +
+                    (Op == NdOp::INT_ADD ? "_add" : "_sub");
+        Func.ReturnType = NdType::makeVoid();
+        Func.Params = {{"arg0", Pointer}};
+        auto Address = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Pointer),
+                                           HighExpr::makeConst(Width, 8));
+        Address->Type = NdType::makeInt(8, false);
+        auto Value = HighExpr::makeBinop(Op, HighExpr::makeLoad(Address, Type),
+                                         HighExpr::makeConst(3, Width));
+        Value->Type = Type;
+        HighStmt Store;
+        Store.Kind = StmtKind::Store;
+        Store.StoreAddr = Address;
+        Store.StoreVal = Value;
+        Func.Body.push_back(std::move(Store));
+        for (const auto &Input : Values) {
+          const auto Expected = Op == NdOp::INT_ADD ? Input + 3 : Input - 3;
+          Checks +=
+              "    { " + RecordName + " fields = {" + argument(Type, "0x5a") +
+              ", " +
+              argument(Type, std::to_string(Input.getZExtValue()).c_str()) +
+              ", " + argument(Type, "0xa5") + "}; " + Func.Name +
+              "(&fields); check_value(\"" + Func.Name + "\", (uint64_t)(" +
+              Unsigned + ")fields.value, UINT64_C(" +
+              std::to_string(Expected.getZExtValue()) + ")); " +
+              "check_value(\"before\", (uint64_t)(" + Unsigned +
+              ")fields.before, UINT64_C(0x5a)); " +
+              "check_value(\"after\", (uint64_t)(" + Unsigned +
+              ")fields.after, UINT64_C(0xa5)); }\n";
+        }
+        Functions.push_back(std::move(Func));
+      }
+    }
+  }
+  const auto Source =
+      Declarations + emitFunctions(Functions) + executionHarness(Checks);
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndExecute(Source, false, true, Optimization);
+}
+
 TEST(HighCIntegerWidths, SignedOverflowPredicatesCompileAndMatchBoundaries) {
   std::vector<HighFunc> Functions;
   std::string Checks;
@@ -308,8 +546,8 @@ TEST(HighCIntegerWidths, SignedOverflowPredicatesCompileAndMatchBoundaries) {
       const auto Type = NdType::makeInt(Width, SignedCarrier);
       const auto BitArgument = [&](const llvm::APInt &BitsValue) {
         if (Width <= 8)
-          return argument(
-              Type, std::to_string(BitsValue.getZExtValue()).c_str());
+          return argument(Type,
+                          std::to_string(BitsValue.getZExtValue()).c_str());
         const auto Bits = "(((__uint128_t)UINT64_C(" +
                           std::to_string(BitsValue.lshr(64).getZExtValue()) +
                           ") << 64) | UINT64_C(" +
@@ -335,10 +573,10 @@ TEST(HighCIntegerWidths, SignedOverflowPredicatesCompileAndMatchBoundaries) {
             bool Overflow = false;
             [[maybe_unused]] const auto Result =
                 Op == NdOp::INT_SOVF ? Left.sadd_ov(Right, Overflow)
-                                      : Left.ssub_ov(Right, Overflow);
-            appendCheck(
-                Checks, Func.Name, BitArgument(Left) + ", " + BitArgument(Right),
-                Overflow ? "1" : "0");
+                                     : Left.ssub_ov(Right, Overflow);
+            appendCheck(Checks, Func.Name,
+                        BitArgument(Left) + ", " + BitArgument(Right),
+                        Overflow ? "1" : "0");
           }
         Functions.push_back(std::move(Func));
       }
@@ -1021,8 +1259,8 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
     return HighExpr::makeVar(Register, U64);
   };
   auto Pair = [&](int LowId, int HighId) {
-    auto Value = HighExpr::makeBinop(
-        NdOp::CONCAT, UnknownRegister(HighId), UnknownRegister(LowId));
+    auto Value = HighExpr::makeBinop(NdOp::CONCAT, UnknownRegister(HighId),
+                                     UnknownRegister(LowId));
     Value->Type = NdType::makeInt(16, false);
     return Value;
   };
@@ -1032,19 +1270,19 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
     Func.ReturnType = NdType::makeVoid();
     HighStmt Call;
     Call.Kind = StmtKind::Call;
-    Call.CallExpr = HighExpr::makeCall(
-        "neverd_x64_syscall", 0,
-        {HighExpr::makeConst(Number, 8), HighExpr::makeConst(0, 8),
-         Pair(6, 2), Pair(10, 8), UnknownRegister(9)});
+    Call.CallExpr = HighExpr::makeCall("neverd_x64_syscall", 0,
+                                       {HighExpr::makeConst(Number, 8),
+                                        HighExpr::makeConst(0, 8), Pair(6, 2),
+                                        Pair(10, 8), UnknownRegister(9)});
     Call.CallExpr->IntrinsicId = Intrinsic::X64Syscall;
     Call.CallExpr->Type = NdType::makeInt(16, false);
     Func.Body.push_back(std::move(Call));
     return Func;
   };
 
-  const std::string Source = emitFunctions(
-      {MakeCall(60, "call_exit"), MakeCall(231, "call_exit_group"),
-       MakeCall(39, "call_getpid")});
+  const std::string Source = emitFunctions({MakeCall(60, "call_exit"),
+                                            MakeCall(231, "call_exit_group"),
+                                            MakeCall(39, "call_getpid")});
   EXPECT_NE(Source.find("neverd_x64_syscall(60, 0, 0, 0, 0)"),
             std::string::npos)
       << Source;
@@ -1058,9 +1296,8 @@ TEST(HighCIntegerWidths, LinuxX64ExitOmitsUnusedUnknownRegisterInputs) {
 #if defined(__x86_64__) && defined(__linux__)
   compileAndExecute(Source + "int main(void) { call_exit(); return 99; }\n",
                     false);
-  compileAndExecute(Source +
-                        "int main(void) { call_exit_group(); return 99; }\n",
-                    false);
+  compileAndExecute(
+      Source + "int main(void) { call_exit_group(); return 99; }\n", false);
 #endif
 }
 

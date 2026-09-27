@@ -84,7 +84,8 @@ TEST(SessionInterpreterRecovery, RejectsUnknownFlagsWithoutPublishingSource) {
 
 TEST(SessionInterpreterRecovery, NullSessionClearsTheReportDestination) {
   const char *Report = "previous";
-  EXPECT_EQ(neverd_devirtualize_source_v1(nullptr, 0, nullptr, &Report), nullptr);
+  EXPECT_EQ(neverd_devirtualize_source_v1(nullptr, 0, nullptr, &Report),
+            nullptr);
   EXPECT_EQ(Report, nullptr);
 }
 

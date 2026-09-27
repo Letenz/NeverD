@@ -431,9 +431,11 @@ int runDecompile(neverd_session_t Sess) {
     WithColor::error() << "--devirtualize requires --func and C output\n";
     return 1;
   }
-  if (!Devirtualize && (!VMControlRegisters.empty() || !VMControlFrameSlots.empty() || !VMRecoveryReport.empty() ||
-      VMMaxNodes.getNumOccurrences() || VMMaxContexts.getNumOccurrences() ||
-      VMMaxOperations.getNumOccurrences())) {
+  if (!Devirtualize &&
+      (!VMControlRegisters.empty() || !VMControlFrameSlots.empty() ||
+       !VMRecoveryReport.empty() || VMMaxNodes.getNumOccurrences() ||
+       VMMaxContexts.getNumOccurrences() ||
+       VMMaxOperations.getNumOccurrences())) {
     WithColor::error() << "VM recovery options require --devirtualize\n";
     return 1;
   }
@@ -479,7 +481,8 @@ int runDecompile(neverd_session_t Sess) {
         if (Parts.first.empty() || Parts.second.empty() ||
             Parts.first.getAsInteger(0, Offset) ||
             Parts.second.getAsInteger(0, Bytes) || !Bytes || Bytes > 8) {
-          WithColor::error() << "--vm-control-stack expects signed-offset:bytes (1..8)\n";
+          WithColor::error()
+              << "--vm-control-stack expects signed-offset:bytes (1..8)\n";
           return 1;
         }
         FrameSlots.push_back({Offset, static_cast<uint16_t>(Bytes), 0});
@@ -501,7 +504,8 @@ int runDecompile(neverd_session_t Sess) {
         std::error_code EC;
         raw_fd_ostream OS(VMRecoveryReport, EC);
         if (EC) {
-          WithColor::error() << "cannot write recovery report: " << EC.message() << "\n";
+          WithColor::error()
+              << "cannot write recovery report: " << EC.message() << "\n";
           neverd_free_string(Report);
           neverd_free_string(Source);
           return 1;

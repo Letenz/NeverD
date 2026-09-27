@@ -21,7 +21,8 @@ namespace neverd::analysis {
 /// target range, including addresses computed from external integers, is
 /// disjoint from the entry return-address slot. This is an environment
 /// precondition, not a consequence of absent frame provenance. Root-derived
-/// writes must prove disjointness; stack pivots and return dispatch are refused.
+/// writes must prove disjointness; stack pivots and return dispatch are
+/// refused.
 SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});

@@ -9,8 +9,8 @@
 
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
-#include "neverd/loader/ExceptionWindowsEH.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/ExceptionWindowsEH.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/BinaryFormat/COFF.h"
@@ -18,6 +18,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
 #include <array>
@@ -346,6 +347,17 @@ TEST_F(COFFFunctionListingTest,
   EXPECT_TRUE(One->Raw.empty())
       << "--func PE load must not memcpy the whole image into BinaryImage.Raw";
   EXPECT_FALSE(All->Raw.empty());
+  ASSERT_TRUE(One->InputFileSHA256.has_value());
+  EXPECT_EQ(One->InputFileSHA256, All->InputFileSHA256);
+  EXPECT_EQ(*One->InputFileSHA256, llvm::SHA256::hash(Bytes));
+  // Evidence belongs to the consumed buffer, even if the locator later names
+  // a different file. Reporting must not reopen that path to obtain a digest.
+  {
+    std::ofstream Replaced(Path, std::ios::binary | std::ios::trunc);
+    Replaced << "a different file at the same path";
+    ASSERT_TRUE(Replaced.good());
+  }
+  EXPECT_EQ(*One->InputFileSHA256, llvm::SHA256::hash(Bytes));
 
   ASSERT_TRUE(coff_loader::ensureX64RuntimeFunction(*One, Second));
   ASSERT_NE(One->ExceptionMetadata.findFunction(Second), nullptr);

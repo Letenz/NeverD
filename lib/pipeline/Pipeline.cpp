@@ -201,7 +201,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.InterpreterSpecialization &&
       (Opts.PatchMode || Opts.OnlyFunctionEntries.size() != 1 ||
        Img.Arch != Arch::X64)) {
-    Result.Error = "interpreter recovery requires one x64 entry and source/lift mode";
+    Result.Error =
+        "interpreter recovery requires one x64 entry and source/lift mode";
     return Result;
   }
 
@@ -356,13 +357,13 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
           }
         }
         size_t Before = Result.LowFuncs.size();
-        Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
-                                             Result.LowFuncs.end(),
-                                             [&](const LowFunc &LF) {
-                                               return JTTargets.count(LF.Entry) &&
-                                                      LF.JumpTables.empty();
-                                             }),
-                              Result.LowFuncs.end());
+        Result.LowFuncs.erase(
+            std::remove_if(Result.LowFuncs.begin(), Result.LowFuncs.end(),
+                           [&](const LowFunc &LF) {
+                             return JTTargets.count(LF.Entry) &&
+                                    LF.JumpTables.empty();
+                           }),
+            Result.LowFuncs.end());
         size_t Removed = Before - Result.LowFuncs.size();
         if (Removed > 0)
           LLVM_DEBUG(llvm::dbgs()
