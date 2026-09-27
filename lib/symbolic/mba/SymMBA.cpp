@@ -37,6 +37,7 @@
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -280,6 +281,113 @@ SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Solved == E ? solveMasked(Ctx, E, Opts, Budget, Rep) : Solved;
 }
 
+// Child rewrites can hide a shared arithmetic input in one bitwise use while
+// its other uses retain the original spelling. Keep a whole-region reading
+// there; complements alone remain with the cheaper arithmetic reading.
+bool hasBitwiseInteraction(const SymContext &Ctx, SymRef R) {
+  auto Bitwise = [&](SymRef N) {
+    SymOp Op = Ctx.op(N);
+    return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor;
+  };
+  return Bitwise(R) || llvm::any_of(Ctx.operands(R), Bitwise);
+}
+
+// A candidate can introduce a factored sum that was absent from the original
+// postorder. Visit its unmeasured nodes once, reusing exact child replacements.
+// The snapshot below is deliberately not extended with nodes emitted by this
+// visit: this is one bounded refinement, not a whole-graph fixed point.
+SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                       llvm::ArrayRef<uint32_t> OriginalOrder,
+                       llvm::DenseMap<uint32_t, SymRef> &Solved,
+                       WorkBudget &Budget, size_t &Storage, SolveReport &Rep) {
+  auto Known = [&](SymRef R) {
+    auto It = Solved.find(R.index());
+    if (It != Solved.end())
+      return It->second;
+    if (R.index() <= OriginalOrder.back() &&
+        std::binary_search(OriginalOrder.begin(), OriginalOrder.end(),
+                           R.index()))
+      return R;
+    return SymRef();
+  };
+  if (SymRef R = Known(E); R.isValid())
+    return readingCost(Ctx, R) < readingCost(Ctx, E) ? R : E;
+  // An emitted root whose children already have their final spelling has no
+  // new internal region to visit. Constants and scaled variables are also
+  // builder-normalized leaves of this traversal.
+  auto Finished = [&](SymRef R) {
+    if (SymRef K = Known(R); K.isValid())
+      return K == R;
+    return Ctx.numOperands(R) == 0 ||
+           (Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+            Ctx.isConst(Ctx.operand(R, 0)) && Ctx.isVar(Ctx.operand(R, 1)));
+  };
+  if (llvm::all_of(Ctx.operands(E), Finished))
+    return E;
+  auto Stop = [&]() {
+    Rep.BudgetExhausted = true;
+    return E;
+  };
+  llvm::DenseSet<uint32_t> Seen;
+  llvm::SmallVector<SymRef, 16> Pending{E};
+  llvm::SmallVector<uint32_t, 16> Order;
+  while (!Pending.empty()) {
+    SymRef R = Pending.pop_back_val();
+    if (!Budget.consume())
+      return Stop();
+    if (Known(R).isValid() || Seen.contains(R.index()))
+      continue;
+    const size_t Children = Ctx.numOperands(R);
+    // Charge cumulative scratch and memo storage, including edge slots,
+    // before extending either collection.
+    constexpr size_t NodeBytes = 128;
+    if (Storage < NodeBytes ||
+        Children > (Storage - NodeBytes) / sizeof(SymRef))
+      return Stop();
+    if (!Budget.consume(Children))
+      return Stop();
+    Storage -= NodeBytes + Children * sizeof(SymRef);
+    Seen.insert(R.index());
+    Order.push_back(R.index());
+    Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
+  }
+  llvm::sort(Order);
+  for (uint32_t Index : Order) {
+    SymRef R(Index);
+    llvm::SmallVector<SymRef, 8> Ops;
+    bool Changed = false;
+    for (SymRef Child : Ctx.operands(R)) {
+      auto It = Solved.find(Child.index());
+      SymRef Next = It == Solved.end() ? Child : It->second;
+      Changed |= Next != Child;
+      Ops.push_back(Next);
+    }
+    SymRef Rebuilt = Changed ? Ctx.rebuild(R, Ops) : R;
+    SymRef Best =
+        readingCost(Ctx, Rebuilt) <= readingCost(Ctx, R) ? Rebuilt : R;
+    // The emitted root was just measured by the caller. Its children must
+    // change before another measurement can reveal anything new there.
+    if ((R != E || Changed) && canMeasureAtRoot(Ctx, Rebuilt)) {
+      if (Budget.exhausted() || !Budget.consume(Ctx.dagSize(Rebuilt)))
+        return Stop();
+      SolveReport Local;
+      SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Local);
+      Rep.BudgetExhausted |= Local.BudgetExhausted;
+      if (readingCost(Ctx, Measured) < readingCost(Ctx, Best)) {
+        Best = Measured;
+        Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
+        if (Local.Evidence == MBAEvidence::Samples)
+          Rep.Evidence = MBAEvidence::Samples;
+      }
+      if (Budget.exhausted())
+        return Stop();
+    }
+    Solved[Index] = Best;
+  }
+  SymRef Best = Solved.lookup(E.index());
+  return readingCost(Ctx, Best) < readingCost(Ctx, E) ? Best : E;
+}
+
 } // namespace
 
 const char *mbaOutcomeName(MBAOutcome Outcome) {
@@ -356,6 +464,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   llvm::DenseMap<uint32_t, SymRef> Solved;
   WorkBudget Budget(Opts.MaxWork);
   bool Skipped = false;
+  size_t RefinementStorage = Opts.MaxTableBytes;
   // The weakest evidence any layer rested on is what the whole answer rests on,
   // because the layers above were measured over what it produced.
   bool AnySampled = false;
@@ -391,9 +500,14 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       SolveReport Rep;
       SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep);
       if (Measured != Rebuilt) {
-        Rebuilt = Measured;
+        SolveReport Refined;
+        Rebuilt = refineCandidate(Ctx, Measured, Opts, Order, Solved, Budget,
+                                  RefinementStorage, Refined);
         Result.NumAtoms = std::max(Result.NumAtoms, Rep.NumAtoms);
+        Result.NumAtoms = std::max(Result.NumAtoms, Refined.NumAtoms);
         AnySampled |= Rep.Evidence == MBAEvidence::Samples;
+        AnySampled |= Refined.Evidence == MBAEvidence::Samples;
+        Skipped |= Refined.BudgetExhausted;
       } else if (Rep.Outcome == MBAOutcome::BudgetExhausted) {
         Skipped = true;
       } else if (Rep.Outcome == MBAOutcome::TooManyInputs &&
@@ -407,21 +521,34 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       // the original region as a second exact reading before discarding it.
       // The main reading gets first use of the shared work budget.
       SolveReport OriginalRep;
-      SymRef Original = ChildrenChanged && !Budget.exhausted()
-                            ? solveArithmetic(Ctx, R, Opts, Budget, OriginalRep)
-                            : R;
+      const bool WholeRegion = ChildrenChanged && hasBitwiseInteraction(Ctx, R);
+      SymRef Original = R;
+      if (ChildrenChanged && !Budget.exhausted())
+        Original = WholeRegion
+                       ? solveRegionOrSplit(Ctx, R, Opts, Budget, OriginalRep)
+                       : solveArithmetic(Ctx, R, Opts, Budget, OriginalRep);
       Skipped |= OriginalRep.BudgetExhausted;
+      if (Original != R && !Budget.exhausted()) {
+        SolveReport Refined;
+        Original = refineCandidate(Ctx, Original, Opts, Order, Solved, Budget,
+                                   RefinementStorage, Refined);
+        OriginalRep.NumAtoms = std::max(OriginalRep.NumAtoms, Refined.NumAtoms);
+        if (Refined.Evidence == MBAEvidence::Samples)
+          OriginalRep.Evidence = MBAEvidence::Samples;
+        Skipped |= Refined.BudgetExhausted;
+      }
       if (Original != R &&
           readingCost(Ctx, Original) < readingCost(Ctx, Rebuilt)) {
         // Arithmetic cancellation may expose a fresh linear MBA. It was not
         // in the original postorder, so finish that region before selecting it.
         SolveReport Refined;
-        if (!Budget.exhausted())
+        if (!WholeRegion && !Budget.exhausted())
           Original = solveRegionOrSplit(Ctx, Original, Opts, Budget, Refined);
         Rebuilt = Original;
         Result.NumAtoms =
             std::max({Result.NumAtoms, OriginalRep.NumAtoms, Refined.NumAtoms});
         AnySampled |= Refined.Evidence == MBAEvidence::Samples;
+        AnySampled |= OriginalRep.Evidence == MBAEvidence::Samples;
         Skipped |= Refined.BudgetExhausted;
       }
     } else {
