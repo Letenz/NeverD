@@ -351,6 +351,52 @@ TEST(NativeSourceHints, UIColorIntAlphaAllocatorUsesMixedSwiftRegisters) {
       sdk::swiftMangledUIColorIntAlphaAllocatorSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, UIColorIntAllocatorAuthenticatesNumericSwiftInput) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$sSo7UIColorC13WMFComponentsEyABSicfC", 0x1000, 0, true});
+  const auto Hint =
+      sdk::swiftMangledUIColorIntAllocatorSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  ASSERT_EQ(Hint->Parameters.size(), 2U);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[1].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name =
+      "_$sSo7UIColorC13WMFComponentsE_5alphaABSi_12CoreGraphics7CGFloatVtcfC";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo7NSColorC13WMFComponentsEyABSicfC";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo7UIColorC13WMFComponentsEyABSicfc";
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledUIColorIntAllocatorSourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints, ZeroArgClassVoidAndBoolMethodsUseSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;

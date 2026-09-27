@@ -509,6 +509,55 @@ struct Fixture {
   }
 };
 
+TEST(ObjCSourceBindings,
+     AuthenticatedSwiftIntegerCallKeepsAddressShapedScalarLiteral) {
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    Fixture F;
+    F.Image.ObjCSourceReferences.clear();
+    auto Literal = HighExpr::makeConst(0x1040, 8);
+    auto Binding = std::make_shared<SourceCallTypeHint>();
+    Binding->CallKind = SourceCallTypeHint::Kind::Native;
+    Binding->TargetAddress = 0x2000;
+    auto &Signature = Binding->Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+    Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+    Signature.Parameters = {{"color", NdType::makeInt(8, true)},
+                            {"self", NdType::makePtr(NdType::makeVoid())}};
+    Signature.Parameters[1].TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    std::string Error;
+    ASSERT_TRUE(assignDarwinSwiftSourceABI(Signature, F.Image.Arch, Error))
+        << Error;
+    auto Call = HighExpr::makeCall("color_init", 0x2000,
+                                   {Literal, HighExpr::makeConst(0, 8)});
+    Call->Type = Signature.ReturnType;
+    Call->SourceCallHint = Binding;
+    F.Function.ReturnType = Signature.ReturnType;
+    F.Function.Body[0].RetVal = Call;
+    if (Mutation == 1)
+      Literal->ConstProvenance = ConstantAddressProvenance::Scalar;
+    if (Mutation == 2)
+      Literal->ConstProvenance = ConstantAddressProvenance::DataAddress;
+    if (Mutation == 3)
+      Literal->AddressOwnerVA = 0x1040;
+    if (Mutation == 4)
+      Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    if (Mutation == 5)
+      Signature.Parameters[0].Type = NdType::makePtr(NdType::makeVoid());
+    if (Mutation == 6)
+      Call->CallAddr += 4;
+    const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+    if (Mutation < 2) {
+      EXPECT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+      ASSERT_EQ(Result.Function.Body[0].RetVal->Operands.size(), 2U);
+      EXPECT_EQ(Result.Function.Body[0].RetVal->Operands[0]->ConstVal, 0x1040U);
+    } else {
+      EXPECT_FALSE(Result.Limitation.empty());
+    }
+  }
+}
+
 struct SwiftTypeMetadataFixture {
   BinaryImage Image;
   HighFunc Function;

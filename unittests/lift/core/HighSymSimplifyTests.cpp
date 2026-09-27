@@ -200,6 +200,26 @@ TEST(HighSymSimplify, CollapsesAnExpressionThatIsSecretlyConstant) {
   EXPECT_EQ(returnedExpr(B.finish(NdOp::INT_SUB, {LessX, Y})), "0");
 }
 
+TEST(HighSymSimplify, FoldedScalarLiteralsRetainNumericProvenance) {
+  using P = ConstantAddressProvenance;
+  for (P FirstProvenance : {P::Scalar, P::Unknown}) {
+    auto Color = HighExpr::makeBinop(
+        NdOp::INT_OR,
+        HighExpr::makeBinop(NdOp::INT_OR,
+                            HighExpr::makeConst(0x3B0000, 8, FirstProvenance),
+                            HighExpr::makeConst(0x5B00, 8, P::Scalar)),
+        HighExpr::makeConst(0x1B, 8, P::Scalar));
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = std::move(Color);
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    ASSERT_EQ(Body[0].RetVal->Kind, ExprKind::Const);
+    EXPECT_EQ(Body[0].RetVal->ConstVal, 0x3B5B1BU);
+    EXPECT_EQ(Body[0].RetVal->ConstProvenance, FirstProvenance);
+  }
+}
+
 TEST(HighSymSimplify, LeavesAnOrdinaryExpressionAlone) {
   // Nothing here is hiding anything, and the pass must not churn it.
   FunctionBuilder B;

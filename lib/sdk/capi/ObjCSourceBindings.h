@@ -4497,6 +4497,40 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             Parameters[Index].Type->Kind == NdTypeKind::Ptr)
           OperandAddress = true;
       }
+      // A compiler-authenticated Swift.Int argument is numeric even when a
+      // folded color literal happens to equal an address in the image. Do not
+      // grant this to inferred native integer carriers or address-provenance
+      // constants: those may still carry pointer identity.
+      if (Operand && Operand->Kind == ExprKind::Const &&
+          Operand->AddressOwnerVA == InvalidVA &&
+          (Operand->ConstProvenance == ConstantAddressProvenance::Unknown ||
+           Operand->ConstProvenance == ConstantAddressProvenance::Scalar) &&
+          !OperandAddress && !MemoryAddress &&
+          Expression->Kind == ExprKind::Call && !Expression->IsIndirectCall &&
+          Expression->SourceCallHint &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::Native &&
+          Expression->CallAddr == Expression->SourceCallHint->TargetAddress &&
+          Expression->SourceCallHint->Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+          Expression->SourceCallHint->Signature.HasExplicitABI &&
+          Expression->SourceCallHint->Signature.Convention ==
+              SourceFunctionTypeHint::ConventionKind::Swift &&
+          Expression->Operands.size() ==
+              Expression->SourceCallHint->Signature.Parameters.size() &&
+          Index < Expression->SourceCallHint->Signature.Parameters.size() &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type->Kind ==
+              NdTypeKind::Int &&
+          Operand->Type && Operand->Type->Kind == NdTypeKind::Int &&
+          Operand->Type->Size ==
+              Expression->SourceCallHint->Signature.Parameters[Index]
+                  .Type->Size) {
+        auto Scalar = std::make_shared<HighExpr>(*Operand);
+        Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+        Operand = Copy(Scalar, Depth + 1, true, false, false);
+        continue;
+      }
       const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
                             Expression->Kind == ExprKind::UnaryOp) &&
                            isNumericConstantOperand(Expression->Op, Index);

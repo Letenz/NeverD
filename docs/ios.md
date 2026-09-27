@@ -381,3 +381,7 @@ Swift value-witness call recognition now traces authenticated immutable image me
 Swift protocol witness-table addresses can be projected when the Mach-O image provides exactly one exported protocol-witness-table symbol at the address, in readable storage that becomes read-only after relocations, under an unambiguous two-level namespace. Generated C refers to that symbol instead of embedding the image address. Private tables, aliases, mutable storage, and numeric lookalikes remain unsupported.
 
 Direct references to exported Swift struct and enum metadata also use their exact symbol identity when the immutable record has the matching kind marker and points to its exported nominal descriptor. The generated C does not copy metadata bytes. Private symbols, aliases, mismatched descriptors, mutable storage, and scalar lookalikes remain unbound.
+
+The ARM64 Swift `UIColor.init(_ value: Int)` extension gets a source ABI only after its complete mangled allocator shape, unique function symbol, and native pipeline audit agree. Its integer color argument remains numeric when a folded literal happens to fall inside an image section. Address-provenance values and inferred native integer carriers still require ordinary relocation proof.
+
+HighIR preserves scalar provenance across a symbolic fold only when every contributing literal, including those reached through visible local definitions, is already a proven scalar. Unknown or address-derived inputs do not gain numeric provenance.
