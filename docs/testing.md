@@ -91,8 +91,8 @@ checks load identity/order, volatile/atomic state and poison boundaries.
 function addresses, mapping-only objects, mixed-image decoding, cross-mode
 calls with modular MBA arithmetic, wide Thumb branches, HighC/LLVMC
 execution, forwarded argument chains, halfword-aligned interworking targets,
-and rejection of contradictory modes at one address. A sectionless and
-symbolless linked ELF also checks both
+preserved conditional ARM calls, and rejection of contradictory modes or
+malformed call relocations. A sectionless and symbolless linked ELF checks both
 directions of direct ARM/Thumb calls, conditional Thumb fallthrough, unknown
 unreached bytes, and executable HighC/LLVMC output before and after rewriting.
 A mapped ELF checks generated executable bytes outside its section table,

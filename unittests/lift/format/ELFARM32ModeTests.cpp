@@ -237,6 +237,68 @@ thumb_target:
   EXPECT_EQ(Dec.currentMode(), InstructionMode::Thumb);
 }
 
+TEST_F(ELFARM32ModeTest, RejectsConditionalCallRelocation) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM relocation fixture requires cross-target clang";
+  auto Image = loadAssembly(R"(
+.syntax unified
+.section .text.entry,"ax",%progbits
+.arm
+.globl cond_entry
+.type cond_entry,%function
+cond_entry:
+  cmp r0, #0
+call_site:
+  .inst 0x1b000000
+  bx lr
+.reloc call_site, R_ARM_CALL, arm_leaf
+.size cond_entry, .-cond_entry
+.section .text.leaf,"ax",%progbits
+.arm
+.globl arm_leaf
+.type arm_leaf,%function
+arm_leaf:
+  add r0, r0, #1
+  bx lr
+.size arm_leaf, .-arm_leaf
+)");
+  ASSERT_FALSE(static_cast<bool>(Image));
+  EXPECT_NE(
+      llvm::toString(Image.takeError()).find("malformed ARM call relocation"),
+      std::string::npos);
+}
+
+TEST_F(ELFARM32ModeTest, PreservesConditionalBranchRelocation) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM relocation fixture requires cross-target clang";
+  auto Image = loadAssembly(R"(
+.syntax unified
+.section .text.entry,"ax",%progbits
+.arm
+.globl cond_entry
+.type cond_entry,%function
+cond_entry:
+  cmp r0, #0
+  blne arm_leaf
+  bx lr
+.size cond_entry, .-cond_entry
+.section .text.leaf,"ax",%progbits
+.arm
+.globl arm_leaf
+.type arm_leaf,%function
+arm_leaf:
+  add r0, r0, #1
+  bx lr
+.size arm_leaf, .-arm_leaf
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const auto *Call = Image->readVA(4, sizeof(uint32_t));
+  ASSERT_NE(Call, nullptr);
+  uint32_t Encoding = 0;
+  std::memcpy(&Encoding, Call, sizeof(Encoding));
+  EXPECT_EQ(Encoding & 0xff000000u, 0x1b000000u);
+}
+
 TEST_F(ELFARM32ModeTest, FindsDirectInterworkingCallsWithoutSectionMetadata) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";

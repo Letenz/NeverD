@@ -1243,6 +1243,13 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
               static_cast<int64_t>(BranchS) + Addend - static_cast<int64_t>(P);
           const bool WasBLX = (Insn & 0xfe000000u) == 0xfa000000u;
           const bool ToThumb = SymIsFunction ? (S & 1u) != 0 : WasBLX;
+          // BLX is unconditional; a malformed relocation must not erase a
+          // conditional BL's predicate while changing its target state.
+          if (RType == R_ARM_CALL && !WasBLX &&
+              (Insn & 0xff000000u) != 0xeb000000u)
+            return llvm::make_error<llvm::StringError>(
+                "elf: malformed ARM call relocation",
+                llvm::inconvertibleErrorCode());
           if (Disp < -(int64_t{1} << 25) || Disp >= (int64_t{1} << 25))
             return llvm::make_error<llvm::StringError>(
                 "elf: ARM branch relocation exceeds direct range",
