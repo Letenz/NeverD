@@ -41,10 +41,23 @@ SymRef SymContext::internMaskedSource(llvm::ArrayRef<SymRef> Source,
 bool SymContext::mergeMaskedOperands(llvm::SmallVectorImpl<SymRef> &Terms,
                                      bool RequireDisjoint) {
   unsigned MaskedCount = 0;
-  for (SymRef R : Terms)
-    if (hasConstantMask(*this, R) && ++MaskedCount == 2)
+  uint64_t CommonBits = ~uint64_t(0);
+  for (SymRef R : Terms) {
+    if (!hasConstantMask(*this, R))
+      continue;
+    if (RequireDisjoint) {
+      const SymNode &Mask = node(operand(R, 0));
+      CommonBits &=
+          Mask.Width <= 64 ? Mask.Aux : WideConsts[Mask.Aux].getRawData()[0];
+    }
+    ++MaskedCount;
+    if (MaskedCount >= 2 && (!RequireDisjoint || CommonBits == 0))
       break;
-  if (MaskedCount < 2)
+  }
+  // A common low-word bit prevents every pair from being disjoint. Ignoring
+  // higher words keeps this sufficient check allocation-free; its failure
+  // still requires grouping rather than assuming masks are disjoint.
+  if (MaskedCount < 2 || (RequireDisjoint && CommonBits != 0))
     return false;
 
   // AND is variadic, so its non-constant operand list identifies the source.
