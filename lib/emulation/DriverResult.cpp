@@ -586,6 +586,8 @@ llvm::json::Array pnpConfigurationJSON(const DriverOptions &Options) {
                             {field::InitialDevicePower, nullptr},
                             {field::InitialSystemPower, nullptr},
                             {field::InitialReportedDevicePower, nullptr}};
+    if (Device.ParentID)
+      Item[field::ParentID] = *Device.ParentID;
     if (Device.InitialDevicePower)
       Item[field::InitialDevicePower] =
           devicePowerName(*Device.InitialDevicePower);
@@ -743,12 +745,18 @@ std::string driverResultJSON(const DriverResult &Result) {
     llvm::json::Object Item{
         {field::ID, Device.ID},
         {field::PDO, Address(Device.PDO)},
+        {field::ParentID, nullptr},
+        {field::ParentPDO, nullptr},
         {field::AddDeviceStatus, nullptr},
         {field::Attached, Device.Attached},
         {field::PnpState, pnpStateName(Device.PnpState)},
         {field::ProviderPresent, Device.ProviderPresent},
         {field::DevicePower, devicePowerName(Device.DevicePower)},
         {field::SystemPower, systemPowerName(Device.SystemPower)}};
+    if (Device.ParentID)
+      Item[field::ParentID] = *Device.ParentID;
+    if (Device.ParentPDO)
+      Item[field::ParentPDO] = Address(*Device.ParentPDO);
     if (Device.AddDeviceStatus)
       Item[field::AddDeviceStatus] = *Device.AddDeviceStatus;
     PnpDevices.push_back(std::move(Item));
@@ -948,12 +956,18 @@ std::string driverResultJSON(const DriverResult &Result) {
           {field::SystemStateBefore, systemPowerName(Power.SystemStateBefore)},
           {field::SystemStateAfter, systemPowerName(Power.SystemStateAfter)},
           {field::RequestedDeviceObject, nullptr},
+          {field::WakeSourceDeviceID, nullptr},
+          {field::WakeSourcePDO, nullptr},
           {field::BusStatus, nullptr},
           {field::BusReceivedAt100ns, nullptr},
           {field::BusCompletedAt100ns, nullptr}};
       if (Power.RequestedDeviceObject)
         Observation[field::RequestedDeviceObject] =
             Address(*Power.RequestedDeviceObject);
+      if (Power.WakeSourceDeviceID)
+        Observation[field::WakeSourceDeviceID] = *Power.WakeSourceDeviceID;
+      if (Power.WakeSourcePDO)
+        Observation[field::WakeSourcePDO] = Address(*Power.WakeSourcePDO);
       if (Power.BusStatus)
         Observation[field::BusStatus] = *Power.BusStatus;
       if (Power.BusReceivedAt100ns)

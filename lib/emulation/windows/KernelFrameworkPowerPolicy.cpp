@@ -212,13 +212,23 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
         P.PowerUpRequested = true;
     } else {
       if (Field(policy::WakeDxState) != uint32_t(DevicePowerState::D3) ||
-          Field(policy::WakeUserControl) != policy::NoUserControl ||
-          uint16_t(Fields[policy::WakeChildren / sizeof(uint32_t)]))
-        return policyError(
-            "wake requires explicit D3 and no user or child-device policy");
+          Field(policy::WakeUserControl) != policy::NoUserControl)
+        return policyError("wake requires explicit D3 and no user override");
       if (Field(policy::WakeEnabled) > policy::UseDefault)
         return Result{windows::StatusInvalidParameter};
-      if (Field(policy::WakeEnabled)) {
+      auto ArmChildren = read(A[2] + policy::WakeChildren, sizeof(uint8_t));
+      if (!ArmChildren)
+        return ArmChildren.takeError();
+      auto Propagate = read(A[2] + policy::WakePropagate, sizeof(uint8_t));
+      if (!Propagate)
+        return Propagate.takeError();
+      if ((*ArmChildren || *Propagate) && !PowerHost.Children)
+        return policyError("child wake settings require explicit PDO topology");
+      if (*Propagate && !PowerHost.CompleteWakes)
+        return policyError("child wake propagation requires batch completion");
+      if ((*ArmChildren || *Propagate) && !PowerHost.CancelWakes)
+        return policyError("child wake settings require batch cancellation");
+      if (Field(policy::WakeEnabled) || *ArmChildren) {
         if (!PowerHost.CanWake)
           return policyError(
               "system wake settings require provider capabilities");
@@ -228,7 +238,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
         if (!*Capable)
           return Result{policy::StatusPowerStateInvalid};
       }
-      P.Wake = KernelPowerPolicy::WakeSettings{Field(policy::WakeEnabled) != 0};
+      P.Wake = KernelPowerPolicy::WakeSettings{
+          Field(policy::WakeEnabled) != 0, *ArmChildren != 0, *Propagate != 0};
     }
     return Result{0};
   }
@@ -301,24 +312,6 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
   if (D.Policy.Started &&
       (!D.InD0 || D.PowerQueuesHeld || D.Policy.SystemSleeping))
     D.Policy.PowerUpRequested = true;
-  return llvm::Error::success();
-}
-llvm::Error KernelFramework::powerPolicyWake(uint64_t PDO) {
-  auto Handle = PnpDeviceHandles.find(PDO);
-  if (Handle == PnpDeviceHandles.end())
-    return policyError("wake observation requires a framework PDO");
-  auto &P = Devices.at(Handle->second).Policy;
-  if (P.Armed == KernelPowerPolicy::WakeSource::None || P.WakeTriggered)
-    return policyError("wake signal requires one successfully armed source");
-  if (!PowerHost.FinishWake)
-    return policyError("wake signal lost its provider WAIT_WAKE bridge");
-  if (auto E = PowerHost.FinishWake(Devices.at(Handle->second).Wdm, true))
-    return E;
-  P.WakeTriggered = true;
-  P.IdleSince.reset();
-  P.PowerUpRequested = true;
-  // An Sx signal does not fabricate a system S0 transaction. The explicit
-  // system packet remains the authority that makes device power-up eligible.
   return llvm::Error::success();
 }
 llvm::Error KernelFramework::systemPowerPolicy(uint64_t PDO, bool Sleeping) {
@@ -422,7 +415,12 @@ llvm::Expected<bool> KernelFramework::systemSleepNeedsD0(uint64_t PDO) const {
   if (Handle == PnpDeviceHandles.end())
     return policyError("system sleep lost its framework PDO");
   const auto &D = Devices.at(Handle->second);
-  return !D.InD0 && ((D.Policy.Wake && D.Policy.Wake->Enabled) ||
+  auto Children = armedWakeChildren(Handle->second);
+  if (!Children)
+    return Children.takeError();
+  return !D.InD0 && ((D.Policy.Wake && (D.Policy.Wake->Enabled ||
+                                        (D.Policy.Wake->ArmForChildren &&
+                                         !Children->empty()))) ||
                      D.Policy.Armed != KernelPowerPolicy::WakeSource::None);
 }
 

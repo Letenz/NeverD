@@ -849,10 +849,8 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   auto Pending = dispatchPending(*Request, Request->StackCount - 1);
   if (!Pending)
     return Pending.takeError();
-  if (Request->DispatchReturned &&
-      Observation.DispatchStatus == StatusPending && !*Pending)
-    return ioError(
-        "pending dispatch completion requires propagation to the top stack");
+  if (auto E = validateCompletionPending(*Request, *Pending))
+    return E;
   auto Retiring = requestReleaseRanges(IRP);
   if (!Retiring)
     return Retiring.takeError();

@@ -270,6 +270,13 @@ private:
       KernelFramework::PowerPolicyHost::RequestMode Mode);
   llvm::Error armFrameworkWake(uint64_t Device, bool SystemSleep);
   llvm::Error finishFrameworkWake(uint64_t Device, bool Triggered);
+  llvm::Expected<uint64_t> preflightFrameworkWake(uint64_t PDO,
+                                                  uint32_t Status) const;
+  llvm::Error completeFrameworkWake(uint64_t PDO, uint32_t Status,
+                                    std::optional<uint64_t> SourcePDO);
+  llvm::Error completeFrameworkWakes(uint64_t SourceDevice,
+                                     llvm::ArrayRef<uint64_t> Devices);
+  llvm::Error cancelFrameworkWakes(llvm::ArrayRef<uint64_t> Devices);
   llvm::Error
   canArmPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events) const;
   llvm::Error
@@ -285,7 +292,11 @@ private:
     uint64_t PoFxHandle = 0;
   };
   std::vector<PowerPolicyEvent> PowerPolicyEvents;
-  std::map<uint64_t, uint64_t> FrameworkWakeIRPs;
+  struct FrameworkWake {
+    uint64_t IRP = 0;
+    uint64_t Epoch = 0;
+  };
+  std::map<uint64_t, FrameworkWake> FrameworkWakeIRPs;
   void configureFrameworkInterruptHost();
   void configureFrameworkLockHost();
   llvm::Expected<std::optional<uint32_t>>
@@ -568,6 +579,9 @@ private:
   // PnP provider identities persist after the concrete PDO is retired.
   struct PnpDeviceRecord {
     uint64_t PDO = 0;
+    // Devnode parent identity persists independently of attachment and
+    // presence.
+    uint64_t ParentPDO = 0;
     size_t ResultIndex = 0;
     DriverBusKind Bus = DriverBusKind::ResourceFree;
     std::optional<uint32_t> AddDeviceStatus;
@@ -590,6 +604,8 @@ private:
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
+  llvm::Error validatePnpTopologyTransition(uint64_t PDO,
+                                            DevicePnpRequest Minor) const;
   llvm::Error finishPnpRemoval(uint64_t PDO);
   llvm::Error retirePnpProvider(uint64_t PDO);
   llvm::Error snapshotPnpDevices();
@@ -753,6 +769,8 @@ private:
   llvm::Expected<std::optional<uint64_t>> advanceIRPCompletion(uint64_t Token);
   llvm::Expected<bool> dispatchPending(const ActiveRequest &Request,
                                        uint32_t Slot) const;
+  llvm::Error validateCompletionPending(const ActiveRequest &Request,
+                                        bool Pending) const;
   llvm::Error retireCompletedRequest(uint64_t IRP, uint8_t PriorityBoost);
   ActiveRequest *requestForIRP(uint64_t IRP);
   const ActiveRequest *requestForIRP(uint64_t IRP) const;

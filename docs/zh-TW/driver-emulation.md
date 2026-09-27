@@ -111,6 +111,8 @@ DriverEntry 成功後，每個設定的 PDO 執行一次 `AddDevice`，提供者
 
 報告於 `configuration.pnp_devices` 保留初始設定。觀測的 `pnp_devices` 包含 `id`、`pdo`、可空 `add_device_status`、目前 `attached`、`pnp_state` 與 `provider_present`；移除後 `attached` 為 false。AddDevice 階段為 `add_device:<ID>`，失敗影響 `scenario_success`，但不覆寫 DriverEntry 的 `nt_status`。每個要求新增可空 `device_id` 與 `pnp`；PnP 的 `file` 為 null。`pnp` 記錄 `minor`、`state_before`、`state_after`、可空 `bus_status`、`bus_received_at_100ns` 與 `bus_completed_at_100ns`。設定狀態僅在匯流排實際完成後成為觀測；接收時間獨立記錄。既有要求欄位型別不變。
 
+可選的 `parent_id` 以設定 ID 宣告裝置提供者的父節點；父節點可在陣列中較晚出現，省略則代表獨立根節點。原生與 JSON 預檢會在建立 PDO 前拒絕未知父節點、自我參照、循環及無效 ID。此圖不建立 WDM 附加鏈或 WDF 物件父子關係。報告中的 `parent_id` 與 `parent_pdo` 在任一提供者退役後仍保留原身分。 子節點 START 要求父節點仍存在、已 Started、處於實體 D0，且無未完成生命週期或電源轉換。父節點 STOP／SurpriseRemoval 要求子節點已離開活動 PnP 狀態並排空轉換與 WAIT_WAKE；父節點 REMOVE 要求所有子提供者先退役。不會隱含級聯處理。
+
 除了 Removing/Removed，裝置仍存在時，一般 CREATE/READ/WRITE/IOCTL/CLEANUP/CLOSE 會進入真正客體派送。模型不根據 Stopped、StopPending、RemovePending 或電源狀態虛構失敗；驅動程式可依自身程式碼完成軟體 I/O、拒絕或保留要求。公開執行器仍為循序；目前保留 IRP 若無可用生產者，不能靠後續情境中的 start 或 cleanup 喚醒，會以停滯 `model_error` 結束。Remove 前關閉檔案、排空先前要求是目前設定的限制。`query_stop` 的最終 `STATUS_RESOURCE_REQUIREMENTS_CHANGED` (0x119) 要求尚未實作的資源重新查詢，因此情境預檢與客體最終完成都明確拒絕；參見 [Microsoft QUERY_STOP 合約](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-query-stop-device)。停止／重啟及突然移除不代表一般資源重新配置、一般電源管理或 一般 KMDF PnP 支援。
 
 無資源 PnP 使用原創真正 WDK `driver_wdm_pnp.c`、選用的 `NEVERD_WDM_PNP_FIXTURE`／`NEVERD_WDM_PNP_CFG_FIXTURE`，並提供原生及 C API／CLI 測試；缺少產物時明確略過，執行證據仍僅來自 Linux。
@@ -173,7 +175,13 @@ KMDF 1.33 支援使用精確的 1.33.0 ABI：458 個函式槽具有穩定的客�
 
 鎖 API：`WdfSpinLockCreate`, `WdfSpinLockAcquire`, `WdfSpinLockRelease`, `WdfWaitLockCreate`, `WdfWaitLockAcquire`, `WdfWaitLockRelease`, `WdfObjectAcquireLock`, `WdfObjectReleaseLock`。外部 `WDFSPINLOCK`／`WDFWAITLOCK` 與中斷共用 executive／dispatcher 鎖狀態，刪除會檢查持有者、等待者及父物件參考。自旋鎖提升並還原 IRQL；等待鎖由實際執行緒擁有，等待／持有期間停用一般核心 APC，支援無限、相對、絕對與零逾時。零逾時要求低於 `DISPATCH_LEVEL`，其他等待要求 `PASSIVE_LEVEL`。中斷使用的自旋鎖必須透過中斷鎖 API。裝置／佇列同步範圍依繼承執行層級序列化 I/O、檔案、取消和中斷延後回呼；被動鎖可等待，dispatch 鎖不可阻塞。自動回呼允許同執行緒巢狀執行，明確物件鎖不可遞迴；DPC／工作項目必須符合父物件執行層級。
 
-電源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驅動管理的閒置策略要求明確的正毫秒逾時、`IdleCannotWake`／`IdleCanWake` 及無使用者覆寫。S0／Sleeping3 以實際保留的 `WAIT_WAKE` IRP 執行 arm、triggered、disarm 回呼。StopIdle／ResumeIdle 參考必須配對且可巢狀；TRUE 在 `PASSIVE_LEVEL` 以真實呼叫框架等待 D0，FALSE／ResumeIdle／設定 API 允許至 `DISPATCH_LEVEL`，註冊回呼要求 `PASSIVE_LEVEL`。受電源管理佇列回呼或斷電期間同步 StopIdle 會報告死結。Sx 喚醒仍需明確的系統 Working 請求。USB 閒置策略、子裝置喚醒、一般 PEP／平台策略及失敗裝置自動重新列舉仍不支援。
+電源策略 API：`WdfDeviceInitSetPowerPolicyEventCallbacks`, `WdfDeviceAssignS0IdleSettings`, `WdfDeviceAssignSxWakeSettings`, `WdfDeviceStopIdleNoTrack`, `WdfDeviceResumeIdleNoTrack`, `WdfDeviceStopIdleActual`, `WdfDeviceResumeIdleActual`。驅動管理的閒置策略要求明確的正毫秒逾時、`IdleCannotWake`／`IdleCanWake` 及無使用者覆寫。S0／Sleeping3 以實際保留的 `WAIT_WAKE` IRP 執行 arm、triggered、disarm 回呼。StopIdle／ResumeIdle 參考必須配對且可巢狀；TRUE 在 `PASSIVE_LEVEL` 以真實呼叫框架等待 D0，FALSE／ResumeIdle／設定 API 允許至 `DISPATCH_LEVEL`，註冊回呼要求 `PASSIVE_LEVEL`。受電源管理佇列回呼或斷電期間同步 StopIdle 會報告死結。Sx 喚醒仍需明確的系統 Working 請求。USB 閒置策略、一般 PEP／平台策略及失敗裝置自動重新列舉仍不支援。
+
+宣告的 `parent_id` 關係支援 KMDF Sx 子裝置喚醒。`ArmForWakeIfChildrenAreArmedForWake` 與 `IndicateChildWakeOnParentWake` 是獨立布林設定。`EvtDeviceArmWakeFromSxWithReason` 分別接收自身與子裝置原因，僅子裝置需要喚醒時為 `(FALSE, TRUE)`。只有成功完成 Sx arm 且保留真正 `WAIT_WAKE` 的子裝置參與；父節點擷取其 PDO 與 START 世代。父喚醒先預檢整批完成作業，再完成這些 IRP，且只經由啟用傳播的節點遞迴。停用、已解除、arm 失敗或已重新啟動的子裝置不會被虛構喚醒。成功 WAIT_WAKE 的可空 `wake_source_device_id` 與 `wake_source_pdo` 記錄原始來源；每個裝置仍須透過自己的回應 FIFO 明確執行 Working 與 D0 請求。
+
+須先 arm 子裝置，再使父節點進入 Sx/Dx。直接父節點已在 Sx/Dx 且啟用任一子裝置喚醒設定時，新的子 arm 會在建立 WAIT_WAKE 前遭拒。取消最後一個擷取的子裝置，也會取消僅因子裝置而 arm 的父節點 WAIT_WAKE，並恰好執行一次 disarm；父節點有自身原因或已成功喚醒時，保留正常 D0 disarm 順序。本範圍使用宣告的提供者拓撲，仍不支援客體匯流排 PDO 列舉及原始 WDM 子裝置喚醒回呼。
+
+真正的 WDK 範例 `driver_kmdf_child_wake.c` 使用可選 `NEVERD_KMDF_CHILD_WAKE_FIXTURE`／`NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE`。[子裝置喚醒情境](../examples/driver-kmdf-child-wake-scenario.json) 可透過 CLI 執行。缺少映像會明確跳過；一般／active-CFG 及偏好／重定位位址的執行證據仍僅來自 Linux。
 
 `WdfDeviceWdmAssignPowerFrameworkSettings`（KMDF 1.33 槽 425）支援自訂單元件 Fx 狀態。先成功設定系統管理閒置策略，再於 `PASSIVE_LEVEL`、首次 START 完成前呼叫一次；元件、狀態及回呼設定會複製保存。客體活動、閒置條件及閒置狀態回呼透過真實呼叫框架執行，省略的回呼由框架預設處理。`PoFxDeviceFlags` 必須為 0，`DirectedPoFxEnabled` 必須為 `WdfFalse`；PEP 電源控制仍不支援。
 
@@ -396,7 +404,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令計數。它保留停止前收集的 API 呼叫及可觀察狀態，包括裝置物件與驅動程式回呼位址。客體位址以十六進位字串表示，避免 JSON 使用端遺失 64 位元精確度。
 
-`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v78`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
+`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v79`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
 
 工作項目觀察記錄使用 `callback:N` 階段。待處理請求的 `dispatch_status` 保留 `STATUS_PENDING`，最終完成狀態分別記錄於 `io_status`，並據此計算該請求對 `scenario_success` 的影響。
 

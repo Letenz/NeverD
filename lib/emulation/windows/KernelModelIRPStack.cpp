@@ -85,6 +85,16 @@ llvm::Expected<bool> KernelModel::dispatchPending(const ActiveRequest &Request,
   return (*Control & StackPendingReturned) != 0;
 }
 
+llvm::Error KernelModel::validateCompletionPending(const ActiveRequest &Request,
+                                                   bool Pending) const {
+  if (Request.DispatchReturned &&
+      Result.Requests[Request.ResultIndex].DispatchStatus == StatusPending &&
+      !Pending)
+    return stackError(
+        "pending dispatch completion requires propagation to the top stack");
+  return llvm::Error::success();
+}
+
 llvm::Expected<uint64_t>
 KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
                         std::optional<int64_t> SendTimeout) {
@@ -389,6 +399,13 @@ KernelModel::planIRPCompletion(uint64_t IRP,
     }
     PropagatePending = Pending;
   }
+  llvm::Expected<bool> Pending =
+      Plan.Steps.empty() ? dispatchPending(Request, Request.StackCount - 1)
+                         : llvm::Expected<bool>(Plan.Steps.back().Pending);
+  if (!Pending)
+    return Pending.takeError();
+  if (auto E = validateCompletionPending(Request, *Pending))
+    return E;
   llvm::Expected<uint64_t> Information =
       StatusOverride ? llvm::Expected<uint64_t>(0)
                      : Memory.readInteger(IRP + IRPInformationOffset, 8);

@@ -130,6 +130,10 @@ struct DriverPnpDevice {
   std::optional<DriverWakeCapabilities> WakeCapabilities;
   /// Omission preserves a powered D3hot bus; cold power is never inferred.
   std::optional<DriverD3ColdCapabilities> D3Cold;
+  /// Explicit bus topology, independent of WDM attachment and WDF object
+  /// parents. Omission declares a root; the provider never infers a parent
+  /// device.
+  std::optional<std::string> ParentID;
 };
 
 struct DriverPnpOperation {
@@ -146,6 +150,9 @@ struct DriverPnpDeviceResult {
   bool ProviderPresent = false;
   DevicePowerState DevicePower = DevicePowerState::D0;
   SystemPowerState SystemPower = SystemPowerState::Working;
+  /// Stable configured relationship, retained after either provider retires.
+  std::optional<std::string> ParentID;
+  std::optional<uint64_t> ParentPDO;
 };
 
 struct DriverPnpRequestResult {
@@ -172,6 +179,10 @@ struct DriverPowerRequestResult {
   std::optional<uint64_t> BusCompletedAt100ns;
   /// Original API device argument, independent of canonical PDO identity.
   std::optional<uint64_t> RequestedDeviceObject;
+  /// Provider that caused successful WAIT_WAKE completion, including a parent
+  /// whose configured wake propagation completed this child's retained IRP.
+  std::optional<std::string> WakeSourceDeviceID;
+  std::optional<uint64_t> WakeSourcePDO;
 };
 } // namespace neverd::emulation
 

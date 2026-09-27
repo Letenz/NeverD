@@ -56,6 +56,10 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
     const ActiveRequest &Request, uint32_t Status, bool ProviderProbe) const {
   if (auto E = Lifecycle.validatePnpCompletion(*Request.PnpTicket, Status))
     return E;
+  if (!(Status & profile::NTStatusFailureMask))
+    if (auto E = validatePnpTopologyTransition(Request.PnpDevice,
+                                               Request.PnpOperation->Minor))
+      return E;
   // START has not assigned resources at the provider probe. All STOP/REMOVE
   // routes, including framework ReleaseHardware, retire resources before
   // forwarding to the provider. Final completion validates both paths.
