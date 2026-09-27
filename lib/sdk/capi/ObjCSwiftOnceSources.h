@@ -606,16 +606,16 @@ getterContract(const HighFunc &F, const BinaryImage &Image) {
 }
 
 // A shared ObjC getter can retain two unused incoming registers before its
-// four Swift inputs. Its native source hint may be absent on the first pass,
-// because ordinary entry-demand inference cannot establish those carriers.
-// Admit an ABI candidate only after the complete getter use contract proves
-// that the leading registers have no observable use.
+// three or four Swift inputs. Its native source hint may be absent on the
+// first pass, because ordinary entry-demand inference cannot establish those
+// carriers. Admit an ABI candidate only after the complete getter use
+// contract proves that the leading registers have no observable use.
 inline std::optional<std::pair<SwiftOnceGetterContract, SourceFunctionTypeHint>>
-untypedSixParameterGetter(const HighFunc &F, const BinaryImage &Image) {
-  if (Image.Arch != Arch::AArch64 || F.SourceTypeHint || F.Params.size() != 6 ||
-      F.DoesNotReturn || F.StructuredExceptionRegions ||
-      F.UnstructuredExceptionRegions || !F.ReturnType ||
-      F.ReturnType->Size != 8 ||
+untypedObjectiveCGetter(const HighFunc &F, const BinaryImage &Image) {
+  if (Image.Arch != Arch::AArch64 || F.SourceTypeHint ||
+      (F.Params.size() != 5 && F.Params.size() != 6) || F.DoesNotReturn ||
+      F.StructuredExceptionRegions || F.UnstructuredExceptionRegions ||
+      !F.ReturnType || F.ReturnType->Size != 8 ||
       (F.ReturnType->Kind != NdTypeKind::Ptr &&
        F.ReturnType->Kind != NdTypeKind::Int))
     return std::nullopt;
@@ -641,7 +641,9 @@ untypedSixParameterGetter(const HighFunc &F, const BinaryImage &Image) {
   Typed.SourceTypeHint = Hint;
   const auto Contract = getterContract(Typed, Image);
   if (!Contract || Contract->Predicate != 2 || Contract->Storage != 3 ||
-      Contract->SecondStorage != 4 || Contract->Initializer != 5)
+      (F.Params.size() == 5
+           ? Contract->SecondStorage || Contract->Initializer != 4
+           : Contract->SecondStorage != 4 || Contract->Initializer != 5))
     return std::nullopt;
   return std::pair{*Contract, std::move(Hint)};
 }
@@ -1908,7 +1910,7 @@ discoverSwiftOnceSources(const BinaryImage &Image,
       Plan.ObjCClassMetadataAccessors.emplace(F.Entry, *Contract);
     else if (auto Contract = getterContract(F, Image))
       Plan.Getters.emplace(F.Entry, *Contract);
-    else if (auto Candidate = untypedSixParameterGetter(F, Image)) {
+    else if (auto Candidate = untypedObjectiveCGetter(F, Image)) {
       Plan.Getters.emplace(F.Entry, Candidate->first);
       Plan.GetterHints.emplace(F.Entry, std::move(Candidate->second));
     } else if (auto Contract = copyContract(F, Image))

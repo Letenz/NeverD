@@ -2266,6 +2266,27 @@ TEST(ObjCSourceBindings, CountdownByteTableMayTestBeforeDecrementing) {
   EXPECT_TRUE(readOnlyScalarSourceHelpers(Bound.Function, F.Image).empty());
 }
 
+TEST(ObjCSourceBindings, CountdownByteTableAcceptsDirectFinalIterationExit) {
+  auto F = countdownByteTableFixture();
+  auto &Steps = F.Function.Body[2].Body;
+  const auto Count = F.Function.Body[0].Dst;
+  Steps.erase(Steps.begin() + 4); // no predicate temporary
+  std::swap(Steps[3], Steps[4]);  // break before decrement
+  auto Exit =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Count, HighExpr::makeConst(1, 8));
+  Exit->Type = NdType::makeInt(1, false);
+  Steps[3].Cond = Exit;
+  auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  ASSERT_EQ(Bound.BorrowedBytes.size(), 1U);
+  EXPECT_EQ(*Bound.BorrowedBytes.begin(), (BorrowedByteRange{0x1040, 720}));
+  EXPECT_EQ(Bound.Function.Body[1].Val->ConstVal, 2U);
+  EXPECT_EQ(readOnlyScalarSourceHelpers(Bound.Function, F.Image).size(), 3U);
+
+  Bound.Function.Body[2].Body[3].Cond->Operands[1]->ConstVal = 2;
+  EXPECT_TRUE(readOnlyScalarSourceHelpers(Bound.Function, F.Image).empty());
+}
+
 TEST(ObjCSourceBindings, CountdownByteTablePublicationRechecksLoopAndHelper) {
   for (unsigned Mutation = 0; Mutation < 4; ++Mutation) {
     SCOPED_TRACE(Mutation);

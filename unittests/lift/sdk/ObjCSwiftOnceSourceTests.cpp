@@ -2062,6 +2062,58 @@ TEST(SwiftOnceSources, SharedObjectGetterIgnoresTwoLeadingObjCRegisters) {
   }
 }
 
+TEST(SwiftOnceSources, UntypedSharedObjectGetterProvesFiveParameterABI) {
+  OnceFixture F(Arch::AArch64);
+  const auto Pointer = NdType::makePtr(NdType::makeVoid());
+  auto Param = [&](unsigned Id) {
+    MedVar V;
+    V.Kind = MedVar::Param;
+    V.Id = Id;
+    V.Size = 8;
+    return HighExpr::makeVar(V, Pointer);
+  };
+  auto &Getter = F.Pipeline.HighFuncs[0];
+  Getter.Params = {{"objc_self", Pointer},
+                   {"objc_cmd", Pointer},
+                   {"predicate", Pointer},
+                   {"storage", Pointer},
+                   {"initializer", Pointer}};
+  Getter.SourceTypeHint.reset();
+  Getter.Body[0].Val->Operands[0] = Param(2);
+  F.Once->Operands = {Param(2), Param(4), Param(2)};
+  Getter.Body[2].RetVal->Operands[0] = Param(3);
+
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.Getters.size(), 1U);
+  ASSERT_EQ(Plan.GetterHints.size(), 1U);
+  EXPECT_EQ(Plan.Getters.begin()->second.parameterCount(), 5U);
+  PipelineOptions Options;
+  EXPECT_GE(applySwiftOnceSourceHints(Plan, Options), 1U);
+  Getter.SourceTypeHint = Options.SourceTypeHints.at(Getter.Entry);
+  auto &Call = F.Pipeline.HighFuncs.back().Body[0].RetVal;
+  Call->Operands.insert(Call->Operands.begin(),
+                        {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8)});
+  auto Hint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+  Hint->Signature = *Getter.SourceTypeHint;
+  Call->SourceCallHint = std::move(Hint);
+  const auto TypedPlan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(TypedPlan.Getters.size(), 1U);
+  ASSERT_EQ(TypedPlan.CallbackHints.size(), 1U);
+  EXPECT_TRUE(TypedPlan.GetterHints.empty());
+  const auto Bound = bindSwiftOnceSourceReferences(
+      F.Pipeline.HighFuncs.back(), F.Image, TypedPlan, F.functions());
+  EXPECT_EQ(Bound.Dependencies, std::set<va_t>{0x1080});
+  EXPECT_TRUE(
+      bindObjCSourceReferences(Bound.Function, F.Image).Limitation.empty());
+
+  Getter.SourceTypeHint.reset();
+  HighStmt Escape;
+  Escape.Kind = StmtKind::ExprStmt;
+  Escape.Val = Param(0);
+  Getter.Body.insert(Getter.Body.begin(), Escape);
+  EXPECT_TRUE(discoverSwiftOnceSources(F.Image, F.Pipeline).Getters.empty());
+}
+
 TEST(SwiftOnceSources, SharedObjectGetterBindsInteriorMergedStorage) {
   for (auto Architecture : {Arch::AArch64, Arch::X64}) {
     OnceFixture F(Architecture);
