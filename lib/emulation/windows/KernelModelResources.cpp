@@ -85,7 +85,11 @@ llvm::Error KernelModel::publishProviderHardware(ActiveRequest &Request,
     const auto State =
         static_cast<DevicePowerState>(Request.PowerOperation->State);
     Resources.setPhysicalPower(Request.PnpDevice, State);
-    if (State == DevicePowerState::D3 && Framework) {
+    // A repeated successful SET D3 acknowledges the current state; a device
+    // already in D3cold must not lose its context or advance its generation
+    // a second time without an intervening powered state.
+    if (State == DevicePowerState::D3 && Framework &&
+        !Resources.isD3Cold(Request.PnpDevice)) {
       auto Cold = Framework->allowsD3Cold(Request.PnpDevice);
       if (!Cold)
         return Cold.takeError();

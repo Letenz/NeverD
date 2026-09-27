@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../TestProcess.h"
+#include "fixtures/driver_kmdf_child_wake_test.h"
 #include "fixtures/driver_kmdf_interrupt_test.h"
 #include "fixtures/driver_nested_user.h"
 #include "fixtures/driver_seh_test.h"
@@ -4814,6 +4815,88 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteFrameworkIdleWake) {
   }
 #else
   GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteD2SleepThroughRealD0) {
+#ifdef NEVERD_KMDF_CHILD_WAKE_FIXTURE
+  std::ifstream Stream(NEVERD_DRIVER_D2_SCENARIO);
+  ASSERT_TRUE(Stream.good());
+  const std::string Scenario((std::istreambuf_iterator<char>(Stream)),
+                             std::istreambuf_iterator<char>());
+  std::vector<const char *> Images{NEVERD_KMDF_CHILD_WAKE_FIXTURE};
+#ifdef NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    const std::string API = takeString(neverd_emulate_driver_scenario_json(
+        Session, Image, Scenario.c_str(), nullptr));
+    ASSERT_FALSE(API.empty()) << error();
+    for (const auto &JSON : {API, runCLI(Scenario, 0, nullptr, Image)}) {
+      auto Parsed = llvm::json::parse(JSON);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      std::vector<std::string> Before, After;
+      unsigned Snapshots = 0, D2Requests = 0;
+      for (const auto &Value : *Requests) {
+        const auto *Request = Value.getAsObject();
+        ASSERT_NE(Request, nullptr);
+        EXPECT_EQ(Request->getBoolean("completed"), true);
+        EXPECT_EQ(Request->getInteger("io_status"), 0);
+        if (const auto *Power = Request->getObject("power")) {
+          if (Request->getString("origin") == "framework_power_policy") {
+            Before.push_back(
+                Power->getString("device_state_before").value_or("").str());
+            After.push_back(
+                Power->getString("device_state_after").value_or("").str());
+            ASSERT_TRUE(Power->getInteger("bus_received_at_100ns"));
+            ASSERT_TRUE(Power->getInteger("bus_completed_at_100ns"));
+            EXPECT_GT(*Power->getInteger("bus_completed_at_100ns"),
+                      *Power->getInteger("bus_received_at_100ns"));
+          }
+          if (Power->getString("power_type") == "device" &&
+              Power->getString("power_state") == "D2") {
+            ++D2Requests;
+            EXPECT_EQ(Power->getString("device_state_before"), "D0");
+            EXPECT_EQ(Power->getString("device_state_after"), "D2");
+          }
+        }
+        if (Request->getString("kind") != "ioctl")
+          continue;
+        std::string Bytes;
+        ASSERT_TRUE(llvm::tryGetFromHex(
+            Request->getString("output_hex").value_or(""), Bytes));
+        ASSERT_EQ(Bytes.size(), KmdfChildWakeSnapshotWords * sizeof(uint32_t));
+        auto Word = [&](unsigned Index) {
+          uint32_t Value = 0;
+          for (unsigned I = 0; I < sizeof(Value); ++I)
+            Value |= uint32_t(uint8_t(Bytes[Index * sizeof(Value) + I]))
+                     << (I * 8);
+          return Value;
+        };
+        EXPECT_EQ(Word(KmdfChildWakeFailures), 0u);
+        EXPECT_EQ(Word(KmdfChildWakeD0Entries), Snapshots + 1);
+        EXPECT_EQ(Word(KmdfChildWakeD0Exits), std::min(Snapshots + 1, 2u));
+        EXPECT_EQ(Word(KmdfChildWakeInD0), uint32_t(Snapshots == 2));
+        ++Snapshots;
+      }
+      EXPECT_EQ(D2Requests, 1u);
+      EXPECT_EQ(Snapshots, 3u);
+      EXPECT_EQ(Before, (std::vector<std::string>{"D2", "D0", "D3"}));
+      EXPECT_EQ(After, (std::vector<std::string>{"D0", "D3", "D0"}));
+    }
+  }
+#else
+  GTEST_SKIP()
+      << "NEVERD_KMDF_CHILD_WAKE_FIXTURE requires a genuine WDK fixture";
 #endif
 }
 

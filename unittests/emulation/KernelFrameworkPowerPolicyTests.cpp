@@ -133,10 +133,14 @@ protected:
                           {Globals, Device, IdleConfig})),
               0u);
   }
-  void expectCall(uint64_t PC, uint32_t Status = 0) {
+  void expectCall(uint64_t PC, uint32_t Status = 0,
+                  std::optional<DevicePowerState> PowerState = {}) {
     const auto Call = callback();
     EXPECT_EQ(Call.PC, PC);
     EXPECT_EQ(Call.Arguments.front(), Device);
+    if (PowerState)
+      EXPECT_EQ(Call.Arguments,
+                (std::vector<uint64_t>{Device, uint32_t(*PowerState)}));
     take(Model.finishGuestCall(Call.Token, Status));
     if (PC == Arm) {
       auto Completed = Model.takePnpCompletion();
@@ -150,6 +154,17 @@ protected:
         PDO, ++Packet, DevicePnpRequest::Start, 0, 0, 0)));
     expectCall(Entry);
     ASSERT_TRUE(Model.takePnpCompletion());
+  }
+  void wakeSettings(DevicePowerState State, bool Enabled = true) {
+    put(WakeConfig, policy::WakeSize, 4);
+    put(WakeConfig + policy::WakeDxState, uint32_t(State), 4);
+    put(WakeConfig + policy::WakeUserControl, policy::NoUserControl, 4);
+    put(WakeConfig + policy::WakeEnabled, Enabled, 4);
+    put(WakeConfig + policy::WakeChildren, 0, 1);
+    put(WakeConfig + policy::WakePropagate, 0, 1);
+    EXPECT_EQ(take(invoke(api::WdfDeviceAssignSxWakeSettings,
+                          {Globals, Device, WakeConfig})),
+              windows::StatusSuccess);
   }
 };
 
@@ -363,6 +378,178 @@ TEST_F(DriverKernelFrameworkPowerPolicy,
   EXPECT_TRUE(take(Model.systemPowerNeedsD0(PDO)));
   success(Model.processPowerPolicy());
   EXPECT_TRUE(Requests.empty());
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy, D2IdleWakePreservesCallbackStates) {
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D2), 4);
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  Now = policy::TicksPerMillisecond;
+  success(Model.processPowerPolicy());
+  expectCall(Arm);
+  ASSERT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+  expectCall(Exit, 0, DevicePowerState::D2);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  success(Model.powerPolicyWake(PDO));
+  success(Model.processPowerPolicy());
+  expectCall(Entry, 0, DevicePowerState::D2);
+  expectCall(Triggered);
+  expectCall(Disarm);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(Requests,
+            (std::vector{DevicePowerState::D2, DevicePowerState::D0}));
+  EXPECT_EQ(WaitWakeArms, 1u);
+  EXPECT_EQ(WaitWakeCompletions, 1u);
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       ReassignedIdleStateUsesD2AndStopIdleRestoresD0) {
+  idleSettings(false);
+  configure();
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D2), 4);
+  configure();
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  Now = policy::TicksPerMillisecond;
+  success(Model.processPowerPolicy());
+  ASSERT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+  expectCall(Exit, 0, DevicePowerState::D2);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(take(invoke(api::WdfDeviceStopIdleNoTrack, {Globals, Device, 1})),
+            windows::StatusPending);
+  success(Model.processPowerPolicy());
+  expectCall(Entry, 0, DevicePowerState::D2);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(take(Model.powerPolicyWait(Device)), windows::StatusSuccess);
+  EXPECT_EQ(Requests,
+            (std::vector{DevicePowerState::D2, DevicePowerState::D0}));
+  EXPECT_EQ(WaitWakeArms, 0u);
+  take(invoke(api::WdfDeviceResumeIdleNoTrack, {Globals, Device}));
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       LowPowerStatesCannotTransitionWithoutD0) {
+  start();
+  for (const auto State : {DevicePowerState::D2, DevicePowerState::D3}) {
+    EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+        PDO, ++Packet, DevicePowerState::D0, State)));
+    expectCall(Exit, 0, State);
+    ASSERT_TRUE(Model.takePnpCompletion());
+    const auto Other = State == DevicePowerState::D2 ? DevicePowerState::D3
+                                                     : DevicePowerState::D2;
+    expectError(Model.beginDevicePowerTransition(PDO, ++Packet, State, Other),
+                "require D0");
+    EXPECT_FALSE(Model.hasPendingGuestCall());
+    EXPECT_FALSE(Model.takePnpCompletion());
+    EXPECT_TRUE(take(Model.beginDevicePowerTransition(PDO, ++Packet, State,
+                                                      DevicePowerState::D0)));
+    expectCall(Entry, 0, State);
+    ASSERT_TRUE(Model.takePnpCompletion());
+  }
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       UnsupportedStatesCannotBypassValidationAsNoOps) {
+  start();
+  for (const auto State :
+       {DevicePowerState::D1, DevicePowerState(0), DevicePowerState(5)}) {
+    expectError(Model.beginDevicePowerTransition(PDO, ++Packet, State, State),
+                "supported state");
+    expectError(Model.beginDevicePowerTransition(PDO, ++Packet,
+                                                 DevicePowerState::D0, State),
+                "supported state");
+    EXPECT_FALSE(Model.hasPendingGuestCall());
+    EXPECT_FALSE(Model.takePnpCompletion());
+  }
+  EXPECT_FALSE(take(Model.beginDevicePowerTransition(
+      PDO, ++Packet, DevicePowerState::D0, DevicePowerState::D0)));
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       InvalidPolicyStatePreservesPreviousIdleAndWakeSettings) {
+  idleSettings(false);
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D2), 4);
+  configure();
+  wakeSettings(DevicePowerState::D2);
+  for (const auto State :
+       {DevicePowerState::D0, DevicePowerState::D1, DevicePowerState(5)}) {
+    put(IdleConfig + policy::IdleDxState, uint32_t(State), 4);
+    expectError(invoke(api::WdfDeviceAssignS0IdleSettings,
+                       {Globals, Device, IdleConfig}),
+                "supported low-power");
+    put(WakeConfig + policy::WakeDxState, uint32_t(State), 4);
+    expectError(invoke(api::WdfDeviceAssignSxWakeSettings,
+                       {Globals, Device, WakeConfig}),
+                "supported low-power");
+    EXPECT_EQ(take(Model.systemSleepTarget(PDO)), DevicePowerState::D2);
+  }
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  Now = policy::TicksPerMillisecond;
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(Requests, (std::vector{DevicePowerState::D2}));
+  expectCall(Exit, 0, DevicePowerState::D2);
+  ASSERT_TRUE(Model.takePnpCompletion());
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       SystemWakeUsesItsOwnExplicitLowPowerState) {
+  EXPECT_EQ(take(Model.systemSleepTarget(PDO)), DevicePowerState::D3);
+  wakeSettings(DevicePowerState::D2, false);
+  EXPECT_EQ(take(Model.systemSleepTarget(PDO)), DevicePowerState::D3);
+  wakeSettings(DevicePowerState::D3);
+  wakeSettings(DevicePowerState::D2);
+  EXPECT_EQ(take(Model.systemSleepTarget(PDO)), DevicePowerState::D2);
+  start();
+  success(Model.systemPowerPolicy(PDO, true));
+  EXPECT_TRUE(take(
+      Model.beginDevicePowerTransition(PDO, ++Packet, DevicePowerState::D0,
+                                       take(Model.systemSleepTarget(PDO)))));
+  const auto ArmCall = callback();
+  EXPECT_EQ(ArmCall.PC, Arm);
+  EXPECT_EQ(ArmCall.Arguments, (std::vector<uint64_t>{Device}));
+  take(Model.finishGuestCall(ArmCall.Token, windows::StatusSuccess));
+  expectCall(Exit, 0, DevicePowerState::D2);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_TRUE(take(Model.systemSleepNeedsD0(PDO)));
+  success(Model.systemPowerPolicy(PDO, false));
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, ++Packet, DevicePowerState::D2, DevicePowerState::D0)));
+  expectCall(Entry, 0, DevicePowerState::D2);
+  expectCall(Disarm);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(WaitWakeArms, 1u);
+  EXPECT_EQ(WaitWakeCompletions, 1u);
+}
+
+TEST_F(DriverKernelFrameworkPowerPolicy,
+       D2IdlePolicyCannotAuthorizeD3ColdOnSystemSleep) {
+  unsigned ColdQueries = 0;
+  KernelFramework::PowerPolicyHost Policy;
+  Policy.ColdAllowed = [&](uint64_t Wdm, bool Wake, bool Sleeping,
+                           uint32_t Exclude) -> llvm::Expected<bool> {
+    EXPECT_EQ(Wdm, FDO);
+    EXPECT_FALSE(Wake);
+    EXPECT_TRUE(Sleeping);
+    EXPECT_EQ(Exclude, policy::False);
+    ++ColdQueries;
+    return true;
+  };
+  Model.setPowerPolicyHost(std::move(Policy));
+  idleSettings(false);
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D2), 4);
+  put(IdleConfig + policy::IdleExcludeD3Cold, policy::False, 4);
+  configure();
+  start();
+  success(Model.systemPowerPolicy(PDO, true));
+  EXPECT_EQ(take(Model.systemSleepTarget(PDO)), DevicePowerState::D3);
+  EXPECT_FALSE(take(Model.allowsD3Cold(PDO)));
+  EXPECT_EQ(ColdQueries, 0u);
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D3), 4);
+  configure();
+  EXPECT_TRUE(take(Model.allowsD3Cold(PDO)));
+  EXPECT_EQ(ColdQueries, 1u);
 }
 
 TEST(DriverPowerPolicyScenario, EmptyEventFieldStillRequiresAnIoRequest) {

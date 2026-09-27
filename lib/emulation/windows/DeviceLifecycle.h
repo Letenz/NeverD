@@ -69,6 +69,10 @@ public:
   llvm::Error validatePnpCompletion(DeviceLifecycleTicket Ticket,
                                     uint32_t Status) const;
   llvm::Error finishPnp(DeviceLifecycleTicket Ticket, uint32_t Status);
+  /// Validate without consuming a ticket or publishing a pending operation.
+  llvm::Error validateDevicePowerRequest(uint64_t Device,
+                                         DevicePowerRequest Request,
+                                         DevicePowerState Target) const;
   llvm::Expected<DeviceLifecycleTicket>
   beginDevicePower(uint64_t Device, DevicePowerRequest Request,
                    DevicePowerState Target);

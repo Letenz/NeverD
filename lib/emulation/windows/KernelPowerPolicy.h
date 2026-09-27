@@ -6,6 +6,8 @@
 #ifndef NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 #define NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 
+#include "neverd/emulation/DriverPnp.h"
+
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -25,6 +27,7 @@ struct KernelPowerPolicy {
 #undef NEVERD_POWER_POLICY_CALLBACK
   } Events;
   struct IdleSettings {
+    DevicePowerState DxState = DevicePowerState::D3;
     bool Enabled = false;
     bool CanWake = false;
     bool PowerUpOnSystemWake = false;
@@ -36,6 +39,7 @@ struct KernelPowerPolicy {
     uint32_t ExcludeD3Cold = power_policy::True;
   };
   struct WakeSettings {
+    DevicePowerState DxState = DevicePowerState::D3;
     bool Enabled = false;
     bool ArmForChildren = false;
     bool PropagateParentWake = false;

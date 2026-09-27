@@ -139,9 +139,10 @@ protected:
     Children[pdo(1)] = {pdo(2)};
   }
   void configure(unsigned Index, bool Enabled, bool ArmChildren = false,
-                 bool Propagate = false) {
+                 bool Propagate = false,
+                 DevicePowerState DxState = DevicePowerState::D3) {
     put(WakeConfig, policy::WakeSize, 4);
-    put(WakeConfig + policy::WakeDxState, uint32_t(DevicePowerState::D3), 4);
+    put(WakeConfig + policy::WakeDxState, uint32_t(DxState), 4);
     put(WakeConfig + policy::WakeUserControl, policy::NoUserControl, 4);
     put(WakeConfig + policy::WakeEnabled, Enabled, 4);
     put(WakeConfig + policy::WakeChildren, ArmChildren, 1);
@@ -445,6 +446,29 @@ TEST_F(DriverKernelFrameworkChildWake,
   // can still observe both obligations at this explicit failure boundary.
   success(Model.powerPolicyWake(pdo(0)));
   EXPECT_EQ(Batches.back(), (std::vector<uint64_t>{fdo(0), fdo(1)}));
+}
+
+TEST_F(DriverKernelFrameworkChildWake,
+       ChildOnlyPolicySelectsD2WhileEligibleChildIsArmed) {
+  configure(0, false, true, false, DevicePowerState::D2);
+  configure(1, true);
+  start(0);
+  start(1);
+  EXPECT_EQ(take(Model.systemSleepTarget(pdo(0))), DevicePowerState::D3);
+  sleep(1);
+  EXPECT_EQ(take(Model.systemSleepTarget(pdo(0))), DevicePowerState::D2);
+  resume(1);
+  EXPECT_EQ(take(Model.systemSleepTarget(pdo(0))), DevicePowerState::D3);
+}
+
+TEST_F(DriverKernelFrameworkChildWake,
+       PropagationAloneDoesNotSelectChildWakeD2State) {
+  configure(0, false, false, true, DevicePowerState::D2);
+  configure(1, true);
+  start(0);
+  start(1);
+  sleep(1);
+  EXPECT_EQ(take(Model.systemSleepTarget(pdo(0))), DevicePowerState::D3);
 }
 
 } // namespace

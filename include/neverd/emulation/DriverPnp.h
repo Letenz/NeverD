@@ -58,6 +58,20 @@ enum class DevicePowerState : uint32_t {
 #include "neverd/emulation/DeviceLifecycle.def"
 #undef NEVERD_DEVICE_POWER_STATE
 };
+/// Device states admitted by the driver execution profile. The lifecycle model
+/// separately validates Windows state transitions, including unsupported
+/// states.
+constexpr bool isSupportedDriverDevicePower(DevicePowerState State) {
+  switch (State) {
+#define NEVERD_DRIVER_POWER_DEVICE_STATE(Name) case DevicePowerState::Name:
+#include "neverd/emulation/DriverPower.def"
+#undef NEVERD_DRIVER_POWER_DEVICE_STATE
+    return true;
+  default:
+    return false;
+  }
+}
+
 enum class SystemPowerState : uint32_t {
 #define NEVERD_SYSTEM_POWER_STATE(Name, Value) Name = Value,
 #include "neverd/emulation/DeviceLifecycle.def"

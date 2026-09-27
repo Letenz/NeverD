@@ -120,9 +120,13 @@ protected:
     take(Model.finishGuestCall(Call.Token, 0));
     ASSERT_TRUE(Model.takePnpCompletion());
   }
-  void finishPower(uint64_t PC) {
+  void finishPower(uint64_t PC,
+                   std::optional<DevicePowerState> PowerState = {}) {
     const auto Call = callback();
     EXPECT_EQ(Call.PC, PC);
+    if (PowerState)
+      EXPECT_EQ(Call.Arguments,
+                (std::vector<uint64_t>{Device, uint32_t(*PowerState)}));
     take(Model.finishGuestCall(Call.Token, 0));
     const auto Completed = Model.takePnpCompletion();
     ASSERT_TRUE(Completed);
@@ -213,6 +217,29 @@ TEST_F(DriverKernelFrameworkPoFxPolicy,
   finishPower(Entry);
   EXPECT_EQ(PowerRequests,
             (std::vector{DevicePowerState::D3, DevicePowerState::D0}));
+}
+
+TEST_F(DriverKernelFrameworkPoFxPolicy,
+       ExplicitPermissionUsesD2PolicyAndRestoresFromD2) {
+  put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D2), 4);
+  EXPECT_EQ(take(configure()), 0u);
+  start();
+  success(Model.powerPolicyIdle(PDO));
+  success(Model.processPowerPolicy());
+  EXPECT_TRUE(PowerRequests.empty());
+  success(Model.powerPolicyPermission(PDO, true));
+  success(Model.processPowerPolicy());
+  ASSERT_EQ(PowerRequests, (std::vector{DevicePowerState::D2}));
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, false)));
+  finishPower(Exit, DevicePowerState::D2);
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, false)));
+  success(Model.powerPolicyActive(PDO));
+  success(Model.processPowerPolicy());
+  EXPECT_EQ(PowerRequests,
+            (std::vector{DevicePowerState::D2, DevicePowerState::D0}));
+  EXPECT_FALSE(take(Model.powerPolicyDeviceReady(PDO, true)));
+  finishPower(Entry, DevicePowerState::D2);
+  EXPECT_TRUE(take(Model.powerPolicyDeviceReady(PDO, true)));
 }
 
 TEST_F(DriverKernelFrameworkPoFxPolicy,

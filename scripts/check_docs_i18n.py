@@ -2249,6 +2249,8 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "IRP_MJ_INTERNAL_DEVICE_CONTROL", "internal_ioctl", "driver_allocated_irp",
         "NEVERD_WDM_OWNED_IRP_FIXTURE", "NEVERD_WDM_OWNED_IRP_CFG_FIXTURE",
         "driver-owned-irp-scenario.json",
+        "driver-d2-power-scenario.json", "DeviceLifecycle::validateDevicePowerRequest",
+        "DxState", "PowerDeviceMaximum", "IdleUsbSelectiveSuspend",
         "KMDF",
         "UMDF",
         "KMDF 1.33",

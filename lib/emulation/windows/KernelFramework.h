@@ -316,6 +316,7 @@ public:
   llvm::Expected<std::optional<uint32_t>> powerPolicyWait(uint64_t Device);
   llvm::Expected<uint64_t> powerPolicyEpoch(uint64_t PDO) const;
   llvm::Expected<bool> systemPowerNeedsD0(uint64_t PDO) const;
+  llvm::Expected<DevicePowerState> systemSleepTarget(uint64_t PDO) const;
   llvm::Expected<bool> systemSleepNeedsD0(uint64_t PDO) const;
   llvm::Error systemPowerPolicy(uint64_t PDO, bool Sleeping);
   llvm::Error beginPowerPolicyRequest(uint64_t PDO);

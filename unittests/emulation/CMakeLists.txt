@@ -710,6 +710,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverPnpScenarioTests.cpp
   DriverPnpTopologyTests.cpp
   DriverPowerScenarioTests.cpp
+  DriverDeviceD2Tests.cpp
   KernelIRPStackTests.cpp
   KernelPnpCompletionTests.cpp
   KernelPowerRequestTests.cpp
@@ -770,6 +771,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
   target_compile_definitions(NeverDDriverEmulationPublicTests PRIVATE
     NEVERD_DRIVER_NESTED_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-nested-user-scenario.json"
+    NEVERD_DRIVER_D2_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-d2-power-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
     NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
     NEVERD_DRIVER_CLI="$<TARGET_FILE:neverd>"

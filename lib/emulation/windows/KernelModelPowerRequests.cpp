@@ -80,7 +80,7 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   // This is consistency with a known transaction, not an inferred parent or
   // lifetime link. The FIFO still owns the child's independent packet facts.
   if (Child && Operation.Type == DriverPowerType::Device &&
-      Operation.State == uint32_t(DevicePowerState::D3)) {
+      Operation.State != uint32_t(DevicePowerState::D0)) {
     bool ActiveSystem = false;
     for (const auto &[IRP, Request] : Requests) {
       (void)IRP;
@@ -117,6 +117,10 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     return powerError("framework power requires an explicit FDO/PDO request");
   if (*Top != PDO && !PC && !FrameworkPower)
     return powerError("attached driver did not register DispatchPower");
+  if (!WaitWake && Operation.Type == DriverPowerType::Device)
+    if (auto E = Lifecycle.validateDevicePowerRequest(
+            PDO, Operation.Minor, DevicePowerState(Operation.State)))
+      return E;
   auto Packet = allocate(IRPSize + *Count * StackSize);
   if (!Packet)
     return Packet.takeError();
@@ -259,22 +263,29 @@ llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {
   if (!*Owner)
     return false;
   const auto System = *Request->PowerOperation;
-  const auto SystemTarget = System.State == uint32_t(SystemPowerState::Working)
-                                ? DevicePowerState::D0
-                                : DevicePowerState::D3;
-  DevicePowerState Target = SystemTarget;
+  const bool Working = System.State == uint32_t(SystemPowerState::Working);
+  llvm::Expected<DevicePowerState> SystemTarget =
+      Working ? llvm::Expected<DevicePowerState>(DevicePowerState::D0)
+              : Framework->systemSleepTarget(Request->PnpDevice);
+  if (!SystemTarget)
+    return SystemTarget.takeError();
+  DevicePowerState Target = *SystemTarget;
   bool PrepareSleep = false;
-  if (System.Minor == DevicePowerRequest::Set &&
-      SystemTarget == DevicePowerState::D3) {
+  if (System.Minor == DevicePowerRequest::Set && !Working) {
     auto NeedsD0 = Framework->systemSleepNeedsD0(Request->PnpDevice);
     if (!NeedsD0)
       return NeedsD0.takeError();
-    PrepareSleep = *NeedsD0;
+    auto State = Lifecycle.snapshot(Request->PnpDevice);
+    if (!State)
+      return State.takeError();
+    // Distinct low-power states require a real D0 transaction. The provider
+    // FIFO supplies that response independently of the final sleep target.
+    PrepareSleep = *NeedsD0 || (State->DevicePower != DevicePowerState::D0 &&
+                                State->DevicePower != Target);
     if (PrepareSleep)
       Target = DevicePowerState::D0;
   }
-  if (System.Minor == DevicePowerRequest::Set &&
-      SystemTarget == DevicePowerState::D0) {
+  if (System.Minor == DevicePowerRequest::Set && Working) {
     auto NeedsD0 = Framework->systemPowerNeedsD0(Request->PnpDevice);
     if (!NeedsD0)
       return NeedsD0.takeError();
@@ -304,20 +315,19 @@ llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {
   Child.RequestDevice = Request->DeviceRoute.front();
   Child.ResponseIndex = Index;
   Child.Origin = DriverRequestOrigin::FrameworkPowerPolicy;
-  Child.FrameworkParent = SystemTarget == DevicePowerState::D0 ? 0 : IRP;
+  Child.FrameworkParent = Working ? 0 : IRP;
   Child.PrepareSystemSleep = PrepareSleep;
   auto Call = preparePowerRequest(Input, Result.Requests.size(), Child);
   if (!Call)
     return Call.takeError();
   if (System.Minor == DevicePowerRequest::Set)
-    if (auto E = Framework->systemPowerPolicy(
-            Request->PnpDevice, SystemTarget != DevicePowerState::D0))
+    if (auto E = Framework->systemPowerPolicy(Request->PnpDevice, !Working))
       return E;
   ++Provider->RequestedPowerIndex;
   Request->FrameworkPolicyIssued = true;
   // S0 may complete after the independent D0 transaction is issued. S3 must
   // retain its original packet until the matching device transaction finishes.
-  if (SystemTarget == DevicePowerState::D0) {
+  if (Working) {
     if (auto E = completeRequest(IRP, 0))
       return E;
   } else {
@@ -357,8 +367,8 @@ KernelModel::setPowerState(llvm::ArrayRef<uint64_t> A) {
   if (uint32_t(A[1]) != uint32_t(DriverPowerType::Device))
     return powerError("PoSetPowerState requires DevicePowerState type");
   const auto State = DevicePowerState(uint32_t(A[2]));
-  if (State != DevicePowerState::D0 && State != DevicePowerState::D3)
-    return powerError("PoSetPowerState supports D0 and D3 in this profile");
+  if (!isSupportedDriverDevicePower(State))
+    return powerError("PoSetPowerState target is unsupported by this profile");
   if (State != DevicePowerState::D0 && CurrentIRQL > APCLevel)
     return powerError("PoSetPowerState below D0 requires IRQL <= APC_LEVEL");
   auto &Reported = Device->second.ReportedDevicePower;

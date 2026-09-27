@@ -139,6 +139,27 @@ TEST_F(KernelD3ColdResourceTest,
   EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
 }
 
+TEST_F(KernelD3ColdResourceTest, D2CannotBecomeColdOrResetConfiguredRegisters) {
+  configure(configuration());
+  start();
+  const auto Alias = take(MMIO->map(Physical, 16, mmio::NonCached, false));
+  ok(Memory->writeInteger(Alias, 91, 4));
+  const auto Epoch = Resources.find(PDO)->Epoch;
+  Resources.setPhysicalPower(PDO, DevicePowerState::D2);
+  reject(Resources.enterD3Cold(PDO, SystemPowerState::Working, true), "D3hot");
+  EXPECT_EQ(Resources.find(PDO)->Power, DevicePowerState::D2);
+  EXPECT_EQ(Resources.find(PDO)->PowerGeneration, 0u);
+  EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
+  EXPECT_FALSE(Resources.isD3Cold(PDO));
+  Resources.setPhysicalPower(PDO, DevicePowerState::D0);
+  EXPECT_EQ(take(Memory->readInteger(Alias, 4)), 91u);
+  cold();
+  Resources.setPhysicalPower(PDO, DevicePowerState::D0);
+  EXPECT_EQ(take(Memory->readInteger(Alias, 4)), 17u);
+  EXPECT_EQ(Resources.find(PDO)->PowerGeneration, 1u);
+  EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
+}
+
 TEST_F(KernelD3ColdResourceTest, CapabilityAndColdWakeAreIndependentOfPolicy) {
   auto Device = configuration();
   Device.D3Cold->EnabledByDefault = true;

@@ -304,15 +304,16 @@ llvm::Error DeviceLifecycle::finishPnp(DeviceLifecycleTicket Ticket,
   return llvm::Error::success();
 }
 
-llvm::Expected<DeviceLifecycleTicket>
-DeviceLifecycle::beginDevicePower(uint64_t Identity, DevicePowerRequest Request,
-                                  DevicePowerState Target) {
+llvm::Error
+DeviceLifecycle::validateDevicePowerRequest(uint64_t Identity,
+                                            DevicePowerRequest Request,
+                                            DevicePowerState Target) const {
   if (!valid(Request) || !valid(Target))
     return lifecycleError("unsupported device power request or state");
   auto Found = lookup(Identity);
   if (!Found)
     return Found.takeError();
-  Device &D = **Found;
+  const Device &D = **Found;
   if (absent(D.Pnp))
     return lifecycleError("device is being removed");
   if (D.DevicePowerPending)
@@ -320,10 +321,24 @@ DeviceLifecycle::beginDevicePower(uint64_t Identity, DevicePowerRequest Request,
   if (Request == DevicePowerRequest::Set && D.SystemPowerPending &&
       D.SystemPowerPending->Request == DevicePowerRequest::Query)
     return lifecycleError("device set-power cannot satisfy a system query");
+  // Distinct low-power states require an actual intervening D0 transaction.
+  // D3hot -> D3cold is a bus-owned substate, not another DEVICE_POWER_STATE.
+  // https://learn.microsoft.com/windows-hardware/drivers/kernel/device-power-states
+  if (Request == DevicePowerRequest::Set && D.DevicePower != Target &&
+      D.DevicePower != DevicePowerState::D0 && Target != DevicePowerState::D0)
+    return lifecycleError("low-power transitions require an intermediate D0");
+  return llvm::Error::success();
+}
+
+llvm::Expected<DeviceLifecycleTicket>
+DeviceLifecycle::beginDevicePower(uint64_t Identity, DevicePowerRequest Request,
+                                  DevicePowerState Target) {
+  if (auto E = validateDevicePowerRequest(Identity, Request, Target))
+    return std::move(E);
   auto Ticket = nextTicket(Identity);
   if (!Ticket)
     return Ticket.takeError();
-  D.DevicePowerPending =
+  Devices.at(Identity).DevicePowerPending =
       PowerOperation<DevicePowerState>{*Ticket, Request, Target};
   return *Ticket;
 }

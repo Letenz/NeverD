@@ -181,12 +181,18 @@ TEST_F(KernelResourceAssignmentTest, FailedLowerAndUpperStartsRetainRetryFacts) 
 TEST_F(KernelResourceAssignmentTest, PhysicalPowerAndPresenceAreIndependentOfEpoch) {
   start();
   const auto Epoch = Model.find(PDO)->Epoch;
-  Model.setPhysicalPower(PDO, DevicePowerState::D3);
-  EXPECT_EQ(Model.find(PDO)->Power, DevicePowerState::D3);
-  EXPECT_TRUE(Model.find(PDO)->Assigned);
-  EXPECT_EQ(Model.find(PDO)->Epoch, Epoch);
-  Model.setPhysicalPower(PDO, DevicePowerState::D0);
-  EXPECT_EQ(Model.find(PDO)->Power, DevicePowerState::D0);
+  const auto Raw = take(Model.resourceList(PDO, false));
+  const auto Translated = take(Model.resourceList(PDO, true));
+  for (auto Power : {DevicePowerState::D2, DevicePowerState::D3}) {
+    Model.setPhysicalPower(PDO, Power);
+    EXPECT_EQ(Model.find(PDO)->Power, Power);
+    EXPECT_TRUE(Model.find(PDO)->Assigned);
+    EXPECT_EQ(Model.find(PDO)->Epoch, Epoch);
+    EXPECT_EQ(take(Model.resourceList(PDO, false)), Raw);
+    EXPECT_EQ(take(Model.resourceList(PDO, true)), Translated);
+    Model.setPhysicalPower(PDO, DevicePowerState::D0);
+    EXPECT_EQ(Model.find(PDO)->Power, DevicePowerState::D0);
+  }
   Model.surpriseRemoval(PDO);
   EXPECT_FALSE(Model.find(PDO)->Present);
   EXPECT_TRUE(Model.find(PDO)->Assigned);

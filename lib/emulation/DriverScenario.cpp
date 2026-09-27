@@ -142,17 +142,6 @@ bool pnpRequestMayFail(DevicePnpRequest Minor) {
   return false;
 }
 
-bool supportedDevicePower(uint32_t State) {
-  switch (static_cast<DevicePowerState>(State)) {
-#define NEVERD_DRIVER_POWER_DEVICE_STATE(Name) case DevicePowerState::Name:
-#include "neverd/emulation/DriverPower.def"
-#undef NEVERD_DRIVER_POWER_DEVICE_STATE
-    return true;
-  default:
-    return false;
-  }
-}
-
 bool supportedSystemPower(uint32_t State) {
   switch (static_cast<SystemPowerState>(State)) {
 #define NEVERD_DRIVER_POWER_SYSTEM_STATE(Name) case SystemPowerState::Name:
@@ -1495,8 +1484,8 @@ llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
     return invalid("requested_device_power requires device power type");
   switch (Operation.Type) {
   case DriverPowerType::Device:
-    if (!supportedDevicePower(Operation.State))
-      return invalid("device power target must be D0 or D3");
+    if (!isSupportedDriverDevicePower(DevicePowerState(Operation.State)))
+      return invalid("device power target is unsupported by this profile");
     break;
   case DriverPowerType::System:
     if (!supportedSystemPower(Operation.State))
@@ -2012,9 +2001,9 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return invalid("pnp devices require D0 and working initial "
                      "power states");
     if (Device.InitialReportedDevicePower &&
-        !supportedDevicePower(
-            static_cast<uint32_t>(*Device.InitialReportedDevicePower)))
-      return invalid("initial_reported_device_power must be D0 or D3");
+        !isSupportedDriverDevicePower(*Device.InitialReportedDevicePower))
+      return invalid(
+          "initial_reported_device_power is unsupported by this profile");
     if (Device.RequestedDevicePower.size() >
         DriverScenarioPowerResponseLimit - PowerResponses)
       return invalid("requested_device_power exceeds the combined response "

@@ -578,6 +578,34 @@ TEST_F(DriverKernelDMA, PhysicalD3FailureCannotPerformAPrefixWrite) {
   EXPECT_EQ(Result.DmaTransfers[0].OccurredAt100ns, 5u);
 }
 
+TEST_F(DriverKernelDMA, PhysicalD2BlocksWritesWithoutReleasingCommonBuffer) {
+  start();
+  const auto Map = publish(plan(1, 8, true));
+  good(Model.arm({event(Logical, 2, 5, {1, 2})}, 0, 0));
+  Resources.setPhysicalPower(PDO, DevicePowerState::D2);
+  bad(Model.processEvents(5), "physical device power D0");
+  EXPECT_EQ(Memory.DeviceWrites, 0u);
+  EXPECT_EQ(Memory.Bytes[0], 0u);
+  ASSERT_NE(Model.mapping(Map.Object), nullptr);
+  EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
+}
+
+TEST_F(DriverKernelDMA, D2CommonBufferRemainsUsableAfterCompletedD0) {
+  start();
+  const auto Map = publish(plan(1, 8, true));
+  Resources.setPhysicalPower(PDO, DevicePowerState::D2);
+  good(Model.arm({event(Logical, 2, 5, {3, 4})}, 0, 0));
+  ASSERT_NE(Model.mapping(Map.Object), nullptr);
+  EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
+  Resources.setPhysicalPower(PDO, DevicePowerState::D0);
+  good(Model.processEvents(5));
+  EXPECT_EQ(Memory.Bytes[0], 3u);
+  EXPECT_EQ(Memory.Bytes[1], 4u);
+  EXPECT_EQ(Memory.DeviceWrites, 1u);
+  EXPECT_EQ(Model.mapping(Map.Object)->Logical, Map.Logical);
+  release(Map.Object);
+}
+
 TEST_F(DriverKernelDMA, DeliveryUsesActualD0StateRatherThanArmTimePower) {
   start();
   publish(plan(1, 8, true));

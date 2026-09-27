@@ -684,6 +684,22 @@ TEST_F(KernelInterruptTest, DueD3PulseRecordsPreciseUndeliveredFailure) {
   EXPECT_FALSE(Result.Interrupts[0].DeliveredAt100ns);
 }
 
+TEST_F(KernelInterruptTest, DueD2PulseCannotInvokeGuestHandler) {
+  connect();
+  arm(0, 10);
+  const auto Epoch = Resources.find(PDO)->Epoch;
+  Resources.setPhysicalPower(PDO, DevicePowerState::D2);
+  EXPECT_EQ(take(Model->dueCount(10)), 1u);
+  reject(Model->queueNextDue(10), "power D0");
+  ASSERT_EQ(Result.Interrupts.size(), 1u);
+  EXPECT_TRUE(Result.Interrupts.front().UndeliveredReason);
+  EXPECT_FALSE(Result.Interrupts.front().ReturnValue);
+  EXPECT_FALSE(Result.Interrupts.front().DeliveredAt100ns);
+  EXPECT_TRUE(Result.Interrupts.front().Handlers.empty());
+  EXPECT_NE(Model->connection(Object), nullptr);
+  EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
+}
+
 TEST_F(KernelInterruptTest, SurpriseInvalidatesArmedPulseBeforeGuestEntry) {
   connect();
   arm(1, 10);

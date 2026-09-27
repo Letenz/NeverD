@@ -155,19 +155,24 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     const auto Field = [&](uint64_t Offset) {
       return Fields[Offset / sizeof(uint32_t)];
     };
+    const auto DxState = DevicePowerState(
+        Field(Idle ? policy::IdleDxState : policy::WakeDxState));
+    if (!isSupportedDriverDevicePower(DxState) ||
+        DxState == DevicePowerState::D0)
+      return policyError("settings require an explicit supported low-power "
+                         "device state");
     if (Idle) {
       if (Field(policy::IdleCapabilities) != policy::CannotWake &&
           Field(policy::IdleCapabilities) != policy::CanWake)
         return policyError("USB and unknown idle capabilities are unsupported");
-      if (Field(policy::IdleDxState) != uint32_t(DevicePowerState::D3) ||
-          (Field(policy::IdleTimeoutType) == policy::DriverManagedTimeout &&
+      if ((Field(policy::IdleTimeoutType) == policy::DriverManagedTimeout &&
            !Field(policy::IdleTimeout)) ||
           Field(policy::IdleTimeoutType) >
               policy::SystemManagedTimeoutWithHint ||
           Field(policy::IdleUserControl) != policy::NoUserControl ||
           Field(policy::IdleExcludeD3Cold) > policy::UseDefault)
-        return policyError("idle requires explicit D3, a valid timeout policy "
-                           "and no user override");
+        return policyError("idle requires a valid timeout policy and no user "
+                           "override");
       const bool Managed =
           Field(policy::IdleTimeoutType) != policy::DriverManagedTimeout;
       if (Managed && !PowerHost.ManagedIdle)
@@ -193,6 +198,7 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
       }
       const auto Previous = P.Idle;
       P.Idle = KernelPowerPolicy::IdleSettings{
+          DxState,
           Field(policy::IdleEnabled) != 0,
           Field(policy::IdleCapabilities) == policy::CanWake,
           Previous ? Previous->PowerUpOnSystemWake
@@ -211,9 +217,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
       if (!P.Idle->Enabled && P.Started && !D->second.InD0)
         P.PowerUpRequested = true;
     } else {
-      if (Field(policy::WakeDxState) != uint32_t(DevicePowerState::D3) ||
-          Field(policy::WakeUserControl) != policy::NoUserControl)
-        return policyError("wake requires explicit D3 and no user override");
+      if (Field(policy::WakeUserControl) != policy::NoUserControl)
+        return policyError("wake requires no user override");
       if (Field(policy::WakeEnabled) > policy::UseDefault)
         return Result{windows::StatusInvalidParameter};
       auto ArmChildren = read(A[2] + policy::WakeChildren, sizeof(uint8_t));
@@ -239,7 +244,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
           return Result{policy::StatusPowerStateInvalid};
       }
       P.Wake = KernelPowerPolicy::WakeSettings{
-          Field(policy::WakeEnabled) != 0, *ArmChildren != 0, *Propagate != 0};
+          DxState, Field(policy::WakeEnabled) != 0, *ArmChildren != 0,
+          *Propagate != 0};
     }
     return Result{0};
   }
@@ -358,7 +364,7 @@ llvm::Error KernelFramework::processPowerPolicy() {
       return beginIdlePowerDown(Handle);
     P.IdlePowerDown = true;
     P.ManagedPowerNotRequired = false;
-    if (auto E = PowerHost.Request(D.Wdm, DevicePowerState::D3,
+    if (auto E = PowerHost.Request(D.Wdm, P.Idle->DxState,
                                    PowerPolicyHost::RequestMode::Issue)) {
       P.IdlePowerDown = false;
       return E;
@@ -410,6 +416,26 @@ llvm::Expected<uint64_t> KernelFramework::powerPolicyEpoch(uint64_t PDO) const {
   return P.Epoch;
 }
 
+llvm::Expected<DevicePowerState>
+KernelFramework::systemSleepTarget(uint64_t PDO) const {
+  const auto Handle = PnpDeviceHandles.find(PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("system sleep lost its framework PDO");
+  const auto &P = Devices.at(Handle->second).Policy;
+  if (!P.Wake)
+    return DevicePowerState::D3;
+  if (P.Wake->Enabled)
+    return P.Wake->DxState;
+  if (P.Wake->ArmForChildren) {
+    auto Children = armedWakeChildren(Handle->second);
+    if (!Children)
+      return Children.takeError();
+    if (!Children->empty())
+      return P.Wake->DxState;
+  }
+  return DevicePowerState::D3;
+}
+
 llvm::Expected<bool> KernelFramework::systemSleepNeedsD0(uint64_t PDO) const {
   const auto Handle = PnpDeviceHandles.find(PDO);
   if (Handle == PnpDeviceHandles.end())
@@ -451,10 +477,10 @@ llvm::Error KernelFramework::beginIdlePowerDown(uint64_t Device) {
     return policyError("idle callback identity exhausted");
   if (!PowerHost.ArmWake)
     return policyError("idle arm requires the WAIT_WAKE bridge");
-  if (auto E = PowerHost.Request(D.Wdm, DevicePowerState::D3,
+  if (auto E = PowerHost.Request(D.Wdm, D.Policy.Idle->DxState,
                                  PowerPolicyHost::RequestMode::Validate))
     return E;
-  // Arm before requesting D3. A rejected arm is not a failed SET_POWER IRP:
+  // Arm before requesting Dx. A rejected arm is not a failed SET_POWER IRP:
   // no device-power packet has reached either the framework or the provider.
   const uint64_t Token = NextContinuation++;
   PnpTransition Transition{0, Device};
@@ -493,7 +519,7 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
   }
   D->second.Policy.IdlePowerDown = true;
   D->second.Policy.ManagedPowerNotRequired = false;
-  return PowerHost.Request(D->second.Wdm, DevicePowerState::D3,
+  return PowerHost.Request(D->second.Wdm, D->second.Policy.Idle->DxState,
                            PowerPolicyHost::RequestMode::Issue);
 }
 
@@ -545,7 +571,8 @@ llvm::Expected<bool> KernelFramework::allowsD3Cold(uint64_t PDO) const {
   if (Handle == PnpDeviceHandles.end())
     return false;
   const auto &D = Devices.at(Handle->second);
-  if (!D.Policy.Idle || D.Policy.Idle->ExcludeD3Cold == power_policy::True ||
+  if (!D.Policy.Idle || D.Policy.Idle->DxState != DevicePowerState::D3 ||
+      D.Policy.Idle->ExcludeD3Cold == power_policy::True ||
       !PowerHost.ColdAllowed)
     return false;
   return PowerHost.ColdAllowed(

@@ -117,11 +117,13 @@ llvm::Expected<bool>
 KernelFramework::beginDevicePowerTransition(uint64_t PDO, uint64_t IRP,
                                             DevicePowerState Previous,
                                             DevicePowerState Target) {
+  if (!isSupportedDriverDevicePower(Previous) ||
+      !isSupportedDriverDevicePower(Target))
+    return invalid("device power transition requires a supported state");
   if (Previous == Target)
     return false;
-  if ((Previous != DevicePowerState::D0 && Previous != DevicePowerState::D3) ||
-      (Target != DevicePowerState::D0 && Target != DevicePowerState::D3))
-    return invalid("device power transition requires D0 or D3");
+  if (Previous != DevicePowerState::D0 && Target != DevicePowerState::D0)
+    return invalid("transitions between low-power states require D0");
   const bool Entering = Target == DevicePowerState::D0;
   return beginPowerTransition(PDO, IRP,
                               Entering ? PowerTransitionKind::PowerUp
