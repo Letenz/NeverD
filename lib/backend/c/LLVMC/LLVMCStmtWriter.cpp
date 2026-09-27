@@ -3152,7 +3152,9 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
   } else {
     const std::string Value = freshVar("memory_value");
     OS << "{ " << typeToCLLVM(Type) << " " << Value << " = "
-       << valueStr(Store->getValueOperand()) << ";\n";
+       << (Integer ? integerPointerOperandStr(Store->getValueOperand())
+                   : valueStr(Store->getValueOperand()))
+       << ";\n";
     emitIndent(Indent + 1);
     OS << "__builtin_memcpy((void*)(" << Pointer << "), &" << Value << ", "
        << Size.getFixedValue() << ");\n";

@@ -407,6 +407,53 @@ TEST(LLVMCValues, UnsupportedGEPPointerLayoutsFailClosed) {
                std::runtime_error);
 }
 
+TEST(LLVMCValues, UnalignedIntegerStorePreservesPointerAddressRepresentation) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-store-pointer-view", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  auto *Ptr = B.getPtrTy();
+  auto *Observe = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {Ptr, Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "observe_pointer", Module);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(B.getVoidTy(), {Ptr}, false),
+      llvm::GlobalValue::ExternalLinkage, "store_frame_address", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Frame =
+      B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 96), nullptr, "frame");
+  auto *End = B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(72), "frame_end");
+  auto *Base = B.CreatePtrToInt(End, B.getInt64Ty(), "rsp_init");
+  auto *Bits = B.CreateAdd(Base, B.getInt64(-8));
+  B.CreateAlignedStore(Bits, Function->getArg(0), llvm::Align(1));
+  B.CreateCall(Observe, {Function->getArg(0), B.CreateIntToPtr(Bits, Ptr)});
+  B.CreateRetVoid();
+  ASSERT_FALSE(llvm::verifyModule(Module));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  // The frame printer deliberately gives this integer IR value a pointer
+  // expression. Capturing it for byte copying must keep the integer view.
+  EXPECT_NE(Source.find("memory_value"), std::string::npos) << Source;
+  compileAndRun(Source + R"(
+#include <string.h>
+static int mismatch;
+void observe_pointer(void *storage, void *address) {
+  uint64_t stored;
+  memcpy(&stored, storage, sizeof(stored));
+  mismatch = stored != (uint64_t)(uintptr_t)address;
+}
+int main(void) {
+  unsigned char output[16];
+  memset(output, 0x5a, sizeof(output));
+  store_frame_address(output + 1);
+  for (unsigned i = 0; i < sizeof(output); ++i)
+    if ((i < 1 || i >= 9) && output[i] != 0x5a) return 2;
+  return mismatch;
+}
+)");
+}
+
 TEST(LLVMCValues, VectorMemoryUsesCCarrierAlignmentWithWeakerSourceABI) {
   llvm::LLVMContext Context;
   llvm::Module Module("vector-memory-carrier-alignment", Context);

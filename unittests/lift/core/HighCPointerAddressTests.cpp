@@ -11777,9 +11777,13 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
   EXPECT_NE(ZeroFn.find("+ 56"), std::string::npos) << Source;
   // The callee can follow [record + 8] to frame + 64 and read its +16
   // field at frame + 80. Without an access bound, zero is observable too.
-  const auto ZeroStoreAt = ZeroFn.find("+ 80) = 0;");
+  const std::regex ZeroStore(
+      R"(\{ uint64_t (\w+) = 0;\s*)"
+      R"(__builtin_memcpy\(\(void\*\)\(\(\(char\*\)&frame0 \+ 80\)\), &\1, 8\);\s*\})");
+  std::smatch StoredZero;
+  ASSERT_TRUE(std::regex_search(ZeroFn, StoredZero, ZeroStore)) << Source;
+  const auto ZeroStoreAt = static_cast<size_t>(StoredZero.position());
   const auto RecordCallAt = ZeroFn.find("use_record(");
-  ASSERT_NE(ZeroStoreAt, std::string::npos) << Source;
   ASSERT_NE(RecordCallAt, std::string::npos) << Source;
   EXPECT_LT(ZeroStoreAt, RecordCallAt) << Source;
   EXPECT_NE(KeptFn.find("+ 80"), std::string::npos) << Source;
@@ -33207,8 +33211,20 @@ TEST(LLVMCPointerAddresses, NamedImageLoadKeepsAssignWhenStored) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, &Img, Function));
   OS.flush();
-  EXPECT_NE(Source.find("= s_instance"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("GetPeriodID("), std::string::npos) << Source;
+  const size_t StoreAt = Source.find("s_instance = 0;");
+  ASSERT_NE(StoreAt, std::string::npos) << Source;
+  const std::regex Load(
+      R"(__builtin_memcpy\(&(\w+), \(const void\*\)\(&s_instance\), 8\);)");
+  std::smatch Loaded;
+  ASSERT_TRUE(std::regex_search(Source, Loaded, Load)) << Source;
+  const std::string Captured = Loaded[1];
+  const size_t LoadAt = static_cast<size_t>(Loaded.position());
+  const size_t CallAt = Source.find("GetPeriodID(" + Captured + ", 1);");
+  ASSERT_NE(CallAt, std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint64_t " + Captured + ";"), std::string::npos)
+      << Source;
+  EXPECT_LT(StoreAt, LoadAt) << Source;
+  EXPECT_LT(LoadAt, CallAt) << Source;
 }
 
 TEST(LLVMCPointerAddresses, NdDataGepPrintsSyntheticGlobalNotNullLoad) {
@@ -33600,8 +33616,10 @@ TEST(LLVMCPointerAddresses, IntegerFieldStorePreservesCallViewAndStoreWidth) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("*(uint64_t*)&this->values_ = "), std::string::npos)
-      << Source;
+  const std::regex Store(
+      R"(\{ uint64_t (\w+) = \(uint64_t\)\(\(uint32_t\)\(GetLength\(this\)\)\);\s*)"
+      R"(__builtin_memcpy\(\(void\*\)\(&this->values_\), &\1, 8\);\s*\})");
+  EXPECT_TRUE(std::regex_search(Source, Store)) << Source;
   EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uint64_t)"), std::string::npos) << Source;
 }
@@ -37683,7 +37701,22 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
           R"(__builtin_memcpy\(&(\w+), \(const void\*\)\((\(\(char\*\)&frame0 \+ [0-9]+\))\), 4\);\s*)"
           R"(\{ uint32_t (\w+) = \(\1 \+ 20\);\s*)"
           R"(__builtin_memcpy\(\(void\*\)\(\2\), &\3, 4\);\s*\})");
-      EXPECT_TRUE(std::regex_search(Handler, Update)) << Source;
+      if (!std::regex_search(Handler, Update)) {
+        // Optimized IR can prove alignment and retain the direct scalar
+        // accesses. Keep the same load/add/store identity and order checks.
+        const auto AddAt = Handler.find(" + 20);");
+        ASSERT_NE(AddAt, std::string::npos) << Source;
+        const auto LineStart = Handler.rfind('\n', AddAt) + 1;
+        const auto AssignAt = Handler.find(" = (", LineStart);
+        ASSERT_LT(AssignAt, AddAt) << Source;
+        const std::string Slot =
+            llvm::StringRef(Handler).slice(LineStart, AssignAt).trim().str();
+        const std::string Loaded =
+            Handler.substr(AssignAt + 4, AddAt - AssignAt - 4);
+        const auto LoadAt = Handler.find(Loaded + " = " + Slot + ";");
+        ASSERT_NE(LoadAt, std::string::npos) << Source;
+        EXPECT_LT(LoadAt, LineStart) << Source;
+      }
     }
   }
 }
