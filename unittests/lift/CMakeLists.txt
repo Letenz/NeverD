@@ -988,6 +988,7 @@ target_compile_definitions(NeverDObjCSourceCallTests PRIVATE
   NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
 )
 if(MSVC)
+  target_compile_options(NeverDLiftTests PRIVATE /bigobj)
   target_compile_options(NeverDObjCSourceCallTests PRIVATE /bigobj)
 endif()
 
