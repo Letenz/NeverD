@@ -11,6 +11,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "../SymPrintShape.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -40,25 +42,55 @@ size_t SymContext::dagSize(SymRef R) const {
 }
 
 size_t SymContext::readabilityCost(SymRef R) const {
+  return readability(R).Nodes;
+}
+
+SymReadability SymContext::readability(SymRef R) const {
   constexpr size_t Ceiling = std::numeric_limits<size_t>::max();
+  auto Add = [](size_t A, size_t B) {
+    return B > Ceiling - A ? Ceiling : A + B;
+  };
 
   // Interning appends a node only after all of its operands exist.  Extending
   // one prefix cache therefore computes every new cost in a single pass, even
   // when a solver asks again after interning more candidates.
-  ReadabilityCosts.reserve(Nodes.size());
+  // Let the vector grow geometrically: reserving the exact current prefix on
+  // every query makes interleaved construction and inspection quadratic.
   while (ReadabilityCosts.size() < Nodes.size()) {
     SymRef Current(static_cast<uint32_t>(ReadabilityCosts.size()));
-    size_t Total = isConst(Current) && isConstOnes(Current) ? 0 : 1;
-    for (SymRef Operand : operands(Current)) {
+    llvm::ArrayRef<SymRef> Ops = operands(Current);
+    const SymOp Op = op(Current);
+    const bool InfixChain = Op == SymOp::Add || Op == SymOp::Mul ||
+                            Op == SymOp::And || Op == SymOp::Or ||
+                            Op == SymOp::Xor;
+    size_t Own = InfixChain ? Ops.size() - 1 : 1;
+    // Not(Eq) is the single printed inequality operation.
+    if (Op == SymOp::Not && op(Ops[0]) == SymOp::Eq)
+      Own = 0;
+    SymReadability Total{Own, Ops.empty() ? 0 : Own};
+    const unsigned Lead =
+        Op == SymOp::Add ? print_detail::leadingAddOperand(*this, Ops) : 0;
+    const bool UnitMinus = print_detail::hasUnaryMinus(*this, Current);
+    for (unsigned I = 0; I < Ops.size(); ++I) {
+      SymRef Operand = Ops[I];
       assert(Operand.index() < ReadabilityCosts.size() &&
              "a symbolic node precedes one of its operands");
-      const size_t OperandCost = ReadabilityCosts[Operand.index()];
-      if (OperandCost > Ceiling - Total) {
-        Total = Ceiling;
-        break;
+      if (I == 0 && UnitMinus)
+        continue;
+      SymReadability Child = ReadabilityCosts[Operand.index()];
+      // The parent's subtraction takes the place of this unary sign. Adjust
+      // before addition; subtracting from a saturated sum would undercount it.
+      if (Op == SymOp::Add && I != Lead &&
+          print_detail::hasUnaryMinus(*this, Operand) &&
+          Child.Nodes != Ceiling) {
+        --Child.Nodes;
+        --Child.Operations;
       }
-      Total += OperandCost;
+      Total.Nodes = Add(Total.Nodes, Child.Nodes);
+      Total.Operations = Add(Total.Operations, Child.Operations);
     }
+    if (Total.Nodes == Ceiling)
+      Total.Operations = Ceiling;
     ReadabilityCosts.push_back(Total);
   }
   return ReadabilityCosts[R.index()];

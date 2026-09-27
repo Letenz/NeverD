@@ -264,7 +264,7 @@ SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   assert(Verified && "a proved mask split disagreed with what it replaces");
   if (!Verified)
     return E;
-  if (!Opts.AllowGrowth && readingCost(Ctx, Rebuilt) > readingCost(Ctx, E))
+  if (!Opts.AllowGrowth && !doesNotGrow(Ctx, Rebuilt, E))
     return E;
 
   Rep.NumAtoms = Widest;
@@ -295,6 +295,30 @@ bool hasBitwiseInteraction(const SymContext &Ctx, SymRef R) {
          (Ctx.op(R) == SymOp::Add && llvm::any_of(Ctx.operands(R), Bitwise));
 }
 
+// A child may improve a complement of a product into an arithmetic sum and
+// thereby hide its relation to the product's other bitwise uses. Preserve one
+// original reading at sums of bitwise products, including a complemented sum.
+// This only inspects the immediate sum/product frontier; it does not revisit
+// the graph or broaden the emitted-candidate refinement below.
+bool hasBitwiseProductSum(const SymContext &Ctx, SymRef R) {
+  if (Ctx.op(R) == SymOp::Not)
+    R = Ctx.operand(R, 0);
+  if (Ctx.op(R) != SymOp::Add)
+    return false;
+  for (SymRef Term : Ctx.operands(R)) {
+    if (Ctx.op(Term) != SymOp::Mul)
+      continue;
+    unsigned BitwiseFactors = 0;
+    for (SymRef Factor : Ctx.operands(Term)) {
+      SymOp Op = Ctx.op(Factor);
+      if ((Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor) &&
+          ++BitwiseFactors == 2)
+        return true;
+    }
+  }
+  return false;
+}
+
 // A candidate can introduce a factored sum that was absent from the original
 // postorder. Visit its unmeasured nodes once, reusing exact child replacements.
 // The snapshot below is deliberately not extended with nodes emitted by this
@@ -314,7 +338,7 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return SymRef();
   };
   if (SymRef R = Known(E); R.isValid())
-    return readingCost(Ctx, R) < readingCost(Ctx, E) ? R : E;
+    return readingScore(Ctx, R) < readingScore(Ctx, E) ? R : E;
   // An emitted root whose children already have their final spelling has no
   // new internal region to visit. Constants and scaled variables are also
   // builder-normalized leaves of this traversal.
@@ -368,7 +392,7 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     SymRef Rebuilt = Changed ? Ctx.rebuild(R, Ops) : R;
     SymRef Best =
-        readingCost(Ctx, Rebuilt) <= readingCost(Ctx, R) ? Rebuilt : R;
+        readingScore(Ctx, Rebuilt) <= readingScore(Ctx, R) ? Rebuilt : R;
     // The final region can restore a product into an additive bitwise
     // relation without having measured that new root. Finish that exposed
     // relation once within this fixed frontier, even if its children stayed
@@ -382,7 +406,7 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       SolveReport Local;
       SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Local);
       Rep.BudgetExhausted |= Local.BudgetExhausted;
-      if (readingCost(Ctx, Measured) < readingCost(Ctx, Best)) {
+      if (readingScore(Ctx, Measured) < readingScore(Ctx, Best)) {
         Best = Measured;
         Rep.NumAtoms = std::max(Rep.NumAtoms, Local.NumAtoms);
         if (Local.Evidence == MBAEvidence::Samples)
@@ -394,7 +418,7 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Solved[Index] = Best;
   }
   SymRef Best = Solved.lookup(E.index());
-  return readingCost(Ctx, Best) < readingCost(Ctx, E) ? Best : E;
+  return readingScore(Ctx, Best) < readingScore(Ctx, E) ? Best : E;
 }
 
 } // namespace
@@ -447,7 +471,7 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   if (!Budget.exhausted() && readingCost(Ctx, Result.Expr) > 2) {
     SolveReport Factored;
     SymRef Candidate = solveStructuralFactors(Ctx, E, Opts, Budget, Factored);
-    if (readingCost(Ctx, Candidate) < readingCost(Ctx, Result.Expr)) {
+    if (readingScore(Ctx, Candidate) < readingScore(Ctx, Result.Expr)) {
       Result.Expr = Candidate;
       Rep.NumAtoms = Factored.NumAtoms;
       Rep.Outcome = Factored.Outcome;
@@ -470,6 +494,13 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     } else if (Final.BudgetExhausted && Result.Expr == E) {
       Rep.Outcome = MBAOutcome::BudgetExhausted;
     }
+  }
+  if (Result.Expr != E && !Opts.AllowGrowth &&
+      !doesNotGrow(Ctx, Result.Expr, E)) {
+    Result.Expr = E;
+    Rep.Outcome = Budget.exhausted() ? MBAOutcome::BudgetExhausted
+                                     : MBAOutcome::AlreadyShortest;
+    Rep.Evidence = MBAEvidence::None;
   }
   Result.Work = Budget.used();
   Result.NumAtoms = Rep.NumAtoms;
@@ -572,7 +603,9 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       // the original region as a second exact reading before discarding it.
       // The main reading gets first use of the shared work budget.
       SolveReport OriginalRep;
-      const bool WholeRegion = ChildrenChanged && hasBitwiseInteraction(Ctx, R);
+      const bool WholeRegion =
+          ChildrenChanged &&
+          (hasBitwiseInteraction(Ctx, R) || hasBitwiseProductSum(Ctx, R));
       SymRef Original = R;
       if (ChildrenChanged && !Budget.exhausted())
         Original = WholeRegion
@@ -591,7 +624,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
         Complete &= !Refined.BudgetExhausted;
       }
       if (Original != R &&
-          readingCost(Ctx, Original) < readingCost(Ctx, Rebuilt)) {
+          readingScore(Ctx, Original) < readingScore(Ctx, Rebuilt)) {
         // Arithmetic cancellation may expose a fresh linear MBA. It was not
         // in the original postorder, so finish that region before selecting it.
         SolveReport Refined;
@@ -613,7 +646,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       // Use the original node: a child rewrite may already have expanded one
       // occurrence of a complemented factor while leaving its products whole.
       SymRef Candidate = solveStructuralFactors(Ctx, R, Opts, Budget, Factored);
-      if (readingCost(Ctx, Candidate) < readingCost(Ctx, Rebuilt)) {
+      if (readingScore(Ctx, Candidate) < readingScore(Ctx, Rebuilt)) {
         Rebuilt = Candidate;
         Result.NumAtoms = std::max(Result.NumAtoms, Factored.NumAtoms);
       }
@@ -640,7 +673,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   // for, and it is the only place either gate sees the expression the caller
   // actually handed over rather than a layer of it.
   bool Kept = Out != E;
-  if (Kept && !Opts.AllowGrowth && readingCost(Ctx, Out) > Result.SizeBefore)
+  if (Kept && !Opts.AllowGrowth && !doesNotGrow(Ctx, Out, E))
     Kept = false;
   if (Kept) {
     const bool Verified = agreeOnSamples(Ctx, E, Out, Opts.VerifySamples);

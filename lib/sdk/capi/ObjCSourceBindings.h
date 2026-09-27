@@ -303,9 +303,10 @@ provenSourcePointerValue(const ExprPtr &Value,
 }
 
 /// An integer spelling alone is not a source declaration. Trace every
-/// definition to an independently validated message result, keeping the
-/// declaration's signedness. Narrowing, raw loads and unknown values cannot
-/// acquire a complete variadic carrier through this proof.
+/// definition to an independently validated message result or explicit
+/// floating-to-integer conversion, keeping signedness. Narrowing, raw loads
+/// and unknown values cannot acquire a complete variadic carrier through this
+/// proof.
 inline TypeRef
 provenSourceInteger64Value(const ExprPtr &Value,
                            const VarKeyMap<std::vector<ExprPtr>> &Definitions,
@@ -334,6 +335,45 @@ provenSourceInteger64Value(const ExprPtr &Value,
     const auto Right = provenSourceInteger64Value(
         Value->Operands[2], Definitions, Image, Budget, Active, Depth + 1);
     return Left && Right && equalSourceTypes(Left, Right) ? Left : TypeRef{};
+  }
+  // FLOAT_FLOAT2INT is an explicit signed conversion in the machine IR.
+  // Unlike an integer-looking load or arithmetic result, it determines its
+  // own C variadic type without relying on a selector spelling.
+  if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::FLOAT_FLOAT2INT &&
+      Value->Type->IsSigned && Value->Operands.size() == 1 &&
+      Value->Operands[0] && Value->Operands[0]->Type &&
+      Value->Operands[0]->Type->Kind == NdTypeKind::Float &&
+      (Value->Operands[0]->Type->Size == 4 ||
+       Value->Operands[0]->Type->Size == 8))
+    return Value->Type;
+  // Clang lowers a signed nonnegative clamp as x & ~(x >> 63). The mask
+  // changes the integer value, but not its 64-bit signed source carrier.
+  // Require the same SSA value on both sides and an independently declared
+  // integer result for x; an arbitrary bitwise operation proves no type.
+  if (Value->Kind == ExprKind::BinOp && Value->Op == NdOp::INT_AND &&
+      Value->Operands.size() == 2) {
+    const auto &Input = Value->Operands[0];
+    const auto &Mask = Value->Operands[1];
+    const auto Shift = Mask && Mask->Kind == ExprKind::UnaryOp &&
+                               Mask->Op == NdOp::INT_NOT &&
+                               Mask->Operands.size() == 1
+                           ? Mask->Operands[0]
+                           : ExprPtr{};
+    if (Input && Input->Kind == ExprKind::Var && Shift &&
+        Shift->Kind == ExprKind::BinOp && Shift->Op == NdOp::INT_ASHR &&
+        Shift->Operands.size() == 2 && Shift->Operands[0] &&
+        Shift->Operands[0]->Kind == ExprKind::Var &&
+        varKey(Input->Var) == varKey(Shift->Operands[0]->Var) &&
+        Shift->Operands[1] && Shift->Operands[1]->Kind == ExprKind::Const &&
+        Shift->Operands[1]->ConstVal == 63 && Shift->Operands[1]->Type &&
+        Shift->Operands[1]->Type->Size == 8 && Shift->Type &&
+        equalSourceTypes(Shift->Type, Value->Type) && Mask->Type &&
+        equalSourceTypes(Mask->Type, Value->Type)) {
+      const auto Type = provenSourceInteger64Value(Input, Definitions, Image,
+                                                   Budget, Active, Depth + 1);
+      if (Type && Type->IsSigned && equalSourceTypes(Type, Value->Type))
+        return Type;
+    }
   }
   if (Value->Kind == ExprKind::Call && Value->SourceCallHint) {
     const auto &Binding = *Value->SourceCallHint;

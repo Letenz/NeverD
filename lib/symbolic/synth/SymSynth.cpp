@@ -152,18 +152,18 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
   // for these subterms and range over everything they could be, so putting the
   // subterms back cannot make it disagree.
   const SymRef Concrete = Ctx.substitute(Found.Candidate, Problem.Hidden);
-  const size_t Cost = Ctx.readabilityCost(Concrete);
+  const SymReadability Score = Ctx.readability(Concrete);
   Result.Verification = Found.Evidence == SynthEvidence::Verifier
                             ? SynthVerification::Equivalent
                             : SynthVerification::Unknown;
-  if (Concrete == E || (!Opts.AllowGrowth && Cost >= Result.SizeBefore)) {
+  if (Concrete == E || (!Opts.AllowGrowth && Score >= Ctx.readability(E))) {
     Result.Outcome = SynthOutcome::AlreadyShortest;
     return Result;
   }
 
   Result.Expr = Concrete;
   Result.Changed = true;
-  Result.SizeAfter = Cost;
+  Result.SizeAfter = Score.Nodes;
   Result.CandidateCost = Found.Cost;
   Result.Outcome = SynthOutcome::Synthesized;
   Result.Evidence = Found.Evidence;

@@ -65,6 +65,9 @@ private:
   llvm::raw_ostream *Target;
 };
 
+/// Address of frame byte storage at \p Displacement from the entry SP.
+std::string frameStorageAddress(int64_t Displacement);
+
 class HighCWriter {
 public:
   static llvm::StringRef

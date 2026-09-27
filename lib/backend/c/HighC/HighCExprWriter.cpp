@@ -29,7 +29,6 @@
 
 namespace neverd {
 
-namespace {
 std::string frameStorageAddress(int64_t Displacement) {
   if (Displacement == 0)
     return "frame_base";
@@ -39,7 +38,6 @@ std::string frameStorageAddress(int64_t Displacement) {
   return "(frame_base " + std::string(Displacement < 0 ? "- " : "+ ") +
          std::to_string(Magnitude) + ")";
 }
-} // namespace
 
 std::string HighCWriter::debugNameForDisplacement(va_t Entry,
                                                   int64_t Disp) const {

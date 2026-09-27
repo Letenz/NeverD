@@ -11956,6 +11956,63 @@ TEST(ObjCCallHints, DynamicFormatInteger64TailRequiresDeclaredCompleteValues) {
   Selected.Body.front().Val->Type = Integer;
   Check(Selected, true);
 
+  // Clang's signed clamp x & ~(x >> 63) preserves the declared 64-bit
+  // integer carrier across the format argument. The exact shared SSA input
+  // and shift amount matter; a generic bitwise expression has no type proof.
+  const auto Clamped = [&] {
+    auto F = Make();
+    auto &Argument = F.Body.back().RetVal->Operands[3];
+    auto Shift = HighExpr::makeBinop(NdOp::INT_ASHR, Value(),
+                                     HighExpr::makeConst(63, 8));
+    Shift->Type = Integer;
+    auto Mask = HighExpr::makeUnary(NdOp::INT_NOT, Shift);
+    Mask->Type = Integer;
+    Argument = HighExpr::makeBinop(NdOp::INT_AND, Value(), Mask);
+    Argument->Type = Integer;
+    return F;
+  };
+  Check(Clamped(), true);
+  auto WrongShift = Clamped();
+  auto &WrongMask = WrongShift.Body.back().RetVal->Operands[3]->Operands[1];
+  WrongMask->Operands[0]->Operands[1] = HighExpr::makeConst(62, 8);
+  Check(WrongShift, false);
+  auto DifferentInput = Clamped();
+  auto &DifferentMask =
+      DifferentInput.Body.back().RetVal->Operands[3]->Operands[1];
+  DifferentMask->Operands[0]->Operands[0]->Var.Id = 43;
+  Check(DifferentInput, false);
+  auto UnsignedClamp = Clamped();
+  UnsignedClamp.Body.back().RetVal->Operands[3]->Type =
+      NdType::makeInt(8, false);
+  Check(UnsignedClamp, false);
+  auto ArbitraryAnd = Clamped();
+  ArbitraryAnd.Body.back().RetVal->Operands[3]->Operands[1] =
+      HighExpr::makeConst(0x7fffffffffffffffULL, 8);
+  Check(ArbitraryAnd, false);
+
+  const auto Converted = [&] {
+    auto F = Make();
+    auto Float = NdType::makeFloat(8);
+    auto Parameter = V;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    F.Params.push_back({"distance", Float});
+    F.Body.front().Val = HighExpr::makeUnary(
+        NdOp::FLOAT_FLOAT2INT, HighExpr::makeVar(Parameter, Float));
+    F.Body.front().Val->Type = Integer;
+    return F;
+  };
+  Check(Converted(), true);
+  auto UnsignedConversion = Converted();
+  UnsignedConversion.Body.front().Val->Type = NdType::makeInt(8, false);
+  Check(UnsignedConversion, false);
+  auto UnrelatedConversion = Converted();
+  UnrelatedConversion.Body.front().Val->Op = NdOp::FLOAT_FLOAT2UINT;
+  Check(UnrelatedConversion, false);
+  auto IntegerInput = Converted();
+  IntegerInput.Body.front().Val->Operands[0]->Type = Integer;
+  Check(IntegerInput, false);
+
   for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = Make();

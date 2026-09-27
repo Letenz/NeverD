@@ -4599,6 +4599,56 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     // Integer store-to-load forwarding and named C locals are exclusive.
     // Mixing them leaves later loads on `frame_base` after the seed `arg0`
     // store has already been deleted.
+    // Member text and copy aliases chosen before this point can name a slot
+    // that byte storage now replaces. Rewrite each such name as a typed view
+    // of the same storage bytes.
+    std::map<std::string, std::string> StorageViews;
+    for (const auto &[Disp, Slot] : FrameSlots) {
+      if (Slot.Name.empty())
+        continue;
+      const std::string Address =
+          "(uintptr_t)(" + frameStorageAddress(Disp) + ")";
+      if (Slot.RegionBytes)
+        StorageViews[Slot.Name] = "(*(uint8_t (*)[" +
+                                  std::to_string(Slot.RegionBytes) + "])" +
+                                  Address + ")";
+      else
+        StorageViews[Slot.Name] =
+            "(*(" +
+            declarationToC(
+                Slot.Type ? cDisplayType(Slot.Type) : NdType::makeInt(1), "*") +
+            ")" + Address + ")";
+    }
+    auto RewriteSlotNames = [&](std::string &Text) {
+      const auto IsIdent = [](char C) {
+        return std::isalnum(static_cast<unsigned char>(C)) || C == '_';
+      };
+      std::string Out;
+      for (size_t Pos = 0; Pos < Text.size();) {
+        if (!IsIdent(Text[Pos]) || (Pos && IsIdent(Text[Pos - 1]))) {
+          Out += Text[Pos++];
+          continue;
+        }
+        size_t End = Pos;
+        while (End < Text.size() && IsIdent(Text[End]))
+          ++End;
+        const std::string Token = Text.substr(Pos, End - Pos);
+        const bool Member =
+            Pos && (Text[Pos - 1] == '.' ||
+                    (Pos > 1 && Text[Pos - 1] == '>' && Text[Pos - 2] == '-'));
+        const auto View =
+            Member ? StorageViews.end() : StorageViews.find(Token);
+        Out += View == StorageViews.end() ? Token : View->second;
+        Pos = End;
+      }
+      Text = std::move(Out);
+    };
+    if (!StorageViews.empty()) {
+      for (auto &[Name, Text] : FieldForward)
+        RewriteSlotNames(Text);
+      for (auto &[Name, Source] : CopyForward)
+        RewriteSlotNames(Source);
+    }
     if (ProjectFrameAliasesIntoStorage)
       FrameStorageSlots = FrameSlots;
     FrameSlots.clear();

@@ -120,7 +120,8 @@ typedef struct neverd_simplify_result {
   const char *input;
   const char *output;
   int changed;
-  /// What the expression costs a reader, before and after.
+  /// Expanded spelling nodes (operators and leaves), before and after.
+  /// A changed result may have equal size but fewer printed operations.
   size_t cost_before;
   size_t cost_after;
   /// Distinct inputs the winning measurement spanned.

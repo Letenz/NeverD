@@ -14,6 +14,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cctype>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -667,6 +668,62 @@ TEST(HighCStoreForwarding, KeepsCyclicDependenciesMaterialized) {
       << Body->take_front(4096).str();
   EXPECT_GE(countPointerDerefLoads(*Body) + countOccurrences(*Body, "var_"), 2u)
       << Body->take_front(4096).str();
+}
+
+TEST(HighCStoreForwarding, ByteStorageDoesNotPrintReplacedSlotNames) {
+  // A frame address escapes into memory, so the frame becomes byte storage
+  // after slot names were chosen. A temp that aliased such a slot must print
+  // the storage access, not the slot name that is no longer declared.
+  const auto I32 = NdType::makeInt(4);
+  const auto I16 = NdType::makeInt(2);
+  const auto I64 = NdType::makeInt(8);
+  HighFunc Func;
+  Func.Name = "storage_alias";
+  Func.FrameSize = 0x40;
+  Func.ReturnType = I32;
+  Func.Params = {{"arg0", NdType::makePtr(I32)}, {"arg1", I32}};
+  MedVar Base;
+  Base.Kind = MedVar::Temp;
+  Base.Id = 3;
+  Base.Size = 8;
+  MedVar Old;
+  Old.Kind = MedVar::Temp;
+  Old.Id = 25;
+  Old.SSAVer = 1;
+  Old.Size = 2;
+  auto At = [&](uint64_t Offset) {
+    return HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(Base, I64),
+                               HighExpr::makeConst(Offset, 8));
+  };
+  HighStmt SetBase;
+  SetBase.Kind = StmtKind::Assign;
+  SetBase.Dst = HighExpr::makeVar(Base, I64);
+  SetBase.Val = frameSlot(0x18);
+  HighStmt LoadOld;
+  LoadOld.Kind = StmtKind::Assign;
+  LoadOld.Dst = HighExpr::makeVar(Old, I16);
+  LoadOld.Val = HighExpr::makeLoad(At(16), I16);
+  Func.Body = {
+      SetBase, store(At(8), At(16)), LoadOld,
+      store(At(16),
+            HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Old, I16),
+                                HighExpr::makeConst(0, 2))),
+      ret(HighExpr::makeLoad(makeParam(0, 8, NdType::makePtr(I32)), I32))};
+  const std::string Body = emitBody(Func);
+  // Every slot name the body prints is declared in it.
+  size_t From = 0;
+  while ((From = Body.find("var_", From)) != std::string::npos) {
+    size_t End = From;
+    while (End < Body.size() &&
+           (std::isalnum(static_cast<unsigned char>(Body[End])) ||
+            Body[End] == '_'))
+      ++End;
+    const std::string Name = Body.substr(From, End - From);
+    EXPECT_NE(Body.find(" " + Name + ";"), std::string::npos)
+        << Name << " is not declared\n"
+        << Body;
+    From = End;
+  }
 }
 
 } // namespace

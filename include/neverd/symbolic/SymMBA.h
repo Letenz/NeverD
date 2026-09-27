@@ -219,9 +219,9 @@ struct MBAResult {
   /// The simplified expression, or the input unchanged.
   SymRef Expr;
   bool Changed = false;
-  /// What the expression costs a reader, before and after.  This is close to a
-  /// node count but charges nothing for the all-ones literal, which is a sign
-  /// or a mask rather than a quantity — see the note in the implementation.
+  /// Expanded spelling size before and after, as in
+  /// SymContext::readabilityCost. Equal-size rewrites may still reduce the
+  /// number of printed operations.
   size_t SizeBefore = 0;
   size_t SizeAfter = 0;
   /// How many distinct inputs the expression was measured over.  Zero when the
