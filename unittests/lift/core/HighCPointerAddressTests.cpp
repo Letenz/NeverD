@@ -777,6 +777,29 @@ TEST(HighCPointerAddresses, FoldsReadonlyImageIntegerLoad) {
   EXPECT_EQ(Source.find("0x140003260"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
+  // A branchless select masks two string addresses. The literal is an array
+  // in C; the mask needs its address. A call argument keeps the literal.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003400, {0x25, 0x00, 0x73, 0x00, 0x00, 0x00}, false);
+  HighFunc Func;
+  Func.Name = "select_name";
+  Func.ReturnType = NdType::makeInt(8);
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                     {HighExpr::makeConst(0x140003400, 8)});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeBinop(
+      NdOp::INT_AND, HighExpr::makeConst(0x140003400, 8), parameter(0));
+  Func.Body = {Call, Return};
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(Source.find("(uintptr_t)L\"%s\" & "), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("Format(L\"%s\")"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   BinaryImage Img = makeImageObjectFixture(
       0x140003400, {0x25, 0x00, 0x73, 0x00, 0x00, 0x00}, false);
