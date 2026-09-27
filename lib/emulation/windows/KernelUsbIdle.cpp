@@ -8,6 +8,8 @@
 
 #include "WindowsKernelLayout.h"
 
+#include "neverd/emulation/DriverProfile.h"
+
 #include <limits>
 #include <set>
 #include <utility>
@@ -53,6 +55,9 @@ KernelUsbIdle::canSubmit(const UsbIdleSubmission &Submission) const {
       !Submission.Callback)
     return idleError(
         "submission requires nonzero identities, info and callback");
+  if (Submission.Owner != UsbIdleCallbackOwner::Guest &&
+      Submission.Owner != UsbIdleCallbackOwner::Framework)
+    return idleError("submission has an invalid callback owner");
   if (Submission.InfoAddress >
       std::numeric_limits<uint64_t>::max() - usb_idle::CallbackInfoSize)
     return idleError("callback-info range overflows");
@@ -130,19 +135,31 @@ KernelUsbIdle::canQueueCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const {
 }
 
 llvm::Expected<std::vector<KernelUsbIdle::CallbackPlan>>
-KernelUsbIdle::queueCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) {
+KernelUsbIdle::previewCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const {
   if (auto E = canQueueCallbacks(Keys))
     return std::move(E);
   std::vector<CallbackPlan> Calls;
   Calls.reserve(Keys.size());
+  uint64_t Token = NextToken;
   for (auto Key : Keys) {
-    auto &R = Registrations.at(Key.PDO);
-    R.Call = CallbackPlan{NextToken++, Key, R.Submission.Callback,
-                          R.Submission.Context};
-    R.State = Phase::CallbackQueued;
-    Calls.push_back(*R.Call);
+    const auto &S = Registrations.at(Key.PDO).Submission;
+    Calls.push_back({Token++, Key, S.Callback, S.Context, S.Owner});
   }
   return Calls;
+}
+
+llvm::Expected<std::vector<KernelUsbIdle::CallbackPlan>>
+KernelUsbIdle::queueCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) {
+  auto Calls = previewCallbacks(Keys);
+  if (!Calls)
+    return Calls.takeError();
+  for (const auto &Call : *Calls) {
+    auto &R = Registrations.at(Call.Key.PDO);
+    R.Call = Call;
+    R.State = Phase::CallbackQueued;
+  }
+  NextToken += Calls->size();
+  return std::move(*Calls);
 }
 
 const KernelUsbIdle::CallbackPlan *
@@ -152,6 +169,15 @@ KernelUsbIdle::callback(uint64_t Token) const {
         (R.State == Phase::CallbackQueued || R.State == Phase::CallbackEntered))
       return &*R.Call;
   return nullptr;
+}
+
+const KernelUsbIdle::CallbackPlan *
+KernelUsbIdle::callbackForIRP(uint64_t IRP) const {
+  const auto *Submission = submissionForIRP(IRP);
+  if (!Submission)
+    return nullptr;
+  const auto &R = Registrations.at(Submission->Key.PDO);
+  return R.Call ? callback(R.Call->Token) : nullptr;
 }
 
 llvm::Expected<const KernelUsbIdle::Record *>
@@ -183,7 +209,10 @@ KernelUsbIdle::finishCallback(uint64_t Token) {
     return idleError("callback return requires an entered invocation");
   const bool CancelledAllocationFailure =
       R.AllocationFailed && R.CompletionCause == UsbIdleCompletionCause::Cancel;
-  if (!R.DevicePowerStatus && !CancelledAllocationFailure)
+  const bool CancelledFrameworkFailure =
+      R.FrameworkFailure && R.FrameworkCancelled;
+  if (!R.DevicePowerStatus && !CancelledAllocationFailure &&
+      !CancelledFrameworkFailure)
     return idleError("callback returned before its D2 request completed");
   Registrations.at(R.Submission.Key.PDO).State = Phase::CallbackReturned;
   if (!R.CompletionCause)
@@ -208,7 +237,7 @@ llvm::Error KernelUsbIdle::withdrawCallback(uint64_t Token) {
 llvm::Error KernelUsbIdle::canIssueDevicePower(const Record &R) const {
   if (R.State != Phase::CallbackEntered)
     return idleError("D2 issuance requires an entered idle callback");
-  if (R.DevicePowerIRP || R.AllocationFailed)
+  if (R.DevicePowerIRP || R.AllocationFailed || R.FrameworkFailure)
     return idleError("idle callback already attempted its one D2 request");
   return llvm::Error::success();
 }
@@ -263,9 +292,52 @@ llvm::Error KernelUsbIdle::failedDevicePowerAdmission(uint64_t Token,
     return Found.takeError();
   if (auto E = canIssueDevicePower(**Found))
     return E;
+  if ((**Found).Submission.Owner != UsbIdleCallbackOwner::Guest)
+    return idleError("raw allocation escape requires a guest callback owner");
   if (Status != windows::StatusInsufficientResources)
     return idleError("D2 allocation escape requires insufficient resources");
   Registrations.at((**Found).Submission.Key.PDO).AllocationFailed = true;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelUsbIdle::failFrameworkCallback(uint64_t Token,
+                                                 FrameworkCallbackFailure Cause,
+                                                 uint32_t Status) {
+  auto Found = findCallback(Token);
+  if (!Found)
+    return Found.takeError();
+  const auto &R = **Found;
+  if (R.Submission.Owner != UsbIdleCallbackOwner::Framework)
+    return idleError("native failure requires a framework callback owner");
+  if (auto E = canIssueDevicePower(R))
+    return E;
+  switch (Cause) {
+  case FrameworkCallbackFailure::ArmWake:
+    if (!(Status & profile::NTStatusFailureMask))
+      return idleError("native arm failure requires a failing callback result");
+    break;
+  case FrameworkCallbackFailure::PowerAllocation:
+    if (Status != windows::StatusInsufficientResources)
+      return idleError(
+          "native allocation escape requires insufficient resources");
+    break;
+  default:
+    return idleError("invalid native callback failure cause");
+  }
+  Registrations.at(R.Submission.Key.PDO).FrameworkFailure = Cause;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelUsbIdle::cancelFrameworkCallback(uint64_t Token) {
+  auto Found = findCallback(Token);
+  if (!Found)
+    return Found.takeError();
+  const auto &R = **Found;
+  if (R.Submission.Owner != UsbIdleCallbackOwner::Framework ||
+      R.State != Phase::CallbackEntered || !R.CompletionCause)
+    return idleError("native cancellation requires a claimed entered framework "
+                     "callback");
+  Registrations.at(R.Submission.Key.PDO).FrameworkCancelled = true;
   return llvm::Error::success();
 }
 
@@ -314,12 +386,17 @@ bool KernelUsbIdle::isParked(uint64_t IRP) const {
          (R.State == Phase::Retained || R.State == Phase::CallbackReturned);
 }
 
-llvm::Error KernelUsbIdle::canReleaseRange(uint64_t Base, uint64_t Size) const {
+llvm::Error
+KernelUsbIdle::canReleaseRange(uint64_t Base, uint64_t Size,
+                               std::optional<UsbIdleKey> Retiring) const {
   if (Size > std::numeric_limits<uint64_t>::max() - Base)
     return idleError("released range overflows");
   if (!Size)
     return llvm::Error::success();
   for (const auto &[PDO, R] : Registrations) {
+    if (Retiring && R.Submission.Key == *Retiring &&
+        R.Submission.Owner == UsbIdleCallbackOwner::Framework)
+      continue;
     const uint64_t Info = R.Submission.InfoAddress;
     if (Base < Info + usb_idle::CallbackInfoSize && Info < Base + Size)
       return idleError(

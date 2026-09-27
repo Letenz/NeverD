@@ -429,6 +429,11 @@ KernelModel::finishGuestCall(GuestCallToken Token, uint64_t Result) {
       return Continued.takeError();
     if (auto E = completeFrameworkTransitionIfReady())
       return E;
+    // Finishing the transition can start another framework phase, such as
+    // disarming wake after power-packet allocation fails. Keep that callback
+    // on the same continuation instead of reporting an already finished frame.
+    if (*Continued && Framework->hasPendingGuestCall())
+      return std::optional<uint64_t>{};
     return Continued;
   }
   case GuestCallOwner::WDM:

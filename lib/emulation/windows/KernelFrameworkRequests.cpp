@@ -822,6 +822,10 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     auto AlreadyCanceled = RequestsHost.IsCanceled(R->second.IRP);
     if (!AlreadyCanceled)
       return AlreadyCanceled.takeError();
+    const auto &Device = Devices.at(Destination->second.Device);
+    if (Destination->second.PowerManaged && Device.PDO)
+      if (auto E = powerPolicyActive(Device.PDO))
+        return E;
     if (!Requeue) {
       DestinationObject->second.Children.push_back(A[1]);
       Source->second.Children.erase(Child);

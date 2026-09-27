@@ -187,14 +187,6 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
       if (auto E = validateUsbIdlePermission(Usb->Members))
         return E;
       UsbKeys.insert(UsbKeys.end(), Usb->Members.begin(), Usb->Members.end());
-      for (const auto &Key : Usb->Members) {
-        const auto &Submission = *UsbIdle.submission(Key.PDO);
-        Callbacks.push_back({Key.IRP,
-                             Key.PDO,
-                             profile::WorkerThreadIdentity,
-                             Submission.Callback,
-                             {Submission.Context}});
-      }
       continue;
     }
     const auto *Wake = std::get_if<WdmWakeEvent>(&Event.Owner);
@@ -222,10 +214,17 @@ llvm::Error KernelModel::processPowerPolicyEvents() {
   }
   if (NativePlans.size() > UINT64_MAX - NextIRPCall)
     return policyError("wake completion identity exhausted");
-  if (!UsbKeys.empty())
-    if (auto E = UsbIdle.canQueueCallbacks(UsbKeys))
+  if (!UsbKeys.empty()) {
+    auto Batch = previewUsbIdleCallbacks(UsbKeys);
+    if (!Batch)
+      return Batch.takeError();
+    if (auto E = Scheduler.canEnqueueUsbIdleBatch(*Batch))
       return E;
+  }
   if (auto E = Scheduler.canEnqueueCompletions(Callbacks))
+    return E;
+  if (auto E = Scheduler.canAdvanceTo100ns(Scheduler.now100ns(),
+                                           Callbacks.size() + UsbKeys.size()))
     return E;
   for (auto &Event : PowerPolicyEvents) {
     auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];

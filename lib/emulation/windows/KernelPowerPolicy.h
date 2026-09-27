@@ -6,6 +6,8 @@
 #ifndef NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 #define NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 
+#include "KernelUsbIdle.h"
+
 #include "neverd/emulation/DriverPnp.h"
 
 #include <cstdint>
@@ -26,6 +28,7 @@ struct KernelPowerPolicy {
 #include "KernelPowerPolicyCallbacks.def"
 #undef NEVERD_POWER_POLICY_CALLBACK
   } Events;
+  enum class IdleCapability { CannotWake, CanWake, UsbSelectiveSuspend };
   struct IdleSettings {
     DevicePowerState DxState = DevicePowerState::D3;
     bool Enabled = false;
@@ -37,6 +40,10 @@ struct KernelPowerPolicy {
       return TimeoutType != power_policy::DriverManagedTimeout;
     }
     uint32_t ExcludeD3Cold = power_policy::True;
+    IdleCapability Capability = IdleCapability::CannotWake;
+    bool usesUsbIdle() const {
+      return Capability == IdleCapability::UsbSelectiveSuspend;
+    }
   };
   struct WakeSettings {
     DevicePowerState DxState = DevicePowerState::D3;
@@ -49,6 +56,12 @@ struct KernelPowerPolicy {
     uint64_t Epoch = 0;
   };
   enum class WakeSource { None, S0, Sx };
+  struct UsbIdleState {
+    UsbIdleKey Key;
+    std::optional<uint64_t> CallbackToken;
+    bool PowerAdmissionFailed = false;
+  };
+  std::optional<UsbIdleState> UsbIdle;
   std::optional<IdleSettings> Idle;
   std::optional<WakeSettings> Wake;
   uint64_t References = 0;

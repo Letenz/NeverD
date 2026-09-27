@@ -334,6 +334,31 @@ private:
   };
   std::map<uint64_t, ProviderWake> ProviderWakeIRPs;
   KernelUsbIdle UsbIdle;
+  struct FrameworkUsbIdleRequest {
+    uint64_t Device = 0;
+    uint64_t PolicyEpoch = 0;
+    uint64_t Info = 0;
+    UsbIdleKey Key;
+  };
+  std::map<uint64_t, FrameworkUsbIdleRequest> FrameworkUsbIdleRequests;
+  llvm::Expected<KernelFramework::PowerPolicyHost::UsbIdleSettings>
+  resolveFrameworkUsbIdle(uint64_t Device, uint32_t RequestedState) const;
+  llvm::Expected<UsbIdleKey> submitFrameworkUsbIdle(uint64_t Device,
+                                                    uint64_t PolicyEpoch);
+  llvm::Expected<bool> hasFrameworkUsbIdle(UsbIdleKey Key) const;
+  llvm::Error
+  cancelFrameworkUsbIdle(UsbIdleKey Key,
+                         KernelFramework::PowerPolicyHost::RequestMode Mode);
+  llvm::Error requestFrameworkUsbIdlePower(
+      uint64_t Device, UsbIdleKey Key, uint64_t Token,
+      KernelFramework::PowerPolicyHost::RequestMode Mode);
+  llvm::Error abortFrameworkUsbIdlePower(UsbIdleKey Key, uint64_t Token,
+                                         uint32_t Status);
+  llvm::Error finishFrameworkUsbIdleCallback(UsbIdleKey Key, uint64_t Token);
+  llvm::Error tryFinalizeFrameworkUsbIdle(uint64_t IRP);
+  llvm::Expected<std::optional<KernelScheduler::Invocation>>
+  dispatchScheduledFrameworkUsbIdle(const KernelScheduler::Invocation &Call);
+
   const DriverUsbIdleConfig *usbIdleConfig(uint64_t PDO) const;
   llvm::Expected<UsbIdleSubmission>
   planUsbIdleSubmission(uint64_t PDO, uint64_t IRP, uint64_t Info,
@@ -343,6 +368,8 @@ private:
   llvm::Expected<std::vector<UsbIdleKey>>
   captureUsbIdlePermission(uint64_t PDO) const;
   llvm::Error validateUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys) const;
+  llvm::Expected<std::vector<KernelScheduler::UsbIdleCallback>>
+  previewUsbIdleCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const;
   llvm::Error queueUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys);
   llvm::Error beginUsbIdleCallback(uint64_t Token);
   llvm::Expected<std::optional<uint64_t>> finishUsbIdleCallback(uint64_t Token);
@@ -569,7 +596,9 @@ private:
                               uint64_t IgnoredDMAPin = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
-  llvm::Error canRevokeVirtualRange(uint64_t Base, uint64_t Size) const;
+  llvm::Error
+  canRevokeVirtualRange(uint64_t Base, uint64_t Size,
+                        std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;
   llvm::Error prepareRevokeVirtualRange(uint64_t Base, uint64_t Size);
   llvm::Error prepareReleaseRange(uint64_t Base, uint64_t Size,
                                   uint64_t IgnoredDMAPin = 0);

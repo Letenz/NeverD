@@ -115,8 +115,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
     return stackError("pageable power forwarding requires PASSIVE_LEVEL");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return stackError("cannot replace a pending guest callback");
-  if (Owner == ForwardingOwner::WDM && Framework &&
-      Framework->ownsRequestIRP(IRP))
+  if (Owner == ForwardingOwner::WDM &&
+      (FrameworkUsbIdleRequests.contains(IRP) ||
+       (Framework && Framework->ownsRequestIRP(IRP))))
     return stackError("framework-owned requests cannot use WDM forwarding");
   if (!Devices.count(Device) ||
       std::find(Request->DeviceRoute.begin(), Request->DeviceRoute.end(),
@@ -563,6 +564,8 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
   if (auto E = retireCompletedRequest(IRP, 0))
     return E;
   IRPCalls.erase(Call);
+  if (auto E = tryFinalizeFrameworkUsbIdle(IRP))
+    return E;
   if (auto E = tryFinalizePowerRequest(IRP))
     return E;
   return std::optional<uint64_t>{ReturnValue};

@@ -838,6 +838,8 @@ llvm::Expected<uint64_t> KernelModel::call(
   }
   if (Kind == KernelAPIKind::IofCompleteRequest ||
       Kind == KernelAPIKind::IoCompleteRequest) {
+    if (FrameworkUsbIdleRequests.contains(A[0]))
+      return modelError("framework owns its USB idle completion");
     if (Framework && Framework->ownsRequestIRP(A[0]))
       return modelError(
           "framework-owned requests must complete through WdfRequestComplete");

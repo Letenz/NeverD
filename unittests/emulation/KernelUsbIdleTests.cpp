@@ -362,5 +362,182 @@ TEST(DriverKernelUsbIdle, CompletionPlansRevalidatePhaseCauseAndExactIdentity) {
   EXPECT_TRUE(Idle.hasOutstanding(Replacement.Key.PDO));
   EXPECT_TRUE(Idle.isParked(Replacement.Key.IRP));
 }
+
+TEST(DriverKernelUsbIdle, MixedPermissionRetainsTypedCallbackOwnership) {
+  KernelUsbIdle Idle;
+  const auto Guest = submission();
+  auto Framework = submission(0x3000, 0x4000);
+  Framework.Owner = UsbIdleCallbackOwner::Framework;
+  auto Invalid = Framework;
+  Invalid.Owner = static_cast<UsbIdleCallbackOwner>(255);
+  expectError(Idle.submit(Invalid), "invalid callback owner");
+  success(Idle.submit(Guest));
+  success(Idle.submit(Framework));
+  EXPECT_EQ(Idle.callbackForIRP(Guest.Key.IRP), nullptr);
+  const auto Preview = take(Idle.previewCallbacks({Guest.Key, Framework.Key}));
+  EXPECT_EQ(take(Idle.previewCallbacks({Guest.Key, Framework.Key})), Preview);
+  EXPECT_TRUE(Idle.isParked(Guest.Key.IRP));
+  EXPECT_TRUE(Idle.isParked(Framework.Key.IRP));
+  EXPECT_EQ(Idle.callbackForIRP(Framework.Key.IRP), nullptr);
+  auto Calls = take(Idle.queueCallbacks({Guest.Key, Framework.Key}));
+  EXPECT_EQ(Calls, Preview);
+  ASSERT_EQ(Calls.size(), 2u);
+  EXPECT_EQ(Calls[0].Owner, UsbIdleCallbackOwner::Guest);
+  EXPECT_EQ(Calls[1].Owner, UsbIdleCallbackOwner::Framework);
+  EXPECT_EQ(Calls[0].Token, 1u);
+  for (const auto &Call : Calls) {
+    ASSERT_NE(Idle.callbackForIRP(Call.Key.IRP), nullptr);
+    EXPECT_EQ(Idle.callbackForIRP(Call.Key.IRP)->Token, Call.Token);
+    success(Idle.beginCallback(Call.Token));
+    EXPECT_EQ(Idle.callbackForIRP(Call.Key.IRP)->Owner, Call.Owner);
+    finishD2(Idle, Call.Token, Call.Key.IRP + 0x10000);
+    EXPECT_FALSE(take(Idle.finishCallback(Call.Token)));
+    EXPECT_EQ(Idle.callbackForIRP(Call.Key.IRP), nullptr);
+    EXPECT_TRUE(Idle.isParked(Call.Key.IRP));
+  }
+}
+
+TEST(DriverKernelUsbIdle, NativeArmFailureRequiresActualCancellation) {
+  using Failure = KernelUsbIdle::FrameworkCallbackFailure;
+  KernelUsbIdle Idle;
+  auto S = submission();
+  S.Owner = UsbIdleCallbackOwner::Framework;
+  success(Idle.submit(S));
+  auto Call = enter(Idle, S);
+  for (uint32_t Status : {windows::StatusSuccess, windows::StatusPending})
+    expectError(
+        Idle.failFrameworkCallback(Call.Token, Failure::ArmWake, Status),
+        "failing callback result");
+  expectError(Idle.failFrameworkCallback(Call.Token, static_cast<Failure>(255),
+                                         windows::StatusNotSupported),
+              "invalid native");
+  expectError(Idle.cancelFrameworkCallback(Call.Token), "claimed entered");
+  success(Idle.failFrameworkCallback(Call.Token, Failure::ArmWake,
+                                     windows::StatusNotSupported));
+  expectError(Idle.finishCallback(Call.Token), "before its D2");
+  expectError(Idle.issuedDevicePower(Call.Token, 0x9000), "one D2");
+  success(
+      Idle.claimCompletion(take(Idle.planCompletion(S.Key, Cause::Cancel))));
+  expectError(Idle.finishCallback(Call.Token), "before its D2");
+  success(Idle.cancelFrameworkCallback(Call.Token));
+  success(Idle.cancelFrameworkCallback(Call.Token));
+  auto Plan = take(Idle.finishCallback(Call.Token));
+  ASSERT_TRUE(Plan);
+  EXPECT_EQ(Plan->Cause, Cause::Cancel);
+  EXPECT_FALSE(Plan->DeferredUntilCallbackReturn);
+  expectError(Idle.canReleaseRange(S.InfoAddress, 1), "borrowed");
+  success(Idle.retireCompletion(S.Key));
+  EXPECT_EQ(Idle.callbackForIRP(S.Key.IRP), nullptr);
+}
+
+TEST(DriverKernelUsbIdle, NativeAllocationFailureCannotUseRawEscape) {
+  using Failure = KernelUsbIdle::FrameworkCallbackFailure;
+  KernelUsbIdle Idle;
+  auto S = submission();
+  S.Owner = UsbIdleCallbackOwner::Framework;
+  success(Idle.submit(S));
+  auto Call = enter(Idle, S);
+  expectError(Idle.failedDevicePowerAdmission(
+                  Call.Token, windows::StatusInsufficientResources),
+              "guest callback owner");
+  expectError(Idle.failFrameworkCallback(Call.Token, Failure::PowerAllocation,
+                                         windows::StatusNotSupported),
+              "insufficient resources");
+  success(Idle.failFrameworkCallback(Call.Token, Failure::PowerAllocation,
+                                     windows::StatusInsufficientResources));
+  expectError(Idle.failFrameworkCallback(Call.Token, Failure::ArmWake,
+                                         windows::StatusNotSupported),
+              "one D2");
+  success(
+      Idle.claimCompletion(take(Idle.planCompletion(S.Key, Cause::Cancel))));
+  success(Idle.cancelFrameworkCallback(Call.Token));
+  ASSERT_TRUE(take(Idle.finishCallback(Call.Token)));
+  success(Idle.retireCompletion(S.Key));
+}
+
+TEST(DriverKernelUsbIdle, NativeFailurePreservesEarlierReceiptCause) {
+  KernelUsbIdle Idle;
+  auto S = submission();
+  S.Owner = UsbIdleCallbackOwner::Framework;
+  success(Idle.submit(S));
+  auto Call = enter(Idle, S);
+  success(
+      Idle.claimCompletion(take(Idle.planCompletion(S.Key, Cause::DeviceD0))));
+  success(Idle.failFrameworkCallback(
+      Call.Token, KernelUsbIdle::FrameworkCallbackFailure::ArmWake,
+      windows::StatusNotSupported));
+  auto Cancellation = take(Idle.planCompletion(S.Key, Cause::Cancel));
+  EXPECT_EQ(Cancellation.Cause, Cause::DeviceD0);
+  success(Idle.claimCompletion(Cancellation));
+  success(Idle.cancelFrameworkCallback(Call.Token));
+  auto Plan = take(Idle.finishCallback(Call.Token));
+  ASSERT_TRUE(Plan);
+  EXPECT_EQ(Plan->Cause, Cause::DeviceD0);
+  success(Idle.retireCompletion(S.Key));
+}
+
+TEST(DriverKernelUsbIdle, NativeCancellationCannotBypassAnIssuedD2) {
+  KernelUsbIdle Idle;
+  auto S = submission();
+  S.Owner = UsbIdleCallbackOwner::Framework;
+  success(Idle.submit(S));
+  auto Call = enter(Idle, S);
+  success(
+      Idle.claimCompletion(take(Idle.planCompletion(S.Key, Cause::Cancel))));
+  success(Idle.cancelFrameworkCallback(Call.Token));
+  expectError(Idle.finishCallback(Call.Token), "before its D2");
+  success(Idle.issuedDevicePower(Call.Token, 0x9000));
+  expectError(Idle.failFrameworkCallback(
+                  Call.Token, KernelUsbIdle::FrameworkCallbackFailure::ArmWake,
+                  windows::StatusNotSupported),
+              "one D2");
+  expectError(Idle.finishCallback(Call.Token), "before its D2");
+  success(Idle.completedDevicePower(0x9000, windows::StatusSuccess));
+  ASSERT_TRUE(take(Idle.finishCallback(Call.Token)));
+  success(Idle.retireCompletion(S.Key));
+}
+
+TEST(DriverKernelUsbIdle, GuestCallbackCannotUseNativeFailureEvidence) {
+  KernelUsbIdle Idle;
+  const auto S = submission();
+  success(Idle.submit(S));
+  auto Call = enter(Idle, S);
+  success(
+      Idle.claimCompletion(take(Idle.planCompletion(S.Key, Cause::Cancel))));
+  expectError(Idle.cancelFrameworkCallback(Call.Token), "framework callback");
+  expectError(Idle.failFrameworkCallback(
+                  Call.Token, KernelUsbIdle::FrameworkCallbackFailure::ArmWake,
+                  windows::StatusNotSupported),
+              "framework callback owner");
+  expectError(Idle.finishCallback(Call.Token), "before its D2");
+  finishD2(Idle, Call.Token);
+  ASSERT_TRUE(take(Idle.finishCallback(Call.Token)));
+}
+
+TEST(DriverKernelUsbIdle, NativeRetirementExemptsOnlyItsExactBorrow) {
+  KernelUsbIdle Idle;
+  auto Native = submission();
+  Native.Owner = UsbIdleCallbackOwner::Framework;
+  success(Idle.submit(Native));
+  expectError(Idle.canReleaseRange(Native.InfoAddress, 1), "borrowed");
+  success(Idle.canReleaseRange(Native.InfoAddress, usb_idle::CallbackInfoSize,
+                               Native.Key));
+  for (auto Stale : {UsbIdleKey{Native.Key.PDO + 1, Native.Key.IRP, 1},
+                     UsbIdleKey{Native.Key.PDO, Native.Key.IRP + 1, 1},
+                     UsbIdleKey{Native.Key.PDO, Native.Key.IRP, 2}})
+    expectError(Idle.canReleaseRange(Native.InfoAddress, 1, Stale), "borrowed");
+  auto Guest = submission(0x3000, 0x4000);
+  Guest.InfoAddress = Native.InfoAddress;
+  success(Idle.submit(Guest));
+  expectError(Idle.canReleaseRange(Native.InfoAddress, 1, Native.Key),
+              "borrowed");
+  complete(Idle, Native.Key, Cause::Cancel);
+  expectError(Idle.canReleaseRange(Guest.InfoAddress, 1, Guest.Key),
+              "borrowed");
+  expectError(Idle.canReleaseRange(Guest.InfoAddress, 1, Native.Key),
+              "borrowed");
+  complete(Idle, Guest.Key, Cause::Cancel);
+  success(Idle.canReleaseRange(Guest.InfoAddress, 1, Native.Key));
+}
 } // namespace
 } // namespace neverd::emulation

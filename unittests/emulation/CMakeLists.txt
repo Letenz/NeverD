@@ -28,6 +28,10 @@ set(NEVERD_WDM_USB_IDLE_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK native USB idle fixture")
 set(NEVERD_WDM_USB_IDLE_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK native USB idle fixture with active CFG")
+set(NEVERD_KMDF_USB_IDLE_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK framework USB idle fixture")
+set(NEVERD_KMDF_USB_IDLE_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK framework USB idle fixture with active CFG")
 set(NEVERD_WDM_STACK_FIXTURE "" CACHE FILEPATH
   "Optional original WDM device-stack fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_STACK_CFG_FIXTURE "" CACHE FILEPATH
@@ -331,6 +335,31 @@ foreach(_driver_usb_idle_variable NEVERD_WDM_USB_IDLE_FIXTURE
     message(STATUS "Driver WDM USB idle fixture ${_driver_usb_idle_variable}: ${_driver_usb_idle_path}")
   else()
     message(STATUS "Driver WDM USB idle tests requiring ${_driver_usb_idle_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
+set(_driver_kmdf_usb_idle_definitions)
+set(_driver_has_kmdf_usb_idle_fixture FALSE)
+foreach(_driver_kmdf_usb_idle_variable NEVERD_KMDF_USB_IDLE_FIXTURE
+    NEVERD_KMDF_USB_IDLE_CFG_FIXTURE)
+  if(_driver_kmdf_usb_idle_variable STREQUAL "NEVERD_KMDF_USB_IDLE_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_usb_idle_fixture)
+    message(STATUS "Driver KMDF USB idle CFG tests skipped: NEVERD_KMDF_USB_IDLE_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_kmdf_usb_idle_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_kmdf_usb_idle_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_kmdf_usb_idle_variable}}")
+    get_filename_component(_driver_kmdf_usb_idle_path
+      "${${_driver_kmdf_usb_idle_variable}}" ABSOLUTE)
+    list(APPEND _driver_kmdf_usb_idle_definitions
+      "${_driver_kmdf_usb_idle_variable}=\"${_driver_kmdf_usb_idle_path}\"")
+    if(_driver_kmdf_usb_idle_variable STREQUAL "NEVERD_KMDF_USB_IDLE_FIXTURE")
+      set(_driver_has_kmdf_usb_idle_fixture TRUE)
+    endif()
+    message(STATUS "Driver KMDF USB idle fixture ${_driver_kmdf_usb_idle_variable}: ${_driver_kmdf_usb_idle_path}")
+  else()
+    message(STATUS "Driver KMDF USB idle tests requiring ${_driver_kmdf_usb_idle_variable} skipped: optional fixture is missing")
   endif()
 endforeach()
 
@@ -711,6 +740,10 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverWDMOwnedIRPTests.cpp
   DriverWdmWaitWakeTests.cpp
   DriverWdmUsbIdleTests.cpp
+  DriverKMDFUsbIdleTests.cpp
+  KernelFrameworkUsbIdleTests.cpp
+  KernelFrameworkUsbIdleStorageTests.cpp
+  KernelFrameworkUsbIdleBridgeTests.cpp
   DriverUsbIdleScenarioTests.cpp
   KernelUsbIdleTests.cpp
   KernelUsbIdleBridgeTests.cpp
@@ -812,6 +845,7 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_usb_idle_definitions}
+  ${_driver_kmdf_usb_idle_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}
@@ -835,6 +869,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     DriverScenarioPublicTests.cpp
     DriverWdmWaitWakePublicTests.cpp
     DriverWdmUsbIdlePublicTests.cpp
+    DriverKMDFUsbIdlePublicTests.cpp
   DriverD3ColdPublicTests.cpp
     LINK_LIBS neverd_shared)
   target_include_directories(NeverDDriverEmulationPublicTests PRIVATE
@@ -843,6 +878,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     NEVERD_DRIVER_NESTED_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-nested-user-scenario.json"
     NEVERD_DRIVER_D2_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-d2-power-scenario.json"
     NEVERD_DRIVER_WDM_WAIT_WAKE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-wait-wake-scenario.json"
+    NEVERD_DRIVER_KMDF_USB_IDLE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-kmdf-usb-idle-scenario.json"
     NEVERD_DRIVER_WDM_USB_IDLE_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-usb-idle-scenario.json"
     NEVERD_DRIVER_WDM_ELEVATED_POWER_SCENARIO="${CMAKE_SOURCE_DIR}/docs/examples/driver-wdm-elevated-power-scenario.json"
     NEVERD_DRIVER_FIXTURES="${_driver_fixture_dir}"
@@ -853,6 +889,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_wait_wake_definitions}
   ${_driver_wdm_usb_idle_definitions}
+  ${_driver_kmdf_usb_idle_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}

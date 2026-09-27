@@ -106,6 +106,7 @@ llvm::Error KernelModel::releaseCancelSpinLock(uint64_t OldIRQL) {
 llvm::Expected<uint64_t> KernelModel::cancelIRP(uint64_t IRP) {
   auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed ||
+      FrameworkUsbIdleRequests.contains(IRP) ||
       (Framework && Framework->ownsRequestIRP(IRP)))
     return cancellationError("IoCancelIrp requires a live WDM-owned IRP");
   if (CancelLock.Held || CancelLock.Callback || hasPendingModelGuestCall())
@@ -230,13 +231,14 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
        KernelScheduler::isFrameworkInterruptCallbackKind(Kind))
           ? GuestCallOwner::Framework
       : Kind == KernelScheduler::CallbackKind::UsbIdle ? Token->second.Owner
-      : Kind == KernelScheduler::CallbackKind::PoFx ? GuestCallOwner::PoFx
+      : Kind == KernelScheduler::CallbackKind::PoFx    ? GuestCallOwner::PoFx
       : Kind == KernelScheduler::CallbackKind::Interrupt
           ? GuestCallOwner::Interrupt
       : KernelScheduler::isDMACallbackKind(Kind) ? GuestCallOwner::DMA
                                                  : GuestCallOwner::WDM;
   if (Kind == KernelScheduler::CallbackKind::UsbIdle &&
-      ExpectedOwner != GuestCallOwner::UsbIdle && ExpectedOwner != GuestCallOwner::WDM)
+      ExpectedOwner != GuestCallOwner::UsbIdle &&
+      ExpectedOwner != GuestCallOwner::WDM)
     return cancellationError("USB callback has a foreign continuation owner");
   auto IsFrameworkCall = [&](GuestCallToken Call) {
     return Call.Owner == GuestCallOwner::Framework ||

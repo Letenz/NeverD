@@ -370,10 +370,15 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
       auto Next = Scheduler.next(false, Deadline);
       if (!Next)
         return Next.takeError();
-      if (!*Next ||
-          (**Next).Kind != KernelScheduler::CallbackKind::WDMProviderDispatch)
+      if (!*Next)
         return std::move(*Next);
-      auto Completion = dispatchScheduledPowerProvider(**Next);
+      const auto Kind = (**Next).Kind;
+      if (Kind != KernelScheduler::CallbackKind::WDMProviderDispatch &&
+          Kind != KernelScheduler::CallbackKind::FrameworkUsbIdle)
+        return std::move(*Next);
+      auto Completion = Kind == KernelScheduler::CallbackKind::FrameworkUsbIdle
+                            ? dispatchScheduledFrameworkUsbIdle(**Next)
+                            : dispatchScheduledPowerProvider(**Next);
       if (!Completion)
         return Completion.takeError();
       if (*Completion)
@@ -513,6 +518,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMDispatch ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMProviderDispatch ||
+      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkUsbIdle ||
       Invocation.Kind == KernelScheduler::CallbackKind::UsbIdle ||
       Invocation.Kind == KernelScheduler::CallbackKind::Interrupt ||
       KernelScheduler::isDMACallbackKind(Invocation.Kind))
@@ -777,15 +783,16 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
   return canRevokeVirtualRange(Base, Size);
 }
 
-llvm::Error KernelModel::canRevokeVirtualRange(uint64_t Base,
-                                               uint64_t Size) const {
+llvm::Error KernelModel::canRevokeVirtualRange(
+    uint64_t Base, uint64_t Size,
+    std::optional<UsbIdleKey> RetiringUsbIdle) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing virtual storage range");
   if (auto E = DMA.canReleaseRange(Base, Size))
     return E;
   if (auto E = Interrupts.canReleaseRange(Base, Size))
     return E;
-  if (auto E = UsbIdle.canReleaseRange(Base, Size))
+  if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
     return E;
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))
