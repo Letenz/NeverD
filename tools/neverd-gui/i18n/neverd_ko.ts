@@ -333,11 +333,6 @@
             <translation>바이너리를 열어 함수를 탐색하세요.</translation>
         </message>
         <message>
-            <location filename="../qml/FunctionsPane.qml" line="137" />
-            <source>CURRENT FUNCTION</source>
-            <translation>현재 함수</translation>
-        </message>
-        <message>
             <location filename="../qml/FunctionsPane.qml" line="157" />
             <source>Rename</source>
             <translation>이름 바꾸기</translation>
@@ -682,9 +677,9 @@
             <translation>어셈블리 너머를 살펴보세요</translation>
         </message>
         <message>
-            <location filename="../qml/RepresentationPane.qml" line="47" />
-            <source>Compare recovered C with LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>복원된 C 코드를 LowIR, MedIR, HighIR, LLVM IR과 비교하세요. 함수를 선택하여 시작하세요.</translation>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
+            <translation>복원된 C, LLVM C, LowIR, MedIR, HighIR, LLVM IR을 비교합니다. 시작하려면 함수를 선택하세요.</translation>
         </message>
         <message>
             <location filename="../qml/DockWorkspace.qml" line="112" />
@@ -1053,6 +1048,11 @@ Explore disassembly, control flow, recovered C, and intermediate representations
     </context>
     <context>
         <name>Workbench</name>
+        <message>
+            <location filename="../Workbench.cpp" line="71" />
+            <source>Loading debug symbols…</source>
+            <translation>디버그 심볼 로드 중…</translation>
+        </message>
         <message>
             <location filename="../Workbench.cpp" line="17" />
             <source>Open a binary to begin</source>

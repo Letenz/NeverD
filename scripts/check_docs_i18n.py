@@ -502,6 +502,7 @@ GUIDE_REQUIRED_TOKENS = {
         "--format=objc-methods", "--format=swift-methods", "--source-signatures",
         "neverd_objc_methods_json", "neverd_swift_methods_json", "neverd_free_string",
         "test_mobile_ios_backend.py", "test_mobile_swift_backend.py", "--setup-only",
+        "@synchronized", "required_cflags", "-fexceptions",
     ),
     "android": (
         "neverd mobile", ".apk", ".dex", ".smali", "JADX", "1.5.6", "C++20",
@@ -2119,6 +2120,46 @@ def driver_report_profile(view: RepositoryView) -> str:
     return profiles[0]
 
 
+def validate_driver_framework_contract(
+    path: Path, implemented: list[str], errors: list[str], view: RepositoryView
+) -> None:
+    """Validate the API inventory and caller-context routing in their own prose."""
+    paragraphs = without_markdown_fences(view.read_text(path)).split("\n\n")
+    inventories = []
+    for paragraph in paragraphs:
+        symbols = re.findall(r"`([^`]+)`", paragraph)
+        if symbols and symbols[0] == implemented[0]:
+            inventories.append((paragraph, set(symbols)))
+    if len(inventories) != 1:
+        report(errors, f"{display_path(path)}: expected one dedicated KMDF API inventory")
+    else:
+        _, documented = inventories[0]
+        for symbol in sorted(set(implemented) - documented):
+            report(errors, f"{display_path(path)}: KMDF API inventory missing {symbol!r}")
+        for symbol in sorted(documented - set(implemented)):
+            report(errors, f"{display_path(path)}: KMDF API inventory has unmodeled {symbol!r}")
+
+    caller_tokens = (
+        "`WdfDeviceInitSetIoInCallerContextCallback`",
+        "`WdfDeviceEnqueueRequest`",
+        "`WdfRequestRetrieveUnsafeUserInputBuffer`",
+    )
+    inventory_paragraphs = {paragraph for paragraph, _ in inventories}
+    caller_paragraphs = [
+        paragraph for paragraph in paragraphs
+        if paragraph not in inventory_paragraphs
+        and all(token in paragraph for token in caller_tokens)
+    ]
+    if len(caller_paragraphs) != 1:
+        report(errors, f"{display_path(path)}: expected one caller-context routing paragraph")
+    elif "`WdfDeviceConfigureRequestDispatching`" not in caller_paragraphs[0]:
+        report(
+            errors,
+            f"{display_path(path)}: caller-context routing paragraph missing "
+            "'WdfDeviceConfigureRequestDispatching'",
+        )
+
+
 def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     """Keep execution examples, supported exports and locale entry points aligned."""
     english = Path("docs/driver-emulation.md")
@@ -2219,12 +2260,19 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         r"NEVERD_KERNEL_DISPATCHER_API\((\w+),",
         view.read_text(Path("lib/emulation/windows/KernelDispatcherAPIs.def")),
     )
+    framework_exports = re.findall(
+        r"^NEVERD_FRAMEWORK_API\((\w+),",
+        view.read_text(Path("lib/emulation/windows/KernelFrameworkAPIs.def")),
+        re.MULTILINE,
+    )
+    if not framework_exports:
+        report(errors, "implemented KMDF API inventory is empty")
+    exports += framework_exports
     # The 458-entry identity inventory also names unmodeled traps. Only the
     # implemented table and loader ABI inventories establish documented APIs.
     for inventory, macro in (
         ("KernelInterruptAPIs.def", "NEVERD_KERNEL_INTERRUPT_API"),
         ("KernelPoFxAPIs.def", "NEVERD_KERNEL_POFX_API"),
-        ("KernelFrameworkAPIs.def", "NEVERD_FRAMEWORK_API"),
         ("KernelFrameworkLoaderAPIs.def", "NEVERD_FRAMEWORK_LOADER_API"),
     ):
         exports += re.findall(
@@ -2459,6 +2507,8 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     )
     for guide in guides:
         require_tokens(guide, required, errors, view)
+        if framework_exports:
+            validate_driver_framework_contract(guide, framework_exports, errors, view)
         text = view.read_text(guide)
         if re.findall(r"```[^\n]*\n(.*?)```", text, re.DOTALL) != examples:
             report(

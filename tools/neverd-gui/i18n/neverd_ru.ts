@@ -333,11 +333,6 @@
             <translation>Откройте двоичный файл, чтобы просмотреть его функции.</translation>
         </message>
         <message>
-            <location filename="../qml/FunctionsPane.qml" line="137" />
-            <source>CURRENT FUNCTION</source>
-            <translation>ТЕКУЩАЯ ФУНКЦИЯ</translation>
-        </message>
-        <message>
             <location filename="../qml/FunctionsPane.qml" line="157" />
             <source>Rename</source>
             <translation>Переименовать</translation>
@@ -682,9 +677,9 @@
             <translation>За пределами ассемблера</translation>
         </message>
         <message>
-            <location filename="../qml/RepresentationPane.qml" line="47" />
-            <source>Compare recovered C with LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>Сравните восстановленный C с LowIR, MedIR, HighIR и LLVM IR. Для начала выберите функцию.</translation>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
+            <translation>Сравните восстановленный C, LLVM C, LowIR, MedIR, HighIR и LLVM IR. Выберите функцию, чтобы начать.</translation>
         </message>
         <message>
             <location filename="../qml/DockWorkspace.qml" line="112" />
@@ -1053,6 +1048,11 @@ Explore disassembly, control flow, recovered C, and intermediate representations
     </context>
     <context>
         <name>Workbench</name>
+        <message>
+            <location filename="../Workbench.cpp" line="71" />
+            <source>Loading debug symbols…</source>
+            <translation>Загрузка отладочных символов…</translation>
+        </message>
         <message>
             <location filename="../Workbench.cpp" line="17" />
             <source>Open a binary to begin</source>
