@@ -8,7 +8,7 @@
 
 專案概覽、建置與 CLI 說明見儲存庫 README。面向貢獻者的設計與測試資料統一收錄於此。
 
-**行動平台支援（實驗性 CLI）：** `neverd mobile` 支援從 [Android](android.md) APK、DEX、smali 恢復 Java，以及從 [iOS](ios.md) IPA、`.app`、Mach-O 恢復原生 C 與受支援的 Objective-C/Swift 原始碼。JSON 報告記錄恢復結果及涵蓋範圍。先閱讀[行動平台總覽（英文）](../mobile.md)，再參考平台指南的命令與限制。
+**行動平台支援（實驗性 CLI）：** `neverd mobile` 支援從 [Android](android.md) APK、DEX、smali 恢復 Java，以及從 [iOS](ios.md) IPA、`.app`、Mach-O 恢復原生 C 與受支援的 Objective-C/Swift 原始碼。JSON 報告記錄恢復結果及涵蓋範圍。先閱讀[行動平台總覽](mobile.md)，再參考平台指南的命令與限制。
 
 英文指南直接位於 `docs/`。譯文按語言分布於 `ar/`、`de/`、`es/`、`fr/`、`it/`、`ja/`、`ko/`、`ru/`、`zh-CN/` 與 `zh-TW/` 目錄。各語言目錄包含文件索引 `README.md`、專案概覽 `project.md`、主題指南、`CONTRIBUTING.md`、`ATTRIBUTION.md` 與 `roadmap.md`。共用圖片位於 `assets/`。
 
@@ -35,7 +35,7 @@ CPU 執行分離 ISA 准入、客體記憶體、後端傳輸與客體 OS 策略�
 | [記憶體安全稽核與獵取](memory-safety.md) | 堆積生命週期與拷貝越界分析：各格式身分契約、匯/源目錄、判定、預算與 JSON 模式 |
 | [原生外掛](plugins.md) | 純 C 描述元 ABI、回呼與事件、建置/連結流程、探索順序及相容性規則 |
 | [Python 外掛](python-plugins.md) | 外掛撰寫、工作階段與事件 API、隔離、測試及發佈 |
-| [行動平台支援總覽（English）](../mobile.md) | Android / iOS 輸入、原始碼輸出、CLI 流程與限制 |
+| [行動平台支援總覽](mobile.md) | Android / iOS 輸入、原始碼輸出、CLI 流程與限制 |
 | [Android Java 還原](android.md) | APK（multidex）、DEX、smali 檔案／目錄 → Java。CLI 流程、執行環境、選項、JSON 報告、錯誤處理與驗證限制 |
 | [iOS 原始碼還原](ios.md) | IPA、`.app`、Mach-O → 原生 C 與受支援的 Objective-C / Swift 原始碼。輸入選擇、方法與配置、CLI/export、JSON 覆蓋率報告、限制及執行驗證 |
 | [EVM 反編譯](evm.md) | EVM 輸入、硬分叉、分級 IR、C/LLVM host ABI、Solidity 重建與限制 |

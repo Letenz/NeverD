@@ -8,7 +8,7 @@
 
 Projektüberblick, Build und CLI stehen in der Repository-README. Architektur- und Testreferenzen für Mitwirkende sind hier gebündelt.
 
-**Mobile Unterstützung (experimentelle CLI):** `neverd mobile` rekonstruiert Java aus [Android](android.md)-APK, DEX und smali sowie natives C und unterstützte Objective-C-/Swift-Quellen aus [iOS](ios.md)-IPA, `.app` und Mach-O. JSON-Berichte beschreiben Ergebnisse und Abdeckung. Beginnen Sie mit dem [mobilen Überblick (Englisch)](../mobile.md); Befehle und Grenzen stehen in den Plattformleitfäden.
+**Mobile Unterstützung (experimentelle CLI):** `neverd mobile` rekonstruiert Java aus [Android](android.md)-APK, DEX und smali sowie natives C und unterstützte Objective-C-/Swift-Quellen aus [iOS](ios.md)-IPA, `.app` und Mach-O. JSON-Berichte beschreiben Ergebnisse und Abdeckung. Beginnen Sie mit dem [mobilen Überblick](mobile.md); Befehle und Grenzen stehen in den Plattformleitfäden.
 
 Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`, `de/`, `es/`, `fr/`, `it/`, `ja/`, `ko/`, `ru/`, `zh-CN/` und `zh-TW/` gruppiert. Jedes Sprachverzeichnis enthält den Index `README.md`, die Projektübersicht `project.md`, Fachanleitungen, `CONTRIBUTING.md`, `ATTRIBUTION.md` und `roadmap.md`. Gemeinsame Bilder liegen unter `assets/`.
 
@@ -35,7 +35,7 @@ Die CPU-Ausführung trennt ISA-Zulassung, Gastspeicher, Backend-Transport und Ga
 | [Speicher-Audit und Hunt](memory-safety.md) | Heap-Lebensdauer- und Copy-Überlaufanalyse: Identitätsvertrag je Format, Senken-/Quellenkatalog, Urteile, Budgets und JSON-Schema |
 | [Native Plugins](plugins.md) | Reine C-Deskriptor-ABI, Callbacks und Ereignisse, Build-/Link-Ablauf, Erkennung und Kompatibilitätsregeln |
 | [Python-Plugins](python-plugins.md) | Plugin-Entwicklung, Session-/Event-API, Isolation, Tests und Veröffentlichung |
-| [Mobile-Überblick (Englisch)](../mobile.md) | Experimentelle Android-/iOS-CLI, Eingaben, Ausgaben, Berichte und Grenzen |
+| [Mobile-Überblick](mobile.md) | Experimentelle Android-/iOS-CLI, Eingaben, Ausgaben, Berichte und Grenzen |
 | [Java-Rekonstruktion für Android](android.md) | APK (einschließlich Multidex), DEX, smali-Dateien/-Verzeichnisse → Java; CLI, JSON-Bericht, Fehlerbehandlung, Grenzen und Verifikation |
 | [iOS-Quelltextrekonstruktion](ios.md) | IPA/.app/Mach-O (arm64/x86_64) → natives C und unterstützte Objective-C-/Swift-Quelltexte; Layouts, CLI/Export, JSON-Abdeckung, Grenzen und Ausführungstests |
 | [EVM-Dekompilation](evm.md) | Eingaben, Hardforks, IR-Stufen, C-/LLVM-Host-ABI, Solidity-Rekonstruktion und Grenzen |

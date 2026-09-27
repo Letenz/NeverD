@@ -725,6 +725,7 @@ ENGLISH_DOCS = (
     *(Path(f"docs/{stem}.md") for stem in GUIDE_STEMS),
     Path("docs/driver-emulation.md"),
     Path("docs/interpreter-recovery.md"),
+    Path("docs/mobile.md"),
 )
 
 
@@ -750,12 +751,16 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/cpu-execution.md"),
         Path(f"docs/{locale}/process-emulation.md"),
         Path(f"docs/{locale}/solver.md"),
+        Path(f"docs/{locale}/mobile.md"),
     )
 
 
 LOCALIZED_DOCS = tuple(path for locale in LOCALES for path in localized_paths(locale))
-PARTIAL_TRANSLATION_DOCS = (Path("docs/mobile.md"), Path("docs/zh-CN/mobile.md"))
-MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS + PARTIAL_TRANSLATION_DOCS
+MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS
+MOBILE_OVERVIEW_DOCS = (
+    Path("docs/mobile.md"),
+    *(Path(f"docs/{locale}/mobile.md") for locale in LOCALES),
+)
 PROHIBITED_STAGED_PREFIXES = ("docs/superpowers/",)
 EVM_TESTS_CMAKE = Path("unittests/evm/CMakeLists.txt")
 
@@ -1665,7 +1670,7 @@ def validate_mobile_readme_entries(
 def validate_mobile_examples(
     errors: list[str], view: RepositoryView, stem: str = "android"
 ) -> None:
-    """Preserve command and JSON samples exactly while allowing translated text."""
+    """Preserve fenced examples and the overview's inline CLI query commands."""
     languages = {"sh", "bash", "shell", "powershell", "json"}
 
     def examples(path: Path) -> tuple[tuple[str, str], ...]:
@@ -1675,7 +1680,12 @@ def validate_mobile_examples(
             if info in languages
         )
 
+    def inline_commands(path: Path) -> list[str]:
+        prose = without_markdown_fences(view.read_text(path))
+        return sorted(re.findall(r"`(neverd mobile [^`\n]+)`", prose))
+
     expected = examples(Path(f"docs/{stem}.md"))
+    expected_inline = inline_commands(Path("docs/mobile.md")) if stem == "mobile" else None
     for locale in LOCALES:
         path = Path(f"docs/{locale}/{stem}.md")
         if examples(path) != expected:
@@ -1684,6 +1694,35 @@ def validate_mobile_examples(
                 f"{display_path(path)}: {stem} command and JSON fenced blocks "
                 f"must match docs/{stem}.md exactly",
             )
+        if expected_inline is not None and inline_commands(path) != expected_inline:
+            report(
+                errors,
+                f"{display_path(path)}: mobile inline CLI commands "
+                "must match docs/mobile.md exactly",
+            )
+
+
+def validate_mobile_overview_links(errors: list[str], view: RepositoryView) -> None:
+    """Keep every overview reachable locally and across the language selector."""
+    for path in MOBILE_OVERVIEW_DOCS:
+        prose = without_markdown_fences(view.read_text(path))
+        targets = {link_target(raw) for raw in LINK_RE.findall(prose)}
+        for overview in MOBILE_OVERVIEW_DOCS:
+            target = posixpath.relpath(overview.as_posix(), path.parent.as_posix())
+            if target not in targets:
+                report(
+                    errors,
+                    f"{display_path(path)}: mobile language selector must link to {target!r}",
+                )
+        for name in ("README.md", "android.md", "ios.md"):
+            entry = path.parent / name
+            prose = without_markdown_fences(view.read_text(entry))
+            targets = {link_target(raw) for raw in LINK_RE.findall(prose)}
+            if "mobile.md" not in targets:
+                report(
+                    errors,
+                    f"{display_path(entry)}: must link to its local mobile.md overview",
+                )
 
 
 def validate_mobile_native_runtime(errors: list[str], view: RepositoryView) -> None:
@@ -1693,7 +1732,7 @@ def validate_mobile_native_runtime(errors: list[str], view: RepositoryView) -> N
         for directory in ("", *LOCALES)
         for stem in ("android", "ios")
     )
-    overviews = (Path("docs/mobile.md"), Path("docs/zh-CN/mobile.md"))
+    overviews = MOBILE_OVERVIEW_DOCS
     entries = (
         Path("README.md"), Path("docs/README.md"),
         *(Path(f"docs/{locale}/{name}.md")
@@ -2919,7 +2958,9 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     validate_sbf_testing_release_commands(errors, view)
     for stem in ("android", "ios"):
         validate_mobile_readme_entries(errors, view, stem)
+    for stem in ("android", "ios", "mobile"):
         validate_mobile_examples(errors, view, stem)
+    validate_mobile_overview_links(errors, view)
     validate_mobile_native_runtime(errors, view)
     registered_evm_tests = evm_test_targets(errors, view)
 
@@ -3010,6 +3051,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             cpu_guide,
             process_guide,
             solver_guide,
+            _mobile_overview,
         ) = localized_paths(locale)
         require_tokens(
             _interpreter_guide,
