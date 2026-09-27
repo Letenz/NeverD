@@ -444,6 +444,19 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
 
   SolveReport Rep;
   Result.Expr = solveRegionOrSplit(Ctx, E, Opts, Budget, Rep);
+  if (!Budget.exhausted() && readingCost(Ctx, Result.Expr) > 2) {
+    SolveReport Factored;
+    SymRef Candidate = solveStructuralFactors(Ctx, E, Opts, Budget, Factored);
+    if (readingCost(Ctx, Candidate) < readingCost(Ctx, Result.Expr)) {
+      Result.Expr = Candidate;
+      Rep.NumAtoms = Factored.NumAtoms;
+      Rep.Outcome = Factored.Outcome;
+      Rep.Evidence = Factored.Evidence;
+    }
+    Rep.BudgetExhausted |= Factored.BudgetExhausted;
+    if (Result.Expr == E && Factored.BudgetExhausted)
+      Rep.Outcome = MBAOutcome::BudgetExhausted;
+  }
   if (!Budget.exhausted()) {
     SolveReport Final;
     SymRef Factored =
@@ -594,6 +607,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       }
     } else {
       Skipped = true;
+    }
+    if (!Budget.exhausted() && readingCost(Ctx, Rebuilt) > 2) {
+      SolveReport Factored;
+      // Use the original node: a child rewrite may already have expanded one
+      // occurrence of a complemented factor while leaving its products whole.
+      SymRef Candidate = solveStructuralFactors(Ctx, R, Opts, Budget, Factored);
+      if (readingCost(Ctx, Candidate) < readingCost(Ctx, Rebuilt)) {
+        Rebuilt = Candidate;
+        Result.NumAtoms = std::max(Result.NumAtoms, Factored.NumAtoms);
+      }
+      Skipped |= Factored.BudgetExhausted;
+      Complete &= !Factored.BudgetExhausted;
     }
     Remember(Index, Rebuilt, Complete);
   }

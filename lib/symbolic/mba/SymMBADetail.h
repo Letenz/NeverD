@@ -416,6 +416,11 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
                                const MBAOptions &Opts, WorkBudget &Budget,
                                SolveReport &Rep);
 
+/// Factor complete immediate operands before other readings erase their
+/// shared spelling; measure at most two quotients using the same budget.
+SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep);
+
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to
 /// it once it has split a masked expression into mask-free columns, so keeping

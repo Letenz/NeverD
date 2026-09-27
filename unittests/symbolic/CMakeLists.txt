@@ -24,6 +24,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBARestoredTests.cpp
   SymMBASelectorTests.cpp
   SymMBAStressTests.cpp
+  SymMBAStructuralFactorTests.cpp
   SymMBAWeightedTests.cpp
   SymMBAComplementTests.cpp
   SymMBATests.cpp
