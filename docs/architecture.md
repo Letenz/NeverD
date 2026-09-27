@@ -1379,7 +1379,10 @@ The deep walk also visits new internal nodes in an emitted candidate once,
 before comparing the complete restored spellings. It shares completed-node
 results with the original walk, charges the new frontier to the same work and
 storage budgets, and does not recursively extend that frontier with further
-generated nodes. An emitted root is remeasured only when its children change.
+generated nodes. An emitted root is remeasured when its children change or
+when the final region exposes an unmeasured additive bitwise relation.
+Already-completed roots and candidates whose children are all completed keep
+their fast exit; the extra reading does not extend the fixed frontier.
 When child rewrites obscure an arithmetic input shared by a sum's bitwise
 terms, the original region remains a bounded alternative.
 
@@ -1415,11 +1418,12 @@ masked word using the original shift-count width. These rules inspect immediate
 operands and leave deeper sources opaque. They do not recursively normalize a
 whole DAG to a fixed point or relax MBA's mask-column independence checks.
 
-The word-complement builder can negate a sum's immediate coefficients and
+The word-complement builder can negate a sum of scaled free variables and
 complement its constant offset when that spelling is strictly cheaper.
 It estimates the operator change before construction and rechecks the actual
-reading cost afterwards. Deeper factors stay opaque, and one-bit flag networks
-retain the Boolean structure used by comparison recovery.
+reading cost afterwards. Compound and nonlinear inputs keep their complement
+boundary so shared products and bitwise relations remain recognizable.
+One-bit flag networks retain the Boolean structure used by comparison recovery.
 
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
