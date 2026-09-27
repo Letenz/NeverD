@@ -1360,6 +1360,8 @@ word width. This relation needs no inverse, including for even coefficients.
 A hash index only selects candidates for the full comparison. Replacements
 refer to the original placeholders without following newly created aliases;
 the same work and storage bounds cover indexing and rebuilding.
+A bounded offset-parity check skips the index when known offsets cannot sum
+to an odd value. Ambiguous nested arithmetic keeps the complete comparison.
 If this exact abstraction becomes a literal constant, the region retains it
 through the ordinary proof and cost checks, charging the single zero-input
 corner. Nonliteral zero-input expressions remain ineligible.
@@ -1369,6 +1371,23 @@ walk's original postorder. A strictly smaller restored Add/Mul result with
 a visible bitwise term gets at most one further region reading, using the
 same remaining budget. Only a strict cost decrease is retained; this does
 not introduce a recursive fixed-point search.
+
+The deep walk also visits new internal nodes in an emitted candidate once,
+before comparing the complete restored spellings. It shares completed-node
+results with the original walk, charges the new frontier to the same work and
+storage budgets, and does not recursively extend that frontier with further
+generated nodes. An emitted root is remeasured only when its children change.
+When child rewrites obscure an arithmetic input shared by a sum's bitwise
+terms, the original region remains a bounded alternative.
+
+After the established linear and polynomial readings have been proved, a
+two- or three-input region may subtract one affine atom from its measured
+weights and synthesize a two-valued Boolean residual. Aligning the two halves
+of that atom's table needs at most two coefficient trials and no modular
+division. The search reuses the existing small Boolean recipes, accounts for
+wide coefficient storage, and independently proves each form before restoring
+hidden inputs. Exhausting this optional search preserves earlier proved
+candidates.
 
 Boolean synthesis can peel independent singleton XOR terms from an algebraic
 normal form, leaving a kernel of at most three inputs for cached exact
