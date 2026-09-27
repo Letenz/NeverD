@@ -113,6 +113,13 @@ PatchResult InplaceRewriter::rewrite(const std::filesystem::path &InputPath,
                                      llvm::Module &Mod,
                                      const BinaryImage &Image,
                                      Arch TargetArch) {
+  if (!isSingleInstructionMode(Image.Mode)) {
+    llvm::WithColor::error()
+        << "inplace: rewriting requires a single instruction mode (got "
+        << getInstructionModeName(Image.Mode) << ")\n";
+    return PatchResult{};
+  }
+
   auto BufOrErr = llvm::MemoryBuffer::getFile(InputPath.string());
   if (!BufOrErr) {
     llvm::WithColor::error()

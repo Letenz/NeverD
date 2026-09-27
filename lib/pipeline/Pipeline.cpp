@@ -287,6 +287,11 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   NativePipelineTrace Trace;
   Trace.start(NativePipelineTrace::Stage::Decoder);
+  if (Img.Mode == InstructionMode::MixedARMThumb) {
+    Result.Error = "mixed ARM/Thumb decoding unsupported";
+    Trace.finish(false);
+    return Result;
+  }
   Decoder Dec;
   if (!Dec.init(Img.Arch, Img.Mode)) {
     Result.Error = "failed to initialize decoder for architecture " +
@@ -424,8 +429,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.DumpMed && Opts.EmitDumpOutput)
     dumpMedIR(Result.MedFuncs);
 
-  if (Result.MedIRVerifierFailures != 0 &&
-      (Opts.PatchMode || Opts.LiftMode)) {
+  if (Result.MedIRVerifierFailures != 0 && (Opts.PatchMode || Opts.LiftMode)) {
     Result.Error = "MedIR verification failed";
     Result.Success = false;
     Trace.finish(false);

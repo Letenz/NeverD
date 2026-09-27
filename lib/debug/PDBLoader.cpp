@@ -15,36 +15,41 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/loader/BinaryImage.h"
+
+// Parallel.h includes windows.h through StackSizeMain.h. Parse LLVM's COFF
+// declarations first so Windows' IMAGE_SYM_* macros cannot replace them.
+// clang-format off
+#include "llvm/Object/COFF.h"
 #include "neverd/support/Parallel.h"
+// clang-format on
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
+#include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/GUID.h"
 #include "llvm/DebugInfo/CodeView/RecordSerialization.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
-#include "llvm/DebugInfo/CodeView/CodeView.h"
-#include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbacks.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/ISectionContribVisitor.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
-#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
-#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PublicsStream.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
-#include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Debug.h"
@@ -61,8 +66,8 @@
 #include <map>
 #include <mutex>
 #include <optional>
-#include <thread>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -135,9 +140,9 @@ bool pdb_loader_detail::recordedSectionsMatch(
   return true;
 }
 
-llvm::Error pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream,
-                                                  uint32_t Offset,
-                                                  ParsedPublicSym32 &Out) {
+llvm::Error
+pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream,
+                                      uint32_t Offset, ParsedPublicSym32 &Out) {
   constexpr uint32_t PrefixSize =
       static_cast<uint32_t>(sizeof(llvm::codeview::RecordPrefix));
   constexpr uint32_t HeaderSize =
@@ -169,9 +174,8 @@ llvm::Error pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream
 
   const uint8_t *const Body = Bytes + PrefixSize;
   const uint32_t Flags = llvm::support::endian::read32le(Body);
-  Out.IsFunction =
-      (Flags & static_cast<uint32_t>(
-                   llvm::codeview::PublicSymFlags::Function)) != 0;
+  Out.IsFunction = (Flags & static_cast<uint32_t>(
+                                llvm::codeview::PublicSymFlags::Function)) != 0;
   Out.Offset = llvm::support::endian::read32le(Body + 4);
   Out.Segment = llvm::support::endian::read16le(Body + 8);
   const char *const Name = reinterpret_cast<const char *>(Body + HeaderSize);
@@ -251,9 +255,9 @@ llvm::Error pdbLoadError(const llvm::Twine &Message) {
                                  "pdb: " + Message);
 }
 
-llvm::Error parsePublicSym32FromStream(llvm::BinaryStreamRef Stream,
-                                       uint32_t Offset,
-                                       pdb_loader_detail::ParsedPublicSym32 &Out) {
+llvm::Error
+parsePublicSym32FromStream(llvm::BinaryStreamRef Stream, uint32_t Offset,
+                           pdb_loader_detail::ParsedPublicSym32 &Out) {
   llvm::BinaryStreamReader Reader(Stream);
   Reader.setOffset(Offset);
   llvm::ArrayRef<uint8_t> Prefix;
@@ -452,8 +456,8 @@ uint16_t boundedTypeSize(uint64_t Size) {
 }
 
 llvm::codeview::CPUType cpuTypeFromMachine(llvm::pdb::PDB_Machine Machine) {
-  using llvm::pdb::PDB_Machine;
   using llvm::codeview::CPUType;
+  using llvm::pdb::PDB_Machine;
   switch (Machine) {
   case PDB_Machine::Amd64:
     return CPUType::X64;
@@ -503,9 +507,9 @@ bool isProcedureIdSymbol(llvm::codeview::SymbolKind Kind) {
 
 } // namespace
 
-void pdb_loader_detail::publishNamedOffset(std::map<int64_t, VariableSym> &Slots,
-                                           std::set<int64_t> &Ambiguous,
-                                           int64_t Offset, VariableSym VS) {
+void pdb_loader_detail::publishNamedOffset(
+    std::map<int64_t, VariableSym> &Slots, std::set<int64_t> &Ambiguous,
+    int64_t Offset, VariableSym VS) {
   if (Ambiguous.count(Offset))
     return;
   auto IsHomeParam = [](const VariableSym &V) {
@@ -653,9 +657,10 @@ struct PDBDebugContext::Impl {
   std::optional<uint16_t> moduleForVA(va_t Addr) const {
     if (Addr == 0 || Contribs.empty())
       return std::nullopt;
-    const auto It = std::upper_bound(
-        Contribs.begin(), Contribs.end(), Addr,
-        [](va_t Value, const ModuleRange &Range) { return Value < Range.Start; });
+    const auto It = std::upper_bound(Contribs.begin(), Contribs.end(), Addr,
+                                     [](va_t Value, const ModuleRange &Range) {
+                                       return Value < Range.Start;
+                                     });
     auto Cur = It;
     while (Cur != Contribs.begin()) {
       --Cur;
@@ -918,8 +923,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   switch (CV.kind()) {
   case LK::LF_MODIFIER: {
     llvm::codeview::ModifierRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -927,8 +931,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_POINTER: {
     llvm::codeview::PointerRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -944,8 +947,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_ARRAY: {
     llvm::codeview::ArrayRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -970,7 +972,8 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         llvm::consumeError(std::move(Err));
         return {};
       }
-      const std::string Name = udtSpelling(Union.getName(), Union.getUniqueName());
+      const std::string Name =
+          udtSpelling(Union.getName(), Union.getUniqueName());
       if (Name.empty())
         return {};
       if (Union.isForwardRef() && !Self.isNoneType()) {
@@ -999,8 +1002,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
       }
       return Named;
     }
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1035,8 +1037,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_ENUM: {
     llvm::codeview::EnumRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1070,8 +1071,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_PROCEDURE: {
     llvm::codeview::ProcedureRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1099,8 +1099,8 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         llvm::consumeError(std::move(Err));
       } else {
         const uint32_t Limit = std::min<uint32_t>(
-            Args.ArgIndices.size(), Rec.ParameterCount ? Rec.ParameterCount
-                                                       : Args.ArgIndices.size());
+            Args.ArgIndices.size(),
+            Rec.ParameterCount ? Rec.ParameterCount : Args.ArgIndices.size());
         for (uint32_t I = 0; I < Limit; ++I) {
           if (Args.ArgIndices[I].isNoneType())
             continue;
@@ -1113,8 +1113,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_MFUNCTION: {
     llvm::codeview::MemberFunctionRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1142,8 +1141,8 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
         llvm::consumeError(std::move(Err));
       } else {
         const uint32_t Limit = std::min<uint32_t>(
-            Args.ArgIndices.size(), Rec.ParameterCount ? Rec.ParameterCount
-                                                       : Args.ArgIndices.size());
+            Args.ArgIndices.size(),
+            Rec.ParameterCount ? Rec.ParameterCount : Args.ArgIndices.size());
         for (uint32_t I = 0; I < Limit; ++I) {
           if (Args.ArgIndices[I].isNoneType())
             continue;
@@ -1156,8 +1155,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_BITFIELD: {
     llvm::codeview::BitFieldRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1165,8 +1163,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_FUNC_ID: {
     llvm::codeview::FuncIdRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1174,8 +1171,7 @@ TypeRef PDBDebugContext::Impl::resolveRecord(llvm::codeview::CVType CV,
   }
   case LK::LF_MFUNC_ID: {
     llvm::codeview::MemberFuncIdRecord Rec;
-    if (auto Err =
-            llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
+    if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(CV, Rec)) {
       llvm::consumeError(std::move(Err));
       return {};
     }
@@ -1253,15 +1249,17 @@ void PDBDebugContext::Impl::attachDisplayFields(
       Record->FieldDisplayTypes.push_back(std::move(Ty));
     }
 
-    llvm::Error visitKnownMember(llvm::codeview::CVMemberRecord &,
-                                 llvm::codeview::DataMemberRecord &Field) override {
+    llvm::Error
+    visitKnownMember(llvm::codeview::CVMemberRecord &,
+                     llvm::codeview::DataMemberRecord &Field) override {
       add(Field.getFieldOffset(), Field.getName(),
           Owner->resolveTpi(Field.getType(), Depth + 1));
       return llvm::Error::success();
     }
 
-    llvm::Error visitKnownMember(llvm::codeview::CVMemberRecord &,
-                                 llvm::codeview::EnumeratorRecord &Field) override {
+    llvm::Error
+    visitKnownMember(llvm::codeview::CVMemberRecord &,
+                     llvm::codeview::EnumeratorRecord &Field) override {
       const llvm::APSInt Value = Field.getValue();
       if (Value.isNegative() || Value.getActiveBits() > 16)
         return llvm::Error::success();
@@ -1269,8 +1267,9 @@ void PDBDebugContext::Impl::attachDisplayFields(
       return llvm::Error::success();
     }
 
-    llvm::Error visitKnownMember(llvm::codeview::CVMemberRecord &,
-                                 llvm::codeview::BaseClassRecord &Base) override {
+    llvm::Error
+    visitKnownMember(llvm::codeview::CVMemberRecord &,
+                     llvm::codeview::BaseClassRecord &Base) override {
       if (Failed)
         return llvm::Error::success();
       TypeRef BaseTy = Owner->resolveTpi(Base.getBaseType(), Depth + 1);
@@ -1280,8 +1279,9 @@ void PDBDebugContext::Impl::attachDisplayFields(
       for (size_t I = 0; I < BaseTy->FieldDisplayOffsets.size(); ++I) {
         if (BaseTy->FieldDisplayNames[I].empty())
           continue;
-        if (BaseOff > static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()) -
-                          BaseTy->FieldDisplayOffsets[I]) {
+        if (BaseOff >
+            static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()) -
+                BaseTy->FieldDisplayOffsets[I]) {
           Failed = true;
           return llvm::Error::success();
         }
@@ -1365,8 +1365,8 @@ PDBDebugContext::Impl::loadType(TypeGraph &Graph, bool UseIpi,
 bool PDBDebugContext::Impl::visitProcedureType(
     llvm::codeview::TypeIndex TI, bool FromIpi,
     const llvm::function_ref<void(llvm::codeview::TypeIndex ReturnTI,
-                                  llvm::codeview::CallingConvention)>
-        &Fn) const {
+                                  llvm::codeview::CallingConvention)> &Fn)
+    const {
   llvm::codeview::TypeIndex Cur = TI;
   bool UseIpi = FromIpi;
   for (int Depth = 0; Depth < 8; ++Depth) {
@@ -1376,7 +1376,8 @@ bool PDBDebugContext::Impl::visitProcedureType(
     using LK = llvm::codeview::TypeLeafKind;
     if (CV->kind() == LK::LF_FUNC_ID) {
       llvm::codeview::FuncIdRecord Rec;
-      if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
+      if (auto Err =
+              llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
         llvm::consumeError(std::move(Err));
         return false;
       }
@@ -1386,7 +1387,8 @@ bool PDBDebugContext::Impl::visitProcedureType(
     }
     if (CV->kind() == LK::LF_MFUNC_ID) {
       llvm::codeview::MemberFuncIdRecord Rec;
-      if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
+      if (auto Err =
+              llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
         llvm::consumeError(std::move(Err));
         return false;
       }
@@ -1396,7 +1398,8 @@ bool PDBDebugContext::Impl::visitProcedureType(
     }
     if (CV->kind() == LK::LF_PROCEDURE) {
       llvm::codeview::ProcedureRecord Rec;
-      if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
+      if (auto Err =
+              llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
         llvm::consumeError(std::move(Err));
         return false;
       }
@@ -1405,7 +1408,8 @@ bool PDBDebugContext::Impl::visitProcedureType(
     }
     if (CV->kind() == LK::LF_MFUNCTION) {
       llvm::codeview::MemberFunctionRecord Rec;
-      if (auto Err = llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
+      if (auto Err =
+              llvm::codeview::TypeDeserializer::deserializeAs(*CV, Rec)) {
         llvm::consumeError(std::move(Err));
         return false;
       }
@@ -1417,8 +1421,9 @@ bool PDBDebugContext::Impl::visitProcedureType(
   return false;
 }
 
-TypeRef PDBDebugContext::Impl::functionReturnFromType(
-    llvm::codeview::TypeIndex TI, bool FromIpi) const {
+TypeRef
+PDBDebugContext::Impl::functionReturnFromType(llvm::codeview::TypeIndex TI,
+                                              bool FromIpi) const {
   TypeRef Return;
   if (visitProcedureType(TI, FromIpi,
                          [&](llvm::codeview::TypeIndex ReturnTI,
@@ -1432,22 +1437,24 @@ TypeRef PDBDebugContext::Impl::functionReturnFromType(
   return {};
 }
 
-std::vector<TypeRef> PDBDebugContext::Impl::functionParamTypesFromType(
-    llvm::codeview::TypeIndex TI, bool FromIpi) const {
+std::vector<TypeRef>
+PDBDebugContext::Impl::functionParamTypesFromType(llvm::codeview::TypeIndex TI,
+                                                  bool FromIpi) const {
   const TypeRef Ty = FromIpi ? resolveIpi(TI) : resolveTpi(TI);
   if (Ty && Ty->Kind == NdTypeKind::Func)
     return Ty->ParamTypes;
   return {};
 }
 
-DebugCallConv PDBDebugContext::Impl::functionCallConvFromType(
-    llvm::codeview::TypeIndex TI, bool FromIpi) const {
+DebugCallConv
+PDBDebugContext::Impl::functionCallConvFromType(llvm::codeview::TypeIndex TI,
+                                                bool FromIpi) const {
   DebugCallConv CC = DebugCallConv::Unknown;
-  visitProcedureType(TI, FromIpi,
-                     [&](llvm::codeview::TypeIndex,
-                         llvm::codeview::CallingConvention RecCC) {
-                       CC = debugCallConv(RecCC);
-                     });
+  visitProcedureType(
+      TI, FromIpi,
+      [&](llvm::codeview::TypeIndex, llvm::codeview::CallingConvention RecCC) {
+        CC = debugCallConv(RecCC);
+      });
   return CC;
 }
 
@@ -1480,10 +1487,10 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
     return pdbLoadError("strict PDB loading requires a linked PE image");
   if (Image.DynInfo.CodeViewPDBIdentityState != PDBIdentityState::Unique ||
       !Image.DynInfo.CodeViewPDBIdentity)
-    return pdbLoadError(
-        Image.DynInfo.CodeViewPDBIdentityState == PDBIdentityState::Ambiguous
-            ? "PE CodeView identity is malformed or ambiguous"
-            : "PE image has no unique CodeView identity");
+    return pdbLoadError(Image.DynInfo.CodeViewPDBIdentityState ==
+                                PDBIdentityState::Ambiguous
+                            ? "PE CodeView identity is malformed or ambiguous"
+                            : "PE image has no unique CodeView identity");
   if (Image.DynInfo.CodeViewPDBIdentity->Kind == PDBIdentityKind::NB10)
     return loadPdb20DebugContext(PdbPath, Image);
 
@@ -1542,8 +1549,7 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
       void visit(const llvm::pdb::SectionContrib &C) override {
         if (C.Size <= 0)
           return;
-        const va_t VA =
-            Owner.resolveVA(C.ISect, static_cast<uint32_t>(C.Off));
+        const va_t VA = Owner.resolveVA(C.ISect, static_cast<uint32_t>(C.Off));
         if (VA == 0)
           return;
         const uint64_t Size = static_cast<uint64_t>(C.Size);
@@ -1623,8 +1629,8 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
       if (RestrictPublics) {
         Ctx->PImpl->PublicAddrBytes.assign(AddrBytes.begin(), AddrBytes.end());
         Ctx->PImpl->PublicSymStream = std::move(SymStream);
-        const uint32_t Wanted = static_cast<uint32_t>(
-            Image.LoadOnlyFunctionEntries.size());
+        const uint32_t Wanted =
+            static_cast<uint32_t>(Image.LoadOnlyFunctionEntries.size());
         Progress.report("debug", 0, Wanted, "pdb publics");
         uint32_t Done = 0;
         for (va_t VA : Image.LoadOnlyFunctionEntries) {
@@ -1875,7 +1881,8 @@ void PDBDebugContext::ensureLocalsForAddress(va_t Addr) const {
     for (auto &Param : Params) {
       if (Param.second)
         continue;
-      while (Id < Proc.ParamIds.size() && Proc.ParamIds[Id].first != Param.first)
+      while (Id < Proc.ParamIds.size() &&
+             Proc.ParamIds[Id].first != Param.first)
         ++Id;
       if (Id < Proc.ParamIds.size())
         Param.second = PImpl->resolveTpi(Proc.ParamIds[Id++].second);
@@ -2028,8 +2035,7 @@ void PDBDebugContext::ensureLocalsForAddress(va_t Addr) const {
       }
       if (RangeOr->hasSpilledUDTMember())
         continue;
-      place(Proc,
-            static_cast<int32_t>(RangeOr->Hdr.BasePointerOffset),
+      place(Proc, static_cast<int32_t>(RangeOr->Hdr.BasePointerOffset),
             static_cast<llvm::codeview::RegisterId>(
                 static_cast<uint16_t>(RangeOr->Hdr.Register)),
             false);
@@ -2116,8 +2122,8 @@ std::optional<FunctionSym> PDBDebugContext::resolveFunction(va_t Addr) const {
   return std::nullopt;
 }
 
-std::optional<VariableSym> PDBDebugContext::resolveVariable(va_t FuncAddr,
-                                                            int64_t Offset) const {
+std::optional<VariableSym>
+PDBDebugContext::resolveVariable(va_t FuncAddr, int64_t Offset) const {
   if (!PImpl)
     return std::nullopt;
   ensureLocalsForAddress(FuncAddr);
@@ -2164,8 +2170,8 @@ void PDBDebugContext::completeType(const TypeRef &Ty) const {
 std::optional<TypeSym> PDBDebugContext::resolveType(uint64_t TypeId) const {
   if (!PImpl)
     return std::nullopt;
-  const TypeRef Ty =
-      PImpl->resolveTpi(llvm::codeview::TypeIndex(static_cast<uint32_t>(TypeId)));
+  const TypeRef Ty = PImpl->resolveTpi(
+      llvm::codeview::TypeIndex(static_cast<uint32_t>(TypeId)));
   if (!Ty)
     return std::nullopt;
   TypeSym Out;

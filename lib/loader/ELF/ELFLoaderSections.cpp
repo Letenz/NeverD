@@ -23,6 +23,8 @@
 #include "llvm/Support/Error.h"
 
 #include <limits>
+#include <map>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -80,10 +82,10 @@ llvm::Error buildSections(llvm::ArrayRef<typename ELFT::Shdr> Sections,
 }
 
 template <typename ELFT>
-void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
-                    llvm::ArrayRef<typename ELFT::Shdr> Sections, size_t Size,
-                    const std::vector<va_t> &SecBase, bool IsRelocatable,
-                    BinaryImage &Img) {
+llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
+                           llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                           size_t Size, const std::vector<va_t> &SecBase,
+                           bool IsRelocatable, BinaryImage &Img) {
   using namespace llvm::ELF;
   using Elf_Shdr = typename ELFT::Shdr;
   using Elf_Sym = typename ELFT::Sym;
@@ -92,23 +94,43 @@ void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
   // distinct by name, and retain different symbol types at the same address.
   ELFSymbolCollector Symbols(Img);
   std::set<std::pair<va_t, llvm::StringRef>> ExportKeys;
+  std::optional<InstructionMode> ARMMode;
+  std::map<va_t, InstructionMode> ARMCodeModes;
+  auto RecordARMMode = [&](va_t Address, InstructionMode Mode) -> llvm::Error {
+    const auto [It, Inserted] = ARMCodeModes.emplace(Address, Mode);
+    if (!Inserted && It->second != Mode)
+      return llvm::make_error<llvm::StringError>(
+          "elf: conflicting ARM/Thumb instruction modes at one code address",
+          llvm::inconvertibleErrorCode());
+    // Valid mixed images remain available to symbol, section and relocation
+    // clients. Consumers needing one instruction mode reject this state.
+    ARMMode =
+        ARMMode && *ARMMode != Mode ? InstructionMode::MixedARMThumb : Mode;
+    return llvm::Error::success();
+  };
+  if (Img.Arch == Arch::ARM && !IsRelocatable && ELF.getHeader().e_entry != 0 &&
+      Img.hasExecutableCodeOwnerAt(Img.Entry))
+    if (auto Error = RecordARMMode(Img.Entry, (ELF.getHeader().e_entry & 1u)
+                                                  ? InstructionMode::Thumb
+                                                  : InstructionMode::ARM))
+      return Error;
 
   // --- Symbol tables ---
-  auto AddSymbolsFrom = [&](const Elf_Shdr &SH) {
+  auto AddSymbolsFrom = [&](const Elf_Shdr &SH) -> llvm::Error {
     if (SH.sh_type != SHT_SYMTAB && SH.sh_type != SHT_DYNSYM)
-      return;
+      return llvm::Error::success();
     if (!rangeInBounds(SH.sh_offset, SH.sh_size, Size) || SH.sh_entsize == 0)
-      return;
+      return llvm::Error::success();
 
     auto SymsOr = ELF.symbols(&SH);
     if (!SymsOr) {
       llvm::consumeError(SymsOr.takeError());
-      return;
+      return llvm::Error::success();
     }
     auto StrTabOr = ELF.getStringTableForSymtab(SH);
     if (!StrTabOr) {
       llvm::consumeError(StrTabOr.takeError());
-      return;
+      return llvm::Error::success();
     }
     llvm::StringRef StrTab = *StrTabOr;
 
@@ -125,7 +147,14 @@ void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       if (NameOr->empty())
         continue;
 
-      va_t Value = Sym.st_value;
+      const uint8_t Bind = Sym.getBinding();
+      const uint8_t Type = Sym.getType();
+      const bool IsFunction = Type == STT_FUNC || Type == STT_GNU_IFUNC;
+      // The low bit belongs to the ELF symbol value, before a relocatable
+      // section is placed in the image's synthesized address space.
+      va_t Value = Img.Arch == Arch::ARM && IsFunction
+                       ? clearThumbBit(Sym.st_value)
+                       : static_cast<va_t>(Sym.st_value);
       if (IsRelocatable && Sym.st_shndx < SHN_LORESERVE &&
           Sym.st_shndx < SecBase.size()) {
         if (Value > InvalidVA - SecBase[Sym.st_shndx])
@@ -134,15 +163,39 @@ void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
       }
       // Relocatable .o symbols at section start have st_value==0; SecBase may
       // also be 0 — do not treat that as "no address".
-      if (Value == 0 && !IsRelocatable)
+      if (Value == 0 && Sym.st_value == 0 && !IsRelocatable)
         continue;
 
-      uint8_t Bind = Sym.getBinding();
-      uint8_t Type = Sym.getType();
-
-      bool IsFunction = Type == STT_FUNC || Type == STT_GNU_IFUNC;
-      if (Img.Arch == Arch::ARM && IsFunction)
-        Value = clearThumbBit(Value);
+      if (Img.Arch == Arch::ARM) {
+        const bool IsARMMapping =
+            Bind == STB_LOCAL && Type == STT_NOTYPE &&
+            (*NameOr == "$a" || NameOr->starts_with("$a."));
+        const bool IsThumbMapping =
+            Bind == STB_LOCAL && Type == STT_NOTYPE &&
+            (*NameOr == "$t" || NameOr->starts_with("$t."));
+        const auto SymbolMode =
+            IsThumbMapping || (IsFunction && (Sym.st_value & 1u))
+                ? InstructionMode::Thumb
+                : InstructionMode::ARM;
+        if ((IsFunction || IsARMMapping || IsThumbMapping) &&
+            Sym.st_shndx < SHN_LORESERVE && Sym.st_shndx < Sections.size()) {
+          const Elf_Shdr &Owner = Sections[Sym.st_shndx];
+          const va_t OwnerVA =
+              sectionVA<ELFT>(IsRelocatable, SecBase, Owner, Sym.st_shndx);
+          if ((Owner.sh_flags & (SHF_ALLOC | SHF_EXECINSTR)) ==
+                  (SHF_ALLOC | SHF_EXECINSTR) &&
+              Value >= OwnerVA && Value - OwnerVA < Owner.sh_size) {
+            const unsigned Alignment =
+                SymbolMode == InstructionMode::Thumb ? 2 : 4;
+            if (Value % Alignment != 0)
+              return llvm::make_error<llvm::StringError>(
+                  "elf: misaligned ARM/Thumb code-mode symbol",
+                  llvm::inconvertibleErrorCode());
+            if (auto Error = RecordARMMode(Value, SymbolMode))
+              return Error;
+          }
+        }
+      }
 
       Symbols.add(*NameOr, Value, Sym.st_size, Type, IsFunction);
 
@@ -178,10 +231,15 @@ void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
         Img.Exports.push_back(std::move(Exp));
       }
     }
+    return llvm::Error::success();
   };
 
   for (const Elf_Shdr &SH : Sections)
-    AddSymbolsFrom(SH);
+    if (auto Error = AddSymbolsFrom(SH))
+      return Error;
+  if (Img.Arch == Arch::ARM)
+    Img.Mode = ARMMode.value_or(InstructionMode::ARM);
+  return llvm::Error::success();
 }
 
 // ===--------------------------------------------------------------------===//
@@ -195,11 +253,11 @@ template llvm::Error buildSections<llvm::object::ELF64LE>(
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, llvm::StringRef,
     const uint8_t *, size_t, const std::vector<va_t> &, bool, BinaryImage &);
 
-template void collectSymbols<llvm::object::ELF32LE>(
+template llvm::Error collectSymbols<llvm::object::ELF32LE>(
     const llvm::object::ELFFile<llvm::object::ELF32LE> &,
     llvm::ArrayRef<llvm::object::ELF32LE::Shdr>, size_t,
     const std::vector<va_t> &, bool, BinaryImage &);
-template void collectSymbols<llvm::object::ELF64LE>(
+template llvm::Error collectSymbols<llvm::object::ELF64LE>(
     const llvm::object::ELFFile<llvm::object::ELF64LE> &,
     llvm::ArrayRef<llvm::object::ELF64LE::Shdr>, size_t,
     const std::vector<va_t> &, bool, BinaryImage &);

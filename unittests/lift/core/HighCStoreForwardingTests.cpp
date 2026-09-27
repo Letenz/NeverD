@@ -10,6 +10,7 @@
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/MedToHigh.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -23,24 +24,25 @@ namespace {
 
 using namespace neverd;
 
-ExprPtr makeParam(unsigned Id, uint16_t Size, TypeRef Type) {
+ExprPtr makeParam(unsigned Id, uint16_t Size, TypeRef Type,
+                  Arch Architecture = Arch::X64) {
   MedVar Param;
   Param.Kind = MedVar::Param;
   Param.Id = static_cast<int>(Id);
   Param.Size = Size;
-  Param.TheArch = Arch::X64;
+  Param.TheArch = Architecture;
   return HighExpr::makeVar(Param, Type);
 }
 
-ExprPtr frameSlot(unsigned Offset) {
+ExprPtr frameSlot(unsigned Offset, Arch Architecture = Arch::X64) {
   MedVar SP;
   SP.Kind = MedVar::Reg;
   SP.Id = 100;
-  SP.Size = 8;
-  SP.TheArch = Arch::X64;
-  SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
+  SP.Size = Architecture == Arch::X86 || Architecture == Arch::ARM ? 4 : 8;
+  SP.TheArch = Architecture;
+  SP.RegOff = getTargetRegInfo(Architecture).StackPointer;
   return HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(SP),
-                             HighExpr::makeConst(Offset, 8));
+                             HighExpr::makeConst(Offset, SP.Size));
 }
 
 std::optional<llvm::StringRef> functionBody(llvm::StringRef Output,
@@ -167,11 +169,11 @@ TEST(HighCStoreForwarding, BoundsRepeatedTransitiveExpansion) {
       << Body->take_front(4096).str();
 }
 
-std::string emitBody(const HighFunc &Func) {
+std::string emitBody(const HighFunc &Func, Arch Architecture = Arch::X64) {
   std::string Output;
   llvm::raw_string_ostream OS(Output);
   CEmitterOptions Options;
-  Options.TheArch = Arch::X64;
+  Options.TheArch = Architecture;
   EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options));
   OS.flush();
   auto Body = functionBody(Output, Func.Name);
@@ -192,6 +194,263 @@ HighStmt ret(ExprPtr Value) {
   Result.Kind = StmtKind::Return;
   Result.RetVal = std::move(Value);
   return Result;
+}
+
+TEST(HighCStoreForwarding, RetainsDefinitionsUsedByForwardedValues) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Mode = 0; Mode != 4; ++Mode) {
+      const bool FloatConversion = (Mode & 1) != 0;
+      const bool AdditionalUse = (Mode & 2) != 0;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(Mode);
+      const auto I32 = NdType::makeInt(4);
+      const auto U64 = NdType::makeInt(8, false);
+      const auto F64 = NdType::makeFloat(8);
+      HighFunc Func;
+      Func.Name = "forwarded_value_definition";
+      Func.FrameSize = 16;
+      Func.ReturnType = FloatConversion ? F64 : I32;
+      Func.Params = {{"arg0", I32}};
+      MedVar Input;
+      Input.Kind = MedVar::Temp;
+      Input.Id = 17;
+      Input.Size = 4;
+      Input.TheArch = Architecture;
+      HighStmt Define;
+      Define.Kind = StmtKind::Assign;
+      Define.Dst = HighExpr::makeVar(Input, I32);
+      Define.Val = makeParam(0, 4, I32, Architecture);
+      Func.Body.push_back(std::move(Define));
+      ExprPtr Value = HighExpr::makeVar(Input, I32);
+      if (FloatConversion) {
+        Value = HighExpr::makeUnary(
+            NdOp::FLOAT_FLOAT2FLOAT,
+            HighExpr::makeBitCast(Value, NdType::makeFloat(4)));
+        Value->Type = F64;
+        Value = HighExpr::makeBitCast(Value, U64);
+      }
+      Func.Body.push_back(store(frameSlot(16, Architecture), Value));
+      ExprPtr Loaded = HighExpr::makeLoad(frameSlot(16, Architecture),
+                                          FloatConversion ? U64 : I32);
+      if (FloatConversion)
+        Loaded = HighExpr::makeBitCast(Loaded, F64);
+      if (AdditionalUse) {
+        ExprPtr Extra = HighExpr::makeVar(Input, I32);
+        if (FloatConversion) {
+          Extra = HighExpr::makeUnary(
+              NdOp::FLOAT_FLOAT2FLOAT,
+              HighExpr::makeBitCast(Extra, NdType::makeFloat(4)));
+          Extra->Type = F64;
+        }
+        Loaded = HighExpr::makeBinop(
+            FloatConversion ? NdOp::FLOAT_ADD : NdOp::INT_ADD, Loaded, Extra);
+      }
+      Func.Body.push_back(ret(Loaded));
+
+      const std::string Body = emitBody(Func, Architecture);
+      // The forwarded expression still uses the earlier copy. It must either
+      // retain that copy's declaration and assignment or substitute its source
+      // consistently; deleting the copy alone prints an undefined identifier.
+      if (Body.find("t17") != std::string::npos) {
+        EXPECT_NE(Body.find("int32_t t17;"), std::string::npos) << Body;
+        EXPECT_NE(Body.find("t17 = arg0;"), std::string::npos) << Body;
+        EXPECT_LT(Body.find("t17 = arg0;"), Body.find("return ")) << Body;
+      } else {
+        EXPECT_NE(Body.find("arg0"), std::string::npos) << Body;
+      }
+      // This must exercise forwarding, rather than pass by disabling it.
+      EXPECT_EQ(countPointerDerefStores(Body), 0u) << Body;
+      EXPECT_EQ(countPointerDerefLoads(Body), 0u) << Body;
+    }
+  }
+}
+
+TEST(MedToHighMemoryAddress, NarrowsOnlyProvenZeroExtendedPointerCarriers) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (unsigned Mode = 0; Mode != 5; ++Mode) {
+      for (bool Atomic : {false, true}) {
+        SCOPED_TRACE(static_cast<unsigned>(Architecture));
+        SCOPED_TRACE(Mode);
+        SCOPED_TRACE(Atomic);
+        const auto &TRI = getTargetRegInfo(Architecture);
+        MedFunc Med;
+        Med.Entry = 0x1000;
+        Med.Name = "pointer_carrier";
+        Med.ReturnType = NdType::makeInt(4, false);
+        Med.ReturnValueEvidence = MedReturnValueEvidence::ReturnsInteger;
+        auto Variable = [&](MedVar::VarKind Kind, int Id, uint16_t Size) {
+          MedVar V;
+          V.Kind = Kind;
+          V.Id = Id;
+          V.SSAVer = 1;
+          V.Size = Size;
+          V.TheArch = Architecture;
+          return V;
+        };
+        MedVar Input = Variable(MedVar::Param, 0, 4);
+        MedVar Value = Variable(MedVar::Param, 1, 4);
+        Med.Params = {Input, Value};
+        Med.Blocks.emplace_back();
+        MedBlock &Block = Med.Blocks.back();
+        Block.Id = 0;
+        Block.StartAddr = Med.Entry;
+        Block.EndAddr = Med.Entry + 32;
+        auto Append = [&](NdOp Opcode, MedVar Output,
+                          std::initializer_list<MedVar> Inputs) {
+          MedOp Op;
+          Op.Opcode = Opcode;
+          Op.Output = Output;
+          Op.Addr = Med.Entry + Block.Ops.size();
+          for (const MedVar &Operand : Inputs)
+            Op.addInput(Operand);
+          Block.Ops.push_back(std::move(Op));
+        };
+        MedVar Address = Variable(MedVar::Temp, 2, 8);
+        Append(
+            Mode == 1 ? NdOp::INT_SEXT : NdOp::INT_ZEXT, Address,
+            {Mode == 4 ? MedVar::makeConst(UINT64_C(0x80000000), 4) : Input});
+        if (Mode == 2) {
+          MedVar Wide = Variable(MedVar::Temp, 3, 8);
+          Append(NdOp::INT_ADD, Wide,
+                 {Address, MedVar::makeConst(UINT64_C(0x100000000), 8)});
+          Address = Wide;
+        } else if (Mode == 3) {
+          Address = MedVar::makeConst(UINT64_C(0x180000000), 8);
+        }
+        Append(NdOp::STORE, {}, {Address, Value});
+        MedVar Result = Variable(MedVar::Reg, 4, 4);
+        Result.RegOff = TRI.IntReturnReg;
+        if (Atomic)
+          Append(NdOp::ATOMIC_ADD, Result, {Address, Value});
+        else
+          Append(NdOp::LOAD, Result, {Address});
+        Append(NdOp::RETURN, {}, {Result});
+
+        const HighFunc High = MedToHighConverter().convert(Med, Architecture);
+        unsigned MemoryAddresses = 0;
+        auto CheckAddress = [&](const ExprPtr &AddressExpr,
+                                bool InlineDefinition = true) {
+          const bool Narrowed = TRI.PointerSize == 4 &&
+                                (Mode == 0 || Mode == 4) && InlineDefinition;
+          ASSERT_NE(AddressExpr, nullptr);
+          ASSERT_NE(AddressExpr->Type, nullptr);
+          ++MemoryAddresses;
+          EXPECT_EQ(AddressExpr->Type->Size, Narrowed ? 4 : 8)
+              << AddressExpr->str();
+          // The view is unsigned so source values >= 0x80000000 retain their
+          // zero-extended address, rather than becoming negative host VAs.
+          if (Narrowed)
+            EXPECT_FALSE(AddressExpr->Type->IsSigned) << AddressExpr->str();
+          if (Mode == 3) {
+            ASSERT_EQ(AddressExpr->Kind, ExprKind::Const);
+            EXPECT_EQ(AddressExpr->ConstVal, UINT64_C(0x180000000));
+          } else if (Mode == 4) {
+            const HighExpr *Constant = AddressExpr.get();
+            while ((Constant->Kind == ExprKind::Cast ||
+                    Constant->Kind == ExprKind::BitCast) &&
+                   Constant->Operands.size() == 1 && Constant->Operands[0]) {
+              ASSERT_NE(Constant->Type, nullptr);
+              ASSERT_NE(Constant->Operands[0]->Type, nullptr);
+              ASSERT_EQ(Constant->Type->Size,
+                        Constant->Operands[0]->Type->Size);
+              Constant = Constant->Operands[0].get();
+            }
+            if (Constant->Kind == ExprKind::UnaryOp) {
+              // A shared atomic carrier and a 64-bit target retain the
+              // original zero extension. Accept that exact operation, not a
+              // sign extension or a numeric widening cast of 0x80000000.
+              ASSERT_FALSE(Narrowed);
+              ASSERT_EQ(Constant->Op, NdOp::INT_ZEXT);
+              ASSERT_NE(Constant->Type, nullptr);
+              ASSERT_EQ(Constant->Type->Size, 8u);
+              ASSERT_EQ(Constant->Operands.size(), 1u);
+              ASSERT_NE(Constant->Operands[0], nullptr);
+              ASSERT_NE(Constant->Operands[0]->Type, nullptr);
+              ASSERT_EQ(Constant->Operands[0]->Type->Size, 4u);
+              Constant = Constant->Operands[0].get();
+            }
+            ASSERT_EQ(Constant->Kind, ExprKind::Const) << AddressExpr->str();
+            EXPECT_EQ(Constant->ConstVal, UINT64_C(0x80000000));
+          }
+        };
+        walkStmts(High.Body, [&](const HighStmt &Stmt) {
+          if (Stmt.Kind == StmtKind::Store)
+            CheckAddress(Stmt.StoreAddr);
+          forEachRhsExpr(Stmt, [&](const ExprPtr &Root) {
+            auto Visit = [&](auto &&Self, const ExprPtr &Expr) -> void {
+              if (!Expr)
+                return;
+              if (Expr->Kind == ExprKind::Load ||
+                  (Expr->Kind == ExprKind::BinOp &&
+                   Expr->Op == NdOp::ATOMIC_ADD)) {
+                ASSERT_FALSE(Expr->Operands.empty());
+                CheckAddress(Expr->Operands[0], !Atomic);
+              }
+              Expr->forEachChildExpr(
+                  [&](const ExprPtr &Child) { Self(Self, Child); });
+            };
+            Visit(Visit, Root);
+          });
+        });
+        EXPECT_EQ(MemoryAddresses, 2u);
+      }
+    }
+  }
+}
+
+TEST(HighCStoreForwarding, CallResultsFollowRenderedLoadsAndCallArity) {
+  // Exercise the liveness boundary with a certified cached value. The current
+  // store producer conservatively excludes calls; this verifies the consumer
+  // does not drop result definitions if forwarding facts are supplied.
+  for (unsigned Mode = 0; Mode != 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    const auto I32 = NdType::makeInt(4);
+    MedVar Result;
+    Result.Kind = MedVar::Temp;
+    Result.Id = 17;
+    Result.Size = 4;
+    HighFunc Function;
+    Function.Name = "cached_call_result";
+    Function.ReturnType = I32;
+    HighStmt Define;
+    Define.Kind = StmtKind::Assign;
+    Define.Dst = HighExpr::makeVar(Result, I32);
+    Define.Val = HighExpr::makeCall("produce_value", 0x2000, {});
+    Define.Val->Type = I32;
+    Function.Body.push_back(Define);
+    auto Address = frameSlot(16);
+    auto Load = HighExpr::makeLoad(Address, I32);
+    ExprPtr Use = Load;
+    if (Mode == 1 || Mode == 2 || Mode == 3) {
+      Use = HighExpr::makeCall("consume_value", 0x3000, {Load});
+      Use->Type = I32;
+      if (Mode == 3) {
+        Use->IsIndirectCall = true;
+        Use->IndirectTarget = Load;
+      }
+    } else if (Mode == 4) {
+      Use = std::make_shared<HighExpr>();
+      Use->Kind = ExprKind::Addr;
+      Use->Type = NdType::makePtr(I32);
+      Use->Operands = {Load};
+    }
+    Function.Body.push_back(ret(Use));
+    HighCAnalysisState State;
+    State.AddressKeys.emplace(Address.get(), "private-slot-16");
+    State.ForwardedAddressDeps["private-slot-16"].insert("t17");
+    if (Mode == 5)
+      State.DeadStmts.insert(&Function.Body.back());
+    const auto VarFn = [](const MedVar &Variable) {
+      return "t" + std::to_string(Variable.Id);
+    };
+    const auto ArgLimit = [Mode](const HighExpr &Call) {
+      return Mode == 2 || Mode == 3 ? size_t(0) : Call.Operands.size();
+    };
+    analyzeUnusedCallResults(State, Function, VarFn, ArgLimit);
+    const bool ResultIsRendered = Mode == 0 || Mode == 1 || Mode == 3;
+    EXPECT_EQ(State.OmittedCallResults.count(&Function.Body[0]),
+              ResultIsRendered ? 0u : 1u);
+  }
 }
 
 TEST(HighCStoreForwarding, KeepsObservableStoresAndPrecedingLoads) {
@@ -256,7 +515,8 @@ TEST(HighCStoreForwarding, DoesNotMoveFrameWritesBeforeLoadsOrAcrossBranches) {
     Func.Body.push_back(ret(HighExpr::makeVar(Old, I32)));
     const auto Body = emitBody(Func);
     EXPECT_GE(countPointerDerefStores(Body), 1u) << Body;
-    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 || Body.find("var_") != std::string::npos)
+    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 ||
+                Body.find("var_") != std::string::npos)
         << Body;
   }
 }
@@ -353,8 +613,7 @@ TEST(HighCStoreForwarding,
   Func.Body.push_back(ret(HighExpr::makeVar(Bits, I64)));
 
   const auto Body = emitBody(Func);
-  EXPECT_NE(Body.find("t19 = (int64_t)(uintptr_t)(var_m8);"),
-            std::string::npos)
+  EXPECT_NE(Body.find("t19 = (int64_t)(uintptr_t)(var_m8);"), std::string::npos)
       << Body;
 }
 
@@ -418,7 +677,8 @@ TEST(HighCStoreForwarding, RequiresPrivateFullWidthAndImmutableSlots) {
     Func.Body.push_back(ret(HighExpr::makeLoad(Address(), I32)));
     const auto Body = emitBody(Func);
     EXPECT_EQ(countPointerDerefStores(Body), Variant == 3 ? 2u : 1u) << Body;
-    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 || Body.find("var_") != std::string::npos)
+    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 ||
+                Body.find("var_") != std::string::npos)
         << Body;
   }
 }
@@ -520,7 +780,8 @@ TEST(HighCStoreForwarding, KeepsNonIntegerReinterpretationInMemory) {
     Func.Body.push_back(ret(HighExpr::makeLoad(frameSlot(8), LoadType)));
     const auto Body = emitBody(Func);
     EXPECT_GE(countPointerDerefStores(Body), 1u) << Body;
-    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 || Body.find("var_") != std::string::npos)
+    EXPECT_TRUE(countPointerDerefLoads(Body) > 0 ||
+                Body.find("var_") != std::string::npos)
         << Body;
   }
 }
@@ -664,8 +925,7 @@ TEST(HighCStoreForwarding, KeepsCyclicDependenciesMaterialized) {
   auto Body = functionBody(Output, Func.Name);
   ASSERT_TRUE(Body.has_value());
   EXPECT_LT(Body->size(), 4u * 1024u) << Body->take_front(4096).str();
-  EXPECT_GE(countPointerDerefStores(*Body), 2u)
-      << Body->take_front(4096).str();
+  EXPECT_GE(countPointerDerefStores(*Body), 2u) << Body->take_front(4096).str();
   EXPECT_GE(countPointerDerefLoads(*Body) + countOccurrences(*Body, "var_"), 2u)
       << Body->take_front(4096).str();
 }

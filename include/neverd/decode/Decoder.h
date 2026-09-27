@@ -112,6 +112,10 @@ public:
 
   bool init(Arch A, InstructionMode Mode = InstructionMode::Default);
 
+  /// Release active decoder state. Decoding returns failure until init
+  /// succeeds.
+  void reset();
+
   /// Decode a single instruction at \p Addr; returns size or 0 on failure.
   int decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr, DecodedInsn &Out);
 

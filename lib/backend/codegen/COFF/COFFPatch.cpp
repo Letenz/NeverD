@@ -358,6 +358,12 @@ uint64_t COFFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
 PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
                                const std::filesystem::path &OutputPath,
                                llvm::Module &Mod, Arch TargetArch) {
+  if (!isSingleInstructionMode(CachedMode)) {
+    llvm::WithColor::error()
+        << "coff_patch: rewriting requires a single instruction mode (got "
+        << getInstructionModeName(CachedMode) << ")\n";
+    return PatchResult{};
+  }
   if (!archCOFFPatchSupported(TargetArch)) {
     llvm::WithColor::error()
         << "coff_patch: unsupported arch " << getArchName(TargetArch) << "\n";

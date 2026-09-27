@@ -14,11 +14,62 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/libc/LibCNames.h"
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <set>
 
 namespace neverd {
+
+namespace {
+
+// Store forwarding hides the original store and caches its rendered value.
+// A surviving load therefore reads the cached value's dependencies as well as
+// the variables visible in HighIR. Later liveness passes must use both views
+// or they can delete the only definition of a name still present in C.
+void collectRenderedUses(const HighCAnalysisState &State, const HighExpr &Expr,
+                         std::map<std::string, TypeRef> &Used, VarNameFn VarFn,
+                         CallArgLimitFn ArgLimit) {
+  collectUsedVarsExpr(Expr, Used, VarFn, ArgLimit);
+  if (State.ForwardedAddressDeps.empty())
+    return;
+
+  std::set<const HighExpr *> Seen;
+  std::vector<const HighExpr *> Work{&Expr};
+  while (!Work.empty()) {
+    const HighExpr *Current = Work.back();
+    Work.pop_back();
+    if (!Current || !Seen.insert(Current).second)
+      continue;
+    // Taking the address of a load does not read its forwarded value.
+    if (Current->Kind == ExprKind::Addr && Current->Operands.size() == 1 &&
+        Current->Operands[0] && Current->Operands[0]->Kind == ExprKind::Load) {
+      for (const ExprPtr &Address : Current->Operands[0]->Operands)
+        Work.push_back(Address.get());
+      continue;
+    }
+    if (Current->Kind == ExprKind::Load && Current->Operands.size() == 1 &&
+        Current->Operands[0] &&
+        Current->MemoryOrdering == NdMemoryOrdering::None) {
+      auto Key = State.AddressKeys.find(Current->Operands[0].get());
+      if (Key != State.AddressKeys.end()) {
+        auto Deps = State.ForwardedAddressDeps.find(Key->second);
+        if (Deps != State.ForwardedAddressDeps.end())
+          for (const std::string &Name : Deps->second)
+            Used.try_emplace(Name);
+      }
+    }
+    size_t Limit = Current->Operands.size();
+    if (Current->Kind == ExprKind::Call && ArgLimit)
+      Limit = std::min(Limit, ArgLimit(*Current));
+    for (size_t I = 0; I < Limit; ++I)
+      Work.push_back(Current->Operands[I].get());
+    if (Current->IndirectTarget)
+      Work.push_back(Current->IndirectTarget.get());
+  }
+}
+
+} // namespace
 
 bool isNoreturnCallExpr(const HighExpr &E) {
   // A bare return in the caller says nothing about whether another callee
@@ -242,7 +293,7 @@ void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,
         return;
       forEachRhsExpr(S, [&](const ExprPtr &E) {
         if (E)
-          collectUsedVarsExpr(*E, Used, VarFn, ArgLimit);
+          collectRenderedUses(State, *E, Used, VarFn, ArgLimit);
       });
     });
     walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -270,7 +321,7 @@ void analyzeUnusedCallResults(HighCAnalysisState &State, const HighFunc &Func,
       return;
     forEachRhsExpr(S, [&](const ExprPtr &E) {
       if (E)
-        collectUsedVarsExpr(*E, Used, VarFn, ArgLimit);
+        collectRenderedUses(State, *E, Used, VarFn, ArgLimit);
     });
   });
   walkStmts(Func.Body, [&](const HighStmt &S) {

@@ -184,7 +184,76 @@ int main(void) {
 )";
 }
 
-class MBASourceTest : public NeverDLiftTest,
+bool containsResidualMBA(const std::string &AST) {
+  // Inspect expression kinds rather than punctuation: address-of and
+  // dereference are unary operators, and pointer casts are type expressions.
+  static const std::regex Binary(
+      R"(\b(?:BinaryOperator|CompoundAssignOperator)\b[^\r\n]* '(?:\^|&|\||<<|>>|\*|/|%)=?')");
+  static const std::regex Complement(R"(\bUnaryOperator\b[^\r\n]* prefix '~')");
+  return std::regex_search(AST, Binary) || std::regex_search(AST, Complement);
+}
+
+class MBAExecutableSourceTest : public NeverDLiftTest {
+protected:
+  std::string functionAST(const fs::path &Source, const std::string &Name) {
+    // The scalar fixtures need no SIMD declarations. Leave the original C
+    // body intact while allowing LLVMC's blanket x86 include on other hosts.
+    std::ofstream(tmpFile("immintrin.h")).close();
+    const auto Parsed = exec(NEVERD_TEST_CLANG,
+                             {"-std=c11", "-fsyntax-only",
+                              "-Werror=implicit-function-declaration", "-I",
+                              tmp().string(), "-Xclang", "-ast-dump", "-Xclang",
+                              "-ast-dump-filter=" + Name, Source.string()});
+    EXPECT_TRUE(Parsed.ok()) << Parsed.err;
+    EXPECT_NE(Parsed.out.find("FunctionDecl"), std::string::npos)
+        << Name << "\n"
+        << Parsed.out;
+    EXPECT_NE(Parsed.out.find("CompoundStmt"), std::string::npos)
+        << Name << "\n"
+        << Parsed.out;
+    EXPECT_NE(Parsed.out.find("ReturnStmt"), std::string::npos) << Name << "\n"
+                                                                << Parsed.out;
+    return Parsed.out;
+  }
+
+  void expectNoResidualMBA(const fs::path &Source, const std::string &Name) {
+    const auto AST = functionAST(Source, Name);
+    EXPECT_FALSE(containsResidualMBA(AST)) << Name << "\n" << AST;
+  }
+};
+
+TEST_F(MBAExecutableSourceTest,
+       WholeFunctionCheckFindsHiddenMBAAndAllowsAddressExpressions) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "C expression checks require clang";
+  const auto Source = tmpFile("expression-shapes.c");
+  std::ofstream(Source) << R"(
+#include <stdint.h>
+
+uint32_t hidden_mba(uint32_t x, uint32_t y) {
+  uint32_t parity = x ^ y;
+  uint32_t carry = (x & y) << 1;
+  return parity + carry;
+}
+
+uint32_t compound_mba(uint32_t x, uint32_t y) {
+  x ^= y;
+  return x + y;
+}
+
+uint32_t addressed_add(uint32_t x, uint32_t y) {
+  uint32_t local = x;
+  uintptr_t address = (uintptr_t)&local;
+  uint32_t *pointer = (uint32_t *)address;
+  return *pointer + y;
+}
+)";
+  EXPECT_TRUE(containsResidualMBA(functionAST(Source, "hidden_mba")));
+  EXPECT_TRUE(containsResidualMBA(functionAST(Source, "compound_mba")));
+  EXPECT_FALSE(containsResidualMBA(functionAST(Source, "addressed_add")));
+}
+
+class MBASourceTest : public MBAExecutableSourceTest,
                       public ::testing::WithParamInterface<SourceCase> {};
 
 TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
@@ -243,6 +312,8 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
   EXPECT_EQ(Store.find("128"), std::string::npos) << Store;
   EXPECT_FALSE(functionBody(Source, "mba_full_product8").empty());
 
+  expectNoResidualMBA(Output, "mba_spilled_add");
+  expectNoResidualMBA(Output, "mba_spilled_sub");
   const auto SpilledAdd =
       returnedExpression(functionBody(Source, "mba_spilled_add"));
   for (char Operator : {'^', '&', '|', '~'})
@@ -294,6 +365,209 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<SourceCase> &Info) {
       return std::string(std::get<0>(Info.param)) +
              (std::get<2>(Info.param) ? "LLVMC" : "HighC");
+    });
+
+struct FrameSourceCase {
+  const char *Name;
+  const char *Triple;
+  const char *Fixture;
+  unsigned WordBits;
+  bool Thumb;
+  bool LLVM;
+};
+
+// Execute the emitted C on the host: the fixed-width unsigned oracle remains
+// valid even when the fixture's machine width differs from the host's width.
+const char *frameExecutionHarness() {
+  return R"(
+#include <inttypes.h>
+#include <stdio.h>
+
+static int check_pair(uint64_t x, uint64_t y) {
+  const uint64_t mask = MBA_WORD_BITS == 32 ? UINT32_MAX : UINT64_MAX;
+  x &= mask;
+  y &= mask;
+  const uint64_t sum = (uint64_t)mba_spilled_add(x, y) & mask;
+  const uint64_t difference = (uint64_t)mba_spilled_sub(x, y) & mask;
+  if (sum != ((x + y) & mask) || difference != ((x - y) & mask)) {
+    fprintf(stderr, "width=%u x=%" PRIx64 " y=%" PRIx64
+                    " sum=%" PRIx64 " difference=%" PRIx64 "\n",
+            MBA_WORD_BITS, x, y, sum, difference);
+    return 1;
+  }
+  return 0;
+}
+
+int main(void) {
+  for (uint64_t x = 0; x != 256; ++x)
+    for (uint64_t y = 0; y != 256; ++y)
+      if (check_pair(x, y))
+        return 1;
+  static const uint64_t edges[] = {
+    0, 1, 2, 0x7f, 0x80, 0xff, 0x100, 0x7fff, 0x8000, 0xffff, 0x10000,
+    UINT64_C(0x7fffffff), UINT64_C(0x80000000), UINT64_C(0xffffffff),
+    UINT64_C(0x100000000), UINT64_C(0x7fffffffffffffff),
+    UINT64_C(0x8000000000000000), UINT64_MAX - 1, UINT64_MAX,
+    UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555555555)
+  };
+  for (unsigned i = 0; i != sizeof(edges) / sizeof(edges[0]); ++i)
+    for (unsigned j = 0; j != sizeof(edges) / sizeof(edges[0]); ++j)
+      if (check_pair(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x92d68ca2f53b17e9);
+  for (unsigned i = 0; i != 4096; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    const uint64_t x = state;
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check_pair(x, state))
+      return 1;
+  }
+  return 0;
+}
+)";
+}
+
+class MBAFrameSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<FrameSourceCase> {};
+
+TEST_P(MBAFrameSourceTest, RemovesSpilledMBAAndPreservesExecutableBehavior) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + (Case.LLVM ? " LLVMC" : " HighC"));
+  const auto Object = tmpFile("frame-spills.o");
+  std::vector<std::string> CompileArguments{"-target", Case.Triple};
+  if (Case.Thumb)
+    CompileArguments.push_back("-mthumb");
+  CompileArguments.insert(CompileArguments.end(),
+                          {"-c",
+                           (fs::path(TEST_SOURCE_DIR) / Case.Fixture).string(),
+                           "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArguments);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("frame-spills.c");
+  std::vector<std::string> Arguments{"decompile"};
+  if (Case.LLVM)
+    Arguments.push_back("--llvm");
+  Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Arguments);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const auto Source = readSource(Output);
+  ASSERT_FALSE(Source.empty());
+  std::string AddName = "mba_spilled_add";
+  std::string SubName = "mba_spilled_sub";
+  if (Source.find(AddName + "(") == std::string::npos ||
+      Source.find(SubName + "(") == std::string::npos) {
+    // Object formats can keep more than one symbol at a function entry. Bind
+    // the harness to the emitted alias only after authenticating its address.
+    const auto Listed = exec(ndBin(), {"funcs", "--json", Object.string()});
+    ASSERT_TRUE(Listed.ok()) << Listed.err;
+    const std::regex Definition(
+        R"json(\{"addr":"([^"]+)","name":"([^"]+)","size":)json");
+    std::vector<std::pair<std::string, std::string>> Symbols;
+    for (std::sregex_iterator
+             It(Listed.out.begin(), Listed.out.end(), Definition),
+         End;
+         It != End; ++It)
+      Symbols.emplace_back((*It)[1].str(), (*It)[2].str());
+    auto ResolveAlias = [&](const std::string &Name) {
+      const auto Requested =
+          std::find_if(Symbols.begin(), Symbols.end(), [&](const auto &Symbol) {
+            return Symbol.second == Name || Symbol.second == "_" + Name;
+          });
+      EXPECT_NE(Requested, Symbols.end()) << Name << "\n" << Listed.out;
+      if (Requested == Symbols.end())
+        return Name;
+      for (const auto &[Address, RawName] : Symbols) {
+        const auto Candidate =
+            RawName.starts_with("_") ? RawName.substr(1) : RawName;
+        if (Address == Requested->first &&
+            Source.find(Candidate + "(") != std::string::npos)
+          return Candidate;
+      }
+      ADD_FAILURE() << "No emitted alias for " << Name << "\n" << Source;
+      return Name;
+    };
+    AddName = ResolveAlias(AddName);
+    SubName = ResolveAlias(SubName);
+  }
+  for (const bool Subtract : {false, true}) {
+    expectNoResidualMBA(Output, Subtract ? SubName : AddName);
+    const auto Expression =
+        returnedExpression(functionBody(Source, Subtract ? SubName : AddName));
+    for (const char Operator : {'^', '&', '|', '~', '*'})
+      EXPECT_EQ(Expression.find(Operator), std::string::npos) << Expression;
+    EXPECT_EQ(Expression.find("<<"), std::string::npos) << Expression;
+    EXPECT_EQ(Expression.find(">>"), std::string::npos) << Expression;
+    EXPECT_EQ(
+        std::count(Expression.begin(), Expression.end(), Subtract ? '-' : '+'),
+        1)
+        << Expression;
+    EXPECT_EQ(Expression.find(Subtract ? '+' : '-'), std::string::npos)
+        << Expression;
+  }
+
+  std::ofstream(tmpFile("immintrin.h")).close();
+  const auto Harness = tmpFile("execute-frame.c");
+  std::ofstream(Harness) << "#define MBA_WORD_BITS " << Case.WordBits << "\n"
+                         << Source << "\n#define mba_spilled_add " << AddName
+                         << "\n#define mba_spilled_sub " << SubName << "\n"
+                         << frameExecutionHarness();
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("execute-frame");
+    const auto Recompiled =
+        exec(NEVERD_TEST_CLANG,
+             {"-std=c11", Optimization, "-fno-inline", "-Werror=return-type",
+              "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+              "-fsanitize-trap=undefined", "-I", tmp().string(),
+              Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CrossArchitecture, MBAFrameSourceTest,
+    ::testing::Values(
+        FrameSourceCase{"X86ELF", "i386-linux-gnu",
+                        "x86_32/test_mba_frame_spills.S", 32, false, false},
+        FrameSourceCase{"X86ELF", "i386-linux-gnu",
+                        "x86_32/test_mba_frame_spills.S", 32, false, true},
+        FrameSourceCase{"X86COFF", "i386-pc-windows-msvc",
+                        "x86_32/test_mba_frame_spills.S", 32, false, false},
+        FrameSourceCase{"X86COFF", "i386-pc-windows-msvc",
+                        "x86_32/test_mba_frame_spills.S", 32, false, true},
+        FrameSourceCase{"X86MachO", "i386-apple-macos10.7",
+                        "x86_32/test_mba_frame_spills.S", 32, false, false},
+        FrameSourceCase{"X86MachO", "i386-apple-macos10.7",
+                        "x86_32/test_mba_frame_spills.S", 32, false, true},
+        FrameSourceCase{"ARM32", "armv7-linux-gnueabi",
+                        "arm32/test_mba_frame_spills.S", 32, false, false},
+        FrameSourceCase{"ARM32", "armv7-linux-gnueabi",
+                        "arm32/test_mba_frame_spills.S", 32, false, true},
+        FrameSourceCase{"Thumb2", "armv7-linux-gnueabi",
+                        "arm32/test_mba_frame_spills.S", 32, true, false},
+        FrameSourceCase{"Thumb2", "armv7-linux-gnueabi",
+                        "arm32/test_mba_frame_spills.S", 32, true, true},
+        FrameSourceCase{"AArch64ELF", "aarch64-linux-gnu",
+                        "aarch64/test_mba_frame_spills.S", 64, false, false},
+        FrameSourceCase{"AArch64ELF", "aarch64-linux-gnu",
+                        "aarch64/test_mba_frame_spills.S", 64, false, true},
+        FrameSourceCase{"AArch64COFF", "aarch64-pc-windows-msvc",
+                        "aarch64/test_mba_frame_spills.S", 64, false, false},
+        FrameSourceCase{"AArch64COFF", "aarch64-pc-windows-msvc",
+                        "aarch64/test_mba_frame_spills.S", 64, false, true},
+        FrameSourceCase{"AArch64MachO", "aarch64-apple-macos11",
+                        "aarch64/test_mba_frame_spills.S", 64, false, false},
+        FrameSourceCase{"AArch64MachO", "aarch64-apple-macos11",
+                        "aarch64/test_mba_frame_spills.S", 64, false, true}),
+    [](const ::testing::TestParamInfo<FrameSourceCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
     });
 
 } // namespace

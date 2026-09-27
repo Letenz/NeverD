@@ -344,6 +344,12 @@ uint64_t ELFPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
 PatchResult ELFPatcher::patch(const std::filesystem::path &InputPath,
                               const std::filesystem::path &OutputPath,
                               llvm::Module &Mod, Arch TargetArch) {
+  if (!isSingleInstructionMode(CachedMode)) {
+    llvm::WithColor::error()
+        << "elf_patch: rewriting requires a single instruction mode (got "
+        << getInstructionModeName(CachedMode) << ")\n";
+    return PatchResult{};
+  }
   if (!archELFPatchSupported(TargetArch)) {
     llvm::WithColor::error()
         << "elf_patch: unsupported arch " << getArchName(TargetArch) << "\n";

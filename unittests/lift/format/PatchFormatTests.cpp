@@ -7,6 +7,7 @@
 #include "PatchFormatTestsDetail.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/codegen/MachO/MachOPatch.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -66,6 +67,78 @@ TEST_F(PatchReceipt, FailedInplaceWritePublishesNoMappings) {
 
   EXPECT_FALSE(Result.Success);
   EXPECT_TRUE(Result.PatchedOriginalEntries.empty());
+}
+
+TEST_F(PatchReceipt, UnsupportedInstructionModesRejectBeforeFileAccess) {
+  // These public C++ entry points also accept modules that did not come from
+  // Pipeline. A decoder guard cannot protect their file publication boundary.
+  const fs::path InputPath = tmpFile("missing-input");
+  ASSERT_FALSE(fs::exists(InputPath));
+  const std::string Sentinel = "existing output must remain unchanged";
+  llvm::LLVMContext Context;
+  llvm::Module Module("mode-boundary", Context);
+
+  for (const InstructionMode Mode :
+       {InstructionMode::MixedARMThumb, static_cast<InstructionMode>(255)}) {
+    SCOPED_TRACE(getInstructionModeName(Mode));
+    for (const BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      BinaryImage Image;
+      Image.Arch = Arch::ARM;
+      Image.Mode = Mode;
+      Image.Format = Format;
+      // Mach-O exposes both the virtual patch entry and an options overload.
+      const unsigned APICount = Format == BinaryFormat::MachO ? 3 : 2;
+      for (unsigned API = 0; API < APICount; ++API) {
+        SCOPED_TRACE(API);
+        for (const bool ExistingOutput : {false, true}) {
+          SCOPED_TRACE(ExistingOutput);
+          const fs::path OutputPath = tmpFile("unsupported-mode-output");
+          fs::remove(OutputPath);
+          if (ExistingOutput) {
+            std::ofstream Output(OutputPath, std::ios::binary);
+            Output << Sentinel;
+            ASSERT_TRUE(Output.good());
+          }
+
+          PatchResult Result;
+          testing::internal::CaptureStderr();
+          if (API == 0) {
+            auto Rewriter = InplaceRewriter::create(Format);
+            Result = Rewriter->rewrite(InputPath, OutputPath, Module, Image,
+                                       Image.Arch);
+          } else if (API == 1) {
+            auto Patcher = BinaryPatcher::create(Format);
+            Patcher->setImageContext(&Image);
+            Result = Patcher->patch(InputPath, OutputPath, Module, Image.Arch);
+          } else {
+            MachOPatcher Patcher;
+            Patcher.setImageContext(&Image);
+            Result = Patcher.patch(InputPath, OutputPath, Module, Image.Arch,
+                                   MachOPatchOptions{});
+          }
+          const std::string Diagnostic = testing::internal::GetCapturedStderr();
+
+          EXPECT_FALSE(Result.Success);
+          EXPECT_TRUE(Result.OutputPath.empty());
+          EXPECT_TRUE(Result.PatchedOriginalEntries.empty());
+          EXPECT_EQ(Result.TrampolineCount, 0u);
+          // Distinguishes the semantic rejection from a later missing-file or
+          // parse failure, which must not mask an unguarded API.
+          EXPECT_NE(Diagnostic.find("requires a single instruction mode"),
+                    std::string::npos)
+              << Diagnostic;
+          EXPECT_EQ(fs::exists(OutputPath), ExistingOutput);
+          if (ExistingOutput) {
+            std::ifstream Output(OutputPath, std::ios::binary);
+            EXPECT_EQ(std::string(std::istreambuf_iterator<char>(Output), {}),
+                      Sentinel);
+          }
+        }
+      }
+    }
+  }
 }
 
 TEST_F(PatchReceipt,

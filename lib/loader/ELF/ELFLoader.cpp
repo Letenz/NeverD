@@ -156,8 +156,9 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
     elf_loader::detail::applyDynamicRelativeRelocations<ELFT>(ELF, *SectionsOr,
                                                               Data, Size, Img);
 
-  elf_loader::detail::collectSymbols<ELFT>(ELF, *SectionsOr, Size, SecBase,
-                                           IsRelocatable, Img);
+  if (llvm::Error E = elf_loader::detail::collectSymbols<ELFT>(
+          ELF, *SectionsOr, Size, SecBase, IsRelocatable, Img))
+    return E;
 
   // --- .dynamic ---
   for (const Elf_Shdr &SH : *SectionsOr) {

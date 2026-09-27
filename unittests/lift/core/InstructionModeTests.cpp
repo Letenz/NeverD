@@ -2,6 +2,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/TargetCodegenInfo.h"
 
@@ -175,4 +176,53 @@ TEST(InstructionMode, LegacyTrampolinesHonorExactOverwriteLimits) {
     EXPECT_TRUE(
         TCI.writeTrampoline(Exact, 0, 0x1100, 0x1000, TCI.trampolineSize()));
   }
+}
+
+TEST(InstructionMode, MixedImageModeCannotDecodeOrEmitSingleModeInstructions) {
+  constexpr auto Mixed = InstructionMode::MixedARMThumb;
+  EXPECT_STREQ(getInstructionModeName(Mixed), "mixed_arm_thumb");
+  EXPECT_FALSE(isSingleInstructionMode(Mixed));
+  Decoder Dec;
+  EXPECT_FALSE(Dec.init(Arch::ARM, Mixed));
+  const uint8_t ARMBranch[] = {0x00, 0x00, 0x00, 0xeb};
+  DecodedInsn Insn{};
+  EXPECT_EQ(Dec.decodeOne(ARMBranch, sizeof(ARMBranch), 0x1000, Insn), 0);
+  EXPECT_EQ(Dec.decodeOneLight(ARMBranch, sizeof(ARMBranch), 0x1000, Insn), 0);
+  EXPECT_EQ(Dec.decodeOneForLift(ARMBranch, sizeof(ARMBranch), 0x1000, Insn),
+            0);
+  size_t Length = 0;
+  EXPECT_FALSE(decodeDirectBranchTarget(Arch::ARM, Mixed, ARMBranch,
+                                        sizeof(ARMBranch), 0x1000, Length));
+  EXPECT_FALSE(canScanDirectBranches(Arch::ARM, Mixed));
+  EXPECT_EQ(normalizeCodeAddress(0x1001, Arch::ARM, Mixed), 0x1000u);
+  EXPECT_EQ(serializeCodePointer(0x1000, Arch::ARM, Mixed), InvalidVA);
+  auto Target = getTargetCodegenInfo(Arch::ARM, Mixed);
+  std::vector<uint8_t> Bytes(8, 0xaa);
+  EXPECT_FALSE(Target.appendNop(Bytes));
+  EXPECT_EQ(Target.trampolineSize(), 0u);
+  EXPECT_FALSE(Target.fillPadding(Bytes.data(), Bytes.size()));
+  EXPECT_FALSE(Target.writeTrampoline(Bytes, 0, 0x2000, 0x1000));
+  EXPECT_EQ(Bytes, (std::vector<uint8_t>(8, 0xaa)));
+  auto Control = canonicalizeLowControlTarget(
+      0x1000, Mixed, LowInstructionTargetMode::Preserve);
+  EXPECT_FALSE(static_cast<bool>(Control));
+  if (!Control)
+    llvm::consumeError(Control.takeError());
+}
+
+TEST(InstructionMode,
+     ResetClearsAnEarlierDecoderWithoutChangingFailureAtomicity) {
+  const uint8_t ThumbAdds[] = {0x01, 0x30};
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
+  EXPECT_FALSE(Dec.init(Arch::ARM, InstructionMode::MixedARMThumb));
+  DecodedInsn Insn{};
+  EXPECT_EQ(Dec.decodeOne(ThumbAdds, sizeof(ThumbAdds), 0x1000, Insn), 2);
+  Dec.reset();
+  EXPECT_EQ(Dec.decodeOne(ThumbAdds, sizeof(ThumbAdds), 0x1000, Insn), 0);
+  EXPECT_EQ(Dec.decodeOneLight(ThumbAdds, sizeof(ThumbAdds), 0x1000, Insn), 0);
+  EXPECT_EQ(Dec.decodeOneForLift(ThumbAdds, sizeof(ThumbAdds), 0x1000, Insn),
+            0);
+  ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Thumb));
+  EXPECT_EQ(Dec.decodeOne(ThumbAdds, sizeof(ThumbAdds), 0x1000, Insn), 2);
 }
