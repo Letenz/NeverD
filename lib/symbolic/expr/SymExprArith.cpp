@@ -13,6 +13,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprMask.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -52,6 +54,18 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
   std::map<uint32_t, llvm::APInt> Terms;
 
   llvm::SmallVector<SymRef, 8> Work(Ops.begin(), Ops.end());
+  llvm::SmallVector<SymRef, 8> Flat;
+  while (!Work.empty()) {
+    SymRef R = Work.pop_back_val();
+    if (op(R) == SymOp::Add) {
+      auto Sub = operands(R);
+      Work.append(Sub.begin(), Sub.end());
+    } else {
+      Flat.push_back(R);
+    }
+  }
+  mergeMaskedOperands(Flat, /*RequireDisjoint=*/true);
+  Work = std::move(Flat);
   while (!Work.empty()) {
     SymRef R = Work.pop_back_val();
     assert(width(R) == W && "mkAdd operands must share a width");
@@ -136,6 +150,13 @@ SymRef SymContext::mkMul(llvm::ArrayRef<SymRef> Ops) {
     return mkConst(ConstFactor);
 
   std::sort(Rest.begin(), Rest.end());
+
+  if (Rest.size() == 1 && op(Rest[0]) == SymOp::LShr) {
+    SymRef Source = operand(Rest[0], 0);
+    SymRef Count = operand(Rest[0], 1);
+    if (auto K = detail::matchingShiftPower(*this, Count, ConstFactor))
+      return mkAnd(Source, mkConst(~llvm::APInt::getLowBitsSet(W, *K)));
+  }
 
   if (ConstFactor.isOne()) {
     if (Rest.size() == 1)

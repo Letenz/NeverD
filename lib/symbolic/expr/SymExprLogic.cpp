@@ -14,6 +14,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprMask.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -44,6 +46,25 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
       continue;
     }
     Rest.push_back(R);
+  }
+
+  if (Rest.size() == 1 && Acc.isMask() && !Acc.isAllOnes()) {
+    SymRef Reduced = simplifyLowMaskedAdd(Rest[0], Acc);
+    if (Reduced != Rest[0]) {
+      Rest.clear();
+      // Normalize the new immediate AND/constant without recursively
+      // applying demand to another layer of a potentially deep source DAG.
+      if (op(Reduced) == SymOp::And)
+        Rest.append(operands(Reduced).begin(), operands(Reduced).end());
+      else
+        Rest.push_back(Reduced);
+      llvm::erase_if(Rest, [&](SymRef R) {
+        if (!isConst(R))
+          return false;
+        Acc &= constValue(R);
+        return true;
+      });
+    }
   }
 
   if (Acc.isZero())
@@ -122,6 +143,24 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
       continue;
     }
     Rest.push_back(R);
+  }
+
+  if (mergeMaskedOperands(Rest, /*RequireDisjoint=*/false)) {
+    // A fully covered source can itself be an OR. Flatten it iteratively;
+    // mask reasoning stays local instead of re-entering this builder.
+    Work = std::move(Rest);
+    Rest.clear();
+    while (!Work.empty()) {
+      SymRef R = Work.pop_back_val();
+      if (op(R) == SymOp::Or) {
+        auto Sub = operands(R);
+        Work.append(Sub.begin(), Sub.end());
+      } else if (isConst(R)) {
+        Acc |= constValue(R);
+      } else {
+        Rest.push_back(R);
+      }
+    }
   }
 
   if (Acc.isAllOnes())
@@ -278,6 +317,13 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       return A;
     if (isConst(A))
       return mkConst(constValue(A).lshr(Amt.getZExtValue()));
+    if (op(A) == SymOp::Mul && operands(A).size() == 2 &&
+        isConst(operand(A, 0))) {
+      llvm::APInt Factor = constValue(operand(A, 0));
+      SymRef Source = operand(A, 1);
+      if (auto K = detail::matchingShiftPower(*this, B, Factor))
+        return mkAnd(Source, mkConst(llvm::APInt::getLowBitsSet(W, W - *K)));
+    }
   }
   if (isConstZero(A))
     return mkZero(W);

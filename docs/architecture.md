@@ -1322,6 +1322,16 @@ never caches inconclusive proof results or shares rejections across requests.
 Repeated offers still spend search work; only actual verifier calls count as
 proof queries.
 
+The expression builders own local word-mask normalization shared by execution,
+MBA simplification, and expression rebuilding. Constant-masked copies of an
+identical source merge under OR, or under addition when every mask is disjoint.
+A retained low-prefix mask can remove redundant masks from immediate addends;
+this changes only the masked consumer, not other users of the complete sum.
+Matching power-of-two multiplication and logical right shifts reconstruct a
+masked word using the original shift-count width. These rules inspect immediate
+operands and leave deeper sources opaque. They do not recursively normalize a
+whole DAG to a fixed point or relax MBA's mask-column independence checks.
+
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
 libraries supplied by the CMake helper.

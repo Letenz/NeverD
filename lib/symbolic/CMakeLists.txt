@@ -8,6 +8,7 @@ add_neverd_component_library(NeverDSymbolic
   expr/SymExprArith.cpp
   expr/SymExprEval.cpp
   expr/SymExprLogic.cpp
+  expr/SymExprMask.cpp
   expr/SymExprStruct.cpp
   expr/SymExprWalk.cpp
   mba/SymBitwise.cpp
