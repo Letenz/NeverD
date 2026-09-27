@@ -29579,6 +29579,46 @@ TEST(HighCPointerAddresses, DuplicateSkipFoldKeepsPrefixReadAfterJump) {
   EXPECT_TRUE(everyReadTempIsAssigned(Func));
 }
 
+TEST(HighCPointerAddresses, DeadTrailingLoadKeepsJumpLabel) {
+  // A dead load that a jump enters is removed, but its label must stay.
+  HighFunc Func;
+  Func.Name = "dead_load_label";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const va_t LoadVA = 0x140001040;
+  HighStmt Dead = assignTo(
+      temporary(20, 26),
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
+                                             HighExpr::makeConst(8, 8)),
+                         NdType::makeInt(8)));
+  Dead.Addr = LoadVA;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(1),
+                                   HighExpr::makeConst(0, 8));
+  Inner.Body = {callStmt("First", 0x140002000, {})};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {Dead, assignTo(temporary(21, 1), HighExpr::makeConst(5, 8)),
+                Inner, callStmt("Second", 0x140002100, {})};
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = LoadVA;
+  HighStmt Enter;
+  Enter.Kind = StmtKind::If;
+  Enter.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
+                                   HighExpr::makeConst(0, 8));
+  Enter.Body = {Jump};
+  Func.Body = {Enter, Outer};
+  structureIfElse(Func, 8);
+  bool Labeled = false;
+  walkStmts(Func.Body,
+            [&](const HighStmt &S) { Labeled = Labeled || S.Addr == LoadVA; });
+  EXPECT_TRUE(Labeled);
+}
+
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
   HighFunc Func;
   Func.Name = "aux_len";

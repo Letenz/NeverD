@@ -51,6 +51,9 @@ thread_local const std::vector<HighStmt> *IfElseFunctionBody = nullptr;
 /// function is structured. Structuring repeats that question for the same
 /// definition; a remembered reader only keeps an assignment alive.
 thread_local std::set<std::tuple<int, int, int>> *IfElseReadOutside = nullptr;
+/// Goto targets of the whole function being structured; nested statement
+/// lists can be entered by jumps from outside them.
+thread_local const std::set<va_t> *IfElseFunctionTargets = nullptr;
 
 // These facts cover the entire function, including entries from a different
 // statement list. Rewrites only remove addresses and references, so retaining
@@ -1147,6 +1150,17 @@ static bool listHasExternalExit(const std::vector<HighStmt> &Body) {
     if (!Inside.count(Target))
       return true;
   return false;
+}
+
+/// Whether a jump of the function being structured, or of \p Local, enters
+/// the statement at \p Addr.
+static bool isFunctionJumpTarget(va_t Addr,
+                                 const std::vector<HighStmt> &Local) {
+  if (!Addr || Addr == InvalidVA)
+    return false;
+  if (IfElseFunctionTargets && IfElseFunctionTargets->count(Addr))
+    return true;
+  return gotoTargets(Local).count(Addr) != 0;
 }
 
 static bool isValueAssign(const HighStmt &S, MedVar &Dest, ExprPtr &Val) {
@@ -2451,9 +2465,11 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
   size_t I = End;
   while (I > 0) {
     --I;
+    // A jump that enters a copied predicate call still runs it.
     if (Body[I].Kind == StmtKind::Call && Body[I].CallExpr &&
         exprHasSameCall(Pred.get(), Body[I].CallExpr->CallAddr,
-                        Body[I].CallExpr->CallTarget)) {
+                        Body[I].CallExpr->CallTarget) &&
+        !isFunctionJumpTarget(Body[I].Addr, Body)) {
       Body.erase(Body.begin() + static_cast<long>(I));
       if (End > I)
         --End;
@@ -2473,10 +2489,21 @@ static void dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
     // assignment whether or not anything reads it.
     if (PredCall || IsLoad) {
       if (!destHasRealUse(Body, I, Dest, ExternalExit)) {
-        Body.erase(Body.begin() + static_cast<long>(I));
-        if (End > I)
-          --End;
-        continue;
+        const bool Entered = isFunctionJumpTarget(Body[I].Addr, Body);
+        if (Entered && IsLoad) {
+          // The dead load goes; the label a jump names stays in place.
+          HighStmt Anchor;
+          Anchor.Kind = StmtKind::Block;
+          Anchor.Addr = Body[I].Addr;
+          Body[I] = std::move(Anchor);
+          continue;
+        }
+        if (!Entered) {
+          Body.erase(Body.begin() + static_cast<long>(I));
+          if (End > I)
+            --End;
+          continue;
+        }
       }
       if (IsLoad)
         continue;
@@ -3419,6 +3446,11 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
     if (!Def || DefI >= Body.size()) {
       continue;
     }
+    // Only an `if` gives the default a new home for its label. Erasing an
+    // entered default under an if/else would lose the jump's target.
+    if (Prev.Kind == StmtKind::IfElse &&
+        isFunctionJumpTarget(Body[DefI].Addr, Body))
+      continue;
     // The join edges become fallthrough; a jump that skips later work in its
     // arm cannot.
     if (Join && !joinGotosAreTail(Prev, Join))
@@ -4045,11 +4077,6 @@ static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
   structureIfElseList(Stmts, MaxPasses, Med);
 }
 
-namespace {
-/// Goto targets of the whole function being structured; nested statement
-/// lists can be entered by jumps from outside them.
-thread_local const std::set<va_t> *IfElseFunctionTargets = nullptr;
-} // namespace
 
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
   const std::set<va_t> Targets = gotoTargets(Func.Body);
