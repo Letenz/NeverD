@@ -5271,7 +5271,12 @@ TEST(HighCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("pAuxData.p->m_type"), std::string::npos) << Source;
+  // The call writes the box into frame storage; the field is read from there.
+  EXPECT_NE(
+      Source.find("(*(PtrBox *)(uintptr_t)((frame_base - 24))).p->m_type"),
+      std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m10"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("+ (uint64_t)(24)"), std::string::npos) << Source;
 }
@@ -19922,9 +19927,12 @@ TEST(HighCPointerAddresses, CleanupFuncletFrameSlotLoadForwardsIntoDtor) {
   Options.Format = BinaryFormat::COFF;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CStringT_dtor(badgeRecordName.m_pszData)"),
+  // Byte storage holds the object; the funclet reads its field from there.
+  EXPECT_NE(Source.find("CStringT_dtor((*(CStringT *)(uintptr_t)((frame_base - "
+                        "24))).m_pszData)"),
             std::string::npos)
       << Source;
+  EXPECT_EQ(Source.find("badgeRecordName"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t2 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t2;"), std::string::npos) << Source;
 }
