@@ -142,7 +142,13 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
         return pnpError("remove requires all device files to close");
     }
     if (std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
-          return Entry.second.PnpDevice == PDO &&
+          const auto Native = FrameworkUsbIdleRequests.find(Entry.first);
+          const bool ParkedUsb =
+              Native != FrameworkUsbIdleRequests.end() &&
+              Native->second.Key.IRP == Entry.first &&
+              Native->second.Key.PDO == Entry.second.PnpDevice &&
+              UsbIdle.isParked(Entry.first);
+          return Entry.second.PnpDevice == PDO && !ParkedUsb &&
                  (!Entry.second.ChildPower || !Entry.second.PowerOperation ||
                   Entry.second.PowerOperation->Minor !=
                       DevicePowerRequest::WaitWake);
@@ -252,7 +258,15 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
 llvm::Expected<uint64_t>
 KernelModel::forwardFrameworkTransitionRequest(uint64_t IRP) {
   auto *Request = requestForIRP(IRP);
-  if (!Request || (!Request->PnpOperation && !Request->PowerOperation) ||
+  const auto Native = FrameworkUsbIdleRequests.find(IRP);
+  const bool NativeUsb =
+      Request && Native != FrameworkUsbIdleRequests.end() &&
+      Request->Kind == DriverRequestKind::InternalDeviceControl &&
+      Native->second.Key.IRP == IRP &&
+      Native->second.Key.PDO == Request->PnpDevice &&
+      Native->second.Device == Request->Device;
+  if (!Request ||
+      (!Request->PnpOperation && !Request->PowerOperation && !NativeUsb) ||
       Request->Completed || Request->Forwarded ||
       Request->FrameworkTransitionAwaiting ||
       Request->DeviceRoute.size() != 2 || Request->StackCount < 2 ||
@@ -293,8 +307,6 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
     auto &Observation = *Result.Requests[Request.ResultIndex].Power;
     Observation.DeviceStateAfter = State->DevicePower;
     Observation.SystemStateAfter = State->SystemPower;
-    if (auto E = observeUsbIdlePowerCompletion(Request.IRP, Status))
-      return E;
     if (Framework && Power.Type == DriverPowerType::Device &&
         !Request.DeviceRoute.empty() &&
         FrameworkDevices.count(Request.DeviceRoute.front()))
@@ -302,6 +314,8 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
               Request.PnpDevice, Status,
               Power.Minor == DevicePowerRequest::Set))
         return E;
+    if (auto E = observeUsbIdlePowerCompletion(Request.IRP, Status))
+      return E;
   } else if (Request.PowerOperation &&
              Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) {
     auto State = Lifecycle.snapshot(Request.PnpDevice);

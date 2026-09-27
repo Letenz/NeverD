@@ -300,6 +300,12 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
       NextContinuation == UINT64_MAX)
     return invalid("framework callback identity exhausted");
 
+  if (ReleasesHardware && !Starting) {
+    if (auto E = cancelUsbIdle(Handle->second))
+      return E;
+    if (D.Policy.UsbIdle)
+      return invalid("hardware release must drain its USB idle callback");
+  }
   if (Leaving && ReleasesHardware && D.PoFxHandle) {
     if (!PowerFrameworkHost.Quiesce)
       return invalid("hardware teardown lost its PoFx quiesce host");

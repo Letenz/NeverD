@@ -174,6 +174,30 @@ llvm::Expected<uint64_t> KernelModel::retainProviderWake(uint64_t PDO,
 
 void KernelModel::configureFrameworkPowerPolicyHost() {
   KernelFramework::PowerPolicyHost Host;
+  Host.ResolveUsbIdle = [this](uint64_t Device, uint32_t State) {
+    return resolveFrameworkUsbIdle(Device, State);
+  };
+  Host.SubmitUsbIdle = [this](uint64_t Device, uint64_t Epoch) {
+    return submitFrameworkUsbIdle(Device, Epoch);
+  };
+  Host.HasUsbIdle = [this](UsbIdleKey Key) { return hasFrameworkUsbIdle(Key); };
+  Host.CancelUsbIdle =
+      [this](UsbIdleKey Key,
+             KernelFramework::PowerPolicyHost::RequestMode Mode) {
+        return cancelFrameworkUsbIdle(Key, Mode);
+      };
+  Host.RequestUsbIdlePower =
+      [this](uint64_t Device, UsbIdleKey Key, uint64_t Token,
+             KernelFramework::PowerPolicyHost::RequestMode Mode) {
+        return requestFrameworkUsbIdlePower(Device, Key, Token, Mode);
+      };
+  Host.AbortUsbIdlePower = [this](UsbIdleKey Key, uint64_t Token,
+                                  uint32_t Status) {
+    return abortFrameworkUsbIdlePower(Key, Token, Status);
+  };
+  Host.FinishUsbIdleCallback = [this](UsbIdleKey Key, uint64_t Token) {
+    return finishFrameworkUsbIdleCallback(Key, Token);
+  };
   Host.Now = [this] { return Scheduler.now100ns(); };
   Host.Request = [this](uint64_t Device, DevicePowerState Target,
                         KernelFramework::PowerPolicyHost::RequestMode Mode) {

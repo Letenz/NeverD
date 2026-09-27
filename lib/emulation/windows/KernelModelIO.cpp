@@ -276,7 +276,12 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
   const uint64_t File = Request->FileAddress;
   const bool IsPnp = Input.Kind == DriverRequestKind::Pnp;
   const bool IsPower = Input.Kind == DriverRequestKind::Power;
-  const bool FileFree = IsPnp || IsPower;
+  const bool IsInternal =
+      Input.Kind == DriverRequestKind::InternalDeviceControl;
+  const bool FileFree = IsPnp || IsPower || IsInternal;
+  if (IsInternal && (File || Request->ProcessID))
+    return ioError(
+        "internal control packets require kernel file-free ownership");
   uint32_t Flags = FileFree || Request->AsynchronousFile ? 0 : IRPSynchronous;
   if (Input.Kind == DriverRequestKind::Create)
     Flags |= IRPCreate;
@@ -342,7 +347,7 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
     if (auto E = Memory.writeInteger(Packet + IRPInformationOffset, 0, 8))
       return E;
     Request->IOStatusWritten.fill(true);
-  } else if (Input.Kind == DriverRequestKind::DeviceControl) {
+  } else if (Input.Kind == DriverRequestKind::DeviceControl || IsInternal) {
     for (const Field &F :
          std::array<Field, 3>{{{StackParametersOffset, Input.OutputSize, 4},
                                {StackInputLengthOffset, Input.Input.size(), 4},
@@ -804,6 +809,19 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
     return ioError("caller-owned IRPs require explicit IoFreeIrp disposal");
   std::vector<std::pair<uint64_t, uint64_t>> Retiring{
       {IRP, IRPSize + Request->StackCount * StackSize}};
+  const auto NativeUsb = FrameworkUsbIdleRequests.find(IRP);
+  if (NativeUsb != FrameworkUsbIdleRequests.end()) {
+    const auto &Native = NativeUsb->second;
+    if (Request->Kind != DriverRequestKind::InternalDeviceControl ||
+        Native.Key.IRP != IRP || Native.Key.PDO != Request->PnpDevice ||
+        Native.Device != Request->Device || !Native.Info ||
+        Native.Info != Request->UserInput ||
+        Request->InputSize != usb_idle::CallbackInfoSize ||
+        Request->FileAddress || Request->FileId || Request->ProcessID ||
+        Request->OutputSize || Request->SystemBuffer || Request->Mdl)
+      return ioError("framework USB release lost its exact packet ownership");
+    Retiring.emplace_back(Native.Info, usb_idle::CallbackInfoSize);
+  }
   if (Request->RawResources) {
     Retiring.emplace_back(Request->RawResources, Request->ResourceListSize);
     Retiring.emplace_back(Request->TranslatedResources,
@@ -826,7 +844,13 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
   for (const auto &[Address, Size] : Retiring) {
     if (auto E = canReleaseUserViewsForBacking(Address, Size))
       return E;
-    if (auto E = canRevokeVirtualRange(Address, Size))
+    const std::optional<UsbIdleKey> RetiringUsb =
+        NativeUsb != FrameworkUsbIdleRequests.end() &&
+                Address == NativeUsb->second.Info &&
+                Size == usb_idle::CallbackInfoSize
+            ? std::optional<UsbIdleKey>{NativeUsb->second.Key}
+            : std::nullopt;
+    if (auto E = canRevokeVirtualRange(Address, Size, RetiringUsb))
       return E;
   }
   if (auto E = Physical.canReleaseRanges(Retiring, RetiringPins))
@@ -927,9 +951,14 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   // accesses to the packet and its system buffer are invalid even before the
   // dispatch routine returns to the session.
   Observation.Completed = true;
+  if (Observation.UsbIdle)
+    Observation.UsbIdle->CompletedAt100ns = Scheduler.now100ns();
   Request->Completed = true;
   Request->CancelDeadline.reset();
   FreedRanges.emplace(IRP, IRPSize + Request->StackCount * StackSize);
+  if (const auto Native = FrameworkUsbIdleRequests.find(IRP);
+      Native != FrameworkUsbIdleRequests.end())
+    FreedRanges.emplace(Native->second.Info, usb_idle::CallbackInfoSize);
   if (Request->RawResources) {
     FreedRanges.emplace(Request->RawResources, Request->ResourceListSize);
     FreedRanges.emplace(Request->TranslatedResources,
@@ -1010,6 +1039,24 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
         return E;
     if (CompletionDevice)
       if (auto E = releaseDevice(CompletionDevice))
+        return E;
+    return snapshot();
+  }
+  if (auto Native = FrameworkUsbIdleRequests.find(IRP);
+      Native != FrameworkUsbIdleRequests.end()) {
+    if (Request->Kind != DriverRequestKind::InternalDeviceControl ||
+        Native->second.Key.IRP != IRP ||
+        Native->second.Key.PDO != Request->PnpDevice ||
+        Native->second.Device != Request->Device ||
+        Native->second.Info != Request->UserInput ||
+        !FreedRanges.contains(Native->second.Info))
+      return ioError("framework USB finalization lost its completed packet");
+    auto Route = std::move(Request->DeviceRoute);
+    Requests.erase(IRP);
+    FrameworkUsbIdleRequests.erase(Native);
+    FinalizedRequests.insert(IRP);
+    for (uint64_t Owner : Route)
+      if (auto E = releaseDevice(Owner))
         return E;
     return snapshot();
   }

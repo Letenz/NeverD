@@ -56,6 +56,7 @@ public:
     FrameworkDeferred,
     PoFx,
     UsbIdle,
+    FrameworkUsbIdle,
     FrameworkInterruptDPC,
     FrameworkInterruptWorkItem,
     Interrupt,
@@ -101,6 +102,9 @@ public:
     uint64_t DueTime100ns = 0;
     uint64_t SourceTimer = 0;
     bool SourceTimerPeriodic = false;
+    /// A native USB task keeps its IRP identity while executing the real
+    /// framework callback that replaced it in this slot.
+    bool FrameworkUsbIdleContinuation = false;
   };
 
   KernelScheduler() = default;
@@ -116,9 +120,24 @@ public:
   /// USB permission callbacks have their own identity namespace and carry
   /// exactly one opaque context argument. Admission of a composite group is
   /// pure; the bridge publishes the complete preflighted batch serially.
-  llvm::Error
-  canEnqueueUsbIdleCallbacks(llvm::ArrayRef<Callback> Calls) const;
+  llvm::Error canEnqueueUsbIdleCallbacks(llvm::ArrayRef<Callback> Calls) const;
   llvm::Expected<uint64_t> enqueueUsbIdleCallback(Callback Call);
+  struct UsbIdleCallback {
+    Callback Call;
+    CallbackKind Kind = CallbackKind::UsbIdle;
+  };
+  /// Atomically preflight mixed guest callbacks and native model tasks. A
+  /// native task has PC zero and arguments {PDO, IRP, owner callback token}.
+  llvm::Error
+  canEnqueueUsbIdleBatch(llvm::ArrayRef<UsbIdleCallback> Calls) const;
+  llvm::Expected<uint64_t> enqueueFrameworkUsbIdleCallback(uint64_t IRP,
+                                                           uint64_t PDO,
+                                                           uint64_t Thread,
+                                                           uint64_t Token);
+  /// Continue a selected native task with a real framework guest callback,
+  /// preserving its occupied slot, ID, time and dispatch count.
+  llvm::Expected<Invocation> beginFrameworkUsbIdleCallback(uint64_t ID,
+                                                           Callback Call);
   llvm::Error canWithdrawUsbIdleCallback(uint64_t ID) const;
   llvm::Error withdrawUsbIdleCallback(uint64_t ID);
   bool cancelWorkItem(uint64_t Object);
@@ -131,14 +150,13 @@ public:
   llvm::Expected<uint64_t> enqueueWDMDispatch(Callback Dispatch);
   /// A provider-only dispatch is a model task, with no guest executable PC.
   /// The model consumes it at selection before returning a guest invocation.
-  llvm::Expected<uint64_t> enqueueWDMProviderDispatch(uint64_t IRP,
-                                                     uint64_t PDO,
-                                                     uint64_t Thread);
+  llvm::Expected<uint64_t>
+  enqueueWDMProviderDispatch(uint64_t IRP, uint64_t PDO, uint64_t Thread);
   /// Replace only the active provider task with its real completion callback.
   /// Preserve its ID, time, owner, thread and occupied capacity. No new
   /// callback identity or dispatch budget is consumed by this transition.
-  llvm::Expected<Invocation>
-  beginWDMProviderCompletion(uint64_t ID, Callback Completion);
+  llvm::Expected<Invocation> beginWDMProviderCompletion(uint64_t ID,
+                                                        Callback Completion);
 
   /// Framework cancellation has its own object namespace and PASSIVE_LEVEL
   /// FIFO, independent of work-item removal. The framework owns cancellation

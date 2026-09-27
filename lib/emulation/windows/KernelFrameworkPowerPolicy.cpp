@@ -30,10 +30,59 @@ bool KernelFramework::powerPolicyBusy(uint64_t Device) const {
   return false;
 }
 
+llvm::Error KernelFramework::refreshUsbIdle(uint64_t Device) {
+  auto &P = Devices.at(Device).Policy;
+  if (!P.UsbIdle)
+    return llvm::Error::success();
+  if (!PowerHost.HasUsbIdle)
+    return policyError("USB idle requires its packet ownership bridge");
+  auto Outstanding = PowerHost.HasUsbIdle(P.UsbIdle->Key);
+  if (!Outstanding)
+    return Outstanding.takeError();
+  if (!*Outstanding)
+    P.UsbIdle.reset();
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::cancelUsbIdle(uint64_t Device) {
+  if (auto E = refreshUsbIdle(Device))
+    return E;
+  auto &P = Devices.at(Device).Policy;
+  if (!P.UsbIdle)
+    return llvm::Error::success();
+  if (!PowerHost.CancelUsbIdle)
+    return policyError("USB idle cancellation requires its packet bridge");
+  const auto Key = P.UsbIdle->Key;
+  if (auto E =
+          PowerHost.CancelUsbIdle(Key, PowerPolicyHost::RequestMode::Validate))
+    return E;
+  if (auto E =
+          PowerHost.CancelUsbIdle(Key, PowerPolicyHost::RequestMode::Issue))
+    return E;
+  return refreshUsbIdle(Device);
+}
+
+llvm::Error
+KernelFramework::requestIdleDevicePower(uint64_t Device,
+                                        PowerPolicyHost::RequestMode Mode) {
+  const auto &D = Devices.at(Device);
+  const auto &P = D.Policy;
+  if (P.Idle->usesUsbIdle()) {
+    if (!P.UsbIdle || !P.UsbIdle->CallbackToken ||
+        !PowerHost.RequestUsbIdlePower)
+      return policyError("USB power down requires its entered idle callback");
+    return PowerHost.RequestUsbIdlePower(D.Wdm, P.UsbIdle->Key,
+                                         *P.UsbIdle->CallbackToken, Mode);
+  }
+  return PowerHost.Request(D.Wdm, P.Idle->DxState, Mode);
+}
+
 llvm::Error KernelFramework::restartIdleTimer(uint64_t Device) {
   auto &D = Devices.at(Device);
   auto &P = D.Policy;
-  if (!P.Idle) {
+  if (auto E = refreshUsbIdle(Device))
+    return E;
+  if (!P.Idle || P.UsbIdle) {
     P.Deadline.reset();
     return llvm::Error::success();
   }
@@ -155,18 +204,20 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     const auto Field = [&](uint64_t Offset) {
       return Fields[Offset / sizeof(uint32_t)];
     };
-    const auto DxState = DevicePowerState(
+    const bool Usb =
+        Idle && Field(policy::IdleCapabilities) == policy::UsbSelectiveSuspend;
+    auto DxState = DevicePowerState(
         Field(Idle ? policy::IdleDxState : policy::WakeDxState));
-    if (!isSupportedDriverDevicePower(DxState) ||
-        DxState == DevicePowerState::D0)
+    if (!Usb && (!isSupportedDriverDevicePower(DxState) ||
+                 DxState == DevicePowerState::D0))
       return policyError("settings require an explicit supported low-power "
                          "device state");
     if (Idle) {
       if (Field(policy::IdleCapabilities) != policy::CannotWake &&
-          Field(policy::IdleCapabilities) != policy::CanWake)
-        return policyError("USB and unknown idle capabilities are unsupported");
+          Field(policy::IdleCapabilities) != policy::CanWake && !Usb)
+        return policyError("unknown idle capability");
       if ((Field(policy::IdleTimeoutType) == policy::DriverManagedTimeout &&
-           !Field(policy::IdleTimeout)) ||
+           !Field(policy::IdleTimeout) && !Usb) ||
           Field(policy::IdleTimeoutType) >
               policy::SystemManagedTimeoutWithHint ||
           Field(policy::IdleUserControl) != policy::NoUserControl ||
@@ -175,6 +226,9 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
                            "override");
       const bool Managed =
           Field(policy::IdleTimeoutType) != policy::DriverManagedTimeout;
+      if (Usb && Managed)
+        return policyError("USB idle requires driver-managed timeout until the "
+                           "PoFx and USB permission authorities are combined");
       if (Managed && !PowerHost.ManagedIdle)
         return policyError("system-managed idle requires the PoFx authority");
       if (P.Idle && P.Idle->TimeoutType != Field(policy::IdleTimeoutType))
@@ -186,7 +240,25 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
       if (Field(policy::IdleEnabled) > policy::UseDefault ||
           Field(policy::IdlePowerUpOnSystemWake) > policy::UseDefault)
         return Result{windows::StatusInvalidParameter};
-      if (Field(policy::IdleCapabilities) == policy::CanWake) {
+      bool CanWake = Field(policy::IdleCapabilities) == policy::CanWake;
+      if (Usb) {
+        if (!PowerHost.ResolveUsbIdle || !PowerHost.SubmitUsbIdle ||
+            !PowerHost.CancelUsbIdle || !PowerHost.HasUsbIdle ||
+            !PowerHost.RequestUsbIdlePower || !PowerHost.AbortUsbIdlePower ||
+            !PowerHost.FinishUsbIdleCallback)
+          return policyError("USB idle settings require the USB packet bridge");
+        if (Field(policy::IdlePowerUpOnSystemWake) != policy::UseDefault)
+          return Result{windows::StatusInvalidParameter};
+        auto Resolved =
+            PowerHost.ResolveUsbIdle(D->second.Wdm, Field(policy::IdleDxState));
+        if (!Resolved)
+          return Resolved.takeError();
+        if (Resolved->DxState != DevicePowerState::D2)
+          return policyError("USB idle requires a supported D2 capability");
+        DxState = Resolved->DxState;
+        CanWake = Resolved->CanWake;
+      }
+      if (CanWake) {
         if (!PowerHost.CanWake)
           return policyError(
               "idle wake settings require provider capabilities");
@@ -197,19 +269,40 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
           return Result{policy::StatusPowerStateInvalid};
       }
       const auto Previous = P.Idle;
-      P.Idle = KernelPowerPolicy::IdleSettings{
-          DxState,
-          Field(policy::IdleEnabled) != 0,
-          Field(policy::IdleCapabilities) == policy::CanWake,
+      KernelPowerPolicy::IdleSettings Settings;
+      Settings.DxState = DxState;
+      Settings.Enabled = Field(policy::IdleEnabled) != policy::False;
+      Settings.CanWake = CanWake;
+      Settings.PowerUpOnSystemWake =
           Previous ? Previous->PowerUpOnSystemWake
-                   : Field(policy::IdlePowerUpOnSystemWake) == policy::True,
+                   : Field(policy::IdlePowerUpOnSystemWake) == policy::True;
+      const uint64_t Timeout = !Field(policy::IdleTimeout) && Usb
+                                   ? policy::DefaultIdleTimeoutMilliseconds
+                                   : Field(policy::IdleTimeout);
+      Settings.Timeout100ns =
           Field(policy::IdleTimeoutType) == policy::SystemManagedTimeout
               ? 0
-              : uint64_t(Field(policy::IdleTimeout)) *
-                    policy::TicksPerMillisecond,
-          uint32_t(Field(policy::IdleTimeoutType)),
-          Previous ? Previous->ExcludeD3Cold
-                   : uint32_t(Field(policy::IdleExcludeD3Cold))};
+              : Timeout * policy::TicksPerMillisecond;
+      Settings.TimeoutType = Field(policy::IdleTimeoutType);
+      Settings.ExcludeD3Cold =
+          Previous ? Previous->ExcludeD3Cold : Field(policy::IdleExcludeD3Cold);
+      Settings.Capability =
+          Usb       ? KernelPowerPolicy::IdleCapability::UsbSelectiveSuspend
+          : CanWake ? KernelPowerPolicy::IdleCapability::CanWake
+                    : KernelPowerPolicy::IdleCapability::CannotWake;
+      if (PowerHost.Now &&
+          Settings.Timeout100ns > uint64_t(INT64_MAX) - PowerHost.Now())
+        return policyError("idle timeout exceeds the virtual clock range");
+      if (auto E = refreshUsbIdle(A[1]))
+        return E;
+      if (P.UsbIdle && P.UsbIdle->CallbackToken)
+        return policyError("settings cannot replace an entered USB callback");
+      // All configuration checks precede cancellation of the old registration.
+      if (auto E = cancelUsbIdle(A[1]))
+        return E;
+      if (P.UsbIdle)
+        return policyError("USB idle packet did not retire after cancellation");
+      P.Idle = Settings;
       if (auto E = restartIdleTimer(A[1])) {
         P.Idle = Previous;
         return E;
@@ -260,6 +353,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     for (const auto &[Token, Transition] : PnpTransitions)
       if (Wait && Transition.Device == A[1] && !Transition.Entering)
         return policyError("StopIdle(TRUE) during power down would deadlock");
+    if (auto E = cancelUsbIdle(A[1]))
+      return E;
     if (P.Idle && P.Idle->systemManaged())
       if (auto E =
               PowerHost.ManagedIdle(D->second.Wdm, false, P.Idle->Timeout100ns))
@@ -269,7 +364,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
     ++P.References;
     P.Deadline.reset();
     P.ManagedPowerNotRequired = false;
-    if (D->second.InD0 && !D->second.PowerQueuesHeld)
+    if (D->second.InD0 && !D->second.PowerQueuesHeld && !P.DevicePowerPending &&
+        !P.UsbIdle)
       return Result{windows::StatusSuccess};
     P.PowerUpRequested = true;
     return Result{windows::StatusPending};
@@ -306,6 +402,8 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
   if (Handle == PnpDeviceHandles.end())
     return policyError("activity requires a framework PDO");
   auto &D = Devices.at(Handle->second);
+  if (auto E = cancelUsbIdle(Handle->second))
+    return E;
   if (D.Policy.Idle && D.Policy.Idle->systemManaged() && D.Policy.Started)
     if (auto E =
             PowerHost.ManagedIdle(D.Wdm, false, D.Policy.Idle->Timeout100ns))
@@ -316,7 +414,8 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
   D.Policy.Deadline.reset();
   D.Policy.ManagedPowerNotRequired = false;
   if (D.Policy.Started &&
-      (!D.InD0 || D.PowerQueuesHeld || D.Policy.SystemSleeping))
+      (!D.InD0 || D.PowerQueuesHeld || D.Policy.SystemSleeping ||
+       D.Policy.DevicePowerPending || D.Policy.UsbIdle))
     D.Policy.PowerUpRequested = true;
   return llvm::Error::success();
 }
@@ -324,11 +423,124 @@ llvm::Error KernelFramework::systemPowerPolicy(uint64_t PDO, bool Sleeping) {
   auto Handle = PnpDeviceHandles.find(PDO);
   if (Handle == PnpDeviceHandles.end())
     return policyError("system transition requires a framework PDO");
+  if (Sleeping)
+    if (auto E = cancelUsbIdle(Handle->second))
+      return E;
   auto &P = Devices.at(Handle->second).Policy;
   P.SystemSleeping = Sleeping;
   P.Deadline.reset();
   return llvm::Error::success();
 }
+llvm::Error
+KernelFramework::canBeginUsbIdlePermission(UsbIdleKey Key, uint64_t PolicyEpoch,
+                                           uint64_t CallbackToken) const {
+  const auto Handle = PnpDeviceHandles.find(Key.PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("USB permission lost its framework device");
+  const auto &D = Devices.at(Handle->second);
+  const auto &P = D.Policy;
+  if (!CallbackToken || !P.Started || P.Epoch != PolicyEpoch || !P.UsbIdle ||
+      P.UsbIdle->Key != Key || P.UsbIdle->CallbackToken || !P.Idle ||
+      !P.Idle->usesUsbIdle() || !P.Idle->Enabled || !P.IdleSince ||
+      P.References || P.SystemSleeping || P.Failure || P.DevicePowerPending ||
+      !D.InD0 || D.PowerQueuesHeld || powerPolicyBusy(Handle->second))
+    return policyError("USB permission requires its current idle D0 policy");
+  if (PendingCall || !PnpTransitions.empty())
+    return policyError("USB permission must wait for framework callbacks");
+  if (!PowerHost.RequestUsbIdlePower || !PowerHost.AbortUsbIdlePower ||
+      !PowerHost.FinishUsbIdleCallback)
+    return policyError("USB permission requires its device-power bridge");
+  if (P.Idle->CanWake && P.Armed == KernelPowerPolicy::WakeSource::None) {
+    if (NextContinuation == UINT64_MAX)
+      return policyError("idle callback identity exhausted");
+    if (!PowerHost.ArmWake)
+      return policyError("idle arm requires the WAIT_WAKE bridge");
+  }
+  return PowerHost.RequestUsbIdlePower(D.Wdm, Key, CallbackToken,
+                                       PowerPolicyHost::RequestMode::Validate);
+}
+
+llvm::Error KernelFramework::beginUsbIdlePermission(UsbIdleKey Key,
+                                                    uint64_t PolicyEpoch,
+                                                    uint64_t CallbackToken) {
+  if (auto E = canBeginUsbIdlePermission(Key, PolicyEpoch, CallbackToken))
+    return E;
+  const auto Device = PnpDeviceHandles.at(Key.PDO);
+  auto &D = Devices.at(Device);
+  auto &P = D.Policy;
+  P.UsbIdle->CallbackToken = CallbackToken;
+  P.Deadline.reset();
+  if (P.Idle->CanWake && P.Armed == KernelPowerPolicy::WakeSource::None)
+    return beginIdlePowerDown(Device);
+  P.IdlePowerDown = true;
+  P.ManagedPowerNotRequired = false;
+  if (auto E =
+          requestIdleDevicePower(Device, PowerPolicyHost::RequestMode::Issue)) {
+    P.IdlePowerDown = false;
+    return E;
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::retireUsbIdleRegistration(UsbIdleKey Key) {
+  const auto Handle = PnpDeviceHandles.find(Key.PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("USB retirement lost its framework device");
+  auto &P = Devices.at(Handle->second).Policy;
+  if (!P.UsbIdle || P.UsbIdle->Key != Key)
+    return policyError("USB retirement requires its exact registration");
+  P.UsbIdle.reset();
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::finishUsbIdlePowerAdmissionFailure(
+    UsbIdleKey Key, uint64_t CallbackToken, uint32_t Status) {
+  const auto Handle = PnpDeviceHandles.find(Key.PDO);
+  if (Handle == PnpDeviceHandles.end())
+    return policyError("USB admission failure lost its framework device");
+  auto &D = Devices.at(Handle->second);
+  auto &P = D.Policy;
+  if (Status != windows::StatusInsufficientResources || !P.UsbIdle ||
+      P.UsbIdle->Key != Key || P.UsbIdle->CallbackToken != CallbackToken ||
+      P.UsbIdle->PowerAdmissionFailed || !D.InD0 || P.DevicePowerPending ||
+      P.Armed == KernelPowerPolicy::WakeSource::Sx ||
+      !PowerHost.FinishUsbIdleCallback || PendingCall ||
+      !PnpTransitions.empty())
+    return policyError(
+        "USB allocation failure requires its active D0 callback");
+  const bool Disarm = P.Armed == KernelPowerPolicy::WakeSource::S0;
+  if (Disarm && NextContinuation == UINT64_MAX)
+    return policyError("USB cleanup callback identity exhausted");
+  P.UsbIdle->PowerAdmissionFailed = true;
+  P.IdleSince.reset();
+  P.Deadline.reset();
+  P.IdlePowerDown = false;
+  P.ManagedPowerNotRequired = false;
+  if (!Disarm)
+    return finishIdlePowerDown(Handle->second, Status);
+  const uint64_t Token = NextContinuation++;
+  PnpTransition Transition{0, Handle->second};
+  Transition.NotificationOnly = true;
+  Transition.IdlePolicy = true;
+  Transition.Status = Status;
+  Transition.Remaining.push_back({PnpPhase::DisarmWakeFromS0});
+  Continuations.emplace(Token, Continuation{});
+  PnpTransitions.emplace(Token, std::move(Transition));
+  D.PowerQueuesHeld = true;
+  if (auto E = schedulePnpCallback(Token))
+    return E;
+  if (PnpTransitions.at(Token).CallbacksComplete) {
+    auto Completed = advance(Token);
+    if (!Completed)
+      return Completed.takeError();
+    if (!*Completed)
+      return policyError("USB cleanup did not finish its continuation");
+    PnpTransitions.erase(Token);
+    return finishIdlePowerDown(Handle->second, Status);
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error KernelFramework::processPowerPolicy() {
   if (!PowerHost.Now || !PowerHost.Request || PendingCall ||
       !PnpTransitions.empty())
@@ -336,6 +548,8 @@ llvm::Error KernelFramework::processPowerPolicy() {
   const uint64_t Now = PowerHost.Now();
   for (auto &[Handle, D] : Devices) {
     auto &P = D.Policy;
+    if (auto E = refreshUsbIdle(Handle))
+      return E;
     if (P.DevicePowerPending)
       continue;
     if (P.PowerUpRequested && !P.SystemSleeping && !P.Failure) {
@@ -347,6 +561,8 @@ llvm::Error KernelFramework::processPowerPolicy() {
       P.PowerUpRequested = false;
       return llvm::Error::success();
     }
+    if (P.UsbIdle)
+      continue;
     if (!P.Deadline && P.IdleSince && P.Started && !P.Failure)
       if (auto E = restartIdleTimer(Handle))
         return E;
@@ -358,6 +574,15 @@ llvm::Error KernelFramework::processPowerPolicy() {
         powerPolicyBusy(Handle)) {
       P.Deadline.reset();
       continue;
+    }
+    if (P.Idle && P.Idle->usesUsbIdle()) {
+      auto Key = PowerHost.SubmitUsbIdle(D.Wdm, P.Epoch);
+      if (!Key)
+        return Key.takeError();
+      P.UsbIdle = KernelPowerPolicy::UsbIdleState{*Key, std::nullopt};
+      P.Deadline.reset();
+      P.ManagedPowerNotRequired = false;
+      return llvm::Error::success();
     }
     if (P.Idle && P.Idle->CanWake &&
         P.Armed == KernelPowerPolicy::WakeSource::None)
@@ -402,7 +627,10 @@ KernelFramework::powerPolicyWait(uint64_t Device) {
     --D->second.Policy.References;
     return std::optional<uint32_t>{power_policy::StatusPowerStateInvalid};
   }
-  if (D->second.InD0 && !D->second.PowerQueuesHeld)
+  if (auto E = refreshUsbIdle(Device))
+    return E;
+  if (D->second.InD0 && !D->second.PowerQueuesHeld &&
+      !D->second.Policy.DevicePowerPending && !D->second.Policy.UsbIdle)
     return std::optional<uint32_t>{windows::StatusSuccess};
   return std::optional<uint32_t>{};
 }
@@ -477,8 +705,8 @@ llvm::Error KernelFramework::beginIdlePowerDown(uint64_t Device) {
     return policyError("idle callback identity exhausted");
   if (!PowerHost.ArmWake)
     return policyError("idle arm requires the WAIT_WAKE bridge");
-  if (auto E = PowerHost.Request(D.Wdm, D.Policy.Idle->DxState,
-                                 PowerPolicyHost::RequestMode::Validate))
+  if (auto E = requestIdleDevicePower(Device,
+                                      PowerPolicyHost::RequestMode::Validate))
     return E;
   // Arm before requesting Dx. A rejected arm is not a failed SET_POWER IRP:
   // no device-power packet has reached either the framework or the provider.
@@ -511,7 +739,37 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
   auto D = Devices.find(Device);
   if (D == Devices.end() || !D->second.InD0)
     return policyError("idle arm lost its D0 device");
+  if (D->second.Policy.UsbIdle &&
+      D->second.Policy.UsbIdle->PowerAdmissionFailed) {
+    const auto Usb = *D->second.Policy.UsbIdle;
+    if (Status != windows::StatusInsufficientResources || !Usb.CallbackToken ||
+        D->second.Policy.Armed != KernelPowerPolicy::WakeSource::None)
+      return policyError("USB allocation cleanup lost its failure or disarm");
+    if (auto E = PowerHost.FinishUsbIdleCallback(Usb.Key, *Usb.CallbackToken))
+      return E;
+    if (auto E = refreshUsbIdle(Device))
+      return E;
+    if (D->second.Policy.UsbIdle)
+      return policyError("USB allocation cleanup did not retire its packet");
+    D->second.PowerQueuesHeld = false;
+    std::vector<Step> Presentations;
+    appendPowerQueuePresentations(Device, Presentations);
+    if (!Presentations.empty()) {
+      auto Started = start(std::move(Presentations));
+      if (!Started)
+        return Started.takeError();
+    }
+    return llvm::Error::success();
+  }
   if (Status & profile::NTStatusFailureMask) {
+    const auto &Usb = D->second.Policy.UsbIdle;
+    if (Usb && Usb->CallbackToken) {
+      if (auto E = PowerHost.AbortUsbIdlePower(Usb->Key, *Usb->CallbackToken,
+                                               Status))
+        return E;
+      if (auto E = refreshUsbIdle(Device))
+        return E;
+    }
     D->second.Policy.IdleSince.reset();
     D->second.Policy.Deadline.reset();
     D->second.PowerQueuesHeld = false;
@@ -519,8 +777,7 @@ llvm::Error KernelFramework::finishIdlePowerDown(uint64_t Device,
   }
   D->second.Policy.IdlePowerDown = true;
   D->second.Policy.ManagedPowerNotRequired = false;
-  return PowerHost.Request(D->second.Wdm, D->second.Policy.Idle->DxState,
-                           PowerPolicyHost::RequestMode::Issue);
+  return requestIdleDevicePower(Device, PowerPolicyHost::RequestMode::Issue);
 }
 
 llvm::Error KernelFramework::finishPowerPolicyRequest(uint64_t PDO,

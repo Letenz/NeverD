@@ -207,7 +207,7 @@ KernelScheduler::enqueueWDMDispatch(Callback Dispatch) {
 
 llvm::Expected<uint64_t>
 KernelScheduler::enqueueWDMProviderDispatch(uint64_t IRP, uint64_t PDO,
-                                           uint64_t Thread) {
+                                            uint64_t Thread) {
   if (!IRP || !PDO || !Thread)
     return schedulerError(
         "provider dispatch requires nonzero IRP, PDO and thread identities");
@@ -228,8 +228,8 @@ KernelScheduler::beginWDMProviderCompletion(uint64_t ID, Callback Completion) {
       Active->IRQL != scheduler::PassiveLevel)
     return schedulerError("completion requires its active provider dispatch");
   if (Completion.Object != Active->Object ||
-      Completion.Owner != Active->Owner || Completion.Thread != Active->Thread ||
-      Completion.SynchronizationObject)
+      Completion.Owner != Active->Owner ||
+      Completion.Thread != Active->Thread || Completion.SynchronizationObject)
     return schedulerError("provider completion changed its dispatch identity");
   if (auto E = validateCallback(Completion))
     return E;
@@ -300,21 +300,44 @@ llvm::Expected<uint64_t> KernelScheduler::enqueuePoFx(Callback Call) {
 
 llvm::Error KernelScheduler::canEnqueueUsbIdleCallbacks(
     llvm::ArrayRef<Callback> Calls) const {
+  std::vector<UsbIdleCallback> Batch;
+  Batch.reserve(Calls.size());
+  for (const auto &Call : Calls)
+    Batch.push_back({Call, CallbackKind::UsbIdle});
+  return canEnqueueUsbIdleBatch(Batch);
+}
+
+llvm::Error KernelScheduler::canEnqueueUsbIdleBatch(
+    llvm::ArrayRef<UsbIdleCallback> Calls) const {
   if (auto E = validateTime())
     return E;
   std::set<uint64_t> Objects;
-  for (const auto &Call : Calls) {
-    if (auto E = validateCallback(Call))
-      return E;
-    if (Call.Arguments.size() != 1 || Call.SynchronizationObject)
-      return schedulerError("USB idle callback requires one context argument "
-                            "without a synchronization object");
+  for (const auto &Entry : Calls) {
+    const auto &Call = Entry.Call;
+    if (Entry.Kind == CallbackKind::UsbIdle) {
+      if (auto E = validateCallback(Call))
+        return E;
+      if (Call.Arguments.size() != 1 || Call.SynchronizationObject)
+        return schedulerError("USB idle callback requires one context argument "
+                              "without a synchronization object");
+    } else if (Entry.Kind == CallbackKind::FrameworkUsbIdle) {
+      if (!Call.Object || !Call.Owner || !Call.Thread || Call.PC ||
+          Call.SynchronizationObject || Call.Arguments.size() != 3 ||
+          Call.Arguments[0] != Call.Owner || Call.Arguments[1] != Call.Object ||
+          !Call.Arguments[2])
+        return schedulerError("framework USB task requires its typed provider, "
+                              "IRP and callback token without a guest PC");
+    } else {
+      return schedulerError("USB batch has a foreign callback kind");
+    }
     const auto Matches = [&](const Invocation &Existing) {
-      return Existing.Kind == CallbackKind::UsbIdle &&
+      return (Existing.Kind == CallbackKind::UsbIdle ||
+              Existing.Kind == CallbackKind::FrameworkUsbIdle ||
+              Existing.FrameworkUsbIdleContinuation) &&
              Existing.Object == Call.Object;
     };
-    if (!Objects.insert(Call.Object).second ||
-        llvm::any_of(Workers, Matches) || (Active && Matches(*Active)) ||
+    if (!Objects.insert(Call.Object).second || llvm::any_of(Workers, Matches) ||
+        (Active && Matches(*Active)) ||
         llvm::any_of(Suspended,
                      [&](const auto &Entry) { return Matches(Entry.second); }))
       return schedulerError("USB idle callback is already outstanding");
@@ -322,16 +345,49 @@ llvm::Error KernelScheduler::canEnqueueUsbIdleCallbacks(
   return checkCapacity(Calls.size());
 }
 
-llvm::Expected<uint64_t> KernelScheduler::enqueueUsbIdleCallback(Callback Call) {
+llvm::Expected<uint64_t>
+KernelScheduler::enqueueUsbIdleCallback(Callback Call) {
   if (auto E = canEnqueueUsbIdleCallbacks({Call}))
     return E;
-  Workers.push_back(makeInvocation(std::move(Call), CallbackKind::UsbIdle, Now));
+  Workers.push_back(
+      makeInvocation(std::move(Call), CallbackKind::UsbIdle, Now));
   return Workers.back().ID;
+}
+
+llvm::Expected<uint64_t> KernelScheduler::enqueueFrameworkUsbIdleCallback(
+    uint64_t IRP, uint64_t PDO, uint64_t Thread, uint64_t Token) {
+  Callback Call{IRP, PDO, Thread, 0, {PDO, IRP, Token}};
+  if (auto E = canEnqueueUsbIdleBatch({{Call, CallbackKind::FrameworkUsbIdle}}))
+    return E;
+  Workers.push_back(
+      makeInvocation(std::move(Call), CallbackKind::FrameworkUsbIdle, Now));
+  return Workers.back().ID;
+}
+
+llvm::Expected<KernelScheduler::Invocation>
+KernelScheduler::beginFrameworkUsbIdleCallback(uint64_t ID, Callback Call) {
+  if (auto E = canFinish(ID))
+    return E;
+  if (Active->Kind != CallbackKind::FrameworkUsbIdle || Active->PC ||
+      Active->IRQL != scheduler::PassiveLevel)
+    return schedulerError(
+        "framework USB continuation requires its active task");
+  if (Call.Object != Active->Object || Call.Owner != Active->Owner ||
+      Call.Thread != Active->Thread)
+    return schedulerError(
+        "framework USB continuation changed its task identity");
+  if (auto E = validateCallback(Call))
+    return E;
+  static_cast<Callback &>(*Active) = std::move(Call);
+  Active->Kind = CallbackKind::FrameworkDeferred;
+  Active->FrameworkUsbIdleContinuation = true;
+  return *Active;
 }
 
 llvm::Error KernelScheduler::canWithdrawUsbIdleCallback(uint64_t ID) const {
   if (llvm::none_of(Workers, [ID](const auto &Call) {
-        return Call.ID == ID && Call.Kind == CallbackKind::UsbIdle;
+        return Call.ID == ID && (Call.Kind == CallbackKind::UsbIdle ||
+                                 Call.Kind == CallbackKind::FrameworkUsbIdle);
       }))
     return schedulerError("USB idle withdrawal requires its exact queued ID");
   return llvm::Error::success();
@@ -341,7 +397,8 @@ llvm::Error KernelScheduler::withdrawUsbIdleCallback(uint64_t ID) {
   if (auto E = canWithdrawUsbIdleCallback(ID))
     return E;
   Workers.erase(llvm::find_if(Workers, [ID](const auto &Call) {
-    return Call.ID == ID && Call.Kind == CallbackKind::UsbIdle;
+    return Call.ID == ID && (Call.Kind == CallbackKind::UsbIdle ||
+                             Call.Kind == CallbackKind::FrameworkUsbIdle);
   }));
   return llvm::Error::success();
 }

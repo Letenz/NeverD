@@ -90,6 +90,79 @@ TEST(DriverUsbIdleScenario,
   EXPECT_EQ(Usb->getBoolean("remote_wake"), false);
 }
 
+TEST(DriverUsbIdleScenario, DeviceWakeIsAnExplicitIndependentBusFact) {
+  for (const bool RemoteWake : {false, true}) {
+    const auto Usb =
+        std::string(
+            R"({"role":"independent_function","device_wake":"D2","remote_wake":)") +
+        (RemoteWake ? "true}" : "false}");
+    auto Options = driverOptionsFromScenarioJSON(scenario(Usb));
+    ASSERT_TRUE(bool(Options)) << llvm::toString(Options.takeError());
+    const auto &Config = *Options->PnpDevices.front().UsbIdle;
+    EXPECT_EQ(Config.DeviceWake, DevicePowerState::D2);
+    EXPECT_EQ(Config.RemoteWake, RemoteWake);
+    DriverResult Result;
+    Result.Configuration = *Options;
+    auto JSON = llvm::json::parse(driverResultJSON(Result));
+    ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+    const auto *Reported = JSON->getAsObject()
+                               ->getObject("configuration")
+                               ->getArray("pnp_devices")
+                               ->front()
+                               .getAsObject()
+                               ->getObject("usb_idle");
+    ASSERT_NE(Reported, nullptr);
+    EXPECT_EQ(Reported->getString("device_wake"), "D2");
+    EXPECT_EQ(Reported->getBoolean("remote_wake"), RemoteWake);
+  }
+  auto Unknown = driverOptionsFromScenarioJSON(
+      scenario(R"({"role":"independent_function","remote_wake":true})"));
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_FALSE(Unknown->PnpDevices.front().UsbIdle->DeviceWake);
+  DriverResult Result;
+  Result.Configuration = *Unknown;
+  auto JSON = llvm::json::parse(driverResultJSON(Result));
+  ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+  EXPECT_EQ(JSON->getAsObject()
+                ->getObject("configuration")
+                ->getArray("pnp_devices")
+                ->front()
+                .getAsObject()
+                ->getObject("usb_idle")
+                ->get("device_wake"),
+            nullptr);
+}
+
+TEST(DriverUsbIdleScenario, DeviceWakeRequiresASupportedFunctionCapability) {
+  for (const auto *State : {"null", "true", "2", "[]", "{}", "\"D0\"", "\"D1\"",
+                            "\"D3\"", "\"D2hot\"", "\"d2\"", "\"maximum\""}) {
+    SCOPED_TRACE(State);
+    auto Parsed = driverOptionsFromScenarioJSON(scenario(
+        std::string(R"({"role":"independent_function","device_wake":)") +
+        State + "}"));
+    ASSERT_FALSE(bool(Parsed));
+    EXPECT_NE(llvm::toString(Parsed.takeError()).find("device_wake"),
+              std::string::npos);
+  }
+  DriverOptions Options;
+  Options.PnpDevices = {device("parent", DriverUsbIdleRole::CompositeParent),
+                        device("child", DriverUsbIdleRole::CompositeFunction)};
+  Options.PnpDevices[1].ParentID = "parent";
+  Options.PnpDevices[1].UsbIdle->DeviceWake = DevicePowerState::D2;
+  auto Error = validateDriverScenario(Options);
+  ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+  for (auto State :
+       {DevicePowerState::D0, DevicePowerState::D1, DevicePowerState::D3,
+        static_cast<DevicePowerState>(0), static_cast<DevicePowerState>(5),
+        static_cast<DevicePowerState>(UINT32_MAX)}) {
+    auto Invalid = Options;
+    Invalid.PnpDevices[1].UsbIdle->DeviceWake = State;
+    rejectNativeAndInherited(Invalid, "device_wake");
+  }
+  Options.PnpDevices[0].UsbIdle->DeviceWake = DevicePowerState::D2;
+  rejectNativeAndInherited(Options, "device_wake");
+}
+
 TEST(DriverUsbIdleScenario, MissingRoleCapabilityKeepsAnOrdinaryProvider) {
   DriverOptions Options;
   auto Device = device("ordinary", DriverUsbIdleRole::IndependentFunction);
@@ -268,6 +341,25 @@ TEST(DriverUsbIdleScenario,
   }
 }
 
+TEST(DriverUsbIdleScenario, FrameworkOriginHasNoScenarioFileOrResponseSlot) {
+  DriverResult Result;
+  DriverRequestResult Request;
+  Request.Kind = DriverRequestKind::InternalDeviceControl;
+  Request.Origin = DriverRequestOrigin::FrameworkUsbIdle;
+  Request.ControlCode = usb_idle::SubmitIdleNotification;
+  Result.Requests.push_back(Request);
+  auto JSON = llvm::json::parse(driverResultJSON(Result));
+  ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+  const auto *Observed =
+      JSON->getAsObject()->getArray("requests")->front().getAsObject();
+  EXPECT_EQ(Observed->getString("origin"), "framework_usb_idle");
+  EXPECT_EQ(Observed->getString("kind"), "internal_ioctl");
+  for (const auto *Field : {"file", "response_index", "usb_idle"}) {
+    ASSERT_NE(Observed->get(Field), nullptr);
+    EXPECT_EQ(Observed->get(Field)->kind(), llvm::json::Value::Null);
+  }
+}
+
 TEST(DriverUsbIdleScenario, ReportsD2AndWinningCompletionAsIndependentFacts) {
   DriverResult Result;
   DriverRequestResult Request;
@@ -337,38 +429,42 @@ TEST(DriverUsbIdleScenario, ExpectedCompletionRequiresExactProtocolEvidence) {
     }
     return JSON->getAsObject()->getBoolean("scenario_success").value_or(false);
   };
-  for (auto Cause : {DriverUsbIdleCompletionCause::Cancel,
-                     DriverUsbIdleCompletionCause::SystemSleep,
-                     DriverUsbIdleCompletionCause::Remove,
-                     DriverUsbIdleCompletionCause::DeviceD3}) {
-    Request.UsbIdle->CompletionCause = Cause;
-    Request.IOStatus = Cause == DriverUsbIdleCompletionCause::DeviceD3
-                           ? usb_idle::StatusPowerStateInvalid
-                           : windows::StatusCancelled;
-    EXPECT_TRUE(Succeeded(Request));
-    auto Missing = Request;
-    Missing.UsbIdle->BusReceivedAt100ns.reset();
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing = Request;
-    Missing.UsbIdle->CompletionCause.reset();
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing = Request;
-    Missing.Origin = DriverRequestOrigin::PoRequestPowerIrp;
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing = Request;
-    Missing.Kind = DriverRequestKind::DeviceControl;
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing = Request;
-    ++Missing.ControlCode;
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing = Request;
-    Missing.IOStatus = windows::StatusDeviceBusy;
-    EXPECT_FALSE(Succeeded(Missing));
-    Missing.IOStatus = windows::StatusSuccess;
-    EXPECT_TRUE(Succeeded(Missing));
-    Missing = Request;
-    Missing.UsbIdle->CompletionCause = DriverUsbIdleCompletionCause::DeviceD0;
-    EXPECT_FALSE(Succeeded(Missing));
+  for (auto Origin : {DriverRequestOrigin::DriverAllocatedIRP,
+                      DriverRequestOrigin::FrameworkUsbIdle}) {
+    Request.Origin = Origin;
+    for (auto Cause : {DriverUsbIdleCompletionCause::Cancel,
+                       DriverUsbIdleCompletionCause::SystemSleep,
+                       DriverUsbIdleCompletionCause::Remove,
+                       DriverUsbIdleCompletionCause::DeviceD3}) {
+      Request.UsbIdle->CompletionCause = Cause;
+      Request.IOStatus = Cause == DriverUsbIdleCompletionCause::DeviceD3
+                             ? usb_idle::StatusPowerStateInvalid
+                             : windows::StatusCancelled;
+      EXPECT_TRUE(Succeeded(Request));
+      auto Missing = Request;
+      Missing.UsbIdle->BusReceivedAt100ns.reset();
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing = Request;
+      Missing.UsbIdle->CompletionCause.reset();
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing = Request;
+      Missing.Origin = DriverRequestOrigin::PoRequestPowerIrp;
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing = Request;
+      Missing.Kind = DriverRequestKind::DeviceControl;
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing = Request;
+      ++Missing.ControlCode;
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing = Request;
+      Missing.IOStatus = windows::StatusDeviceBusy;
+      EXPECT_FALSE(Succeeded(Missing));
+      Missing.IOStatus = windows::StatusSuccess;
+      EXPECT_TRUE(Succeeded(Missing));
+      Missing = Request;
+      Missing.UsbIdle->CompletionCause = DriverUsbIdleCompletionCause::DeviceD0;
+      EXPECT_FALSE(Succeeded(Missing));
+    }
   }
 }
 

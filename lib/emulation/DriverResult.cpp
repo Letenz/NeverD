@@ -157,7 +157,8 @@ bool scenarioSucceeded(const DriverResult &Result) {
         Request.Power->BusStatus == requestStatus::RequestCancelled &&
         Request.Power->BusCompletedAt100ns)
       return true;
-    if (Request.Origin == DriverRequestOrigin::DriverAllocatedIRP &&
+    if ((Request.Origin == DriverRequestOrigin::DriverAllocatedIRP ||
+         Request.Origin == DriverRequestOrigin::FrameworkUsbIdle) &&
         Request.Kind == DriverRequestKind::InternalDeviceControl &&
         Request.ControlCode == usbValue::SubmitIdleNotification &&
         Request.UsbIdle && Request.UsbIdle->BusReceivedAt100ns &&
@@ -670,10 +671,15 @@ llvm::json::Array pnpConfigurationJSON(const DriverOptions &Options) {
       Item[policyField::WakeCapabilities] =
           llvm::json::Object{{policyField::S0, Device.WakeCapabilities->S0},
                              {policyField::Sx, Device.WakeCapabilities->Sx}};
-    if (Device.UsbIdle)
-      Item[usbField::UsbIdle] = llvm::json::Object{
+    if (Device.UsbIdle) {
+      llvm::json::Object Usb{
           {usbField::Role, usbIdleRoleName(Device.UsbIdle->Role)},
           {usbField::RemoteWake, Device.UsbIdle->RemoteWake}};
+      if (Device.UsbIdle->DeviceWake)
+        Usb[usbField::DeviceWake] =
+            devicePowerName(*Device.UsbIdle->DeviceWake);
+      Item[usbField::UsbIdle] = std::move(Usb);
+    }
     if (Device.D3Cold) {
       const auto &Cold = *Device.D3Cold;
       Item[coldField::D3Cold] = llvm::json::Object{
@@ -999,7 +1005,8 @@ std::string driverResultJSON(const DriverResult &Result) {
       Item[field::ResponseIndex] = *Request.ResponseIndex;
     if (Request.Kind == DriverRequestKind::Pnp ||
         Request.Kind == DriverRequestKind::Power ||
-        Request.Origin == DriverRequestOrigin::DriverAllocatedIRP)
+        Request.Origin == DriverRequestOrigin::DriverAllocatedIRP ||
+        Request.Origin == DriverRequestOrigin::FrameworkUsbIdle)
       Item[field::File] = nullptr;
     if (Request.Pnp) {
       const auto &Pnp = *Request.Pnp;

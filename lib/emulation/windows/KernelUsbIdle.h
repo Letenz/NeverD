@@ -1,4 +1,5 @@
-//===- KernelUsbIdle.h - USB idle protocol ------------------------*- C++ -*-===//
+//===- KernelUsbIdle.h - USB idle protocol ------------------------*- C++
+//-*-===//
 //
 // NeverD Decompiler
 //
@@ -32,11 +33,14 @@ struct UsbIdleKey {
   bool operator==(const UsbIdleKey &) const = default;
 };
 
+enum class UsbIdleCallbackOwner { Guest, Framework };
+
 struct UsbIdleSubmission {
   UsbIdleKey Key;
   uint64_t InfoAddress = 0;
   uint64_t Callback = 0;
   uint64_t Context = 0;
+  UsbIdleCallbackOwner Owner = UsbIdleCallbackOwner::Guest;
 };
 
 using UsbIdleCompletionCause = DriverUsbIdleCompletionCause;
@@ -59,7 +63,10 @@ public:
     UsbIdleKey Key;
     uint64_t PC = 0;
     uint64_t Context = 0;
+    UsbIdleCallbackOwner Owner = UsbIdleCallbackOwner::Guest;
+    bool operator==(const CallbackPlan &) const = default;
   };
+  enum class FrameworkCallbackFailure { ArmWake, PowerAllocation };
 
   KernelUsbIdle() = default;
   explicit KernelUsbIdle(uint64_t MaxRegistrations)
@@ -77,8 +84,11 @@ public:
   capturePermission(llvm::ArrayRef<uint64_t> Members) const;
   llvm::Error canQueueCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const;
   llvm::Expected<std::vector<CallbackPlan>>
+  previewCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const;
+  llvm::Expected<std::vector<CallbackPlan>>
   queueCallbacks(llvm::ArrayRef<UsbIdleKey> Keys);
   const CallbackPlan *callback(uint64_t Token) const;
+  const CallbackPlan *callbackForIRP(uint64_t IRP) const;
   llvm::Error beginCallback(uint64_t Token);
   llvm::Expected<std::optional<UsbIdleCompletionPlan>>
   finishCallback(uint64_t Token);
@@ -90,6 +100,14 @@ public:
   llvm::Error issuedDevicePower(uint64_t Token, uint64_t IRP);
   llvm::Error completedDevicePower(uint64_t IRP, uint32_t Status);
   llvm::Error failedDevicePowerAdmission(uint64_t Token, uint32_t Status);
+  /// The native bridge supplies an actual failed arm continuation or observed
+  /// allocation failure. Neither authorizes return until cancellation commits.
+  llvm::Error failFrameworkCallback(uint64_t Token,
+                                    FrameworkCallbackFailure Cause,
+                                    uint32_t Status);
+  /// Record actual native cancellation independently of the first winning
+  /// completion cause, which might already be a successful D0 receipt.
+  llvm::Error cancelFrameworkCallback(uint64_t Token);
   std::optional<UsbIdleKey> keyForDevicePower(uint64_t IRP) const;
 
   llvm::Expected<UsbIdleCompletionPlan>
@@ -100,7 +118,11 @@ public:
   llvm::Error retireCompletion(UsbIdleKey Key);
 
   bool isParked(uint64_t IRP) const;
-  llvm::Error canReleaseRange(uint64_t Base, uint64_t Size) const;
+  /// Native terminal retirement may ignore only its own exact registration's
+  /// borrow. Guest callers and unrelated borrows never receive that exemption.
+  llvm::Error
+  canReleaseRange(uint64_t Base, uint64_t Size,
+                  std::optional<UsbIdleKey> Retiring = std::nullopt) const;
   bool hasOutstanding(uint64_t PDO) const;
 
 private:
@@ -117,6 +139,8 @@ private:
     std::optional<uint64_t> DevicePowerIRP;
     std::optional<uint32_t> DevicePowerStatus;
     bool AllocationFailed = false;
+    std::optional<FrameworkCallbackFailure> FrameworkFailure;
+    bool FrameworkCancelled = false;
     std::optional<UsbIdleCompletionCause> CompletionCause;
   };
 

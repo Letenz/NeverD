@@ -24,6 +24,7 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelModelPowerPolicy.cpp
   windows/KernelModelPowerEvents.cpp
   windows/KernelUsbIdle.cpp
+  windows/KernelModelFrameworkUsbIdle.cpp
   windows/KernelModelUsbIdle.cpp
   windows/KernelModelProviderReceipt.cpp
   windows/KernelModelDriverIRP.cpp

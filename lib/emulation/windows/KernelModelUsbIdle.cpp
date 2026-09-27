@@ -69,20 +69,35 @@ KernelModel::planUsbIdleSubmission(uint64_t PDO, uint64_t IRP, uint64_t Info,
       Memory.readInteger(Info + usb_idle::ContextOffset, profile::PointerSize);
   if (!PC || !Context)
     return llvm::joinErrors(PC.takeError(), Context.takeError());
-  auto Executable = Memory.canAccess(*PC, 1, Execute);
-  if (!Executable)
-    return Executable.takeError();
-  if (!*PC || !*Executable)
-    return usbError("idle callback requires executable guest code");
-  return UsbIdleSubmission{{PDO, IRP, *Epoch}, Info, *PC, *Context};
+  UsbIdleCallbackOwner Owner = UsbIdleCallbackOwner::Guest;
+  const auto Native = FrameworkUsbIdleRequests.find(IRP);
+  if (Native != FrameworkUsbIdleRequests.end()) {
+    const auto *Entry = Exports ? Exports->lookup(*PC) : nullptr;
+    if (Native->second.Info != Info ||
+        Native->second.Key != UsbIdleKey{PDO, IRP, *Epoch} || *Context != IRP ||
+        !Entry ||
+        Entry->Kind != KernelExportRegistry::ExportKind::ProviderFunction ||
+        Entry->Binding != PDO || Entry->Name != callback::FrameworkUsbIdle)
+      return usbError(
+          "native callback requires its exact registered provider entry");
+    Owner = UsbIdleCallbackOwner::Framework;
+  } else {
+    auto Executable = Memory.canAccess(*PC, 1, Execute);
+    if (!Executable)
+      return Executable.takeError();
+    if (!*PC || !*Executable)
+      return usbError("idle callback requires executable guest code");
+  }
+  return UsbIdleSubmission{{PDO, IRP, *Epoch}, Info, *PC, *Context, Owner};
 }
 
 llvm::Expected<uint64_t> KernelModel::receiveUsbIdle(uint64_t PDO,
                                                      uint64_t IRP) {
   auto *Request = requestForIRP(IRP);
   if (!Request || Request->Kind != DriverRequestKind::InternalDeviceControl ||
-      Request->PnpDevice != PDO || !DriverIRPs.contains(IRP))
-    return usbError("provider receipt requires its caller-owned idle IRP");
+      Request->PnpDevice != PDO ||
+      (!DriverIRPs.contains(IRP) && !FrameworkUsbIdleRequests.contains(IRP)))
+    return usbError("provider receipt requires its retained idle packet owner");
   auto Stack = currentRequestStack(IRP);
   if (!Stack)
     return Stack.takeError();
@@ -126,7 +141,8 @@ llvm::Expected<uint64_t> KernelModel::receiveUsbIdle(uint64_t PDO,
       return E;
   }
   std::optional<uint64_t> CancelPC;
-  if (Status == StatusPending) {
+  if (Status == StatusPending &&
+      Submission->Owner == UsbIdleCallbackOwner::Guest) {
     auto Routine =
         Exports->insertProviderFunction(PDO, callback::CancelUsbIdle);
     if (!Routine)
@@ -141,8 +157,8 @@ llvm::Expected<uint64_t> KernelModel::receiveUsbIdle(uint64_t PDO,
       return E;
     if (auto E = markRequestPending(IRP))
       return E;
-    if (auto E =
-            Memory.writeInteger(IRP + IRPCancelRoutineOffset, *CancelPC, 8))
+    if (auto E = Memory.writeInteger(IRP + IRPCancelRoutineOffset,
+                                     CancelPC.value_or(0), 8))
       return E;
     return StatusPending;
   }
@@ -206,30 +222,50 @@ KernelModel::validateUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys) const {
   return llvm::Error::success();
 }
 
+llvm::Expected<std::vector<KernelScheduler::UsbIdleCallback>>
+KernelModel::previewUsbIdleCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const {
+  auto Plans = UsbIdle.previewCallbacks(Keys);
+  if (!Plans)
+    return Plans.takeError();
+  std::vector<KernelScheduler::UsbIdleCallback> Calls;
+  for (const auto &Plan : *Plans) {
+    const bool Native = Plan.Owner == UsbIdleCallbackOwner::Framework;
+    KernelScheduler::Callback Call{
+        Plan.Key.IRP, Plan.Key.PDO, profile::WorkerThreadIdentity,
+        Native ? 0 : Plan.PC,
+        Native ? std::vector<uint64_t>{Plan.Key.PDO, Plan.Key.IRP, Plan.Token}
+               : std::vector<uint64_t>{Plan.Context}};
+    Calls.push_back({std::move(Call),
+                     Native ? KernelScheduler::CallbackKind::FrameworkUsbIdle
+                            : KernelScheduler::CallbackKind::UsbIdle});
+  }
+  return Calls;
+}
+
 llvm::Error
 KernelModel::queueUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys) {
   if (auto E = validateUsbIdlePermission(Keys))
     return E;
-  std::vector<KernelScheduler::Callback> Callbacks;
-  for (const auto &Key : Keys) {
-    const auto &Submission = *UsbIdle.submission(Key.PDO);
-    Callbacks.push_back({Key.IRP,
-                         Key.PDO,
-                         profile::WorkerThreadIdentity,
-                         Submission.Callback,
-                         {Submission.Context}});
-  }
-  if (auto E = Scheduler.canEnqueueUsbIdleCallbacks(Callbacks))
+  auto Callbacks = previewUsbIdleCallbacks(Keys);
+  if (!Callbacks)
+    return Callbacks.takeError();
+  if (auto E = Scheduler.canEnqueueUsbIdleBatch(*Callbacks))
     return E;
   auto Plans = UsbIdle.queueCallbacks(Keys);
   if (!Plans)
     return Plans.takeError();
   for (size_t I = 0; I < Plans->size(); ++I) {
-    auto ID = Scheduler.enqueueUsbIdleCallback(std::move(Callbacks[I]));
+    const auto &Plan = (*Plans)[I];
+    auto ID =
+        Plan.Owner == UsbIdleCallbackOwner::Framework
+            ? Scheduler.enqueueFrameworkUsbIdleCallback(
+                  Plan.Key.IRP, Plan.Key.PDO, profile::WorkerThreadIdentity,
+                  Plan.Token)
+            : Scheduler.enqueueUsbIdleCallback(std::move((*Callbacks)[I].Call));
     if (!ID)
       return ID.takeError();
     ScheduledModelContinuations.emplace(
-        *ID, GuestCallToken{GuestCallOwner::UsbIdle, (*Plans)[I].Token});
+        *ID, GuestCallToken{GuestCallOwner::UsbIdle, Plan.Token});
   }
   return llvm::Error::success();
 }
@@ -252,6 +288,14 @@ llvm::Error KernelModel::beginUsbIdleCallback(uint64_t Token) {
       State->SystemPower != SystemPowerState::Working ||
       State->DevicePowerOperation || State->SystemPowerOperation)
     return usbError("callback entry lost its stable S0/D0 START identity");
+  if (Call->Owner == UsbIdleCallbackOwner::Framework) {
+    const auto Native = FrameworkUsbIdleRequests.find(Key.IRP);
+    if (!Framework || Native == FrameworkUsbIdleRequests.end())
+      return usbError("callback lost its native framework owner");
+    if (auto E = Framework->canBeginUsbIdlePermission(
+            Key, Native->second.PolicyEpoch, Token))
+      return E;
+  }
   if (auto E = UsbIdle.beginCallback(Token))
     return E;
   Result.Requests[Request->ResultIndex].UsbIdle->CallbackEnteredAt100ns =
@@ -366,7 +410,9 @@ llvm::Error KernelModel::completeUsbIdle(UsbIdleKey Key,
   Request->IOStatusWritten.fill(true);
   if (auto E = UsbIdle.retireCompletion(Key))
     return E;
-  return completeRequest(Key.IRP, 0);
+  if (auto E = completeRequest(Key.IRP, 0))
+    return E;
+  return tryFinalizeFrameworkUsbIdle(Key.IRP);
 }
 
 llvm::Expected<uint64_t>
@@ -404,6 +450,16 @@ llvm::Error KernelModel::observeUsbIdlePowerCompletion(uint64_t IRP,
   auto &Facts = *Result.Requests[Idle->ResultIndex].UsbIdle;
   Facts.D2Status = Status;
   Facts.D2CompletedAt100ns = Scheduler.now100ns();
+  if (FrameworkUsbIdleRequests.contains(Key->IRP)) {
+    const auto *Call = UsbIdle.callbackForIRP(Key->IRP);
+    if (!Call || Call->Owner != UsbIdleCallbackOwner::Framework)
+      return usbError("D2 completion lost its native callback");
+    auto Returned = finishUsbIdleCallback(Call->Token);
+    if (!Returned)
+      return Returned.takeError();
+    if (!*Returned)
+      return usbError("native callback return unexpectedly invoked guest code");
+  }
   return llvm::Error::success();
 }
 

@@ -272,6 +272,20 @@ public:
   llvm::Expected<bool> ownsPowerPolicy(uint64_t WdmDevice) const;
   struct PowerPolicyHost {
     enum class RequestMode { Validate, Issue };
+    struct UsbIdleSettings {
+      DevicePowerState DxState = DevicePowerState::D2;
+      bool CanWake = false;
+    };
+    std::function<llvm::Expected<UsbIdleSettings>(uint64_t, uint32_t)>
+        ResolveUsbIdle;
+    std::function<llvm::Expected<UsbIdleKey>(uint64_t, uint64_t)> SubmitUsbIdle;
+    std::function<llvm::Error(UsbIdleKey, RequestMode)> CancelUsbIdle;
+    std::function<llvm::Expected<bool>(UsbIdleKey)> HasUsbIdle;
+    std::function<llvm::Error(uint64_t, UsbIdleKey, uint64_t, RequestMode)>
+        RequestUsbIdlePower;
+    std::function<llvm::Error(UsbIdleKey, uint64_t, uint32_t)>
+        AbortUsbIdlePower;
+    std::function<llvm::Error(UsbIdleKey, uint64_t)> FinishUsbIdleCallback;
     std::function<uint64_t()> Now;
     std::function<llvm::Error(uint64_t, DevicePowerState, RequestMode)> Request;
     std::function<llvm::Expected<bool>(uint64_t, bool)> CanWake;
@@ -310,6 +324,14 @@ public:
   llvm::Expected<bool> powerPolicyDeviceReady(uint64_t PDO,
                                               bool Required) const;
   llvm::Expected<bool> allowsD3Cold(uint64_t PDO) const;
+  llvm::Error canBeginUsbIdlePermission(UsbIdleKey Key, uint64_t PolicyEpoch,
+                                        uint64_t CallbackToken) const;
+  llvm::Error beginUsbIdlePermission(UsbIdleKey Key, uint64_t PolicyEpoch,
+                                     uint64_t CallbackToken);
+  llvm::Error retireUsbIdleRegistration(UsbIdleKey Key);
+  llvm::Error finishUsbIdlePowerAdmissionFailure(UsbIdleKey Key,
+                                                 uint64_t CallbackToken,
+                                                 uint32_t Status);
   llvm::Error processPowerPolicy();
   std::optional<uint64_t> nextPowerPolicyTime() const;
   bool hasPendingPowerPolicy() const;
@@ -676,6 +698,10 @@ private:
   armedWakeChildren(uint64_t Device) const;
   bool isLiveWakeChild(const KernelPowerPolicy::WakeChild &Child) const;
   llvm::Error validateWakeEnrollment(uint64_t Device) const;
+  llvm::Error refreshUsbIdle(uint64_t Device);
+  llvm::Error cancelUsbIdle(uint64_t Device);
+  llvm::Error requestIdleDevicePower(uint64_t Device,
+                                     PowerPolicyHost::RequestMode Mode);
   llvm::Error restartIdleTimer(uint64_t Device);
   llvm::Error beginIdlePowerDown(uint64_t Device);
   llvm::Expected<std::optional<uint64_t>>

@@ -22,6 +22,7 @@ NEVERD_DRIVER_USB_IDLE_COMPLETION_CAUSE(DeviceD3, "device_d3")
 NEVERD_DRIVER_USB_IDLE_FIELD(UsbIdle, "usb_idle")
 NEVERD_DRIVER_USB_IDLE_FIELD(Role, "role")
 NEVERD_DRIVER_USB_IDLE_FIELD(RemoteWake, "remote_wake")
+NEVERD_DRIVER_USB_IDLE_FIELD(DeviceWake, "device_wake")
 NEVERD_DRIVER_USB_IDLE_FIELD(StartEpoch, "start_epoch")
 NEVERD_DRIVER_USB_IDLE_FIELD(CallbackEnteredAt100ns,
                              "callback_entered_at_100ns")

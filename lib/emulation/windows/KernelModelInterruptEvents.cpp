@@ -115,7 +115,7 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   if (!InterruptCount)
     return InterruptCount.takeError();
   std::vector<UsbIdleKey> UsbKeys;
-  std::vector<KernelScheduler::Callback> UsbCallbacks;
+  std::vector<KernelScheduler::UsbIdleCallback> UsbCallbacks;
   for (const auto &Event : PowerPolicyEvents) {
     const auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
     const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner);
@@ -126,15 +126,11 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   if (!UsbKeys.empty()) {
     if (auto E = validateUsbIdlePermission(UsbKeys))
       return E;
-    for (const auto &Key : UsbKeys) {
-      const auto &Submission = *UsbIdle.submission(Key.PDO);
-      UsbCallbacks.push_back({Key.IRP,
-                              Key.PDO,
-                              profile::WorkerThreadIdentity,
-                              Submission.Callback,
-                              {Submission.Context}});
-    }
-    if (auto E = Scheduler.canEnqueueUsbIdleCallbacks(UsbCallbacks))
+    auto Calls = previewUsbIdleCallbacks(UsbKeys);
+    if (!Calls)
+      return Calls.takeError();
+    UsbCallbacks = std::move(*Calls);
+    if (auto E = Scheduler.canEnqueueUsbIdleBatch(UsbCallbacks))
       return E;
   }
   const uint64_t Providers = ProviderCallbacks.size() + UsbCallbacks.size();

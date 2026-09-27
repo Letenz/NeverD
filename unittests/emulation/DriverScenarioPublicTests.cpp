@@ -273,7 +273,10 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIRejectMalformedUsbFactsBeforeLoading) {
   for (const char *Usb :
        {R"({"role":"hub"})", R"({"role":"composite_function"})",
         R"({"role":"independent_function","remote_wake":true})",
-        R"({"role":"independent_function","remote_wake":0})"}) {
+        R"({"role":"independent_function","remote_wake":0})",
+        R"({"role":"independent_function","device_wake":"D3"})",
+        R"({"role":"independent_function","device_wake":null})",
+        R"({"role":"composite_parent","device_wake":"D2"})"}) {
     SCOPED_TRACE(Usb);
     const std::string Scenario =
         R"({"pnp_devices":[{"id":"port","bus":"resource_free",

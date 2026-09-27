@@ -1,4 +1,5 @@
-//===- DriverUsbIdle.h - USB idle provider facts ------------------*- C++ -*-===//
+//===- DriverUsbIdle.h - USB idle provider facts ------------------*- C++
+//-*-===//
 //
 // NeverD Decompiler
 //
@@ -13,6 +14,8 @@
 
 namespace neverd::emulation {
 
+enum class DevicePowerState : uint32_t;
+
 enum class DriverUsbIdleRole {
 #define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling) Name,
 #include "neverd/emulation/DriverUsbIdle.def"
@@ -26,6 +29,9 @@ struct DriverUsbIdleConfig {
   DriverUsbIdleRole Role = DriverUsbIdleRole::IndependentFunction;
   /// USB remote wake from D2. Generic wake capabilities do not imply this fact.
   bool RemoteWake = false;
+  /// Explicit bus DeviceWake fact. Omission remains unknown; policy must not
+  /// derive a device state from the independent RemoteWake Boolean.
+  std::optional<DevicePowerState> DeviceWake;
 };
 
 enum class DriverUsbIdleCompletionCause {

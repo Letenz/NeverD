@@ -1015,7 +1015,8 @@ pnpDevices(const llvm::json::Value &Value) {
       const auto *Facts = Usb->getAsObject();
       if (!Facts)
         return invalid("usb_idle requires an object");
-      if (auto E = fields(*Facts, {usbField::Role, usbField::RemoteWake}))
+      if (auto E = fields(*Facts, {usbField::Role, usbField::RemoteWake,
+                                   usbField::DeviceWake}))
         return std::move(E);
       auto Role = Facts->getString(usbField::Role);
       if (!Role)
@@ -1036,6 +1037,18 @@ pnpDevices(const llvm::json::Value &Value) {
         if (!Enabled)
           return invalid("usb_idle remote_wake requires a boolean");
         Config.RemoteWake = *Enabled;
+      }
+      if (const auto *Wake = Facts->get(usbField::DeviceWake)) {
+        auto State = Wake->getAsString();
+        if (!State)
+          return invalid("usb_idle device_wake requires a state string");
+#define NEVERD_DRIVER_DEVICE_POWER(Name, Spelling)                             \
+  if (*State == Spelling)                                                      \
+    Config.DeviceWake = DevicePowerState::Name;
+#include "neverd/emulation/DriverPnpNames.def"
+#undef NEVERD_DRIVER_DEVICE_POWER
+        if (!Config.DeviceWake)
+          return invalid("unsupported usb_idle device_wake state");
       }
       Device.UsbIdle = Config;
     }
@@ -1860,6 +1873,10 @@ llvm::Error validateDriverUsbIdle(llvm::ArrayRef<DriverPnpDevice> Devices) {
     if (CompositeParent && Usb.Role != DriverUsbIdleRole::CompositeFunction)
       return invalid("usb_idle children of a composite_parent require the "
                      "composite_function role");
+    if (Usb.DeviceWake && (Usb.Role == DriverUsbIdleRole::CompositeParent ||
+                           *Usb.DeviceWake != DevicePowerState::D2))
+      return invalid(
+          "usb_idle device_wake requires a function with D2 capability");
     if (Usb.Role == DriverUsbIdleRole::CompositeParent && Usb.RemoteWake)
       return invalid("usb_idle composite_parent cannot declare remote_wake");
     if (Usb.RemoteWake &&
