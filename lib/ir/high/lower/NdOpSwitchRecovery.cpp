@@ -367,12 +367,13 @@ void MedToHighConverter::lowerBranchInd(HighFunc &Func,
 
     if (TargetExpr->Kind == ExprKind::Var &&
         TargetExpr->Var.Kind == MedVar::Reg) {
-      int PIdx = regToArgIdx(TargetExpr->Var.RegOff);
+      // A tail-call target in a reused argument register may be a call result.
+      int PIdx = TargetExpr->Var.SSAVer == 0
+                     ? regToArgIdx(TargetExpr->Var.RegOff)
+                     : -1;
       if (PIdx >= 0) {
         IndirectParam = PIdx;
         TargetName = "arg" + std::to_string(PIdx);
-      } else {
-        TargetName = TargetExpr->str();
       }
     } else if (TargetExpr->Kind == ExprKind::Const) {
       bool FoundName = false;

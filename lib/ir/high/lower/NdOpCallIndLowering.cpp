@@ -114,7 +114,10 @@ static bool tryResolveLoadTarget(const MedOp &CurOp, const MedBlock &CurBlock,
 /// calling-convention argument index, use that.
 static bool tryResolveRegTarget(const ExprPtr &TargetExpr, Arch TargetArch,
                                 MedToHighConverter::CallIndTarget &Out) {
-  if (TargetExpr->Kind != ExprKind::Var || TargetExpr->Var.Kind != MedVar::Reg)
+  // Later SSA versions can hold a returned function pointer in an argument
+  // register; register location alone does not make them entry parameters.
+  if (TargetExpr->Kind != ExprKind::Var ||
+      TargetExpr->Var.Kind != MedVar::Reg || TargetExpr->Var.SSAVer != 0)
     return false;
   int PIdx = getTargetRegInfo(TargetArch).regToArgIdx(TargetExpr->Var.RegOff);
   if (PIdx < 0)
@@ -158,7 +161,7 @@ static bool tryResolveStackSlotTarget(const MedOp &CurOp,
     if (BOp.Opcode != NdOp::STORE || BOp.NumInputs < 2 ||
         BOp.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       continue;
-    if (BOp.Inputs[1].Kind != MedVar::Reg)
+    if (BOp.Inputs[1].Kind != MedVar::Reg || BOp.Inputs[1].SSAVer != 0)
       continue;
     int PIdx = TRI.regToArgIdx(BOp.Inputs[1].RegOff);
     if (PIdx < 0)
