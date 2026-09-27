@@ -378,14 +378,24 @@ bool mayImproveArithmetic(const SymContext &Ctx, SymRef Root) {
   if (Ctx.op(Root) == SymOp::Mul)
     return llvm::any_of(Ctx.operands(Root),
                         [&](SymRef R) { return Ctx.op(R) == SymOp::Add; });
+  // Linear regions already handle complements of arithmetic expressions.
+  // Expanding them here as the sole reason for an attempt repeatedly reads
+  // growing tails during a layered walk. A complemented atom can expose a
+  // new cancellation; nonlinear products below still admit compound words.
+  auto ExposesComplementAtom = [&](SymRef R) {
+    if (Ctx.op(R) != SymOp::Not)
+      return false;
+    SymOp Inner = Ctx.op(Ctx.operand(R, 0));
+    return Inner != SymOp::Add && Inner != SymOp::Mul;
+  };
   for (SymRef Term : Ctx.operands(Root)) {
-    if (Ctx.op(Term) == SymOp::Not)
+    if (ExposesComplementAtom(Term))
       return true;
     if (Ctx.op(Term) != SymOp::Mul)
       continue;
     unsigned NonConstants = 0;
     for (SymRef Factor : Ctx.operands(Term)) {
-      if (Ctx.op(Factor) == SymOp::Add || Ctx.op(Factor) == SymOp::Not)
+      if (Ctx.op(Factor) == SymOp::Add || ExposesComplementAtom(Factor))
         return true;
       if (!Ctx.isConst(Factor) && ++NonConstants == 2)
         return true;

@@ -9,6 +9,8 @@
 
 #include "neverd/symbolic/SymParse.h"
 
+#include <array>
+
 using namespace neverd::symbolic;
 
 namespace {
@@ -145,6 +147,52 @@ TEST(SymMBAComplementArithmetic, ReusesSharedComplementPolynomials) {
               C.mkZero(128));
     EXPECT_FALSE(Report.BudgetExhausted);
     EXPECT_LE(Budget.used(), Options.MaxWork);
+  }
+}
+
+TEST(SymMBAComplementArithmetic, DefersCompoundOnlyComplementsToLinearRegions) {
+  for (const char *Text : {"z+~(x+y)", "z+3*~(x+y)", "~(x+y)+x+y"}) {
+    SymContext C;
+    auto Input = parseSymExpr(C, Text, 64);
+    ASSERT_TRUE(Input.ok());
+    MBAOptions Options;
+    detail::WorkBudget Budget(Options.MaxWork);
+    detail::SolveReport Report;
+    const size_t Nodes = C.numNodes();
+    EXPECT_EQ(detail::solveArithmetic(C, Input.Root, Options, Budget, Report),
+              Input.Root);
+    EXPECT_EQ(Budget.used(), 0u);
+    EXPECT_EQ(C.numNodes(), Nodes);
+    EXPECT_FALSE(Report.BudgetExhausted);
+  }
+  SymContext C;
+  auto Input = parseSymExpr(C, "~(x+y)+x+y", 64);
+  ASSERT_TRUE(Input.ok());
+  MBAOptions Options;
+  Options.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBADeep(C, Input.Root, Options).Expr, C.mkOnes(64));
+}
+
+TEST(SymMBAComplementArithmetic, KeepsLayeredLinearComplementWorkBounded) {
+  for (unsigned Depth : {8u, 32u, 64u}) {
+    SymContext C;
+    SymRef Variables[] = {C.mkVar("x", 64), C.mkVar("y", 64), C.mkVar("z", 64),
+                          C.mkVar("w", 64)};
+    SymRef Input = Variables[0];
+    for (unsigned I = 0; I != Depth; ++I)
+      Input = C.mkNot(C.mkAdd(Variables[I % 4], Input));
+    MBAOptions Options;
+    Options.VerifySamples = 0;
+    MBAResult Result = simplifyMBADeep(C, Input, Options);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    EXPECT_LE(Result.Work, 400u * (Depth + 1)) << Depth;
+    EXPECT_LT(Result.SizeAfter, Result.SizeBefore);
+    for (const std::array<uint64_t, 4> Values :
+         {std::array<uint64_t, 4>{0, 0, 0, 0},
+          {1, 2, 3, 4},
+          {UINT64_MAX, UINT64_MAX - 1, 1, 0},
+          {uint64_t(1) << 63, 1, uint64_t(1) << 62, 7}})
+      EXPECT_EQ(C.evalU64(Result.Expr, Values), C.evalU64(Input, Values));
   }
 }
 
