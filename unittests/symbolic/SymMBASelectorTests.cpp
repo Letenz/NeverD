@@ -50,8 +50,20 @@ TEST(SymMBASelector, KeepsIndependentWeightedAndFactoredVariableSums) {
       Sum += Variable;
     }
     const std::string Factored = "2 * (" + Sum + ")";
+    std::string Grouped;
+    for (unsigned Coefficient = 2; Coefficient != 5; ++Coefficient) {
+      if (!Grouped.empty())
+        Grouped += " + ";
+      Grouped += std::to_string(Coefficient) + " * (";
+      for (unsigned I = Coefficient - 2; I < Count; I += 3) {
+        if (I != Coefficient - 2)
+          Grouped += " + ";
+        Grouped += "x" + std::to_string(I);
+      }
+      Grouped += ")";
+    }
     for (uint32_t Width : {3u, 8u, 32u, 64u, 129u, 256u}) {
-      simplifiesTo(Weighted, Weighted, Width);
+      simplifiesTo(Weighted, Grouped, Width);
       simplifiesTo(Factored, Factored, Width);
     }
   }
@@ -60,8 +72,12 @@ TEST(SymMBASelector, KeepsIndependentWeightedAndFactoredVariableSums) {
 TEST(SymMBASelector, KeepsSignedAndWideIndependentCoefficients) {
   constexpr llvm::StringLiteral Signed(
       "-2 * x0 + 3 * x1 - 4 * x2 + 2 * x3 - 3 * x4 + 4 * x5");
-  for (uint32_t Width : {3u, 8u, 32u, 64u, 129u, 256u})
-    simplifiesTo(Signed, Signed, Width);
+  for (uint32_t Width : {3u, 8u, 32u, 64u, 129u, 256u}) {
+    if (Width == 3)
+      simplifiesTo(Signed, "-2*x0+3*x1+2*x3-3*x4+4*(x2+x5)", Width);
+    else
+      simplifiesTo(Signed, Signed, Width);
+  }
 
   constexpr llvm::StringLiteral Wide(
       "0x100000000000000000000000000000002 * x0 + 3 * x1 - 2 * x2");

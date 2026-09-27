@@ -220,8 +220,10 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       if (MaxCost)
         --MaxCost;
     }
+    bool MayHaveBooleanPair = false;
     affineResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
-                             MaxCost, Limits, Budget, Forms);
+                             MaxCost, Limits, Budget, Forms,
+                             &MayHaveBooleanPair);
     for (SymRef Form : Forms) {
       if (Budget.exhausted())
         break;
@@ -238,6 +240,38 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Candidates.push_back({Rewritten,
                             static_cast<unsigned>(ResidualRegion->Atoms.size()),
                             true});
+    }
+    // Keep the older affine residual proofs before spending anything on this
+    // additional reading. Both searches reuse the small retained weight table
+    // and its wide-word scratch guard above.
+    if (MayHaveBooleanPair && !Budget.exhausted()) {
+      Forms.clear();
+      if (ResidualRegion->Abstract.Hidden.empty()) {
+        MaxCost = termBudget(Ctx, E, Opts);
+        for (const Candidate &C : Candidates)
+          MaxCost = std::min(MaxCost, readingCost(Ctx, C.Expr));
+        if (MaxCost)
+          --MaxCost;
+      }
+      booleanResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
+                                MaxCost, Limits, Budget, Forms);
+      for (SymRef Form : Forms) {
+        if (Budget.exhausted())
+          break;
+        if (!proveLinearIdentity(Ctx, ResidualRegion->Abstract.Body, Form,
+                                 Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+          continue;
+        if (!ResidualRegion->Abstract.Hidden.empty() &&
+            !Budget.consume(Ctx.dagSize(Form)))
+          break;
+        SymRef Rewritten =
+            ResidualRegion->Abstract.Hidden.empty()
+                ? Form
+                : Ctx.substitute(Form, ResidualRegion->Abstract.Hidden);
+        Candidates.push_back(
+            {Rewritten, static_cast<unsigned>(ResidualRegion->Atoms.size()),
+             true});
+      }
     }
   }
   Rep.BudgetExhausted |= Budget.exhausted();
