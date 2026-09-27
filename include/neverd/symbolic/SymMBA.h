@@ -121,8 +121,9 @@ struct MBAOptions {
   /// measuring the solver, not for using it.
   bool AllowGrowth = false;
 
-  /// Work units available to region measurement and combinatorial product
-  /// expansion/factor recovery.  This is a resource budget, not a nesting or
+  /// Work units available to affine relation recovery, region measurement and
+  /// combinatorial product expansion/factor recovery. This is a resource
+  /// budget, not a nesting or
   /// expression-shape cutoff: the iterative deep walk still visits every node,
   /// and opaque boundaries do not spend it.  Once exhausted, remaining regions
   /// stay intact and the result reports \c MBAOutcome::BudgetExhausted.
@@ -141,6 +142,8 @@ struct MBAOptions {
 
   /// Bytes one tabulation — a corner table, a truth table, a candidate list —
   /// may occupy before the solver measures something narrower instead.
+  /// Optional affine and arithmetic normalization also bound their cumulative
+  /// temporary storage by this amount.
   ///
   /// Alone among these, this one has no unlimited setting, and deliberately
   /// so.  Every other refusal costs the caller an answer it might have had;

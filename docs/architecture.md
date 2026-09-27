@@ -1292,6 +1292,24 @@ assumptions remain separate. Expression synthesis selects its proof backend
 through the existing verifier boundary; inconclusive results never authorize a
 rewrite. See [bitvector proof backends](solver.md) for build and validation.
 
+MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Independent summand groups are measured separately before a whole-region
+truth table is attempted. Add/Mul regions also have a bounded sparse
+polynomial reading over integers modulo the word width; other operations
+remain opaque, and the chosen spelling is re-expanded before acceptance.
+Hidden affine inputs may supply exact inverse relations when a coefficient
+is odd. Those substitutions apply only in arithmetic positions, preserving
+the independent bitwise inputs required by the coefficient proof. Shared
+linear tails reuse coefficient summaries; optional relation recovery spends
+the same work budget and also bounds its temporary storage. An incomplete
+recovery leaves the original abstraction intact.
+
+Synthesis shares one candidate checker within a request. It remembers
+counterexamples and validation-grid mismatches for canonical candidates, but
+never caches inconclusive proof results or shares rejections across requests.
+Repeated offers still spend search work; only actual verifier calls count as
+proof queries.
+
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
 libraries supplied by the CMake helper.
