@@ -11,8 +11,8 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/MsvcAtlCallee.h"
+#include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/ir/SourceCallTypeHint.h"
@@ -52,6 +52,7 @@
 #include <map>
 #include <optional>
 #include <regex>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29245,6 +29246,250 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
   EXPECT_EQ(KindCount, 1u) << Source;
+}
+
+MedVar temporary(int Id, int SSA = 0, uint16_t Size = 8) {
+  MedVar V;
+  V.Kind = MedVar::Temp;
+  V.Id = Id;
+  V.SSAVer = SSA;
+  V.Size = Size;
+  V.TheArch = Arch::X64;
+  return V;
+}
+
+HighStmt assignTo(const MedVar &Dst, ExprPtr Val) {
+  HighStmt S;
+  S.Kind = StmtKind::Assign;
+  S.Dst = HighExpr::makeVar(Dst);
+  S.Val = std::move(Val);
+  return S;
+}
+
+HighStmt callStmt(const char *Name, va_t Addr, std::vector<ExprPtr> Args) {
+  HighStmt S;
+  S.Kind = StmtKind::Call;
+  S.CallExpr = HighExpr::makeCall(Name, Addr, std::move(Args));
+  return S;
+}
+
+/// Every temporary a statement reads still has an assignment.
+bool everyReadTempIsAssigned(const HighFunc &Func) {
+  std::set<std::pair<int, int>> Assigned, Read;
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
+    if (E.Kind == ExprKind::Var && E.Var.Kind == MedVar::Temp)
+      Read.insert({E.Var.Id, E.Var.SSAVer});
+    E.forEachChildExpr([&](const ExprPtr &Child) { Visit(*Child); });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var &&
+        S.Dst->Var.Kind == MedVar::Temp)
+      Assigned.insert({S.Dst->Var.Id, S.Dst->Var.SSAVer});
+    forEachRhsExpr(S, [&](const ExprPtr &E) { Visit(*E); });
+  });
+  return std::includes(Assigned.begin(), Assigned.end(), Read.begin(),
+                       Read.end());
+}
+
+TEST(HighCPointerAddresses, TrailingLoadReadAsLaterCallArgumentStays) {
+  // `t27` feeds only the third argument of a call before the inner test.
+  HighFunc Func;
+  Func.Name = "load_call_arg";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const MedVar Field = temporary(27, 61), Base = temporary(17, 145),
+               Result = temporary(30, 1);
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Result),
+                                   HighExpr::makeConst(~0ull, 8));
+  Inner.Body = {callStmt("Flush", 0x140002100, {})};
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body = {
+      assignTo(Field, HighExpr::makeLoad(
+                          HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                              HighExpr::makeConst(8, 8)),
+                          NdType::makeInt(8))),
+      assignTo(Base, HighExpr::makeConst(0x140C4EC48, 8)),
+      assignTo(Result, HighExpr::makeCall("FindBits", 0x140002000,
+                                          {HighExpr::makeVar(Base),
+                                           HighExpr::makeConst(1, 8),
+                                           HighExpr::makeVar(Field)})),
+      Inner, callStmt("Use", 0x140002200, {HighExpr::makeVar(Result)})};
+  Func.Body = {Guard};
+  structureIfElse(Func, 8);
+  EXPECT_TRUE(everyReadTempIsAssigned(Func));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("FindBits("), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, FoldedPrefixLoadStaysWhileKeptPrefixReadsIt) {
+  // Folding `if (c) { t = *p; u = t & 8; if (t & 8) ... }` moves the load into
+  // the condition, but `u` still reads `t`.
+  HighFunc Func;
+  Func.Name = "folded_prefix_reader";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const MedVar Flags = temporary(130, 195, 1), Bit = temporary(118, 227, 1);
+  auto Masked = [&] {
+    return HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Flags),
+                               HighExpr::makeConst(8, 1));
+  };
+  HighStmt Inner;
+  Inner.Kind = StmtKind::If;
+  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Masked(),
+                                   HighExpr::makeConst(0, 1));
+  Inner.Body = {callStmt("Copy", 0x140002000, {parameter(1)})};
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body = {
+      assignTo(Flags, HighExpr::makeLoad(
+                          HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
+                                              HighExpr::makeConst(35, 8)),
+                          NdType::makeInt(1))),
+      assignTo(Bit, Masked()), Inner};
+  Func.Body = {Guard};
+  structureIfElse(Func, 8);
+  EXPECT_TRUE(everyReadTempIsAssigned(Func));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("Copy("), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, JoinChainKeepsCopyReadByArmWork) {
+  // `t72 = (i32)t71` looks like join clutter, but the arm's own work reads it.
+  HighFunc Func;
+  Func.Name = "join_chain_copy";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  const MedVar Raw = temporary(71, 1, 4), Wide = temporary(72, 1, 4),
+               Sum = temporary(9, 1), Status = temporary(12, 1);
+  HighStmt Arm;
+  Arm.Kind = StmtKind::If;
+  Arm.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                 HighExpr::makeConst(0, 8));
+  HighStmt Join;
+  Join.Kind = StmtKind::Goto;
+  Join.GotoTarget = 0x140001080;
+  Arm.Body = {
+      assignTo(Raw, HighExpr::makeLoad(
+                        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                            HighExpr::makeConst(32, 8)),
+                        NdType::makeInt(4))),
+      assignTo(Wide, HighExpr::makeVar(Raw)),
+      assignTo(Sum, HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Wide),
+                                        parameter(1))),
+      callStmt("Record", 0x140002000, {HighExpr::makeVar(Sum)}),
+      assignTo(Status,
+               HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Sum),
+                                   HighExpr::makeConst(1, 8))),
+      Join};
+  HighStmt Fallback = assignTo(Status, HighExpr::makeConst(0xC0000225, 8));
+  Fallback.Addr = 0x140001070;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeVar(Status);
+  Return.Addr = 0x140001080;
+  Func.Body = {Arm, Fallback, Return};
+  invertSkipGotos(Func);
+  EXPECT_TRUE(everyReadTempIsAssigned(Func));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("Record("), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, JoinSinkKeepsEarlyExitBeforeLaterWork) {
+  // `if (a == 0) { if (b == 0) goto J; probe work; if (m) { ...; goto J; }
+  // else { ... } } v = d; J: use(v)`. The inner jump skips the probe; turning
+  // it into fallthrough would run the probe on the path that skipped it.
+  HighFunc Func;
+  Func.Name = "join_sink_early_exit";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  const va_t JoinVA = 0x140001080;
+  const MedVar Kept = temporary(8, 2), Incoming = temporary(8, 1),
+               Probe = temporary(6, 1), Masked = temporary(41, 1),
+               Toggled = temporary(10, 1), Other = temporary(11, 1),
+               Value = temporary(35, 1);
+  auto Jump = [&] {
+    HighStmt S;
+    S.Kind = StmtKind::Goto;
+    S.GotoTarget = JoinVA;
+    return S;
+  };
+  auto IsZero = [](ExprPtr E) {
+    return HighExpr::makeBinop(NdOp::INT_EQUAL, std::move(E),
+                               HighExpr::makeConst(0, 8));
+  };
+  HighStmt Copy = assignTo(Kept, HighExpr::makeVar(Incoming));
+  Copy.IsPhiCopy = true;
+  HighStmt Early;
+  Early.Kind = StmtKind::If;
+  Early.Cond = IsZero(parameter(1));
+  Early.Body = {Copy, Jump()};
+  HighStmt Tail;
+  Tail.Kind = StmtKind::IfElse;
+  Tail.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Masked),
+                                  HighExpr::makeConst(0, 8));
+  Tail.Body = {callStmt("Apply", 0x140002100, {HighExpr::makeVar(Probe)}),
+               assignTo(Toggled, HighExpr::makeBinop(
+                                     NdOp::INT_XOR, HighExpr::makeVar(Probe),
+                                     HighExpr::makeConst(0x80, 8))),
+               Jump()};
+  Tail.ElseBody = {
+      assignTo(Other, HighExpr::makeCall("ReadOther", 0x140002300, {})),
+      callStmt("Apply", 0x140002100, {HighExpr::makeVar(Other)})};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Cond = IsZero(parameter(0));
+  Outer.Body = {
+      Early, assignTo(Probe, HighExpr::makeCall("ReadState", 0x140002000, {})),
+      assignTo(Masked,
+               HighExpr::makeBinop(NdOp::INT_AND, HighExpr::makeVar(Probe),
+                                   HighExpr::makeConst(0x20080, 8))),
+      Tail};
+  HighStmt Use = callStmt("Consume", 0x140002200, {HighExpr::makeVar(Value)});
+  Use.Addr = JoinVA;
+  Func.Body = {Outer,
+               assignTo(Value, HighExpr::makeBinop(NdOp::INT_ADD, parameter(3),
+                                                   HighExpr::makeConst(8, 8))),
+               Use};
+  structureIfElse(Func, 8);
+  // No test on `b` may fall through into a later sibling that reads the
+  // probe: that would run `ReadState` on the path that skipped it.
+  bool Falls = false;
+  auto EndsWithTransfer = [](const std::vector<HighStmt> &Arm) {
+    return !Arm.empty() && (Arm.back().Kind == StmtKind::Goto ||
+                            Arm.back().Kind == StmtKind::Return);
+  };
+  auto ReadsProbe = [&](const HighStmt &S) {
+    bool Calls = false;
+    walkStmts(std::vector<HighStmt>{S}, [&](const HighStmt &T) {
+      forEachRhsExpr(T, [&](const ExprPtr &E) {
+        Calls = Calls ||
+                (E->Kind == ExprKind::Call && E->CallTarget == "ReadState");
+      });
+    });
+    return Calls;
+  };
+  const ExprPtr EarlyTest = IsZero(parameter(1));
+  std::function<void(const std::vector<HighStmt> &)> Scan =
+      [&](const std::vector<HighStmt> &List) {
+        for (size_t I = 0; I < List.size(); ++I) {
+          const HighStmt &S = List[I];
+          if (S.Kind == StmtKind::If && S.Cond &&
+              S.Cond->structuralEq(*EarlyTest) && !EndsWithTransfer(S.Body))
+            for (size_t J = I + 1; J < List.size(); ++J)
+              Falls = Falls || ReadsProbe(List[J]);
+          Scan(S.Body);
+          Scan(S.ElseBody);
+        }
+      };
+  Scan(Func.Body);
+  EXPECT_FALSE(Falls);
 }
 
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
