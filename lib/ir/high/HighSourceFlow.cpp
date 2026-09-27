@@ -458,8 +458,251 @@ class SourceFlow {
   // comparison with zero. Facts belong to individual edges, even those with
   // the same destination. A write to either operand kills the relation.
   // Inconsistent widths and escaped locals remain unknown; no memory-value,
-  // alias, or transitive equality inference is needed.
+  // alias inference is needed. A chain of unique, dominating scalar copies
+  // may also carry the same relation to a later test.
   size_t refine(size_t Entry) {
+    size_t BranchTests = 0;
+    bool HasStoredBooleanTest = false;
+    for (const auto &N : Nodes) {
+      if (!N.Test || N.Next.size() <= 1)
+        continue;
+      ++BranchTests;
+      auto Condition = N.Test;
+      for (unsigned Depth = 0;
+           Depth != 8 && Condition &&
+           Condition->Kind == ExprKind::UnaryOp &&
+           Condition->Op == NdOp::BOOL_NOT &&
+           Condition->Operands.size() == 1 &&
+           Condition->IntrinsicOutputs.empty() &&
+           Condition->MemoryOrdering == NdMemoryOrdering::None &&
+           Condition->MemoryAddressSpace == NdMemoryAddressSpace::Default;
+           ++Depth)
+        Condition = Condition->Operands[0];
+      HasStoredBooleanTest |= scalarLocal(Condition);
+    }
+    if (BranchTests < 2)
+      return Entry;
+    struct Copy {
+      size_t Source;
+      NdTypeKind Kind;
+      uint16_t Width;
+      bool Signed;
+      std::vector<size_t> Nodes;
+    };
+    std::vector<unsigned> WriteCount(Locals.size());
+    std::vector<size_t> WriteAt(Locals.size(), NoNode);
+    for (size_t I = 0; I < Nodes.size(); ++I)
+      for (size_t Written : Nodes[I].Writes)
+        if (Written < WriteCount.size()) {
+          if (WriteCount[Written]++ == 0)
+            WriteAt[Written] = I;
+        }
+    std::map<std::pair<size_t, size_t>, bool> Dominance;
+    size_t DominanceWork = 0;
+    auto Dominates = [&](size_t Definition, size_t Use) {
+      const auto Key = std::pair{Definition, Use};
+      if (auto It = Dominance.find(Key); It != Dominance.end())
+        return It->second;
+      bool Result = Definition != Use;
+      std::vector<uint8_t> Seen(Nodes.size());
+      std::vector<size_t> Pending{Entry};
+      while (Result && !Pending.empty()) {
+        const size_t Current = Pending.back();
+        Pending.pop_back();
+        if (++DominanceWork > 1000000) {
+          Result = false;
+          break;
+        }
+        if (Current == Definition || Seen[Current])
+          continue;
+        if (Current == Use) {
+          Result = false;
+          break;
+        }
+        Seen[Current] = 1;
+        Pending.insert(Pending.end(), Nodes[Current].Next.begin(),
+                       Nodes[Current].Next.end());
+      }
+      return Dominance.emplace(Key, Result).first->second;
+    };
+    // A compiler can emit the same scalar copy on both sides of a join. All
+    // writes must copy one stable source, and every path to a comparison must
+    // cross one of those writes before the local can borrow its source's fact.
+    std::map<size_t, Copy> Copies;
+    std::set<size_t> ConflictingCopies;
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      const auto *S = Nodes[I].Statement;
+      if (!S || S->Kind != StmtKind::Assign || !scalarLocal(S->Dst) ||
+          !scalarLocal(S->Val) || entryValue(S->Dst->Var) ||
+          entryValue(S->Val->Var) || S->Dst->Type->Kind != S->Val->Type->Kind ||
+          S->Dst->Type->Size != S->Val->Type->Size ||
+          S->Dst->Type->IsSigned != S->Val->Type->IsSigned ||
+          !S->Body.empty() || !S->ElseBody.empty() || !S->Cases.empty() ||
+          !S->DefaultBody.empty())
+        continue;
+      const size_t Destination = local(S->Dst->Var);
+      const size_t Source = local(S->Val->Var);
+      if (Destination == Source || AddressTaken.count(Destination) ||
+          AddressTaken.count(Source) || !WriteCount[Destination] ||
+          !WriteCount[Source])
+        continue;
+      auto [It, Inserted] =
+          Copies.try_emplace(Destination, Copy{Source,
+                                               S->Dst->Type->Kind,
+                                               S->Dst->Type->Size,
+                                               S->Dst->Type->IsSigned,
+                                               {}});
+      if (!Inserted && (It->second.Source != Source ||
+                        It->second.Kind != S->Dst->Type->Kind ||
+                        It->second.Width != S->Dst->Type->Size ||
+                        It->second.Signed != S->Dst->Type->IsSigned))
+        ConflictingCopies.insert(Destination);
+      else
+        It->second.Nodes.push_back(I);
+    }
+    for (auto It = Copies.begin(); It != Copies.end();)
+      if (ConflictingCopies.count(It->first) ||
+          It->second.Nodes.size() != WriteCount[It->first] ||
+          It->second.Nodes.size() > 8)
+        It = Copies.erase(It);
+      else
+        ++It;
+    std::map<std::pair<size_t, size_t>, bool> CopyDominance;
+    auto CopyDominates = [&](size_t Local, size_t Use) {
+      const auto &Definitions = Copies.at(Local).Nodes;
+      if (Definitions.size() == 1)
+        return Dominates(Definitions.front(), Use);
+      const auto Key = std::pair{Local, Use};
+      if (auto It = CopyDominance.find(Key); It != CopyDominance.end())
+        return It->second;
+      std::vector<uint8_t> Stops(Nodes.size()), Seen(Nodes.size());
+      for (size_t Definition : Definitions)
+        Stops[Definition] = 1;
+      bool Result = true;
+      std::vector<size_t> Pending{Entry};
+      while (Result && !Pending.empty()) {
+        const size_t Current = Pending.back();
+        Pending.pop_back();
+        if (++DominanceWork > 1000000) {
+          Result = false;
+          break;
+        }
+        if (Stops[Current] || Seen[Current])
+          continue;
+        if (Current == Use) {
+          Result = false;
+          break;
+        }
+        Seen[Current] = 1;
+        Pending.insert(Pending.end(), Nodes[Current].Next.begin(),
+                       Nodes[Current].Next.end());
+      }
+      return CopyDominance.emplace(Key, Result).first->second;
+    };
+    std::vector<std::vector<std::optional<Predicate>>> CanonicalFacts;
+    // A one-write boolean can preserve a repeated equality even when neither
+    // operand was copied. Avoid materializing edge facts for direct tests that
+    // have no scalar-copy aliases to canonicalize.
+    if (!Copies.empty() || HasStoredBooleanTest) {
+      CanonicalFacts.reserve(Nodes.size());
+      for (size_t I = 0; I < Nodes.size(); ++I) {
+        CanonicalFacts.push_back(Nodes[I].EdgeFacts);
+        // The emitter often stores a scalar equality in a one-write boolean
+        // local before testing it. Borrow the comparison only when every path
+        // to the test passes through that definition.
+        if (const auto &Test = Nodes[I].Test) {
+          ExprPtr Condition = Test;
+          bool Inverted = false;
+          for (unsigned Depth = 0;
+               Depth != 8 && Condition &&
+               Condition->Kind == ExprKind::UnaryOp &&
+               Condition->Op == NdOp::BOOL_NOT &&
+               Condition->Operands.size() == 1 &&
+               Condition->IntrinsicOutputs.empty() &&
+               Condition->MemoryOrdering == NdMemoryOrdering::None &&
+               Condition->MemoryAddressSpace ==
+                   NdMemoryAddressSpace::Default;
+               ++Depth) {
+            Inverted = !Inverted;
+            Condition = Condition->Operands[0];
+          }
+          if (Condition && scalarLocal(Condition)) {
+            const size_t Boolean = local(Condition->Var);
+            if (WriteCount[Boolean] == 1 &&
+                !AddressTaken.count(Boolean) &&
+                Dominates(WriteAt[Boolean], I)) {
+              const auto *Definition = Nodes[WriteAt[Boolean]].Statement;
+              if (Definition && Definition->Kind == StmtKind::Assign &&
+                  scalarLocal(Definition->Dst) &&
+                  local(Definition->Dst->Var) == Boolean &&
+                  Definition->Val &&
+                  Definition->Val->Kind == ExprKind::BinOp &&
+                  (Definition->Val->Op == NdOp::INT_EQUAL ||
+                   Definition->Val->Op == NdOp::INT_NOTEQUAL) &&
+                  Definition->Val->Type &&
+                  Definition->Val->Type->Kind == NdTypeKind::Int &&
+                  Definition->Val->Type->Size == Condition->Type->Size &&
+                  Definition->Dst->Type->Size == Condition->Type->Size &&
+                  Definition->Body.empty() &&
+                  Definition->ElseBody.empty() &&
+                  Definition->Cases.empty() &&
+                  Definition->DefaultBody.empty())
+                if (auto Relation = predicate(Definition->Val))
+                  for (size_t E = 0; E < CanonicalFacts.back().size(); ++E)
+                    if (Nodes[I].EdgeTruth[E]) {
+                      auto Fact = *Relation;
+                      Fact.Nonzero ^= Inverted ^ !*Nodes[I].EdgeTruth[E];
+                      CanonicalFacts.back()[E] = Fact;
+                    }
+            }
+          }
+        }
+        auto Canonical = [&](size_t Local) {
+          const size_t Original = Local;
+          std::set<size_t> Seen;
+          while (Local != NoNode && Seen.insert(Local).second) {
+            const auto It = Copies.find(Local);
+            if (It == Copies.end())
+              return Local;
+            if (!CopyDominates(Local, I))
+              return Original;
+            const size_t Source = It->second.Source;
+            if (const auto SourceCopy = Copies.find(Source);
+                SourceCopy != Copies.end()) {
+              if (SourceCopy->second.Kind != It->second.Kind ||
+                  SourceCopy->second.Width != It->second.Width ||
+                  SourceCopy->second.Signed != It->second.Signed ||
+                  !CopyDominates(Source, I) ||
+                  std::any_of(It->second.Nodes.begin(), It->second.Nodes.end(),
+                              [&](size_t Definition) {
+                                return !CopyDominates(Source, Definition);
+                              }))
+                return Original;
+            } else if (WriteCount[Source] != 1 ||
+                       !Dominates(WriteAt[Source], I) ||
+                       std::any_of(
+                           It->second.Nodes.begin(), It->second.Nodes.end(),
+                           [&](size_t Definition) {
+                             return !Dominates(WriteAt[Source], Definition);
+                           }))
+              return Original;
+            Local = Source;
+          }
+          return Original;
+        };
+        for (auto &Fact : CanonicalFacts.back())
+          if (Fact) {
+            Fact->Local = Canonical(Fact->Local);
+            Fact->Other = Canonical(Fact->Other);
+            if (Fact->Other < Fact->Local)
+              std::swap(Fact->Local, Fact->Other);
+          }
+      }
+    }
+    const auto Facts = [&](size_t I)
+        -> const std::vector<std::optional<Predicate>> & {
+      return CanonicalFacts.empty() ? Nodes[I].EdgeFacts : CanonicalFacts[I];
+    };
     struct Observations {
       size_t Count = 0;
       uint16_t Width = 0;
@@ -467,10 +710,10 @@ class SourceFlow {
     };
     using Relation = std::pair<size_t, size_t>;
     std::map<Relation, Observations> Tests;
-    for (const auto &N : Nodes) {
-      if (N.EdgeFacts.empty() || !N.EdgeFacts[0])
+    for (size_t I = 0; I < Nodes.size(); ++I) {
+      if (Facts(I).empty() || !Facts(I)[0])
         continue;
-      const auto &Fact = *N.EdgeFacts[0];
+      const auto &Fact = *Facts(I)[0];
       auto &Seen = Tests[Fact.identity()];
       Seen.Consistent &= !Seen.Count || Seen.Width == Fact.Width;
       Seen.Width = Fact.Width;
@@ -540,7 +783,7 @@ class SourceFlow {
           }
         for (size_t E = 0; E < Original.Next.size(); ++E) {
           uint32_t NextKnown = Known, NextNonzero = Nonzero;
-          if (auto Fact = Original.EdgeFacts[E])
+          if (auto Fact = Facts(S.Original)[E])
             if (auto It = Masks.find(Fact->identity()); It != Masks.end()) {
               const uint32_t Mask = It->second;
               if ((Known & Mask) && bool(Nonzero & Mask) != Fact->Nonzero)
@@ -659,25 +902,43 @@ class SourceFlow {
         Test->Type->Size > 8 || Test->IntrinsicId != Intrinsic::None ||
         !Test->IntrinsicOutputs.empty() ||
         Test->MemoryOrdering != NdMemoryOrdering::None ||
-        Test->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        Test->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Test->IndirectTarget)
       return false;
-    if (Test->Kind == ExprKind::UnaryOp && Test->Op == NdOp::BOOL_NOT &&
-        Test->Operands.size() == 1)
-      return purePredicate(Test->Operands[0], Depth + 1);
-    if (Test->Kind == ExprKind::BinOp && Test->Operands.size() == 2) {
-      if (Test->Op == NdOp::BOOL_AND || Test->Op == NdOp::BOOL_OR)
-        return purePredicate(Test->Operands[0], Depth + 1) &&
-               purePredicate(Test->Operands[1], Depth + 1);
-      if (Test->Op == NdOp::INT_LESS || Test->Op == NdOp::INT_LESSEQUAL ||
-          Test->Op == NdOp::INT_EQUAL || Test->Op == NdOp::INT_NOTEQUAL ||
-          Test->Op == NdOp::INT_SLESS || Test->Op == NdOp::INT_SLESSEQUAL) {
-        std::set<size_t> Unused;
-        return bool(indexRange(Test->Operands[0], Unused)) &&
-               bool(indexRange(Test->Operands[1], Unused));
+    if (Test->Kind == ExprKind::Const || Test->Kind == ExprKind::Var ||
+        Test->Kind == ExprKind::Phi || Test->Kind == ExprKind::Undef)
+      return Test->Operands.empty();
+    if (Test->Kind != ExprKind::BinOp && Test->Kind != ExprKind::UnaryOp &&
+        Test->Kind != ExprKind::Cast && Test->Kind != ExprKind::BitCast &&
+        Test->Kind != ExprKind::Field)
+      return false;
+    if (Test->Kind == ExprKind::BinOp || Test->Kind == ExprKind::UnaryOp)
+      switch (Test->Op) {
+      case NdOp::NOP:
+      case NdOp::LOAD:
+      case NdOp::STORE:
+      case NdOp::ATOMIC_XCHG:
+      case NdOp::ATOMIC_ADD:
+      case NdOp::ATOMIC_CMPXCHG:
+      case NdOp::BRANCH:
+      case NdOp::COND_BR:
+      case NdOp::INDIR_BR:
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+      case NdOp::RETURN:
+      case NdOp::INTRINSIC:
+        return false;
+      default:
+        break;
       }
-    }
-    std::set<size_t> Unused;
-    return bool(indexRange(Test, Unused));
+    // An unsupported arithmetic expression need not have a known range to
+    // preserve the bound from another arm of a compound condition. It only
+    // needs to be unable to change any source local while it is evaluated.
+    return !Test->Operands.empty() &&
+           std::all_of(Test->Operands.begin(), Test->Operands.end(),
+                       [&](const ExprPtr &Operand) {
+                         return purePredicate(Operand, Depth + 1);
+                       });
   }
 
   // Intersections constrain both predicates. Unions retain every feasible

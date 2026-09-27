@@ -4,6 +4,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
 
@@ -26,6 +27,52 @@ void renameVars(std::vector<HighStmt> &);
 void eliminateUnusedValues(std::vector<HighStmt> &);
 } // namespace neverd
 using namespace neverd;
+
+TEST(HighControlFlowSemantics, CalleeNameSnapshotKeepsLookupPrecedence) {
+  BinaryImage Img;
+  Img.Imports.push_back({"", "import_name", 0, 0x1000});
+  Img.Imports.push_back({"", "sub_ignored", 0, 0x6000});
+  Img.Exports.push_back({"export_name", 0, 0x3000});
+  Img.Exports.push_back({"export_after_synthetic_import", 0, 0x6000});
+  Img.Exports.push_back({"sub_7000", 0, 0x7000});
+  Img.Exports.push_back({"", 0, 0x8000});
+  Img.Exports.push_back({"ignored_later_export", 0, 0x8000});
+  Img.Symbols.push_back({"symbol_behind_export", 0x3000});
+  Img.Symbols.push_back({"symbol_name", 0x4000});
+  Img.Symbols.push_back({"symbol_behind_synthetic", 0x7000});
+  Img.Symbols.push_back({"symbol_after_empty_export", 0x8000});
+  std::map<va_t, std::string> FunctionNames = {
+      {0x1000, "sub_1000"}, {0x2000, "declared_name"},
+      {0x3000, "sub_3000"}, {0x5000, "sub_5000"}};
+  std::set<va_t> Targets = {0,      0x1000, 0x2000, 0x3000, 0x4000,
+                            0x5000, 0x6000, 0x7000, 0x8000};
+
+  MedToHighConverter Resolver;
+  Resolver.setBinaryImage(&Img);
+  Resolver.setFuncNames(&FunctionNames);
+  std::map<va_t, std::string> Snapshot;
+  Resolver.resolveCalleeNames(Targets, Snapshot);
+  EXPECT_EQ(Snapshot.at(0), "sub_0");
+  EXPECT_EQ(Snapshot.at(0x1000), "import_name");
+  EXPECT_EQ(Snapshot.at(0x2000), "declared_name");
+  EXPECT_EQ(Snapshot.at(0x3000), "export_name");
+  EXPECT_EQ(Snapshot.at(0x4000), "symbol_name");
+  EXPECT_EQ(Snapshot.at(0x5000), "sub_5000");
+  EXPECT_EQ(Snapshot.at(0x6000), "export_after_synthetic_import");
+  EXPECT_EQ(Snapshot.at(0x7000), "sub_7000");
+  EXPECT_EQ(Snapshot.at(0x8000), "symbol_after_empty_export");
+
+  MedToHighConverter Cached;
+  Cached.setBinaryImage(&Img);
+  Cached.setFuncNames(&FunctionNames);
+  Cached.setResolvedCalleeNames(&Snapshot);
+  Img.Imports[0].Name = "changed_import";
+  Img.Symbols[1].Name = "changed_symbol";
+  std::map<va_t, std::string> Reused;
+  Cached.resolveCalleeNames({0x1000, 0x4000}, Reused);
+  EXPECT_EQ(Reused.at(0x1000), "import_name");
+  EXPECT_EQ(Reused.at(0x4000), "symbol_name");
+}
 
 namespace {
 ExprPtr local(int Id) {
@@ -301,6 +348,125 @@ TEST(HighControlFlowSemantics, RepeatedEqualityRemovesOnlyDeadEdgeCopies) {
            {uint64_t{0}, uint64_t{7}, uint64_t{19}, UINT64_MAX})
         EXPECT_EQ(execute(F, Value), Value == 7 ? 42u : 7u);
     }
+}
+
+TEST(HighControlFlowSemantics,
+     BooleanEqualityNeedsNoUnrelatedScalarCopyToPruneDeadPhiRead) {
+  auto F = guardedPhiCopy();
+  auto Boolean = [](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 1;
+    return HighExpr::makeVar(V);
+  };
+  auto Equality = [&](va_t Address, int Destination) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = Boolean(Destination);
+    S.Val = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), local(3));
+    return S;
+  };
+  F.Body[0].Cond = Boolean(5);
+  F.Body[1].Cond = Boolean(8);
+  F.Body.insert(F.Body.begin(), assign(0x1000, 3, 7));
+  F.Body.insert(F.Body.begin() + 1, Equality(0x1002, 5));
+  F.Body.insert(F.Body.begin() + 3, Equality(0x100c, 8));
+  EXPECT_THROW(execute(F, 0), std::runtime_error);
+  ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+  for (uint64_t Value : {uint64_t{0}, uint64_t{7}, uint64_t{19}})
+    EXPECT_EQ(execute(F, Value), Value == 7 ? 42u : 7u);
+}
+
+HighFunc copiedBooleanEquality(bool ReassignCopy) {
+  auto Copy = [](va_t Address, int Destination, int Source) {
+    auto S = assign(Address, Destination, 0);
+    S.Val = local(Source);
+    return S;
+  };
+  auto Boolean = [](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 1;
+    return HighExpr::makeVar(V);
+  };
+  auto Equality = [&](va_t Address, int Destination, int Left, int Right) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = Boolean(Destination);
+    S.Val = HighExpr::makeBinop(NdOp::INT_EQUAL, local(Left), local(Right));
+    return S;
+  };
+  HighStmt Define;
+  Define.Kind = StmtKind::If;
+  Define.Addr = 0x1018;
+  Define.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Boolean(5));
+  Define.Body = {assign(0x101c, 9, 7)};
+  HighStmt Use;
+  Use.Kind = StmtKind::If;
+  Use.Addr = 0x1034;
+  Use.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Boolean(8));
+  Use.Body = {result(0x1038, local(9))};
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 1),
+            assign(0x1004, 2, 1),
+            Copy(0x1008, 3, 1),
+            Copy(0x100c, 4, 2),
+            Equality(0x1010, 5, 1, 2),
+            Define};
+  if (ReassignCopy)
+    F.Body.push_back(assign(0x1020, 3, 2));
+  F.Body.insert(F.Body.end(),
+                {Copy(0x1024, 6, 3), Copy(0x1028, 7, 4),
+                 Equality(0x102c, 8, 6, 7), Use,
+                 result(0x103c, HighExpr::makeConst(0, 8))});
+  return F;
+}
+
+TEST(HighControlFlowSemantics, BooleanEqualitySurvivesDominatingScalarCopies) {
+  auto F = copiedBooleanEquality(false);
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty());
+}
+
+TEST(HighControlFlowSemantics,
+     BooleanEqualitySurvivesIdenticalCopiesOnBothBranchArms) {
+  auto F = copiedBooleanEquality(false);
+  HighStmt Branch;
+  Branch.Kind = StmtKind::IfElse;
+  MedVar Parameter;
+  Parameter.Kind = MedVar::Param;
+  Parameter.Size = 8;
+  Branch.Cond = HighExpr::makeVar(Parameter);
+  Branch.Body = {F.Body[2], F.Body[3]};
+  Branch.ElseBody = {F.Body[2], F.Body[3]};
+  F.Body.erase(F.Body.begin() + 2, F.Body.begin() + 4);
+  F.Body.insert(F.Body.begin() + 2, std::move(Branch));
+
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  EXPECT_TRUE(Report.Items.empty())
+      << (Report.Items.empty() ? "" : Report.Items.front().Reason);
+  for (uint64_t Choice : {uint64_t{0}, uint64_t{1}})
+    EXPECT_EQ(execute(F, Choice), 0u);
+
+  // The alias proof must not cross a join when one path never writes it.
+  F.Body[2].ElseBody.pop_back();
+  const auto MissingCopy = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(MissingCopy.Complete);
+  EXPECT_FALSE(MissingCopy.Items.empty());
+}
+
+TEST(HighControlFlowSemantics, ReassignedScalarCopyInvalidatesEquality) {
+  auto F = copiedBooleanEquality(true);
+  const auto Report = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(Report.Complete);
+  ASSERT_FALSE(Report.Items.empty());
+  EXPECT_EQ(Report.Items[0].Issue, HighSourceFlowIssue::DefiniteAssignment);
 }
 
 TEST(HighControlFlowSemantics, EitherEqualityOperandWriteInvalidatesTheFact) {

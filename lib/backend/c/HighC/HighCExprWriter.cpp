@@ -2655,8 +2655,13 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
           Data && llvm::StringRef(Data->Name).starts_with("??_C@"))
         AllowEmpty = true;
     }
-    if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
-      return *Lit;
+    // A scalar immediate may numerically fall inside a string section. In
+    // arithmetic it must remain the original number, never become a pointer
+    // to bytes at the coincident address.
+    if (E.ConstProvenance != ConstantAddressProvenance::Scalar &&
+        E.ConstProvenance != ConstantAddressProvenance::AddressFragment)
+      if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
+        return *Lit;
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.

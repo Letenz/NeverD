@@ -837,6 +837,28 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             const std::map<va_t, const HighFunc *> &Functions,
             std::string &Reason) {
   const auto &Image = Source.Image;
+  // A stack literal needs a store for its ISA/header. Avoid constructing a
+  // source-flow graph for the many native functions that cannot build one.
+  std::vector<const HighStmt *> Pending;
+  for (const auto &Statement : Function.Body)
+    Pending.push_back(&Statement);
+  bool HasStore = false;
+  while (!Pending.empty() && !HasStore) {
+    const auto *Statement = Pending.back();
+    Pending.pop_back();
+    HasStore = Statement->Kind == StmtKind::Store;
+    for (const auto &Child : Statement->Body)
+      Pending.push_back(&Child);
+    for (const auto &Child : Statement->ElseBody)
+      Pending.push_back(&Child);
+    for (const auto &Child : Statement->DefaultBody)
+      Pending.push_back(&Child);
+    for (const auto &Case : Statement->Cases)
+      for (const auto &Child : Case.Body)
+        Pending.push_back(&Child);
+  }
+  if (!HasStore)
+    return {};
   struct Byte {
     Value V;
     unsigned Index = 0, Width = 0;
