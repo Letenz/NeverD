@@ -128,9 +128,9 @@ static void collectRefExpr(const ExprPtr &Root, VarKeySet &Refs) {
 }
 
 static bool removableAssignment(const HighStmt &S) {
-  if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
-      !isLocalExpr(*S.Dst) || !S.Body.empty() || !S.ElseBody.empty() ||
-      !S.Cases.empty() || !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
+  if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val || !isLocalExpr(*S.Dst) ||
+      !S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
+      !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
     return false;
   std::unordered_set<const HighExpr *> Seen;
   std::vector<const HighExpr *> Work{S.Val.get()};
