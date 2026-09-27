@@ -2223,6 +2223,7 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     # implemented table and loader ABI inventories establish documented APIs.
     for inventory, macro in (
         ("KernelInterruptAPIs.def", "NEVERD_KERNEL_INTERRUPT_API"),
+        ("KernelPoFxAPIs.def", "NEVERD_KERNEL_POFX_API"),
         ("KernelFrameworkAPIs.def", "NEVERD_FRAMEWORK_API"),
         ("KernelFrameworkLoaderAPIs.def", "NEVERD_FRAMEWORK_LOADER_API"),
     ):
@@ -2259,6 +2260,16 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "NEVERD_WDM_PNP_CFG_FIXTURE",
         "configuration.pnp_devices",
         "service_name", "wake_capabilities", "power_policy_events",
+        "d3cold", "enabled_by_default", "wake_s0", "wake_sx", "wake_capable",
+        "component_idle_state", "power_not_required",
+        "SystemManagedIdleTimeout", "SystemManagedIdleTimeoutWithHint",
+        "NEVERD_WDM_POFX_FIXTURE", "NEVERD_WDM_POFX_CFG_FIXTURE",
+        "WdfDeviceWdmAssignPowerFrameworkSettings", "425",
+        "EvtDeviceWdmPostPoFxRegisterDevice", "EvtDeviceWdmPrePoFxUnregisterDevice",
+        "PoFxDeviceFlags", "DirectedPoFxEnabled", "WdfFalse",
+        "NEVERD_KMDF_POFX_FIXTURE", "NEVERD_KMDF_POFX_CFG_FIXTURE",
+        "driver-pofx-scenario.json", "driver-kmdf-pofx-scenario.json",
+        "ReportInactiveOnPowerDown", "CanWakeDevice", "GS:[0x188]",
         "device_epoch", "framework_wait_wake",
         "driver-kmdf-power-policy-scenario.json",
         "resource_free",

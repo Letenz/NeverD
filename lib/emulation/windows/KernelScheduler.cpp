@@ -211,6 +211,23 @@ KernelScheduler::enqueueFrameworkDeferred(Callback Call, uint8_t IRQL) {
   return Queue.back().ID;
 }
 
+llvm::Expected<uint64_t> KernelScheduler::enqueuePoFx(Callback Call) {
+  if (auto E = validateCallback(Call))
+    return E;
+  const auto Matches = [&](const Invocation &Existing) {
+    return Existing.Kind == CallbackKind::PoFx &&
+           Existing.Object == Call.Object;
+  };
+  if (llvm::any_of(Workers, Matches) || (Active && Matches(*Active)) ||
+      llvm::any_of(Suspended,
+                   [&](const auto &Entry) { return Matches(Entry.second); }))
+    return schedulerError("PoFx callback is already outstanding");
+  if (auto E = checkCapacity(1))
+    return E;
+  Workers.push_back(makeInvocation(std::move(Call), CallbackKind::PoFx, Now));
+  return Workers.back().ID;
+}
+
 llvm::Error KernelScheduler::canEnqueueWDMCancellations(
     llvm::ArrayRef<Callback> Batch) const {
   if (auto E = validateTime())

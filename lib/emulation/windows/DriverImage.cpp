@@ -756,6 +756,8 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   for (auto [Start, Limit] :
        {std::pair{profile::KernelArenaBase,
                   profile::KernelArenaBase + profile::KernelArenaSize},
+        std::pair{profile::ProcessorEnvironmentBase,
+                  profile::ProcessorEnvironmentBase + profile::PageSize},
         std::pair{profile::StackBase, profile::StackBase + profile::StackSize},
         std::pair{profile::ThunkBase, profile::ThunkBase + profile::ThunkSize},
         std::pair{profile::CallbackStackBase,

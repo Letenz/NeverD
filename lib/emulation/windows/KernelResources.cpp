@@ -12,6 +12,8 @@
 
 #include "KernelResources.h"
 
+#include "../DriverScenario.h"
+
 #include "neverd/emulation/DriverProfile.h"
 
 #include <algorithm>
@@ -28,30 +30,38 @@ bool failed(uint32_t Status) { return Status & profile::NTStatusFailureMask; }
 
 llvm::Error KernelResources::configure(uint64_t PDO,
                                        const DriverPnpDevice &Configuration) {
+  if (auto E = validateDriverD3Cold(Configuration))
+    return E;
   if (Configuration.Resources.empty() && Configuration.Interrupts.empty() &&
-      !Configuration.Dma)
+      !Configuration.Dma && !Configuration.D3Cold)
     return llvm::Error::success();
   if (!PDO || Devices.count(PDO) || !Configuration.InitialDevicePower ||
-      Configuration.Bus != DriverBusKind::RegisterBank)
+      (Configuration.Bus != DriverBusKind::RegisterBank &&
+       (Configuration.Bus != DriverBusKind::ResourceFree ||
+        !Configuration.Resources.empty() || !Configuration.Interrupts.empty() ||
+        Configuration.Dma)))
     return resourceError("invalid or duplicate resource provider");
   Device Record;
   Record.ID = Configuration.ID;
   Record.Memory = Configuration.Resources;
   Record.Interrupts = Configuration.Interrupts;
   Record.Dma = Configuration.Dma;
+  Record.D3Cold = Configuration.D3Cold;
   Record.Power = *Configuration.InitialDevicePower;
   Devices.emplace(PDO, std::move(Record));
   return llvm::Error::success();
 }
 
 bool KernelResources::hasResources(uint64_t PDO) const {
-  return Devices.count(PDO);
+  const auto *Device = find(PDO);
+  return Device && (!Device->Memory.empty() || !Device->Interrupts.empty() ||
+                    Device->Dma);
 }
 
 llvm::Expected<std::vector<uint8_t>>
 KernelResources::resourceList(uint64_t PDO, bool Translated) const {
   const auto It = Devices.find(PDO);
-  if (It == Devices.end())
+  if (It == Devices.end() || !hasResources(PDO))
     return resourceError("resource list requires a configured register bank");
   const auto &Resources = It->second.Memory;
   const auto &Interrupts = It->second.Interrupts;
@@ -92,7 +102,8 @@ KernelResources::resourceList(uint64_t PDO, bool Translated) const {
         (Interrupt.Mode == DriverInterruptMode::Latched
              ? resources::InterruptLatched
              : resources::InterruptLevelSensitive) |
-        (Interrupt.Messages.empty() ? 0 : resources::InterruptMessage);
+        (Interrupt.Messages.empty() ? 0 : resources::InterruptMessage) |
+        (Interrupt.WakeCapable ? resources::InterruptWakeHint : 0);
     Put(Base + resources::ResourceFlagsOffset, Flags, 2);
     Put(Base + resources::InterruptLevelOffset,
         Translated ? Interrupt.TranslatedLevel : Interrupt.RawLevel, 4);
@@ -189,8 +200,59 @@ void KernelResources::surpriseRemoval(uint64_t PDO) {
 
 void KernelResources::setPhysicalPower(uint64_t PDO, DevicePowerState Power) {
   const auto It = Devices.find(PDO);
-  if (It != Devices.end())
+  if (It != Devices.end()) {
     It->second.Power = Power;
+    if (Power == DevicePowerState::D0)
+      It->second.Cold = false;
+  }
+}
+
+bool KernelResources::supportsD3Cold(uint64_t PDO) const {
+  const auto *Device = find(PDO);
+  return Device && Device->D3Cold && Device->D3Cold->Supported;
+}
+
+bool KernelResources::d3ColdEnabledByDefault(uint64_t PDO) const {
+  const auto *Device = find(PDO);
+  return supportsD3Cold(PDO) && Device->D3Cold->EnabledByDefault;
+}
+
+bool KernelResources::isD3Cold(uint64_t PDO) const {
+  const auto *Device = find(PDO);
+  return Device && Device->Cold;
+}
+
+llvm::Error KernelResources::canEnterD3Cold(uint64_t PDO,
+                                            SystemPowerState System,
+                                            bool RequireWake) const {
+  const auto *Device = find(PDO);
+  if (!supportsD3Cold(PDO))
+    return resourceError("D3cold requires explicit bus and platform support");
+  if (!Device->Present || !Device->Assigned || Device->Starting)
+    return resourceError(
+        "D3cold requires a present completed START assignment");
+  if (Device->Power != DevicePowerState::D3 || Device->Cold)
+    return resourceError("D3cold entry requires physical D3hot");
+  if (System != SystemPowerState::Working &&
+      System != SystemPowerState::Sleeping3)
+    return resourceError("D3cold requires working or sleeping3 system power");
+  if (RequireWake &&
+      !(System == SystemPowerState::Working ? Device->D3Cold->WakeS0
+                                            : Device->D3Cold->WakeSx))
+    return resourceError("D3cold requires explicit wake capability");
+  if (Device->PowerGeneration == UINT64_MAX)
+    return resourceError("D3cold power generation is exhausted");
+  return ColdPowerDownCheck ? ColdPowerDownCheck(PDO) : llvm::Error::success();
+}
+
+llvm::Error KernelResources::enterD3Cold(uint64_t PDO, SystemPowerState System,
+                                         bool RequireWake) {
+  if (auto E = canEnterD3Cold(PDO, System, RequireWake))
+    return E;
+  auto &Device = Devices.at(PDO);
+  Device.Cold = true;
+  ++Device.PowerGeneration;
+  return llvm::Error::success();
 }
 
 const KernelResources::Device *KernelResources::find(uint64_t PDO) const {

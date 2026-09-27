@@ -12,6 +12,8 @@
 
 #include "X64ExecutionPolicy.h"
 
+#include "windows/WindowsKernelLayout.h"
+
 #include "llvm/Support/Error.h"
 
 #include <memory>
@@ -42,7 +44,7 @@ llvm::Error X64ExecutionPolicy::validate(llvm::ArrayRef<uint8_t> Bytes,
   return llvm::Error::success();
 }
 
-llvm::Expected<std::optional<X64Register>>
+llvm::Expected<std::optional<X64ExecutionPolicy::Action>>
 X64ExecutionPolicy::inspect(llvm::ArrayRef<uint8_t> Bytes, uint64_t PC) {
   cs_insn *Decoded = nullptr;
   size_t Count = cs_disasm(Handle, Bytes.data(), Bytes.size(), PC, 1, &Decoded);
@@ -57,26 +59,30 @@ X64ExecutionPolicy::inspect(llvm::ArrayRef<uint8_t> Bytes, uint64_t PC) {
                    Insn->mnemonic);
   };
   const cs_x86 &X86 = Insn->detail->x86;
-  // WDM headers inline KeGetCurrentIrql as a CR8 read on x64. This profile
-  // owns CR8 as the current callback IRQL and forbids guest CR8 writes. Pinned
-  // Unicorn's MOV CR8 helper reads a missing APIC and returns zero, independently
-  // of its register API. Return an exact destination for the executor to write;
-  // never let that backend helper guess this modeled environment state.
+  // WDK headers inline the IRQL and current-thread queries. Decode only the
+  // exact full-width reads whose values belong to the Windows model. Other
+  // segment offsets and all writes remain outside this execution profile.
   if (Insn->id == X86_INS_MOV && X86.op_count == 2 &&
-      X86.operands[0].type == X86_OP_REG && X86.operands[0].size == 8 &&
-      X86.operands[1].type == X86_OP_REG && X86.operands[1].reg == X86_REG_CR8) {
-    if (X86.prefix[0] == X86_PREFIX_LOCK ||
-        X86.operands[0].reg == X86_REG_RIP ||
-        X86.operands[0].reg == X86_REG_CR8)
-      return Rejected();
-    switch (X86.operands[0].reg) {
+      X86.operands[0].type == X86_OP_REG && X86.operands[0].size == 8) {
+    const auto &Source = X86.operands[1];
+    std::optional<Action::Kind> Kind;
+    if (Source.type == X86_OP_REG && Source.reg == X86_REG_CR8)
+      Kind = Action::Kind::ReadIRQL;
+    if (Kind) {
+      if (X86.prefix[0] == X86_PREFIX_LOCK ||
+          X86.operands[0].reg == X86_REG_RIP ||
+          X86.operands[0].reg == X86_REG_CR8)
+        return Rejected();
+      switch (X86.operands[0].reg) {
 #define NEVERD_X64_REGISTER(Name, DecoderID, BackendID)                        \
-    case DecoderID:                                                          \
-      return std::optional<X64Register>{X64Register::Name};
+  case DecoderID:                                                              \
+    return std::optional<Action>{{*Kind, X64Register::Name}};
 #include "X64Registers.def"
 #undef NEVERD_X64_REGISTER
-    default:
-      return failure("CR8 read has an unsupported full-width destination");
+      default:
+        return failure(
+            "environment read has an unsupported full-width destination");
+      }
     }
   }
   if (cs_insn_group(Handle, Insn.get(), CS_GRP_PRIVILEGE) ||
@@ -104,19 +110,30 @@ X64ExecutionPolicy::inspect(llvm::ArrayRef<uint8_t> Bytes, uint64_t PC) {
       (X86.prefix[1] == X86_PREFIX_FS || X86.prefix[1] == X86_PREFIX_GS))
     return failure("FS/GS memory access requires an unsupported Windows "
                    "thread profile");
+  bool ReadsCurrentThread = false;
   for (unsigned I = 0; I < X86.op_count; ++I) {
     const auto &Operand = X86.operands[I];
     if (Operand.type == X86_OP_MEM && (Operand.mem.segment == X86_REG_FS ||
-                                       Operand.mem.segment == X86_REG_GS))
-      return failure("FS/GS memory access requires an unsupported Windows "
-                     "thread profile");
+                                       Operand.mem.segment == X86_REG_GS)) {
+      if (Operand.mem.segment != X86_REG_GS ||
+          Operand.size != sizeof(uint64_t) || Operand.access != CS_AC_READ ||
+          Operand.mem.base != X86_REG_INVALID ||
+          Operand.mem.index != X86_REG_INVALID ||
+          Operand.mem.disp != windows::GSCurrentThreadOffset)
+        return failure("FS/GS memory access requires an unsupported Windows "
+                       "thread profile");
+      ReadsCurrentThread = true;
+    }
     if (Operand.type == X86_OP_REG &&
         (Operand.reg == X86_REG_CS || Operand.reg == X86_REG_DS ||
          Operand.reg == X86_REG_ES || Operand.reg == X86_REG_SS ||
          Operand.reg == X86_REG_FS || Operand.reg == X86_REG_GS))
       return Rejected();
   }
-  return std::optional<X64Register>{};
+  if (ReadsCurrentThread)
+    return std::optional<Action>{
+        {Action::Kind::ReadCurrentThread, std::nullopt}};
+  return std::optional<Action>{};
 }
 
 } // namespace neverd::emulation

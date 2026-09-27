@@ -1111,7 +1111,8 @@ llvm::Error KernelModel::finishUnload() {
   if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
       !Files.empty() || !Requests.empty() || !MDLs.empty() ||
       !WorkItems.empty() || !IRPCalls.empty() || PendingWdmCall ||
-      Scheduler.hasPending())
+      Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
+      !BlockingPoFx.empty())
     return ioError("unload returned with live devices, symbolic links, pool "
                    "allocations or file/request state");
   Unloading = false;

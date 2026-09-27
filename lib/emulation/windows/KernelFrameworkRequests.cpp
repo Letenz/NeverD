@@ -457,6 +457,7 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
   if (Queue.PowerManaged && D->second.PDO)
     if (auto E = powerPolicyActive(D->second.PDO))
       return E;
+  WaitForSlot |= queuePnpHeld(Queue);
   if (Manual || WaitForSlot) {
     auto &Pending = Requests.at(Handle);
     Pending.Queued = true;

@@ -24,6 +24,25 @@ llvm::Error schedulingError(const llvm::Twine &Text) {
 }
 } // namespace
 
+llvm::Expected<uint64_t> KernelModel::currentThreadObject() {
+  if (!CurrentExecution || !CurrentThreadKey)
+    return schedulingError("current thread requires an active execution");
+  for (const auto &[Object, Thread] : SystemThreads)
+    if (Thread.CallbackID == CurrentThreadKey) {
+      if (Thread.Exited)
+        return schedulingError("current thread has already exited");
+      return Object;
+    }
+  if (const auto Found = CurrentThreadObjects.find(CurrentThreadKey);
+      Found != CurrentThreadObjects.end())
+    return Found->second;
+  auto Object = allocate(profile::ProcessTokenSize);
+  if (!Object)
+    return Object.takeError();
+  CurrentThreadObjects.emplace(CurrentThreadKey, *Object);
+  return *Object;
+}
+
 llvm::Expected<uint64_t> KernelModel::allocateWorkItem(uint64_t Device) {
   if (CurrentIRQL > scheduler::DispatchLevel)
     return schedulingError(
@@ -284,7 +303,9 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
       return E;
     if (auto E = processInterruptEvents())
       return E;
-    return processPowerPolicyEvents();
+    if (auto E = processPowerPolicyEvents())
+      return E;
+    return processPoFxCallbacks();
   };
   if (auto E = ProcessBoundary(Scheduler.now100ns()))
     return E;
@@ -337,6 +358,14 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
         CancelLock.Owner = 0;
         CancelLock.IRP = (**Next).Object;
         CancelLock.OldIRQL = scheduler::PassiveLevel;
+      }
+      if ((**Next).Kind == KernelScheduler::CallbackKind::PoFx) {
+        auto Token = ScheduledModelContinuations.find((**Next).ID);
+        if (Token == ScheduledModelContinuations.end() ||
+            Token->second.Owner != GuestCallOwner::PoFx)
+          return schedulingError("PoFx callback lost its model continuation");
+        if (auto E = beginGuestCall(Token->second))
+          return E;
       }
       if (KernelScheduler::isDMACallbackKind((**Next).Kind)) {
         auto Token = ScheduledModelContinuations.find((**Next).ID);
@@ -401,6 +430,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   if (Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCompletion ||
       Invocation.Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
+      Invocation.Kind == KernelScheduler::CallbackKind::PoFx ||
       KernelScheduler::isFrameworkInterruptCallbackKind(Invocation.Kind) ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
@@ -459,6 +489,9 @@ std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Policy = nextPowerPolicyEventTime();
   if (Policy && (!Deadline || *Policy < *Deadline))
     Deadline = std::max(*Policy, Scheduler.now100ns());
+  auto ComponentPower = PoFx.nextDeadline();
+  if (ComponentPower && (!Deadline || *ComponentPower < *Deadline))
+    Deadline = std::max(*ComponentPower, Scheduler.now100ns());
   auto Transfer = DMA.nextEventTime();
   if (Transfer && (!Deadline || *Transfer < *Deadline))
     Deadline = std::max(*Transfer, Scheduler.now100ns());
@@ -537,6 +570,22 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::PoFxActive ||
+      Pending.Type == Wait::Kind::PoFxIdle) {
+    auto Operation = BlockingPoFx.find(Pending.Thread);
+    if (Operation == BlockingPoFx.end() ||
+        Operation->second.Handle != Pending.Object)
+      return schedulingError("PoFx wait lost its blocking operation");
+    auto Ready =
+        PoFx.conditionReached(Pending.Object, Operation->second.Component,
+                              Pending.Type == Wait::Kind::PoFxActive);
+    if (!Ready)
+      return Ready.takeError();
+    if (!Operation->second.Completed && !*Ready)
+      return std::optional<uint32_t>{};
+    BlockingPoFx.erase(Operation);
+    return std::optional<uint32_t>{windows::StatusSuccess};
+  }
   if (Pending.Type == Wait::Kind::FrameworkWaitLock)
     return pollFrameworkWaitLock(Pending);
   if (Pending.Type == Wait::Kind::FrameworkCallback ||

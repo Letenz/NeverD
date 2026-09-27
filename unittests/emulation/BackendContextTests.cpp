@@ -238,6 +238,25 @@ TEST_F(DriverBackendContext, ModelControlledIRQLIsPartOfTheCPUContext) {
   EXPECT_EQ(reg(X64Register::CR8), 2u);
 }
 
+TEST_F(DriverBackendContext, ProcessorEnvironmentBaseSurvivesContextRestore) {
+  // MOV rax, gs:[0x40]; NOP. Both pages remain shared across CPU contexts.
+  const std::array<uint8_t, 10> ReadGS = {0x65, 0x48, 0x8b, 0x04, 0x25,
+                                          0x40, 0,    0,    0,    0x90};
+  ASSERT_EQ(llvm::toString(CPU->writeInteger(DataAddress + 0x40, 11, 8)), "");
+  ASSERT_EQ(llvm::toString(CPU->writeInteger(StackAddress + 0x40, 22, 8)), "");
+  ASSERT_EQ(llvm::toString(CPU->setGSBase(DataAddress)), "");
+  auto Saved = CPU->saveContext();
+  ASSERT_TRUE(bool(Saved)) << llvm::toString(Saved.takeError());
+  execute(ReadGS);
+  EXPECT_EQ(reg(X64Register::AX), 11u);
+  ASSERT_EQ(llvm::toString(CPU->setGSBase(StackAddress)), "");
+  execute(ReadGS);
+  EXPECT_EQ(reg(X64Register::AX), 22u);
+  ASSERT_EQ(llvm::toString(CPU->restoreContext(**Saved)), "");
+  execute(ReadGS);
+  EXPECT_EQ(reg(X64Register::AX), 11u);
+}
+
 TEST_F(DriverBackendContext, SnapshotsAreIndependentAndCanBeRefreshed) {
   ASSERT_EQ(llvm::toString(CPU->setReg(X64Register::AX, 11)), "");
   auto First = CPU->saveContext();

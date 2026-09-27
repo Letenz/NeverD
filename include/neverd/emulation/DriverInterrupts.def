@@ -47,6 +47,7 @@ NEVERD_DRIVER_INTERRUPT_LIMIT(DriverInterruptAffinity, 1)
 
 #ifdef NEVERD_DRIVER_INTERRUPT_FIELD
 NEVERD_DRIVER_INTERRUPT_FIELD(Messages, "messages")
+NEVERD_DRIVER_INTERRUPT_FIELD(WakeCapable, "wake_capable")
 NEVERD_DRIVER_INTERRUPT_FIELD(MessageID, "message_id")
 NEVERD_DRIVER_INTERRUPT_FIELD(MessageAddress, "message_address")
 NEVERD_DRIVER_INTERRUPT_FIELD(MessageData, "message_data")

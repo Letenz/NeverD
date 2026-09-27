@@ -211,10 +211,10 @@ TEST_F(DriverKernelFrameworkPowerPolicy,
               "IRQL");
   expectError(invoke(api::WdfDeviceResumeIdleNoTrack, {Globals, Device}),
               "matching");
-  put(IdleConfig + policy::IdleTimeoutType, 1, 4);
+  put(IdleConfig + policy::IdleTimeoutType, policy::SystemManagedTimeout, 4);
   expectError(
       invoke(api::WdfDeviceAssignS0IdleSettings, {Globals, Device, IdleConfig}),
-      "driver timeout");
+      "PoFx authority");
   EXPECT_EQ(Model.nextPowerPolicyTime(), policy::TicksPerMillisecond);
 }
 

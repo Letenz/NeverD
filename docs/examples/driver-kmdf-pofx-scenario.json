@@ -1,0 +1,116 @@
+{
+  "service_name": "NeverDKmdfPoFxN",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "custom-pofx-pdo",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D3",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "custom-pofx-pdo",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "custom-pofx-pdo",
+      "file": 1
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "custom-pofx-pdo",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 40,
+      "power_policy_events": [
+        {
+          "device_id": "custom-pofx-pdo",
+          "after_100ns": 0,
+          "action": "idle"
+        },
+        {
+          "device_id": "custom-pofx-pdo",
+          "after_100ns": 3,
+          "action": "component_idle_state",
+          "component": 0,
+          "state": 1
+        },
+        {
+          "device_id": "custom-pofx-pdo",
+          "after_100ns": 10001,
+          "action": "power_not_required"
+        },
+        {
+          "device_id": "custom-pofx-pdo",
+          "after_100ns": 10017,
+          "action": "active"
+        }
+      ]
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "custom-pofx-pdo",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 40
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "custom-pofx-pdo",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "custom-pofx-pdo",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "custom-pofx-pdo",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "custom-pofx-pdo",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0
+      }
+    }
+  ]
+}

@@ -186,6 +186,36 @@ protected:
   }
 };
 
+TEST_F(DriverKernelDMA, PowerDownPreservesIdleAdaptersAndCommonBufferPins) {
+  const auto Map = publish(plan(1, 64, true));
+  good(Model.canPowerDownPDO(PDO));
+  ASSERT_NE(Model.adapter(AdapterID), nullptr);
+  ASSERT_NE(Model.mapping(Map.Object), nullptr);
+  EXPECT_TRUE(Physical.hasPinnedPages(Base, 64));
+  bad(Model.canReleasePDO(PDO), "DMA adapter");
+}
+
+TEST_F(DriverKernelDMA, PowerDownRequiresBothCallbackReturnAndPacketRelease) {
+  const auto Map = publish(plan(1, 64));
+  bad(Model.canPowerDownPDO(PDO), "DMA callback");
+  good(Model.beginCallback(Map.Object));
+  good(Model.finishCallback(Map.Object));
+  bad(Model.canPowerDownPDO(PDO), "packet DMA mapping");
+  release(Map.Object);
+  good(Model.canPowerDownPDO(PDO));
+}
+
+TEST_F(DriverKernelDMA, PowerDownRejectsFutureTransactionsUntilTheyComplete) {
+  start();
+  const auto Map = publish(plan(1, 64, true));
+  good(Model.arm({event(Map.Logical, 4, 5)}, 0, 0));
+  bad(Model.canPowerDownPDO(PDO), "explicit DMA transaction");
+  EXPECT_EQ(Memory.DeviceReads, 0u);
+  good(Model.processEvents(5));
+  good(Model.canPowerDownPDO(PDO));
+  EXPECT_EQ(Memory.DeviceReads, 1u);
+}
+
 TEST_F(DriverKernelDMA, AdapterAndCommonBufferDoNotRequireStartedHardware) {
   ASSERT_NE(Model.adapter(AdapterID), nullptr);
   EXPECT_FALSE(Resources.find(PDO)->Assigned);

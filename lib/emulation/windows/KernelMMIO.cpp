@@ -31,7 +31,7 @@ llvm::Error KernelMMIO::configure(uint64_t PDO) {
     return llvm::Error::success();
   if (Devices.count(PDO))
     return mmioError("duplicate physical register bank");
-  Devices.emplace(PDO, Device{Assignment->Memory});
+  Devices.emplace(PDO, Device{Assignment->Memory, Assignment->PowerGeneration});
   return llvm::Error::success();
 }
 
@@ -157,11 +157,21 @@ llvm::Error KernelMMIO::validate(uint64_t Address, uint64_t Offset,
   return mmioError("access requires an exact declared register and width");
 }
 
+void KernelMMIO::restorePowerContext(uint64_t PDO) {
+  auto &Device = Devices.at(PDO);
+  const auto &Assignment = *Resources.find(PDO);
+  if (Device.PowerGeneration == Assignment.PowerGeneration)
+    return;
+  Device.Resources = Assignment.Memory;
+  Device.PowerGeneration = Assignment.PowerGeneration;
+}
+
 llvm::Expected<uint64_t> KernelMMIO::read(uint64_t Address, uint64_t Offset,
                                           unsigned Size) {
   if (auto E = validate(Address, Offset, Size, false))
     return E;
   const auto &Mapping = Mappings.at(Address);
+  restorePowerContext(Mapping.PDO);
   const auto &Resource =
       Devices.at(Mapping.PDO).Resources[Mapping.ResourceIndex];
   const uint64_t RegisterOffset = Mapping.Physical - Resource.TranslatedStart +
@@ -177,6 +187,7 @@ llvm::Error KernelMMIO::write(uint64_t Address, uint64_t Offset, unsigned Size,
   if (auto E = validate(Address, Offset, Size, true))
     return E;
   const auto &Mapping = Mappings.at(Address);
+  restorePowerContext(Mapping.PDO);
   auto &Resource = Devices.at(Mapping.PDO).Resources[Mapping.ResourceIndex];
   const uint64_t RegisterOffset = Mapping.Physical - Resource.TranslatedStart +
                                   Offset - (Address - Mapping.PageBase);

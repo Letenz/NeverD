@@ -21,6 +21,13 @@
 namespace neverd::emulation {
 namespace {
 
+namespace coldField {
+#define NEVERD_DRIVER_D3COLD_FIELD(Name, Spelling)                             \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverD3Cold.def"
+#undef NEVERD_DRIVER_D3COLD_FIELD
+} // namespace coldField
+
 namespace resourceField {
 #define NEVERD_DRIVER_RESOURCE_FIELD(Name, Spelling)                           \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -371,6 +378,7 @@ interruptConfigurationJSON(llvm::ArrayRef<DriverInterruptResource> Interrupts) {
         {interruptField::TranslatedVector, Interrupt.TranslatedVector},
         {interruptField::TranslatedLevel, Interrupt.TranslatedLevel},
         {interruptField::TranslatedAffinity, Interrupt.TranslatedAffinity},
+        {interruptField::WakeCapable, Interrupt.WakeCapable},
         {interruptField::Mode, interruptModeName(Interrupt.Mode)},
         {interruptField::Share, interruptShareName(Interrupt.Share)}};
     if (Interrupt.RetriggerAfter100ns)
@@ -430,13 +438,19 @@ llvm::json::Array powerPolicyConfigurationJSON(const DriverOptions &Options) {
   llvm::json::Array Result;
   for (size_t I = 0; I < Options.Requests.size(); ++I) {
     const auto &Events = Options.Requests[I].PowerPolicyEvents;
-    for (size_t J = 0; J < Events.size(); ++J)
-      Result.push_back(llvm::json::Object{
+    for (size_t J = 0; J < Events.size(); ++J) {
+      llvm::json::Object Item{
           {policyField::SourceRequestIndex, I},
           {policyField::EventIndex, J},
           {policyField::After100ns, Events[J].After100ns},
           {policyField::Action, powerPolicyActionName(Events[J].Action)},
-          {policyField::DeviceID, Events[J].DeviceID}});
+          {policyField::DeviceID, Events[J].DeviceID}};
+      if (Events[J].Component)
+        Item[policyField::Component] = *Events[J].Component;
+      if (Events[J].State)
+        Item[policyField::State] = *Events[J].State;
+      Result.push_back(std::move(Item));
+    }
   }
   return Result;
 }
@@ -595,6 +609,14 @@ llvm::json::Array pnpConfigurationJSON(const DriverOptions &Options) {
       Item[policyField::WakeCapabilities] =
           llvm::json::Object{{policyField::S0, Device.WakeCapabilities->S0},
                              {policyField::Sx, Device.WakeCapabilities->Sx}};
+    if (Device.D3Cold) {
+      const auto &Cold = *Device.D3Cold;
+      Item[coldField::D3Cold] = llvm::json::Object{
+          {coldField::Supported, Cold.Supported},
+          {coldField::EnabledByDefault, Cold.EnabledByDefault},
+          {coldField::WakeS0, Cold.WakeS0},
+          {coldField::WakeSx, Cold.WakeSx}};
+    }
     if (Device.Dma)
       Item[dmaField::Dma] = dmaConfigurationJSON(*Device.Dma);
     Devices.push_back(std::move(Item));
@@ -692,6 +714,10 @@ std::string driverResultJSON(const DriverResult &Result) {
         {policyField::OccurredAt100ns, nullptr}};
     if (Event.OccurredAt100ns)
       Item[policyField::OccurredAt100ns] = *Event.OccurredAt100ns;
+    if (Event.Component)
+      Item[policyField::Component] = *Event.Component;
+    if (Event.State)
+      Item[policyField::State] = *Event.State;
     PolicyEvents.push_back(std::move(Item));
   }
   Root[policyField::Events] = std::move(PolicyEvents);

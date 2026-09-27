@@ -175,6 +175,56 @@ HighFunc predecessorReturnCarrier() {
   return MedToHighConverter().convert(F, Architecture);
 }
 
+TEST(SourceCallReturns, IndirectCallOfReturnedPointerIsNotEntryParameter) {
+  constexpr Arch Architecture = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  MedFunc F;
+  F.Name = "invoke_returned_pointer";
+  F.Entry = 0x1000;
+  MedBlock B;
+  B.Id = 0;
+  B.StartAddr = F.Entry;
+  B.EndAddr = 0x100c;
+  const auto Input = regValue(1, TRI.IntParamRegs[0], 0, Architecture);
+  const auto Returned = regValue(2, TRI.IntReturnReg, 1, Architecture);
+  MedOp EntryInput;
+  EntryInput.Opcode = NdOp::COPY;
+  EntryInput.Output = Input;
+  EntryInput.addInput(Input);
+  B.Ops.push_back(EntryInput);
+  MedOp Lookup;
+  Lookup.Opcode = NdOp::CALL;
+  Lookup.Addr = 0x1000;
+  Lookup.Output = Returned;
+  Lookup.addInput(MedVar::makeConst(0x2000, 8));
+  B.Ops.push_back(Lookup);
+  MedOp Invoke;
+  Invoke.Opcode = NdOp::INDIR_CALL;
+  Invoke.Addr = 0x1004;
+  Invoke.Output = regValue(3, TRI.IntReturnReg, 2, Architecture);
+  Invoke.addInput(Returned);
+  B.Ops.push_back(Invoke);
+  MedOp Return;
+  Return.Opcode = NdOp::RETURN;
+  Return.Addr = 0x1008;
+  Return.addInput(regValue(4, 240, 0, Architecture));
+  B.Ops.push_back(Return);
+  F.Blocks.push_back(B);
+  inferMedTypes(F, Architecture);
+  const auto High = MedToHighConverter().convert(F, Architecture);
+  const HighExpr *Indirect = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Expr) {
+      if (Expr && Expr->IsIndirectCall)
+        Indirect = Expr.get();
+    });
+  });
+  ASSERT_NE(Indirect, nullptr);
+  EXPECT_EQ(Indirect->IndirectParamIdx, -1);
+  EXPECT_EQ(Indirect->CallTarget, "indirect");
+  ASSERT_NE(Indirect->IndirectTarget, nullptr);
+}
+
 TEST(SourceCallReturns, DirectAndIndirectResultsKeepFollowingArithmeticOnce) {
 #ifdef NEVERD_TEST_CLANG
   const std::string Compiler = NEVERD_TEST_CLANG;

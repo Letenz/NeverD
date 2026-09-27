@@ -266,6 +266,7 @@ void KernelModel::configureFrameworkDeviceHost() {
   };
   Framework->setDeviceHost(std::move(Host));
   configureFrameworkPowerPolicyHost();
+  configureFrameworkPoFxHost();
 }
 
 std::optional<unsigned>
@@ -392,6 +393,8 @@ llvm::Error KernelModel::completeFrameworkTransitionIfReady() {
 }
 
 std::optional<KernelGuestCall> KernelModel::takeGuestCall() {
+  if (auto Call = takePoFxThreadCall(CurrentThreadKey))
+    return Call;
   if (PendingDMACall)
     return std::exchange(PendingDMACall, std::nullopt);
   if (PendingInterruptCall)
@@ -430,6 +433,8 @@ KernelModel::finishGuestCall(GuestCallToken Token, uint64_t Result) {
     return finishInterruptCall(Token.ID, Result);
   case GuestCallOwner::DMA:
     return finishDMACall(Token.ID, Result);
+  case GuestCallOwner::PoFx:
+    return finishPoFxCall(Token.ID);
   }
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "guest callback has an invalid owner");

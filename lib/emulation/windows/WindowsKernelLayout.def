@@ -10,6 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 NEVERD_WDM_VALUE(DriverObjectSize, 0x150)
+// x64 wdm.h KeGetCurrentThread reads the current KTHREAD identity from GS.
+NEVERD_WDM_VALUE(GSCurrentThreadOffset, 0x188)
 // x64 ntifs.h KAPC_STATE: two LIST_ENTRYs, Process, and three UCHAR flags.
 NEVERD_WDM_VALUE(KAPCStateSize, 0x30)
 NEVERD_WDM_VALUE(KAPCStateProcessOffset, 0x20)

@@ -8,6 +8,7 @@
 /// Fixed synthetic bus assignments and deterministic register initial values.
 /// Addresses never refer to host physical memory. Each device initializes its
 /// registers once; mapping, unmapping and restarting do not reset their values.
+/// An explicitly configured D3cold power cycle restores these power-on values.
 ///
 //===----------------------------------------------------------------------===//
 

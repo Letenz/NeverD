@@ -7,6 +7,8 @@
 NEVERD_POWER_POLICY_ACTION(Idle, "idle")
 NEVERD_POWER_POLICY_ACTION(Active, "active")
 NEVERD_POWER_POLICY_ACTION(Wake, "wake")
+NEVERD_POWER_POLICY_ACTION(ComponentIdleState, "component_idle_state")
+NEVERD_POWER_POLICY_ACTION(PowerNotRequired, "power_not_required")
 #endif
 #ifdef NEVERD_POWER_POLICY_FIELD
 NEVERD_POWER_POLICY_FIELD(Events, "power_policy_events")
@@ -16,6 +18,8 @@ NEVERD_POWER_POLICY_FIELD(Sx, "sx")
 NEVERD_POWER_POLICY_FIELD(DeviceID, "device_id")
 NEVERD_POWER_POLICY_FIELD(DeviceEpoch, "device_epoch")
 NEVERD_POWER_POLICY_FIELD(Action, "action")
+NEVERD_POWER_POLICY_FIELD(Component, "component")
+NEVERD_POWER_POLICY_FIELD(State, "state")
 NEVERD_POWER_POLICY_FIELD(After100ns, "after_100ns")
 NEVERD_POWER_POLICY_FIELD(SourceRequestIndex, "source_request_index")
 NEVERD_POWER_POLICY_FIELD(EventIndex, "event_index")

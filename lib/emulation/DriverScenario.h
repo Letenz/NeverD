@@ -21,11 +21,16 @@ struct DriverRequest;
 struct DriverPnpOperation;
 struct DriverPowerOperation;
 struct DriverPnpDevice;
+struct DriverPowerPolicyEvent;
+
+llvm::Error validateDriverPowerPolicyEvent(const DriverPowerPolicyEvent &Event);
 
 llvm::Error validateDriverPnpOperation(const DriverPnpOperation &Operation);
 
 llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
                                          bool RequireDeviceType = false);
+
+llvm::Error validateDriverD3Cold(const DriverPnpDevice &Device);
 
 llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices);
 

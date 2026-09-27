@@ -1,0 +1,23 @@
+//===- KernelPoFxAPIs.def - Component power DDI contracts ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Single inventory for component-power argument counts and IRQL ceilings.
+///
+//===----------------------------------------------------------------------===//
+NEVERD_KERNEL_POFX_API(PoFxRegisterDevice, 3, Passive)
+NEVERD_KERNEL_POFX_API(PoFxUnregisterDevice, 1, Passive)
+NEVERD_KERNEL_POFX_API(PoFxStartDevicePowerManagement, 1, Passive)
+NEVERD_KERNEL_POFX_API(PoFxActivateComponent, 3, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxIdleComponent, 3, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxCompleteIdleCondition, 2, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxCompleteIdleState, 2, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxCompleteDevicePowerNotRequired, 1, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxReportDevicePoweredOn, 1, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxSetComponentLatency, 3, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxSetComponentResidency, 3, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxSetComponentWake, 3, Dispatch)
+NEVERD_KERNEL_POFX_API(PoFxSetDeviceIdleTimeout, 2, Dispatch)

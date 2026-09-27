@@ -52,6 +52,7 @@ public:
     WDMCompletion,
     FrameworkCompletion,
     FrameworkDeferred,
+    PoFx,
     FrameworkInterruptDPC,
     FrameworkInterruptWorkItem,
     Interrupt,
@@ -108,6 +109,7 @@ public:
   llvm::Expected<uint64_t> enqueueWorkItem(Callback Work);
   llvm::Error canEnqueueSystemThread(const Callback &Thread) const;
   llvm::Expected<uint64_t> enqueueSystemThread(Callback Thread);
+  llvm::Expected<uint64_t> enqueuePoFx(Callback Call);
   bool cancelWorkItem(uint64_t Object);
   bool isWorkItemQueued(uint64_t Object) const;
 

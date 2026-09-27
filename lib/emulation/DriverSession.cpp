@@ -20,8 +20,10 @@
 #include "windows/KernelExportRegistry.h"
 #include "windows/KernelModel.h"
 #include "windows/KernelSEH.h"
+#include "windows/WindowsKernelLayout.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FormatVariadic.h"
 
 #include <algorithm>
@@ -47,6 +49,9 @@ std::string guestCallPhase(const GuestCallToken &Token) {
     break;
   case GuestCallOwner::WDM:
     Prefix = WDMCallbackPhase;
+    break;
+  case GuestCallOwner::PoFx:
+    Prefix = PoFxCallbackPhase;
     break;
   case GuestCallOwner::DMA:
     Prefix = DMACallbackPhase;
@@ -169,10 +174,29 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   const KernelExportRegistry::Export *Pending = nullptr;
   uint64_t PendingGuard = 0;
   struct EnvironmentRead {
-    X64Register Destination;
+    X64ExecutionPolicy::Action Request;
     uint64_t NextPC;
   };
-  std::optional<EnvironmentRead> PendingCR8Read;
+  std::optional<EnvironmentRead> PendingEnvironmentRead;
+  bool ProcessorViewMapped = false;
+  bool ProcessorReadAdmitted = false;
+  auto RefreshProcessorView = [&]() -> llvm::Error {
+    auto Thread = Kernel.currentThreadObject();
+    if (!Thread)
+      return Thread.takeError();
+    std::array<uint8_t, PointerSize> Bytes;
+    llvm::support::endian::write64le(Bytes.data(), *Thread);
+    if (auto E = CPU.writeBacking(
+            ProcessorEnvironmentBase + windows::GSCurrentThreadOffset, Bytes))
+      return E;
+    return CPU.setGSBase(ProcessorEnvironmentBase);
+  };
+  auto PrepareProcessorView = [&]() -> llvm::Error {
+    if (auto E = CPU.map(ProcessorEnvironmentBase, PageSize, Read))
+      return E;
+    ProcessorViewMapped = true;
+    return RefreshProcessorView();
+  };
   auto Stop = [&](DriverStopReason Reason, const std::string &Diagnostic) {
     if (Stopped)
       return;
@@ -190,6 +214,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
   };
   BackendHooks Hooks;
   Hooks.Instruction = [&](uint64_t Address, uint32_t Size) {
+    ProcessorReadAdmitted = false;
     if (Stopped)
       return;
     Result.PC = Address;
@@ -267,19 +292,36 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
            llvm::toString(Inspection.takeError()));
       return;
     }
+    if (*Inspection &&
+        (**Inspection).Source ==
+            X64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
+      if (!ProcessorViewMapped) {
+        // Materialize the processor field outside the running backend, then
+        // retry this instruction once. It has not consumed its budget yet.
+        PendingEnvironmentRead = EnvironmentRead{**Inspection, Address};
+        CPU.stop();
+        return;
+      }
+      ProcessorReadAdmitted = true;
+      ++Result.Instructions;
+      return;
+    }
     ++Result.Instructions;
     if (*Inspection) {
       if (Size > UINT64_MAX - Address) {
         Stop(DriverStopReason::MemoryFault,
-             "CR8 read advances beyond the guest address range");
+             "environment read advances beyond the guest address range");
         return;
       }
-      PendingCR8Read = EnvironmentRead{**Inspection, Address + Size};
+      PendingEnvironmentRead = EnvironmentRead{**Inspection, Address + Size};
       CPU.stop();
     }
   };
   Hooks.Read = [&](uint64_t Address, uint32_t Size) {
     if (Stopped)
+      return;
+    if (ProcessorReadAdmitted && Size == PointerSize &&
+        Address == ProcessorEnvironmentBase + windows::GSCurrentThreadOffset)
       return;
     if (Address < ThunkBase + ThunkSize &&
         (Address >= ThunkBase || Size > ThunkBase - Address)) {
@@ -564,6 +606,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     for (auto &Frame : Waiting) {
       if (!Frame->Wait)
         continue;
+      if (Frame->Wait->Type == KernelModel::Wait::Kind::PoFxActive ||
+          Frame->Wait->Type == KernelModel::Wait::Kind::PoFxIdle) {
+        if (auto Call = Kernel.takePoFxThreadCall(Frame->Wait->Thread)) {
+          Frame->ChildCall = std::move(*Call);
+          Frame->ResumeIRQL = Frame->Wait->IRQL;
+          Frame->Wait.reset();
+          continue;
+        }
+      }
       auto Status = Kernel.pollWait(*Frame->Wait);
       if (!Status)
         return Status.takeError();
@@ -633,6 +684,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       return IRQL.takeError();
     if (*IRQL != Kernel.currentIRQL())
       return failure("saved CPU IRQL disagrees with its model execution");
+    if (ProcessorViewMapped)
+      if (auto E = RefreshProcessorView())
+        return E;
     Result.Phase = Frame.Phase;
     Result.PC = Frame.PC;
     ExpectedReturnSP = Frame.InitialSP + PointerSize;
@@ -651,7 +705,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       }
       Pending = nullptr;
       PendingGuard = 0;
-      PendingCR8Read.reset();
+      PendingEnvironmentRead.reset();
       if (auto E = CPU.run(NextPC, Remaining)) {
         std::string Message = llvm::toString(std::move(E));
         if (!Stopped)
@@ -687,17 +741,27 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         Stop(DriverStopReason::Timeout, "execution time limit reached");
         break;
       }
-      if (PendingCR8Read) {
+      if (PendingEnvironmentRead) {
+        const auto &Action = PendingEnvironmentRead->Request;
+        if (Action.Source ==
+            X64ExecutionPolicy::Action::Kind::ReadCurrentThread) {
+          if (auto E = PrepareProcessorView())
+            return E;
+          NextPC = PendingEnvironmentRead->NextPC;
+          continue;
+        }
         auto IRQL = CPU.reg(X64Register::CR8);
         if (!IRQL)
           return IRQL.takeError();
         if (*IRQL != Kernel.currentIRQL())
           return failure("CR8 read disagrees with the active model IRQL");
-        // MOV r64, CR8 only changes its destination and instruction pointer;
-        // do not clobber flags, other registers, or re-count this instruction.
-        if (auto E = CPU.setReg(PendingCR8Read->Destination, *IRQL))
+        // MOV only changes its destination and instruction pointer. Preserve
+        // flags, other registers and the already counted instruction.
+        if (!Action.Destination)
+          return failure("IRQL read lost its destination register");
+        if (auto E = CPU.setReg(*Action.Destination, *IRQL))
           return E;
-        NextPC = PendingCR8Read->NextPC;
+        NextPC = PendingEnvironmentRead->NextPC;
         continue;
       }
       if (PendingGuard) {
@@ -1086,6 +1150,9 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           }
           auto Call = std::move(*Current->ChildCall);
           Current->ChildCall.reset();
+          if (Call.Token.Owner == GuestCallOwner::PoFx)
+            Kernel.enterExecution(
+                Current->Base, Current->ID ? Current->ID : profile::StackBase);
           if (auto E = Kernel.beginGuestCall(Call.Token)) {
             ModelFailure(std::move(E));
             return llvm::Error::success();
@@ -1200,6 +1267,14 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               return llvm::Error::success();
             }
             auto Parent = std::move(Current->Parent);
+            if (auto Wait = Kernel.takeWait()) {
+              if (Parent->Wait) {
+                ModelFailure(
+                    failure("callback cannot replace its caller wait"));
+                return llvm::Error::success();
+              }
+              Parent->Wait = std::move(Wait);
+            }
             if (*Completion) {
               if (!Parent->Wait) {
                 Parent->ResumeValue = **Completion;

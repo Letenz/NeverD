@@ -187,6 +187,9 @@ public:
                                       uint32_t Length,
                                       DriverDmaDirection Direction) const;
   llvm::Error flush(const FlushPlan &Plan);
+  /// Power loss keeps idle adapters and host RAM common buffers alive, but
+  /// cannot interrupt accepted callbacks, packet mappings or transactions.
+  llvm::Error canPowerDownPDO(uint64_t PDO) const;
   llvm::Error canReleasePDO(uint64_t PDO) const;
   llvm::Error canReleaseRange(uint64_t Base, uint64_t Size) const;
   llvm::Error validateGuestAccess(uint64_t Address, uint32_t Size,

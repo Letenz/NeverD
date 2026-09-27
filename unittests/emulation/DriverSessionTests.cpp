@@ -11,6 +11,7 @@
 
 #include "gtest/gtest.h"
 #include "windows/DriverImage.h"
+#include "windows/WindowsKernelLayout.h"
 
 #include "neverd/emulation/DriverSession.h"
 
@@ -130,12 +131,11 @@ TEST(DriverEmulation, StackPivotIntoDriverObjectStopsBeforeAPIDispatch) {
   EXPECT_TRUE(Result->Calls.empty());
 }
 
-TEST(DriverEmulation, UnsupportedGSAccessStopsBeforeReadingUnknownThreadState) {
+TEST(DriverEmulation, CurrentThreadReadUsesTheActiveExecutionIdentity) {
   auto Result = emulateDriver(fixture("gs"));
   ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
-  EXPECT_EQ(Result->Stop, DriverStopReason::UnsupportedInstruction)
-      << Result->Diagnostic;
-  EXPECT_FALSE(Result->NTStatus);
+  EXPECT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
 }
 
 TEST(DriverEmulation, KernelAPIPointersUseCheckedGuestMemory) {
@@ -311,6 +311,16 @@ protected:
     return Path;
   }
 
+  void replaceEntry(llvm::ArrayRef<uint8_t> Code) {
+    uintptr_t Entry = 0;
+    auto Error = Object->getRvaPtr(
+        Object->getPE32PlusHeader()->AddressOfEntryPoint, Entry);
+    ASSERT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    const auto Offset = offset(reinterpret_cast<const void *>(Entry));
+    ASSERT_LE(Offset + Code.size(), Bytes.size());
+    std::copy(Code.begin(), Code.end(), Bytes.begin() + Offset);
+  }
+
   // Append a real DIR64 block to existing file padding, leaving all original
   // imports and code intact. The target is the first eight bytes of that data
   // section; at the preferred base the loader must not alter those bytes.
@@ -363,6 +373,59 @@ protected:
   }
 };
 
+TEST_F(DriverImageValidation, CurrentThreadComparisonsPreserveFlagsAndBudget) {
+  // MOV rax,gs:[0x188]; CMP rax,gs:[0x188]; SETNE al; MOVZX eax,al; RET.
+  const std::array<uint8_t, 25> Code = {
+      0x65, 0x48, 0x8b, 0x04, 0x25, 0x88, 0x01, 0x00, 0x00,
+      0x65, 0x48, 0x3b, 0x04, 0x25, 0x88, 0x01, 0x00, 0x00,
+      0x0f, 0x95, 0xc0, 0x0f, 0xb6, 0xc0, 0xc3};
+  replaceEntry(Code);
+  const auto Path = writeModified();
+  auto Result = emulateDriver(Path);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+  EXPECT_EQ(Result->NTStatus, 0u);
+  EXPECT_EQ(Result->Instructions, 5u);
+
+  DriverOptions Options;
+  Options.InstructionLimit = 1;
+  Result = emulateDriver(Path, Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, DriverStopReason::InstructionLimit);
+  EXPECT_EQ(Result->Instructions, 1u);
+}
+
+TEST_F(DriverImageValidation, PrivateProcessorViewRejectsOrdinaryAddressReads) {
+  // First admit the GS field, then attempt an ordinary absolute address read.
+  std::array<uint8_t, 20> Code = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x88, 0x01,
+                                  0x00, 0x00, 0x48, 0xa1, 0,    0,    0,
+                                  0,    0,    0,    0,    0,    0xc3};
+  llvm::support::endian::write64le(Code.data() + 11,
+                                   profile::ProcessorEnvironmentBase +
+                                       windows::GSCurrentThreadOffset);
+  replaceEntry(Code);
+  auto Result = emulateDriver(writeModified());
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, DriverStopReason::ModelError) << Result->Diagnostic;
+  EXPECT_NE(Result->Diagnostic.find("processor view"), std::string::npos);
+  EXPECT_EQ(Result->Instructions, 2u);
+  EXPECT_FALSE(Result->NTStatus);
+}
+
+TEST_F(DriverImageValidation, UnknownProcessorFieldRemainsUnsupported) {
+  // The neighboring field is not part of the declared current-thread view.
+  std::array<uint8_t, 10> Code = {0x65, 0x48, 0x8b, 0x04, 0x25,
+                                  0,    0,    0,    0,    0xc3};
+  llvm::support::endian::write32le(
+      Code.data() + 5, windows::GSCurrentThreadOffset + profile::PointerSize);
+  replaceEntry(Code);
+  auto Result = emulateDriver(writeModified());
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, DriverStopReason::UnsupportedInstruction);
+  EXPECT_EQ(Result->Instructions, 0u);
+  EXPECT_FALSE(Result->NTStatus);
+}
+
 TEST_F(DriverImageValidation, ExecuteOnlyCodeDoesNotRequireDataReadPermission) {
   bool Changed = false;
   for (const auto &Reference : Object->sections()) {
@@ -410,6 +473,12 @@ TEST_F(DriverImageValidation, RejectsOverlappingVirtualSections) {
 
 TEST_F(DriverImageValidation, RejectsReservedKernelModelAddressRange) {
   put64(&Object->getPE32PlusHeader()->ImageBase, 0x70000000);
+  rejects();
+}
+
+TEST_F(DriverImageValidation, RejectsReservedProcessorViewAddressRange) {
+  put64(&Object->getPE32PlusHeader()->ImageBase,
+        profile::ProcessorEnvironmentBase);
   rejects();
 }
 

@@ -29,6 +29,13 @@ namespace neverd::emulation {
 namespace {
 constexpr uint64_t KibibyteBytes = 1024;
 
+namespace coldField {
+#define NEVERD_DRIVER_D3COLD_FIELD(Name, Spelling)                             \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverD3Cold.def"
+#undef NEVERD_DRIVER_D3COLD_FIELD
+} // namespace coldField
+
 namespace resourceField {
 #define NEVERD_DRIVER_RESOURCE_FIELD(Name, Spelling)                           \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -667,7 +674,7 @@ interruptResources(const llvm::json::Value &Value) {
              interruptField::TranslatedVector, interruptField::TranslatedLevel,
              interruptField::TranslatedAffinity, interruptField::Mode,
              interruptField::Share, interruptField::RetriggerAfter100ns,
-             interruptField::Messages}))
+             interruptField::Messages, interruptField::WakeCapable}))
       return std::move(E);
     auto ID = Object->getString(interruptField::ID);
     auto Mode = Object->getString(interruptField::Mode);
@@ -676,6 +683,12 @@ interruptResources(const llvm::json::Value &Value) {
       return invalid("interrupts require explicit id, mode and share strings");
     DriverInterruptResource Resource;
     Resource.ID = ID->str();
+    if (const auto *Wake = Object->get(interruptField::WakeCapable)) {
+      auto Capable = Wake->getAsBoolean();
+      if (!Capable)
+        return invalid("interrupt wake_capable must be a boolean");
+      Resource.WakeCapable = *Capable;
+    }
     bool ModeFound = false, ShareFound = false;
 #define NEVERD_DRIVER_INTERRUPT_MODE(Name, Value, Spelling)                    \
   if (*Mode == Spelling) {                                                     \
@@ -751,7 +764,8 @@ powerPolicyEvents(const llvm::json::Value &Value) {
     if (!Object)
       return invalid("each power policy event must be an object");
     if (auto E = fields(*Object, {policyField::After100ns,
-                                  policyField::DeviceID, policyField::Action}))
+                                  policyField::DeviceID, policyField::Action,
+                                  policyField::Component, policyField::State}))
       return std::move(E);
     const auto *After = Object->get(policyField::After100ns);
     auto DeviceID = Object->getString(policyField::DeviceID);
@@ -772,7 +786,21 @@ powerPolicyEvents(const llvm::json::Value &Value) {
 #include "neverd/emulation/DriverPowerPolicy.def"
 #undef NEVERD_POWER_POLICY_ACTION
     if (!Found)
-      return invalid("power policy action must be idle, active or wake");
+      return invalid("unsupported power policy event action");
+    for (const auto &[Field, Output] :
+         {std::pair{policyField::Component, &Event.Component},
+          std::pair{policyField::State, &Event.State}}) {
+      if (const auto *Value = Object->get(Field)) {
+        auto Parsed = unsigned64(*Value, Field);
+        if (!Parsed)
+          return Parsed.takeError();
+        if (*Parsed > UINT32_MAX)
+          return invalid("component and state must fit unsigned 32-bit values");
+        *Output = uint32_t(*Parsed);
+      }
+    }
+    if (auto E = validateDriverPowerPolicyEvent(Event))
+      return std::move(E);
     Result.push_back(std::move(Event));
   }
   return Result;
@@ -954,7 +982,7 @@ pnpDevices(const llvm::json::Value &Value) {
                          field::InitialReportedDevicePower,
                          field::RequestedDevicePower, resourceField::Resources,
                          interruptField::Interrupts, dmaField::Dma,
-                         policyField::WakeCapabilities}))
+                         policyField::WakeCapabilities, coldField::D3Cold}))
       return std::move(E);
     auto ID = Object->getString(field::ID);
     auto Bus = Object->getString(field::Bus);
@@ -978,6 +1006,26 @@ pnpDevices(const llvm::json::Value &Value) {
         return invalid(
             "wake_capabilities requires explicit s0 and sx booleans");
       Device.WakeCapabilities = DriverWakeCapabilities{*S0, *Sx};
+    }
+
+    if (const auto *Cold = Object->get(coldField::D3Cold)) {
+      const auto *Facts = Cold->getAsObject();
+      if (!Facts)
+        return invalid("d3cold requires an object");
+      if (auto E =
+              fields(*Facts, {coldField::Supported, coldField::EnabledByDefault,
+                              coldField::WakeS0, coldField::WakeSx}))
+        return std::move(E);
+      auto Supported = Facts->getBoolean(coldField::Supported);
+      auto Default = Facts->getBoolean(coldField::EnabledByDefault);
+      auto WakeS0 = Facts->getBoolean(coldField::WakeS0);
+      auto WakeSx = Facts->getBoolean(coldField::WakeSx);
+      if (!Supported || !Default || !WakeS0 || !WakeSx)
+        return invalid(
+            "d3cold requires explicit supported, enabled_by_default, "
+            "wake_s0 and wake_sx booleans");
+      Device.D3Cold =
+          DriverD3ColdCapabilities{*Supported, *Default, *WakeS0, *WakeSx};
     }
 
     bool Found = false;
@@ -1355,6 +1403,26 @@ registry(const llvm::json::Value &Value) {
 
 } // namespace
 
+llvm::Error
+validateDriverPowerPolicyEvent(const DriverPowerPolicyEvent &Event) {
+  switch (Event.Action) {
+#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
+  case DriverPowerPolicyAction::Name:
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_ACTION
+    break;
+  default:
+    return invalid("unsupported power policy event action");
+  }
+  if (Event.Action == DriverPowerPolicyAction::ComponentIdleState) {
+    if (!Event.Component || !Event.State)
+      return invalid("component_idle_state requires component and state");
+  } else if (Event.Component || Event.State) {
+    return invalid("component and state require component_idle_state");
+  }
+  return llvm::Error::success();
+}
+
 const char *devicePnpFinalStatusError(DevicePnpRequest Request,
                                       uint32_t Status) {
   if (!supportedPnpRequest(Request))
@@ -1670,6 +1738,20 @@ llvm::Error validateDmaEvents(const DriverOptions &Options) {
 }
 } // namespace
 
+llvm::Error validateDriverD3Cold(const DriverPnpDevice &Device) {
+  if (!Device.D3Cold)
+    return llvm::Error::success();
+  const auto &Cold = *Device.D3Cold;
+  if (!Cold.Supported && (Cold.EnabledByDefault || Cold.WakeS0 || Cold.WakeSx))
+    return invalid("d3cold policy and wake require provider support");
+  if ((Cold.WakeS0 &&
+       (!Device.WakeCapabilities || !Device.WakeCapabilities->S0)) ||
+      (Cold.WakeSx &&
+       (!Device.WakeCapabilities || !Device.WakeCapabilities->Sx)))
+    return invalid("d3cold wake requires corresponding wake_capabilities");
+  return llvm::Error::success();
+}
+
 llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   if (auto E = validateDriverInterrupts(Devices))
     return E;
@@ -1686,6 +1768,8 @@ llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   std::vector<Interval> TranslatedRanges;
   size_t ResourceCount = 0, RegisterCount = 0;
   for (const auto &Device : Devices) {
+    if (auto E = validateDriverD3Cold(Device))
+      return E;
     switch (Device.Bus) {
     case DriverBusKind::ResourceFree:
       if (!Device.Resources.empty())
@@ -1908,18 +1992,11 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return invalid("combined power policy event limit exceeded");
     PolicyEvents += Request.PowerPolicyEvents.size();
     for (const auto &Event : Request.PowerPolicyEvents) {
+      if (auto E = validateDriverPowerPolicyEvent(Event))
+        return E;
       if (!DeviceIDs.contains(Event.DeviceID) || Event.After100ns > INT64_MAX)
         return invalid(
             "power policy event requires a configured PDO and bounded time");
-      switch (Event.Action) {
-#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
-  case DriverPowerPolicyAction::Name:
-#include "neverd/emulation/DriverPowerPolicy.def"
-#undef NEVERD_POWER_POLICY_ACTION
-        break;
-      default:
-        return invalid("unsupported power policy event action");
-      }
     }
 
     if (auto E = validateDriverUserMemory(Request))
