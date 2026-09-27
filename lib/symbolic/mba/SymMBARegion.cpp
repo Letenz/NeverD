@@ -347,19 +347,26 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
   const Candidate *Best = nullptr;
   SymReadability BestCost;
+  SymReadability RawBest =
+      readingScore(Ctx, Candidates.empty() ? E : Candidates.front().Expr);
+  for (const Candidate &C : Candidates)
+    RawBest = std::min(RawBest, readingScore(Ctx, C.Expr));
   llvm::SmallVector<std::pair<SymRef, SymRef>, 8> FactoredForms;
   for (Candidate &C : Candidates) {
     if (!C.Proven)
       continue;
     // Compare completed forms: a slightly larger basis expansion can expose
     // repeated coefficients whose factored spelling beats the shorter basis.
-    // Normalize each unique proved form once, retaining it on refusal.
+    // Complete only forms that would otherwise be discarded. The winning
+    // spelling still gets the public final coefficient stage; factoring it
+    // here would repeatedly normalize deep regions and hide useful children.
+    // Normalize each unique losing form once, retaining it on refusal.
     auto Found = llvm::find_if(FactoredForms, [&](const auto &Entry) {
       return Entry.first == C.Expr;
     });
     if (Found != FactoredForms.end())
       C.Expr = Found->second;
-    else if (!Budget.exhausted()) {
+    else if (!Budget.exhausted() && RawBest < readingScore(Ctx, C.Expr)) {
       const SymRef Before = C.Expr;
       SolveReport Factored;
       C.Expr = solveCoefficientFactors(Ctx, Before, Opts, Budget, Factored);

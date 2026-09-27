@@ -42,6 +42,7 @@ TEST(SymReadability, CountsRenderedSignsAndInfixChains) {
              Case{"x!=y", 3, 1},
              Case{"~(-1+x+y)", 6, 3},
              Case{"-~x", 3, 2},
+             Case{"~-x", 3, 1},
              Case{"x+1", 3, 1},
          }) {
       SCOPED_TRACE(Width);

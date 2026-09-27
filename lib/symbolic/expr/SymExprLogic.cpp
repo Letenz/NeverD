@@ -326,6 +326,11 @@ SymRef SymContext::mkNot(SymRef A) {
     return mkConst(~constValue(A));
   if (op(A) == SymOp::Not)
     return operand(A, 0);
+  // A negated free input needs one fewer operation as x - 1. Keep compound
+  // sources opaque, since their complement can identify a shared factor.
+  if (W > 1 && op(A) == SymOp::Mul && numOperands(A) == 2 &&
+      isConstOnes(operand(A, 0)) && isVar(operand(A, 1)))
+    return mkAdd(operand(A, 1), mkOnes(W));
   // One-bit flag networks retain their Boolean spelling for comparison
   // recovery; affine word normalization belongs to wider arithmetic.
   if (W > 1 && op(A) == SymOp::Add) {
