@@ -99,6 +99,10 @@ LocalRegisterEffect localRegisterEffect(const BinaryImage &Img,
         // wide as a later read needs it.
         if (Op.Output.Size >= 4)
           Step.Kills |= Bit;
+        else if (auto Family = gprFamilyOf(Img.Arch, Op.Output.Offset);
+                 Family && Op.Output.Offset % 8 == 0)
+          Step.LowWrites[*Family] = std::max<uint8_t>(
+              Step.LowWrites[*Family], static_cast<uint8_t>(Op.Output.Size));
       }
       const auto [Control, Flags] = ControlOf(I);
       const bool TailCall = Control == LowInstructionControl::TailCall;
@@ -191,6 +195,9 @@ GPRReadWidths entryLiveWidths(const LocalRegisterEffect &F,
           joinReads(Live, R->second);
       }
       Clear(Live, Step.Kills);
+      for (size_t I = 0; I < Live.size(); ++I)
+        if (Step.LowWrites[I] && Live[I] <= Step.LowWrites[I])
+          Live[I] = 0;
       joinReads(Live, Step.Reads);
     }
     return Live;
