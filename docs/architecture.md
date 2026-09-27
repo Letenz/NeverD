@@ -1356,6 +1356,9 @@ word width. This relation needs no inverse, including for even coefficients.
 A hash index only selects candidates for the full comparison. Replacements
 refer to the original placeholders without following newly created aliases;
 the same work and storage bounds cover indexing and rebuilding.
+If this exact abstraction becomes a literal constant, the region retains it
+through the ordinary proof and cost checks, charging the single zero-input
+corner. Nonliteral zero-input expressions remain ineligible.
 
 Restoring hidden inputs can expose a new bitwise relation outside the deep
 walk's original postorder. A strictly smaller restored Add/Mul result with
