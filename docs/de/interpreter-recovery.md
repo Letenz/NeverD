@@ -50,8 +50,10 @@ Die PE-Rekonstruktion erfordert vollständige Abbildmetadaten einschließlich al
 Nur vollständige, dateigestützte und schreibgeschützte Bereiche ohne
 überlappende Mappings oder Loader-Fixups dürfen konstante Abbildlesevorgänge
 begründen. Schreibbare Tabellen, nicht aufgelöste Relokationen und punktuelle
-Laufzeitschnappschüsse belegen keine Unveränderlichkeit. COPY-Relokationen und
-unvollständige Ausnahmemetadaten werden vorsorglich abgelehnt. Der Gültigkeitsbereich
+Laufzeitschnappschüsse belegen keine Unveränderlichkeit. COPY-Relokationen und strukturell unvollständige Ausnahmedirektoren werden
+abgelehnt. Ist das PE-Verzeichnis samt Funktionsbereichen vollständig, hindert
+ein unbekannter Handler in einer anderen Funktion die Analyse nicht; erreicht
+die Wiederherstellung dessen Codebereich, wird sie abgelehnt. Der Gültigkeitsbereich
 verlangt normale ABI-Rückgaben: Der Zielbereich jedes Schreibzugriffs externen
 Ursprungs muss vom Speicherplatz der Eintritts-Rücksprungadresse getrennt sein.
 Dies ist eine ausdrückliche Voraussetzung an Aufrufer und Umgebung, auch bei

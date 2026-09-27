@@ -48,9 +48,10 @@ La récupération PE exige toutes les métadonnées de l’image, y compris les 
 Seules des plages complètes en lecture seule, adossées au fichier et dépourvues
 de mappages superposés ou de corrections du chargeur, peuvent fournir des
 lectures constantes de l’image. Les tables modifiables, relocations non résolues
-et instantanés d’exécution ne prouvent pas l’immuabilité des lectures. Les
-relocations COPY et métadonnées d’exceptions incomplètes sont refusées par
-prudence. Le domaine de validité exige des retours ABI ordinaires : la plage
+et instantanés d’exécution ne prouvent pas l’immuabilité des lectures. Les relocations COPY et les répertoires d’exceptions structurellement
+incomplets sont refusés. Si le répertoire PE et les plages de fonctions sont
+complets, un gestionnaire inconnu dans une autre fonction ne bloque pas
+l’analyse de l’entrée choisie ; atteindre son code arrête la récupération. Le domaine de validité exige des retours ABI ordinaires : la plage
 cible de toute écriture issue de données externes doit être disjointe de
 l’emplacement de l’adresse de retour à l’entrée. C’est une précondition explicite
 de l’appelant et de l’environnement, y compris pour les adresses calculées à

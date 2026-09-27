@@ -49,7 +49,10 @@ absence of fixups or exceptional edges.
 Only complete file-backed, read-only ranges without overlapping mappings or
 loader fixups can supply constant image reads. Writable tables, unresolved
 relocations, and a sampled runtime snapshot are not immutable-read evidence.
-COPY relocations and incomplete exception metadata are conservatively refused.
+COPY relocations and structurally incomplete exception directories are refused.
+A PE can contain an undecoded handler in an unrelated function when the
+directory and function ranges are complete; reaching that handler still stops
+recovery.
 The source domain requires ordinary ABI returns: every external-origin store's
 target range is disjoint from the entry return-address slot. This is an explicit
 caller/environment precondition, including addresses computed from external

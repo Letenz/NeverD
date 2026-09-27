@@ -17,6 +17,30 @@
 namespace neverd::analysis {
 namespace {
 
+bool hasUsableExceptionCoverage(const BinaryImage &Image) {
+  const ExceptionInfo &Info = Image.ExceptionMetadata;
+  if (Info.ParseStatus == ExceptionParseStatus::Complete)
+    return true;
+  // A full PE directory can be structurally complete while a different
+  // function's language handler remains unknown. The provider checks every
+  // covering record at each reached instruction, so only a partial result
+  // accounted for by valid, localized records may be considered here.
+  if (Image.Format != BinaryFormat::COFF ||
+      Info.ParseStatus != ExceptionParseStatus::Partial ||
+      (Info.StructuralDecode ? Info.StructuralDecode->ParseStatus !=
+                                   ExceptionParseStatus::Complete
+                             : !Info.Diagnostics.empty()))
+    return false;
+  bool HasPartialFunction = false;
+  for (const ExceptionFunction &Function : Info.Functions) {
+    if (!Function.CodeRange.isValid() ||
+        Function.ParseStatus == ExceptionParseStatus::Malformed)
+      return false;
+    HasPartialFunction |= Function.ParseStatus == ExceptionParseStatus::Partial;
+  }
+  return HasPartialFunction;
+}
+
 class ImageProvider final : public SpecializationProvider {
   const BinaryImage &Image;
   Decoder Decode;
@@ -177,7 +201,7 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
         "interpreter specialization requires a linked x64 ELF or PE image";
     return Result;
   }
-  if (Image.ExceptionMetadata.ParseStatus != ExceptionParseStatus::Complete) {
+  if (!hasUsableExceptionCoverage(Image)) {
     SpecializationResult Result;
     Result.Status = SpecializationStatus::Unsupported;
     Result.Diagnostic =

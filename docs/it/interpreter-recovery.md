@@ -48,8 +48,10 @@ Il recupero PE richiede tutti i metadati dell’immagine, comprese le rilocazion
 Solo intervalli completi di sola lettura, sostenuti dal file e privi di
 mappature sovrapposte o correzioni del loader, possono fornire letture costanti
 dell’immagine. Tabelle scrivibili, rilocazioni non risolte e istantanee campionate
-durante l’esecuzione non provano l’immutabilità. Rilocazioni COPY e metadati
-delle eccezioni incompleti vengono rifiutati in modo conservativo. Il dominio
+durante l’esecuzione non provano l’immutabilità. Le rilocazioni COPY e le directory delle eccezioni strutturalmente incomplete
+vengono rifiutate. Se la directory PE e gli intervalli delle funzioni sono
+completi, un gestore sconosciuto in un’altra funzione non blocca l’analisi
+dell’ingresso scelto; raggiungere il codice che copre interrompe il recupero. Il dominio
 ammesso richiede ritorni ABI ordinari: l’intervallo di destinazione di ogni
 scrittura di origine esterna deve essere disgiunto dallo slot dell’indirizzo
 di ritorno all’ingresso. È una precondizione esplicita per chiamante e ambiente,

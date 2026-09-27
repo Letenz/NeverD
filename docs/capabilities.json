@@ -9371,7 +9371,7 @@
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
         "Calls, exception/reentry boundaries, mutable code, unresolved control and exhausted budgets refuse recovery.",
         "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
-        "PE recovery requires complete image-wide relocation and exception metadata; source recovery does not certify binary replacement."
+        "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories and reached exception handlers refuse recovery; source recovery does not certify binary replacement."
       ],
       "tests": [
         {

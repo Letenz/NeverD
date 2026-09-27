@@ -487,6 +487,38 @@ TEST_F(DevirtualizationSourceTest, PERecoveryRequiresFullMetadataAndFileHash) {
   ASSERT_EQ(Image->Format, BinaryFormat::COFF);
   const auto Entry = Image->Entry;
   ASSERT_NE(Entry, 0u);
+
+  const ExceptionInfo OriginalExceptions = Image->ExceptionMetadata;
+  ExceptionFunction Unrelated;
+  Unrelated.CodeRange = {Entry + 0x100000, Entry + 0x100010};
+  Unrelated.ParseStatus = ExceptionParseStatus::Partial;
+  Image->ExceptionMetadata.Functions.push_back(Unrelated);
+  Image->ExceptionMetadata.ParseStatus = ExceptionParseStatus::Partial;
+  Image->ExceptionMetadata.rebuildIndex();
+  const auto Localized =
+      analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
+  EXPECT_TRUE(Localized.complete()) << Localized.Diagnostic;
+  // A partial record covering the reached function is still an unsupported
+  // exceptional edge, even when the PE directory itself is well formed.
+  Image->ExceptionMetadata.Functions.back().CodeRange = {Entry, Entry + 16};
+  const auto Covering =
+      analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
+  EXPECT_EQ(Covering.Status, analysis::SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Covering.Residual.Blocks.empty());
+  Image->ExceptionMetadata.Functions.back().CodeRange = Unrelated.CodeRange;
+  Image->ExceptionMetadata.Diagnostics.push_back("incomplete PE directory");
+  const auto Unattributed =
+      analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
+  EXPECT_EQ(Unattributed.Status, analysis::SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Unattributed.Residual.Blocks.empty());
+  Image->ExceptionMetadata.Diagnostics.clear();
+  Image->ExceptionMetadata.Functions.back().CodeRange = {};
+  const auto Unbounded =
+      analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
+  EXPECT_EQ(Unbounded.Status, analysis::SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Unbounded.Residual.Blocks.empty());
+  Image->ExceptionMetadata = OriginalExceptions;
+
   BinaryLoadOptions RestrictedOptions;
   RestrictedOptions.OnlyFunctionEntries.insert(Entry);
   auto Restricted = loadBinary(Binary, RestrictedOptions);

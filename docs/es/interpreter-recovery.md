@@ -48,9 +48,10 @@ La recuperación PE requiere todos los metadatos de la imagen, incluidas las reu
 Solo los rangos completos de solo lectura respaldados por el archivo, sin
 mapeos superpuestos ni ajustes del cargador, pueden proporcionar lecturas
 constantes de la imagen. Las tablas modificables, relocaciones sin resolver y
-capturas puntuales de ejecución no demuestran la inmutabilidad. Las
-relocaciones COPY y los metadatos incompletos de excepciones se rechazan de
-forma conservadora. El dominio admitido exige retornos ABI ordinarios: el rango
+capturas puntuales de ejecución no demuestran la inmutabilidad. Las relocaciones COPY y los directorios de excepciones estructuralmente
+incompletos se rechazan. Si el directorio PE y los rangos de funciones están
+completos, un controlador desconocido en otra función no impide analizar la
+entrada elegida; alcanzar el código que cubre detiene la recuperación. El dominio admitido exige retornos ABI ordinarios: el rango
 de destino de cada escritura de origen externo debe ser disjunto del espacio
 de la dirección de retorno al entrar. Es una precondición explícita del
 llamador y del entorno, incluso para direcciones calculadas a partir de enteros
