@@ -443,14 +443,13 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
         continue;
-      // x87 bitcasts need a 10-byte representation copy in C.  A numeric C
-      // cast, used for ordinary inlined casts, would change their value.
-      if (const auto *Cast = llvm::dyn_cast<llvm::BitCastInst>(&Inst))
-        if ((Cast->getSrcTy()->isIntegerTy(80) &&
-             Cast->getDestTy()->isX86_FP80Ty()) ||
-            (Cast->getSrcTy()->isX86_FP80Ty() &&
-             Cast->getDestTy()->isIntegerTy(80)))
-          continue;
+      // Updating one vector lane requires a copy followed by an assignment.
+      if (llvm::isa<llvm::InsertElementInst>(&Inst))
+        continue;
+      // Floating-point bitcasts copy the representation, rather than
+      // performing the numeric conversion used by ordinary C casts.
+      if (isFloatingPointBitcast(Inst))
+        continue;
       if (foldImmediate(&Inst)) {
         Analysis.Inlinable.insert(&Inst);
         continue;
@@ -676,6 +675,12 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
                     Used = true;
                 if (Used)
                   Sinks.insert(CB);
+                continue;
+              }
+              // C comparison operands have no evaluation order. Retain the
+              // LLVM call order even when the comparison itself is inlined.
+              if (llvm::isa<llvm::FCmpInst>(I)) {
+                Blocked = true;
                 continue;
               }
               if (llvm::isa<llvm::CastInst, llvm::FreezeInst, llvm::LoadInst>(
@@ -3198,7 +3203,8 @@ void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
   };
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
-      if (Inst.getType()->isVoidTy() || llvm::isa<llvm::FreezeInst>(&Inst))
+      if (Inst.getType()->isVoidTy() || llvm::isa<llvm::FreezeInst>(&Inst) ||
+          isFloatingPointBitcast(Inst))
         continue;
       if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst))
         if (!Load->isSimple())
@@ -3225,7 +3231,8 @@ void LLVMCWriter::markComposedPrints(llvm::Function &Fn) {
     Changed = false;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
-        if (Inst.getType()->isVoidTy() || Analysis.Inlinable.count(&Inst))
+        if (Inst.getType()->isVoidTy() || Analysis.Inlinable.count(&Inst) ||
+            isFloatingPointBitcast(Inst))
           continue;
         const bool Chain = llvm::isa<llvm::CastInst>(&Inst) ||
                            (llvm::isa<llvm::BinaryOperator>(&Inst) &&

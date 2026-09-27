@@ -518,6 +518,9 @@ constexpr int kMaxCExprPrintDepth = 200;
 /// Pointer-chain walk when asking whether a C type contains a function.
 constexpr unsigned kMaxCPointerNesting = 16;
 
+/// Largest fixed integer vector represented by a C compiler vector type.
+constexpr unsigned kMaxCIntegerVectorBytes = 64;
+
 /// HighC dead-store / store-forward expression walks.
 constexpr unsigned kMaxHighCMemoryWalkDepth = 128;
 

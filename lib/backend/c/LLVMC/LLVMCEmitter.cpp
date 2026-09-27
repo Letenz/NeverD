@@ -100,6 +100,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
     OS << "\n";
   } else {
     writeReferencedImageObjects(*OnlyFunction);
+    writeForwardDecls(Mod);
   }
 
   for (auto &Fn : Mod) {
@@ -141,9 +142,11 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
             continue;
           auto Name = Callee->getName().str();
 
-          if (llvmIntrinsicToCName(Name.c_str())) {
+          if (const char *Mapped = llvmIntrinsicToCName(Name.c_str())) {
             HasCIntrinsics = true;
             IntrinsicMappedNames.insert(Name);
+            if (const char *Header = libc::headerFor(Mapped))
+              Headers.insert(Header);
           }
           if (isX86FastFailName(Name))
             HasCIntrinsics = true;
@@ -374,11 +377,27 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
 
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
-    if (!Fn.isDeclaration())
+    if (OnlyFunction) {
+      // Vector declarations retain the calling convention in a selected
+      // function fragment without expanding its scalar declaration surface.
+      const auto *Signature = Fn.getFunctionType();
+      const bool HasVectorSignature =
+          Signature->getReturnType()->isVectorTy() ||
+          llvm::any_of(Signature->params(), [](const llvm::Type *Type) {
+            return Type->isVectorTy();
+          });
+      if (!HasVectorSignature || &Fn == OnlyFunction ||
+          !llvm::any_of(Fn.users(), [&](const llvm::User *User) {
+            const auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User);
+            return Instruction && Instruction->getFunction() == OnlyFunction;
+          }))
+        continue;
+    } else if (!Fn.isDeclaration())
       continue;
     if (Fn.isIntrinsic())
       continue;
-    if (GuardAnalysisOnlyFunctions && !isReferencedByExecutableProjection(Fn))
+    if (!OnlyFunction && GuardAnalysisOnlyFunctions &&
+        !isReferencedByExecutableProjection(Fn))
       continue;
 
     std::string RawName = Fn.getName().str();
@@ -557,6 +576,37 @@ static bool containsVectorType(llvm::Type *Type) {
   return containsVectorType(Type, Seen);
 }
 
+static bool isCVectorBoundaryType(llvm::Type *Type) {
+  return isCIntegerVectorType(Type) || !containsVectorType(Type);
+}
+
+static bool isCVectorBoundarySignature(const llvm::FunctionType *Type) {
+  return isCVectorBoundaryType(Type->getReturnType()) &&
+         llvm::all_of(Type->params(), isCVectorBoundaryType);
+}
+
+static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst) {
+  if (!isCVectorBoundaryType(Inst.getType()) ||
+      !llvm::all_of(Inst.operands(), [](const llvm::Use &Operand) {
+        return isCVectorBoundaryType(Operand->getType());
+      }))
+    return false;
+  // The scalarizer retains gathers/scatters at function boundaries. C vector
+  // types preserve those lanes and their calling convention; arithmetic and
+  // memory operations still need the existing explicit scalar lowering.
+  if (llvm::isa<llvm::ExtractElementInst, llvm::InsertElementInst,
+                llvm::ReturnInst, llvm::PHINode>(Inst))
+    return true;
+  if (const auto *Select = llvm::dyn_cast<llvm::SelectInst>(&Inst))
+    return Select->getCondition()->getType()->isIntegerTy(1);
+  if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+    const auto *Callee = Call->getCalledFunction();
+    return Callee && !Callee->isIntrinsic() &&
+           isCVectorBoundarySignature(Call->getFunctionType());
+  }
+  return false;
+}
+
 bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
@@ -620,15 +670,17 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         continue;
       if (!ProjectionOnly && F.isDeclaration() && F.isIntrinsic())
         continue;
-      if (containsVectorType(F.getFunctionType()))
+      if (!isCVectorBoundarySignature(F.getFunctionType()))
         throw std::runtime_error(
             "C projection retains an unsupported vector signature");
       for (const auto &BB : F)
         for (const auto &I : BB)
-          if (containsVectorType(I.getType()) ||
-              llvm::any_of(I.operands(), [](const llvm::Use &Operand) {
-                return containsVectorType(Operand->getType());
-              }))
+          if ((containsVectorType(I.getType()) ||
+               llvm::any_of(I.operands(),
+                            [](const llvm::Use &Operand) {
+                              return containsVectorType(Operand->getType());
+                            })) &&
+              !isCVectorBoundaryInstruction(I))
             throw std::runtime_error(
                 "C projection retains an unsupported vector instruction");
     }

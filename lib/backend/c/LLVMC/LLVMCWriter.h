@@ -99,6 +99,8 @@ public:
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
   void markInlinable(llvm::Function &Fn);
+  static bool isFloatingPointBitcast(const llvm::Instruction &Inst);
+  std::string fcmpInlineText(const llvm::FCmpInst &Compare);
   /// A call whose result is printed at exactly one later instruction is
   /// inlined there. Ctor returns, noreturn, and values with two printed
   /// uses stay assigned. A call that mentions a slot is not moved past a

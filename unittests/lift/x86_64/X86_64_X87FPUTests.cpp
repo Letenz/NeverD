@@ -83,6 +83,71 @@ TEST_F(X86_64_X87FPU, DecompileSucceeds) {
 
 TEST_F(X86_64_X87FPU, AllModesSucceed) { verifyAllModesSucceed(testObj()); }
 
+TEST_F(X86_64_X87FPU, EmittedCExecutesArithmeticAndDynamicRounding) {
+#if !defined(__x86_64__) || !defined(__linux__)
+  GTEST_SKIP() << "native x87 C execution requires Linux x86-64";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Clang is required for emitted C execution";
+  auto Decompiled = decompileToC(testObj());
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  const auto Source = tmpFile("decompiled.c");
+  std::ofstream Output(Source, std::ios::app);
+  Output << R"(
+typedef uint64_t lanes __attribute__((vector_size(16)));
+static uint64_t bits(double value) {
+  uint64_t result;
+  __builtin_memcpy(&result, &value, sizeof(result));
+  return result;
+}
+int main(void) {
+  const double values[][2] = {{2.5, 1.25}, {-6, 2}, {-0.0, 2}, {4, 4}};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    const double a = values[i][0], b = values[i][1];
+    const lanes left = {bits(a), UINT64_MAX}, right = {bits(b), 123};
+    if (test_fadd(left, right)[0] != bits((double)((long double)a + b)) ||
+        test_fsub(left, right)[0] != bits((double)((long double)a - b)) ||
+        test_fmul(left, right)[0] != bits((double)((long double)a * b)) ||
+        test_fdiv(left, right)[0] != bits((double)((long double)a / b)) ||
+        test_fabs(left)[0] != bits(__builtin_fabs(a)) ||
+        test_fchs(left)[0] != bits(-a)) return 1;
+  }
+  if (test_fsqrt((lanes){bits(4.0), 0})[0] != bits(2.0)) return 2;
+  const int32_t integers[] = {0, -1, 17, INT32_MIN, INT32_MAX};
+  for (unsigned i = 0; i < sizeof(integers) / sizeof(integers[0]); ++i)
+    if (test_fild_fistp((uint32_t)integers[i]) != (uint32_t)integers[i]) return 3;
+  uint16_t saved;
+  __asm__ volatile("fnstcw %0" : "=m"(saved));
+  int failed = 0;
+  for (unsigned mode = 0; mode < 4; ++mode) {
+    uint16_t control = (saved & ~0x0c00u) | (mode << 10);
+    __asm__ volatile("fldcw %0" : : "m"(control));
+    for (unsigned i = 0; i < 4; ++i) {
+      const double input = i & 1 ? -2.5 : 1.75;
+      long double expected;
+      __asm__ volatile("frndint" : "=t"(expected) : "0"((long double)input));
+      if (test_frndint((lanes){bits(input), 0})[0] != bits((double)expected))
+        failed = 4;
+    }
+  }
+  __asm__ volatile("fldcw %0" : : "m"(saved));
+  return failed;
+}
+)";
+  Output.close();
+  const auto Binary = tmpFile("x87-c-execution");
+  for (const std::string Optimization : {"-O0", "-O2"}) {
+    auto Compiled = exec(NEVERD_TEST_CLANG,
+                         {"-std=c11", Optimization, "-Werror=uninitialized",
+                          "-Werror=return-type", Source.string(), "-lm", "-o",
+                          Binary.string()});
+    ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+    auto Executed = exec(Binary.string(), {});
+    EXPECT_EQ(Executed.exitCode, 0) << Executed.err << Optimization;
+  }
+#endif
+}
+
 TEST_F(X86_64_X87FPU, HighCFpremKeeps80BitOperandsAndStatus) {
   HighFunc Func;
   Func.Entry = 0x1000;

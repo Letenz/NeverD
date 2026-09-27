@@ -81,6 +81,8 @@ inline bool isMsvcIndirectReturn(const TypeRef &Ty) {
 std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator);
 
 std::string typeToCLLVM(llvm::Type *Ty);
+/// Fixed, power-of-two integer vectors with native C lane widths.
+bool isCIntegerVectorType(llvm::Type *Ty);
 std::string llvmStructName(llvm::StructType *ST);
 
 std::string escapeCString(llvm::StringRef Str);
