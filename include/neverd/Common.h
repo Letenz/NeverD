@@ -64,9 +64,9 @@ enum class NameOrigin { Synthesized, Analysis, Stated, User };
 /// nothing else, which is what every mint site produces.  Requiring the exact
 /// shape keeps a binary that genuinely exports `sub_total` or `func_ptr` from
 /// having its own name treated as up for grabs.
-/// MSVC RTTI `TypeDescriptor` name (`.?AVInner@Outer@Ns@@`) → `Ns::Outer::Inner`.
-/// Templates and other non-identifier decorations stay empty so callers can
-/// keep the raw string rather than invent a spelling.
+/// MSVC RTTI `TypeDescriptor` name (`.?AVInner@Outer@Ns@@`) →
+/// `Ns::Outer::Inner`. Templates and other non-identifier decorations stay
+/// empty so callers can keep the raw string rather than invent a spelling.
 inline std::string msvcRttiTypeSpelling(llvm::StringRef Raw) {
   if (Raw.starts_with(".?AV") || Raw.starts_with(".?AU") ||
       Raw.starts_with(".?AT"))
@@ -326,7 +326,33 @@ inline bool isDarwinStackProbeName(llvm::StringRef Name) {
 /// Backend support (lift/codegen/patch): neverd/ArchSupport.h.
 enum class Arch : uint8_t { X64, AArch64, X86, ARM, EVM, SBF, Unknown };
 
-enum class InstructionMode : uint8_t { Default, ARM, Thumb };
+enum class InstructionMode : uint8_t {
+  Default,
+  ARM,
+  Thumb,
+  /// Image metadata with distinct ARM and Thumb code regions. A single
+  /// instruction decoder or code generator cannot consume this image mode.
+  MixedARMThumb
+};
+
+inline bool isSingleInstructionMode(InstructionMode Mode) {
+  return Mode == InstructionMode::Default || Mode == InstructionMode::ARM ||
+         Mode == InstructionMode::Thumb;
+}
+
+inline const char *getInstructionModeName(InstructionMode Mode) {
+  switch (Mode) {
+  case InstructionMode::Default:
+    return "default";
+  case InstructionMode::ARM:
+    return "arm";
+  case InstructionMode::Thumb:
+    return "thumb";
+  case InstructionMode::MixedARMThumb:
+    return "mixed_arm_thumb";
+  }
+  return "unknown";
+}
 
 inline const char *getArchName(Arch A) {
   switch (A) {

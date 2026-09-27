@@ -77,6 +77,10 @@ const char *neverd_disasm_json(neverd_session_t Sess, neverd_va_t Addr,
     S->setError("no binary loaded");
     return dupStr(std::string("[]"));
   }
+  if (S->Img.Mode == InstructionMode::MixedARMThumb) {
+    S->setError("mixed ARM/Thumb decoding unsupported");
+    return dupStr(std::string("[]"));
+  }
 
   if (S->Img.Arch == Arch::EVM) {
     if (!S->ensurePipeline() || !S->PipeResult.EVM)
@@ -212,6 +216,10 @@ const char *neverd_disasm_text(neverd_session_t Sess,
   auto *S = static_cast<Session *>(Sess);
   if (!S || !S->Loaded)
     return nullptr;
+  if (S->Img.Mode == InstructionMode::MixedARMThumb) {
+    S->setError("mixed ARM/Thumb decoding unsupported");
+    return nullptr;
+  }
 
   if (S->Img.Arch == Arch::EVM) {
     if (!S->ensurePipeline() || !S->PipeResult.EVM)

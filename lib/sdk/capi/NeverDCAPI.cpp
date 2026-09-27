@@ -207,6 +207,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Decoder::init retains its existing state on failure, so it is the final
   // preparation step before publishing the replacement.
   if (Image.Arch != Arch::EVM && Image.Arch != Arch::SBF &&
+      Image.Mode != InstructionMode::MixedARMThumb &&
       !S.Dec.init(Image.Arch, Image.Mode)) {
     S.setError("failed to init decoder for arch");
     return 0;
@@ -215,6 +216,8 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   // Dispose analysis while the image/debug objects it was built from still
   // exist. clearPipeline also releases LLVM modules before their context.
   S.clearPipeline();
+  if (Image.Mode == InstructionMode::MixedARMThumb)
+    S.Dec.reset();
   S.Img = std::move(Image);
   S.FilePath = std::move(Path);
   S.SanitizeSourcePath = std::move(SanitizeSourcePath);
@@ -368,9 +371,8 @@ neverd_va_t neverd_session_resolve_function_name_before_load(
       !S->DbgRequest.Enabled || S->DbgRequest.PDBPath.empty())
     return 0;
   try {
-    return resolvePDBPublicFunctionNameHint(
-               std::filesystem::u8path(BinaryPath), S->DbgRequest.PDBPath,
-               Name)
+    return resolvePDBPublicFunctionNameHint(std::filesystem::u8path(BinaryPath),
+                                            S->DbgRequest.PDBPath, Name)
         .value_or(0);
   } catch (const std::exception &) {
     // An optional pre-load lookup never replaces normal load diagnostics.

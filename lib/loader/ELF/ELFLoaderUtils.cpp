@@ -105,7 +105,8 @@ std::optional<va_t> armPLTVeneerTarget(const uint8_t *Bytes, size_t Available,
 } // anonymous namespace
 
 size_t recordARMPLTVeneers(BinaryImage &Img) {
-  if (Img.Arch != Arch::ARM || Img.Imports.empty())
+  if (Img.Arch != Arch::ARM || Img.Imports.empty() ||
+      !isSingleInstructionMode(Img.Mode))
     return 0;
 
   std::map<va_t, size_t> CellOwners;
@@ -124,14 +125,12 @@ size_t recordARMPLTVeneers(BinaryImage &Img) {
     if (Sec.Size == 0 || Sec.Size > std::numeric_limits<size_t>::max())
       continue;
     const size_t Size = static_cast<size_t>(Sec.Size);
-    const uint8_t *Bytes = !Sec.Data.empty()
-                               ? Sec.Data.data()
-                               : Img.readVA(Sec.VA, Size);
+    const uint8_t *Bytes =
+        !Sec.Data.empty() ? Sec.Data.data() : Img.readVA(Sec.VA, Size);
     if (!Bytes)
       continue;
-    const size_t Available = !Sec.Data.empty()
-                                 ? std::min<size_t>(Sec.Data.size(), Size)
-                                 : Size;
+    const size_t Available =
+        !Sec.Data.empty() ? std::min<size_t>(Sec.Data.size(), Size) : Size;
 
     // Every entry is word-aligned, and the header the linker puts first is
     // not an entry.  Stepping a word at a time rather than an entry at a time

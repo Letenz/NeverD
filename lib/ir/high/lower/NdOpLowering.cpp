@@ -90,11 +90,7 @@ void MedToHighConverter::lowerStore(HighFunc &Func, const MedOp &CurOp) {
   S.MemoryOrdering = CurOp.MemoryOrdering;
   S.MemoryAddressSpace = CurOp.MemoryAddressSpace;
   if (CurOp.NumInputs >= 2) {
-    auto &AddrVar = CurOp.Inputs[0];
-    ExprPtr AddrExpr;
-    if (AddrVar.Id >= 0)
-      AddrExpr = inlineableDefinition(varKey(AddrVar));
-    S.StoreAddr = AddrExpr ? AddrExpr : medvarToExpr(AddrVar);
+    S.StoreAddr = memoryAddressExpr(CurOp.Inputs[0]);
 
     auto ValKey = std::make_pair(CurOp.Inputs[1].Id, CurOp.Inputs[1].SSAVer);
     if (CallOutputs.count(ValKey))

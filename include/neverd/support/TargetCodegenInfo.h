@@ -39,6 +39,8 @@ struct TargetCodegenInfo {
   /// Append a single architectural NOP instruction to \p Code.
   /// Returns false for an unsupported architecture (nothing appended).
   bool appendNop(std::vector<uint8_t> &Code) const {
+    if (!isSingleInstructionMode(Mode))
+      return false;
     switch (TheArch) {
     case Arch::X64:
     case Arch::X86:
@@ -69,7 +71,9 @@ struct TargetCodegenInfo {
 
   /// Fill [Dst, Dst+Len) with inter-function padding: INT3 on x86 (traps on
   /// stray execution), NOP on AArch64, and the selected ARM-state NOP.
-  void fillPadding(uint8_t *Dst, uint64_t Len) const {
+  bool fillPadding(uint8_t *Dst, uint64_t Len) const {
+    if (!isSingleInstructionMode(Mode))
+      return false;
     if (TheArch == Arch::AArch64) {
       uint32_t NopInsn = aarch64::kNop;
       for (uint64_t P = 0; P + aarch64::kInsnSize <= Len;
@@ -89,9 +93,12 @@ struct TargetCodegenInfo {
     } else {
       std::memset(Dst, x86::kInt3, Len);
     }
+    return true;
   }
 
   uint64_t trampolineSize() const {
+    if (!isSingleInstructionMode(Mode))
+      return 0;
     if (TheArch == Arch::ARM && Mode == InstructionMode::Thumb)
       return arm::kThumbBWLen;
     if (TheArch == Arch::ARM)
@@ -133,8 +140,8 @@ struct TargetCodegenInfo {
       if (FromVA > uint64_t(UINT32_MAX) || TargetVA > uint64_t(UINT32_MAX))
         return false;
       if (Mode == InstructionMode::Thumb) {
-        int64_t Diff = static_cast<int64_t>(TargetVA) -
-                       (static_cast<int64_t>(FromVA) + 4);
+        int64_t Diff =
+            static_cast<int64_t>(TargetVA) - (static_cast<int64_t>(FromVA) + 4);
         if ((FromVA & 1) || (TargetVA & 1) || (Diff & 1) ||
             Diff < arm::kThumbBWMinDisp || Diff > arm::kThumbBWMaxDisp)
           return false;
@@ -144,8 +151,7 @@ struct TargetCodegenInfo {
         uint32_t I2 = (Imm25 >> 22) & 1;
         uint32_t J1 = (~(I1 ^ S)) & 1;
         uint32_t J2 = (~(I2 ^ S)) & 1;
-        uint16_t H1 = uint16_t(0xf000u | (S << 10) |
-                               ((Imm25 >> 12) & 0x03ffu));
+        uint16_t H1 = uint16_t(0xf000u | (S << 10) | ((Imm25 >> 12) & 0x03ffu));
         uint16_t H2 = uint16_t(0x9000u | (J1 << 13) | (J2 << 11) |
                                ((Imm25 >> 1) & 0x07ffu));
         writeLE<uint16_t>(Data.data() + FromOff, H1);

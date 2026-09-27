@@ -167,6 +167,7 @@ add_neverd_unittest(NeverDLiftTests
   format/MachOFunctionListingTests.cpp
   format/FunctionDiscoveryAlignmentTests.cpp
   format/ELFFunctionListingTests.cpp
+  format/ELFARM32ModeTests.cpp
   format/COFFFunctionListingTests.cpp
   format/MachOLLVMNameBoundaryTests.cpp
   format/COFFImportStorageBoundaryTests.cpp
@@ -197,6 +198,7 @@ add_neverd_unittest(NeverDLiftTests
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
   core/HighSymSimplifyTests.cpp
+  core/HighFrameStoreForwardingTests.cpp
   core/MedNoReturnTests.cpp
   eh/RegistrationTryLevelTests.cpp
   format/COFFARMFormatTests.cpp
@@ -1730,6 +1732,12 @@ if(TARGET neverd_shared)
   add_neverd_unittest(NeverDMetadataJSONTests
     sdk/MetadataJSONTests.cpp
     sdk/SwiftNominalContextCAPITests.cpp
+    sdk/ELFARM32ModeCAPITests.cpp
+  )
+  target_compile_definitions(NeverDMetadataJSONTests PRIVATE
+    NEVERD_BINARY="$<TARGET_FILE:neverd>"
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+    TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   )
 
   target_include_directories(NeverDMetadataJSONTests PRIVATE

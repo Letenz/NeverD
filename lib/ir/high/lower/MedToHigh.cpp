@@ -510,6 +510,35 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   return HighExpr::makeVar(V);
 }
 
+ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
+                                              bool InlineDefinition) {
+  ExprPtr Address;
+  if (InlineDefinition && V.Id >= 0)
+    Address = inlineableDefinition(varKey(V));
+  if (!Address)
+    Address = medvarToExpr(V);
+
+  // LowIR represents x86 effective addresses as 8-byte VAs even when their
+  // arithmetic wraps at the target pointer width. Recover that width at the
+  // memory boundary; do not narrow arbitrary wide arithmetic or sign-extended
+  // addresses. The unsigned bit view preserves zero extension when bit 31 is
+  // set, including when the emitted C runs on a 64-bit host.
+  const uint16_t PointerBytes = getTargetRegInfo(TargetArch).PointerSize;
+  if (!Address || !PointerBytes || PointerBytes >= 8 ||
+      Address->Kind != ExprKind::UnaryOp || Address->Op != NdOp::INT_ZEXT ||
+      Address->Operands.size() != 1 || !Address->Operands[0] ||
+      !Address->Type || Address->Type->Kind != NdTypeKind::Int ||
+      Address->Type->Size != 8 ||
+      Address->MemoryOrdering != NdMemoryOrdering::None ||
+      Address->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return Address;
+  const ExprPtr &Source = Address->Operands[0];
+  if (!Source->Type || Source->Type->Kind != NdTypeKind::Int ||
+      Source->Type->Size != PointerBytes)
+    return Address;
+  return HighExpr::makeBitCast(Source, NdType::makeInt(PointerBytes, false));
+}
+
 ExprPtr MedToHighConverter::sourceBitSlice(const ExprPtr &Value,
                                            uint64_t ByteOffset, uint16_t Bytes,
                                            unsigned Depth) {
@@ -823,7 +852,8 @@ HighFunc MedToHighConverter::convert(const MedFunc &Med, Arch TheArch) {
       } else if ((PtrParamRegOffs.count(MP.RegOff) &&
                   MP.RegOff != kNoParamReg &&
                   !TRI.isFrameOrLinkReg(MP.RegOff)) ||
-                 PtrParamIds.count(MP.Id) || PtrParamIds.count(static_cast<int>(PI)))
+                 PtrParamIds.count(MP.Id) ||
+                 PtrParamIds.count(static_cast<int>(PI)))
         HP.Type = NdType::makePtr();
       else
         HP.Type = NdType::makeInt(MP.Size);

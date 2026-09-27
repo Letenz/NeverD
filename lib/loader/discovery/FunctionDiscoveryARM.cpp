@@ -73,6 +73,8 @@ size_t scanThumbImportThunks(BinaryImage &Img, const Segment &Seg,
 size_t scanImportThunksARM(BinaryImage &Img, const Segment &Seg,
                            const std::map<va_t, size_t> &Targets,
                            std::set<va_t> &Existing) {
+  if (!isSingleInstructionMode(Img.Mode))
+    return 0;
   if (Img.Mode == InstructionMode::Thumb)
     return scanThumbImportThunks(Img, Seg, Targets, Existing);
 

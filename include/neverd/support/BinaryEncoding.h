@@ -105,13 +105,16 @@ inline uint64_t clearThumbBit(uint64_t Addr) { return Addr & ~uint64_t(1); }
 
 inline uint64_t normalizeCodeAddress(uint64_t Addr, Arch TargetArch,
                                      InstructionMode Mode) {
-  return TargetArch == Arch::ARM && Mode == InstructionMode::Thumb
+  return TargetArch == Arch::ARM && (Mode == InstructionMode::Thumb ||
+                                     Mode == InstructionMode::MixedARMThumb)
              ? clearThumbBit(Addr)
              : Addr;
 }
 
 inline uint64_t serializeCodePointer(uint64_t Addr, Arch TargetArch,
                                      InstructionMode Mode) {
+  if (!isSingleInstructionMode(Mode))
+    return InvalidVA;
   return TargetArch == Arch::ARM && Mode == InstructionMode::Thumb
              ? clearThumbBit(Addr) | uint64_t(1)
              : Addr;

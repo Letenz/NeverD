@@ -52,8 +52,7 @@ std::optional<va_t> decodeThumbBranch(const uint8_t *Code, size_t Available,
   const va_t Base = WideImm ? VA + 4 : ((VA + 4) & ~va_t(3));
   // BLX encodes a halfword-pair target, so its lowest immediate bit is the
   // reserved H bit rather than part of the displacement.
-  const uint32_t Imm25 = (S << 24) | (I1 << 23) | (I2 << 22) |
-                         (ImmHigh << 12) |
+  const uint32_t Imm25 = (S << 24) | (I1 << 23) | (I2 << 22) | (ImmHigh << 12) |
                          ((WideImm ? ImmLow : (ImmLow & 0x07FEu)) << 1);
   // Bit 24 is the sign: shifting it up to bit 63 and back sign-extends it.
   const int64_t Offset = static_cast<int64_t>(Imm25) << 39 >> 39;
@@ -68,6 +67,8 @@ std::optional<va_t> decodeDirectBranchTarget(Arch A, InstructionMode Mode,
                                              const uint8_t *Code,
                                              size_t Available, va_t VA,
                                              size_t &Length) {
+  if (!isSingleInstructionMode(Mode))
+    return std::nullopt;
   switch (A) {
   case Arch::X64:
   case Arch::X86: {
