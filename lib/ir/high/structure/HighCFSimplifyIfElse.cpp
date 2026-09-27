@@ -2578,6 +2578,15 @@ collectPredChainFromList(const std::vector<HighStmt> &Body, va_t Join,
     Composed.push_back({Dest, std::move(Val)});
     Folded[I] = 1;
   }
+  // Folded definitions leave the chain; their values are substituted only
+  // into its work. A reader elsewhere in the function would be orphaned.
+  if (!Composed.empty()) {
+    std::set<const HighStmt *> ChainStatements;
+    walkStmts(Body, [&](const HighStmt &S) { ChainStatements.insert(&S); });
+    for (const auto &[Dest, Val] : Composed)
+      if (functionReadsVar(Body, Dest, ChainStatements))
+        return std::nullopt;
+  }
   std::vector<HighStmt> KeptPrefix;
   for (size_t I = 0; I + 1 < LastI; ++I) {
     if (Folded[I])
