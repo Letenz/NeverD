@@ -108,8 +108,8 @@ protected:
       return GuestCallToken{GuestCallOwner::Interrupt, Token};
     };
     Host.QueueDeferred = [this](uint64_t Handle, uint64_t, uint64_t,
-                                llvm::ArrayRef<uint64_t>, bool,
-                                uint64_t Token) -> llvm::Expected<bool> {
+                                llvm::ArrayRef<uint64_t>, bool, uint64_t Token,
+                                uint64_t) -> llvm::Expected<bool> {
       return Deferred.emplace(Handle, Token).second;
     };
     Host.HasDeferred = [this](uint64_t Handle) {
@@ -150,6 +150,39 @@ protected:
     take(Model.finishGuestCall(Call.Token, Status));
   }
 };
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       SynchronizeReturnDrainsRetiredCallbackLocksAndPreservesBoolean) {
+  const auto Handle = interrupt();
+  start();
+  expectCallback(Before);
+  expectCallback(Enable);
+  expectCallback(After);
+  ASSERT_TRUE(Model.takePnpCompletion());
+
+  constexpr uint64_t QueueConfig = Driver + 0x4000;
+  constexpr uint64_t QueueSlot = Driver + 0x4100;
+  put(QueueConfig, QueueConfigSize, 4);
+  put(QueueConfig + QueueConfigDispatch, QueueDispatchManual, 4);
+  attributes(0, 0, 0, ChildDestroy);
+  EXPECT_EQ(take(invoke(api::WdfIoQueueCreate,
+                        {Globals, Device, QueueConfig, Attrs, QueueSlot})),
+            0u);
+  const uint64_t Queue = get(QueueSlot);
+  success(Model.retainSynchronizationObject(Queue));
+  take(invoke(api::WdfObjectDelete, {Globals, Queue}));
+  EXPECT_FALSE(Model.takeGuestCall());
+  take(invoke(api::WdfInterruptSynchronize, {Globals, Handle, Before, 0}));
+  const auto Synchronized = callback();
+  success(Model.releaseSynchronizationObject(Queue));
+  EXPECT_FALSE(take(Model.finishGuestCall(Synchronized.Token, 1)));
+  const auto Destroy = callback();
+  EXPECT_EQ(Destroy.PC, ChildDestroy);
+  EXPECT_EQ(Destroy.SynchronizationObject, 0u);
+  EXPECT_EQ(take(Model.finishGuestCall(Destroy.Token, 0)),
+            std::optional<uint64_t>{1});
+  EXPECT_TRUE(Released.count(Queue));
+}
 
 TEST_F(DriverKernelFrameworkInterrupt,
        AutomaticPowerCallbacksBracketD0AndResources) {
@@ -262,6 +295,8 @@ TEST_F(DriverKernelFrameworkInterrupt,
   EXPECT_EQ(liveAllocations(), Live);
   configureInterrupt();
   put(InterruptConfig + InterruptAutomaticSerialization, 1, 1);
+  put(InterruptConfig + InterruptDPC, 0);
+  put(InterruptConfig + InterruptWorkItem, DPC);
   EXPECT_EQ(take(create()), IncompatibleExecutionLevel);
   EXPECT_EQ(liveAllocations(), Live);
 }
@@ -319,6 +354,79 @@ TEST_F(DriverKernelFrameworkInterrupt, ConnectedObjectCannotBeDeleted) {
   EXPECT_EQ(take(invoke(api::WdfInterruptGetDevice, {Globals, Handle})),
             Device);
 }
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       ExternalSpinLockCannotUseOrdinarySpinAcquisition) {
+  constexpr uint64_t Storage = Driver + 0x6000;
+  KernelFramework::LockHost Host;
+  Host.Create = [Storage](bool Wait) -> llvm::Expected<uint64_t> {
+    EXPECT_FALSE(Wait);
+    return Storage;
+  };
+  Host.Destroy = [](uint64_t, bool) { return llvm::Error::success(); };
+  Host.Acquire = [](uint64_t, bool,
+                    std::optional<int64_t>) -> llvm::Expected<uint32_t> {
+    ADD_FAILURE() << "external spin acquisition bypassed the interrupt";
+    return 0;
+  };
+  Model.setLockHost(std::move(Host));
+  EXPECT_EQ(take(invoke(api::WdfSpinLockCreate, {Globals, 0, InterruptSlot})),
+            0u);
+  const auto Lock = get(InterruptSlot);
+  put(InterruptConfig + InterruptSpinLock, Lock);
+  const auto Handle = interrupt();
+  expectError(invoke(api::WdfSpinLockAcquire, {Globals, Lock}),
+              "requires WdfInterrupt");
+  expectError(invoke(api::WdfSpinLockRelease, {Globals, Lock}),
+              "requires WdfInterrupt");
+  EXPECT_EQ(take(invoke(api::WdfInterruptGetDevice, {Globals, Handle})),
+            Device);
+  put(InterruptConfig + InterruptSpinLock, 0);
+  put(InterruptConfig + InterruptPassiveHandling, 1, 1);
+  put(InterruptConfig + InterruptWaitLock, Lock);
+  expectError(create(), "matching framework lock");
+}
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       ExternalLockDeletionRetainsStorageUntilLastInterruptIsDestroyed) {
+  constexpr uint64_t Storage = Driver + 0x6000;
+  bool Destroyed = false;
+  KernelFramework::LockHost Host;
+  Host.Create = [Storage](bool Wait) -> llvm::Expected<uint64_t> {
+    EXPECT_TRUE(Wait);
+    return Storage;
+  };
+  Host.CanDelete = [Storage](uint64_t Address, bool Wait) {
+    EXPECT_EQ(Address, Storage);
+    EXPECT_TRUE(Wait);
+    return llvm::Error::success();
+  };
+  Host.Destroy = [&](uint64_t Address, bool Wait) {
+    EXPECT_EQ(Address, Storage);
+    EXPECT_TRUE(Wait);
+    EXPECT_FALSE(Destroyed);
+    Destroyed = true;
+    return llvm::Error::success();
+  };
+  Model.setLockHost(std::move(Host));
+  EXPECT_EQ(take(invoke(api::WdfWaitLockCreate, {Globals, 0, InterruptSlot})),
+            0u);
+  const auto Lock = get(InterruptSlot);
+  put(InterruptConfig + InterruptPassiveHandling, 1, 1);
+  put(InterruptConfig + InterruptWaitLock, Lock);
+  const auto First = interrupt();
+  const auto Second = interrupt();
+  take(invoke(api::WdfObjectDelete, {Globals, Lock}));
+  EXPECT_FALSE(Destroyed);
+  expectError(invoke(api::WdfWaitLockAcquire, {Globals, Lock, 0}),
+              "live matching");
+  take(invoke(api::WdfObjectDelete, {Globals, First}));
+  EXPECT_FALSE(Destroyed);
+  take(invoke(api::WdfObjectDelete, {Globals, Second}));
+  EXPECT_TRUE(Destroyed);
+  expectError(Model.validateGuestAccess(Lock, HandleSize, false), "freed");
+}
+
 TEST_F(DriverKernelFrameworkInterrupt,
        DispatchDereferenceDefersPassiveDestroyAndRetainsItsContext) {
   type();
@@ -333,8 +441,9 @@ TEST_F(DriverKernelFrameworkInterrupt,
   std::optional<KernelFramework::GuestCall> DeferredCall;
   KernelFramework::DeviceHost Host;
   Host.DeferCall = [&](const KernelFramework::GuestCall &Call,
-                       uint64_t WdmDevice) {
+                       uint64_t WdmDevice, uint8_t IRQL) {
     EXPECT_EQ(WdmDevice, FDO);
+    EXPECT_EQ(IRQL, scheduler::PassiveLevel);
     DeferredCall = Call;
     return llvm::Error::success();
   };

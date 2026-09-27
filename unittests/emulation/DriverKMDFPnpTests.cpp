@@ -179,6 +179,32 @@ DriverOptions interruptOptions(char Mode) {
   return Input;
 }
 
+TEST(DriverKMDFPnp, AutomaticSerializationRetainsLockAcrossIoWait) {
+  for (const auto *Image : pnpImages()) {
+    SCOPED_TRACE(Image);
+    auto Input = interruptOptions(KmdfInterruptAutomatic);
+    auto Result = emulateDriver(Image, Input);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    ASSERT_EQ(Result->Stop, DriverStopReason::Returned) << Result->Diagnostic;
+    EXPECT_TRUE(Result->UnloadCompleted);
+    for (const auto &Request : Result->Requests)
+      EXPECT_EQ(Request.IOStatus, windows::StatusSuccess);
+    auto Position = Result->Messages.begin();
+    for (llvm::StringRef Expected :
+         {"KMDF interrupt: serialized I/O begin\n", "KMDF interrupt: ISR 0\n",
+          "KMDF interrupt: serialized I/O end\n",
+          "KMDF interrupt: deferred 0\n"}) {
+      Position = std::find(Position, Result->Messages.end(), Expected);
+      ASSERT_NE(Position, Result->Messages.end()) << Expected.str();
+      ++Position;
+    }
+    EXPECT_EQ(callCount(*Result, "WdfObjectAcquireLock"), 1u);
+    EXPECT_EQ(callCount(*Result, "WdfObjectReleaseLock"), 1u);
+    for (const auto &Message : Result->Messages)
+      EXPECT_EQ(Message.find("KMDF interrupt: failure"), std::string::npos);
+  }
+}
+
 TEST(DriverKMDFPnp, FrameworkInterruptsExecuteRealDirqlAndPassiveCallbacks) {
   for (const auto *Image : pnpImages())
     for (uint64_t Base : {0x180000000ULL, 0x190000000ULL})

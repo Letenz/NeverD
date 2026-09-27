@@ -75,7 +75,9 @@ protected:
     put(Attrs + 28, 4, 4);
   }
 
-  uint64_t control(uint64_t Cleanup = 0, uint64_t Destroy = 0) {
+  uint64_t control(uint64_t Cleanup = 0, uint64_t Destroy = 0,
+                   uint32_t Execution = framework::ExecutionPassive,
+                   uint32_t Synchronization = framework::SynchronizationNone) {
     string(Security, "D:P(A;;GA;;;WD)");
     const auto Init = take(invoke("WdfControlDeviceInitAllocate",
                                   {Globals, DriverHandle, Security}));
@@ -85,6 +87,8 @@ protected:
         take(invoke("WdfDeviceInitAssignName", {Globals, Init, DeviceName})),
         0u);
     queueAttributes(0, 0, Cleanup, Destroy);
+    put(Attrs + framework::AttributesExecution, Execution, 4);
+    put(Attrs + framework::AttributesSynchronization, Synchronization, 4);
     EXPECT_EQ(
         take(invoke("WdfDeviceCreate", {Globals, InitSlot, Attrs, DeviceSlot})),
         0u);

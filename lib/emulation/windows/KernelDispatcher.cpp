@@ -26,6 +26,7 @@
 #include "../GuestMemory.h"
 #include "KernelException.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace neverd::emulation {
@@ -79,6 +80,8 @@ llvm::Error KernelDispatcher::canRelease(uint64_t Address,
                                          const Object &State) const {
   if (State.Type == Kind::Mutex && State.MutexDepth)
     return dispatcherError("cannot release storage with an owned mutex");
+  if (State.Type == Kind::WaitLock && State.LockOwner)
+    return dispatcherError("cannot release storage with an owned wait lock");
   if (State.Type == Kind::DPC) {
     if (Scheduler.isDPCQueued(Address))
       return dispatcherError("dispatcher DPC is still queued");
@@ -177,7 +180,68 @@ llvm::Error KernelDispatcher::prepareReleaseRange(uint64_t Address,
 
 bool KernelDispatcher::isWaitable(uint64_t Address) const {
   auto It = Objects.find(Address);
-  return It != Objects.end() && It->second.Type != Kind::DPC;
+  return It != Objects.end() && It->second.Type != Kind::DPC &&
+         It->second.Type != Kind::WaitLock;
+}
+
+llvm::Error KernelDispatcher::initializeWaitLock(uint64_t Address,
+                                                 bool Recursive) {
+  Object State(Kind::WaitLock, dispatcher::EventSize);
+  State.RecursiveLock = Recursive;
+  return initialize(Address, std::move(State));
+}
+
+llvm::Expected<bool> KernelDispatcher::tryAcquireWaitLock(uint64_t Address,
+                                                          WaitLockOwner Owner) {
+  if (!Owner.ID)
+    return dispatcherError("wait lock requires an owning thread or callback");
+  auto Lock = object(Address, Kind::WaitLock, true);
+  if (!Lock)
+    return Lock.takeError();
+  auto &State = **Lock;
+  if (State.LockOwner) {
+    if (*State.LockOwner != Owner)
+      return false;
+    if (!State.RecursiveLock)
+      return dispatcherError("wait lock is nonrecursive");
+    if (State.LockDepth == UINT32_MAX)
+      return dispatcherError("wait lock recursion count overflow");
+  } else {
+    State.LockOwner = Owner;
+  }
+  ++State.LockDepth;
+  return true;
+}
+
+llvm::Error KernelDispatcher::releaseWaitLock(uint64_t Address,
+                                              WaitLockOwner Owner) {
+  auto Lock = object(Address, Kind::WaitLock, true);
+  if (!Lock)
+    return Lock.takeError();
+  auto &State = **Lock;
+  if (!State.LockOwner || *State.LockOwner != Owner || !State.LockDepth)
+    return dispatcherError("wait lock release requires its owning thread");
+  if (!--State.LockDepth)
+    State.LockOwner.reset();
+  return llvm::Error::success();
+}
+
+bool KernelDispatcher::waitLockAvailable(
+    uint64_t Address, std::optional<WaitLockOwner> Owner) const {
+  auto Lock = Objects.find(Address);
+  return Lock != Objects.end() && Lock->second.Type == Kind::WaitLock &&
+         (!Lock->second.LockOwner ||
+          (Owner && Lock->second.LockOwner == Owner));
+}
+
+bool KernelDispatcher::waitLockOwnedByThread(uint64_t Thread) const {
+  if (!Thread)
+    return false;
+  const WaitLockOwner Owner{WaitLockOwner::Kind::Thread, Thread};
+  return std::any_of(Objects.begin(), Objects.end(), [&](const auto &Entry) {
+    return Entry.second.Type == Kind::WaitLock &&
+           Entry.second.LockOwner == Owner;
+  });
 }
 
 bool KernelDispatcher::ownsMutex(uint64_t Execution) const {

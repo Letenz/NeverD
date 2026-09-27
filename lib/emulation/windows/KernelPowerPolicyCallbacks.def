@@ -1,0 +1,12 @@
+//===- KernelPowerPolicyCallbacks.def - WDF power-policy callback slots ---===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+NEVERD_POWER_POLICY_CALLBACK(ArmWakeFromS0, 0, Status)
+NEVERD_POWER_POLICY_CALLBACK(DisarmWakeFromS0, 1, Void)
+NEVERD_POWER_POLICY_CALLBACK(WakeFromS0Triggered, 2, Void)
+NEVERD_POWER_POLICY_CALLBACK(ArmWakeFromSx, 3, Status)
+NEVERD_POWER_POLICY_CALLBACK(DisarmWakeFromSx, 4, Void)
+NEVERD_POWER_POLICY_CALLBACK(WakeFromSxTriggered, 5, Void)
+NEVERD_POWER_POLICY_CALLBACK(ArmWakeFromSxWithReason, 6, Status)

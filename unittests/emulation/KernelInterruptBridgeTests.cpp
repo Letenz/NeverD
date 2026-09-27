@@ -356,6 +356,35 @@ TEST_F(KernelInterruptBridge, FullySpecifiedExDoesNotReadGroupField) {
   EXPECT_NE(get(Scratch), Interrupt);
 }
 
+TEST_F(KernelInterruptBridge, PassiveInterruptAPCRegionFollowsItsActualThread) {
+  constexpr uint64_t Parameters = Scratch + 0x1000;
+  constexpr uint64_t ParentThread = 0x31;
+  exParameters(Parameters, interrupts::FullySpecified);
+  put(Parameters + interrupts::SynchronizeIRQL, 0, 1);
+  put(Parameters + interrupts::Vector, 0x55, 4);
+  put(Parameters + interrupts::IRQL, 0, 1);
+  put(Parameters + interrupts::Mode, uint32_t(DriverInterruptMode::Latched), 4);
+  put(Parameters + interrupts::Affinity, 1);
+  EXPECT_EQ(call("IoConnectInterruptEx", {Parameters}), StatusSuccess);
+  Interrupt = get(Scratch);
+  Model->enterExecution(ParentFrame, ParentThread);
+  const auto IRP = request(1);
+  const auto Service = next(true);
+  ASSERT_EQ(Service.IRQL, scheduler::PassiveLevel);
+  Model->enterExecution(ChildFrame, Service.ID);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  EXPECT_EQ(call("KeAreAllApcsDisabled", {}), 0u);
+  Model->enterExecution(ParentFrame, ParentThread);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  Model->enterExecution(ChildFrame, Service.ID);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 1u);
+  finishISR(Service, 1);
+  EXPECT_EQ(call("KeAreApcsDisabled", {}), 0u);
+  Model->enterExecution(ParentFrame, ParentThread);
+  complete(IRP);
+  ok(Model->finalizeRequest(IRP));
+}
+
 TEST_F(KernelInterruptBridge, SameDeadlineInterruptPrecedesTimerDPC) {
   const auto IRP = request(20);
   timer(20);

@@ -540,11 +540,8 @@ KernelFramework::attributes(uint64_t Address, AttributesUse Use) {
   if (!*Execution || *Execution > ExecutionDispatch || !*Synchronization ||
       *Synchronization > SynchronizationNone)
     return uint32_t(ObjectAttributesInvalid);
-  if (*Execution != ExecutionInherit && *Execution != ExecutionPassive)
-    return invalid("unsupported framework object execution level");
-  if (*Synchronization != SynchronizationInherit &&
-      *Synchronization != SynchronizationNone)
-    return invalid("unsupported framework object synchronization scope");
+  A.Execution = *Execution;
+  A.Synchronization = *Synchronization;
   if (A.ContextSize > MaxContextSize)
     return invalid("framework context exceeds the storage limit");
   return A;
@@ -597,6 +594,14 @@ llvm::Expected<uint64_t> KernelFramework::createObject(uint64_t Globals,
   O.Binding = Globals;
   O.Parent = Parent;
   O.Kind = IsDriver ? ObjectKind::Driver : ObjectKind::Generic;
+  O.Execution =
+      A.Execution == ExecutionInherit
+          ? IsDriver ? ExecutionDispatch : Objects.at(Parent).Execution
+          : A.Execution;
+  O.Synchronization =
+      A.Synchronization == SynchronizationInherit
+          ? IsDriver ? SynchronizationNone : Objects.at(Parent).Synchronization
+          : A.Synchronization;
   auto Context = addContext(O, A);
   if (!Context)
     return llvm::joinErrors(Context.takeError(), retire(*Handle));
@@ -604,6 +609,84 @@ llvm::Expected<uint64_t> KernelFramework::createObject(uint64_t Globals,
   if (Parent)
     Objects.at(Parent).Children.push_back(*Handle);
   return *Handle;
+}
+
+uint64_t KernelFramework::callbackSynchronizationObject(uint64_t Handle) const {
+  const auto &Object = Objects.at(Handle);
+  if (Object.Kind == ObjectKind::Queue) {
+    if (Object.Synchronization == SynchronizationQueue)
+      return Handle;
+    if (Object.Synchronization == SynchronizationDevice)
+      return Queues.at(Handle).Device;
+  }
+  if (Object.Kind == ObjectKind::Device &&
+      Object.Synchronization == SynchronizationDevice)
+    return Handle;
+  if (Object.Kind == ObjectKind::File)
+    return Devices.at(FileObjects.at(Handle).Device)
+        .Files.SynchronizationObject;
+  if (Object.Kind == ObjectKind::Request) {
+    const auto &Request = Requests.at(Handle);
+    if (Request.FileCreate)
+      return Devices.at(Request.Device).Files.SynchronizationObject;
+    if (Request.Queue)
+      return callbackSynchronizationObject(Request.Queue);
+  }
+  return 0;
+}
+
+llvm::Expected<uint64_t>
+KernelFramework::synchronizationObject(uint64_t Handle, bool Automatic) const {
+  auto Object = Objects.find(Handle);
+  if (Object == Objects.end() || (Object->second.Kind != ObjectKind::Device &&
+                                  Object->second.Kind != ObjectKind::Queue))
+    return invalid("callback lock requires a framework device or queue");
+  const uint64_t Owner = callbackSynchronizationObject(Handle);
+  return Owner || Automatic ? Owner : Handle;
+}
+
+llvm::Expected<uint32_t>
+KernelFramework::executionLevel(uint64_t Handle) const {
+  auto Object = Objects.find(Handle);
+  if (Object == Objects.end())
+    return invalid("execution level requires a live framework object");
+  return Object->second.Execution;
+}
+
+uint8_t KernelFramework::synchronizationIRQL(uint64_t Handle) const {
+  return Objects.at(Handle).Execution == ExecutionPassive
+             ? scheduler::PassiveLevel
+             : scheduler::DispatchLevel;
+}
+
+llvm::Error KernelFramework::retainSynchronizationObject(uint64_t Handle) {
+  auto Object = Objects.find(Handle);
+  if (Object == Objects.end() ||
+      (Object->second.Kind != ObjectKind::Device &&
+       Object->second.Kind != ObjectKind::Queue) ||
+      Object->second.InternalReferences == UINT64_MAX)
+    return invalid("callback lock lost its live object or reference capacity");
+  ++Object->second.InternalReferences;
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::releaseSynchronizationObject(uint64_t Handle) {
+  auto Object = Objects.find(Handle);
+  if (Object == Objects.end() || !Object->second.InternalReferences)
+    return invalid("callback lock release lost its retained object");
+  auto &State = Object->second;
+  --State.InternalReferences;
+  if (State.Cleaned && State.DestroyEligible && !State.InternalReferences &&
+      !State.References)
+    PendingSynchronizationDestructions.insert(Handle);
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::flushSynchronizationDestructions() {
+  if (PendingSynchronizationDestructions.empty() || PendingCall)
+    return llvm::Error::success();
+  auto Result = start({});
+  return Result ? llvm::Error::success() : Result.takeError();
 }
 
 llvm::Expected<uint64_t>
@@ -709,6 +792,17 @@ KernelFramework::prepareDeletion(uint64_t Handle, uint64_t UnlinkedFile) const {
     auto I = Objects.find(Current);
     if (I == Objects.end())
       return invalid("delete requires a live framework object");
+    if (I->second.Kind == ObjectKind::SpinLock ||
+        I->second.Kind == ObjectKind::WaitLock)
+      if (auto E = validateLockDeletion(Current, Handle))
+        return E;
+    if (I->second.Kind == ObjectKind::Device) {
+      const auto &Policy = Devices.at(Current).Policy;
+      if (Policy.References)
+        return invalid("device deletion retains unmatched StopIdle references");
+      if (Policy.Armed != KernelPowerPolicy::WakeSource::None)
+        return invalid("device deletion requires wake disarm");
+    }
     if (I->second.Kind == ObjectKind::Request) {
       const auto &R = Requests.at(Current);
       if (!R.Completed && !(Current == Handle && R.Completing))
@@ -803,7 +897,10 @@ KernelFramework::advance(uint64_t Token) {
   if (I == Continuations.end() || PendingCall)
     return invalid("invalid framework callback continuation");
   auto &C = I->second;
-  auto NotifyQueueState = [&]() {
+  for (uint64_t Handle : PendingSynchronizationDestructions)
+    C.Steps.insert(C.Steps.begin() + C.Index, {StepKind::TryDestroy, Handle});
+  PendingSynchronizationDestructions.clear();
+  auto NotifyQueueState = [&]() -> llvm::Expected<bool> {
     for (auto &[Handle, Q] : Queues) {
       if (!Q.StopComplete && !Q.DrainComplete)
         continue;
@@ -827,14 +924,25 @@ KernelFramework::advance(uint64_t Token) {
               [&](const auto &Entry) { return Entry.second == Handle; }))
         continue;
       if (Q.StopComplete) {
-        PendingCall = GuestCall{Token, Q.StopComplete, {Handle, Q.StopContext}};
+        if (auto E = retainQueueCallback(Token, Handle))
+          return E;
+        PendingCall = GuestCall{Token,
+                                Q.StopComplete,
+                                {Handle, Q.StopContext},
+                                {},
+                                callbackSynchronizationObject(Handle)};
         Q.StopComplete = 0;
         Q.StopContext = 0;
       } else {
         if (!Q.Pending.empty())
           continue;
-        PendingCall =
-            GuestCall{Token, Q.DrainComplete, {Handle, Q.DrainContext}};
+        if (auto E = retainQueueCallback(Token, Handle))
+          return E;
+        PendingCall = GuestCall{Token,
+                                Q.DrainComplete,
+                                {Handle, Q.DrainContext},
+                                {},
+                                callbackSynchronizationObject(Handle)};
         Q.DrainComplete = 0;
         Q.DrainContext = 0;
       }
@@ -842,12 +950,21 @@ KernelFramework::advance(uint64_t Token) {
     }
     return false;
   };
-  if (!C.AutomaticFile && NotifyQueueState())
-    return std::optional<uint64_t>{};
+  if (!C.AutomaticFile) {
+    auto Notified = NotifyQueueState();
+    if (!Notified)
+      return Notified.takeError();
+    if (*Notified)
+      return std::optional<uint64_t>{};
+  }
   while (C.Index < C.Steps.size()) {
     const Step S = C.Steps[C.Index++];
     if (S.Kind == StepKind::Callback) {
-      PendingCall = GuestCall{Token, S.PC, {S.Object}};
+      if (CancelCallbacks.contains(Token))
+        if (auto E = retainQueueCallback(Token, Requests.at(S.Object).Queue))
+          return E;
+      PendingCall =
+          GuestCall{Token, S.PC, {S.Object}, {}, S.SynchronizationObject};
       return std::optional<uint64_t>{};
     }
     if (S.Kind == StepKind::PresentQueue) {
@@ -898,9 +1015,13 @@ KernelFramework::advance(uint64_t Token) {
       CancelCallbacks.emplace(Token, S.Object);
       C.Steps.insert(C.Steps.begin() + C.Index,
                      {StepKind::CancelReturned, S.Object});
-      if (auto E = beginCancelCallback(Token))
+      if (auto E = retainQueueCallback(Token, R->second.Queue))
         return E;
-      PendingCall = GuestCall{Token, Routine, {S.Object}};
+      PendingCall = GuestCall{Token,
+                              Routine,
+                              {S.Object},
+                              {},
+                              callbackSynchronizationObject(S.Object)};
       return std::optional<uint64_t>{};
     }
     if (S.Kind == StepKind::CanceledOnQueue) {
@@ -913,10 +1034,15 @@ KernelFramework::advance(uint64_t Token) {
         return invalid("queued cancellation lost its callback");
       if (!CanceledQueueCallbacks.emplace(Token, R->second.Queue).second)
         return invalid("queued cancellation callback already active");
+      if (auto E = retainQueueCallback(Token, R->second.Queue))
+        return E;
       C.Steps.insert(C.Steps.begin() + C.Index,
                      {StepKind::CanceledOnQueueReturned, R->second.Queue});
-      PendingCall = GuestCall{
-          Token, Q->second.CanceledOnQueue, {R->second.Queue, S.Object}};
+      PendingCall = GuestCall{Token,
+                              Q->second.CanceledOnQueue,
+                              {R->second.Queue, S.Object},
+                              {},
+                              callbackSynchronizationObject(R->second.Queue)};
       return std::optional<uint64_t>{};
     }
     if (S.Kind == StepKind::CanceledOnQueueReturned) {
@@ -925,7 +1051,10 @@ KernelFramework::advance(uint64_t Token) {
           Callback->second != S.Object)
         return invalid("queued cancellation callback return lost its queue");
       CanceledQueueCallbacks.erase(Callback);
-      if (NotifyQueueState())
+      auto Notified = NotifyQueueState();
+      if (!Notified)
+        return Notified.takeError();
+      if (*Notified)
         return std::optional<uint64_t>{};
       continue;
     }
@@ -942,10 +1071,15 @@ KernelFramework::advance(uint64_t Token) {
       Q->second.ReadyPending = false;
       if (!ReadyQueueCallbacks.emplace(Token, S.Object).second)
         return invalid("ready notification callback already active");
+      if (auto E = retainQueueCallback(Token, S.Object))
+        return E;
       C.Steps.insert(C.Steps.begin() + C.Index,
                      {StepKind::ReadyNotifyReturned, S.Object});
-      PendingCall = GuestCall{
-          Token, Q->second.ReadyNotify, {S.Object, Q->second.ReadyContext}};
+      PendingCall = GuestCall{Token,
+                              Q->second.ReadyNotify,
+                              {S.Object, Q->second.ReadyContext},
+                              {},
+                              callbackSynchronizationObject(S.Object)};
       return std::optional<uint64_t>{};
     }
     if (S.Kind == StepKind::ReadyNotifyReturned) {
@@ -953,7 +1087,10 @@ KernelFramework::advance(uint64_t Token) {
       if (Callback == ReadyQueueCallbacks.end() || Callback->second != S.Object)
         return invalid("ready notification callback return lost its queue");
       ReadyQueueCallbacks.erase(Callback);
-      if (NotifyQueueState())
+      auto Notified = NotifyQueueState();
+      if (!Notified)
+        return Notified.takeError();
+      if (*Notified)
         return std::optional<uint64_t>{};
       continue;
     }
@@ -995,7 +1132,10 @@ KernelFramework::advance(uint64_t Token) {
       }
       for (auto &Entry : PnpTransitions)
         Entry.second.WaitingRequests.erase(S.Object);
-      if (NotifyQueueState()) {
+      auto Notified = NotifyQueueState();
+      if (!Notified)
+        return Notified.takeError();
+      if (*Notified) {
         C.Steps.insert(C.Steps.begin() + C.Index,
                        {StepKind::PresentQueue, QueueHandle});
         return std::optional<uint64_t>{};
@@ -1063,7 +1203,10 @@ KernelFramework::advance(uint64_t Token) {
           !O->second.References && !O->second.InternalReferences)
         C.Steps.insert(C.Steps.begin() + C.Index,
                        {StepKind::TryDestroy, S.Object});
-      if (NotifyQueueState())
+      auto Notified = NotifyQueueState();
+      if (!Notified)
+        return Notified.takeError();
+      if (*Notified)
         return std::optional<uint64_t>{};
       continue;
     }
@@ -1077,7 +1220,9 @@ KernelFramework::advance(uint64_t Token) {
     }
     if (S.Kind == StepKind::TryDestroy) {
       O.DestroyEligible = true;
-      if (O.References || O.InternalReferences)
+      if (O.References || O.InternalReferences ||
+          std::any_of(O.Children.begin(), O.Children.end(),
+                      [&](uint64_t Child) { return Objects.contains(Child); }))
         continue;
       std::vector<Step> Destroy;
       for (uint64_t Type : O.ContextOrder)
@@ -1107,8 +1252,18 @@ KernelFramework::advance(uint64_t Token) {
         PnpDeviceHandles.erase(Devices.at(S.Object).PDO);
       Devices.erase(S.Object);
     }
-    if (O.Kind == ObjectKind::Interrupt)
+    if (O.Kind == ObjectKind::SpinLock || O.Kind == ObjectKind::WaitLock)
+      if (auto E = destroyFrameworkLock(S.Object))
+        return E;
+    if (O.Kind == ObjectKind::Interrupt) {
+      auto Lock = releaseInterruptLock(S.Object);
+      if (!Lock)
+        return Lock.takeError();
+      if (*Lock)
+        C.Steps.insert(C.Steps.begin() + C.Index,
+                       {StepKind::TryDestroy, **Lock});
       InterruptObjects.erase(S.Object);
+    }
     if (O.Kind == ObjectKind::Queue)
       Queues.erase(S.Object);
     if (O.Kind == ObjectKind::File)
@@ -1132,7 +1287,17 @@ KernelFramework::advance(uint64_t Token) {
         return E;
     if (auto E = retire(S.Object))
       return E;
+    const uint64_t Parent = O.Parent;
     Objects.erase(OI);
+    auto Ancestor = Objects.find(Parent);
+    if (Ancestor != Objects.end() && Ancestor->second.Cleaned &&
+        Ancestor->second.DestroyEligible && !Ancestor->second.References &&
+        !Ancestor->second.InternalReferences &&
+        !std::any_of(
+            C.Steps.begin() + C.Index, C.Steps.end(), [&](const Step &Next) {
+              return Next.Kind == StepKind::TryDestroy && Next.Object == Parent;
+            }))
+      C.Steps.insert(C.Steps.begin() + C.Index, {StepKind::TryDestroy, Parent});
   }
   const uint64_t ReturnValue = C.ReturnValue;
   const bool AutomaticFile = C.AutomaticFile;
@@ -1174,8 +1339,37 @@ llvm::Expected<std::optional<uint64_t>>
 KernelFramework::finishGuestCall(uint64_t Token, uint64_t Result,
                                  uint8_t IRQL) {
   llvm::SaveAndRestore<uint8_t> CallbackLevel(CallbackIRQL, IRQL);
+  auto Cancel = CancelCallbacks.find(Token);
+  if (Cancel != CancelCallbacks.end() &&
+      Requests.at(Cancel->second).Cancellation != CancelState::Delivered)
+    return invalid("cancellation callback has not entered guest execution");
+  if (auto Callback = QueueCallbacks.find(Token);
+      Callback != QueueCallbacks.end()) {
+    if (auto E = releaseSynchronizationObject(Callback->second))
+      return E;
+    QueueCallbacks.erase(Callback);
+  }
+  auto FinishWithoutAdvance =
+      [&](llvm::Expected<std::optional<uint64_t>> Completion)
+      -> llvm::Expected<std::optional<uint64_t>> {
+    if (!Completion || !*Completion ||
+        PendingSynchronizationDestructions.empty())
+      return Completion;
+    const uint64_t ReturnValue = **Completion;
+    const uint64_t Retirement = NextContinuation++;
+    Continuation Sequence;
+    Sequence.ReturnValue = ReturnValue;
+    Continuations.emplace(Retirement, std::move(Sequence));
+    auto Retired = advance(Retirement);
+    if (!Retired)
+      return Retired.takeError();
+    auto Deferred = deferPassiveCall();
+    if (!Deferred)
+      return Deferred.takeError();
+    return *Deferred ? std::optional<uint64_t>{ReturnValue} : *Retired;
+  };
   if (InterruptContinuations.contains(Token))
-    return finishInterruptCallback(Token, Result);
+    return FinishWithoutAdvance(finishInterruptCallback(Token, Result));
   const bool AutomaticFile = isAutomaticFileContinuation(Token);
   auto Progress = finishPnpCallback(Token, Result);
   if (!Progress)
@@ -1183,11 +1377,7 @@ KernelFramework::finishGuestCall(uint64_t Token, uint64_t Result,
   if (*Progress == PnpCallbackProgress::Scheduled)
     return std::optional<uint64_t>{};
   if (*Progress == PnpCallbackProgress::Waiting)
-    return std::optional<uint64_t>{0};
-  auto Cancel = CancelCallbacks.find(Token);
-  if (Cancel != CancelCallbacks.end() &&
-      Requests.at(Cancel->second).Cancellation != CancelState::Delivered)
-    return invalid("cancellation callback has not entered guest execution");
+    return FinishWithoutAdvance(std::optional<uint64_t>{0});
   auto Completion = RequestCompletionCallbacks.find(Token);
   if (Completion != RequestCompletionCallbacks.end()) {
     if (auto Request = Requests.find(Completion->second.Request);
@@ -1210,7 +1400,10 @@ KernelFramework::finishGuestCall(uint64_t Token, uint64_t Result,
     if (Complete != PnpTransitions.end() &&
         Complete->second.CallbacksComplete) {
       CompletedPnp =
-          PnpCompletion{Complete->second.IRP, Complete->second.Status};
+          PnpCompletion{Complete->second.IRP, Complete->second.Status,
+                        Complete->second.IdlePolicy
+                            ? std::optional<uint64_t>{Complete->second.Device}
+                            : std::nullopt};
       PnpTransitions.erase(Complete);
     }
   }
@@ -1281,7 +1474,16 @@ KernelFramework::call(const KernelExportRegistry::Export &Export,
 }
 
 llvm::Expected<bool> KernelFramework::deferPassiveCall(uint64_t WdmDevice) {
-  if (!CallbackIRQL || !PendingCall || PendingCall->ExecutionToken)
+  if (!PendingCall || PendingCall->ExecutionToken)
+    return false;
+  const bool Recursive =
+      PendingCall->SynchronizationObject && DevicesHost.OwnsCallbackLock &&
+      DevicesHost.OwnsCallbackLock(PendingCall->SynchronizationObject);
+  uint8_t ExecutionIRQL = scheduler::PassiveLevel;
+  if (auto Callback = QueueCallbacks.find(PendingCall->Token);
+      Callback != QueueCallbacks.end())
+    ExecutionIRQL = synchronizationIRQL(Callback->second);
+  if (CallbackIRQL <= ExecutionIRQL && !Recursive)
     return false;
   if (!WdmDevice && !PendingCall->Arguments.empty()) {
     auto Object = Objects.find(PendingCall->Arguments.front());
@@ -1294,8 +1496,8 @@ llvm::Expected<bool> KernelFramework::deferPassiveCall(uint64_t WdmDevice) {
     }
   }
   if (!WdmDevice || !DevicesHost.DeferCall)
-    return invalid("PASSIVE_LEVEL callback scheduling requires a device host");
-  if (auto E = DevicesHost.DeferCall(*PendingCall, WdmDevice))
+    return invalid("deferred callback scheduling requires a device host");
+  if (auto E = DevicesHost.DeferCall(*PendingCall, WdmDevice, ExecutionIRQL))
     return E;
   PendingCall.reset();
   return true;
@@ -1330,6 +1532,36 @@ KernelFramework::callImpl(const KernelExportRegistry::Export &Export,
   }
   if (A[0] != B.Globals)
     return invalid("framework function received another binding's globals");
+  if (Export.Name == api::WdfObjectAcquireLock ||
+      Export.Name == api::WdfObjectReleaseLock) {
+    auto Object = Objects.find(A[1]);
+    if (Object == Objects.end() || Object->second.Binding != B.Globals)
+      return invalid("callback lock requires a matching framework handle");
+    auto Owner = synchronizationObject(A[1], false);
+    if (!Owner)
+      return Owner.takeError();
+    const auto &Operation = Export.Name == api::WdfObjectAcquireLock
+                                ? DevicesHost.AcquireCallbackLock
+                                : DevicesHost.ReleaseCallbackLock;
+    if (!Operation)
+      return invalid("callback lock host is unavailable");
+    if (auto E = Operation(*Owner))
+      return E;
+    if (Export.Name == api::WdfObjectReleaseLock)
+      if (auto E = flushSynchronizationDestructions())
+        return E;
+    return 0;
+  }
+  auto Policy = callPowerPolicy(Export.Name, B, A, IRQL);
+  if (!Policy)
+    return Policy.takeError();
+  if (*Policy)
+    return **Policy;
+  auto Lock = callLock(Export.Name, B, A, IRQL);
+  if (!Lock)
+    return Lock.takeError();
+  if (*Lock)
+    return **Lock;
   auto InterruptResult = callInterrupt(Export.Name, B, A, IRQL);
   if (!InterruptResult)
     return InterruptResult.takeError();
@@ -1386,6 +1618,10 @@ KernelFramework::callImpl(const KernelExportRegistry::Export &Export,
     if (const auto *Status = std::get_if<uint32_t>(&*Validation))
       return *Status;
     const auto &Attrs = std::get<Attributes>(*Validation);
+    if (Attrs.Synchronization != SynchronizationInherit &&
+        Attrs.Synchronization != SynchronizationNone)
+      return invalid(
+          "synchronization scope requires a driver, device or queue");
     if (auto E = writable(A[2], 8))
       return E;
     auto Handle = createObject(B.Globals, Attrs, false);

@@ -269,6 +269,7 @@ protected:
     EXPECT_EQ(Call->Owner, WdmDevice);
     EXPECT_EQ(Call->PC, CancelPC);
     EXPECT_EQ(Call->IRQL, 0u);
+    take(Model->enterFrameworkCallback(Call->ID, {}, 0));
     return *Call;
   }
 
@@ -313,13 +314,63 @@ TEST_F(KernelCancellation, DeadlineWithoutTimerSetsTheAuthoritativeIRPFlag) {
   EXPECT_FALSE(Model->nextEventTime());
   EXPECT_EQ(invoke("WdfRequestUnmarkCancelable", {Globals, Request.Request}),
             Cancelled);
-  // nextScheduled performed the real callback-entry notification itself.
+  // The session entry hook has delivered the selected callback.
   complete(Request);
   EXPECT_TRUE(observation(Request.IRP).Completed);
   rejected(Model->validateGuestAccess(Request.IRP, 1, false), "freed");
   finishCancellation(Cancel.ID);
   success(Model->finalizeRequest(Request.IRP));
   EXPECT_EQ(observation(Request.IRP).DispatchStatus, Pending);
+  EXPECT_EQ(observation(Request.IRP).IOStatus, Cancelled);
+}
+
+TEST_F(KernelCancellation,
+       DeferredDestructionRetainsTheWdmDeviceThroughSchedulerReturn) {
+  Model->enterExecution(profile::StackBase);
+  put(Type, 40, 4);
+  put(Type + 8, Type + 48);
+  put(Type + 16, 24);
+  success(Memory->write(Type + 48, {'C', 't', 'x', 0}));
+  put(Attributes + 16, DestroyPC);
+  put(Attributes + 32, Device);
+  put(Attributes + 48, Type);
+  EXPECT_EQ(invoke("WdfObjectCreate", {Globals, Attributes, ContextSlot}), 0u);
+  const auto Child = get(ContextSlot);
+  invoke("WdfObjectReferenceActual", {Globals, Child, 0, 0, 0});
+  invoke("WdfObjectDelete", {Globals, Child});
+  const auto Previous = kernel("KfRaiseIrql", {scheduler::DispatchLevel});
+  invoke("WdfObjectDereferenceActual", {Globals, Child, 0, 0, 0});
+  kernel("KeLowerIrql", {Previous});
+  const auto Callback = take(Model->nextScheduled(false));
+  ASSERT_TRUE(Callback);
+  ASSERT_EQ(Callback->Kind, KernelScheduler::CallbackKind::FrameworkDeferred);
+  ASSERT_EQ(Callback->PC, DestroyPC);
+  invoke("WdfObjectDelete", {Globals, Device});
+  EXPECT_FALSE(take(Model->continueScheduled(Callback->ID, 0)));
+  // The framework objects have retired, but the real scheduled frame still
+  // owns the WDM device until its scheduler epilogue returns.
+  success(Model->validateGuestAccess(WdmDevice + windows::DeviceTypeOffset,
+                                     sizeof(uint32_t), false));
+  success(Model->finishScheduled(Callback->ID));
+  rejected(Model->validateGuestAccess(WdmDevice, 1, false), "freed");
+}
+
+TEST_F(KernelCancellation, DequeueDoesNotAuthorizeCancellationCompletion) {
+  file(DriverRequestKind::Create);
+  const auto Request = begin(7);
+  mark(Request);
+  pending(Request);
+  auto Call = take(Model->nextScheduled(true));
+  ASSERT_TRUE(Call);
+  EXPECT_EQ(Call->Kind, KernelScheduler::CallbackKind::FrameworkCancel);
+  rejected(call("WdfRequestCompleteWithInformation",
+                {Globals, Request.Request, Cancelled, 0}),
+           "delivered EvtRequestCancel");
+  EXPECT_FALSE(observation(Request.IRP).Completed);
+  take(Model->enterFrameworkCallback(Call->ID, {}, 0));
+  complete(Request);
+  finishCancellation(Call->ID);
+  success(Model->finalizeRequest(Request.IRP));
   EXPECT_EQ(observation(Request.IRP).IOStatus, Cancelled);
 }
 

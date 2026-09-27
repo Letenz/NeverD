@@ -18,6 +18,7 @@
 
 #include "neverd/emulation/DriverSession.h"
 
+#include <functional>
 #include <map>
 
 namespace neverd::emulation {
@@ -29,6 +30,14 @@ namespace interrupts {
 } // namespace interrupts
 class KernelInterrupts {
 public:
+  struct PassiveLockHost {
+    std::function<bool(uint64_t, std::optional<uint64_t>)> Available;
+    std::function<llvm::Expected<bool>(uint64_t, uint64_t, bool)> Acquire;
+    std::function<llvm::Error(uint64_t, uint64_t, bool)> Release;
+  };
+  void setPassiveLockHost(PassiveLockHost Host) {
+    PassiveLocks = std::move(Host);
+  }
   KernelInterrupts(const KernelResources &Resources, DriverResult &Result)
       : Resources(Resources), Result(Result) {}
   struct Connection {
@@ -46,6 +55,7 @@ public:
     uint8_t IRQL = 0;
     uint8_t SynchronizeIRQL = 0;
     uint64_t SpinLock = 0;
+    uint64_t WaitLock = 0;
     /// Zero is the legacy API; otherwise the exact Ex connection version.
     uint32_t Version = 0;
     /// Resource-local assignment index; also set for fully specified connects.
@@ -129,6 +139,7 @@ public:
   llvm::Error validateExecutionReturn(uint64_t Execution) const;
 
 private:
+  PassiveLockHost PassiveLocks;
   enum class HoldKind { Manual, Callback };
   struct Hold {
     uint64_t Object;

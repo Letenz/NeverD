@@ -14,8 +14,12 @@ add_neverd_component_library(NeverDEmulation
   windows/GuardControlFlow.cpp
   windows/KernelFramework.cpp
   windows/KernelFrameworkInterrupts.cpp
+  windows/KernelFrameworkLocks.cpp
+  windows/KernelModelFrameworkLocks.cpp
   windows/KernelModelFrameworkInterrupts.cpp
   windows/KernelFrameworkPower.cpp
+  windows/KernelFrameworkPowerPolicy.cpp
+  windows/KernelModelPowerPolicy.cpp
   windows/KernelFrameworkControl.cpp
   windows/KernelFrameworkFiles.cpp
   windows/KernelFrameworkQueue.cpp
@@ -54,6 +58,7 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelRemoveLocks.cpp
   windows/KernelModelRuntime.cpp
   windows/KernelModelScheduling.cpp
+  windows/KernelModelFrameworkSynchronization.cpp
   windows/KernelModelSpinLocks.cpp
   windows/KernelModelIRQL.cpp
   windows/KernelModelCancellation.cpp

@@ -517,5 +517,42 @@ TEST(DriverKernelDispatcherConfiguration, OwnerThreadAndValidatorAreRequired) {
   expectError(Dispatcher.configure(1, 2), "configuration");
 }
 
+TEST_F(DriverKernelDispatcher, WaitLockOwnersAreTypedAndNonrecursive) {
+  using OwnerKind = KernelDispatcher::WaitLockOwner::Kind;
+  const KernelDispatcher::WaitLockOwner ThreadOwner{OwnerKind::Thread, Thread};
+  const KernelDispatcher::WaitLockOwner InterruptOwner{OwnerKind::Interrupt,
+                                                       Thread};
+  success(Dispatcher.initializeWaitLock(Event));
+  EXPECT_FALSE(Dispatcher.isWaitable(Event));
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Event, ThreadOwner)));
+  EXPECT_TRUE(Dispatcher.waitLockOwnedByThread(Thread));
+  EXPECT_FALSE(take(Dispatcher.tryAcquireWaitLock(Event, InterruptOwner)));
+  expectError(Dispatcher.tryAcquireWaitLock(Event, ThreadOwner),
+              "nonrecursive");
+  expectError(Dispatcher.releaseWaitLock(Event, InterruptOwner),
+              "owning thread");
+  expectError(Dispatcher.canReleaseRange(Event, dispatcher::EventSize),
+              "owned wait lock");
+  success(Dispatcher.releaseWaitLock(Event, ThreadOwner));
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Event, InterruptOwner)));
+  EXPECT_FALSE(Dispatcher.waitLockOwnedByThread(Thread));
+  success(Dispatcher.releaseWaitLock(Event, InterruptOwner));
+  success(Dispatcher.canReleaseRange(Event, dispatcher::EventSize));
+}
+
+TEST_F(DriverKernelDispatcher, CallbackWaitLockBalancesRecursiveThreadEntries) {
+  using OwnerKind = KernelDispatcher::WaitLockOwner::Kind;
+  const KernelDispatcher::WaitLockOwner First{OwnerKind::Thread, Thread};
+  const KernelDispatcher::WaitLockOwner Second{OwnerKind::Thread, Thread + 1};
+  success(Dispatcher.initializeWaitLock(Event, true));
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Event, First)));
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Event, First)));
+  success(Dispatcher.releaseWaitLock(Event, First));
+  EXPECT_FALSE(take(Dispatcher.tryAcquireWaitLock(Event, Second)));
+  success(Dispatcher.releaseWaitLock(Event, First));
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Event, Second)));
+  success(Dispatcher.releaseWaitLock(Event, Second));
+  expectError(Dispatcher.releaseWaitLock(Event, Second), "owning thread");
+}
 } // namespace
 } // namespace neverd::emulation

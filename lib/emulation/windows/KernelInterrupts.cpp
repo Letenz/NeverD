@@ -199,7 +199,10 @@ llvm::Error KernelInterrupts::canConnect(const Connection &Candidate) const {
   if (Candidate.Passive &&
       (Candidate.SpinLock || Candidate.SynchronizeIRQL || !Candidate.Version))
     return interruptError(
-        "passive interrupt requires a private synchronization event");
+        "passive interrupt requires a passive synchronization event");
+  if (Candidate.WaitLock && (!Candidate.Passive || !PassiveLocks.Available ||
+                             !PassiveLocks.Acquire || !PassiveLocks.Release))
+    return interruptError("external wait lock requires its passive authority");
   if (!Candidate.Passive &&
       (Candidate.SynchronizeIRQL < Candidate.IRQL ||
        Candidate.SynchronizeIRQL > DriverInterruptMaximumLevel ||
@@ -286,7 +289,9 @@ bool KernelInterrupts::usesSpinLock(uint64_t Address) const {
 
 uint64_t KernelInterrupts::lockIdentity(uint64_t Object) const {
   const auto *Connection = connection(Object);
-  return Connection->SpinLock ? Connection->SpinLock : Object;
+  return Connection->WaitLock   ? Connection->WaitLock
+         : Connection->SpinLock ? Connection->SpinLock
+                                : Object;
 }
 
 const KernelInterrupts::Connection *
@@ -396,6 +401,10 @@ llvm::Error KernelInterrupts::canReleaseRange(uint64_t Base,
         Connection.SpinLock < End)
       return interruptError(
           "storage still owns a connected interrupt spin lock");
+    if (Connection.WaitLock && Base <= Connection.WaitLock &&
+        Connection.WaitLock < End)
+      return interruptError(
+          "storage still owns a connected interrupt wait lock");
     if (Connection.OutputDeviceSize &&
         Base < Connection.OutputDeviceBase + Connection.OutputDeviceSize &&
         Connection.OutputDeviceBase < End)
@@ -524,6 +533,11 @@ bool KernelInterrupts::passiveAvailable(uint64_t Object, uint64_t Token) const {
   const auto *Connection = connection(Object);
   if (!Connection || !Connection->Passive)
     return true;
+  if (Connection->WaitLock &&
+      !PassiveLocks.Available(Connection->WaitLock,
+                              Token ? std::optional<uint64_t>{Token}
+                                    : std::nullopt))
+    return false;
   const uint64_t Identity = lockIdentity(Object);
   for (const auto &Hold : Holds)
     if (lockIdentity(Hold.Object) == Identity &&
@@ -812,6 +826,13 @@ llvm::Expected<bool> KernelInterrupts::reserveSynchronization(uint64_t Token) {
     return true;
   if (!passiveAvailable(Call.Object, Token))
     return false;
+  if (const auto Lock = connection(Call.Object)->WaitLock) {
+    auto Acquired = PassiveLocks.Acquire(Lock, Token, true);
+    if (!Acquired)
+      return Acquired.takeError();
+    if (!*Acquired)
+      return false;
+  }
   Holds.push_back({Call.Object, Token, 0, HoldKind::Callback});
   Call.Reserved = true;
   return true;
@@ -828,6 +849,13 @@ KernelInterrupts::beginCall(uint64_t Token, uint8_t CallerIRQL, uint64_t Now) {
       return interruptError("passive interrupt synchronization event is owned");
     if (auto E = canHold(Call.Object, CallerIRQL))
       return E;
+    if (const auto Lock = connection(Call.Object)->WaitLock) {
+      auto Acquired = PassiveLocks.Acquire(Lock, Token, true);
+      if (!Acquired)
+        return Acquired.takeError();
+      if (!*Acquired)
+        return interruptError("passive interrupt lost its available wait lock");
+    }
     Holds.push_back({Call.Object, Token, CallerIRQL, HoldKind::Callback});
   } else if (CallerIRQL) {
     return interruptError("passive synchronization requires PASSIVE_LEVEL");
@@ -869,6 +897,9 @@ KernelInterrupts::finishCall(uint64_t Token, uint64_t Value,
         Line.Sources.begin()->second.RetriggerAfter100ns > UINT64_MAX - Now)
       return interruptError("level sampling deadline overflows virtual time");
   }
+  if (const auto Lock = connection(It->second.Object)->WaitLock)
+    if (auto E = PassiveLocks.Release(Lock, Token, true))
+      return E;
   if (It->second.Observation) {
     const size_t Index = *It->second.Observation;
     auto &Observation = Result.Interrupts[Index];
@@ -921,6 +952,18 @@ llvm::Expected<bool> KernelInterrupts::tryAcquirePassive(uint64_t Object,
         return interruptError("execution already waits on another interrupt");
       return false;
     }
+  if (Connection->WaitLock) {
+    auto Acquired =
+        PassiveLocks.Acquire(Connection->WaitLock, Execution, false);
+    if (!Acquired)
+      return Acquired.takeError();
+    if (!*Acquired) {
+      auto [It, Inserted] = PassiveLockWaiters.emplace(Execution, Object);
+      if (!Inserted && It->second != Object)
+        return interruptError("execution already waits on another interrupt");
+      return false;
+    }
+  }
   PassiveLockWaiters.erase(Execution);
   Holds.push_back({Object, Execution, 0, HoldKind::Manual});
   return true;
@@ -953,6 +996,9 @@ llvm::Expected<uint8_t> KernelInterrupts::release(uint64_t Object,
       CurrentIRQL != Connection->SynchronizeIRQL)
     return interruptError(
         "release requires the owning execution and saved IRQL");
+  if (Connection->WaitLock)
+    if (auto E = PassiveLocks.Release(Connection->WaitLock, Execution, false))
+      return E;
   Holds.erase(Owned);
   return OldIRQL;
 }

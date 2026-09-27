@@ -196,9 +196,8 @@ TEST_F(DriverKernelFramework, DriverRegistryCopyUsesTheValidatedBindingPath) {
   EXPECT_EQ(take(invoke(framework::api::WdfDriverCreate,
                         {Globals, Driver, Copy, 0, Config, DriverSlot})),
             0u);
-  const uint64_t Path =
-      take(invoke(framework::api::WdfDriverGetRegistryPath,
-                  {Globals, get(DriverSlot)}));
+  const uint64_t Path = take(invoke(framework::api::WdfDriverGetRegistryPath,
+                                    {Globals, get(DriverSlot)}));
   std::vector<uint8_t> Stored(Original.size() + sizeof(char16_t));
   success(Memory.read(Path, Stored));
   Original.resize(Stored.size(), 0);
@@ -337,6 +336,25 @@ TEST_F(DriverKernelFramework,
   finish(Call);
   EXPECT_EQ(drain(), (std::vector<uint64_t>{ChildDestroy}));
   EXPECT_TRUE(Released.count(Handle));
+}
+
+TEST_F(DriverKernelFramework,
+       ReferencedChildKeepsItsParentAliveThroughDeferredDestruction) {
+  bind();
+  createDriver();
+  attributes(0, 0, ParentCleanup, ParentDestroy);
+  const auto Parent = object(Attrs);
+  attributes(Parent, 0, ChildCleanup, ChildDestroy);
+  const auto Child = object(Attrs);
+  take(invoke("WdfObjectReferenceActual", {Globals, Child, 0, 0, 0}));
+  take(invoke("WdfObjectDelete", {Globals, Parent}));
+  EXPECT_EQ(drain(), (std::vector<uint64_t>{ChildCleanup, ParentCleanup}));
+  EXPECT_FALSE(Released.count(Parent));
+  EXPECT_FALSE(Released.count(Child));
+  take(invoke("WdfObjectDereferenceActual", {Globals, Child, 0, 0, 0}));
+  EXPECT_EQ(drain(), (std::vector<uint64_t>{ChildDestroy, ParentDestroy}));
+  EXPECT_TRUE(Released.count(Parent));
+  EXPECT_TRUE(Released.count(Child));
 }
 
 TEST_F(DriverKernelFramework,
@@ -536,18 +554,20 @@ TEST_F(DriverKernelFramework,
       0u);
 }
 
-TEST_F(DriverKernelFramework, UnsupportedSchedulingAttributesRemainExplicit) {
+TEST_F(DriverKernelFramework,
+       GenericExecutionLevelDoesNotGrantACallbackSynchronizationScope) {
   bind();
   createDriver();
   attributes();
-  put(Attrs + 24, 3, 4);
+  put(Attrs + framework::AttributesExecution, framework::ExecutionDispatch, 4);
+  EXPECT_EQ(take(invoke("WdfObjectCreate", {Globals, Attrs, Output})), 0u);
+  EXPECT_EQ(take(Model.executionLevel(get(Output))),
+            framework::ExecutionDispatch);
   const size_t Attempts = AllocationAttempts;
-  expectError(invoke("WdfObjectCreate", {Globals, Attrs, Output}),
-              "unsupported framework object execution level");
   attributes();
   put(Attrs + 28, 2, 4);
   expectError(invoke("WdfObjectCreate", {Globals, Attrs, Output}),
-              "unsupported framework object synchronization scope");
+              "synchronization scope requires a driver, device or queue");
   EXPECT_EQ(AllocationAttempts, Attempts);
 }
 

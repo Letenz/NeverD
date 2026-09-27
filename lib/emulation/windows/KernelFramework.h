@@ -15,6 +15,7 @@
 #include "../GuestMemory.h"
 #include "KernelExportRegistry.h"
 #include "KernelGuestCall.h"
+#include "KernelPowerPolicy.h"
 
 #include "neverd/emulation/DriverPnp.h"
 
@@ -65,6 +66,7 @@ public:
     uint64_t PC = 0;
     std::vector<uint64_t> Arguments;
     std::optional<GuestCallToken> ExecutionToken;
+    uint64_t SynchronizationObject = 0;
   };
   struct DeviceCreation {
     uint32_t Status = 0;
@@ -81,7 +83,10 @@ public:
         CreatePnp;
     std::function<llvm::Error(uint64_t)> Delete;
     std::function<llvm::Error(uint64_t)> FinishInitializing;
-    std::function<llvm::Error(const GuestCall &, uint64_t)> DeferCall;
+    std::function<llvm::Error(const GuestCall &, uint64_t, uint8_t)> DeferCall;
+    std::function<bool(uint64_t)> OwnsCallbackLock;
+    std::function<llvm::Error(uint64_t)> AcquireCallbackLock;
+    std::function<llvm::Error(uint64_t)> ReleaseCallbackLock;
     std::function<llvm::Expected<uint32_t>(uint64_t, llvm::StringRef)> Link;
   };
   void setDeviceHost(DeviceHost Host) { DevicesHost = std::move(Host); }
@@ -92,6 +97,8 @@ public:
     uint32_t MessageOrdinal = 0;
     bool Passive = false;
     std::optional<bool> ShareVector;
+    uint64_t SpinLock = 0, WaitLock = 0;
+    uint8_t SynchronizeIRQL = 0;
   };
   struct InterruptConnection {
     uint64_t Token = 0, Affinity = 0;
@@ -113,14 +120,25 @@ public:
         PrepareCall;
     std::function<llvm::Error(uint64_t)> Acquire;
     std::function<llvm::Error(uint64_t)> Release;
-    std::function<llvm::Expected<bool>(
-        uint64_t, uint64_t, uint64_t, llvm::ArrayRef<uint64_t>, bool, uint64_t)>
+    std::function<llvm::Expected<bool>(uint64_t, uint64_t, uint64_t,
+                                       llvm::ArrayRef<uint64_t>, bool, uint64_t,
+                                       uint64_t)>
         QueueDeferred;
     std::function<bool(uint64_t)> HasDeferred;
   };
   void setInterruptHost(InterruptHost Host) {
     InterruptsHost = std::move(Host);
   }
+  struct LockHost {
+    std::function<llvm::Expected<uint64_t>(bool)> Create;
+    std::function<llvm::Error(uint64_t, bool)> CanDelete;
+    std::function<llvm::Error(uint64_t, bool)> Destroy;
+    std::function<llvm::Expected<uint32_t>(uint64_t, bool,
+                                           std::optional<int64_t>)>
+        Acquire;
+    std::function<llvm::Error(uint64_t, bool)> Release;
+  };
+  void setLockHost(LockHost Host) { LocksHost = std::move(Host); }
   struct RequestView {
     uint64_t IRP = 0, ByteOffset = 0;
     uint32_t Major = 0, ControlCode = 0, InputLength = 0, OutputLength = 0;
@@ -169,11 +187,14 @@ public:
     std::vector<uint64_t> Arguments;
     uint32_t Status = 0;
     bool CallerContext = false;
+    uint64_t SynchronizationObject = 0;
   };
   /// Nullopt selects ordinary WDM dispatch; an engaged result owns the exact
   /// framework dispatch status independently from a void callback's RAX.
   llvm::Expected<std::optional<RequestDispatch>>
   routeRequest(uint64_t WdmDevice, uint64_t IRP, bool AfterCaller = false);
+  llvm::Error finishRequestDispatch(uint64_t IRP);
+  bool isPowerManagedCallback(uint64_t IRP, uint64_t Token) const;
   llvm::Expected<GuestCall>
   previewFileSendCompletion(uint64_t IRP, uint32_t Status,
                             uint64_t EarlierCallbacks = 0) const;
@@ -228,6 +249,7 @@ public:
   struct PnpCompletion {
     uint64_t IRP = 0;
     uint32_t Status = 0;
+    std::optional<uint64_t> IdlePolicyDevice;
   };
   /// Run driver veto/notification callbacks before the provider receives the
   /// PnP IRP. A rejected query never changes hardware or queue power state.
@@ -244,6 +266,31 @@ public:
                                                   DevicePowerState Previous,
                                                   DevicePowerState Target);
   llvm::Expected<bool> ownsPowerPolicy(uint64_t WdmDevice) const;
+  struct PowerPolicyHost {
+    enum class RequestMode { Validate, Issue };
+    std::function<uint64_t()> Now;
+    std::function<llvm::Error(uint64_t, DevicePowerState, RequestMode)> Request;
+    std::function<llvm::Expected<bool>(uint64_t, bool)> CanWake;
+    std::function<llvm::Error(uint64_t, bool)> ArmWake;
+    std::function<llvm::Error(uint64_t, bool)> FinishWake;
+  };
+  void setPowerPolicyHost(PowerPolicyHost Host) { PowerHost = std::move(Host); }
+  llvm::Error powerPolicyIdle(uint64_t PDO);
+  llvm::Error powerPolicyActive(uint64_t PDO);
+  llvm::Error powerPolicyWake(uint64_t PDO);
+  llvm::Error processPowerPolicy();
+  std::optional<uint64_t> nextPowerPolicyTime() const;
+  bool hasPendingPowerPolicy() const;
+  llvm::Expected<std::optional<uint32_t>> powerPolicyWait(uint64_t Device);
+  llvm::Expected<uint64_t> powerPolicyEpoch(uint64_t PDO) const;
+  llvm::Expected<bool> systemPowerNeedsD0(uint64_t PDO) const;
+  llvm::Expected<bool> systemSleepNeedsD0(uint64_t PDO) const;
+  llvm::Error systemPowerPolicy(uint64_t PDO, bool Sleeping);
+  llvm::Error beginPowerPolicyRequest(uint64_t PDO);
+  llvm::Error finishPowerPolicyRequest(uint64_t PDO, uint32_t Status,
+                                       bool SetPower = true);
+  llvm::Error finishIdlePowerDown(uint64_t Device, uint32_t Status);
+
   std::optional<PnpCompletion> takePnpCompletion();
   static std::optional<unsigned>
   argumentCount(const KernelExportRegistry::Export &Export);
@@ -264,12 +311,24 @@ public:
   llvm::Error validateGuestAccess(uint64_t Address, uint32_t Size,
                                   bool IsWrite) const;
   bool hasLiveBinding() const;
+  /// Resolve the shared device or queue callback lock. Automatic calls return
+  /// zero when the object's effective synchronization scope is None.
+  llvm::Expected<uint64_t> synchronizationObject(uint64_t Handle,
+                                                 bool Automatic = true) const;
+  uint8_t synchronizationIRQL(uint64_t Object) const;
+  llvm::Expected<uint32_t> executionLevel(uint64_t Handle) const;
+  llvm::Error retainSynchronizationObject(uint64_t Object);
+  llvm::Error releaseSynchronizationObject(uint64_t Object);
+  llvm::Error flushSynchronizationDestructions();
 
 private:
   llvm::Expected<uint64_t> callImpl(const KernelExportRegistry::Export &Export,
                                     llvm::ArrayRef<uint64_t> Arguments,
                                     uint8_t IRQL);
   llvm::Expected<bool> deferPassiveCall(uint64_t WdmDevice = 0);
+  uint64_t callbackSynchronizationObject(uint64_t Handle) const;
+  llvm::Error retainQueueCallback(uint64_t Token, uint64_t Queue);
+  std::set<uint64_t> PendingSynchronizationDestructions;
   uint8_t CallbackIRQL = 0;
   llvm::Error writeRequestParameters(uint64_t Address, const RequestView &View);
   llvm::Error writeRequestCompletionParams(uint64_t Address, uint32_t Status);
@@ -297,9 +356,12 @@ private:
   std::map<uint64_t, Binding> Bindings;
   DeviceHost DevicesHost;
   InterruptHost InterruptsHost;
+  LockHost LocksHost;
   struct Attributes {
     uint64_t Parent = 0, Cleanup = 0, Destroy = 0;
     uint64_t Type = 0, ContextSize = 0;
+    uint32_t Execution = framework::ExecutionInherit;
+    uint32_t Synchronization = framework::SynchronizationInherit;
   };
   struct FileConfig {
     bool Enabled = false;
@@ -307,6 +369,7 @@ private:
     uint32_t AutoForward = framework::FileAutoForwardDefault;
     uint32_t Class = framework::FileObjectNotRequired;
     Attributes ObjectAttributes;
+    uint64_t SynchronizationObject = 0;
     bool forwards(bool Filter) const {
       return AutoForward == framework::FileAutoForwardTrue ||
              (AutoForward == framework::FileAutoForwardDefault && Filter);
@@ -331,6 +394,7 @@ private:
     FileConfig Files;
     uint64_t CallerContext = 0;
     PnpCallbacks Callbacks;
+    KernelPowerPolicy::Callbacks PowerCallbacks;
   };
   std::map<uint64_t, DeviceInit> DeviceInits;
   struct ResourceList {
@@ -354,6 +418,7 @@ private:
     bool Filter = false;
     bool Initialized = false;
     bool PowerPolicyOwner = true;
+    KernelPowerPolicy Policy;
     bool HasLink = false;
     PnpCallbacks Callbacks;
     ResourceList RawResources, TranslatedResources;
@@ -366,6 +431,8 @@ private:
   std::map<uint64_t, Device> Devices;
   struct Interrupt {
     uint64_t Device = 0, AssociatedObject = 0;
+    uint64_t ExternalLock = 0;
+    uint64_t SynchronizationObject = 0;
     uint64_t ISR = 0, DPC = 0, WorkItem = 0, Enable = 0, Disable = 0;
     InterruptSelection Selection;
     std::optional<InterruptConnection> Connection;
@@ -373,6 +440,18 @@ private:
     bool ChangingState = false;
   };
   std::map<uint64_t, Interrupt> InterruptObjects;
+  struct Lock {
+    uint64_t Storage = 0;
+    bool Wait = false;
+    std::set<uint64_t> InterruptUsers;
+  };
+  std::map<uint64_t, Lock> LockObjects;
+  llvm::Expected<std::optional<uint64_t>>
+  callLock(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> Arguments,
+           uint8_t IRQL);
+  llvm::Error validateLockDeletion(uint64_t Handle, uint64_t Root) const;
+  llvm::Error destroyFrameworkLock(uint64_t Handle);
+  llvm::Expected<std::optional<uint64_t>> releaseInterruptLock(uint64_t Handle);
   enum class InterruptCallKind { Synchronize, Enable, Disable, Deferred };
   struct InterruptContinuation {
     uint64_t Object = 0;
@@ -476,10 +555,14 @@ private:
     Queue,
     Request,
     Interrupt,
+    SpinLock,
+    WaitLock,
     Memory
   };
   struct Object {
     uint64_t Binding = 0, Parent = 0;
+    uint32_t Execution = framework::ExecutionDispatch;
+    uint32_t Synchronization = framework::SynchronizationNone;
     ObjectKind Kind = ObjectKind::Generic;
     bool Deleting = false, Cleaned = false;
     bool DestroyEligible = false;
@@ -517,6 +600,7 @@ private:
     uint64_t PC = 0;
     uint64_t File = 0;
     uint32_t Status = 0;
+    uint64_t SynchronizationObject = 0;
   };
   struct Continuation {
     std::vector<Step> Steps;
@@ -535,9 +619,21 @@ private:
   uint64_t NextContinuation = 1;
   std::map<uint64_t, Continuation> Continuations;
   std::map<uint64_t, uint64_t> CancelCallbacks;
+  std::map<uint64_t, uint64_t> QueueCallbacks;
+  std::map<uint64_t, uint64_t> RequestDispatchQueues;
   std::map<uint64_t, uint64_t> CanceledQueueCallbacks;
   std::map<uint64_t, uint64_t> ReadyQueueCallbacks;
+  PowerPolicyHost PowerHost;
+  bool powerPolicyBusy(uint64_t Device) const;
+  llvm::Error restartIdleTimer(uint64_t Device);
+  llvm::Error beginIdlePowerDown(uint64_t Device);
+  llvm::Expected<std::optional<uint64_t>>
+  callPowerPolicy(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> A,
+                  uint8_t IRQL);
   enum class PnpPhase {
+#define NEVERD_POWER_POLICY_CALLBACK(Name, Index, Result) Name,
+#include "KernelPowerPolicyCallbacks.def"
+#undef NEVERD_POWER_POLICY_CALLBACK
 #define NEVERD_FRAMEWORK_PNP_CALLBACK(Name, Index, Result) Name,
 #include "KernelFrameworkPnpCallbacks.def"
 #undef NEVERD_FRAMEWORK_PNP_CALLBACK
@@ -564,6 +660,7 @@ private:
     std::deque<PnpStep> Remaining;
     std::set<uint64_t> WaitingRequests;
     bool NotificationOnly = false;
+    bool IdlePolicy = false;
     bool ReleasesHardware = true;
     uint32_t PowerState = framework::PowerDeviceD3Final;
     bool SuspendAfterQueues = false;

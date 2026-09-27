@@ -123,23 +123,28 @@ TEST(DriverKernelScheduler,
      FrameworkPassiveContinuationsRetainIdentityAndWorkerOrdering) {
   Scheduler S;
   const auto First = take(S.enqueueWorkItem(work(1)));
-  const auto Deferred = take(S.enqueueFrameworkPassive(work(1)));
+  const auto Deferred =
+      take(S.enqueueFrameworkDeferred(work(1), scheduler::PassiveLevel));
   EXPECT_TRUE(S.cancelWorkItem(1));
   EXPECT_FALSE(S.cancelWorkItem(1));
   EXPECT_FALSE(S.isWorkItemQueued(1));
-  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
+  expectError(S.enqueueFrameworkDeferred(work(1), scheduler::PassiveLevel),
+              "outstanding");
   auto Invocation = take(S.next());
   ASSERT_TRUE(Invocation);
-  EXPECT_EQ(Invocation->Kind, Scheduler::CallbackKind::FrameworkPassive);
+  EXPECT_EQ(Invocation->Kind, Scheduler::CallbackKind::FrameworkDeferred);
   EXPECT_EQ(Invocation->ID, Deferred);
   EXPECT_GT(Deferred, First);
   EXPECT_EQ(Invocation->IRQL, scheduler::PassiveLevel);
   EXPECT_EQ(Invocation->Arguments, work(1).Arguments);
-  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
+  expectError(S.enqueueFrameworkDeferred(work(1), scheduler::PassiveLevel),
+              "outstanding");
   success(S.suspend(Deferred));
   EXPECT_TRUE(S.hasOutstanding(100));
-  expectError(S.enqueueFrameworkPassive(work(1)), "outstanding");
-  const auto Second = take(S.enqueueFrameworkPassive(work(2)));
+  expectError(S.enqueueFrameworkDeferred(work(1), scheduler::PassiveLevel),
+              "outstanding");
+  const auto Second =
+      take(S.enqueueFrameworkDeferred(work(2), scheduler::PassiveLevel));
   auto Next = take(S.next());
   ASSERT_TRUE(Next);
   EXPECT_EQ(Next->ID, Second);
@@ -147,6 +152,38 @@ TEST(DriverKernelScheduler,
   success(S.resume(Deferred));
   success(S.finish(Deferred));
   EXPECT_FALSE(S.hasOutstanding(100));
+}
+
+TEST(DriverKernelScheduler,
+     FrameworkDispatchPrecedesWorkersAndCanHandOffItsPassiveEpilogue) {
+  Scheduler S;
+  const auto Worker = take(S.enqueueWorkItem(work(1)));
+  const auto Passive =
+      take(S.enqueueFrameworkDeferred(work(2), scheduler::PassiveLevel));
+  expectError(S.enqueueFrameworkDeferred(work(3), 1), "IRQL");
+  const auto Dispatch =
+      take(S.enqueueFrameworkDeferred(work(3), scheduler::DispatchLevel));
+  EXPECT_TRUE(S.hasQueuedDPC());
+  EXPECT_FALSE(S.isDPCQueued(3));
+  EXPECT_FALSE(S.removeDPC(3));
+  expectError(S.enqueueFrameworkDeferred(work(3), scheduler::PassiveLevel),
+              "outstanding");
+  auto First = take(S.next());
+  ASSERT_TRUE(First);
+  EXPECT_EQ(First->ID, Dispatch);
+  EXPECT_EQ(First->IRQL, scheduler::DispatchLevel);
+  const auto Epilogue =
+      take(S.enqueueFrameworkDeferred(work(3), scheduler::PassiveLevel));
+  expectError(S.enqueueFrameworkDeferred(work(3), scheduler::DispatchLevel),
+              "outstanding");
+  success(S.finish(Dispatch));
+  for (uint64_t ID : {Worker, Passive, Epilogue}) {
+    auto Next = take(S.next());
+    ASSERT_TRUE(Next);
+    EXPECT_EQ(Next->ID, ID);
+    EXPECT_EQ(Next->IRQL, scheduler::PassiveLevel);
+    success(S.finish(ID));
+  }
 }
 
 TEST(DriverKernelScheduler, WorkersPreserveFIFOAndExactGuestMetadata) {

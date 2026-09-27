@@ -155,7 +155,8 @@ KernelFramework::requestCancellation(uint64_t IRP) {
   // https://github.com/microsoft/Windows-Driver-Frameworks/blob/b6191d9543441329154da32f7ab9bdd97228dd3c/src/framework/shared/irphandlers/io/fxioqueue.cpp#L4892-L4935
   Continuations.emplace(
       Token,
-      Continuation{{{StepKind::Callback, R->first, R->second.CancelRoutine},
+      Continuation{{{StepKind::Callback, R->first, R->second.CancelRoutine, 0,
+                     0, callbackSynchronizationObject(R->first)},
                     {StepKind::CancelReturned, R->first}}});
   CancelCallbacks.emplace(Token, R->first);
   R->second.Cancellation = CancelState::Queued;
@@ -178,6 +179,36 @@ llvm::Error KernelFramework::beginCancelCallback(uint64_t Token) {
   // sets FXREQUEST_FLAG_CANCELLED immediately before invoking the driver.
   R->second.Cancellation = CancelState::Delivered;
   return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::retainQueueCallback(uint64_t Token,
+                                                 uint64_t Queue) {
+  if (!Queues.contains(Queue) || QueueCallbacks.contains(Token))
+    return requestError("callback lost its queue or already holds a reference");
+  if (auto E = retainSynchronizationObject(Queue))
+    return E;
+  QueueCallbacks.emplace(Token, Queue);
+  return llvm::Error::success();
+}
+
+llvm::Error KernelFramework::finishRequestDispatch(uint64_t IRP) {
+  auto Callback = RequestDispatchQueues.find(IRP);
+  if (Callback == RequestDispatchQueues.end())
+    return llvm::Error::success();
+  if (auto E = releaseSynchronizationObject(Callback->second))
+    return E;
+  RequestDispatchQueues.erase(Callback);
+  return flushSynchronizationDestructions();
+}
+
+bool KernelFramework::isPowerManagedCallback(uint64_t IRP,
+                                             uint64_t Token) const {
+  const auto &Callbacks = Token ? QueueCallbacks : RequestDispatchQueues;
+  auto Callback = Callbacks.find(Token ? Token : IRP);
+  if (Callback == Callbacks.end())
+    return false;
+  auto Queue = Queues.find(Callback->second);
+  return Queue != Queues.end() && Queue->second.PowerManaged;
 }
 
 llvm::Expected<KernelFramework::RequestDispatch>
@@ -213,6 +244,7 @@ KernelFramework::queueDispatch(uint64_t QueueHandle, uint64_t RequestHandle,
   RequestDispatch Dispatch;
   Dispatch.PC = Callback;
   Dispatch.Status = windows::StatusPending;
+  Dispatch.SynchronizationObject = callbackSynchronizationObject(QueueHandle);
   Dispatch.Arguments = {QueueHandle, RequestHandle};
   if (Specific) {
     if (View.Major == RequestMajorDeviceControl) {
@@ -284,11 +316,16 @@ llvm::Expected<bool> KernelFramework::presentQueued(uint64_t QueueHandle,
                               Steps.begin(), Steps.end());
     return false;
   }
+  if (auto E = retainQueueCallback(Token, QueueHandle))
+    return E;
   Q->second.Pending.pop_front();
   R->second.Queued = false;
   R->second.DeliveredOnce = true;
-  PendingCall = GuestCall{Token, R->second.QueuedCallback,
-                          std::move(R->second.QueuedArguments)};
+  PendingCall = GuestCall{Token,
+                          R->second.QueuedCallback,
+                          std::move(R->second.QueuedArguments),
+                          {},
+                          callbackSynchronizationObject(QueueHandle)};
   R->second.QueuedCallback = 0;
   return true;
 }
@@ -417,6 +454,9 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
     Requests.emplace(Handle, Request{IRP, Q->first, D->first});
     Requests.at(Handle).File = *File;
   }
+  if (Queue.PowerManaged && D->second.PDO)
+    if (auto E = powerPolicyActive(D->second.PDO))
+      return E;
   if (Manual || WaitForSlot) {
     auto &Pending = Requests.at(Handle);
     Pending.Queued = true;
@@ -438,6 +478,11 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
   }
   RequestDispatch Dispatch = std::move(*Planned);
   Dispatch.Arguments[1] = Handle;
+  if (RequestDispatchQueues.contains(IRP))
+    return requestError("request dispatch already holds its queue reference");
+  if (auto E = retainSynchronizationObject(Q->first))
+    return E;
+  RequestDispatchQueues.emplace(IRP, Q->first);
   Requests.at(Handle).DeliveredOnce = true;
   return std::optional<RequestDispatch>{std::move(Dispatch)};
 }
@@ -867,20 +912,15 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     R->second.Cancellation = CancelState::Marked;
     if (*Canceled) {
       // RequestCancelable(..., FALSE) takes the same cancellation reference
-      // even when insertion finds an already canceled IRP. In this profile,
-      // PASSIVE_LEVEL and SynchronizationNone let DispatchEvents invoke the
-      // driver recursively before the legacy void API returns.
+      // even when insertion finds an already canceled IRP. DispatchEvents can
+      // invoke the driver before this API returns when the callback lock and
+      // execution level permit it; otherwise the callback remains queued.
       // https://github.com/microsoft/Windows-Driver-Frameworks/blob/b6191d9543441329154da32f7ab9bdd97228dd3c/src/framework/shared/irphandlers/io/fxioqueue.cpp#L2195-L2223
       auto Call = requestCancellation(R->second.IRP);
       if (!Call)
         return Call.takeError();
       if (!*Call)
         return requestError("legacy cancellation lost its guest callback");
-      if (auto E = beginCancelCallback((**Call).Token))
-        return E;
-      // Publishing this as the current API's child preserves caller state and
-      // keeps the API suspended through callback waits, nested completion and
-      // the final CancelReturned/destroy continuation. No worker is queued.
       PendingCall = std::move(**Call);
     }
     return Result{0};

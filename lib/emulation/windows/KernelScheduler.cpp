@@ -184,23 +184,31 @@ KernelScheduler::enqueueFrameworkCancel(Callback Cancellation) {
 }
 
 llvm::Expected<uint64_t>
-KernelScheduler::enqueueFrameworkPassive(Callback Call) {
+KernelScheduler::enqueueFrameworkDeferred(Callback Call, uint8_t IRQL) {
   if (auto E = validateCallback(Call))
     return E;
+  if (IRQL != scheduler::PassiveLevel && IRQL != scheduler::DispatchLevel)
+    return schedulerError(
+        "framework callback requires PASSIVE or DISPATCH IRQL");
   auto Matches = [&](const Invocation &Existing) {
-    return Existing.Kind == CallbackKind::FrameworkPassive &&
+    return Existing.Kind == CallbackKind::FrameworkDeferred &&
            Existing.Object == Call.Object;
   };
-  if (containsObject(Workers, Call.Object, CallbackKind::FrameworkPassive) ||
-      (Active && Matches(*Active)) ||
+  if (llvm::any_of(Workers, Matches) || llvm::any_of(DPCs, Matches) ||
+      (Active && Matches(*Active) && Active->IRQL == IRQL) ||
       llvm::any_of(Suspended,
                    [&](const auto &Entry) { return Matches(Entry.second); }))
     return schedulerError("framework continuation is already outstanding");
   if (auto E = checkCapacity(1))
     return E;
-  Workers.push_back(
-      makeInvocation(std::move(Call), CallbackKind::FrameworkPassive, Now));
-  return Workers.back().ID;
+  // An active continuation can hand its next callback to another IRQL FIFO;
+  // the current invocation retires before that successor can be selected.
+  auto Invocation =
+      makeInvocation(std::move(Call), CallbackKind::FrameworkDeferred, Now);
+  Invocation.IRQL = IRQL;
+  auto &Queue = IRQL == scheduler::DispatchLevel ? DPCs : Workers;
+  Queue.push_back(std::move(Invocation));
+  return Queue.back().ID;
 }
 
 llvm::Error KernelScheduler::canEnqueueWDMCancellations(

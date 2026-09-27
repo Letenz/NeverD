@@ -17,6 +17,7 @@ enum {
   KmdfInterruptPassiveCleanup = 'l',
   KmdfInterruptPassiveMsi = 'm',
   KmdfInterruptPassivePowerWait = 'w',
+  KmdfInterruptAutomatic = '_',
   KmdfInterruptVector = 0x91,
   KmdfInterruptIrql = 5,
   KmdfInterruptMessages = 2,
@@ -25,6 +26,7 @@ enum {
   KmdfInterruptDelay100ns = 2,
   KmdfInterruptPulse100ns = 7,
   KmdfInterruptPowerDelay100ns = 8,
+  KmdfInterruptCallbackDelay100ns = 12,
 };
 
 #endif

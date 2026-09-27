@@ -43,6 +43,104 @@ TEST_F(DriverKernelFrameworkQueue, DefaultQueueMayOmitItsOutputPointer) {
   EXPECT_EQ(get(QueueSlot), Sentinel);
 }
 
+TEST_F(DriverKernelFrameworkQueue, CallbackConstraintsResolveThroughParents) {
+  EXPECT_EQ(take(Model.executionLevel(DriverHandle)),
+            framework::ExecutionDispatch);
+  EXPECT_EQ(take(Model.executionLevel(Device)), framework::ExecutionPassive);
+  EXPECT_EQ(take(Model.synchronizationObject(Device)), 0u);
+  EXPECT_EQ(take(Model.synchronizationObject(Device, false)), Device);
+  EXPECT_EQ(Model.synchronizationIRQL(Device), 0u);
+  for (uint32_t Scope :
+       {framework::SynchronizationDevice, framework::SynchronizationQueue}) {
+    Device = control(0, 0, framework::ExecutionPassive, Scope);
+    for (unsigned I = 0; I < 2; ++I) {
+      queueConfiguration();
+      put(QueueConfig + framework::QueueConfigIsDefault, 0, 1);
+      attributes();
+      EXPECT_EQ(take(createQueue()), 0u);
+      const auto Queue = get(QueueSlot);
+      EXPECT_EQ(take(Model.executionLevel(Queue)), framework::ExecutionPassive);
+      EXPECT_EQ(take(Model.synchronizationObject(Queue)),
+                Scope == framework::SynchronizationDevice ? Device : Queue);
+    }
+  }
+}
+
+TEST_F(DriverKernelFrameworkQueue, SharedDeviceLockRequiresMatchingExecution) {
+  for (uint32_t Execution :
+       {framework::ExecutionPassive, framework::ExecutionDispatch}) {
+    Device = control(0, 0, Execution, framework::SynchronizationDevice);
+    queueConfiguration();
+    put(Attrs + framework::AttributesExecution,
+        Execution == framework::ExecutionPassive ? framework::ExecutionDispatch
+                                                 : framework::ExecutionPassive,
+        4);
+    put(Attrs + framework::AttributesSynchronization,
+        framework::SynchronizationInherit, 4);
+    const auto Attempts = AllocationAttempts;
+    EXPECT_EQ(take(createQueue()), framework::InvalidParameter);
+    EXPECT_EQ(AllocationAttempts, Attempts);
+  }
+}
+
+TEST_F(DriverKernelFrameworkQueue,
+       ManualCallbackLockUsesTheSameResolvedOwnerAndHostRecursionRules) {
+  Device = control(0, 0, framework::ExecutionPassive,
+                   framework::SynchronizationDevice);
+  queueConfiguration();
+  attributes();
+  EXPECT_EQ(take(createQueue()), 0u);
+  const auto Queue = get(QueueSlot);
+  bool Held = false;
+  std::vector<uint64_t> Attempts;
+  KernelFramework::DeviceHost Host;
+  Host.AcquireCallbackLock = [&](uint64_t Owner) -> llvm::Error {
+    Attempts.push_back(Owner);
+    if (Held)
+      return failure("recursive callback lock acquisition");
+    Held = true;
+    return llvm::Error::success();
+  };
+  Host.ReleaseCallbackLock = [&](uint64_t Owner) -> llvm::Error {
+    EXPECT_EQ(Owner, Device);
+    EXPECT_TRUE(Held);
+    Held = false;
+    return llvm::Error::success();
+  };
+  Model.setDeviceHost(std::move(Host));
+  EXPECT_EQ(take(invoke("WdfObjectAcquireLock", {Globals, Queue})), 0u);
+  expectError(invoke("WdfObjectAcquireLock", {Globals, Device}), "recursive");
+  EXPECT_EQ(Attempts, (std::vector<uint64_t>{Device, Device}));
+  EXPECT_EQ(take(invoke("WdfObjectReleaseLock", {Globals, Queue})), 0u);
+  EXPECT_FALSE(Held);
+  expectError(invoke("WdfObjectAcquireLock", {Globals, DriverHandle}),
+              "device or queue");
+  EXPECT_EQ(Attempts.size(), 2u);
+}
+
+TEST_F(DriverKernelFrameworkQueue,
+       CallbackReferenceDefersQueueDestructionUntilItsNormalEpilogue) {
+  put(QueueConfig + framework::QueueConfigIsDefault, 0, 1);
+  queueAttributes(0, 0, 0, ParentDestroy);
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationQueue, 4);
+  EXPECT_EQ(take(createQueue()), 0u);
+  const auto Queue = get(QueueSlot);
+  success(Model.retainSynchronizationObject(Queue));
+  EXPECT_EQ(take(invoke("WdfObjectDelete", {Globals, Queue})), 0u);
+  EXPECT_FALSE(Model.takeGuestCall());
+  EXPECT_FALSE(Released.count(Queue));
+  success(Model.releaseSynchronizationObject(Queue));
+  EXPECT_FALSE(Model.takeGuestCall());
+  success(Model.flushSynchronizationDestructions());
+  auto Destroy = Model.takeGuestCall();
+  ASSERT_TRUE(Destroy);
+  EXPECT_EQ(Destroy->PC, ParentDestroy);
+  EXPECT_EQ(Destroy->SynchronizationObject, 0u);
+  EXPECT_TRUE(take(Model.finishGuestCall(Destroy->Token, 0)));
+  EXPECT_TRUE(Released.count(Queue));
+}
+
 TEST_F(DriverKernelFrameworkQueue, FailedConfigurationsLeaveNoDefaultQueue) {
   struct Case {
     uint64_t Offset;
@@ -162,14 +260,18 @@ TEST_F(DriverKernelFrameworkQueue,
   EXPECT_EQ(take(invoke("WdfIoQueueGetDevice", {Globals, Queue})), Device);
 }
 
-TEST_F(DriverKernelFrameworkQueue, PassivePolicyMustBeExplicitlyConfigured) {
-  expectError(
-      invoke("WdfIoQueueCreate", {Globals, Device, QueueConfig, 0, QueueSlot}),
-      "explicit passive");
+TEST_F(DriverKernelFrameworkQueue, OmittedExecutionPolicyInheritsTheDevice) {
+  EXPECT_EQ(take(invoke("WdfIoQueueCreate",
+                        {Globals, Device, QueueConfig, 0, QueueSlot})),
+            0u);
+  EXPECT_EQ(take(Model.executionLevel(get(QueueSlot))),
+            framework::ExecutionPassive);
+  put(QueueConfig + framework::QueueConfigIsDefault, 0, 1);
   attributes();
-  expectError(createQueue(), "explicit passive");
-  queueAttributes();
   EXPECT_EQ(take(createQueue()), 0u);
+  EXPECT_EQ(take(Model.executionLevel(get(QueueSlot))),
+            framework::ExecutionPassive);
+  EXPECT_EQ(take(Model.synchronizationObject(get(QueueSlot))), 0u);
 }
 
 TEST_F(DriverKernelFrameworkQueue, ControlPowerTriStatesRemainNonPnp) {

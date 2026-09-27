@@ -51,7 +51,7 @@ public:
     WDMCancel,
     WDMCompletion,
     FrameworkCompletion,
-    FrameworkPassive,
+    FrameworkDeferred,
     FrameworkInterruptDPC,
     FrameworkInterruptWorkItem,
     Interrupt,
@@ -77,6 +77,7 @@ public:
     uint64_t Thread = 0;
     uint64_t PC = 0;
     std::vector<uint64_t> Arguments;
+    uint64_t SynchronizationObject = 0;
   };
 
   struct DpcCallback : Callback {
@@ -115,9 +116,10 @@ public:
   /// eligibility and the request lifetime; the scheduler only orders delivery.
   /// An already-queued cancellation object is an explicit error.
   llvm::Expected<uint64_t> enqueueFrameworkCancel(Callback Cancellation);
-  /// A framework continuation deferred from DISPATCH_LEVEL runs on the normal
-  /// worker FIFO. Its token is independent of interrupt and WDM work objects.
-  llvm::Expected<uint64_t> enqueueFrameworkPassive(Callback Call);
+  /// A deferred framework continuation uses the DPC or worker FIFO selected by
+  /// its effective execution level. Its token has an independent namespace.
+  llvm::Expected<uint64_t> enqueueFrameworkDeferred(Callback Call,
+                                                    uint8_t IRQL);
   llvm::Error
   canEnqueueWDMCancellations(llvm::ArrayRef<Callback> Cancellations) const;
   llvm::Expected<uint64_t> enqueueWDMCancellation(Callback Cancellation);

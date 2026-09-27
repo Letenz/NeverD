@@ -26,6 +26,24 @@ llvm::Error frameworkDeviceError(const llvm::Twine &Message) {
 }
 } // namespace
 
+llvm::Expected<bool> KernelModel::enterFrameworkCallback(uint64_t ScheduledID,
+                                                         GuestCallToken Token,
+                                                         uint64_t IRP) {
+  if (ScheduledID && !Token.ID) {
+    auto It = ScheduledModelContinuations.find(ScheduledID);
+    if (It != ScheduledModelContinuations.end())
+      Token = It->second;
+  }
+  if (!Framework)
+    return false;
+  const uint64_t FrameworkToken =
+      Token.Owner == GuestCallOwner::Framework ? Token.ID : 0;
+  if (FrameworkToken && Framework->isCancelCallback(FrameworkToken))
+    if (auto E = Framework->beginCancelCallback(FrameworkToken))
+      return E;
+  return Framework->isPowerManagedCallback(IRP, FrameworkToken);
+}
+
 void KernelModel::configureFrameworkDeviceHost() {
   using DeviceResult = llvm::Expected<KernelFramework::DeviceCreation>;
   KernelFramework::DeviceHost Host;
@@ -159,8 +177,7 @@ void KernelModel::configureFrameworkDeviceHost() {
           "framework device deletion with live work items is outside this "
           "profile");
     auto References = WorkReferences.find(Device);
-    if (Scheduler.hasOutstanding(Device) ||
-        (References != WorkReferences.end() && References->second))
+    if (References != WorkReferences.end() && References->second)
       return frameworkDeviceError(
           "asynchronous framework device deletion is outside this profile");
     // Completed packets may already be inaccessible while their dispatch
@@ -188,7 +205,7 @@ void KernelModel::configureFrameworkDeviceHost() {
     // marking deletion. No guest callback can interleave these host operations.
     if (auto E = snapshot())
       return E;
-    if (auto E = prepareReleaseRange(Device, Object->second.Size))
+    if (auto E = canReleaseRange(Device, Object->second.Size))
       return E;
     if (auto E = Interrupts.canReleaseRange(Device, Object->second.Size))
       return E;
@@ -209,7 +226,7 @@ void KernelModel::configureFrameworkDeviceHost() {
     return llvm::Error::success();
   };
   Host.DeferCall = [this](const KernelFramework::GuestCall &Call,
-                          uint64_t Device) -> llvm::Error {
+                          uint64_t Device, uint8_t IRQL) -> llvm::Error {
     const auto Owner = Devices.find(Device);
     if (!Call.Token || Owner == Devices.end() || Owner->second.DeletePending ||
         !FrameworkDevices.contains(Device))
@@ -220,17 +237,35 @@ void KernelModel::configureFrameworkDeviceHost() {
          Call.ExecutionToken->ID != Call.Token))
       return frameworkDeviceError("deferred framework continuation cannot "
                                   "transfer another model's lock");
-    KernelScheduler::Callback Callback{Call.Token, Device,
-                                       profile::WorkerThreadIdentity, Call.PC,
-                                       Call.Arguments};
-    auto ID = Scheduler.enqueueFrameworkPassive(std::move(Callback));
+    KernelScheduler::Callback Callback{
+        Call.Token, Device,         profile::WorkerThreadIdentity,
+        Call.PC,    Call.Arguments, Call.SynchronizationObject};
+    auto ID = Scheduler.enqueueFrameworkDeferred(std::move(Callback), IRQL);
     if (!ID)
       return ID.takeError();
     ScheduledModelContinuations.emplace(
         *ID, GuestCallToken{GuestCallOwner::Framework, Call.Token});
     return llvm::Error::success();
   };
+  Host.OwnsCallbackLock = [this](uint64_t Object) {
+    return std::any_of(FrameworkCallbackEntries.begin(),
+                       FrameworkCallbackEntries.end(), [&](const auto &Entry) {
+                         return Entry.second.Object == Object &&
+                                Entry.second.Thread == CurrentThreadKey &&
+                                Entry.second.Acquired;
+                       });
+  };
+  Host.AcquireCallbackLock = [this](uint64_t Object) -> llvm::Error {
+    auto Acquired = acquireFrameworkCallback(Object, false);
+    if (!Acquired)
+      return Acquired.takeError();
+    return llvm::Error::success();
+  };
+  Host.ReleaseCallbackLock = [this](uint64_t Object) {
+    return releaseFrameworkCallback(Object, false);
+  };
   Framework->setDeviceHost(std::move(Host));
+  configureFrameworkPowerPolicyHost();
 }
 
 std::optional<unsigned>
@@ -267,9 +302,17 @@ llvm::Expected<uint64_t> KernelModel::call(
       Export.Name == framework::api::WdfIoQueueDrainSynchronously ||
       Export.Name == framework::api::WdfIoQueuePurgeSynchronously;
   const bool RequestSend = Export.Name == framework::api::WdfRequestSend;
-  if ((StopSync || StopPurgeSync || EmptySync || RequestSend) && PendingWait)
+  const bool StopIdleWait =
+      (Export.Name == framework::api::WdfDeviceStopIdleActual ||
+       Export.Name == framework::api::WdfDeviceStopIdleNoTrack) &&
+      uint8_t(Arguments[2]);
+  if ((StopSync || StopPurgeSync || EmptySync || RequestSend || StopIdleWait) &&
+      PendingWait)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "previous deferred wait was not consumed");
+  if (StopIdleWait && FrameworkPowerManagedCallback)
+    return frameworkDeviceError("StopIdle with WaitForD0 cannot run inside a "
+                                "power-managed I/O callback");
   auto Result = Framework->call(Export, Arguments, CurrentIRQL);
   if (!Result)
     return Result.takeError();
@@ -287,6 +330,14 @@ llvm::Expected<uint64_t> KernelModel::call(
       Send.IRQL = CurrentIRQL;
       PendingWait = Send;
     }
+  }
+  if (StopIdleWait && *Result == windows::StatusPending) {
+    Wait Pending;
+    Pending.Type = Wait::Kind::FrameworkIdle;
+    Pending.Object = Arguments[1];
+    Pending.Execution = CurrentExecution;
+    Pending.IRQL = CurrentIRQL;
+    PendingWait = Pending;
   }
   if (StopSync || StopPurgeSync || EmptySync) {
     auto Ready = Framework->queueWaitReady(Arguments[1], EmptySync);
@@ -312,6 +363,8 @@ llvm::Error KernelModel::completeFrameworkTransitionIfReady() {
   auto Pnp = Framework->takePnpCompletion();
   if (!Pnp)
     return llvm::Error::success();
+  if (Pnp->IdlePolicyDevice)
+    return Framework->finishIdlePowerDown(*Pnp->IdlePolicyDevice, Pnp->Status);
   auto *Request = requestForIRP(Pnp->IRP);
   if (!Request || !Request->FrameworkTransitionAwaiting ||
       Request->FrameworkTransitionHandled)
@@ -349,7 +402,8 @@ std::optional<KernelGuestCall> KernelModel::takeGuestCall() {
     if (auto Call = Framework->takeGuestCall())
       return KernelGuestCall{Call->ExecutionToken.value_or(GuestCallToken{
                                  GuestCallOwner::Framework, Call->Token}),
-                             Call->PC, std::move(Call->Arguments)};
+                             Call->PC, std::move(Call->Arguments),
+                             Call->SynchronizationObject};
   return std::nullopt;
 }
 

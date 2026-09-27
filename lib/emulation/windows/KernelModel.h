@@ -71,6 +71,12 @@ public:
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
   std::optional<KernelGuestCall> takeGuestCall();
   llvm::Error beginGuestCall(GuestCallToken Token);
+  llvm::Expected<bool> enterFrameworkCallback(uint64_t ScheduledID,
+                                              GuestCallToken Token,
+                                              uint64_t IRP);
+  void setFrameworkCallbackContext(bool PowerManaged) {
+    FrameworkPowerManagedCallback = PowerManaged;
+  }
   llvm::Expected<std::optional<uint64_t>> finishGuestCall(GuestCallToken Token,
                                                           uint64_t Result);
   llvm::Expected<uint64_t>
@@ -88,6 +94,7 @@ public:
     std::optional<uint32_t> FrameworkDispatchStatus;
     bool FrameworkCallerContext = false;
     uint64_t IRP = 0;
+    uint64_t SynchronizationObject = 0;
   };
   // PnP device enrollment: configuration identities never expose addresses.
   llvm::Error preparePnpDevices();
@@ -101,6 +108,11 @@ public:
                std::optional<size_t> SourceIndex = std::nullopt);
   llvm::Expected<Invocation> continueFrameworkCallerContext(uint64_t IRP);
   llvm::Error recordDispatchReturn(uint64_t IRP, uint32_t DispatchStatus);
+  /// Acquire the callback's effective device or queue synchronization lock.
+  /// A false result suspends entry; the real guest frame has not run yet.
+  llvm::Expected<bool> beginFrameworkCallback(uint64_t Object);
+  llvm::Error finishFrameworkCallback(uint64_t Object);
+  llvm::Error flushFrameworkCallbackDestructions();
   /// Finalization is idempotent only for an already finalized owned IRP.
   llvm::Error finalizeRequest(uint64_t IRP);
   /// IRP=0 inspects all requests. The scheduler can exclude framework packets
@@ -120,6 +132,7 @@ public:
   continueScheduled(uint64_t ID, uint64_t ReturnValue);
   llvm::Error suspendScheduled(uint64_t ID);
   llvm::Error resumeScheduled(uint64_t ID);
+  llvm::Error restoreWaitIRQL(uint8_t IRQL);
   struct Wait {
     enum class Kind {
       Dispatcher,
@@ -129,12 +142,17 @@ public:
       FrameworkQueueStop,
       FrameworkQueueEmpty,
       FrameworkFileSend,
+      FrameworkIdle,
       InterruptSynchronization,
-      FrameworkInterruptLock
+      FrameworkInterruptLock,
+      FrameworkWaitLock,
+      FrameworkCallback,
+      FrameworkCallbackLock
     };
     Kind Type = Kind::Dispatcher;
     uint64_t Object = 0;
     uint64_t Execution = 0;
+    uint64_t Thread = 0;
     uint8_t IRQL = 0;
     std::optional<uint64_t> Deadline;
   };
@@ -158,6 +176,11 @@ public:
     CurrentExecution = Identity;
     CurrentThreadKey = ThreadKey ? ThreadKey : Identity;
     ExecutionThreadKeys[Identity] = CurrentThreadKey;
+    if (EnteringPassiveInterrupt) {
+      PassiveInterruptThreads.emplace(*EnteringPassiveInterrupt,
+                                      CurrentThreadKey);
+      EnteringPassiveInterrupt.reset();
+    }
     if (Scheduler.active() &&
         Scheduler.active()->Kind ==
             KernelScheduler::CallbackKind::SystemThread &&
@@ -184,7 +207,8 @@ public:
   }
   bool hasPendingHardwareWork() const {
     return Interrupts.hasPendingEvents() || DMA.hasPendingEvents() ||
-           DMA.hasPendingCallbacks();
+           DMA.hasPendingCallbacks() || hasPendingPowerPolicyEvents() ||
+           (Framework && Framework->hasPendingPowerPolicy());
   }
   uint8_t currentIRQL() const { return CurrentIRQL; }
   llvm::Expected<Invocation> beginUnload();
@@ -202,7 +226,52 @@ private:
   llvm::Expected<std::optional<uint64_t>> finishWdmGuestCall(uint64_t Token,
                                                              uint64_t Result);
   void configureFrameworkDeviceHost();
+  void configureFrameworkPowerPolicyHost();
+  llvm::Error requestFrameworkDevicePower(
+      uint64_t Device, DevicePowerState Target,
+      KernelFramework::PowerPolicyHost::RequestMode Mode);
+  llvm::Error armFrameworkWake(uint64_t Device, bool SystemSleep);
+  llvm::Error finishFrameworkWake(uint64_t Device, bool Triggered);
+  llvm::Error
+  canArmPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events) const;
+  llvm::Error
+  armPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events,
+                       size_t SourceIndex);
+  llvm::Error processPowerPolicyEvents();
+  std::optional<uint64_t> nextPowerPolicyEventTime() const;
+  bool hasPendingPowerPolicyEvents() const;
+  struct PowerPolicyEvent {
+    uint64_t PDO = 0;
+    uint64_t Epoch = 0;
+    size_t ResultIndex = 0;
+  };
+  std::vector<PowerPolicyEvent> PowerPolicyEvents;
+  std::map<uint64_t, uint64_t> FrameworkWakeIRPs;
   void configureFrameworkInterruptHost();
+  void configureFrameworkLockHost();
+  llvm::Expected<std::optional<uint32_t>>
+  pollFrameworkWaitLock(const Wait &Pending);
+  struct FrameworkCallbackLock {
+    uint64_t Storage = 0;
+  };
+  bool FrameworkPowerManagedCallback = false;
+  std::map<uint64_t, FrameworkCallbackLock> FrameworkCallbackLocks;
+  struct FrameworkCallbackEntry {
+    uint64_t Object = 0, Thread = 0;
+    uint8_t PreviousIRQL = 0;
+    bool Acquired = false;
+    bool Passive = true;
+    bool Automatic = true;
+    uint16_t CriticalDepth = 0;
+  };
+  std::map<std::pair<uint64_t, uint64_t>, FrameworkCallbackEntry>
+      FrameworkCallbackEntries;
+  llvm::Expected<uint64_t> frameworkCallbackLock(uint64_t Object);
+  llvm::Expected<bool> acquireFrameworkCallback(uint64_t Object,
+                                                bool Automatic);
+  llvm::Error releaseFrameworkCallback(uint64_t Object, bool Automatic);
+  llvm::Expected<std::optional<uint32_t>>
+  pollFrameworkCallback(const Wait &Pending);
   llvm::Error completeFrameworkTransitionIfReady();
   llvm::Expected<uint64_t> forwardFrameworkTransitionRequest(uint64_t IRP);
   llvm::Error detachFrameworkPnpDevice(uint64_t Device, uint64_t PDO);
@@ -335,7 +404,12 @@ private:
                                            uint32_t Alignment, bool ForWrite);
   std::optional<KernelGuestCall> PendingInterruptCall;
   std::map<uint64_t, uint64_t> FrameworkInterruptContinuations;
+  std::optional<uint64_t> EnteringPassiveInterrupt;
+  std::map<uint64_t, uint64_t> PassiveInterruptThreads;
   std::map<std::pair<uint64_t, uint64_t>, uint8_t> FrameworkInterruptLocks;
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> FrameworkPassiveLockThreads;
+  std::map<uint64_t, bool> FrameworkLockStorage;
+  std::map<std::pair<uint64_t, uint64_t>, uint64_t> FrameworkWaitLockThreads;
   llvm::Expected<uint64_t> callInterruptAPI(llvm::StringRef Name,
                                             llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<std::optional<uint64_t>> finishInterruptCall(uint64_t Token,
@@ -462,6 +536,7 @@ private:
     std::optional<DevicePowerState> InitialReportedDevicePower;
     std::vector<DriverPowerOperation> RequestedDevicePower;
     uint32_t RequestedPowerIndex = 0;
+    std::optional<DriverWakeCapabilities> WakeCapabilities;
   };
   uint64_t PnpProviderDriver = 0;
   bool PnpDevicesPrepared = false;
@@ -501,6 +576,7 @@ private:
     bool CallbackReturned = false;
     DriverRequestOrigin Origin = DriverRequestOrigin::PoRequestPowerIrp;
     uint64_t FrameworkParent = 0;
+    bool PrepareSystemSleep = false;
   };
   struct UserRegion {
     DriverUserBufferKind Kind;

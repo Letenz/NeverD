@@ -30,6 +30,7 @@ struct KernelGuestCall {
   GuestCallToken Token;
   uint64_t PC = 0;
   std::vector<uint64_t> Arguments;
+  uint64_t SynchronizationObject = 0;
 };
 
 } // namespace neverd::emulation

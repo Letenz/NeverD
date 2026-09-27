@@ -174,6 +174,7 @@ llvm::Error KernelModel::processRequestCancellations() {
     Callback.Thread = profile::WorkerThreadIdentity;
     Callback.PC = (**Call).PC;
     Callback.Arguments = (**Call).Arguments;
+    Callback.SynchronizationObject = (**Call).SynchronizationObject;
     auto ID = Scheduler.enqueueFrameworkCancel(std::move(Callback));
     if (!ID)
       return ID.takeError();
@@ -191,7 +192,7 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
   const auto Kind = Scheduler.active()->Kind;
   if (Kind != KernelScheduler::CallbackKind::FrameworkCancel &&
       Kind != KernelScheduler::CallbackKind::FrameworkCompletion &&
-      Kind != KernelScheduler::CallbackKind::FrameworkPassive &&
+      Kind != KernelScheduler::CallbackKind::FrameworkDeferred &&
       !KernelScheduler::isFrameworkInterruptCallbackKind(Kind) &&
       Kind != KernelScheduler::CallbackKind::WDMCompletion &&
       Kind != KernelScheduler::CallbackKind::Interrupt &&
@@ -203,7 +204,7 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
   const auto ExpectedOwner =
       (Kind == KernelScheduler::CallbackKind::FrameworkCancel ||
        Kind == KernelScheduler::CallbackKind::FrameworkCompletion ||
-       Kind == KernelScheduler::CallbackKind::FrameworkPassive ||
+       Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
        KernelScheduler::isFrameworkInterruptCallbackKind(Kind))
           ? GuestCallOwner::Framework
       : Kind == KernelScheduler::CallbackKind::Interrupt

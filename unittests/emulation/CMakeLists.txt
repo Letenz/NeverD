@@ -12,6 +12,10 @@ set(NEVERD_KMDF_PNP_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF PnP fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_PNP_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK KMDF PnP fixture linked with active CFG")
+set(NEVERD_KMDF_LOCK_FIXTURE "" CACHE FILEPATH
+  "Optional original KMDF lock fixture linked with genuine WDK libraries")
+set(NEVERD_KMDF_LOCK_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF lock fixture linked with active CFG")
 set(NEVERD_WDM_STACK_FIXTURE "" CACHE FILEPATH
   "Optional original WDM device-stack fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_STACK_CFG_FIXTURE "" CACHE FILEPATH
@@ -184,9 +188,11 @@ set(_driver_kmdf_definitions)
 set(_driver_has_kmdf_fixture FALSE)
 set(_driver_has_kmdf_control_fixture FALSE)
 set(_driver_has_kmdf_pnp_fixture FALSE)
+set(_driver_has_kmdf_lock_fixture FALSE)
 foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
     NEVERD_KMDF_CONTROL_FIXTURE NEVERD_KMDF_CONTROL_CFG_FIXTURE
-    NEVERD_KMDF_PNP_FIXTURE NEVERD_KMDF_PNP_CFG_FIXTURE)
+    NEVERD_KMDF_PNP_FIXTURE NEVERD_KMDF_PNP_CFG_FIXTURE
+    NEVERD_KMDF_LOCK_FIXTURE NEVERD_KMDF_LOCK_CFG_FIXTURE)
   if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_CFG_FIXTURE"
       AND NOT _driver_has_kmdf_fixture)
     message(STATUS "Driver KMDF CFG tests skipped: NEVERD_KMDF_FIXTURE is unavailable")
@@ -202,6 +208,11 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
     message(STATUS "Driver KMDF PnP CFG tests skipped: NEVERD_KMDF_PNP_FIXTURE is unavailable")
     continue()
   endif()
+  if(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_lock_fixture)
+    message(STATUS "Driver KMDF lock CFG tests skipped: NEVERD_KMDF_LOCK_FIXTURE is unavailable")
+    continue()
+  endif()
   if(NOT "${${_driver_kmdf_variable}}" STREQUAL ""
       AND EXISTS "${${_driver_kmdf_variable}}"
       AND NOT IS_DIRECTORY "${${_driver_kmdf_variable}}")
@@ -215,6 +226,8 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
       set(_driver_has_kmdf_control_fixture TRUE)
     elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_PNP_FIXTURE")
       set(_driver_has_kmdf_pnp_fixture TRUE)
+    elseif(_driver_kmdf_variable STREQUAL "NEVERD_KMDF_LOCK_FIXTURE")
+      set(_driver_has_kmdf_lock_fixture TRUE)
     endif()
     message(STATUS "Driver KMDF fixture ${_driver_kmdf_variable}: ${_driver_kmdf_path}")
   else()
@@ -518,6 +531,8 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverKMDFLifecycleTests.cpp
   DriverKMDFControlTests.cpp
   DriverKMDFPnpTests.cpp
+  DriverKMDFPowerPolicyTests.cpp
+  DriverKMDFLockTests.cpp
   DriverWDMStackTests.cpp
   DriverWDMPnpTests.cpp
   DriverWDMPowerTests.cpp
@@ -541,7 +556,9 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelRequestOwnershipTests.cpp
   KernelCancellationTests.cpp
   KernelFrameworkTests.cpp
+  KernelFrameworkPowerPolicyTests.cpp
   KernelFrameworkInterruptTests.cpp
+  KernelFrameworkLockTests.cpp
   KernelFrameworkControlTests.cpp
   KernelFrameworkFileTests.cpp
   KernelFrameworkFileSendTests.cpp

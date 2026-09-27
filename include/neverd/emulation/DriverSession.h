@@ -87,6 +87,7 @@ struct DriverRequest {
   std::vector<DriverInterruptEvent> InterruptEvents{};
   /// Independent external DMA transactions for READ/WRITE/IOCTL requests.
   std::vector<DriverDmaEvent> DmaEvents{};
+  std::vector<DriverPowerPolicyEvent> PowerPolicyEvents{};
   /// Additional user allocations and explicit guest pointer slots for
   /// neither-I/O requests. Every allocation belongs to RequestorProcessID.
   std::vector<DriverUserBuffer> UserBuffers;
@@ -216,6 +217,7 @@ struct DriverResult {
   std::vector<DriverPnpDeviceResult> PnpDevices;
   std::vector<DriverInterruptResult> Interrupts;
   std::vector<DriverDmaResult> DmaTransfers;
+  std::vector<DriverPowerPolicyResult> PowerPolicyEvents;
 };
 
 /// Parse and validate a fresh complete PE image. Request/format/setup failures

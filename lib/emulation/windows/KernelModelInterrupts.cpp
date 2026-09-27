@@ -371,6 +371,10 @@ llvm::Error KernelModel::beginGuestCall(GuestCallToken Token) {
   if (!IRQL)
     return IRQL.takeError();
   CurrentIRQL = *IRQL;
+  // Entry is prepared before DriverSession selects the callback's stack and
+  // thread. Bind the implicit critical region at its first enterExecution.
+  if (*IRQL == scheduler::PassiveLevel)
+    EnteringPassiveInterrupt = Token.ID;
   return llvm::Error::success();
 }
 
@@ -380,6 +384,9 @@ KernelModel::finishInterruptCall(uint64_t Token, uint64_t Value) {
       Interrupts.finishCall(Token, Value, CurrentIRQL, Scheduler.now100ns());
   if (!Return)
     return Return.takeError();
+  PassiveInterruptThreads.erase(Token);
+  if (EnteringPassiveInterrupt == Token)
+    EnteringPassiveInterrupt.reset();
   CurrentIRQL = Return->RestoredIRQL;
   if (Return->Next) {
     PendingInterruptCall = std::move(*Return->Next);
@@ -407,6 +414,15 @@ llvm::Error KernelModel::validateExecutionReturn(uint64_t Identity,
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Lock.Execution == Identity)
       return apiError("guest return retains an executive spin lock");
+  for (const auto &[Lock, Execution] : FrameworkWaitLockThreads)
+    if (Execution == Identity)
+      return apiError("guest return retains a framework wait lock");
+  for (const auto &[Owner, Thread] : FrameworkPassiveLockThreads)
+    if (Owner.first == Identity)
+      return apiError("guest return retains a passive interrupt lock");
+  for (const auto &[Key, Entry] : FrameworkCallbackEntries)
+    if (Key.first == Identity)
+      return apiError("guest return retains a framework callback lock");
   for (const RaisedIRQL &Raise : RaisedIRQLs)
     if (Raise.Execution == Identity)
       return apiError("guest return retains a raised IRQL");

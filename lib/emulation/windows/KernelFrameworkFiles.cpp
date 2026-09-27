@@ -100,6 +100,10 @@ KernelFramework::callFile(llvm::StringRef Name, Binding &B,
     if (std::holds_alternative<uint32_t>(*Validation))
       return fileError("invalid file-object attributes");
     const auto &Attrs = std::get<Attributes>(*Validation);
+    if (Attrs.Synchronization != SynchronizationInherit &&
+        Attrs.Synchronization != SynchronizationNone)
+      return fileError("file callbacks inherit device synchronization or opt "
+                       "out of automatic synchronization");
     if (BaseClass == FileObjectNotRequired &&
         (Attrs.Type || Attrs.ContextSize || Attrs.Cleanup || Attrs.Destroy))
       return fileError("file-object attributes require a file object");
@@ -379,8 +383,11 @@ KernelFramework::routeFileRequest(uint64_t Device, uint64_t IRP,
     Requests.emplace(*Created, std::move(RequestState));
     if (auto E = RequestsHost.MarkPending(IRP))
       return E;
-    return Result{RequestDispatch{
-        Config.Create, {Device, *Created, File}, windows::StatusPending}};
+    return Result{RequestDispatch{Config.Create,
+                                  {Device, *Created, File},
+                                  windows::StatusPending,
+                                  false,
+                                  Config.SynchronizationObject}};
   }
   auto File = requestFileObject(Device, View.File);
   if (!File)
@@ -389,7 +396,8 @@ KernelFramework::routeFileRequest(uint64_t Device, uint64_t IRP,
   const uint64_t Callback =
       View.Major == RequestMajorCleanup ? Config.Cleanup : Config.Close;
   if (Callback)
-    Steps.push_back({StepKind::Callback, *File, Callback});
+    Steps.push_back({StepKind::Callback, *File, Callback, 0, 0,
+                     Config.SynchronizationObject});
   if (Forward) {
     Steps.push_back({StepKind::ForwardFileIRP, IRP, 0, *File});
   } else {

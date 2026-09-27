@@ -124,6 +124,7 @@ llvm::Error KernelModel::preparePnpDevices() {
       return E;
     Record.InitialReportedDevicePower = Configured.InitialReportedDevicePower;
     Record.RequestedDevicePower = Configured.RequestedDevicePower;
+    Record.WakeCapabilities = Configured.WakeCapabilities;
     Devices.at(Created->Address).ReportedDevicePower =
         Configured.InitialReportedDevicePower;
     auto Flags = Memory.readInteger(Created->Address + DeviceFlagsOffset, 4);

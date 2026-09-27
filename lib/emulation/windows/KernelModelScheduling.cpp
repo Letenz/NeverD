@@ -282,7 +282,9 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
       return E;
     if (auto E = DMA.processEvents(Scheduler.now100ns()))
       return E;
-    return processInterruptEvents();
+    if (auto E = processInterruptEvents())
+      return E;
+    return processPowerPolicyEvents();
   };
   if (auto E = ProcessBoundary(Scheduler.now100ns()))
     return E;
@@ -304,15 +306,6 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
     }
   }
   if (*Next) {
-    if ((**Next).Kind == KernelScheduler::CallbackKind::FrameworkCancel) {
-      auto Token = ScheduledModelContinuations.find((**Next).ID);
-      if (!Framework || Token == ScheduledModelContinuations.end() ||
-          Token->second.Owner != GuestCallOwner::Framework)
-        return schedulingError("cancel callback lost its framework identity");
-      if (Framework->isCancelCallback(Token->second.ID))
-        if (auto E = Framework->beginCancelCallback(Token->second.ID))
-          return E;
-    }
     if ((**Next).Kind == KernelScheduler::CallbackKind::FrameworkCompletion) {
       auto Token = ScheduledModelContinuations.find((**Next).ID);
       if (!Framework || Token == ScheduledModelContinuations.end() ||
@@ -407,7 +400,7 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   }
   if (Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCompletion ||
-      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkPassive ||
+      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
       KernelScheduler::isFrameworkInterruptCallbackKind(Invocation.Kind) ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
@@ -418,9 +411,12 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
 }
 
 llvm::Error KernelModel::suspendScheduled(uint64_t ID) {
+  if (CurrentIRQL > windows::APCLevel)
+    return schedulingError("cannot suspend above APC_LEVEL");
   for (const RaisedIRQL &Raise : RaisedIRQLs)
-    if (Raise.Execution == CurrentExecution)
-      return schedulingError("cannot suspend with an unmatched IRQL raise");
+    if (Raise.Execution == CurrentExecution &&
+        Raise.NewIRQL > windows::APCLevel)
+      return schedulingError("cannot suspend with a raised dispatch IRQL");
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Lock.Execution == CurrentExecution)
       return schedulingError("cannot suspend with an executive spin lock");
@@ -441,6 +437,13 @@ llvm::Error KernelModel::resumeScheduled(uint64_t ID) {
   return llvm::Error::success();
 }
 
+llvm::Error KernelModel::restoreWaitIRQL(uint8_t IRQL) {
+  if (IRQL > windows::APCLevel)
+    return schedulingError("blocked wait cannot resume above APC_LEVEL");
+  CurrentIRQL = IRQL;
+  return llvm::Error::success();
+}
+
 std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Deadline = Scheduler.nextEventTime100ns();
   for (const auto &[IRP, Request] : Requests)
@@ -453,6 +456,9 @@ std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Interrupt = nextInterruptEventTime();
   if (Interrupt && (!Deadline || *Interrupt < *Deadline))
     Deadline = std::max(*Interrupt, Scheduler.now100ns());
+  auto Policy = nextPowerPolicyEventTime();
+  if (Policy && (!Deadline || *Policy < *Deadline))
+    Deadline = std::max(*Policy, Scheduler.now100ns());
   auto Transfer = DMA.nextEventTime();
   if (Transfer && (!Deadline || *Transfer < *Deadline))
     Deadline = std::max(*Transfer, Scheduler.now100ns());
@@ -531,6 +537,11 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::FrameworkWaitLock)
+    return pollFrameworkWaitLock(Pending);
+  if (Pending.Type == Wait::Kind::FrameworkCallback ||
+      Pending.Type == Wait::Kind::FrameworkCallbackLock)
+    return pollFrameworkCallback(Pending);
   if (Pending.Type == Wait::Kind::FrameworkInterruptLock) {
     auto Acquired =
         Interrupts.tryAcquirePassive(Pending.Object, Pending.Execution);
@@ -549,6 +560,11 @@ KernelModel::pollWait(const Wait &Pending) {
       return Ready.takeError();
     return *Ready ? std::optional<uint32_t>{windows::StatusSuccess}
                   : std::optional<uint32_t>{};
+  }
+  if (Pending.Type == Wait::Kind::FrameworkIdle) {
+    if (!Framework)
+      return schedulingError("StopIdle wait lost the framework");
+    return Framework->powerPolicyWait(Pending.Object);
   }
   if (Pending.Type == Wait::Kind::FrameworkFileSend) {
     if (!Framework)

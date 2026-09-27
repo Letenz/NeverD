@@ -58,6 +58,7 @@ static ULONG InterruptIsrCount, InterruptDeferredCount, InterruptSyncCount;
 static ULONG InterruptEnableCount, InterruptDisableCount;
 static WDFREQUEST InterruptRequest;
 static BOOLEAN InterruptFailure;
+static BOOLEAN InterruptIoActive;
 
 typedef struct {
   WDFREQUEST Request;
@@ -76,13 +77,15 @@ static BOOLEAN UsesFrameworkInterrupts(VOID) {
          ServiceMode == KmdfInterruptSerialization ||
          ServiceMode == KmdfInterruptPassiveCleanup ||
          ServiceMode == KmdfInterruptPassiveMsi ||
-         ServiceMode == KmdfInterruptPassivePowerWait;
+         ServiceMode == KmdfInterruptPassivePowerWait ||
+         ServiceMode == KmdfInterruptAutomatic;
 }
 
 static BOOLEAN InterruptIsPassive(VOID) {
   return ServiceMode == KmdfInterruptPassive ||
          ServiceMode == KmdfInterruptPassiveMsi ||
-         ServiceMode == KmdfInterruptPassivePowerWait;
+         ServiceMode == KmdfInterruptPassivePowerWait ||
+         ServiceMode == KmdfInterruptAutomatic;
 }
 
 static ULONG InterruptCount(VOID) {
@@ -199,6 +202,8 @@ static VOID InterruptDeferred(WDFINTERRUPT Interrupt,
                               WDFOBJECT AssociatedObject) {
   ULONG *Output;
   NTSTATUS Status;
+  if (ServiceMode == KmdfInterruptAutomatic)
+    InterruptCheck(!InterruptIoActive && KeAreApcsDisabled());
   InterruptCheck(AssociatedObject == InterruptDevice &&
                  WdfInterruptGetDevice(Interrupt) == InterruptDevice &&
                  KeGetCurrentIrql() ==
@@ -251,13 +256,21 @@ static NTSTATUS CreateFrameworkInterrupts(WDFDEVICE Device, WDFCMRESLIST Raw,
                                           WDFCMRESLIST Translated) {
   ULONG Index;
   InterruptDevice = Device;
+  if (ServiceMode == KmdfInterruptAutomatic) {
+    InterruptCheck(!KeAreApcsDisabled());
+    WdfObjectAcquireLock(Device);
+    InterruptCheck(KeAreApcsDisabled() && KeGetCurrentIrql() == PASSIVE_LEVEL);
+    WdfObjectReleaseLock(Device);
+    InterruptCheck(!KeAreApcsDisabled());
+  }
   for (Index = 0; Index < InterruptCount(); ++Index) {
     WDF_INTERRUPT_CONFIG Config;
     NTSTATUS Status;
     WDF_INTERRUPT_CONFIG_INIT(&Config, InterruptIsr,
                               InterruptIsPassive() ? NULL : InterruptDeferred);
     Config.PassiveHandling = InterruptIsPassive();
-    Config.AutomaticSerialization = ServiceMode == KmdfInterruptSerialization;
+    Config.AutomaticSerialization = ServiceMode == KmdfInterruptSerialization ||
+                                    ServiceMode == KmdfInterruptAutomatic;
     Config.EvtInterruptEnable = InterruptEnable;
     Config.EvtInterruptDisable = InterruptDisable;
     if (InterruptIsPassive())
@@ -321,6 +334,18 @@ static VOID InterruptIoControl(WDFREQUEST Request, size_t OutputLength) {
     WdfInterruptEnable(Interrupt);
   }
   InterruptRequest = Request;
+  if (ServiceMode == KmdfInterruptAutomatic) {
+    LARGE_INTEGER Delay;
+    InterruptIoActive = TRUE;
+    InterruptCheck(KeAreApcsDisabled());
+    DbgPrint("KMDF interrupt: serialized I/O begin\n");
+    Delay.QuadPart = -KmdfInterruptCallbackDelay100ns;
+    InterruptCheck(
+        NT_SUCCESS(KeDelayExecutionThread(KernelMode, FALSE, &Delay)));
+    InterruptCheck(InterruptDeferredCount == 0 && KeAreApcsDisabled());
+    InterruptIoActive = FALSE;
+    DbgPrint("KMDF interrupt: serialized I/O end\n");
+  }
 }
 
 #endif
