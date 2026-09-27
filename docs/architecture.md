@@ -1346,7 +1346,8 @@ the cost of the complete restored expression. Add/Mul regions also have a
 bounded sparse polynomial reading over integers modulo the word width.
 Complements on those arithmetic paths are read as `~X = -1-X`; bitwise
 consumers and other operations remain opaque. The chosen spelling is
-re-expanded before acceptance.
+re-expanded before acceptance. Bounded checks stop further region search for
+proved minimal unary variables and products of distinct free variables.
 
 Hidden affine inputs may supply exact inverse relations when a coefficient
 is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic
@@ -1364,6 +1365,8 @@ word width. This relation needs no inverse, including for even coefficients.
 A hash index only selects candidates for the full comparison. Replacements
 refer to the original placeholders without following newly created aliases;
 the same work and storage bounds cover indexing and rebuilding.
+A bounded offset-parity check skips the index when known offsets cannot sum
+to an odd value. Ambiguous nested arithmetic keeps the complete comparison.
 If this exact abstraction becomes a literal constant, the region retains it
 through the ordinary proof and cost checks, charging the single zero-input
 corner. Nonliteral zero-input expressions remain ineligible.
@@ -1373,6 +1376,26 @@ walk's original postorder. A strictly smaller restored Add/Mul result with
 a visible bitwise term gets at most one further region reading, using the
 same remaining budget. Only a strict cost decrease is retained; this does
 not introduce a recursive fixed-point search.
+
+The deep walk also visits new internal nodes in an emitted candidate once,
+before comparing the complete restored spellings. It shares completed-node
+results with the original walk, charges the new frontier to the same work and
+storage budgets, and does not recursively extend that frontier with further
+generated nodes. An emitted root is remeasured when its children change or
+when the final region exposes an unmeasured additive bitwise relation.
+Already-completed roots and candidates whose children are all completed keep
+their fast exit; the extra reading does not extend the fixed frontier.
+When child rewrites obscure an arithmetic input shared by a sum's bitwise
+terms, the original region remains a bounded alternative.
+
+After the established linear and polynomial readings have been proved, a
+two- or three-input region may subtract one affine atom from its measured
+weights and synthesize a two-valued Boolean residual. Aligning the two halves
+of that atom's table needs at most two coefficient trials and no modular
+division. The search reuses the existing small Boolean recipes, accounts for
+wide coefficient storage, and independently proves each form before restoring
+hidden inputs. Exhausting this optional search preserves earlier proved
+candidates.
 
 Boolean synthesis can peel independent singleton XOR terms from an algebraic
 normal form, leaving a kernel of at most three inputs for cached exact
@@ -1396,6 +1419,13 @@ Matching power-of-two multiplication and logical right shifts reconstruct a
 masked word using the original shift-count width. These rules inspect immediate
 operands and leave deeper sources opaque. They do not recursively normalize a
 whole DAG to a fixed point or relax MBA's mask-column independence checks.
+
+The word-complement builder can negate a sum of scaled free variables and
+complement its constant offset when that spelling is strictly cheaper.
+It estimates the operator change before construction and rechecks the actual
+reading cost afterwards. Compound and nonlinear inputs keep their complement
+boundary so shared products and bitwise relations remain recognizable.
+One-bit flag networks retain the Boolean structure used by comparison recovery.
 
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
