@@ -43,21 +43,24 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
     return frameAddressOffset(E->Operands[0], Func, Architecture, Budget,
                               Depth + 1, Alias);
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
-      !E->Operands[1] || E->Operands[1]->Kind != ExprKind::Const ||
-      !E->Operands[1]->Type || !E->Operands[1]->Type->Size ||
-      E->Operands[1]->Type->Size > TRI.PointerSize ||
-      (E->Operands[1]->Type->Size < 8 &&
-       E->Operands[1]->ConstVal >=
-           (UINT64_C(1) << (E->Operands[1]->Type->Size * 8))) ||
       (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
     return std::nullopt;
-  const auto Base = frameAddressOffset(E->Operands[0], Func, Architecture,
-                                       Budget, Depth + 1, Alias);
+  const bool Swapped = E->Op == NdOp::INT_ADD && E->Operands[0] &&
+                       E->Operands[0]->Kind == ExprKind::Const;
+  const auto &BaseExpr = E->Operands[Swapped ? 1 : 0];
+  const auto &OffsetExpr = E->Operands[Swapped ? 0 : 1];
+  if (!OffsetExpr || OffsetExpr->Kind != ExprKind::Const || !OffsetExpr->Type ||
+      !OffsetExpr->Type->Size || OffsetExpr->Type->Size > TRI.PointerSize ||
+      (OffsetExpr->Type->Size < 8 &&
+       OffsetExpr->ConstVal >= (UINT64_C(1) << (OffsetExpr->Type->Size * 8))))
+    return std::nullopt;
+  const auto Base = frameAddressOffset(BaseExpr, Func, Architecture, Budget,
+                                       Depth + 1, Alias);
   if (!Base)
     return std::nullopt;
   const int64_t Delta = TRI.PointerSize == 4
-                            ? int64_t(int32_t(E->Operands[1]->ConstVal))
-                            : int64_t(E->Operands[1]->ConstVal);
+                            ? int64_t(int32_t(OffsetExpr->ConstVal))
+                            : int64_t(OffsetExpr->ConstVal);
   int64_t Result;
   if (E->Op == NdOp::INT_ADD ? llvm::AddOverflow(*Base, Delta, Result)
                              : llvm::SubOverflow(*Base, Delta, Result))
