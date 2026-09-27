@@ -34,8 +34,9 @@ namespace {
 /// search far cheaper than its bound: almost every candidate is wrong, and
 /// almost every wrong one is wrong on its first monomial.
 bool expandProduct(llvm::ArrayRef<TruthTable> Factors,
-                   const std::map<Monomial, llvm::APInt> &Higher,
-                   std::map<Monomial, unsigned> &Counts, WorkBudget &Budget) {
+                   const HigherCoefficients &Higher,
+                   std::unordered_map<Monomial, unsigned, MonomialHash> &Counts,
+                   WorkBudget &Budget) {
   Counts.clear();
   llvm::SmallVector<llvm::SmallVector<MintermIndex, 8>, 4> Selected;
   for (const TruthTable &Table : Factors) {
@@ -76,8 +77,8 @@ bool expandProduct(llvm::ArrayRef<TruthTable> Factors,
 /// Combination generation is iterative: product degree changes memory use, not
 /// call-stack depth.
 template <typename FnT>
-void forEachProductMatch(const std::map<Monomial, llvm::APInt> &Higher,
-                         unsigned Degree, unsigned NumAtoms, uint32_t Width,
+void forEachProductMatch(const HigherCoefficients &Higher, unsigned Degree,
+                         unsigned NumAtoms, uint32_t Width,
                          size_t MaxCandidates, WorkBudget &Budget, FnT Visit) {
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   if (!Corners || Degree < 2)
@@ -116,7 +117,7 @@ void forEachProductMatch(const std::map<Monomial, llvm::APInt> &Higher,
 
   llvm::SmallVector<size_t, 4> Choice(Degree, 0);
   llvm::SmallVector<TruthTable, 4> Factors(Degree);
-  std::map<Monomial, unsigned> Counts;
+  std::unordered_map<Monomial, unsigned, MonomialHash> Counts;
   // Nondecreasing tuples, because a product does not care what order its
   // factors are written in.
   for (;;) {
@@ -129,9 +130,10 @@ void forEachProductMatch(const std::map<Monomial, llvm::APInt> &Higher,
     }
 
     if (Union == Active && expandProduct(Factors, Higher, Counts, Budget)) {
-      // Pin the coefficient on a monomial the product reaches exactly once.
+      // Pin the coefficient on any monomial the product reaches exactly once.
       // Where every monomial is reached more than once no single coefficient
-      // can be read off, and the shape is refused rather than guessed at.
+      // can be read off. Every coefficient is checked below, so choosing a
+      // different singleton cannot change whether a product matches.
       const llvm::APInt *Coeff = nullptr;
       for (const auto &[Key, Count] : Counts)
         if (Count == 1) {
@@ -230,9 +232,11 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
   // its own part of the target is a decomposition rather than a guess.  That
   // is what reaches the shape left behind when an obfuscator expands a square
   // and a cube into the same sum.
-  std::map<unsigned, std::map<Monomial, llvm::APInt>> ByDegree;
-  for (const auto &[Key, Coeff] : Form->Higher)
-    ByDegree[monomialDegree(Key)].emplace(Key, Coeff);
+  std::map<unsigned, HigherCoefficients> ByDegree;
+  while (!Form->Higher.empty()) {
+    auto Node = Form->Higher.extract(Form->Higher.begin());
+    ByDegree[monomialDegree(Node.key())].insert(std::move(Node));
+  }
 
   const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermCeiling);
   const size_t MaxCandidates =

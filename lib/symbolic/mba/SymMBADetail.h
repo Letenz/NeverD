@@ -31,6 +31,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -254,6 +255,9 @@ public:
 
   bool exhausted() const { return Exhausted; }
   size_t used() const { return Used; }
+  bool canConsume(size_t Units) const {
+    return Unlimited || Units <= Remaining;
+  }
 
 private:
   size_t Remaining;
@@ -281,14 +285,23 @@ splitIntoTerms(const SymContext &Ctx, SymRef Body);
 
 /// A monomial of arbitrary degree: the minterms whose product it is, sorted.
 ///
-/// The old packed integer key made degree a property of storage width.  A
-/// vector key costs a small allocation only for higher-degree terms and lets
-/// the resource budget, rather than an eight-byte container, decide how far a
-/// search goes.
+/// The old packed integer key made degree a property of storage width. Small
+/// inline storage avoids an allocation for common low-degree products while
+/// still letting the resource budget decide how far a search goes.
 using MintermIndex = uint32_t;
 static_assert(kMaxTruthTableAtoms <= std::numeric_limits<MintermIndex>::digits,
               "a minterm index must address every truth-table entry");
-using Monomial = std::vector<MintermIndex>;
+using Monomial = llvm::SmallVector<MintermIndex, 4>;
+
+struct MonomialHash {
+  size_t operator()(const Monomial &Key) const {
+    return static_cast<size_t>(
+        llvm::hash_combine_range(Key.begin(), Key.end()));
+  }
+};
+
+using HigherCoefficients =
+    std::unordered_map<Monomial, llvm::APInt, MonomialHash>;
 
 Monomial makeMonomial(llvm::ArrayRef<MintermIndex> Sorted);
 
@@ -298,10 +311,12 @@ unsigned monomialDegree(const Monomial &Key);
 TruthTable monomialSupport(const Monomial &Key, unsigned NumVars);
 
 /// An expression's coefficients over the minterm basis: the degree-one part
-/// indexed by minterm, and every higher monomial keyed by its packing.
+/// indexed by minterm, and every higher monomial keyed by its packing. The
+/// product search orders factor candidates explicitly; coefficient iteration
+/// order has no bearing on which rewrite wins.
 struct PolyForm {
   std::vector<llvm::APInt> Linear;
-  std::map<Monomial, llvm::APInt> Higher;
+  HigherCoefficients Higher;
   /// True when some term was a product, even if the products then cancelled.
   /// That is the difference between "linear all along", which the measurement
   /// already handled, and "quadratic and above but it came to nothing", which
