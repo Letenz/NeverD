@@ -29,6 +29,49 @@ enum class API {
 };
 } // namespace
 
+llvm::Expected<KernelPoFx::Component>
+KernelModel::readPoFxComponent(uint64_t Address) {
+  if (auto E = validateGuestAccess(Address, pofx::ComponentSize, false))
+    return E;
+  auto StateCount =
+      Memory.readInteger(Address + pofx::ComponentIdleStateCount, 4);
+  if (!StateCount)
+    return StateCount.takeError();
+  auto Deepest =
+      Memory.readInteger(Address + pofx::ComponentDeepestWakeableState, 4);
+  if (!Deepest)
+    return Deepest.takeError();
+  auto States = Memory.readInteger(Address + pofx::ComponentIdleStates,
+                                   profile::PointerSize);
+  if (!States)
+    return States.takeError();
+  if (!*StateCount || *StateCount > pofx::DefaultMaxIdleStates)
+    return poFxError("component has an invalid idle-state count");
+  if (auto E = validateGuestAccess(*States, *StateCount * pofx::IdleStateSize,
+                                   false))
+    return E;
+  KernelPoFx::Component Component;
+  if (auto E = Memory.read(Address + pofx::ComponentID, Component.ID))
+    return E;
+  Component.DeepestWakeableState = *Deepest;
+  for (uint64_t State = 0; State < *StateCount; ++State) {
+    const uint64_t StateBase = *States + State * pofx::IdleStateSize;
+    auto Latency =
+        Memory.readInteger(StateBase + pofx::IdleStateTransitionLatency, 8);
+    if (!Latency)
+      return Latency.takeError();
+    auto Residency =
+        Memory.readInteger(StateBase + pofx::IdleStateResidencyRequirement, 8);
+    if (!Residency)
+      return Residency.takeError();
+    auto Power = Memory.readInteger(StateBase + pofx::IdleStateNominalPower, 4);
+    if (!Power)
+      return Power.takeError();
+    Component.IdleStates.push_back({*Latency, *Residency, uint32_t(*Power)});
+  }
+  return Component;
+}
+
 llvm::Expected<KernelPoFx::Registration>
 KernelModel::readPoFxRegistration(uint64_t PDO, uint64_t Address) {
   if (auto E = validateGuestAccess(Address, pofx::DeviceComponents, false))
@@ -69,48 +112,55 @@ KernelModel::readPoFxRegistration(uint64_t PDO, uint64_t Address) {
     *Field.Value = *Value;
   }
   for (uint64_t Index = 0; Index < *Count; ++Index) {
-    const uint64_t Base =
-        Address + pofx::DeviceComponents + Index * pofx::ComponentSize;
-    auto StateCount =
-        Memory.readInteger(Base + pofx::ComponentIdleStateCount, 4);
-    if (!StateCount)
-      return StateCount.takeError();
-    auto Deepest =
-        Memory.readInteger(Base + pofx::ComponentDeepestWakeableState, 4);
-    if (!Deepest)
-      return Deepest.takeError();
-    auto States = Memory.readInteger(Base + pofx::ComponentIdleStates,
-                                     profile::PointerSize);
-    if (!States)
-      return States.takeError();
-    if (!*StateCount || *StateCount > pofx::DefaultMaxIdleStates)
-      return poFxError("component has an invalid idle-state count");
-    if (auto E = validateGuestAccess(*States, *StateCount * pofx::IdleStateSize,
-                                     false))
-      return E;
-    KernelPoFx::Component Component;
-    if (auto E = Memory.read(Base + pofx::ComponentID, Component.ID))
-      return E;
-    Component.DeepestWakeableState = *Deepest;
-    for (uint64_t State = 0; State < *StateCount; ++State) {
-      const uint64_t StateBase = *States + State * pofx::IdleStateSize;
-      auto Latency =
-          Memory.readInteger(StateBase + pofx::IdleStateTransitionLatency, 8);
-      if (!Latency)
-        return Latency.takeError();
-      auto Residency = Memory.readInteger(
-          StateBase + pofx::IdleStateResidencyRequirement, 8);
-      if (!Residency)
-        return Residency.takeError();
-      auto Power =
-          Memory.readInteger(StateBase + pofx::IdleStateNominalPower, 4);
-      if (!Power)
-        return Power.takeError();
-      Component.IdleStates.push_back({*Latency, *Residency, uint32_t(*Power)});
-    }
-    Registration.Components.push_back(std::move(Component));
+    auto Component = readPoFxComponent(Address + pofx::DeviceComponents +
+                                       Index * pofx::ComponentSize);
+    if (!Component)
+      return Component.takeError();
+    Registration.Components.push_back(std::move(*Component));
   }
   return Registration;
+}
+
+llvm::Error KernelModel::validatePoFxRegistrationDevice(uint64_t PDO) const {
+  auto State = Lifecycle.snapshot(PDO);
+  if (!State)
+    return State.takeError();
+  bool Running = State->Pnp == DevicePnpState::Started && !State->PnpOperation;
+  DevicePowerState PhysicalPower = State->DevicePower;
+  for (const auto &[IRP, Request] : Requests) {
+    if (Request.PnpDevice != PDO)
+      continue;
+    const auto &Observation = Result.Requests[Request.ResultIndex];
+    // A driver normally registers after lower START succeeds but before its
+    // own completion releases the retained upper START transaction.
+    if (State->PnpOperation && Request.PnpTicket == State->PnpOperation &&
+        Request.PnpOperation &&
+        Request.PnpOperation->Minor == DevicePnpRequest::Start &&
+        Observation.Pnp && Observation.Pnp->BusCompletedAt100ns &&
+        Observation.Pnp->BusStatus &&
+        !(*Observation.Pnp->BusStatus & profile::NTStatusFailureMask))
+      Running = true;
+    // Resource-free devices still publish lower power completion before the
+    // upper lifecycle transaction finishes. PoSetPowerState is independent.
+    if (State->DevicePowerOperation &&
+        Request.PowerTicket == State->DevicePowerOperation &&
+        Request.PowerOperation &&
+        Request.PowerOperation->Type == DriverPowerType::Device &&
+        Request.PowerOperation->Minor == DevicePowerRequest::Set &&
+        Observation.Power && Observation.Power->BusCompletedAt100ns &&
+        Observation.Power->BusStatus &&
+        !(*Observation.Power->BusStatus & profile::NTStatusFailureMask))
+      PhysicalPower =
+          static_cast<DevicePowerState>(Request.PowerOperation->State);
+  }
+  if (const auto *Resource = Resources.find(PDO)) {
+    Running &= Resource->Present && Resource->Assigned && !Resource->Cold;
+    PhysicalPower = Resource->Power;
+  }
+  if (!Running || PhysicalPower != DevicePowerState::D0)
+    return poFxError(
+        "registration requires a running D0 device after successful START");
+  return llvm::Error::success();
 }
 
 llvm::Expected<uint64_t> KernelModel::callPoFxAPI(llvm::StringRef Name,
@@ -135,45 +185,8 @@ llvm::Expected<uint64_t> KernelModel::callPoFxAPI(llvm::StringRef Name,
       return poFxError("registration requires a configured PnP provider");
     if (*PDO != A[0])
       return poFxError("registration requires the exact configured PDO");
-    auto State = Lifecycle.snapshot(*PDO);
-    if (!State)
-      return State.takeError();
-    bool Running =
-        State->Pnp == DevicePnpState::Started && !State->PnpOperation;
-    DevicePowerState PhysicalPower = State->DevicePower;
-    for (const auto &[IRP, Request] : Requests) {
-      if (Request.PnpDevice != *PDO)
-        continue;
-      const auto &Observation = Result.Requests[Request.ResultIndex];
-      // A driver normally registers after lower START succeeds but before its
-      // own completion releases the retained upper START transaction.
-      if (State->PnpOperation && Request.PnpTicket == State->PnpOperation &&
-          Request.PnpOperation &&
-          Request.PnpOperation->Minor == DevicePnpRequest::Start &&
-          Observation.Pnp && Observation.Pnp->BusCompletedAt100ns &&
-          Observation.Pnp->BusStatus &&
-          !(*Observation.Pnp->BusStatus & profile::NTStatusFailureMask))
-        Running = true;
-      // Resource-free devices still publish lower power completion before the
-      // upper lifecycle transaction finishes. PoSetPowerState is independent.
-      if (State->DevicePowerOperation &&
-          Request.PowerTicket == State->DevicePowerOperation &&
-          Request.PowerOperation &&
-          Request.PowerOperation->Type == DriverPowerType::Device &&
-          Request.PowerOperation->Minor == DevicePowerRequest::Set &&
-          Observation.Power && Observation.Power->BusCompletedAt100ns &&
-          Observation.Power->BusStatus &&
-          !(*Observation.Power->BusStatus & profile::NTStatusFailureMask))
-        PhysicalPower =
-            static_cast<DevicePowerState>(Request.PowerOperation->State);
-    }
-    if (const auto *Resource = Resources.find(*PDO)) {
-      Running &= Resource->Present && Resource->Assigned && !Resource->Cold;
-      PhysicalPower = Resource->Power;
-    }
-    if (!Running || PhysicalPower != DevicePowerState::D0)
-      return poFxError(
-          "registration requires a running D0 device after successful START");
+    if (auto E = validatePoFxRegistrationDevice(*PDO))
+      return E;
     if (auto E = validateGuestAccess(A[2], profile::PointerSize, true))
       return E;
     auto Writable =
@@ -200,8 +213,21 @@ llvm::Expected<uint64_t> KernelModel::callPoFxAPI(llvm::StringRef Name,
     return windows::StatusSuccess;
   }
   const auto *Registration = PoFx.registration(A[0]);
-  if (!Registration || Registration->InternalCallbacks)
-    return poFxError("operation requires a live driver-owned PoFx handle");
+  if (!Registration)
+    return poFxError("operation requires a live PoFx handle");
+  if (Registration->Owner == KernelPoFx::RegistrationOwner::Framework) {
+    switch (Kind) {
+    case API::PoFxCompleteIdleCondition:
+    case API::PoFxCompleteIdleState:
+    case API::PoFxSetComponentLatency:
+    case API::PoFxSetComponentResidency:
+    case API::PoFxSetComponentWake:
+      break;
+    default:
+      return poFxError(
+          "operation is owned by the framework registration in this profile");
+    }
+  }
   llvm::Error E = llvm::Error::success();
   switch (Kind) {
   case API::PoFxRegisterDevice:
@@ -394,6 +420,9 @@ KernelModel::finishPoFxCall(uint64_t Token) {
     return E;
   if (auto E = queuePoFxCallbacks())
     return E;
+  if (Framework)
+    if (auto E = Framework->resumePoFxTransitions())
+      return E;
   if (Thread) {
     if (auto E = waitForPoFxOperation(Thread))
       return E;

@@ -48,6 +48,8 @@ llvm::Error KernelFramework::restartIdleTimer(uint64_t Device) {
         return policyError("system-managed idle requires the PoFx authority");
       if (auto E = PowerHost.ManagedIdle(D.Wdm, !Active, P.Idle->Timeout100ns))
         return E;
+      if (auto E = holdForPoFxComponent(Device))
+        return E;
     }
     if (Active)
       P.ManagedPowerNotRequired = false;
@@ -245,6 +247,8 @@ KernelFramework::callPowerPolicy(llvm::StringRef Name, Binding &B,
       if (auto E =
               PowerHost.ManagedIdle(D->second.Wdm, false, P.Idle->Timeout100ns))
         return E;
+    if (auto E = holdForPoFxComponent(A[1]))
+      return E;
     ++P.References;
     P.Deadline.reset();
     P.ManagedPowerNotRequired = false;
@@ -289,6 +293,8 @@ llvm::Error KernelFramework::powerPolicyActive(uint64_t PDO) {
     if (auto E =
             PowerHost.ManagedIdle(D.Wdm, false, D.Policy.Idle->Timeout100ns))
       return E;
+  if (auto E = holdForPoFxComponent(Handle->second))
+    return E;
   D.Policy.IdleSince.reset();
   D.Policy.Deadline.reset();
   D.Policy.ManagedPowerNotRequired = false;
@@ -533,7 +539,7 @@ KernelFramework::powerPolicyDeviceReady(uint64_t PDO, bool Required) const {
   if (D.Policy.Failure)
     return policyError("PoFx device power transaction failed");
   return D.Policy.Started && !D.Policy.DevicePowerPending &&
-         (Required ? D.InD0 && !D.PowerQueuesHeld : !D.InD0);
+         (Required ? D.InD0 : !D.InD0);
 }
 
 llvm::Expected<bool> KernelFramework::allowsD3Cold(uint64_t PDO) const {

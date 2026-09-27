@@ -1552,6 +1552,11 @@ KernelFramework::callImpl(const KernelExportRegistry::Export &Export,
         return E;
     return 0;
   }
+  auto PoFx = callPoFxSettings(Export.Name, B, A, IRQL);
+  if (!PoFx)
+    return PoFx.takeError();
+  if (*PoFx)
+    return **PoFx;
   auto Policy = callPowerPolicy(Export.Name, B, A, IRQL);
   if (!Policy)
     return Policy.takeError();

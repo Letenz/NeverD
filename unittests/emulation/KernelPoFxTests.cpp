@@ -494,7 +494,7 @@ TEST_F(DriverKernelPoFx,
 TEST_F(DriverKernelPoFx, FrameworkOwnedRegistrationUsesTypedInternalCallbacks) {
   auto D = description();
   D.Routines = {};
-  D.InternalCallbacks = true;
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
   D.Components[0].IdleStates.resize(1);
   D.Components[0].DeepestWakeableState = 0;
   success(Model.registerDevice(Handle, D));
@@ -514,6 +514,213 @@ TEST_F(DriverKernelPoFx, FrameworkOwnedRegistrationUsesTypedInternalCallbacks) {
   complete(Kind::DevicePowerRequired);
   complete(Kind::ActiveCondition);
   EXPECT_TRUE(take(Model.conditionReached(Handle, 0, true)));
+}
+
+TEST_F(DriverKernelPoFx,
+       FrameworkOwnershipValidatesComponentAndCallbackBounds) {
+  auto D = description();
+  D.Owner = static_cast<KernelPoFx::RegistrationOwner>(99);
+  expectError(Model.registerDevice(Handle, D), "invalid owner");
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
+  expectError(Model.registerDevice(Handle, D), "owns device-power callbacks");
+  D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+  D.Components.push_back(D.Components.front());
+  expectError(Model.registerDevice(Handle, D), "exactly one component");
+  EXPECT_FALSE(Model.registration(Handle));
+  D.Components.pop_back();
+  success(Model.registerDevice(Handle, D));
+  EXPECT_EQ(Model.registration(Handle)->Owner,
+            KernelPoFx::RegistrationOwner::Framework);
+}
+
+TEST_F(DriverKernelPoFx,
+       FrameworkGuestComponentsKeepInternalDevicePowerOwnership) {
+  auto D = description();
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
+  D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+  success(Model.registerDevice(Handle, D));
+  success(Model.start(Handle));
+  auto Call = next(Kind::IdleCondition);
+  EXPECT_FALSE(Call.Internal);
+  EXPECT_EQ(Call.PC, IdlePC);
+  acknowledge(Call);
+  success(Model.finishCallback(Call.Token));
+  success(Model.requestIdleState(Handle, 0, 1));
+  Call = next(Kind::IdleState);
+  EXPECT_FALSE(Call.Internal);
+  EXPECT_EQ(Call.Arguments, (std::vector<uint64_t>{Context, 0, 1}));
+  acknowledge(Call);
+  success(Model.finishCallback(Call.Token));
+  success(Model.requestDevicePowerNotRequired(Handle));
+  Call = next(Kind::DevicePowerNotRequired);
+  EXPECT_TRUE(Call.Internal);
+  EXPECT_EQ(Call.PC, 0u);
+  EXPECT_EQ(Call.Arguments, (std::vector<uint64_t>{Context}));
+  acknowledge(Call);
+  success(Model.finishCallback(Call.Token));
+  success(Model.activate(Handle, 0));
+  Call = next(Kind::DevicePowerRequired);
+  EXPECT_TRUE(Call.Internal);
+  EXPECT_EQ(Call.PC, 0u);
+  acknowledge(Call);
+  success(Model.finishCallback(Call.Token));
+  Call = next(Kind::IdleState);
+  EXPECT_FALSE(Call.Internal);
+  EXPECT_EQ(Call.State, 0u);
+  acknowledge(Call);
+  success(Model.finishCallback(Call.Token));
+  Call = next(Kind::ActiveCondition);
+  EXPECT_FALSE(Call.Internal);
+  EXPECT_EQ(Call.PC, ActivePC);
+  success(Model.finishCallback(Call.Token));
+  EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+}
+
+TEST_F(DriverKernelPoFx,
+       FrameworkDefaultsRemainAvailableForEachOmittedComponentCallback) {
+  for (bool GuestStateCallback : {false, true}) {
+    SCOPED_TRACE(GuestStateCallback);
+    Model = KernelPoFx{};
+    auto D = description();
+    D.Owner = KernelPoFx::RegistrationOwner::Framework;
+    D.Routines = {};
+    if (GuestStateCallback)
+      D.Routines.IdleState = StatePC;
+    success(Model.registerDevice(Handle, D));
+    success(Model.start(Handle));
+    auto Call = next(Kind::IdleCondition);
+    EXPECT_TRUE(Call.Internal);
+    acknowledge(Call);
+    success(Model.finishCallback(Call.Token));
+    success(Model.requestIdleState(Handle, 0, 1));
+    Call = next(Kind::IdleState);
+    EXPECT_EQ(Call.Internal, !GuestStateCallback);
+    EXPECT_EQ(Call.PC, GuestStateCallback ? StatePC : 0u);
+    acknowledge(Call);
+    success(Model.finishCallback(Call.Token));
+    success(Model.activate(Handle, 0));
+    Call = next(Kind::IdleState);
+    EXPECT_EQ(Call.Internal, !GuestStateCallback);
+    EXPECT_EQ(Call.State, 0u);
+    acknowledge(Call);
+    success(Model.finishCallback(Call.Token));
+    Call = next(Kind::ActiveCondition);
+    EXPECT_TRUE(Call.Internal);
+    EXPECT_EQ(Call.PC, 0u);
+    success(Model.finishCallback(Call.Token));
+    EXPECT_TRUE(take(Model.conditionReached(Handle, 0, true)));
+  }
+}
+
+TEST_F(DriverKernelPoFx,
+       CallbackDrainTracksLiveRegistrationThroughReturnAndAcknowledgement) {
+  auto Unknown = Model.callbacksDrained(Handle);
+  ASSERT_FALSE(bool(Unknown));
+  EXPECT_NE(llvm::toString(Unknown.takeError()).find("live registration"),
+            std::string::npos);
+  registerDevice();
+  EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+  success(Model.start(Handle));
+  EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+  const auto Call = next(Kind::IdleCondition);
+  EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+  success(Model.finishCallback(Call.Token));
+  EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+  success(Model.completeIdleCondition(Handle, 0));
+  EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+  success(Model.setDeviceIdleTimeout(Handle, 100));
+  success(Model.requestDevicePowerNotRequired(Handle));
+  EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+  success(Model.unregisterDevice(Handle));
+  Unknown = Model.callbacksDrained(Handle);
+  ASSERT_FALSE(bool(Unknown));
+  llvm::consumeError(Unknown.takeError());
+}
+
+TEST_F(DriverKernelPoFx, FrameworkQuiescenceCancelsUnissuedPowerDecisions) {
+  auto D = description();
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
+  D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+  success(Model.registerDevice(Handle, D));
+  success(Model.start(Handle));
+  complete(Kind::IdleCondition);
+  success(Model.setDeviceIdleTimeout(Handle, 100));
+  success(Model.requestDevicePowerNotRequired(Handle));
+  EXPECT_EQ(Model.nextDeadline(), 100u);
+  success(Model.quiesceFrameworkRegistration(Handle));
+  success(Model.quiesceFrameworkRegistration(Handle));
+  EXPECT_FALSE(Model.nextDeadline());
+  success(Model.process(1000));
+  EXPECT_FALSE(Model.hasPendingCallbacks());
+  expectError(Model.requestIdleState(Handle, 0, 1), "quiescing");
+  expectError(Model.requestDevicePowerNotRequired(Handle), "quiescing");
+  expectError(Model.activate(Handle, 0), "quiescing");
+  expectError(Model.idle(Handle, 0), "quiescing");
+  success(Model.setLatency(Handle, 0, 20));
+  success(Model.setResidency(Handle, 0, 30));
+  success(Model.setWake(Handle, 0, true));
+  EXPECT_TRUE(Model.registration(Handle));
+  success(Model.unregisterDevice(Handle));
+}
+
+TEST_F(DriverKernelPoFx, FrameworkQuiescenceRetainsExistingCallbacks) {
+  for (bool BeforeEntry : {false, true}) {
+    SCOPED_TRACE(BeforeEntry);
+    Model = KernelPoFx{};
+    auto D = description();
+    D.Owner = KernelPoFx::RegistrationOwner::Framework;
+    D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+    success(Model.registerDevice(Handle, D));
+    success(Model.start(Handle));
+    complete(Kind::IdleCondition);
+    success(Model.requestIdleState(Handle, 0, 1));
+    if (BeforeEntry)
+      success(Model.quiesceFrameworkRegistration(Handle));
+    const auto State = next(Kind::IdleState);
+    if (!BeforeEntry)
+      success(Model.quiesceFrameworkRegistration(Handle));
+    success(Model.process(100));
+    EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+    expectError(Model.unregisterDevice(Handle), "pending callbacks");
+    success(Model.finishCallback(State.Token));
+    EXPECT_FALSE(take(Model.callbacksDrained(Handle)));
+    acknowledge(State);
+    EXPECT_TRUE(take(Model.callbacksDrained(Handle)));
+    EXPECT_EQ(take(Model.component(Handle, 0)).IdleState, 1u);
+    EXPECT_FALSE(Model.hasPendingCallbacks());
+    success(Model.unregisterDevice(Handle));
+  }
+}
+
+TEST_F(DriverKernelPoFx, FrameworkQuiescencePreservesPendingPowerCompletion) {
+  auto D = description();
+  D.Owner = KernelPoFx::RegistrationOwner::Framework;
+  D.Routines.DevicePowerRequired = D.Routines.DevicePowerNotRequired = 0;
+  success(Model.registerDevice(Handle, D));
+  success(Model.start(Handle));
+  complete(Kind::IdleCondition);
+  success(Model.requestDevicePowerNotRequired(Handle));
+  const auto Pending = Model.nextCallback();
+  ASSERT_TRUE(Pending);
+  expectError(Model.quiesceFrameworkRegistration(Handle), "device-power");
+  ASSERT_TRUE(Model.nextCallback());
+  EXPECT_EQ(Model.nextCallback()->Token, Pending->Token);
+  const auto Power = next(Kind::DevicePowerNotRequired);
+  expectError(Model.quiesceFrameworkRegistration(Handle), "device-power");
+  success(Model.finishCallback(Power.Token));
+  expectError(Model.quiesceFrameworkRegistration(Handle), "device-power");
+  success(Model.completeDevicePowerNotRequired(Handle));
+  success(Model.quiesceFrameworkRegistration(Handle));
+  success(Model.unregisterDevice(Handle));
+}
+
+TEST_F(DriverKernelPoFx, FrameworkQuiescenceDoesNotAlterDriverOwnership) {
+  registerDevice();
+  expectError(Model.quiesceFrameworkRegistration(Handle), "framework-owned");
+  success(Model.start(Handle));
+  complete(Kind::IdleCondition);
+  success(Model.activate(Handle, 0));
+  complete(Kind::ActiveCondition);
 }
 
 TEST_F(DriverKernelPoFx,

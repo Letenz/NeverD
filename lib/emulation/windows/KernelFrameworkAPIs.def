@@ -124,6 +124,7 @@ NEVERD_FRAMEWORK_API(WdfWaitLockRelease, 2)
 
 NEVERD_FRAMEWORK_API(WdfDeviceInitSetPowerPolicyEventCallbacks, 3)
 NEVERD_FRAMEWORK_API(WdfDeviceAssignS0IdleSettings, 3)
+NEVERD_FRAMEWORK_API(WdfDeviceWdmAssignPowerFrameworkSettings, 3)
 NEVERD_FRAMEWORK_API(WdfDeviceAssignSxWakeSettings, 3)
 NEVERD_FRAMEWORK_API(WdfDeviceStopIdleNoTrack, 3)
 NEVERD_FRAMEWORK_API(WdfDeviceResumeIdleNoTrack, 2)

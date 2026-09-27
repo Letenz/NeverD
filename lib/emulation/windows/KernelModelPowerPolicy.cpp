@@ -22,7 +22,8 @@ llvm::Expected<uint64_t> componentPolicyEpoch(const KernelResources &Resources,
   const auto Handle = PoFx.handleForPDO(PDO);
   if (!Handle)
     return policyError("PoFx decision requires a live registration");
-  if (PoFx.registration(*Handle)->InternalCallbacks) {
+  if (PoFx.registration(*Handle)->Owner ==
+      KernelPoFx::RegistrationOwner::Framework) {
     if (!Framework)
       return policyError("internal registration lost its framework owner");
     return Framework->powerPolicyEpoch(PDO);

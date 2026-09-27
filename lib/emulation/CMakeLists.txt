@@ -19,6 +19,7 @@ add_neverd_component_library(NeverDEmulation
   windows/KernelModelFrameworkInterrupts.cpp
   windows/KernelFrameworkPower.cpp
   windows/KernelFrameworkPowerPolicy.cpp
+  windows/KernelFrameworkPoFx.cpp
   windows/KernelModelPowerPolicy.cpp
   windows/KernelPoFx.cpp
   windows/KernelModelPoFx.cpp

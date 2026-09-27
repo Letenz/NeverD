@@ -372,6 +372,9 @@ TEST_F(KernelPoFxAPI, RegistrationRequiresTheConfiguredPhysicalDeviceObject) {
          "exact configured PDO");
   EXPECT_EQ(get(HandleSlot), UINT64_MAX);
   registerDevice();
+  reject(Model->validateGuestAccess(Handle, 8, false), "opaque PoFx");
+  reject(Model->validateGuestAccess(Handle, 8, true), "opaque PoFx");
+  call("PoFxSetComponentLatency", {Handle, 0, 10});
   reject(Model->call("PoFxRegisterDevice", {PDO, Description, HandleSlot}),
          "already registered");
   EXPECT_EQ(get(HandleSlot), Handle);

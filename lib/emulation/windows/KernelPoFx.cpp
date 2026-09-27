@@ -47,19 +47,22 @@ KernelPoFx::canRegisterDevice(uint64_t Handle,
   if (Description.Components.empty() ||
       Description.Components.size() > Bounds.MaxComponents)
     return powerError("component count is zero or exceeds the execution bound");
+  if (Description.Owner != RegistrationOwner::Driver &&
+      Description.Owner != RegistrationOwner::Framework)
+    return powerError("registration has an invalid owner");
+  const bool FrameworkOwned = Description.Owner == RegistrationOwner::Framework;
+  if (FrameworkOwned && Description.Components.size() != 1)
+    return powerError("framework registration requires exactly one component");
   const auto &Routines = Description.Routines;
   if (Routines.PowerControl)
     return powerError(
         "PEP power-control callbacks require an explicit provider");
-  if (!Description.InternalCallbacks &&
-      bool(Routines.DevicePowerRequired) !=
-          bool(Routines.DevicePowerNotRequired))
+  if (!FrameworkOwned && bool(Routines.DevicePowerRequired) !=
+                             bool(Routines.DevicePowerNotRequired))
     return powerError("device power callbacks require a paired return path");
-  if (Description.InternalCallbacks &&
-      (Routines.ActiveCondition || Routines.IdleCondition ||
-       Routines.IdleState || Routines.DevicePowerRequired ||
-       Routines.DevicePowerNotRequired))
-    return powerError("internal registration cannot mix guest callback PCs");
+  if (FrameworkOwned &&
+      (Routines.DevicePowerRequired || Routines.DevicePowerNotRequired))
+    return powerError("framework registration owns device-power callbacks");
 
   std::set<std::array<uint8_t, pofx::ComponentIDSize>> IDs;
   for (const auto &C : Description.Components) {
@@ -72,7 +75,7 @@ KernelPoFx::canRegisterDevice(uint64_t Handle,
         C.IdleStates.front().ResidencyRequirement)
       return powerError(
           "F0 latency and residency requirement must both be zero");
-    if (C.IdleStates.size() > 1 && !Description.InternalCallbacks &&
+    if (C.IdleStates.size() > 1 && !FrameworkOwned &&
         (!Routines.ActiveCondition || !Routines.IdleCondition ||
          !Routines.IdleState))
       return powerError("multiple Fx states require all component callbacks");
@@ -151,7 +154,6 @@ llvm::Error KernelPoFx::enqueue(uint64_t Handle, Device &D, CallbackKind Kind,
   Call.Kind = Kind;
   Call.Component = Index;
   Call.State = State;
-  Call.Internal = Description.InternalCallbacks;
   Call.Arguments = {Description.Context};
   switch (Kind) {
   case CallbackKind::ActiveCondition:
@@ -170,6 +172,7 @@ llvm::Error KernelPoFx::enqueue(uint64_t Handle, Device &D, CallbackKind Kind,
     Call.PC = Routines.DevicePowerNotRequired;
     break;
   }
+  Call.Internal = Description.Owner == RegistrationOwner::Framework && !Call.PC;
   if (!Call.PC && !Call.Internal)
     return powerError("transition requires a registered callback");
   if (isComponentCallback(Kind)) {
@@ -193,7 +196,7 @@ bool KernelPoFx::allIdle(const Device &D) const {
 }
 
 llvm::Error KernelPoFx::reconcile(uint64_t Handle, Device &D, uint64_t &Next) {
-  if (!D.Started)
+  if (!D.Started || D.Quiescing)
     return llvm::Error::success();
   const bool HasReferences =
       llvm::any_of(D.Components, [](const ComponentState &C) {
@@ -218,7 +221,8 @@ llvm::Error KernelPoFx::reconcile(uint64_t Handle, Device &D, uint64_t &Next) {
   if (D.PowerCallback || !D.PowerRequired)
     return llvm::Error::success();
 
-  const bool Internal = D.Description.InternalCallbacks;
+  const bool FrameworkOwned =
+      D.Description.Owner == RegistrationOwner::Framework;
   const auto &Routines = D.Description.Routines;
   for (uint32_t Index = 0; Index != D.Components.size(); ++Index) {
     auto &C = D.Components[Index];
@@ -234,7 +238,7 @@ llvm::Error KernelPoFx::reconcile(uint64_t Handle, Device &D, uint64_t &Next) {
                                  Thread, Next))
           return Error;
       } else if (!C.Active) {
-        if (Routines.ActiveCondition || Internal) {
+        if (Routines.ActiveCondition || FrameworkOwned) {
           if (auto Error = enqueue(Handle, D, CallbackKind::ActiveCondition,
                                    Index, 0, Thread, Next))
             return Error;
@@ -246,7 +250,7 @@ llvm::Error KernelPoFx::reconcile(uint64_t Handle, Device &D, uint64_t &Next) {
     }
     if (!C.CallbackToken && !C.References && !C.BlockingActivationThread &&
         C.Active) {
-      if (Routines.IdleCondition || Internal) {
+      if (Routines.IdleCondition || FrameworkOwned) {
         if (auto Error = enqueue(Handle, D, CallbackKind::IdleCondition, Index,
                                  0, C.CallbackThread, Next))
           return Error;
@@ -286,6 +290,8 @@ llvm::Error KernelPoFx::reconcile(uint64_t Handle, Device &D, uint64_t &Next) {
 
 llvm::Error KernelPoFx::start(uint64_t Handle) {
   return mutate(Handle, [](Device &D) -> llvm::Error {
+    if (D.Quiescing)
+      return powerError("framework registration is quiescing");
     if (D.Started)
       return powerError("power management is already started");
     D.Started = true;
@@ -296,6 +302,8 @@ llvm::Error KernelPoFx::start(uint64_t Handle) {
 llvm::Error KernelPoFx::activate(uint64_t Handle, uint32_t Index,
                                  uint64_t CallbackThread) {
   return mutate(Handle, [&](Device &D) -> llvm::Error {
+    if (D.Quiescing)
+      return powerError("framework registration is quiescing");
     if (Index >= D.Components.size())
       return powerError("component index is outside the registration");
     auto &C = D.Components[Index];
@@ -315,6 +323,8 @@ llvm::Error KernelPoFx::activate(uint64_t Handle, uint32_t Index,
 llvm::Error KernelPoFx::idle(uint64_t Handle, uint32_t Index,
                              uint64_t CallbackThread) {
   return mutate(Handle, [&](Device &D) -> llvm::Error {
+    if (D.Quiescing)
+      return powerError("framework registration is quiescing");
     if (Index >= D.Components.size())
       return powerError("component index is outside the registration");
     auto &C = D.Components[Index];
@@ -475,6 +485,8 @@ llvm::Error KernelPoFx::validateIdleState(const Device &D, uint32_t Index,
 llvm::Error KernelPoFx::requestIdleState(uint64_t Handle, uint32_t Index,
                                          uint32_t State) {
   return mutate(Handle, [&](Device &D) -> llvm::Error {
+    if (D.Quiescing)
+      return powerError("framework registration is quiescing");
     if (auto Error = validateIdleState(D, Index, State))
       return Error;
     auto &C = D.Components[Index];
@@ -488,16 +500,34 @@ llvm::Error KernelPoFx::requestIdleState(uint64_t Handle, uint32_t Index,
 
 llvm::Error KernelPoFx::requestDevicePowerNotRequired(uint64_t Handle) {
   return mutate(Handle, [&](Device &D) -> llvm::Error {
+    if (D.Quiescing)
+      return powerError("framework registration is quiescing");
     if (!D.Started || !allIdle(D) || !D.PowerRequired || D.PowerCallback ||
         D.PowerDownDeadline)
       return powerError("power-down decision requires a quiescent idle device");
-    if (!D.Description.InternalCallbacks &&
+    if (D.Description.Owner == RegistrationOwner::Driver &&
         !D.Description.Routines.DevicePowerNotRequired)
       return powerError("device has no power-not-required callback");
     if (!D.IdleSince ||
         D.IdleTimeout > std::numeric_limits<uint64_t>::max() - *D.IdleSince)
       return powerError("device idle deadline overflows virtual time");
     D.PowerDownDeadline = *D.IdleSince + D.IdleTimeout;
+    return llvm::Error::success();
+  });
+}
+
+llvm::Error KernelPoFx::quiesceFrameworkRegistration(uint64_t Handle) {
+  return mutate(Handle, [](Device &D) -> llvm::Error {
+    if (D.Description.Owner != RegistrationOwner::Framework)
+      return powerError("quiescence requires a framework-owned registration");
+    if (D.PowerCallback)
+      return powerError("framework teardown requires the device-power callback "
+                        "to complete first");
+    D.Quiescing = true;
+    D.IdleSince.reset();
+    D.PowerDownDeadline.reset();
+    for (auto &C : D.Components)
+      C.RequestedIdleState.reset();
     return llvm::Error::success();
   });
 }
@@ -616,11 +646,18 @@ llvm::Expected<bool> KernelPoFx::conditionReached(uint64_t Handle,
          (!Active || C->IdleState == 0);
 }
 
-llvm::Error KernelPoFx::canUnregisterDevice(uint64_t Handle) const {
+llvm::Expected<bool> KernelPoFx::callbacksDrained(uint64_t Handle) const {
   const auto Found = Devices.find(Handle);
   if (Found == Devices.end())
     return powerError("operation requires a live registration handle");
-  if (!Found->second.Callbacks.empty())
+  return Found->second.Callbacks.empty();
+}
+
+llvm::Error KernelPoFx::canUnregisterDevice(uint64_t Handle) const {
+  auto Drained = callbacksDrained(Handle);
+  if (!Drained)
+    return Drained.takeError();
+  if (!*Drained)
     return powerError("registration is retained by pending callbacks");
   return llvm::Error::success();
 }

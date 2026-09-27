@@ -1,0 +1,22 @@
+//===- KernelFrameworkPoFxValues.def - Native KMDF PoFx settings ABI ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verified native x64 KMDF 1.33 power framework settings offsets.
+///
+//===----------------------------------------------------------------------===//
+// Native x64 WDF_POWER_FRAMEWORK_SETTINGS, KMDF 1.33.
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsSize, 88)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsPostRegister, 8)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsPreUnregister, 16)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsComponent, 24)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsActiveCondition, 32)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsIdleCondition, 40)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsIdleState, 48)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsPowerControl, 56)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsContext, 64)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsFlags, 72)
+NEVERD_FRAMEWORK_POFX_VALUE(PoFxSettingsDirected, 80)

@@ -1243,6 +1243,9 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
   for (const auto &[Thread, Object] : CurrentThreadObjects)
     if (Address < Object + profile::ProcessTokenSize && Object < End)
       return modelError("guest access to an opaque thread object");
+  for (const auto &[Handle, Owner] : PoFxDeviceObjects)
+    if (Address < Handle + profile::PointerSize && Handle < End)
+      return modelError("guest access to an opaque PoFx handle");
   for (const auto &Attachment : ProcessAttachments)
     if (Address < Attachment.ApcState + KAPCStateSize &&
         Attachment.ApcState < End)

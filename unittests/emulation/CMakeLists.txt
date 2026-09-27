@@ -28,6 +28,10 @@ set(NEVERD_WDM_POWER_FIXTURE "" CACHE FILEPATH
   "Optional original WDM power fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_POWER_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK power fixture linked with active CFG")
+set(NEVERD_KMDF_POFX_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF custom component power fixture")
+set(NEVERD_KMDF_POFX_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK KMDF custom component power fixture with active CFG")
 set(NEVERD_WDM_POFX_FIXTURE "" CACHE FILEPATH
   "Optional original WDM component power fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_POFX_CFG_FIXTURE "" CACHE FILEPATH
@@ -339,6 +343,31 @@ foreach(_driver_pofx_variable NEVERD_WDM_POFX_FIXTURE
   endif()
 endforeach()
 
+set(_driver_kmdf_pofx_definitions)
+set(_driver_has_kmdf_pofx_fixture FALSE)
+foreach(_driver_custom_pofx_variable NEVERD_KMDF_POFX_FIXTURE
+    NEVERD_KMDF_POFX_CFG_FIXTURE)
+  if(_driver_custom_pofx_variable STREQUAL "NEVERD_KMDF_POFX_CFG_FIXTURE"
+      AND NOT _driver_has_kmdf_pofx_fixture)
+    message(STATUS "Driver KMDF custom component power CFG tests skipped: NEVERD_KMDF_POFX_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_custom_pofx_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_custom_pofx_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_custom_pofx_variable}}")
+    get_filename_component(_driver_custom_pofx_path
+      "${${_driver_custom_pofx_variable}}" ABSOLUTE)
+    list(APPEND _driver_kmdf_pofx_definitions
+      "${_driver_custom_pofx_variable}=\"${_driver_custom_pofx_path}\"")
+    if(_driver_custom_pofx_variable STREQUAL "NEVERD_KMDF_POFX_FIXTURE")
+      set(_driver_has_kmdf_pofx_fixture TRUE)
+    endif()
+    message(STATUS "Driver KMDF custom component power fixture ${_driver_custom_pofx_variable}: ${_driver_custom_pofx_path}")
+  else()
+    message(STATUS "Driver KMDF custom component power tests requiring ${_driver_custom_pofx_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
 set(_driver_wdm_remove_lock_definitions)
 set(_driver_has_wdm_remove_lock_fixture FALSE)
 foreach(_driver_remove_lock_variable NEVERD_WDM_REMOVE_LOCK_FIXTURE
@@ -590,11 +619,14 @@ add_neverd_unittest(NeverDDriverEmulationTests
   KernelPoFxTests.cpp
   KernelPoFxAPITests.cpp
   KernelFrameworkPoFxPolicyTests.cpp
+  KernelFrameworkPoFxTests.cpp
+  KernelFrameworkPoFxBridgeTests.cpp
   KernelD3ColdResourceTests.cpp
   DriverD3ColdScenarioTests.cpp
   DriverPoFxScenarioTests.cpp
   DriverKMDFD3ColdTests.cpp
   DriverKMDFPoFxTests.cpp
+  DriverKMDFCustomPoFxTests.cpp
   KernelInterruptActivityTests.cpp
   KernelFrameworkInterruptTests.cpp
   KernelFrameworkLockTests.cpp
@@ -647,6 +679,7 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}
+  ${_driver_kmdf_pofx_definitions}
   ${_driver_wdm_remove_lock_definitions}
   ${_driver_wdm_resource_definitions}
   ${_driver_wdm_interrupt_definitions}
@@ -677,6 +710,7 @@ if(TARGET neverd_shared AND TARGET neverd)
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}
+  ${_driver_kmdf_pofx_definitions}
   ${_driver_wdm_remove_lock_definitions}
   ${_driver_wdm_resource_definitions}
   ${_driver_wdm_interrupt_definitions}

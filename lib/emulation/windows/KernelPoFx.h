@@ -60,15 +60,16 @@ public:
     uint64_t DevicePowerNotRequired = 0;
     uint64_t PowerControl = 0;
   };
+  enum class RegistrationOwner { Driver, Framework };
   struct Registration {
     uint64_t PDO = 0;
     uint64_t Context = 0;
     uint32_t Version = pofx::Version1;
     Callbacks Routines;
     std::vector<Component> Components;
-    /// Framework-owned registration uses typed events instead of guest PCs.
-    /// Zero guest callbacks otherwise mean the documented optional callback.
-    bool InternalCallbacks = false;
+    /// The framework owns device-power callbacks and defaults for omitted
+    /// component callbacks; supplied component callbacks remain guest calls.
+    RegistrationOwner Owner = RegistrationOwner::Driver;
   };
   enum class CallbackKind {
     ActiveCondition,
@@ -145,6 +146,11 @@ public:
                                               uint32_t Component) const;
   llvm::Expected<bool> conditionReached(uint64_t Handle, uint32_t Component,
                                         bool Active) const;
+  llvm::Expected<bool> callbacksDrained(uint64_t Handle) const;
+
+  /// Stop new framework policy decisions before hardware teardown. Existing
+  /// callbacks still require their normal acknowledgement and return.
+  llvm::Error quiesceFrameworkRegistration(uint64_t Handle);
   llvm::Error canUnregisterDevice(uint64_t Handle) const;
   llvm::Error unregisterDevice(uint64_t Handle);
   llvm::Error canReleasePDO(uint64_t PDO) const;
@@ -168,6 +174,7 @@ private:
     std::vector<ComponentState> Components;
     std::map<uint64_t, CallbackState> Callbacks;
     bool Started = false;
+    bool Quiescing = false;
     bool PowerRequired = true;
     std::optional<uint64_t> PowerCallback;
     uint64_t IdleTimeout = 0;

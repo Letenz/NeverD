@@ -266,6 +266,7 @@ void KernelModel::configureFrameworkDeviceHost() {
   };
   Framework->setDeviceHost(std::move(Host));
   configureFrameworkPowerPolicyHost();
+  configureFrameworkPoFxHost();
 }
 
 std::optional<unsigned>

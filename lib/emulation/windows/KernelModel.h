@@ -253,6 +253,9 @@ private:
   llvm::Error processPoFxCallbacks();
   llvm::Expected<std::optional<uint64_t>> finishPoFxCall(uint64_t Token);
   llvm::Error processInternalPoFxCallback(const KernelPoFx::Callback &Call);
+  llvm::Expected<KernelPoFx::Component> readPoFxComponent(uint64_t Address);
+  llvm::Error validatePoFxRegistrationDevice(uint64_t PDO) const;
+  void configureFrameworkPoFxHost();
   llvm::Error setFrameworkPoFxIdle(uint64_t Device, bool Idle,
                                    uint64_t Timeout);
   llvm::Error retireFrameworkPoFx(uint64_t Device);

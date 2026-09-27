@@ -14,6 +14,7 @@
 
 #include "../GuestMemory.h"
 #include "KernelExportRegistry.h"
+#include "KernelFrameworkPoFx.h"
 #include "KernelGuestCall.h"
 #include "KernelPowerPolicy.h"
 
@@ -282,6 +283,22 @@ public:
         ColdAllowed;
   };
   void setPowerPolicyHost(PowerPolicyHost Host) { PowerHost = std::move(Host); }
+  struct PoFxHost {
+    std::function<llvm::Expected<KernelPoFx::Component>(uint64_t)>
+        ReadComponent;
+    std::function<llvm::Error(uint64_t, const KernelFrameworkPoFxSettings &)>
+        Validate;
+    std::function<llvm::Expected<uint64_t>(uint64_t,
+                                           const KernelFrameworkPoFxSettings &)>
+        Register;
+    std::function<llvm::Error(uint64_t)> Start;
+    std::function<llvm::Error(uint64_t)> Quiesce;
+    std::function<llvm::Expected<bool>(uint64_t)> CanUnregister;
+    std::function<llvm::Error(uint64_t)> Unregister;
+    std::function<llvm::Expected<bool>(uint64_t)> ComponentReady;
+  };
+  void setPoFxHost(PoFxHost Host) { PowerFrameworkHost = std::move(Host); }
+  llvm::Error resumePoFxTransitions();
   llvm::Error powerPolicyIdle(uint64_t PDO);
   llvm::Error powerPolicyActive(uint64_t PDO);
   llvm::Error powerPolicyWake(uint64_t PDO);
@@ -431,6 +448,9 @@ private:
     bool Initialized = false;
     bool PowerPolicyOwner = true;
     KernelPowerPolicy Policy;
+    std::optional<KernelFrameworkPoFxSettings> PoFxSettings;
+    uint64_t PoFxHandle = 0;
+    bool PoFxStarted = false;
     bool HasLink = false;
     PnpCallbacks Callbacks;
     ResourceList RawResources, TranslatedResources;
@@ -638,6 +658,14 @@ private:
   std::map<uint64_t, uint64_t> CanceledQueueCallbacks;
   std::map<uint64_t, uint64_t> ReadyQueueCallbacks;
   PowerPolicyHost PowerHost;
+  PoFxHost PowerFrameworkHost;
+  llvm::Expected<std::optional<uint64_t>>
+  callPoFxSettings(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> A,
+                   uint8_t IRQL);
+  llvm::Expected<bool> advancePoFxLifecycle(uint64_t Token);
+  llvm::Expected<bool> canUnregisterPoFx(uint64_t Device) const;
+  llvm::Error unregisterPoFx(uint64_t Device);
+  llvm::Error holdForPoFxComponent(uint64_t Device);
   bool powerPolicyBusy(uint64_t Device) const;
   llvm::Error restartIdleTimer(uint64_t Device);
   llvm::Error beginIdlePowerDown(uint64_t Device);
@@ -656,7 +684,11 @@ private:
     EnableInterrupts,
     DisableInterrupts,
     DrainInterrupts,
-    WakeInterrupts
+    WakeInterrupts,
+    PoFxRegister,
+    PoFxStart,
+    PoFxQuiesce,
+    PoFxUnregister
   };
   struct PnpStep {
     PnpPhase Phase;
@@ -671,6 +703,7 @@ private:
     bool WaitingForRequests = false;
     bool WaitingForInterrupts = false;
     bool WaitingForWakeInterrupts = false;
+    bool WaitingForPoFx = false;
     uint32_t Status = 0;
     PnpStep Current{PnpPhase::PrepareHardware};
     std::deque<PnpStep> Remaining;
