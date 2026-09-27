@@ -733,3 +733,20 @@ generated-source ABI المستقل.
 ## تبسيط MBA المعياري
 
 تغطي `SymReadability.*` كتابة الطرح والمتمّم، وكلفة العوامل التجميعية، والثوابت ذات البت الواحد والعريضة، وتشبع الأشجار المشتركة، واختيار المرشّحات ضمن ميزانية، والتكافؤ الشامل لثلاثة بتات مع تعطيل أخذ العينات. تقارن `SymMBASample.*` التحقق الضيق وذا الدقة غير المحدودة بمقيّم AP، بما يشمل كل العوامل والإسنادات الحتمية والمدخلات العريضة غير المستخدمة. عند مقارنة جودة المرشّحات بين إصدارات التقييم، يجب إعادة حساب المخرجين بالمقياس نفسه؛ عدادات الحجم الخاصة بإصدار SDK للتشخيص فقط.
+
+## مصفوفة اختبارات ARM32 وتمرير الإطار
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+تشمل المصفوفة أيضًا x86-32 بصيغ ELF/COFF/Mach-O، وARM32 بنمطي ARM وThumb في ELF، وAArch64 بصيغ ELF/COFF/Mach-O، مع خلفيتي C. يجب اختزال إعادة تحميل الإطار الخاص المتكررة إلى جمع أو طرح وأن تنفذ بصورة صحيحة لأزواج البايتات وحدود الكلمات والكلمات العشوائية المحددة عند مستويَي التحسين. تفحص اختبارات Clang AST الدوال الكاملة بحثًا عن عمليات MBA المتبقية مع التمييز بين العناوين الصحيحة. يغطي HighFrameStoreForwarding عرض الوصول وتغير المتغيرات المحلية وكتابات الذاكرة والتداخل والذاكرة المرتبة والرسوم غير الصحيحة وحدود التوسع. تحفظ اختبارات HighCStoreForwarding تعريفات قيم التخزين الحية عبر المعماريات الأربع، وتغطي SymSimplifyGuard هوية التحميل وترتيبه وحالات volatile/atomic وحدود poison. تتحقق اختبارات ELFARM32ModeTest من اختيار ARM/Thumb وتطبيع العناوين وحفظ بيانات الصور المختلطة ورفض الأدلة المتناقضة؛ وتتحقق ELFARM32ModeCAPITest من رفض SDK الصريح ثم استعادة المفكك بعد إعادة تحميل Thumb. تغطي InstructionMode حدود المفكك والمؤشرات والفروع وتوليد الكود. غياب Clang للهدف الآخر يعني تخطي الاختبار، وليس إثبات نجاح الصيغة.

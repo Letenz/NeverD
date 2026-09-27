@@ -797,3 +797,20 @@ Il workflow manuale `Mobile Swift String ABI Evidence` compila sonde Swift fisse
 ## Semplificazione MBA modulare
 
 `SymReadability.*` copre la forma di sottrazione e complemento, il costo degli operatori associativi, letterali a un bit e larghi, saturazione degli alberi condivisi, scelta dei candidati con budget ed equivalenza esaustiva a tre bit senza campionamento. `SymMBASample.*` confronta la verifica stretta e a precisione arbitraria con il valutatore AP per tutti gli operatori, assegnazioni deterministiche e input larghi inutilizzati. Per confrontare la qualità tra versioni del punteggio occorre ricontare entrambe le uscite con la stessa metrica; i contatori di dimensione dell’SDK servono solo alla diagnostica.
+
+## Matrice di test ARM32 e propagazione del frame
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+La matrice degli spill copre anche x86-32 (ELF/COFF/Mach-O), ARM32 (ARM e Thumb in ELF) e AArch64 (ELF/COFF/Mach-O) con entrambi i backend C. Ricaricamenti ripetuti del frame privato devono ridursi ad addizioni o sottrazioni ed eseguire correttamente coppie di byte, coppie ai confini di parola e parole casuali deterministiche a entrambi i livelli di ottimizzazione. I controlli AST di Clang esaminano intere funzioni spill per operatori MBA residui, distinguendo le espressioni di indirizzo valide. HighFrameStoreForwarding verifica larghezze, mutazioni locali, scritture alla memoria, alias, sovrapposizioni, memoria ordinata, grafi malformati e limiti di espansione. HighCStoreForwarding mantiene vive le definizioni usate da valori memorizzati su quattro architetture, incluse reinterpretazioni floating; SymSimplifyGuard verifica identità e ordine dei load, volatile/atomic e confini poison. ELFARM32ModeTest verifica selezione ARM/Thumb, normalizzazione degli indirizzi, metadati misti e prove contraddittorie. ELFARM32ModeCAPITest verifica errori SDK espliciti e ripristino del decoder dopo il ricaricamento di Thumb; InstructionMode copre decoder, puntatori al codice, branch e codegen. La mancanza di Clang cross-target significa skip, non prova del formato.

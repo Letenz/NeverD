@@ -685,3 +685,20 @@ deterministic 與 offline。
 ## 模組化 MBA 簡化
 
 `SymReadability.*` 涵蓋減法與補數的表示、結合律運算成本、單位元及寬字面值、共用樹飽和、有預算的候選選擇，以及關閉取樣後的三位元窮舉等價性。`SymMBASample.*` 對照 AP 求值器檢查窄值與任意精度驗證，涵蓋所有運算子、確定性賦值及未使用的寬輸入。跨評分版本比較候選品質時，須用相同指標重算兩側輸出；SDK 的版本化大小計數僅供診斷。
+
+## ARM32 與堆疊框架轉送測試矩陣
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+堆疊框架溢出測試矩陣透過兩套 C 後端涵蓋 x86-32（ELF/COFF/Mach-O）、ARM32（ARM 與 Thumb ELF）及 AArch64（ELF/COFF/Mach-O）。重複的私有框架讀取必須化簡為加減法，並在兩種最佳化等級正確執行位元組配對、跨字邊界配對及確定性亂數字。Clang AST 檢查完整函式中的殘留 MBA 運算，同時區分合法位址表示式。HighFrameStoreForwarding 涵蓋精確存取寬度、區域變數變更、記憶體寫入、前綴別名、部分重疊、有序記憶體、錯誤或循環圖及呈現展開預算；窄位取補回歸於語義化簡後執行。HighCStoreForwarding 在四種架構保留轉送值所依賴的定義存活，包括浮點重新解讀及額外直接使用。SymSimplifyGuard 檢查載入身分與順序、volatile/atomic 狀態及 poison 邊界。ELFARM32ModeTest 驗證 ARM/Thumb 選擇、位址正規化、純對映符號物件、混合模式中繼資料保留及同一位址矛盾證據的拒絕。ELFARM32ModeCAPITest 在同一 SDK 工作階段以混合中繼資料取代 Thumb 映像，確認反組譯、HighC、LLVMC 的明確錯誤，再重新載入 Thumb 驗證解碼器復原。InstructionMode 涵蓋對應的解碼、程式碼指標、直接分支與程式碼產生邊界。缺少跨目標 Clang 應標記為略過，不能當作格式通過的證據。

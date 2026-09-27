@@ -664,3 +664,20 @@ deterministic 与 offline。
 ## 模块化 MBA 简化
 
 `SymReadability.*` 覆盖减法与补码的打印形式、结合律运算的代价、单比特和宽字面量、共享树大小饱和、有预算的候选选择，以及关闭采样时三比特的穷举等价性。`SymMBASample.*` 将窄值和任意精度验证与 AP 求值器比较，覆盖全部运算符、确定性赋值和未使用的宽输入。比较不同评分版本的候选质量时，必须用同一指标重算两边输出；SDK 随版本变化的大小计数仅供诊断。
+
+## ARM32 与栈帧转发测试矩阵
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+栈帧溢出测试矩阵通过两套 C 后端覆盖 x86-32（ELF/COFF/Mach-O）、ARM32（ARM 与 Thumb ELF）和 AArch64（ELF/COFF/Mach-O）。重复的私有栈帧读取必须化简为加减法，并在两个优化级别正确执行字节对、跨字边界对和确定性随机字。Clang AST 检查完整函数中的残留 MBA 运算，同时区分合法地址表达式。HighFrameStoreForwarding 覆盖精确访问位宽、局部变量变更、内存写入、前缀别名、部分重叠、有序内存、畸形或循环图，以及渲染展开预算；其窄位取补回归在语义化简后执行。HighCStoreForwarding 在四种架构上保持转发值所依赖的定义存活，包括浮点重新解释与额外直接使用。SymSimplifyGuard 检查加载身份和顺序、volatile/atomic 状态及 poison 边界。ELFARM32ModeTest 验证 ARM/Thumb 选择、地址规范化、纯映射符号对象、混合模式元数据保留及同一地址矛盾证据的拒绝。ELFARM32ModeCAPITest 在同一 SDK 会话中以混合元数据替换 Thumb 映像，验证反汇编、HighC、LLVMC 的明确错误，再重载 Thumb 验证解码器恢复。InstructionMode 覆盖相应的解码、代码指针、直接分支与代码生成边界。缺少跨目标 Clang 应标记为跳过，不能当作格式通过的证据。

@@ -770,3 +770,20 @@ Fixtures масштаба 10,000 защищают worklist, function ownership �
 ## Модульное упрощение MBA
 
 `SymReadability.*` проверяет запись вычитания и дополнения, стоимость ассоциативных операторов, однобитные и широкие литералы, насыщение общих деревьев, выбор кандидатов с бюджетом и полный перебор трёхбитной эквивалентности без выборки. `SymMBASample.*` сравнивает узкую и произвольно-точную проверку с вычислителем AP для всех операторов, детерминированных присваиваний и неиспользуемых широких входов. При сравнении качества между версиями оценки оба результата нужно пересчитать одной метрикой; версионные счётчики размера SDK служат только диагностике.
+
+## Матрица тестов ARM32 и продвижения значений кадра
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+Матрица spill охватывает также x86-32 (ELF/COFF/Mach-O), ARM32 (ARM и Thumb ELF) и AArch64 (ELF/COFF/Mach-O) в обоих C-бэкендах. Повторные чтения из приватного кадра должны сводиться к сложению или вычитанию и правильно исполняться для пар байтов, границ слов и детерминированных случайных слов на обоих уровнях оптимизации. Проверки Clang AST просматривают функции целиком на оставшиеся MBA-операторы, отличая допустимые адресные выражения. HighFrameStoreForwarding проверяет ширины доступа, изменения локальных переменных, записи памяти, псевдонимы, перекрытия, упорядоченную память, некорректные графы и бюджеты развёртки. HighCStoreForwarding сохраняет определения кешированных значений живыми для четырёх архитектур, в том числе при интерпретации как float; SymSimplifyGuard проверяет идентичность и порядок загрузок, volatile/atomic и границы poison. ELFARM32ModeTest проверяет выбор ARM/Thumb, нормализацию адресов, смешанные метаданные и отказ при противоречии. ELFARM32ModeCAPITest проверяет явные ошибки SDK и восстановление декодера после повторной загрузки Thumb; InstructionMode охватывает границы декодера, указателей на код, ветвлений и кодогенерации. Отсутствие кросс-целевого Clang означает пропуск, а не доказательство поддержки формата.

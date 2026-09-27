@@ -734,3 +734,20 @@ deterministic/offline に保ったまま `RPC activation audit` を可能にし�
 ## モジュール式 MBA 簡約
 
 `SymReadability.*` は減算と補数の表記、結合的演算のコスト、1 ビットおよび広幅リテラル、共有木の飽和、予算付き候補選択、サンプリングを無効にした 3 ビットの総当たり同値性を確認します。`SymMBASample.*` は全演算子、決定的な割り当て、未使用の広幅入力について、狭幅と任意精度の検証を AP 評価器と比較します。評価方式の異なる版で候補品質を比べる場合は、両方の出力を同じ尺度で数え直してください。SDK の版ごとのサイズカウンターは診断専用です。
+
+## ARM32 とフレーム転送のテスト行列
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+フレーム spill の行列は両方の C バックエンドで x86-32（ELF/COFF/Mach-O）、ARM32（ARM/Thumb ELF）、AArch64（ELF/COFF/Mach-O）も対象にします。プライベートフレームの反復ロードは加減算へ簡約され、両方の最適化レベルでバイトの組、ワード境界の組、決定的な乱数ワードを正しく実行する必要があります。Clang AST は関数全体の残存 MBA 演算子を確認し、有効なアドレス式と区別します。HighFrameStoreForwarding はアクセス幅、ローカル変数の変更、メモリ書き込み、エイリアス、重複、順序付きアクセス、不正なグラフ、展開予算を検査します。HighCStoreForwarding は浮動小数点の再解釈を含む 4 アーキテクチャでキャッシュ値の定義を生存させ、SymSimplifyGuard はロードの同一性と順序、volatile/atomic、poison 境界を検査します。ELFARM32ModeTest は ARM/Thumb 選択、アドレス正規化、混在メタデータと矛盾の拒否を検査します。ELFARM32ModeCAPITest は SDK の明示的なエラーと Thumb 再ロード後のデコーダー復旧を検査し、InstructionMode はデコーダー、コードポインター、分岐、コード生成の境界を検査します。クロスターゲット Clang がなければスキップであり、形式が正しい証拠にはなりません。
