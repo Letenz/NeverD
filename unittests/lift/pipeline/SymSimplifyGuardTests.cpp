@@ -2335,4 +2335,84 @@ TEST(SymSimplifyGuard, TheConservativeOrderIgnoresTheStrength) {
   EXPECT_GT(Bitwise, 0u) << printFunction(*DeepMBA);
 }
 
+TEST(SymSimplifyGuard, MeasuresSharedArithmeticInsideOneClosedRegion) {
+  for (unsigned Width : {8u, 16u, 32u, 64u, 128u}) {
+    for (bool Swap : {false, true}) {
+      llvm::LLVMContext C;
+      llvm::Module M("shared_region", C);
+      auto *Ty = llvm::IntegerType::get(C, Width);
+      auto *FT = llvm::FunctionType::get(Ty, {Ty, Ty}, false);
+      auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                       "shared_union", &M);
+      auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+      llvm::IRBuilder<> B(BB);
+      llvm::Value *X = F->getArg(0);
+      llvm::Value *Y = F->getArg(1);
+      llvm::Value *Union = B.CreateOr(X, Y);
+      B.CreateRet(B.CreateOr(B.CreateSub(Union, Swap ? Y : X), Union));
+      ASSERT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+      EXPECT_EQ(instructionCount(*F), 2u) << printFunction(*F);
+      const auto *Ret = llvm::cast<llvm::ReturnInst>(BB->getTerminator());
+      const auto *Result =
+          llvm::dyn_cast<llvm::BinaryOperator>(Ret->getReturnValue());
+      ASSERT_NE(Result, nullptr);
+      EXPECT_EQ(Result->getOpcode(), llvm::Instruction::Or);
+      EXPECT_TRUE((Result->getOperand(0) == X && Result->getOperand(1) == Y) ||
+                  (Result->getOperand(0) == Y && Result->getOperand(1) == X));
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+TEST(SymSimplifyGuard, KeepsExternallyUsedSharedComputationOpaque) {
+  llvm::LLVMContext C;
+  llvm::Module M("external_shared", C);
+  auto *Ty = llvm::Type::getInt32Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(Ty, {Ty, Ty, Ptr}, false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "external_union", &M);
+  auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(BB);
+  llvm::Value *X = F->getArg(0);
+  llvm::Value *Y = F->getArg(1);
+  llvm::Value *Union = B.CreateOr(X, Y);
+  B.CreateStore(Union, F->getArg(2));
+  B.CreateRet(B.CreateOr(B.CreateSub(Union, X), Union));
+  const std::string Before = printFunction(*F);
+  EXPECT_EQ(SymSimplifyPass::simplify(*F), 0u);
+  EXPECT_EQ(printFunction(*F), Before);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, PropagatesExternalUsesBeforeCountingDeadInstructions) {
+  llvm::LLVMContext C;
+  llvm::Module M("shared_boundary", C);
+  auto *Ty = llvm::Type::getInt32Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(Ty, {Ty, Ty, Ptr}, false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "shared_boundary", &M);
+  auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(BB);
+  llvm::Value *Base = B.CreateAdd(F->getArg(0), B.getInt32(7));
+  llvm::Value *Shared = B.CreateOr(Base, F->getArg(1));
+  auto *Stored = B.CreateStore(Shared, F->getArg(2));
+  llvm::Value *Xor = B.CreateXor(Shared, Base);
+  llvm::Value *And = B.CreateAnd(Shared, Base);
+  B.CreateRet(B.CreateAdd(Xor, B.CreateMul(And, B.getInt32(2))));
+  const std::string Before = printFunction(*F);
+  SymSimplifyOptions Opts;
+  Opts.MinInstructionsSaved = 4;
+  // The shared OR and its base remain live at the store. Only the four
+  // carry-save instructions can die, while their replacement costs one.
+  EXPECT_EQ(SymSimplifyPass::simplify(*F, Opts), 0u);
+  EXPECT_EQ(printFunction(*F), Before);
+  Opts.MinInstructionsSaved = 3;
+  EXPECT_GT(SymSimplifyPass::simplify(*F, Opts), 0u);
+  EXPECT_EQ(Stored->getValueOperand(), Shared);
+  EXPECT_EQ(instructionCount(*F), 5u) << printFunction(*F);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
 } // namespace

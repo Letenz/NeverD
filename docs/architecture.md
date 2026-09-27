@@ -1404,6 +1404,21 @@ this does not raise the exhaustive synthesis ceiling. The resulting candidate
 must improve on the established construction's actual cost. An unavailable
 construction remains unavailable even when the caller's cost limit is unlimited.
 
+The LLVM bridge includes shared integer instructions only when every use stays
+inside the measured region. External-use boundaries propagate to their operands
+before instruction savings are counted; poison and opaque-effect checks still
+apply. The HighIR bridge models integer casts using source signedness, explicit
+extensions, and byte slices. It visits numeric regions beneath predicates and
+other opaque operations without moving their evaluation or removing effects.
+Within a straight-line HighIR statement sequence, the bridge may consult
+previous pure integer definitions while proving a shorter expression. Bindings
+use the emitted local's identity and matching integer types. Writes invalidate
+transitive dependencies; address escape, control flow, calls, and memory effects
+block propagation. Definitions remain in HighIR for the existing dead-store
+analysis, and the published expression must be smaller than the original use.
+Integer views of one parameter share a widest symbolic carrier; narrower views
+extract its low bits without assuming any value for the remaining upper bits.
+
 Synthesis shares one candidate checker within a request. It remembers
 counterexamples and validation-grid mismatches for canonical candidates, but
 never caches inconclusive proof results or shares rejections across requests.
@@ -1426,6 +1441,12 @@ It estimates the operator change before construction and rechecks the actual
 reading cost afterwards. Compound and nonlinear inputs keep their complement
 boundary so shared products and bitwise relations remain recognizable.
 One-bit flag networks retain the Boolean structure used by comparison recovery.
+
+Low-bit extraction also projects modular addition, multiplication, and bitwise
+operations through a shared DAG. It retains narrower operands' sign or zero
+extension, and leaves high slices, division, and shift counts intact. Adjacent
+slice reconstruction recognizes these projected prefixes so byte-addressed
+register storage can still reassemble the original computed word.
 
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
