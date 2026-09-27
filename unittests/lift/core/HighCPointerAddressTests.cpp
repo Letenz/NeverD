@@ -29803,6 +29803,54 @@ TEST(HighCPointerAddresses, TryExitPastHandlerJoinStaysPrinted) {
   EXPECT_NE(Source.find("Recover();", BodyAt), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, LabelInGuardedArmKeepsImpliedLookingTest) {
+  // The else arm jumps back into the `arg0 == 0` arm, so the inner
+  // `arg0 != 0` test is reachable true and its jump must stay.
+  HighFunc Func;
+  Func.Name = "reentered_guard";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  const va_t ReenterVA = 0x140001010;
+  const va_t OtherVA = 0x140001040;
+  auto IsZero = [](NdOp Op) {
+    return HighExpr::makeBinop(Op, parameter(0), HighExpr::makeConst(0, 8));
+  };
+  HighStmt Reenter;
+  Reenter.Kind = StmtKind::Block;
+  Reenter.Addr = ReenterVA;
+  HighStmt Leave;
+  Leave.Kind = StmtKind::If;
+  Leave.Cond = IsZero(NdOp::INT_NOTEQUAL);
+  Leave.Body = {gotoStmt(0x140001020, OtherVA)};
+  HighStmt Done;
+  Done.Kind = StmtKind::Return;
+  HighStmt Other;
+  Other.Kind = StmtKind::Block;
+  Other.Addr = OtherVA;
+  HighStmt Outer;
+  Outer.Kind = StmtKind::IfElse;
+  Outer.Cond = IsZero(NdOp::INT_EQUAL);
+  Outer.Body = {Reenter, callStmt("Probe", 0x140002000, {}), Leave,
+                callStmt("Tail", 0x140002100, {}), Done};
+  Outer.ElseBody = {callStmt("Enter", 0x140002200, {}),
+                    gotoStmt(0x140001030, ReenterVA), Other,
+                    callStmt("Other", 0x140002300, {}), Done};
+  Func.Body = {Outer};
+  invertSkipGotos(Func);
+  size_t Jumps = 0;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    Jumps += S.Kind == StmtKind::Goto && S.GotoTarget == OtherVA;
+  });
+  EXPECT_EQ(Jumps, 1u);
+  const std::string Source = emitFunctions({Func});
+  const size_t BodyAt = Source.find("reentered_guard(int64_t arg0) {");
+  ASSERT_NE(BodyAt, std::string::npos) << Source;
+  EXPECT_NE(Source.find("goto L_140001040;", BodyAt), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("Other();", BodyAt), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
   HighFunc Func;
   Func.Name = "aux_len";

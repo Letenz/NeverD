@@ -1681,11 +1681,87 @@ static bool stmtInvalidatesCond(const HighStmt &S, const HighExpr *Cond,
 static void filterLiveConds(std::vector<const HighExpr *> &Live,
                             const HighStmt &S,
                             const FieldLoadDefs *FieldLoads) {
-  Live.erase(std::remove_if(Live.begin(), Live.end(),
-                            [&](const HighExpr *C) {
-                              return stmtInvalidatesCond(S, C, FieldLoads);
-                            }),
-             Live.end());
+  // A compound statement kills what any statement nested in it kills.
+  auto Kill = [&](const HighStmt &N) {
+    Live.erase(std::remove_if(Live.begin(), Live.end(),
+                              [&](const HighExpr *C) {
+                                return stmtInvalidatesCond(N, C, FieldLoads);
+                              }),
+               Live.end());
+  };
+  Kill(S);
+  if (Live.empty())
+    return;
+  walkStmts(S.Body, Kill);
+  walkStmts(S.ElseBody, Kill);
+  for (const auto &C : S.Cases)
+    walkStmts(C.Body, Kill);
+  walkStmts(S.DefaultBody, Kill);
+  for (const auto &Clause : S.EHClauseBodies)
+    walkStmts(Clause, Kill);
+}
+
+/// How many gotos of the function jump to each address.
+using GotoUses = std::map<va_t, unsigned>;
+
+static GotoUses countGotoUses(const std::vector<HighStmt> &Body) {
+  GotoUses Uses;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto)
+      ++Uses[S.GotoTarget];
+  });
+  return Uses;
+}
+
+static bool isJumpedTo(va_t Addr, const GotoUses &Uses) {
+  return Addr != 0 && Addr != InvalidVA && Uses.count(Addr);
+}
+
+/// A goto can reach \p S itself without passing the tests that guard its
+/// list, including a later statement jumping back to it.
+static bool isBranchEntry(const HighStmt &S, const GotoUses &Uses) {
+  return isJumpedTo(S.Addr, Uses) ||
+         (S.Kind == StmtKind::While && isJumpedTo(S.LoopHeaderAddr, Uses));
+}
+
+/// A goto outside \p S jumps to \p S or to a label nested in it, so control
+/// can leave \p S without having entered it at the top.
+static bool isEnteredFromOutside(const HighStmt &S, const GotoUses &Uses) {
+  std::map<va_t, unsigned> Inside;
+  std::vector<va_t> Labels;
+  auto Visit = [&](const HighStmt &N) {
+    if (N.Kind == StmtKind::Goto)
+      ++Inside[N.GotoTarget];
+    if (isJumpedTo(N.Addr, Uses))
+      Labels.push_back(N.Addr);
+    if (N.Kind == StmtKind::While && isJumpedTo(N.LoopHeaderAddr, Uses))
+      Labels.push_back(N.LoopHeaderAddr);
+  };
+  Visit(S);
+  walkStmts(S.Body, Visit);
+  walkStmts(S.ElseBody, Visit);
+  for (const auto &C : S.Cases)
+    walkStmts(C.Body, Visit);
+  walkStmts(S.DefaultBody, Visit);
+  for (const auto &Clause : S.EHClauseBodies)
+    walkStmts(Clause, Visit);
+  for (va_t Label : Labels)
+    if (Uses.find(Label)->second > Inside[Label])
+      return true;
+  return false;
+}
+
+/// The enclosing tests that still hold once \p S has run.
+static void retireLiveConds(std::vector<const HighExpr *> &Live,
+                            const HighStmt &S, const FieldLoadDefs *FieldLoads,
+                            const GotoUses &Uses) {
+  if (Live.empty())
+    return;
+  if (isEnteredFromOutside(S, Uses)) {
+    Live.clear();
+    return;
+  }
+  filterLiveConds(Live, S, FieldLoads);
 }
 
 enum class ImpliedAct { None, Partial, FlattenThen, FlattenElse };
@@ -1732,13 +1808,24 @@ static ImpliedAct peelAgainstOuters(HighStmt &S,
 
 static bool flattenInList(std::vector<HighStmt> &List,
                           const std::vector<const HighExpr *> &Outers,
-                          const FieldLoadDefs *FieldLoads) {
+                          const FieldLoadDefs *FieldLoads,
+                          const GotoUses &Uses) {
   bool Changed = false;
-  for (size_t J = 0; J < List.size();) {
-    std::vector<const HighExpr *> Live = Outers;
-    for (size_t P = 0; P < J; ++P)
-      filterLiveConds(Live, List[P], FieldLoads);
-    const ImpliedAct Act = peelAgainstOuters(List[J], Live, FieldLoads);
+  std::vector<const HighExpr *> Live = Outers;
+  for (size_t J = 0; J < List.size() && !Live.empty();) {
+    // A jump to this statement bypasses the tests that guard the list.
+    if (isBranchEntry(List[J], Uses))
+      break;
+    ImpliedAct Act = peelAgainstOuters(List[J], Live, FieldLoads);
+    // The arm a flatten drops is still live code when a goto enters it.
+    auto Entered = [&](const std::vector<HighStmt> &Arm) {
+      return std::any_of(Arm.begin(), Arm.end(), [&](const HighStmt &N) {
+        return isEnteredFromOutside(N, Uses);
+      });
+    };
+    if ((Act == ImpliedAct::FlattenThen && Entered(List[J].ElseBody)) ||
+        (Act == ImpliedAct::FlattenElse && Entered(List[J].Body)))
+      Act = ImpliedAct::None;
     if (Act == ImpliedAct::FlattenThen || Act == ImpliedAct::FlattenElse) {
       HighStmt Taken = std::move(List[J]);
       auto &Src =
@@ -1752,43 +1839,47 @@ static bool flattenInList(std::vector<HighStmt> &List,
     }
     if (Act == ImpliedAct::Partial)
       Changed = true;
+    retireLiveConds(Live, List[J], FieldLoads, Uses);
     ++J;
   }
   return Changed;
 }
 
-static bool dropImpliedInnerConds(
-    std::vector<HighStmt> &Body, const FieldLoadDefs *FieldLoads,
-    const std::vector<const HighExpr *> &Ancestors) {
-  return flattenInList(Body, Ancestors, FieldLoads);
-}
-
 static void dropImpliedInnerCondsIn(
     std::vector<HighStmt> &Body, const FieldLoadDefs *FieldLoads,
-    const std::vector<const HighExpr *> &Ancestors) {
-  dropImpliedInnerConds(Body, FieldLoads, Ancestors);
+    const std::vector<const HighExpr *> &Ancestors, const GotoUses &Uses) {
+  flattenInList(Body, Ancestors, FieldLoads, Uses);
+  std::vector<const HighExpr *> Live = Ancestors;
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
-    std::vector<const HighExpr *> Live = Ancestors;
-    for (size_t P = 0; P < I; ++P)
-      filterLiveConds(Live, Body[P], FieldLoads);
+    if (isBranchEntry(S, Uses))
+      Live.clear();
     std::vector<const HighExpr *> ThenLive = Live;
     if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) && S.Cond)
       ThenLive.push_back(S.Cond.get());
-    dropImpliedInnerCondsIn(S.Body, FieldLoads, ThenLive);
-    dropImpliedInnerCondsIn(S.ElseBody, FieldLoads, Live);
-    dropImpliedInnerCondsIn(S.DefaultBody, FieldLoads, Live);
+    // A loop body repeats, a case can fall into the next one, and a handler
+    // runs after any statement of its try; each keeps only the tests that
+    // nothing in the statement kills or jumps around.
+    std::vector<const HighExpr *> Whole = Live;
+    retireLiveConds(Whole, S, FieldLoads, Uses);
+    const bool Repeats = S.Kind == StmtKind::While ||
+                         S.Kind == StmtKind::DoWhile || S.Kind == StmtKind::For;
+    dropImpliedInnerCondsIn(S.Body, FieldLoads, Repeats ? Whole : ThenLive,
+                            Uses);
+    dropImpliedInnerCondsIn(S.ElseBody, FieldLoads, Live, Uses);
+    dropImpliedInnerCondsIn(S.DefaultBody, FieldLoads, Whole, Uses);
     for (auto &C : S.Cases)
-      dropImpliedInnerCondsIn(C.Body, FieldLoads, Live);
+      dropImpliedInnerCondsIn(C.Body, FieldLoads, Whole, Uses);
     for (auto &Clause : S.EHClauseBodies)
-      dropImpliedInnerCondsIn(Clause, FieldLoads, Live);
+      dropImpliedInnerCondsIn(Clause, FieldLoads, Whole, Uses);
+    retireLiveConds(Live, S, FieldLoads, Uses);
   }
 }
 
 static void dropImpliedInnerCondsNested(std::vector<HighStmt> &Body) {
   FieldLoadDefs FieldLoads;
   collectFieldLoadDefs(Body, FieldLoads);
-  dropImpliedInnerCondsIn(Body, &FieldLoads, {});
+  dropImpliedInnerCondsIn(Body, &FieldLoads, {}, countGotoUses(Body));
 }
 
 static void collectOrDisjuncts(const HighExpr *E,
@@ -1929,7 +2020,8 @@ static ExprPtr composeWorkAssigns(const std::vector<HighStmt> &Body,
 }
 
 static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
-                                        const FieldLoadDefs *FieldLoads) {
+                                        const FieldLoadDefs *FieldLoads,
+                                        const GotoUses &Uses) {
   bool Changed = false;
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
@@ -1938,7 +2030,10 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
       continue;
     size_t J = I + 1;
     unsigned Skipped = 0;
-    while (J < Body.size() && Skipped < 32 && fallthroughWorkOk(Body[J])) {
+    // A jump into the work or to the next test reaches it without failing
+    // the first one.
+    while (J < Body.size() && Skipped < 32 && fallthroughWorkOk(Body[J]) &&
+           !isEnteredFromOutside(Body[J], Uses)) {
       ++J;
       ++Skipped;
     }
@@ -1946,7 +2041,7 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
       continue;
     HighStmt &Next = Body[J];
     if ((Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
-        !Next.Cond)
+        !Next.Cond || isBranchEntry(Next, Uses))
       continue;
     ExprPtr Head = composeWorkAssigns(
         Body, 0, I, std::make_shared<HighExpr>(*S.Cond));
@@ -1973,23 +2068,24 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
 }
 
 static void dropImpliedFallthroughCondsIn(std::vector<HighStmt> &Body,
-                                          const FieldLoadDefs *FieldLoads) {
-  dropImpliedFallthroughConds(Body, FieldLoads);
+                                          const FieldLoadDefs *FieldLoads,
+                                          const GotoUses &Uses) {
+  dropImpliedFallthroughConds(Body, FieldLoads, Uses);
   for (HighStmt &S : Body) {
-    dropImpliedFallthroughCondsIn(S.Body, FieldLoads);
-    dropImpliedFallthroughCondsIn(S.ElseBody, FieldLoads);
-    dropImpliedFallthroughCondsIn(S.DefaultBody, FieldLoads);
+    dropImpliedFallthroughCondsIn(S.Body, FieldLoads, Uses);
+    dropImpliedFallthroughCondsIn(S.ElseBody, FieldLoads, Uses);
+    dropImpliedFallthroughCondsIn(S.DefaultBody, FieldLoads, Uses);
     for (auto &C : S.Cases)
-      dropImpliedFallthroughCondsIn(C.Body, FieldLoads);
+      dropImpliedFallthroughCondsIn(C.Body, FieldLoads, Uses);
     for (auto &Clause : S.EHClauseBodies)
-      dropImpliedFallthroughCondsIn(Clause, FieldLoads);
+      dropImpliedFallthroughCondsIn(Clause, FieldLoads, Uses);
   }
 }
 
 static void dropImpliedFallthroughCondsNested(std::vector<HighStmt> &Body) {
   FieldLoadDefs FieldLoads;
   collectFieldLoadDefs(Body, FieldLoads);
-  dropImpliedFallthroughCondsIn(Body, &FieldLoads);
+  dropImpliedFallthroughCondsIn(Body, &FieldLoads, countGotoUses(Body));
 }
 
 static bool isNegatedCallCond(const HighExpr *E) {
