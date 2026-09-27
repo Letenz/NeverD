@@ -203,6 +203,11 @@ are bytes that two files name differently. Without this, a debug-CRT wrapper
 that is unique among the SDK's libraries would still name the byte-identical
 template instantiations that `vs2026.pat` had dropped as ambiguous.
 
+The matcher compares a line only as far as the line's own length, so a line
+whose bytes open a longer routine of another name is dropped as well. An ARM64
+catch funclet that is nothing but a prologue is the typical case: its line
+would name every function that begins with the same prologue.
+
 Every file written is read back through `neverd-sigmaker --verify`, which uses
 the loader's parser, because one bad line makes the loader reject its whole
 directory. A `<name>.sources.json` file next to each `.pat` records the assets

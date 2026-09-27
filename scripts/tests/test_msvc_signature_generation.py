@@ -125,6 +125,42 @@ class SettleDirectoryTests(unittest.TestCase):
         self.assertEqual(newer.texts, [line])
 
 
+class OpeningTests(unittest.TestCase):
+    # pacibsp; stp x19,x20,[sp,#-32]!; str x21,[sp,#16]; stp x29,x30,[sp,#-16]!
+    PROLOGUE = "7F2303D5F353BEA9F50B00F9FD7BBFA9"
+
+    def _settle(self, *lines: str) -> list[str]:
+        result = fold(list(lines))
+        settle_directory({Path("vs2026.pat"): result})
+        return result.texts
+
+    def test_a_routine_that_is_another_routines_opening_is_dropped(self) -> None:
+        # An ARM64 catch funclet is only its prologue, and so is the start of
+        # many longer routines; its line would name every one of them.
+        funclet = f"{self.PROLOGUE} 00 0000 0010 :0000 ?catch$9@?0??f@@YAXXZ@4HA"
+        longer = f"{self.PROLOGUE}F30300AAFD7BC1A8F50B40F9F353C2A8 00 0000 0020 :0000 ?g@@YAXXZ"
+        result = fold([funclet, longer])
+        settle_directory({Path("vs2026.pat"): result})
+        self.assertEqual(result.texts, [longer])
+        self.assertEqual(result.dropped_openings, 1)
+
+    def test_the_same_routine_at_another_length_does_not_drop_it(self) -> None:
+        short = f"{self.PROLOGUE} 00 0000 0010 :0000 ?g@@YAXXZ"
+        longer = f"{self.PROLOGUE}F30300AAFD7BC1A8 00 0000 0018 :0000 ?g@@YAXXZ"
+        self.assertEqual(self._settle(short, longer), [short, longer])
+
+    def test_a_byte_the_longer_routine_relocates_is_a_difference(self) -> None:
+        short = f"{self.PROLOGUE}F30300AA 00 0000 0014 :0000 ?f@@YAXXZ"
+        longer = f"{self.PROLOGUE}........FD7BC1A8 00 0000 0018 :0000 ?g@@YAXXZ"
+        self.assertEqual(sorted(self._settle(short, longer)), sorted([short, longer]))
+
+    def test_a_long_line_opens_one_with_the_same_crc_and_a_longer_tail(self) -> None:
+        lead = "48895C2408574883EC20488BD9E8........488BCBE8........488B5C2430"
+        short = f"{lead}.. 04 1A2B 002A :0000 ?f@@YAXXZ 4883C4205FC3"
+        longer = f"{lead}.. 04 1A2B 0040 :0000 ?g@@YAXXZ 4883C4205FC3CCCC48895C24"
+        self.assertEqual(self._settle(short, longer), [longer])
+
+
 class AssetTests(unittest.TestCase):
     def _asset(self, manifest: dict) -> Asset:
         return Asset(manifest["asset"], manifest, Path("unused.tar.zst"))

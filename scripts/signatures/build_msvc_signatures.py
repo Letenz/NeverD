@@ -34,7 +34,10 @@ Four rules decide what a file holds:
     reads every file of a directory together, so this holds across the
     directory: bytes that one file's libraries give two names are dropped
     from every file of it, and so are bytes two files name differently.
-    Both counts are reported.
+    NeverD's matcher compares a line only as far as the line's own length,
+    so a line whose bytes open a longer routine of another name is dropped
+    as well: in a linked image it would name that routine too.  The counts
+    are reported.
 
 Every file written is read back through `neverd-sigmaker --verify`, the
 loader's own parser: the loader rejects a whole directory for one bad line.
@@ -185,6 +188,43 @@ class PatternLine:
     names: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class Shape:
+    """A line's byte assertions, in the parts NeverD's matcher reads."""
+
+    lead: str
+    crc_len: int
+    crc: str
+    total: int
+    tail: str
+
+    @classmethod
+    def of(cls, key: str) -> "Shape":
+        tokens = key.split()
+        tail = tokens[4] if len(tokens) > 4 else ""
+        return cls(tokens[0], int(tokens[1], 16), tokens[2], int(tokens[3], 16), tail)
+
+    def opens(self, other: "Shape") -> bool:
+        """Whether a longer routine's line states every byte this one states.
+
+        Only what both lines state can be compared, so a byte that one line
+        leaves to a relocation and the other states counts as a difference;
+        the check errs toward keeping a line.
+        """
+
+        if other.total <= self.total:
+            return False
+        if len(self.lead) >= 2 * self.total:
+            # The whole routine fits in the leading pattern.
+            return other.lead.startswith(self.lead)
+        return (
+            other.lead == self.lead
+            and other.crc_len == self.crc_len
+            and other.crc == self.crc
+            and other.tail.startswith(self.tail)
+        )
+
+
 def parse_line(text: str) -> PatternLine | None:
     """Split a line into its byte assertions and its names.
 
@@ -220,11 +260,14 @@ class FoldResult:
 
     lines: list[PatternLine]
     ambiguous_keys: set[str] = field(default_factory=set)
+    # Every distinct claim the libraries made, the dropped ones included.
+    evidence: list[PatternLine] = field(default_factory=list)
     duplicates: int = 0
     conflicting_lines: int = 0
     conflicting_groups: int = 0
     conflict_examples: list[list[str]] = field(default_factory=list)
     dropped_across_files: int = 0
+    dropped_openings: int = 0
 
     @property
     def texts(self) -> list[str]:
@@ -251,6 +294,7 @@ def fold(lines: list[str]) -> FoldResult:
 
     result = FoldResult(lines=[])
     for key, variants in groups.items():
+        result.evidence.extend(variants.values())
         if len(variants) > 1:
             result.ambiguous_keys.add(key)
             result.conflicting_groups += 1
@@ -289,6 +333,32 @@ def settle_directory(results: dict[Path, FoldResult]) -> None:
     for result in results.values():
         kept = [line for line in result.lines if claims[line.key] is not None]
         result.dropped_across_files = len(result.lines) - len(kept)
+        result.lines = kept
+
+    # A line that opens another agrees with it on its first 16 bytes, which
+    # every line states or leaves to a relocation, so bucketing by them
+    # loses nothing.
+    openings: dict[str, list[tuple[Shape, tuple[str, ...]]]] = {}
+    for result in results.values():
+        for line in result.evidence:
+            shape = Shape.of(line.key)
+            openings.setdefault(shape.lead[:32], []).append((shape, line.names))
+    for bucket in openings.values():
+        bucket.sort(key=lambda item: -item[0].total)
+    for result in results.values():
+        kept = []
+        for line in result.lines:
+            shape = Shape.of(line.key)
+            opened = False
+            for other, names in openings.get(shape.lead[:32], ()):
+                if other.total <= shape.total:
+                    break
+                if names != line.names and shape.opens(other):
+                    opened = True
+                    break
+            if not opened:
+                kept.append(line)
+        result.dropped_openings = len(result.lines) - len(kept)
         result.lines = kept
 
 
@@ -383,7 +453,9 @@ def write(
         f"{result.conflicting_lines} lines in {result.conflicting_groups} "
         f"ambiguous groups dropped, "
         f"{result.dropped_across_files} dropped for bytes another file of "
-        f"{relative.parent.as_posix()} names differently)",
+        f"{relative.parent.as_posix()} names differently, "
+        f"{result.dropped_openings} for bytes that open a longer routine of "
+        f"another name)",
         flush=True,
     )
     for example in result.conflict_examples[:5]:
