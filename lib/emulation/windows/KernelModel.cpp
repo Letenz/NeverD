@@ -695,6 +695,13 @@ llvm::Expected<uint64_t> KernelModel::call(
   if (Kind == KernelAPIKind::KeWaitForSingleObject ||
       Kind == KernelAPIKind::KeDelayExecutionThread)
     return beginWait(A, Kind == KernelAPIKind::KeDelayExecutionThread);
+  if (Kind == KernelAPIKind::IoAllocateIrp)
+    return allocateDriverIRP(A);
+  if (Kind == KernelAPIKind::IoFreeIrp) {
+    if (auto E = freeDriverIRP(A[0]))
+      return E;
+    return 0;
+  }
   if (Kind == KernelAPIKind::IoAllocateWorkItem)
     return allocateWorkItem(A[0]);
   if (Kind == KernelAPIKind::IoQueueWorkItem) {
@@ -1330,6 +1337,14 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
         }))
       return E;
   }
+  if (IsWrite)
+    for (const auto &[IRP, Allocation] : DriverIRPs) {
+      if (Allocation.Submitted || Allocation.StorageReleased)
+        continue;
+      for (uint64_t Byte = std::max(Address, IRP + IRPStatusOffset);
+           Byte < std::min(End, IRP + IRPRequestorModeOffset); ++Byte)
+        Allocation.IOStatusWritten[Byte - IRP - IRPStatusOffset] = true;
+    }
   if (IsWrite && DriverObject) {
     const uint64_t Start = DriverObject + DriverDispatchOffset;
     const uint64_t Last = DriverObject + DriverObjectSize;

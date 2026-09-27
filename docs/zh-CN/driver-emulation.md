@@ -82,7 +82,15 @@ WDM 设备栈可以包含同一来宾驱动拥有的多个设备对象。`IoAtta
 
 `IofCallDriver` 和 `IoCallDriver` 辅助入口调用保存路径中的确切目标。真实内联 `IoCopyCurrentIrpStackLocationToNext`、`IoSkipCurrentIrpStackLocation` 和 `IoSetCompletionRoutine` 操作原始来宾 IRP；模型验证游标、数量和控制标志。下层派发返回真实状态，与 `IoStatus` 及完成回调返回值分开。完成展开先推进游标，按成功／错误／取消标志选择回调并向上传递 pending 状态；执行完成回调时，回调负责传播 pending，包括派发已返回 `STATUS_PENDING` 后的传播。`STATUS_MORE_PROCESSING_REQUIRED` 暂停展开并保留 IRP、MDL 和缓冲区，后续完成调用可以继续。嵌套完成要求外层返回停止结果，最终展开只释放一次存储。带所属子系统标记的续接保留嵌套 WDM／WDF 调用帧和继承的 IRQL。 在调用上层完成回调之前，已消耗的下层栈位置会被清零。
 
-通用电源管理、驱动自行分配的 IRP、其他 PnP 次功能以及其他硬件／资源模型仍不支持。除直连 FDO/PDO 文件生命周期外的 WDF 目标转发、向仍有文件或回调的栈附加设备、拆除中间层、改变转发的主功能及指向保存路径之外的设备均明确报错。可选真实 WDK 样例 `driver_wdm_stack.c` 使用 `NEVERD_WDM_STACK_FIXTURE` 和 `NEVERD_WDM_STACK_CFG_FIXTURE`；原生与 C API／CLI 测试包括重定位，缺少产物会明确跳过。执行证据仍仅来自 Linux。
+`IoAllocateIrp` 与 `IoFreeIrp` 支持调用方拥有的 IRP，允许至 `DISPATCH_LEVEL`，要求 `ChargeQuota=FALSE`。首次 `IoCallDriver` 验证包并保存精确的下层设备路径。本范围支持内核 `IRP_MJ_INTERNAL_DEVICE_CONTROL` 与驱动拥有的 `METHOD_NEITHER` 缓冲区，不创建用户文件或复制用户缓冲区。来宾执行真实完成及取消回调。在完成回调内释放包必须返回 `STATUS_MORE_PROCESSING_REQUIRED`；包访问立即失效，派发与回调元数据保留至调用帧返回。未发送包可直接释放；泄漏、重复释放、外来或仍被占有的包明确失败。任意重用、其他调用方请求格式、`IoBuildDeviceIoControlRequest`、USB idle notification 及 USB selective suspend 仍不支持。
+
+调用方请求报告使用 `kind: "internal_ioctl"`、`origin: "driver_allocated_irp"`、`file: null`，保留 `code`、`irp`、派发／I/O 状态、取消时间与精确 `information_hex`。原生与 JSON 场景在加载映像前拒绝 `internal_ioctl`；只有真实来宾分配与派发才产生这些记录。
+
+下层目标必须是存活的来宾 WDM 设备，完成回调必须同时启用成功、错误和取消条件。真实 `driver_wdm_owned_irp.c` 样例使用 `NEVERD_WDM_OWNED_IRP_FIXTURE`／`NEVERD_WDM_OWNED_IRP_CFG_FIXTURE`。[调用方 IRP 场景](../examples/driver-owned-irp-scenario.json) 验证延迟完成。普通／active-CFG 映像覆盖首选／重定位地址，C API／CLI 保留独立内核来源记录。缺失产物明确跳过，执行证据仅来自 Linux。
+
+示例会主动取消一个子请求，因此 CLI 退出码 2 和 `scenario_success: false` 属于预期；同时应有 `stop_reason: "returned"`、正常卸载及零样例错误。完成后的内核输出可快照到 `output_hex`，缓冲区仍由驱动拥有。
+
+通用电源管理、其他 PnP 次功能以及其他硬件／资源模型仍不支持。除直连 FDO/PDO 文件生命周期外的 WDF 目标转发、向仍有文件或回调的栈附加设备、拆除中间层、改变转发的主功能及指向保存路径之外的设备均明确报错。可选真实 WDK 样例 `driver_wdm_stack.c` 使用 `NEVERD_WDM_STACK_FIXTURE` 和 `NEVERD_WDM_STACK_CFG_FIXTURE`；原生与 C API／CLI 测试包括重定位，缺少产物会明确跳过。执行证据仍仅来自 Linux。
 
 场景可显式配置 `pnp_devices`，最多 64 个。每项必须包含 `id`、`bus: "resource_free"` 或 `bus: "register_bank"`、`initial_device_power: "D0"` 和 `initial_system_power: "working"`，不会猜测缺失事实。ID 为区分大小写的 ASCII，长度 1–64 字节，以字母或数字开头，其余只允许字母、数字、`_`、`-`、`.`。普通请求可用已配置的 `device_id` 代替 `device`，两者互斥。`kind: "pnp"` 必须提供 `device_id`、`minor` 和 `bus_completion`；支持 `start`、`query_remove`、`cancel_remove`、`remove`、`query_stop`、`stop`、`cancel_stop`、`surprise_removal`。`bus_completion.status` 必须为 32 位整数或十六进制字符串；可选 `delay_100ns` 是不超过 INT64_MAX 的非负整数，从提供者实际接收请求时计时。最终总线状态不能是 `STATUS_PENDING`；stop/cancel-stop/surprise-removal/cancel-remove/remove 必须精确返回 `STATUS_SUCCESS` (0)。PnP 请求拒绝文件、传输和取消字段，即使值为零；C++ API 执行相同预检。
 
@@ -398,7 +406,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 报告区分 `stop_reason`、可为空的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令计数。它保留停止前收集的 API 调用和可观察状态，包括设备对象与驱动回调地址。来宾地址以十六进制字符串表示，避免 JSON 使用方丢失 64 位精度。
 
-`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v79`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
+`configuration` 对象记录本次执行的限制、服务名及 `kernel_exports` 覆盖配置。配置标识为 `wdm-x64-scheduled-v80`。`nt_status` 始终是 DriverEntry 的结果，而 `scenario_success` 综合描述初始化及已完成请求的结果。`phase`、`requests` 和 `unload_completed` 表明请求生命周期的哪些部分已运行。每次 API 调用及 CPU 写入也会记录阶段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每个请求报告派发状态与 I/O 状态、是否完成、information 长度以及返回的 `output_hex` 字节。`preferred_image_base` 描述原始 PE 基址。`security_cookie` 为已初始化 cookie 的来宾地址；若无需 cookie，则为 `"0x0"`。请求报告字段为 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始注册表配置。 `information_hex` 以十六进制字符串精确保留原始 64 位 `IoStatus.Information`；原有数值字段 `information` 仍保留。
 
 工作项观察记录使用 `callback:N` 阶段。待处理请求的 `dispatch_status` 保留 `STATUS_PENDING`，最终完成状态单独记录在 `io_status`，并据此计算该请求对 `scenario_success` 的影响。
 

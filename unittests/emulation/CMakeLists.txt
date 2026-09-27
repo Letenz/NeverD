@@ -16,6 +16,10 @@ set(NEVERD_KMDF_LOCK_FIXTURE "" CACHE FILEPATH
   "Optional original KMDF lock fixture linked with genuine WDK libraries")
 set(NEVERD_KMDF_LOCK_CFG_FIXTURE "" CACHE FILEPATH
   "Optional genuine WDK KMDF lock fixture linked with active CFG")
+set(NEVERD_WDM_OWNED_IRP_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK caller-allocated internal IRP fixture")
+set(NEVERD_WDM_OWNED_IRP_CFG_FIXTURE "" CACHE FILEPATH
+  "Optional genuine WDK caller-allocated internal IRP fixture with active CFG")
 set(NEVERD_WDM_STACK_FIXTURE "" CACHE FILEPATH
   "Optional original WDM device-stack fixture linked with genuine WDK libraries")
 set(NEVERD_WDM_STACK_CFG_FIXTURE "" CACHE FILEPATH
@@ -244,6 +248,31 @@ foreach(_driver_kmdf_variable NEVERD_KMDF_FIXTURE NEVERD_KMDF_CFG_FIXTURE
     message(STATUS "Driver KMDF fixture ${_driver_kmdf_variable}: ${_driver_kmdf_path}")
   else()
     message(STATUS "Driver KMDF tests requiring ${_driver_kmdf_variable} skipped: optional fixture is missing")
+  endif()
+endforeach()
+
+set(_driver_wdm_owned_irp_definitions)
+set(_driver_has_wdm_owned_irp_fixture FALSE)
+foreach(_driver_owned_irp_variable NEVERD_WDM_OWNED_IRP_FIXTURE
+    NEVERD_WDM_OWNED_IRP_CFG_FIXTURE)
+  if(_driver_owned_irp_variable STREQUAL "NEVERD_WDM_OWNED_IRP_CFG_FIXTURE"
+      AND NOT _driver_has_wdm_owned_irp_fixture)
+    message(STATUS "Driver WDM caller-owned IRP CFG tests skipped: NEVERD_WDM_OWNED_IRP_FIXTURE is unavailable")
+    continue()
+  endif()
+  if(NOT "${${_driver_owned_irp_variable}}" STREQUAL ""
+      AND EXISTS "${${_driver_owned_irp_variable}}"
+      AND NOT IS_DIRECTORY "${${_driver_owned_irp_variable}}")
+    get_filename_component(_driver_owned_irp_path
+      "${${_driver_owned_irp_variable}}" ABSOLUTE)
+    list(APPEND _driver_wdm_owned_irp_definitions
+      "${_driver_owned_irp_variable}=\"${_driver_owned_irp_path}\"")
+    if(_driver_owned_irp_variable STREQUAL "NEVERD_WDM_OWNED_IRP_FIXTURE")
+      set(_driver_has_wdm_owned_irp_fixture TRUE)
+    endif()
+    message(STATUS "Driver WDM caller-owned IRP fixture ${_driver_owned_irp_variable}: ${_driver_owned_irp_path}")
+  else()
+    message(STATUS "Driver WDM caller-owned IRP tests requiring ${_driver_owned_irp_variable} skipped: optional fixture is missing")
   endif()
 endforeach()
 
@@ -621,6 +650,7 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverKMDFPowerPolicyTests.cpp
   DriverKMDFLockTests.cpp
   DriverWDMStackTests.cpp
+  DriverWDMOwnedIRPTests.cpp
   DriverWDMPnpTests.cpp
   DriverWDMPowerTests.cpp
   DriverWDMPoFxTests.cpp
@@ -642,6 +672,8 @@ add_neverd_unittest(NeverDDriverEmulationTests
   DriverScenarioTests.cpp
   KernelModelTests.cpp
   KernelRequestOwnershipTests.cpp
+  KernelDriverIRPAllocationTests.cpp
+  KernelDriverIRPOwnershipTests.cpp
   KernelCancellationTests.cpp
   KernelFrameworkTests.cpp
   KernelFrameworkPowerPolicyTests.cpp
@@ -710,6 +742,7 @@ target_compile_definitions(NeverDDriverEmulationTests PRIVATE
   NEVERD_DRIVER_IO_FIXTURE="${_driver_fixture_dir}/driver_io.sys"
   ${_driver_kmdf_definitions}
   ${_driver_wdm_stack_definitions}
+  ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}
@@ -742,6 +775,7 @@ if(TARGET neverd_shared AND TARGET neverd)
     NEVERD_DRIVER_CLI="$<TARGET_FILE:neverd>"
     ${_driver_kmdf_definitions}
     ${_driver_wdm_stack_definitions}
+  ${_driver_wdm_owned_irp_definitions}
   ${_driver_wdm_pnp_definitions}
   ${_driver_wdm_power_definitions}
   ${_driver_wdm_pofx_definitions}

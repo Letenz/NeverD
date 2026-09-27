@@ -1116,6 +1116,18 @@ pnpDevices(const llvm::json::Value &Value) {
   return Result;
 }
 
+llvm::Error validateScenarioRequestKind(DriverRequestKind Kind) {
+  switch (Kind) {
+#define NEVERD_DRIVER_KERNEL_REQUEST_KIND(Name) case DriverRequestKind::Name:
+#include "neverd/emulation/DriverRequestKinds.def"
+#undef NEVERD_DRIVER_KERNEL_REQUEST_KIND
+    return invalid("kernel-generated request kinds are not accepted in "
+                   "scenarios");
+  default:
+    return llvm::Error::success();
+  }
+}
+
 llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object)
@@ -1136,6 +1148,8 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
 #undef NEVERD_DRIVER_REQUEST_KIND
   if (!KnownKind)
     return invalid("unsupported request kind '" + *Kind + "'");
+  if (auto E = validateScenarioRequestKind(Result.Kind))
+    return std::move(E);
   if ((Object->get(userField::UserBuffers) ||
        Object->get(userField::UserPointers)) &&
       Result.Kind != DriverRequestKind::DeviceControl &&
@@ -2014,6 +2028,9 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
     return E;
   if (Options.Requests.size() > DriverScenarioRequestLimit)
     return invalid("at most 64 requests are permitted");
+  for (const auto &Request : Options.Requests)
+    if (auto E = validateScenarioRequestKind(Request.Kind))
+      return E;
   if (auto E = validateDmaEvents(Options))
     return E;
   uint64_t Total = 0;

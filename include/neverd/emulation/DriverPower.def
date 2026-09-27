@@ -31,6 +31,7 @@ NEVERD_DRIVER_REQUEST_ORIGIN(Scenario, "scenario")
 NEVERD_DRIVER_REQUEST_ORIGIN(PoRequestPowerIrp, "PoRequestPowerIrp")
 NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkPowerPolicy, "framework_power_policy")
 NEVERD_DRIVER_REQUEST_ORIGIN(FrameworkWaitWake, "framework_wait_wake")
+NEVERD_DRIVER_REQUEST_ORIGIN(DriverAllocatedIRP, "driver_allocated_irp")
 #endif
 
 #ifdef NEVERD_DRIVER_POWER_DEVICE_STATE

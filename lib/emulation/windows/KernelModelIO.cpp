@@ -283,18 +283,16 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
     uint64_t Offset, Value;
     unsigned Size;
   };
-  for (const Field &F : std::array<Field, 13>{
-           {{0, IRPType, 2},
-            {2, IRPSize + Request->StackCount * StackSize, 2},
-            {IRPMdlOffset, Request->Mdl, 8},
+  if (auto E =
+          initializeIRPHeader(Packet, Request->StackCount, Request->StackCount))
+    return E;
+  for (const Field &F : std::array<Field, 8>{
+           {{IRPMdlOffset, Request->Mdl, 8},
             {IRPFlagsOffset, Flags, 4},
             {IRPSystemBufferOffset, Request->SystemBuffer, 8},
             {IRPStatusOffset, FileFree ? StatusNotSupported : 0, 4},
             {IRPRequestorModeOffset, FileFree ? KernelMode : UserMode, 1},
-            {IRPStackCountOffset, Request->StackCount, 1},
-            {IRPLocationOffset, Request->StackCount, 1},
             {IRPUserBufferOffset, Request->UserBuffer, 8},
-            {IRPStackPointerOffset, Request->Stack, 8},
             {IRPOriginalFileOffset, File, 8},
             {Request->Stack - Packet, majorFunction(Input.Kind), 1}}})
     if (auto E = Memory.writeInteger(Packet + F.Offset, F.Value, F.Size))
@@ -791,6 +789,8 @@ KernelModel::requestReleaseRanges(uint64_t IRP) const {
   const auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed)
     return ioError("completion release requires a live IRP");
+  if (DriverIRPs.contains(IRP))
+    return ioError("caller-owned IRPs require explicit IoFreeIrp disposal");
   std::vector<std::pair<uint64_t, uint64_t>> Retiring{
       {IRP, IRPSize + Request->StackCount * StackSize}};
   if (Request->RawResources) {
@@ -986,6 +986,22 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
                   [&](const auto &Entry) { return Entry.second.IRP == IRP; }))
     return ioError(
         "request finalization requires its guest continuations to return");
+  if (auto Allocation = DriverIRPs.find(IRP); Allocation != DriverIRPs.end()) {
+    if (!Allocation->second.StorageReleased)
+      return ioError("caller request finalization requires IoFreeIrp");
+    auto Route = std::move(Request->DeviceRoute);
+    const uint64_t CompletionDevice = Allocation->second.CompletionDevice;
+    Requests.erase(IRP);
+    DriverIRPs.erase(Allocation);
+    FinalizedRequests.insert(IRP);
+    for (uint64_t Owner : Route)
+      if (auto E = releaseDevice(Owner))
+        return E;
+    if (CompletionDevice)
+      if (auto E = releaseDevice(CompletionDevice))
+        return E;
+    return snapshot();
+  }
   if (Request->PowerOperation) {
     if (Request->ChildPower && !Request->ChildPower->CallbackReturned)
       return ioError("power request finalization requires its callback return");
@@ -1080,7 +1096,7 @@ llvm::Expected<KernelModel::Invocation> KernelModel::beginUnload() {
   if (Scheduler.queuedCallbackCount() || Scheduler.active() ||
       Scheduler.suspendedCallbackCount())
     return ioError("unload requires scheduled callbacks to drain");
-  if (!Requests.empty() || !Files.empty())
+  if (!Requests.empty() || !Files.empty() || !DriverIRPs.empty())
     return ioError(
         "unload requires all requests completed and the file closed");
   if (Unloading || Unloaded)
@@ -1107,9 +1123,9 @@ llvm::Error KernelModel::finishUnload() {
   if (Framework && Framework->hasLiveBinding())
     return ioError("unload returned with a live framework binding");
   if (!Devices.empty() || !SymbolicLinks.empty() || !Allocations.empty() ||
-      !Files.empty() || !Requests.empty() || !MDLs.empty() ||
-      !WorkItems.empty() || !IRPCalls.empty() || PendingWdmCall ||
-      Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
+      !Files.empty() || !Requests.empty() || !DriverIRPs.empty() ||
+      !MDLs.empty() || !WorkItems.empty() || !IRPCalls.empty() ||
+      PendingWdmCall || Scheduler.hasPending() || !PoFxDeviceObjects.empty() ||
       !BlockingPoFx.empty())
     return ioError("unload returned with live devices, symbolic links, pool "
                    "allocations or file/request state");
@@ -1163,7 +1179,8 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
                     Offset < IRPThreadOffset);
           if (Offset >= IRPStatusOffset && Offset < IRPRequestorModeOffset)
             return Request->IOStatusWritten[Offset - IRPStatusOffset];
-          return (Offset >= profile::PointerSize &&
+          return (DriverIRPs.contains(IRP) && Offset < sizeof(uint32_t)) ||
+                 (Offset >= profile::PointerSize &&
                   Offset < IRPSystemBufferOffset + profile::PointerSize) ||
                  (Offset >= IRPStatusOffset && Offset <= IRPCancelIROffset) ||
                  (Offset >= IRPCancelRoutineOffset &&

@@ -924,7 +924,8 @@ std::string driverResultJSON(const DriverResult &Result) {
     if (Request.ResponseIndex)
       Item[field::ResponseIndex] = *Request.ResponseIndex;
     if (Request.Kind == DriverRequestKind::Pnp ||
-        Request.Kind == DriverRequestKind::Power)
+        Request.Kind == DriverRequestKind::Power ||
+        Request.Origin == DriverRequestOrigin::DriverAllocatedIRP)
       Item[field::File] = nullptr;
     if (Request.Pnp) {
       const auto &Pnp = *Request.Pnp;
