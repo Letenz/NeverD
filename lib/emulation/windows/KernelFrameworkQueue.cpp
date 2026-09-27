@@ -522,18 +522,17 @@ KernelFramework::callQueue(llvm::StringRef Name, Binding &B,
     return invalidQueue(
         "I/O stop and resume require a power-managed PnP queue");
 
-  // Effective inherited policies are not recorded by this object profile.
-  // Require an explicit policy rather than claiming an inherited PASSIVE IRQL.
-  if (!A[3])
-    return invalidQueue(
-        "queue requires explicit passive execution and no synchronization");
-  auto Execution = read(A[3] + AttributesExecution, 4);
-  auto Synchronization = read(A[3] + AttributesSynchronization, 4);
-  if (!Execution || !Synchronization)
-    return llvm::joinErrors(Execution.takeError(), Synchronization.takeError());
-  if (*Execution != ExecutionPassive || *Synchronization != SynchronizationNone)
-    return invalidQueue(
-        "queue requires explicit passive execution and no synchronization");
+  const auto &ParentObject = Objects.at(A[1]);
+  const uint32_t Execution = Attrs.Execution == ExecutionInherit
+                                 ? ParentObject.Execution
+                                 : Attrs.Execution;
+  const uint32_t Synchronization =
+      Attrs.Synchronization == SynchronizationInherit
+          ? ParentObject.Synchronization
+          : Attrs.Synchronization;
+  if (Synchronization == SynchronizationDevice &&
+      Execution != ParentObject.Execution)
+    return std::optional<uint64_t>{InvalidParameter};
   if (IsDefault && Device.DefaultQueue)
     return std::optional<uint64_t>{QueueUnsuccessful};
   if (A[4])

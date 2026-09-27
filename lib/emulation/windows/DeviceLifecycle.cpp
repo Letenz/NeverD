@@ -72,6 +72,8 @@ bool valid(SystemPowerState State) {
 }
 
 bool valid(DevicePowerRequest Request) {
+  if (Request == DevicePowerRequest::WaitWake)
+    return false;
   switch (Request) {
 #define NEVERD_DEVICE_POWER_REQUEST(Name, Value)                               \
   case DevicePowerRequest::Name:                                               \

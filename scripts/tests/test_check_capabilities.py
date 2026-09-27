@@ -3157,7 +3157,11 @@ class RepositoryCapabilityTests(unittest.TestCase):
                 "json": ["neverd_ir_view_json"],
             },
             "mobile.source-recovery": {
-                "c": ["neverd_objc_methods_json", "neverd_swift_methods_json"],
+                "c": [
+                    "neverd_objc_methods_json",
+                    "neverd_objc_methods_summary_json",
+                    "neverd_swift_methods_json",
+                ],
                 "python": [],
                 "cli": [
                     "neverd mobile",
@@ -3175,7 +3179,11 @@ class RepositoryCapabilityTests(unittest.TestCase):
                     "neverd export --max-func",
                     "neverd export --source-signatures",
                 ],
-                "json": ["neverd_objc_methods_json", "neverd_swift_methods_json"],
+                "json": [
+                    "neverd_objc_methods_json",
+                    "neverd_objc_methods_summary_json",
+                    "neverd_swift_methods_json",
+                ],
             },
             "debug.hardware": no_surfaces,
             "debug.local": no_surfaces,

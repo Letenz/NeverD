@@ -896,6 +896,63 @@ TEST_F(DriverKernelSEH, IncompleteAndUnsupportedFramesCannotActAsLeaves) {
   EXPECT_TRUE(Reads.empty());
 }
 
+TEST_F(DriverKernelSEH, CxxRuntimeCannotBeSkippedToReachAnOuterCHandler) {
+  for (auto Personality : {ExceptionPersonality::CxxFrameHandler3,
+                           ExceptionPersonality::CxxFrameHandler4,
+                           ExceptionPersonality::GSHandlerCheckEH,
+                           ExceptionPersonality::GSHandlerCheckEH4}) {
+    SCOPED_TRACE(getExceptionPersonalityName(Personality));
+    Metadata.Functions.clear();
+    Words.clear();
+    Reads.clear();
+    handler();
+    auto &Inner = function(0x2000);
+    Inner.Personality = Personality;
+    Inner.UnwindFlags = seh::ExceptionHandlerFlag | seh::UnwindHandlerFlag;
+    auto &Cxx = Inner.Cxx.emplace();
+    Cxx.NativeEncoding =
+        Personality == ExceptionPersonality::CxxFrameHandler4 ||
+                Personality == ExceptionPersonality::GSHandlerCheckEH4
+            ? CxxExceptionInfo::Encoding::FH4
+            : CxxExceptionInfo::Encoding::FH3;
+    Cxx.MaxState = 2;
+    Cxx.UnwindMap = {{-1, Base + 0x2200}, {0, 0}};
+    Cxx.IPMap = {{Base + 0x2000, -1}, {Base + 0x2030, 0}};
+    CxxCatchHandler Catch;
+    Catch.HandlerVA = Base + 0x2180;
+    Cxx.TryBlocks.push_back({0, 0, 1, {Catch}});
+    ASSERT_TRUE(Cxx.hasValidStateGraph());
+    Caller.PC = Base + 0x2040;
+    const auto SP = Caller.GPR[seh::StackRegister];
+    Words[SP] = Base + 0x1041;
+    if (isGSWrappedPersonality(Personality)) {
+      auto &GS = Inner.GSCookie.emplace();
+      GS.ParseStatus = ExceptionParseStatus::Complete;
+      GS.CookieOffset = 32;
+      GS.HasExceptionHandler = GS.HasUnwindHandler = true;
+      Words[SP + 32] = SP ^ SecurityCookie;
+    }
+    auto Engine = planner();
+    auto State = Engine.begin(Code, Caller, {StackBase, StackSize});
+    auto Next = Engine.advance(State);
+    ASSERT_FALSE(bool(Next));
+    EXPECT_NE(llvm::toString(Next.takeError()).find("personality"),
+              std::string::npos);
+    EXPECT_EQ(std::find(Reads.begin(), Reads.end(), SP), Reads.end());
+
+    // Rejection is failure-atomic. Only replacing the unsupported contract
+    // with a genuine leaf allows the same cursor to reach the outer handler.
+    Inner.Personality = ExceptionPersonality::None;
+    Inner.UnwindFlags = 0;
+    Inner.Cxx.reset();
+    Inner.GSCookie.reset();
+    Next = Engine.advance(State);
+    ASSERT_TRUE(bool(Next)) << llvm::toString(Next.takeError());
+    EXPECT_EQ(Next->Kind, KernelSEH::ActionKind::Handler);
+    EXPECT_EQ(Next->State.HandlerPC, Base + 0x1080);
+  }
+}
+
 TEST_F(DriverKernelSEH, RestoresBothHalvesOfSavedNonvolatileXmmRegisters) {
   handler();
   auto &F = function(0x2000);

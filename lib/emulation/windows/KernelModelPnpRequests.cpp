@@ -66,7 +66,10 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
         return pnpError("remove requires all device files to close");
     }
     if (std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
-          return Entry.second.PnpDevice == PDO;
+          return Entry.second.PnpDevice == PDO &&
+                 (!Entry.second.ChildPower ||
+                  Entry.second.ChildPower->Origin !=
+                      DriverRequestOrigin::FrameworkWaitWake);
         }))
       return pnpError("remove requires earlier device requests to finalize");
   }
@@ -208,6 +211,21 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
                  : Lifecycle.finishSystemPower(*Request.PowerTicket, Status);
     if (E)
       return E;
+    auto State = Lifecycle.snapshot(Request.PnpDevice);
+    if (!State)
+      return State.takeError();
+    auto &Observation = *Result.Requests[Request.ResultIndex].Power;
+    Observation.DeviceStateAfter = State->DevicePower;
+    Observation.SystemStateAfter = State->SystemPower;
+    if (Framework && Power.Type == DriverPowerType::Device &&
+        !Request.DeviceRoute.empty() &&
+        FrameworkDevices.count(Request.DeviceRoute.front()))
+      if (auto E = Framework->finishPowerPolicyRequest(
+              Request.PnpDevice, Status,
+              Power.Minor == DevicePowerRequest::Set))
+        return E;
+  } else if (Request.PowerOperation &&
+             Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) {
     auto State = Lifecycle.snapshot(Request.PnpDevice);
     if (!State)
       return State.takeError();

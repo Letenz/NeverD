@@ -112,6 +112,7 @@ llvm::Error KernelModel::tryFinalizePowerRequest(uint64_t IRP) {
                   [&](const auto &Entry) { return Entry.second.IRP == IRP; }))
     return llvm::Error::success();
   const uint64_t ParentIRP = Child.FrameworkParent;
+  const bool PrepareSleep = Child.PrepareSystemSleep;
   const auto Status = Result.Requests[Request->ResultIndex].IOStatus;
   if (auto E = finalizeRequest(IRP))
     return E;
@@ -120,7 +121,25 @@ llvm::Error KernelModel::tryFinalizePowerRequest(uint64_t IRP) {
     if (!Parent || !Parent->FrameworkPolicyIssued ||
         !Parent->FrameworkTransitionAwaiting || !Status)
       return powerError("framework power child lost its retained system IRP");
+    if (PrepareSleep && !(*Status & profile::NTStatusFailureMask)) {
+      Parent->FrameworkPolicyIssued = false;
+      auto Continued = beginFrameworkPowerPolicy(ParentIRP);
+      if (!Continued)
+        return Continued.takeError();
+      if (!*Continued)
+        return powerError(
+            "sleep preparation lost its remaining device transition");
+      return llvm::Error::success();
+    }
     Parent->FrameworkTransitionAwaiting = false;
+    if (Parent->PowerOperation->Minor == DevicePowerRequest::Set &&
+        (*Status & profile::NTStatusFailureMask)) {
+      const auto &Observation = *Result.Requests[Parent->ResultIndex].Power;
+      if (auto E = Framework->systemPowerPolicy(Parent->PnpDevice,
+                                                Observation.SystemStateBefore !=
+                                                    SystemPowerState::Working))
+        return E;
+    }
     if (Parent->PowerOperation->Minor == DevicePowerRequest::Query ||
         (*Status & profile::NTStatusFailureMask))
       if (auto E = Memory.writeInteger(ParentIRP + windows::IRPStatusOffset,

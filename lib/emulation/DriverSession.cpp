@@ -73,17 +73,6 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                                  MaxMemoryLimit, MaxEventLimit,
                                  MaxTimeoutMilliseconds)
                        .str());
-  if (Options.ServiceName.empty() ||
-      Options.ServiceName.size() > MaxServiceNameSize ||
-      !std::all_of(Options.ServiceName.begin(), Options.ServiceName.end(),
-                   [](unsigned char C) {
-                     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') ||
-                            (C >= '0' && C <= '9') || C == '_' || C == '-';
-                   }))
-    return failure(llvm::formatv("service name must contain 1..{0} ASCII "
-                                 "letters, digits, underscores or hyphens",
-                                 MaxServiceNameSize)
-                       .str());
   if (auto E = validateDriverScenario(Options))
     return std::move(E);
   KernelExportRegistry Exports;
@@ -388,10 +377,16 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     std::unique_ptr<BackendContext> Context;
     std::optional<KernelModel::Wait> Wait;
     std::optional<uint64_t> ResumeValue;
+    std::optional<uint8_t> ResumeIRQL;
     size_t WaitEvent = 0;
     bool PrivateStack = false;
     GuestCallToken ReturnToken;
     std::optional<GuestCallToken> PendingEntry;
+    uint64_t SynchronizationObject = 0;
+    bool SynchronizationEntered = false;
+    bool CallbackEntered = false;
+    bool PowerManagedCallback = false;
+    uint64_t RequestIRP = 0;
     std::optional<KernelGuestCall> ChildCall;
     bool ThreadTerminated = false;
     std::unique_ptr<ExceptionExecution> Exception;
@@ -573,9 +568,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (!Status)
         return Status.takeError();
       if (*Status) {
+        if (Frame->Wait->Type !=
+            KernelModel::Wait::Kind::InterruptSynchronization)
+          Frame->ResumeIRQL = Frame->Wait->IRQL;
         const bool BeforeChild =
             Frame->Wait->Type ==
-            KernelModel::Wait::Kind::InterruptSynchronization;
+                KernelModel::Wait::Kind::InterruptSynchronization ||
+            Frame->Wait->Type == KernelModel::Wait::Kind::FrameworkCallback;
         Frame->Wait.reset();
         if (!BeforeChild) {
           Frame->ResumeValue = **Status;
@@ -596,6 +595,39 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         Frame.ResumeValue.reset();
       }
     }
+    if (Frame.SynchronizationObject && !Frame.SynchronizationEntered) {
+      auto Entered = Kernel.beginFrameworkCallback(Frame.SynchronizationObject);
+      if (!Entered)
+        return Entered.takeError();
+      if (!*Entered) {
+        Frame.Wait = Kernel.takeWait();
+        if (!Frame.Wait ||
+            Frame.Wait->Type != KernelModel::Wait::Kind::FrameworkCallback)
+          return failure("framework callback entry lost its lock wait");
+        auto Context = CPU.saveContext();
+        if (!Context)
+          return Context.takeError();
+        Frame.Context = std::move(*Context);
+        if (Frame.ID)
+          if (auto E = Kernel.suspendScheduled(Frame.ID))
+            return E;
+        return llvm::Error::success();
+      }
+      Frame.SynchronizationEntered = true;
+      if (auto E = CPU.setReg(X64Register::CR8, Kernel.currentIRQL()))
+        return E;
+    }
+    if (!Frame.CallbackEntered) {
+      if (!Frame.ExceptionCallback) {
+        auto Managed = Kernel.enterFrameworkCallback(
+            Frame.ID, Frame.ReturnToken, Frame.RequestIRP);
+        if (!Managed)
+          return Managed.takeError();
+        Frame.PowerManagedCallback |= *Managed;
+      }
+      Frame.CallbackEntered = true;
+    }
+    Kernel.setFrameworkCallbackContext(Frame.PowerManagedCallback);
     auto IRQL = CPU.reg(X64Register::CR8);
     if (!IRQL)
       return IRQL.takeError();
@@ -897,6 +929,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       if (!Frame)
         return Frame.takeError();
       (*Frame)->ReturnToken = Call.Token;
+      (*Frame)->SynchronizationObject = Call.SynchronizationObject;
       if (Wait) {
         auto Context = CPU.saveContext();
         if (!Context)
@@ -976,6 +1009,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
     };
     while (!DeadlineExceeded()) {
       if (Current) {
+        if (Current->ResumeIRQL) {
+          if (auto E = Kernel.restoreWaitIRQL(*Current->ResumeIRQL)) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+          Current->ResumeIRQL.reset();
+        }
         if (Current->PendingEntry) {
           if (auto E = Kernel.beginGuestCall(*Current->PendingEntry)) {
             ModelFailure(std::move(E));
@@ -1027,6 +1067,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             ModelFailure(std::move(E));
             return llvm::Error::success();
           }
+          (*Child)->PowerManagedCallback = Current->PowerManagedCallback;
           (*Child)->Parent = std::move(Current);
           Current = std::move(*Child);
           continue;
@@ -1057,6 +1098,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             return llvm::Error::success();
           }
           (*Child)->ReturnToken = Call.Token;
+          (*Child)->SynchronizationObject = Call.SynchronizationObject;
+          (*Child)->PowerManagedCallback = Current->PowerManagedCallback;
           (*Child)->Parent = std::move(Current);
           Current = std::move(*Child);
           continue;
@@ -1066,6 +1109,16 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         } else {
           if (Result.Stop != DriverStopReason::Returned)
             return llvm::Error::success();
+          if (Current->SynchronizationEntered) {
+            if (auto E = Kernel.finishFrameworkCallback(
+                    Current->SynchronizationObject)) {
+              ModelFailure(std::move(E));
+              return llvm::Error::success();
+            }
+            Current->SynchronizationEntered = false;
+            if (auto E = CPU.setReg(X64Register::CR8, Kernel.currentIRQL()))
+              return E;
+          }
           if (auto E = Kernel.validateExecutionReturn(
                   Current->Base, Current->EntryIRQL, bool(Current->Parent))) {
             ModelFailure(std::move(E));
@@ -1207,8 +1260,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
             Current.reset();
             continue;
           }
-          if (!Current->ID)
+          if (!Current->ID) {
+            if (auto E = Kernel.flushFrameworkCallbackDestructions()) {
+              ModelFailure(std::move(E));
+              return llvm::Error::success();
+            }
             return llvm::Error::success();
+          }
           auto Continuation =
               Current->ThreadTerminated
                   ? llvm::Expected<std::optional<KernelGuestCall>>(
@@ -1237,6 +1295,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
               ModelFailure(Frame.takeError());
               return llvm::Error::success();
             }
+            (*Frame)->SynchronizationObject =
+                (**Continuation).SynchronizationObject;
             if (Wait) {
               auto Context = CPU.saveContext();
               if (!Context) {
@@ -1305,6 +1365,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         return llvm::Error::success();
       }
       if (!*Next) {
+        if (auto Call = Kernel.takeGuestCall()) {
+          if (auto E = StartDetachedCall(*Call)) {
+            ModelFailure(std::move(E));
+            return llvm::Error::success();
+          }
+          continue;
+        }
         if (std::any_of(Waiting.begin(), Waiting.end(),
                         [](const auto &Frame) { return !Frame->Wait; }))
           continue;
@@ -1338,8 +1405,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
           ModelFailure(std::move(E));
           return llvm::Error::success();
         }
-        if (!*Next)
+        if (!*Next) {
+          if (auto Call = Kernel.takeGuestCall()) {
+            if (auto E = StartDetachedCall(*Call)) {
+              ModelFailure(std::move(E));
+              return llvm::Error::success();
+            }
+          }
           continue;
+        }
       }
       auto Frame =
           NewExecution((**Next).PC, (**Next).Arguments,
@@ -1349,6 +1423,7 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
         ModelFailure(Frame.takeError());
         return llvm::Error::success();
       }
+      (*Frame)->SynchronizationObject = (**Next).SynchronizationObject;
       Current = std::move(*Frame);
     }
     return llvm::Error::success();
@@ -1365,6 +1440,8 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
       ModelFailure(Frame.takeError());
       return llvm::Error::success();
     }
+    (*Frame)->SynchronizationObject = Invocation.SynchronizationObject;
+    (*Frame)->RequestIRP = Invocation.IRP;
     return Pump(std::move(*Frame), Phase);
   };
   auto DrainCallbacks = [&]() -> llvm::Error {

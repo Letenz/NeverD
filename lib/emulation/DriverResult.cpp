@@ -35,6 +35,19 @@ namespace dmaField {
 #undef NEVERD_DRIVER_DMA_FIELD
 } // namespace dmaField
 
+namespace requestStatus {
+#define NEVERD_FRAMEWORK_VALUE(Name, Value) constexpr uint32_t Name = Value;
+#include "windows/KernelFrameworkRequestValues.def"
+#undef NEVERD_FRAMEWORK_VALUE
+} // namespace requestStatus
+
+namespace policyField {
+#define NEVERD_POWER_POLICY_FIELD(Name, Spelling)                              \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_FIELD
+} // namespace policyField
+
 namespace interruptField {
 #define NEVERD_DRIVER_INTERRUPT_FIELD(Name, Spelling)                          \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -61,10 +74,11 @@ const char *requestKindName(DriverRequestKind Kind) {
 }
 
 bool scenarioSucceeded(const DriverResult &Result) {
-  size_t InterruptCount = 0, DmaCount = 0;
+  size_t InterruptCount = 0, DmaCount = 0, PolicyCount = 0;
   for (const auto &Request : Result.Configuration.Requests) {
     InterruptCount += Request.InterruptEvents.size();
     DmaCount += Request.DmaEvents.size();
+    PolicyCount += Request.PowerPolicyEvents.size();
   }
   const size_t ScenarioRequests =
       llvm::count_if(Result.Requests, [](const DriverRequestResult &Request) {
@@ -75,6 +89,7 @@ bool scenarioSucceeded(const DriverResult &Result) {
       ScenarioRequests != Result.Configuration.Requests.size() ||
       InterruptCount != Result.Interrupts.size() ||
       DmaCount != Result.DmaTransfers.size() ||
+      PolicyCount != Result.PowerPolicyEvents.size() ||
       Result.PnpDevices.size() != Result.Configuration.PnpDevices.size() ||
       (Result.Configuration.Unload && !Result.UnloadCompleted))
     return false;
@@ -99,15 +114,26 @@ bool scenarioSucceeded(const DriverResult &Result) {
                 Event.Data.size() == Event.Length);
       }))
     return false;
+  if (!llvm::all_of(Result.PowerPolicyEvents, [](const auto &Event) {
+        return Event.OccurredAt100ns.has_value();
+      }))
+    return false;
   if (!llvm::all_of(Result.PnpDevices, [](const DriverPnpDeviceResult &Device) {
         return Device.AddDeviceStatus &&
                !(*Device.AddDeviceStatus & profile::NTStatusFailureMask);
       }))
     return false;
   return llvm::all_of(Result.Requests, [](const DriverRequestResult &Request) {
-    return Request.Completed && Request.DispatchStatus && Request.IOStatus &&
-           !(*Request.DispatchStatus & profile::NTStatusFailureMask) &&
-           !(*Request.IOStatus & profile::NTStatusFailureMask);
+    if (!Request.Completed || !Request.DispatchStatus || !Request.IOStatus ||
+        (*Request.DispatchStatus & profile::NTStatusFailureMask))
+      return false;
+    if (Request.Origin == DriverRequestOrigin::FrameworkWaitWake &&
+        *Request.IOStatus == requestStatus::RequestCancelled && Request.Power &&
+        Request.Power->Minor == DevicePowerRequest::WaitWake &&
+        Request.Power->BusStatus == requestStatus::RequestCancelled &&
+        Request.Power->BusCompletedAt100ns)
+      return true;
+    return !(*Request.IOStatus & profile::NTStatusFailureMask);
   });
 }
 
@@ -389,6 +415,32 @@ interruptEventConfigurationJSON(const DriverOptions &Options) {
   return Result;
 }
 
+const char *powerPolicyActionName(DriverPowerPolicyAction Action) {
+  switch (Action) {
+#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
+  case DriverPowerPolicyAction::Name:                                          \
+    return Spelling;
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_ACTION
+  }
+  llvm_unreachable("invalid power policy action");
+}
+
+llvm::json::Array powerPolicyConfigurationJSON(const DriverOptions &Options) {
+  llvm::json::Array Result;
+  for (size_t I = 0; I < Options.Requests.size(); ++I) {
+    const auto &Events = Options.Requests[I].PowerPolicyEvents;
+    for (size_t J = 0; J < Events.size(); ++J)
+      Result.push_back(llvm::json::Object{
+          {policyField::SourceRequestIndex, I},
+          {policyField::EventIndex, J},
+          {policyField::After100ns, Events[J].After100ns},
+          {policyField::Action, powerPolicyActionName(Events[J].Action)},
+          {policyField::DeviceID, Events[J].DeviceID}});
+  }
+  return Result;
+}
+
 const char *dmaDirectionName(DriverDmaDirection Direction) {
   switch (Direction) {
 #define NEVERD_DRIVER_DMA_DIRECTION(Name, Spelling)                            \
@@ -539,6 +591,10 @@ llvm::json::Array pnpConfigurationJSON(const DriverOptions &Options) {
       Item[interruptField::Interrupts] =
           interruptConfigurationJSON(Device.Interrupts);
     }
+    if (Device.WakeCapabilities)
+      Item[policyField::WakeCapabilities] =
+          llvm::json::Object{{policyField::S0, Device.WakeCapabilities->S0},
+                             {policyField::Sx, Device.WakeCapabilities->Sx}};
     if (Device.Dma)
       Item[dmaField::Dma] = dmaConfigurationJSON(*Device.Dma);
     Devices.push_back(std::move(Item));
@@ -597,6 +653,7 @@ std::string driverResultJSON(const DriverResult &Result) {
       {interruptField::InterruptEvents,
        interruptEventConfigurationJSON(Result.Configuration)},
       {dmaField::DmaEvents, dmaEventConfigurationJSON(Result.Configuration)},
+      {policyField::Events, powerPolicyConfigurationJSON(Result.Configuration)},
       {field::UserPageAccess,
        userPageAccessConfigurationJSON(Result.Configuration)},
       {userField::UserMemory,
@@ -623,6 +680,21 @@ std::string driverResultJSON(const DriverResult &Result) {
     Root[field::NTSuccess] =
         (*Result.NTStatus & profile::NTStatusFailureMask) == 0;
   }
+  llvm::json::Array PolicyEvents;
+  for (const auto &Event : Result.PowerPolicyEvents) {
+    llvm::json::Object Item{
+        {policyField::SourceRequestIndex, Event.SourceRequestIndex},
+        {policyField::EventIndex, Event.EventIndex},
+        {policyField::DeviceID, Event.DeviceID},
+        {policyField::Action, powerPolicyActionName(Event.Action)},
+        {policyField::DueAt100ns, Event.DueAt100ns},
+        {policyField::DeviceEpoch, Event.DeviceEpoch},
+        {policyField::OccurredAt100ns, nullptr}};
+    if (Event.OccurredAt100ns)
+      Item[policyField::OccurredAt100ns] = *Event.OccurredAt100ns;
+    PolicyEvents.push_back(std::move(Item));
+  }
+  Root[policyField::Events] = std::move(PolicyEvents);
   llvm::json::Array Functions;
   for (uint64_t Function : Result.MajorFunctions)
     Functions.push_back(Address(Function));

@@ -91,7 +91,7 @@ llvm::Error KernelModel::stackAttachProcess(uint64_t Process,
        Scheduler.active()->Kind !=
            KernelScheduler::CallbackKind::FrameworkInterruptWorkItem &&
        Scheduler.active()->Kind !=
-           KernelScheduler::CallbackKind::FrameworkPassive &&
+           KernelScheduler::CallbackKind::FrameworkDeferred &&
        Scheduler.active()->Kind !=
            KernelScheduler::CallbackKind::SystemThread) ||
       CurrentExecution == profile::StackBase)
@@ -188,7 +188,9 @@ bool KernelModel::requestPending(uint64_t IRP,
            (!Request.Completed ||
             (Request.ChildPower && !Request.ChildPower->CallbackReturned)) &&
            (Scope == PendingRequestScope::All || !Framework ||
-            !Framework->isPowerParkedIRP(Request.IRP));
+            (!(Request.PowerOperation &&
+               Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) &&
+             !Framework->isPowerParkedIRP(Request.IRP)));
   };
   if (IRP) {
     const auto *Request = requestForIRP(IRP);
@@ -315,9 +317,15 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
     const auto &Power = *Input.Power;
     for (const Field &F : std::array<Field, 5>{
              {{StackMinorOffset, uint8_t(Power.Minor), 1},
-              {StackPowerSystemContextOffset, Power.SystemContext, 4},
+              {StackPowerSystemContextOffset,
+               Power.Minor == DevicePowerRequest::WaitWake
+                   ? Power.State
+                   : Power.SystemContext,
+               4},
               {StackPowerTypeOffset, uint32_t(Power.Type), 4},
-              {StackPowerStateOffset, Power.State, 4},
+              {StackPowerStateOffset,
+               Power.Minor == DevicePowerRequest::WaitWake ? 0 : Power.State,
+               4},
               {StackPowerActionOffset, uint32_t(Power.Action), 4}}})
       if (auto E =
               Memory.writeInteger(Request->Stack + F.Offset, F.Value, F.Size))
@@ -394,6 +402,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
   if (auto E =
           Interrupts.canArm(Input.InterruptEvents, SourceIndex.value_or(Index),
                             Scheduler.now100ns()))
+    return E;
+  if (auto E = canArmPowerPolicyEvents(Input.PowerPolicyEvents))
     return E;
   if (auto E = DMA.canArm(Input.DmaEvents, SourceIndex.value_or(Index),
                           Scheduler.now100ns()))
@@ -676,6 +686,9 @@ KernelModel::beginRequest(const DriverRequest &Input,
   if (auto E = DMA.arm(Input.DmaEvents, SourceIndex.value_or(Index),
                        Scheduler.now100ns()))
     return E;
+  if (auto E = armPowerPolicyEvents(Input.PowerPolicyEvents,
+                                    SourceIndex.value_or(Index)))
+    return E;
   const uint64_t Callback = Result.MajorFunctions[Major];
   if (Framework) {
     auto Route = Framework->routeRequest(*Top, Request->IRP);
@@ -701,6 +714,7 @@ KernelModel::beginRequest(const DriverRequest &Input,
       Call.PC = Dispatch.PC;
       Call.FrameworkDispatchStatus = Dispatch.Status;
       Call.FrameworkCallerContext = Dispatch.CallerContext;
+      Call.SynchronizationObject = Dispatch.SynchronizationObject;
       Call.IRP = *Packet;
       // Caller-context preprocessing may enqueue a request without presenting
       // it to an I/O callback. Apply an immediate cancellation after that
@@ -761,6 +775,7 @@ KernelModel::continueFrameworkCallerContext(uint64_t IRP) {
   Call.PC = Routed->PC;
   Call.IRP = IRP;
   Call.FrameworkDispatchStatus = Routed->Status;
+  Call.SynchronizationObject = Routed->SynchronizationObject;
   uint64_t *Registers[] = {&Call.Argument0, &Call.Argument1, &Call.Argument2,
                            &Call.Argument3};
   for (size_t I = 0; I < Routed->Arguments.size(); ++I)
@@ -953,6 +968,8 @@ llvm::Error KernelModel::recordDispatchReturn(uint64_t IRP,
                      "IoStatus.Status");
   }
   Request->DispatchReturned = true;
+  if (Framework)
+    return Framework->finishRequestDispatch(IRP);
   return llvm::Error::success();
 }
 
@@ -971,7 +988,7 @@ llvm::Error KernelModel::finalizeRequest(uint64_t IRP) {
                   [&](const auto &Entry) { return Entry.second.IRP == IRP; }))
     return ioError(
         "request finalization requires its guest continuations to return");
-  if (Request->PowerTicket) {
+  if (Request->PowerOperation) {
     if (Request->ChildPower && !Request->ChildPower->CallbackReturned)
       return ioError("power request finalization requires its callback return");
     auto Route = std::move(Request->DeviceRoute);

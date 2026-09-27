@@ -752,6 +752,7 @@ TEST_F(KernelRequestMDL,
   if (!Cancel)
     Cancel = take(Model->nextScheduled(false));
   ASSERT_TRUE(Cancel);
+  take(Model->enterFrameworkCallback(Cancel->ID, {}, 0));
   EXPECT_EQ(Cancel->PC, CancelPC);
   complete(Request, 0, Cancelled);
   success(Model->validateGuestAccess(Context, 24, false));

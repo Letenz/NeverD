@@ -15,6 +15,7 @@
 
 #include "neverd/emulation/DriverDMA.h"
 #include "neverd/emulation/DriverInterrupts.h"
+#include "neverd/emulation/DriverPowerPolicy.h"
 #include "neverd/emulation/DriverResources.h"
 
 #include <cstdint>
@@ -125,6 +126,7 @@ struct DriverPnpDevice {
   std::vector<DriverInterruptResource> Interrupts{};
   /// Optional explicit bus-master capability and independent logical domain.
   std::optional<DriverDmaConfig> Dma = std::nullopt;
+  std::optional<DriverWakeCapabilities> WakeCapabilities;
 };
 
 struct DriverPnpOperation {

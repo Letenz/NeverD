@@ -142,8 +142,9 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
              Request->PowerOperation) {
     if (CurrentIRQL != scheduler::PassiveLevel)
       return providerError("pageable power forwarding requires PASSIVE_LEVEL");
-    if (auto E = validateDriverPowerOperation(*Request->PowerOperation))
-      return E;
+    if (Request->PowerOperation->Minor != DevicePowerRequest::WaitWake)
+      if (auto E = validateDriverPowerOperation(*Request->PowerOperation))
+        return E;
     Response = &Request->PowerOperation->BusCompletion;
     ExpectedMinor = uint8_t(Request->PowerOperation->Minor);
   } else {
@@ -180,9 +181,15 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
     const auto &Operation = *Request->PowerOperation;
     for (const auto &[Offset, Expected] :
          std::initializer_list<std::pair<uint64_t, uint32_t>>{
-             {StackPowerSystemContextOffset, Operation.SystemContext},
+             {StackPowerSystemContextOffset,
+              Operation.Minor == DevicePowerRequest::WaitWake
+                  ? Operation.State
+                  : Operation.SystemContext},
              {StackPowerTypeOffset, uint32_t(Operation.Type)},
-             {StackPowerStateOffset, Operation.State},
+             {StackPowerStateOffset,
+              Operation.Minor == DevicePowerRequest::WaitWake
+                  ? 0
+                  : Operation.State},
              {StackPowerActionOffset, uint32_t(Operation.Action)}}) {
       auto Actual = Memory.readInteger(*Stack + Offset, 4);
       if (!Actual)
@@ -200,6 +207,19 @@ KernelModel::callProviderDriver(uint64_t Device, uint64_t IRP,
     return providerError("request lost its bus observation");
   if (Received || ProviderCompletions.count(IRP))
     return providerError("configured bus response was already dispatched");
+  if (Request->PowerOperation &&
+      Request->PowerOperation->Minor == DevicePowerRequest::WaitWake) {
+    if (!Request->ChildPower ||
+        Request->ChildPower->Origin != DriverRequestOrigin::FrameworkWaitWake ||
+        FrameworkWakeIRPs.contains(Device))
+      return providerError(
+          "WAIT_WAKE requires one framework-owned provider request");
+    if (auto E = markRequestPending(IRP))
+      return E;
+    Observation.Power->BusReceivedAt100ns = Scheduler.now100ns();
+    FrameworkWakeIRPs.emplace(Device, IRP);
+    return StatusPending;
+  }
   auto Deadline = Scheduler.computeDeadline(-int64_t(Response->Delay100ns));
   if (!Deadline)
     return Deadline.takeError();
@@ -307,7 +327,8 @@ llvm::Error KernelModel::processProviderCompletions() {
       if (!Call)
         return Call.takeError();
       Callbacks.push_back({IRP, Request->Device, profile::WorkerThreadIdentity,
-                           Call->PC, Call->Arguments});
+                           Call->PC, Call->Arguments,
+                           Call->SynchronizationObject});
       Due.push_back({IRP, Provider, std::nullopt});
     } else {
       ++WDMCompletions;
@@ -384,7 +405,7 @@ llvm::Error KernelModel::processProviderCompletions() {
         continue;
       auto ID = Scheduler.enqueueFrameworkCompletion(
           {IRP, Request.Device, profile::WorkerThreadIdentity, Call->PC,
-           std::move(Call->Arguments)});
+           std::move(Call->Arguments), Call->SynchronizationObject});
       if (!ID)
         return ID.takeError();
       ScheduledModelContinuations.emplace(

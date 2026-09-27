@@ -43,6 +43,13 @@ namespace dmaField {
 #undef NEVERD_DRIVER_DMA_FIELD
 } // namespace dmaField
 
+namespace policyField {
+#define NEVERD_POWER_POLICY_FIELD(Name, Spelling)                              \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_FIELD
+} // namespace policyField
+
 namespace interruptField {
 #define NEVERD_DRIVER_INTERRUPT_FIELD(Name, Spelling)                          \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -73,9 +80,8 @@ constexpr llvm::StringRef RootFields[] = {
 #undef NEVERD_DRIVER_SCENARIO_REQUEST_FIELD
 };
 constexpr llvm::StringRef RequestFields[] = {
-    interruptField::InterruptEvents,
-    dmaField::DmaEvents,
-    userField::UserBuffers,
+    policyField::Events,     interruptField::InterruptEvents,
+    dmaField::DmaEvents,     userField::UserBuffers,
     userField::UserPointers,
 #define NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Name, Spelling)
 #define NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(Name, Spelling) Spelling,
@@ -734,6 +740,44 @@ interruptResources(const llvm::json::Value &Value) {
   return Result;
 }
 
+llvm::Expected<std::vector<DriverPowerPolicyEvent>>
+powerPolicyEvents(const llvm::json::Value &Value) {
+  const auto *Array = Value.getAsArray();
+  if (!Array || Array->size() > DriverPowerPolicyEventLimit)
+    return invalid("power_policy_events must be a bounded array");
+  std::vector<DriverPowerPolicyEvent> Result;
+  for (const auto &Item : *Array) {
+    const auto *Object = Item.getAsObject();
+    if (!Object)
+      return invalid("each power policy event must be an object");
+    if (auto E = fields(*Object, {policyField::After100ns,
+                                  policyField::DeviceID, policyField::Action}))
+      return std::move(E);
+    const auto *After = Object->get(policyField::After100ns);
+    auto DeviceID = Object->getString(policyField::DeviceID);
+    auto Action = Object->getString(policyField::Action);
+    if (!After || !DeviceID || !Action)
+      return invalid(
+          "power policy events require after_100ns, device_id and action");
+    auto Time = unsigned64(*After, policyField::After100ns);
+    if (!Time)
+      return Time.takeError();
+    DriverPowerPolicyEvent Event{*Time, DeviceID->str()};
+    bool Found = false;
+#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
+  if (*Action == Spelling) {                                                   \
+    Event.Action = DriverPowerPolicyAction::Name;                              \
+    Found = true;                                                              \
+  }
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_ACTION
+    if (!Found)
+      return invalid("power policy action must be idle, active or wake");
+    Result.push_back(std::move(Event));
+  }
+  return Result;
+}
+
 llvm::Expected<std::vector<DriverInterruptEvent>>
 interruptEvents(const llvm::json::Value &Value) {
   const auto *Array = Value.getAsArray();
@@ -909,7 +953,8 @@ pnpDevices(const llvm::json::Value &Value) {
                          field::InitialSystemPower,
                          field::InitialReportedDevicePower,
                          field::RequestedDevicePower, resourceField::Resources,
-                         interruptField::Interrupts, dmaField::Dma}))
+                         interruptField::Interrupts, dmaField::Dma,
+                         policyField::WakeCapabilities}))
       return std::move(E);
     auto ID = Object->getString(field::ID);
     auto Bus = Object->getString(field::Bus);
@@ -921,6 +966,20 @@ pnpDevices(const llvm::json::Value &Value) {
           "and initial_system_power strings");
     DriverPnpDevice Device;
     Device.ID = ID->str();
+    if (const auto *Wake = Object->get(policyField::WakeCapabilities)) {
+      const auto *Facts = Wake->getAsObject();
+      if (!Facts)
+        return invalid("wake_capabilities requires an object");
+      if (auto E = fields(*Facts, {policyField::S0, policyField::Sx}))
+        return std::move(E);
+      auto S0 = Facts->getBoolean(policyField::S0);
+      auto Sx = Facts->getBoolean(policyField::Sx);
+      if (!S0 || !Sx)
+        return invalid(
+            "wake_capabilities requires explicit s0 and sx booleans");
+      Device.WakeCapabilities = DriverWakeCapabilities{*S0, *Sx};
+    }
+
     bool Found = false;
 #define NEVERD_DRIVER_BUS_KIND(Name, Spelling)                                 \
   if (*Bus == Spelling) {                                                      \
@@ -1047,6 +1106,16 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
        Result.Kind == DriverRequestKind::Power) &&
       Object->get(RequestorProcessIDField))
     return invalid("requestor_process_id requires a file request");
+  if (const auto *Events = Object->get(policyField::Events)) {
+    if (Result.Kind != DriverRequestKind::Read &&
+        Result.Kind != DriverRequestKind::Write &&
+        Result.Kind != DriverRequestKind::DeviceControl)
+      return invalid("power_policy_events requires read, write or ioctl");
+    auto Parsed = powerPolicyEvents(*Events);
+    if (!Parsed)
+      return Parsed.takeError();
+    Result.PowerPolicyEvents = std::move(*Parsed);
+  }
   if (const auto *Events = Object->get(dmaField::DmaEvents)) {
     if (Result.Kind != DriverRequestKind::Read &&
         Result.Kind != DriverRequestKind::Write &&
@@ -1322,6 +1391,8 @@ llvm::Error validateDriverPnpOperation(const DriverPnpOperation &Operation) {
 
 llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
                                          bool RequireDeviceType) {
+  if (Operation.Minor == DevicePowerRequest::WaitWake)
+    return invalid("WAIT_WAKE is owned by configured framework wake policy");
   switch (Operation.Minor) {
 #define NEVERD_DRIVER_POWER_REQUEST(Name, Spelling)                            \
   case DevicePowerRequest::Name:
@@ -1775,6 +1846,17 @@ llvm::Error validateDriverUserMemory(const DriverRequest &Request) {
 }
 
 llvm::Error validateDriverScenario(const DriverOptions &Options) {
+  if (Options.ServiceName.empty() ||
+      Options.ServiceName.size() > profile::MaxServiceNameSize ||
+      !std::all_of(Options.ServiceName.begin(), Options.ServiceName.end(),
+                   [](unsigned char C) {
+                     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') ||
+                            (C >= '0' && C <= '9') || C == '_' || C == '-';
+                   }))
+    return invalid(llvm::formatv("service name must contain 1..{0} ASCII "
+                                 "letters, digits, underscores or hyphens",
+                                 profile::MaxServiceNameSize)
+                       .str());
   if (auto E = validateDriverRegistry(Options.Registry))
     return invalid(llvm::toString(std::move(E)));
   if (Options.PnpDevices.size() > DriverScenarioPnpDeviceLimit)
@@ -1814,7 +1896,32 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
   uint64_t Total = 0;
   size_t UserBufferCount = 0, UserPointerCount = 0;
   size_t InterruptEventCount = 0;
+  size_t PolicyEvents = 0;
   for (const auto &Request : Options.Requests) {
+    if (!Request.PowerPolicyEvents.empty() &&
+        Request.Kind != DriverRequestKind::Read &&
+        Request.Kind != DriverRequestKind::Write &&
+        Request.Kind != DriverRequestKind::DeviceControl)
+      return invalid("power_policy_events requires read, write or ioctl");
+    if (Request.PowerPolicyEvents.size() >
+        DriverPowerPolicyEventLimit - PolicyEvents)
+      return invalid("combined power policy event limit exceeded");
+    PolicyEvents += Request.PowerPolicyEvents.size();
+    for (const auto &Event : Request.PowerPolicyEvents) {
+      if (!DeviceIDs.contains(Event.DeviceID) || Event.After100ns > INT64_MAX)
+        return invalid(
+            "power policy event requires a configured PDO and bounded time");
+      switch (Event.Action) {
+#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
+  case DriverPowerPolicyAction::Name:
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_ACTION
+        break;
+      default:
+        return invalid("unsupported power policy event action");
+      }
+    }
+
     if (auto E = validateDriverUserMemory(Request))
       return E;
     if (Request.UserBuffers.size() >
@@ -2093,6 +2200,12 @@ driverOptionsFromScenarioJSON(llvm::StringRef JSON, DriverOptions Base) {
             "kernel_exports requires printable names and boolean values");
       Base.KernelExports.emplace(ExportName, *Present);
     }
+  }
+  if (const auto *Service = Object->get(ServiceNameField)) {
+    auto Name = Service->getAsString();
+    if (!Name)
+      return invalid("service_name must be a string");
+    Base.ServiceName = Name->str();
   }
   if (const auto *Address = Object->get(LoadAddressField)) {
     auto Text = Address->getAsString();

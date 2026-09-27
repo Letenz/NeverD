@@ -24,6 +24,41 @@ llvm::Error frameworkInterruptError(const llvm::Twine &Message) {
 } // namespace
 
 void KernelModel::configureFrameworkInterruptHost() {
+  using LockOwner = KernelDispatcher::WaitLockOwner;
+  auto ResolveOwner = [this](uint64_t Identity,
+                             bool Callback) -> llvm::Expected<LockOwner> {
+    if (Callback)
+      return LockOwner{LockOwner::Kind::Interrupt, Identity};
+    auto Thread = ExecutionThreadKeys.find(Identity);
+    if (Thread == ExecutionThreadKeys.end())
+      return frameworkInterruptError("passive lock lost its acquiring thread");
+    return LockOwner{LockOwner::Kind::Thread, Thread->second};
+  };
+  KernelInterrupts::PassiveLockHost PassiveHost;
+  PassiveHost.Available = [this](uint64_t Storage,
+                                 std::optional<uint64_t> Token) {
+    return Dispatcher.waitLockAvailable(
+        Storage,
+        Token ? std::optional<LockOwner>{{LockOwner::Kind::Interrupt, *Token}}
+              : std::nullopt);
+  };
+  PassiveHost.Acquire = [this,
+                         ResolveOwner](uint64_t Storage, uint64_t Identity,
+                                       bool Callback) -> llvm::Expected<bool> {
+    auto Owner = ResolveOwner(Identity, Callback);
+    if (!Owner)
+      return Owner.takeError();
+    return Dispatcher.tryAcquireWaitLock(Storage, *Owner);
+  };
+  PassiveHost.Release = [this, ResolveOwner](uint64_t Storage,
+                                             uint64_t Identity,
+                                             bool Callback) -> llvm::Error {
+    auto Owner = ResolveOwner(Identity, Callback);
+    if (!Owner)
+      return Owner.takeError();
+    return Dispatcher.releaseWaitLock(Storage, *Owner);
+  };
+  Interrupts.setPassiveLockHost(std::move(PassiveHost));
   using Selection = KernelFramework::InterruptSelection;
   using Connection = KernelFramework::InterruptConnection;
   using ConnectionResult = llvm::Expected<std::optional<Connection>>;
@@ -59,8 +94,11 @@ void KernelModel::configureFrameworkInterruptHost() {
         *Input.ShareVector != (Resource.Share == DriverInterruptShare::Shared))
       return frameworkInterruptError("sharing differs from assigned resource");
     Selected->Passive = Input.Passive;
-    Selected->SynchronizeIRQL =
-        Input.Passive ? scheduler::PassiveLevel : Selected->IRQL;
+    Selected->SpinLock = Input.SpinLock;
+    Selected->WaitLock = Input.WaitLock;
+    Selected->SynchronizeIRQL = Input.Passive ? scheduler::PassiveLevel
+                                : Input.SynchronizeIRQL ? Input.SynchronizeIRQL
+                                                        : Selected->IRQL;
     Selected->Version = Selected->ResourceMessage
                             ? (Input.Passive ? interrupts::MessageBasedPassive
                                              : interrupts::MessageBased)
@@ -102,6 +140,8 @@ void KernelModel::configureFrameworkInterruptHost() {
     if (!*Selected)
       return std::optional<Connection>{};
     auto &Candidate = **Selected;
+    if (Candidate.SpinLock && ExecutiveSpinLocks.contains(Candidate.SpinLock))
+      return frameworkInterruptError("interrupt spin lock is already held");
     const uint64_t Aligned = (NextAllocation + interrupts::TokenSize - 1) &
                              ~(interrupts::TokenSize - 1);
     if (Aligned > AllocationEnd ||
@@ -164,9 +204,19 @@ void KernelModel::configureFrameworkInterruptHost() {
     if (Connection->Passive) {
       if (CurrentIRQL != scheduler::PassiveLevel)
         return frameworkInterruptError("passive lock requires PASSIVE_LEVEL");
+      if (!CurrentThreadKey || ApcStates[CurrentThreadKey].CriticalDepth ==
+                                   profile::MaxAPCRegionNesting)
+        return frameworkInterruptError(
+            "passive lock lost its thread APC region");
+      if (FrameworkPassiveLockThreads.contains({CurrentExecution, Object}))
+        return frameworkInterruptError(
+            "passive lock acquisition is already pending");
       auto Acquired = Interrupts.tryAcquirePassive(Object, CurrentExecution);
       if (!Acquired)
         return Acquired.takeError();
+      ++ApcStates[CurrentThreadKey].CriticalDepth;
+      FrameworkPassiveLockThreads.emplace(
+          std::make_pair(CurrentExecution, Object), CurrentThreadKey);
       if (!*Acquired) {
         Wait Pending;
         Pending.Type = Wait::Kind::FrameworkInterruptLock;
@@ -191,17 +241,30 @@ void KernelModel::configureFrameworkInterruptHost() {
     if (Saved == FrameworkInterruptLocks.end())
       return frameworkInterruptError(
           "release requires the acquiring execution");
+    const auto Thread =
+        FrameworkPassiveLockThreads.find({CurrentExecution, Object});
+    if (Thread != FrameworkPassiveLockThreads.end() &&
+        (Thread->second != CurrentThreadKey ||
+         !ApcStates[Thread->second].CriticalDepth))
+      return frameworkInterruptError(
+          "passive release lost its thread APC region");
     auto Restored = Interrupts.release(Object, CurrentExecution, Saved->second,
                                        CurrentIRQL);
     if (!Restored)
       return Restored.takeError();
     CurrentIRQL = *Restored;
     FrameworkInterruptLocks.erase(Saved);
+    if (Thread != FrameworkPassiveLockThreads.end()) {
+      --ApcStates[Thread->second].CriticalDepth;
+      FrameworkPassiveLockThreads.erase(Thread);
+    }
     return llvm::Error::success();
   };
-  Host.QueueDeferred = [this](uint64_t Handle, uint64_t Owner, uint64_t Routine,
-                              llvm::ArrayRef<uint64_t> Arguments, bool WorkItem,
-                              uint64_t Continuation) -> llvm::Expected<bool> {
+  Host.QueueDeferred =
+      [this](uint64_t Handle, uint64_t Owner, uint64_t Routine,
+             llvm::ArrayRef<uint64_t> Arguments, bool WorkItem,
+             uint64_t Continuation,
+             uint64_t SynchronizationObject) -> llvm::Expected<bool> {
     if (!Continuation || !Devices.contains(Owner) ||
         Devices.at(Owner).DeletePending)
       return frameworkInterruptError("deferred callback lost its live device");
@@ -210,6 +273,7 @@ void KernelModel::configureFrameworkInterruptHost() {
                                    profile::WorkerThreadIdentity,
                                    Routine,
                                    {Arguments.begin(), Arguments.end()}};
+    Call.SynchronizationObject = SynchronizationObject;
     auto ID = Scheduler.queueFrameworkInterrupt(std::move(Call), WorkItem);
     if (!ID)
       return ID.takeError();

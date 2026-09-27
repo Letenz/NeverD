@@ -13,6 +13,9 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include <algorithm>
+#include <iterator>
+
 namespace neverd::emulation {
 namespace {
 llvm::Error irqlError(const llvm::Twine &Text) {
@@ -39,9 +42,11 @@ KernelModel::callIRQLAPI(llvm::StringRef Name,
   }
   if (Name != kernel_api::KeLowerIrql)
     return irqlError("unknown IRQL operation");
-  if (RaisedIRQLs.empty() || RaisedIRQLs.back().Execution != CurrentExecution ||
-      RaisedIRQLs.back().NewIRQL != CurrentIRQL ||
-      RaisedIRQLs.back().OldIRQL != RequestedIRQL)
+  const auto Raise = std::find_if(
+      RaisedIRQLs.rbegin(), RaisedIRQLs.rend(),
+      [&](const auto &Entry) { return Entry.Execution == CurrentExecution; });
+  if (Raise == RaisedIRQLs.rend() || Raise->NewIRQL != CurrentIRQL ||
+      Raise->OldIRQL != RequestedIRQL)
     return irqlError("KeLowerIrql requires the latest saved IRQL on this "
                      "execution");
   if (RequestedIRQL < scheduler::DispatchLevel) {
@@ -55,7 +60,7 @@ KernelModel::callIRQLAPI(llvm::StringRef Name,
   if (auto Required = Interrupts.manualHoldIRQL(CurrentExecution);
       Required && RequestedIRQL < *Required)
     return irqlError("cannot lower IRQL while holding an interrupt spin lock");
-  RaisedIRQLs.pop_back();
+  RaisedIRQLs.erase(std::next(Raise).base());
   CurrentIRQL = RequestedIRQL;
   return 0;
 }
@@ -71,7 +76,11 @@ llvm::Expected<uint64_t> KernelModel::callApcStateAPI(llvm::StringRef Name) {
         OwnsMutex = true;
         break;
       }
-    return uint64_t(State.CriticalDepth || State.GuardedDepth || OwnsMutex);
+    const bool PassiveInterrupt = std::any_of(
+        PassiveInterruptThreads.begin(), PassiveInterruptThreads.end(),
+        [&](const auto &Entry) { return Entry.second == CurrentThreadKey; });
+    return uint64_t(State.CriticalDepth || State.GuardedDepth || OwnsMutex ||
+                    PassiveInterrupt);
   }
   if (Name == kernel_api::KeAreAllApcsDisabled)
     return uint64_t(State.GuardedDepth || CurrentIRQL >= windows::APCLevel);

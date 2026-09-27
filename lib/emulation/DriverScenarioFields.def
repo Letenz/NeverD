@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+NEVERD_DRIVER_SCENARIO_ROOT_FIELD(ServiceName, "service_name")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(LoadAddress, "load_address")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(Unload, "unload")
 NEVERD_DRIVER_SCENARIO_ROOT_FIELD(KernelExports, "kernel_exports")
@@ -22,8 +23,10 @@ NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(Input, "input")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(OutputSize, "output_size")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(UserInputAccess, "user_input_access")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(UserOutputAccess, "user_output_access")
-NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(UserUnmapAfterDispatch, "user_unmap_after_dispatch")
-NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(RequestorExitAfterDispatch, "requestor_exit_after_dispatch")
+NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(UserUnmapAfterDispatch,
+                                     "user_unmap_after_dispatch")
+NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(RequestorExitAfterDispatch,
+                                     "requestor_exit_after_dispatch")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(RequestorProcessID, "requestor_process_id")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(DirectInput, "direct_input")
 NEVERD_DRIVER_SCENARIO_REQUEST_FIELD(ByteOffset, "byte_offset")

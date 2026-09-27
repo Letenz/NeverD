@@ -67,8 +67,24 @@ public:
                                   uint8_t CurrentIRQL = 0);
   bool ownsMutex(uint64_t Execution) const;
 
+  /// Framework wait locks share dispatcher ownership and opaque storage. An
+  /// interrupt reservation exists before its guest thread begins execution.
+  struct WaitLockOwner {
+    enum class Kind { Thread, Interrupt };
+    Kind Type = Kind::Thread;
+    uint64_t ID = 0;
+    bool operator==(const WaitLockOwner &) const = default;
+  };
+  llvm::Error initializeWaitLock(uint64_t Address, bool Recursive = false);
+  llvm::Expected<bool> tryAcquireWaitLock(uint64_t Address,
+                                          WaitLockOwner Owner);
+  llvm::Error releaseWaitLock(uint64_t Address, WaitLockOwner Owner);
+  bool waitLockAvailable(uint64_t Address,
+                         std::optional<WaitLockOwner> Owner = {}) const;
+  bool waitLockOwnedByThread(uint64_t Thread) const;
+
 private:
-  enum class Kind { DPC, Timer, Event, Semaphore, Mutex };
+  enum class Kind { DPC, Timer, Event, Semaphore, Mutex, WaitLock };
   struct Object {
     Object(Kind Type, uint32_t Size) : Type(Type), Size(Size) {}
     Kind Type;
@@ -80,6 +96,9 @@ private:
     uint64_t MutexOwner = 0;
     uint32_t MutexDepth = 0;
     bool MutexAcquiredAtDispatch = false;
+    std::optional<WaitLockOwner> LockOwner;
+    uint32_t LockDepth = 0;
+    bool RecursiveLock = false;
     bool HasSchedule = false;
     uint64_t TimerDPC = 0;
     KernelScheduler::DpcCallback DPC;

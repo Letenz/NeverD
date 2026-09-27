@@ -67,6 +67,7 @@ ABI_SLOT(WdfRequestRetrieveOutputBuffer, 270);
 
 static WCHAR ServiceMode;
 #include "driver_kmdf_interrupt.h"
+#include "driver_kmdf_power_policy.h"
 static ULONG QueryStopCount, QueryRemoveCount;
 static ULONG PowerEntryCount, PowerExitCount;
 static const LONGLONG FileSendTimeout100ns = -5;
@@ -531,6 +532,10 @@ static VOID IoControl(WDFQUEUE Queue, WDFREQUEST Request, size_t OutputLength,
   UCHAR *Output;
   UCHAR Value;
   NTSTATUS Status;
+  if (UsesPowerPolicy()) {
+    PolicyIoControl(Queue, Request);
+    return;
+  }
   if (UsesFrameworkInterrupts()) {
     InterruptIoControl(Request, OutputLength);
     return;
@@ -667,16 +672,25 @@ static NTSTATUS DeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT Init) {
     }
     WdfDeviceInitSetPnpPowerEventCallbacks(Init, &PnpCallbacks);
   }
+  if (UsesPowerPolicy())
+    PolicyInitialize(Init);
   if (ServiceMode == L'8')
     WdfDeviceInitSetPowerPolicyOwnership(Init, FALSE);
   WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
   Attributes.ExecutionLevel = WdfExecutionLevelPassive;
   Attributes.SynchronizationScope = WdfSynchronizationScopeNone;
   Attributes.EvtCleanupCallback = DeviceCleanup;
+  if (ServiceMode == KmdfInterruptAutomatic)
+    Attributes.SynchronizationScope = WdfSynchronizationScopeDevice;
   Attributes.EvtDestroyCallback = DeviceDestroy;
   Status = WdfDeviceCreate(&Init, &Attributes, &Device);
   if (!NT_SUCCESS(Status))
     return Status;
+  if (UsesPowerPolicy()) {
+    Status = PolicyConfigure(Device);
+    if (!NT_SUCCESS(Status))
+      return Status;
+  }
   FDO = WdfDeviceWdmGetDeviceObject(Device);
   if (FDO->DeviceType != (ServiceMode == L'K' ? FILE_DEVICE_SERIAL_PORT
                                               : FILE_DEVICE_UNKNOWN) ||
@@ -705,7 +719,9 @@ static NTSTATUS DeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT Init) {
   }
   WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&QueueConfig,
                                          WdfIoQueueDispatchSequential);
-  if (ServiceMode == L'T')
+  if (ServiceMode == L'T' ||
+      (UsesPowerPolicy() && PolicyMode == KmdfPowerManagedQueue) ||
+      (UsesPowerPolicy() && PolicyMode == KmdfPowerManagedWait))
     QueueConfig.PowerManaged = WdfTrue;
   else if (!UsesPowerQueue())
     QueueConfig.PowerManaged = WdfFalse;
@@ -718,6 +734,8 @@ static NTSTATUS DeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT Init) {
   WDF_OBJECT_ATTRIBUTES_INIT(&Attributes);
   Attributes.ExecutionLevel = WdfExecutionLevelPassive;
   Attributes.SynchronizationScope = WdfSynchronizationScopeNone;
+  if (ServiceMode == KmdfInterruptAutomatic)
+    Attributes.SynchronizationScope = WdfSynchronizationScopeInheritFromParent;
   Status = WdfIoQueueCreate(Device, &QueueConfig, &Attributes, &Queue);
   if (NT_SUCCESS(Status) && UsesPowerQueue()) {
     PowerQueue = Queue;
@@ -737,6 +755,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject,
       RegistryPath->Length >= sizeof(WCHAR)
           ? RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) - 1]
           : L'S';
+  PolicyMode =
+      RegistryPath->Length >= 2 * sizeof(WCHAR)
+          ? RegistryPath->Buffer[RegistryPath->Length / sizeof(WCHAR) - 2]
+          : 0;
   PowerQueue = NULL;
   MappedResource = NULL;
   DeliveryCount = 0;

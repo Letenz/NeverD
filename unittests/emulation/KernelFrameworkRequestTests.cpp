@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "KernelFrameworkQueueTestSupport.h"
+#include "windows/KernelScheduler.h"
 
 #include <tuple>
 
@@ -259,6 +260,109 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_EQ(Packets.at(IRP).Information, 5u);
   // A void I/O callback has no completion-status result to substitute here.
   EXPECT_EQ(Dispatch.Status, 0x103u);
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       RequestAndCancelCallbacksCarryTheirQueueSynchronizationOwner) {
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationQueue, 4);
+  initializeQueue();
+  const auto IRP = packet();
+  const auto Dispatch = route(IRP);
+  EXPECT_EQ(Dispatch.SynchronizationObject, Queue);
+  const auto Request = request(Dispatch);
+  markCancelable(Request);
+  const auto Cancel = cancel(IRP);
+  EXPECT_EQ(Cancel.SynchronizationObject, Queue);
+  success(Model.beginCancelCallback(Cancel.Token));
+  complete(Request, 0, framework::RequestCancelled);
+  EXPECT_TRUE(take(Model.finishGuestCall(Cancel.Token, 0)));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       PresentedQueueCallbackRetainsSynchronizationAfterEarlierCompletion) {
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationQueue, 4);
+  initializeQueue();
+  const auto First = request(route(packet()));
+  EXPECT_EQ(route(packet()).PC, 0u);
+  complete(First);
+  const auto Presented = callback();
+  EXPECT_EQ(Presented.PC, IoControlPC);
+  EXPECT_EQ(Presented.SynchronizationObject, Queue);
+  complete(Presented.Arguments[1]);
+  finish(Presented);
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       DeviceSynchronizationRetainsTheQueueUntilDirectCallbackReturn) {
+  Device = control(0, 0, framework::ExecutionPassive,
+                   framework::SynchronizationDevice);
+  WdmDevice = take(invoke("WdfDeviceWdmGetDeviceObject", {Globals, Device}));
+  queueConfiguration();
+  queueAttributes(0, 0, 0, ParentDestroy);
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationInherit, 4);
+  initializeQueue();
+  const auto IRP = packet();
+  const auto Dispatch = route(IRP);
+  EXPECT_EQ(Dispatch.SynchronizationObject, Device);
+  complete(request(Dispatch));
+  take(invoke("WdfObjectDelete", {Globals, Device}));
+  EXPECT_FALSE(Model.takeGuestCall());
+  EXPECT_FALSE(Released.count(Queue));
+  EXPECT_EQ(take(invoke("WdfIoQueueGetDevice", {Globals, Queue})), Device);
+  success(Model.finishRequestDispatch(IRP));
+  const auto Destroy = callback();
+  EXPECT_EQ(Destroy.PC, ParentDestroy);
+  EXPECT_EQ(Destroy.SynchronizationObject, 0u);
+  finish(Destroy);
+  EXPECT_TRUE(Released.count(Queue));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       DeviceDeletionWaitsForAnUnsynchronizedIoCallbackToReturn) {
+  type();
+  attributes(0, Type, 0, ParentDestroy);
+  take(invoke("WdfObjectAllocateContext", {Globals, Device, Attrs, 0}));
+  queueAttributes(0, 0, 0, ChildDestroy);
+  initializeQueue();
+  const auto IRP = packet();
+  const auto Dispatch = route(IRP);
+  EXPECT_EQ(Dispatch.SynchronizationObject, 0u);
+  complete(request(Dispatch));
+  take(invoke("WdfObjectDelete", {Globals, Device}));
+  EXPECT_FALSE(Model.takeGuestCall());
+  EXPECT_FALSE(Released.count(Queue));
+  EXPECT_FALSE(Released.count(Device));
+  EXPECT_EQ(take(invoke("WdfIoQueueGetDevice", {Globals, Queue})), Device);
+  success(Model.finishRequestDispatch(IRP));
+  EXPECT_EQ(drain(), (std::vector<uint64_t>{ChildDestroy, ParentDestroy}));
+  EXPECT_TRUE(Released.count(Queue));
+  EXPECT_TRUE(Released.count(Device));
+  EXPECT_TRUE(HostDevices.empty());
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       PresentedCallbackRetainsItsQueueUntilContinuationReturn) {
+  queueAttributes(0, 0, 0, ParentDestroy);
+  initializeQueue();
+  const auto FirstIRP = packet();
+  const auto First = request(route(FirstIRP));
+  success(Model.finishRequestDispatch(FirstIRP));
+  EXPECT_EQ(route(packet()).PC, 0u);
+  complete(First);
+  const auto Presented = callback();
+  complete(Presented.Arguments[1]);
+  take(invoke("WdfObjectDelete", {Globals, Device}));
+  EXPECT_FALSE(Model.takeGuestCall());
+  EXPECT_FALSE(Released.count(Queue));
+  finish(Presented);
+  const auto Destroy = callback();
+  EXPECT_EQ(Destroy.PC, ParentDestroy);
+  EXPECT_EQ(Destroy.Token, Presented.Token);
+  finish(Destroy);
+  EXPECT_TRUE(Released.count(Queue));
 }
 
 TEST_F(DriverKernelFrameworkRequest,
@@ -944,6 +1048,7 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_EQ(Cancel.PC, CancelPC);
   EXPECT_EQ(Cancel.Arguments, (std::vector<uint64_t>{Request}));
   EXPECT_TRUE(Packets.at(IRP).Canceled);
+  success(Model.beginCancelCallback(Cancel.Token));
   complete(Request, 0, framework::RequestCancelled);
   EXPECT_FALSE(Model.takeGuestCall());
   finish(Cancel);
@@ -965,6 +1070,7 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_FALSE(take(Model.queueWaitReady(Queue, true)));
   auto Cancel = callback();
   EXPECT_EQ(Cancel.PC, CancelPC);
+  success(Model.beginCancelCallback(Cancel.Token));
   complete(Request, 0, framework::RequestCancelled);
   EXPECT_FALSE(take(Model.queueWaitReady(Queue, true)));
   finish(Cancel);
@@ -987,6 +1093,7 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_EQ(Packets.at(OldQueuedIRP).Status, framework::RequestCancelled);
   auto Cancel = callback();
   EXPECT_EQ(Cancel.PC, CancelPC);
+  success(Model.beginCancelCallback(Cancel.Token));
   const auto NewQueuedIRP = packet();
   EXPECT_EQ(route(NewQueuedIRP).PC, 0u);
   EXPECT_FALSE(Packets.at(NewQueuedIRP).Completed);
@@ -1016,6 +1123,7 @@ TEST_F(DriverKernelFrameworkRequest,
   take(invoke("WdfIoQueueStopAndPurgeSynchronously", {Globals, Queue}));
   EXPECT_FALSE(take(Model.queueWaitReady(Queue, false)));
   auto Cancel = callback();
+  success(Model.beginCancelCallback(Cancel.Token));
   const auto NewIRP = packet();
   EXPECT_EQ(route(NewIRP).PC, 0u);
   complete(Request, 0, framework::RequestCancelled);
@@ -1049,12 +1157,14 @@ TEST_F(DriverKernelFrameworkRequest,
   auto FirstCancel = callback();
   EXPECT_EQ(FirstCancel.PC, CancelPC);
   EXPECT_EQ(FirstCancel.Arguments, (std::vector<uint64_t>{First}));
+  success(Model.beginCancelCallback(FirstCancel.Token));
   complete(First, 0, framework::RequestCancelled);
   EXPECT_FALSE(Model.takeGuestCall());
   finish(FirstCancel);
   auto SecondCancel = callback();
   EXPECT_EQ(SecondCancel.PC, CancelPC);
   EXPECT_EQ(SecondCancel.Arguments, (std::vector<uint64_t>{Second}));
+  success(Model.beginCancelCallback(SecondCancel.Token));
   complete(Second, 0, framework::RequestCancelled);
   EXPECT_FALSE(Model.takeGuestCall());
   finish(SecondCancel);
@@ -2238,6 +2348,7 @@ TEST_F(DriverKernelFrameworkRequest,
   attributes(Device);
   const auto Child = object(Attrs);
   complete(Request);
+  success(Model.finishRequestDispatch(IRP));
   take(invoke("WdfObjectDelete", {Globals, Device}));
   EXPECT_EQ(drain(), (std::vector<uint64_t>{ParentCleanup, ParentDestroy}));
   EXPECT_TRUE(Released.count(Child));
@@ -2485,6 +2596,94 @@ TEST_F(DriverKernelFrameworkRequest,
 }
 
 TEST_F(DriverKernelFrameworkRequest,
+       DispatchQueuePresentationStaysInlineAtDispatchLevel) {
+  put(Attrs + framework::AttributesExecution, framework::ExecutionDispatch, 4);
+  initializeQueue();
+  const auto First = request(route(packet()));
+  EXPECT_EQ(route(packet()).PC, 0u);
+  KernelFramework::DeviceHost Host;
+  Host.DeferCall = [](const KernelFramework::GuestCall &, uint64_t,
+                      uint8_t) -> llvm::Error {
+    return failure("dispatch queue callback must not move to a worker");
+  };
+  Model.setDeviceHost(std::move(Host));
+  take(Model.call(entry("WdfRequestComplete"), {Globals, First, 0},
+                  scheduler::DispatchLevel));
+  const auto Presented = callback();
+  EXPECT_EQ(Presented.PC, IoControlPC);
+  take(Model.call(entry("WdfRequestComplete"),
+                  {Globals, Presented.Arguments[1], 0},
+                  scheduler::DispatchLevel));
+  EXPECT_TRUE(take(
+      Model.finishGuestCall(Presented.Token, 0, scheduler::DispatchLevel)));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       RecursiveDispatchCancellationUsesTheDpcExecutionLevel) {
+  put(Attrs + framework::AttributesExecution, framework::ExecutionDispatch, 4);
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationQueue, 4);
+  initializeQueue();
+  const auto IRP = packet();
+  const auto Request = request(route(IRP));
+  Packets.at(IRP).Canceled = true;
+  std::optional<KernelFramework::GuestCall> Deferred;
+  KernelFramework::DeviceHost Host;
+  Host.OwnsCallbackLock = [&](uint64_t Object) { return Object == Queue; };
+  Host.DeferCall = [&](const KernelFramework::GuestCall &Call, uint64_t,
+                       uint8_t IRQL) -> llvm::Error {
+    EXPECT_EQ(IRQL, scheduler::DispatchLevel);
+    Deferred = Call;
+    return llvm::Error::success();
+  };
+  Model.setDeviceHost(std::move(Host));
+  take(Model.call(entry("WdfRequestMarkCancelable"),
+                  {Globals, Request, CancelPC}, scheduler::DispatchLevel));
+  EXPECT_FALSE(Model.takeGuestCall());
+  ASSERT_TRUE(Deferred);
+  success(Model.beginCancelCallback(Deferred->Token));
+  take(Model.call(entry("WdfRequestComplete"),
+                  {Globals, Request, framework::RequestCancelled},
+                  scheduler::DispatchLevel));
+  EXPECT_TRUE(take(
+      Model.finishGuestCall(Deferred->Token, 0, scheduler::DispatchLevel)));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       LegacyCancellationWaitsForTheCurrentCallbackSynchronizationOwner) {
+  put(Attrs + framework::AttributesSynchronization,
+      framework::SynchronizationQueue, 4);
+  initializeQueue();
+  const auto IRP = packet();
+  const auto Request = request(route(IRP));
+  Packets.at(IRP).Canceled = true;
+  std::optional<KernelFramework::GuestCall> Deferred;
+  KernelFramework::DeviceHost Host;
+  Host.OwnsCallbackLock = [&](uint64_t Object) { return Object == Queue; };
+  Host.DeferCall = [&](const KernelFramework::GuestCall &Call, uint64_t Wdm,
+                       uint8_t IRQL) -> llvm::Error {
+    EXPECT_EQ(Wdm, WdmDevice);
+    EXPECT_EQ(IRQL, scheduler::PassiveLevel);
+    EXPECT_FALSE(Deferred);
+    Deferred = Call;
+    return llvm::Error::success();
+  };
+  Model.setDeviceHost(std::move(Host));
+  take(invoke("WdfRequestMarkCancelable", {Globals, Request, CancelPC}));
+  EXPECT_FALSE(Model.takeGuestCall());
+  ASSERT_TRUE(Deferred);
+  EXPECT_EQ(Deferred->PC, CancelPC);
+  EXPECT_EQ(Deferred->SynchronizationObject, Queue);
+  expectError(invoke("WdfRequestComplete",
+                     {Globals, Request, framework::RequestCancelled}),
+              "delivered");
+  success(Model.beginCancelCallback(Deferred->Token));
+  complete(Request, 0, framework::RequestCancelled);
+  EXPECT_TRUE(take(Model.finishGuestCall(Deferred->Token, 0)));
+  EXPECT_EQ(Packets.at(IRP).CompletionCalls, 1u);
+}
+
+TEST_F(DriverKernelFrameworkRequest,
        LegacyAlreadyCanceledMarkRetainsNestedCompletionAndDestroyContinuation) {
   initializeQueue();
   const auto IRP = packet();
@@ -2502,7 +2701,7 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_EQ(Cancel.Arguments, (std::vector<uint64_t>{Request}));
   // This child is delivered by the current API continuation, without waiting
   // for a scheduler entry. The session has not yet returned the void API.
-  expectError(Model.beginCancelCallback(Cancel.Token), "already delivered");
+  success(Model.beginCancelCallback(Cancel.Token));
   EXPECT_FALSE(take(Model.requestCancellation(IRP)));
   EXPECT_FALSE(Packets.at(IRP).Completed);
   EXPECT_EQ(take(invoke("WdfRequestUnmarkCancelable", {Globals, Request})),
@@ -2558,6 +2757,7 @@ TEST_F(DriverKernelFrameworkRequest,
   Packets.at(IRP).Canceled = true;
   take(invoke("WdfRequestMarkCancelable", {Globals, Request, CancelPC}));
   const auto Cancel = callback();
+  success(Model.beginCancelCallback(Cancel.Token));
   EXPECT_EQ(take(Model.finishGuestCall(Cancel.Token, Sentinel)),
             std::optional<uint64_t>{0});
   EXPECT_FALSE(Packets.at(IRP).Completed);
@@ -2657,6 +2857,7 @@ TEST_F(DriverKernelFrameworkRequest,
   // A retry after the unrelated callback completes must still be a first mark.
   take(invoke("WdfRequestMarkCancelable", {Globals, Request, CancelPC}));
   const auto Cancel = callback();
+  success(Model.beginCancelCallback(Cancel.Token));
   complete(Request, 0, 0xc0000120);
   EXPECT_EQ(take(Model.finishGuestCall(Cancel.Token, 0)),
             std::optional<uint64_t>{0});

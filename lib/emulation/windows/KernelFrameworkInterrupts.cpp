@@ -87,15 +87,9 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
       *Inactive > InterruptTriDefault || (*DPC && *WorkItem) ||
       (*Passive && *SpinLock) || (!*Passive && *WaitLock))
     return InvalidParameter;
-  if (*SpinLock || *WaitLock)
-    return invalid("external framework interrupt lock objects are not modeled");
   if (*Wake || *Inactive == InterruptTriTrue)
     return invalid("wake-armed and retained inactive interrupt connections are "
                    "not modeled");
-  if (*Automatic && *DPC)
-    return IncompatibleExecutionLevel;
-  if (*Automatic)
-    return invalid("automatic parent callback serialization is not modeled");
   // FloatingSave is ignored by Windows on x64; register state is preserved by
   // the execution backend for both ordinary and interrupt callbacks.
   auto Validation = attributes(A[3], AttributesUse::Object);
@@ -106,12 +100,35 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   auto Attrs = std::get<Attributes>(*Validation);
   if (Attrs.Parent && Attrs.Parent != A[1]) {
     auto Queue = Queues.find(Attrs.Parent);
-    if (Queue != Queues.end() && Queue->second.Device == A[1])
-      return invalid("interrupt queue parents require automatic callback "
-                     "serialization, which is not modeled");
-    return ParentAssignmentNotAllowed;
+    if (Queue == Queues.end() || Queue->second.Device != A[1])
+      return ParentAssignmentNotAllowed;
   }
-  Attrs.Parent = A[1];
+  if (!Attrs.Parent)
+    Attrs.Parent = A[1];
+  uint64_t SynchronizationObject = 0;
+  if (*Automatic) {
+    auto Level = executionLevel(Attrs.Parent);
+    if (!Level)
+      return Level.takeError();
+    if ((*DPC && *Level == ExecutionPassive) ||
+        (*WorkItem && *Level == ExecutionDispatch))
+      return IncompatibleExecutionLevel;
+    auto Owner = synchronizationObject(Attrs.Parent);
+    if (!Owner)
+      return Owner.takeError();
+    SynchronizationObject = *Owner;
+  }
+  const uint64_t ExternalLock = *Passive ? *WaitLock : *SpinLock;
+  if (ExternalLock) {
+    auto Object = Objects.find(ExternalLock);
+    auto Lock = LockObjects.find(ExternalLock);
+    if (Object == Objects.end() || Object->second.Binding != B.Globals ||
+        Object->second.Deleting || Lock == LockObjects.end() ||
+        Lock->second.Wait != bool(*Passive))
+      return invalid("interrupt lock must be a live matching framework lock");
+    if (Object->second.InternalReferences == UINT64_MAX)
+      return invalid("interrupt lock reference count exhausted");
+  }
 
   const bool Preparing = std::any_of(
       PnpTransitions.begin(), PnpTransitions.end(), [&](const auto &Entry) {
@@ -125,6 +142,8 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   Interrupt Item;
   Item.Device = A[1];
   Item.AssociatedObject = Attrs.Parent;
+  Item.ExternalLock = ExternalLock;
+  Item.SynchronizationObject = SynchronizationObject;
   Item.ISR = *ISR;
   Item.DPC = *DPC;
   Item.WorkItem = *WorkItem;
@@ -132,6 +151,12 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
   Item.Disable = *Disable;
   Item.Selection.PDO = D.PDO;
   Item.Selection.Passive = bool(*Passive);
+  if (ExternalLock) {
+    if (*Passive)
+      Item.Selection.WaitLock = LockObjects.at(ExternalLock).Storage;
+    else
+      Item.Selection.SpinLock = LockObjects.at(ExternalLock).Storage;
+  }
   if (*Share != InterruptTriDefault)
     Item.Selection.ShareVector = *Share == InterruptTriTrue;
   Item.Selection.Ordinal = std::count_if(
@@ -174,6 +199,10 @@ KernelFramework::createInterrupt(Binding &B, llvm::ArrayRef<uint64_t> A) {
     return Handle.takeError();
   Objects.at(*Handle).Kind = ObjectKind::Interrupt;
   InterruptObjects.emplace(*Handle, std::move(Item));
+  if (ExternalLock) {
+    ++Objects.at(ExternalLock).InternalReferences;
+    LockObjects.at(ExternalLock).InterruptUsers.insert(*Handle);
+  }
   if (auto E = Memory.writeInteger(A[4], *Handle, 8))
     return E;
   return windows::StatusSuccess;
@@ -278,9 +307,9 @@ KernelFramework::callInterrupt(llvm::StringRef Name, Binding &B,
       return invalid(
           "interrupt callback identity or reference count exhausted");
     const uint64_t Token = NextContinuation;
-    auto Queued = InterruptsHost.QueueDeferred(A[1], I.Selection.PDO, Routine,
-                                               {A[1], I.AssociatedObject},
-                                               WorkItem, Token);
+    auto Queued = InterruptsHost.QueueDeferred(
+        A[1], I.Selection.PDO, Routine, {A[1], I.AssociatedObject}, WorkItem,
+        Token, I.SynchronizationObject);
     if (!Queued)
       return Queued.takeError();
     if (*Queued) {
@@ -398,6 +427,20 @@ llvm::Expected<bool> KernelFramework::advancePnpInterrupts(uint64_t Token,
       continue;
     Transition.CurrentInterrupt = Handle;
     if (Enable && !I.Connection) {
+      if (I.Selection.SpinLock) {
+        uint8_t MaximumIRQL = 0;
+        for (const auto &[PeerHandle, Peer] : InterruptObjects) {
+          if (Peer.ExternalLock != I.ExternalLock ||
+              !Devices.at(Peer.Device).ResourcesActive)
+            continue;
+          auto Info = InterruptsHost.Describe(Peer.Selection);
+          if (!Info)
+            return Info.takeError();
+          if (*Info)
+            MaximumIRQL = std::max(MaximumIRQL, (**Info).IRQL);
+        }
+        I.Selection.SynchronizeIRQL = MaximumIRQL;
+      }
       auto Connection = InterruptsHost.Connect(I.Selection, Handle, I.ISR);
       if (!Connection)
         return Connection.takeError();

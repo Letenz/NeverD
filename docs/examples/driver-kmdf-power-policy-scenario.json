@@ -1,0 +1,110 @@
+{
+  "service_name": "NeverDKmdfPowerA-",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "policy0",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "wake_capabilities": {
+        "s0": true,
+        "sx": true
+      },
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D3",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 3
+          }
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "policy0",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "policy0",
+      "file": 1
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "policy0",
+      "file": 1,
+      "code": "0x222000",
+      "input": "00",
+      "output_size": 24,
+      "power_policy_events": [
+        {
+          "device_id": "policy0",
+          "after_100ns": 0,
+          "action": "idle"
+        },
+        {
+          "device_id": "policy0",
+          "after_100ns": 10017,
+          "action": "wake"
+        }
+      ]
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "policy0",
+      "file": 1,
+      "code": "0x222000",
+      "input": "00",
+      "output_size": 24
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "policy0",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "policy0",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "policy0",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "policy0",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0
+      }
+    }
+  ]
+}

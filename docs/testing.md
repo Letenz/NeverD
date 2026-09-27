@@ -222,9 +222,21 @@ passive callbacks, creation in PrepareHardware, all eleven interrupt table
 slots, enable failure and STOP/restart reconnection through
 `DriverKMDFPnpTests.cpp`. Normal and active-CFG images run at preferred and
 rebased addresses. Missing external images skip explicitly; execution evidence
-remains Linux-only. External framework locks, automatic parent serialization,
-wake interrupts and retained inactive connections are unsupported contracts,
-not simulated successes.
+remains Linux-only. Wake interrupts and retained inactive connections remain unsupported contracts.
+
+`KernelFrameworkLockTests.cpp` covers real thread ownership, waiter references,
+IRQL restoration, APC state, relative timeouts and parent deletion. Dispatcher
+and interrupt tests cover shared external locks and recursive callback locks.
+The original genuine-WDK `driver_kmdf_locks.c` uses optional
+`NEVERD_KMDF_LOCK_FIXTURE` / `NEVERD_KMDF_LOCK_CFG_FIXTURE`;
+`DriverKMDFLockTests.cpp` executes two-thread contention, zero/relative timeouts,
+spin IRQL restoration, scheduled and foreground APC_LEVEL lock waits, and
+unload at preferred/rebased addresses with normal
+and active-CFG images. Missing images skip explicitly. The PnP fixture also
+checks device/queue automatic callback serialization and explicit
+`WdfObjectAcquireLock` / `WdfObjectReleaseLock` across real callback waits.
+
+`KernelFrameworkPowerPolicyTests.cpp` checks arm/disarm continuations, nested idle references and real D0 waits. `DriverKMDFPowerPolicyTests.cpp` uses the genuine `driver_kmdf_pnp.c` fixture with `driver_kmdf_power_policy.h`, via `NEVERD_KMDF_PNP_FIXTURE` / `NEVERD_KMDF_PNP_CFG_FIXTURE`, to cover D3hot idle, S0/Sleeping3 wake, retained and canceled WAIT_WAKE IRPs, arm failure, StopIdle waits, queue-triggered D0 and explicit system resume. The [KMDF power-policy scenario](examples/driver-kmdf-power-policy-scenario.json) uses the same optional fixture. `DriverScenarioPublic.CAPIAndCLIExecuteFrameworkIdleWake` runs its policy events and retained WAIT_WAKE observations through the C API and CLI. Missing images skip explicitly; normal/active-CFG and preferred/rebased execution evidence remains Linux-only.
 
 `DriverDMAScenarioTests.cpp` validates explicit capabilities, logical domains, byte/count/time limits, strict event directions and separate configuration/observations. `KernelPhysicalMemoryTests.cpp` and `BackendBackingTests.cpp` check shared-page allocation boundaries, pins, unchanged CPU permissions, MMIO/reentry exclusion and whole-span failure atomicity; `KernelRequestMDLTests.cpp` checks built descriptor aliases against the same physical identities. `KernelDMATests.cpp`, `KernelDMABridgeTests.cpp` and `SchedulerDMATests.cpp` exercise actual RAM bytes, adapter-bound table calls, inline/queued FIFO ownership, separate callback/map lifetimes, page fragments, wrong directions, release preflight, independent PDO domains and epoch/power failures. The original genuine-WDK `driver_wdm_dma.c` uses `NEVERD_WDM_DMA_FIXTURE` / `NEVERD_WDM_DMA_CFG_FIXTURE`; `DriverWDMDMATests.cpp` and C API/CLI coverage execute real adapter pointers, common/SG storage and separately configured DMA/interrupt events. The shared [driver-dma-scenario.json](examples/driver-dma-scenario.json) requires that fixture's protocol. Missing artifacts skip explicitly; execution evidence is Linux-only and does not establish real host DMA, PCI or a general device engine. `pluginsdk/python/tests/test_driver_dma_integration.py` exercises the existing owned JSON binding with `NEVERD_TEST_LIBNEVERD`, `NEVERD_TEST_WDM_DMA_FIXTURE` and `NEVERD_TEST_WDM_DMA_CFG_FIXTURE`, including bytes, callback order and reported failures.
 

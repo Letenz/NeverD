@@ -249,11 +249,21 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
         [this](uint64_t Address, uint32_t Size, bool IsWrite) {
           return validateGuestAccess(Address, Size, IsWrite);
         },
-        [this](uint64_t Address, uint64_t Size) {
-          return prepareReleaseRange(Address, Size);
+        [this](uint64_t Address, uint64_t Size) -> llvm::Error {
+          auto Lock = FrameworkCallbackLocks.find(Address);
+          if (Lock == FrameworkCallbackLocks.end())
+            return prepareReleaseRange(Address, Size);
+          const uint64_t Storage = Lock->second.Storage;
+          if (auto E = prepareReleaseRanges(
+                  {{Address, Size}, {Storage, dispatcher::EventSize}}))
+            return E;
+          FreedRanges.emplace(Storage, dispatcher::EventSize);
+          FrameworkCallbackLocks.erase(Lock);
+          return llvm::Error::success();
         });
     Framework->configure(DriverObject, RegistryPath, Options.ServiceName);
     configureFrameworkDeviceHost();
+    configureFrameworkLockHost();
     configureFrameworkRequestHost();
     configureFrameworkInterruptHost();
   }
@@ -1340,7 +1350,7 @@ KernelModel::executionProcessContext() const {
        Scheduler.active()->Kind ==
            KernelScheduler::CallbackKind::FrameworkInterruptWorkItem ||
        Scheduler.active()->Kind ==
-           KernelScheduler::CallbackKind::FrameworkPassive ||
+           KernelScheduler::CallbackKind::FrameworkDeferred ||
        Scheduler.active()->Kind == KernelScheduler::CallbackKind::SystemThread))
     return ExecutionProcessContext{Attached ? CurrentUserProcessID
                                             : uint32_t(SystemProcessID),

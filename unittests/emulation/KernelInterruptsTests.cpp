@@ -9,6 +9,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
+#include "unicorn/UnicornBackend.h"
+#include "windows/KernelDispatcher.h"
 #include "windows/KernelInterrupts.h"
 
 #include <array>
@@ -1091,6 +1093,72 @@ TEST_F(KernelInterruptTest,
   EXPECT_EQ(Result.Interrupts[0].OccurredAt100ns, 3u);
   EXPECT_TRUE(Result.Interrupts[0].UndeliveredReason);
   EXPECT_TRUE(Result.Interrupts[0].Handlers.empty());
+}
+TEST_F(KernelInterruptTest, ExternalPassiveLockUsesDispatcherOwnership) {
+  constexpr uint64_t Storage = 0x700000, Thread = 0x51;
+  auto Memory = take(UnicornBackend::create(1024 * 1024));
+  ASSERT_TRUE(Memory);
+  ok(Memory->map(Storage, 4096, Read | Write));
+  KernelScheduler Scheduler;
+  KernelDispatcher Dispatcher(*Memory, Scheduler, [](uint64_t, uint32_t, bool) {
+    return llvm::Error::success();
+  });
+  ok(Dispatcher.configure(PDO, Thread));
+  ok(Dispatcher.initializeWaitLock(Storage));
+  using Owner = KernelDispatcher::WaitLockOwner;
+  const Owner ThreadOwner{Owner::Kind::Thread, Thread};
+  KernelInterrupts::PassiveLockHost Host;
+  Host.Available = [&](uint64_t Address, std::optional<uint64_t> Token) {
+    return Dispatcher.waitLockAvailable(
+        Address, Token ? std::optional<Owner>{{Owner::Kind::Interrupt, *Token}}
+                       : std::nullopt);
+  };
+  Host.Acquire = [&](uint64_t Address, uint64_t Identity, bool Callback) {
+    return Dispatcher.tryAcquireWaitLock(
+        Address,
+        {Callback ? Owner::Kind::Interrupt : Owner::Kind::Thread, Identity});
+  };
+  Host.Release = [&](uint64_t Address, uint64_t Identity, bool Callback) {
+    return Dispatcher.releaseWaitLock(
+        Address,
+        {Callback ? Owner::Kind::Interrupt : Owner::Kind::Thread, Identity});
+  };
+  Model->setPassiveLockHost(std::move(Host));
+  for (unsigned Index = 0; Index != 2; ++Index) {
+    auto Candidate = take(Model->match(Index ? OtherPDO : PDO, 0x91 + Index,
+                                       uint8_t(5 + Index), 1));
+    Candidate.Object = Index ? OtherObject : Object;
+    Candidate.Routine = 0x180005000 + Index * 0x100;
+    Candidate.Version = interrupts::FullySpecified;
+    Candidate.Passive = true;
+    Candidate.SynchronizeIRQL = 0;
+    Candidate.WaitLock = Storage;
+    ok(Model->connect(Candidate));
+  }
+  EXPECT_TRUE(take(Dispatcher.tryAcquireWaitLock(Storage, ThreadOwner)));
+  auto First = take(Model->synchronize(Object, 0x180006000, 0));
+  auto Second = take(Model->synchronize(OtherObject, 0x180006100, 0));
+  EXPECT_FALSE(take(Model->reserveSynchronization(First.Token.ID)));
+  ok(Dispatcher.releaseWaitLock(Storage, ThreadOwner));
+  EXPECT_TRUE(take(Model->reserveSynchronization(First.Token.ID)));
+  EXPECT_FALSE(take(Model->reserveSynchronization(Second.Token.ID)));
+  EXPECT_FALSE(take(Dispatcher.tryAcquireWaitLock(Storage, ThreadOwner)));
+  reject(Model->canReleaseRange(Storage, dispatcher::EventSize), "wait lock");
+  take(Model->beginCall(First.Token.ID, 0, 0));
+  take(Model->finishCall(First.Token.ID, 1, 0, 1));
+  EXPECT_TRUE(take(Model->reserveSynchronization(Second.Token.ID)));
+  take(Model->beginCall(Second.Token.ID, 0, 1));
+  take(Model->finishCall(Second.Token.ID, 1, 0, 2));
+  EXPECT_TRUE(take(Model->tryAcquirePassive(Object, Thread)));
+  EXPECT_FALSE(take(Model->tryAcquirePassive(OtherObject, Thread + 1)));
+  EXPECT_FALSE(take(Dispatcher.tryAcquireWaitLock(
+      Storage, {Owner::Kind::Thread, Thread + 1})));
+  take(Model->release(Object, Thread, 0, 0));
+  EXPECT_TRUE(take(Model->tryAcquirePassive(OtherObject, Thread + 1)));
+  take(Model->release(OtherObject, Thread + 1, 0, 0));
+  ok(Model->disconnect(Object, interrupts::FullySpecified));
+  ok(Model->disconnect(OtherObject, interrupts::FullySpecified));
+  ok(Dispatcher.canReleaseRange(Storage, dispatcher::EventSize));
 }
 } // namespace
 } // namespace neverd::emulation
