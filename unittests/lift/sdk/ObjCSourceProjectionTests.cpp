@@ -1557,9 +1557,21 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverNeedsStableSelf) {
   const auto ReleasedProof =
       proveObjCSynchronizedReceiverCleanup(Image, Function);
   ASSERT_TRUE(ReleasedProof);
-  EXPECT_TRUE(ReleasedProof->GuardStopsAtRelease);
+  EXPECT_EQ(ReleasedProof->UnprotectedReleases, 1U);
   EXPECT_EQ(ReleasedProof->GuardStopCall, 0x3030U);
   EXPECT_EQ(ReleasedProof->ExitCall, 0x3038U);
+  Rewrite(0x3028, 0xaa1603e0U);
+  Rewrite(0x302c, 0x94000000U | ((0x4050 - 0x302c) / 4));
+  Rewrite(0x3030, 0xaa1503e0U);
+  Rewrite(0x3034, 0x94000000U | ((0x4050 - 0x3034) / 4));
+  Rewrite(0x3038, 0xaa1303e0U);
+  Rewrite(0x303c, 0x94000000U | ((0x4030 - 0x303c) / 4));
+  const auto TwoReleases =
+      proveObjCSynchronizedReceiverCleanup(Image, Function);
+  ASSERT_TRUE(TwoReleases);
+  EXPECT_EQ(TwoReleases->UnprotectedReleases, 2U);
+  EXPECT_EQ(TwoReleases->GuardStopCall, 0x302cU);
+  EXPECT_EQ(TwoReleases->ExitCall, 0x303cU);
 }
 
 TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
@@ -1593,4 +1605,20 @@ TEST(ObjCSourceProjection, SynchronizedRegisterReceiverStopsAtNormalExit) {
             Released->find("objc_release(v2);"));
   EXPECT_LT(Released->find("objc_release(v2);"),
             Released->find("neverd_darwin_objc_sync_exit(objc_self);"));
+  const char *TwoReleaseSource =
+      "void neverd_objc_imp_3000(void* objc_self) {\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_enter(objc_self));\n"
+      "    work();\n"
+      "    objc_release(v2);\n"
+      "    objc_release(v3);\n"
+      "    (uint32_t)(neverd_darwin_objc_sync_exit(objc_self));\n"
+      "    objc_release(objc_self);\n"
+      "}\n";
+  const auto Twice = addObjCSynchronizedReceiverCleanup(
+      TwoReleaseSource,
+      ObjCSynchronizedSourceProof{0x301c, 0x302c, 0x303c, 0x3050, 0x4040,
+                                  2});
+  ASSERT_TRUE(Twice);
+  EXPECT_LT(Twice->find("neverd_objc_sync_guard = 0;"),
+            Twice->find("objc_release(v2);"));
 }

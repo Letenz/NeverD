@@ -10,6 +10,7 @@
 
 #include <capstone/arm64.h>
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -23,7 +24,7 @@ struct ObjCSynchronizedSourceProof {
   va_t ExitCall = 0;
   va_t LandingPad = 0;
   va_t ResumeTarget = 0;
-  bool GuardStopsAtRelease = false;
+  uint8_t UnprotectedReleases = 0;
 };
 
 struct ObjCSynchronizedSourceRegion {
@@ -176,19 +177,26 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
   };
   const va_t EnterCall = Region->Begin - 4;
   const va_t Landing = Region->Landing;
-  const bool ExitImmediately =
-      Word(Region->End) == 0xaa1303e0U &&
-      HasCall(Region->End + 4, "_objc_sync_exit");
-  const bool ReleaseBeforeExit =
-      Word(Region->End) == 0xaa0003f4U &&
-      Word(Region->End + 4) == 0xaa1503e0U &&
-      HasCall(Region->End + 8, "_objc_release") &&
-      Word(Region->End + 12) == 0xaa1303e0U &&
-      HasCall(Region->End + 16, "_objc_sync_exit");
-  const va_t ExitCall = Region->End + (ReleaseBeforeExit ? 16 : 4);
+  va_t Normal = Region->End;
+  if (Word(Normal) == 0xaa0003f4U || Word(Normal) == 0xaa0003f5U)
+    Normal += 4; // retain an already computed result across ARC releases
+  va_t FirstRelease = 0;
+  uint8_t UnprotectedReleases = 0;
+  while (UnprotectedReleases < 2 && Normal < Landing - 8 &&
+         (Word(Normal) == 0xaa1403e0U ||
+          Word(Normal) == 0xaa1503e0U ||
+          Word(Normal) == 0xaa1603e0U) &&
+         HasCall(Normal + 4, "_objc_release")) {
+    if (!FirstRelease)
+      FirstRelease = Normal + 4;
+    ++UnprotectedReleases;
+    Normal += 8;
+  }
+  const va_t ExitCall = Normal + 4;
   if (Word(EnterCall - 4) != 0xaa1303e0U ||
       !HasCall(EnterCall, "_objc_sync_enter") ||
-      (!ExitImmediately && !ReleaseBeforeExit) ||
+      Normal >= Landing - 4 || Word(Normal) != 0xaa1303e0U ||
+      !HasCall(ExitCall, "_objc_sync_exit") ||
       Word(Landing) != 0xaa0003f4U ||
       Word(Landing + 4) != 0xaa1303e0U ||
       !HasCall(Landing + 8, "_objc_sync_exit") ||
@@ -237,17 +245,18 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
           cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL))))
       return std::nullopt;
     if (Address > EnterCall &&
-        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP))
+        (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) ||
+         cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET)))
       return std::nullopt;
-    if (ReleaseBeforeExit && Address > EnterCall &&
+    if (UnprotectedReleases && Address > EnterCall &&
         Address < Region->End &&
         HasCall(Address, "_objc_release"))
       return std::nullopt;
   }
   return ObjCSynchronizedSourceProof{
-      EnterCall, ReleaseBeforeExit ? Region->End + 8 : ExitCall, ExitCall,
+      EnterCall, UnprotectedReleases ? FirstRelease : ExitCall, ExitCall,
       Landing, objcSynchronizedBranchTarget(Image, Landing + 16),
-      ReleaseBeforeExit};
+      UnprotectedReleases};
 }
 
 inline std::optional<ObjCSynchronizedSourceProof>
@@ -364,23 +373,30 @@ addObjCSynchronizedReceiverCleanup(llvm::StringRef Source,
   const size_t Dispatch = Source.find(DispatchName, Open);
   const size_t Exit = Source.find(ExitName, Open);
   const bool StopAtExit = Proof.GuardStopCall == Proof.ExitCall;
-  const size_t Release = Proof.GuardStopsAtRelease
+  const size_t Release = Proof.UnprotectedReleases
                              ? Source.find(ReleaseName, Open)
                              : std::string::npos;
   const size_t Stop = StopAtExit ? Exit
-                      : Proof.GuardStopsAtRelease ? Release
+                      : Proof.UnprotectedReleases ? Release
                                                    : Dispatch;
   if (Enter == std::string::npos || Stop == std::string::npos ||
       Exit == std::string::npos ||
       Source.find(EnterName, Enter + 1) != std::string::npos ||
       Source.find(ExitName, Exit + 1) != std::string::npos ||
-      (Proof.GuardStopsAtRelease &&
-       (Release <= Enter || Release >= Exit ||
-        Source.find(ReleaseName, Release + 1) <= Exit)) ||
+      (Proof.UnprotectedReleases &&
+       (Release <= Enter || Release >= Exit)) ||
       (!StopAtExit &&
        Source.find(DispatchName, Dispatch + 1) != std::string::npos) ||
       Enter >= Stop || Stop > Exit)
     return std::nullopt;
+  if (Proof.UnprotectedReleases) {
+    size_t Count = 0;
+    for (size_t At = Release; At != std::string::npos && At < Exit;
+         At = Source.find(ReleaseName, At + 1))
+      ++Count;
+    if (Count != Proof.UnprotectedReleases)
+      return std::nullopt;
+  }
   const size_t EnterEnd = Source.find(';', Enter);
   const size_t StopLine = Source.rfind('\n', Stop);
   const size_t ExitLine = Source.rfind('\n', Exit);
