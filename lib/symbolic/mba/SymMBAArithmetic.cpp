@@ -155,7 +155,8 @@ public:
       Reachable.insert(R.index());
       if (Ctx.width(R) != Width)
         return std::nullopt;
-      if (Ctx.op(R) != SymOp::Add && Ctx.op(R) != SymOp::Mul)
+      if (Ctx.op(R) != SymOp::Add && Ctx.op(R) != SymOp::Mul &&
+          Ctx.op(R) != SymOp::Not)
         continue;
       llvm::ArrayRef<SymRef> Children = Ctx.operands(R);
       if (!Resources.array(Children.size(), sizeof(SymRef)))
@@ -190,6 +191,18 @@ public:
           P = std::move(Next);
           if (P.empty())
             break;
+        }
+      } else if (Ctx.op(R) == SymOp::Not) {
+        // A word complement is exactly -1-X in the modular ring. Only
+        // arithmetic paths reach this node: bitwise consumers remain opaque.
+        if (!Resources.array(Words, sizeof(uint64_t)) ||
+            !add(P, {}, llvm::APInt::getAllOnes(Width)))
+          return std::nullopt;
+        for (const auto &[Key, Coefficient] :
+             Memo.at(Ctx.operand(R, 0).index())) {
+          if (!Resources.array(Words, sizeof(uint64_t)) ||
+              !add(P, Key, -Coefficient))
+            return std::nullopt;
         }
       } else {
         ++Atoms;
@@ -366,11 +379,13 @@ bool mayImproveArithmetic(const SymContext &Ctx, SymRef Root) {
     return llvm::any_of(Ctx.operands(Root),
                         [&](SymRef R) { return Ctx.op(R) == SymOp::Add; });
   for (SymRef Term : Ctx.operands(Root)) {
+    if (Ctx.op(Term) == SymOp::Not)
+      return true;
     if (Ctx.op(Term) != SymOp::Mul)
       continue;
     unsigned NonConstants = 0;
     for (SymRef Factor : Ctx.operands(Term)) {
-      if (Ctx.op(Factor) == SymOp::Add)
+      if (Ctx.op(Factor) == SymOp::Add || Ctx.op(Factor) == SymOp::Not)
         return true;
       if (!Ctx.isConst(Factor) && ++NonConstants == 2)
         return true;
