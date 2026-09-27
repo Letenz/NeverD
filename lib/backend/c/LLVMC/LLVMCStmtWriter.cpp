@@ -1376,10 +1376,14 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   }
 
   if (auto *FCI = llvm::dyn_cast<llvm::FCmpInst>(&Inst)) {
-    auto LHS = valueStr(FCI->getOperand(0));
-    auto RHS = valueStr(FCI->getOperand(1));
     emitIndent(Indent);
-    OS << Name << " = " << cmpStr(FCI->getPredicate(), LHS, RHS, true) << ";\n";
+    OS << Name << " = " << fcmpInlineText(*FCI) << ";\n";
+    return;
+  }
+
+  if (Inst.getOpcode() == llvm::Instruction::FNeg) {
+    emitIndent(Indent);
+    OS << Name << " = " << renderInline(Inst) << ";\n";
     return;
   }
 
@@ -1843,20 +1847,18 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 
   if (Inst.isCast()) {
     auto Src = valueStr(Inst.getOperand(0));
-    if (auto *Cast = llvm::dyn_cast<llvm::BitCastInst>(&Inst);
-        Cast &&
-        ((Cast->getSrcTy()->isIntegerTy(80) &&
-          Cast->getDestTy()->isX86_FP80Ty()) ||
-         (Cast->getSrcTy()->isX86_FP80Ty() &&
-          Cast->getDestTy()->isIntegerTy(80)))) {
-      const std::string Source = freshVar("x87_source");
+    if (isFloatingPointBitcast(Inst)) {
+      const auto *Cast = llvm::cast<llvm::BitCastInst>(&Inst);
+      const unsigned Bytes = Cast->getSrcTy()->getPrimitiveSizeInBits() / 8;
+      const std::string Source = freshVar("bitcast_source");
       emitIndent(Indent);
       OS << Name << " = 0;\n";
       emitIndent(Indent);
       OS << "{ " << typeToCLLVM(Cast->getSrcTy()) << " " << Source << " = "
          << Src << ";\n";
       emitIndent(Indent + 1);
-      OS << "__builtin_memcpy(&" << Name << ", &" << Source << ", 10);\n";
+      OS << "__builtin_memcpy(&" << Name << ", &" << Source << ", " << Bytes
+         << ");\n";
       emitIndent(Indent);
       OS << "}\n";
       return;
@@ -3030,6 +3032,22 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
     return;
   }
 
+  if (auto *Extract = llvm::dyn_cast<llvm::ExtractElementInst>(&Inst)) {
+    emitIndent(Indent);
+    OS << Name << " = (" << valueStr(Extract->getVectorOperand()) << ")["
+       << valueStr(Extract->getIndexOperand()) << "];\n";
+    return;
+  }
+
+  if (auto *Insert = llvm::dyn_cast<llvm::InsertElementInst>(&Inst)) {
+    emitIndent(Indent);
+    OS << Name << " = " << valueStr(Insert->getOperand(0)) << ";\n";
+    emitIndent(Indent);
+    OS << Name << "[" << valueStr(Insert->getOperand(2))
+       << "] = " << valueStr(Insert->getOperand(1)) << ";\n";
+    return;
+  }
+
   if (auto *EV = llvm::dyn_cast<llvm::ExtractValueInst>(&Inst)) {
     auto *Agg = EV->getAggregateOperand();
     unsigned Idx = EV->getIndices()[0];
@@ -3163,6 +3181,76 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::experimental_constrained_sitofp &&
+      Call.getType()->isX86_FP80Ty()) {
+    if (Call.arg_size() != 3)
+      throw std::runtime_error("invalid constrained x87 integer conversion");
+    auto MetadataText = [&](unsigned Index) -> llvm::StringRef {
+      const auto *Value =
+          llvm::dyn_cast<llvm::MetadataAsValue>(Call.getArgOperand(Index));
+      const auto *String =
+          Value ? llvm::dyn_cast<llvm::MDString>(Value->getMetadata())
+                : nullptr;
+      return String ? String->getString() : llvm::StringRef();
+    };
+    const auto *Input = Call.getArgOperand(0);
+    if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+        (!Input->getType()->isIntegerTy(32) &&
+         !Input->getType()->isIntegerTy(64)) ||
+        MetadataText(1) != "round.dynamic" ||
+        (MetadataText(2) != "fpexcept.strict" &&
+         MetadataText(2) != "fpexcept.ignore"))
+      throw std::runtime_error(
+          "unsupported constrained x87 integer conversion");
+    const unsigned Bits = Input->getType()->getIntegerBitWidth();
+    const std::string IntegerType = "int" + std::to_string(Bits) + "_t";
+    const std::string Source = freshVar("x87_integer");
+    emitIndent(Indent);
+    OS << "{ " << IntegerType << " " << Source << " = (" << IntegerType << ")("
+       << valueStr(Input) << ");\n";
+    emitIndent(Indent + 1);
+    OS << "__asm__ volatile(\"" << (Bits == 32 ? "fildl" : "fildq")
+       << " %1\" : \"=t\"(" << getName(&Call) << ") : \"m\"(" << Source
+       << "));\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
+  if (IID == llvm::Intrinsic::sqrt && Call.getType()->isX86_FP80Ty()) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      throw std::runtime_error("x87 square root requires an x86 C projection");
+    emitIndent(Indent);
+    OS << "__asm__ volatile(\"fsqrt\" : \"=t\"(" << getName(&Call)
+       << ") : \"0\"(" << valueStr(Call.getArgOperand(0)) << "));\n";
+    return true;
+  }
+  if (IID == llvm::Intrinsic::fptosi_sat &&
+      Call.getArgOperand(0)->getType()->isX86_FP80Ty()) {
+    if (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64))
+      throw std::runtime_error("unsupported saturating x87 integer width");
+    const unsigned Bits = Call.getType()->getIntegerBitWidth();
+    const std::string Source = freshVar("fp_source");
+    const std::string Bound = "0x1p" + std::to_string(Bits - 1) + "L";
+    const std::string Suffix = Bits == 64 ? "ULL" : "U";
+    const std::string Minimum =
+        "0x" + llvm::toString(llvm::APInt::getSignedMinValue(Bits), 16, false) +
+        Suffix;
+    const std::string Maximum =
+        "0x" + llvm::toString(llvm::APInt::getSignedMaxValue(Bits), 16, false) +
+        Suffix;
+    const std::string Name = getName(&Call);
+    emitIndent(Indent);
+    OS << "{ long double " << Source << " = " << valueStr(Call.getArgOperand(0))
+       << ";\n";
+    emitIndent(Indent + 1);
+    OS << Name << " = __builtin_isnan(" << Source << ") ? 0 : " << Source
+       << " >= " << Bound << " ? " << Maximum << " : " << Source << " < -"
+       << Bound << " ? " << Minimum << " : (" << typeToCLLVM(Call.getType())
+       << ")(int" << Bits << "_t)" << Source << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::sideeffect || IID == llvm::Intrinsic::donothing ||
       IID == llvm::Intrinsic::seh_try_begin ||
       IID == llvm::Intrinsic::seh_try_end ||
@@ -3310,6 +3398,21 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
 
   if (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) {
     const llvm::StringRef Constraints = IA->getConstraintString();
+    if (AsmStr == "frndint" && Call.getType()->isX86_FP80Ty() &&
+        Call.arg_size() == 1 &&
+        Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&
+        Constraints == "=&{st},0,~{dirflag},~{fpsr},~{flags}") {
+      const std::string Result =
+          ResultLive ? Name : freshVar("x87_unused_integer");
+      if (!ResultLive) {
+        emitIndent(Indent);
+        OS << "long double " << Result << ";\n";
+      }
+      emitIndent(Indent);
+      OS << "__asm__ volatile(\"frndint\" : \"=&t\"(" << Result << ") : \"0\"("
+         << valueStr(Call.getArgOperand(0)) << ") : \"cc\");\n";
+      return true;
+    }
     auto X87Operand = [&](unsigned Index) -> std::string {
       const llvm::Value *Arg = Call.getArgOperand(Index);
       if (const auto *Cast = llvm::dyn_cast<llvm::BitCastInst>(Arg);

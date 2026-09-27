@@ -752,6 +752,11 @@ llvm::Error UnicornBackend::setReg(X64Register Register, uint64_t Value) {
                "write guest register");
 }
 
+llvm::Error UnicornBackend::setGSBase(uint64_t Address) {
+  return check(uc_reg_write(State->Engine, UC_X86_REG_GS_BASE, &Address),
+               "write guest GS base");
+}
+
 llvm::Expected<UnicornBackend::XmmValue>
 UnicornBackend::xmm(unsigned Register) {
   if (Register > UC_X86_REG_XMM15 - UC_X86_REG_XMM0)

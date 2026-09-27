@@ -44,8 +44,7 @@ llvm::APInt SymContext::eval(SymRef R,
   return Plan.eval(VarVals);
 }
 
-uint64_t SymContext::evalU64(SymRef R,
-                             llvm::ArrayRef<uint64_t> VarVals) const {
+uint64_t SymContext::evalU64(SymRef R, llvm::ArrayRef<uint64_t> VarVals) const {
   SymEvalPlan Plan(*this, R);
   return Plan.evalU64(VarVals);
 }
@@ -323,9 +322,9 @@ llvm::APInt evalNodeAP(const SymContext &Ctx, SymRef R,
       return llvm::APInt(W, 0);
     return Args[0].srem(Args[1]);
   case SymOp::Rol:
-    return Args[0].rotl(Args[1].urem(llvm::APInt(W, W)).getZExtValue());
+    return Args[0].rotl(Args[1].urem(W));
   case SymOp::Ror:
-    return Args[0].rotr(Args[1].urem(llvm::APInt(W, W)).getZExtValue());
+    return Args[0].rotr(Args[1].urem(W));
   case SymOp::Extract:
     return Args[0].extractBits(W, static_cast<uint32_t>(N.Aux));
   case SymOp::Concat: {

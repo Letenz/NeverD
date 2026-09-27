@@ -669,27 +669,41 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
   for (const auto &S : F.Body)
     if (!InertLabel(S))
       Body.push_back(&S);
+  const bool HasSeparateLoad = Body.size() == 3;
   if (F.Params.size() != 3 || !F.ReturnType || F.ReturnType->Size != 8 ||
       (F.ReturnType->Kind != NdTypeKind::Int &&
        F.ReturnType->Kind != NdTypeKind::Ptr) ||
-      Body.size() != 3 || Body[0]->Kind != StmtKind::Assign || !Body[0]->Dst ||
-      !Body[0]->Val ||
-      (Body[1]->Kind != StmtKind::If &&
-       Body[1]->Kind != StmtKind::IfElse) ||
-      !Body[1]->Cond ||
-      Body[2]->Kind != StmtKind::Return || !Body[2]->RetVal)
+      (Body.size() != 2 && !HasSeparateLoad))
+    return std::nullopt;
+  const HighStmt *Assignment = HasSeparateLoad ? Body[0] : nullptr;
+  const HighStmt &Conditional = *Body[HasSeparateLoad ? 1 : 0];
+  const HighStmt &FinalReturn = *Body.back();
+  if ((Assignment &&
+       (Assignment->Kind != StmtKind::Assign || !Assignment->Dst ||
+        !Assignment->Val)) ||
+      (Conditional.Kind != StmtKind::If &&
+       Conditional.Kind != StmtKind::IfElse) ||
+      !Conditional.Cond || FinalReturn.Kind != StmtKind::Return ||
+      !FinalReturn.RetVal)
     return std::nullopt;
   const bool BranchReturn =
-      Body[1]->ElseBody.empty() && Body[1]->Body.size() == 2 &&
-      Body[1]->Body[0].Kind == StmtKind::Call &&
-      Body[1]->Body[0].CallExpr &&
-      Body[1]->Body[1].Kind == StmtKind::Return &&
-      Body[1]->Body[1].RetVal;
+      Assignment && Conditional.ElseBody.empty() &&
+      Conditional.Body.size() == 2 &&
+      Conditional.Body[0].Kind == StmtKind::Call &&
+      Conditional.Body[0].CallExpr &&
+      Conditional.Body[1].Kind == StmtKind::Return &&
+      Conditional.Body[1].RetVal;
   const bool SharedReturn =
-      Body[1]->Body.empty() && Body[1]->ElseBody.size() == 1 &&
-      Body[1]->ElseBody[0].Kind == StmtKind::Call &&
-      Body[1]->ElseBody[0].CallExpr;
-  if (!BranchReturn && !SharedReturn)
+      Assignment && Conditional.Body.empty() &&
+      Conditional.ElseBody.size() == 1 &&
+      Conditional.ElseBody[0].Kind == StmtKind::Call &&
+      Conditional.ElseBody[0].CallExpr;
+  const bool InlinedLoad =
+      !Assignment && Conditional.ElseBody.empty() &&
+      Conditional.Body.size() == 1 &&
+      Conditional.Body[0].Kind == StmtKind::Call &&
+      Conditional.Body[0].CallExpr;
+  if (!BranchReturn && !SharedReturn && !InlinedLoad)
     return std::nullopt;
   for (const auto &Parameter : F.Params)
     if (!Parameter.Type || Parameter.Type->Size != 8 ||
@@ -706,34 +720,25 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
       Value = Value->Operands.front();
     return Value;
   };
-  const auto &Assignment = *Body[0];
-  if ((Assignment.Dst->Kind != ExprKind::Var &&
-       Assignment.Dst->Kind != ExprKind::Phi) ||
-      !Assignment.Dst->Operands.empty() || !Assignment.Dst->Type ||
-      Assignment.Dst->Type->Size != 8 ||
-      Assignment.Dst->IntrinsicId != Intrinsic::None ||
-      !Assignment.Dst->IntrinsicOutputs.empty() ||
-      Assignment.Dst->MemoryOrdering != NdMemoryOrdering::None ||
-      Assignment.Dst->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+  if (Assignment &&
+      ((Assignment->Dst->Kind != ExprKind::Var &&
+        Assignment->Dst->Kind != ExprKind::Phi) ||
+       !Assignment->Dst->Operands.empty() || !Assignment->Dst->Type ||
+       Assignment->Dst->Type->Size != 8 ||
+       Assignment->Dst->IntrinsicId != Intrinsic::None ||
+       !Assignment->Dst->IntrinsicOutputs.empty() ||
+       Assignment->Dst->MemoryOrdering != NdMemoryOrdering::None ||
+       Assignment->Dst->MemoryAddressSpace !=
+           NdMemoryAddressSpace::Default))
     return std::nullopt;
-  const auto Loaded = Plain(Assignment.Val);
-  if (!Loaded || Loaded->Kind != ExprKind::Load ||
-      Loaded->Operands.size() != 1 || !Loaded->Type ||
-      Loaded->Type->Kind != NdTypeKind::Int || Loaded->Type->Size != 8 ||
-      Loaded->MemoryOrdering != NdMemoryOrdering::None ||
-      Loaded->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-      Loaded->IntrinsicId != Intrinsic::None ||
-      !Loaded->IntrinsicOutputs.empty())
-    return std::nullopt;
-  const auto Predicate =
-      objc_binding_detail::constantAddress(*Loaded->Operands.front());
+  ExprPtr Loaded = Assignment ? Plain(Assignment->Val) : nullptr;
 
   const auto ResolveAssigned = [&](ExprPtr Value) {
     Value = Plain(std::move(Value));
-    if (Value &&
+    if (Assignment && Value &&
         (Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) &&
         highSourceLocalIdentity(Value->Var) ==
-            highSourceLocalIdentity(Assignment.Dst->Var))
+            highSourceLocalIdentity(Assignment->Dst->Var))
       Value = Loaded;
     return Plain(std::move(Value));
   };
@@ -741,7 +746,7 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
     const auto E = Plain(Value);
     return E && E->Kind == ExprKind::Const && E->ConstVal == Expected;
   };
-  auto Condition = Plain(Body[1]->Cond);
+  auto Condition = Plain(Conditional.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
       Condition->Op !=
           (SharedReturn ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL) ||
@@ -760,11 +765,23 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
     AddedValue = ResolveAssigned(Added->Operands[1]);
   else if (IsConstant(Added->Operands[1], 1))
     AddedValue = ResolveAssigned(Added->Operands[0]);
-  if (!AddedValue || AddedValue.get() != Loaded.get())
+  if (!AddedValue || (Assignment && AddedValue.get() != Loaded.get()))
     return std::nullopt;
+  if (!Assignment)
+    Loaded = AddedValue;
+  if (!Loaded || Loaded->Kind != ExprKind::Load ||
+      Loaded->Operands.size() != 1 || !Loaded->Type ||
+      Loaded->Type->Kind != NdTypeKind::Int || Loaded->Type->Size != 8 ||
+      Loaded->MemoryOrdering != NdMemoryOrdering::None ||
+      Loaded->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Loaded->IntrinsicId != Intrinsic::None ||
+      !Loaded->IntrinsicOutputs.empty())
+    return std::nullopt;
+  const auto Predicate =
+      objc_binding_detail::constantAddress(*Loaded->Operands.front());
 
-  const auto &Once = *(SharedReturn ? Body[1]->ElseBody[0].CallExpr
-                                   : Body[1]->Body[0].CallExpr);
+  const auto &Once = *(SharedReturn ? Conditional.ElseBody[0].CallExpr
+                                   : Conditional.Body[0].CallExpr);
   if (!onceCall(Once, Image))
     return std::nullopt;
   const auto OncePredicate =
@@ -773,10 +790,10 @@ addressorContract(const HighFunc &F, const BinaryImage &Image) {
       objc_binding_detail::constantAddress(*Once.Operands[1]);
   const auto Context = parameter(Once.Operands[2]);
   const auto FirstStorage = objc_binding_detail::constantAddress(
-      *ResolveAssigned(SharedReturn ? Body[2]->RetVal
-                                    : Body[1]->Body[1].RetVal));
+      *ResolveAssigned(BranchReturn ? Conditional.Body[1].RetVal
+                                    : FinalReturn.RetVal));
   const auto SecondStorage =
-      objc_binding_detail::constantAddress(*ResolveAssigned(Body[2]->RetVal));
+      objc_binding_detail::constantAddress(*ResolveAssigned(FinalReturn.RetVal));
   if (!Predicate || !OncePredicate || *Predicate != *OncePredicate ||
       !Initializer || !Context || *Context != 2 || !FirstStorage ||
       !SecondStorage || *FirstStorage != *SecondStorage ||
@@ -827,9 +844,15 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
       return std::nullopt;
     Method = &Candidate;
   }
-  const bool SeparateRetain = F.Body.size() == 7;
+  const bool InlinedPredicate =
+      !F.Body.empty() &&
+      (F.Body.front().Kind == StmtKind::If ||
+       F.Body.front().Kind == StmtKind::IfElse);
+  const size_t Offset = InlinedPredicate ? 0 : 1;
+  const bool SeparateRetain = F.Body.size() == Offset + 6;
   if (!Method || F.Params.size() != 3 || !F.ReturnType ||
-      F.ReturnType->Size != 8 || (F.Body.size() != 6 && !SeparateRetain))
+      F.ReturnType->Size != 8 ||
+      (F.Body.size() != Offset + 5 && !SeparateRetain))
     return std::nullopt;
   const auto Parameters = sourceABIParameters(*Method->TypeHint);
   if (Parameters.size() != 2 || !Method->TypeHint->ReturnType ||
@@ -895,13 +918,14 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     return E && E->Kind == ExprKind::Const && E->ConstVal == Expected;
   };
 
-  const auto *PredicateAssignment = Assignment(0);
-  const auto *StorageAssignment = Assignment(3);
-  const auto *RetainAssignment = Assignment(4);
-  const auto *ResultAssignment = Assignment(SeparateRetain ? 5 : 4);
-  const auto &Branch = F.Body[1];
-  const auto &Label = F.Body[2];
-  const auto &Return = F.Body[SeparateRetain ? 6 : 5];
+  const auto *PredicateAssignment = InlinedPredicate ? nullptr : Assignment(0);
+  const auto *StorageAssignment = Assignment(Offset + 2);
+  const auto *RetainAssignment = Assignment(Offset + 3);
+  const auto *ResultAssignment =
+      Assignment(Offset + (SeparateRetain ? 4 : 3));
+  const auto &Branch = F.Body[Offset];
+  const auto &Label = F.Body[Offset + 1];
+  const auto &Return = F.Body[Offset + (SeparateRetain ? 5 : 4)];
   const size_t OnceIndex = Branch.Body.size() == 3 ? 1 : 0;
   const bool BranchGoto =
       Branch.ElseBody.empty() && Branch.Body.size() == OnceIndex + 2 &&
@@ -913,6 +937,10 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
       Branch.Body.empty() && Branch.ElseBody.size() == 1 &&
       Branch.ElseBody[0].Kind == StmtKind::Call &&
       Branch.ElseBody[0].CallExpr;
+  const bool InlinedBranchCall =
+      InlinedPredicate && Branch.Kind == StmtKind::If &&
+      Branch.ElseBody.empty() && Branch.Body.size() == 1 &&
+      Branch.Body[0].Kind == StmtKind::Call && Branch.Body[0].CallExpr;
   if (OnceIndex) {
     const auto &EntryLabel = Branch.Body.front();
     bool HasExpression = false;
@@ -939,21 +967,22 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
            Label.MemoryOrdering == NdMemoryOrdering::None &&
            Label.MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
-  if (!PredicateAssignment || !StorageAssignment || !RetainAssignment ||
+  if ((!InlinedPredicate && !PredicateAssignment) || !StorageAssignment ||
+      !RetainAssignment ||
       !ResultAssignment ||
       (Branch.Kind != StmtKind::If &&
        !(SharedReturn && Branch.Kind == StmtKind::IfElse)) ||
       !Branch.Cond ||
-      (!BranchGoto && !SharedReturn) || !InertContinuationLabel() ||
+      (!BranchGoto && !SharedReturn && !InlinedBranchCall) ||
+      !InertContinuationLabel() ||
       (BranchGoto &&
        Label.Addr != Branch.Body[OnceIndex + 1].GotoTarget) ||
       Return.Kind != StmtKind::Return || !Return.RetVal ||
       !SameLocal(Return.RetVal, ResultAssignment->Dst))
     return std::nullopt;
 
-  const auto Predicate = LoadAddress(PredicateAssignment->Val);
   const auto Storage = LoadAddress(StorageAssignment->Val);
-  if (!Predicate || !Storage || *Predicate == *Storage)
+  if (!Storage)
     return std::nullopt;
   auto Condition = Plain(Branch.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
@@ -974,7 +1003,13 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     Loaded = Plain(Added->Operands[1]);
   else if (IsConstant(Added->Operands[1], 1))
     Loaded = Plain(Added->Operands[0]);
-  if (!SameLocal(Loaded, PredicateAssignment->Dst))
+  if (InlinedPredicate ? !LoadAddress(Loaded)
+                       : !SameLocal(Loaded, PredicateAssignment->Dst))
+    return std::nullopt;
+  const auto Predicate =
+      InlinedPredicate ? LoadAddress(Loaded)
+                       : LoadAddress(PredicateAssignment->Val);
+  if (!Predicate || *Predicate == *Storage)
     return std::nullopt;
 
   const auto &Once = *(SharedReturn ? Branch.ElseBody[0].CallExpr

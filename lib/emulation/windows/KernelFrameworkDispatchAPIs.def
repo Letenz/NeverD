@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 NEVERD_FRAMEWORK_DISPATCH_API(WdfObjectDereferenceActual)
+NEVERD_FRAMEWORK_DISPATCH_API(WdfDeviceConfigureRequestDispatching)
 NEVERD_FRAMEWORK_DISPATCH_API(WdfRequestComplete)
 NEVERD_FRAMEWORK_DISPATCH_API(WdfRequestCompleteWithInformation)
 NEVERD_FRAMEWORK_DISPATCH_API(WdfRequestRetrieveInputBuffer)

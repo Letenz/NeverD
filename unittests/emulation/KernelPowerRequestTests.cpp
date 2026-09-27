@@ -262,14 +262,15 @@ TEST_F(KernelPowerRequest, InvalidPacketAndNotificationInputsPreserveState) {
   EXPECT_EQ(Result.Requests.back().IRP, 0u);
   auto WrongState = input();
   WrongState.Power->State = 2;
-  reject(Model->beginRequest(WrongState), "D0 or D3");
+  reject(Model->beginRequest(WrongState), "unsupported by this profile");
   EXPECT_EQ(Result.Requests.back().IRP, 0u);
   auto WithFile = input();
   WithFile.File = 9;
   reject(Model->beginRequest(WithFile), "without file");
   EXPECT_EQ(Result.Requests.back().IRP, 0u);
   reject(Model->call("PoSetPowerState", {FDO, 0, 1}), "DevicePowerState");
-  reject(Model->call("PoSetPowerState", {FDO, 1, 2}), "D0 and D3");
+  reject(Model->call("PoSetPowerState", {FDO, 1, 2}),
+         "unsupported by this profile");
   reject(Model->call("PoSetPowerState", {PDO, 1, 1}),
          "driver's live PnP device");
   const auto Control = create();
@@ -280,6 +281,55 @@ TEST_F(KernelPowerRequest, InvalidPacketAndNotificationInputsPreserveState) {
   const auto Valid = take(Model->beginRequest(input()));
   forwardAndFinish(Valid.IRP);
   EXPECT_EQ(Result.PnpDevices[0].DevicePower, DevicePowerState::D0);
+}
+
+TEST_F(KernelPowerRequest, D2PacketsPreserveStateAndRequireRealD0BeforeD3) {
+  initialize();
+  auto Input = input();
+  Input.Power->Minor = DevicePowerRequest::Set;
+  Input.Power->State = uint32_t(DevicePowerState::D2);
+  const auto Down = take(Model->beginRequest(Input));
+  const auto Stack = get(Down.IRP + IRPStackPointerOffset);
+  EXPECT_EQ(get(Stack + StackPowerStateOffset, sizeof(uint32_t)),
+            uint32_t(DevicePowerState::D2));
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D0);
+  forwardAndFinish(Down.IRP);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D2);
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D2);
+  EXPECT_EQ(reported(FDO), DevicePowerState::D3);
+
+  Input.Power->State = uint32_t(DevicePowerState::D3);
+  reject(Model->beginRequest(Input), "intermediate D0");
+  EXPECT_EQ(Result.Requests.back().IRP, 0u);
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D2);
+  Input.Power->State = uint32_t(DevicePowerState::D0);
+  const auto Up = take(Model->beginRequest(Input));
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D2);
+  forwardAndFinish(Up.IRP);
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D0);
+  Input.Power->State = uint32_t(DevicePowerState::D3);
+  forwardAndFinish(take(Model->beginRequest(Input)).IRP);
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D3);
+}
+
+TEST_F(KernelPowerRequest, D2NotificationsKeepIndependentDeviceHistories) {
+  initialize(DevicePowerState::D2, false, true);
+  EXPECT_EQ(reported(FDO), DevicePowerState::D2);
+  EXPECT_EQ(reported(Upper), DevicePowerState::D2);
+  EXPECT_EQ(call("PoSetPowerState", {FDO, uint32_t(DriverPowerType::Device),
+                                     uint32_t(DevicePowerState::D0)}),
+            uint32_t(DevicePowerState::D2));
+  EXPECT_EQ(call("PoSetPowerState", {Upper, uint32_t(DriverPowerType::Device),
+                                     uint32_t(DevicePowerState::D3)}),
+            uint32_t(DevicePowerState::D2));
+  EXPECT_EQ(call("PoSetPowerState", {FDO, uint32_t(DriverPowerType::Device),
+                                     uint32_t(DevicePowerState::D2)}),
+            uint32_t(DevicePowerState::D0));
+  EXPECT_EQ(reported(FDO), DevicePowerState::D2);
+  EXPECT_EQ(reported(Upper), DevicePowerState::D3);
+  EXPECT_EQ(Result.PnpDevices.front().DevicePower, DevicePowerState::D0);
+  EXPECT_TRUE(Result.Requests.empty());
 }
 
 TEST_F(KernelPowerRequest, VistaStartNextHasNoHandshakeOrCompletionSideEffect) {
@@ -301,7 +351,7 @@ TEST_F(KernelPowerRequest, VistaStartNextHasNoHandshakeOrCompletionSideEffect) {
   forwardAndFinish(Next.IRP);
 }
 
-TEST_F(KernelPowerRequest, DpcMayNotifyD0ButCannotNotifyD3) {
+TEST_F(KernelPowerRequest, DpcMayNotifyD0ButCannotNotifyLowPower) {
   initialize();
   const uint64_t Dpc = Scratch + 0x200;
   call("KeInitializeDpc", {Dpc, Entry, 0});
@@ -310,7 +360,9 @@ TEST_F(KernelPowerRequest, DpcMayNotifyD0ButCannotNotifyD3) {
   ASSERT_TRUE(Scheduled);
   ASSERT_EQ(Scheduled->IRQL, scheduler::DispatchLevel);
   EXPECT_EQ(call("PoSetPowerState", {FDO, 1, 1}), 4u);
-  reject(Model->call("PoSetPowerState", {FDO, 1, 4}), "APC_LEVEL");
+  for (auto Target : {DevicePowerState::D2, DevicePowerState::D3})
+    reject(Model->call("PoSetPowerState", {FDO, 1, uint32_t(Target)}),
+           "APC_LEVEL");
   EXPECT_EQ(reported(FDO), DevicePowerState::D0);
   EXPECT_EQ(Result.PnpDevices[0].DevicePower, DevicePowerState::D0);
   ok(Model->finishScheduled(Scheduled->ID));

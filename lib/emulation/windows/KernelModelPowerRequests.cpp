@@ -26,9 +26,34 @@ llvm::Error powerError(const llvm::Twine &Message) {
 }
 } // namespace
 
-llvm::Expected<KernelModel::Invocation>
-KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
-                                 std::optional<RequestedPower> Child) {
+llvm::Expected<bool>
+KernelModel::canAllocatePowerRequest(const PowerRequestPlan &Plan,
+                                     bool Callback) const {
+  const uint64_t PacketSize = IRPSize + Plan.StackCount * StackSize;
+  const uint64_t Packet =
+      (NextAllocation + PoolAlignment - 1) & ~(PoolAlignment - 1);
+  if (Packet > AllocationEnd || PacketSize > AllocationEnd - Packet)
+    return false;
+  uint64_t End = Packet + PacketSize;
+  if (Callback) {
+    const uint64_t Block = (End + PoolAlignment - 1) & ~(PoolAlignment - 1);
+    if (Block > AllocationEnd || PowerStatusBlockSize > AllocationEnd - Block)
+      return false;
+    End = Block + PowerStatusBlockSize;
+  }
+  auto Writable = Memory.canAccess(Packet, End - Packet, Read | Write);
+  if (!Writable)
+    return Writable.takeError();
+  if (!*Writable)
+    return powerError(
+        "power packet allocation requires writable kernel memory");
+  return true;
+}
+
+llvm::Expected<KernelModel::PowerRequestPlan>
+KernelModel::planPowerRequest(const DriverRequest &Input, size_t Index,
+                              const std::optional<RequestedPower> &Child,
+                              PowerRequestDelivery Delivery) const {
   if (Input.Kind != DriverRequestKind::Power || !Input.Power || Input.Pnp ||
       Input.DeviceID.empty() || !Input.Device.empty() || Input.File ||
       Input.ControlCode || !Input.Input.empty() || !Input.DirectInput.empty() ||
@@ -38,16 +63,41 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   if ((Child && Index != Result.Requests.size()) ||
       (!Child && Index >= Result.Requests.size()))
     return powerError("power request lost its independent result identity");
-  if (Unloading || Unloaded || CurrentIRQL != scheduler::PassiveLevel)
-    return powerError("pageable power dispatch requires PASSIVE_LEVEL before "
-                      "unload");
+  if (Unloading || Unloaded)
+    return powerError("power preparation requires a live driver before unload");
   const auto &Operation = *Input.Power;
+  if (Delivery == PowerRequestDelivery::Queued) {
+    if (!Child || Child->Origin != DriverRequestOrigin::PoRequestPowerIrp ||
+        Operation.Type != DriverPowerType::Device ||
+        (Operation.Minor != DevicePowerRequest::Query &&
+         Operation.Minor != DevicePowerRequest::Set) ||
+        CurrentIRQL <= scheduler::PassiveLevel ||
+        CurrentIRQL > scheduler::DispatchLevel)
+      return powerError("queued power preparation requires elevated native "
+                        "device Query/Set");
+  } else if (CurrentIRQL != scheduler::PassiveLevel) {
+    return powerError("pageable power dispatch requires PASSIVE_LEVEL");
+  }
+  PowerRequestPlan Plan;
   const bool WaitWake =
-      Child && Child->Origin == DriverRequestOrigin::FrameworkWaitWake &&
-      Operation.Minor == DevicePowerRequest::WaitWake;
-  if (!WaitWake)
-    if (auto E = validateDriverPowerOperation(Operation, bool(Child)))
-      return E;
+      Child && Operation.Minor == DevicePowerRequest::WaitWake &&
+      (Child->Origin == DriverRequestOrigin::FrameworkWaitWake ||
+       Child->Origin == DriverRequestOrigin::PoRequestPowerIrp);
+  if (WaitWake) {
+    if (Operation.Type != DriverPowerType::System)
+      return powerError("WAIT_WAKE requires a system power state");
+    switch (SystemPowerState(Operation.State)) {
+#define NEVERD_DRIVER_POWER_SYSTEM_STATE(Name) case SystemPowerState::Name:
+#include "neverd/emulation/DriverPower.def"
+#undef NEVERD_DRIVER_POWER_SYSTEM_STATE
+      break;
+    default:
+      return powerError(
+          "WAIT_WAKE system state is unsupported by this profile");
+    }
+  } else if (auto E = validateDriverPowerOperation(Operation, bool(Child))) {
+    return E;
+  }
   const auto Found = PnpDevices.find(Input.DeviceID);
   if (Found == PnpDevices.end() || !Found->second.AddDeviceStatus ||
       (*Found->second.AddDeviceStatus & profile::NTStatusFailureMask) ||
@@ -57,6 +107,16 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   auto State = Lifecycle.snapshot(PDO);
   if (!State)
     return State.takeError();
+  if (WaitWake && Child->Origin == DriverRequestOrigin::PoRequestPowerIrp) {
+    if (State->DevicePower != DevicePowerState::D0 ||
+        State->DevicePowerOperation || State->SystemPowerOperation)
+      return powerError("WAIT_WAKE issuance requires stable D0 without another "
+                        "power operation");
+    auto Epoch = deviceStartEpoch(PDO, true);
+    if (!Epoch)
+      return Epoch.takeError();
+    Plan.StartEpoch = *Epoch;
+  }
   auto Top = topAttachedDevice(PDO);
   if (!Top)
     return Top.takeError();
@@ -70,6 +130,8 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   for (uint64_t Device : *Route) {
     if (Devices.at(Device).DeletePending)
       return powerError("power route requires live devices");
+    if (Devices.at(Device).InternalReferences == UINT64_MAX)
+      return powerError("power route reference count is exhausted");
     auto Flags = Memory.readInteger(Device + DeviceFlagsOffset, 4);
     if (!Flags)
       return Flags.takeError();
@@ -80,13 +142,14 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   // This is consistency with a known transaction, not an inferred parent or
   // lifetime link. The FIFO still owns the child's independent packet facts.
   if (Child && Operation.Type == DriverPowerType::Device &&
-      Operation.State == uint32_t(DevicePowerState::D3)) {
+      Operation.State != uint32_t(DevicePowerState::D0)) {
     bool ActiveSystem = false;
     for (const auto &[IRP, Request] : Requests) {
       (void)IRP;
       if (Request.PnpDevice == PDO && !Request.Completed &&
           Request.PowerOperation &&
-          Request.PowerOperation->Type == DriverPowerType::System) {
+          Request.PowerOperation->Type == DriverPowerType::System &&
+          Request.PowerOperation->Minor != DevicePowerRequest::WaitWake) {
         ActiveSystem = true;
         if (Request.PowerOperation->Action != Operation.Action)
           return powerError("device child action differs from the active "
@@ -112,25 +175,54 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   const bool FrameworkPower = Framework && FrameworkDevices.count(*Top);
   if (FrameworkPower &&
       ((Child && Child->Origin != DriverRequestOrigin::FrameworkPowerPolicy &&
-        !WaitWake) ||
+        Child->Origin != DriverRequestOrigin::FrameworkWaitWake) ||
        Route->size() != 2 || Route->back() != PDO))
     return powerError("framework power requires an explicit FDO/PDO request");
   if (*Top != PDO && !PC && !FrameworkPower)
     return powerError("attached driver did not register DispatchPower");
-  auto Packet = allocate(IRPSize + *Count * StackSize);
+  if (!WaitWake) {
+    auto Valid =
+        Operation.Type == DriverPowerType::Device
+            ? Lifecycle.validateDevicePowerRequest(
+                  PDO, Operation.Minor, DevicePowerState(Operation.State))
+            : Lifecycle.validateSystemPowerRequest(
+                  PDO, Operation.Minor, SystemPowerState(Operation.State));
+    if (Valid)
+      return std::move(Valid);
+  }
+  Plan.PDO = PDO;
+  Plan.Top = *Top;
+  Plan.PC = *Top == PDO || FrameworkPower ? 0 : PC;
+  Plan.StackCount = uint8_t(*Count);
+  Plan.Before = *State;
+  Plan.Route = std::move(*Route);
+  Plan.WaitWake = WaitWake;
+  Plan.FrameworkPower = FrameworkPower;
+  return Plan;
+}
+
+llvm::Expected<KernelModel::Invocation>
+KernelModel::commitPowerRequest(const DriverRequest &Input, size_t Index,
+                                std::optional<RequestedPower> Child,
+                                PowerRequestPlan Plan) {
+  const auto &Operation = *Input.Power;
+  const uint64_t PDO = Plan.PDO;
+  if (Child && Plan.StartEpoch)
+    Child->StartEpoch = Plan.StartEpoch;
+  auto Packet = allocate(IRPSize + Plan.StackCount * StackSize, PoolAlignment);
   if (!Packet)
     return Packet.takeError();
   if (Child) {
     Child->CallbackReturned = !Child->Callback;
     if (Child->Callback) {
-      auto Block = allocate(PowerStatusBlockSize);
+      auto Block = allocate(PowerStatusBlockSize, PoolAlignment);
       if (!Block)
         return Block.takeError();
       Child->StatusBlock = *Block;
     }
   }
   std::optional<DeviceLifecycleTicket> Ticket;
-  if (!WaitWake) {
+  if (!Plan.WaitWake) {
     auto Started =
         Operation.Type == DriverPowerType::Device
             ? Lifecycle.beginDevicePower(PDO, Operation.Minor,
@@ -148,10 +240,10 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   Record.PowerTicket = Ticket;
   Record.PowerOperation = Operation;
   Record.ChildPower = Child;
-  Record.StackCount = *Count;
-  Record.Stack = *Packet + IRPSize + (*Count - 1) * StackSize;
-  Record.DeviceRoute = std::move(*Route);
-  Record.UnwoundPending.resize(*Count);
+  Record.StackCount = Plan.StackCount;
+  Record.Stack = *Packet + IRPSize + (Plan.StackCount - 1) * StackSize;
+  Record.DeviceRoute = std::move(Plan.Route);
+  Record.UnwoundPending.resize(Plan.StackCount);
   auto &Request = Requests.emplace(*Packet, std::move(Record)).first->second;
   for (uint64_t Device : Request.DeviceRoute)
     if (auto E = retainDevice(Device))
@@ -163,7 +255,7 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
     Observation.Kind = DriverRequestKind::Power;
     Observation.DeviceID = Input.DeviceID;
     Observation.Origin = Child->Origin;
-    if (!WaitWake)
+    if (!Plan.WaitWake)
       Observation.ResponseIndex = Child->ResponseIndex;
     Result.Requests.push_back(std::move(Observation));
   }
@@ -175,17 +267,32 @@ KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
   Power.State = Operation.State;
   Power.SystemContext = Operation.SystemContext;
   Power.Action = Operation.Action;
-  Power.DeviceStateBefore = Power.DeviceStateAfter = State->DevicePower;
-  Power.SystemStateBefore = Power.SystemStateAfter = State->SystemPower;
+  Power.DeviceStateBefore = Power.DeviceStateAfter = Plan.Before.DevicePower;
+  Power.SystemStateBefore = Power.SystemStateAfter = Plan.Before.SystemPower;
   if (Child)
     Power.RequestedDeviceObject = Child->RequestDevice;
   Observation.Power = Power;
-  if (FrameworkPower && Operation.Type == DriverPowerType::Device)
+  if (Plan.FrameworkPower && Operation.Type == DriverPowerType::Device)
     if (auto E = Framework->beginPowerPolicyRequest(PDO))
       return E;
-  Invocation Call{*Top == PDO || FrameworkPower ? 0 : PC, *Top, *Packet};
+  Invocation Call{Plan.PC, Plan.Top, *Packet};
   Call.IRP = *Packet;
   return Call;
+}
+
+llvm::Expected<KernelModel::Invocation>
+KernelModel::preparePowerRequest(const DriverRequest &Input, size_t Index,
+                                 std::optional<RequestedPower> Child) {
+  auto Plan =
+      planPowerRequest(Input, Index, Child, PowerRequestDelivery::Inline);
+  if (!Plan)
+    return Plan.takeError();
+  auto Space = canAllocatePowerRequest(*Plan, Child && Child->Callback);
+  if (!Space)
+    return Space.takeError();
+  if (!*Space)
+    return powerError("power packet exceeds the available kernel arena");
+  return commitPowerRequest(Input, Index, std::move(Child), std::move(*Plan));
 }
 
 llvm::Expected<KernelModel::Invocation>
@@ -233,8 +340,16 @@ KernelModel::dispatchPreparedPowerRequest(const Invocation &Call) {
                                : callProviderDriver(Call.Argument0, Call.IRP);
   if (!Status)
     return Status.takeError();
-  return Request->FrameworkTransitionAwaiting ? StatusPending
-                                              : uint32_t(*Status);
+  if (FrameworkPower) {
+    // An inline device-power completion may already have released the system
+    // IRP's policy hold. Its pending bit still governs the dispatch return.
+    auto Pending = dispatchPending(*Request, Request->StackCount - 1);
+    if (!Pending)
+      return Pending.takeError();
+    if (*Pending)
+      return StatusPending;
+  }
+  return uint32_t(*Status);
 }
 
 llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {
@@ -251,22 +366,29 @@ llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {
   if (!*Owner)
     return false;
   const auto System = *Request->PowerOperation;
-  const auto SystemTarget = System.State == uint32_t(SystemPowerState::Working)
-                                ? DevicePowerState::D0
-                                : DevicePowerState::D3;
-  DevicePowerState Target = SystemTarget;
+  const bool Working = System.State == uint32_t(SystemPowerState::Working);
+  llvm::Expected<DevicePowerState> SystemTarget =
+      Working ? llvm::Expected<DevicePowerState>(DevicePowerState::D0)
+              : Framework->systemSleepTarget(Request->PnpDevice);
+  if (!SystemTarget)
+    return SystemTarget.takeError();
+  DevicePowerState Target = *SystemTarget;
   bool PrepareSleep = false;
-  if (System.Minor == DevicePowerRequest::Set &&
-      SystemTarget == DevicePowerState::D3) {
+  if (System.Minor == DevicePowerRequest::Set && !Working) {
     auto NeedsD0 = Framework->systemSleepNeedsD0(Request->PnpDevice);
     if (!NeedsD0)
       return NeedsD0.takeError();
-    PrepareSleep = *NeedsD0;
+    auto State = Lifecycle.snapshot(Request->PnpDevice);
+    if (!State)
+      return State.takeError();
+    // Distinct low-power states require a real D0 transaction. The provider
+    // FIFO supplies that response independently of the final sleep target.
+    PrepareSleep = *NeedsD0 || (State->DevicePower != DevicePowerState::D0 &&
+                                State->DevicePower != Target);
     if (PrepareSleep)
       Target = DevicePowerState::D0;
   }
-  if (System.Minor == DevicePowerRequest::Set &&
-      SystemTarget == DevicePowerState::D0) {
+  if (System.Minor == DevicePowerRequest::Set && Working) {
     auto NeedsD0 = Framework->systemPowerNeedsD0(Request->PnpDevice);
     if (!NeedsD0)
       return NeedsD0.takeError();
@@ -296,20 +418,19 @@ llvm::Expected<bool> KernelModel::beginFrameworkPowerPolicy(uint64_t IRP) {
   Child.RequestDevice = Request->DeviceRoute.front();
   Child.ResponseIndex = Index;
   Child.Origin = DriverRequestOrigin::FrameworkPowerPolicy;
-  Child.FrameworkParent = SystemTarget == DevicePowerState::D0 ? 0 : IRP;
+  Child.FrameworkParent = Working ? 0 : IRP;
   Child.PrepareSystemSleep = PrepareSleep;
   auto Call = preparePowerRequest(Input, Result.Requests.size(), Child);
   if (!Call)
     return Call.takeError();
   if (System.Minor == DevicePowerRequest::Set)
-    if (auto E = Framework->systemPowerPolicy(
-            Request->PnpDevice, SystemTarget != DevicePowerState::D0))
+    if (auto E = Framework->systemPowerPolicy(Request->PnpDevice, !Working))
       return E;
   ++Provider->RequestedPowerIndex;
   Request->FrameworkPolicyIssued = true;
   // S0 may complete after the independent D0 transaction is issued. S3 must
   // retain its original packet until the matching device transaction finishes.
-  if (SystemTarget == DevicePowerState::D0) {
+  if (Working) {
     if (auto E = completeRequest(IRP, 0))
       return E;
   } else {
@@ -349,8 +470,8 @@ KernelModel::setPowerState(llvm::ArrayRef<uint64_t> A) {
   if (uint32_t(A[1]) != uint32_t(DriverPowerType::Device))
     return powerError("PoSetPowerState requires DevicePowerState type");
   const auto State = DevicePowerState(uint32_t(A[2]));
-  if (State != DevicePowerState::D0 && State != DevicePowerState::D3)
-    return powerError("PoSetPowerState supports D0 and D3 in this profile");
+  if (!isSupportedDriverDevicePower(State))
+    return powerError("PoSetPowerState target is unsupported by this profile");
   if (State != DevicePowerState::D0 && CurrentIRQL > APCLevel)
     return powerError("PoSetPowerState below D0 requires IRQL <= APC_LEVEL");
   auto &Reported = Device->second.ReportedDevicePower;

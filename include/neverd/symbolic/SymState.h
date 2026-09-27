@@ -178,6 +178,12 @@ private:
     std::map<uint64_t, SymRef> Values;
   };
 
+  /// Defaults for regions first touched after one memory effect.  Copies share
+  /// these byte identities even if neither had materialised the region yet.
+  struct UnknownRegions {
+    std::map<uint32_t, std::shared_ptr<UnknownBytes>> Values;
+  };
+
   /// One byte-addressed store: the register file, the temporaries, absolute
   /// memory, or one memory region.
   struct Bank {
@@ -235,6 +241,8 @@ private:
   Bank AbsoluteMemory{{}, nullptr, "mem", SymInputKind::AbsoluteMemory, 0};
   /// One bank per symbolic base, keyed by the node that base interned to.
   std::map<uint32_t, Bank> Regions;
+  /// Null for entry memory; replaced by every potentially aliasing write.
+  std::shared_ptr<UnknownRegions> UnseenRegions;
   /// Keyed by the node index of the value the loads produced.
   std::map<uint32_t, llvm::SmallVector<LoadOrigin, 1>> LoadOrigins;
 

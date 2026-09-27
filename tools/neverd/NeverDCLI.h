@@ -370,6 +370,8 @@ extern llvm::cl::opt<unsigned long long> SimplifyStochasticIterations;
 extern llvm::cl::opt<unsigned long long> SimplifySolverMaxConflicts;
 extern llvm::cl::opt<unsigned long long> SimplifySolverMaxPropagations;
 extern llvm::cl::opt<unsigned long long> SimplifySolverMaxWatchVisits;
+extern llvm::cl::opt<std::string> SimplifySolver;
+extern llvm::cl::opt<unsigned> SimplifySolverTimeoutMs;
 
 // Optimize textual LLVM IR.
 extern llvm::cl::opt<std::string> OptimizeIRInput;

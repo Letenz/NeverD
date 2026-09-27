@@ -354,6 +354,19 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="unittests/semantic/x86/X86_X87TranscendentalRTTests.cpp",
+        rule="provenance-phrase",
+        commits=frozenset({"4fa1b1f9b384a24335828131150b285667c2d7cc"}),
+        line="// Adapted from Packmad's MIT-licensed fprem-anti-emulation, revision",
+        reason=(
+            "This commit replaced the attribution wording with a pinned source "
+            "URL while preserving Packmad's MIT attribution and the references "
+            "to THIRD_PARTY_NOTICES.md and LICENSES/FPREM-Anti-Emulation.txt. "
+            "Review covers only this exact historical deletion; it permits no "
+            "new occurrences or changes to the required attribution."
+        ),
+    ),
+    HistoryAllowance(
         path="scripts/tests/test_first_fatal_snapshots.py",
         rule="private-path",
         commits=frozenset({

@@ -266,6 +266,7 @@ void KernelModel::configureFrameworkDeviceHost() {
   };
   Framework->setDeviceHost(std::move(Host));
   configureFrameworkPowerPolicyHost();
+  configureFrameworkPoFxHost();
 }
 
 std::optional<unsigned>
@@ -275,6 +276,8 @@ KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
     return argumentCount(Export.Name);
   if (Export.Kind == KernelExportRegistry::ExportKind::DMAFunction)
     return dmaArgumentCount(Export.Name);
+  if (Export.Kind == KernelExportRegistry::ExportKind::ProviderFunction)
+    return providerArgumentCount(Export.Name);
   return KernelFramework::argumentCount(Export);
 }
 
@@ -287,6 +290,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return call(Export.Name, Arguments, ReadArgument);
   if (Export.Kind == KernelExportRegistry::ExportKind::DMAFunction)
     return callDMAExport(Export, Arguments);
+  if (Export.Kind == KernelExportRegistry::ExportKind::ProviderFunction)
+    return callProviderExport(Export, Arguments);
   if (!Framework)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "framework model is not initialized");
@@ -392,6 +397,8 @@ llvm::Error KernelModel::completeFrameworkTransitionIfReady() {
 }
 
 std::optional<KernelGuestCall> KernelModel::takeGuestCall() {
+  if (auto Call = takePoFxThreadCall(CurrentThreadKey))
+    return Call;
   if (PendingDMACall)
     return std::exchange(PendingDMACall, std::nullopt);
   if (PendingInterruptCall)
@@ -422,6 +429,11 @@ KernelModel::finishGuestCall(GuestCallToken Token, uint64_t Result) {
       return Continued.takeError();
     if (auto E = completeFrameworkTransitionIfReady())
       return E;
+    // Finishing the transition can start another framework phase, such as
+    // disarming wake after power-packet allocation fails. Keep that callback
+    // on the same continuation instead of reporting an already finished frame.
+    if (*Continued && Framework->hasPendingGuestCall())
+      return std::optional<uint64_t>{};
     return Continued;
   }
   case GuestCallOwner::WDM:
@@ -430,6 +442,10 @@ KernelModel::finishGuestCall(GuestCallToken Token, uint64_t Result) {
     return finishInterruptCall(Token.ID, Result);
   case GuestCallOwner::DMA:
     return finishDMACall(Token.ID, Result);
+  case GuestCallOwner::PoFx:
+    return finishPoFxCall(Token.ID);
+  case GuestCallOwner::UsbIdle:
+    return finishUsbIdleCallback(Token.ID);
   }
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "guest callback has an invalid owner");

@@ -7,7 +7,7 @@
 /// \file
 /// Implements synthesis of a bitwise expression from its truth table.
 ///
-/// Three strategies, and which one runs is decided by what the caller can
+/// Exact constructions, chosen by what the caller can
 /// afford and then by which answer reads better:
 ///
 ///   - Up to \c BitwiseSynthesisLimits::MaxOptimalAtoms inputs, an exhaustive
@@ -26,6 +26,8 @@
 ///     depend on which family the obfuscator happened to use: a seven-input
 ///     parity is sixty-four seven-literal products one way and a single
 ///     exclusive-or of seven atoms the other.
+///     Independent parity arms can also be removed from that normal form to
+///     expose a kernel of at most three inputs for the cached exact recipes.
 ///
 /// Both of the general constructions are polynomial in the number of patterns
 /// the function is true on, which is itself exponential in the arity, so each
@@ -44,6 +46,7 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstdint>
 #include <limits>
@@ -509,6 +512,146 @@ SymRef buildExclusiveOr(SymContext &Ctx, llvm::ArrayRef<uint32_t> Terms,
   return Ctx.mkXor(Parts);
 }
 
+/// Cost a cached small recipe before interning it. This upper bound keeps the
+/// binary recipe's joins even when the builders would flatten or cancel them.
+size_t recipeCost(const SynthTable &Table, uint32_t Packed,
+                  llvm::ArrayRef<size_t> Atoms,
+                  llvm::DenseMap<uint32_t, size_t> &Memo) {
+  auto It = Memo.find(Packed);
+  if (It != Memo.end())
+    return It->second;
+  const Recipe &R = Table.recipe(Packed);
+  size_t Cost;
+  switch (R.K) {
+  case Recipe::Zero:
+    Cost = 1;
+    break;
+  case Recipe::Ones:
+    Cost = 0;
+    break;
+  case Recipe::Atom:
+    Cost = Atoms[R.A];
+    break;
+  case Recipe::Not:
+    Cost = saturatingAdd(1, recipeCost(Table, R.A, Atoms, Memo));
+    break;
+  case Recipe::And:
+  case Recipe::Or:
+  case Recipe::Xor:
+    Cost = saturatingAdd(1, saturatingAdd(recipeCost(Table, R.A, Atoms, Memo),
+                                          recipeCost(Table, R.B, Atoms, Memo)));
+    break;
+  case Recipe::Unreached:
+    llvm_unreachable("every function of this arity is reachable");
+  }
+  Memo[Packed] = Cost;
+  return Cost;
+}
+
+struct ParityKernel {
+  llvm::SmallVector<unsigned, 3> Inputs;
+  uint32_t Peeled = 0;
+  uint32_t Packed = 0;
+};
+
+/// A variable appearing only as a singleton ANF term is an independent XOR
+/// arm. Removing all such arms can leave a small function for which the exact
+/// recipe is already available. Never enlarge the exhaustive search for this
+/// candidate, even when a caller explicitly permits a larger table elsewhere.
+std::optional<ParityKernel> parityKernel(llvm::ArrayRef<uint32_t> Terms,
+                                         const AtomCosts &Costs,
+                                         unsigned NumVars, size_t ANFWork,
+                                         size_t BestCost,
+                                         const BitwiseSynthesisLimits &Limits) {
+  const unsigned Ceiling = std::min(Limits.MaxOptimalAtoms, 3u);
+  if (Ceiling < 2 || ANFWork > Limits.MaxWork ||
+      Terms.size() > Limits.MaxWork - ANFWork)
+    return std::nullopt;
+  size_t Work = ANFWork + Terms.size();
+  auto charge = [&](size_t Amount) {
+    if (Amount > Limits.MaxWork - Work)
+      return false;
+    Work += Amount;
+    return true;
+  };
+  uint32_t Nonlinear = 0, Singletons = 0;
+  for (uint32_t Term : Terms) {
+    if (std::has_single_bit(Term)) {
+      Singletons |= Term;
+    } else {
+      Nonlinear |= Term;
+      if (std::popcount(Nonlinear) > Ceiling)
+        return std::nullopt;
+    }
+  }
+  ParityKernel Out;
+  Out.Peeled = Singletons & ~Nonlinear;
+  if (!Out.Peeled || !Nonlinear || !charge(NumVars))
+    return std::nullopt;
+
+  // Every supported atom must still be read. Reject unaffordable candidates
+  // before requesting the cached recipe or constructing any expression.
+  const size_t Limit = std::min(BestCost, Limits.MaxCost);
+  if (joinCost(Costs.Plain) >= Limit)
+    return std::nullopt;
+  llvm::SmallVector<size_t, 3> KernelCosts;
+  size_t PeeledCost = 0;
+  for (unsigned I = 0; I < NumVars; ++I) {
+    if (Nonlinear & (1u << I)) {
+      Out.Inputs.push_back(I);
+      KernelCosts.push_back(Costs.Plain[I]);
+    } else if (Out.Peeled & (1u << I)) {
+      PeeledCost = saturatingAdd(PeeledCost, Costs.Plain[I]);
+    }
+  }
+  const auto Size = static_cast<unsigned>(Out.Inputs.size());
+  const unsigned Entries = 1u << Size;
+  // The ANF scan and tiny projection share the original construction's work
+  // allowance. In particular, the kernel does not get a fresh optimal budget.
+  if (!charge(saturatingMul(Entries, saturatingAdd(Terms.size(), Size))) ||
+      !charge(optimalTableWork(Size)))
+    return std::nullopt;
+  for (unsigned K = 0; K < Entries; ++K) {
+    uint32_t Original = 0;
+    for (unsigned I = 0; I < Size; ++I)
+      if (K & (1u << I))
+        Original |= 1u << Out.Inputs[I];
+    bool Value = false;
+    for (uint32_t Term : Terms)
+      if ((Original & Term) == Term)
+        Value = !Value;
+    if (Value)
+      Out.Packed |= 1u << K;
+  }
+  // There are at most 256 recipes. Bound their cost memo and construction
+  // together; recursion follows only these fixed small recipes, never a DAG
+  // supplied by the caller.
+  if (!charge(2 * (size_t(1) << Entries)))
+    return std::nullopt;
+  llvm::DenseMap<uint32_t, size_t> Memo;
+  const size_t Cost = saturatingAdd(
+      1, saturatingAdd(PeeledCost, recipeCost(synthTable(Size), Out.Packed,
+                                              KernelCosts, Memo)));
+  if (Cost > Limits.MaxCost || Cost >= BestCost)
+    return std::nullopt;
+  return Out;
+}
+
+SymRef buildParityKernel(SymContext &Ctx, const ParityKernel &Kernel,
+                         llvm::ArrayRef<SymRef> Atoms, uint32_t Width) {
+  llvm::SmallVector<SymRef, 3> Core;
+  for (unsigned I : Kernel.Inputs)
+    Core.push_back(Atoms[I]);
+  llvm::DenseMap<uint32_t, SymRef> Memo;
+  llvm::SmallVector<SymRef, 8> Parts;
+  Parts.push_back(buildRecipe(Ctx, synthTable(Core.size()), Kernel.Packed, Core,
+                              Width, Memo));
+  for (unsigned I = 0; I < Atoms.size(); ++I)
+    if (Kernel.Peeled & (1u << I))
+      Parts.push_back(Atoms[I]);
+  return Ctx.mkXor(Parts);
+}
+
 //===----------------------------------------------------------------------===//
 // Dropping the inputs the function ignores
 //===----------------------------------------------------------------------===//
@@ -622,11 +765,25 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
   }
 
   const size_t SumCost = Sum ? Sum->Cost : kCostCeiling;
+  std::optional<ParityKernel> Kernel;
+  if (!Terms.empty())
+    Kernel = parityKernel(Terms, Costs, NumVars,
+                          saturatingMul(Projected.entries(), NumVars),
+                          std::min(SumCost, ExclusiveCost), Limits);
+  SymRef Best;
   if (SumCost <= ExclusiveCost && SumCost != kCostCeiling)
-    return buildCover(Ctx, *Sum, KeptAtoms, Width);
-  if (ExclusiveCost <= Limits.MaxCost)
-    return buildExclusiveOr(Ctx, Terms, KeptAtoms, Width);
-  return std::nullopt;
+    Best = buildCover(Ctx, *Sum, KeptAtoms, Width);
+  else if (ExclusiveCost != kCostCeiling && ExclusiveCost <= Limits.MaxCost)
+    Best = buildExclusiveOr(Ctx, Terms, KeptAtoms, Width);
+  if (Kernel) {
+    SymRef Candidate = buildParityKernel(Ctx, *Kernel, KeptAtoms, Width);
+    // Opaque or repeated atoms may make the established form collapse during
+    // construction. Keep it on an actual-cost tie as well as an estimated one.
+    if (!Best.isValid() ||
+        Ctx.readabilityCost(Candidate) < Ctx.readabilityCost(Best))
+      Best = Candidate;
+  }
+  return Best.isValid() ? std::optional<SymRef>(Best) : std::nullopt;
 }
 
 } // namespace neverd::symbolic

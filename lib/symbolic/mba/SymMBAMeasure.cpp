@@ -14,7 +14,7 @@
 /// pattern therefore reads off every weight, and the size the expression was
 /// written at has nothing to do with it.
 ///
-/// Three ways of writing the weights back out are tried, because none of them
+/// Four ways of writing the weights back out are tried, because none of them
 /// is shortest for every function:
 ///
 ///   - *Constant*, when the weights agree.
@@ -24,18 +24,26 @@
 ///   - *Conjunction basis*, the weights inverted over the subset lattice.
 ///     This is what turns `(x ^ y) + 2 * (x & y)` back into `x + y`, which the
 ///     grouped form cannot: it would return the input.
+///   - *Nested*, weighted differences over cumulative selectors. Overlapping
+///     selectors can spell the same weights more cheaply than disjoint ones.
 ///
 /// They are offered in that order and the caller keeps the cheapest, so the
 /// order they are appended in decides ties.
+///
+/// A later small-region search subtracts one affine atom and synthesizes a
+/// two-valued residual. It spends the remaining shared budget only after the
+/// established linear and polynomial readings have been proved.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "SymMBADetail.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <limits>
 #include <map>
@@ -71,14 +79,31 @@ struct APIntLess {
   }
 };
 
+/// Whether the weights already describe a sum of independently scaled inputs.
+///
+/// A zero constant weight and W[K] = W[K without one bit] + W[that bit]
+/// characterize this form modulo the word width, including negative and wide
+/// coefficients. The cumulative selectors otherwise spend a combinatorial
+/// search on threshold functions for an ordinary weighted variable sum.
+bool isIndependentWeightedSum(llvm::ArrayRef<llvm::APInt> Weights) {
+  if (!Weights[0].isZero())
+    return false;
+  for (size_t K = 1; K < Weights.size(); ++K) {
+    const size_t Rest = K & (K - 1);
+    if (Rest != 0 && Weights[K] != Weights[Rest] + Weights[K ^ Rest])
+      return false;
+  }
+  return true;
+}
+
 /// `sum over distinct weights v of v * B_v`, with `B_v` selecting the patterns
 /// carrying that weight.  Exact because the minterms of one weight are
 /// disjoint, so their union is a bitwise function like any other.
 std::optional<SymRef> groupedForm(SymContext &Ctx,
                                   llvm::ArrayRef<llvm::APInt> Weights,
                                   llvm::ArrayRef<SymRef> Atoms,
-                                  size_t TermBudget,
-                                  const SolverLimits &Limits) {
+                                  size_t TermBudget, const SolverLimits &Limits,
+                                  llvm::SmallVectorImpl<SymRef> &Nested) {
   const auto NumAtoms = static_cast<unsigned>(Atoms.size());
   if (NumAtoms > Limits.MaxSynthesisAtoms)
     return std::nullopt;
@@ -111,6 +136,38 @@ std::optional<SymRef> groupedForm(SymContext &Ctx,
     return Ctx.mkZero(Ctx.width(Atoms[0]));
 
   const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  // Only the new cumulative search is skipped for independent weighted sums;
+  // the grouped and conjunction candidates remain available, since this test
+  // establishes a shape rather than a minimum expression cost.
+  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 &&
+      !isIndependentWeightedSum(Weights)) {
+    TruthTable Nonzero = TruthTable::zero(NumAtoms);
+    for (const auto &[Value, Table] : Groups)
+      Nonzero |= Table;
+
+    // For weights v1,...,vn in any fixed order, let Si select groups i..n.
+    // Then sum_i (vi - v(i-1)) * Si, with v0=0, has weight vj on group j.
+    // This telescopes modulo the word width, including negative coefficients.
+    // Both orders are useful because complements can make one selector cheap.
+    auto appendNested = [&](const auto &Ordered) {
+      TruthTable Remaining = Nonzero;
+      llvm::APInt Previous(Ctx.width(Atoms[0]), 0);
+      llvm::SmallVector<SymRef, 8> Terms;
+      for (const auto &[Value, Table] : Ordered) {
+        std::optional<SymRef> Selector =
+            synthesizeBitwise(Ctx, Remaining, Atoms, Synthesis);
+        if (!Selector)
+          return;
+        Terms.push_back(Ctx.mkMul(Ctx.mkConst(Value - Previous), *Selector));
+        Previous = Value;
+        Remaining ^= Table;
+      }
+      Nested.push_back(Ctx.mkAdd(Terms));
+    };
+    appendNested(Groups);
+    appendNested(llvm::reverse(Groups));
+  }
+
   llvm::SmallVector<SymRef, 8> Terms;
   for (const auto &[Value, Table] : Groups) {
     // Synthesis declines when no spelling of the selector fits the budget.
@@ -246,23 +303,27 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
         Width == 64 ? ~uint64_t(0) : (uint64_t(1) << Width) - 1;
     std::vector<uint64_t> Assignment(Ctx.numVars(), 0);
     for (size_t K = 0; K < *Corners; ++K) {
-      for (unsigned J = 0; J < NumAtoms; ++J)
-        Assignment[Atoms[J]] = (K >> J) & 1 ? Ones : 0;
+      // Consecutive Gray corners change one input. Store each reading at its
+      // ordinary binary index so coefficient and selector consumers keep the
+      // same table convention without rewriting every atom at every corner.
+      if (K != 0)
+        Assignment[Atoms[std::countr_zero(K)]] ^= Ones;
+      const size_t Pattern = K ^ (K >> 1);
       // The corner value is the negated weight, so negating is what turns a
       // reading into a weight.
-      Weights[K] = -llvm::APInt(Width, Plan.evalU64(Assignment),
-                                /*isSigned=*/false, /*implicitTrunc=*/true);
+      Weights[Pattern] =
+          -llvm::APInt(Width, Plan.evalU64(Assignment),
+                       /*isSigned=*/false, /*implicitTrunc=*/true);
     }
     return Weights;
   }
 
   const llvm::APInt Zero(Width, 0);
-  const llvm::APInt Ones = llvm::APInt::getAllOnes(Width);
   std::vector<llvm::APInt> Assignment(Ctx.numVars(), Zero);
   for (size_t K = 0; K < *Corners; ++K) {
-    for (unsigned J = 0; J < NumAtoms; ++J)
-      Assignment[Atoms[J]] = (K >> J) & 1 ? Ones : Zero;
-    Weights[K] = -Plan.eval(Assignment);
+    if (K != 0)
+      Assignment[Atoms[std::countr_zero(K)]].flipAllBits();
+    Weights[K ^ (K >> 1)] = -Plan.eval(Assignment);
   }
   return Weights;
 }
@@ -318,17 +379,173 @@ void linearCandidates(SymContext &Ctx, std::vector<llvm::APInt> Weights,
                       llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
                       const SolverLimits &Limits,
                       llvm::SmallVectorImpl<SymRef> &Out) {
+  auto append = [&](SymRef Form) {
+    if (!llvm::is_contained(Out, Form))
+      Out.push_back(Form);
+  };
   if (llvm::all_of(Weights,
                    [&](const llvm::APInt &W) { return W == Weights[0]; }))
-    Out.push_back(Ctx.mkConst(-Weights[0]));
+    append(Ctx.mkConst(-Weights[0]));
+  llvm::SmallVector<SymRef, 2> Nested;
   if (std::optional<SymRef> Grouped =
-          groupedForm(Ctx, Weights, Atoms, TermBudget, Limits))
-    Out.push_back(*Grouped);
+          groupedForm(Ctx, Weights, Atoms, TermBudget, Limits, Nested))
+    append(*Grouped);
   // Handing the weights over rather than copying: at the widths and arity this
   // reaches, a copy would be tens of thousands of allocations.
   if (std::optional<SymRef> Conjunctions =
           conjunctionForm(Ctx, std::move(Weights), Atoms, TermBudget, Limits))
-    Out.push_back(*Conjunctions);
+    append(*Conjunctions);
+  // Preserve the established tie order; the new forms must improve the cost
+  // to displace a grouped or conjunction-basis answer.
+  for (SymRef Form : Nested)
+    append(Form);
+}
+
+void affineResidualCandidates(SymContext &Ctx,
+                              llvm::ArrayRef<llvm::APInt> Weights,
+                              llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
+                              const SolverLimits &Limits, WorkBudget &Budget,
+                              llvm::SmallVectorImpl<SymRef> &Out) {
+  const unsigned Count = static_cast<unsigned>(Atoms.size());
+  // This search reuses only the existing small exact Boolean recipes. A
+  // larger caller ceiling must not trigger the four-input optimal table here.
+  if (Count < 2 || Count > std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+                                     Limits.MaxSynthesisAtoms}))
+    return;
+  if (TermBudget < 3)
+    return;
+  assert(Weights.size() == (size_t(1) << Count));
+  if (!Budget.consume(Weights.size()))
+    return;
+  llvm::SmallVector<llvm::APInt, 4> Values;
+  for (const llvm::APInt &Value : Weights) {
+    if (llvm::is_contained(Values, Value))
+      continue;
+    if (Values.size() == 4)
+      return;
+    Values.push_back(Value);
+  }
+  // At most two values already have the offset/selector readings above. A
+  // shifted two-valued residual can cover at most four original values.
+  if (Values.size() < 3)
+    return;
+
+  if (!Budget.consume(Count * Weights.size()))
+    return;
+  unsigned Support = 0;
+  for (unsigned Axis = 0; Axis < Count; ++Axis) {
+    const size_t Bit = size_t(1) << Axis;
+    for (size_t K = 0; K < Weights.size(); ++K)
+      if (!(K & Bit) && Weights[K] != Weights[K | Bit]) {
+        ++Support;
+        break;
+      }
+  }
+  // Every essential input needs a leaf, and a multi-input result needs an
+  // operation. This bound does not assume a particular Boolean form.
+  if (TermBudget < Support + 1)
+    return;
+
+  llvm::DenseMap<uint32_t, SymRef> Synthesized;
+
+  for (unsigned Axis = 0; Axis < Count; ++Axis) {
+    if (!Budget.consume(Weights.size()))
+      return;
+    llvm::SmallVector<llvm::APInt, 2> Low, High;
+    bool TooMany = false;
+    for (size_t K = 0; K < Weights.size(); ++K) {
+      auto &Half = (K & (size_t(1) << Axis)) ? High : Low;
+      if (llvm::is_contained(Half, Weights[K]))
+        continue;
+      if (Half.size() == 2) {
+        TooMany = true;
+        break;
+      }
+      Half.push_back(Weights[K]);
+    }
+    if (TooMany)
+      continue;
+
+    // Subtracting c*X leaves the low half unchanged and translates the high
+    // half by -c. If the low half has two values, any chosen high value must
+    // align with one of them. Otherwise one of the two high values must align
+    // with the single low value. Thus at most two coefficients suffice; edge
+    // differences alone miss valid translations. No inverse is needed, even
+    // for coefficients that are not units modulo the word width.
+    llvm::SmallVector<llvm::APInt, 2> Coefficients;
+    if (Low.size() == 2) {
+      Coefficients.push_back(High[0] - Low[0]);
+      Coefficients.push_back(High[0] - Low[1]);
+    } else {
+      for (const llvm::APInt &Value : High)
+        Coefficients.push_back(Value - Low[0]);
+    }
+    for (const llvm::APInt &Coefficient : Coefficients) {
+      if (Coefficient.isZero())
+        continue;
+      if (!Budget.consume(Weights.size()))
+        return;
+      llvm::SmallVector<llvm::APInt, 2> ResidualValues;
+      TruthTable Selector = TruthTable::zero(Count);
+      bool TwoValued = true;
+      for (size_t K = 0; K < Weights.size(); ++K) {
+        llvm::APInt Value = Weights[K];
+        if (K & (size_t(1) << Axis))
+          Value -= Coefficient;
+        if (ResidualValues.empty())
+          ResidualValues.push_back(Value);
+        if (Value == ResidualValues[0])
+          continue;
+        if (ResidualValues.size() == 1)
+          ResidualValues.push_back(Value);
+        if (Value != ResidualValues[1]) {
+          TwoValued = false;
+          break;
+        }
+        Selector.set(K);
+      }
+      if (!TwoValued || ResidualValues.size() != 2)
+        continue;
+
+      for (unsigned Orientation = 0; Orientation < 2; ++Orientation) {
+        // Pay for each construction, and prepay the small exact table on its
+        // first lookup in this region. Reusing an already-built selector does
+        // not restart its synthesis allowance.
+        if (!Budget.consume(Weights.size()))
+          return;
+        const TruthTable Table = Orientation == 0 ? Selector : ~Selector;
+        const uint32_t Key = static_cast<uint32_t>(Table.packed());
+        auto Found = Synthesized.find(Key);
+        if (Found == Synthesized.end()) {
+          const unsigned Arity = std::popcount(truthTableSupport(Table));
+          const size_t Functions = size_t(1) << (size_t(1) << Arity);
+          const size_t SynthesisWork = Functions * Functions;
+          if (SynthesisWork > Limits.SynthesisWork)
+            continue;
+          if (!Budget.consume(SynthesisWork))
+            return;
+          BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+          Synthesis.MaxOptimalAtoms = Count;
+          Synthesis.MaxWork = SynthesisWork;
+          std::optional<SymRef> Boolean =
+              synthesizeBitwise(Ctx, Table, Atoms, Synthesis);
+          Found =
+              Synthesized.try_emplace(Key, Boolean.value_or(SymRef())).first;
+        }
+        if (!Found->second.isValid())
+          continue;
+        const llvm::APInt &Base = ResidualValues[Orientation];
+        const llvm::APInt &Other = ResidualValues[1 - Orientation];
+        SymRef Form =
+            Ctx.mkAdd({Ctx.mkConst(-Base),
+                       Ctx.mkMul(Ctx.mkConst(Other - Base), Found->second),
+                       Ctx.mkMul(Ctx.mkConst(Coefficient), Atoms[Axis])});
+        if (readingCost(Ctx, Form) <= TermBudget &&
+            !llvm::is_contained(Out, Form))
+          Out.push_back(Form);
+      }
+    }
+  }
 }
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates) {

@@ -19,7 +19,7 @@ namespace neverd::emulation {
 llvm::Error KernelModel::canReleaseResources(uint64_t PDO) const {
   return llvm::joinErrors(
       llvm::joinErrors(MMIO.canRemove(PDO), Interrupts.canRelease(PDO)),
-      DMA.canReleasePDO(PDO));
+      llvm::joinErrors(DMA.canReleasePDO(PDO), PoFx.canReleasePDO(PDO)));
 }
 
 llvm::Error KernelModel::initializePnpResources(ActiveRequest &Request) {
@@ -56,13 +56,44 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
     const ActiveRequest &Request, uint32_t Status, bool ProviderProbe) const {
   if (auto E = Lifecycle.validatePnpCompletion(*Request.PnpTicket, Status))
     return E;
+  const auto Minor = Request.PnpOperation->Minor;
+  const bool Failed = Status & profile::NTStatusFailureMask;
+  const bool RetiresStart =
+      (Minor == DevicePnpRequest::Start && Failed) ||
+      (!Failed &&
+       (Minor == DevicePnpRequest::Stop || Minor == DevicePnpRequest::Remove ||
+        Minor == DevicePnpRequest::SurpriseRemoval));
+  if (RetiresStart && !ProviderProbe &&
+      UsbIdle.hasOutstanding(Request.PnpDevice))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "PnP completion must drain USB idle registration");
+  if (RetiresStart)
+    for (const auto &[IRP, Other] : Requests) {
+      (void)IRP;
+      if (Other.PnpDevice == Request.PnpDevice && Other.ChildPower &&
+          Other.ChildPower->Origin == DriverRequestOrigin::PoRequestPowerIrp &&
+          Other.PowerOperation &&
+          Other.PowerOperation->Minor == DevicePowerRequest::WaitWake)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "PnP completion requires native wait/wake IRPs and callbacks to "
+            "drain");
+    }
+  if (!Failed)
+    if (auto E = validatePnpTopologyTransition(Request.PnpDevice,
+                                               Request.PnpOperation->Minor))
+      return E;
   // START has not assigned resources at the provider probe. All STOP/REMOVE
   // routes, including framework ReleaseHardware, retire resources before
   // forwarding to the provider. Final completion validates both paths.
   if (ProviderProbe && Request.PnpOperation->Minor == DevicePnpRequest::Start)
     return llvm::Error::success();
-  return Resources.validateCompletion(Request.PnpDevice,
-                                      Request.PnpOperation->Minor, Status);
+  if (!(Status & profile::NTStatusFailureMask) &&
+      (Minor == DevicePnpRequest::Stop || Minor == DevicePnpRequest::Remove))
+    if (auto E = PoFx.canReleasePDO(Request.PnpDevice))
+      return E;
+  return Resources.validateCompletion(Request.PnpDevice, Minor, Status);
 }
 
 llvm::Error KernelModel::publishProviderHardware(ActiveRequest &Request,
@@ -73,10 +104,44 @@ llvm::Error KernelModel::publishProviderHardware(ActiveRequest &Request,
   if (Request.PowerOperation &&
       Request.PowerOperation->Type == DriverPowerType::Device &&
       Request.PowerOperation->Minor == DevicePowerRequest::Set &&
-      !(Status & profile::NTStatusFailureMask))
-    Resources.setPhysicalPower(
-        Request.PnpDevice,
-        static_cast<DevicePowerState>(Request.PowerOperation->State));
+      !(Status & profile::NTStatusFailureMask)) {
+    const auto State =
+        static_cast<DevicePowerState>(Request.PowerOperation->State);
+    Resources.setPhysicalPower(Request.PnpDevice, State);
+    // A repeated successful SET D3 acknowledges the current state; a device
+    // already in D3cold must not lose its context or advance its generation
+    // a second time without an intervening powered state.
+    if (State == DevicePowerState::D3 && Framework &&
+        !Resources.isD3Cold(Request.PnpDevice)) {
+      auto Cold = Framework->allowsD3Cold(Request.PnpDevice);
+      if (!Cold)
+        return Cold.takeError();
+      if (*Cold) {
+        auto Snapshot = Lifecycle.snapshot(Request.PnpDevice);
+        if (!Snapshot)
+          return Snapshot.takeError();
+        auto System = Snapshot->SystemPower;
+        // A child D3 completion precedes its retained system IRP. The pending
+        // SET target, rather than the last completed state, owns wake policy.
+        if (Snapshot->SystemPowerOperation)
+          for (const auto &[IRP, Active] : Requests) {
+            (void)IRP;
+            if (Active.PowerTicket != Snapshot->SystemPowerOperation ||
+                !Active.PowerOperation || Active.Completed)
+              continue;
+            const auto &Operation = *Active.PowerOperation;
+            if (Operation.Type == DriverPowerType::System &&
+                Operation.Minor == DevicePowerRequest::Set)
+              System = static_cast<SystemPowerState>(Operation.State);
+            break;
+          }
+        if (auto E = Resources.enterD3Cold(
+                Request.PnpDevice, System,
+                ProviderWakeIRPs.contains(Request.PnpDevice)))
+          return E;
+      }
+    }
+  }
   return llvm::Error::success();
 }
 

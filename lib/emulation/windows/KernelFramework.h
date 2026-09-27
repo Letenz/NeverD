@@ -14,6 +14,7 @@
 
 #include "../GuestMemory.h"
 #include "KernelExportRegistry.h"
+#include "KernelFrameworkPoFx.h"
 #include "KernelGuestCall.h"
 #include "KernelPowerPolicy.h"
 
@@ -96,6 +97,7 @@ public:
     std::optional<uint32_t> ResourceIndex;
     uint32_t MessageOrdinal = 0;
     bool Passive = false;
+    bool CanWake = false;
     std::optional<bool> ShareVector;
     uint64_t SpinLock = 0, WaitLock = 0;
     uint8_t SynchronizeIRQL = 0;
@@ -115,6 +117,8 @@ public:
         const InterruptSelection &, uint64_t, uint64_t)>
         Connect;
     std::function<llvm::Error(uint64_t)> Disconnect;
+    std::function<llvm::Error(uint64_t, bool)> SetActive;
+    std::function<bool(uint64_t)> HasPendingWake;
     std::function<llvm::Expected<GuestCallToken>(
         uint64_t, uint64_t, llvm::ArrayRef<uint64_t>, uint64_t)>
         PrepareCall;
@@ -268,22 +272,76 @@ public:
   llvm::Expected<bool> ownsPowerPolicy(uint64_t WdmDevice) const;
   struct PowerPolicyHost {
     enum class RequestMode { Validate, Issue };
+    struct UsbIdleSettings {
+      DevicePowerState DxState = DevicePowerState::D2;
+      bool CanWake = false;
+    };
+    std::function<llvm::Expected<UsbIdleSettings>(uint64_t, uint32_t)>
+        ResolveUsbIdle;
+    std::function<llvm::Expected<UsbIdleKey>(uint64_t, uint64_t)> SubmitUsbIdle;
+    std::function<llvm::Error(UsbIdleKey, RequestMode)> CancelUsbIdle;
+    std::function<llvm::Expected<bool>(UsbIdleKey)> HasUsbIdle;
+    std::function<llvm::Error(uint64_t, UsbIdleKey, uint64_t, RequestMode)>
+        RequestUsbIdlePower;
+    std::function<llvm::Error(UsbIdleKey, uint64_t, uint32_t)>
+        AbortUsbIdlePower;
+    std::function<llvm::Error(UsbIdleKey, uint64_t)> FinishUsbIdleCallback;
     std::function<uint64_t()> Now;
     std::function<llvm::Error(uint64_t, DevicePowerState, RequestMode)> Request;
     std::function<llvm::Expected<bool>(uint64_t, bool)> CanWake;
     std::function<llvm::Error(uint64_t, bool)> ArmWake;
     std::function<llvm::Error(uint64_t, bool)> FinishWake;
+    std::function<llvm::Expected<std::vector<uint64_t>>(uint64_t)> Children;
+    std::function<llvm::Error(uint64_t, llvm::ArrayRef<uint64_t>)>
+        CompleteWakes;
+    std::function<llvm::Error(llvm::ArrayRef<uint64_t>)> CancelWakes;
+    std::function<llvm::Error(uint64_t, bool, uint64_t)> ManagedIdle;
+    std::function<llvm::Error(uint64_t, RequestMode)> CompletePowerNotRequired;
+    std::function<llvm::Error(uint64_t)> RemoveManaged;
+    std::function<llvm::Expected<bool>(uint64_t, bool, bool, uint32_t)>
+        ColdAllowed;
   };
   void setPowerPolicyHost(PowerPolicyHost Host) { PowerHost = std::move(Host); }
+  struct PoFxHost {
+    std::function<llvm::Expected<KernelPoFx::Component>(uint64_t)>
+        ReadComponent;
+    std::function<llvm::Error(uint64_t, const KernelFrameworkPoFxSettings &)>
+        Validate;
+    std::function<llvm::Expected<uint64_t>(uint64_t,
+                                           const KernelFrameworkPoFxSettings &)>
+        Register;
+    std::function<llvm::Error(uint64_t)> Start;
+    std::function<llvm::Error(uint64_t)> Quiesce;
+    std::function<llvm::Expected<bool>(uint64_t)> CanUnregister;
+    std::function<llvm::Error(uint64_t)> Unregister;
+    std::function<llvm::Expected<bool>(uint64_t)> ComponentReady;
+  };
+  void setPoFxHost(PoFxHost Host) { PowerFrameworkHost = std::move(Host); }
+  llvm::Error resumePoFxTransitions();
   llvm::Error powerPolicyIdle(uint64_t PDO);
   llvm::Error powerPolicyActive(uint64_t PDO);
   llvm::Error powerPolicyWake(uint64_t PDO);
+  llvm::Error powerPolicyPermission(uint64_t PDO, bool NotRequired);
+  llvm::Expected<std::optional<uint32_t>>
+  powerPolicyDeviceCompletion(uint64_t PDO, bool Required) const;
+  llvm::Expected<bool> powerPolicyDeviceReady(uint64_t PDO,
+                                              bool Required) const;
+  llvm::Expected<bool> allowsD3Cold(uint64_t PDO) const;
+  llvm::Error canBeginUsbIdlePermission(UsbIdleKey Key, uint64_t PolicyEpoch,
+                                        uint64_t CallbackToken) const;
+  llvm::Error beginUsbIdlePermission(UsbIdleKey Key, uint64_t PolicyEpoch,
+                                     uint64_t CallbackToken);
+  llvm::Error retireUsbIdleRegistration(UsbIdleKey Key);
+  llvm::Error finishUsbIdlePowerAdmissionFailure(UsbIdleKey Key,
+                                                 uint64_t CallbackToken,
+                                                 uint32_t Status);
   llvm::Error processPowerPolicy();
   std::optional<uint64_t> nextPowerPolicyTime() const;
   bool hasPendingPowerPolicy() const;
   llvm::Expected<std::optional<uint32_t>> powerPolicyWait(uint64_t Device);
   llvm::Expected<uint64_t> powerPolicyEpoch(uint64_t PDO) const;
   llvm::Expected<bool> systemPowerNeedsD0(uint64_t PDO) const;
+  llvm::Expected<DevicePowerState> systemSleepTarget(uint64_t PDO) const;
   llvm::Expected<bool> systemSleepNeedsD0(uint64_t PDO) const;
   llvm::Error systemPowerPolicy(uint64_t PDO, bool Sleeping);
   llvm::Error beginPowerPolicyRequest(uint64_t PDO);
@@ -305,6 +363,7 @@ public:
                                       bool IncludePending) const;
   llvm::Error flushReadyNotifications();
   llvm::Error resumeInterruptDrain() { return resumePausedPnp(); }
+  bool canDeliverWakeInterrupt(uint64_t PDO) const;
   /// Resume one suspended framework operation after its actual guest callback.
   llvm::Expected<std::optional<uint64_t>>
   finishGuestCall(uint64_t Token, uint64_t Result, uint8_t IRQL = 0);
@@ -413,12 +472,16 @@ private:
     uint64_t Wdm = 0, PDO = 0;
     uint64_t LocalTarget = 0;
     uint64_t DefaultQueue = 0;
+    std::map<uint32_t, uint64_t> DispatchQueues;
     uint64_t CallerContext = 0;
     FileConfig Files;
     bool Filter = false;
     bool Initialized = false;
     bool PowerPolicyOwner = true;
     KernelPowerPolicy Policy;
+    std::optional<KernelFrameworkPoFxSettings> PoFxSettings;
+    uint64_t PoFxHandle = 0;
+    bool PoFxStarted = false;
     bool HasLink = false;
     PnpCallbacks Callbacks;
     ResourceList RawResources, TranslatedResources;
@@ -426,6 +489,12 @@ private:
     bool ResourcesActive = false;
     bool InD0 = false;
     bool PowerQueuesHeld = true;
+    bool PoFxComponentHeld = false;
+    bool queuesHeld() const { return PowerQueuesHeld || PoFxComponentHeld; }
+    uint64_t dispatchQueue(uint32_t Major) const {
+      const auto Mapping = DispatchQueues.find(Major);
+      return Mapping == DispatchQueues.end() ? DefaultQueue : Mapping->second;
+    }
     SelfManagedIoState SelfManagedIo = SelfManagedIoState::Uninitialized;
   };
   std::map<uint64_t, Device> Devices;
@@ -437,6 +506,8 @@ private:
     InterruptSelection Selection;
     std::optional<InterruptConnection> Connection;
     bool Enabled = false;
+    bool ReportInactiveOnPowerDown = false;
+    bool CanWake = false;
     bool ChangingState = false;
   };
   std::map<uint64_t, Interrupt> InterruptObjects;
@@ -624,7 +695,26 @@ private:
   std::map<uint64_t, uint64_t> CanceledQueueCallbacks;
   std::map<uint64_t, uint64_t> ReadyQueueCallbacks;
   PowerPolicyHost PowerHost;
+  PoFxHost PowerFrameworkHost;
+  llvm::Expected<std::optional<uint64_t>>
+  callPoFxSettings(llvm::StringRef Name, Binding &B, llvm::ArrayRef<uint64_t> A,
+                   uint8_t IRQL);
+  llvm::Expected<bool> advancePoFxLifecycle(uint64_t Token);
+  llvm::Expected<bool> canUnregisterPoFx(uint64_t Device) const;
+  llvm::Error unregisterPoFx(uint64_t Device);
+  llvm::Error holdForPoFxComponent(uint64_t Device);
   bool powerPolicyBusy(uint64_t Device) const;
+  llvm::Expected<std::vector<KernelPowerPolicy::WakeChild>>
+  armedWakeChildren(uint64_t Device) const;
+  bool isLiveWakeChild(const KernelPowerPolicy::WakeChild &Child) const;
+  llvm::Error validateWakeEnrollment(uint64_t Device) const;
+  llvm::Error refreshUsbIdle(uint64_t Device);
+  llvm::Error cancelUsbIdle(uint64_t Device);
+  llvm::Error completeManagedUsbPowerDown(uint64_t Device,
+                                          PowerPolicyHost::RequestMode Mode);
+  llvm::Error restoreManagedUsbActivity(uint64_t Device);
+  llvm::Error requestIdleDevicePower(uint64_t Device,
+                                     PowerPolicyHost::RequestMode Mode);
   llvm::Error restartIdleTimer(uint64_t Device);
   llvm::Error beginIdlePowerDown(uint64_t Device);
   llvm::Expected<std::optional<uint64_t>>
@@ -641,7 +731,13 @@ private:
     IoResume,
     EnableInterrupts,
     DisableInterrupts,
-    DrainInterrupts
+    DrainInterrupts,
+    WakeInterrupts,
+    PoFxRegister,
+    PoFxStart,
+    PoFxQuiesce,
+    PoFxUnregister,
+    DisarmWakeParents
   };
   struct PnpStep {
     PnpPhase Phase;
@@ -655,6 +751,8 @@ private:
     bool CallbacksComplete = false;
     bool WaitingForRequests = false;
     bool WaitingForInterrupts = false;
+    bool WaitingForWakeInterrupts = false;
+    bool WaitingForPoFx = false;
     uint32_t Status = 0;
     PnpStep Current{PnpPhase::PrepareHardware};
     std::deque<PnpStep> Remaining;
@@ -665,6 +763,10 @@ private:
     uint32_t PowerState = framework::PowerDeviceD3Final;
     bool SuspendAfterQueues = false;
     uint64_t CurrentInterrupt = 0;
+    bool DeviceWakeEnabled = false;
+    bool ChildrenArmedForWake = false;
+    std::vector<KernelPowerPolicy::WakeChild> WakeChildren;
+    std::deque<uint64_t> WakeParentsToDisarm;
     bool nextPrecedesRequestDrain() const {
       if (Remaining.empty())
         return false;
@@ -674,6 +776,7 @@ private:
     }
   };
   std::map<uint64_t, PnpTransition> PnpTransitions;
+  llvm::Error retireChildWake(uint64_t Device, PnpTransition &Transition);
   std::optional<PnpCompletion> CompletedPnp;
   std::optional<GuestCall> PendingCall;
 
@@ -698,10 +801,12 @@ private:
   llvm::Error schedulePnpCallback(uint64_t Token);
   llvm::Error finalizePnpCallbacks(uint64_t Token);
   llvm::Error resumePausedPnp();
+  bool hasPendingWakeInterrupts(uint64_t Device) const;
   llvm::Expected<bool> advancePnpInterrupts(uint64_t Token, bool Enable);
   llvm::Error finishPnpInterrupt(uint64_t Token, uint32_t Status);
   bool hasDeferredInterrupts(uint64_t Device) const;
-  llvm::Error disconnectInterrupts(uint64_t Device);
+  llvm::Error disconnectInterrupts(uint64_t Device,
+                                   bool RetainInactive = false);
   llvm::Expected<uint64_t> createInterrupt(Binding &B,
                                            llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<std::optional<uint64_t>>

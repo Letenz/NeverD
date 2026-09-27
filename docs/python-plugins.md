@@ -214,6 +214,11 @@ distinct outcomes and work counters. `ProofStatus.INVALID` identifies a
 malformed proof question and remains distinct from budget-driven
 `ProofStatus.UNKNOWN`; both fail closed.
 
+Expression synthesis accepts `solver="z3"` and `solver_timeout_ms=1000` when
+the native library was built with `NEVERD_ENABLE_Z3=ON`. The default is
+`solver="builtin"`; an unavailable explicit backend is an error. See
+[bitvector proof backends](solver.md) for resource limits and local validation.
+
 `optimize_llvm_ir` parses textual LLVM IR, optimizes a transaction clone with
 NeverD's semantic fixed point and the selected standard LLVM pipeline, verifies
 the result, and returns only the committed module:

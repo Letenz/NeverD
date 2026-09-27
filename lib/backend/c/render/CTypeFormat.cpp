@@ -19,6 +19,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <cctype>
 #include <functional>
@@ -304,6 +305,17 @@ std::string llvmStructName(llvm::StructType *ST) {
          std::to_string(reinterpret_cast<uintptr_t>(ST) & 0xFFFF);
 }
 
+bool isCIntegerVectorType(llvm::Type *Ty) {
+  const auto *Vector = llvm::dyn_cast<llvm::FixedVectorType>(Ty);
+  if (!Vector || !Vector->getElementType()->isIntegerTy() ||
+      !llvm::isPowerOf2_32(Vector->getNumElements()))
+    return false;
+  const unsigned Bits = Vector->getElementType()->getIntegerBitWidth();
+  return (Bits == 8 || Bits == 16 || Bits == 32 || Bits == 64) &&
+         uint64_t(Vector->getNumElements()) * (Bits / 8) <=
+             limits::kMaxCIntegerVectorBytes;
+}
+
 std::string typeToCLLVM(llvm::Type *Ty) {
   if (!Ty)
     return "void";
@@ -347,13 +359,13 @@ std::string typeToCLLVM(llvm::Type *Ty) {
     return llvmStructName(ST);
 
   if (auto *VT = llvm::dyn_cast<llvm::FixedVectorType>(Ty)) {
-    unsigned Total = VT->getNumElements() *
-                     VT->getElementType()->getPrimitiveSizeInBits() / 8;
-    if (Total == 16)
-      return "__int128";
-    if (Total == 32)
-      return "struct { __int128 lo; __int128 hi; }";
-    return "uint64_t";
+    if (!isCIntegerVectorType(VT))
+      throw std::invalid_argument(
+          "C vector has no supported lane type or size");
+    const unsigned Bytes =
+        VT->getNumElements() * VT->getElementType()->getIntegerBitWidth() / 8;
+    return typeToCLLVM(VT->getElementType()) + " __attribute__((vector_size(" +
+           std::to_string(Bytes) + ")))";
   }
 
   if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(Ty))

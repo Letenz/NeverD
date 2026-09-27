@@ -6,12 +6,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "KernelFrameworkTestSupport.h"
+#include "windows/KernelResources.h"
 #include "windows/KernelScheduler.h"
 
 namespace neverd::emulation {
 namespace {
 using namespace framework_test;
 using namespace framework;
+namespace policy = power_policy;
 
 class DriverKernelFrameworkInterrupt : public DriverKernelFramework {
 protected:
@@ -31,9 +33,15 @@ protected:
   static constexpr uint64_t After = 0x180004100;
   static constexpr uint64_t Exit = 0x180004200;
   static constexpr uint64_t Release = 0x180004300;
+  static constexpr uint64_t WakeArm = 0x180004400;
+  static constexpr uint64_t WakeDisarm = 0x180004500;
+  static constexpr uint64_t WakeTriggered = 0x180004600;
   uint64_t Device = 0, NextConnection = 0x400000;
   unsigned Assigned = 1;
+  bool WithPrepareHardware = false;
+  bool PendingWake = false;
   std::set<uint64_t> Connected;
+  std::set<uint64_t> Inactive;
   std::map<uint64_t, uint64_t> Deferred;
   std::vector<std::pair<uint64_t, std::vector<uint64_t>>> Calls;
 
@@ -66,6 +74,19 @@ protected:
     put(PnpConfig + PnpPowerCallbacksFirstOffset + 8, After);
     put(PnpConfig + PnpPowerCallbacksFirstOffset + 16, Exit);
     put(PnpConfig + PnpPowerCallbacksFirstOffset + 40, Release);
+    if (WithPrepareHardware) {
+      put(PnpConfig + PnpPowerCallbacksFirstOffset + 32, ChildCleanup);
+      constexpr uint64_t PowerCallbacks = Driver + 0x7300;
+      put(PowerCallbacks, policy::CallbacksSize, 4);
+      put(PowerCallbacks + policy::CallbacksFirst + 3 * sizeof(uint64_t),
+          WakeArm);
+      put(PowerCallbacks + policy::CallbacksFirst + 4 * sizeof(uint64_t),
+          WakeDisarm);
+      put(PowerCallbacks + policy::CallbacksFirst + 5 * sizeof(uint64_t),
+          WakeTriggered);
+      take(invoke(api::WdfDeviceInitSetPowerPolicyEventCallbacks,
+                  {Globals, Add.Init, PowerCallbacks}));
+    }
     take(invoke(api::WdfDeviceInitSetPnpPowerEventCallbacks,
                 {Globals, Add.Init, PnpConfig}));
     EXPECT_EQ(
@@ -98,6 +119,19 @@ protected:
     };
     Host.Disconnect = [this](uint64_t Object) {
       EXPECT_EQ(Connected.erase(Object), 1u);
+      Inactive.erase(Object);
+      return llvm::Error::success();
+    };
+    Host.HasPendingWake = [this](uint64_t Owner) {
+      EXPECT_EQ(Owner, PDO);
+      return PendingWake;
+    };
+    Host.SetActive = [this](uint64_t Object, bool Active) {
+      EXPECT_TRUE(Connected.contains(Object));
+      if (Active)
+        Inactive.erase(Object);
+      else
+        Inactive.insert(Object);
       return llvm::Error::success();
     };
     Host.PrepareCall =
@@ -150,6 +184,157 @@ protected:
     take(Model.finishGuestCall(Call.Token, Status));
   }
 };
+
+class DriverKernelFrameworkWakeInterrupt
+    : public DriverKernelFrameworkInterrupt {
+protected:
+  void SetUp() override {
+    WithPrepareHardware = true;
+    DriverKernelFrameworkInterrupt::SetUp();
+    KernelFramework::PowerPolicyHost Host;
+    Host.CanWake = [](uint64_t, bool) -> llvm::Expected<bool> { return true; };
+    Host.ArmWake = [](uint64_t, bool) { return llvm::Error::success(); };
+    Host.FinishWake = [](uint64_t, bool) { return llvm::Error::success(); };
+    Model.setPowerPolicyHost(std::move(Host));
+    constexpr uint64_t IdleConfig = Driver + 0x7000;
+    put(IdleConfig, policy::IdleSize, 4);
+    put(IdleConfig + policy::IdleCapabilities, policy::CanWake, 4);
+    put(IdleConfig + policy::IdleDxState, uint32_t(DevicePowerState::D3), 4);
+    put(IdleConfig + policy::IdleTimeout, 1, 4);
+    put(IdleConfig + policy::IdleUserControl, policy::NoUserControl, 4);
+    put(IdleConfig + policy::IdleEnabled, policy::True, 4);
+    put(IdleConfig + policy::IdleExcludeD3Cold, policy::True, 4);
+    EXPECT_EQ(take(invoke(api::WdfDeviceAssignS0IdleSettings,
+                          {Globals, Device, IdleConfig})),
+              0u);
+    put(InterruptConfig + InterruptCanWake, 1, 1);
+    put(InterruptConfig + InterruptPassiveHandling, 1, 1);
+    put(InterruptConfig + InterruptDPC, 0);
+  }
+
+  uint64_t prepare() {
+    constexpr uint64_t Raw = Driver + 0x7100;
+    constexpr uint64_t Translated = Driver + 0x7200;
+    constexpr uint64_t ListSize =
+        resources::ResourceHeaderSize + resources::ResourceDescriptorSize;
+    for (const auto Address : {Raw, Translated}) {
+      put(Address + resources::ResourceCountOffset,
+          resources::SupportedFullDescriptorCount,
+          resources::ResourceCountFieldSize);
+      put(Address + resources::ResourcePartialCountOffset, 1,
+          resources::ResourceCountFieldSize);
+      put(Address + resources::ResourceHeaderSize, resources::InterruptType, 1);
+    }
+    EXPECT_TRUE(take(Model.beginPnpPowerTransition(
+        PDO, InitSlot, DevicePnpRequest::Start, Raw, Translated, ListSize)));
+    auto Call = callback();
+    EXPECT_EQ(Call.PC, ChildCleanup);
+    EXPECT_EQ(Call.Arguments.size(), 3u);
+    put(InterruptConfig + InterruptRaw,
+        take(invoke(api::WdfCmResourceListGetDescriptor,
+                    {Globals, Call.Arguments[1], 0})));
+    put(InterruptConfig + InterruptTranslated,
+        take(invoke(api::WdfCmResourceListGetDescriptor,
+                    {Globals, Call.Arguments[2], 0})));
+    const auto Handle = interrupt();
+    take(Model.finishGuestCall(Call.Token, 0));
+    expectCallback(Before);
+    expectCallback(Enable);
+    expectCallback(After);
+    EXPECT_TRUE(Model.takePnpCompletion());
+    return Handle;
+  }
+};
+
+TEST_F(DriverKernelFrameworkWakeInterrupt,
+       WakeCreationRequiresPassiveHandlingAndAssignedPreparation) {
+  put(InterruptConfig + InterruptPassiveHandling, 0, 1);
+  EXPECT_EQ(take(create()), InvalidParameter);
+  put(InterruptConfig + InterruptPassiveHandling, 1, 1);
+  expectError(create(), "prepare-hardware");
+}
+
+TEST_F(DriverKernelFrameworkWakeInterrupt,
+       D0EntryPrecedesWakeISRAndInterruptEnableIsNotRepeated) {
+  const auto Handle = prepare();
+  const auto Connection = *Connected.begin();
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D0, DevicePowerState::D3)));
+  expectCallback(Exit);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(Connected, (std::set<uint64_t>{Connection}));
+  EXPECT_TRUE(Inactive.empty());
+  PendingWake = true;
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D3, DevicePowerState::D0)));
+  EXPECT_FALSE(Model.canDeliverWakeInterrupt(PDO));
+  expectCallback(Before);
+  EXPECT_TRUE(Model.canDeliverWakeInterrupt(PDO));
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+  EXPECT_FALSE(Model.takePnpCompletion());
+  success(Model.resumeInterruptDrain());
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+  PendingWake = false;
+  success(Model.resumeInterruptDrain());
+  EXPECT_FALSE(Model.canDeliverWakeInterrupt(PDO));
+  expectCallback(After);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(take(invoke(api::WdfInterruptWdmGetInterrupt, {Globals, Handle})),
+            Connection);
+}
+
+TEST_F(DriverKernelFrameworkWakeInterrupt,
+       WakeISRPrecedesDisarmAndTriggerBeforePostInterruptPowerCallback) {
+  prepare();
+  constexpr uint64_t WakeConfig = Driver + 0x7400;
+  put(WakeConfig, policy::WakeSize, 4);
+  put(WakeConfig + policy::WakeDxState, uint32_t(DevicePowerState::D3), 4);
+  put(WakeConfig + policy::WakeUserControl, policy::NoUserControl, 4);
+  put(WakeConfig + policy::WakeEnabled, policy::True, 4);
+  EXPECT_EQ(take(invoke(api::WdfDeviceAssignSxWakeSettings,
+                        {Globals, Device, WakeConfig})),
+            0u);
+  success(Model.systemPowerPolicy(PDO, true));
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D0, DevicePowerState::D3)));
+  expectCallback(WakeArm);
+  expectCallback(Exit);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  PendingWake = true;
+  success(Model.powerPolicyWake(PDO));
+  success(Model.systemPowerPolicy(PDO, false));
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D3, DevicePowerState::D0)));
+  expectCallback(Before);
+  EXPECT_TRUE(Model.canDeliverWakeInterrupt(PDO));
+  EXPECT_FALSE(Model.hasPendingGuestCall());
+  PendingWake = false;
+  success(Model.resumeInterruptDrain());
+  expectCallback(WakeDisarm);
+  expectCallback(WakeTriggered);
+  expectCallback(After);
+  ASSERT_TRUE(Model.takePnpCompletion());
+}
+
+TEST_F(DriverKernelFrameworkWakeInterrupt,
+       FailedD0EntryDisablesWakeInterruptBeforeHardwareRelease) {
+  prepare();
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D0, DevicePowerState::D3)));
+  expectCallback(Exit);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  PendingWake = true;
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D3, DevicePowerState::D0)));
+  expectCallback(Before, windows::StatusUnsuccessful);
+  EXPECT_FALSE(Model.canDeliverWakeInterrupt(PDO));
+  expectCallback(Disable);
+  EXPECT_TRUE(Connected.empty());
+  expectCallback(Release);
+  const auto Completion = Model.takePnpCompletion();
+  ASSERT_TRUE(Completion);
+  EXPECT_EQ(Completion->Status, windows::StatusUnsuccessful);
+}
 
 TEST_F(DriverKernelFrameworkInterrupt,
        SynchronizeReturnDrainsRetiredCallbackLocksAndPreservesBoolean) {
@@ -243,6 +428,87 @@ TEST_F(DriverKernelFrameworkInterrupt,
   expectCallback(Exit);
   expectCallback(Release);
   ASSERT_TRUE(Model.takePnpCompletion());
+}
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       InactivePowerDownRetainsIdentityAndReactivatesBeforeEnable) {
+  put(InterruptConfig + InterruptReportInactive, InterruptTriTrue, 4);
+  const auto Handle = interrupt();
+  start();
+  drain();
+  ASSERT_TRUE(Model.takePnpCompletion());
+  const auto Connection =
+      take(invoke(api::WdfInterruptWdmGetInterrupt, {Globals, Handle}));
+  ASSERT_NE(Connection, 0u);
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D0, DevicePowerState::D3)));
+  expectCallback(Disable);
+  EXPECT_EQ(Connected, (std::set<uint64_t>{Connection}));
+  EXPECT_EQ(Inactive, Connected);
+  expectCallback(Exit);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(take(invoke(api::WdfInterruptWdmGetInterrupt, {Globals, Handle})),
+            Connection);
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D3, DevicePowerState::D0)));
+  expectCallback(Before);
+  EXPECT_TRUE(Inactive.empty());
+  expectCallback(Enable);
+  expectCallback(After);
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(take(invoke(api::WdfInterruptWdmGetInterrupt, {Globals, Handle})),
+            Connection);
+  EXPECT_TRUE(take(Model.beginPnpPowerTransition(
+      PDO, InitSlot, DevicePnpRequest::Stop, 0, 0, 0)));
+  expectCallback(Disable);
+  EXPECT_TRUE(Connected.empty());
+  expectCallback(Exit);
+  expectCallback(Release);
+  ASSERT_TRUE(Model.takePnpCompletion());
+}
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       StopFromInactivePowerStateRetiresConnectionBeforeReleaseHardware) {
+  configureInterrupt(false);
+  put(InterruptConfig + InterruptReportInactive, InterruptTriTrue, 4);
+  interrupt();
+  start();
+  drain();
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_TRUE(take(Model.beginDevicePowerTransition(
+      PDO, InitSlot, DevicePowerState::D0, DevicePowerState::D3)));
+  drain();
+  ASSERT_TRUE(Model.takePnpCompletion());
+  EXPECT_EQ(Inactive, Connected);
+  EXPECT_TRUE(take(Model.beginPnpPowerTransition(
+      PDO, InitSlot, DevicePnpRequest::Stop, 0, 0, 0)));
+  EXPECT_TRUE(Connected.empty());
+  expectCallback(Release);
+  ASSERT_TRUE(Model.takePnpCompletion());
+}
+
+TEST_F(DriverKernelFrameworkInterrupt,
+       ActivityReportsRequireLiveConnectionAndDispatchOrLowerIRQL) {
+  const auto Handle = interrupt();
+  expectError(invoke(api::WdfInterruptReportInactive, {Globals, Handle}),
+              "live connection");
+  start();
+  drain();
+  ASSERT_TRUE(Model.takePnpCompletion());
+  const auto Connection = *Connected.begin();
+  take(invoke(api::WdfInterruptReportInactive, {Globals, Handle}, 2));
+  EXPECT_EQ(Inactive, Connected);
+  expectError(invoke(api::WdfInterruptReportActive, {Globals, Handle}, 3),
+              "IRQL");
+  EXPECT_EQ(Inactive, Connected);
+  take(invoke(api::WdfInterruptReportActive, {Globals, Handle}, 2));
+  EXPECT_TRUE(Inactive.empty());
+  EXPECT_EQ(take(invoke(api::WdfInterruptWdmGetInterrupt, {Globals, Handle})),
+            Connection);
+  take(invoke(api::WdfInterruptDisable, {Globals, Handle}));
+  expectError(invoke(api::WdfInterruptReportInactive, {Globals, Handle}),
+              "state callback");
+  expectCallback(Disable);
 }
 
 TEST_F(DriverKernelFrameworkInterrupt, ExcessObjectsRemainUnassigned) {

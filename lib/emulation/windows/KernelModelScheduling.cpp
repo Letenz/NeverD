@@ -24,6 +24,25 @@ llvm::Error schedulingError(const llvm::Twine &Text) {
 }
 } // namespace
 
+llvm::Expected<uint64_t> KernelModel::currentThreadObject() {
+  if (!CurrentExecution || !CurrentThreadKey)
+    return schedulingError("current thread requires an active execution");
+  for (const auto &[Object, Thread] : SystemThreads)
+    if (Thread.CallbackID == CurrentThreadKey) {
+      if (Thread.Exited)
+        return schedulingError("current thread has already exited");
+      return Object;
+    }
+  if (const auto Found = CurrentThreadObjects.find(CurrentThreadKey);
+      Found != CurrentThreadObjects.end())
+    return Found->second;
+  auto Object = allocate(profile::ProcessTokenSize);
+  if (!Object)
+    return Object.takeError();
+  CurrentThreadObjects.emplace(CurrentThreadKey, *Object);
+  return *Object;
+}
+
 llvm::Expected<uint64_t> KernelModel::allocateWorkItem(uint64_t Device) {
   if (CurrentIRQL > scheduler::DispatchLevel)
     return schedulingError(
@@ -263,6 +282,57 @@ llvm::Error KernelModel::updateDeviceReferences(uint64_t Device) {
 }
 
 llvm::Expected<std::optional<KernelScheduler::Invocation>>
+KernelModel::dispatchScheduledPowerProvider(
+    const KernelScheduler::Invocation &Call) {
+  auto Token = ScheduledModelContinuations.find(Call.ID);
+  if (Token == ScheduledModelContinuations.end() ||
+      Token->second.Owner != GuestCallOwner::WDM)
+    return schedulingError("provider power dispatch lost its continuation");
+  auto Dispatch = IRPCalls.find(Token->second.ID);
+  const auto *Request = requestForIRP(Call.Object);
+  if (Call.Kind != KernelScheduler::CallbackKind::WDMProviderDispatch ||
+      Call.PC || Call.IRQL != scheduler::PassiveLevel ||
+      Call.Arguments.size() != 2 || Call.Arguments[0] != Call.Owner ||
+      Call.Arguments[1] != Call.Object || !Request || !Request->ChildPower ||
+      Request->DispatchReturned || Request->Device != Call.Owner ||
+      Request->PnpDevice != Call.Owner || Dispatch == IRPCalls.end() ||
+      Dispatch->second.IRP != Call.Object ||
+      Dispatch->second.Kind != IRPCallKind::PowerDispatch ||
+      !Dispatch->second.AwaitingCallback)
+    return schedulingError("provider power dispatch lost its captured request");
+  CurrentIRQL = scheduler::PassiveLevel;
+  auto Status = callProviderDriver(Call.Owner, Call.Object);
+  if (!Status)
+    return Status.takeError();
+  if (auto Receipt = ProviderReceipts.find(Call.Object);
+      Receipt != ProviderReceipts.end()) {
+    if (!PendingWdmCall || Receipt->second.ScheduledDispatchToken)
+      return schedulingError("provider receipt lost its suspended return");
+    Receipt->second.ScheduledDispatchToken = Token->second.ID;
+  } else {
+    auto Returned = finishWdmGuestCall(Token->second.ID, *Status);
+    if (!Returned)
+      return Returned.takeError();
+    if (!*Returned)
+      return schedulingError(
+          "provider power dispatch did not record its return");
+  }
+  if (auto Completion = takeWdmGuestCall()) {
+    auto Next = Scheduler.beginWDMProviderCompletion(
+        Call.ID, {Call.Object, Call.Owner, Call.Thread, Completion->PC,
+                  std::move(Completion->Arguments)});
+    if (!Next)
+      return Next.takeError();
+    Token->second = Completion->Token;
+    return std::optional<KernelScheduler::Invocation>{std::move(*Next)};
+  }
+  ScheduledModelContinuations.erase(Token);
+  if (auto E = finishScheduled(Call.ID))
+    return E;
+  return std::optional<KernelScheduler::Invocation>{};
+}
+
+llvm::Expected<std::optional<KernelScheduler::Invocation>>
 KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
   if (Scheduler.active())
     return schedulingError("cannot dispatch with an unfinished callback");
@@ -284,13 +354,38 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
       return E;
     if (auto E = processInterruptEvents())
       return E;
-    return processPowerPolicyEvents();
+    if (auto E = processPowerPolicyEvents())
+      return E;
+    return processPoFxCallbacks();
   };
   if (auto E = ProcessBoundary(Scheduler.now100ns()))
     return E;
   // Admission and time advancement never dequeue. In particular, an ISR due
   // with a timer must be present before selecting that timer's lower-IRQL DPC.
-  auto Next = Scheduler.next(false, Deadline);
+  auto SelectReady =
+      [&]() -> llvm::Expected<std::optional<KernelScheduler::Invocation>> {
+    // Each model-only dispatch consumes the same bounded scheduler budget as
+    // guest dispatch. Only actual guest callbacks reach the execution engine.
+    for (;;) {
+      auto Next = Scheduler.next(false, Deadline);
+      if (!Next)
+        return Next.takeError();
+      if (!*Next)
+        return std::move(*Next);
+      const auto Kind = (**Next).Kind;
+      if (Kind != KernelScheduler::CallbackKind::WDMProviderDispatch &&
+          Kind != KernelScheduler::CallbackKind::FrameworkUsbIdle)
+        return std::move(*Next);
+      auto Completion = Kind == KernelScheduler::CallbackKind::FrameworkUsbIdle
+                            ? dispatchScheduledFrameworkUsbIdle(**Next)
+                            : dispatchScheduledPowerProvider(**Next);
+      if (!Completion)
+        return Completion.takeError();
+      if (*Completion)
+        return std::move(*Completion);
+    }
+  };
+  auto Next = SelectReady();
   if (!Next)
     return Next.takeError();
   if (!*Next && AdvanceTime) {
@@ -300,7 +395,7 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
     if (Boundary && *Boundary > Scheduler.now100ns()) {
       if (auto E = ProcessBoundary(*Boundary))
         return E;
-      Next = Scheduler.next(false, Deadline);
+      Next = SelectReady();
       if (!Next)
         return Next.takeError();
     }
@@ -337,6 +432,22 @@ KernelModel::nextScheduled(bool AdvanceTime, std::optional<uint64_t> Deadline) {
         CancelLock.Owner = 0;
         CancelLock.IRP = (**Next).Object;
         CancelLock.OldIRQL = scheduler::PassiveLevel;
+      }
+      if ((**Next).Kind == KernelScheduler::CallbackKind::PoFx) {
+        auto Token = ScheduledModelContinuations.find((**Next).ID);
+        if (Token == ScheduledModelContinuations.end() ||
+            Token->second.Owner != GuestCallOwner::PoFx)
+          return schedulingError("PoFx callback lost its model continuation");
+        if (auto E = beginGuestCall(Token->second))
+          return E;
+      }
+      if ((**Next).Kind == KernelScheduler::CallbackKind::UsbIdle) {
+        auto Token = ScheduledModelContinuations.find((**Next).ID);
+        if (Token == ScheduledModelContinuations.end() ||
+            Token->second.Owner != GuestCallOwner::UsbIdle)
+          return schedulingError("USB idle callback lost its continuation");
+        if (auto E = beginUsbIdleCallback(Token->second.ID))
+          return E;
       }
       if (KernelScheduler::isDMACallbackKind((**Next).Kind)) {
         auto Token = ScheduledModelContinuations.find((**Next).ID);
@@ -401,9 +512,14 @@ llvm::Error KernelModel::finishScheduled(uint64_t ID) {
   if (Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::FrameworkCompletion ||
       Invocation.Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
+      Invocation.Kind == KernelScheduler::CallbackKind::PoFx ||
       KernelScheduler::isFrameworkInterruptCallbackKind(Invocation.Kind) ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCancel ||
       Invocation.Kind == KernelScheduler::CallbackKind::WDMCompletion ||
+      Invocation.Kind == KernelScheduler::CallbackKind::WDMDispatch ||
+      Invocation.Kind == KernelScheduler::CallbackKind::WDMProviderDispatch ||
+      Invocation.Kind == KernelScheduler::CallbackKind::FrameworkUsbIdle ||
+      Invocation.Kind == KernelScheduler::CallbackKind::UsbIdle ||
       Invocation.Kind == KernelScheduler::CallbackKind::Interrupt ||
       KernelScheduler::isDMACallbackKind(Invocation.Kind))
     return retireDeviceIfUnreferenced(Invocation.Owner);
@@ -459,6 +575,9 @@ std::optional<uint64_t> KernelModel::nextEventTime() const {
   auto Policy = nextPowerPolicyEventTime();
   if (Policy && (!Deadline || *Policy < *Deadline))
     Deadline = std::max(*Policy, Scheduler.now100ns());
+  auto ComponentPower = PoFx.nextDeadline();
+  if (ComponentPower && (!Deadline || *ComponentPower < *Deadline))
+    Deadline = std::max(*ComponentPower, Scheduler.now100ns());
   auto Transfer = DMA.nextEventTime();
   if (Transfer && (!Deadline || *Transfer < *Deadline))
     Deadline = std::max(*Transfer, Scheduler.now100ns());
@@ -537,6 +656,22 @@ llvm::Expected<uint64_t> KernelModel::beginWait(llvm::ArrayRef<uint64_t> A,
 
 llvm::Expected<std::optional<uint32_t>>
 KernelModel::pollWait(const Wait &Pending) {
+  if (Pending.Type == Wait::Kind::PoFxActive ||
+      Pending.Type == Wait::Kind::PoFxIdle) {
+    auto Operation = BlockingPoFx.find(Pending.Thread);
+    if (Operation == BlockingPoFx.end() ||
+        Operation->second.Handle != Pending.Object)
+      return schedulingError("PoFx wait lost its blocking operation");
+    auto Ready =
+        PoFx.conditionReached(Pending.Object, Operation->second.Component,
+                              Pending.Type == Wait::Kind::PoFxActive);
+    if (!Ready)
+      return Ready.takeError();
+    if (!Operation->second.Completed && !*Ready)
+      return std::optional<uint32_t>{};
+    BlockingPoFx.erase(Operation);
+    return std::optional<uint32_t>{windows::StatusSuccess};
+  }
   if (Pending.Type == Wait::Kind::FrameworkWaitLock)
     return pollFrameworkWaitLock(Pending);
   if (Pending.Type == Wait::Kind::FrameworkCallback ||
@@ -648,13 +783,16 @@ llvm::Error KernelModel::canReleaseRange(uint64_t Base, uint64_t Size,
   return canRevokeVirtualRange(Base, Size);
 }
 
-llvm::Error KernelModel::canRevokeVirtualRange(uint64_t Base,
-                                               uint64_t Size) const {
+llvm::Error KernelModel::canRevokeVirtualRange(
+    uint64_t Base, uint64_t Size,
+    std::optional<UsbIdleKey> RetiringUsbIdle) const {
   if (Size > UINT64_MAX - Base)
     return schedulingError("overflowing virtual storage range");
   if (auto E = DMA.canReleaseRange(Base, Size))
     return E;
   if (auto E = Interrupts.canReleaseRange(Base, Size))
+    return E;
+  if (auto E = UsbIdle.canReleaseRange(Base, Size, RetiringUsbIdle))
     return E;
   for (const auto &[Address, Lock] : ExecutiveSpinLocks)
     if (Address < Base + Size && Base < Address + sizeof(uint64_t))

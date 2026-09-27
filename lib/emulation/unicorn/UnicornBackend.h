@@ -105,6 +105,8 @@ public:
   llvm::Error fetch(uint64_t Address, llvm::MutableArrayRef<uint8_t> Bytes);
   llvm::Expected<uint64_t> reg(X64Register Register);
   llvm::Error setReg(X64Register Register, uint64_t Value);
+  /// Set the model-owned x64 processor environment base.
+  llvm::Error setGSBase(uint64_t Address);
   using XmmValue = std::array<uint64_t, 2>;
   llvm::Expected<XmmValue> xmm(unsigned Register);
   llvm::Error setXmm(unsigned Register, const XmmValue &Value);

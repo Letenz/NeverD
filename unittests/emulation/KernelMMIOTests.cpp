@@ -176,6 +176,28 @@ TEST_F(KernelMMIOTest, PhysicalPowerChangesDoNotResetOrUnmapRegisters) {
   EXPECT_EQ(get(Alias), 88u);
 }
 
+TEST_F(KernelMMIOTest, D2RetainsProviderRegistersWithoutPermittingAccess) {
+  start();
+  const auto Alias = map();
+  ok(Memory->writeInteger(Alias, 88, 4));
+  const auto Epoch = Resources.find(PDO)->Epoch;
+  Resources.setPhysicalPower(PDO, DevicePowerState::D2);
+  EXPECT_EQ(Resources.find(PDO)->Power, DevicePowerState::D2);
+  EXPECT_TRUE(Resources.find(PDO)->Assigned);
+  EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
+  EXPECT_EQ(Resources.find(PDO)->PowerGeneration, 0u);
+  EXPECT_FALSE(Resources.isD3Cold(PDO));
+  EXPECT_FALSE(take(Memory->canAccess(Alias, 4, GuestPermission::Read)));
+  EXPECT_FALSE(take(Memory->canAccess(Alias, 4, GuestPermission::Write)));
+  const auto Other = map(Physical, 4);
+  Resources.setPhysicalPower(PDO, DevicePowerState::D0);
+  // Register retention is this provider's contract, not a property of all D2
+  // hardware. Only its explicit D3cold model resets configured register values.
+  EXPECT_EQ(get(Alias), 88u);
+  EXPECT_EQ(get(Other), 88u);
+  EXPECT_EQ(Resources.find(PDO)->Epoch, Epoch);
+}
+
 TEST_F(KernelMMIOTest, PhysicalD3RejectsRegisterAccess) {
   start();
   const auto Alias = map();

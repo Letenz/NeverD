@@ -502,6 +502,7 @@ GUIDE_REQUIRED_TOKENS = {
         "--format=objc-methods", "--format=swift-methods", "--source-signatures",
         "neverd_objc_methods_json", "neverd_swift_methods_json", "neverd_free_string",
         "test_mobile_ios_backend.py", "test_mobile_swift_backend.py", "--setup-only",
+        "@synchronized", "required_cflags", "-fexceptions",
     ),
     "android": (
         "neverd mobile", ".apk", ".dex", ".smali", "JADX", "1.5.6", "C++20",
@@ -2119,6 +2120,46 @@ def driver_report_profile(view: RepositoryView) -> str:
     return profiles[0]
 
 
+def validate_driver_framework_contract(
+    path: Path, implemented: list[str], errors: list[str], view: RepositoryView
+) -> None:
+    """Validate the API inventory and caller-context routing in their own prose."""
+    paragraphs = without_markdown_fences(view.read_text(path)).split("\n\n")
+    inventories = []
+    for paragraph in paragraphs:
+        symbols = re.findall(r"`([^`]+)`", paragraph)
+        if symbols and symbols[0] == implemented[0]:
+            inventories.append((paragraph, set(symbols)))
+    if len(inventories) != 1:
+        report(errors, f"{display_path(path)}: expected one dedicated KMDF API inventory")
+    else:
+        _, documented = inventories[0]
+        for symbol in sorted(set(implemented) - documented):
+            report(errors, f"{display_path(path)}: KMDF API inventory missing {symbol!r}")
+        for symbol in sorted(documented - set(implemented)):
+            report(errors, f"{display_path(path)}: KMDF API inventory has unmodeled {symbol!r}")
+
+    caller_tokens = (
+        "`WdfDeviceInitSetIoInCallerContextCallback`",
+        "`WdfDeviceEnqueueRequest`",
+        "`WdfRequestRetrieveUnsafeUserInputBuffer`",
+    )
+    inventory_paragraphs = {paragraph for paragraph, _ in inventories}
+    caller_paragraphs = [
+        paragraph for paragraph in paragraphs
+        if paragraph not in inventory_paragraphs
+        and all(token in paragraph for token in caller_tokens)
+    ]
+    if len(caller_paragraphs) != 1:
+        report(errors, f"{display_path(path)}: expected one caller-context routing paragraph")
+    elif "`WdfDeviceConfigureRequestDispatching`" not in caller_paragraphs[0]:
+        report(
+            errors,
+            f"{display_path(path)}: caller-context routing paragraph missing "
+            "'WdfDeviceConfigureRequestDispatching'",
+        )
+
+
 def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     """Keep execution examples, supported exports and locale entry points aligned."""
     english = Path("docs/driver-emulation.md")
@@ -2219,11 +2260,19 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         r"NEVERD_KERNEL_DISPATCHER_API\((\w+),",
         view.read_text(Path("lib/emulation/windows/KernelDispatcherAPIs.def")),
     )
+    framework_exports = re.findall(
+        r"^NEVERD_FRAMEWORK_API\((\w+),",
+        view.read_text(Path("lib/emulation/windows/KernelFrameworkAPIs.def")),
+        re.MULTILINE,
+    )
+    if not framework_exports:
+        report(errors, "implemented KMDF API inventory is empty")
+    exports += framework_exports
     # The 458-entry identity inventory also names unmodeled traps. Only the
     # implemented table and loader ABI inventories establish documented APIs.
     for inventory, macro in (
         ("KernelInterruptAPIs.def", "NEVERD_KERNEL_INTERRUPT_API"),
-        ("KernelFrameworkAPIs.def", "NEVERD_FRAMEWORK_API"),
+        ("KernelPoFxAPIs.def", "NEVERD_KERNEL_POFX_API"),
         ("KernelFrameworkLoaderAPIs.def", "NEVERD_FRAMEWORK_LOADER_API"),
     ):
         exports += re.findall(
@@ -2244,6 +2293,29 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "METHOD_IN_DIRECT",
         "METHOD_OUT_DIRECT",
         "METHOD_NEITHER",
+        "IoAllocateIrp", "IoFreeIrp", "ChargeQuota=FALSE",
+        "IRP_MJ_INTERNAL_DEVICE_CONTROL", "internal_ioctl", "driver_allocated_irp",
+        "NEVERD_WDM_OWNED_IRP_FIXTURE", "NEVERD_WDM_OWNED_IRP_CFG_FIXTURE",
+        "driver-owned-irp-scenario.json",
+        "driver-d2-power-scenario.json", "DeviceLifecycle::validateDevicePowerRequest",
+        "IRP_MN_WAIT_WAKE", "PIRP", "REQUEST_POWER_COMPLETE",
+        "STATUS_DEVICE_BUSY", "STATUS_INVALID_DEVICE_STATE",
+        "IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION",
+        "NEVERD_WDM_WAIT_WAKE_FIXTURE", "NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE",
+        "driver-wdm-wait-wake-scenario.json",
+        "driver-wdm-elevated-power-scenario.json", "CR8",
+        "usb_idle", "usb_idle_permission", "usb_idle_members", "remote_wake",
+        "independent_function", "composite_parent", "composite_function",
+        "d2_irp", "completion_cause", "STATUS_POWER_STATE_INVALID",
+        "NEVERD_WDM_USB_IDLE_FIXTURE", "NEVERD_WDM_USB_IDLE_CFG_FIXTURE",
+        "NEVERD_KMDF_USB_IDLE_FIXTURE", "NEVERD_KMDF_USB_IDLE_CFG_FIXTURE",
+        "driver-kmdf-usb-idle-scenario.json", "device_wake",
+        "driver-kmdf-usb-pofx-scenario.json", "STATUS_WDF_BUSY",
+        "WdfDeviceEnqueueRequest",
+        "framework_usb_idle", "DriverManagedIdleTimeout",
+        "WdfDeviceConfigureRequestDispatching",
+        "driver-wdm-usb-idle-scenario.json",
+        "DxState", "PowerDeviceMaximum", "IdleUsbSelectiveSuspend",
         "KMDF",
         "UMDF",
         "KMDF 1.33",
@@ -2258,7 +2330,23 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "NEVERD_WDM_PNP_FIXTURE",
         "NEVERD_WDM_PNP_CFG_FIXTURE",
         "configuration.pnp_devices",
+        "parent_id", "parent_pdo",
+        "ArmForWakeIfChildrenAreArmedForWake", "IndicateChildWakeOnParentWake",
+        "EvtDeviceArmWakeFromSxWithReason",
+        "wake_source_device_id", "wake_source_pdo",
+        "NEVERD_KMDF_CHILD_WAKE_FIXTURE", "NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE",
+        "driver-kmdf-child-wake-scenario.json",
         "service_name", "wake_capabilities", "power_policy_events",
+        "d3cold", "enabled_by_default", "wake_s0", "wake_sx", "wake_capable",
+        "component_idle_state", "power_not_required",
+        "SystemManagedIdleTimeout", "SystemManagedIdleTimeoutWithHint",
+        "NEVERD_WDM_POFX_FIXTURE", "NEVERD_WDM_POFX_CFG_FIXTURE",
+        "WdfDeviceWdmAssignPowerFrameworkSettings", "425",
+        "EvtDeviceWdmPostPoFxRegisterDevice", "EvtDeviceWdmPrePoFxUnregisterDevice",
+        "PoFxDeviceFlags", "DirectedPoFxEnabled", "WdfFalse",
+        "NEVERD_KMDF_POFX_FIXTURE", "NEVERD_KMDF_POFX_CFG_FIXTURE",
+        "driver-pofx-scenario.json", "driver-kmdf-pofx-scenario.json",
+        "ReportInactiveOnPowerDown", "CanWakeDevice", "GS:[0x188]",
         "device_epoch", "framework_wait_wake",
         "driver-kmdf-power-policy-scenario.json",
         "resource_free",
@@ -2419,6 +2507,8 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
     )
     for guide in guides:
         require_tokens(guide, required, errors, view)
+        if framework_exports:
+            validate_driver_framework_contract(guide, framework_exports, errors, view)
         text = view.read_text(guide)
         if re.findall(r"```[^\n]*\n(.*?)```", text, re.DOTALL) != examples:
             report(

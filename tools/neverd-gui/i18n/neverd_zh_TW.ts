@@ -333,11 +333,6 @@
             <translation>開啟二進位檔案以瀏覽其函式。</translation>
         </message>
         <message>
-            <location filename="../qml/FunctionsPane.qml" line="137" />
-            <source>CURRENT FUNCTION</source>
-            <translation>目前函式</translation>
-        </message>
-        <message>
             <location filename="../qml/FunctionsPane.qml" line="157" />
             <source>Rename</source>
             <translation>重新命名</translation>
@@ -682,9 +677,9 @@
             <translation>探索組合語言之外的表示</translation>
         </message>
         <message>
-            <location filename="../qml/RepresentationPane.qml" line="47" />
-            <source>Compare recovered C with LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>比較還原的 C 程式碼與 LowIR、MedIR、HighIR 和 LLVM IR。選取函式以開始。</translation>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
+            <translation>比較還原的 C、LLVM C、LowIR、MedIR、HighIR 和 LLVM IR。選取函式以開始。</translation>
         </message>
         <message>
             <location filename="../qml/DockWorkspace.qml" line="112" />
@@ -1053,6 +1048,11 @@ Explore disassembly, control flow, recovered C, and intermediate representations
     </context>
     <context>
         <name>Workbench</name>
+        <message>
+            <location filename="../Workbench.cpp" line="71" />
+            <source>Loading debug symbols…</source>
+            <translation>正在載入偵錯符號…</translation>
+        </message>
         <message>
             <location filename="../Workbench.cpp" line="17" />
             <source>Open a binary to begin</source>

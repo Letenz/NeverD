@@ -205,6 +205,8 @@ recovered-ios/
 
 最外層 `status: "success"` 表示已釋出通過校驗的輸出。方法覆蓋 `recovered`、`partial`、`unrecovered`、`no-methods` 描述的是已發現清單，不是語義等價或原程式完整性。每個未恢復方法都有原因。Objective-C 的 `recovered` 還要求執行階段中繼資料完整。空清單不能證明原程式沒有方法。
 
+從已證明的 `@synchronized` 清理流程還原的 Objective-C 方法，其方法列可能包含 `required_cflags: ["-fexceptions"]`。編譯該方法的 C 原始碼時，必須使用所列選項，才能在受保護呼叫因例外而展開堆疊時執行清理並釋放同步鎖。已證明的例外 landing pad 尾段，只有在原始碼中沒有任何正常控制流程邊可到達時，才會從一般 C 本體中省略；其中的解鎖操作由清理處理常式表達。無法證明 landing pad 或保護範圍的方法仍標示為 `unrecovered`。
+
 未恢復的 Objective-C 方法列可能包含 `native_backend: {status, reason, diagnostics}`，前提是唯一的後端結果與執行階段身分完全相符。這個有大小限制的選用摘要會保留後端的中間結果，即使宣告或配置檢查先失敗。方法列的主要狀態、原因和還原計數仍為最終依據；沒有摘要表示該證據無法取得。
 
 Swift 的 `coverage_status` 只統計已分類的可呼叫項。整體 Swift `status` 還考慮未知符號，可為 `unclassified`、`unsupported-architecture` 或 `no-symbols`。不可呼叫中繼資料位於 `non_method_symbols`，狀態為 `not-callable`；未知符號使用 `unclassified`。`types`、`type_metadata_count`、`source_type_count` 分別記錄型別中繼資料/輸出型別單元，不得用來增加方法數量。

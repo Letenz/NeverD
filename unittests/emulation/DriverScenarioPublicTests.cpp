@@ -10,15 +10,18 @@
 //===----------------------------------------------------------------------===//
 
 #include "../TestProcess.h"
+#include "fixtures/driver_kmdf_child_wake_test.h"
 #include "fixtures/driver_kmdf_interrupt_test.h"
 #include "fixtures/driver_nested_user.h"
 #include "fixtures/driver_seh_test.h"
+#include "fixtures/driver_wdm_owned_irp_test.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/DriverProfile.h"
 #include "neverd/sdk/NeverDCAPIEmulation.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
@@ -146,6 +149,150 @@ TEST_F(DriverScenarioPublic, CLIRejectsUnknownFieldsNULAndOversizedFiles) {
   EXPECT_TRUE(runCLI(std::string("{}\0ignored", 10), 1).empty());
   EXPECT_TRUE(runCLI(std::string(NEVERD_DRIVER_SCENARIO_JSON_LIMIT + 1, ' '), 1)
                   .empty());
+}
+
+TEST_F(DriverScenarioPublic,
+       CAPIAndCLIRejectKernelGeneratedRequestsBeforeImageLoading) {
+  constexpr char Scenario[] =
+      R"({"requests":[{"kind":"internal_ioctl","code":3}]})";
+  constexpr char Image[] = "missing-kernel-request-public.sys";
+  EXPECT_EQ(
+      neverd_emulate_driver_scenario_json(Session, Image, Scenario, nullptr),
+      nullptr);
+  EXPECT_NE(error().find("kernel-generated"), std::string::npos);
+  EXPECT_FALSE(neverd_session_is_loaded(Session));
+  EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
+  std::ifstream Errors(Directory / "error.txt");
+  const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
+  EXPECT_NE(Diagnostic.find("kernel-generated"), std::string::npos);
+}
+
+TEST_F(DriverScenarioPublic, CAPIAndCLIReportIndependentDriverAllocatedIRP) {
+#ifdef NEVERD_WDM_OWNED_IRP_FIXTURE
+  const uint8_t Input[] = {OwnedIrpWorker, 1};
+  llvm::json::Object Scenario{
+      {"service_name", "NeverDOwnedIrp"},
+      {"unload", true},
+      {"requests",
+       llvm::json::Array{
+           llvm::json::Object{{"kind", "create"},
+                              {"device", "\\Device\\NeverDOwnedIrp"},
+                              {"file", 1}},
+           llvm::json::Object{{"kind", "ioctl"},
+                              {"file", 1},
+                              {"code", uint32_t(OwnedIrpSubmitIoctl)},
+                              {"input", llvm::toHex(Input, true)}},
+           llvm::json::Object{
+               {"kind", "ioctl"},
+               {"file", 1},
+               {"code", uint32_t(OwnedIrpSnapshotIoctl)},
+               {"output_size", OwnedIrpSnapshotWords * sizeof(uint32_t)}},
+           llvm::json::Object{{"kind", "cleanup"}, {"file", 1}},
+           llvm::json::Object{{"kind", "close"}, {"file", 1}}}}};
+  const auto ScenarioJSON =
+      llvm::formatv("{0}", llvm::json::Value(std::move(Scenario))).str();
+  for (const auto *Image : {
+           NEVERD_WDM_OWNED_IRP_FIXTURE,
+#ifdef NEVERD_WDM_OWNED_IRP_CFG_FIXTURE
+           NEVERD_WDM_OWNED_IRP_CFG_FIXTURE,
+#endif
+       }) {
+    SCOPED_TRACE(Image);
+    const auto API = takeString(neverd_emulate_driver_scenario_json(
+        Session, Image, ScenarioJSON.c_str(), nullptr));
+    ASSERT_FALSE(API.empty()) << error();
+    for (const auto &Text : {API, runCLI(ScenarioJSON, 0, nullptr, Image)}) {
+      auto JSON = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+      const auto *Report = JSON->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      ASSERT_EQ(Requests->size(), 6u);
+      size_t Children = 0, Snapshots = 0;
+      for (const auto &Request : *Requests) {
+        const auto *Row = Request.getAsObject();
+        ASSERT_NE(Row, nullptr);
+        EXPECT_EQ(Row->getBoolean("completed"), true);
+        EXPECT_EQ(Row->getInteger("io_status"), 0);
+        if (Row->getString("origin") == "driver_allocated_irp") {
+          ++Children;
+          EXPECT_EQ(Row->getString("kind"), "internal_ioctl");
+          EXPECT_EQ(Row->getInteger("code"), OwnedIrpInternalIoctl);
+          EXPECT_EQ(Row->getInteger("dispatch_status"), 0x103);
+          EXPECT_EQ(Row->getInteger("information"), 0);
+          EXPECT_EQ(Row->getString("output_hex"), "");
+          for (const auto *Field :
+               {"file", "requestor_process_id", "response_index",
+                "cancel_requested_at_100ns"}) {
+            SCOPED_TRACE(Field);
+            ASSERT_NE(Row->get(Field), nullptr);
+            EXPECT_EQ(Row->get(Field)->kind(), llvm::json::Value::Null);
+          }
+        } else {
+          EXPECT_EQ(Row->getString("origin"), "scenario");
+          EXPECT_EQ(Row->getInteger("file"), 1);
+        }
+        if (Row->getInteger("code") != OwnedIrpSnapshotIoctl)
+          continue;
+        ++Snapshots;
+        const auto Hex = Row->getString("output_hex");
+        ASSERT_TRUE(Hex);
+        ASSERT_EQ(Hex->size(), OwnedIrpSnapshotWords * sizeof(uint32_t) * 2);
+        const auto Word = [&](size_t Index) {
+          uint32_t Value = 0;
+          for (size_t I = 0; I != sizeof(Value); ++I) {
+            uint32_t Byte = 0;
+            EXPECT_FALSE(Hex->substr((Index * sizeof(Value) + I) * 2, 2)
+                             .getAsInteger(16, Byte));
+            Value |= Byte << (I * 8);
+          }
+          return Value;
+        };
+        EXPECT_EQ(Word(OwnedIrpFailures), 0u);
+        EXPECT_EQ(Word(OwnedIrpAllocations), 1u);
+        EXPECT_EQ(Word(OwnedIrpCompletions), 1u);
+        EXPECT_EQ(Word(OwnedIrpFrees), 1u);
+        EXPECT_EQ(Word(OwnedIrpWorkers), 1u);
+      }
+      EXPECT_EQ(Children, 1u);
+      EXPECT_EQ(Snapshots, 1u);
+    }
+  }
+#else
+  GTEST_SKIP() << "NEVERD_WDM_OWNED_IRP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIAndCLIRejectMalformedUsbFactsBeforeLoading) {
+  constexpr char Image[] = "missing-usb-public-preflight.sys";
+  for (const char *Usb :
+       {R"({"role":"hub"})", R"({"role":"composite_function"})",
+        R"({"role":"independent_function","remote_wake":true})",
+        R"({"role":"independent_function","remote_wake":0})",
+        R"({"role":"independent_function","device_wake":"D3"})",
+        R"({"role":"independent_function","device_wake":null})",
+        R"({"role":"composite_parent","device_wake":"D2"})"}) {
+    SCOPED_TRACE(Usb);
+    const std::string Scenario =
+        R"({"pnp_devices":[{"id":"port","bus":"resource_free",
+          "initial_device_power":"D0","initial_system_power":"working",
+          "usb_idle":)" +
+        std::string(Usb) + "}]}";
+    EXPECT_EQ(neverd_emulate_driver_scenario_json(Session, Image,
+                                                  Scenario.c_str(), nullptr),
+              nullptr);
+    EXPECT_NE(error().find("usb_idle"), std::string::npos);
+    EXPECT_FALSE(neverd_session_is_loaded(Session));
+    EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
+    std::ifstream Errors(Directory / "error.txt");
+    const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
+    EXPECT_NE(Diagnostic.find("usb_idle"), std::string::npos);
+  }
 }
 
 TEST_F(DriverScenarioPublic,
@@ -4695,6 +4842,88 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteFrameworkIdleWake) {
   }
 #else
   GTEST_SKIP() << "NEVERD_KMDF_PNP_FIXTURE requires a genuine WDK fixture";
+#endif
+}
+
+TEST_F(DriverScenarioPublic, CAPIAndCLIExecuteD2SleepThroughRealD0) {
+#ifdef NEVERD_KMDF_CHILD_WAKE_FIXTURE
+  std::ifstream Stream(NEVERD_DRIVER_D2_SCENARIO);
+  ASSERT_TRUE(Stream.good());
+  const std::string Scenario((std::istreambuf_iterator<char>(Stream)),
+                             std::istreambuf_iterator<char>());
+  std::vector<const char *> Images{NEVERD_KMDF_CHILD_WAKE_FIXTURE};
+#ifdef NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE
+  Images.push_back(NEVERD_KMDF_CHILD_WAKE_CFG_FIXTURE);
+#endif
+  for (const char *Image : Images) {
+    SCOPED_TRACE(Image);
+    const std::string API = takeString(neverd_emulate_driver_scenario_json(
+        Session, Image, Scenario.c_str(), nullptr));
+    ASSERT_FALSE(API.empty()) << error();
+    for (const auto &JSON : {API, runCLI(Scenario, 0, nullptr, Image)}) {
+      auto Parsed = llvm::json::parse(JSON);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Report = Parsed->getAsObject();
+      ASSERT_NE(Report, nullptr);
+      EXPECT_EQ(Report->getString("stop_reason"), "returned")
+          << Report->getString("diagnostic").value_or("").str();
+      EXPECT_EQ(Report->getBoolean("scenario_success"), true);
+      EXPECT_EQ(Report->getBoolean("unload_completed"), true);
+      const auto *Requests = Report->getArray("requests");
+      ASSERT_NE(Requests, nullptr);
+      std::vector<std::string> Before, After;
+      unsigned Snapshots = 0, D2Requests = 0;
+      for (const auto &Value : *Requests) {
+        const auto *Request = Value.getAsObject();
+        ASSERT_NE(Request, nullptr);
+        EXPECT_EQ(Request->getBoolean("completed"), true);
+        EXPECT_EQ(Request->getInteger("io_status"), 0);
+        if (const auto *Power = Request->getObject("power")) {
+          if (Request->getString("origin") == "framework_power_policy") {
+            Before.push_back(
+                Power->getString("device_state_before").value_or("").str());
+            After.push_back(
+                Power->getString("device_state_after").value_or("").str());
+            ASSERT_TRUE(Power->getInteger("bus_received_at_100ns"));
+            ASSERT_TRUE(Power->getInteger("bus_completed_at_100ns"));
+            EXPECT_GT(*Power->getInteger("bus_completed_at_100ns"),
+                      *Power->getInteger("bus_received_at_100ns"));
+          }
+          if (Power->getString("power_type") == "device" &&
+              Power->getString("power_state") == "D2") {
+            ++D2Requests;
+            EXPECT_EQ(Power->getString("device_state_before"), "D0");
+            EXPECT_EQ(Power->getString("device_state_after"), "D2");
+          }
+        }
+        if (Request->getString("kind") != "ioctl")
+          continue;
+        std::string Bytes;
+        ASSERT_TRUE(llvm::tryGetFromHex(
+            Request->getString("output_hex").value_or(""), Bytes));
+        ASSERT_EQ(Bytes.size(), KmdfChildWakeSnapshotWords * sizeof(uint32_t));
+        auto Word = [&](unsigned Index) {
+          uint32_t Value = 0;
+          for (unsigned I = 0; I < sizeof(Value); ++I)
+            Value |= uint32_t(uint8_t(Bytes[Index * sizeof(Value) + I]))
+                     << (I * 8);
+          return Value;
+        };
+        EXPECT_EQ(Word(KmdfChildWakeFailures), 0u);
+        EXPECT_EQ(Word(KmdfChildWakeD0Entries), Snapshots + 1);
+        EXPECT_EQ(Word(KmdfChildWakeD0Exits), std::min(Snapshots + 1, 2u));
+        EXPECT_EQ(Word(KmdfChildWakeInD0), uint32_t(Snapshots == 2));
+        ++Snapshots;
+      }
+      EXPECT_EQ(D2Requests, 1u);
+      EXPECT_EQ(Snapshots, 3u);
+      EXPECT_EQ(Before, (std::vector<std::string>{"D2", "D0", "D3"}));
+      EXPECT_EQ(After, (std::vector<std::string>{"D0", "D3", "D0"}));
+    }
+  }
+#else
+  GTEST_SKIP()
+      << "NEVERD_KMDF_CHILD_WAKE_FIXTURE requires a genuine WDK fixture";
 #endif
 }
 

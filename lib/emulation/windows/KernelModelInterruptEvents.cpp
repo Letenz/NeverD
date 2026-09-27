@@ -114,7 +114,26 @@ KernelModel::preflightScheduledBoundary(uint64_t Time) {
   auto InterruptCount = Interrupts.dueCount(Time);
   if (!InterruptCount)
     return InterruptCount.takeError();
-  const uint64_t Providers = ProviderCallbacks.size();
+  std::vector<UsbIdleKey> UsbKeys;
+  std::vector<KernelScheduler::UsbIdleCallback> UsbCallbacks;
+  for (const auto &Event : PowerPolicyEvents) {
+    const auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
+    const auto *Usb = std::get_if<UsbIdlePermissionEvent>(&Event.Owner);
+    if (!Usb || Observation.OccurredAt100ns || Observation.DueAt100ns > Time)
+      continue;
+    UsbKeys.insert(UsbKeys.end(), Usb->Members.begin(), Usb->Members.end());
+  }
+  if (!UsbKeys.empty()) {
+    if (auto E = validateUsbIdlePermission(UsbKeys))
+      return E;
+    auto Calls = previewUsbIdleCallbacks(UsbKeys);
+    if (!Calls)
+      return Calls.takeError();
+    UsbCallbacks = std::move(*Calls);
+    if (auto E = Scheduler.canEnqueueUsbIdleBatch(UsbCallbacks))
+      return E;
+  }
+  const uint64_t Providers = ProviderCallbacks.size() + UsbCallbacks.size();
   if (WDMCancellations.size() > UINT64_MAX - Cancellations ||
       Cancellations + WDMCancellations.size() > UINT64_MAX - Providers ||
       *InterruptCount >

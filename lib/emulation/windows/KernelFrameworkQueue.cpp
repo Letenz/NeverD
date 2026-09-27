@@ -29,13 +29,14 @@ llvm::Error invalidQueue(const llvm::Twine &Message) {
 } // namespace
 
 bool KernelFramework::queuePnpHeld(const Queue &Q) const {
-  return Q.PowerManaged && Devices.at(Q.Device).PowerQueuesHeld;
+  return Q.PowerManaged && Devices.at(Q.Device).queuesHeld();
 }
 
 llvm::Expected<std::optional<uint64_t>>
 KernelFramework::callQueue(llvm::StringRef Name, Binding &B,
                            llvm::ArrayRef<uint64_t> A) {
   if (Name != api::WdfIoQueueCreate && Name != api::WdfDeviceGetDefaultQueue &&
+      Name != api::WdfDeviceConfigureRequestDispatching &&
       Name != api::WdfIoQueueGetDevice && Name != api::WdfIoQueueGetState &&
       Name != api::WdfIoQueueStop && Name != api::WdfIoQueueStart &&
       Name != api::WdfIoQueueStopSynchronously &&
@@ -52,10 +53,11 @@ KernelFramework::callQueue(llvm::StringRef Name, Binding &B,
     return std::optional<uint64_t>{};
 
   const auto OI = Objects.find(A[1]);
-  const auto Kind =
-      Name == api::WdfIoQueueCreate || Name == api::WdfDeviceGetDefaultQueue
-          ? ObjectKind::Device
-          : ObjectKind::Queue;
+  const auto Kind = Name == api::WdfIoQueueCreate ||
+                            Name == api::WdfDeviceGetDefaultQueue ||
+                            Name == api::WdfDeviceConfigureRequestDispatching
+                        ? ObjectKind::Device
+                        : ObjectKind::Queue;
   if (OI == Objects.end() || OI->second.Binding != B.Globals ||
       OI->second.Kind != Kind)
     return invalidQueue("invalid, foreign or wrong-kind object handle");
@@ -433,6 +435,43 @@ KernelFramework::callQueue(llvm::StringRef Name, Binding &B,
     if (Device.DefaultQueue && !Queues.count(Device.DefaultQueue))
       return invalidQueue("device lost its default-queue identity");
     return std::optional<uint64_t>{Device.DefaultQueue};
+  }
+  if (Name == api::WdfDeviceConfigureRequestDispatching) {
+    const auto QueueObject = Objects.find(A[2]);
+    const auto Target = Queues.find(A[2]);
+    if (OI->second.Deleting || QueueObject == Objects.end() ||
+        QueueObject->second.Binding != B.Globals ||
+        QueueObject->second.Kind != ObjectKind::Queue ||
+        QueueObject->second.Deleting || Target == Queues.end() ||
+        Target->second.Device != A[1])
+      return invalidQueue("dispatch mapping requires a live same-device queue");
+    const uint32_t Type = A[3];
+    const auto &Queue = Target->second;
+    uint64_t Callback = 0;
+    switch (Type) {
+    case RequestMajorRead:
+      Callback = Queue.Read;
+      break;
+    case RequestMajorWrite:
+      Callback = Queue.Write;
+      break;
+    case RequestMajorDeviceControl:
+      Callback = Queue.DeviceControl;
+      break;
+    case RequestMajorCreate:
+    case RequestMajorInternalDeviceControl:
+      return invalidQueue("CREATE and internal-control queue mapping requires "
+                          "an unmodeled request route");
+    default:
+      return std::optional<uint64_t>{InvalidParameter};
+    }
+    if (Queue.IsDefault ||
+        (Queue.Dispatch != QueueDispatchManual && !Queue.Default && !Callback))
+      return std::optional<uint64_t>{QueueInvalidDeviceRequest};
+    if (Device.DispatchQueues.contains(Type))
+      return std::optional<uint64_t>{QueueBusy};
+    Device.DispatchQueues.emplace(Type, A[2]);
+    return std::optional<uint64_t>{0};
   }
   if (OI->second.Deleting)
     return invalidQueue("cannot create a queue while its device is deleting");

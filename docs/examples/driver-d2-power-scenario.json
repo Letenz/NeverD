@@ -1,0 +1,153 @@
+{
+  "service_name": "NeverDD2Power",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "d2-device",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "initial_reported_device_power": "D2",
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "system_context": 0,
+          "power_action": "none",
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 11
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D3",
+          "system_context": 0,
+          "power_action": "sleep",
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 13
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "system_context": 0,
+          "power_action": "none",
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 17
+          }
+        }
+      ],
+      "bus": "resource_free"
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "d2-device",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "d2-device",
+      "file": 1
+    },
+    {
+      "kind": "power",
+      "device_id": "d2-device",
+      "minor": "set",
+      "power_type": "device",
+      "power_state": "D2",
+      "system_context": 0,
+      "power_action": "none",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 7
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "d2-device",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 44
+    },
+    {
+      "kind": "power",
+      "device_id": "d2-device",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "sleeping3",
+      "system_context": 0,
+      "power_action": "sleep",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "d2-device",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 44
+    },
+    {
+      "kind": "power",
+      "device_id": "d2-device",
+      "minor": "set",
+      "power_type": "system",
+      "power_state": "working",
+      "system_context": 0,
+      "power_action": "none",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "d2-device",
+      "file": 1,
+      "code": "0x222000",
+      "output_size": 44
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "d2-device",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "d2-device",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "d2-device",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "d2-device",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 0
+      }
+    }
+  ]
+}

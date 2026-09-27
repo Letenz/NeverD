@@ -19,17 +19,21 @@
 #include "KernelGuestCall.h"
 #include "KernelInterrupts.h"
 #include "KernelMMIO.h"
+#include "KernelPoFx.h"
 #include "KernelRegistry.h"
 #include "KernelRemoveLocks.h"
 #include "KernelScheduler.h"
+#include "KernelUsbIdle.h"
 
 #include "neverd/emulation/DriverSession.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <deque>
 #include <map>
 #include <optional>
 #include <set>
+#include <variant>
 namespace neverd::emulation {
 struct DriverImage;
 class KernelExportRegistry;
@@ -47,7 +51,8 @@ public:
                     // DMA adapter acquisition in AddDevice precedes START.
                     return llvm::joinErrors(MMIO.canRemove(PDO),
                                             Interrupts.canRelease(PDO));
-                  }),
+                  },
+                  [this](uint64_t PDO) { return DMA.canPowerDownPDO(PDO); }),
         MMIO(Memory, Resources), Interrupts(Resources, Result),
         Physical(Memory), DMA(Physical, Resources, Result) {}
   KernelModel(const KernelModel &) = delete;
@@ -70,6 +75,7 @@ public:
        llvm::ArrayRef<uint64_t> Arguments,
        llvm::function_ref<llvm::Expected<uint64_t>(unsigned)> ReadArgument);
   std::optional<KernelGuestCall> takeGuestCall();
+  std::optional<KernelGuestCall> takePoFxThreadCall(uint64_t Thread);
   llvm::Error beginGuestCall(GuestCallToken Token);
   llvm::Expected<bool> enterFrameworkCallback(uint64_t ScheduledID,
                                               GuestCallToken Token,
@@ -143,6 +149,8 @@ public:
       FrameworkQueueEmpty,
       FrameworkFileSend,
       FrameworkIdle,
+      PoFxActive,
+      PoFxIdle,
       InterruptSynchronization,
       FrameworkInterruptLock,
       FrameworkWaitLock,
@@ -172,8 +180,15 @@ public:
   llvm::Error activateStack(uint64_t Base, uint64_t Size);
   llvm::Error retireStack(uint64_t Base, uint64_t Size);
   void enterForeground() { CurrentIRQL = 0; }
-  void enterExecution(uint64_t Identity, uint64_t ThreadKey = 0) {
+  GuestCallToken scheduledGuestCall(uint64_t ID) const {
+    const auto Found = ScheduledModelContinuations.find(ID);
+    return Found == ScheduledModelContinuations.end() ? GuestCallToken{}
+                                                      : Found->second;
+  }
+  void enterExecution(uint64_t Identity, uint64_t ThreadKey = 0,
+                      GuestCallToken Call = {}) {
     CurrentExecution = Identity;
+    CurrentGuestCall = Call;
     CurrentThreadKey = ThreadKey ? ThreadKey : Identity;
     ExecutionThreadKeys[Identity] = CurrentThreadKey;
     if (EnteringPassiveInterrupt) {
@@ -207,10 +222,13 @@ public:
   }
   bool hasPendingHardwareWork() const {
     return Interrupts.hasPendingEvents() || DMA.hasPendingEvents() ||
-           DMA.hasPendingCallbacks() || hasPendingPowerPolicyEvents() ||
+           DMA.hasPendingCallbacks() || PoFx.hasPendingCallbacks() ||
+           PoFx.nextDeadline().has_value() || hasPendingPowerPolicyEvents() ||
            (Framework && Framework->hasPendingPowerPolicy());
   }
   uint8_t currentIRQL() const { return CurrentIRQL; }
+  /// Return a borrowed, opaque identity for the current kernel thread.
+  llvm::Expected<uint64_t> currentThreadObject();
   llvm::Expected<Invocation> beginUnload();
   llvm::Error finishUnload();
   /// Reject CPU accesses whose environment semantics this profile does not own.
@@ -222,6 +240,41 @@ private:
   DriverResult &Result;
   KernelExportRegistry *Exports;
   std::unique_ptr<KernelFramework> Framework;
+  KernelPoFx PoFx;
+  std::map<uint64_t, uint64_t> PoFxDeviceObjects;
+  struct FrameworkPoFxPowerWait {
+    uint64_t CallbackToken;
+    KernelPoFx::CallbackKind Kind;
+  };
+  std::map<uint64_t, FrameworkPoFxPowerWait> FrameworkPoFxPowerWaits;
+  struct BlockingPoFxOperation {
+    uint64_t Handle = 0, Thread = 0;
+    uint32_t Component = 0;
+    bool Active = false;
+    std::deque<KernelGuestCall> Calls;
+    std::optional<uint64_t> TerminalCallback;
+    bool Completed = false;
+    uint64_t CompletionGeneration = 0;
+  };
+  std::map<uint64_t, BlockingPoFxOperation> BlockingPoFx;
+  llvm::Error waitForPoFxOperation(uint64_t Thread);
+  llvm::Expected<uint64_t> callPoFxAPI(llvm::StringRef Name,
+                                       llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<KernelPoFx::Registration>
+  readPoFxRegistration(uint64_t PDO, uint64_t Address);
+  llvm::Error queuePoFxCallbacks();
+  llvm::Error processPoFxCallbacks();
+  llvm::Expected<std::optional<uint64_t>> finishPoFxCall(uint64_t Token);
+  llvm::Error processInternalPoFxCallback(const KernelPoFx::Callback &Call);
+  llvm::Expected<KernelPoFx::Component> readPoFxComponent(uint64_t Address);
+  llvm::Error validatePoFxRegistrationDevice(uint64_t PDO) const;
+  void configureFrameworkPoFxHost();
+  llvm::Error setFrameworkPoFxIdle(uint64_t Device, bool Idle,
+                                   uint64_t Timeout);
+  llvm::Error retireFrameworkPoFx(uint64_t Device);
+  llvm::Error completeFrameworkPowerNotRequired(
+      uint64_t Device, KernelFramework::PowerPolicyHost::RequestMode Mode);
+
   std::optional<KernelGuestCall> takeWdmGuestCall();
   llvm::Expected<std::optional<uint64_t>> finishWdmGuestCall(uint64_t Token,
                                                              uint64_t Result);
@@ -232,6 +285,20 @@ private:
       KernelFramework::PowerPolicyHost::RequestMode Mode);
   llvm::Error armFrameworkWake(uint64_t Device, bool SystemSleep);
   llvm::Error finishFrameworkWake(uint64_t Device, bool Triggered);
+  llvm::Expected<uint64_t> preflightFrameworkWake(uint64_t PDO,
+                                                  uint32_t Status) const;
+  llvm::Expected<uint64_t> retainProviderWake(uint64_t PDO, uint64_t IRP);
+  llvm::Expected<uint64_t> preflightProviderWake(uint64_t PDO, uint64_t IRP,
+                                                 uint32_t Status) const;
+  llvm::Error completeProviderWake(uint64_t PDO, uint64_t IRP, uint32_t Status,
+                                   std::optional<uint64_t> SourcePDO);
+  static std::optional<unsigned> providerArgumentCount(llvm::StringRef Name);
+  llvm::Expected<uint64_t>
+  callProviderExport(const KernelExportRegistry::Export &Export,
+                     llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Error completeFrameworkWakes(uint64_t SourceDevice,
+                                     llvm::ArrayRef<uint64_t> Devices);
+  llvm::Error cancelFrameworkWakes(llvm::ArrayRef<uint64_t> Devices);
   llvm::Error
   canArmPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events) const;
   llvm::Error
@@ -240,13 +307,87 @@ private:
   llvm::Error processPowerPolicyEvents();
   std::optional<uint64_t> nextPowerPolicyEventTime() const;
   bool hasPendingPowerPolicyEvents() const;
-  struct PowerPolicyEvent {
-    uint64_t PDO = 0;
-    uint64_t Epoch = 0;
-    size_t ResultIndex = 0;
+  struct FrameworkPowerEvent {
+    uint64_t Epoch;
   };
+  struct WdmWakeEvent {
+    uint64_t StartEpoch;
+    uint64_t IRP;
+  };
+  struct PoFxPowerEvent {
+    uint64_t Epoch;
+    uint64_t Handle;
+  };
+  struct UsbIdlePermissionEvent {
+    uint64_t Epoch;
+    std::vector<UsbIdleKey> Members;
+  };
+  using PowerEventOwner = std::variant<FrameworkPowerEvent, WdmWakeEvent,
+                                       PoFxPowerEvent, UsbIdlePermissionEvent>;
+  struct PowerPolicyEvent {
+    uint64_t PDO;
+    size_t ResultIndex;
+    PowerEventOwner Owner;
+  };
+  llvm::Expected<PowerEventOwner>
+  capturePowerEventOwner(const DriverPowerPolicyEvent &Event) const;
   std::vector<PowerPolicyEvent> PowerPolicyEvents;
-  std::map<uint64_t, uint64_t> FrameworkWakeIRPs;
+  struct ProviderWake {
+    uint64_t IRP = 0;
+    uint64_t StartEpoch = 0;
+    std::optional<uint64_t> FrameworkEpoch;
+    uint64_t CancelRoutine = 0;
+  };
+  std::map<uint64_t, ProviderWake> ProviderWakeIRPs;
+  KernelUsbIdle UsbIdle;
+  struct FrameworkUsbIdleRequest {
+    uint64_t Device = 0;
+    uint64_t PolicyEpoch = 0;
+    uint64_t Info = 0;
+    UsbIdleKey Key;
+  };
+  std::map<uint64_t, FrameworkUsbIdleRequest> FrameworkUsbIdleRequests;
+  llvm::Expected<KernelFramework::PowerPolicyHost::UsbIdleSettings>
+  resolveFrameworkUsbIdle(uint64_t Device, uint32_t RequestedState) const;
+  llvm::Expected<UsbIdleKey> submitFrameworkUsbIdle(uint64_t Device,
+                                                    uint64_t PolicyEpoch);
+  llvm::Expected<bool> hasFrameworkUsbIdle(UsbIdleKey Key) const;
+  llvm::Error
+  cancelFrameworkUsbIdle(UsbIdleKey Key,
+                         KernelFramework::PowerPolicyHost::RequestMode Mode);
+  llvm::Error requestFrameworkUsbIdlePower(
+      uint64_t Device, UsbIdleKey Key, uint64_t Token,
+      KernelFramework::PowerPolicyHost::RequestMode Mode);
+  llvm::Error abortFrameworkUsbIdlePower(UsbIdleKey Key, uint64_t Token,
+                                         uint32_t Status);
+  llvm::Error finishFrameworkUsbIdleCallback(UsbIdleKey Key, uint64_t Token);
+  llvm::Error tryFinalizeFrameworkUsbIdle(uint64_t IRP);
+  llvm::Expected<std::optional<KernelScheduler::Invocation>>
+  dispatchScheduledFrameworkUsbIdle(const KernelScheduler::Invocation &Call);
+
+  const DriverUsbIdleConfig *usbIdleConfig(uint64_t PDO) const;
+  llvm::Expected<UsbIdleSubmission>
+  planUsbIdleSubmission(uint64_t PDO, uint64_t IRP, uint64_t Info,
+                        uint64_t InputSize, uint64_t OutputSize,
+                        uint64_t Output) const;
+  llvm::Expected<uint64_t> receiveUsbIdle(uint64_t PDO, uint64_t IRP);
+  llvm::Expected<std::vector<UsbIdleKey>>
+  captureUsbIdlePermission(uint64_t PDO) const;
+  llvm::Error validateUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys) const;
+  llvm::Expected<std::vector<KernelScheduler::UsbIdleCallback>>
+  previewUsbIdleCallbacks(llvm::ArrayRef<UsbIdleKey> Keys) const;
+  llvm::Error queueUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys);
+  llvm::Error beginUsbIdleCallback(uint64_t Token);
+  llvm::Expected<std::optional<uint64_t>> finishUsbIdleCallback(uint64_t Token);
+  llvm::Expected<UsbIdleCompletionPlan>
+  preflightUsbIdleCompletion(UsbIdleKey Key, UsbIdleCompletionCause Cause,
+                             std::optional<bool> CancelOverride = {}) const;
+  llvm::Error completeUsbIdle(UsbIdleKey Key, UsbIdleCompletionCause Cause);
+  llvm::Expected<uint64_t>
+  cancelUsbIdle(const KernelExportRegistry::Export &Export,
+                llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Error observeUsbIdlePowerCompletion(uint64_t IRP, uint32_t Status);
+  llvm::Error validateUsbRemoteWake(uint64_t PDO) const;
   void configureFrameworkInterruptHost();
   void configureFrameworkLockHost();
   llvm::Expected<std::optional<uint32_t>>
@@ -289,8 +430,11 @@ private:
   std::optional<KernelGuestCall> PendingDMACall;
   std::set<uint64_t> InlineDMACalls;
   bool hasPendingModelGuestCall() const {
-    return PendingWdmCall || PendingInterruptCall || PendingDMACall ||
-           (Framework && Framework->hasPendingGuestCall());
+    auto Operation = BlockingPoFx.find(CurrentThreadKey);
+    const bool HasPoFxCall =
+        Operation != BlockingPoFx.end() && !Operation->second.Calls.empty();
+    return HasPoFxCall || PendingWdmCall || PendingInterruptCall ||
+           PendingDMACall || (Framework && Framework->hasPendingGuestCall());
   }
   static std::optional<unsigned> dmaArgumentCount(llvm::StringRef Name);
   llvm::Expected<uint64_t>
@@ -322,6 +466,7 @@ private:
                                                         uint64_t Result);
 
   uint64_t CurrentExecution = 0;
+  GuestCallToken CurrentGuestCall;
   uint64_t CurrentThreadKey = 0;
   std::map<uint64_t, uint64_t> ExecutionThreadKeys;
   struct ExecutionProcessContext {
@@ -432,6 +577,7 @@ private:
     bool Terminating = false;
   };
   std::map<uint64_t, SystemThread> SystemThreads;
+  std::map<uint64_t, uint64_t> CurrentThreadObjects;
   std::map<uint64_t, uint64_t> ThreadHandles;
   uint64_t NextThreadHandle = profile::SystemThreadHandleBase;
   std::optional<uint32_t> PendingThreadTermination;
@@ -456,7 +602,9 @@ private:
                               uint64_t IgnoredDMAPin = 0) const;
   llvm::Expected<uint64_t> beginWait(llvm::ArrayRef<uint64_t> Arguments,
                                      bool Delay);
-  llvm::Error canRevokeVirtualRange(uint64_t Base, uint64_t Size) const;
+  llvm::Error
+  canRevokeVirtualRange(uint64_t Base, uint64_t Size,
+                        std::optional<UsbIdleKey> RetiringUsbIdle = {}) const;
   llvm::Error prepareRevokeVirtualRange(uint64_t Base, uint64_t Size);
   llvm::Error prepareReleaseRange(uint64_t Base, uint64_t Size,
                                   uint64_t IgnoredDMAPin = 0);
@@ -525,6 +673,9 @@ private:
   // PnP provider identities persist after the concrete PDO is retired.
   struct PnpDeviceRecord {
     uint64_t PDO = 0;
+    // Devnode parent identity persists independently of attachment and
+    // presence.
+    uint64_t ParentPDO = 0;
     size_t ResultIndex = 0;
     DriverBusKind Bus = DriverBusKind::ResourceFree;
     std::optional<uint32_t> AddDeviceStatus;
@@ -536,6 +687,8 @@ private:
     std::optional<DevicePowerState> InitialReportedDevicePower;
     std::vector<DriverPowerOperation> RequestedDevicePower;
     uint32_t RequestedPowerIndex = 0;
+    // Identity of the last successfully committed START transaction.
+    uint64_t StartEpoch = 0;
     std::optional<DriverWakeCapabilities> WakeCapabilities;
   };
   uint64_t PnpProviderDriver = 0;
@@ -547,6 +700,10 @@ private:
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
+  llvm::Expected<uint64_t> deviceStartEpoch(uint64_t PDO,
+                                            bool AllowStarting) const;
+  llvm::Error validatePnpTopologyTransition(uint64_t PDO,
+                                            DevicePnpRequest Minor) const;
   llvm::Error finishPnpRemoval(uint64_t PDO);
   llvm::Error retirePnpProvider(uint64_t PDO);
   llvm::Error snapshotPnpDevices();
@@ -572,11 +729,21 @@ private:
     // A separate callback input snapshot; the completed IRP stays retired.
     uint64_t StatusBlock = 0;
     uint32_t ResponseIndex = 0;
+    std::optional<uint64_t> StartEpoch;
     bool CallbackStarted = false;
     bool CallbackReturned = false;
     DriverRequestOrigin Origin = DriverRequestOrigin::PoRequestPowerIrp;
     uint64_t FrameworkParent = 0;
     bool PrepareSystemSleep = false;
+  };
+  enum class PowerRequestDelivery { Inline, Queued };
+  struct PowerRequestPlan {
+    uint64_t PDO = 0, Top = 0, PC = 0;
+    uint8_t StackCount = 0;
+    DeviceLifecycleSnapshot Before;
+    std::vector<uint64_t> Route;
+    bool WaitWake = false, FrameworkPower = false;
+    std::optional<uint64_t> StartEpoch;
   };
   struct UserRegion {
     DriverUserBufferKind Kind;
@@ -584,6 +751,33 @@ private:
     uint64_t Address;
     uint32_t Size;
   };
+  struct DriverIRPAllocation {
+    uint64_t Size = 0;
+    uint8_t StackCount = 0;
+    bool Submitted = false;
+    bool StorageReleased = false;
+    bool CompletionHeld = false;
+    uint32_t DispatchSlot = 0;
+    uint64_t CompletionDevice = 0;
+    std::optional<uint64_t> InitialDispatchToken;
+    std::optional<uint32_t> ProviderDispatchReturn;
+    std::optional<uint64_t> FreeCompletionToken;
+    mutable std::array<bool, 16> IOStatusWritten{};
+  };
+  std::map<uint64_t, DriverIRPAllocation> DriverIRPs;
+  llvm::Expected<uint64_t>
+  allocateDriverIRP(llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Error initializeIRPHeader(uint64_t IRP, uint8_t StackCount,
+                                  uint8_t CurrentLocation);
+  llvm::Error freeDriverIRP(uint64_t IRP);
+  llvm::Error releaseDriverIRPStorage(uint64_t IRP);
+  llvm::Error freeSubmittedDriverIRP(uint64_t IRP);
+  llvm::Error adoptDriverIRP(uint64_t Device, uint64_t IRP);
+  llvm::Error validateDriverIRPCompletion(uint64_t IRP, uint32_t Status,
+                                          uint64_t Information) const;
+  llvm::Error captureDriverIRPCompletion(uint64_t IRP);
+  llvm::Error recordDriverIRPDispatchReturn(uint64_t IRP, uint32_t Status);
+  llvm::Error tryFinalizeDriverIRP(uint64_t IRP);
   struct ActiveRequest {
     DriverRequestKind Kind;
     size_t ResultIndex;
@@ -656,7 +850,23 @@ private:
     uint32_t Slot = 0;
     bool AwaitingCallback = false;
     uint64_t ReturnValue = 0;
+    std::optional<uint64_t> ProviderReceiptIRP;
   };
+  struct ProviderReceipt {
+    uint64_t Device = 0;
+    uint64_t Deadline = 0;
+    std::vector<UsbIdleCompletionPlan> Idle;
+    size_t NextIdle = 0;
+    std::optional<uint64_t> ScheduledDispatchToken;
+  };
+  std::map<uint64_t, ProviderReceipt> ProviderReceipts;
+  llvm::Expected<std::vector<UsbIdleCompletionPlan>>
+  planUsbIdleReceipt(uint64_t PDO, uint64_t IRP) const;
+  llvm::Expected<std::optional<uint64_t>> continueProviderReceipt(uint64_t IRP);
+  llvm::Expected<uint64_t> completeProviderReceipt(uint64_t PDO, uint64_t IRP,
+                                                   uint64_t Deadline);
+  llvm::Expected<std::optional<uint64_t>>
+  finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue);
   uint64_t NextIRPCall = 1;
   std::map<uint64_t, IRPCall> IRPCalls;
   std::optional<KernelGuestCall> PendingWdmCall;
@@ -686,9 +896,10 @@ private:
     bool PowerCompletion = false;
     std::vector<uint64_t> Arguments;
   };
-  llvm::Expected<IRPCompletionPlan> planIRPCompletion(
-      uint64_t IRP,
-      std::optional<uint32_t> StatusOverride = std::nullopt) const;
+  llvm::Expected<IRPCompletionPlan>
+  planIRPCompletion(uint64_t IRP,
+                    std::optional<uint32_t> StatusOverride = std::nullopt,
+                    std::optional<bool> CancelOverride = std::nullopt) const;
   struct ProviderCompletion {
     enum class Kind {
       WDM,
@@ -710,6 +921,8 @@ private:
   llvm::Expected<std::optional<uint64_t>> advanceIRPCompletion(uint64_t Token);
   llvm::Expected<bool> dispatchPending(const ActiveRequest &Request,
                                        uint32_t Slot) const;
+  llvm::Error validateCompletionPending(const ActiveRequest &Request,
+                                        bool Pending) const;
   llvm::Error retireCompletedRequest(uint64_t IRP, uint8_t PriorityBoost);
   ActiveRequest *requestForIRP(uint64_t IRP);
   const ActiveRequest *requestForIRP(uint64_t IRP) const;
@@ -729,8 +942,20 @@ private:
   llvm::Expected<Invocation>
   preparePowerRequest(const DriverRequest &Input, size_t ResultIndex,
                       std::optional<RequestedPower> Child = std::nullopt);
+  llvm::Expected<PowerRequestPlan>
+  planPowerRequest(const DriverRequest &Input, size_t ResultIndex,
+                   const std::optional<RequestedPower> &Child,
+                   PowerRequestDelivery Delivery) const;
+  llvm::Expected<Invocation>
+  commitPowerRequest(const DriverRequest &Input, size_t ResultIndex,
+                     std::optional<RequestedPower> Child,
+                     PowerRequestPlan Plan);
   llvm::Expected<uint32_t> dispatchPreparedPowerRequest(const Invocation &Call);
+  llvm::Expected<std::optional<KernelScheduler::Invocation>>
+  dispatchScheduledPowerProvider(const KernelScheduler::Invocation &Call);
   llvm::Expected<bool> beginFrameworkPowerPolicy(uint64_t IRP);
+  llvm::Expected<bool> canAllocatePowerRequest(const PowerRequestPlan &Plan,
+                                               bool Callback) const;
   llvm::Expected<uint64_t> requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> setPowerState(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Error startNextPowerIrp(uint64_t IRP);

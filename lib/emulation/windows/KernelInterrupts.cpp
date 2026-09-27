@@ -200,6 +200,10 @@ llvm::Error KernelInterrupts::canConnect(const Connection &Candidate) const {
       (Candidate.SpinLock || Candidate.SynchronizeIRQL || !Candidate.Version))
     return interruptError(
         "passive interrupt requires a passive synchronization event");
+  if (Candidate.WakeCapable && (!Candidate.Passive || !Resource.WakeCapable ||
+                                !Wake.Request || !Wake.Ready))
+    return interruptError(
+        "wake connection requires assigned passive wake support");
   if (Candidate.WaitLock && (!Candidate.Passive || !PassiveLocks.Available ||
                              !PassiveLocks.Acquire || !PassiveLocks.Release))
     return interruptError("external wait lock requires its passive authority");
@@ -362,7 +366,37 @@ llvm::Error KernelInterrupts::disconnectConnection(uint64_t Object) {
       return interruptError("message table members must disconnect together");
   if (auto E = canDisconnect(Object, Connection->Version))
     return E;
+  for (auto Event = WakeEvents.begin(); Event != WakeEvents.end();) {
+    if (Event->second.Object != Object) {
+      ++Event;
+      continue;
+    }
+    Result.Interrupts[Event->first].UndeliveredReason =
+        "wake interrupt disconnected before ISR delivery";
+    Event = WakeEvents.erase(Event);
+  }
   Connections.erase(Object);
+  return llvm::Error::success();
+}
+
+llvm::Error KernelInterrupts::setActive(uint64_t Object, bool Active) {
+  auto Entry = Connections.find(Object);
+  if (Entry == Connections.end())
+    return interruptError("activity report requires a live connection");
+  if (Entry->second.Active == Active)
+    return llvm::Error::success();
+  // The guest must quiesce its hardware and callbacks before soft disconnect.
+  // Keep the registration unchanged if that lifetime precondition fails.
+  if (!Active) {
+    if (std::any_of(
+            WakeEvents.begin(), WakeEvents.end(),
+            [&](const auto &Event) { return Event.second.Object == Object; }))
+      return interruptError(
+          "activity change cannot retire a latched wake interrupt");
+    if (auto E = canDisconnect(Object, Entry->second.Version))
+      return E;
+  }
+  Entry->second.Active = Active;
   return llvm::Error::success();
 }
 
@@ -381,6 +415,8 @@ llvm::Error KernelInterrupts::canRelease(uint64_t PDO) const {
     for (const auto &[Source, Event] : Line.Sources)
       if (Event.PDO == PDO)
         return interruptError("device still owns an asserted interrupt source");
+  if (hasPendingWake(PDO))
+    return interruptError("device still owns a latched wake interrupt");
   return llvm::Error::success();
 }
 
@@ -555,9 +591,121 @@ bool KernelInterrupts::passiveAvailable(uint64_t Object, uint64_t Token) const {
   return true;
 }
 
+bool KernelInterrupts::hasPendingWake(uint64_t PDO) const {
+  return std::any_of(
+      WakeEvents.begin(), WakeEvents.end(),
+      [&](const auto &Entry) { return Entry.second.PDO == PDO; });
+}
+
+llvm::Error KernelInterrupts::latchWakeEvents(uint64_t Now) {
+  for (auto It = Events.begin(); It != Events.end();) {
+    auto &Event = It->second;
+    const auto *Connection = connection(Event.Object);
+    const auto *Device = Resources.find(Event.PDO);
+    if (Event.Queued || Event.Observed || Event.Due > Now ||
+        Event.Action == DriverInterruptAction::Deassert || !Connection ||
+        !Connection->WakeCapable || !Device ||
+        (Device->Power == DevicePowerState::D0 && !hasPendingWake(Event.PDO))) {
+      ++It;
+      continue;
+    }
+    if (auto E = validateEvent(Event, false))
+      return deliveryError(Event, llvm::toString(std::move(E)), Now);
+    if (!Connection->Active)
+      return deliveryError(Event, "wake source has an inactive interrupt", Now);
+    if (!Wake.Request || !Wake.Ready)
+      return deliveryError(Event, "wake source lost its power-policy host",
+                           Now);
+    if (!hasPendingWake(Event.PDO))
+      if (auto E = Wake.Request(Event.PDO))
+        return deliveryError(Event, llvm::toString(std::move(E)), Now);
+    Event.Observed = true;
+    Event.WakeRequested = true;
+    Result.Interrupts[Event.Observation].OccurredAt100ns = Now;
+    // A level assertion is latched independently of its line. A later
+    // deassertion may silence the controller before D0, but must not erase the
+    // wake ISR that the framework owes after successful D0 entry.
+    const bool RepeatedAssertion =
+        Event.Action == DriverInterruptAction::Assert &&
+        std::any_of(WakeEvents.begin(), WakeEvents.end(),
+                    [&](const auto &Entry) {
+                      return Entry.second.PDO == Event.PDO &&
+                             Entry.second.ResourceIndex == Event.ResourceIndex;
+                    });
+    if (!RepeatedAssertion)
+      WakeEvents.emplace(It->first, Event);
+    if (Event.Action == DriverInterruptAction::Pulse)
+      It = Events.erase(It);
+    else
+      ++It;
+  }
+  return llvm::Error::success();
+}
+
+std::vector<size_t> KernelInterrupts::readyWakeEvents(uint64_t Now) const {
+  std::vector<size_t> Ready;
+  for (const auto &[Index, Event] : WakeEvents) {
+    if (Event.Queued || Event.Due > Now)
+      continue;
+    const auto *Connection = connection(Event.Object);
+    const auto *Device = Resources.find(Event.PDO);
+    const bool LostPeer = std::any_of(
+        Event.Chain.begin(), Event.Chain.end(), [&](uint64_t Object) {
+          const auto *Peer = connection(Object);
+          const auto *Provider = Peer ? Resources.find(Peer->PDO) : nullptr;
+          return !Peer || !Provider || !Provider->Assigned ||
+                 !Provider->Present || Provider->Epoch != Peer->Epoch;
+        });
+    if (!Connection || !Device || !Device->Assigned || !Device->Present ||
+        Device->Epoch != Event.Epoch || LostPeer) {
+      Ready.push_back(Index);
+      continue;
+    }
+    if (!Wake.Ready || !Wake.Ready(Event.PDO))
+      continue;
+    if (std::all_of(Event.Chain.begin(), Event.Chain.end(),
+                    [&](uint64_t Object) {
+                      const auto *Peer = connection(Object);
+                      return !Peer || !Peer->Active || passiveAvailable(Object);
+                    }))
+      Ready.push_back(Index);
+  }
+  std::sort(Ready.begin(), Ready.end(), [&](size_t Left, size_t Right) {
+    return std::tie(WakeEvents.at(Left).Due, Left) <
+           std::tie(WakeEvents.at(Right).Due, Right);
+  });
+  std::set<uint64_t> Claimed;
+  Ready.erase(std::remove_if(Ready.begin(), Ready.end(),
+                             [&](size_t Index) {
+                               const auto &Event = WakeEvents.at(Index);
+                               for (uint64_t Object : Event.Chain)
+                                 if (const auto *Peer = connection(Object);
+                                     Peer && Peer->Active &&
+                                     Claimed.contains(lockIdentity(Object)))
+                                   return true;
+                               for (uint64_t Object : Event.Chain)
+                                 if (const auto *Peer = connection(Object);
+                                     Peer && Peer->Active)
+                                   Claimed.insert(lockIdentity(Object));
+                               return false;
+                             }),
+              Ready.end());
+  return Ready;
+}
+
 bool KernelInterrupts::runnable(const Event &Event) const {
-  return std::all_of(Event.Chain.begin(), Event.Chain.end(),
-                     [&](uint64_t Object) { return passiveAvailable(Object); });
+  if (hasPendingWake(Event.PDO))
+    return false;
+  if (const auto *Connection = connection(Event.Object);
+      Connection && Connection->WakeCapable)
+    if (const auto *Device = Resources.find(Event.PDO);
+        Device && Device->Power != DevicePowerState::D0)
+      return false;
+  return std::all_of(
+      Event.Chain.begin(), Event.Chain.end(), [&](uint64_t Object) {
+        const auto *Peer = connection(Object);
+        return !Peer || !Peer->Active || passiveAvailable(Object);
+      });
 }
 
 std::optional<uint64_t> KernelInterrupts::nextEventTime() const {
@@ -574,6 +722,11 @@ std::optional<uint64_t> KernelInterrupts::nextEventTime() const {
     if (!Line.Queued && !Line.Sources.empty() &&
         runnable(Line.Sources.begin()->second) && (!Time || Line.Due < *Time))
       Time = Line.Due;
+  for (size_t Index : readyWakeEvents(UINT64_MAX)) {
+    const auto Due = WakeEvents.at(Index).Due;
+    if (!Time || Due < *Time)
+      Time = Due;
+  }
   return Time;
 }
 
@@ -588,7 +741,9 @@ llvm::Error KernelInterrupts::canPrepareCalls(uint64_t Count) const {
 
 llvm::Expected<uint64_t> KernelInterrupts::dueCount(uint64_t Time) const {
   const auto Plan = planBoundary(Time);
-  const uint64_t Count = Plan.Pulses.size() + Plan.Levels.size();
+  const auto WakeReady = readyWakeEvents(Time);
+  const uint64_t Count =
+      Plan.Pulses.size() + Plan.Levels.size() + WakeReady.size();
   if (auto E = canPrepareCalls(Count))
     return E;
   if (Count > DriverInterruptDeliveryLimit -
@@ -622,12 +777,12 @@ KernelInterrupts::Boundary KernelInterrupts::planBoundary(uint64_t Time) const {
     const auto &Event = Events.at(Index);
     for (uint64_t Object : Event.Chain)
       if (const auto *Connection = connection(Object);
-          Connection && Connection->Passive &&
+          Connection && Connection->Active && Connection->Passive &&
           Claimed.count(lockIdentity(Object)))
         return true;
     for (uint64_t Object : Event.Chain)
       if (const auto *Connection = connection(Object);
-          Connection && Connection->Passive)
+          Connection && Connection->Active && Connection->Passive)
         Claimed.insert(lockIdentity(Object));
     return false;
   };
@@ -670,18 +825,24 @@ llvm::Error KernelInterrupts::validateEvent(const Event &Event,
   if (!Device || !Device->Assigned || !Device->Present ||
       Device->Epoch != Event.Epoch)
     return interruptError("pulse targets an unavailable resource epoch");
-  if (CheckPower && Device->Power != DevicePowerState::D0)
-    return interruptError("pulse requires physical device power D0");
+
   const auto *Connection = connection(Event.Object);
   if (!Connection || Connection->PDO != Event.PDO ||
       Connection->Epoch != Event.Epoch)
     return interruptError("pulse lost its original interrupt connection");
+  if (CheckPower && Device->Power != DevicePowerState::D0 &&
+      !(Connection->WakeCapable && Event.WakeRequested))
+    return interruptError("pulse requires physical device power D0");
+  if (CheckPower && !Connection->Active)
+    return interruptError("pulse targets an inactive interrupt source");
   for (uint64_t Object : Event.Chain) {
     const auto *Peer = connection(Object);
     const auto *Provider = Peer ? Resources.find(Peer->PDO) : nullptr;
     if (!Peer || !Provider || !Provider->Present || !Provider->Assigned ||
         Provider->Epoch != Peer->Epoch ||
-        (CheckPower && Provider->Power != DevicePowerState::D0))
+        (CheckPower && Peer->Active &&
+         Provider->Power != DevicePowerState::D0 &&
+         !(Peer->WakeCapable && Event.WakeRequested && Peer->PDO == Event.PDO)))
       return interruptError("shared pulse lost a captured live connection");
   }
   return llvm::Error::success();
@@ -699,10 +860,24 @@ llvm::Error KernelInterrupts::deliveryError(Event &Event,
 
 llvm::Expected<std::optional<KernelInterrupts::Delivery>>
 KernelInterrupts::queueNextDue(uint64_t Now) {
+  if (auto E = latchWakeEvents(Now))
+    return E;
   auto Count = dueCount(Now);
   if (!Count)
     return Count.takeError();
   auto Plan = planBoundary(Now);
+  const auto WakeReady = readyWakeEvents(Now);
+  for (size_t Index : WakeReady) {
+    auto &Event = WakeEvents.at(Index);
+    if (auto E = validateEvent(Event, true))
+      return deliveryError(Event, llvm::toString(std::move(E)), Now);
+    if (!connection(Event.Object)->Active)
+      return deliveryError(Event, "wake source became inactive before its ISR",
+                           Now);
+    if (Resources.find(Event.PDO)->Power != DevicePowerState::D0)
+      return deliveryError(Event, "wake ISR requires actual device power D0",
+                           Now);
+  }
   std::vector<size_t> Arrivals;
   for (auto &[Index, Event] : Events)
     if (!Event.Observed && Event.Action == DriverInterruptAction::Pulse &&
@@ -745,8 +920,13 @@ KernelInterrupts::queueNextDue(uint64_t Now) {
             std::tie(Events.at(Plan.Pulses.front()).Due, Plan.Pulses.front()))
       LineVector = Vector;
   }
-  auto &Event = LineVector ? LevelLines.at(*LineVector).Sources.begin()->second
-                           : Events.at(Plan.Pulses.front());
+  const bool WakeDelivery = !WakeReady.empty();
+  if (WakeDelivery)
+    LineVector.reset();
+  auto &Event = WakeDelivery ? WakeEvents.at(WakeReady.front())
+                : LineVector
+                    ? LevelLines.at(*LineVector).Sources.begin()->second
+                    : Events.at(Plan.Pulses.front());
   uint32_t DeliveryIndex = 0;
   if (LineVector) {
     auto &Line = LevelLines.at(*LineVector);
@@ -757,10 +937,14 @@ KernelInterrupts::queueNextDue(uint64_t Now) {
   }
   const uint64_t Token = NextCall++;
   ++Deliveries;
-  const auto First = Event.Chain.front();
+  std::vector<uint64_t> ActiveChain;
+  for (uint64_t Object : Event.Chain)
+    if (connection(Object)->Active)
+      ActiveChain.push_back(Object);
+  const auto First = ActiveChain.front();
   const auto *Connection = connection(First);
-  Calls.emplace(Token, Call{First, Event.Observation, false, 0, Event.Chain,
-                            LineVector, DeliveryIndex});
+  Calls.emplace(Token, Call{First, Event.Observation, false, 0, ActiveChain,
+                            LineVector, DeliveryIndex, false, WakeDelivery});
   auto &Observation = Result.Interrupts[Event.Observation];
   if (!Observation.OccurredAt100ns)
     Observation.OccurredAt100ns = Now;
@@ -890,6 +1074,13 @@ KernelInterrupts::finishCall(uint64_t Token, uint64_t Value,
     return interruptError("callback return lost its interrupt lock or IRQL");
   CallbackReturn Return{uint8_t(Value), Owned->OldIRQL, {}};
   const auto &Pending = It->second;
+  if (Pending.Wake) {
+    const auto &Event = WakeEvents.at(*Pending.Observation);
+    if (Event.Action == DriverInterruptAction::Assert &&
+        Event.RetriggerAfter100ns > UINT64_MAX - Now)
+      return interruptError(
+          "wake level sampling deadline overflows virtual time");
+  }
   if (Pending.Line &&
       (Return.Value || Pending.Handler + 1 == Pending.Chain.size())) {
     const auto &Line = LevelLines.at(*Pending.Line);
@@ -929,6 +1120,13 @@ KernelInterrupts::finishCall(uint64_t Token, uint64_t Value,
             Now + Line->second.Sources.begin()->second.RetriggerAfter100ns;
         Line->second.Queued = false;
       }
+    } else if (Call.Wake) {
+      const auto &Event = WakeEvents.at(Index);
+      if (auto Line = LevelLines.find(Event.Vector);
+          Event.Action == DriverInterruptAction::Assert &&
+          Line != LevelLines.end())
+        Line->second.Due = Now + Event.RetriggerAfter100ns;
+      WakeEvents.erase(Index);
     } else {
       Events.erase(Index);
     }

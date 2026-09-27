@@ -29,6 +29,20 @@ namespace neverd::emulation {
 namespace {
 constexpr uint64_t KibibyteBytes = 1024;
 
+namespace usbField {
+#define NEVERD_DRIVER_USB_IDLE_FIELD(Name, Spelling)                           \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_FIELD
+} // namespace usbField
+
+namespace coldField {
+#define NEVERD_DRIVER_D3COLD_FIELD(Name, Spelling)                             \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverD3Cold.def"
+#undef NEVERD_DRIVER_D3COLD_FIELD
+} // namespace coldField
+
 namespace resourceField {
 #define NEVERD_DRIVER_RESOURCE_FIELD(Name, Spelling)                           \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -133,17 +147,6 @@ bool pnpRequestMayFail(DevicePnpRequest Minor) {
 #undef NEVERD_DEVICE_PNP_REQUEST
   }
   return false;
-}
-
-bool supportedDevicePower(uint32_t State) {
-  switch (static_cast<DevicePowerState>(State)) {
-#define NEVERD_DRIVER_POWER_DEVICE_STATE(Name) case DevicePowerState::Name:
-#include "neverd/emulation/DriverPower.def"
-#undef NEVERD_DRIVER_POWER_DEVICE_STATE
-    return true;
-  default:
-    return false;
-  }
 }
 
 bool supportedSystemPower(uint32_t State) {
@@ -667,7 +670,7 @@ interruptResources(const llvm::json::Value &Value) {
              interruptField::TranslatedVector, interruptField::TranslatedLevel,
              interruptField::TranslatedAffinity, interruptField::Mode,
              interruptField::Share, interruptField::RetriggerAfter100ns,
-             interruptField::Messages}))
+             interruptField::Messages, interruptField::WakeCapable}))
       return std::move(E);
     auto ID = Object->getString(interruptField::ID);
     auto Mode = Object->getString(interruptField::Mode);
@@ -676,6 +679,12 @@ interruptResources(const llvm::json::Value &Value) {
       return invalid("interrupts require explicit id, mode and share strings");
     DriverInterruptResource Resource;
     Resource.ID = ID->str();
+    if (const auto *Wake = Object->get(interruptField::WakeCapable)) {
+      auto Capable = Wake->getAsBoolean();
+      if (!Capable)
+        return invalid("interrupt wake_capable must be a boolean");
+      Resource.WakeCapable = *Capable;
+    }
     bool ModeFound = false, ShareFound = false;
 #define NEVERD_DRIVER_INTERRUPT_MODE(Name, Value, Spelling)                    \
   if (*Mode == Spelling) {                                                     \
@@ -751,7 +760,8 @@ powerPolicyEvents(const llvm::json::Value &Value) {
     if (!Object)
       return invalid("each power policy event must be an object");
     if (auto E = fields(*Object, {policyField::After100ns,
-                                  policyField::DeviceID, policyField::Action}))
+                                  policyField::DeviceID, policyField::Action,
+                                  policyField::Component, policyField::State}))
       return std::move(E);
     const auto *After = Object->get(policyField::After100ns);
     auto DeviceID = Object->getString(policyField::DeviceID);
@@ -772,7 +782,21 @@ powerPolicyEvents(const llvm::json::Value &Value) {
 #include "neverd/emulation/DriverPowerPolicy.def"
 #undef NEVERD_POWER_POLICY_ACTION
     if (!Found)
-      return invalid("power policy action must be idle, active or wake");
+      return invalid("unsupported power policy event action");
+    for (const auto &[Field, Output] :
+         {std::pair{policyField::Component, &Event.Component},
+          std::pair{policyField::State, &Event.State}}) {
+      if (const auto *Value = Object->get(Field)) {
+        auto Parsed = unsigned64(*Value, Field);
+        if (!Parsed)
+          return Parsed.takeError();
+        if (*Parsed > UINT32_MAX)
+          return invalid("component and state must fit unsigned 32-bit values");
+        *Output = uint32_t(*Parsed);
+      }
+    }
+    if (auto E = validateDriverPowerPolicyEvent(Event))
+      return std::move(E);
     Result.push_back(std::move(Event));
   }
   return Result;
@@ -949,12 +973,13 @@ pnpDevices(const llvm::json::Value &Value) {
     if (!Object)
       return invalid("each pnp_devices entry must be an object");
     if (auto E = fields(*Object,
-                        {field::ID, field::Bus, field::InitialDevicePower,
-                         field::InitialSystemPower,
+                        {field::ID, field::ParentID, field::Bus,
+                         field::InitialDevicePower, field::InitialSystemPower,
                          field::InitialReportedDevicePower,
                          field::RequestedDevicePower, resourceField::Resources,
                          interruptField::Interrupts, dmaField::Dma,
-                         policyField::WakeCapabilities}))
+                         policyField::WakeCapabilities, coldField::D3Cold,
+                         usbField::UsbIdle}))
       return std::move(E);
     auto ID = Object->getString(field::ID);
     auto Bus = Object->getString(field::Bus);
@@ -966,6 +991,12 @@ pnpDevices(const llvm::json::Value &Value) {
           "and initial_system_power strings");
     DriverPnpDevice Device;
     Device.ID = ID->str();
+    if (const auto *Parent = Object->get(field::ParentID)) {
+      auto ParentID = Parent->getAsString();
+      if (!ParentID)
+        return invalid("pnp parent_id must be a string when present");
+      Device.ParentID = ParentID->str();
+    }
     if (const auto *Wake = Object->get(policyField::WakeCapabilities)) {
       const auto *Facts = Wake->getAsObject();
       if (!Facts)
@@ -978,6 +1009,68 @@ pnpDevices(const llvm::json::Value &Value) {
         return invalid(
             "wake_capabilities requires explicit s0 and sx booleans");
       Device.WakeCapabilities = DriverWakeCapabilities{*S0, *Sx};
+    }
+
+    if (const auto *Usb = Object->get(usbField::UsbIdle)) {
+      const auto *Facts = Usb->getAsObject();
+      if (!Facts)
+        return invalid("usb_idle requires an object");
+      if (auto E = fields(*Facts, {usbField::Role, usbField::RemoteWake,
+                                   usbField::DeviceWake}))
+        return std::move(E);
+      auto Role = Facts->getString(usbField::Role);
+      if (!Role)
+        return invalid("usb_idle requires a role string");
+      DriverUsbIdleConfig Config;
+      bool Found = false;
+#define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling)                            \
+  if (*Role == Spelling) {                                                     \
+    Config.Role = DriverUsbIdleRole::Name;                                     \
+    Found = true;                                                              \
+  }
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_ROLE
+      if (!Found)
+        return invalid("unsupported usb_idle role");
+      if (const auto *Wake = Facts->get(usbField::RemoteWake)) {
+        auto Enabled = Wake->getAsBoolean();
+        if (!Enabled)
+          return invalid("usb_idle remote_wake requires a boolean");
+        Config.RemoteWake = *Enabled;
+      }
+      if (const auto *Wake = Facts->get(usbField::DeviceWake)) {
+        auto State = Wake->getAsString();
+        if (!State)
+          return invalid("usb_idle device_wake requires a state string");
+#define NEVERD_DRIVER_DEVICE_POWER(Name, Spelling)                             \
+  if (*State == Spelling)                                                      \
+    Config.DeviceWake = DevicePowerState::Name;
+#include "neverd/emulation/DriverPnpNames.def"
+#undef NEVERD_DRIVER_DEVICE_POWER
+        if (!Config.DeviceWake)
+          return invalid("unsupported usb_idle device_wake state");
+      }
+      Device.UsbIdle = Config;
+    }
+
+    if (const auto *Cold = Object->get(coldField::D3Cold)) {
+      const auto *Facts = Cold->getAsObject();
+      if (!Facts)
+        return invalid("d3cold requires an object");
+      if (auto E =
+              fields(*Facts, {coldField::Supported, coldField::EnabledByDefault,
+                              coldField::WakeS0, coldField::WakeSx}))
+        return std::move(E);
+      auto Supported = Facts->getBoolean(coldField::Supported);
+      auto Default = Facts->getBoolean(coldField::EnabledByDefault);
+      auto WakeS0 = Facts->getBoolean(coldField::WakeS0);
+      auto WakeSx = Facts->getBoolean(coldField::WakeSx);
+      if (!Supported || !Default || !WakeS0 || !WakeSx)
+        return invalid(
+            "d3cold requires explicit supported, enabled_by_default, "
+            "wake_s0 and wake_sx booleans");
+      Device.D3Cold =
+          DriverD3ColdCapabilities{*Supported, *Default, *WakeS0, *WakeSx};
     }
 
     bool Found = false;
@@ -1061,6 +1154,18 @@ pnpDevices(const llvm::json::Value &Value) {
   return Result;
 }
 
+llvm::Error validateScenarioRequestKind(DriverRequestKind Kind) {
+  switch (Kind) {
+#define NEVERD_DRIVER_KERNEL_REQUEST_KIND(Name) case DriverRequestKind::Name:
+#include "neverd/emulation/DriverRequestKinds.def"
+#undef NEVERD_DRIVER_KERNEL_REQUEST_KIND
+    return invalid("kernel-generated request kinds are not accepted in "
+                   "scenarios");
+  default:
+    return llvm::Error::success();
+  }
+}
+
 llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
   const auto *Object = Value.getAsObject();
   if (!Object)
@@ -1081,6 +1186,8 @@ llvm::Expected<DriverRequest> request(const llvm::json::Value &Value) {
 #undef NEVERD_DRIVER_REQUEST_KIND
   if (!KnownKind)
     return invalid("unsupported request kind '" + *Kind + "'");
+  if (auto E = validateScenarioRequestKind(Result.Kind))
+    return std::move(E);
   if ((Object->get(userField::UserBuffers) ||
        Object->get(userField::UserPointers)) &&
       Result.Kind != DriverRequestKind::DeviceControl &&
@@ -1355,6 +1462,26 @@ registry(const llvm::json::Value &Value) {
 
 } // namespace
 
+llvm::Error
+validateDriverPowerPolicyEvent(const DriverPowerPolicyEvent &Event) {
+  switch (Event.Action) {
+#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
+  case DriverPowerPolicyAction::Name:
+#include "neverd/emulation/DriverPowerPolicy.def"
+#undef NEVERD_POWER_POLICY_ACTION
+    break;
+  default:
+    return invalid("unsupported power policy event action");
+  }
+  if (Event.Action == DriverPowerPolicyAction::ComponentIdleState) {
+    if (!Event.Component || !Event.State)
+      return invalid("component_idle_state requires component and state");
+  } else if (Event.Component || Event.State) {
+    return invalid("component and state require component_idle_state");
+  }
+  return llvm::Error::success();
+}
+
 const char *devicePnpFinalStatusError(DevicePnpRequest Request,
                                       uint32_t Status) {
   if (!supportedPnpRequest(Request))
@@ -1406,8 +1533,8 @@ llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
     return invalid("requested_device_power requires device power type");
   switch (Operation.Type) {
   case DriverPowerType::Device:
-    if (!supportedDevicePower(Operation.State))
-      return invalid("device power target must be D0 or D3");
+    if (!isSupportedDriverDevicePower(DevicePowerState(Operation.State)))
+      return invalid("device power target is unsupported by this profile");
     break;
   case DriverPowerType::System:
     if (!supportedSystemPower(Operation.State))
@@ -1617,6 +1744,36 @@ llvm::Error validateDriverDma(llvm::ArrayRef<DriverPnpDevice> Devices) {
 }
 
 namespace {
+llvm::Error validatePnpTopology(llvm::ArrayRef<DriverPnpDevice> Devices) {
+  std::map<llvm::StringRef, const DriverPnpDevice *> ByID;
+  for (const auto &Device : Devices)
+    ByID.emplace(Device.ID, &Device);
+  for (const auto &Device : Devices) {
+    if (!Device.ParentID)
+      continue;
+    if (!validDeviceID(*Device.ParentID))
+      return invalid("pnp parent_id must be a bounded ASCII identifier");
+    if (*Device.ParentID == Device.ID)
+      return invalid("pnp parent_id cannot name the device itself");
+    if (!ByID.contains(*Device.ParentID))
+      return invalid("pnp parent_id must name a configured device");
+  }
+  // Each node has at most one parent. Mark complete paths so shared ancestors
+  // are visited once without recursion or a second authoritative graph.
+  std::set<llvm::StringRef> Complete;
+  for (const auto &Device : Devices) {
+    std::set<llvm::StringRef> Path;
+    const auto *Current = &Device;
+    while (Current && !Complete.contains(Current->ID)) {
+      if (!Path.insert(Current->ID).second)
+        return invalid("pnp parent_id relationships contain a cycle");
+      Current = Current->ParentID ? ByID.at(*Current->ParentID) : nullptr;
+    }
+    Complete.insert(Path.begin(), Path.end());
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error validateDmaEvents(const DriverOptions &Options) {
   size_t Count = 0;
   uint64_t Bytes = 0;
@@ -1670,6 +1827,67 @@ llvm::Error validateDmaEvents(const DriverOptions &Options) {
 }
 } // namespace
 
+llvm::Error validateDriverD3Cold(const DriverPnpDevice &Device) {
+  if (!Device.D3Cold)
+    return llvm::Error::success();
+  const auto &Cold = *Device.D3Cold;
+  if (!Cold.Supported && (Cold.EnabledByDefault || Cold.WakeS0 || Cold.WakeSx))
+    return invalid("d3cold policy and wake require provider support");
+  if ((Cold.WakeS0 &&
+       (!Device.WakeCapabilities || !Device.WakeCapabilities->S0)) ||
+      (Cold.WakeSx &&
+       (!Device.WakeCapabilities || !Device.WakeCapabilities->Sx)))
+    return invalid("d3cold wake requires corresponding wake_capabilities");
+  return llvm::Error::success();
+}
+
+llvm::Error validateDriverUsbIdle(llvm::ArrayRef<DriverPnpDevice> Devices) {
+  std::map<llvm::StringRef, const DriverPnpDevice *> ByID;
+  for (const auto &Device : Devices)
+    ByID.emplace(Device.ID, &Device);
+  for (const auto &Device : Devices) {
+    if (!Device.UsbIdle)
+      continue;
+    const auto &Usb = *Device.UsbIdle;
+    switch (Usb.Role) {
+#define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling)                            \
+  case DriverUsbIdleRole::Name:
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_ROLE
+      break;
+    default:
+      return invalid("unsupported usb_idle role");
+    }
+    const DriverPnpDevice *Parent = nullptr;
+    if (Device.ParentID) {
+      const auto Found = ByID.find(*Device.ParentID);
+      if (Found != ByID.end())
+        Parent = Found->second;
+    }
+    const bool CompositeParent =
+        Parent && Parent->UsbIdle &&
+        Parent->UsbIdle->Role == DriverUsbIdleRole::CompositeParent;
+    if (Usb.Role == DriverUsbIdleRole::CompositeFunction && !CompositeParent)
+      return invalid("usb_idle composite_function requires an immediate "
+                     "composite_parent");
+    if (CompositeParent && Usb.Role != DriverUsbIdleRole::CompositeFunction)
+      return invalid("usb_idle children of a composite_parent require the "
+                     "composite_function role");
+    if (Usb.DeviceWake && (Usb.Role == DriverUsbIdleRole::CompositeParent ||
+                           *Usb.DeviceWake != DevicePowerState::D2))
+      return invalid(
+          "usb_idle device_wake requires a function with D2 capability");
+    if (Usb.Role == DriverUsbIdleRole::CompositeParent && Usb.RemoteWake)
+      return invalid("usb_idle composite_parent cannot declare remote_wake");
+    if (Usb.RemoteWake &&
+        (!Device.WakeCapabilities ||
+         (!Device.WakeCapabilities->S0 && !Device.WakeCapabilities->Sx)))
+      return invalid("usb_idle remote_wake requires enabled "
+                     "wake_capabilities");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   if (auto E = validateDriverInterrupts(Devices))
     return E;
@@ -1686,6 +1904,8 @@ llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   std::vector<Interval> TranslatedRanges;
   size_t ResourceCount = 0, RegisterCount = 0;
   for (const auto &Device : Devices) {
+    if (auto E = validateDriverD3Cold(Device))
+      return E;
     switch (Device.Bus) {
     case DriverBusKind::ResourceFree:
       if (!Device.Resources.empty())
@@ -1877,9 +2097,9 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return invalid("pnp devices require D0 and working initial "
                      "power states");
     if (Device.InitialReportedDevicePower &&
-        !supportedDevicePower(
-            static_cast<uint32_t>(*Device.InitialReportedDevicePower)))
-      return invalid("initial_reported_device_power must be D0 or D3");
+        !isSupportedDriverDevicePower(*Device.InitialReportedDevicePower))
+      return invalid(
+          "initial_reported_device_power is unsupported by this profile");
     if (Device.RequestedDevicePower.size() >
         DriverScenarioPowerResponseLimit - PowerResponses)
       return invalid("requested_device_power exceeds the combined response "
@@ -1889,8 +2109,15 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       if (auto E = validateDriverPowerOperation(Operation, true))
         return E;
   }
+  if (auto E = validatePnpTopology(Options.PnpDevices))
+    return E;
+  if (auto E = validateDriverUsbIdle(Options.PnpDevices))
+    return E;
   if (Options.Requests.size() > DriverScenarioRequestLimit)
     return invalid("at most 64 requests are permitted");
+  for (const auto &Request : Options.Requests)
+    if (auto E = validateScenarioRequestKind(Request.Kind))
+      return E;
   if (auto E = validateDmaEvents(Options))
     return E;
   uint64_t Total = 0;
@@ -1908,17 +2135,28 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       return invalid("combined power policy event limit exceeded");
     PolicyEvents += Request.PowerPolicyEvents.size();
     for (const auto &Event : Request.PowerPolicyEvents) {
+      if (auto E = validateDriverPowerPolicyEvent(Event))
+        return E;
       if (!DeviceIDs.contains(Event.DeviceID) || Event.After100ns > INT64_MAX)
         return invalid(
             "power policy event requires a configured PDO and bounded time");
-      switch (Event.Action) {
-#define NEVERD_POWER_POLICY_ACTION(Name, Spelling)                             \
-  case DriverPowerPolicyAction::Name:
-#include "neverd/emulation/DriverPowerPolicy.def"
-#undef NEVERD_POWER_POLICY_ACTION
-        break;
-      default:
-        return invalid("unsupported power policy event action");
+      if (Event.Action == DriverPowerPolicyAction::UsbIdlePermission) {
+        const auto Device = std::find_if(
+            Options.PnpDevices.begin(), Options.PnpDevices.end(),
+            [&](const DriverPnpDevice &D) { return D.ID == Event.DeviceID; });
+        if (!Device->UsbIdle ||
+            Device->UsbIdle->Role == DriverUsbIdleRole::CompositeFunction)
+          return invalid("usb_idle_permission requires an independent "
+                         "function or composite parent");
+        if (Device->UsbIdle->Role == DriverUsbIdleRole::CompositeParent &&
+            std::none_of(Options.PnpDevices.begin(), Options.PnpDevices.end(),
+                         [&](const DriverPnpDevice &D) {
+                           return D.ParentID == Device->ID && D.UsbIdle &&
+                                  D.UsbIdle->Role ==
+                                      DriverUsbIdleRole::CompositeFunction;
+                         }))
+          return invalid("usb_idle_permission composite parent requires "
+                         "configured function children");
       }
     }
 

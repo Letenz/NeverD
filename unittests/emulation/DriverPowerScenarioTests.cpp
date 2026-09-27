@@ -104,6 +104,88 @@ TEST(DriverPowerScenario, ExplicitPacketFactsPreserveOpaqueContext) {
   EXPECT_TRUE(Result->PnpDevices.front().RequestedDevicePower.empty());
 }
 
+TEST(DriverPowerScenario, D2AdmissionPreservesPacketAndReportedState) {
+  auto Device = llvm::json::parse(DeviceJSON);
+  auto Response = llvm::json::parse(OperationJSON);
+  auto Request = llvm::json::parse(RequestJSON);
+  ASSERT_TRUE(bool(Device)) << llvm::toString(Device.takeError());
+  ASSERT_TRUE(bool(Response)) << llvm::toString(Response.takeError());
+  ASSERT_TRUE(bool(Request)) << llvm::toString(Request.takeError());
+  (*Device->getAsObject())["initial_reported_device_power"] = "D2";
+  (*Response->getAsObject())["power_state"] = "D2";
+  (*Request->getAsObject())["power_state"] = "D2";
+  llvm::json::Array Queue;
+  Queue.push_back(std::move(*Response));
+  (*Device->getAsObject())["requested_device_power"] = std::move(Queue);
+  auto Options = driverOptionsFromScenarioJSON(
+      scenario(jsonText(*Request), jsonText(*Device)));
+  ASSERT_TRUE(bool(Options)) << llvm::toString(Options.takeError());
+  const auto &Configured = Options->PnpDevices.front();
+  EXPECT_EQ(Configured.InitialDevicePower, DevicePowerState::D0);
+  EXPECT_EQ(Configured.InitialReportedDevicePower, DevicePowerState::D2);
+  ASSERT_EQ(Configured.RequestedDevicePower.size(), 1u);
+  EXPECT_EQ(Configured.RequestedDevicePower.front().State,
+            uint32_t(DevicePowerState::D2));
+  EXPECT_EQ(Options->Requests.front().Power->State,
+            uint32_t(DevicePowerState::D2));
+  auto Valid = validateDriverScenario(*Options);
+  ASSERT_FALSE(bool(Valid)) << llvm::toString(std::move(Valid));
+
+  DriverResult Result;
+  Result.Configuration = *Options;
+  Result.PnpDevices.push_back(
+      {"power0", 0x1000, 0, true, DevicePnpState::Started, true,
+       DevicePowerState::D2, SystemPowerState::Working});
+  Result.Devices.push_back({0x2000, 0, 0, "", DevicePowerState::D2});
+  DriverRequestResult Row;
+  Row.Kind = DriverRequestKind::Power;
+  Row.DeviceID = "power0";
+  Row.Power = DriverPowerRequestResult{};
+  Row.Power->State = uint32_t(DevicePowerState::D2);
+  Row.Power->DeviceStateAfter = DevicePowerState::D2;
+  Result.Requests.push_back(Row);
+  auto JSON = llvm::json::parse(driverResultJSON(Result));
+  ASSERT_TRUE(bool(JSON)) << llvm::toString(JSON.takeError());
+  const auto &Root = *JSON->getAsObject();
+  EXPECT_EQ(Root.getArray("pnp_devices")
+                ->front()
+                .getAsObject()
+                ->getString("device_power"),
+            "D2");
+  EXPECT_EQ(Root.getArray("devices")->front().getAsObject()->getString(
+                "reported_device_power"),
+            "D2");
+  const auto *Power =
+      Root.getArray("requests")->front().getAsObject()->getObject("power");
+  ASSERT_NE(Power, nullptr);
+  EXPECT_EQ(Power->getString("power_state"), "D2");
+  EXPECT_EQ(Power->getString("device_state_after"), "D2");
+  const auto *Config = Root.getObject("configuration")
+                           ->getArray("pnp_devices")
+                           ->front()
+                           .getAsObject();
+  EXPECT_EQ(Config->getString("initial_reported_device_power"), "D2");
+  EXPECT_EQ(Config->getArray("requested_device_power")
+                ->front()
+                .getAsObject()
+                ->getString("power_state"),
+            "D2");
+
+  for (auto Unsupported : {DevicePowerState::D1, DevicePowerState(0),
+                           DevicePowerState(UINT32_MAX)}) {
+    auto Native = *Options;
+    Native.Requests.front().Power->State = uint32_t(Unsupported);
+    invalidNative(Native, "unsupported by this profile");
+    Native = *Options;
+    Native.PnpDevices.front().InitialReportedDevicePower = Unsupported;
+    invalidNative(Native, "initial_reported_device_power");
+    Native = *Options;
+    Native.PnpDevices.front().RequestedDevicePower.front().State =
+        uint32_t(Unsupported);
+    invalidNative(Native, "unsupported by this profile");
+  }
+}
+
 TEST(DriverPowerScenario, EveryPacketFactAndDeviceIdentityIsRequired) {
   for (const char *Field :
        {"device_id", "minor", "power_type", "power_state", "power_action",
@@ -128,7 +210,6 @@ TEST(DriverPowerScenario, TypesTargetsActionsAndContextHaveStrictBoundaries) {
       {"minor", "stop"},
       {"power_type", "bus"},
       {"power_state", "D1"},
-      {"power_state", "D2"},
       {"power_state", "working"},
       {"power_action", "hibernate"},
       {"power_action", "shutdown"},

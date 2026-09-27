@@ -205,6 +205,10 @@ TypeRef parseObjCSourceType(llvm::StringRef Encoding, size_t &I,
     while (Start < Encoding.size() &&
            llvm::StringRef("rnNoORV").contains(Encoding[Start]))
       ++Start;
+    if (Start < Encoding.size() && Encoding[Start] == '?') {
+      I = Start + 1; // An IMP pointer does not encode its invocation ABI.
+      return NdType::makePtr(NdType::makeVoid());
+    }
     if (Start < Encoding.size() &&
         llvm::StringRef("{([").contains(Encoding[Start])) {
       if (!skipPointeeType(Encoding, I, Depth + 1))

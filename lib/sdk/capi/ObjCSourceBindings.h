@@ -1644,6 +1644,81 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
              : std::nullopt;
 }
 
+// Swift can leave a file-private literal array of (String, String) pairs in
+// writable __data without an nlist entry for the array itself. The two words
+// immediately before it give the pair and string counts; the next data symbol
+// bounds the object. Rebuild only arrays made entirely of inline ASCII Swift
+// Strings, with no relocations or named object overlapping their bytes.
+inline std::optional<SourceCallTypeHint>
+swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      !Image.MachOTwoLevelNamespace || Image.MachOChainedFixupsAmbiguous ||
+      Address < 16 || Address % 16)
+    return std::nullopt;
+  const auto *Section = Image.getSectionFor(Address);
+  const auto *Segment = Image.getSegmentFor(Address);
+  const auto *Header = Image.readVA(Address - 16, 16);
+  if (!Section || !Segment || !Header ||
+      Image.getSectionFor(Address - 16) != Section || !Section->isReadable() ||
+      !Section->isWritable() || Section->isExecutable() ||
+      !Segment->isReadable() || !Segment->isWritable() ||
+      Segment->isExecutable())
+    return std::nullopt;
+  const uint64_t Pairs = llvm::support::endian::read64le(Header);
+  if (!Pairs || Pairs > 32 ||
+      llvm::support::endian::read64le(Header + 8) != Pairs * 2)
+    return std::nullopt;
+  const uint64_t Width = Pairs * 32;
+  if (Address > InvalidVA - Width ||
+      Image.getSectionFor(Address + Width - 1) != Section ||
+      Image.getSegmentFor(Address + Width - 1) != Segment ||
+      Image.hasExecutableCodeOwnerAt(Address) ||
+      Image.hasExecutableCodeOwnerAt(Address + Width - 1) ||
+      overlapsPointerStorage(Image, Address - 16, Width + 16))
+    return std::nullopt;
+  const auto *Bytes = Image.readVA(Address, Width);
+  if (!Bytes)
+    return std::nullopt;
+  for (uint64_t Word = 0; Word < Pairs * 2; ++Word) {
+    const auto *String = Bytes + Word * 16;
+    if ((String[15] & 0xf0) != 0xe0)
+      return std::nullopt;
+    const uint8_t Count = String[15] & 0x0f;
+    for (unsigned I = 0; I < 15; ++I)
+      if ((I < Count && String[I] >= 0x80) || (I >= Count && String[I] != 0))
+        return std::nullopt;
+  }
+  size_t BoundarySymbols = 0;
+  for (const auto &Symbol : Image.Symbols) {
+    if (Symbol.Addr >= Address && Symbol.Addr < Address + Width)
+      return std::nullopt;
+    if (Symbol.Addr == Address + Width && !Symbol.IsFunc)
+      ++BoundarySymbols;
+    if (Symbol.Size &&
+        (Symbol.Addr > InvalidVA - Symbol.Size ||
+         (Symbol.Addr < Address + Width &&
+          Address < Symbol.Addr + Symbol.Size)))
+      return std::nullopt;
+  }
+  if (BoundarySymbols != 1)
+    return std::nullopt;
+  for (const auto &Export : Image.Exports)
+    if (Export.Addr >= Address && Export.Addr < Address + Width)
+      return std::nullopt;
+  SourceCallTypeHint Hint;
+  Hint.CallKind = SourceCallTypeHint::Kind::RuntimeLocalStorageAddress;
+  Hint.TargetAddress = Address;
+  Hint.TargetName =
+      "swift_inline_string_pairs_" + llvm::utohexstr(Address, true);
+  Hint.ByteCount = Width;
+  Hint.Signature.ReturnType = NdType::makePtr(NdType::makeVoid());
+  std::string Reason;
+  return assignDarwinScalarSourceABI(Hint.Signature, Image.Arch, Reason)
+             ? std::optional<SourceCallTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 inline std::optional<SourceCallTypeHint>
 swiftPrivateScalarStorageHint(const BinaryImage &Image, va_t Address) {
   const auto *Symbol = uniqueWritableDataSymbol(Image, Address, 1);
@@ -3284,6 +3359,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             Expression->SourceCallHint->ByteCount;
         return Expression;
       }
+      if (auto Storage =
+              swiftInlineStringPairArrayHint(Image, Original->ConstVal)) {
+        *Expression = *HighExpr::makeCall({}, 0, {});
+        Expression->Type = Original->Type;
+        Expression->SourceCallHint =
+            std::make_shared<SourceCallTypeHint>(std::move(*Storage));
+        Result.LocalStorageExtents[Original->ConstVal] =
+            Expression->SourceCallHint->ByteCount;
+        return Expression;
+      }
     }
     // Machine pointer stores use integer carriers. Preserve the occurrence's
     // complete address provenance even without a pointer-typed consumer; a
@@ -4790,6 +4875,11 @@ inline bool objcSourceCallBound(
         localStorageHint(Image, Binding.TargetAddress, Binding.ByteCount);
     if (!Expected && Binding.ByteCount == 8)
       Expected = oncePredicateStorageHint(Image, Binding.TargetAddress);
+    if (!Expected) {
+      auto Array = swiftInlineStringPairArrayHint(Image, Binding.TargetAddress);
+      if (Array && Array->ByteCount == Binding.ByteCount)
+        Expected = std::move(Array);
+    }
     return Expected && Binding.TargetName == Expected->TargetName &&
            Binding.Selector.empty() && Binding.OwnerClass.empty() &&
            !Binding.SelectorReferenceAddress &&
@@ -5800,6 +5890,12 @@ renderObjCLocalStorageHelpers(const BinaryImage &Image,
     auto Hint = objc_binding_detail::localStorageHint(Image, Address, Width);
     if (!Hint && Width == 8)
       Hint = objc_binding_detail::oncePredicateStorageHint(Image, Address);
+    if (!Hint) {
+      auto Array =
+          objc_binding_detail::swiftInlineStringPairArrayHint(Image, Address);
+      if (Array && Array->ByteCount == Width)
+        Hint = std::move(Array);
+    }
     if (!Hint)
       throw std::runtime_error("local-storage initializer is no longer valid");
     const auto *Bytes = Image.readVA(Address, Width);

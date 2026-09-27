@@ -756,6 +756,137 @@ TEST(LLVMCIntrinsicSemantics, X87I80BitcastMaterializesExpressionSource) {
 #endif
 }
 
+TEST(LLVMCIntrinsicSemantics, FloatingBitcastsKeepSignedZeroAndNaNPayloads) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("floating-bitcast-representations", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  for (unsigned Bits : {32u, 64u}) {
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Float = Bits == 32 ? Builder.getFloatTy() : Builder.getDoubleTy();
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Integer, {Integer}, false),
+        llvm::GlobalValue::ExternalLinkage, "bits" + std::to_string(Bits),
+        Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    Builder.CreateRet(Builder.CreateBitCast(
+        Builder.CreateBitCast(Function->getArg(0), Float), Integer));
+  }
+  compileAndCheck("#include <stdint.h>\n" + emit(Module) + R"(
+int main(void) {
+  const uint32_t small[] = {0, UINT32_C(0x80000000), UINT32_C(0x7f800000),
+                           UINT32_C(0x7fc12345), UINT32_C(0xffc54321)};
+  const uint64_t large[] = {0, UINT64_C(0x8000000000000000),
+      UINT64_C(0x7ff0000000000000), UINT64_C(0x7ff8123456789abc),
+      UINT64_C(0xfff8fedcba987654)};
+  for (unsigned i = 0; i < sizeof(small) / sizeof(small[0]); ++i)
+    if (bits32(small[i]) != small[i] || bits64(large[i]) != large[i])
+      return (int)i + 1;
+  return 0;
+}
+)");
+}
+
+TEST(LLVMCIntrinsicSemantics, FloatingPredicatesKeepNaNsAndProducerEffects) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("floating-predicates", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> Builder(Context);
+  auto *Double = Builder.getDoubleTy();
+  auto *Producer = llvm::Function::Create(
+      llvm::FunctionType::get(Double, {Double}, false),
+      llvm::GlobalValue::ExternalLinkage, "produce", Module);
+  for (unsigned Index = 0; Index <= llvm::CmpInst::FCMP_TRUE; ++Index) {
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Builder.getInt32Ty(), {Double, Double}, false),
+        llvm::GlobalValue::ExternalLinkage, "compare" + std::to_string(Index),
+        Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Left = Builder.CreateCall(Producer, {Function->getArg(0)});
+    auto *Right = Builder.CreateCall(Producer, {Function->getArg(1)});
+    auto *Compare = Builder.CreateFCmp(
+        static_cast<llvm::CmpInst::Predicate>(Index), Left, Right);
+    Builder.CreateRet(Builder.CreateZExt(Compare, Builder.getInt32Ty()));
+  }
+  compileAndCheck("#include <stdint.h>\n" + emit(Module) + R"(
+static unsigned calls;
+static double observed[2];
+double produce(double value) { observed[calls++] = value; return value; }
+int main(void) {
+  uint32_t (*functions[])(double, double) = {
+    compare0, compare1, compare2, compare3, compare4, compare5, compare6,
+    compare7, compare8, compare9, compare10, compare11, compare12,
+    compare13, compare14, compare15};
+  const double values[] = {-1, 0, 1, __builtin_nan("")};
+  for (unsigned a = 0; a < 4; ++a)
+    for (unsigned b = 0; b < 4; ++b)
+      for (unsigned predicate = 0; predicate < 16; ++predicate) {
+        const double left = values[a], right = values[b];
+        const int unordered = __builtin_isnan(left) || __builtin_isnan(right);
+        const int ordered = !unordered;
+        const int expected[] = {
+          0, ordered && left == right, ordered && left > right,
+          ordered && left >= right, ordered && left < right,
+          ordered && left <= right, ordered && left != right, ordered,
+          unordered, unordered || left == right, unordered || left > right,
+          unordered || left >= right, unordered || left < right,
+          unordered || left <= right, unordered || left != right, 1};
+        calls = 0;
+        if (functions[predicate](left, right) != (unsigned)expected[predicate] ||
+            calls != 2) return (int)predicate + 1;
+        if (!(observed[0] == left ||
+              (__builtin_isnan(observed[0]) && __builtin_isnan(left))) ||
+            !(observed[1] == right ||
+              (__builtin_isnan(observed[1]) && __builtin_isnan(right)))) return 17;
+      }
+  return 0;
+}
+)");
+}
+
+TEST(LLVMCIntrinsicSemantics, X87SaturatingConversionsGuardUndefinedCasts) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("x87-saturating-conversions", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> Builder(Context);
+  auto *Float = llvm::Type::getX86_FP80Ty(Context);
+  for (unsigned Bits : {32u, 64u}) {
+    auto *Integer = Builder.getIntNTy(Bits);
+    auto *Function =
+        llvm::Function::Create(llvm::FunctionType::get(Integer, {Float}, false),
+                               llvm::GlobalValue::ExternalLinkage,
+                               "saturate" + std::to_string(Bits), Module);
+    Builder.SetInsertPoint(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Intrinsic = llvm::Intrinsic::getOrInsertDeclaration(
+        &Module, llvm::Intrinsic::fptosi_sat, {Integer, Float});
+    Builder.CreateRet(Builder.CreateCall(Intrinsic, {Function->getArg(0)}));
+  }
+#if defined(__x86_64__) && defined(__linux__)
+  compileAndCheck("#include <stdint.h>\n" + emit(Module) + R"(
+int main(void) {
+  const long double nan = __builtin_nanl(""), infinity = __builtin_infl();
+  if (saturate32(nan) || saturate64(nan)) return 1;
+  if (saturate32(infinity) != INT32_MAX ||
+      saturate32(-infinity) != UINT32_C(0x80000000) ||
+      saturate64(infinity) != INT64_MAX ||
+      saturate64(-infinity) != UINT64_C(0x8000000000000000)) return 2;
+  if (saturate32(0x1p31L) != INT32_MAX ||
+      saturate64(0x1p63L) != INT64_MAX ||
+      saturate32(-0x1p31L) != UINT32_C(0x80000000) ||
+      saturate64(-0x1p63L) != UINT64_C(0x8000000000000000)) return 3;
+  if (saturate32(17.9L) != 17 || saturate32(-17.9L) != (uint32_t)-17 ||
+      saturate64(17.9L) != 17 || saturate64(-17.9L) != (uint64_t)-17) return 4;
+  return 0;
+}
+)");
+#else
+  GTEST_SKIP() << "native x87 C execution requires Linux x86-64";
+#endif
+}
+
 TEST(LLVMCIntrinsicSemantics, VolatileI80PointerCopyKeepsTenByteAccesses) {
   llvm::LLVMContext C;
   llvm::Module M("volatile-i80-pointer-copy", C);

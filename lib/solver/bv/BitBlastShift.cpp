@@ -12,7 +12,7 @@
 /// overwhelmingly the common one in recovered code, and because the variable
 /// case is built out of it: one stage per bit of the amount, each stage either
 /// applying a fixed power-of-two shift or passing its input through.  The
-/// depth is logarithmic in the width rather than linear, and a stage whose
+/// ordinary shift depth is logarithmic in the value width, and a stage whose
 /// amount bit is already decided disappears.
 ///
 /// Two boundary behaviours are defined by the expression language rather than
@@ -20,8 +20,8 @@
 /// A shift by at least the width produces the fill value — zero, or the sign
 /// for an arithmetic right shift — which the staged shifts already give for
 /// amounts the stages cover, and which an explicit guard gives for amounts
-/// above that.  A rotation is taken modulo the width, which is free when the
-/// width is a power of two and needs a division when it is not.
+/// above that.  Rotation stages compose by adding their amounts modulo the
+/// width, so even a non-power-of-two width needs no division circuit.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -147,46 +147,34 @@ void shiftBits(CnfEncoder &E, LitSpan A, LitSpan Amount, ShiftKind Kind,
 
   const bool Rotate = isRotate(Kind);
 
-  if (std::optional<uint64_t> Fixed =
-          Rotate ? constantResidue(E, Amount, Width)
-                 : constantAmount(E, Amount, Width)) {
+  if (std::optional<uint64_t> Fixed = Rotate
+                                          ? constantResidue(E, Amount, Width)
+                                          : constantAmount(E, Amount, Width)) {
     shiftBitsByConstant(E, A, *Fixed, Kind, Out);
     return;
   }
 
   const size_t Stages = stageCount(Width);
 
-  // A rotation is modulo the width.  When the width is a power of two the
-  // amount's low bits already are that residue; otherwise it has to be
-  // computed, and the only exact way to do that is the division the definition
-  // names.  The reduction is skipped when the amount is too narrow to reach
-  // the width in the first place.
-  LitSpan Steps = Amount;
-  LitVec Reduced;
-  const bool NeedsReduction =
-      Rotate && (Width & (Width - 1)) != 0 &&
-      (Amount.size() >= 64 || (uint64_t(1) << Amount.size()) > Width);
-
-  if (NeedsReduction) {
-    LitVec Modulus;
-    Modulus.reserve(Amount.size());
-    for (size_t I = 0, N = Amount.size(); I < N; ++I)
-      Modulus.push_back(E.constant(I < 64 && ((Width >> I) & 1) != 0));
-    divideBits(E, Amount, Modulus, /*Quotient=*/nullptr, &Reduced);
-    Steps = Reduced;
-  }
-
   LitVec Current(A.begin(), A.end());
   LitVec Stage;
   LitVec Selected;
 
-  const size_t Usable = std::min(Stages, Steps.size());
-  for (size_t K = 0; K < Usable; ++K) {
-    SatLit Step = Steps[K];
+  // Rotating by the sum of selected powers of two is the composition of
+  // rotations by each selected power. Reduce the constant stage distances,
+  // not the symbolic amount: this needs at most Width * Amount.size() muxes.
+  // For power-of-two widths Distance reaches zero, making every later stage
+  // an identity. Other widths must keep every bit, even beyond bit 63.
+  const size_t Usable =
+      Rotate ? Amount.size() : std::min(Stages, Amount.size());
+  uint64_t Distance = Rotate ? 1 % Width : 1;
+  for (size_t K = 0; K < Usable && Distance != 0;
+       ++K, Distance = Rotate ? (2 * Distance) % Width : 2 * Distance) {
+    SatLit Step = Amount[K];
     if (E.isFalseLit(Step))
       continue;
 
-    shiftBitsByConstant(E, Current, uint64_t(1) << K, Kind, Stage);
+    shiftBitsByConstant(E, Current, Distance, Kind, Stage);
     if (E.isTrueLit(Step)) {
       Current = std::move(Stage);
       continue;
@@ -197,7 +185,7 @@ void shiftBits(CnfEncoder &E, LitSpan A, LitSpan Amount, ShiftKind Kind,
 
   if (!Rotate) {
     // Amount bits above the last stage can only mean an amount past the width.
-    // Rotation needs no such guard: its amount was already reduced.
+    // Rotation needs no such guard: each stage already wraps around.
     SatLit Beyond = E.falseLit();
     for (size_t K = Stages, N = Amount.size(); K < N; ++K)
       Beyond = E.mkOr(Beyond, Amount[K]);

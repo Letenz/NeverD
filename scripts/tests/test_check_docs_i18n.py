@@ -167,6 +167,59 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
         i18n.validate_driver_documents(errors, _OverlayView({path: changed}))
         self.assertFalse(any("WdfUnmodeledIdentity" in error for error in errors), errors)
 
+    def test_driver_framework_inventory_cannot_use_mentions_elsewhere(self) -> None:
+        path = Path("docs/de/driver-emulation.md")
+        original = i18n.RepositoryView(use_index=False).read_text(path)
+        inventory = next(
+            paragraph for paragraph in original.split("\n\n")
+            if "`" in paragraph and paragraph.split("`")[1] == "WdfDriverCreate"
+        )
+        symbol = "WdfDeviceConfigureRequestDispatching"
+        self.assertIn(f"`{symbol}`", inventory)
+        changed = original.replace(inventory, inventory.replace(f"`{symbol}`", "", 1))
+        self.assertIn(f"`{symbol}`", changed)
+        errors: list[str] = []
+        i18n.validate_driver_documents(errors, _OverlayView({path: changed}))
+        self.assertTrue(
+            any(f"KMDF API inventory missing '{symbol}'" in error for error in errors),
+            errors,
+        )
+
+    def test_driver_framework_inventory_rejects_unmodeled_entries(self) -> None:
+        path = Path("docs/ja/driver-emulation.md")
+        original = i18n.RepositoryView(use_index=False).read_text(path)
+        changed = original.replace(
+            "`WdfDriverCreate`,", "`WdfDriverCreate`, `WdfUnmodeledIdentity`,", 1
+        )
+        errors: list[str] = []
+        i18n.validate_driver_documents(errors, _OverlayView({path: changed}))
+        self.assertTrue(
+            any("KMDF API inventory has unmodeled 'WdfUnmodeledIdentity'" in error
+                for error in errors),
+            errors,
+        )
+
+    def test_driver_caller_context_requires_its_routing_contract(self) -> None:
+        path = Path("docs/zh-TW/driver-emulation.md")
+        original = i18n.RepositoryView(use_index=False).read_text(path)
+        paragraph = next(
+            part for part in original.split("\n\n")
+            if "`WdfDeviceInitSetIoInCallerContextCallback`" in part
+            and "`WdfRequestRetrieveUnsafeUserInputBuffer`" in part
+            and "`WdfDriverCreate`" not in part
+        )
+        symbol = "WdfDeviceConfigureRequestDispatching"
+        self.assertIn(f"`{symbol}`", paragraph)
+        changed = original.replace(paragraph, paragraph.replace(f"`{symbol}`", ""))
+        self.assertIn(f"`{symbol}`", changed)
+        errors: list[str] = []
+        i18n.validate_driver_documents(errors, _OverlayView({path: changed}))
+        self.assertTrue(
+            any(f"caller-context routing paragraph missing '{symbol}'" in error
+                for error in errors),
+            errors,
+        )
+
     def test_driver_guide_requires_framework_and_guard_limits(self) -> None:
         path = Path("docs/zh-TW/driver-emulation.md")
         view = i18n.RepositoryView(use_index=False)
@@ -678,6 +731,24 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                     path: original.replace(token, "removed-ios-contract")
                 }))
                 self.assertTrue(any(token in error for error in errors), errors)
+
+    def test_ios_synchronized_cleanup_contract_is_required_in_every_guide(self) -> None:
+        view = i18n.RepositoryView(use_index=False)
+        paths = (Path("docs/ios.md"), *(Path(f"docs/{locale}/ios.md") for locale in i18n.LOCALES))
+        for path in paths:
+            with self.subTest(path=path):
+                original = view.read_text(path)
+                paragraph = next(
+                    part for part in original.split("\n\n")
+                    if "required_cflags" in part
+                )
+                errors: list[str] = []
+                i18n.require_tokens(
+                    path, i18n.GUIDE_REQUIRED_TOKENS["ios"], errors,
+                    _OverlayView({path: original.replace(paragraph, "")}),
+                )
+                for token in ("@synchronized", "required_cflags", "-fexceptions"):
+                    self.assertTrue(any(token in error for error in errors), errors)
 
     def test_ios_translated_examples_and_mobile_rows_do_not_drift(self) -> None:
         view = i18n.RepositoryView(use_index=False)

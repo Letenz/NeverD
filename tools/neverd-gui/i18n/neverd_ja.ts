@@ -333,11 +333,6 @@
             <translation>バイナリを開くと、関数を閲覧できます。</translation>
         </message>
         <message>
-            <location filename="../qml/FunctionsPane.qml" line="137" />
-            <source>CURRENT FUNCTION</source>
-            <translation>現在の関数</translation>
-        </message>
-        <message>
             <location filename="../qml/FunctionsPane.qml" line="157" />
             <source>Rename</source>
             <translation>名前を変更</translation>
@@ -682,9 +677,9 @@
             <translation>アセンブリの先を読む</translation>
         </message>
         <message>
-            <location filename="../qml/RepresentationPane.qml" line="47" />
-            <source>Compare recovered C with LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
-            <translation>復元された C を LowIR、MedIR、HighIR、LLVM IR と比較します。関数を選択して開始してください。</translation>
+            <location filename="../qml/RepresentationPane.qml" line="49" />
+            <source>Compare recovered C, LLVM C, LowIR, MedIR, HighIR, and LLVM IR. Select a function to begin.</source>
+            <translation>復元された C、LLVM C、LowIR、MedIR、HighIR、LLVM IR を比較します。関数を選択して開始してください。</translation>
         </message>
         <message>
             <location filename="../qml/DockWorkspace.qml" line="112" />
@@ -1053,6 +1048,11 @@ Explore disassembly, control flow, recovered C, and intermediate representations
     </context>
     <context>
         <name>Workbench</name>
+        <message>
+            <location filename="../Workbench.cpp" line="71" />
+            <source>Loading debug symbols…</source>
+            <translation>デバッグシンボルを読み込み中…</translation>
+        </message>
         <message>
             <location filename="../Workbench.cpp" line="17" />
             <source>Open a binary to begin</source>

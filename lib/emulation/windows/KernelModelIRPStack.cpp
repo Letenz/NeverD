@@ -85,9 +85,25 @@ llvm::Expected<bool> KernelModel::dispatchPending(const ActiveRequest &Request,
   return (*Control & StackPendingReturned) != 0;
 }
 
+llvm::Error KernelModel::validateCompletionPending(const ActiveRequest &Request,
+                                                   bool Pending) const {
+  if (Request.DispatchReturned &&
+      Result.Requests[Request.ResultIndex].DispatchStatus == StatusPending &&
+      !Pending)
+    return stackError(
+        "pending dispatch completion requires propagation to the top stack");
+  return llvm::Error::success();
+}
+
 llvm::Expected<uint64_t>
 KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
                         std::optional<int64_t> SendTimeout) {
+  if (!requestForIRP(IRP) && DriverIRPs.contains(IRP)) {
+    if (Owner != ForwardingOwner::WDM)
+      return stackError("caller-allocated packets require WDM dispatch");
+    if (auto E = adoptDriverIRP(Device, IRP))
+      return E;
+  }
   auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed)
     return stackError("IoCallDriver requires a live owned IRP");
@@ -99,8 +115,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
     return stackError("pageable power forwarding requires PASSIVE_LEVEL");
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return stackError("cannot replace a pending guest callback");
-  if (Owner == ForwardingOwner::WDM && Framework &&
-      Framework->ownsRequestIRP(IRP))
+  if (Owner == ForwardingOwner::WDM &&
+      (FrameworkUsbIdleRequests.contains(IRP) ||
+       (Framework && Framework->ownsRequestIRP(IRP))))
     return stackError("framework-owned requests cannot use WDM forwarding");
   if (!Devices.count(Device) ||
       std::find(Request->DeviceRoute.begin(), Request->DeviceRoute.end(),
@@ -161,6 +178,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   const bool WasForwarded = Request->Forwarded;
   const auto WasPending = Request->UnwoundPending[Slot];
   const bool FileBusReceived = Request->FileBusReceived;
+  const bool UsbReceived = Result.Requests[Request->ResultIndex].UsbIdle &&
+                           Result.Requests[Request->ResultIndex]
+                               .UsbIdle->BusReceivedAt100ns.has_value();
   const size_t ResultIndex = Request->ResultIndex;
   const auto &Observation = Result.Requests[ResultIndex];
   const auto Received = Observation.Pnp ? Observation.Pnp->BusReceivedAt100ns
@@ -177,8 +197,22 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   Request->UnwoundPending[Slot].reset();
   if (Provider) {
     auto Status = callProviderDriver(Device, IRP, Owner, SendTimeout);
-    if (Status)
+    if (Status) {
+      auto Allocation = DriverIRPs.find(IRP);
+      if (Allocation != DriverIRPs.end() &&
+          !Allocation->second.InitialDispatchToken &&
+          !requestForIRP(IRP)->DispatchReturned) {
+        if (*Status == StatusPending || requestForIRP(IRP)->Completed) {
+          if (auto E = recordDriverIRPDispatchReturn(IRP, uint32_t(*Status)))
+            return E;
+        } else {
+          // Synchronous provider completion can enter the allocating caller
+          // before this API returns. Keep its result until that real unwind.
+          Allocation->second.ProviderDispatchReturn = uint32_t(*Status);
+        }
+      }
       return Status;
+    }
     auto E = Status.takeError();
     auto *Retained = requestForIRP(IRP);
     const auto &Current = Result.Requests[ResultIndex];
@@ -189,7 +223,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
     // the call without accepting the packet, restore that cursor and its slot
     // metadata. Once a real receipt occurred, effects cannot be rolled back.
     if (Retained && !Retained->Completed && NowReceived == Received &&
-        Retained->FileBusReceived == FileBusReceived) {
+        Retained->FileBusReceived == FileBusReceived &&
+        bool(Current.UsbIdle && Current.UsbIdle->BusReceivedAt100ns) ==
+            UsbReceived) {
       E = llvm::joinErrors(
           std::move(E),
           Memory.writeInteger(IRP + IRPLocationOffset, *Cursor + 1, 1));
@@ -224,6 +260,10 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   }
   const uint64_t Token = NextIRPCall++;
   IRPCalls.emplace(Token, IRPCall{IRPCallKind::Dispatch, IRP, Slot, true});
+  if (auto Allocation = DriverIRPs.find(IRP);
+      Allocation != DriverIRPs.end() &&
+      !Allocation->second.InitialDispatchToken)
+    Allocation->second.InitialDispatchToken = Token;
   PendingWdmCall =
       KernelGuestCall{{GuestCallOwner::WDM, Token}, *PC, {Device, IRP}};
   return 0;
@@ -336,7 +376,8 @@ llvm::Error KernelModel::completeRequest(uint64_t IRP, uint8_t PriorityBoost) {
 
 llvm::Expected<KernelModel::IRPCompletionPlan>
 KernelModel::planIRPCompletion(uint64_t IRP,
-                               std::optional<uint32_t> StatusOverride) const {
+                               std::optional<uint32_t> StatusOverride,
+                               std::optional<bool> CancelOverride) const {
   auto Cursor = requestStackCursor(IRP);
   if (!Cursor)
     return Cursor.takeError();
@@ -344,9 +385,21 @@ KernelModel::planIRPCompletion(uint64_t IRP,
   llvm::Expected<uint64_t> Status =
       StatusOverride ? llvm::Expected<uint64_t>(*StatusOverride)
                      : Memory.readInteger(IRP + IRPStatusOffset, 4);
-  auto Cancel = Memory.readInteger(IRP + IRPCancelOffset, 1);
+  llvm::Expected<uint64_t> Cancel =
+      CancelOverride ? llvm::Expected<uint64_t>(*CancelOverride)
+                     : Memory.readInteger(IRP + IRPCancelOffset, 1);
   if (!Status || !Cancel)
     return llvm::joinErrors(Status.takeError(), Cancel.takeError());
+  if (!StatusOverride && Request.PowerOperation &&
+      Request.PowerOperation->Minor == DevicePowerRequest::WaitWake &&
+      !(uint32_t(*Status) & profile::NTStatusFailureMask)) {
+    const auto &Observation = Result.Requests[Request.ResultIndex].Power;
+    if (!Observation || !Observation->BusReceivedAt100ns ||
+        !Observation->BusCompletedAt100ns || !Observation->BusStatus ||
+        (*Observation->BusStatus & profile::NTStatusFailureMask))
+      return stackError("successful WAIT_WAKE requires actual successful "
+                        "provider completion");
+  }
   IRPCompletionPlan Plan;
   Plan.StartSlot = *Cursor;
   bool PropagatePending = false;
@@ -378,9 +431,14 @@ KernelModel::planIRPCompletion(uint64_t IRP,
             Memory.readInteger(Stack + StackSize + StackDeviceOffset, 8);
         if (!Upper)
           return Upper.takeError();
+        const auto Allocation = DriverIRPs.find(IRP);
+        const bool CallerDevice = Allocation != DriverIRPs.end() &&
+                                  Slot == Allocation->second.DispatchSlot &&
+                                  *Upper == Allocation->second.CompletionDevice;
         if (!Devices.count(*Upper) ||
-            std::find(Request.DeviceRoute.begin(), Request.DeviceRoute.end(),
-                      *Upper) == Request.DeviceRoute.end())
+            (!CallerDevice &&
+             std::find(Request.DeviceRoute.begin(), Request.DeviceRoute.end(),
+                       *Upper) == Request.DeviceRoute.end()))
           return stackError("completion lost the upper device identity");
         Plan.Device = *Upper;
       }
@@ -389,6 +447,16 @@ KernelModel::planIRPCompletion(uint64_t IRP,
     }
     PropagatePending = Pending;
   }
+  if (DriverIRPs.contains(IRP))
+    return stackError("caller IRP completion must return "
+                      "STATUS_MORE_PROCESSING_REQUIRED");
+  llvm::Expected<bool> Pending =
+      Plan.Steps.empty() ? dispatchPending(Request, Request.StackCount - 1)
+                         : llvm::Expected<bool>(Plan.Steps.back().Pending);
+  if (!Pending)
+    return Pending.takeError();
+  if (auto E = validateCompletionPending(Request, *Pending))
+    return E;
   llvm::Expected<uint64_t> Information =
       StatusOverride ? llvm::Expected<uint64_t>(0)
                      : Memory.readInteger(IRP + IRPInformationOffset, 8);
@@ -496,6 +564,8 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
   if (auto E = retireCompletedRequest(IRP, 0))
     return E;
   IRPCalls.erase(Call);
+  if (auto E = tryFinalizeFrameworkUsbIdle(IRP))
+    return E;
   if (auto E = tryFinalizePowerRequest(IRP))
     return E;
   return std::optional<uint64_t>{ReturnValue};
@@ -503,6 +573,27 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
 
 llvm::Expected<std::optional<uint64_t>>
 KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
+  const auto Found = IRPCalls.find(Token);
+  const auto Parent = Found != IRPCalls.end() ? Found->second.ProviderReceiptIRP
+                                              : std::optional<uint64_t>{};
+  auto Returned = finishWdmGuestCallBody(Token, ResultValue);
+  if (!Returned || !*Returned || !Parent)
+    return Returned;
+  auto Continued = continueProviderReceipt(*Parent);
+  if (!Continued)
+    return Continued.takeError();
+  if (!*Continued && PendingWdmCall && Scheduler.active()) {
+    auto Scheduled = ScheduledModelContinuations.find(Scheduler.active()->ID);
+    if (Scheduled != ScheduledModelContinuations.end() &&
+        Scheduled->second.Owner == GuestCallOwner::WDM &&
+        Scheduled->second.ID == Token)
+      Scheduled->second = PendingWdmCall->Token;
+  }
+  return Continued;
+}
+
+llvm::Expected<std::optional<uint64_t>>
+KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
   auto Call = IRPCalls.find(Token);
   if (Call == IRPCalls.end() || !Call->second.AwaitingCallback)
     return stackError("unknown or inactive guest continuation");
@@ -512,8 +603,13 @@ KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
     if (!CancelLock.Callback || CancelLock.Held ||
         CancelLock.IRP != Call->second.IRP || CurrentIRQL != CancelLock.OldIRQL)
       return stackError("IoCancelIrp callback did not release its cancel lock");
+    const uint64_t IRP = Call->second.IRP;
     CancelLock = {};
     IRPCalls.erase(Call);
+    if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
+    if (auto E = tryFinalizePowerRequest(IRP))
+      return E;
     return std::optional<uint64_t>{1};
   }
   if (Call->second.Kind == IRPCallKind::PowerDispatch) {
@@ -531,13 +627,34 @@ KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
     if (!Request)
       return stackError("dispatch return lost its retained request");
     const uint32_t Status = uint32_t(ResultValue);
+    if (auto Allocation = DriverIRPs.find(IRP);
+        Allocation != DriverIRPs.end() &&
+        Allocation->second.InitialDispatchToken == Token)
+      if (auto E = recordDriverIRPDispatchReturn(IRP, Status))
+        return E;
     // A forwarding middle driver can return pending before its completion
     // routine runs and propagates that bit. IoCallDriver returns the driver's
     // status now; final unwinding owns propagation and retirement checks.
     IRPCalls.erase(Call);
     if (auto E = tryFinalizePowerRequest(IRP))
       return E;
+    if (auto E = tryFinalizeDriverIRP(IRP))
+      return E;
     return std::optional<uint64_t>{Status};
+  }
+  const uint64_t IRP = Call->second.IRP;
+  auto Allocation = DriverIRPs.find(IRP);
+  if (Allocation != DriverIRPs.end() && Allocation->second.StorageReleased &&
+      Allocation->second.FreeCompletionToken == Token &&
+      uint32_t(ResultValue) != StatusMoreProcessingRequired)
+    return stackError("IoFreeIrp in completion requires "
+                      "STATUS_MORE_PROCESSING_REQUIRED");
+  if (uint32_t(ResultValue) == StatusMoreProcessingRequired &&
+      Allocation != DriverIRPs.end() && !Allocation->second.StorageReleased &&
+      Call->second.Slot == Allocation->second.DispatchSlot + 1) {
+    if (auto E = captureDriverIRPCompletion(IRP))
+      return E;
+    Allocation->second.CompletionHeld = true;
   }
   Call->second.AwaitingCallback = false;
   if (uint32_t(ResultValue) == StatusMoreProcessingRequired) {
@@ -547,6 +664,8 @@ KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
     const uint64_t ReturnValue = Call->second.ReturnValue;
     IRPCalls.erase(Call);
     if (auto E = tryFinalizePowerRequest(IRP))
+      return E;
+    if (auto E = tryFinalizeDriverIRP(IRP))
       return E;
     return std::optional<uint64_t>{ReturnValue};
   }

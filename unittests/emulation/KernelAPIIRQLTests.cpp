@@ -85,6 +85,8 @@ TEST(DriverKernelAPIIRQL, NonpagedPoolMdlAndWorkOperationsPermitDispatch) {
                                        "ExAllocatePool2",
                                        "ExFreePoolWithTag",
                                        "ExFreePool",
+                                       "IoAllocateIrp",
+                                       "IoFreeIrp",
                                        "IoAllocateMdl",
                                        "IoFreeMdl",
                                        "MmBuildMdlForNonPagedPool",

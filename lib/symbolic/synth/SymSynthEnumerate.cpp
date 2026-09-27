@@ -120,7 +120,7 @@ private:
 SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
                                 const SynthOptions &Opts,
                                 const OpSemantics &Sem, SearchEffort &Effort,
-                                const Checker &Check,
+                                Checker &Check,
                                 const std::optional<SynthVerifyFn> &Verify,
                                 uint64_t &ProofQueries) {
   SearchOutcome Result;
@@ -131,10 +131,9 @@ SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
   const size_t Points = P.Grid.size();
   TermBank Bank;
 
-  // A check evaluates two expressions at every point of its own grid, so it
-  // costs hundreds of ordinary candidates and is charged as much.  An
-  // expression whose behaviour a whole tier of coincidences reproduces would
-  // otherwise buy an unbounded amount of checking for nothing.
+  // Charge a grid's worth of work per offer, including candidates whose
+  // refutation is cached.  This preserves the work limit and search order
+  // when many expressions canonicalize to the same rejected candidate.
   const size_t CheckCost = std::max<size_t>(Check.Grid.size(), 1);
 
   // Offer a term to the check and, when it survives, end the search.  Returns
@@ -142,7 +141,7 @@ SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
   auto offer = [&](SymRef Node, size_t Cost) {
     if (!Effort.spend(CheckCost))
       return false;
-    switch (Check.check(Ctx, P.Body, Node, Verify, ProofQueries)) {
+    switch (Check.check(Node, Verify, ProofQueries)) {
     case Verdict::Refuted:
       Result.SawRefuted = true;
       return true;

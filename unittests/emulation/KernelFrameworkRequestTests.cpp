@@ -181,6 +181,21 @@ protected:
     return Automatic;
   }
 
+  uint64_t dispatchQueue() {
+    queueConfiguration();
+    put(QueueConfig + framework::QueueConfigIsDefault, 0, 1);
+    put(QueueConfig + framework::QueueConfigRead, DefaultPC);
+    put(QueueConfig + framework::QueueConfigWrite, DefaultPC);
+    EXPECT_EQ(take(createQueue()), 0u);
+    return get(QueueSlot);
+  }
+
+  llvm::Expected<uint64_t> assignQueue(uint64_t Target, uint32_t Major,
+                                       uint8_t IRQL = 0) {
+    return invoke(framework::api::WdfDeviceConfigureRequestDispatching,
+                  {Globals, Device, Target, Major}, IRQL);
+  }
+
   uint64_t packet(uint32_t Major = 14, uint32_t Input = 3, uint32_t Output = 7,
                   uint64_t Offset = 0) {
     const uint64_t IRP = NextIRP;
@@ -2981,6 +2996,184 @@ TEST_F(DriverKernelFrameworkRequest,
   EXPECT_EQ(take(Model.finishGuestCall(Cancel.Token, 0)),
             std::optional<uint64_t>{0});
   EXPECT_TRUE(Released.count(Request));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchKeepsDefaultIdentityAndUnmappedRequests) {
+  using namespace framework;
+  initializeQueue();
+  const auto Target = dispatchQueue();
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), 0u);
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorWrite)), 0u);
+  EXPECT_EQ(take(invoke(api::WdfDeviceGetDefaultQueue, {Globals, Device})),
+            Queue);
+  for (const auto Major :
+       {RequestMajorRead, RequestMajorWrite, RequestMajorDeviceControl}) {
+    const auto IRP = packet(Major);
+    const auto Call = route(IRP);
+    EXPECT_EQ(Call.Arguments[0],
+              Major == RequestMajorDeviceControl ? Queue : Target);
+    EXPECT_EQ(Call.PC,
+              Major == RequestMajorDeviceControl ? IoControlPC : DefaultPC);
+    complete(request(Call));
+    success(Model.finishRequestDispatch(IRP));
+  }
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchDoesNotMoveAnAlreadyPresentedRequest) {
+  using namespace framework;
+  initializeQueue();
+  const auto OldIRP = packet(RequestMajorRead);
+  const auto Old = route(OldIRP);
+  const auto Target = dispatchQueue();
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), 0u);
+  const auto NewIRP = packet(RequestMajorRead);
+  const auto New = route(NewIRP);
+  EXPECT_EQ(Old.Arguments[0], Queue);
+  EXPECT_EQ(New.Arguments[0], Target);
+  EXPECT_EQ(take(invoke(api::WdfRequestGetIoQueue, {Globals, request(Old)})),
+            Queue);
+  complete(request(Old));
+  complete(request(New));
+  success(Model.finishRequestDispatch(OldIRP));
+  success(Model.finishRequestDispatch(NewIRP));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchCapturesEnqueuedCallerRequestAndTransfersOwnership) {
+  using namespace framework;
+  for (const bool ConfigureBeforeEnqueue : {true, false}) {
+    SCOPED_TRACE(ConfigureBeforeEnqueue);
+    Device = control(0, 0, ExecutionPassive, SynchronizationNone, CancelPC);
+    WdmDevice =
+        take(invoke(api::WdfDeviceWdmGetDeviceObject, {Globals, Device}));
+    queueConfiguration();
+    put(QueueConfig + QueueConfigRead, ReadPC);
+    initializeQueue();
+    const auto Target = dispatchQueue();
+    const auto Manual = manualQueue();
+    const auto IRP = packet(RequestMajorRead);
+    const auto Caller = route(IRP);
+    EXPECT_EQ(Caller.PC, CancelPC);
+    const auto Request = request(Caller);
+    if (ConfigureBeforeEnqueue)
+      EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), 0u);
+    EXPECT_EQ(
+        take(invoke(api::WdfDeviceEnqueueRequest, {Globals, Device, Request})),
+        0u);
+    if (!ConfigureBeforeEnqueue)
+      EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), 0u);
+    const auto Delivery = take(Model.continueCallerContext(IRP));
+    EXPECT_EQ(Delivery.Arguments[0], ConfigureBeforeEnqueue ? Target : Queue);
+    EXPECT_EQ(request(Delivery), Request);
+    EXPECT_EQ(take(invoke(api::WdfRequestForwardToIoQueue,
+                          {Globals, Request, Manual})),
+              0u);
+    success(Model.finishRequestDispatch(IRP));
+    EXPECT_EQ(take(invoke(api::WdfIoQueueRetrieveNextRequest,
+                          {Globals, Manual, BufferSlot})),
+              0u);
+    EXPECT_EQ(get(BufferSlot), Request);
+    complete(Request);
+    EXPECT_EQ(Packets.at(IRP).CompletionCalls, 1u);
+    take(invoke(api::WdfObjectDelete, {Globals, Device}));
+    EXPECT_TRUE(Released.count(Request));
+    EXPECT_TRUE(Released.count(Target));
+    EXPECT_TRUE(Released.count(Queue));
+  }
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchValidatesBeforePublishingAndProtectsItsQueue) {
+  using namespace framework;
+  initializeQueue();
+  const auto NoRead = automaticQueue();
+  EXPECT_EQ(take(assignQueue(NoRead, RequestMajorRead)),
+            QueueInvalidDeviceRequest);
+  EXPECT_EQ(take(assignQueue(Queue, RequestMajorRead)),
+            QueueInvalidDeviceRequest);
+  EXPECT_EQ(take(assignQueue(NoRead, UINT32_MAX)), InvalidParameter);
+  expectError(assignQueue(NoRead, RequestMajorCreate), "unmodeled");
+  expectError(assignQueue(NoRead, RequestMajorInternalDeviceControl),
+              "unmodeled");
+  const auto Target = dispatchQueue();
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), 0u);
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorRead)), QueueBusy);
+  EXPECT_EQ(take(assignQueue(dispatchQueue(), RequestMajorRead)), QueueBusy);
+  expectError(invoke(api::WdfObjectDelete, {Globals, Target}),
+              "dispatch queue");
+  const auto IRP = packet(RequestMajorRead);
+  const auto Call = route(IRP);
+  EXPECT_EQ(Call.Arguments[0], Target);
+  complete(request(Call));
+  success(Model.finishRequestDispatch(IRP));
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchRejectsForeignAndDeletedDestinations) {
+  using namespace framework;
+  initializeQueue();
+  const auto Target = dispatchQueue();
+  take(invoke(api::WdfObjectDelete, {Globals, Target}));
+  expectError(assignQueue(Target, RequestMajorRead), "same-device");
+  const auto OriginalDevice = Device;
+  Device = control();
+  const auto Foreign = dispatchQueue();
+  Device = OriginalDevice;
+  expectError(assignQueue(Foreign, RequestMajorRead), "same-device");
+  EXPECT_EQ(take(assignQueue(dispatchQueue(), RequestMajorRead)), 0u);
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchSupportsManualRetrievalAndStoppedQueueRestart) {
+  using namespace framework;
+  initializeQueue();
+  const auto Manual = manualQueue();
+  EXPECT_EQ(take(assignQueue(Manual, RequestMajorRead)), 0u);
+  const auto ReadIRP = packet(RequestMajorRead);
+  EXPECT_EQ(route(ReadIRP).PC, 0u);
+  EXPECT_FALSE(Packets.at(ReadIRP).Completed);
+  EXPECT_EQ(take(invoke(api::WdfIoQueueRetrieveNextRequest,
+                        {Globals, Manual, BufferSlot})),
+            0u);
+  complete(get(BufferSlot));
+  const auto CanceledIRP = packet(RequestMajorRead);
+  EXPECT_EQ(route(CanceledIRP).PC, 0u);
+  Packets.at(CanceledIRP).Canceled = true;
+  EXPECT_FALSE(take(Model.requestCancellation(CanceledIRP)));
+  EXPECT_EQ(Packets.at(CanceledIRP).Status, RequestCancelled);
+  EXPECT_EQ(Packets.at(CanceledIRP).CompletionCalls, 1u);
+  EXPECT_FALSE(Model.takeGuestCall());
+  EXPECT_EQ(take(invoke(api::WdfIoQueueRetrieveNextRequest,
+                        {Globals, Manual, BufferSlot})),
+            QueueNoMoreEntries);
+  const auto Target = dispatchQueue();
+  EXPECT_EQ(take(assignQueue(Target, RequestMajorWrite)), 0u);
+  take(invoke(api::WdfIoQueueStop, {Globals, Target, 0, 0}));
+  const auto WriteIRP = packet(RequestMajorWrite);
+  EXPECT_EQ(route(WriteIRP).PC, 0u);
+  EXPECT_FALSE(Model.takeGuestCall());
+  take(invoke(api::WdfIoQueueStart, {Globals, Target}));
+  const auto Call = callback();
+  EXPECT_EQ(Call.PC, DefaultPC);
+  EXPECT_EQ(Call.Arguments[0], Target);
+  complete(Call.Arguments[1]);
+  finish(Call);
+  EXPECT_TRUE(Packets.at(WriteIRP).Completed);
+}
+
+TEST_F(DriverKernelFrameworkRequest,
+       TypeDispatchAllowsDispatchLevelAndRejectsHigherIrql) {
+  using namespace framework;
+  initializeQueue();
+  const auto Target = dispatchQueue();
+  expectError(
+      assignQueue(Target, RequestMajorRead, scheduler::DispatchLevel + 1),
+      "DISPATCH_LEVEL");
+  EXPECT_EQ(
+      take(assignQueue(Target, RequestMajorRead, scheduler::DispatchLevel)),
+      0u);
 }
 
 } // namespace

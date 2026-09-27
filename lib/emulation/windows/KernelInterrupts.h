@@ -30,6 +30,12 @@ namespace interrupts {
 } // namespace interrupts
 class KernelInterrupts {
 public:
+  struct WakeHost {
+    std::function<llvm::Error(uint64_t)> Request;
+    std::function<bool(uint64_t)> Ready;
+  };
+  void setWakeHost(WakeHost Host) { Wake = std::move(Host); }
+  bool hasPendingWake(uint64_t PDO) const;
   struct PassiveLockHost {
     std::function<bool(uint64_t, std::optional<uint64_t>)> Available;
     std::function<llvm::Expected<bool>(uint64_t, uint64_t, bool)> Acquire;
@@ -63,6 +69,8 @@ public:
     /// PDO table index supplied only to a message-service routine.
     std::optional<uint32_t> MessageID;
     bool Passive = false;
+    bool Active = true;
+    bool WakeCapable = false;
     /// Framework ISR signatures differ from the WDM service routine. The
     /// execution still belongs to this connection and its interrupt lock.
     std::optional<std::vector<uint64_t>> ServiceArguments;
@@ -91,6 +99,8 @@ public:
   /// Retire an individually owned connection. WDM message tables remain an
   /// atomic group and cannot be dismantled through this bridge.
   llvm::Error disconnectConnection(uint64_t Object);
+  /// Soft connection changes retain the opaque registration and locks.
+  llvm::Error setActive(uint64_t Object, bool Active);
   llvm::Error canRelease(uint64_t PDO) const;
   /// Validate known storage retirement without inferring a context extent or
   /// recursively examining pointers stored inside caller-owned context data.
@@ -104,7 +114,7 @@ public:
                   size_t SourceIndex, uint64_t Now);
   std::optional<uint64_t> nextEventTime() const;
   bool hasPendingEvents() const {
-    return !Events.empty() || !LevelLines.empty();
+    return !Events.empty() || !LevelLines.empty() || !WakeEvents.empty();
   }
   /// Pure callback/token capacity check; hardware availability is observed at
   /// the actual boundary after same-time provider hardware publications.
@@ -139,6 +149,7 @@ public:
   llvm::Error validateExecutionReturn(uint64_t Execution) const;
 
 private:
+  WakeHost Wake;
   PassiveLockHost PassiveLocks;
   enum class HoldKind { Manual, Callback };
   struct Hold {
@@ -156,6 +167,7 @@ private:
     std::optional<uint32_t> Line;
     uint32_t DeliveryIndex = 0;
     bool Reserved = false;
+    bool Wake = false;
   };
   struct Event {
     uint64_t Object;
@@ -170,6 +182,7 @@ private:
     DriverInterruptAction Action = DriverInterruptAction::Pulse;
     uint64_t RetriggerAfter100ns = 0;
     bool Observed = false;
+    bool WakeRequested = false;
   };
   using Source = std::pair<uint64_t, size_t>;
   struct LevelLine {
@@ -199,6 +212,7 @@ private:
   std::vector<Hold> Holds;
   std::map<uint64_t, uint64_t> PassiveLockWaiters;
   std::map<size_t, Event> Events;
+  std::map<size_t, Event> WakeEvents;
   std::map<uint32_t, LevelLine> LevelLines;
   uint64_t NextCall = 1;
   uint64_t Deliveries = 0;
@@ -214,6 +228,8 @@ private:
   bool sameLine(const Connection &Left, const Connection &Right) const;
   bool passiveAvailable(uint64_t Object, uint64_t Token = 0) const;
   bool runnable(const Event &Event) const;
+  llvm::Error latchWakeEvents(uint64_t Now);
+  std::vector<size_t> readyWakeEvents(uint64_t Now) const;
   Boundary planBoundary(uint64_t Time) const;
   llvm::Error validateEvent(const Event &Event, bool CheckPower) const;
   llvm::Error deliveryError(Event &Event, const llvm::Twine &Message,

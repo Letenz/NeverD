@@ -175,6 +175,7 @@ struct DriverRequestResult {
   /// Consumed per-PDO RequestedDevicePower entry; absent for scenario requests.
   std::optional<uint32_t> ResponseIndex;
   std::vector<DriverUserBufferResult> UserBuffers;
+  std::optional<DriverUsbIdleRequestResult> UsbIdle;
 };
 
 struct DriverFault {

@@ -6,8 +6,13 @@
 #ifndef NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 #define NEVERD_EMULATION_WINDOWS_KERNELPOWERPOLICY_H
 
+#include "KernelUsbIdle.h"
+
+#include "neverd/emulation/DriverPnp.h"
+
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace neverd::emulation {
 namespace power_policy {
@@ -23,16 +28,40 @@ struct KernelPowerPolicy {
 #include "KernelPowerPolicyCallbacks.def"
 #undef NEVERD_POWER_POLICY_CALLBACK
   } Events;
+  enum class IdleCapability { CannotWake, CanWake, UsbSelectiveSuspend };
   struct IdleSettings {
+    DevicePowerState DxState = DevicePowerState::D3;
     bool Enabled = false;
     bool CanWake = false;
     bool PowerUpOnSystemWake = false;
     uint64_t Timeout100ns = 0;
+    uint32_t TimeoutType = power_policy::DriverManagedTimeout;
+    bool systemManaged() const {
+      return TimeoutType != power_policy::DriverManagedTimeout;
+    }
+    uint32_t ExcludeD3Cold = power_policy::True;
+    IdleCapability Capability = IdleCapability::CannotWake;
+    bool usesUsbIdle() const {
+      return Capability == IdleCapability::UsbSelectiveSuspend;
+    }
   };
   struct WakeSettings {
+    DevicePowerState DxState = DevicePowerState::D3;
     bool Enabled = false;
+    bool ArmForChildren = false;
+    bool PropagateParentWake = false;
+  };
+  struct WakeChild {
+    uint64_t PDO = 0;
+    uint64_t Epoch = 0;
   };
   enum class WakeSource { None, S0, Sx };
+  struct UsbIdleState {
+    UsbIdleKey Key;
+    std::optional<uint64_t> CallbackToken;
+    bool PowerAdmissionFailed = false;
+  };
+  std::optional<UsbIdleState> UsbIdle;
   std::optional<IdleSettings> Idle;
   std::optional<WakeSettings> Wake;
   uint64_t References = 0;
@@ -40,12 +69,15 @@ struct KernelPowerPolicy {
   std::optional<uint64_t> IdleSince;
   std::optional<uint64_t> Deadline;
   WakeSource Armed = WakeSource::None;
+  bool ArmedForDevice = false;
+  std::vector<WakeChild> ArmedChildren;
   bool WakeTriggered = false;
   bool Started = false;
   bool SystemSleeping = false;
   bool IdlePowerDown = false;
   bool PowerUpRequested = false;
   bool DevicePowerPending = false;
+  bool ManagedPowerNotRequired = false;
   std::optional<uint32_t> Failure;
 };
 } // namespace neverd::emulation

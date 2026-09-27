@@ -1,0 +1,40 @@
+//===- KernelPoFxValues.def - PoFx v1 ABI and execution bounds ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Centralize native x64 PoFx v1 ABI layouts, flags and execution limits.
+///
+//===----------------------------------------------------------------------===//
+// Native x64 wdm.h PO_FX_DEVICE_V1, PO_FX_COMPONENT_V1 and idle-state layouts.
+NEVERD_KERNEL_POFX_VALUE(Version1, 1)
+NEVERD_KERNEL_POFX_VALUE(FlagBlocking, 0x01)
+NEVERD_KERNEL_POFX_VALUE(FlagAsyncOnly, 0x02)
+NEVERD_KERNEL_POFX_VALUE(UnknownTime, UINT64_MAX)
+NEVERD_KERNEL_POFX_VALUE(UnknownPower, UINT32_MAX)
+NEVERD_KERNEL_POFX_VALUE(DeviceVersion, 0)
+NEVERD_KERNEL_POFX_VALUE(DeviceComponentCount, 4)
+NEVERD_KERNEL_POFX_VALUE(DeviceActiveCondition, 8)
+NEVERD_KERNEL_POFX_VALUE(DeviceIdleCondition, 16)
+NEVERD_KERNEL_POFX_VALUE(DeviceIdleState, 24)
+NEVERD_KERNEL_POFX_VALUE(DevicePowerRequired, 32)
+NEVERD_KERNEL_POFX_VALUE(DevicePowerNotRequired, 40)
+NEVERD_KERNEL_POFX_VALUE(DevicePowerControl, 48)
+NEVERD_KERNEL_POFX_VALUE(DeviceContext, 56)
+NEVERD_KERNEL_POFX_VALUE(DeviceComponents, 64)
+NEVERD_KERNEL_POFX_VALUE(ComponentSize, 32)
+NEVERD_KERNEL_POFX_VALUE(ComponentID, 0)
+NEVERD_KERNEL_POFX_VALUE(ComponentIDSize, 16)
+NEVERD_KERNEL_POFX_VALUE(ComponentIdleStateCount, 16)
+NEVERD_KERNEL_POFX_VALUE(ComponentDeepestWakeableState, 20)
+NEVERD_KERNEL_POFX_VALUE(ComponentIdleStates, 24)
+NEVERD_KERNEL_POFX_VALUE(IdleStateSize, 24)
+NEVERD_KERNEL_POFX_VALUE(IdleStateTransitionLatency, 0)
+NEVERD_KERNEL_POFX_VALUE(IdleStateResidencyRequirement, 8)
+NEVERD_KERNEL_POFX_VALUE(IdleStateNominalPower, 16)
+NEVERD_KERNEL_POFX_VALUE(DefaultMaxDevices, 64)
+NEVERD_KERNEL_POFX_VALUE(DefaultMaxComponents, 64)
+NEVERD_KERNEL_POFX_VALUE(DefaultMaxIdleStates, 64)
+NEVERD_KERNEL_POFX_VALUE(DefaultMaxCallbacks, 4096)

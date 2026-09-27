@@ -93,6 +93,10 @@ void KernelModel::configureFrameworkInterruptHost() {
     if (Input.ShareVector &&
         *Input.ShareVector != (Resource.Share == DriverInterruptShare::Shared))
       return frameworkInterruptError("sharing differs from assigned resource");
+    if (Input.CanWake && (!Input.Passive || !Resource.WakeCapable))
+      return frameworkInterruptError(
+          "wake interrupt requires a passive, wake-capable assigned resource");
+    Selected->WakeCapable = Input.CanWake;
     Selected->Passive = Input.Passive;
     Selected->SpinLock = Input.SpinLock;
     Selected->WaitLock = Input.WaitLock;
@@ -164,6 +168,9 @@ void KernelModel::configureFrameworkInterruptHost() {
   };
   Host.Disconnect = [this](uint64_t Object) {
     return Interrupts.disconnectConnection(Object);
+  };
+  Host.SetActive = [this](uint64_t Object, bool Active) {
+    return Interrupts.setActive(Object, Active);
   };
   Host.PrepareCall =
       [this](uint64_t Object, uint64_t Routine,
@@ -286,6 +293,17 @@ void KernelModel::configureFrameworkInterruptHost() {
   Host.HasDeferred = [this](uint64_t Handle) {
     return Scheduler.hasFrameworkInterrupt(Handle);
   };
+  Host.HasPendingWake = [this](uint64_t PDO) {
+    return Interrupts.hasPendingWake(PDO);
+  };
+  KernelInterrupts::WakeHost Wake;
+  Wake.Request = [this](uint64_t PDO) {
+    return Framework->powerPolicyWake(PDO);
+  };
+  Wake.Ready = [this](uint64_t PDO) {
+    return Framework && Framework->canDeliverWakeInterrupt(PDO);
+  };
+  Interrupts.setWakeHost(std::move(Wake));
   Framework->setInterruptHost(std::move(Host));
 }
 } // namespace neverd::emulation

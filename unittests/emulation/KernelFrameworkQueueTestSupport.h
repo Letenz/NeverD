@@ -77,11 +77,15 @@ protected:
 
   uint64_t control(uint64_t Cleanup = 0, uint64_t Destroy = 0,
                    uint32_t Execution = framework::ExecutionPassive,
-                   uint32_t Synchronization = framework::SynchronizationNone) {
+                   uint32_t Synchronization = framework::SynchronizationNone,
+                   uint64_t CallerContext = 0) {
     string(Security, "D:P(A;;GA;;;WD)");
     const auto Init = take(invoke("WdfControlDeviceInitAllocate",
                                   {Globals, DriverHandle, Security}));
     put(InitSlot, Init);
+    if (CallerContext)
+      take(invoke(framework::api::WdfDeviceInitSetIoInCallerContextCallback,
+                  {Globals, Init, CallerContext}));
     string(DeviceName, "\\Device\\QueueTest" + std::to_string(NextHostDevice));
     EXPECT_EQ(
         take(invoke("WdfDeviceInitAssignName", {Globals, Init, DeviceName})),

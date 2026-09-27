@@ -413,6 +413,56 @@ TEST_F(DriverDeviceLifecycle, DevicePowerQueriesAndIdleTransitions) {
     Set = devicePower(DevicePowerRequest::Set, Target);
     success(Model.finishDevicePower(Set, Success));
     EXPECT_EQ(state().DevicePower, Target);
+    Set = devicePower(DevicePowerRequest::Set, DevicePowerState::D0);
+    success(Model.finishDevicePower(Set, Success));
+  }
+}
+
+TEST_F(DriverDeviceLifecycle,
+       DistinctLowPowerStatesRequireCompletedD0WithoutConsumingTickets) {
+  start();
+  for (auto From :
+       {DevicePowerState::D1, DevicePowerState::D2, DevicePowerState::D3}) {
+    const auto Down = devicePower(DevicePowerRequest::Set, From);
+    success(Model.finishDevicePower(Down, Success));
+    for (auto To :
+         {DevicePowerState::D1, DevicePowerState::D2, DevicePowerState::D3}) {
+      if (From == To)
+        continue;
+      const auto Query = devicePower(DevicePowerRequest::Query, To);
+      success(Model.finishDevicePower(Query, Success));
+      EXPECT_TRUE(state().DevicePowerQueryAccepted);
+      failure(Model.validateDevicePowerRequest(FirstDevice,
+                                               DevicePowerRequest::Set, To),
+              "intermediate D0");
+      failure(Model.beginDevicePower(FirstDevice, DevicePowerRequest::Set, To),
+              "intermediate D0");
+      EXPECT_EQ(state().DevicePower, From);
+      EXPECT_TRUE(state().DevicePowerQueryAccepted);
+      EXPECT_FALSE(state().DevicePowerOperation);
+      success(Model.validateDevicePowerRequest(FirstDevice,
+                                               DevicePowerRequest::Set, From));
+      const auto Same = devicePower(DevicePowerRequest::Set, From);
+      EXPECT_EQ(Same.Sequence, Query.Sequence + 1);
+      success(Model.finishDevicePower(Same, Success));
+      const auto Up =
+          devicePower(DevicePowerRequest::Set, DevicePowerState::D0);
+      EXPECT_EQ(state().DevicePower, From);
+      failure(Model.validateDevicePowerRequest(FirstDevice,
+                                               DevicePowerRequest::Set, To),
+              "already active");
+      EXPECT_EQ(state().DevicePowerOperation, Up);
+      success(Model.finishDevicePower(Up, Success));
+      const auto Next = devicePower(DevicePowerRequest::Set, To);
+      success(Model.finishDevicePower(Next, Success));
+      EXPECT_EQ(state().DevicePower, To);
+      success(Model.finishDevicePower(
+          devicePower(DevicePowerRequest::Set, DevicePowerState::D0), Success));
+      success(Model.finishDevicePower(
+          devicePower(DevicePowerRequest::Set, From), Success));
+    }
+    success(Model.finishDevicePower(
+        devicePower(DevicePowerRequest::Set, DevicePowerState::D0), Success));
   }
 }
 
@@ -595,5 +645,35 @@ TEST_F(DriverDeviceLifecycle, ExplicitDeviceLimitLeavesExistingObjectsIntact) {
   failure(Many.snapshot(Limit + 1), "unknown device");
 }
 
+TEST_F(DriverDeviceLifecycle,
+       PureSystemPreflightDoesNotConsumeOrReplaceTickets) {
+  start();
+  success(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Sleeping3));
+  EXPECT_FALSE(state().SystemPowerOperation);
+  EXPECT_EQ(state().SystemPower, SystemPowerState::Working);
+  failure(Model.validateSystemPowerRequest(FirstDevice,
+                                           DevicePowerRequest::Query,
+                                           SystemPowerState::Working),
+          "does not use a query");
+  const auto System =
+      systemPower(DevicePowerRequest::Set, SystemPowerState::Sleeping3);
+  failure(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Working),
+          "already active");
+  EXPECT_EQ(state().SystemPowerOperation, System);
+  success(Model.finishSystemPower(System, Success));
+  success(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Working));
+  const auto Resume =
+      systemPower(DevicePowerRequest::Set, SystemPowerState::Working);
+  EXPECT_EQ(Resume.Sequence, System.Sequence + 1);
+  success(Model.finishSystemPower(Resume, Success));
+  pnp(DevicePnpRequest::SurpriseRemoval);
+  failure(Model.validateSystemPowerRequest(FirstDevice, DevicePowerRequest::Set,
+                                           SystemPowerState::Sleeping3),
+          "being removed");
+  EXPECT_FALSE(state().SystemPowerOperation);
+}
 } // namespace
 } // namespace neverd::emulation

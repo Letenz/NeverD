@@ -205,6 +205,8 @@ recovered-ios/
 
 바깥쪽 `status: "success"`는 검증한 출력을 게시했다는 뜻입니다. `recovered`, `partial`, `unrecovered`, `no-methods`는 발견한 목록에 대한 상태이며 의미 동등성이나 원 프로그램 완전성이 아닙니다. 각 미복원 메서드에는 이유가 있습니다. Objective-C의 `recovered`는 완전한 런타임 메타데이터도 요구합니다. 빈 목록이 메서드가 없었다는 증거는 아닙니다.
 
+검증된 `@synchronized` 정리 경로에서 복원한 Objective-C 메서드에는 `required_cflags: ["-fexceptions"]`가 표시될 수 있습니다. 보호된 호출의 예외로 스택이 풀릴 때 정리 핸들러가 동기화 잠금을 해제하도록, 해당 메서드의 C 소스를 명시된 옵션으로 컴파일해야 합니다. 검증된 예외 landing pad의 끝부분은 소스의 일반 제어 흐름 간선이 그곳에 도달하지 않을 때만 일반 C 본문에서 생략되며, 해당 잠금 해제는 정리 핸들러로 표현됩니다. landing pad 또는 보호 범위를 입증할 수 없는 메서드는 계속 `unrecovered`로 표시됩니다.
+
 미복원 Objective-C 메서드 행에는 단 하나의 백엔드 결과가 런타임 식별 정보와 정확히 일치할 때 `native_backend: {status, reason, diagnostics}`가 포함될 수 있습니다. 크기가 제한된 이 선택적 요약은 선언 또는 레이아웃 검사가 실패해도 중간 결과를 보존합니다. 행의 기본 상태, 이유 및 복원 개수가 최종 기준이며, 요약이 없으면 해당 증거를 사용할 수 없었다는 뜻입니다.
 
 Swift `coverage_status`는 분류된 호출 가능 항목만 셉니다. 전체 Swift `status`는 알 수 없는 심볼도 고려하여 `unclassified`, `unsupported-architecture`, `no-symbols`일 수 있습니다. 호출 불가능 메타데이터는 `non_method_symbols`에 `not-callable`, 알 수 없는 심볼은 `unclassified`로 저장합니다. `types`, `type_metadata_count`, `source_type_count`는 타입 메타데이터와 출력 타입 단위를 별도로 세며 메서드 수를 부풀리는 데 사용하면 안 됩니다.

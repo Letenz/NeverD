@@ -29,14 +29,19 @@ struct DriverImport;
 
 class KernelExportRegistry {
 public:
-  enum class ExportKind { ModuleExport, FrameworkFunction, DMAFunction };
+  enum class ExportKind {
+    ModuleExport,
+    FrameworkFunction,
+    DMAFunction,
+    ProviderFunction
+  };
 
   struct Export {
     std::string Name;
     std::string Module;
     uint64_t Address = 0;
     ExportKind Kind = ExportKind::ModuleExport;
-    /// Guest framework globals or DMA adapter identity, never a host pointer.
+    /// Guest framework globals, DMA adapter or PDO, never a host pointer.
     /// Zero for ordinary PE imports. The owning model checks its lifetime.
     uint64_t Binding = 0;
   };
@@ -62,6 +67,9 @@ public:
   /// retirement. They never become dynamically discoverable kernel exports.
   llvm::Expected<uint64_t> insertDMAFunction(uint64_t Adapter,
                                              llvm::StringRef Name);
+  /// Provider callbacks are scoped to their PDO and never kernel exports.
+  llvm::Expected<uint64_t> insertProviderFunction(uint64_t PDO,
+                                                  llvm::StringRef Name);
   /// Remaining stable identities, excluding the reserved return sentinel.
   size_t availableThunkCount() const;
   const Export *lookup(uint64_t Address) const;

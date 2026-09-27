@@ -155,6 +155,15 @@ KernelExportRegistry::insertDMAFunction(uint64_t Adapter,
   return insert(DMAProvider, Name, ExportKind::DMAFunction, Adapter);
 }
 
+llvm::Expected<uint64_t>
+KernelExportRegistry::insertProviderFunction(uint64_t PDO,
+                                             llvm::StringRef Name) {
+  if (!Initialized || !PDO || !validName(Name))
+    return invalid(
+        "provider callback requires an initialized namespace, PDO and name");
+  return insert(BusProvider, Name, ExportKind::ProviderFunction, PDO);
+}
+
 const KernelExportRegistry::Export *
 KernelExportRegistry::lookup(uint64_t Address) const {
   auto I = Exports.find(Address);

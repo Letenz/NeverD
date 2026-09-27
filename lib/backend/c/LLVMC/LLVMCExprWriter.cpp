@@ -439,6 +439,26 @@ std::string LLVMCWriter::getName(const llvm::Value *V) {
 }
 
 std::string LLVMCWriter::constStr(const llvm::Constant *C) {
+  if (const auto *Vector =
+          llvm::dyn_cast<llvm::FixedVectorType>(C->getType())) {
+    if (!isCIntegerVectorType(C->getType()))
+      throw std::runtime_error(
+          "LLVM C constant has an unsupported vector type");
+    std::string Text = "(" + typeToCLLVM(C->getType()) + "){";
+    for (unsigned Lane = 0; Lane < Vector->getNumElements(); ++Lane) {
+      if (Lane)
+        Text += ", ";
+      const auto *Element = C->getAggregateElement(Lane);
+      if (!Element)
+        throw std::runtime_error("LLVM C vector constant has no lane value");
+      // Undefined lanes permit a stable zero choice, without observing or
+      // inventing a value for any defined lane.
+      Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
+                  ? "0"
+                  : constStr(Element);
+    }
+    return Text + "}";
+  }
   if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(C)) {
     if (CI->getBitWidth() > 64) {
       if (CI->getBitWidth() > 128)
@@ -2674,11 +2694,92 @@ std::string LLVMCWriter::icmpInlineText(const llvm::ICmpInst &CI) {
                 /*CastUnsigned=*/!CI.isUnsigned());
 }
 
+bool LLVMCWriter::isFloatingPointBitcast(const llvm::Instruction &Inst) {
+  const auto *Cast = llvm::dyn_cast<llvm::BitCastInst>(&Inst);
+  if (!Cast)
+    return false;
+  const auto *Source = Cast->getSrcTy();
+  const auto *Destination = Cast->getDestTy();
+  const auto *Float = Source->isIntegerTy() ? Destination : Source;
+  const auto *Integer = Source->isIntegerTy() ? Source : Destination;
+  return (Float->isFloatTy() || Float->isDoubleTy() || Float->isX86_FP80Ty()) &&
+         Integer->isIntegerTy() &&
+         Float->getPrimitiveSizeInBits() == Integer->getPrimitiveSizeInBits();
+}
+
+std::string LLVMCWriter::fcmpInlineText(const llvm::FCmpInst &Compare) {
+  const char *Builtin = nullptr;
+  bool Negate = false;
+  switch (Compare.getPredicate()) {
+  case llvm::CmpInst::FCMP_FALSE:
+  case llvm::CmpInst::FCMP_TRUE:
+    return "((void)(" + valueStr(Compare.getOperand(0)) + "), (void)(" +
+           valueStr(Compare.getOperand(1)) + "), " +
+           (Compare.getPredicate() == llvm::CmpInst::FCMP_TRUE ? "1)" : "0)");
+  case llvm::CmpInst::FCMP_OEQ:
+  case llvm::CmpInst::FCMP_UNE:
+    return "(" + valueStr(Compare.getOperand(0)) +
+           (Compare.getPredicate() == llvm::CmpInst::FCMP_OEQ ? " == "
+                                                              : " != ") +
+           valueStr(Compare.getOperand(1)) + ")";
+  case llvm::CmpInst::FCMP_UEQ:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_ONE:
+    Builtin = "__builtin_islessgreater";
+    break;
+  case llvm::CmpInst::FCMP_UGE:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_OLT:
+    Builtin = "__builtin_isless";
+    break;
+  case llvm::CmpInst::FCMP_UGT:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_OLE:
+    Builtin = "__builtin_islessequal";
+    break;
+  case llvm::CmpInst::FCMP_ULE:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_OGT:
+    Builtin = "__builtin_isgreater";
+    break;
+  case llvm::CmpInst::FCMP_ULT:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_OGE:
+    Builtin = "__builtin_isgreaterequal";
+    break;
+  case llvm::CmpInst::FCMP_ORD:
+    Negate = true;
+    [[fallthrough]];
+  case llvm::CmpInst::FCMP_UNO:
+    Builtin = "__builtin_isunordered";
+    break;
+  default:
+    throw std::runtime_error("unsupported LLVM C floating-point predicate");
+  }
+  // Each operand appears once, including unordered predicates. A captured
+  // floating-point producer must not run twice merely to check for NaN.
+  return std::string(Negate ? "!" : "") + Builtin + "(" +
+         valueStr(Compare.getOperand(0)) + ", " +
+         valueStr(Compare.getOperand(1)) + ")";
+}
+
 std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
+  if (Inst.getOpcode() == llvm::Instruction::FNeg)
+    return "(-" + valueStr(Inst.getOperand(0)) + ")";
+  if (const auto *Extract = llvm::dyn_cast<llvm::ExtractElementInst>(&Inst))
+    return "(" + valueStr(Extract->getVectorOperand()) + ")[" +
+           valueStr(Extract->getIndexOperand()) + "]";
   if (const auto *CB = llvm::dyn_cast<llvm::CallBase>(&Inst))
     return callExpr(*CB);
   if (const auto *CI = llvm::dyn_cast<llvm::ICmpInst>(&Inst))
     return "(" + icmpInlineText(*CI) + ")";
+  if (const auto *Compare = llvm::dyn_cast<llvm::FCmpInst>(&Inst))
+    return fcmpInlineText(*Compare);
   if (Inst.isBinaryOp()) {
     const bool NeedsIntegerPointerOperand =
         Inst.getOpcode() == llvm::Instruction::Or ||

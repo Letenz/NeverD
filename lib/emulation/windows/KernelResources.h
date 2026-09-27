@@ -32,9 +32,10 @@ public:
   /// The coordinator checks all live resource consumers before assignment
   /// release. This callback is pure and must outlive this authority.
   using CheckRelease = std::function<llvm::Error(uint64_t)>;
-  explicit KernelResources(CheckRelease Release, CheckRelease Start = {})
-      : Check(std::move(Release)),
-        StartCheck(Start ? std::move(Start) : Check) {}
+  explicit KernelResources(CheckRelease Release, CheckRelease Start = {},
+                           CheckRelease ColdPowerDown = {})
+      : Check(std::move(Release)), StartCheck(Start ? std::move(Start) : Check),
+        ColdPowerDownCheck(std::move(ColdPowerDown)) {}
   KernelResources(const KernelResources &) = delete;
   KernelResources &operator=(const KernelResources &) = delete;
   struct Device {
@@ -47,6 +48,11 @@ public:
     bool Assigned = false;
     bool Present = true;
     DevicePowerState Power = DevicePowerState::D0;
+    std::optional<DriverD3ColdCapabilities> D3Cold;
+    /// A cold power cycle invalidates hardware context without releasing the
+    /// START assignment. MMIO consumers use this generation for power-on reset.
+    uint64_t PowerGeneration = 0;
+    bool Cold = false;
   };
   const Device *find(uint64_t PDO) const;
   const std::map<uint64_t, Device> &devices() const { return Devices; }
@@ -62,10 +68,18 @@ public:
   llvm::Error finishPnp(uint64_t PDO, DevicePnpRequest Minor, uint32_t Status);
   void surpriseRemoval(uint64_t PDO);
   void setPhysicalPower(uint64_t PDO, DevicePowerState Power);
+  bool supportsD3Cold(uint64_t PDO) const;
+  bool d3ColdEnabledByDefault(uint64_t PDO) const;
+  bool isD3Cold(uint64_t PDO) const;
+  llvm::Error canEnterD3Cold(uint64_t PDO, SystemPowerState System,
+                             bool RequireWake) const;
+  llvm::Error enterD3Cold(uint64_t PDO, SystemPowerState System,
+                          bool RequireWake);
 
 private:
   CheckRelease Check;
   CheckRelease StartCheck;
+  CheckRelease ColdPowerDownCheck;
   std::map<uint64_t, Device> Devices;
 };
 } // namespace neverd::emulation

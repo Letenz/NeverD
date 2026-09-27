@@ -14,10 +14,14 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprCompare.h"
+#include "SymExprMask.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
 #include <cassert>
+#include <limits>
 
 namespace neverd::symbolic {
 
@@ -46,6 +50,25 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
     Rest.push_back(R);
   }
 
+  if (Rest.size() == 1 && Acc.isMask() && !Acc.isAllOnes()) {
+    SymRef Reduced = simplifyLowMaskedAdd(Rest[0], Acc);
+    if (Reduced != Rest[0]) {
+      Rest.clear();
+      // Normalize the new immediate AND/constant without recursively
+      // applying demand to another layer of a potentially deep source DAG.
+      if (op(Reduced) == SymOp::And)
+        Rest.append(operands(Reduced).begin(), operands(Reduced).end());
+      else
+        Rest.push_back(Reduced);
+      llvm::erase_if(Rest, [&](SymRef R) {
+        if (!isConst(R))
+          return false;
+        Acc &= constValue(R);
+        return true;
+      });
+    }
+  }
+
   if (Acc.isZero())
     return mkZero(W);
 
@@ -63,6 +86,11 @@ SymRef SymContext::mkAnd(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (W == 1)
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::And, Rest, Acc))
+      return Predicate;
 
   // A small masked OR can expose known bits without expanding the general
   // expression. In particular, a status bit remains constant when every
@@ -124,6 +152,24 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
     Rest.push_back(R);
   }
 
+  if (mergeMaskedOperands(Rest, /*RequireDisjoint=*/false)) {
+    // A fully covered source can itself be an OR. Flatten it iteratively;
+    // mask reasoning stays local instead of re-entering this builder.
+    Work = std::move(Rest);
+    Rest.clear();
+    while (!Work.empty()) {
+      SymRef R = Work.pop_back_val();
+      if (op(R) == SymOp::Or) {
+        auto Sub = operands(R);
+        Work.append(Sub.begin(), Sub.end());
+      } else if (isConst(R)) {
+        Acc |= constValue(R);
+      } else {
+        Rest.push_back(R);
+      }
+    }
+  }
+
   if (Acc.isAllOnes())
     return mkConst(Acc);
 
@@ -140,6 +186,11 @@ SymRef SymContext::mkOr(llvm::ArrayRef<SymRef> Ops) {
 
   if (Rest.empty())
     return mkConst(Acc);
+
+  if (W == 1)
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::Or, Rest, Acc))
+      return Predicate;
 
   if (Acc.isZero()) {
     if (Rest.size() == 1)
@@ -210,6 +261,21 @@ SymRef SymContext::mkXor(llvm::ArrayRef<SymRef> Ops) {
   if (Rest.empty())
     return mkConst(Acc);
 
+  if (W == 1 || !isVar(Rest[0]))
+    if (SymRef Predicate =
+            detail::recoverObservedComparison(*this, SymOp::Xor, Rest, Acc))
+      return Predicate;
+
+  // Bits forced by OR disappear when XOR uses the same constant mask.
+  if (!Acc.isZero() && Rest.size() == 1 && op(Rest[0]) == SymOp::Or) {
+    auto Factors = operands(Rest[0]);
+    if (isConst(Factors[0]) && constValue(Factors[0]) == Acc) {
+      llvm::SmallVector<SymRef, 8> Source(Factors.begin() + 1, Factors.end());
+      SymRef Value = Source.size() == 1 ? Source[0] : mkOr(Source);
+      return mkAnd(Value, mkConst(~Acc));
+    }
+  }
+
   // x ^ -1 == ~x: prefer the complement, which the bitwise laws above and the
   // MBA solver's boolean domain both recognise.
   if (Acc.isAllOnes()) {
@@ -235,6 +301,52 @@ SymRef SymContext::mkNot(SymRef A) {
     return mkConst(~constValue(A));
   if (op(A) == SymOp::Not)
     return operand(A, 0);
+  // One-bit flag networks retain their Boolean spelling for comparison
+  // recovery; affine word normalization belongs to wider arithmetic.
+  if (W > 1 && op(A) == SymOp::Add) {
+    // ~(c + sum(k*x)) = ~c + sum(-k*x), at the original word width.
+    // Estimate only the immediate spelling change before allocating anything:
+    // negating a bare term adds a product, while -1*x loses its product.
+    // Other products keep their operator. Do not expand their factors.
+    llvm::ArrayRef<SymRef> Terms = operands(A);
+    const bool HasConstant = isConst(Terms.front());
+    const llvm::APInt Offset =
+        HasConstant ? ~constValue(Terms.front()) : llvm::APInt::getAllOnes(W);
+    size_t Added = 0;
+    size_t Removed = 1; // The outer complement disappears.
+    for (SymRef Term : Terms.drop_front(HasConstant ? 1 : 0)) {
+      if (isVar(Term)) {
+        ++Added;
+      } else if (op(Term) == SymOp::Mul && numOperands(Term) == 2 &&
+                 isConst(operand(Term, 0)) && isVar(operand(Term, 1))) {
+        if (isConstOnes(operand(Term, 0)))
+          ++Removed;
+      } else {
+        // Compound inputs need their complement boundary intact: rewriting
+        // one use can hide its relation to the same source in a product or
+        // bitwise identity, even when this local spelling becomes shorter.
+        return intern(SymOp::Not, W, {A}, 0);
+      }
+    }
+    if (Offset.isZero() && Terms.size() == 2 && HasConstant)
+      ++Removed; // One surviving term needs no sum.
+    if (Removed > Added) {
+      // Builders may intern and reallocate the operand pool. Copy immediate
+      // operands, keeping deeper/shared sources opaque throughout this step.
+      llvm::SmallVector<SymRef, 8> Negated(Terms.begin(), Terms.end());
+      if (HasConstant)
+        Negated.erase(Negated.begin());
+      for (SymRef &Term : Negated)
+        Term = mkNeg(Term);
+      if (!Offset.isZero())
+        Negated.push_back(mkConst(Offset));
+      SymRef Reduced = mkAdd(Negated);
+      const size_t Cost = readabilityCost(A);
+      if (Cost != std::numeric_limits<size_t>::max() &&
+          readabilityCost(Reduced) < Cost + 1)
+        return Reduced;
+    }
+  }
   return intern(SymOp::Not, W, {A}, 0);
 }
 
@@ -268,6 +380,16 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
       return A;
     if (isConst(A))
       return mkConst(constValue(A).lshr(Amt.getZExtValue()));
+    if (op(A) == SymOp::Mul && operands(A).size() == 2 &&
+        isConst(operand(A, 0))) {
+      llvm::APInt Factor = constValue(operand(A, 0));
+      SymRef Source = operand(A, 1);
+      if (auto K = detail::matchingShiftPower(*this, B, Factor))
+        return mkAnd(Source, mkConst(llvm::APInt::getLowBitsSet(W, W - *K)));
+    }
+    if (Amt == W - 1)
+      if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+        return mkZExt(Predicate, W);
   }
   if (isConstZero(A))
     return mkZero(W);
@@ -276,6 +398,8 @@ SymRef SymContext::mkLShr(SymRef A, SymRef B) {
 
 SymRef SymContext::mkAShr(SymRef A, SymRef B) {
   uint32_t W = width(A);
+  if (W == 1)
+    return A;
   if (isConst(B)) {
     llvm::APInt Amt = constValue(B);
     if (isConst(A)) {
@@ -286,6 +410,9 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
     }
     if (Amt.isZero())
       return A;
+    if (Amt.uge(W - 1))
+      if (SymRef Predicate = detail::recoverSignComparison(*this, A))
+        return mkSExt(Predicate, W);
   }
   if (isConstZero(A))
     return mkZero(W);
@@ -295,7 +422,7 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
 SymRef SymContext::mkRol(SymRef A, SymRef B) {
   uint32_t W = width(A);
   if (isConst(B)) {
-    uint64_t Amt = constValue(B).urem(llvm::APInt(W, W)).getZExtValue();
+    uint64_t Amt = constValue(B).urem(W);
     if (Amt == 0)
       return A;
     if (isConst(A))
@@ -307,7 +434,7 @@ SymRef SymContext::mkRol(SymRef A, SymRef B) {
 SymRef SymContext::mkRor(SymRef A, SymRef B) {
   uint32_t W = width(A);
   if (isConst(B)) {
-    uint64_t Amt = constValue(B).urem(llvm::APInt(W, W)).getZExtValue();
+    uint64_t Amt = constValue(B).urem(W);
     if (Amt == 0)
       return A;
     if (isConst(A))

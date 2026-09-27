@@ -117,11 +117,13 @@ llvm::Expected<bool>
 KernelFramework::beginDevicePowerTransition(uint64_t PDO, uint64_t IRP,
                                             DevicePowerState Previous,
                                             DevicePowerState Target) {
+  if (!isSupportedDriverDevicePower(Previous) ||
+      !isSupportedDriverDevicePower(Target))
+    return invalid("device power transition requires a supported state");
   if (Previous == Target)
     return false;
-  if ((Previous != DevicePowerState::D0 && Previous != DevicePowerState::D3) ||
-      (Target != DevicePowerState::D0 && Target != DevicePowerState::D3))
-    return invalid("device power transition requires D0 or D3");
+  if (Previous != DevicePowerState::D0 && Target != DevicePowerState::D0)
+    return invalid("transitions between low-power states require D0");
   const bool Entering = Target == DevicePowerState::D0;
   return beginPowerTransition(PDO, IRP,
                               Entering ? PowerTransitionKind::PowerUp
@@ -202,15 +204,25 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
   }
   if (SuspendSelfManaged && Transition.SuspendAfterQueues)
     Transition.Remaining.push_back({PnpPhase::SelfManagedIoSuspend});
-  if (Leaving)
-    D.PowerQueuesHeld = true;
   auto &Policy = D.Policy;
   const bool ArmS0 = !Entering && !ReleasesHardware && Policy.IdlePowerDown &&
                      Policy.Idle && Policy.Idle->Enabled &&
                      Policy.Idle->CanWake &&
                      Policy.Armed == KernelPowerPolicy::WakeSource::None;
-  const bool ArmSx = !Entering && !ReleasesHardware && Policy.SystemSleeping &&
-                     Policy.Wake && Policy.Wake->Enabled;
+  if (!Entering && !ReleasesHardware && Policy.SystemSleeping && Policy.Wake) {
+    auto Children = armedWakeChildren(Handle->second);
+    if (!Children)
+      return Children.takeError();
+    Transition.WakeChildren = std::move(*Children);
+    Transition.DeviceWakeEnabled = Policy.Wake->Enabled;
+    Transition.ChildrenArmedForWake =
+        Policy.Wake->ArmForChildren && !Transition.WakeChildren.empty();
+  }
+  const bool ArmSx =
+      Transition.DeviceWakeEnabled || Transition.ChildrenArmedForWake;
+  if (ArmSx)
+    if (auto E = validateWakeEnrollment(Handle->second))
+      return E;
   if (ArmS0)
     Transition.Remaining.push_back({PnpPhase::ArmWakeFromS0});
   if (ArmSx)
@@ -223,18 +235,30 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
       Transition.Remaining.push_back({PnpPhase::PrepareHardware});
     if (D.Callbacks.D0Entry)
       Transition.Remaining.push_back({PnpPhase::D0Entry});
-    Transition.Remaining.push_back({PnpPhase::EnableInterrupts});
-    if (D.Callbacks.D0EntryPostInterruptsEnabled)
-      Transition.Remaining.push_back({PnpPhase::D0EntryPostInterruptsEnabled});
-    if (Policy.Armed != KernelPowerPolicy::WakeSource::None) {
+    Transition.Remaining.push_back({PnpPhase::WakeInterrupts});
+    const bool InterruptWake = hasPendingWakeInterrupts(Handle->second);
+    const auto AppendWakeCallbacks = [&] {
+      if (Policy.Armed == KernelPowerPolicy::WakeSource::None)
+        return;
       const bool S0 = Policy.Armed == KernelPowerPolicy::WakeSource::S0;
+      const PnpStep Disarm{S0 ? PnpPhase::DisarmWakeFromS0
+                              : PnpPhase::DisarmWakeFromSx};
+      if (InterruptWake)
+        Transition.Remaining.push_back(Disarm);
       if (Policy.WakeTriggered && (S0 ? Policy.Events.WakeFromS0Triggered
                                       : Policy.Events.WakeFromSxTriggered))
         Transition.Remaining.push_back({S0 ? PnpPhase::WakeFromS0Triggered
                                            : PnpPhase::WakeFromSxTriggered});
-      Transition.Remaining.push_back(
-          {S0 ? PnpPhase::DisarmWakeFromS0 : PnpPhase::DisarmWakeFromSx});
-    }
+      if (!InterruptWake)
+        Transition.Remaining.push_back(Disarm);
+    };
+    if (InterruptWake)
+      AppendWakeCallbacks();
+    Transition.Remaining.push_back({PnpPhase::EnableInterrupts});
+    if (D.Callbacks.D0EntryPostInterruptsEnabled)
+      Transition.Remaining.push_back({PnpPhase::D0EntryPostInterruptsEnabled});
+    if (!InterruptWake)
+      AppendWakeCallbacks();
     Transition.Remaining.insert(Transition.Remaining.end(), Resumes.begin(),
                                 Resumes.end());
     if (D.SelfManagedIo == SelfManagedIoState::Uninitialized &&
@@ -244,7 +268,13 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
              D.Callbacks.SelfManagedIoSuspend &&
              D.Callbacks.SelfManagedIoRestart)
       Transition.Remaining.push_back({PnpPhase::SelfManagedIoRestart});
+    if (Starting) {
+      Transition.Remaining.push_back({PnpPhase::PoFxRegister});
+      Transition.Remaining.push_back({PnpPhase::PoFxStart});
+    }
   } else {
+    if (ReleasesHardware)
+      Transition.Remaining.push_back({PnpPhase::PoFxQuiesce});
     if (D.InD0 && D.Callbacks.D0ExitPreInterruptsDisabled)
       Transition.Remaining.push_back({PnpPhase::D0ExitPreInterruptsDisabled});
     Transition.Remaining.push_back({PnpPhase::DisableInterrupts});
@@ -256,6 +286,8 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
           {Policy.Armed == KernelPowerPolicy::WakeSource::S0
                ? PnpPhase::DisarmWakeFromS0
                : PnpPhase::DisarmWakeFromSx});
+    if (ReleasesHardware)
+      Transition.Remaining.push_back({PnpPhase::PoFxUnregister});
     if (ReleasesHardware && D.HardwarePrepared && D.Callbacks.ReleaseHardware)
       Transition.Remaining.push_back({PnpPhase::ReleaseHardware});
     if (Transition.Removing &&
@@ -267,6 +299,21 @@ llvm::Expected<bool> KernelFramework::beginPowerTransition(
   if ((!Transition.Remaining.empty() || !Transition.WaitingRequests.empty()) &&
       NextContinuation == UINT64_MAX)
     return invalid("framework callback identity exhausted");
+
+  if (ReleasesHardware && !Starting) {
+    if (auto E = cancelUsbIdle(Handle->second))
+      return E;
+    if (D.Policy.UsbIdle)
+      return invalid("hardware release must drain its USB idle callback");
+  }
+  if (Leaving && ReleasesHardware && D.PoFxHandle) {
+    if (!PowerFrameworkHost.Quiesce)
+      return invalid("hardware teardown lost its PoFx quiesce host");
+    if (auto E = PowerFrameworkHost.Quiesce(D.PoFxHandle))
+      return E;
+  }
+  if (Leaving)
+    D.PowerQueuesHeld = true;
 
   if (Starting) {
     if (D.RawResources.Handle || D.TranslatedResources.Handle)
@@ -353,10 +400,13 @@ llvm::Error KernelFramework::finalizePnpCallbacks(uint64_t Token) {
                                        ? SelfManagedIoState::Flushed
                                        : SelfManagedIoState::Suspended;
   }
-  if (Ready)
-    appendPowerQueuePresentations(Transition->second.Device,
-                                  Continuations.at(Token).Steps);
-  else if (Transition->second.ReleasesHardware) {
+  if (Ready) {
+    if (auto E = holdForPoFxComponent(Transition->second.Device))
+      return E;
+    if (!Device->second.queuesHeld())
+      appendPowerQueuePresentations(Transition->second.Device,
+                                    Continuations.at(Token).Steps);
+  } else if (Transition->second.ReleasesHardware) {
     Device->second.ResourcesActive = false;
     if (auto E = retireResourceLists(Device->second))
       return E;
@@ -365,6 +415,16 @@ llvm::Error KernelFramework::finalizePnpCallbacks(uint64_t Token) {
     Device->second.Policy.Started = false;
     Device->second.Policy.Deadline.reset();
     Device->second.Policy.IdleSince.reset();
+  }
+  if (Ready) {
+    if (auto E = restartIdleTimer(Transition->second.Device))
+      return E;
+  } else if (Transition->second.ReleasesHardware &&
+             Device->second.Policy.Idle &&
+             Device->second.Policy.Idle->systemManaged() &&
+             PowerHost.RemoveManaged) {
+    if (auto E = PowerHost.RemoveManaged(Device->second.Wdm))
+      return E;
   }
   Transition->second.CallbacksComplete = true;
   return llvm::Error::success();
@@ -378,12 +438,24 @@ llvm::Error KernelFramework::resumePausedPnp() {
   for (auto Transition = PnpTransitions.begin();
        Transition != PnpTransitions.end(); ++Transition) {
     auto &State = Transition->second;
-    if ((!State.WaitingForRequests && !State.WaitingForInterrupts) ||
+    if (State.WaitingForPoFx) {
+      auto Ready = canUnregisterPoFx(State.Device);
+      if (!Ready)
+        return Ready.takeError();
+      if (!*Ready)
+        continue;
+    }
+    if ((!State.WaitingForRequests && !State.WaitingForInterrupts &&
+         !State.WaitingForWakeInterrupts && !State.WaitingForPoFx) ||
         !State.WaitingRequests.empty() ||
-        (State.WaitingForInterrupts && hasDeferredInterrupts(State.Device)))
+        (State.WaitingForInterrupts && hasDeferredInterrupts(State.Device)) ||
+        (State.WaitingForWakeInterrupts &&
+         hasPendingWakeInterrupts(State.Device)))
       continue;
     State.WaitingForRequests = false;
     State.WaitingForInterrupts = false;
+    State.WaitingForWakeInterrupts = false;
+    State.WaitingForPoFx = false;
     const uint64_t Token = Transition->first;
     if (!State.Remaining.empty()) {
       if (auto E = schedulePnpCallback(Token))
@@ -412,6 +484,15 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     Transition.Current = Transition.Remaining.front();
     Transition.Remaining.pop_front();
     const auto Phase = Transition.Current.Phase;
+    if (Phase == PnpPhase::PoFxRegister || Phase == PnpPhase::PoFxStart ||
+        Phase == PnpPhase::PoFxQuiesce || Phase == PnpPhase::PoFxUnregister) {
+      auto Scheduled = advancePoFxLifecycle(Token);
+      if (!Scheduled)
+        return Scheduled.takeError();
+      if (*Scheduled)
+        return llvm::Error::success();
+      continue;
+    }
     if (Phase == PnpPhase::EnableInterrupts ||
         Phase == PnpPhase::DisableInterrupts) {
       Transition.CurrentInterrupt = 0;
@@ -423,6 +504,29 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
         return Scheduled.takeError();
       if (*Scheduled)
         return llvm::Error::success();
+      continue;
+    }
+    if (Phase == PnpPhase::DisarmWakeParents) {
+      while (!Transition.WakeParentsToDisarm.empty()) {
+        const uint64_t Parent = Transition.WakeParentsToDisarm.front();
+        Transition.WakeParentsToDisarm.pop_front();
+        const uint64_t Callback =
+            Devices.at(Parent).Policy.Events.DisarmWakeFromSx;
+        if (!Callback)
+          continue;
+        if (!Transition.WakeParentsToDisarm.empty())
+          Transition.Remaining.push_front({PnpPhase::DisarmWakeParents});
+        PendingCall = GuestCall{Token, Callback, {Parent}};
+        return llvm::Error::success();
+      }
+      continue;
+    }
+    if (Phase == PnpPhase::WakeInterrupts) {
+      D.InD0 = true;
+      if (hasPendingWakeInterrupts(Transition.Device)) {
+        Transition.WaitingForWakeInterrupts = true;
+        return llvm::Error::success();
+      }
       continue;
     }
     if (Phase == PnpPhase::DrainInterrupts) {
@@ -444,12 +548,14 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
         return E;
     }
     if (Disarm) {
-      if (!PowerHost.FinishWake)
-        return invalid("wake disarm requires the retained WAIT_WAKE bridge");
-      if (auto E = PowerHost.FinishWake(D.Wdm, false))
+      if (auto E = retireChildWake(Transition.Device, Transition))
         return E;
       D.Policy.Armed = KernelPowerPolicy::WakeSource::None;
+      D.Policy.ArmedForDevice = false;
+      D.Policy.ArmedChildren.clear();
       D.Policy.WakeTriggered = false;
+      if (!Transition.WakeParentsToDisarm.empty())
+        Transition.Remaining.push_front({PnpPhase::DisarmWakeParents});
     }
     uint64_t Callback = 0;
     switch (Transition.Current.Phase) {
@@ -469,19 +575,31 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     case PnpPhase::IoResume:
     case PnpPhase::EnableInterrupts:
     case PnpPhase::DisableInterrupts:
+    case PnpPhase::WakeInterrupts:
     case PnpPhase::DrainInterrupts:
+    case PnpPhase::PoFxRegister:
+    case PnpPhase::PoFxStart:
+    case PnpPhase::PoFxQuiesce:
+    case PnpPhase::PoFxUnregister:
+    case PnpPhase::DisarmWakeParents:
       break;
     }
     std::vector<uint64_t> Arguments{Transition.Device};
     switch (Transition.Current.Phase) {
     case PnpPhase::EnableInterrupts:
     case PnpPhase::DisableInterrupts:
+    case PnpPhase::WakeInterrupts:
     case PnpPhase::DrainInterrupts:
+    case PnpPhase::PoFxRegister:
+    case PnpPhase::PoFxStart:
+    case PnpPhase::PoFxQuiesce:
+    case PnpPhase::PoFxUnregister:
+    case PnpPhase::DisarmWakeParents:
       llvm_unreachable(
           "internal interrupt phase handled before guest dispatch");
     case PnpPhase::ArmWakeFromSxWithReason:
-      Arguments.push_back(1);
-      Arguments.push_back(0);
+      Arguments.push_back(Transition.DeviceWakeEnabled);
+      Arguments.push_back(Transition.ChildrenArmedForWake);
       break;
     case PnpPhase::ArmWakeFromS0:
     case PnpPhase::ArmWakeFromSx:
@@ -498,6 +616,8 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
     case PnpPhase::SelfManagedIoRestart:
       D.InD0 = true;
       D.PowerQueuesHeld = false;
+      if (auto E = holdForPoFxComponent(Transition.Device))
+        return E;
       D.SelfManagedIo = SelfManagedIoState::Running;
       break;
     case PnpPhase::SelfManagedIoSuspend:
@@ -548,9 +668,12 @@ llvm::Error KernelFramework::schedulePnpCallback(uint64_t Token) {
       break;
     }
     if (!Callback && (ArmS0 || ArmSx || Disarm)) {
-      if (ArmS0 || ArmSx)
+      if (ArmS0 || ArmSx) {
         D.Policy.Armed = ArmS0 ? KernelPowerPolicy::WakeSource::S0
                                : KernelPowerPolicy::WakeSource::Sx;
+        D.Policy.ArmedForDevice = ArmS0 || Transition.DeviceWakeEnabled;
+        D.Policy.ArmedChildren = std::move(Transition.WakeChildren);
+      }
       continue;
     }
     if (!Callback)
@@ -600,8 +723,14 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
 #undef NEVERD_FRAMEWORK_PNP_CALLBACK
       case PnpPhase::EnableInterrupts:
       case PnpPhase::DisableInterrupts:
+      case PnpPhase::PoFxRegister:
         break;
+      case PnpPhase::WakeInterrupts:
       case PnpPhase::DrainInterrupts:
+      case PnpPhase::PoFxStart:
+      case PnpPhase::PoFxQuiesce:
+      case PnpPhase::PoFxUnregister:
+      case PnpPhase::DisarmWakeParents:
       case PnpPhase::IoStop:
       case PnpPhase::IoResume:
         VoidResult = true;
@@ -637,6 +766,8 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
         if (!Failed) {
           Policy.Armed = ArmS0 ? KernelPowerPolicy::WakeSource::S0
                                : KernelPowerPolicy::WakeSource::Sx;
+          Policy.ArmedForDevice = ArmS0 || State.DeviceWakeEnabled;
+          Policy.ArmedChildren = std::move(State.WakeChildren);
         } else {
           if (auto E = PowerHost.FinishWake(Device->second.Wdm, false))
             return E;
@@ -656,6 +787,9 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       if (Failed && !(State.Status & profile::NTStatusFailureMask))
         State.Status = Status;
       auto &D = Device->second;
+      if (State.Current.Phase == PnpPhase::PoFxUnregister)
+        if (auto E = unregisterPoFx(State.Device))
+          return E;
       const bool InterruptPhase =
           State.Current.Phase == PnpPhase::EnableInterrupts ||
           State.Current.Phase == PnpPhase::DisableInterrupts;
@@ -689,16 +823,23 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
            State.Current.Phase == PnpPhase::D0Entry ||
            State.Current.Phase == PnpPhase::D0EntryPostInterruptsEnabled ||
            State.Current.Phase == PnpPhase::SelfManagedIoInit ||
-           State.Current.Phase == PnpPhase::SelfManagedIoRestart)) {
+           State.Current.Phase == PnpPhase::SelfManagedIoRestart ||
+           State.Current.Phase == PnpPhase::PoFxRegister)) {
         State.Remaining.clear();
         State.ReleasesHardware = true;
         D.PowerQueuesHeld = true;
+        if (State.Current.Phase == PnpPhase::PoFxRegister &&
+            D.SelfManagedIo == SelfManagedIoState::Running &&
+            D.Callbacks.SelfManagedIoSuspend)
+          State.Remaining.push_back({PnpPhase::SelfManagedIoSuspend});
+        State.Remaining.push_back({PnpPhase::PoFxQuiesce});
         if (D.InD0 && D.Callbacks.D0ExitPreInterruptsDisabled)
           State.Remaining.push_back({PnpPhase::D0ExitPreInterruptsDisabled});
         State.Remaining.push_back({PnpPhase::DisableInterrupts});
         State.Remaining.push_back({PnpPhase::DrainInterrupts});
         if (D.InD0 && D.Callbacks.D0Exit)
           State.Remaining.push_back({PnpPhase::D0Exit});
+        State.Remaining.push_back({PnpPhase::PoFxUnregister});
         if (D.Callbacks.ReleaseHardware)
           State.Remaining.push_back({PnpPhase::ReleaseHardware});
       }
@@ -724,9 +865,11 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       if (State.nextPrecedesRequestDrain()) {
         if (auto E = schedulePnpCallback(Token))
           return E;
-        return State.CallbacksComplete      ? PnpCallbackProgress::Continue
-               : State.WaitingForInterrupts ? PnpCallbackProgress::Waiting
-                                            : PnpCallbackProgress::Scheduled;
+        return State.CallbacksComplete ? PnpCallbackProgress::Continue
+               : (State.WaitingForInterrupts ||
+                  State.WaitingForWakeInterrupts || State.WaitingForPoFx)
+                   ? PnpCallbackProgress::Waiting
+                   : PnpCallbackProgress::Scheduled;
       }
       if (!State.WaitingRequests.empty()) {
         State.WaitingForRequests = true;
@@ -735,9 +878,11 @@ KernelFramework::finishPnpCallback(uint64_t Token, uint64_t Result) {
       if (!State.Remaining.empty()) {
         if (auto E = schedulePnpCallback(Token))
           return E;
-        return State.CallbacksComplete      ? PnpCallbackProgress::Continue
-               : State.WaitingForInterrupts ? PnpCallbackProgress::Waiting
-                                            : PnpCallbackProgress::Scheduled;
+        return State.CallbacksComplete ? PnpCallbackProgress::Continue
+               : (State.WaitingForInterrupts ||
+                  State.WaitingForWakeInterrupts || State.WaitingForPoFx)
+                   ? PnpCallbackProgress::Waiting
+                   : PnpCallbackProgress::Scheduled;
       }
       if (auto E = finalizePnpCallbacks(Token))
         return E;

@@ -13,6 +13,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "SymExprMask.h"
+
 #include "neverd/symbolic/SymExpr.h"
 
 #include <algorithm>
@@ -52,45 +54,98 @@ SymRef SymContext::mkAdd(llvm::ArrayRef<SymRef> Ops) {
   std::map<uint32_t, llvm::APInt> Terms;
 
   llvm::SmallVector<SymRef, 8> Work(Ops.begin(), Ops.end());
-  while (!Work.empty()) {
-    SymRef R = Work.pop_back_val();
-    assert(width(R) == W && "mkAdd operands must share a width");
+  llvm::SmallVector<SymRef, 8> Masked;
+  bool CollectedMasks = false;
+  for (;;) {
+    while (!Work.empty()) {
+      SymRef R = Work.pop_back_val();
+      assert(width(R) == W && "mkAdd operands must share a width");
 
-    if (op(R) == SymOp::Add) {
-      llvm::ArrayRef<SymRef> Sub = operands(R);
-      Work.append(Sub.begin(), Sub.end());
-      continue;
-    }
-    if (isConst(R)) {
-      ConstTerm += constValue(R);
-      continue;
-    }
+      SymOp Op = op(R);
+      if (Op == SymOp::Add) {
+        llvm::ArrayRef<SymRef> Sub = operands(R);
+        Work.append(Sub.begin(), Sub.end());
+        continue;
+      }
+      if (Op == SymOp::Const) {
+        ConstTerm += constValue(R);
+        continue;
+      }
+      if (!CollectedMasks && Op == SymOp::And && isConst(operand(R, 0))) {
+        Masked.push_back(R);
+        continue;
+      }
 
-    llvm::APInt Coeff(W, 1);
-    SymRef Base;
-    splitCoefficient(R, Coeff, Base);
-    if (!Base.isValid()) {
-      // Product with three or more factors: rebuild the non-constant tail.
-      llvm::SmallVector<SymRef, 4> Tail(operands(R).begin() + 1,
-                                        operands(R).end());
-      Base = mkMul(Tail);
-    }
+      llvm::APInt Coeff(W, 1);
+      SymRef Base;
+      splitCoefficient(R, Coeff, Base);
+      if (!Base.isValid()) {
+        // Product with three or more factors: rebuild the non-constant tail.
+        llvm::SmallVector<SymRef, 4> Tail(operands(R).begin() + 1,
+                                          operands(R).end());
+        Base = mkMul(Tail);
+      }
 
-    auto It = Terms.find(Base.index());
-    if (It == Terms.end())
-      Terms.emplace(Base.index(), Coeff);
-    else
-      It->second += Coeff;
+      auto It = Terms.find(Base.index());
+      if (It == Terms.end())
+        Terms.emplace(Base.index(), Coeff);
+      else
+        It->second += Coeff;
+    }
+    if (Masked.empty())
+      break;
+    mergeMaskedOperands(Masked, /*RequireDisjoint=*/true);
+    Work = std::move(Masked);
+    Masked.clear();
+    CollectedMasks = true;
   }
 
   llvm::SmallVector<SymRef, 8> Final;
+  bool Recollect = false;
   if (!ConstTerm.isZero())
     Final.push_back(mkConst(ConstTerm));
   for (const auto &[BaseIdx, Coeff] : Terms) {
     if (Coeff.isZero())
       continue;
     SymRef Base(BaseIdx);
-    Final.push_back(Coeff.isOne() ? Base : mkMul(mkConst(Coeff), Base));
+    SymRef Term = Coeff.isOne() ? Base : mkMul(mkConst(Coeff), Base);
+    Recollect |= !Coeff.isOne() && op(Term) != SymOp::Mul;
+    Final.push_back(Term);
+  }
+
+  if (Recollect) {
+    // Materializing a coefficient can recover a masked shift slice, exposing
+    // a constant or a base already present in the sum. Collect those once.
+    // A recovered nonconstant slice retains its mask, so the new base cannot
+    // be a bare LShr and this collection cannot expose another such slice.
+    Terms.clear();
+    ConstTerm = llvm::APInt(W, 0);
+    for (SymRef R : Final) {
+      if (isConst(R)) {
+        ConstTerm += constValue(R);
+        continue;
+      }
+      llvm::APInt Coeff(W, 1);
+      SymRef Base;
+      splitCoefficient(R, Coeff, Base);
+      if (!Base.isValid()) {
+        llvm::SmallVector<SymRef, 4> Tail(operands(R).begin() + 1,
+                                          operands(R).end());
+        Base = mkMul(Tail);
+      }
+      auto [It, Inserted] = Terms.try_emplace(Base.index(), Coeff);
+      if (!Inserted)
+        It->second += Coeff;
+    }
+    Final.clear();
+    if (!ConstTerm.isZero())
+      Final.push_back(mkConst(ConstTerm));
+    for (const auto &[BaseIdx, Coeff] : Terms) {
+      if (!Coeff.isZero()) {
+        SymRef Base(BaseIdx);
+        Final.push_back(Coeff.isOne() ? Base : mkMul(mkConst(Coeff), Base));
+      }
+    }
   }
 
   if (Final.empty())
@@ -136,6 +191,13 @@ SymRef SymContext::mkMul(llvm::ArrayRef<SymRef> Ops) {
     return mkConst(ConstFactor);
 
   std::sort(Rest.begin(), Rest.end());
+
+  if (Rest.size() == 1 && op(Rest[0]) == SymOp::LShr) {
+    SymRef Source = operand(Rest[0], 0);
+    SymRef Count = operand(Rest[0], 1);
+    if (auto K = detail::matchingShiftPower(*this, Count, ConstFactor))
+      return mkAnd(Source, mkConst(~llvm::APInt::getLowBitsSet(W, *K)));
+  }
 
   if (ConstFactor.isOne()) {
     if (Rest.size() == 1)

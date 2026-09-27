@@ -28,6 +28,25 @@ KernelModel::planWDMCancellation(uint64_t IRP,
                                  const ActiveRequest &Request) const {
   if (Request.Completed)
     return cancellationError("WDM cancellation requires a live IRP");
+  if (Request.ChildPower &&
+      Request.ChildPower->Origin == DriverRequestOrigin::FrameworkWaitWake)
+    return cancellationError("framework owns cancellation of its WAIT_WAKE");
+  const auto Wake = ProviderWakeIRPs.find(Request.PnpDevice);
+  if (Wake != ProviderWakeIRPs.end() && Wake->second.IRP == IRP) {
+    auto Validated = preflightProviderWake(Request.PnpDevice, IRP,
+                                           framework::RequestCancelled);
+    if (!Validated)
+      return Validated.takeError();
+  }
+  if (const auto *Submission = UsbIdle.submissionForIRP(IRP)) {
+    auto Idle = preflightUsbIdleCompletion(
+        Submission->Key, UsbIdleCompletionCause::Cancel, true);
+    if (!Idle)
+      return Idle.takeError();
+    const uint64_t Required = Idle->DeferredUntilCallbackReturn ? 1 : 2;
+    if (Required > UINT64_MAX - NextIRPCall)
+      return cancellationError("USB cancel and completion identity exhausted");
+  }
   auto Routine = Memory.readInteger(IRP + windows::IRPCancelRoutineOffset, 8);
   if (!Routine)
     return Routine.takeError();
@@ -87,6 +106,7 @@ llvm::Error KernelModel::releaseCancelSpinLock(uint64_t OldIRQL) {
 llvm::Expected<uint64_t> KernelModel::cancelIRP(uint64_t IRP) {
   auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed ||
+      FrameworkUsbIdleRequests.contains(IRP) ||
       (Framework && Framework->ownsRequestIRP(IRP)))
     return cancellationError("IoCancelIrp requires a live WDM-owned IRP");
   if (CancelLock.Held || CancelLock.Callback || hasPendingModelGuestCall())
@@ -193,8 +213,11 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
   if (Kind != KernelScheduler::CallbackKind::FrameworkCancel &&
       Kind != KernelScheduler::CallbackKind::FrameworkCompletion &&
       Kind != KernelScheduler::CallbackKind::FrameworkDeferred &&
+      Kind != KernelScheduler::CallbackKind::PoFx &&
       !KernelScheduler::isFrameworkInterruptCallbackKind(Kind) &&
       Kind != KernelScheduler::CallbackKind::WDMCompletion &&
+      Kind != KernelScheduler::CallbackKind::WDMDispatch &&
+      Kind != KernelScheduler::CallbackKind::UsbIdle &&
       Kind != KernelScheduler::CallbackKind::Interrupt &&
       !KernelScheduler::isDMACallbackKind(Kind))
     return std::optional<KernelGuestCall>{};
@@ -207,10 +230,16 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
        Kind == KernelScheduler::CallbackKind::FrameworkDeferred ||
        KernelScheduler::isFrameworkInterruptCallbackKind(Kind))
           ? GuestCallOwner::Framework
+      : Kind == KernelScheduler::CallbackKind::UsbIdle ? Token->second.Owner
+      : Kind == KernelScheduler::CallbackKind::PoFx    ? GuestCallOwner::PoFx
       : Kind == KernelScheduler::CallbackKind::Interrupt
           ? GuestCallOwner::Interrupt
       : KernelScheduler::isDMACallbackKind(Kind) ? GuestCallOwner::DMA
                                                  : GuestCallOwner::WDM;
+  if (Kind == KernelScheduler::CallbackKind::UsbIdle &&
+      ExpectedOwner != GuestCallOwner::UsbIdle &&
+      ExpectedOwner != GuestCallOwner::WDM)
+    return cancellationError("USB callback has a foreign continuation owner");
   auto IsFrameworkCall = [&](GuestCallToken Call) {
     return Call.Owner == GuestCallOwner::Framework ||
            (Call.Owner == GuestCallOwner::Interrupt &&

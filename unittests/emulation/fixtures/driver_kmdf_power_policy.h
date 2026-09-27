@@ -19,8 +19,25 @@ _Static_assert(sizeof(WDF_DEVICE_POWER_POLICY_WAKE_SETTINGS) == 20,
 
 static WCHAR PolicyMode;
 static ULONG PolicyEntries, PolicyExits, PolicyArms, PolicyWakes, PolicyDisarms;
-static BOOLEAN PolicyInD0, PolicyArmed;
+static BOOLEAN PolicyInD0, PolicyArmed, PolicyFinalExit;
+static volatile ULONG *PolicyRegisters;
+static ULONG PolicyRestoredRegister, PolicyRestoredCount;
 
+static BOOLEAN UsesColdPowerPolicy(VOID) {
+  return PolicyMode == KmdfPowerColdExplicit ||
+         PolicyMode == KmdfPowerColdDefault ||
+         PolicyMode == KmdfPowerColdExcluded ||
+         PolicyMode == KmdfPowerColdDefaultHot ||
+         PolicyMode == KmdfPowerColdNoWake ||
+         PolicyMode == KmdfPowerColdWakeUnavailable ||
+         PolicyMode == KmdfPowerColdSystemWake;
+}
+static BOOLEAN ExpectsColdPowerCycle(VOID) {
+  return PolicyMode == KmdfPowerColdExplicit ||
+         PolicyMode == KmdfPowerColdDefault ||
+         PolicyMode == KmdfPowerColdNoWake ||
+         PolicyMode == KmdfPowerColdSystemWake;
+}
 static BOOLEAN UsesPowerPolicy(VOID) {
   return ServiceMode == L'-' &&
          (PolicyMode == KmdfPowerIdleWake || PolicyMode == KmdfPowerIdleOnly ||
@@ -30,14 +47,29 @@ static BOOLEAN UsesPowerPolicy(VOID) {
           PolicyMode == KmdfPowerManagedQueue ||
           PolicyMode == KmdfPowerManagedWait ||
           PolicyMode == KmdfPowerIdleAndSystemWake ||
-          PolicyMode == KmdfPowerRemainIdleOnSystemWake);
+          PolicyMode == KmdfPowerRemainIdleOnSystemWake ||
+          PolicyMode == KmdfPowerSystemManaged ||
+          PolicyMode == KmdfPowerSystemManagedHint || UsesColdPowerPolicy());
 }
 static NTSTATUS PolicyD0Entry(WDFDEVICE Device,
                               WDF_POWER_DEVICE_STATE Previous) {
   UNREFERENCED_PARAMETER(Device);
   if (KeGetCurrentIrql() != PASSIVE_LEVEL || PolicyInD0 ||
-      Previous != (PolicyEntries ? WdfPowerDeviceD3 : WdfPowerDeviceD3Final))
+      Previous != ((!PolicyEntries || PolicyFinalExit) ? WdfPowerDeviceD3Final
+                                                       : WdfPowerDeviceD3))
     return STATUS_INVALID_DEVICE_STATE;
+  if (UsesColdPowerPolicy()) {
+    if (PolicyRegisters == NULL)
+      return STATUS_INVALID_DEVICE_STATE;
+    PolicyRestoredRegister = READ_REGISTER_ULONG(PolicyRegisters);
+    if (PolicyRestoredRegister != ((!PolicyEntries || ExpectsColdPowerCycle())
+                                       ? InitialRegisterValue
+                                       : KmdfPowerRegisterMarker))
+      return STATUS_INVALID_DEVICE_STATE;
+    if (PolicyEntries && PolicyRestoredRegister == InitialRegisterValue)
+      ++PolicyRestoredCount;
+    WRITE_REGISTER_ULONG(PolicyRegisters, KmdfPowerRegisterMarker);
+  }
   ++PolicyEntries;
   PolicyInD0 = TRUE;
   return STATUS_SUCCESS;
@@ -48,6 +80,7 @@ static NTSTATUS PolicyD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Target) {
       (Target != WdfPowerDeviceD3 && Target != WdfPowerDeviceD3Final))
     return STATUS_INVALID_DEVICE_STATE;
   ++PolicyExits;
+  PolicyFinalExit = Target == WdfPowerDeviceD3Final;
   PolicyInD0 = FALSE;
   return STATUS_SUCCESS;
 }
@@ -76,12 +109,43 @@ static VOID PolicyDisarm(WDFDEVICE Device) {
   ++PolicyDisarms;
   PolicyArmed = FALSE;
 }
+static NTSTATUS PolicyPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw,
+                                      WDFCMRESLIST Translated) {
+  UNREFERENCED_PARAMETER(Device);
+  if (KeGetCurrentIrql() != PASSIVE_LEVEL || PolicyRegisters != NULL ||
+      WdfCmResourceListGetCount(Raw) != 1 ||
+      WdfCmResourceListGetCount(Translated) != 1)
+    return STATUS_INVALID_DEVICE_STATE;
+  PCM_PARTIAL_RESOURCE_DESCRIPTOR Descriptor =
+      WdfCmResourceListGetDescriptor(Translated, 0);
+  if (Descriptor == NULL || Descriptor->Type != CmResourceTypeMemory ||
+      Descriptor->u.Memory.Start.QuadPart != TranslatedMemoryStart ||
+      Descriptor->u.Memory.Length != MemoryLength)
+    return STATUS_INVALID_DEVICE_STATE;
+  PolicyRegisters = MmMapIoSpace(Descriptor->u.Memory.Start,
+                                 Descriptor->u.Memory.Length, MmNonCached);
+  return PolicyRegisters ? STATUS_SUCCESS : STATUS_INSUFFICIENT_RESOURCES;
+}
+static NTSTATUS PolicyReleaseHardware(WDFDEVICE Device,
+                                      WDFCMRESLIST Translated) {
+  UNREFERENCED_PARAMETER(Device);
+  if (KeGetCurrentIrql() != PASSIVE_LEVEL || PolicyRegisters == NULL ||
+      WdfCmResourceListGetCount(Translated) != 1)
+    return STATUS_INVALID_DEVICE_STATE;
+  MmUnmapIoSpace((PVOID)PolicyRegisters, MemoryLength);
+  PolicyRegisters = NULL;
+  return STATUS_SUCCESS;
+}
 static VOID PolicyInitialize(PWDFDEVICE_INIT Init) {
   WDF_PNPPOWER_EVENT_CALLBACKS Pnp;
   WDF_POWER_POLICY_EVENT_CALLBACKS Policy;
   WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&Pnp);
   Pnp.EvtDeviceD0Entry = PolicyD0Entry;
   Pnp.EvtDeviceD0Exit = PolicyD0Exit;
+  if (UsesColdPowerPolicy()) {
+    Pnp.EvtDevicePrepareHardware = PolicyPrepareHardware;
+    Pnp.EvtDeviceReleaseHardware = PolicyReleaseHardware;
+  }
   WdfDeviceInitSetPnpPowerEventCallbacks(Init, &Pnp);
   WDF_POWER_POLICY_EVENT_CALLBACKS_INIT(&Policy);
   Policy.EvtDeviceArmWakeFromS0 = PolicyArm;
@@ -95,13 +159,15 @@ static VOID PolicyInitialize(PWDFDEVICE_INIT Init) {
 static NTSTATUS PolicyConfigure(WDFDEVICE Device) {
   if (PolicyMode == KmdfPowerSystemWake ||
       PolicyMode == KmdfPowerSystemArmFailure ||
-      PolicyMode == KmdfPowerIdleAndSystemWake) {
+      PolicyMode == KmdfPowerIdleAndSystemWake ||
+      PolicyMode == KmdfPowerColdSystemWake) {
     WDF_DEVICE_POWER_POLICY_WAKE_SETTINGS Wake;
     WDF_DEVICE_POWER_POLICY_WAKE_SETTINGS_INIT(&Wake);
     Wake.DxState = PowerDeviceD3;
     Wake.UserControlOfWakeSettings = WakeDoNotAllowUserControl;
     NTSTATUS Status = WdfDeviceAssignSxWakeSettings(Device, &Wake);
-    if (!NT_SUCCESS(Status) || PolicyMode != KmdfPowerIdleAndSystemWake)
+    if (!NT_SUCCESS(Status) || (PolicyMode != KmdfPowerIdleAndSystemWake &&
+                                PolicyMode != KmdfPowerColdSystemWake))
       return Status;
   }
   WDF_DEVICE_POWER_POLICY_IDLE_SETTINGS Idle;
@@ -109,14 +175,30 @@ static NTSTATUS PolicyConfigure(WDFDEVICE Device) {
       &Idle,
       (PolicyMode == KmdfPowerIdleOnly || PolicyMode == KmdfPowerManagedQueue ||
        PolicyMode == KmdfPowerManagedWait ||
-       PolicyMode == KmdfPowerRemainIdleOnSystemWake)
+       PolicyMode == KmdfPowerRemainIdleOnSystemWake ||
+       PolicyMode == KmdfPowerColdNoWake ||
+       PolicyMode == KmdfPowerColdSystemWake ||
+       PolicyMode == KmdfPowerSystemManaged ||
+       PolicyMode == KmdfPowerSystemManagedHint)
           ? IdleCannotWakeFromS0
           : IdleCanWakeFromS0);
   Idle.DxState = PowerDeviceD3;
   Idle.IdleTimeout = KmdfPowerTimeoutMs;
   Idle.UserControlOfIdleSettings = IdleDoNotAllowUserControl;
-  Idle.IdleTimeoutType = DriverManagedIdleTimeout;
-  Idle.ExcludeD3Cold = WdfTrue;
+  Idle.IdleTimeoutType = PolicyMode == KmdfPowerSystemManaged
+                             ? SystemManagedIdleTimeout
+                         : PolicyMode == KmdfPowerSystemManagedHint
+                             ? SystemManagedIdleTimeoutWithHint
+                             : DriverManagedIdleTimeout;
+  Idle.ExcludeD3Cold = PolicyMode == KmdfPowerColdExplicit ||
+                               PolicyMode == KmdfPowerColdNoWake ||
+                               PolicyMode == KmdfPowerColdWakeUnavailable ||
+                               PolicyMode == KmdfPowerColdSystemWake
+                           ? WdfFalse
+                       : PolicyMode == KmdfPowerColdDefault ||
+                               PolicyMode == KmdfPowerColdDefaultHot
+                           ? WdfUseDefault
+                           : WdfTrue;
   Idle.PowerUpIdleDeviceOnSystemWake =
       PolicyMode == KmdfPowerRemainIdleOnSystemWake ? WdfFalse : WdfTrue;
   return WdfDeviceAssignS0IdleSettings(Device, &Idle);
@@ -127,9 +209,10 @@ static VOID PolicyCompleteSnapshot(WDFREQUEST Request, NTSTATUS Status) {
     WdfRequestComplete(Request, Status);
     return;
   }
-  Status = WdfRequestRetrieveOutputBuffer(
-      Request, KmdfPowerSnapshotWords * sizeof(*Output), (PVOID *)&Output,
-      NULL);
+  const ULONG WordCount = UsesColdPowerPolicy() ? KmdfPowerColdSnapshotWords
+                                                : KmdfPowerSnapshotWords;
+  Status = WdfRequestRetrieveOutputBuffer(Request, WordCount * sizeof(*Output),
+                                          (PVOID *)&Output, NULL);
   if (NT_SUCCESS(Status)) {
     Output[0] = PolicyEntries;
     Output[1] = PolicyExits;
@@ -137,10 +220,13 @@ static VOID PolicyCompleteSnapshot(WDFREQUEST Request, NTSTATUS Status) {
     Output[3] = PolicyWakes;
     Output[4] = PolicyDisarms;
     Output[5] = PolicyInD0;
+    if (UsesColdPowerPolicy()) {
+      Output[6] = PolicyRestoredRegister;
+      Output[7] = PolicyRestoredCount;
+    }
   }
   WdfRequestCompleteWithInformation(
-      Request, Status,
-      NT_SUCCESS(Status) ? KmdfPowerSnapshotWords * sizeof(*Output) : 0);
+      Request, Status, NT_SUCCESS(Status) ? WordCount * sizeof(*Output) : 0);
 }
 static struct {
   WDFDEVICE Device;
@@ -175,6 +261,12 @@ static VOID PolicyIoControl(WDFQUEUE Queue, WDFREQUEST Request) {
   WDFDEVICE Device = WdfIoQueueGetDevice(Queue);
   switch (*Input) {
   case KmdfPowerSnapshot:
+    Status = STATUS_SUCCESS;
+    break;
+  case KmdfPowerReadRegister:
+    if (!UsesColdPowerPolicy() || PolicyRegisters == NULL)
+      ExRaiseStatus(STATUS_INVALID_DEVICE_STATE);
+    PolicyRestoredRegister = READ_REGISTER_ULONG(PolicyRegisters);
     Status = STATUS_SUCCESS;
     break;
   case KmdfPowerHold:

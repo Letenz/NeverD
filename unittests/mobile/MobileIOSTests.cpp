@@ -759,6 +759,21 @@ TEST(MobileIOSNative, RuntimeBlockTypeDoesNotInventInvocationSignature) {
   EXPECT_TRUE(objcTypes("q32@0:8@??16q24").empty());
 }
 
+TEST(MobileIOSNative, RuntimeIMPPointerPreservesCarrierWithoutCallSignature) {
+  auto hint = neverd::parseObjCMethodEncoding("methodForSelector:",
+                                               "^?24@0:8:16");
+  ASSERT_TRUE(hint);
+  ASSERT_EQ(hint->ReturnType->Kind, neverd::NdTypeKind::Ptr);
+  ASSERT_TRUE(hint->ReturnType->Pointee);
+  EXPECT_EQ(hint->ReturnType->Pointee->Kind, neverd::NdTypeKind::Void);
+  EXPECT_EQ(objcTypes("^?24@0:8:16"),
+            (std::vector<std::string>{"void *", "id", "SEL", "SEL"}));
+  EXPECT_TRUE(neverd::parseObjCMethodEncoding("methodForSelector:",
+                                              "^r?24@0:8:16"));
+  EXPECT_FALSE(neverd::parseObjCMethodEncoding("methodForSelector:",
+                                               "^??24@0:8:16"));
+}
+
 TEST(MobileIOSNative, OpaquePointeesUseTheLoaderTypeGrammar) {
   for (const char *pointee : {"{Image=}", "{Image}", "(Color=qd)", "[4f]",
                               "{Outer=\"child\"^{Inner=iq}}"}) {
@@ -777,7 +792,7 @@ TEST(MobileIOSNative, OpaquePointeesUseTheLoaderTypeGrammar) {
   for (const auto &type :
        {std::string("^{Image="), std::string("^{=i}"),
         std::string("^{Image=\"bad\\name\"i}"), std::string("^[i]"),
-        std::string("^?"), std::string(18, '^') + "{Image=}"}) {
+        std::string(18, '^') + "{Image=}"}) {
     const std::string encoding = "q24@0:8" + type + "16";
     EXPECT_FALSE(neverd::parseObjCMethodEncoding("value:", encoding));
     EXPECT_TRUE(objcTypes(encoding).empty());

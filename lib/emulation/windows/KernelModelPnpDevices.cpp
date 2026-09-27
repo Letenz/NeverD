@@ -135,6 +135,17 @@ llvm::Error KernelModel::preparePnpDevices() {
       return E;
     PnpDevices.emplace(Configured.ID, Record);
   }
+  // All configured PDOs exist before parent links are resolved, so inventory
+  // order has no effect on the declared devnode topology.
+  for (const auto &Configured : ConfiguredPnpDevices) {
+    if (!Configured.ParentID)
+      continue;
+    auto &Device = PnpDevices.at(Configured.ID);
+    Device.ParentPDO = PnpDevices.at(*Configured.ParentID).PDO;
+    auto &Observation = Result.PnpDevices[Device.ResultIndex];
+    Observation.ParentID = Configured.ParentID;
+    Observation.ParentPDO = Device.ParentPDO;
+  }
   PnpDevicesPrepared = true;
   return snapshot();
 }

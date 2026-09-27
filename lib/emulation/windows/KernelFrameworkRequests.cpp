@@ -360,23 +360,8 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
       return E;
     return std::optional<RequestDispatch>{RequestDispatch{0, {}, Dispatch}};
   };
-  auto Q = Queues.find(D->second.DefaultQueue);
-  if (Q == Queues.end() && D->second.Filter)
-    return requestError(
-        "automatic non-file filter forwarding is outside this profile");
-  if (Q == Queues.end())
-    return CompleteImmediately(ControlInvalidDeviceRequest,
-                               ControlInvalidDeviceRequest);
-  if (Objects.at(Q->first).Deleting)
-    return requestError("default queue is deleting");
-  if (!Q->second.Accepting) {
-    if (AfterCaller)
-      return requestError(
-          "caller-context queue drained during request routing");
-    return CompleteImmediately(QueueInvalidDeviceState,
-                               QueueInvalidDeviceState);
-  }
   uint64_t ExistingHandle = 0;
+  uint64_t QueueHandle = D->second.dispatchQueue(View->Major);
   if (AfterCaller) {
     auto Caller = CallerRequests.find(IRP);
     if (Caller == CallerRequests.end())
@@ -386,9 +371,42 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
     if (R == Requests.end() || !R->second.InCallerContext ||
         !R->second.Enqueued || R->second.Device != D->first)
       return requestError("caller-context request was not enqueued");
-    R->second.InCallerContext = false;
-    R->second.Queue = Q->first;
-    CallerRequests.erase(Caller);
+    QueueHandle = R->second.Queue;
+  }
+  auto Q = Queues.find(QueueHandle);
+  if (Q == Queues.end() && D->second.Filter)
+    return requestError(
+        "automatic non-file filter forwarding is outside this profile");
+  if (Q == Queues.end())
+    return CompleteImmediately(ControlInvalidDeviceRequest,
+                               ControlInvalidDeviceRequest);
+  if (Objects.at(Q->first).Deleting)
+    return requestError("request dispatch queue is deleting");
+  if (!Q->second.Accepting) {
+    if (AfterCaller)
+      return requestError(
+          "caller-context queue drained during request routing");
+    return CompleteImmediately(QueueInvalidDeviceState,
+                               QueueInvalidDeviceState);
+  }
+  if (AfterCaller) {
+    auto O = Objects.find(ExistingHandle);
+    if (O == Objects.end() || O->second.Kind != ObjectKind::Request)
+      return requestError("caller-context request lost its object");
+    auto Source = Objects.find(O->second.Parent);
+    if (Source == Objects.end() || Source->second.Kind != ObjectKind::Queue ||
+        Source->second.Deleting)
+      return requestError("caller-context request lost its source queue");
+    auto Child = llvm::find(Source->second.Children, ExistingHandle);
+    if (Child == Source->second.Children.end())
+      return requestError("source queue lost its caller-context request");
+    if (O->second.Parent != Q->first) {
+      Objects.at(Q->first).Children.push_back(ExistingHandle);
+      Source->second.Children.erase(Child);
+      O->second.Parent = Q->first;
+    }
+    Requests.at(ExistingHandle).InCallerContext = false;
+    CallerRequests.erase(IRP);
   } else if (D->second.CallerContext) {
     if (auto E = RequestsHost.MarkPending(IRP))
       return E;
@@ -457,6 +475,7 @@ KernelFramework::routeRequest(uint64_t WdmDevice, uint64_t IRP,
   if (Queue.PowerManaged && D->second.PDO)
     if (auto E = powerPolicyActive(D->second.PDO))
       return E;
+  WaitForSlot |= queuePnpHeld(Queue);
   if (Manual || WaitForSlot) {
     auto &Pending = Requests.at(Handle);
     Pending.Queued = true;
@@ -821,6 +840,10 @@ KernelFramework::callRequest(llvm::StringRef Name, Binding &B,
     auto AlreadyCanceled = RequestsHost.IsCanceled(R->second.IRP);
     if (!AlreadyCanceled)
       return AlreadyCanceled.takeError();
+    const auto &Device = Devices.at(Destination->second.Device);
+    if (Destination->second.PowerManaged && Device.PDO)
+      if (auto E = powerPolicyActive(Device.PDO))
+        return E;
     if (!Requeue) {
       DestinationObject->second.Children.push_back(A[1]);
       Source->second.Children.erase(Child);

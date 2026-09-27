@@ -13,10 +13,12 @@
 #ifndef NEVERD_EMULATION_DRIVERPNP_H
 #define NEVERD_EMULATION_DRIVERPNP_H
 
+#include "neverd/emulation/DriverD3Cold.h"
 #include "neverd/emulation/DriverDMA.h"
 #include "neverd/emulation/DriverInterrupts.h"
 #include "neverd/emulation/DriverPowerPolicy.h"
 #include "neverd/emulation/DriverResources.h"
+#include "neverd/emulation/DriverUsbIdle.h"
 
 #include <cstdint>
 #include <optional>
@@ -57,6 +59,20 @@ enum class DevicePowerState : uint32_t {
 #include "neverd/emulation/DeviceLifecycle.def"
 #undef NEVERD_DEVICE_POWER_STATE
 };
+/// Device states admitted by the driver execution profile. The lifecycle model
+/// separately validates Windows state transitions, including unsupported
+/// states.
+constexpr bool isSupportedDriverDevicePower(DevicePowerState State) {
+  switch (State) {
+#define NEVERD_DRIVER_POWER_DEVICE_STATE(Name) case DevicePowerState::Name:
+#include "neverd/emulation/DriverPower.def"
+#undef NEVERD_DRIVER_POWER_DEVICE_STATE
+    return true;
+  default:
+    return false;
+  }
+}
+
 enum class SystemPowerState : uint32_t {
 #define NEVERD_SYSTEM_POWER_STATE(Name, Value) Name = Value,
 #include "neverd/emulation/DeviceLifecycle.def"
@@ -127,6 +143,14 @@ struct DriverPnpDevice {
   /// Optional explicit bus-master capability and independent logical domain.
   std::optional<DriverDmaConfig> Dma = std::nullopt;
   std::optional<DriverWakeCapabilities> WakeCapabilities;
+  /// Omission preserves a powered D3hot bus; cold power is never inferred.
+  std::optional<DriverD3ColdCapabilities> D3Cold;
+  /// Explicit bus topology, independent of WDM attachment and WDF object
+  /// parents. Omission declares a root; the provider never infers a parent
+  /// device.
+  std::optional<std::string> ParentID;
+  /// Explicit selective-idle role; resource transport does not imply USB.
+  std::optional<DriverUsbIdleConfig> UsbIdle;
 };
 
 struct DriverPnpOperation {
@@ -143,6 +167,9 @@ struct DriverPnpDeviceResult {
   bool ProviderPresent = false;
   DevicePowerState DevicePower = DevicePowerState::D0;
   SystemPowerState SystemPower = SystemPowerState::Working;
+  /// Stable configured relationship, retained after either provider retires.
+  std::optional<std::string> ParentID;
+  std::optional<uint64_t> ParentPDO;
 };
 
 struct DriverPnpRequestResult {
@@ -169,6 +196,10 @@ struct DriverPowerRequestResult {
   std::optional<uint64_t> BusCompletedAt100ns;
   /// Original API device argument, independent of canonical PDO identity.
   std::optional<uint64_t> RequestedDeviceObject;
+  /// Provider that caused successful WAIT_WAKE completion, including a parent
+  /// whose configured wake propagation completed this child's retained IRP.
+  std::optional<std::string> WakeSourceDeviceID;
+  std::optional<uint64_t> WakeSourcePDO;
 };
 } // namespace neverd::emulation
 

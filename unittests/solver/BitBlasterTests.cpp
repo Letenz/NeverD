@@ -51,8 +51,8 @@ using BinaryBuilder = std::function<SymRef(SymContext &, SymRef, SymRef)>;
 /// Pin \p X (and \p Y, when it is valid) to concrete values, and compare the
 /// result the solver reports for \p Result against the evaluator.
 void checkPoint(const char *Name, SymContext &Ctx, BitVectorSolver &Solver,
-                SymRef Expr, SymRef Result, SymRef X, uint64_t ValueX,
-                SymRef Y, std::optional<uint64_t> ValueY) {
+                SymRef Expr, SymRef Result, SymRef X, uint64_t ValueX, SymRef Y,
+                std::optional<uint64_t> ValueY) {
   llvm::SmallVector<SymRef, 2> Assumptions;
   Assumptions.push_back(Ctx.mkEq(X, Ctx.mkConst(Ctx.width(X), ValueX)));
   if (ValueY)
@@ -89,19 +89,21 @@ void checkUnary(const char *Name, uint32_t Width, const UnaryBuilder &Build) {
     checkPoint(Name, Ctx, Solver, Expr, Result, X, A, SymRef(), std::nullopt);
 }
 
-void checkBinary(const char *Name, uint32_t Width, const BinaryBuilder &Build) {
+void checkBinary(const char *Name, uint32_t Width, const BinaryBuilder &Build,
+                 uint32_t OtherWidth = 0) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", Width);
-  SymRef Y = Ctx.mkVar("y", Width);
+  SymRef Y = Ctx.mkVar("y", OtherWidth ? OtherWidth : Width);
   SymRef Expr = Build(Ctx, X, Y);
   SymRef Result = Ctx.mkVar("r", Ctx.width(Expr));
 
   BitVectorSolver Solver(Ctx);
   ASSERT_TRUE(Solver.assertEqual(Result, Expr)) << Name;
 
-  const uint64_t End = uint64_t(1) << Width;
-  for (uint64_t A = 0; A < End; ++A)
-    for (uint64_t B = 0; B < End; ++B)
+  const uint64_t EndX = uint64_t(1) << Width;
+  const uint64_t EndY = uint64_t(1) << Ctx.width(Y);
+  for (uint64_t A = 0; A < EndX; ++A)
+    for (uint64_t B = 0; B < EndY; ++B)
       checkPoint(Name, Ctx, Solver, Expr, Result, X, A, Y, B);
 }
 
@@ -156,12 +158,80 @@ TEST(BitBlaster, RotatesByAnUnknownAmount) {
   checkBinary("ror", W4,
               [](SymContext &C, SymRef X, SymRef Y) { return C.mkRor(X, Y); });
 
-  // Here the amount has to be reduced modulo the width by division rather than
-  // by taking its low bits.
+  // Here every bit of the amount can affect its residue modulo the width.
   checkBinary("rol.w3", W3,
               [](SymContext &C, SymRef X, SymRef Y) { return C.mkRol(X, Y); });
   checkBinary("ror.w3", W3,
               [](SymContext &C, SymRef X, SymRef Y) { return C.mkRor(X, Y); });
+}
+
+TEST(BitBlaster, ShiftsAndRotatesWithIndependentlySizedAmounts) {
+  for (uint32_t AmountWidth : {1u, 2u, 5u}) {
+    checkBinary(
+        "shl.mixed", W3,
+        [](SymContext &C, SymRef X, SymRef Y) { return C.mkShl(X, Y); },
+        AmountWidth);
+    checkBinary(
+        "lshr.mixed", W3,
+        [](SymContext &C, SymRef X, SymRef Y) { return C.mkLShr(X, Y); },
+        AmountWidth);
+    checkBinary(
+        "ashr.mixed", W3,
+        [](SymContext &C, SymRef X, SymRef Y) { return C.mkAShr(X, Y); },
+        AmountWidth);
+    checkBinary(
+        "rol.mixed", W3,
+        [](SymContext &C, SymRef X, SymRef Y) { return C.mkRol(X, Y); },
+        AmountWidth);
+    checkBinary(
+        "ror.mixed", W3,
+        [](SymContext &C, SymRef X, SymRef Y) { return C.mkRor(X, Y); },
+        AmountWidth);
+  }
+}
+
+TEST(BitBlaster, ShiftsKeepAmountBitsAboveTheValueWidth) {
+  const llvm::APInt Amounts[] = {llvm::APInt(16, 256),
+                                 llvm::APInt::getOneBitSet(128, 64)};
+  for (const llvm::APInt &Amount : Amounts) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", 8);
+    SymRef Y = Ctx.mkVar("amount", Amount.getBitWidth());
+    BitVectorSolver Solver(Ctx);
+    ASSERT_TRUE(Solver.assertEqual(X, Ctx.mkConst(8, 0x81)));
+    ASSERT_TRUE(Solver.assertEqual(Y, Ctx.mkConst(Amount)));
+    SymRef Wrong[] = {
+        Ctx.mkNe(Ctx.mkShl(X, Y), Ctx.mkZero(8)),
+        Ctx.mkNe(Ctx.mkLShr(X, Y), Ctx.mkZero(8)),
+        Ctx.mkNe(Ctx.mkAShr(X, Y), Ctx.mkOnes(8)),
+    };
+    ASSERT_TRUE(Solver.assertTrue(Ctx.mkOr(Wrong)));
+    EXPECT_EQ(Solver.check(), SatResult::Unsat);
+  }
+}
+
+TEST(BitBlaster, RotatesUseEveryBitOfAWideAmount) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 3);
+  SymRef Y = Ctx.mkVar("amount", 128);
+  SymRef Left = Ctx.mkVar("left", 3);
+  SymRef Right = Ctx.mkVar("right", 3);
+  BitVectorSolver Solver(Ctx);
+  ASSERT_TRUE(Solver.assertEqual(Left, Ctx.mkRol(X, Y)));
+  ASSERT_TRUE(Solver.assertEqual(Right, Ctx.mkRor(X, Y)));
+  ASSERT_TRUE(Solver.assertEqual(X, Ctx.mkConst(3, 1)));
+  // 2^64 mod 3 == 1, while 2^127 mod 3 == 2. Truncating the
+  // rotation count to either the value width or 64 bits loses both.
+  for (uint32_t Bit : {64u, 127u}) {
+    SymRef Pin = Ctx.mkEq(Y, Ctx.mkConst(llvm::APInt::getOneBitSet(128, Bit)));
+    ASSERT_EQ(Solver.check({Pin}), SatResult::Sat);
+    auto LeftValue = Solver.model().value(Ctx.varId(Left));
+    auto RightValue = Solver.model().value(Ctx.varId(Right));
+    ASSERT_TRUE(LeftValue.has_value());
+    ASSERT_TRUE(RightValue.has_value());
+    EXPECT_EQ(LeftValue->getZExtValue(), Bit == 64 ? 2u : 4u);
+    EXPECT_EQ(RightValue->getZExtValue(), Bit == 64 ? 4u : 2u);
+  }
 }
 
 TEST(BitBlaster, DivisionIncludingTheTotalisedCases) {
@@ -240,10 +310,11 @@ TEST(BitBlaster, ProductsByEveryLiteralAgreeWithTheEvaluator) {
 
 /// Gates the blaster builds for one expression, which is the cost model
 /// everything above it is budgeted against.
-size_t gateCost(uint32_t Width, const BinaryBuilder &Build) {
+size_t gateCost(uint32_t Width, const BinaryBuilder &Build,
+                uint32_t OtherWidth = 0) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", Width);
-  SymRef Y = Ctx.mkVar("y", Width);
+  SymRef Y = Ctx.mkVar("y", OtherWidth ? OtherWidth : Width);
 
   SatSolver Sat;
   CnfEncoder Enc(Sat);
@@ -253,35 +324,40 @@ size_t gateCost(uint32_t Width, const BinaryBuilder &Build) {
   return Enc.numGates();
 }
 
+TEST(BitBlaster, NonPowerOfTwoRotatesNeedOnlyOneMuxLayerPerAmountBit) {
+  constexpr uint32_t Width = 3;
+  constexpr uint32_t AmountWidth = 128;
+  const size_t Left = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef Y) { return C.mkRol(X, Y); },
+      AmountWidth);
+  const size_t Right = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef Y) { return C.mkRor(X, Y); },
+      AmountWidth);
+  EXPECT_LE(Left, Width * AmountWidth);
+  EXPECT_LE(Right, Width * AmountWidth);
+}
+
 TEST(BitBlaster, AProductByALiteralIsNotAMultiplier) {
   constexpr uint32_t Width = 32;
 
-  const size_t Sum =
-      gateCost(Width, [](SymContext &C, SymRef X, SymRef Y) {
-        return C.mkAdd(X, Y);
-      });
-  const size_t Product =
-      gateCost(Width, [](SymContext &C, SymRef X, SymRef Y) {
-        return C.mkMul(X, Y);
-      });
+  const size_t Sum = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef Y) { return C.mkAdd(X, Y); });
+  const size_t Product = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef Y) { return C.mkMul(X, Y); });
   ASSERT_GT(Product, 8 * Sum);
 
   // A subtraction is spelled as a multiplication by minus one, so it arrives at
   // the multiplier like any other product.  Encoding it as one would make every
   // subtraction in a recovered expression cost an adder row per bit, which is
   // the difference between a query that answers and one that does not.
-  const size_t Difference =
-      gateCost(Width, [](SymContext &C, SymRef X, SymRef Y) {
-        return C.mkSub(X, Y);
-      });
+  const size_t Difference = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef Y) { return C.mkSub(X, Y); });
   EXPECT_LT(Difference, 3 * Sum);
 
   // A negation is one carry chain, and a carry chain with a constant operand is
   // cheaper than an addition rather than dearer.
-  const size_t Negation =
-      gateCost(Width, [](SymContext &C, SymRef X, SymRef) {
-        return C.mkNeg(X);
-      });
+  const size_t Negation = gateCost(
+      Width, [](SymContext &C, SymRef X, SymRef) { return C.mkNeg(X); });
   EXPECT_LE(Negation, Sum);
 }
 

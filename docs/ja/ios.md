@@ -205,6 +205,8 @@ recovered-ios/
 
 外側の `status: "success"` は検証済み出力の公開を意味します。`recovered`、`partial`、`unrecovered`、`no-methods` は検出一覧に対する状態であり、意味的同等性や元プログラムの完全性ではありません。未復元メソッドには理由があります。Objective-C の `recovered` はランタイムメタデータの完全性も必要です。空一覧はメソッドが存在しなかった証拠にはなりません。
 
+証明済みの `@synchronized` クリーンアップから復元した Objective-C メソッドには、`required_cflags: ["-fexceptions"]` が記載されることがあります。保護された呼び出しから例外によるスタックの巻き戻しが起きたときに、クリーンアップハンドラーが同期ロックを解放できるよう、そのメソッドの C ソースを記載されたオプション付きでコンパイルしてください。証明済みの例外用 landing pad の末尾部分は、ソース上の通常の制御フロー辺がそこへ到達しない場合に限り、通常の C 本体から省略されます。そのロック解除はクリーンアップハンドラーで表現されます。landing pad または保護範囲を証明できないメソッドは `unrecovered` のままです。
+
 未復元の Objective-C メソッド行には、単一のバックエンド結果がランタイムの識別情報と完全に一致する場合、`native_backend: {status, reason, diagnostics}` が含まれることがあります。この任意のサイズ制限付き要約は、宣言や配置の検証が失敗した場合にも中間結果を保持します。行の主ステータス、理由、復元件数が最終的な判断基準であり、要約がない場合はこの証拠を利用できなかったことを意味します。
 
 Swift の `coverage_status` は分類済みの呼び出し可能項目のみを数えます。全体の Swift `status` は未知シンボルも考慮し、`unclassified`、`unsupported-architecture`、`no-symbols` になる場合があります。呼び出せないメタデータは `non_method_symbols` に `not-callable`、未知項目は `unclassified` として保存します。`types`、`type_metadata_count`、`source_type_count` は型情報と出力型単位を別に数え、メソッド数を増やす用途には使いません。

@@ -19,9 +19,16 @@
 #include "neverd/symbolic/SymSynth.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace neverd::solver {
+
+class Z3Solver;
+
+enum class ProofBackend : uint8_t { BuiltIn = 0, Z3 = 1 };
+
+bool proofBackendAvailable(ProofBackend Backend);
 
 /// Last proof disposition.  Values are stable for public result adapters.
 enum class ProofStatus : uint8_t {
@@ -50,10 +57,15 @@ struct SymSynthProofReport {
   std::optional<BitVectorModel> Counterexample;
 };
 
-/// Checks synthesis candidates with the built-in bitvector solver.
+/// Checks synthesis candidates with the selected bitvector solver.
+/// A verifier borrows its expression contexts; they must remain alive and may
+/// only grow while it is in use.
 class SymSynthVerifier {
 public:
-  explicit SymSynthVerifier(SolverOptions Options = {});
+  explicit SymSynthVerifier(SolverOptions Options = {},
+                            ProofBackend Backend = ProofBackend::BuiltIn,
+                            uint32_t TimeoutMs = 1000);
+  ~SymSynthVerifier();
 
   /// Verify one candidate.  The legacy synthesis result has no invalid-query
   /// enumerator, so malformed input returns its fail-closed \c Unknown value;
@@ -70,6 +82,11 @@ private:
   void clearRefutation();
 
   SolverOptions Options;
+  ProofBackend Backend;
+  uint32_t TimeoutMs;
+  symbolic::SymContext *ReportContext = nullptr;
+  symbolic::SymContext *Z3Context = nullptr;
+  std::unique_ptr<Z3Solver> Z3;
   SymSynthProofReport Report;
 };
 

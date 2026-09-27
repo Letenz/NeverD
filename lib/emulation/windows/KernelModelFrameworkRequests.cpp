@@ -59,6 +59,8 @@ llvm::Error KernelModel::validateRequestCompletion(uint64_t IRP,
   if (!Request || Request->Completed)
     return frameworkRequestError(
         "completion requires the active IRP and cannot occur twice");
+  if (DriverIRPs.contains(IRP))
+    return validateDriverIRPCompletion(IRP, Status, Information);
   // An accepted AdapterControl may still need this exact captured packet as
   // input. Check before a terminal unwind consumes stack slots; beginning the
   // callback releases that input hold and permits completion from its body.

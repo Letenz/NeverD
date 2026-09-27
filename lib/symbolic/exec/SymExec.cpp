@@ -295,11 +295,13 @@ StepResult SymExec::stepBinary(const LowOp &Op) {
 
   SymRef A = read(Op.Inputs[0]);
   const uint32_t Width = Ctx.width(A);
-  // The second operand is brought to the first's width rather than the other
-  // way round.  For a shift that is exactly right — the amount is often
-  // narrower than the value and means the same number either way — and for the
-  // rest the two already agree.
-  SymRef B = fit(read(Op.Inputs[1]), Width);
+  SymRef B = read(Op.Inputs[1]);
+  // A shift count keeps its declared width: truncating a wider count can turn
+  // an out-of-range shift into an in-range one.  The expression builders own
+  // the exact shift semantics for both narrower and wider counts.
+  if (Op.Opcode != NdOp::INT_LEFT && Op.Opcode != NdOp::INT_RIGHT &&
+      Op.Opcode != NdOp::INT_ASHR)
+    B = fit(B, Width);
 
   SymRef Result;
   switch (Op.Opcode) {

@@ -67,7 +67,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python scripts/check_gui_i18n.py
+          python scripts/check_gui_i18n.py --check-sources
           if [ '${{ runner.os }}' = Windows ]; then
             mkdir -p build-gui/ci-diagnostics
             set +e

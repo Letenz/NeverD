@@ -46,25 +46,27 @@ void compileAndRun(const std::string &Source) {
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
-  const llvm::SmallVector<llvm::StringRef, 12> Arguments{
-      Compiler,
-      "-std=c11",
-      "-O2",
-      "-Werror=uninitialized",
-      "-Werror=return-type",
-      SourcePath,
-      "-o",
-      BinaryPath};
-  std::string Error;
-  int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
-                                         Redirects, 30, 0, &Error);
-  auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
-  ASSERT_EQ(Result, 0) << Error << (Errors ? (*Errors)->getBuffer().str() : "")
-                       << '\n'
-                       << Source;
-  Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
-                                     Redirects, 30, 0, &Error);
-  ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+  for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
+    const llvm::SmallVector<llvm::StringRef, 12> Arguments{
+        Compiler,
+        "-std=c11",
+        Optimization,
+        "-Werror=uninitialized",
+        "-Werror=return-type",
+        SourcePath,
+        "-o",
+        BinaryPath};
+    std::string Error;
+    int Result = llvm::sys::ExecuteAndWait(Compiler, Arguments, std::nullopt,
+                                           Redirects, 30, 0, &Error);
+    auto Errors = llvm::MemoryBuffer::getFile(ErrorPath);
+    ASSERT_EQ(Result, 0) << Error
+                         << (Errors ? (*Errors)->getBuffer().str() : "") << '\n'
+                         << Source;
+    Result = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
+                                       Redirects, 30, 0, &Error);
+    ASSERT_EQ(Result, 0) << Error << '\n' << Source;
+  }
 }
 
 TEST(LLVMCValues, IntegerVectorsAreScalarizedWithoutMutatingTheInputModule) {
@@ -136,6 +138,114 @@ TEST(LLVMCValues, UnsupportedVectorPackingIsRejected) {
   llvm::raw_string_ostream Out(Source);
   EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
                std::runtime_error);
+}
+
+TEST(LLVMCValues, IntegerVectorSignaturesAndCallsPreserveEveryLane) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-vector-boundary", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Vector = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(Context), 2);
+  auto *Signature = llvm::FunctionType::get(Vector, {Vector}, false);
+  auto *External = llvm::Function::Create(
+      Signature, llvm::GlobalValue::ExternalLinkage, "external_vector", Module);
+  auto *Function = llvm::Function::Create(
+      Signature, llvm::GlobalValue::ExternalLinkage, "vector_boundary", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Called = Builder.CreateCall(External, {Function->getArg(0)});
+  auto *Offsets =
+      llvm::ConstantVector::get({Builder.getInt64(3), Builder.getInt64(7)});
+  auto *Added = Builder.CreateAdd(Called, Offsets);
+  Builder.CreateRet(Builder.CreateShuffleVector(Added, Added, {1, 0}));
+  ASSERT_FALSE(llvm::verifyModule(Module));
+
+  std::string Before, After, Source;
+  llvm::raw_string_ostream BeforeOut(Before), AfterOut(After), Out(Source);
+  Module.print(BeforeOut, nullptr);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Module.print(AfterOut, nullptr);
+  EXPECT_EQ(Before, After);
+  const std::string Runtime = R"(
+typedef uint64_t lanes __attribute__((vector_size(16)));
+lanes external_vector(lanes value) {
+  return (lanes){value[1] ^ UINT64_C(0xfedcba9876543210), value[0]};
+}
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_C(0x123456789abcdef0), UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+    lanes input = {values[i], values[sizeof(values) / sizeof(values[0]) - i - 1]};
+    lanes result = vector_boundary(input);
+    if (result[0] != input[0] + 7 ||
+        result[1] != (input[1] ^ UINT64_C(0xfedcba9876543210)) + 3)
+      return (int)i + 1;
+  }
+  return 0;
+}
+)";
+  compileAndRun(Source + Runtime);
+  std::string Selected;
+  llvm::raw_string_ostream SelectedOut(Selected);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, SelectedOut, {}, nullptr,
+                                          nullptr, Function));
+  compileAndRun(Selected + Runtime);
+}
+
+TEST(LLVMCValues, SelectedIntegerVectorFunctionKeepsConstantsAndLaneUpdates) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("selected-vector-boundary", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *I32 = llvm::Type::getInt32Ty(Context);
+  auto *Vector = llvm::FixedVectorType::get(I32, 4);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Vector, {I32}, false),
+      llvm::GlobalValue::ExternalLinkage, "updated_vector", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Initial =
+      llvm::ConstantVector::get({Builder.getInt32(11), Builder.getInt32(13),
+                                 Builder.getInt32(17), Builder.getInt32(19)});
+  Builder.CreateRet(
+      Builder.CreateInsertElement(Initial, Function->getArg(0), 2));
+  auto *Unrelated = llvm::FixedVectorType::get(Builder.getFloatTy(), 2);
+  llvm::Function::Create(llvm::FunctionType::get(Unrelated, {}, false),
+                         llvm::GlobalValue::ExternalLinkage, "unrelated",
+                         Module);
+  ASSERT_FALSE(llvm::verifyModule(Module));
+
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(
+      neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr, Function));
+  compileAndRun(Source + R"(
+int main(void) {
+  uint32_t __attribute__((vector_size(16))) result = updated_vector(UINT32_MAX);
+  return result[0] != 11 || result[1] != 13 ||
+         result[2] != UINT32_MAX || result[3] != 19;
+}
+)");
+}
+
+TEST(LLVMCValues, UnsupportedVectorSignaturesStillFailClosed) {
+  llvm::LLVMContext Context;
+  llvm::Type *Types[] = {
+      llvm::FixedVectorType::get(llvm::Type::getInt1Ty(Context), 8),
+      llvm::FixedVectorType::get(llvm::Type::getInt64Ty(Context), 3),
+      llvm::FixedVectorType::get(llvm::Type::getInt64Ty(Context), 16),
+      llvm::ScalableVectorType::get(llvm::Type::getInt64Ty(Context), 2)};
+  for (auto *Type : Types) {
+    llvm::Module Module("unsupported-vector-boundary", Context);
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Type, {Type}, false),
+        llvm::GlobalValue::ExternalLinkage, "unsupported", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    Builder.CreateRet(Function->getArg(0));
+    ASSERT_FALSE(llvm::verifyModule(Module));
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+                 std::runtime_error);
+  }
 }
 
 } // namespace

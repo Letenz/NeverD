@@ -385,6 +385,8 @@ class NeverDSynthesizeOptions(ctypes.Structure):
         ("solver_max_propagations", ctypes.c_uint64),
         ("solver_max_watch_visits", ctypes.c_uint64),
         ("exhaustive", ctypes.c_int),
+        ("solver_backend", ctypes.c_uint64),
+        ("solver_timeout_ms", ctypes.c_uint32),
     ]
 
 
@@ -633,6 +635,7 @@ _C_TYPES: dict[str, object] = {
     "neverd_slot_t": ctypes.c_ulonglong,
     "neverd_output_language_t": ctypes.c_int,
     "neverd_proof_status_t": ctypes.c_uint32,
+    "neverd_solver_backend_t": ctypes.c_uint64,
     "neverd_synthesis_outcome_t": ctypes.c_uint32,
     "neverd_optimization_stop_t": ctypes.c_uint32,
     "neverd_translate_object_format_t": ctypes.c_uint32,
@@ -1303,6 +1306,7 @@ _declare(
     ["neverd_proof_status_t"],
     ownership=Ownership.BORROWED_STRING,
 )
+_declare("neverd_solver_backend_available", "int", ["neverd_solver_backend_t"])
 _declare(
     "neverd_synthesis_outcome_name",
     "const char *",

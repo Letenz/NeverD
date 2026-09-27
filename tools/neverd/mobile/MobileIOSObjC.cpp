@@ -1231,7 +1231,7 @@ std::vector<std::string> objcTypes(std::string_view e) {
       return {};
     auto found = primitive.find(e[spelling]);
     if (found == primitive.end() &&
-        (!pointers || !llvm::StringRef("{([").contains(e[spelling])))
+        (!pointers || !llvm::StringRef("{([?").contains(e[spelling])))
       return {};
     auto value = found == primitive.end() ? std::string("void") : found->second;
     while (pointers--)

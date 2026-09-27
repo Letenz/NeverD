@@ -6,8 +6,8 @@
 ///
 /// \file
 /// Implements the region solver: the linear and polynomial readings of one
-/// expression, the ranking between them, and the split of a region too wide to
-/// measure whole into groups of summands that share no input.
+/// expression, the ranking between them, and the split into groups of summands
+/// that share no input before paying for a whole-region measurement.
 ///
 /// Both readings run and the shorter proved answer wins.  Ranking uses a
 /// strict comparison, so where two candidates cost the same the one produced
@@ -51,20 +51,68 @@ struct Region {
   llvm::SmallVector<SymRef, 16> Atoms;
 };
 
-std::optional<Region> readRegion(SymContext &Ctx, SymRef E, unsigned MaxAtoms,
-                                 bool AllowProducts, SolveReport &Rep) {
-  std::optional<Abstraction> Abstract = abstractToMBA(Ctx, E, AllowProducts);
+bool isMinimalUnaryVariable(const SymContext &Ctx, SymRef E) {
+  // These forms cost two: one free-variable leaf and one operation. A cheaper
+  // word expression is a literal or a free variable. Neither transform is
+  // constant or identical to its input, and another independent variable
+  // cannot replace it. Width-one negation has already folded to the variable.
+  if (Ctx.op(E) == SymOp::Not)
+    return Ctx.op(Ctx.operand(E, 0)) == SymOp::Var;
+  return Ctx.width(E) > 1 && Ctx.op(E) == SymOp::Mul &&
+         Ctx.numOperands(E) == 2 && Ctx.isConstOnes(Ctx.operand(E, 0)) &&
+         Ctx.op(Ctx.operand(E, 1)) == SymOp::Var;
+}
+
+bool isMinimalVariableProduct(const SymContext &Ctx, SymRef E,
+                              const SolverLimits &Limits) {
+  if (Ctx.op(E) != SymOp::Mul || Ctx.numOperands(E) > Limits.MaxAtoms)
+    return false;
+  // Setting every other factor to one shows that each distinct free input
+  // affects the product. It therefore needs all these leaves and an operation,
+  // exactly the cost of this n-ary multiplication. Constants, repeated inputs
+  // and opaque factors do not establish this lower bound.
+  SymRef Previous;
+  for (SymRef Factor : Ctx.operands(E)) {
+    // Canonical multiplication sorts its factors, so equal variables are
+    // adjacent and checking uniqueness needs no allocation.
+    if (Ctx.op(Factor) != SymOp::Var || Factor == Previous)
+      return false;
+    Previous = Factor;
+  }
+  return true;
+}
+
+bool isMinimalVariableSum(const SymContext &Ctx, SymRef E,
+                          const SolverLimits &Limits) {
+  if (Ctx.op(E) != SymOp::Add || Ctx.width(E) == 1)
+    return false;
+  llvm::ArrayRef<SymRef> Terms = Ctx.operands(E);
+  if (Terms.size() > Limits.MaxAtoms)
+    return false;
+  // Canonical sums contain each variable at most once. Every input affects
+  // the result, so an expression needs all these leaves and at least one
+  // operation: this sum already meets that reading-cost lower bound.
+  return std::all_of(Terms.begin(), Terms.end(),
+                     [&](SymRef Term) { return Ctx.op(Term) == SymOp::Var; });
+}
+
+std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
+                                 const MBAOptions &Opts, bool AllowProducts,
+                                 WorkBudget &Budget, SolveReport &Rep) {
+  std::optional<Abstraction> Abstract =
+      abstractToMBA(Ctx, E, AllowProducts, &Budget, Opts.MaxTableBytes);
   if (!Abstract)
     return std::nullopt;
 
   Region Out;
   Out.Abstract = std::move(*Abstract);
   Ctx.collectVars(Out.Abstract.Body, Out.AtomIds);
+  const unsigned MaxAtoms = resolveLimits(Opts).MaxAtoms;
   const bool TooWide =
       Out.AtomIds.size() > MaxAtoms || !cornerCount(Out.AtomIds.size());
   if (TooWide)
     Rep.TooWide = true;
-  if (Out.AtomIds.empty() || TooWide)
+  if (TooWide || (Out.AtomIds.empty() && !Ctx.isConst(Out.Abstract.Body)))
     return std::nullopt;
   for (uint32_t Id : Out.AtomIds)
     Out.Atoms.push_back(Ctx.varRef(Id));
@@ -82,11 +130,17 @@ std::optional<Region> readRegion(SymContext &Ctx, SymRef E, unsigned MaxAtoms,
 SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                    WorkBudget &Budget, SolveReport &Rep) {
   const SolverLimits Limits = resolveLimits(Opts);
+  if (isMinimalVariableSum(Ctx, E, Limits)) {
+    Rep.Outcome = MBAOutcome::AlreadyShortest;
+    return E;
+  }
   llvm::SmallVector<Candidate, 6> Candidates;
   bool Measured = false;
+  std::optional<Region> ResidualRegion;
+  std::vector<llvm::APInt> ResidualWeights;
 
   if (std::optional<Region> Linear =
-          readRegion(Ctx, E, Limits.MaxAtoms, /*AllowProducts=*/false, Rep)) {
+          readRegion(Ctx, E, Opts, /*AllowProducts=*/false, Budget, Rep)) {
     Measured = true;
     auto NumAtoms = static_cast<unsigned>(Linear->AtomIds.size());
     std::optional<size_t> Corners = cornerCount(Linear->AtomIds.size());
@@ -94,31 +148,96 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Rep.BudgetExhausted = true;
     } else {
       llvm::SmallVector<SymRef, 4> Forms;
-      linearCandidates(Ctx,
-                       measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
-                       Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+      // Exact abstraction can eliminate every input. The literal is already
+      // the candidate; bitwise synthesis requires at least one atom. Keep the
+      // one-corner budget charge and the same proof and selection gates below.
+      if (Linear->AtomIds.empty())
+        Forms.push_back(Linear->Abstract.Body);
+      else {
+        std::vector<llvm::APInt> Weights =
+            measure(Ctx, Linear->Abstract.Body, Linear->AtomIds);
+        // A tiny corner count can still hold very wide heap-backed APInts.
+        // Reserve room for the retained weights, half sets, coefficients,
+        // residuals and arithmetic temporaries before making the extra copy.
+        // The conservative word count also covers their container overhead.
+        const size_t Width = Ctx.width(Linear->Abstract.Body);
+        const size_t WordBytes =
+            sizeof(llvm::APInt) +
+            (Width / 64 + (Width % 64 != 0)) * sizeof(uint64_t);
+        const bool ResidualStorageFits = WordBytes <= Opts.MaxTableBytes / 64;
+        if (NumAtoms >= 2 &&
+            NumAtoms <= std::min({3u, Limits.MaxOptimalSynthesisAtoms,
+                                  Limits.MaxSynthesisAtoms}) &&
+            ResidualStorageFits)
+          ResidualWeights = Weights;
+        linearCandidates(Ctx, std::move(Weights), Linear->Atoms,
+                         termBudget(Ctx, E, Opts), Limits, Forms);
+      }
       for (SymRef Form : Forms) {
+        // Prove the identity over independent inputs before restoring their
+        // sources. Restoration may combine coefficients and erase the shared
+        // input spelling, but instantiating a proved identity remains exact.
+        if (!proveLinearIdentity(Ctx, Linear->Abstract.Body, Form,
+                                 Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+          continue;
         SymRef Rewritten = Linear->Abstract.Hidden.empty()
                                ? Form
                                : Ctx.substitute(Form, Linear->Abstract.Hidden);
-        if (proveLinearIdentity(Ctx, E, Rewritten, Limits.MaxAtoms, Budget))
-          Candidates.push_back({Rewritten, NumAtoms, true});
+        Candidates.push_back({Rewritten, NumAtoms, true});
       }
+      if (!ResidualWeights.empty())
+        ResidualRegion = std::move(Linear);
     }
   }
 
   if (std::optional<Region> Poly =
-          readRegion(Ctx, E, Limits.MaxAtoms, /*AllowProducts=*/true, Rep)) {
+          readRegion(Ctx, E, Opts, /*AllowProducts=*/true, Budget, Rep)) {
     Measured = true;
     if (std::optional<SymRef> Form =
             solvePolynomial(Ctx, Poly->Abstract.Body, Poly->AtomIds,
                             Poly->Atoms, Opts, Budget)) {
-      SymRef Rewritten = Poly->Abstract.Hidden.empty()
-                             ? *Form
-                             : Ctx.substitute(*Form, Poly->Abstract.Hidden);
-      if (provePolynomialIdentity(Ctx, E, Rewritten, Limits.MaxAtoms, Budget))
+      if (provePolynomialIdentity(Ctx, Poly->Abstract.Body, *Form,
+                                  Limits.MaxAtoms, Budget,
+                                  Opts.MaxTableBytes)) {
+        SymRef Rewritten = Poly->Abstract.Hidden.empty()
+                               ? *Form
+                               : Ctx.substitute(*Form, Poly->Abstract.Hidden);
         Candidates.push_back(
             {Rewritten, static_cast<unsigned>(Poly->AtomIds.size()), true});
+      }
+    }
+  }
+
+  // Additional readings spend only what remains after the established linear
+  // and polynomial candidates have been proved. Refusing the optional search
+  // therefore cannot erase a candidate already available at this budget.
+  if (ResidualRegion && !Budget.exhausted()) {
+    llvm::SmallVector<SymRef, 8> Forms;
+    size_t MaxCost = termBudget(Ctx, E, Opts);
+    if (ResidualRegion->Abstract.Hidden.empty()) {
+      for (const Candidate &C : Candidates)
+        MaxCost = std::min(MaxCost, readingCost(Ctx, C.Expr));
+      if (MaxCost)
+        --MaxCost;
+    }
+    affineResidualCandidates(Ctx, ResidualWeights, ResidualRegion->Atoms,
+                             MaxCost, Limits, Budget, Forms);
+    for (SymRef Form : Forms) {
+      if (Budget.exhausted())
+        break;
+      if (!proveLinearIdentity(Ctx, ResidualRegion->Abstract.Body, Form,
+                               Limits.MaxAtoms, Budget, Opts.MaxTableBytes))
+        continue;
+      if (!ResidualRegion->Abstract.Hidden.empty() &&
+          !Budget.consume(Ctx.dagSize(Form)))
+        break;
+      SymRef Rewritten =
+          ResidualRegion->Abstract.Hidden.empty()
+              ? Form
+              : Ctx.substitute(Form, ResidualRegion->Abstract.Hidden);
+      Candidates.push_back({Rewritten,
+                            static_cast<unsigned>(ResidualRegion->Atoms.size()),
+                            true});
     }
   }
   Rep.BudgetExhausted |= Budget.exhausted();
@@ -167,11 +286,10 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 }
 
 //===----------------------------------------------------------------------===//
-// Regions too wide to measure whole
+// Independent summand groups
 //===----------------------------------------------------------------------===//
 
-/// Solve a region with more inputs than one measurement can afford by cutting
-/// it into groups of summands that share no input.
+/// Solve independent summand groups before attempting a whole measurement.
 ///
 /// The 2^t cost of a measurement is real arithmetic, not a tunable: it is how
 /// many corners the weights are read off.  But it bounds a single measurement,
@@ -187,30 +305,20 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 /// summing the solved groups reproduces the original term for term.  The sample
 /// check at the end guards against a slip in that reasoning rather than being
 /// the reason to believe it.
-SymRef solveWide(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                 WorkBudget &Budget, SolveReport &Rep) {
-  // Against the resolved ceiling rather than the requested one.  A caller that
-  // asks for an unlimited arity is asking to measure as wide as the resources
-  // allow, not to switch the split off — and comparing a node count against
-  // the sentinel would do exactly that, silently, at the one input size the
-  // split exists for.
-  const SolverLimits Limits = resolveLimits(Opts);
-
-  // An expression cannot abstract to more inputs than it has nodes, so this
-  // rejects everything narrow without paying for an abstraction first.
-  if (Ctx.dagSize(E) <= Limits.MaxAtoms)
+SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                             WorkBudget &Budget, SolveReport &Rep) {
+  if (Ctx.op(E) != SymOp::Add ||
+      isMinimalVariableSum(Ctx, E, resolveLimits(Opts)))
     return E;
 
-  std::optional<Abstraction> Abstract =
-      abstractToMBA(Ctx, E, /*AllowProducts=*/false);
+  std::optional<Abstraction> Abstract = abstractToMBA(
+      Ctx, E, /*AllowProducts=*/false, &Budget, Opts.MaxTableBytes);
   if (!Abstract)
     return E;
 
   llvm::SmallVector<uint32_t, 32> AllAtoms;
   Ctx.collectVars(Abstract->Body, AllAtoms);
-  // Measurable in one piece, which the ordinary solver has already tried;
-  // splitting it could only reach the same answer by a longer road.
-  if (AllAtoms.size() <= Limits.MaxAtoms)
+  if (AllAtoms.size() < 2)
     return E;
 
   // The cut is between summands, so there has to be a sum to cut.
@@ -259,10 +367,18 @@ SymRef solveWide(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
 
   llvm::SmallVector<SymRef, 16> Parts;
+  llvm::SmallVector<size_t, 4> OffsetGroups;
+  const bool HasOffset = Constants.size() == 1 &&
+                         Ctx.isConst(Constants.front()) &&
+                         !Ctx.isConstZero(Constants.front());
   unsigned Widest = 0;
   bool AnySolved = false;
   for (const auto &Group : Groups) {
     llvm::ArrayRef<SymRef> GroupTerms = Group.second;
+    // A shared offset can expose a complement in one nontrivial region.
+    // Keep a fixed number of alternatives, not every partition of that offset.
+    if (HasOffset && GroupTerms.size() > 1 && OffsetGroups.size() < 4)
+      OffsetGroups.push_back(Parts.size());
     SymRef Part =
         GroupTerms.size() == 1 ? GroupTerms[0] : Ctx.mkAdd(GroupTerms);
     SolveReport PartRep;
@@ -274,13 +390,53 @@ SymRef solveWide(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     Parts.push_back(Solved);
   }
-  if (!AnySolved)
+  if (!AnySolved && OffsetGroups.empty())
     return E;
 
   Parts.append(Constants.begin(), Constants.end());
-  SymRef Rebuilt = Parts.size() == 1 ? Parts[0] : Ctx.mkAdd(Parts);
-  if (!Abstract->Hidden.empty())
-    Rebuilt = Ctx.substitute(Rebuilt, Abstract->Hidden);
+  auto restoreParts = [&]() {
+    SymRef R = Ctx.mkAdd(Parts);
+    return Abstract->Hidden.empty() ? R : Ctx.substitute(R, Abstract->Hidden);
+  };
+  SymRef Rebuilt = AnySolved ? restoreParts() : E;
+  if (!OffsetGroups.empty() && !Budget.exhausted()) {
+    const size_t InputCost = readingCost(Ctx, E);
+    size_t BestCost = readingCost(Ctx, Rebuilt);
+    const size_t RestoreWork = Ctx.dagSize(E);
+    // Bound the temporary sum edges separately from the solver's tables.
+    const bool Fits = Parts.size() <= Opts.MaxTableBytes / (2 * sizeof(SymRef));
+    if (!Fits)
+      Rep.BudgetExhausted = true;
+    for (size_t I : OffsetGroups) {
+      if (!Fits || Budget.exhausted())
+        break;
+      if (!Budget.consume(Parts.size()) || !Budget.consume(RestoreWork)) {
+        Rep.BudgetExhausted = true;
+        break;
+      }
+      SymRef Previous = Parts[I];
+      SymRef WithOffset = Ctx.mkAdd(Previous, Constants.front());
+      SolveReport OffsetRep;
+      SymRef Solved = solveRegion(Ctx, WithOffset, Opts, Budget, OffsetRep);
+      Rep.BudgetExhausted |= OffsetRep.BudgetExhausted;
+      if (Solved == WithOffset)
+        continue;
+
+      // The offset belongs to this group exactly once. Every other group
+      // keeps its independently proved value, including on later attempts.
+      Parts[I] = Solved;
+      Parts.pop_back();
+      SymRef Candidate = restoreParts();
+      Parts.push_back(Constants.front());
+      Parts[I] = Previous;
+      size_t Cost = readingCost(Ctx, Candidate);
+      if (Cost < InputCost && Cost < BestCost) {
+        Rebuilt = Candidate;
+        BestCost = Cost;
+        Widest = std::max(Widest, OffsetRep.NumAtoms);
+      }
+    }
+  }
   if (Rebuilt == E)
     return E;
 
@@ -302,8 +458,105 @@ SymRef solveWide(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
 SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                       WorkBudget &Budget, SolveReport &Rep) {
-  SymRef Solved = solveRegion(Ctx, E, Opts, Budget, Rep);
-  return Solved == E ? solveWide(Ctx, E, Opts, Budget, Rep) : Solved;
+  SolveReport ArithmeticRep;
+  SymRef Arithmetic = solveArithmetic(Ctx, E, Opts, Budget, ArithmeticRep);
+  if (Budget.exhausted() || Ctx.isConst(Arithmetic) ||
+      (Arithmetic != E && Ctx.op(Arithmetic) == SymOp::Var) ||
+      isMinimalUnaryVariable(Ctx, Arithmetic)) {
+    Rep = ArithmeticRep;
+    return Arithmetic;
+  }
+
+  if (isMinimalVariableProduct(Ctx, Arithmetic, resolveLimits(Opts))) {
+    Rep = ArithmeticRep;
+    if (Arithmetic == E)
+      Rep.Outcome = MBAOutcome::AlreadyShortest;
+    return Arithmetic;
+  }
+
+  // Factoring can hide a bitwise product identity inside a new sum. Measure
+  // the original spelling too, then rank both exact readings.
+  SymRef Split = solveIndependentTerms(Ctx, E, Opts, Budget, Rep);
+
+  // Local rewrites can expose a cheaper shared form after placeholders are
+  // restored. Keep that whole-region opportunity, while sums of distinct
+  // variables stop at their proven minimum instead of enumerating 2^n corners.
+  SolveReport Refined;
+  SymRef Solved = solveRegion(Ctx, Split, Opts, Budget, Refined);
+  if (Split == E)
+    Rep = Refined;
+  Rep.BudgetExhausted |= Refined.BudgetExhausted;
+  Rep.TooWide |= Refined.TooWide;
+  Rep.NumAtoms = std::max(Rep.NumAtoms, Refined.NumAtoms);
+  if (Arithmetic != E) {
+    if (readingCost(Ctx, Arithmetic) <= readingCost(Ctx, Solved)) {
+      Solved = Arithmetic;
+      Rep.NumAtoms = ArithmeticRep.NumAtoms;
+    }
+    Rep.Outcome = MBAOutcome::Rewritten;
+    Rep.Evidence = MBAEvidence::Derivation;
+  }
+  Rep.BudgetExhausted |= ArithmeticRep.BudgetExhausted;
+  if (Solved == E && Rep.BudgetExhausted)
+    Rep.Outcome = MBAOutcome::BudgetExhausted;
+  if (Solved != E && !Budget.exhausted()) {
+    // Restoring hidden affine inputs can expose products of constants and
+    // sums. Cancel their modular coefficients before publishing the spelling.
+    SolveReport Restored;
+    SymRef Normalized = solveArithmetic(Ctx, Solved, Opts, Budget, Restored);
+    Rep.BudgetExhausted |= Restored.BudgetExhausted;
+    if (Normalized != Solved) {
+      Solved = Normalized;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
+    }
+  }
+  if (Solved != E && !Budget.exhausted() &&
+      (Ctx.op(Solved) == SymOp::Add || Ctx.op(Solved) == SymOp::Mul) &&
+      readingCost(Ctx, Solved) < readingCost(Ctx, E) &&
+      !isMinimalVariableSum(Ctx, Solved, resolveLimits(Opts))) {
+    // A sum of scaled opaque inputs has no bitwise relation left to read.
+    // Canonical multiplication puts its one combined coefficient first.
+    auto unscaled = [&](SymRef R) {
+      return Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+                     Ctx.isConst(Ctx.operand(R, 0))
+                 ? Ctx.operand(R, 1)
+                 : R;
+    };
+    auto isBitwise = [&](SymRef R) {
+      SymOp Op = Ctx.op(unscaled(R));
+      return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
+             Op == SymOp::Not;
+    };
+    SymRef Body = unscaled(Solved);
+    bool HasRelation = isBitwise(Body);
+    if (!HasRelation && Ctx.op(Body) == SymOp::Add) {
+      for (SymRef Term : Ctx.operands(Body)) {
+        if (!Budget.consume())
+          break;
+        if (isBitwise(Term)) {
+          HasRelation = true;
+          break;
+        }
+      }
+    }
+    Rep.BudgetExhausted |= Budget.exhausted();
+    if (!HasRelation || Budget.exhausted())
+      return Solved;
+    // Restoring inputs can expose a new linear relation after the original
+    // reading. Give that result one more exact reading with the same budget;
+    // it is not in the deep walk's original postorder. Requiring a strict
+    // decrease keeps equal-cost spellings stable, even in growth mode.
+    SolveReport Restored;
+    SymRef Refined = solveRegion(Ctx, Solved, Opts, Budget, Restored);
+    Rep.BudgetExhausted |= Restored.BudgetExhausted;
+    if (readingCost(Ctx, Refined) < readingCost(Ctx, Solved)) {
+      Solved = Refined;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
+      Rep.Outcome = MBAOutcome::Rewritten;
+      Rep.Evidence = MBAEvidence::Derivation;
+    }
+  }
+  return Solved;
 }
 
 } // namespace neverd::symbolic::detail

@@ -265,6 +265,31 @@ TEST(ObjCImmutableStringCallbackSources,
 }
 
 TEST(ObjCImmutableStringCallbackSources,
+     AddressorAcceptsInlinedPredicateLoadWithSharedReturn) {
+  AddressorCallbackFixture F;
+  auto *Accessor = const_cast<HighFunc *>(
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Provider));
+  ASSERT_NE(Accessor, nullptr);
+  ASSERT_EQ(Accessor->Body.size(), 3U);
+  auto PredicateLoad = Accessor->Body[0].Val;
+  Accessor->Body[1].Cond->Operands[0]->Operands[0] = PredicateLoad;
+  Accessor->Body[1].Body.pop_back();
+  Accessor->Body.erase(Accessor->Body.begin());
+  const auto Contract =
+      swift_once_source_detail::addressorContract(*Accessor, F.Image);
+  ASSERT_TRUE(Contract);
+  EXPECT_EQ(*Contract, F.Once.Addressors.at(F.Provider));
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  EXPECT_TRUE(validatedSwiftOnceAddressorCallee(F.Provider, F.Image, F.Once,
+                                                 Functions));
+  Accessor->Body[0].Cond->Operands[0]->Operands[0] =
+      HighExpr::makeConst(0, 8);
+  EXPECT_FALSE(swift_once_source_detail::addressorContract(*Accessor, F.Image));
+}
+
+TEST(ObjCImmutableStringCallbackSources,
      AddressorRejectsChangedContractAndProjectedBody) {
   for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
     SCOPED_TRACE(Mutation);

@@ -18,6 +18,7 @@
 #include "ObjCSuperGetterSources.h"
 #include "ObjCSwiftBooleanSources.h"
 #include "ObjCSwiftOnceSources.h"
+#include "ObjCSynchronizedSource.h"
 #include "SessionImpl.h"
 #include "SourceProjectionEvidenceJSON.h"
 #include "SourceRegisterCopyProjection.h"
@@ -258,6 +259,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         continue;
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
+      if (const auto Cleanup =
+              proveObjCSynchronizedReceiverCleanup(S->Img,
+                                                   BlockBinding.Function))
+        (void)omitProvenObjCSynchronizedLandingPad(BlockBinding.Function,
+                                                   *Cleanup);
       auto Inputs =
           snapshotObjCEntryInputs(BlockBinding.Function, S->Img, Functions);
       auto OnceBinding = bindSwiftOnceSourceReferences(
@@ -532,6 +538,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       Row["diagnostics"] = std::move(Diagnostics);
       std::string Reason;
       SourceProjectionDiagnostics Evidence;
+      std::optional<ObjCSynchronizedSourceProof> SynchronizedCleanup;
       const HighExpr *UnboundCall = nullptr;
       const HighFunc *Func = nullptr;
       if (auto It = Functions.find(Method.Implementation);
@@ -592,6 +599,18 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                           Audit, CallAllowed, &UnboundCall);
         Evidence = objcSourceBodyDiagnostics(
             Projection.Function, *Method.TypeHint, Audit, CallAllowed);
+        SynchronizedCleanup =
+            proveObjCSynchronizedReceiverCleanup(S->Img, Projection.Function);
+        if (SynchronizedCleanup) {
+          // The ordinary source checker conservatively rejects every LSDA.
+          // Waive only its metadata-level issue after the exact cleanup pad
+          // and its saved receiver have been proved against the image.
+          std::erase_if(Evidence.Items, [](const auto &Item) {
+            return Item.Issue == SourceProjectionIssue::Exception &&
+                   Item.StatementAddress == 0 && !Item.Expression;
+          });
+          Reason = Evidence.limitation();
+        }
         if (ImmutableStringInputs.count(Method.Implementation) &&
             !objCImmutableStringCallbackValid(Projection.Function, S->Img,
                                               Result, OncePlan)) {
@@ -617,7 +636,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                          "method depends on native source that was not "
                          "completely recovered",
                          0, nullptr, Dependency);
-        if (Reason.empty()) {
+        if (Reason.empty() && SynchronizedCleanup && !Evidence.Items.empty())
+          Reason = Evidence.limitation();
+        if (Reason.empty() && SynchronizedCleanup && !Evidence.Complete)
+          Reason = "synchronized method source inspection is incomplete";
+        if (Reason.empty() && !SynchronizedCleanup) {
           if (auto Projection = ProjectionReasons.find(Method.Implementation);
               Projection != ProjectionReasons.end())
             Reason = Projection->second;
@@ -823,9 +846,18 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
                                           Functions, SharedStorageFunctions);
       const bool Emitted = Emitter.emit(Unit, SourceOS, COptions);
       SourceOS << BlockHelpers << IdentityHelpers << StorageHelpers;
+      const auto CleanupSource =
+          Emitted && SynchronizedCleanup
+              ? addObjCSynchronizedReceiverCleanup(Source, *SynchronizedCleanup)
+              : std::optional<std::string>{};
+      if (CleanupSource)
+        Source = *CleanupSource;
       if (!Emitted) {
         Row["status"] = "unrecovered";
         Row["reason"] = "method C source projection failed";
+      } else if (SynchronizedCleanup && !CleanupSource) {
+        Row["status"] = "unrecovered";
+        Row["reason"] = "synchronized cleanup source rendering failed";
       } else if (auto Limitation = objcSourceTextLimitation(Source);
                  !Limitation.empty()) {
         Row["status"] = "unrecovered";
@@ -859,6 +891,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         Row["return_type"] = typeToC(Projection.ReturnType);
         Row["parameters"] = std::move(Parameters);
         Row["function_name"] = Projection.Name;
+        if (SynchronizedCleanup)
+          Row["required_cflags"] = llvm::json::Array{"-fexceptions"};
         // Rendering and the text guard above remain publication checks in
         // both modes. Only retaining/encoding the successful body is optional.
         if (IncludeSources)
@@ -894,6 +928,10 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     Limitations.push_back(
         "Unresolved native dependencies and exception-dependent method bodies "
         "remain individually unrecovered.");
+    Limitations.push_back(
+        "A proved Objective-C synchronization cleanup requires compiling its "
+        "recovered C source with -fexceptions; the method row lists this in "
+        "required_cflags.");
     Limitations.push_back(
         "Borrowed immutable byte ranges are copied only for proven bounded, "
         "read-only "

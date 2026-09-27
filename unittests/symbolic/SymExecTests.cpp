@@ -20,6 +20,7 @@
 #include "neverd/symbolic/SymExec.h"
 #include "neverd/symbolic/SymParse.h"
 
+#include <algorithm>
 #include <limits>
 #include <string>
 #include <vector>
@@ -493,6 +494,55 @@ TEST(SymState, ForksShareSymbolicLoadsUntilTheirMemoryDiverges) {
   EXPECT_EQ(Right.load(Address, 4), BeforeStore);
 }
 
+TEST(SymState, MemoryEffectsInvalidateRegionsFirstReadAfterAFork) {
+  for (unsigned Effect = 0; Effect != 3; ++Effect) {
+    SCOPED_TRACE(Effect);
+    SymContext Ctx;
+    SymState Entry(Ctx);
+    SymState Changed = Entry;
+    SymRef Address = Ctx.mkVar("unseen_address", 64);
+    if (Effect == 0)
+      Changed.clobberMemory();
+    else if (Effect == 1)
+      Changed.store(Ctx.mkConst(64, 0x401000), Ctx.mkConst(32, 1));
+    else
+      Changed.store(Ctx.mkVar("other_address", 64), Ctx.mkConst(32, 1));
+
+    SymRef Before = Entry.load(Address, 4);
+    SymRef After = Changed.load(Address, 4);
+    EXPECT_NE(After, Before);
+    EXPECT_EQ(Changed.load(Address, 4), After);
+  }
+}
+
+TEST(SymState, IndependentMemoryClobbersKeepUnseenRegionsIndependent) {
+  SymContext Ctx;
+  SymState Left(Ctx);
+  SymState Right = Left;
+  Left.clobberMemory();
+  Right.clobberMemory();
+  SymRef Address = Ctx.mkVar("unseen_address", 64);
+
+  EXPECT_NE(Left.load(Address, 4), Right.load(Address, 4));
+}
+
+TEST(SymState, ForkedMemoryClobberSharesOverlappingUnseenRegionBytes) {
+  for (llvm::endianness Order :
+       {llvm::endianness::little, llvm::endianness::big}) {
+    SymContext Ctx;
+    SymState Left(Ctx, Order);
+    Left.clobberMemory();
+    SymState Right = Left;
+    SymRef Address = Ctx.mkVar("unseen_address", 64);
+    SymRef Wide = Left.load(Address, 8);
+    SymRef Narrow = Right.load(Ctx.mkAdd(Address, Ctx.mkConst(64, 1)), 4);
+
+    const uint32_t Low = Order == llvm::endianness::little ? 8 : 24;
+    EXPECT_EQ(Narrow, Ctx.mkExtract(Wide, Low, 32));
+    EXPECT_EQ(Right.load(Address, 8), Wide);
+  }
+}
+
 TEST(SymState, FreshInputsDoNotAliasAcrossCopiedStates) {
   SymContext Ctx;
   SymState Left(Ctx);
@@ -651,6 +701,63 @@ TEST(SymExec, AnOperationHappensAtTheWidthItsOperandsDeclare) {
   EXPECT_EQ(Ctx.constValue(Result).getZExtValue(), 1u) << "-1 < 1 signed";
 }
 
+TEST(SymExec, ShiftCountsAreNotTruncatedToTheValueWidth) {
+  for (NdOp Opcode : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+    SCOPED_TRACE(static_cast<unsigned>(Opcode));
+    for (uint64_t Amount : {uint64_t(0), uint64_t(1), uint64_t(7), uint64_t(8),
+                            uint64_t(255), uint64_t(256), uint64_t(257)}) {
+      SCOPED_TRACE(Amount);
+      for (uint64_t Input : {uint64_t(0x71), uint64_t(0x91)}) {
+        SCOPED_TRACE(Input);
+        SymContext Ctx;
+        SymState State(Ctx);
+        SymExec Exec(Ctx, State);
+        ASSERT_EQ(Exec.step(op(Opcode, NdVar::reg(kRax, 1),
+                               {NdVar::cst(Input, 1), NdVar::cst(Amount, 2)})),
+                  StepResult::Continue);
+        SymRef Result = State.read(SymSpace::Register, kRax, 1);
+        ASSERT_TRUE(Ctx.isConst(Result));
+        llvm::APInt Bits(8, Input);
+        llvm::APInt Expected = Opcode == NdOp::INT_LEFT
+                                   ? Bits.shl(std::min(Amount, uint64_t(8)))
+                               : Opcode == NdOp::INT_RIGHT
+                                   ? Bits.lshr(std::min(Amount, uint64_t(8)))
+                                   : Bits.ashr(std::min(Amount, uint64_t(7)));
+        EXPECT_EQ(Ctx.constValue(Result), Expected);
+        EXPECT_EQ(Exec.unmodelledCount(), 0u);
+      }
+    }
+  }
+}
+
+TEST(SymExec, SymbolicShiftCountsKeepAllTheirBits) {
+  for (NdOp Opcode : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+    SymContext Ctx;
+    SymState State(Ctx);
+    SymRef Value = Ctx.mkVar("shift_value", 8);
+    SymRef Count = Ctx.mkVar("shift_count", 16);
+    State.write(SymSpace::Register, kRax, Value);
+    State.write(SymSpace::Register, kRbx, Count);
+    SymExec Exec(Ctx, State);
+    ASSERT_EQ(Exec.step(op(Opcode, NdVar::reg(kRcx, 1),
+                           {NdVar::reg(kRax, 1), NdVar::reg(kRbx, 2)})),
+              StepResult::Continue);
+    SymRef Result = State.read(SymSpace::Register, kRcx, 1);
+    for (uint64_t Amount :
+         {uint64_t(1), uint64_t(8), uint64_t(256), uint64_t(257)}) {
+      SCOPED_TRACE(Amount);
+      llvm::APInt Bits(8, 0x91);
+      llvm::APInt Expected = Opcode == NdOp::INT_LEFT
+                                 ? Bits.shl(std::min(Amount, uint64_t(8)))
+                             : Opcode == NdOp::INT_RIGHT
+                                 ? Bits.lshr(std::min(Amount, uint64_t(8)))
+                                 : Bits.ashr(std::min(Amount, uint64_t(7)));
+      const llvm::APInt Inputs[] = {Bits, llvm::APInt(16, Amount)};
+      EXPECT_EQ(Ctx.eval(Result, Inputs), Expected);
+    }
+  }
+}
+
 TEST(SymExec, TheCarryAndOverflowFlagsAreExpressionsLikeAnythingElse) {
   SymContext Ctx;
   SymState State(Ctx);
@@ -671,6 +778,30 @@ TEST(SymExec, TheCarryAndOverflowFlagsAreExpressionsLikeAnythingElse) {
                             kRcx, 1);
   ASSERT_TRUE(Ctx.isConst(Overflow));
   EXPECT_EQ(Ctx.constValue(Overflow).getZExtValue(), 1u) << "127 + 1 overflows";
+}
+
+TEST(SymExec, SubtractionSignAndOverflowRecoverTheSignedPredicate) {
+  for (unsigned Bytes : {1u, 2u, 4u, 8u, 16u, 32u}) {
+    SymContext Ctx;
+    SymState State(Ctx);
+    SymRef X = Ctx.mkVar("x", Bytes * 8), Y = Ctx.mkVar("y", Bytes * 8);
+    State.write(SymSpace::Register, 0, X);
+    State.write(SymSpace::Register, 64, Y);
+    for (NdOp Logic : {NdOp::BOOL_XOR, NdOp::INT_XOR}) {
+      SymRef Result =
+          execute(Ctx, State,
+                  {op(NdOp::INT_SUB, NdVar::reg(128, Bytes),
+                      {NdVar::reg(0, Bytes), NdVar::reg(64, Bytes)}),
+                   op(NdOp::INT_SBOR, NdVar::reg(192, 1),
+                      {NdVar::reg(0, Bytes), NdVar::reg(64, Bytes)}),
+                   op(NdOp::INT_SLESS, NdVar::reg(193, 1),
+                      {NdVar::reg(128, Bytes), NdVar::cst(0, Bytes)}),
+                   op(Logic, NdVar::reg(194, 1),
+                      {NdVar::reg(192, 1), NdVar::reg(193, 1)})},
+                  194, 1);
+      EXPECT_EQ(Result, Ctx.mkZExt(Ctx.mkSlt(X, Y), 8));
+    }
+  }
 }
 
 TEST(SymExec, ExtensionAndTruncationKeepTheirMeanings) {
