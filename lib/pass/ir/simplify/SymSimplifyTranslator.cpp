@@ -136,6 +136,11 @@ bool hasHiddenIncompatibleSemantics(const llvm::Instruction &Root,
       continue;
     if (hasIncompatibleSemantics(*I, WithComparisons))
       return true;
+    // Loads remain exact opaque inputs to the symbolic expression. Their
+    // address graph is preserved with the load, so poison-generating pointer
+    // arithmetic there must not block simplification of surrounding values.
+    if (llvm::isa<llvm::LoadInst>(I))
+      continue;
     for (const llvm::Use &Op : I->operands())
       Work.push_back(Op.get());
   }
