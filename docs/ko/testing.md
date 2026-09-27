@@ -713,3 +713,20 @@ offline으로 유지하면서 `RPC activation audit`를 가능하게 합니다.
 ## 모듈식 MBA 단순화
 
 `SymReadability.*`는 뺄셈과 보수 표기, 결합 연산 비용, 1비트 및 넓은 리터럴, 공유 트리 포화, 예산 제한 후보 선택, 표본 검증을 끈 상태의 3비트 완전 동치성을 검사합니다. `SymMBASample.*`는 모든 연산자, 결정적 대입, 사용하지 않는 넓은 입력에 대해 좁은 값과 임의 정밀도 검증을 AP 평가기와 비교합니다. 점수 버전이 다를 때 후보 품질을 비교하려면 두 출력을 같은 척도로 다시 세어야 합니다. SDK의 버전별 크기 카운터는 진단용입니다.
+
+## ARM32 및 프레임 전달 테스트 행렬
+
+```sh
+cmake --build build-release --target NeverDSymbolicTests \
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
+build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSymSimplifyGuardTests
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
+build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
+```
+
+프레임 spill 행렬은 두 C 백엔드에서 x86-32(ELF/COFF/Mach-O), ARM32(ARM 및 Thumb ELF), AArch64(ELF/COFF/Mach-O)도 검사합니다. 반복되는 비공개 프레임 로드는 덧셈이나 뺄셈으로 줄어야 하고, 두 최적화 수준에서 바이트 쌍, 워드 경계 쌍, 결정적 난수 워드에 대해 올바르게 실행되어야 합니다. Clang AST 검사는 전체 spill 함수에 남은 MBA 연산을 찾되 유효한 주소식을 구분합니다. HighFrameStoreForwarding은 접근 폭, 로컬 변수 변경, 메모리 쓰기, 별칭, 겹침, 순서가 지정된 메모리, 잘못된 그래프, 확장 예산을 검사합니다. HighCStoreForwarding은 부동소수점 재해석을 포함한 네 아키텍처에서 캐시 값의 정의를 살아 있게 하고, SymSimplifyGuard는 로드 동일성과 순서, volatile/atomic 및 poison 경계를 검사합니다. ELFARM32ModeTest는 ARM/Thumb 선택, 주소 정규화, 혼합 메타데이터 및 모순 증거 거부를 검사합니다. ELFARM32ModeCAPITest는 명시적인 SDK 오류와 Thumb 재로드 뒤 디코더 복구를 확인하고, InstructionMode는 디코더, 코드 포인터, 분기, 코드 생성 경계를 검사합니다. 크로스 타깃 Clang이 없으면 건너뛰며, 해당 형식의 성공 증거로 보지 않습니다.
