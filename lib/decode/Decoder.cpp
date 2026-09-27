@@ -43,16 +43,30 @@ const char *ndOpName(NdOp Op) {
 
 Decoder::Decoder() = default;
 
-Decoder::~Decoder() {
+Decoder::~Decoder() { reset(); }
+
+void Decoder::reset() {
   if (InsnBuf)
     cs_free(InsnBuf, 1);
   if (Handle)
     cs_close(&Handle);
+  InsnBuf = nullptr;
+  Handle = 0;
+  TargetArch = Arch::Unknown;
+  X86.reset();
+  ARM.reset();
+  AArch64.reset();
 }
 
 // The parallel phases each build a per-thread Decoder, so a failure here can be
 // reported from several worker threads at once — hence the serialized writes.
 bool Decoder::init(Arch TheArch, InstructionMode Mode) {
+  if (!isSingleInstructionMode(Mode)) {
+    syncError() << (Mode == InstructionMode::MixedARMThumb
+                        ? "mixed ARM/Thumb decoding unsupported\n"
+                        : "unknown instruction mode for decoder\n");
+    return false;
+  }
   cs_arch CsArch;
   cs_mode CsMode;
   std::unique_ptr<X86Lifter> NewX86;
@@ -127,6 +141,8 @@ void Decoder::setStrict(bool S) {
 
 int Decoder::decodeOne(const uint8_t *Bytes, size_t Len, va_t Addr,
                        DecodedInsn &Out) {
+  if (!Handle || !InsnBuf)
+    return 0;
   const uint8_t *Code = Bytes;
   size_t Sz = Len;
   uint64_t A = Addr;
@@ -178,6 +194,8 @@ int Decoder::decodeOneForLift(const uint8_t *Bytes, size_t Len, va_t Addr,
 
 int Decoder::decodeOneLight(const uint8_t *Bytes, size_t Len, va_t Addr,
                             DecodedInsn &Out) {
+  if (!Handle || !InsnBuf)
+    return 0;
   const uint8_t *Code = Bytes;
   size_t Sz = Len;
   uint64_t A = Addr;

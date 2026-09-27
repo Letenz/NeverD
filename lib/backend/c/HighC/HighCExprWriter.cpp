@@ -118,8 +118,7 @@ std::string HighCWriter::varName(const MedVar &V) const {
           if (V.Id >= 0 && DebugIdx < FS->Params.size() &&
               !FS->Params[DebugIdx].first.empty())
             return FS->Params[DebugIdx].first;
-        } else if (V.Id >= 0 &&
-                   static_cast<size_t>(V.Id) < FS->Params.size() &&
+        } else if (V.Id >= 0 && static_cast<size_t>(V.Id) < FS->Params.size() &&
                    !FS->Params[static_cast<size_t>(V.Id)].first.empty()) {
           return FS->Params[static_cast<size_t>(V.Id)].first;
         }
@@ -181,6 +180,12 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   switch (E.Op) {
   case NdOp::INT_NOT:
   case NdOp::INT_NEGATE:
+    // C promotes byte/word complements to int. Keep the machine result width
+    // even when it is subsequently widened or substituted for a stored value.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int &&
+        (E.Type->Size == 1 || E.Type->Size == 2))
+      return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
+             "))";
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum
@@ -276,9 +281,9 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
           V->Op != NdOp::INT_SLESS && V->Op != NdOp::INT_SLESSEQUAL &&
           IsZero(V->Operands[1]) && V->Operands[0])
         V = unwrapIntegerView(V->Operands[0].get());
-      const uint16_t Sz =
-          V && V->Type && V->Type->Size && V->Type->Size <= 4 ? V->Type->Size
-                                                              : 4;
+      const uint16_t Sz = V && V->Type && V->Type->Size && V->Type->Size <= 4
+                              ? V->Type->Size
+                              : 4;
       std::string LHS;
       const HighExpr *Print = V ? V : X.get();
       if (const HighExpr *Call = typedCallResult(Print)) {
@@ -324,13 +329,12 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   }
   case NdOp::INT_ZEXT: {
     if (const HighExpr *Call = typedCallResult(&E)) {
-      TypeRef Printed = Call->SourceCallHint ? Call->Type
-                                            : knownCallReturnType(*Call);
+      TypeRef Printed =
+          Call->SourceCallHint ? Call->Type : knownCallReturnType(*Call);
       if (!Printed)
         Printed = Call->Type;
-      if (Printed && Printed->Kind == NdTypeKind::Int &&
-          !Printed->IsSigned && !E.Operands.empty() && E.Operands[0] &&
-          E.Operands[0]->Type &&
+      if (Printed && Printed->Kind == NdTypeKind::Int && !Printed->IsSigned &&
+          !E.Operands.empty() && E.Operands[0] && E.Operands[0]->Type &&
           Printed->Size == E.Operands[0]->Type->Size)
         return exprStr(*Call, ParentPrec);
     }
@@ -347,13 +351,12 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   }
   case NdOp::INT_SEXT: {
     if (const HighExpr *Call = typedCallResult(&E)) {
-      TypeRef Printed = Call->SourceCallHint ? Call->Type
-                                            : knownCallReturnType(*Call);
+      TypeRef Printed =
+          Call->SourceCallHint ? Call->Type : knownCallReturnType(*Call);
       if (!Printed)
         Printed = Call->Type;
-      if (Printed && Printed->Kind == NdTypeKind::Int &&
-          Printed->IsSigned && !E.Operands.empty() && E.Operands[0] &&
-          E.Operands[0]->Type &&
+      if (Printed && Printed->Kind == NdTypeKind::Int && Printed->IsSigned &&
+          !E.Operands.empty() && E.Operands[0] && E.Operands[0]->Type &&
           Printed->Size == E.Operands[0]->Type->Size)
         return exprStr(*Call, ParentPrec);
     }
@@ -441,8 +444,7 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
       }
     }
     if (Slot) {
-      if (auto Data = Dbg->resolveDataObject(Slot);
-          Data && !Data->Name.empty())
+      if (auto Data = Dbg->resolveDataObject(Slot); Data && !Data->Name.empty())
         DebugName = Data->Name;
       else if (auto FS = Dbg->resolveFunction(Slot); FS && !FS->Name.empty())
         DebugName = FS->Name;
@@ -492,7 +494,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // An unconsumed register read is not part of the syscall's behavior. The
     // helper has a fixed six-register signature, so fill those positions with
     // zero only when the omitted expression cannot fault or have side effects.
-    auto CanOmit = [&](auto &&Self, const HighExpr *Op, unsigned Depth) -> bool {
+    auto CanOmit = [&](auto &&Self, const HighExpr *Op,
+                       unsigned Depth) -> bool {
       if (!Op || Depth > limits::kMaxIntegerViewUnwrapDepth)
         return false;
       Op = forwardedExpr(Op);
@@ -588,9 +591,9 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         }
       }
 
-    auto Rendered = renderIntrinsicCall(
-        E.IntrinsicId, Opts.TheArch, OpStrs, E.Type ? E.Type->Size : 0,
-        HasCIntrinsics);
+    auto Rendered =
+        renderIntrinsicCall(E.IntrinsicId, Opts.TheArch, OpStrs,
+                            E.Type ? E.Type->Size : 0, HasCIntrinsics);
     if (!Rendered.empty())
       return Rendered;
   }
@@ -764,8 +767,8 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
   UnknownOnlyNames.clear();
   AssignedNames.clear();
   walkStmts(Func.Body, [&](const HighStmt &S) {
-    const HighExpr *Call = S.Kind == StmtKind::Call ? S.CallExpr.get()
-                                                   : S.Val.get();
+    const HighExpr *Call =
+        S.Kind == StmtKind::Call ? S.CallExpr.get() : S.Val.get();
     if (Call && Call->Kind == ExprKind::Call)
       for (const MedVar &Output : Call->IntrinsicOutputs) {
         const std::string Name = varName(Output);
@@ -895,8 +898,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
       (Inner->Op == NdOp::INT_ADD || Inner->Op == NdOp::INT_SUB) &&
-      Inner->Operands.size() == 2 && Inner->Operands[0] &&
-      Inner->Operands[1]) {
+      Inner->Operands.size() == 2 && Inner->Operands[0] && Inner->Operands[1]) {
     const HighExpr *Lhs = peelIntegerViewOps(Inner->Operands[0].get());
     const HighExpr *Rhs = peelIntegerViewOps(Inner->Operands[1].get());
     if (!Lhs)
@@ -926,13 +928,13 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       if ((Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi))
         if (auto Declared = declaredParamType(Base->Var))
           BaseTy = Declared;
-      const bool BytePtr =
-          BaseTy && BaseTy->Kind == NdTypeKind::Ptr && BaseTy->Pointee &&
-          BaseTy->Pointee->Kind == NdTypeKind::Int && BaseTy->Pointee->Size == 1;
+      const bool BytePtr = BaseTy && BaseTy->Kind == NdTypeKind::Ptr &&
+                           BaseTy->Pointee &&
+                           BaseTy->Pointee->Kind == NdTypeKind::Int &&
+                           BaseTy->Pointee->Size == 1;
       if (!BytePtr && !llvm::StringRef(B).starts_with("(uintptr_t)"))
         B = "(uintptr_t)(" + B + ")";
-      std::string S =
-          B + (Minus ? " - " : " + ") + constStr(Off->ConstVal);
+      std::string S = B + (Minus ? " - " : " + ") + constStr(Off->ConstVal);
       if (ParentPrec >= AddPrec)
         return "(" + S + ")";
       return S;
@@ -1311,8 +1313,9 @@ std::string HighCWriter::exprStrAsTypedArg(const HighExpr &E,
     const HighExpr *Const = Inner;
     if ((Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi)) {
       const std::string Name = copyForwardName(varName(Inner->Var));
-      if (auto It = ValueForward.find(Name); It != ValueForward.end() &&
-          It->second && It->second->Kind == ExprKind::Const)
+      if (auto It = ValueForward.find(Name);
+          It != ValueForward.end() && It->second &&
+          It->second->Kind == ExprKind::Const)
         Const = It->second;
     }
     if (Const && Const->Kind == ExprKind::Const) {
@@ -1386,8 +1389,8 @@ HighCWriter::debugExternPrototype(const FunctionSym &FS,
                                   llvm::StringRef ExternName) const {
   TypeRef ReturnType = cDisplayType(FS.ReturnType);
   TypeRef SretPtr;
-  const bool Indirect =
-      debugExternUsesHiddenSret(FS, ExternName.empty() ? Identifier : ExternName);
+  const bool Indirect = debugExternUsesHiddenSret(
+      FS, ExternName.empty() ? Identifier : ExternName);
   const bool Member = Indirect && isWin64MemberIndirectReturn(FS);
   if (Indirect) {
     const NdType *Record = msvcIndirectReturnRecord(FS.ReturnType);
@@ -1532,23 +1535,20 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
     if (!RB)
       return RA;
     return RB->FieldDisplayNames.size() > RA->FieldDisplayNames.size() ? RB
-                                                                      : RA;
+                                                                       : RA;
   };
-  const bool IsParam = (Base.Kind == ExprKind::Var ||
-                        Base.Kind == ExprKind::Phi) &&
-                       Base.Var.Kind == MedVar::Param &&
-                       Base.Var.RenameTag < 0;
+  const bool IsParam =
+      (Base.Kind == ExprKind::Var || Base.Kind == ExprKind::Phi) &&
+      Base.Var.Kind == MedVar::Param && Base.Var.RenameTag < 0;
   if (IsParam) {
     if (TypeRef Best =
-            RicherRecord(Base.Type,
-                         RicherRecord(declaredParamType(Base.Var),
-                                      debugParamType(Base.Var))))
+            RicherRecord(Base.Type, RicherRecord(declaredParamType(Base.Var),
+                                                 debugParamType(Base.Var))))
       return Best;
   }
   if (TypeRef FromExpr = RecordFrom(Base.Type))
     return FromExpr;
-  if (Base.Kind == ExprKind::Load && !Base.Operands.empty() &&
-      Base.Operands[0])
+  if (Base.Kind == ExprKind::Load && !Base.Operands.empty() && Base.Operands[0])
     if (TypeRef FromMember = RecordFrom(typedMemberType(*Base.Operands[0])))
       return FromMember;
   if (Base.Kind != ExprKind::Var && Base.Kind != ExprKind::Phi)
@@ -1572,7 +1572,8 @@ TypeRef HighCWriter::declaredRecordPointee(const HighExpr &Base) const {
     if (auto It = CallResultTypes.find(CfName); It != CallResultTypes.end())
       if (TypeRef FromCall = RecordFrom(It->second))
         return FromCall;
-  if (auto It = ValueForward.find(FwdName); It != ValueForward.end() && It->second)
+  if (auto It = ValueForward.find(FwdName);
+      It != ValueForward.end() && It->second)
     if (TypeRef FromVal = declaredRecordPointee(*It->second))
       return FromVal;
   if (TypeRef FromDecl = RecordFrom(declaredParamType(Base.Var)))
@@ -1686,7 +1687,8 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
     }
     if (E->Op == NdOp::INT_LEFT && R->Kind == ExprKind::Const &&
         R->ConstVal < 8)
-      return std::make_pair(L, uint64_t{1} << static_cast<unsigned>(R->ConstVal));
+      return std::make_pair(L,
+                            uint64_t{1} << static_cast<unsigned>(R->ConstVal));
     return std::nullopt;
   };
 
@@ -1708,8 +1710,7 @@ HighCWriter::typedIndexAccess(const HighExpr &Addr) {
   std::string BasePath;
   TypeRef PtrTy;
   if (Base->Kind == ExprKind::Load && !Base->Operands.empty() &&
-      Base->Operands[0] &&
-      Base->MemoryOrdering == NdMemoryOrdering::None &&
+      Base->Operands[0] && Base->MemoryOrdering == NdMemoryOrdering::None &&
       Base->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
     if (auto Member = typedMemberAccess(*Base->Operands[0])) {
       BasePath = *Member;
@@ -1829,8 +1830,7 @@ TypeRef interiorFieldType(const TypeRef &Ty, uint64_t Rel,
 } // namespace
 
 std::optional<std::string>
-HighCWriter::frameTypedMemberAccess(int64_t Disp,
-                                     uint16_t AccessSize) const {
+HighCWriter::frameTypedMemberAccess(int64_t Disp, uint16_t AccessSize) const {
   const NamedFrameSlot *Owner = nullptr;
   int64_t OwnerDisp = 0;
   std::string Path;
@@ -1894,8 +1894,8 @@ HighCWriter::scalarRecordFieldDest(llvm::StringRef SlotName,
       (!PrintedType || PrintedType->Kind == NdTypeKind::Int)) {
     const HighExpr *Source = forwardedExpr(&Val);
     std::optional<int64_t> SourceDisp;
-    if (Source && Source->Kind == ExprKind::Load &&
-        !Source->Operands.empty() && Source->Operands[0])
+    if (Source && Source->Kind == ExprKind::Load && !Source->Operands.empty() &&
+        Source->Operands[0])
       SourceDisp = frameDisplacement(*Source->Operands[0]);
     else if (Source &&
              (Source->Kind == ExprKind::Var || Source->Kind == ExprKind::Phi)) {
@@ -1935,8 +1935,7 @@ HighCWriter::scalarRecordFieldDest(llvm::StringRef SlotName,
       }
       SourceType = Slot.Type;
     }
-    if (!Ambiguous && SourceType &&
-        SourceType->Kind == NdTypeKind::Struct &&
+    if (!Ambiguous && SourceType && SourceType->Kind == NdTypeKind::Struct &&
         SourceType->Size == MachineSize)
       PrintedType = SourceType;
   }
@@ -1946,12 +1945,11 @@ HighCWriter::scalarRecordFieldDest(llvm::StringRef SlotName,
       return std::nullopt;
     if (PrintedType && PrintedType->Kind == NdTypeKind::Ptr &&
         (MachineSize == 4 || MachineSize == 8))
-      return "*(" + typeToC(PrintedType) + " *)&" +
-             std::string(SlotName);
+      return "*(" + typeToC(PrintedType) + " *)&" + std::string(SlotName);
     if (!ConstInt && (!Val.Type || Val.Type->Kind != NdTypeKind::Int))
       return std::nullopt;
-    return "*(" + typeToC(NdType::makeInt(MachineSize, false)) +
-           " *)&" + std::string(SlotName);
+    return "*(" + typeToC(NdType::makeInt(MachineSize, false)) + " *)&" +
+           std::string(SlotName);
   };
   auto ProjectTy = [&](const TypeRef &Ty) -> std::optional<std::string> {
     if (!Ty || Ty->Kind != NdTypeKind::Struct || Ty->IsEnum)
@@ -1965,16 +1963,16 @@ HighCWriter::scalarRecordFieldDest(llvm::StringRef SlotName,
     auto Field = Ty->displayFieldNameAt(0);
     if (!Field) {
       if (Ty->SourceName == "ArgList" && MachineSize == 8 &&
-          (ConstInt || (PrintedType &&
-                        PrintedType->Kind == NdTypeKind::Int)))
+          (ConstInt || (PrintedType && PrintedType->Kind == NdTypeKind::Int)))
         return std::string(SlotName) + ".types_";
       return RawScalarStore();
     }
     TypeRef FieldTy;
-    for (size_t I = 0; I < Ty->FieldDisplayOffsets.size() &&
-                       I < Ty->FieldDisplayTypes.size();
+    for (size_t I = 0;
+         I < Ty->FieldDisplayOffsets.size() && I < Ty->FieldDisplayTypes.size();
          ++I) {
-      if (Ty->FieldDisplayOffsets[I] == 0 && Ty->FieldDisplayNames[I] == *Field) {
+      if (Ty->FieldDisplayOffsets[I] == 0 &&
+          Ty->FieldDisplayNames[I] == *Field) {
         FieldTy = Ty->FieldDisplayTypes[I];
         break;
       }
@@ -2016,8 +2014,8 @@ HighCWriter::scalarRecordFieldDest(llvm::StringRef SlotName,
       if (Slot.Type && Slot.CallType &&
           Slot.Type->SourceName != Slot.CallType->SourceName &&
           llvm::StringRef(*Path).starts_with(Base))
-        return "((" + typeToC(Slot.CallType) + " *)&" + SlotName.str() +
-               ")->" + Path->substr(Base.size());
+        return "((" + typeToC(Slot.CallType) + " *)&" + SlotName.str() + ")->" +
+               Path->substr(Base.size());
       return Path;
     }
     return ProjectTy(Slot.Type);
@@ -2072,8 +2070,8 @@ HighCWriter::callOverlayIntegerMemberStore(llvm::StringRef Member,
     if (!Overlay || *Overlay == Field)
       continue;
     if (Slot.Type->SourceName != Slot.CallType->SourceName)
-      return "((" + typeToC(Slot.CallType) + " *)&" + Base.str() +
-             ")->" + *Overlay;
+      return "((" + typeToC(Slot.CallType) + " *)&" + Base.str() + ")->" +
+             *Overlay;
     return Base.str() + "." + *Overlay;
   }
   return std::nullopt;
@@ -2150,8 +2148,7 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
   if (!Peeled)
     return std::nullopt;
   const HighExpr *Base = Peeled->first;
-  if (const auto OverlayDisp =
-          frameOverlayDisplacement(*Base, Peeled->second))
+  if (const auto OverlayDisp = frameOverlayDisplacement(*Base, Peeled->second))
     if (auto Overlay = frameTypedMemberAccess(*OverlayDisp, AccessSize))
       return Overlay;
   const TypeRef Record = declaredRecordPointee(*Base);
@@ -2179,8 +2176,8 @@ HighCWriter::typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize,
           BaseName = It->second;
       } else if (!TypedCursor) {
         BaseName = Cf;
-        if (auto It = ValueForward.find(Raw); It != ValueForward.end() &&
-            It->second &&
+        if (auto It = ValueForward.find(Raw);
+            It != ValueForward.end() && It->second &&
             (It->second->Kind == ExprKind::Var ||
              It->second->Kind == ExprKind::Phi)) {
           BaseName = copyForwardName(varName(It->second->Var));
@@ -2235,8 +2232,7 @@ std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
   if (auto Member = typedMemberAccess(*Inner))
     return *Member;
   if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
-      Inner->Operands[0] &&
-      Inner->MemoryOrdering == NdMemoryOrdering::None &&
+      Inner->Operands[0] && Inner->MemoryOrdering == NdMemoryOrdering::None &&
       Inner->MemoryAddressSpace == NdMemoryAddressSpace::Default) {
     if (auto Member = typedMemberAccess(*Inner->Operands[0]))
       return *Member;
@@ -2272,8 +2268,7 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
   const HighExpr *Base = Cur;
   while (Cur && Depth < 2) {
     if (Cur->Kind != ExprKind::Load || Cur->Operands.empty() ||
-        !Cur->Operands[0] ||
-        Cur->MemoryOrdering != NdMemoryOrdering::None ||
+        !Cur->Operands[0] || Cur->MemoryOrdering != NdMemoryOrdering::None ||
         Cur->MemoryAddressSpace != NdMemoryAddressSpace::Default)
       break;
     const uint16_t Size = Cur->Type ? Cur->Type->Size : 0;
@@ -2354,8 +2349,7 @@ bool HighCWriter::pointerNeedsIntegerView(const TypeRef &Ty) const {
   return Ty && Ty->Kind == NdTypeKind::Ptr;
 }
 
-bool HighCWriter::isSameWidthUnsigned(const HighExpr &E,
-                                      uint16_t Width) const {
+bool HighCWriter::isSameWidthUnsigned(const HighExpr &E, uint16_t Width) const {
   if (Width == 0 || Width > 16)
     return false;
   const HighExpr *P = forwardedExpr(&E);
@@ -2412,8 +2406,8 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
 std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
   if (!CurrentFunc)
     return std::nullopt;
-  const auto &Slots = ProjectFrameAliasesIntoStorage ? FrameStorageSlots
-                                                      : FrameSlots;
+  const auto &Slots =
+      ProjectFrameAliasesIntoStorage ? FrameStorageSlots : FrameSlots;
   const HighExpr *Cur = unwrapIntegerView(&E);
   int64_t Acc = 0;
   unsigned Depth = 0;
@@ -2500,8 +2494,8 @@ bool HighCWriter::isRegistrationEstablisherFrame(const MedVar &V) const {
          V.RegOff == getTargetRegInfo(Opts.TheArch).FramePointer;
 }
 
-std::optional<int64_t> HighCWriter::certifiedFrameStorageDisplacement(
-    const HighExpr &E) const {
+std::optional<int64_t>
+HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
   if (!CurrentFunc)
     return std::nullopt;
   // frameDisplacement also has a display-only heuristic for an unassigned
@@ -2609,9 +2603,8 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
         Reach != ReachingCatchPtrs.end())
       return Reach->second;
     if (InEHClauseBody && isCatchFuncletParentFrame(E.Var))
-      return frameStorageAddress(CurrentFunc->FrameSize > 0
-                                     ? -CurrentFunc->FrameSize
-                                     : 0);
+      return frameStorageAddress(
+          CurrentFunc->FrameSize > 0 ? -CurrentFunc->FrameSize : 0);
     // The registration handler's EBP already has an establisher identity in
     // frameDisplacement. Keep that identity when named slots are replaced by
     // byte storage; an independent SSA root does not make it an unknown input.
@@ -2619,15 +2612,14 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
       if (const auto Disp = frameDisplacement(E))
         return frameStorageAddress(*Disp);
     if (ProjectFrameAliasesIntoStorage) {
-      if (CurrentFunc && isSyntheticEntryStackPointer(E.Var, *CurrentFunc,
-                                                      Opts.TheArch))
+      if (CurrentFunc &&
+          isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))
         return "frame_base";
       // A frame pointer may be assigned only on a normal try path. Project
       // its certified displacement at each use so the exceptional edge also
       // addresses the single byte backing store, rather than reading that
       // potentially skipped C assignment.
-      if (auto Alias = FrameAliases.find(RawName);
-          Alias != FrameAliases.end())
+      if (auto Alias = FrameAliases.find(RawName); Alias != FrameAliases.end())
         return frameStorageAddress(Alias->second);
       for (const auto &[Disp, Slot] : FrameStorageSlots)
         if (Slot.Name == Name && E.Var.Kind != MedVar::Param &&
@@ -2635,8 +2627,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
           return memoryLoadExpr(Slot.Type ? Slot.Type : E.Type,
                                 frameStorageAddress(Disp));
     }
-    if (auto Printed = printedForwardedVar(Name, ParentPrec);
-        Printed != Name)
+    if (auto Printed = printedForwardedVar(Name, ParentPrec); Printed != Name)
       return Printed;
     // Definitions consisting only of unknown values are omitted from C.
     // Their observable uses must still fail, including renamed SSA temps.
@@ -2646,10 +2637,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     // live-in. Keep the failure at the point of use instead of emitting an
     // undeclared name or inventing zero.
     if ((E.Var.Kind == MedVar::Reg || E.Var.Kind == MedVar::Flag) &&
-        E.Var.SSAVer == 0 && Name == RawName &&
-        !AssignedNames.count(RawName) && !isEmittedParamName(RawName) &&
-        !(CurrentFunc && isSyntheticEntryStackPointer(E.Var, *CurrentFunc,
-                                                       Opts.TheArch)))
+        E.Var.SSAVer == 0 && Name == RawName && !AssignedNames.count(RawName) &&
+        !isEmittedParamName(RawName) &&
+        !(CurrentFunc &&
+          isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)))
       return "(__builtin_trap(), 0 /* unknown register */)";
     if (auto Slot = namedFrameSlot(E)) {
       if (const auto Disp = frameDisplacement(E)) {
@@ -2888,7 +2879,8 @@ std::string HighCWriter::collapseHiLo(const HighExpr &Expr) {
 std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
   if (FuncReturnType && FuncReturnType->Kind == NdTypeKind::Ptr) {
     const HighExpr *Inner = unwrapIntegerView(&Expr);
-    if (Inner && (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) &&
+    if (Inner &&
+        (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi) &&
         Inner->Var.Kind == MedVar::Param) {
       const std::string Name = varName(Inner->Var);
       if (!IndirectReturnName.empty() && Name == IndirectReturnName)
@@ -2965,9 +2957,9 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
       Inner = PeelReturnViews(Fwd->second);
   }
   if (Inner && Inner != &Expr) {
-    const bool SameWidth =
-        Inner->Type && Inner->Type->Kind == NdTypeKind::Int &&
-        Inner->Type->Size == FuncReturnType->Size;
+    const bool SameWidth = Inner->Type &&
+                           Inner->Type->Kind == NdTypeKind::Int &&
+                           Inner->Type->Size == FuncReturnType->Size;
     const bool SameSign =
         SameWidth && Inner->Type->IsSigned == FuncReturnType->IsSigned;
     if (Inner->Kind == ExprKind::Const || SameSign)
@@ -2998,11 +2990,11 @@ std::string HighCWriter::formatReturnExpr(const HighExpr &Expr) {
 }
 
 std::string HighCWriter::printedForwardedVar(const std::string &Name,
-                                            int ParentPrec) {
+                                             int ParentPrec) {
   if (auto Fwd = FieldForward.find(Name); Fwd != FieldForward.end())
     return Fwd->second;
-  if (auto Fwd = ValueForward.find(Name); Fwd != ValueForward.end() &&
-      Fwd->second) {
+  if (auto Fwd = ValueForward.find(Name);
+      Fwd != ValueForward.end() && Fwd->second) {
     const HighExpr *Inner = peelIntegerViewOps(Fwd->second);
     if (Inner && Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
@@ -3011,8 +3003,8 @@ std::string HighCWriter::printedForwardedVar(const std::string &Name,
     }
     return exprStr(*Fwd->second, ParentPrec);
   }
-  if (auto Fwd = CtorThisForward.find(Name); Fwd != CtorThisForward.end() &&
-      Fwd->second)
+  if (auto Fwd = CtorThisForward.find(Name);
+      Fwd != CtorThisForward.end() && Fwd->second)
     return exprStr(*Fwd->second, ParentPrec);
   if (auto It = CallResultNames.find(Name); It != CallResultNames.end())
     return It->second;
@@ -3272,7 +3264,8 @@ bool HighCWriter::isCatchFuncletParentFrame(const MedVar &V) const {
   return static_cast<size_t>(V.Id) >= CurrentFunc->Params.size();
 }
 
-const HighExpr *HighCWriter::parentFrameStoredValue(const HighStmt &Stmt) const {
+const HighExpr *
+HighCWriter::parentFrameStoredValue(const HighStmt &Stmt) const {
   if (!InEHClauseBody)
     return nullptr;
   const HighExpr *Addr = nullptr;
@@ -3507,8 +3500,8 @@ HighCWriter::preferGreaterIfElseCond(const HighExpr &E) {
       Inner = &Op;
     if (Inner->Kind == ExprKind::Load && !Inner->Operands.empty() &&
         Inner->Operands[0]) {
-      if (auto Member = typedMemberAccess(
-              *Inner->Operands[0], Inner->Type ? Inner->Type->Size : 0))
+      if (auto Member = typedMemberAccess(*Inner->Operands[0],
+                                          Inner->Type ? Inner->Type->Size : 0))
         return *Member;
       if (auto Member = typedMemberAccess(*Inner->Operands[0]))
         return *Member;
@@ -3523,7 +3516,8 @@ HighCWriter::preferGreaterIfElseCond(const HighExpr &E) {
     }
     return exprStr(*Inner, 7);
   };
-  return MemberOrExpr(*Le->Operands[1]) + " > " + MemberOrExpr(*Le->Operands[0]);
+  return MemberOrExpr(*Le->Operands[1]) + " > " +
+         MemberOrExpr(*Le->Operands[0]);
 }
 
 std::string HighCWriter::invertCondStr(const HighExpr &E) {
@@ -3655,14 +3649,14 @@ std::string HighCWriter::invertCondStr(const HighExpr &E) {
                  Ne->Operands[0].get(), Ne->Operands[1].get()))
       return PrintGe(*Le);
 
-    const bool BoolOr =
-        Cur->Op == NdOp::BOOL_OR ||
-        (Cur->Op == NdOp::INT_OR && LooksBool(LooksBool, Cur->Operands[0].get(), 0) &&
-         LooksBool(LooksBool, Cur->Operands[1].get(), 0));
-    const bool BoolAnd =
-        Cur->Op == NdOp::BOOL_AND ||
-        (Cur->Op == NdOp::INT_AND && LooksBool(LooksBool, Cur->Operands[0].get(), 0) &&
-         LooksBool(LooksBool, Cur->Operands[1].get(), 0));
+    const bool BoolOr = Cur->Op == NdOp::BOOL_OR ||
+                        (Cur->Op == NdOp::INT_OR &&
+                         LooksBool(LooksBool, Cur->Operands[0].get(), 0) &&
+                         LooksBool(LooksBool, Cur->Operands[1].get(), 0));
+    const bool BoolAnd = Cur->Op == NdOp::BOOL_AND ||
+                         (Cur->Op == NdOp::INT_AND &&
+                          LooksBool(LooksBool, Cur->Operands[0].get(), 0) &&
+                          LooksBool(LooksBool, Cur->Operands[1].get(), 0));
     if (BoolOr || BoolAnd) {
       std::string L = invertCondStr(*Cur->Operands[0]);
       std::string R = invertCondStr(*Cur->Operands[1]);

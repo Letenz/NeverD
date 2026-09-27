@@ -114,10 +114,10 @@ void applyDynamicRelativeRelocations(
 /// `Img.Symbols`, and every global or weak function among them in
 /// `Img.Exports`.
 template <typename ELFT>
-void collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
-                    llvm::ArrayRef<typename ELFT::Shdr> Sections, size_t Size,
-                    const std::vector<va_t> &SecBase, bool IsRelocatable,
-                    BinaryImage &Img);
+llvm::Error collectSymbols(const llvm::object::ELFFile<ELFT> &ELF,
+                           llvm::ArrayRef<typename ELFT::Shdr> Sections,
+                           size_t Size, const std::vector<va_t> &SecBase,
+                           bool IsRelocatable, BinaryImage &Img);
 
 } // namespace LLVM_LIBRARY_VISIBILITY_NAMESPACE detail
 } // namespace elf_loader
