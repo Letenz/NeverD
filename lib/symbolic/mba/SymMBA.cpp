@@ -369,9 +369,14 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     SymRef Rebuilt = Changed ? Ctx.rebuild(R, Ops) : R;
     SymRef Best =
         readingCost(Ctx, Rebuilt) <= readingCost(Ctx, R) ? Rebuilt : R;
-    // Give the emitted root another reading only when its children changed;
-    // otherwise this bounded pass keeps the caller's selected spelling.
-    if ((R != E || Changed) && canMeasureAtRoot(Ctx, Rebuilt)) {
+    // The final region can restore a product into an additive bitwise
+    // relation without having measured that new root. Finish that exposed
+    // relation once within this fixed frontier, even if its children stayed
+    // unchanged. Already-known roots and finished children returned above;
+    // expressions emitted by this reading are not added to the frontier.
+    const bool ExposedRoot = R == E && Ctx.op(Rebuilt) == SymOp::Add &&
+                             hasBitwiseInteraction(Ctx, Rebuilt);
+    if ((R != E || Changed || ExposedRoot) && canMeasureAtRoot(Ctx, Rebuilt)) {
       if (Budget.exhausted() || !Budget.consume(Ctx.dagSize(Rebuilt)))
         return Stop();
       SolveReport Local;
