@@ -52,11 +52,15 @@ roundtrips together when changing shared bitvector simplification:
 
 ```sh
 cmake --build build-release --target NeverDSymbolicTests \
-  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests --parallel 4
+  NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
+  NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
 build-release/bin/NeverDSymbolicTests
 build-release/bin/NeverDSymSimplifyGuardTests
-build-release/bin/NeverDLiftTests --gtest_filter='HighSymSimplify.*'
+build-release/bin/NeverDLiftTests \
+  --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
+build-release/bin/NeverDHighCStoreForwardingTests
 build-release/bin/NeverDMBASourceTests
+build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*'
 ```
 
 `NeverDMBASourceTests` assembles generic 8/16/32/64-bit arithmetic and shared
@@ -67,6 +71,30 @@ oracles. A full-product counterexample ensures low-word rules do not discard
 observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
+
+The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
+(ARM and Thumb ELF), and AArch64 (ELF/COFF/Mach-O), through both C backends. Repeated
+private-frame reloads must reduce to addition/subtraction and execute correctly
+for all byte pairs, word-boundary pairs and deterministic random words at both
+optimization levels. Clang AST checks inspect the complete spill functions for
+residual MBA operators, including temporary assignments, while distinguishing
+valid address and pointer expressions. `HighFrameStoreForwarding.*` checks exact
+access widths,
+source-local mutation, memory-home writes, prefix aliases, partial overlaps,
+ordered memory, malformed/cyclic graphs and rendered expansion bounds. Its
+narrow-complement regression executes after semantic simplification.
+`HighCStoreForwarding.RetainsDefinitionsUsedByForwardedValues` keeps the cached
+store-value dependencies live across all four architectures, including floating
+reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
+checks load identity/order, volatile/atomic state and poison boundaries.
+`ELFARM32ModeTest.*` checks authenticated ARM/Thumb selection, normalized
+function addresses, mapping-only objects, mixed-image metadata preservation and
+rejection of contradictory modes at one address. The existing mixed-mode
+MOVW/MOVT relocation fixture remains loadable; decoding requires a single mode.
+`ELFARM32ModeCAPITest.*` replaces a Thumb image with mixed metadata in one SDK
+session, checks explicit disassembly/HighC/LLVMC errors, and reloads Thumb to
+verify decoder recovery. `InstructionMode.*` covers the corresponding decoder,
+code-pointer, direct-branch and code-generation boundaries.
 
 ## Interpreter recovery checks
 

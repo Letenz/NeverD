@@ -3,6 +3,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighIR.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/MathExtras.h"
 namespace neverd::high_detail {
 /// A bounded arithmetic offset from the synthetic entry stack pointer.
@@ -11,7 +12,7 @@ namespace neverd::high_detail {
 inline std::optional<int64_t>
 frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
                    size_t &Budget, unsigned Depth = 0,
-                   const VarKeyMap<ExprPtr> *Aliases = nullptr) {
+                   llvm::function_ref<ExprPtr(const MedVar &)> Alias = {}) {
   const auto &TRI = getTargetRegInfo(Architecture);
   if (!E || !E->Type || E->Type->Size != TRI.PointerSize ||
       E->MemoryOrdering != NdMemoryOrdering::None ||
@@ -22,12 +23,25 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
   if (E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize &&
       isSyntheticEntryStackPointer(E->Var, Func, Architecture))
     return 0;
-  if (Aliases && E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize) {
-    const auto Alias = Aliases->find(varKey(E->Var));
-    if (Alias != Aliases->end())
-      return frameAddressOffset(Alias->second, Func, Architecture, Budget,
-                                Depth + 1, Aliases);
+  if (Alias && E->Kind == ExprKind::Var && E->Var.Size == TRI.PointerSize) {
+    if (ExprPtr Value = Alias(E->Var))
+      return frameAddressOffset(Value, Func, Architecture, Budget, Depth + 1,
+                                Alias);
   }
+  // A signedness view of the target pointer bits does not alter its address.
+  // Keep widening and truncating conversions outside this proof.
+  if ((E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast) &&
+      E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+      !E->IndirectTarget && E->Type->Kind == NdTypeKind::Int &&
+      E->Operands.size() == 1 && E->Operands[0] && E->Operands[0]->Type &&
+      E->Operands[0]->Type->Kind == NdTypeKind::Int &&
+      E->Operands[0]->Type->Size == TRI.PointerSize &&
+      (E->Kind == ExprKind::BitCast ||
+       (E->CastTo && E->CastTo->Kind == NdTypeKind::Int &&
+        E->CastTo->Size == TRI.PointerSize &&
+        E->CastTo->IsSigned == E->Type->IsSigned)))
+    return frameAddressOffset(E->Operands[0], Func, Architecture, Budget,
+                              Depth + 1, Alias);
   if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
       !E->Operands[1] || E->Operands[1]->Kind != ExprKind::Const ||
       !E->Operands[1]->Type || !E->Operands[1]->Type->Size ||
@@ -38,7 +52,7 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
       (E->Op != NdOp::INT_ADD && E->Op != NdOp::INT_SUB))
     return std::nullopt;
   const auto Base = frameAddressOffset(E->Operands[0], Func, Architecture,
-                                       Budget, Depth + 1, Aliases);
+                                       Budget, Depth + 1, Alias);
   if (!Base)
     return std::nullopt;
   const int64_t Delta = TRI.PointerSize == 4
@@ -51,6 +65,21 @@ frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
   if (TRI.PointerSize == 4 && Result != int64_t(int32_t(Result)))
     return std::nullopt;
   return Result;
+}
+
+// Earlier pipeline consumers still operate on MedIR SSA identities. Source
+// passes supply their own resolver after renaming, using source-local identity.
+inline std::optional<int64_t>
+frameAddressOffset(const ExprPtr &E, const HighFunc &Func, Arch Architecture,
+                   size_t &Budget, unsigned Depth,
+                   const VarKeyMap<ExprPtr> *Aliases) {
+  const auto Alias = [&](const MedVar &V) -> ExprPtr {
+    if (!Aliases)
+      return nullptr;
+    const auto It = Aliases->find(varKey(V));
+    return It == Aliases->end() ? nullptr : It->second;
+  };
+  return frameAddressOffset(E, Func, Architecture, Budget, Depth, Alias);
 }
 } // namespace neverd::high_detail
 #endif

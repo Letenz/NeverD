@@ -35,15 +35,7 @@ llvm::Error invalid(const llvm::Twine &Message) {
                                  Message.str().c_str());
 }
 
-bool isKnownMode(InstructionMode Mode) {
-  switch (Mode) {
-  case InstructionMode::Default:
-  case InstructionMode::ARM:
-  case InstructionMode::Thumb:
-    return true;
-  }
-  return false;
-}
+bool isKnownMode(InstructionMode Mode) { return isSingleInstructionMode(Mode); }
 
 bool isKnownTargetMode(LowInstructionTargetMode Mode) {
   switch (Mode) {
@@ -118,13 +110,13 @@ llvm::Error validateMemoryAddressSpace(const LowOp &Op) {
     return llvm::Error::success();
   }
   if (isX86VP4DPIntrinsic(Id)) {
-    if (!intrinsicX86VP4DPShapeIsValid(
-            Id, Op.NumInputs, Op.Output.Size,
-            Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
-            Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
-            Op.NumInputs > 3 ? Op.Inputs[3].Size : 0,
-            Op.NumInputs > 4 ? Op.Inputs[4].Size : 0,
-            Op.NumInputs > 5 ? Op.Inputs[5].Size : 0) ||
+    if (!intrinsicX86VP4DPShapeIsValid(Id, Op.NumInputs, Op.Output.Size,
+                                       Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
+                                       Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
+                                       Op.NumInputs > 3 ? Op.Inputs[3].Size : 0,
+                                       Op.NumInputs > 4 ? Op.Inputs[4].Size : 0,
+                                       Op.NumInputs > 5 ? Op.Inputs[5].Size
+                                                        : 0) ||
         !Op.Inputs[3].isConst() ||
         (!Op.Inputs[4].isReg() && !Op.Inputs[4].isConst()) ||
         !Op.Inputs[5].isConst() || Op.Inputs[3].Offset > 28 ||

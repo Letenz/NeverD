@@ -44,6 +44,18 @@ and their LLVM/Capstone dependencies are private implementation details of
 that shared library. The CLI uses LLVM Support for its command-line UI,
 but it does not bypass the C API to drive the engine.
 
+ARM32 ELF code mode is taken from defined executable function symbols,
+ARM/Thumb mapping symbols and an executable entry point, before normalizing
+Thumb address tags. `BinaryImage` currently has one mode for the whole image;
+homogeneous ARM or Thumb code is supported. Distinct ARM and Thumb regions
+produce explicit mixed-mode metadata, preserving symbol and relocation access;
+conflicting evidence at the same address is rejected. Decoding, lifting and
+rewriting require a single supported mode and refuse mixed images. Loading
+mixed metadata into an existing SDK session clears its old decoder, so later
+operations cannot reuse stale architecture state. Data symbols and unrelated
+names do not select a decoder mode. Supporting interworking execution requires
+a per-address mode contract throughout discovery, decoding and rewriting.
+
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
 use this graph. Bounded partitions track repeated equality tests between scalar
@@ -1360,6 +1372,21 @@ full-word consumers retain their original values. Node/edge limits and unknown
 shapes leave the original expression intact without invoking a solver.
 
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Before HighIR algebra, private-frame forwarding uses source-local identities
+after renaming and the shared target-width frame-address proof. Exact integer
+reads in straight-line functions can reuse a stored value while its inputs and
+bytes remain unchanged. Unknown or overlapping writes invalidate facts;
+calls, ordered memory, malformed graphs and control-flow joins prevent this
+proof. Replayed operations must be total and explicitly typed, store/load
+truncation is retained, and budgets count rendered trees including repeated
+DAG edges. The proof applies to both 32-bit and 64-bit targets.
+The MedIR-to-HighIR memory boundary recovers a target-width unsigned address
+view only from an explicit zero extension of that width into the LowIR VA
+carrier. Arbitrary wide expressions and sign extensions remain intact; frame
+address analysis accepts only bit-preserving views at the target width.
+HighC's later text-based store forwarding records the names used by each cached
+value. Liveness includes those dependencies at surviving loads, and subsequent
+value inlining cannot hide a definition still named in cached text.
 Candidate selection uses one cached rendering score: expanded operator and
 leaf count first, then fewer operations on a size tie. Associative infix
 chains count every printed binary operator. Signed literals are leaves;

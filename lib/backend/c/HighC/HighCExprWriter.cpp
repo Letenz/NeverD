@@ -180,6 +180,12 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   switch (E.Op) {
   case NdOp::INT_NOT:
   case NdOp::INT_NEGATE:
+    // C promotes byte/word complements to int. Keep the machine result width
+    // even when it is subsequently widened or substituted for a stored value.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int &&
+        (E.Type->Size == 1 || E.Type->Size == 2))
+      return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
+             "))";
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum

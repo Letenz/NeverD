@@ -208,11 +208,7 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
 
   case NdOp::LOAD: {
     if (Op.NumInputs >= 1) {
-      auto &AddrVar = Op.Inputs[0];
-      ExprPtr AddrExpr;
-      if (AddrVar.Id >= 0)
-        AddrExpr = inlineableDefinition(varKey(AddrVar));
-      return HighExpr::makeLoad(AddrExpr ? AddrExpr : medvarToExpr(AddrVar),
+      return HighExpr::makeLoad(memoryAddressExpr(Op.Inputs[0]),
                                 NdType::makeInt(Op.Output.Size),
                                 Op.MemoryOrdering, Op.MemoryAddressSpace);
     }
@@ -222,8 +218,9 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
   case NdOp::ATOMIC_XCHG:
   case NdOp::ATOMIC_ADD:
     if (Op.NumInputs >= 2) {
-      auto Expr = HighExpr::makeBinop(Op.Opcode, medvarToExpr(Op.Inputs[0]),
-                                      medvarToExpr(Op.Inputs[1]));
+      auto Expr =
+          HighExpr::makeBinop(Op.Opcode, memoryAddressExpr(Op.Inputs[0], false),
+                              medvarToExpr(Op.Inputs[1]));
       Expr->Type = NdType::makeInt(Op.Output.Size, false);
       Expr->MemoryOrdering = Op.MemoryOrdering;
       Expr->MemoryAddressSpace = Op.MemoryAddressSpace;
@@ -233,8 +230,9 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
 
   case NdOp::ATOMIC_CMPXCHG:
     if (Op.NumInputs >= 3) {
-      auto Expr = HighExpr::makeBinop(Op.Opcode, medvarToExpr(Op.Inputs[0]),
-                                      medvarToExpr(Op.Inputs[1]));
+      auto Expr =
+          HighExpr::makeBinop(Op.Opcode, memoryAddressExpr(Op.Inputs[0], false),
+                              medvarToExpr(Op.Inputs[1]));
       Expr->Operands.push_back(medvarToExpr(Op.Inputs[2]));
       Expr->Type = NdType::makeInt(Op.Output.Size, false);
       Expr->MemoryOrdering = Op.MemoryOrdering;

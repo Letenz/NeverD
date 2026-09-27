@@ -264,6 +264,7 @@ const char *neverd_headers_json(neverd_session_t Sess) {
   Root["entry"] = vaHex(S->Img.Entry);
   Root["base"] = vaHex(S->Img.Base);
   Root["arch"] = getArchName(S->Img.Arch);
+  Root["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   Root["format"] = S->Img.getFormatName();
   Root["bits"] = S->Img.is64Bit() ? 64 : 32;
   Root["file_path"] = jsonSafeText(S->FilePath.string());
@@ -421,6 +422,7 @@ const char *neverd_dashboard_json(neverd_session_t Sess) {
   File["name"] = jsonSafeText(S->FilePath.filename().string());
   File["format"] = S->Img.getFormatName();
   File["arch"] = getArchName(S->Img.Arch);
+  File["instruction_mode"] = getInstructionModeName(S->Img.Mode);
   File["bits"] = S->Img.is64Bit() ? 64 : 32;
   File["entry"] = vaHex(S->Img.Entry);
   File["base"] = vaHex(S->Img.Base);

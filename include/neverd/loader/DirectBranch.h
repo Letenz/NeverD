@@ -59,9 +59,9 @@ inline unsigned getBranchScanStride(Arch A, InstructionMode Mode) {
 
 /// True for the targets \ref decodeDirectBranchTarget models.
 inline bool canScanDirectBranches(Arch A, InstructionMode Mode) {
-  (void)Mode;
-  return A == Arch::X64 || A == Arch::X86 || A == Arch::AArch64 ||
-         A == Arch::ARM;
+  return isSingleInstructionMode(Mode) &&
+         (A == Arch::X64 || A == Arch::X86 || A == Arch::AArch64 ||
+          A == Arch::ARM);
 }
 
 /// Call \p Visit(SiteVA, TargetVA) for every direct branch in

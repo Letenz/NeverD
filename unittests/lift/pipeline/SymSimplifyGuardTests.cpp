@@ -833,7 +833,9 @@ TEST(SymSimplifyGuard, OpaqueLoadCannotBeErasedByARewrite) {
 
   auto *BB = llvm::BasicBlock::Create(C, "entry", F);
   llvm::IRBuilder<> B(BB);
-  llvm::Value *Hidden = B.CreateLoad(I32, F->getArg(0));
+  llvm::Value *Address = B.CreateNSWAdd(B.CreatePtrToInt(F->getArg(0), I32),
+                                        llvm::ConstantInt::get(I32, 8));
+  llvm::Value *Hidden = B.CreateLoad(I32, B.CreateIntToPtr(Address, Ptr));
   llvm::Value *X = F->getArg(1);
   llvm::Value *Z = F->getArg(2);
   llvm::Value *Or = B.CreateOr(B.CreateOr(X, Hidden), Z);
@@ -946,6 +948,166 @@ TEST(SymSimplifyGuard, OpaqueLoadDoesNotExposeItsPoisoningAddressArithmetic) {
   }
   EXPECT_EQ(Loads, 1u) << printFunction(*F);
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+// Rebuilding integer arithmetic must not duplicate, merge, move, or weaken
+// memory accesses. In particular the second read below observes a store that
+// the first read precedes, even though both use the same computed address.
+TEST(SymSimplifyGuard, OpaqueLoadsRetainIdentityOrderAndAccessSemantics) {
+  for (unsigned Width : {32u, 64u}) {
+    for (unsigned Mode = 0; Mode != 4; ++Mode) {
+      SCOPED_TRACE("width=" + std::to_string(Width) +
+                   ", mode=" + std::to_string(Mode));
+      llvm::LLVMContext C;
+      llvm::Module M("m", C);
+      auto *Word = llvm::IntegerType::get(C, Width);
+      auto *Ptr = llvm::PointerType::get(C, 0);
+      auto *FT = llvm::FunctionType::get(Word, {Ptr, Word}, false);
+      auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                       "ordered_loads", &M);
+      auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+      llvm::IRBuilder<> B(BB);
+      llvm::Value *Address = B.CreatePtrToInt(F->getArg(0), Word);
+      Address = B.CreateNSWAdd(Address, llvm::ConstantInt::get(Word, 8));
+      Address = B.CreateIntToPtr(Address, Ptr);
+      auto *First = B.CreateLoad(Word, Address);
+      auto *Store = B.CreateStore(F->getArg(1), Address, true);
+      auto *Second = B.CreateLoad(Word, Address);
+      auto *Hint =
+          llvm::MDNode::get(C, llvm::ConstantAsMetadata::get(B.getInt32(1)));
+      const bool Volatile = Mode == 1 || Mode == 3;
+      const llvm::AtomicOrdering Ordering =
+          Mode == 2   ? llvm::AtomicOrdering::Acquire
+          : Mode == 3 ? llvm::AtomicOrdering::SequentiallyConsistent
+                      : llvm::AtomicOrdering::NotAtomic;
+      for (llvm::LoadInst *Load : {First, Second}) {
+        Load->setVolatile(Volatile);
+        Load->setAlignment(llvm::Align(Width / 8));
+        Load->setMetadata(llvm::LLVMContext::MD_nontemporal, Hint);
+        if (Ordering != llvm::AtomicOrdering::NotAtomic)
+          Load->setAtomic(Ordering, llvm::SyncScope::SingleThread);
+      }
+      llvm::Value *Xor = B.CreateXor(First, Second);
+      llvm::Value *And = B.CreateAnd(First, Second);
+      llvm::Value *Carry = B.CreateShl(And, llvm::ConstantInt::get(Word, 1));
+      auto *Return = B.CreateRet(B.CreateAdd(Xor, Carry));
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+
+      ASSERT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+      std::vector<llvm::Instruction *> Memory;
+      for (llvm::Instruction &I : llvm::instructions(*F))
+        if (llvm::isa<llvm::LoadInst, llvm::StoreInst>(I))
+          Memory.push_back(&I);
+      ASSERT_EQ(Memory,
+                (std::vector<llvm::Instruction *>{First, Store, Second}))
+          << printFunction(*F);
+      for (llvm::LoadInst *Load : {First, Second}) {
+        EXPECT_EQ(Load->getParent(), BB);
+        EXPECT_EQ(Load->getPointerOperand(), Address);
+        EXPECT_EQ(Load->isVolatile(), Volatile);
+        EXPECT_EQ(Load->getOrdering(), Ordering);
+        EXPECT_EQ(Load->getAlign(), llvm::Align(Width / 8));
+        EXPECT_EQ(Load->getMetadata(llvm::LLVMContext::MD_nontemporal), Hint);
+        if (Load->isAtomic())
+          EXPECT_EQ(Load->getSyncScopeID(), llvm::SyncScope::SingleThread);
+      }
+      auto *Sum =
+          llvm::dyn_cast<llvm::BinaryOperator>(Return->getReturnValue());
+      ASSERT_NE(Sum, nullptr) << printFunction(*F);
+      ASSERT_EQ(Sum->getOpcode(), llvm::Instruction::Add);
+      EXPECT_TRUE(
+          (Sum->getOperand(0) == First && Sum->getOperand(1) == Second) ||
+          (Sum->getOperand(0) == Second && Sum->getOperand(1) == First));
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+// Undef, poison, and freeze in a load address belong to the preserved access,
+// rather than to the integer expression being rebuilt. These deliberately
+// non-executable cases verify that simplifying the result keeps that exact
+// access and its original definedness conditions in the IR.
+TEST(SymSimplifyGuard, OpaqueLoadPreservesUndefPoisonAndFrozenAddresses) {
+  for (unsigned Width : {32u, 64u}) {
+    for (unsigned Mode = 0; Mode != 3; ++Mode) {
+      SCOPED_TRACE("width=" + std::to_string(Width) +
+                   ", mode=" + std::to_string(Mode));
+      llvm::LLVMContext C;
+      llvm::Module M("m", C);
+      auto *Word = llvm::IntegerType::get(C, Width);
+      auto *Ptr = llvm::PointerType::get(C, 0);
+      auto *FT = llvm::FunctionType::get(Word, {Ptr, Word}, false);
+      auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                       "retained_address", &M);
+      auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+      llvm::IRBuilder<> B(BB);
+      llvm::Value *Address = llvm::UndefValue::get(Ptr);
+      if (Mode != 0)
+        Address = llvm::PoisonValue::get(Ptr);
+      if (Mode == 2) {
+        Address = B.CreateNSWAdd(B.CreatePtrToInt(F->getArg(0), Word),
+                                 llvm::ConstantInt::get(Word, 8));
+        Address = B.CreateFreeze(B.CreateIntToPtr(Address, Ptr));
+      }
+      auto *Loaded = B.CreateLoad(Word, Address);
+      llvm::Value *Y = F->getArg(1);
+      llvm::Value *Xor = B.CreateXor(Loaded, Y);
+      llvm::Value *And = B.CreateAnd(Loaded, Y);
+      llvm::Value *Carry = B.CreateShl(And, llvm::ConstantInt::get(Word, 1));
+      auto *Return = B.CreateRet(B.CreateAdd(Xor, Carry));
+
+      ASSERT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+      std::vector<llvm::LoadInst *> Loads;
+      for (llvm::Instruction &I : llvm::instructions(*F))
+        if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&I))
+          Loads.push_back(Load);
+      ASSERT_EQ(Loads, (std::vector<llvm::LoadInst *>{Loaded}));
+      EXPECT_EQ(Loaded->getPointerOperand(), Address);
+      auto *Sum =
+          llvm::dyn_cast<llvm::BinaryOperator>(Return->getReturnValue());
+      ASSERT_NE(Sum, nullptr) << printFunction(*F);
+      ASSERT_EQ(Sum->getOpcode(), llvm::Instruction::Add);
+      EXPECT_TRUE((Sum->getOperand(0) == Loaded && Sum->getOperand(1) == Y) ||
+                  (Sum->getOperand(0) == Y && Sum->getOperand(1) == Loaded));
+      EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+    }
+  }
+}
+
+// The opaque-address boundary must not bypass annotations on the loaded
+// value itself. A range violation yields poison, so the total bitvector
+// simplifier must continue to decline the entire candidate.
+TEST(SymSimplifyGuard, OpaqueLoadStillChecksItsOwnPoisonGeneratingMetadata) {
+  for (unsigned Width : {32u, 64u}) {
+    SCOPED_TRACE(Width);
+    llvm::LLVMContext C;
+    llvm::Module M("m", C);
+    auto *Word = llvm::IntegerType::get(C, Width);
+    auto *Ptr = llvm::PointerType::get(C, 0);
+    auto *FT = llvm::FunctionType::get(Word, {Ptr, Word}, false);
+    auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                     "annotated_load", &M);
+    auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+    llvm::IRBuilder<> B(BB);
+    auto *Loaded = B.CreateLoad(Word, F->getArg(0));
+    Loaded->setMetadata(
+        llvm::LLVMContext::MD_range,
+        llvm::MDNode::get(
+            C,
+            {llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Word, 0)),
+             llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Word, 16))}));
+    ASSERT_TRUE(Loaded->hasPoisonGeneratingAnnotations());
+    llvm::Value *Y = F->getArg(1);
+    llvm::Value *Xor = B.CreateXor(Loaded, Y);
+    llvm::Value *And = B.CreateAnd(Loaded, Y);
+    llvm::Value *Carry = B.CreateShl(And, llvm::ConstantInt::get(Word, 1));
+    B.CreateRet(B.CreateAdd(Xor, Carry));
+
+    const std::string Before = printFunction(*F);
+    EXPECT_EQ(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+    EXPECT_EQ(printFunction(*F), Before);
+    EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  }
 }
 
 //===----------------------------------------------------------------------===//

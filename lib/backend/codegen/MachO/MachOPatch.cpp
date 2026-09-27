@@ -1457,6 +1457,12 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                                 const std::filesystem::path &OutputPath,
                                 llvm::Module &Mod, Arch TargetArch,
                                 const MachOPatchOptions &Opts) {
+  if (!isSingleInstructionMode(CachedMode)) {
+    llvm::WithColor::error()
+        << "macho_patch: rewriting requires a single instruction mode (got "
+        << getInstructionModeName(CachedMode) << ")\n";
+    return PatchResult{};
+  }
   if (!archMachOPatchSupported(TargetArch)) {
     llvm::WithColor::error()
         << "macho_patch: unsupported arch " << getArchName(TargetArch) << "\n";
