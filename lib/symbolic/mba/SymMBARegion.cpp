@@ -412,6 +412,52 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
     }
   }
+  if (Solved != E && !Budget.exhausted() &&
+      (Ctx.op(Solved) == SymOp::Add || Ctx.op(Solved) == SymOp::Mul) &&
+      readingCost(Ctx, Solved) < readingCost(Ctx, E) &&
+      !isMinimalVariableSum(Ctx, Solved, resolveLimits(Opts))) {
+    // A sum of scaled opaque inputs has no bitwise relation left to read.
+    // Canonical multiplication puts its one combined coefficient first.
+    auto unscaled = [&](SymRef R) {
+      return Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+                     Ctx.isConst(Ctx.operand(R, 0))
+                 ? Ctx.operand(R, 1)
+                 : R;
+    };
+    auto isBitwise = [&](SymRef R) {
+      SymOp Op = Ctx.op(unscaled(R));
+      return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
+             Op == SymOp::Not;
+    };
+    SymRef Body = unscaled(Solved);
+    bool HasRelation = isBitwise(Body);
+    if (!HasRelation && Ctx.op(Body) == SymOp::Add) {
+      for (SymRef Term : Ctx.operands(Body)) {
+        if (!Budget.consume())
+          break;
+        if (isBitwise(Term)) {
+          HasRelation = true;
+          break;
+        }
+      }
+    }
+    Rep.BudgetExhausted |= Budget.exhausted();
+    if (!HasRelation || Budget.exhausted())
+      return Solved;
+    // Restoring inputs can expose a new linear relation after the original
+    // reading. Give that result one more exact reading with the same budget;
+    // it is not in the deep walk's original postorder. Requiring a strict
+    // decrease keeps equal-cost spellings stable, even in growth mode.
+    SolveReport Restored;
+    SymRef Refined = solveRegion(Ctx, Solved, Opts, Budget, Restored);
+    Rep.BudgetExhausted |= Restored.BudgetExhausted;
+    if (readingCost(Ctx, Refined) < readingCost(Ctx, Solved)) {
+      Solved = Refined;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
+      Rep.Outcome = MBAOutcome::Rewritten;
+      Rep.Evidence = MBAEvidence::Derivation;
+    }
+  }
   return Solved;
 }
 
