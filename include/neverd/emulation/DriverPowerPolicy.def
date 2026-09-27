@@ -9,6 +9,7 @@ NEVERD_POWER_POLICY_ACTION(Active, "active")
 NEVERD_POWER_POLICY_ACTION(Wake, "wake")
 NEVERD_POWER_POLICY_ACTION(ComponentIdleState, "component_idle_state")
 NEVERD_POWER_POLICY_ACTION(PowerNotRequired, "power_not_required")
+NEVERD_POWER_POLICY_ACTION(UsbIdlePermission, "usb_idle_permission")
 #endif
 #ifdef NEVERD_POWER_POLICY_FIELD
 NEVERD_POWER_POLICY_FIELD(Events, "power_policy_events")

@@ -6,10 +6,13 @@
 //===----------------------------------------------------------------------===//
 #ifndef NEVERD_EMULATION_DRIVERPOWERPOLICY_H
 #define NEVERD_EMULATION_DRIVERPOWERPOLICY_H
+#include "neverd/emulation/DriverUsbIdle.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 namespace neverd::emulation {
 enum class DriverPowerPolicyAction {
 #define NEVERD_POWER_POLICY_ACTION(Name, Spelling) Name,
@@ -41,6 +44,7 @@ struct DriverPowerPolicyResult {
   uint64_t DeviceEpoch = 0;
   std::optional<uint32_t> Component;
   std::optional<uint32_t> State;
+  std::vector<DriverUsbIdleMemberResult> UsbIdleMembers;
 };
 inline constexpr size_t DriverPowerPolicyEventLimit = 1024;
 } // namespace neverd::emulation

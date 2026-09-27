@@ -439,6 +439,8 @@ KernelModel::finishGuestCall(GuestCallToken Token, uint64_t Result) {
     return finishDMACall(Token.ID, Result);
   case GuestCallOwner::PoFx:
     return finishPoFxCall(Token.ID);
+  case GuestCallOwner::UsbIdle:
+    return finishUsbIdleCallback(Token.ID);
   }
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "guest callback has an invalid owner");

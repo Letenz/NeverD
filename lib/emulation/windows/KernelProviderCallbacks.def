@@ -10,3 +10,4 @@
 //===----------------------------------------------------------------------===//
 
 NEVERD_PROVIDER_CALLBACK(CancelWaitWake, 2)
+NEVERD_PROVIDER_CALLBACK(CancelUsbIdle, 2)

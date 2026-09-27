@@ -32,6 +32,8 @@ llvm::Error validateDriverPowerOperation(const DriverPowerOperation &Operation,
 
 llvm::Error validateDriverD3Cold(const DriverPnpDevice &Device);
 
+llvm::Error validateDriverUsbIdle(llvm::ArrayRef<DriverPnpDevice> Devices);
+
 llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices);
 
 llvm::Error validateDriverInterrupts(llvm::ArrayRef<DriverPnpDevice> Devices);

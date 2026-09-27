@@ -29,6 +29,13 @@ namespace neverd::emulation {
 namespace {
 constexpr uint64_t KibibyteBytes = 1024;
 
+namespace usbField {
+#define NEVERD_DRIVER_USB_IDLE_FIELD(Name, Spelling)                           \
+  constexpr llvm::StringLiteral Name = Spelling;
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_FIELD
+} // namespace usbField
+
 namespace coldField {
 #define NEVERD_DRIVER_D3COLD_FIELD(Name, Spelling)                             \
   constexpr llvm::StringLiteral Name = Spelling;
@@ -967,12 +974,12 @@ pnpDevices(const llvm::json::Value &Value) {
       return invalid("each pnp_devices entry must be an object");
     if (auto E = fields(*Object,
                         {field::ID, field::ParentID, field::Bus,
-                         field::InitialDevicePower,
-                         field::InitialSystemPower,
+                         field::InitialDevicePower, field::InitialSystemPower,
                          field::InitialReportedDevicePower,
                          field::RequestedDevicePower, resourceField::Resources,
                          interruptField::Interrupts, dmaField::Dma,
-                         policyField::WakeCapabilities, coldField::D3Cold}))
+                         policyField::WakeCapabilities, coldField::D3Cold,
+                         usbField::UsbIdle}))
       return std::move(E);
     auto ID = Object->getString(field::ID);
     auto Bus = Object->getString(field::Bus);
@@ -1002,6 +1009,35 @@ pnpDevices(const llvm::json::Value &Value) {
         return invalid(
             "wake_capabilities requires explicit s0 and sx booleans");
       Device.WakeCapabilities = DriverWakeCapabilities{*S0, *Sx};
+    }
+
+    if (const auto *Usb = Object->get(usbField::UsbIdle)) {
+      const auto *Facts = Usb->getAsObject();
+      if (!Facts)
+        return invalid("usb_idle requires an object");
+      if (auto E = fields(*Facts, {usbField::Role, usbField::RemoteWake}))
+        return std::move(E);
+      auto Role = Facts->getString(usbField::Role);
+      if (!Role)
+        return invalid("usb_idle requires a role string");
+      DriverUsbIdleConfig Config;
+      bool Found = false;
+#define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling)                            \
+  if (*Role == Spelling) {                                                     \
+    Config.Role = DriverUsbIdleRole::Name;                                     \
+    Found = true;                                                              \
+  }
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_ROLE
+      if (!Found)
+        return invalid("unsupported usb_idle role");
+      if (const auto *Wake = Facts->get(usbField::RemoteWake)) {
+        auto Enabled = Wake->getAsBoolean();
+        if (!Enabled)
+          return invalid("usb_idle remote_wake requires a boolean");
+        Config.RemoteWake = *Enabled;
+      }
+      Device.UsbIdle = Config;
     }
 
     if (const auto *Cold = Object->get(coldField::D3Cold)) {
@@ -1792,6 +1828,49 @@ llvm::Error validateDriverD3Cold(const DriverPnpDevice &Device) {
   return llvm::Error::success();
 }
 
+llvm::Error validateDriverUsbIdle(llvm::ArrayRef<DriverPnpDevice> Devices) {
+  std::map<llvm::StringRef, const DriverPnpDevice *> ByID;
+  for (const auto &Device : Devices)
+    ByID.emplace(Device.ID, &Device);
+  for (const auto &Device : Devices) {
+    if (!Device.UsbIdle)
+      continue;
+    const auto &Usb = *Device.UsbIdle;
+    switch (Usb.Role) {
+#define NEVERD_DRIVER_USB_IDLE_ROLE(Name, Spelling)                            \
+  case DriverUsbIdleRole::Name:
+#include "neverd/emulation/DriverUsbIdle.def"
+#undef NEVERD_DRIVER_USB_IDLE_ROLE
+      break;
+    default:
+      return invalid("unsupported usb_idle role");
+    }
+    const DriverPnpDevice *Parent = nullptr;
+    if (Device.ParentID) {
+      const auto Found = ByID.find(*Device.ParentID);
+      if (Found != ByID.end())
+        Parent = Found->second;
+    }
+    const bool CompositeParent =
+        Parent && Parent->UsbIdle &&
+        Parent->UsbIdle->Role == DriverUsbIdleRole::CompositeParent;
+    if (Usb.Role == DriverUsbIdleRole::CompositeFunction && !CompositeParent)
+      return invalid("usb_idle composite_function requires an immediate "
+                     "composite_parent");
+    if (CompositeParent && Usb.Role != DriverUsbIdleRole::CompositeFunction)
+      return invalid("usb_idle children of a composite_parent require the "
+                     "composite_function role");
+    if (Usb.Role == DriverUsbIdleRole::CompositeParent && Usb.RemoteWake)
+      return invalid("usb_idle composite_parent cannot declare remote_wake");
+    if (Usb.RemoteWake &&
+        (!Device.WakeCapabilities ||
+         (!Device.WakeCapabilities->S0 && !Device.WakeCapabilities->Sx)))
+      return invalid("usb_idle remote_wake requires enabled "
+                     "wake_capabilities");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error validateDriverResources(llvm::ArrayRef<DriverPnpDevice> Devices) {
   if (auto E = validateDriverInterrupts(Devices))
     return E;
@@ -2015,6 +2094,8 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
   }
   if (auto E = validatePnpTopology(Options.PnpDevices))
     return E;
+  if (auto E = validateDriverUsbIdle(Options.PnpDevices))
+    return E;
   if (Options.Requests.size() > DriverScenarioRequestLimit)
     return invalid("at most 64 requests are permitted");
   for (const auto &Request : Options.Requests)
@@ -2042,6 +2123,24 @@ llvm::Error validateDriverScenario(const DriverOptions &Options) {
       if (!DeviceIDs.contains(Event.DeviceID) || Event.After100ns > INT64_MAX)
         return invalid(
             "power policy event requires a configured PDO and bounded time");
+      if (Event.Action == DriverPowerPolicyAction::UsbIdlePermission) {
+        const auto Device = std::find_if(
+            Options.PnpDevices.begin(), Options.PnpDevices.end(),
+            [&](const DriverPnpDevice &D) { return D.ID == Event.DeviceID; });
+        if (!Device->UsbIdle ||
+            Device->UsbIdle->Role == DriverUsbIdleRole::CompositeFunction)
+          return invalid("usb_idle_permission requires an independent "
+                         "function or composite parent");
+        if (Device->UsbIdle->Role == DriverUsbIdleRole::CompositeParent &&
+            std::none_of(Options.PnpDevices.begin(), Options.PnpDevices.end(),
+                         [&](const DriverPnpDevice &D) {
+                           return D.ParentID == Device->ID && D.UsbIdle &&
+                                  D.UsbIdle->Role ==
+                                      DriverUsbIdleRole::CompositeFunction;
+                         }))
+          return invalid("usb_idle_permission composite parent requires "
+                         "configured function children");
+      }
     }
 
     if (auto E = validateDriverUserMemory(Request))

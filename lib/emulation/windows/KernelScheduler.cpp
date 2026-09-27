@@ -298,6 +298,54 @@ llvm::Expected<uint64_t> KernelScheduler::enqueuePoFx(Callback Call) {
   return Workers.back().ID;
 }
 
+llvm::Error KernelScheduler::canEnqueueUsbIdleCallbacks(
+    llvm::ArrayRef<Callback> Calls) const {
+  if (auto E = validateTime())
+    return E;
+  std::set<uint64_t> Objects;
+  for (const auto &Call : Calls) {
+    if (auto E = validateCallback(Call))
+      return E;
+    if (Call.Arguments.size() != 1 || Call.SynchronizationObject)
+      return schedulerError("USB idle callback requires one context argument "
+                            "without a synchronization object");
+    const auto Matches = [&](const Invocation &Existing) {
+      return Existing.Kind == CallbackKind::UsbIdle &&
+             Existing.Object == Call.Object;
+    };
+    if (!Objects.insert(Call.Object).second ||
+        llvm::any_of(Workers, Matches) || (Active && Matches(*Active)) ||
+        llvm::any_of(Suspended,
+                     [&](const auto &Entry) { return Matches(Entry.second); }))
+      return schedulerError("USB idle callback is already outstanding");
+  }
+  return checkCapacity(Calls.size());
+}
+
+llvm::Expected<uint64_t> KernelScheduler::enqueueUsbIdleCallback(Callback Call) {
+  if (auto E = canEnqueueUsbIdleCallbacks({Call}))
+    return E;
+  Workers.push_back(makeInvocation(std::move(Call), CallbackKind::UsbIdle, Now));
+  return Workers.back().ID;
+}
+
+llvm::Error KernelScheduler::canWithdrawUsbIdleCallback(uint64_t ID) const {
+  if (llvm::none_of(Workers, [ID](const auto &Call) {
+        return Call.ID == ID && Call.Kind == CallbackKind::UsbIdle;
+      }))
+    return schedulerError("USB idle withdrawal requires its exact queued ID");
+  return llvm::Error::success();
+}
+
+llvm::Error KernelScheduler::withdrawUsbIdleCallback(uint64_t ID) {
+  if (auto E = canWithdrawUsbIdleCallback(ID))
+    return E;
+  Workers.erase(llvm::find_if(Workers, [ID](const auto &Call) {
+    return Call.ID == ID && Call.Kind == CallbackKind::UsbIdle;
+  }));
+  return llvm::Error::success();
+}
+
 llvm::Error KernelScheduler::canEnqueueWDMCancellations(
     llvm::ArrayRef<Callback> Batch) const {
   if (auto E = validateTime())

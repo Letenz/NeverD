@@ -27,7 +27,7 @@ llvm::Error pnpError(const llvm::Twine &Message) {
 } // namespace
 
 llvm::Expected<uint64_t>
-KernelModel::waitWakeStartEpoch(uint64_t PDO, bool AllowStarting) const {
+KernelModel::deviceStartEpoch(uint64_t PDO, bool AllowStarting) const {
   const auto *Provider = pnpDeviceForPDO(PDO);
   if (!Provider || !isProviderDevice(PDO))
     return pnpError("wait/wake requires a live provider");
@@ -293,6 +293,8 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
     auto &Observation = *Result.Requests[Request.ResultIndex].Power;
     Observation.DeviceStateAfter = State->DevicePower;
     Observation.SystemStateAfter = State->SystemPower;
+    if (auto E = observeUsbIdlePowerCompletion(Request.IRP, Status))
+      return E;
     if (Framework && Power.Type == DriverPowerType::Device &&
         !Request.DeviceRoute.empty() &&
         FrameworkDevices.count(Request.DeviceRoute.front()))

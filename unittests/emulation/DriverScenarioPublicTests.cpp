@@ -268,6 +268,30 @@ TEST_F(DriverScenarioPublic, CAPIAndCLIReportIndependentDriverAllocatedIRP) {
 #endif
 }
 
+TEST_F(DriverScenarioPublic, CAPIAndCLIRejectMalformedUsbFactsBeforeLoading) {
+  constexpr char Image[] = "missing-usb-public-preflight.sys";
+  for (const char *Usb :
+       {R"({"role":"hub"})", R"({"role":"composite_function"})",
+        R"({"role":"independent_function","remote_wake":true})",
+        R"({"role":"independent_function","remote_wake":0})"}) {
+    SCOPED_TRACE(Usb);
+    const std::string Scenario =
+        R"({"pnp_devices":[{"id":"port","bus":"resource_free",
+          "initial_device_power":"D0","initial_system_power":"working",
+          "usb_idle":)" +
+        std::string(Usb) + "}]}";
+    EXPECT_EQ(neverd_emulate_driver_scenario_json(Session, Image,
+                                                  Scenario.c_str(), nullptr),
+              nullptr);
+    EXPECT_NE(error().find("usb_idle"), std::string::npos);
+    EXPECT_FALSE(neverd_session_is_loaded(Session));
+    EXPECT_TRUE(runCLI(Scenario, 1, "success", Image).empty());
+    std::ifstream Errors(Directory / "error.txt");
+    const std::string Diagnostic(std::istreambuf_iterator<char>(Errors), {});
+    EXPECT_NE(Diagnostic.find("usb_idle"), std::string::npos);
+  }
+}
+
 TEST_F(DriverScenarioPublic,
        CAPIAndCLIRejectMalformedCancellationBeforeImageLoading) {
   for (

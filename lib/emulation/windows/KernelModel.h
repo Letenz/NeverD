@@ -23,6 +23,7 @@
 #include "KernelRegistry.h"
 #include "KernelRemoveLocks.h"
 #include "KernelScheduler.h"
+#include "KernelUsbIdle.h"
 
 #include "neverd/emulation/DriverSession.h"
 
@@ -179,6 +180,11 @@ public:
   llvm::Error activateStack(uint64_t Base, uint64_t Size);
   llvm::Error retireStack(uint64_t Base, uint64_t Size);
   void enterForeground() { CurrentIRQL = 0; }
+  GuestCallToken scheduledGuestCall(uint64_t ID) const {
+    const auto Found = ScheduledModelContinuations.find(ID);
+    return Found == ScheduledModelContinuations.end() ? GuestCallToken{}
+                                                      : Found->second;
+  }
   void enterExecution(uint64_t Identity, uint64_t ThreadKey = 0,
                       GuestCallToken Call = {}) {
     CurrentExecution = Identity;
@@ -306,8 +312,12 @@ private:
     uint64_t Epoch;
     uint64_t Handle;
   };
-  using PowerEventOwner =
-      std::variant<FrameworkPowerEvent, WdmWakeEvent, PoFxPowerEvent>;
+  struct UsbIdlePermissionEvent {
+    uint64_t Epoch;
+    std::vector<UsbIdleKey> Members;
+  };
+  using PowerEventOwner = std::variant<FrameworkPowerEvent, WdmWakeEvent,
+                                       PoFxPowerEvent, UsbIdlePermissionEvent>;
   struct PowerPolicyEvent {
     uint64_t PDO;
     size_t ResultIndex;
@@ -323,6 +333,28 @@ private:
     uint64_t CancelRoutine = 0;
   };
   std::map<uint64_t, ProviderWake> ProviderWakeIRPs;
+  KernelUsbIdle UsbIdle;
+  const DriverUsbIdleConfig *usbIdleConfig(uint64_t PDO) const;
+  llvm::Expected<UsbIdleSubmission>
+  planUsbIdleSubmission(uint64_t PDO, uint64_t IRP, uint64_t Info,
+                        uint64_t InputSize, uint64_t OutputSize,
+                        uint64_t Output) const;
+  llvm::Expected<uint64_t> receiveUsbIdle(uint64_t PDO, uint64_t IRP);
+  llvm::Expected<std::vector<UsbIdleKey>>
+  captureUsbIdlePermission(uint64_t PDO) const;
+  llvm::Error validateUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys) const;
+  llvm::Error queueUsbIdlePermission(llvm::ArrayRef<UsbIdleKey> Keys);
+  llvm::Error beginUsbIdleCallback(uint64_t Token);
+  llvm::Expected<std::optional<uint64_t>> finishUsbIdleCallback(uint64_t Token);
+  llvm::Expected<UsbIdleCompletionPlan>
+  preflightUsbIdleCompletion(UsbIdleKey Key, UsbIdleCompletionCause Cause,
+                             std::optional<bool> CancelOverride = {}) const;
+  llvm::Error completeUsbIdle(UsbIdleKey Key, UsbIdleCompletionCause Cause);
+  llvm::Expected<uint64_t>
+  cancelUsbIdle(const KernelExportRegistry::Export &Export,
+                llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Error observeUsbIdlePowerCompletion(uint64_t IRP, uint32_t Status);
+  llvm::Error validateUsbRemoteWake(uint64_t PDO) const;
   void configureFrameworkInterruptHost();
   void configureFrameworkLockHost();
   llvm::Expected<std::optional<uint32_t>>
@@ -633,8 +665,8 @@ private:
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
-  llvm::Expected<uint64_t> waitWakeStartEpoch(uint64_t PDO,
-                                              bool AllowStarting) const;
+  llvm::Expected<uint64_t> deviceStartEpoch(uint64_t PDO,
+                                            bool AllowStarting) const;
   llvm::Error validatePnpTopologyTransition(uint64_t PDO,
                                             DevicePnpRequest Minor) const;
   llvm::Error finishPnpRemoval(uint64_t PDO);
@@ -693,6 +725,7 @@ private:
     uint32_t DispatchSlot = 0;
     uint64_t CompletionDevice = 0;
     std::optional<uint64_t> InitialDispatchToken;
+    std::optional<uint32_t> ProviderDispatchReturn;
     std::optional<uint64_t> FreeCompletionToken;
     mutable std::array<bool, 16> IOStatusWritten{};
   };
@@ -782,7 +815,23 @@ private:
     uint32_t Slot = 0;
     bool AwaitingCallback = false;
     uint64_t ReturnValue = 0;
+    std::optional<uint64_t> ProviderReceiptIRP;
   };
+  struct ProviderReceipt {
+    uint64_t Device = 0;
+    uint64_t Deadline = 0;
+    std::vector<UsbIdleCompletionPlan> Idle;
+    size_t NextIdle = 0;
+    std::optional<uint64_t> ScheduledDispatchToken;
+  };
+  std::map<uint64_t, ProviderReceipt> ProviderReceipts;
+  llvm::Expected<std::vector<UsbIdleCompletionPlan>>
+  planUsbIdleReceipt(uint64_t PDO, uint64_t IRP) const;
+  llvm::Expected<std::optional<uint64_t>> continueProviderReceipt(uint64_t IRP);
+  llvm::Expected<uint64_t> completeProviderReceipt(uint64_t PDO, uint64_t IRP,
+                                                   uint64_t Deadline);
+  llvm::Expected<std::optional<uint64_t>>
+  finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue);
   uint64_t NextIRPCall = 1;
   std::map<uint64_t, IRPCall> IRPCalls;
   std::optional<KernelGuestCall> PendingWdmCall;

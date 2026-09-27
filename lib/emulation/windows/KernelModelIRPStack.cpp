@@ -177,6 +177,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   const bool WasForwarded = Request->Forwarded;
   const auto WasPending = Request->UnwoundPending[Slot];
   const bool FileBusReceived = Request->FileBusReceived;
+  const bool UsbReceived = Result.Requests[Request->ResultIndex].UsbIdle &&
+                           Result.Requests[Request->ResultIndex]
+                               .UsbIdle->BusReceivedAt100ns.has_value();
   const size_t ResultIndex = Request->ResultIndex;
   const auto &Observation = Result.Requests[ResultIndex];
   const auto Received = Observation.Pnp ? Observation.Pnp->BusReceivedAt100ns
@@ -193,8 +196,22 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   Request->UnwoundPending[Slot].reset();
   if (Provider) {
     auto Status = callProviderDriver(Device, IRP, Owner, SendTimeout);
-    if (Status)
+    if (Status) {
+      auto Allocation = DriverIRPs.find(IRP);
+      if (Allocation != DriverIRPs.end() &&
+          !Allocation->second.InitialDispatchToken &&
+          !requestForIRP(IRP)->DispatchReturned) {
+        if (*Status == StatusPending || requestForIRP(IRP)->Completed) {
+          if (auto E = recordDriverIRPDispatchReturn(IRP, uint32_t(*Status)))
+            return E;
+        } else {
+          // Synchronous provider completion can enter the allocating caller
+          // before this API returns. Keep its result until that real unwind.
+          Allocation->second.ProviderDispatchReturn = uint32_t(*Status);
+        }
+      }
       return Status;
+    }
     auto E = Status.takeError();
     auto *Retained = requestForIRP(IRP);
     const auto &Current = Result.Requests[ResultIndex];
@@ -205,7 +222,9 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
     // the call without accepting the packet, restore that cursor and its slot
     // metadata. Once a real receipt occurred, effects cannot be rolled back.
     if (Retained && !Retained->Completed && NowReceived == Received &&
-        Retained->FileBusReceived == FileBusReceived) {
+        Retained->FileBusReceived == FileBusReceived &&
+        bool(Current.UsbIdle && Current.UsbIdle->BusReceivedAt100ns) ==
+            UsbReceived) {
       E = llvm::joinErrors(
           std::move(E),
           Memory.writeInteger(IRP + IRPLocationOffset, *Cursor + 1, 1));
@@ -551,6 +570,27 @@ KernelModel::advanceIRPCompletion(uint64_t Token) {
 
 llvm::Expected<std::optional<uint64_t>>
 KernelModel::finishWdmGuestCall(uint64_t Token, uint64_t ResultValue) {
+  const auto Found = IRPCalls.find(Token);
+  const auto Parent = Found != IRPCalls.end() ? Found->second.ProviderReceiptIRP
+                                              : std::optional<uint64_t>{};
+  auto Returned = finishWdmGuestCallBody(Token, ResultValue);
+  if (!Returned || !*Returned || !Parent)
+    return Returned;
+  auto Continued = continueProviderReceipt(*Parent);
+  if (!Continued)
+    return Continued.takeError();
+  if (!*Continued && PendingWdmCall && Scheduler.active()) {
+    auto Scheduled = ScheduledModelContinuations.find(Scheduler.active()->ID);
+    if (Scheduled != ScheduledModelContinuations.end() &&
+        Scheduled->second.Owner == GuestCallOwner::WDM &&
+        Scheduled->second.ID == Token)
+      Scheduled->second = PendingWdmCall->Token;
+  }
+  return Continued;
+}
+
+llvm::Expected<std::optional<uint64_t>>
+KernelModel::finishWdmGuestCallBody(uint64_t Token, uint64_t ResultValue) {
   auto Call = IRPCalls.find(Token);
   if (Call == IRPCalls.end() || !Call->second.AwaitingCallback)
     return stackError("unknown or inactive guest continuation");
