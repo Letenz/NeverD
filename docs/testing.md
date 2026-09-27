@@ -73,8 +73,9 @@ extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
-(ARM and Thumb ELF), and AArch64 (ELF/COFF/Mach-O), through both C backends. Repeated
-private-frame reloads must reduce to addition/subtraction and execute correctly
+(ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
+through both C backends. Repeated private-frame reloads must reduce to
+addition/subtraction and execute correctly
 for all byte pairs, word-boundary pairs and deterministic random words at both
 optimization levels. Clang AST checks inspect the complete spill functions for
 residual MBA operators, including temporary assignments, while distinguishing
