@@ -15,32 +15,31 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/NdTypes.h"
 #include "neverd/loader/BinaryImage.h"
-#include "neverd/support/Parallel.h"
 
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
+#include "llvm/DebugInfo/CodeView/CodeView.h"
 #include "llvm/DebugInfo/CodeView/GUID.h"
 #include "llvm/DebugInfo/CodeView/RecordSerialization.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/SymbolRecord.h"
-#include "llvm/DebugInfo/CodeView/CodeView.h"
-#include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/CodeView/TypeRecord.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbacks.h"
+#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/ISectionContribVisitor.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
-#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
-#include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/Native/PublicsStream.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
+#include "llvm/DebugInfo/PDB/Native/RawTypes.h"
 #include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
@@ -52,6 +51,10 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
+// Parallel.h includes the Windows SDK for worker stacks. Its IMAGE_SYM_*
+// macros must not precede LLVM's COFF declarations and inline definitions.
+#include "neverd/support/Parallel.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -61,8 +64,8 @@
 #include <map>
 #include <mutex>
 #include <optional>
-#include <thread>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <utility>
 
