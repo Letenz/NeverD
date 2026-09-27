@@ -273,7 +273,9 @@ thumb_call:
 .globl arm_leaf
 .type arm_leaf,%function
 arm_leaf:
-  add r0, r0, r1
+  eor r2, r0, r1
+  and r3, r0, r1
+  add r0, r2, r3, lsl #1
   bx lr
 .size arm_leaf, .-arm_leaf
 )";
@@ -354,11 +356,23 @@ arm_leaf:
                 std::string::npos)
           << Source;
     EXPECT_EQ(Source.find("/* unknown"), std::string::npos) << Source;
+    const auto LeafDecl =
+        Source.rfind("sub_" + llvm::utohexstr(ARMLeafVA) + "(");
+    ASSERT_NE(LeafDecl, std::string::npos) << Source;
+    const auto LeafOpen = Source.find('{', LeafDecl);
+    ASSERT_NE(LeafOpen, std::string::npos) << Source;
+    const auto LeafClose = Source.find('}', LeafOpen);
+    ASSERT_NE(LeafClose, std::string::npos) << Source;
+    const auto LeafBody = Source.substr(LeafOpen, LeafClose - LeafOpen);
+    EXPECT_NE(LeafBody.find('+'), std::string::npos) << LeafBody;
+    EXPECT_EQ(LeafBody.find('^'), std::string::npos) << LeafBody;
+    EXPECT_EQ(LeafBody.find('&'), std::string::npos) << LeafBody;
     {
       std::ofstream Append(CFile, std::ios::app);
       Append << "\nint main(void) { return sub_"
+             << llvm::utohexstr((*Wrapper)->Addr) << "(7, 5) == 12 && sub_"
              << llvm::utohexstr((*Wrapper)->Addr)
-             << "(7, 5) == 12 ? 0 : 1; }\n";
+             << "(0xffffffffu, 2) == 1 ? 0 : 1; }\n";
     }
     const auto Executable = tmpFile(LLVM ? "stripped-llvm" : "stripped-high");
     const auto Compiled = exec(
@@ -388,8 +402,9 @@ arm_leaf:
     {
       std::ofstream Append(CFile, std::ios::app);
       Append << "\nint main(void) { return sub_"
+             << llvm::utohexstr((*Wrapper)->Addr) << "(7, 5) == 12 && sub_"
              << llvm::utohexstr((*Wrapper)->Addr)
-             << "(7, 5) == 12 ? 0 : 1; }\n";
+             << "(0xffffffffu, 2) == 1 ? 0 : 1; }\n";
     }
     const auto Executable =
         tmpFile(LLVM ? "patched-stripped-llvm" : "patched-stripped-high");
@@ -428,7 +443,8 @@ arm_leaf:
     {
       std::ofstream Append(CFile, std::ios::app);
       Append << "\nint main(void) { return arm_wrapper(7, 5) == 12 && "
-                "thumb_leaf(7, 5) == 12 && arm_leaf(7, 5) == 12 "
+                "thumb_leaf(7, 5) == 12 && arm_leaf(7, 5) == 12 && "
+                "arm_wrapper(0xffffffffu, 2) == 1 "
                 "? 0 : 1; }\n";
     }
     for (const char *Optimization : {"-O0", "-O2"}) {
