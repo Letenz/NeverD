@@ -31,6 +31,18 @@ std::string functionBody(const std::string &Source, const std::string &Name) {
   return Source.substr(Begin, End - Begin);
 }
 
+std::string returnedExpression(const std::string &Body) {
+  const auto Return = Body.find("return ");
+  EXPECT_NE(Return, std::string::npos) << Body;
+  if (Return == std::string::npos)
+    return {};
+  const auto End = Body.find(';', Return);
+  EXPECT_NE(End, std::string::npos) << Body;
+  if (End == std::string::npos)
+    return {};
+  return Body.substr(Return + 7, End - Return - 7);
+}
+
 // An unsigned arithmetic oracle keeps the expected answers independent of
 // both decompilation paths and of the assembly's Boolean decomposition.
 const char *executionHarness() {
@@ -49,6 +61,12 @@ static uint64_t value32(uint64_t x, uint64_t y) {
 }
 static uint64_t value64(uint64_t x, uint64_t y) {
   return (uint64_t)mba_sub64(x, y);
+}
+static uint64_t spilled_add(uint64_t x, uint64_t y) {
+  return (uint64_t)mba_spilled_add(x, y);
+}
+static uint64_t spilled_sub(uint64_t x, uint64_t y) {
+  return (uint64_t)mba_spilled_sub(x, y);
 }
 static uint64_t disjunction8(uint64_t x, uint64_t y) {
   return (uint32_t)mba_or8(x, y);
@@ -81,6 +99,14 @@ static uint64_t even_parity(uint64_t value) {
   return (ones & 1) == 0;
 }
 static int check_pair(uint64_t x, uint64_t y) {
+  uint64_t actual_sum = spilled_add(x, y);
+  uint64_t actual_difference = spilled_sub(x, y);
+  if (actual_sum != x + y || actual_difference != x - y) {
+    fprintf(stderr, "spilled MBA mismatch x=%" PRIx64 " y=%" PRIx64
+                    " sum=%" PRIx64 " difference=%" PRIx64 "\n",
+            x, y, actual_sum, actual_difference);
+    return 1;
+  }
   static uint64_t (*const values[])(uint64_t, uint64_t) = {
     value8, value16, value32, value64
   };
@@ -216,6 +242,26 @@ TEST_P(MBASourceTest, RemovesModularMBAAndPreservesExecutableBehavior) {
   EXPECT_LE(std::count(Store.begin(), Store.end(), '+'), 1) << Store;
   EXPECT_EQ(Store.find("128"), std::string::npos) << Store;
   EXPECT_FALSE(functionBody(Source, "mba_full_product8").empty());
+
+  const auto SpilledAdd =
+      returnedExpression(functionBody(Source, "mba_spilled_add"));
+  for (char Operator : {'^', '&', '|', '~'})
+    EXPECT_EQ(SpilledAdd.find(Operator), std::string::npos) << SpilledAdd;
+  EXPECT_EQ(SpilledAdd.find("<<"), std::string::npos) << SpilledAdd;
+  EXPECT_EQ(SpilledAdd.find(">>"), std::string::npos) << SpilledAdd;
+  EXPECT_EQ(std::count(SpilledAdd.begin(), SpilledAdd.end(), '+'), 1)
+      << SpilledAdd;
+  EXPECT_EQ(SpilledAdd.find('-'), std::string::npos) << SpilledAdd;
+
+  const auto SpilledSub =
+      returnedExpression(functionBody(Source, "mba_spilled_sub"));
+  for (char Operator : {'^', '&', '|', '~'})
+    EXPECT_EQ(SpilledSub.find(Operator), std::string::npos) << SpilledSub;
+  EXPECT_EQ(SpilledSub.find("<<"), std::string::npos) << SpilledSub;
+  EXPECT_EQ(SpilledSub.find(">>"), std::string::npos) << SpilledSub;
+  EXPECT_EQ(std::count(SpilledSub.begin(), SpilledSub.end(), '-'), 1)
+      << SpilledSub;
+  EXPECT_EQ(SpilledSub.find('+'), std::string::npos) << SpilledSub;
 
   // This scalar-only fixture needs no SIMD declarations. LLVMC's blanket
   // x86 header otherwise prevents recompiling the source on non-x86 hosts.

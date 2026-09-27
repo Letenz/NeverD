@@ -720,3 +720,7 @@ offline으로 유지하면서 `RPC activation audit`를 가능하게 합니다.
 ## 모바일 Swift String ABI 증거
 
 수동 워크플로 `Mobile Swift String ABI Evidence`는 Xcode 26.5로 arm64 iOS 기기와 시뮬레이터용 고정 Swift 동등성·순서 비교 프로브와 C `swiftcall` 프로브를 컴파일합니다. `collect_mobile_swift_string_abi.py`는 소스, LLVM IR, 어셈블리, 컴파일러 식별 정보, SDK 설정 및 `libswiftCore.tbd`를 해시와 함께 보관합니다. 두 언어 모두 정확한 비교 임포트가 인수 5개를 받아 `i1`을 반환해야 하며, C는 그 결과를 명시적으로 1바이트로 확장해야 합니다. 잘못된 대상이나 시그니처, 명령 실패 및 시간 초과는 부분 증거를 남기고 수집을 실패로 처리합니다. 이 증거는 런타임 선언을 등록하거나 메서드 복원을 입증하지 않습니다. SDK 없이 `python3 -m unittest scripts.tests.test_mobile_swift_string_abi`로 수집기를 테스트할 수 있습니다.
+
+## 모듈식 MBA 단순화
+
+`SymReadability.*`는 뺄셈과 보수 표기, 결합 연산 비용, 1비트 및 넓은 리터럴, 공유 트리 포화, 예산 제한 후보 선택, 표본 검증을 끈 상태의 3비트 완전 동치성을 검사합니다. `SymMBASample.*`는 모든 연산자, 결정적 대입, 사용하지 않는 넓은 입력에 대해 좁은 값과 임의 정밀도 검증을 AP 평가기와 비교합니다. 점수 버전이 다를 때 후보 품질을 비교하려면 두 출력을 같은 척도로 다시 세어야 합니다. SDK의 버전별 크기 카운터는 진단용입니다.

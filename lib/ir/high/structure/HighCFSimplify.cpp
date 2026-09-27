@@ -1849,6 +1849,12 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
   const bool IsMega = Func.Body.size() > limits::kMaxStructuredHighStmts;
   const char *Detail = std::getenv("NEVERD_HIGHIR_DETAIL");
   const bool WantDetail = Detail && Detail[0] == '1' && Detail[1] == '\0';
+  size_t NestedStatements = 0;
+  if (Func.Body.size() > 512)
+    walkStmts(Func.Body, [&](const HighStmt &) { ++NestedStatements; });
+  // Every if/else pass revisits nested arms; cap optional folding before a
+  // shallow outer list multiplies work across thousands of descendants.
+  const bool TooNestedForIfElse = NestedStatements > 1536;
   auto Now = [] { return std::chrono::steady_clock::now(); };
   auto ElapsedMs = [](auto Start, auto End) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(End - Start)
@@ -1868,10 +1874,10 @@ void MedToHighConverter::simplifyControlFlow(HighFunc &Func,
     recoverSwitchStatements(Func);
 
   int IfElseMaxPasses =
-      IsMega ? 0
-             : (Med.Blocks.size() > limits::kMaxIfElseStructuringBlocks)
-                   ? limits::kIfElseLargeCfgPasses
-                   : limits::kIfElseStructuringPasses;
+      (IsMega || TooNestedForIfElse) ? 0
+      : (Med.Blocks.size() > limits::kMaxIfElseStructuringBlocks)
+          ? limits::kIfElseLargeCfgPasses
+          : limits::kIfElseStructuringPasses;
   auto TIfElse = Now();
   structureIfElse(Func, IfElseMaxPasses, &Med);
   auto TPost = Now();

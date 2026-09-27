@@ -660,3 +660,7 @@ deterministic 与 offline。
 ## 移动端 Swift String ABI 证据
 
 手动工作流 `Mobile Swift String ABI Evidence` 使用 Xcode 26.5，为 arm64 iOS 设备与模拟器编译固定的 Swift 相等、排序比较探针及 C `swiftcall` 探针。`collect_mobile_swift_string_abi.py` 保存源码、LLVM IR、汇编、编译器身份、SDK 设置与 `libswiftCore.tbd` 及其哈希。两种语言都必须显示精确比较导入采用五个参数并返回 `i1`；C 必须将该结果显式扩展为一字节。目标或签名不符、命令失败及超时均保留部分证据并令采集失败。这些编译器证据不会安装运行时声明，也不证明方法已恢复。可在无 SDK 环境运行 `python3 -m unittest scripts.tests.test_mobile_swift_string_abi` 验证采集器。
+
+## 模块化 MBA 简化
+
+`SymReadability.*` 覆盖减法与补码的打印形式、结合律运算的代价、单比特和宽字面量、共享树大小饱和、有预算的候选选择，以及关闭采样时三比特的穷举等价性。`SymMBASample.*` 将窄值和任意精度验证与 AP 求值器比较，覆盖全部运算符、确定性赋值和未使用的宽输入。比较不同评分版本的候选质量时，必须用同一指标重算两边输出；SDK 随版本变化的大小计数仅供诊断。

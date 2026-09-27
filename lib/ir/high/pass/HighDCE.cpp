@@ -645,6 +645,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 15: semantic simplify ("
                           << Func.Name << ", " << Func.Body.size()
                           << " stmts)\n");
+  forwardPrivateFrameLoads(Func, TargetArch);
   simplifyExprSemantics(Func.Body);
   breakStmtCycles(Func.Body);
   eliminateDeadConditions(Func.Body, referencedStatementEntries(Func.Body));

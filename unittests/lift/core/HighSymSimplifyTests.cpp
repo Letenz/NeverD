@@ -145,6 +145,21 @@ TEST(HighSymSimplify, RecoversAdditionFromItsBitwiseRewriting) {
   EXPECT_NE(Expr.find('+'), std::string::npos) << Expr;
 }
 
+TEST(HighSymSimplify, RecoversAdditionFromAConstantLeftShift) {
+  FunctionBuilder B;
+  MedVar X = B.param(0, 0x38);
+  MedVar Y = B.param(1, 0x30);
+  MedVar Xor = B.emit(NdOp::INT_XOR, {X, Y});
+  MedVar And = B.emit(NdOp::INT_AND, {X, Y});
+  MedVar Scaled = B.emit(NdOp::INT_LEFT, {And, FunctionBuilder::constant(1)});
+
+  const std::string Expr = returnedExpr(B.finish(NdOp::INT_ADD, {Xor, Scaled}));
+  EXPECT_EQ(Expr.find('^'), std::string::npos) << Expr;
+  EXPECT_EQ(Expr.find('&'), std::string::npos) << Expr;
+  EXPECT_EQ(Expr.find("<<"), std::string::npos) << Expr;
+  EXPECT_NE(Expr.find('+'), std::string::npos) << Expr;
+}
+
 TEST(HighSymSimplify, ReachesTheSmallestNontrivialIdentity) {
   // Four DAG nodes: x, ~x, 1 and the addition.  A size gate above four would
   // silently leave this supported identity out of the production HighIR path.
