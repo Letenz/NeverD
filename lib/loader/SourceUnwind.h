@@ -24,7 +24,7 @@ inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
     // the presence of a language annotation alone does not imply a handler.
     if (ObjC.Runtime != ObjCRuntimeKind::AppleNonFragile ||
         ObjC.UsesFragileSetjmp || ObjC.UsesMSVCTables ||
-        !ObjC.LandingPads.empty() || ObjC.RuntimeCalls.empty())
+        !ObjC.LandingPads.empty())
       return false;
     for (const auto &Call : ObjC.RuntimeCalls)
       if (Call.Kind != ObjCRuntimeCallKind::SyncEnter &&

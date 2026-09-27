@@ -317,6 +317,8 @@ TEST(ObjCSourceProjection, OrdinaryDarwinUnwindDoesNotImplyExceptionCode) {
     else
       Metadata.Dwarf.emplace();
     EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+    Metadata.ObjC.emplace();
+    EXPECT_TRUE(P.limitation().empty()) << P.limitation();
   }
 }
 
@@ -374,7 +376,14 @@ TEST(ObjCSourceProjection,
        [](auto &M) { M.PersonalityName = "__objc_personality_v0"; }},
       {"handler data", [](auto &M) { M.HandlerDataVA = 0x2000; }},
       {"language table", [](auto &M) { M.Itanium.emplace(); }},
-      {"objc dispatch", [](auto &M) { M.ObjC.emplace(); }},
+      {"objc dispatch",
+       [](auto &M) { M.ObjC.emplace().LandingPads.emplace_back(); }},
+      {"objc runtime throw",
+       [](auto &M) {
+         M.ObjC.emplace().RuntimeCalls.push_back(
+             {0x1010, 0x2000, "objc_exception_throw",
+              ObjCRuntimeCallKind::Throw});
+       }},
       {"compact personality",
        [](auto &M) { M.Compact->PersonalityVA = 0x2000; }},
       {"compact LSDA flag", [](auto &M) { M.Compact->HasLSDA = true; }},
