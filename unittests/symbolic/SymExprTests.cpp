@@ -247,6 +247,156 @@ TEST(SymExpr, StructuralOperatorsCollapseWhereTheyCan) {
       16u);
 }
 
+TEST(SymExpr, LowPrefixProjectsModularArithmeticAndBitwiseOperations) {
+  for (uint32_t Width : {1u, 3u, 8u, 16u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    SymRef Y = Ctx.mkVar("y", Width);
+    SymRef WideX = Ctx.mkZExt(X, Width * 2);
+    SymRef WideY = Ctx.mkSExt(Y, Width * 2);
+    auto Low = [&](SymRef R) { return Ctx.mkExtract(R, 0, Width); };
+    EXPECT_EQ(Low(Ctx.mkAdd(WideX, WideY)), Ctx.mkAdd(X, Y));
+    EXPECT_EQ(Low(Ctx.mkSub(WideX, WideY)), Ctx.mkSub(X, Y));
+    EXPECT_EQ(Low(Ctx.mkMul(WideX, WideY)), Ctx.mkMul(X, Y));
+    EXPECT_EQ(Low(Ctx.mkAnd(WideX, WideY)), Ctx.mkAnd(X, Y));
+    EXPECT_EQ(Low(Ctx.mkOr(WideX, WideY)), Ctx.mkOr(X, Y));
+    EXPECT_EQ(Low(Ctx.mkXor(WideX, WideY)), Ctx.mkXor(X, Y));
+    EXPECT_EQ(Low(Ctx.mkNot(WideX)), Ctx.mkNot(X));
+
+    // Widening an unsigned all-ones word does not make it wide -1. Its low
+    // product nevertheless implements modular negation at the original width.
+    SymRef Coefficient =
+        Ctx.mkConst(llvm::APInt::getAllOnes(Width).zext(Width * 2));
+    EXPECT_EQ(Low(Ctx.mkMul(WideY, Coefficient)), Ctx.mkNeg(Y));
+  }
+}
+
+TEST(SymExpr, ProjectedWordOperationsAgreeForEverySmallInputIncludingHighBits) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 4);
+  SymRef Y = Ctx.mkVar("y", 4);
+  const SymRef Wide[] = {Ctx.mkAdd(X, Y), Ctx.mkSub(X, Y), Ctx.mkMul(X, Y),
+                         Ctx.mkAnd(X, Y), Ctx.mkOr(X, Y),  Ctx.mkXor(X, Y),
+                         Ctx.mkNot(X)};
+  for (unsigned Width : {1u, 2u, 3u}) {
+    uint64_t Mask = (1u << Width) - 1;
+    for (unsigned A = 0; A != 16; ++A) {
+      for (unsigned B = 0; B != 16; ++B) {
+        const uint64_t Expected[] = {A + B, uint64_t(A) - B, A * B,       A & B,
+                                     A | B, A ^ B,           ~uint64_t(A)};
+        uint64_t Values[] = {A, B};
+        for (unsigned I = 0; I != std::size(Wide); ++I)
+          EXPECT_EQ(Ctx.evalU64(Ctx.mkExtract(Wide[I], 0, Width), Values),
+                    Expected[I] & Mask);
+      }
+    }
+  }
+}
+
+TEST(SymExpr, ProjectionRetainsExtensionWhenItsInputIsNarrowerThanTheResult) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 3);
+  SymRef Y = Ctx.mkVar("y", 4);
+  SymRef SX = Ctx.mkSExt(X, 8);
+  SymRef ZY = Ctx.mkZExt(Y, 8);
+  const SymRef Wide[] = {Ctx.mkAdd(SX, ZY), Ctx.mkSub(SX, ZY),
+                         Ctx.mkMul(SX, ZY), Ctx.mkAnd(SX, ZY),
+                         Ctx.mkOr(SX, ZY),  Ctx.mkXor(SX, ZY)};
+  for (unsigned A = 0; A != 8; ++A) {
+    for (unsigned B = 0; B != 16; ++B) {
+      const uint64_t SignedA = A < 4 ? A : uint64_t(A) - 8;
+      const uint64_t Expected[] = {SignedA + B, SignedA - B, SignedA * B,
+                                   SignedA & B, SignedA | B, SignedA ^ B};
+      uint64_t Values[] = {A, B};
+      for (unsigned I = 0; I != std::size(Wide); ++I)
+        EXPECT_EQ(Ctx.evalU64(Ctx.mkExtract(Wide[I], 0, 5), Values),
+                  Expected[I] & 31);
+    }
+  }
+}
+
+TEST(SymExpr, ProjectionPreservesHighProductsDivisionAndShiftAmounts) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8);
+  SymRef Y = Ctx.mkVar("y", 8);
+  SymRef Product = Ctx.mkMul(X, Y);
+  SymRef HighProduct = Ctx.mkExtract(Product, 4, 4);
+  EXPECT_EQ(Ctx.op(HighProduct), SymOp::Extract);
+  EXPECT_EQ(Ctx.operand(HighProduct, 0), Product);
+  uint64_t ProductValues[] = {15, 15};
+  EXPECT_EQ(Ctx.evalU64(HighProduct, ProductValues), 14u);
+
+  SymRef Division = Ctx.mkUDiv(X, Y);
+  SymRef LowDivision = Ctx.mkExtract(Division, 0, 4);
+  EXPECT_EQ(Ctx.op(LowDivision), SymOp::Extract);
+  uint64_t DivisionValues[] = {16, 3};
+  EXPECT_EQ(Ctx.evalU64(LowDivision, DivisionValues), 5u);
+
+  SymRef Shift = Ctx.mkShl(X, Y);
+  SymRef LowShift = Ctx.mkExtract(Shift, 0, 4);
+  EXPECT_EQ(Ctx.op(LowShift), SymOp::Extract);
+  uint64_t ShiftValues[] = {1, 16};
+  EXPECT_EQ(Ctx.evalU64(LowShift, ShiftValues), 0u);
+
+  SymRef Right = Ctx.mkExtract(Ctx.mkLShr(X, Y), 0, 4);
+  uint64_t RightValues[] = {16, 1};
+  EXPECT_EQ(Ctx.evalU64(Right, RightValues), 8u);
+}
+
+TEST(SymExpr, LowPrefixWalkHandlesDeepSharedWordExpressionsIteratively) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 16);
+  SymRef Y = Ctx.mkVar("y", 16);
+  SymRef Root = X;
+  uint64_t Expected = 173;
+  for (unsigned I = 0; I != 10000; ++I) {
+    Root = Ctx.mkXor(Ctx.mkAdd(Root, Y), Ctx.mkConst(16, 0x35));
+    Expected = ((Expected + 29) ^ 0x35) & 0xff;
+  }
+  SymRef Low = Ctx.mkExtract(Root, 0, 8);
+  EXPECT_EQ(Ctx.op(Low), SymOp::Xor);
+  uint64_t Values[] = {173, 29};
+  EXPECT_EQ(Ctx.evalU64(Low, Values), Expected);
+}
+
+TEST(SymExpr, ByteSlicesReassembleComputedWordsAfterLowPrefixProjection) {
+  for (uint32_t Width : {16u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    SymRef Y = Ctx.mkVar("y", Width);
+    const SymRef Words[] = {Ctx.mkAdd(X, Y), Ctx.mkSub(X, Y), Ctx.mkMul(X, Y),
+                            Ctx.mkAnd(X, Y), Ctx.mkOr(X, Y),  Ctx.mkXor(X, Y),
+                            Ctx.mkNot(X)};
+    for (SymRef Word : Words) {
+      llvm::SmallVector<SymRef, 32> Bytes;
+      for (uint32_t Low = Width; Low != 0; Low -= 8)
+        Bytes.push_back(Ctx.mkExtract(Word, Low - 8, 8));
+      EXPECT_EQ(Ctx.mkConcat(Bytes), Word);
+      SymRef Prefix = Bytes.back();
+      for (uint32_t Low = 8; Low < Width; Low += 8) {
+        Prefix = Ctx.mkConcat(Ctx.mkExtract(Word, Low, 8), Prefix);
+        EXPECT_EQ(Prefix, Ctx.mkExtract(Word, 0, Low + 8));
+      }
+      EXPECT_EQ(Prefix, Word);
+      for (uint32_t Split : {1u, Width / 2, Width - 1})
+        EXPECT_EQ(Ctx.mkConcat(Ctx.mkExtract(Word, Split, Width - Split),
+                               Ctx.mkExtract(Word, 0, Split)),
+                  Word);
+
+      // Only the actual low prefix may reconcile with the upper slices.
+      Bytes.back() = Ctx.mkXor(Bytes.back(), Ctx.mkOne(8));
+      SymRef Different = Ctx.mkConcat(Bytes);
+      EXPECT_NE(Different, Word);
+      llvm::APInt Values[] = {llvm::APInt(Width, 0x18f),
+                              llvm::APInt(Width, 0x175)};
+      EXPECT_EQ(Ctx.eval(Different, Values),
+                Ctx.eval(Word, Values) ^ llvm::APInt(Width, 1));
+    }
+  }
+}
+
 TEST(SymExpr, SelectFoldsToItsConditionWhenTheArmsAreTheTruthValues) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

@@ -21,6 +21,7 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/ConstantFolder.h"
 #include "llvm/IR/Constants.h"
@@ -114,9 +115,9 @@ bool hasIncompatibleSemantics(const llvm::Instruction &I,
 ///
 /// Ordinary translation visits every operand and rejects the whole candidate
 /// when it reaches undef, poison, or a poison-generating instruction.  A value
-/// with multiple uses deliberately stays opaque, though, so its operands would
-/// otherwise escape that check.  Follow the defining operand graph only to
-/// reject unsafe candidates; this never makes an opaque operation
+/// with a use outside the measured region stays opaque, though, so its operands
+/// would otherwise escape that check.  Follow the defining operand graph only
+/// to reject unsafe candidates; this never makes an opaque operation
 /// translatable.
 bool hasHiddenIncompatibleSemantics(const llvm::Instruction &Root,
                                     bool WithComparisons) {
@@ -271,7 +272,36 @@ sym::SymRef Translator::build(const llvm::Instruction &I) {
   llvm_unreachable("build called on an instruction with no operator tag");
 }
 
+void Translator::collectRegion(llvm::Value *Root) {
+  llvm::SmallVector<llvm::Value *, 64> Pending{Root};
+  while (!Pending.empty()) {
+    llvm::Value *V = Pending.pop_back_val();
+    if (!isTranslatable(V, CarryComparisons) || !Region.insert(V).second)
+      continue;
+    auto Ops = children(*llvm::cast<llvm::Instruction>(V));
+    Pending.append(Ops.begin(), Ops.end());
+  }
+
+  // An externally used instruction is an opaque boundary. Removing it can
+  // expose another external use of an operand, so close that boundary towards
+  // the leaves before translation and before computing instruction savings.
+  for (const llvm::Value *V : Region)
+    if (V != Root && llvm::any_of(V->users(), [&](const llvm::User *U) {
+          return !Region.contains(U);
+        }))
+      Pending.push_back(const_cast<llvm::Value *>(V));
+  while (!Pending.empty()) {
+    llvm::Value *V = Pending.pop_back_val();
+    if (!Region.erase(V))
+      continue;
+    for (llvm::Value *Operand : children(*llvm::cast<llvm::Instruction>(V)))
+      if (Operand != Root && Region.contains(Operand))
+        Pending.push_back(Operand);
+  }
+}
+
 sym::SymRef Translator::in(llvm::Value *Root) {
+  collectRegion(Root);
   struct WorkItem {
     llvm::Value *V;
     bool ChildrenReady;
@@ -300,7 +330,7 @@ sym::SymRef Translator::in(llvm::Value *Root) {
         I && hasIncompatibleSemantics(*I, CarryComparisons))
       return {};
 
-    if (!descend(V, V == Root)) {
+    if (!descend(V)) {
       if (const auto *I = llvm::dyn_cast<llvm::Instruction>(V);
           I && hasHiddenIncompatibleSemantics(*I, CarryComparisons))
         return {};

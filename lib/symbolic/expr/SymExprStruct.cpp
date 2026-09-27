@@ -20,6 +20,8 @@
 
 #include "neverd/symbolic/SymExpr.h"
 
+#include "llvm/ADT/DenseMap.h"
+
 #include <algorithm>
 #include <cassert>
 
@@ -48,6 +50,82 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
   if ((op(A) == SymOp::ZExt || op(A) == SymOp::SExt) && Low == 0 &&
       Width <= width(operand(A, 0)))
     return mkExtract(operand(A, 0), 0, Width);
+
+  // Projection to the low word is a homomorphism for modular arithmetic and
+  // bitwise operations. In particular, the low product of widened operands
+  // needs neither their high bits nor the high half of the multiplication.
+  // Other slices can observe carries from below; shifts and division can
+  // observe bits above the result window. Keep those boundaries intact.
+  auto Projects = [](SymOp Op) {
+    return Op == SymOp::Add || Op == SymOp::Mul || isBitwise(Op);
+  };
+  if (Low == 0 && Projects(op(A))) {
+    // A lifted expression can be deep and can share subexpressions. Project
+    // each node once, bottom-up, without recursion through the arithmetic DAG.
+    llvm::DenseMap<uint32_t, SymRef> Done;
+    llvm::SmallVector<std::pair<SymRef, bool>, 32> Work{{A, false}};
+    while (!Work.empty()) {
+      auto [Current, Expanded] = Work.pop_back_val();
+      if (Done.contains(Current.index()))
+        continue;
+      if (width(Current) == Width) {
+        Done[Current.index()] = Current;
+        continue;
+      }
+      const SymOp Op = op(Current);
+      const bool Widen = Op == SymOp::ZExt || Op == SymOp::SExt;
+      if (Widen && width(operand(Current, 0)) < Width) {
+        SymRef Inner = operand(Current, 0);
+        Done[Current.index()] =
+            Op == SymOp::ZExt ? mkZExt(Inner, Width) : mkSExt(Inner, Width);
+        continue;
+      }
+      if (!Projects(Op) && !Widen) {
+        Done[Current.index()] = mkExtract(Current, 0, Width);
+        continue;
+      }
+      if (!Expanded) {
+        Work.emplace_back(Current, true);
+        for (SymRef Child : operands(Current))
+          if (!Done.contains(Child.index()))
+            Work.emplace_back(Child, false);
+        continue;
+      }
+      // Copy handles before interning; builders can grow the operand arena.
+      llvm::SmallVector<SymRef, 8> Children;
+      for (SymRef Child : operands(Current))
+        Children.push_back(Done.lookup(Child.index()));
+      SymRef Result;
+      switch (Op) {
+      case SymOp::Add:
+        Result = mkAdd(Children);
+        break;
+      case SymOp::Mul:
+        Result = mkMul(Children);
+        break;
+      case SymOp::And:
+        Result = mkAnd(Children);
+        break;
+      case SymOp::Or:
+        Result = mkOr(Children);
+        break;
+      case SymOp::Xor:
+        Result = mkXor(Children);
+        break;
+      case SymOp::Not:
+        Result = mkNot(Children.front());
+        break;
+      case SymOp::ZExt:
+      case SymOp::SExt:
+        Result = Children.front();
+        break;
+      default:
+        llvm_unreachable("unexpected low-word projection operator");
+      }
+      Done[Current.index()] = Result;
+    }
+    return Done.lookup(A.index());
+  }
 
   // A slice of a concatenation is a slice of whichever parts it reaches.  This
   // is the companion to the merging mkConcat does, and the pair of them is
@@ -148,16 +226,12 @@ SymRef SymContext::mkConcat(llvm::ArrayRef<SymRef> Ops) {
         if (isWideningOf(UpperBase, LowerBase) &&
             LowerLow + LowerBits <= width(LowerBase))
           LowerBase = UpperBase;
-        else if ((op(UpperBase) == SymOp::ZExt ||
-                  op(UpperBase) == SymOp::SExt) &&
-                 UpperLow == LowerBits &&
-                 LowerBits <= width(operand(UpperBase, 0)) &&
-                 R == mkExtract(operand(UpperBase, 0), 0, LowerBits)) {
-          // mkExtract intentionally looks through the low end of a widening
-          // cast.  When that operand is itself a concatenation, the low slice
-          // may canonicalise all the way to one of its leaves.  Recognise that
-          // leaf as the missing low slice so splitting and rejoining the wide
-          // value still reconstructs the widening node exactly.
+        else if (UpperLow == LowerBits && LowerBits < width(UpperBase) &&
+                 R == mkExtract(UpperBase, 0, LowerBits)) {
+          // A low slice can canonicalize through an extension, concatenation,
+          // or modular operation. Recognize its projected form as the missing
+          // prefix so a byte-wise register write/read still restores the
+          // complete computed word, not a concatenation that hides its value.
           LowerBase = UpperBase;
           LowerLow = 0;
         } else if (isWideningOf(LowerBase, UpperBase) &&

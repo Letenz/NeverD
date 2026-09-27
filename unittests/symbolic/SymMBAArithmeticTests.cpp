@@ -155,3 +155,125 @@ TEST(SymMBAArithmetic, DerivedFormsAgreeAtEverySmallWidthAssignment) {
   }
 }
 } // namespace
+
+namespace {
+TEST(SymMBAArithmetic, SharesExactAffineInputsWithoutRequiringAnInverse) {
+  const std::pair<const char *, const char *> Cases[] = {
+      {"(x | 2*y) - 2*y", "x & ~(2*y)"},
+      {"(x | (6*y + 7)) - 6*y - 7", "x & ~(6*y + 7)"},
+      {"x + (-y | ~(x | y - 1))", "x - y"},
+      {"x - y | ~(y - x - 1 | y - 1)", "x - y"},
+      {"x | y | ((x | 2*y) - 2*y)", "x | y"},
+      {"(x + y) ^ (y + x)", "0"},
+      {"(6*x + 7) ^ ~(7 + 6*x)", "-1"}};
+  MBAOptions Opts;
+  Opts.VerifySamples = 0;
+  for (unsigned Width : {4u, 8u, 16u, 32u, 64u, 257u}) {
+    for (const auto &[Text, Expected] : Cases) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Text);
+      SymContext Ctx;
+      auto P = parseSymExpr(Ctx, Text, Width);
+      auto Q = parseSymExpr(Ctx, Expected, Width);
+      ASSERT_TRUE(P.ok());
+      ASSERT_TRUE(Q.ok());
+      auto R = simplifyMBADeep(Ctx, P.Root, Opts);
+      EXPECT_EQ(R.Expr, Q.Root) << Ctx.toString(R.Expr);
+      if (R.Changed)
+        EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+      if (Width != 4)
+        continue;
+      std::vector<uint64_t> Values(Ctx.numVars(), 0);
+      for (unsigned X = 0; X < 16; ++X)
+        for (unsigned Y = 0; Y < 16; ++Y) {
+          auto XV = Ctx.findVar("x");
+          auto YV = Ctx.findVar("y");
+          if (XV.has_value())
+            Values[*XV] = X;
+          if (YV.has_value())
+            Values[*YV] = Y;
+          EXPECT_EQ(Ctx.evalU64(R.Expr, Values), Ctx.evalU64(P.Root, Values));
+        }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, AffineAliasesKeepDistinctOffsetsAndNoninvertibleInputs) {
+  MBAOptions Opts;
+  Opts.VerifySamples = 0;
+  for (const char *Text :
+       {"2*x | 2*x + 1", "2*x ^ x", "-x | ~(y | x)", "(3*x + 7) ^ (3*x + 8)",
+        "x | ((x | 2*y) - y)", "x - y | ~(y - x - 2 | y - 1)"}) {
+    SymContext Ctx;
+    auto P = parseSymExpr(Ctx, Text, 4);
+    ASSERT_TRUE(P.ok());
+    auto R = simplifyMBADeep(Ctx, P.Root, Opts);
+    std::vector<uint64_t> Values(Ctx.numVars(), 0);
+    for (unsigned X = 0; X < 16; ++X)
+      for (unsigned Y = 0; Y < 16; ++Y) {
+        auto XV = Ctx.findVar("x");
+        auto YV = Ctx.findVar("y");
+        if (XV.has_value())
+          Values[*XV] = X;
+        if (YV.has_value())
+          Values[*YV] = Y;
+        ASSERT_EQ(Ctx.evalU64(R.Expr, Values), Ctx.evalU64(P.Root, Values))
+            << Text << " at " << X << ", " << Y;
+      }
+  }
+}
+
+TEST(SymMBAArithmetic, AbsorbsCompoundBooleanOperandsDuringConstruction) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 64);
+  SymRef Y = Ctx.mkVar("y", 64);
+  SymRef Z = Ctx.mkVar("z", 64);
+  SymRef P = Ctx.mkMul(Ctx.mkConst(64, 2), X);
+  EXPECT_EQ(Ctx.mkAnd(P, Ctx.mkOr(Y, P)), P);
+  EXPECT_EQ(Ctx.mkOr(P, Ctx.mkAnd(Y, P)), P);
+  EXPECT_EQ(Ctx.mkAnd({P, Z, Ctx.mkOr(Y, P)}), Ctx.mkAnd(P, Z));
+  EXPECT_EQ(Ctx.mkOr({P, Z, Ctx.mkAnd(Y, P)}), Ctx.mkOr(P, Z));
+  EXPECT_NE(Ctx.mkAnd(P, Ctx.mkOr(Y, X)), P);
+  EXPECT_NE(Ctx.mkOr(P, Ctx.mkAnd(Y, X)), P);
+}
+
+TEST(SymMBAArithmetic, RevisitedRegionsShareTheOriginalWorkBudget) {
+  SymContext Ctx;
+  auto P =
+      parseSymExpr(Ctx, "-(x | y) - (x & y) + ((x | 2*x) & ~(-1 - 2*x))", 64);
+  ASSERT_TRUE(P.ok());
+  auto Expected = parseSymExpr(Ctx, "x - y", 64);
+  ASSERT_TRUE(Expected.ok());
+  MBAOptions Opts;
+  Opts.VerifySamples = 0;
+  auto Complete = simplifyMBADeep(Ctx, P.Root, Opts);
+  EXPECT_EQ(Complete.Expr, Expected.Root) << Ctx.toString(Complete.Expr);
+  auto Again = simplifyMBADeep(Ctx, Complete.Expr, Opts);
+  EXPECT_EQ(Again.Expr, Complete.Expr);
+  ASSERT_GT(Complete.Work, 0u);
+  for (size_t Limit : {size_t(0), size_t(1), Complete.Work / 2}) {
+    Opts.MaxWork = Limit;
+    auto Limited = simplifyMBADeep(Ctx, P.Root, Opts);
+    EXPECT_LE(Limited.Work, Limit);
+    if (!Limited.Changed)
+      EXPECT_EQ(Limited.Outcome, MBAOutcome::BudgetExhausted);
+  }
+}
+TEST(SymMBAArithmetic, RecognizesComplementarySelfNegatingCoefficients) {
+  MBAOptions Opts;
+  Opts.VerifySamples = 0;
+  for (unsigned Width : {4u, 8u, 64u, 257u}) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    SymRef High = Ctx.mkConst(llvm::APInt::getOneBitSet(Width, Width - 1));
+    SymRef Scaled = Ctx.mkMul(High, X);
+    llvm::APInt Offset(Width, 3);
+    SymRef A = Ctx.mkAdd(Scaled, Ctx.mkConst(Offset));
+    SymRef B = Ctx.mkAdd(Scaled, Ctx.mkConst(~Offset));
+    auto R = simplifyMBADeep(Ctx, Ctx.mkXor(A, B), Opts);
+    EXPECT_EQ(R.Expr, Ctx.mkOnes(Width)) << Ctx.toString(R.Expr);
+    EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+  }
+}
+
+} // namespace

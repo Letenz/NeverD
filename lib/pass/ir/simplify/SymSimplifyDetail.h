@@ -78,9 +78,9 @@ public:
   explicit Translator(sym::SymContext &Ctx, bool CarryComparisons = false)
       : Ctx(Ctx), CarryComparisons(CarryComparisons) {}
 
-  /// Translate the tree rooted at \p Root, descending through single-use
-  /// integer operators and standing an opaque input in front of everything
-  /// else.
+  /// Translate the region rooted at \p Root, including shared integer
+  /// operators whose uses all belong to that region. Everything else stays
+  /// an opaque input.
   sym::SymRef in(llvm::Value *Root);
 
   /// Whether \p R still references every instruction that became an opaque
@@ -153,13 +153,12 @@ public:
   unsigned descendedInsts() const { return NumDescended; }
 
 private:
-  /// Descend into \p V as an operator rather than stopping at it.  The root is
-  /// always descended; anything below it only when it is a single-use integer
-  /// operator, so shared computation stays one opaque input.
-  bool descend(const llvm::Value *V, bool IsRoot) const {
-    return isTranslatable(V, CarryComparisons) &&
-           (IsRoot || llvm::cast<llvm::Instruction>(V)->hasOneUse());
-  }
+  /// Find the maximal integer-expression region whose internal instructions
+  /// have no uses outside it. Every descended instruction can then become dead
+  /// after replacing the root, including computation shared inside the region.
+  void collectRegion(llvm::Value *Root);
+
+  bool descend(const llvm::Value *V) const { return Region.contains(V); }
 
   /// The operands \p I is descended through.
   llvm::SmallVector<llvm::Value *, 2>
@@ -243,6 +242,7 @@ private:
   sym::SymContext &Ctx;
   bool CarryComparisons = false;
   llvm::DenseMap<const llvm::Value *, sym::SymRef> Memo;
+  llvm::DenseSet<const llvm::Value *> Region;
   /// Engine node index to the LLVM value it stands for, for the way back.
   llvm::DenseMap<uint32_t, llvm::Value *> Sources;
   /// Engine variables standing for instruction boundaries that must survive.

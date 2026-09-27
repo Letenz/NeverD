@@ -1358,6 +1358,16 @@ target_include_directories(NeverDNativePointerRelocationBoundaryTests PRIVATE
 
 add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
+add_neverd_unittest(NeverDMBASourceTests
+  core/MBASourceTests.cpp
+)
+target_compile_definitions(NeverDMBASourceTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)
+add_dependencies(NeverDMBASourceTests neverd)
+
 # These focused targets have the same NeverDIR-to-NeverDLift register-name
 # dependency as the native exception contract target above.  Rescan the exact
 # two archives on one-pass Unix linkers without changing other platforms.
