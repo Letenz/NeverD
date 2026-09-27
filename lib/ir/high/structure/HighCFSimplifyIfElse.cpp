@@ -290,7 +290,8 @@ void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med) {
 
 static bool bodyIsSkipGoto(const std::vector<HighStmt> &Body);
 static bool isValueAssign(const HighStmt &S, MedVar &Dest, ExprPtr &Val);
-static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body);
+static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body,
+                                         const std::set<va_t> &Targets);
 static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body);
 static void invertEmptyThenAssignCallNested(std::vector<HighStmt> &Body);
 static void invertExternalSkipGotoNested(std::vector<HighStmt> &Body);
@@ -490,7 +491,7 @@ static void invertSkipGotosGuarded(std::vector<HighStmt> &Body) {
 void invertSkipGotos(HighFunc &Func) {
   // Exception wrap builds try bodies after structureIfElse. Drop sibling
   // skip-gotos first; invert would nest the second skip into the first.
-  dropDuplicateSkipGotosNested(Func.Body);
+  dropDuplicateSkipGotosNested(Func.Body, gotoTargets(Func.Body));
   foldJoinValueGotoChainNested(Func.Body);
   // Empty `if (c) {} assign_call();` is often outside the EH wrap. Skip-goto
   // invert stays try-only.
@@ -3174,7 +3175,8 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
 static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                                 const MedFunc *Med);
 
-static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body) {
+static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body,
+                                   const std::set<va_t> &Targets) {
   bool Changed = false;
   for (int I = 0; I < static_cast<int>(Body.size()); ++I) {
     HighStmt &Stmt = Body[I];
@@ -3193,6 +3195,15 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body) {
     // the guards may still feed the fallthrough work after the second guard.
     if (exprHasObservableEffect(Stmt.Cond.get()) ||
         exprHasObservableEffect(Body[J].Cond.get()))
+      continue;
+    // Another goto may enter the erased prefix or the second guard; folding
+    // would leave that jump without a target.
+    bool Entered = false;
+    for (size_t K = static_cast<size_t>(I) + 1; K <= J && !Entered; ++K)
+      walkStmts(std::vector<HighStmt>{Body[K]}, [&](const HighStmt &N) {
+        Entered |= N.Addr && N.Addr != InvalidVA && Targets.count(N.Addr);
+      });
+    if (Entered)
       continue;
     bool PrefixSafe = true;
     for (size_t K = static_cast<size_t>(I) + 1; K < J; ++K) {
@@ -3238,17 +3249,18 @@ static bool dropDuplicateSkipGotos(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
-static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body) {
+static void dropDuplicateSkipGotosNested(std::vector<HighStmt> &Body,
+                                         const std::set<va_t> &Targets) {
   for (HighStmt &S : Body) {
-    dropDuplicateSkipGotosNested(S.Body);
-    dropDuplicateSkipGotosNested(S.ElseBody);
-    dropDuplicateSkipGotosNested(S.DefaultBody);
+    dropDuplicateSkipGotosNested(S.Body, Targets);
+    dropDuplicateSkipGotosNested(S.ElseBody, Targets);
+    dropDuplicateSkipGotosNested(S.DefaultBody, Targets);
     for (auto &C : S.Cases)
-      dropDuplicateSkipGotosNested(C.Body);
+      dropDuplicateSkipGotosNested(C.Body, Targets);
     for (auto &Clause : S.EHClauseBodies)
-      dropDuplicateSkipGotosNested(Clause);
+      dropDuplicateSkipGotosNested(Clause, Targets);
   }
-  dropDuplicateSkipGotos(Body);
+  dropDuplicateSkipGotos(Body, Targets);
 }
 
 static void foldJoinValueGotoChainNested(std::vector<HighStmt> &Body) {
@@ -3745,8 +3757,18 @@ static void structureIfElseNested(std::vector<HighStmt> &Stmts, int MaxPasses,
   structureIfElseList(Stmts, MaxPasses, Med);
 }
 
+namespace {
+/// Goto targets of the whole function being structured; nested statement
+/// lists can be entered by jumps from outside them.
+thread_local const std::set<va_t> *IfElseFunctionTargets = nullptr;
+} // namespace
+
 void structureIfElse(HighFunc &Func, int MaxPasses, const MedFunc *Med) {
+  const std::set<va_t> Targets = gotoTargets(Func.Body);
+  const std::set<va_t> *Saved = IfElseFunctionTargets;
+  IfElseFunctionTargets = &Targets;
   structureIfElseNested(Func.Body, MaxPasses, Med);
+  IfElseFunctionTargets = Saved;
 }
 
 static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
@@ -4698,7 +4720,13 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
       Changed = true;
     }
   }
-  dropDuplicateSkipGotos(Body);
+  {
+    std::set<va_t> Targets = gotoTargets(Body);
+    if (IfElseFunctionTargets)
+      Targets.insert(IfElseFunctionTargets->begin(),
+                     IfElseFunctionTargets->end());
+    dropDuplicateSkipGotos(Body, Targets);
+  }
   for (size_t I = 0; I < Body.size(); ++I) {
     HighStmt &S = Body[I];
     if ((S.Kind != StmtKind::If && S.Kind != StmtKind::IfElse) || !S.Cond)

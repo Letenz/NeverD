@@ -414,7 +414,19 @@ static bool followingHasObservableWork(const std::vector<HighStmt> &Stmts,
   return false;
 }
 
-static void eliminateDeadConditions(std::vector<HighStmt> &Stmts) {
+static void eliminateDeadConditions(std::vector<HighStmt> &Stmts,
+                                    const std::unordered_set<va_t> &Entries) {
+  // A removed test that a goto enters keeps its position as an empty block,
+  // as dead assignments do.
+  auto Anchor = [&](size_t I) {
+    const va_t Addr = Stmts[I].Addr;
+    if (!Addr || Addr == InvalidVA || !Entries.count(Addr))
+      return false;
+    Stmts[I] = HighStmt{};
+    Stmts[I].Kind = StmtKind::Block;
+    Stmts[I].Addr = Addr;
+    return true;
+  };
   for (size_t I = 0; I < Stmts.size();) {
     auto &S = Stmts[I];
     if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) &&
@@ -422,27 +434,32 @@ static void eliminateDeadConditions(std::vector<HighStmt> &Stmts) {
       // A skip-goto that lost its `goto` is `if (c) {} work;`. Erasing it
       // leaves `work` unconditional. invertSkipGotos still owns that shape.
       if (!followingHasObservableWork(Stmts, I)) {
+        if (Anchor(I)) {
+          ++I;
+          continue;
+        }
         Stmts.erase(Stmts.begin() + static_cast<long>(I));
         continue;
       }
     }
     if ((S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) && S.Cond &&
         S.Cond->Kind == ExprKind::Const && S.Cond->ConstVal == 0) {
-      if (S.Kind == StmtKind::IfElse && !S.ElseBody.empty()) {
-        auto ElseBody = std::move(S.ElseBody);
+      std::vector<HighStmt> ElseBody;
+      if (S.Kind == StmtKind::IfElse)
+        ElseBody = std::move(S.ElseBody);
+      if (Anchor(I))
+        ++I;
+      else
         Stmts.erase(Stmts.begin() + static_cast<long>(I));
-        Stmts.insert(Stmts.begin() + static_cast<long>(I), ElseBody.begin(),
-                     ElseBody.end());
-      } else {
-        Stmts.erase(Stmts.begin() + static_cast<long>(I));
-      }
+      Stmts.insert(Stmts.begin() + static_cast<long>(I), ElseBody.begin(),
+                   ElseBody.end());
       continue;
     }
-    eliminateDeadConditions(S.Body);
-    eliminateDeadConditions(S.ElseBody);
+    eliminateDeadConditions(S.Body, Entries);
+    eliminateDeadConditions(S.ElseBody, Entries);
     for (auto &C : S.Cases)
-      eliminateDeadConditions(C.Body);
-    eliminateDeadConditions(S.DefaultBody);
+      eliminateDeadConditions(C.Body, Entries);
+    eliminateDeadConditions(S.DefaultBody, Entries);
     ++I;
   }
 }
@@ -583,7 +600,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << ", " << Func.Body.size() << " stmts)\n");
   simplifyAllExprs(Func.Body);
 
-  eliminateDeadConditions(Func.Body);
+  eliminateDeadConditions(Func.Body, referencedStatementEntries(Func.Body));
 
   // A call argument equal to a stored value does not make the memory write
   // dead: the callee or a later load may still observe the frame slot.
@@ -630,7 +647,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << " stmts)\n");
   simplifyExprSemantics(Func.Body);
   breakStmtCycles(Func.Body);
-  eliminateDeadConditions(Func.Body);
+  eliminateDeadConditions(Func.Body, referencedStatementEntries(Func.Body));
 
   if (WantDetail) {
     const auto TEnd = Clock::now();
