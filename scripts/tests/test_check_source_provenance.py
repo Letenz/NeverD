@@ -391,6 +391,54 @@ class ReviewedRunnerHistoryTests(unittest.TestCase):
         self.assertIn("private-path", findings[0])
 
 
+class ReviewedFpremHistoryTests(unittest.TestCase):
+    PATH = "unittests/semantic/x86/X86_X87TranscendentalRTTests.cpp"
+    REMOVED = "4fa1b1f9b384a24335828131150b285667c2d7cc"
+    LINE = "// Adapted from Packmad's MIT-licensed fprem-anti-emulation, revision"
+
+    def test_reviewed_deletion_uses_the_full_commit(self) -> None:
+        patch = (
+            f"diff --git a/{self.PATH} b/{self.PATH}\n"
+            f"--- a/{self.PATH}\n+++ b/{self.PATH}\n@@ -168 +168 @@\n"
+            f"-{self.LINE}\n"
+            "+// Operand construction and status checks use the pinned source.\n"
+        )
+        with mock.patch.object(
+            provenance, "_git_output",
+            side_effect=[
+                self.REMOVED + "\n", self.REMOVED + " " + "0" * 40 + "\n",
+                self.PATH + "\0", patch,
+            ],
+        ):
+            self.assertEqual(provenance.scan_recent_history(1), [])
+
+    def test_only_the_reviewed_history_path_commit_and_line_are_exempt(self) -> None:
+        cases = (
+            (self.PATH, self.LINE, None),
+            (self.PATH, self.LINE, "0" * 40),
+            (self.PATH, self.LINE, self.REMOVED[:12]),
+            (self.PATH, self.LINE, self.REMOVED[:-1] + "0"),
+            ("unittests/semantic/x86/other.cpp", self.LINE, self.REMOVED),
+            (self.PATH, self.LINE + " extra text", self.REMOVED),
+            (self.PATH, self.LINE.replace("Packmad", "another author"),
+             self.REMOVED),
+        )
+        for path, line, commit in cases:
+            with self.subTest(path=path, line=line, commit=commit):
+                findings = provenance._scan_text(
+                    path, line, provenance.RULES, history_commit=commit)
+                self.assertEqual(len(findings), 1)
+                self.assertIn("provenance-phrase", findings[0])
+
+    def test_external_policy_is_not_overridden(self) -> None:
+        rule = ProvenanceScanTests.term_rule("provenance-phrase", "Packmad")
+        findings = provenance._scan_text(
+            self.PATH, self.LINE, (*provenance.RULES, rule),
+            history_commit=self.REMOVED)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("provenance-phrase", findings[0])
+
+
 class ProvenanceOfThisRepositoryTests(unittest.TestCase):
     @staticmethod
     def commit(root: Path, message: str) -> None:

@@ -5696,6 +5696,68 @@ TEST(ObjCSourceBindings, ImmutableSwiftSmallStringKeepsSharedAddress) {
   }
 }
 
+TEST(ObjCSourceBindings, AnonymousInlineSwiftStringPairsKeepSharedBytes) {
+  Fixture F;
+  constexpr va_t Address = 0x1040;
+  constexpr uint64_t Width = 64;
+  F.Image.MachOTwoLevelNamespace = true;
+  F.Image.ObjCSourceReferences.clear();
+  F.Image.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  F.Image.Sections[0].Flags = F.Image.Segments[0].Flags;
+  F.Image.Symbols.push_back({"_next_object", Address + Width, 0, false});
+  auto *Header = F.Image.Segments[0].Data.data() + Address - 0x1000 - 16;
+  llvm::support::endian::write64le(Header, 2);
+  llvm::support::endian::write64le(Header + 8, 4);
+  auto *Bytes = Header + 16;
+  for (unsigned Word = 0; Word < 4; ++Word) {
+    Bytes[Word * 16] = 'a' + Word;
+    Bytes[Word * 16 + 1] = 'b';
+    Bytes[Word * 16 + 15] = 0xe2;
+  }
+  F.Function.ReturnType = NdType::makeInt(8, false);
+  F.Function.Body[0].RetVal =
+      HighExpr::makeConst(Address, 8, ConstantAddressProvenance::DataAddress);
+
+  const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  EXPECT_EQ(Bound.LocalStorageExtents,
+            (std::map<va_t, uint64_t>{{Address, Width}}));
+  const auto Value = Bound.Function.Body[0].RetVal;
+  ASSERT_TRUE(Value->SourceCallHint);
+  EXPECT_EQ(Value->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeLocalStorageAddress);
+  EXPECT_TRUE(objcSourceCallBound(*Value, F.Image, {}));
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCLocalStorageHelpers(
+      F.Image, Bound.LocalStorageExtents, Helpers);
+  EXPECT_NE(Source.find("storage[64]"), std::string::npos);
+  EXPECT_NE(Source.find("[15] = 226"), std::string::npos);
+
+  for (unsigned Mutation = 0; Mutation < 7; ++Mutation) {
+    auto Changed = F.Image;
+    if (Mutation == 0)
+      Changed.Segments[0].Data[Address - 0x1000 + 15] = 0xf2;
+    if (Mutation == 1)
+      Changed.Symbols.push_back({"_inside", Address + 16, 0, false});
+    if (Mutation == 2)
+      Changed.Symbols.clear();
+    if (Mutation == 3)
+      Changed.DataPtrRelocSlots.insert(Address + 8);
+    if (Mutation == 4)
+      llvm::support::endian::write64le(
+          Changed.Segments[0].Data.data() + Address - 0x1000 - 8, 3);
+    if (Mutation == 5)
+      Changed.Sections[0].Flags = SegmentFlags::Readable;
+    if (Mutation == 6)
+      Changed.Exports.push_back({"_inside", 0, Address + 16});
+    EXPECT_FALSE(objcSourceCallBound(*Value, Changed, {})) << Mutation;
+    EXPECT_THROW(renderObjCLocalStorageHelpers(
+                     Changed, Bound.LocalStorageExtents, Helpers),
+                 std::runtime_error)
+        << Mutation;
+  }
+}
+
 TEST(ObjCSourceBindings, PointerAccessesKeepStorageAndValueProofsSeparate) {
   for (auto Architecture : {Arch::AArch64, Arch::X64})
     for (unsigned Shape = 0; Shape < 3; ++Shape)

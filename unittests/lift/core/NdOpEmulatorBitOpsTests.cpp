@@ -7,10 +7,112 @@
 #include "NdOpEmulatorTestsDetail.h"
 #include "gtest/gtest.h"
 
+#include <limits>
+
 namespace {
 
 using namespace neverd;
 using namespace neverd::ndop_emulator_test;
+
+std::vector<uint8_t> shiftedBytes(llvm::ArrayRef<uint8_t> Input, uint64_t Count,
+                                  NdOp Opcode, uint16_t OutputBytes) {
+  const uint64_t Bits = Input.size() * 8;
+  const bool Sign = (Input.back() & 0x80) != 0;
+  std::vector<uint8_t> Result(OutputBytes, 0);
+  for (uint64_t Bit = 0; Bit != Bits; ++Bit) {
+    bool Set = false;
+    if (Opcode == NdOp::INT_LEFT) {
+      if (Count <= Bit) {
+        const uint64_t Source = Bit - Count;
+        Set = (Input[Source / 8] >> (Source % 8)) & 1;
+      }
+    } else if (Count < Bits - Bit) {
+      const uint64_t Source = Bit + Count;
+      Set = (Input[Source / 8] >> (Source % 8)) & 1;
+    } else {
+      Set = Opcode == NdOp::INT_ASHR && Sign;
+    }
+    if (Set)
+      Result[Bit / 8] |= uint8_t(1u << (Bit % 8));
+  }
+  return Result;
+}
+
+TEST_F(NdOpEmulatorTest, IntegerShiftsUseOperandWidthWithoutMaskingTheCount) {
+  for (uint16_t Bytes : {uint16_t(1), uint16_t(2), uint16_t(4), uint16_t(8)}) {
+    const uint64_t Bits = uint64_t(Bytes) * 8;
+    for (NdOp Opcode : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+      for (uint64_t Count :
+           {uint64_t(0), uint64_t(1), Bits - 1, Bits, Bits + 1, uint64_t(64),
+            uint64_t(256), std::numeric_limits<uint64_t>::max()}) {
+        for (uint8_t Top : {uint8_t(0x71), uint8_t(0x91)}) {
+          for (uint16_t OutputBytes : {Bytes, uint16_t(8)}) {
+            SCOPED_TRACE(::testing::Message()
+                         << unsigned(Opcode) << ": " << Bits << " bits, "
+                         << Count << " positions, " << OutputBytes
+                         << " output bytes, " << unsigned(Top));
+            NdOpEmulator Emu(Img);
+            Emu.setStrictMode(true);
+            std::vector<uint8_t> Input(Bytes, 0x55);
+            Input.back() = Top;
+            Emu.setRegisterBytes(0x100, Input);
+            Emu.setRegister(0x200, Count);
+            LowOp Shift;
+            Shift.Opcode = Opcode;
+            Shift.Output = NdVar::reg(0x300, OutputBytes);
+            Shift.addInput(NdVar::reg(0x100, Bytes));
+            Shift.addInput(NdVar::reg(0x200, 8));
+            ASSERT_TRUE(Emu.step(Shift));
+            ASSERT_TRUE(Emu.getRegisterBytes(0x300).has_value());
+            EXPECT_EQ(*Emu.getRegisterBytes(0x300),
+                      shiftedBytes(Input, Count, Opcode, 8));
+            EXPECT_FALSE(Emu.skips().any());
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_F(NdOpEmulatorTest,
+       WideIntegerShiftsSaturateIncludingNonPowerOfTwoWidths) {
+  for (uint16_t Bytes : {uint16_t(12), uint16_t(16), uint16_t(32)}) {
+    const uint64_t Bits = uint64_t(Bytes) * 8;
+    for (NdOp Opcode : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+      for (uint64_t Count :
+           {uint64_t(0), uint64_t(1), uint64_t(32), Bits - 1, Bits, Bits + 1,
+            std::numeric_limits<uint64_t>::max()}) {
+        for (bool HighCountBit : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Opcode) << ": " << Bits << " bits, " << Count
+                       << " positions, high count bit " << HighCountBit);
+          NdOpEmulator Emu(Img);
+          Emu.setStrictMode(true);
+          std::vector<uint8_t> Input(Bytes, 0x55);
+          Input.back() = 0x91;
+          std::vector<uint8_t> Amount(Bytes, 0);
+          for (unsigned I = 0; I != 8; ++I)
+            Amount[I] = uint8_t(Count >> (I * 8));
+          if (HighCountBit)
+            Amount[8] = 1;
+          Emu.setRegisterBytes(0x100, Input);
+          Emu.setRegisterBytes(0x200, Amount);
+          LowOp Shift;
+          Shift.Opcode = Opcode;
+          Shift.Output = NdVar::reg(0x300, Bytes);
+          Shift.addInput(NdVar::reg(0x100, Bytes));
+          Shift.addInput(NdVar::reg(0x200, Bytes));
+          ASSERT_TRUE(Emu.step(Shift));
+          ASSERT_TRUE(Emu.getRegisterBytes(0x300).has_value());
+          EXPECT_EQ(
+              *Emu.getRegisterBytes(0x300),
+              shiftedBytes(Input, HighCountBit ? Bits : Count, Opcode, Bytes));
+          EXPECT_FALSE(Emu.skips().any());
+        }
+      }
+    }
+  }
+}
 
 TEST_F(NdOpEmulatorTest, PieceOp) {
   NdOpEmulator Emu(Img);

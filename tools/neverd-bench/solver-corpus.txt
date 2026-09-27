@@ -1,0 +1,13 @@
+# Each query compares the expressions at the requested word width.
+(x ^ y) + 2 * (x & y) ; x + y
+(x | y) - (x & y) ; x ^ y
+(x & y) * (x | y) + (x & ~y) * (~x & y) ; x * y
+((x ^ y) + 2 * (x & y)) & 255 ; (x + y) & 255
+(x >> 4) + ((x >> 2) >> 2) ; 2 * (x >> 4)
+ite(x < y, x + 1, y) ; ite(x < y, x + 1, y)
+rol(x, y) ; ror(x, -y)
+x / y ; x
+srem(x, y) ; x % y
+x + ((1 << y) & 16) ; x
+zext(x#8, 32) ; sext(x#8, 32)
+concat(extract(x, 4, 4), extract(x, 0, 4)) ; extract(x, 0, 8)

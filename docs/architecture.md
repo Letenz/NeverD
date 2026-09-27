@@ -1295,6 +1295,13 @@ AArch64 PE, ELF, and Mach-O images.
 
 ## Component map
 
+The optional Z3 backend remains inside `lib/solver`; `lib/symbolic` has no
+external solver dependency. It translates the expression DAG directly and
+caches nodes within a solver session. Permanent assertions and per-check
+assumptions remain separate. Expression synthesis selects its proof backend
+through the existing verifier boundary; inconclusive results never authorize a
+rewrite. See [bitvector proof backends](solver.md) for build and validation.
+
 Every component is a static archive created by `add_neverd_component_library`.
 The table lists important NeverD dependencies, not the common LLVM and Capstone
 libraries supplied by the CMake helper.

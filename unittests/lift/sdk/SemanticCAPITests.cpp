@@ -289,6 +289,65 @@ TEST(NeverDSemanticCAPI, SynthesisRewriteRequiresAnEquivalentProof) {
   neverd_synthesize_result_dispose(&Result);
 }
 
+TEST(NeverDSemanticCAPI, SynthesisBackendSelectionIsExplicitAndSizeBounded) {
+  EXPECT_EQ(neverd_solver_backend_available(NEVERD_SOLVER_BUILTIN), 1);
+  EXPECT_EQ(neverd_solver_backend_available(255), 0);
+#if INTPTR_MAX == INT64_MAX
+  static_assert(offsetof(neverd_synthesize_options, solver_backend) == 104);
+#endif
+  constexpr const char *Expression = "(x >> 4) + ((x >> 2) >> 2)";
+  neverd_synthesize_options Options = quickSynthesisOptions();
+  Options.solver_backend = 255;
+  Options.struct_size = offsetof(neverd_synthesize_options, solver_backend);
+  neverd_synthesize_result Result{};
+  Result.struct_size = sizeof(Result);
+  ASSERT_EQ(neverd_synthesize_expr(Expression, &Options, &Result), 0);
+  ASSERT_EQ(Result.ok, 1) << (Result.error ? Result.error : "");
+  EXPECT_EQ(Result.proof_status, NEVERD_PROOF_EQUIVALENT);
+  neverd_synthesize_result_dispose(&Result);
+
+  Options.struct_size = sizeof(Options);
+  ASSERT_EQ(neverd_synthesize_expr(Expression, &Options, &Result), 0);
+  EXPECT_EQ(Result.ok, 0);
+  EXPECT_EQ(Result.changed, 0);
+  EXPECT_STREQ(Result.error, "invalid solver backend");
+  neverd_synthesize_result_dispose(&Result);
+
+  Options.solver_backend = NEVERD_SOLVER_Z3;
+  Options.solver_timeout_ms = 1000;
+  ASSERT_EQ(neverd_synthesize_expr(Expression, &Options, &Result), 0);
+  if (neverd_solver_backend_available(NEVERD_SOLVER_Z3)) {
+    ASSERT_EQ(Result.ok, 1) << (Result.error ? Result.error : "");
+    EXPECT_EQ(Result.changed, 1);
+    EXPECT_EQ(Result.proof_status, NEVERD_PROOF_EQUIVALENT);
+    EXPECT_GT(Result.proof_queries, 0u);
+  } else {
+    EXPECT_EQ(Result.ok, 0);
+    EXPECT_EQ(Result.changed, 0);
+    EXPECT_STREQ(Result.error, "Z3 backend is not enabled in this build");
+  }
+  neverd_synthesize_result_dispose(&Result);
+}
+
+TEST(NeverDSemanticCAPI, SynthesisRejectsResourcesForTheWrongBackend) {
+  neverd_synthesize_options Options = quickSynthesisOptions();
+  Options.solver_timeout_ms = 1;
+  neverd_synthesize_result Result{};
+  Result.struct_size = sizeof(Result);
+  ASSERT_EQ(neverd_synthesize_expr("x + x", &Options, &Result), 0);
+  EXPECT_EQ(Result.ok, 0);
+  EXPECT_STREQ(Result.error, "solver_timeout_ms requires the Z3 backend");
+  neverd_synthesize_result_dispose(&Result);
+  if (neverd_solver_backend_available(NEVERD_SOLVER_Z3)) {
+    Options.solver_backend = NEVERD_SOLVER_Z3;
+    Options.solver_max_conflicts = 1;
+    ASSERT_EQ(neverd_synthesize_expr("x + x", &Options, &Result), 0);
+    EXPECT_EQ(Result.ok, 0);
+    EXPECT_STREQ(Result.error, "SAT work limits require the built-in backend");
+    neverd_synthesize_result_dispose(&Result);
+  }
+}
+
 TEST(NeverDSemanticCAPI, SolverUnknownAndSearchBudgetAreDistinct) {
   // The carry-save spelling reaches real SAT propagation when the candidate
   // is `x + y`; unlike a shift identity, it cannot be discharged before the

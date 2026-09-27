@@ -245,10 +245,20 @@ SymState::Bank &SymState::bankFor(const Location &Where) {
   // that is all this region has: what it holds is `*(base + n)` for the
   // displacements the code used, and nothing says what base is.
   Fresh.Name = ("ptr$" + llvm::Twine(Where.Base.index())).str();
+  if (UnseenRegions) {
+    auto &Unknowns = UnseenRegions->Values[Where.Base.index()];
+    if (!Unknowns)
+      Unknowns = std::make_shared<UnknownBytes>();
+    Fresh.Unknowns = Unknowns;
+  }
   return Regions.emplace(Where.Base.index(), std::move(Fresh)).first->second;
 }
 
 void SymState::forgetRegions(SymRef Except) {
+  // A write can affect a pointer region that has never been read.  Retain the
+  // new default memory epoch as well as forgetting materialised regions, or a
+  // later first read would reuse the entry value from an unaffected fork.
+  UnseenRegions = std::make_shared<UnknownRegions>();
   for (auto &Entry : Regions)
     if (!Except.isValid() || Entry.first != Except.index())
       forget(Entry.second);
@@ -341,7 +351,8 @@ bool SymState::holdsSameBytes(const Bank &A, const Bank &B) {
 }
 
 bool SymState::mergeIdentical(const SymState &Other) {
-  if (Order != Other.Order || MemoryClobbered != Other.MemoryClobbered)
+  if (Order != Other.Order || MemoryClobbered != Other.MemoryClobbered ||
+      UnseenRegions != Other.UnseenRegions)
     return false;
   if (!holdsSameBytes(Registers, Other.Registers) ||
       !holdsSameBytes(Temporaries, Other.Temporaries) ||

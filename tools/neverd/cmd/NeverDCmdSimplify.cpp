@@ -124,6 +124,9 @@ neverd_synthesize_options buildSynthesisOptions() {
   Options.solver_max_conflicts = SimplifySolverMaxConflicts;
   Options.solver_max_propagations = SimplifySolverMaxPropagations;
   Options.solver_max_watch_visits = SimplifySolverMaxWatchVisits;
+  Options.solver_backend =
+      SimplifySolver == "z3" ? NEVERD_SOLVER_Z3 : NEVERD_SOLVER_BUILTIN;
+  Options.solver_timeout_ms = SimplifySolverTimeoutMs;
   Options.exhaustive = SimplifyExhaustive ? 1 : 0;
   return Options;
 }
@@ -366,6 +369,10 @@ void printSummary(size_t Count, Tally &Totals) {
 } // namespace
 
 int runSimplify() {
+  if (SimplifySolver != "builtin" && SimplifySolver != "z3") {
+    WithColor::error() << "--solver must be builtin or z3\n";
+    return ExitInvalidInput;
+  }
   if (SimplifyWidth == 0) {
     WithColor::error() << "--width must be at least 1\n";
     return ExitInvalidInput;
@@ -400,7 +407,9 @@ int runSimplify() {
       SimplifyStochasticIterations.getNumOccurrences() != 0 ||
       SimplifySolverMaxConflicts.getNumOccurrences() != 0 ||
       SimplifySolverMaxPropagations.getNumOccurrences() != 0 ||
-      SimplifySolverMaxWatchVisits.getNumOccurrences() != 0;
+      SimplifySolverMaxWatchVisits.getNumOccurrences() != 0 ||
+      SimplifySolver.getNumOccurrences() != 0 ||
+      SimplifySolverTimeoutMs.getNumOccurrences() != 0;
   if (!SimplifySynthesize && HasSynthesisOnlyOption) {
     WithColor::error()
         << "synthesis grammar and solver options require --synthesize\n";

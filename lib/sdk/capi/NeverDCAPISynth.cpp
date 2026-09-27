@@ -98,6 +98,9 @@ struct SynthesisConfig {
   symbolic::SynthOptions Search;
   solver::SolverOptions Solver;
   symbolic::SymParseOptions Parse;
+  solver::ProofBackend Backend = solver::ProofBackend::BuiltIn;
+  uint32_t TimeoutMs = 1000;
+  std::string Error;
 };
 
 SynthesisConfig readOptions(const neverd_synthesize_options *In) {
@@ -153,6 +156,26 @@ SynthesisConfig readOptions(const neverd_synthesize_options *In) {
       In->solver_max_watch_visits)
     Config.Solver.Sat.MaxWatchVisits = In->solver_max_watch_visits;
 
+  if (reaches(Size, FIELD_END(neverd_synthesize_options, solver_backend))) {
+    if (In->solver_backend == NEVERD_SOLVER_Z3)
+      Config.Backend = solver::ProofBackend::Z3;
+    else if (In->solver_backend != NEVERD_SOLVER_BUILTIN)
+      Config.Error = "invalid solver backend";
+  }
+  if (reaches(Size, FIELD_END(neverd_synthesize_options, solver_timeout_ms)) &&
+      In->solver_timeout_ms) {
+    Config.TimeoutMs = In->solver_timeout_ms;
+    if (Config.Backend != solver::ProofBackend::Z3)
+      Config.Error = "solver_timeout_ms requires the Z3 backend";
+  }
+  if (Config.Backend == solver::ProofBackend::Z3) {
+    if (!solver::proofBackendAvailable(Config.Backend))
+      Config.Error = "Z3 backend is not enabled in this build";
+    else if (In->solver_max_conflicts || In->solver_max_propagations ||
+             In->solver_max_watch_visits)
+      Config.Error = "SAT work limits require the built-in backend";
+  }
+
   const bool Exhaustive =
       reaches(Size, FIELD_END(neverd_synthesize_options, exhaustive)) &&
       In->exhaustive != 0;
@@ -162,6 +185,7 @@ SynthesisConfig readOptions(const neverd_synthesize_options *In) {
     Config.Search.StochasticIterations = std::numeric_limits<size_t>::max();
     Config.Parse = symbolic::SymParseOptions::unlimited();
     Config.Solver = solver::SolverOptions::unlimited();
+    Config.TimeoutMs = 0;
   }
   return Config;
 }
@@ -265,6 +289,10 @@ struct SynthesisResult {
 SynthesisResult synthesizeExpression(const char *Expr,
                                      const SynthesisConfig &Config) {
   SynthesisResult Out;
+  if (!Config.Error.empty()) {
+    Out.Error = Config.Error;
+    return Out;
+  }
   if (!Expr) {
     Out.Error = "no expression given";
     return Out;
@@ -279,7 +307,8 @@ SynthesisResult synthesizeExpression(const char *Expr,
     return Out;
   }
 
-  solver::SymSynthVerifier Verifier(Config.Solver);
+  solver::SymSynthVerifier Verifier(Config.Solver, Config.Backend,
+                                    Config.TimeoutMs);
   symbolic::SynthResult Search = symbolic::synthesize(
       Ctx, Parsed.Root, Config.Search,
       [&](symbolic::SymContext &VerifyCtx, symbolic::SymRef Original,
@@ -353,6 +382,13 @@ void writeResult(const SynthesisResult &From, neverd_synthesize_result *To) {
 } // namespace
 
 extern "C" {
+
+int neverd_solver_backend_available(neverd_solver_backend_t Backend) {
+  if (Backend == NEVERD_SOLVER_BUILTIN)
+    return 1;
+  return Backend == NEVERD_SOLVER_Z3 &&
+         solver::proofBackendAvailable(solver::ProofBackend::Z3);
+}
 
 const char *neverd_proof_status_name(neverd_proof_status_t Status) {
   switch (Status) {
