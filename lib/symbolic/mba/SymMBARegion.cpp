@@ -51,6 +51,18 @@ struct Region {
   llvm::SmallVector<SymRef, 16> Atoms;
 };
 
+bool isMinimalUnaryVariable(const SymContext &Ctx, SymRef E) {
+  // These forms cost two: one free-variable leaf and one operation. A cheaper
+  // word expression is a literal or a free variable. Neither transform is
+  // constant or identical to its input, and another independent variable
+  // cannot replace it. Width-one negation has already folded to the variable.
+  if (Ctx.op(E) == SymOp::Not)
+    return Ctx.op(Ctx.operand(E, 0)) == SymOp::Var;
+  return Ctx.width(E) > 1 && Ctx.op(E) == SymOp::Mul &&
+         Ctx.numOperands(E) == 2 && Ctx.isConstOnes(Ctx.operand(E, 0)) &&
+         Ctx.op(Ctx.operand(E, 1)) == SymOp::Var;
+}
+
 bool isMinimalVariableSum(const SymContext &Ctx, SymRef E,
                           const SolverLimits &Limits) {
   if (Ctx.op(E) != SymOp::Add || Ctx.width(E) == 1)
@@ -430,7 +442,8 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   SolveReport ArithmeticRep;
   SymRef Arithmetic = solveArithmetic(Ctx, E, Opts, Budget, ArithmeticRep);
   if (Budget.exhausted() || Ctx.isConst(Arithmetic) ||
-      (Arithmetic != E && Ctx.op(Arithmetic) == SymOp::Var)) {
+      (Arithmetic != E && Ctx.op(Arithmetic) == SymOp::Var) ||
+      isMinimalUnaryVariable(Ctx, Arithmetic)) {
     Rep = ArithmeticRep;
     return Arithmetic;
   }

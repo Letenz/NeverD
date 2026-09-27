@@ -209,6 +209,55 @@ TEST(SymMBAAffineResidual, RejectsNearMissesAndKeepsEveryBudgetExact) {
   }
 }
 
+TEST(SymMBAAffineResidual, StopsAfterProvingAMinimalUnaryVariable) {
+  for (unsigned Width : {2u, 3u, 8u, 64u, 128u, 4096u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+    for (SymRef E : {Ctx.mkAdd(Ctx.mkMul(X, Y), Ctx.mkMul(X, Ctx.mkNot(Y))),
+                     Ctx.mkNeg(X), Ctx.mkNot(X)}) {
+      MBAOptions Options;
+      Options.VerifySamples = 0;
+      detail::WorkBudget ArithmeticBudget(Options.MaxWork);
+      detail::SolveReport ArithmeticReport;
+      SymRef Arithmetic = detail::solveArithmetic(
+          Ctx, E, Options, ArithmeticBudget, ArithmeticReport);
+      ASSERT_EQ(Ctx.readabilityCost(Arithmetic), 2u);
+      detail::WorkBudget RegionBudget(Options.MaxWork);
+      detail::SolveReport RegionReport;
+      SymRef Result =
+          detail::solveOneRegion(Ctx, E, Options, RegionBudget, RegionReport);
+      EXPECT_EQ(Result, Arithmetic);
+      // An exact minimal answer makes every later measurement redundant.
+      EXPECT_EQ(RegionBudget.used(), ArithmeticBudget.used());
+      EXPECT_EQ(RegionReport.Evidence, ArithmeticReport.Evidence);
+      if (Width <= 3)
+        expectAllPairsEqual(Ctx, E, Result, X, Y);
+    }
+  }
+}
+
+TEST(SymMBAAffineResidual, PreservesMinimalUnaryAnswersAcrossBudgets) {
+  for (unsigned Width : {1u, 2u, 3u}) {
+    for (size_t Limit : {size_t(0), size_t(1), size_t(16), size_t(64),
+                         size_t(256), size_t(4096)}) {
+      for (bool Deep : {false, true}) {
+        SymContext Ctx;
+        SymRef X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+        SymRef E = Ctx.mkAdd(Ctx.mkMul(X, Y), Ctx.mkMul(X, Ctx.mkNot(Y)));
+        MBAOptions Options;
+        Options.MaxWork = Limit;
+        Options.VerifySamples = 0;
+        auto Result = Deep ? simplifyMBADeep(Ctx, E, Options)
+                           : simplifyMBA(Ctx, E, Options);
+        EXPECT_LE(Result.Work, Limit);
+        EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+        expectAllPairsEqual(Ctx, E, Result.Expr, X, Y);
+      }
+    }
+  }
+}
+
 TEST(SymMBAAffineResidual, EnforcesArityWorkAndActualCostLimits) {
   for (unsigned Count : {1u, 2u, 3u, 4u}) {
     SymContext Ctx;
