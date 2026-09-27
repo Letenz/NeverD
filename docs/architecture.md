@@ -1334,15 +1334,28 @@ then instantiated with that abstraction's hidden-input mapping. The identity
 holds for arbitrary independent inputs, so restoring related sources cannot
 invalidate it even when canonical builders combine their coefficients.
 Independent summand groups are measured separately before a whole-region
-truth table is attempted. Add/Mul regions also have a bounded sparse
-polynomial reading over integers modulo the word width; other operations
-remain opaque, and the chosen spelling is re-expanded before acceptance.
+truth table is attempted. A nonzero constant may accompany one group in up
+to four bounded trials; each trial includes it exactly once and must reduce
+the cost of the complete restored expression. Add/Mul regions also have a
+bounded sparse polynomial reading over integers modulo the word width;
+other operations remain opaque, and the chosen spelling is re-expanded
+before acceptance.
+
 Hidden affine inputs may supply exact inverse relations when a coefficient
-is odd. Those substitutions apply only in arithmetic positions, preserving
-the independent bitwise inputs required by the coefficient proof. Shared
-linear tails reuse coefficient summaries; optional relation recovery spends
-the same work budget and also bounds its temporary storage. An incomplete
-recovery leaves the original abstraction intact.
+is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic
+multiple `d*T` with `q*P` only after checking `k*q = d` modulo the original
+word width; it never recovers `T` by dividing an even coefficient. Those
+substitutions apply only in arithmetic positions, preserving the independent
+bitwise inputs required by the coefficient proof. Shared linear tails reuse
+coefficient summaries; optional relation recovery spends the same work
+budget and also bounds its temporary storage. An incomplete recovery leaves
+the original abstraction intact.
+
+Restoring hidden inputs can expose a new bitwise relation outside the deep
+walk's original postorder. A strictly smaller restored Add/Mul result with
+a visible bitwise term gets at most one further region reading, using the
+same remaining budget. Only a strict cost decrease is retained; this does
+not introduce a recursive fixed-point search.
 
 Synthesis shares one candidate checker within a request. It remembers
 counterexamples and validation-grid mismatches for canonical candidates, but

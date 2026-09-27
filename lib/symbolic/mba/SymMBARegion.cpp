@@ -277,10 +277,18 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
 
   llvm::SmallVector<SymRef, 16> Parts;
+  llvm::SmallVector<size_t, 4> OffsetGroups;
+  const bool HasOffset = Constants.size() == 1 &&
+                         Ctx.isConst(Constants.front()) &&
+                         !Ctx.isConstZero(Constants.front());
   unsigned Widest = 0;
   bool AnySolved = false;
   for (const auto &Group : Groups) {
     llvm::ArrayRef<SymRef> GroupTerms = Group.second;
+    // A shared offset can expose a complement in one nontrivial region.
+    // Keep a fixed number of alternatives, not every partition of that offset.
+    if (HasOffset && GroupTerms.size() > 1 && OffsetGroups.size() < 4)
+      OffsetGroups.push_back(Parts.size());
     SymRef Part =
         GroupTerms.size() == 1 ? GroupTerms[0] : Ctx.mkAdd(GroupTerms);
     SolveReport PartRep;
@@ -292,13 +300,53 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     Parts.push_back(Solved);
   }
-  if (!AnySolved)
+  if (!AnySolved && OffsetGroups.empty())
     return E;
 
   Parts.append(Constants.begin(), Constants.end());
-  SymRef Rebuilt = Parts.size() == 1 ? Parts[0] : Ctx.mkAdd(Parts);
-  if (!Abstract->Hidden.empty())
-    Rebuilt = Ctx.substitute(Rebuilt, Abstract->Hidden);
+  auto restoreParts = [&]() {
+    SymRef R = Ctx.mkAdd(Parts);
+    return Abstract->Hidden.empty() ? R : Ctx.substitute(R, Abstract->Hidden);
+  };
+  SymRef Rebuilt = AnySolved ? restoreParts() : E;
+  if (!OffsetGroups.empty() && !Budget.exhausted()) {
+    const size_t InputCost = readingCost(Ctx, E);
+    size_t BestCost = readingCost(Ctx, Rebuilt);
+    const size_t RestoreWork = Ctx.dagSize(E);
+    // Bound the temporary sum edges separately from the solver's tables.
+    const bool Fits = Parts.size() <= Opts.MaxTableBytes / (2 * sizeof(SymRef));
+    if (!Fits)
+      Rep.BudgetExhausted = true;
+    for (size_t I : OffsetGroups) {
+      if (!Fits || Budget.exhausted())
+        break;
+      if (!Budget.consume(Parts.size()) || !Budget.consume(RestoreWork)) {
+        Rep.BudgetExhausted = true;
+        break;
+      }
+      SymRef Previous = Parts[I];
+      SymRef WithOffset = Ctx.mkAdd(Previous, Constants.front());
+      SolveReport OffsetRep;
+      SymRef Solved = solveRegion(Ctx, WithOffset, Opts, Budget, OffsetRep);
+      Rep.BudgetExhausted |= OffsetRep.BudgetExhausted;
+      if (Solved == WithOffset)
+        continue;
+
+      // The offset belongs to this group exactly once. Every other group
+      // keeps its independently proved value, including on later attempts.
+      Parts[I] = Solved;
+      Parts.pop_back();
+      SymRef Candidate = restoreParts();
+      Parts.push_back(Constants.front());
+      Parts[I] = Previous;
+      size_t Cost = readingCost(Ctx, Candidate);
+      if (Cost < InputCost && Cost < BestCost) {
+        Rebuilt = Candidate;
+        BestCost = Cost;
+        Widest = std::max(Widest, OffsetRep.NumAtoms);
+      }
+    }
+  }
   if (Rebuilt == E)
     return E;
 
@@ -362,6 +410,52 @@ SymRef solveOneRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     if (Normalized != Solved) {
       Solved = Normalized;
       Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
+    }
+  }
+  if (Solved != E && !Budget.exhausted() &&
+      (Ctx.op(Solved) == SymOp::Add || Ctx.op(Solved) == SymOp::Mul) &&
+      readingCost(Ctx, Solved) < readingCost(Ctx, E) &&
+      !isMinimalVariableSum(Ctx, Solved, resolveLimits(Opts))) {
+    // A sum of scaled opaque inputs has no bitwise relation left to read.
+    // Canonical multiplication puts its one combined coefficient first.
+    auto unscaled = [&](SymRef R) {
+      return Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+                     Ctx.isConst(Ctx.operand(R, 0))
+                 ? Ctx.operand(R, 1)
+                 : R;
+    };
+    auto isBitwise = [&](SymRef R) {
+      SymOp Op = Ctx.op(unscaled(R));
+      return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
+             Op == SymOp::Not;
+    };
+    SymRef Body = unscaled(Solved);
+    bool HasRelation = isBitwise(Body);
+    if (!HasRelation && Ctx.op(Body) == SymOp::Add) {
+      for (SymRef Term : Ctx.operands(Body)) {
+        if (!Budget.consume())
+          break;
+        if (isBitwise(Term)) {
+          HasRelation = true;
+          break;
+        }
+      }
+    }
+    Rep.BudgetExhausted |= Budget.exhausted();
+    if (!HasRelation || Budget.exhausted())
+      return Solved;
+    // Restoring inputs can expose a new linear relation after the original
+    // reading. Give that result one more exact reading with the same budget;
+    // it is not in the deep walk's original postorder. Requiring a strict
+    // decrease keeps equal-cost spellings stable, even in growth mode.
+    SolveReport Restored;
+    SymRef Refined = solveRegion(Ctx, Solved, Opts, Budget, Restored);
+    Rep.BudgetExhausted |= Restored.BudgetExhausted;
+    if (readingCost(Ctx, Refined) < readingCost(Ctx, Solved)) {
+      Solved = Refined;
+      Rep.NumAtoms = std::max(Rep.NumAtoms, Restored.NumAtoms);
+      Rep.Outcome = MBAOutcome::Rewritten;
+      Rep.Evidence = MBAEvidence::Derivation;
     }
   }
   return Solved;

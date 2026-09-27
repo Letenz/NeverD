@@ -8,10 +8,13 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExprCompareTests.cpp
   SymExprMaskTests.cpp
   SymMBAArithmeticTests.cpp
+  SymMBAOffsetTests.cpp
   SymMBAOutcomeTests.cpp
   SymMBAPolynomialTests.cpp
+  SymMBARestoredTests.cpp
   SymMBASelectorTests.cpp
   SymMBAStressTests.cpp
+  SymMBAWeightedTests.cpp
   SymMBATests.cpp
   SymParseTests.cpp
   SymSynthTests.cpp
