@@ -29,7 +29,7 @@ TEST(SymMBAMeasure, PreservesBinaryCornerOrderForSparsePermutedInputs) {
         Atoms.push_back(Ctx.varId(V));
       }
       std::reverse(Atoms.begin(), Atoms.end());
-      llvm::APInt Scale(Width, 3);
+      llvm::APInt Scale = llvm::APInt(64, 3).zextOrTrunc(Width);
       if (Width > 64)
         Scale.setBit(Width - 2);
       SymRef E = Ctx.mkAdd({Ctx.mkConst(Width, 37),
