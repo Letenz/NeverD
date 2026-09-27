@@ -9,6 +9,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <array>
 #include <map>
 
 namespace neverd::symbolic::detail {
@@ -18,6 +19,41 @@ bool isBitwise(const SymContext &Ctx, SymRef R) {
   SymOp Op = Ctx.op(R);
   return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor ||
          Op == SymOp::Not;
+}
+
+// The optional quotient search needs interaction between its terms. A sum of
+// shallow, already canonical bitwise terms on disjoint free variables has no
+// shared input for that search to eliminate. Keep this eligibility check local:
+// arithmetic, opaque nodes, complements, and larger frontiers use the solver.
+bool hasIndependentTerms(const SymContext &Ctx, SymRef E) {
+  if (Ctx.width(E) == 1 || Ctx.op(E) != SymOp::Add)
+    return false;
+  std::array<uint32_t, 64> Inputs;
+  size_t Count = 0;
+  auto AddInput = [&](SymRef R) {
+    if (!Ctx.isVar(R) || Count == Inputs.size())
+      return false;
+    Inputs[Count++] = R.index();
+    return true;
+  };
+  for (SymRef Term : Ctx.operands(E)) {
+    if (Ctx.isConst(Term))
+      continue;
+    if (Ctx.isVar(Term)) {
+      if (!AddInput(Term))
+        return false;
+      continue;
+    }
+    SymOp Op = Ctx.op(Term);
+    if (Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor)
+      return false;
+    for (SymRef Input : Ctx.operands(Term))
+      if (!AddInput(Input))
+        return false;
+  }
+  std::sort(Inputs.begin(), Inputs.begin() + Count);
+  return std::adjacent_find(Inputs.begin(), Inputs.begin() + Count) ==
+         Inputs.begin() + Count;
 }
 
 struct FactorUses {
@@ -66,6 +102,19 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     Storage -= Slots * SlotBytes;
     return true;
   };
+  auto ChargeOperands = [&](SymOp Op, llvm::ArrayRef<SymRef> Operands,
+                            size_t Limit) {
+    size_t Arity = 0;
+    for (SymRef R : Operands) {
+      const size_t N = Ctx.op(R) == Op ? Ctx.numOperands(R) : 1;
+      if (N > Limit - Arity) {
+        Rep.BudgetExhausted = true;
+        return false;
+      }
+      Arity += N;
+    }
+    return Charge(Arity, Arity);
+  };
   // Counts, the original term snapshot, and scratch operand buffers are all
   // charged before allocation. Each scan below is bounded by this frontier.
   const size_t Count = Ctx.numOperands(E);
@@ -99,7 +148,8 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   }
   llvm::SmallVector<uint32_t, 2> Choices;
   for (const auto &[Id, Use] : Uses) {
-    if (Use.Count < 2 || !Use.BitwiseQuotient)
+    if (Use.Count < 2 ||
+        (!Use.BitwiseQuotient && Ctx.op(SymRef(Id)) != SymOp::Not))
       continue;
     auto Position =
         std::find_if(Choices.begin(), Choices.end(),
@@ -138,7 +188,44 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     // ring therefore proves E = Factor * sum(Quotients) + sum(Rest), without
     // treating related factors as independent or inferring anything from
     // samples.
+    // Removing a factor can expose an arbitrarily wide sum. Account for the
+    // actual canonical flattening before any builder copies its operands.
+    if (!ChargeOperands(SymOp::Add, Quotients, MaxTerms))
+      continue;
     SymRef Quotient = Ctx.mkAdd(Quotients);
+    auto Consider = [&](SymRef Value, unsigned NumAtoms) {
+      if (!ChargeOperands(SymOp::Mul, {Factor, Value}, MaxEdges))
+        return;
+      // Multiplication by one can expose the complete factor as an Add.
+      // Check that degeneracy before constructing either candidate node. Rest
+      // comes from the canonical original Add and has no direct Add child.
+      const size_t Added = Ctx.isConst(Value) &&
+                                   Ctx.constValue(Value).isOne() &&
+                                   Ctx.op(Factor) == SymOp::Add
+                               ? Ctx.numOperands(Factor)
+                               : 1;
+      if (Added > MaxTerms || Rest.size() > MaxTerms - Added) {
+        Rep.BudgetExhausted = true;
+        return;
+      }
+      bool Fits = Charge(Rest.size() + Added, Rest.size() + Added);
+      if (!Fits)
+        return;
+      Rest.push_back(Ctx.mkMul(Factor, Value));
+      SymRef Candidate = Ctx.mkAdd(Rest);
+      Rest.pop_back();
+      if (readingCost(Ctx, Candidate) < readingCost(Ctx, Best)) {
+        Best = Candidate;
+        Rep.NumAtoms = NumAtoms;
+        Rep.Outcome = MBAOutcome::Rewritten;
+        Rep.Evidence = MBAEvidence::Derivation;
+      }
+    };
+    // Distributivity already proves this candidate. A failed optional quotient
+    // search must not discard a strictly better completed factorization.
+    Consider(Quotient, 0);
+    if (hasIndependentTerms(Ctx, Quotient))
+      continue;
     MBAOptions Inner = Opts;
     Inner.MaxTableBytes = Storage;
     SolveReport Local;
@@ -148,14 +235,7 @@ SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       continue;
     // solveOneRegion independently proved the quotient replacement. Reusing
     // it under this unchanged factor instantiates that exact identity.
-    Rest.push_back(Ctx.mkMul(Factor, Reduced));
-    SymRef Candidate = Ctx.mkAdd(Rest);
-    if (readingCost(Ctx, Candidate) < readingCost(Ctx, Best)) {
-      Best = Candidate;
-      Rep.NumAtoms = Local.NumAtoms;
-      Rep.Outcome = MBAOutcome::Rewritten;
-      Rep.Evidence = MBAEvidence::Derivation;
-    }
+    Consider(Reduced, Local.NumAtoms);
     if (Budget.exhausted())
       break;
   }
