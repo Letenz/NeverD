@@ -1395,10 +1395,13 @@ When child rewrites obscure an arithmetic input shared by a sum's bitwise
 terms, the original region remains a bounded alternative.
 An immediate sum of products may also retain a complete shared operand before
 child rewrites erase it. At most two such operands are removed syntactically
-from their terms, each quotient is measured once, and the original factor is
-restored. This distributive identity and the quotient's independent proof must
-both hold; only a strictly smaller complete expression is retained. Fixed
-term and edge limits bound the scan, and this reading never reenters itself.
+from their terms and the original factor is restored. Distributivity proves
+this candidate directly; an optional quotient replacement requires its own
+proof. A completed factorization survives refusal of the optional search.
+Shallow bitwise quotient terms on disjoint free variables skip that search
+above one bit. Only a strictly smaller complete expression is retained.
+Fixed term and edge limits bound both the scan and canonical flattening
+before construction, and this reading never reenters itself.
 
 After the established linear and polynomial readings have been proved, a
 two- or three-input region may subtract one affine atom from its measured
