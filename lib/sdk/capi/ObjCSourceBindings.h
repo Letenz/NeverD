@@ -303,9 +303,10 @@ provenSourcePointerValue(const ExprPtr &Value,
 }
 
 /// An integer spelling alone is not a source declaration. Trace every
-/// definition to an independently validated message result, keeping the
-/// declaration's signedness. Narrowing, raw loads and unknown values cannot
-/// acquire a complete variadic carrier through this proof.
+/// definition to an independently validated message result or explicit
+/// floating-to-integer conversion, keeping signedness. Narrowing, raw loads
+/// and unknown values cannot acquire a complete variadic carrier through this
+/// proof.
 inline TypeRef
 provenSourceInteger64Value(const ExprPtr &Value,
                            const VarKeyMap<std::vector<ExprPtr>> &Definitions,
@@ -335,6 +336,16 @@ provenSourceInteger64Value(const ExprPtr &Value,
         Value->Operands[2], Definitions, Image, Budget, Active, Depth + 1);
     return Left && Right && equalSourceTypes(Left, Right) ? Left : TypeRef{};
   }
+  // FLOAT_FLOAT2INT is an explicit signed conversion in the machine IR.
+  // Unlike an integer-looking load or arithmetic result, it determines its
+  // own C variadic type without relying on a selector spelling.
+  if (Value->Kind == ExprKind::UnaryOp && Value->Op == NdOp::FLOAT_FLOAT2INT &&
+      Value->Type->IsSigned && Value->Operands.size() == 1 &&
+      Value->Operands[0] && Value->Operands[0]->Type &&
+      Value->Operands[0]->Type->Kind == NdTypeKind::Float &&
+      (Value->Operands[0]->Type->Size == 4 ||
+       Value->Operands[0]->Type->Size == 8))
+    return Value->Type;
   // Clang lowers a signed nonnegative clamp as x & ~(x >> 63). The mask
   // changes the integer value, but not its 64-bit signed source carrier.
   // Require the same SSA value on both sides and an independently declared

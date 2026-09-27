@@ -11990,6 +11990,29 @@ TEST(ObjCCallHints, DynamicFormatInteger64TailRequiresDeclaredCompleteValues) {
       HighExpr::makeConst(0x7fffffffffffffffULL, 8);
   Check(ArbitraryAnd, false);
 
+  const auto Converted = [&] {
+    auto F = Make();
+    auto Float = NdType::makeFloat(8);
+    auto Parameter = V;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    F.Params.push_back({"distance", Float});
+    F.Body.front().Val = HighExpr::makeUnary(
+        NdOp::FLOAT_FLOAT2INT, HighExpr::makeVar(Parameter, Float));
+    F.Body.front().Val->Type = Integer;
+    return F;
+  };
+  Check(Converted(), true);
+  auto UnsignedConversion = Converted();
+  UnsignedConversion.Body.front().Val->Type = NdType::makeInt(8, false);
+  Check(UnsignedConversion, false);
+  auto UnrelatedConversion = Converted();
+  UnrelatedConversion.Body.front().Val->Op = NdOp::FLOAT_FLOAT2UINT;
+  Check(UnrelatedConversion, false);
+  auto IntegerInput = Converted();
+  IntegerInput.Body.front().Val->Operands[0]->Type = Integer;
+  Check(IntegerInput, false);
+
   for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = Make();
