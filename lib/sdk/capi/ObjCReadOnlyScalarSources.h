@@ -314,7 +314,8 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
   const auto Binary = [&](const ExprPtr &E, NdOp Op, const Identity &L,
                           uint64_t R) {
     return E && E->Kind == ExprKind::BinOp && E->Op == Op && E->Type &&
-           (Op == NdOp::INT_NOTEQUAL || E->Type->Size == 8) &&
+           (Op == NdOp::INT_NOTEQUAL || Op == NdOp::INT_EQUAL ||
+            E->Type->Size == 8) &&
            E->Operands.size() == 2 && Local(E->Operands[0]) == L &&
            E->Operands[0]->Type->Size == 8 && Constant(E->Operands[1]) == R;
   };
@@ -327,7 +328,7 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
       --Budget;
       const auto &Loop = Body[I];
       if (Loop.Kind != StmtKind::While || !Loop.Cond ||
-          Constant(Loop.Cond) != 1 || Loop.Body.size() < 9)
+          Constant(Loop.Cond) != 1 || Loop.Body.size() < 8)
         continue;
       const auto &CountInit = Body[I - 2], &PointerInit = Body[I - 1];
       const auto Count = Local(CountInit.Dst), Pointer = Local(PointerInit.Dst);
@@ -342,37 +343,43 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
         continue;
       const auto &Steps = Loop.Body;
       const size_t End = Steps.size();
-      // Compilers may test the final iteration before computing the next
-      // countdown value. Both orders exit before advancing the pointer after
-      // the last read, provided the tail has no other control-flow edges.
+      // Compilers may test the final iteration directly, or transport the
+      // predicate through a local before the break. In each shape the exit
+      // precedes the pointer increment on the last iteration.
+      const bool DirectExit =
+          Steps[End - 5].Kind == StmtKind::If &&
+          Binary(Steps[End - 5].Cond, NdOp::INT_EQUAL, *Count, 1);
       const bool TestFirst =
-          Steps[End - 6].Kind == StmtKind::Assign &&
-          Steps[End - 6].Val &&
-          Steps[End - 6].Val->Kind == ExprKind::BinOp &&
+          !DirectExit && Steps[End - 6].Kind == StmtKind::Assign &&
+          Steps[End - 6].Val && Steps[End - 6].Val->Kind == ExprKind::BinOp &&
           Steps[End - 6].Val->Op == NdOp::INT_NOTEQUAL;
-      const size_t DecrementAt = TestFirst ? End - 4 : End - 6;
+      const size_t DecrementAt = DirectExit || TestFirst ? End - 4 : End - 6;
       const size_t TestAt = TestFirst ? End - 6 : End - 5;
-      const size_t ExitAt = TestFirst ? End - 5 : End - 4;
+      const size_t ExitAt = DirectExit  ? End - 5
+                            : TestFirst ? End - 5
+                                        : End - 4;
       const auto Decrement = Local(Steps[DecrementAt].Dst);
-      const auto Test = Local(Steps[TestAt].Dst);
+      const auto Test =
+          DirectExit ? std::optional<Identity>{} : Local(Steps[TestAt].Dst);
       const auto Increment = Local(Steps[End - 3].Dst);
-      if (!Decrement || !Test || !Increment || *Decrement == *Count ||
-          *Decrement == *Pointer || *Test == *Count || *Test == *Pointer ||
+      if (!Decrement || (!DirectExit && !Test) || !Increment ||
+          *Decrement == *Count || *Decrement == *Pointer ||
+          (!DirectExit && (*Test == *Count || *Test == *Pointer)) ||
           *Increment == *Count || *Increment == *Pointer ||
           Assignment(Steps[DecrementAt], *Decrement) !=
               Steps[DecrementAt].Val ||
           !Binary(Steps[DecrementAt].Val, NdOp::INT_SUB, *Count, 1) ||
-          Assignment(Steps[TestAt], *Test) != Steps[TestAt].Val ||
-          !Binary(Steps[TestAt].Val, NdOp::INT_NOTEQUAL, *Count, 1) ||
+          (!DirectExit &&
+           (Assignment(Steps[TestAt], *Test) != Steps[TestAt].Val ||
+            !Binary(Steps[TestAt].Val, NdOp::INT_NOTEQUAL, *Count, 1))) ||
           Steps[ExitAt].Kind != StmtKind::If ||
-          !Steps[ExitAt].ElseBody.empty() ||
-          Steps[ExitAt].Body.size() != 1 ||
+          !Steps[ExitAt].ElseBody.empty() || Steps[ExitAt].Body.size() != 1 ||
           Steps[ExitAt].Body[0].Kind != StmtKind::Break ||
-          !Steps[ExitAt].Cond ||
-          Steps[ExitAt].Cond->Kind != ExprKind::UnaryOp ||
-          Steps[ExitAt].Cond->Op != NdOp::BOOL_NOT ||
-          Steps[ExitAt].Cond->Operands.size() != 1 ||
-          Local(Steps[ExitAt].Cond->Operands[0]) != *Test ||
+          (!DirectExit && (!Steps[ExitAt].Cond ||
+                           Steps[ExitAt].Cond->Kind != ExprKind::UnaryOp ||
+                           Steps[ExitAt].Cond->Op != NdOp::BOOL_NOT ||
+                           Steps[ExitAt].Cond->Operands.size() != 1 ||
+                           Local(Steps[ExitAt].Cond->Operands[0]) != *Test)) ||
           Assignment(Steps[End - 3], *Increment) != Steps[End - 3].Val ||
           !Binary(Steps[End - 3].Val, NdOp::INT_ADD, *Pointer, 3) ||
           Local(Steps[End - 2].Dst) != *Count ||
@@ -384,7 +391,7 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
       std::map<unsigned, std::pair<const HighExpr *, ExprPtr>> Loads;
       va_t Base = Bound ? 0 : *Start >= 2 ? *Start - 2 : 0;
       const uint32_t Extent = uint32_t(*Iterations * 3);
-      for (size_t J = 0; J < End - 6 && Straight; ++J) {
+      for (size_t J = 0; J < End - (DirectExit ? 5 : 6) && Straight; ++J) {
         const auto &S = Steps[J];
         if (S.Kind != StmtKind::Assign && S.Kind != StmtKind::Store &&
             S.Kind != StmtKind::Call && S.Kind != StmtKind::ExprStmt) {
@@ -477,7 +484,7 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
             for (const auto &Output : E->IntrinsicOutputs) {
               const auto Id = highSourceLocalIdentity(Output);
               HiddenWrite |= Id == *Count || Id == *Pointer ||
-                             Id == *Decrement || Id == *Test ||
+                             Id == *Decrement || (Test && Id == *Test) ||
                              Id == *Increment;
             }
             Pending.insert(Pending.end(), E->Operands.begin(),
@@ -489,8 +496,9 @@ inline ReadOnlyLoopBytePlans readOnlyLoopBytePlans(const HighFunc &Function,
       if (!Budget || HiddenWrite || NarrowView || InitializerOccurrences != 1 ||
           !Flow.Complete || !Flow.Items.empty() || Writes[*Count] != 2 ||
           Writes[*Pointer] != 2 || Writes[*Decrement] != 1 ||
-          Writes[*Test] != 1 || Writes[*Increment] != 1 || Reads[*Count] != 2 ||
-          Reads[*Pointer] != 4 || Reads[*Decrement] != 1 || Reads[*Test] != 1 ||
+          (Test && Writes[*Test] != 1) || Writes[*Increment] != 1 ||
+          Reads[*Count] != 2 || Reads[*Pointer] != 4 ||
+          Reads[*Decrement] != 1 || (Test && Reads[*Test] != 1) ||
           Reads[*Increment] != 1)
         continue;
       // The only pointer reads are the three byte loads and one increment;
