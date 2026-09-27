@@ -1300,6 +1300,28 @@ TEST(SwiftOnceSources, ProjectsCanonicalObjCLazyStaticGetterThunk) {
   }
 }
 
+TEST(SwiftOnceSources, ProjectsInlinedPredicateObjCLazyStaticGetterThunk) {
+  ObjCThunkFixture F(Arch::AArch64);
+  auto &Thunk = F.Pipeline.HighFuncs[0];
+  ASSERT_EQ(Thunk.Body.size(), 6U);
+  auto PredicateLoad = Thunk.Body[0].Val;
+  Thunk.Body[1].Cond->Operands[0]->Operands[0] = PredicateLoad;
+  Thunk.Body[1].Body.pop_back();
+  Thunk.Body.erase(Thunk.Body.begin());
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.ObjCThunks.size(), 1U);
+  ASSERT_EQ(Plan.CallbackHints.size(), 1U);
+  auto Bound = bindSwiftOnceSourceReferences(Thunk, F.Image, Plan,
+                                            F.functions());
+  ASSERT_EQ(Bound.SwiftOnceObjCThunks,
+            std::set<va_t>{ObjCThunkFixture::ThunkAddress});
+  ASSERT_TRUE(finalizeSwiftOnceObjCThunkProjection(Bound.Function, Plan));
+  EXPECT_EQ(Bound.Function.Params.size(), 2U);
+  Thunk.Body[0].Cond->Operands[0]->Operands[0] =
+      HighExpr::makeConst(0, 8);
+  EXPECT_TRUE(discoverSwiftOnceSources(F.Image, F.Pipeline).ObjCThunks.empty());
+}
+
 TEST(SwiftOnceSources, ProjectsSharedReturnObjCLazyStaticGetterThunk) {
   for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
     for (const bool SeparateRetain : {false, true}) {

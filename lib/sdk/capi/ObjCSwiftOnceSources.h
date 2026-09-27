@@ -844,9 +844,15 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
       return std::nullopt;
     Method = &Candidate;
   }
-  const bool SeparateRetain = F.Body.size() == 7;
+  const bool InlinedPredicate =
+      !F.Body.empty() &&
+      (F.Body.front().Kind == StmtKind::If ||
+       F.Body.front().Kind == StmtKind::IfElse);
+  const size_t Offset = InlinedPredicate ? 0 : 1;
+  const bool SeparateRetain = F.Body.size() == Offset + 6;
   if (!Method || F.Params.size() != 3 || !F.ReturnType ||
-      F.ReturnType->Size != 8 || (F.Body.size() != 6 && !SeparateRetain))
+      F.ReturnType->Size != 8 ||
+      (F.Body.size() != Offset + 5 && !SeparateRetain))
     return std::nullopt;
   const auto Parameters = sourceABIParameters(*Method->TypeHint);
   if (Parameters.size() != 2 || !Method->TypeHint->ReturnType ||
@@ -912,13 +918,14 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     return E && E->Kind == ExprKind::Const && E->ConstVal == Expected;
   };
 
-  const auto *PredicateAssignment = Assignment(0);
-  const auto *StorageAssignment = Assignment(3);
-  const auto *RetainAssignment = Assignment(4);
-  const auto *ResultAssignment = Assignment(SeparateRetain ? 5 : 4);
-  const auto &Branch = F.Body[1];
-  const auto &Label = F.Body[2];
-  const auto &Return = F.Body[SeparateRetain ? 6 : 5];
+  const auto *PredicateAssignment = InlinedPredicate ? nullptr : Assignment(0);
+  const auto *StorageAssignment = Assignment(Offset + 2);
+  const auto *RetainAssignment = Assignment(Offset + 3);
+  const auto *ResultAssignment =
+      Assignment(Offset + (SeparateRetain ? 4 : 3));
+  const auto &Branch = F.Body[Offset];
+  const auto &Label = F.Body[Offset + 1];
+  const auto &Return = F.Body[Offset + (SeparateRetain ? 5 : 4)];
   const size_t OnceIndex = Branch.Body.size() == 3 ? 1 : 0;
   const bool BranchGoto =
       Branch.ElseBody.empty() && Branch.Body.size() == OnceIndex + 2 &&
@@ -930,6 +937,10 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
       Branch.Body.empty() && Branch.ElseBody.size() == 1 &&
       Branch.ElseBody[0].Kind == StmtKind::Call &&
       Branch.ElseBody[0].CallExpr;
+  const bool InlinedBranchCall =
+      InlinedPredicate && Branch.Kind == StmtKind::If &&
+      Branch.ElseBody.empty() && Branch.Body.size() == 1 &&
+      Branch.Body[0].Kind == StmtKind::Call && Branch.Body[0].CallExpr;
   if (OnceIndex) {
     const auto &EntryLabel = Branch.Body.front();
     bool HasExpression = false;
@@ -956,21 +967,22 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
            Label.MemoryOrdering == NdMemoryOrdering::None &&
            Label.MemoryAddressSpace == NdMemoryAddressSpace::Default;
   };
-  if (!PredicateAssignment || !StorageAssignment || !RetainAssignment ||
+  if ((!InlinedPredicate && !PredicateAssignment) || !StorageAssignment ||
+      !RetainAssignment ||
       !ResultAssignment ||
       (Branch.Kind != StmtKind::If &&
        !(SharedReturn && Branch.Kind == StmtKind::IfElse)) ||
       !Branch.Cond ||
-      (!BranchGoto && !SharedReturn) || !InertContinuationLabel() ||
+      (!BranchGoto && !SharedReturn && !InlinedBranchCall) ||
+      !InertContinuationLabel() ||
       (BranchGoto &&
        Label.Addr != Branch.Body[OnceIndex + 1].GotoTarget) ||
       Return.Kind != StmtKind::Return || !Return.RetVal ||
       !SameLocal(Return.RetVal, ResultAssignment->Dst))
     return std::nullopt;
 
-  const auto Predicate = LoadAddress(PredicateAssignment->Val);
   const auto Storage = LoadAddress(StorageAssignment->Val);
-  if (!Predicate || !Storage || *Predicate == *Storage)
+  if (!Storage)
     return std::nullopt;
   auto Condition = Plain(Branch.Cond);
   if (!Condition || Condition->Kind != ExprKind::BinOp ||
@@ -991,7 +1003,13 @@ objcGetterThunkContract(const HighFunc &F, const BinaryImage &Image) {
     Loaded = Plain(Added->Operands[1]);
   else if (IsConstant(Added->Operands[1], 1))
     Loaded = Plain(Added->Operands[0]);
-  if (!SameLocal(Loaded, PredicateAssignment->Dst))
+  if (InlinedPredicate ? !LoadAddress(Loaded)
+                       : !SameLocal(Loaded, PredicateAssignment->Dst))
+    return std::nullopt;
+  const auto Predicate =
+      InlinedPredicate ? LoadAddress(Loaded)
+                       : LoadAddress(PredicateAssignment->Val);
+  if (!Predicate || *Predicate == *Storage)
     return std::nullopt;
 
   const auto &Once = *(SharedReturn ? Branch.ElseBody[0].CallExpr
