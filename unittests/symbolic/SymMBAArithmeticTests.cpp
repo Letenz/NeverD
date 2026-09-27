@@ -51,6 +51,48 @@ TEST(SymMBAArithmetic, ExtractsRepeatedWordCoefficients) {
   }
 }
 
+TEST(SymMBAArithmetic, CompletesSmallComplementSumsInSelectedAnswer) {
+  for (uint32_t Width : {3u, 8u, 32u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto Input =
+        parseSymExpr(Ctx, "(x&y)*(-1-12*((x|~y)+(y&~x)))-4*(x|~y)", Width);
+    auto Expected = parseSymExpr(Ctx, "11*(x&y)-4*(x|~y)", Width);
+    ASSERT_TRUE(Input.ok());
+    ASSERT_TRUE(Expected.ok());
+    MBAOptions Opts;
+    detail::WorkBudget Budget(Opts.MaxWork);
+    SymRef Answer =
+        detail::completeComplementarySums(Ctx, Input.Root, Opts, Budget);
+    EXPECT_EQ(Answer, Expected.Root) << Ctx.toString(Answer);
+    EXPECT_LT(Ctx.readabilityCost(Answer), Ctx.readabilityCost(Input.Root));
+    EXPECT_LE(Budget.used(), Opts.MaxWork);
+  }
+}
+
+TEST(SymMBAArithmetic, ComplementCompletionKeepsNearMissAndResourceFallback) {
+  SymContext Ctx;
+  auto Input = parseSymExpr(Ctx, "(x&y)*(-1-12*((x|~y)+(y&~z)))-4*(x|~y)", 8);
+  ASSERT_TRUE(Input.ok());
+  MBAOptions Opts;
+  detail::WorkBudget Full(Opts.MaxWork);
+  EXPECT_EQ(detail::completeComplementarySums(Ctx, Input.Root, Opts, Full),
+            Input.Root);
+
+  auto Complement =
+      parseSymExpr(Ctx, "(x&y)*(-1-12*((x|~y)+(y&~x)))-4*(x|~y)", 8);
+  ASSERT_TRUE(Complement.ok());
+  detail::WorkBudget Empty(0);
+  EXPECT_EQ(
+      detail::completeComplementarySums(Ctx, Complement.Root, Opts, Empty),
+      Complement.Root);
+  Opts.MaxTableBytes = 128;
+  detail::WorkBudget NoStorage(Opts.MaxWork);
+  EXPECT_EQ(
+      detail::completeComplementarySums(Ctx, Complement.Root, Opts, NoStorage),
+      Complement.Root);
+}
+
 TEST(SymMBAArithmetic, CoefficientGroupsPreserveOpaqueAtomsAndRemainders) {
   test::simplifiesTo("6*(x/y)+6*(x>>y)+3*(x&y)", "6*((x/y)+(x>>y))+3*(x&y)",
                      32);

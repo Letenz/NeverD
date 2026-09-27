@@ -435,6 +435,10 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
                                const MBAOptions &Opts, WorkBudget &Budget,
                                SolveReport &Rep);
 
+/// Fold small exact complement sums in the already selected answer.
+SymRef completeComplementarySums(SymContext &Ctx, SymRef Root,
+                                 const MBAOptions &Opts, WorkBudget &Budget);
+
 /// Factor complete immediate operands before other readings erase their
 /// shared spelling; measure at most two quotients using the same budget.
 SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
