@@ -161,6 +161,9 @@ public:
 
   //--- Expression rendering (HighCExprWriter.cpp) ---
   std::string exprStr(const HighExpr &Expr, int ParentPrec = 0);
+  /// Operands of the integer operator being printed. A string literal among
+  /// them is an array in C and prints as its integer address instead.
+  std::set<const HighExpr *> LiteralAddressOperands;
   /// Address used by a load/store/atomic. Peels integer views and prints
   /// `base + imm` without sanitizer wrap. Value uses of the same add still wrap.
   /// Segmented offsets disable image backing projection to stay numeric.
@@ -365,6 +368,7 @@ public:
 
   //--- Binary expression rendering (HighCExprBinOp.cpp) ---
   std::string renderBinOp(const HighExpr &E, int ParentPrec);
+  std::string renderBinOpOperands(const HighExpr &E, int ParentPrec);
 
   //--- State ---
   RedirectableStream Out;

@@ -2668,7 +2668,7 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
         AllowEmpty = true;
     }
     if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
-      return *Lit;
+      return LiteralAddressOperands.count(&E) ? "(uintptr_t)" + *Lit : *Lit;
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.

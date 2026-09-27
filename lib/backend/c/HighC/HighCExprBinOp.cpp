@@ -67,6 +67,39 @@ int getOpPrecedence(NdOp Op) {
 } // anonymous namespace
 
 std::string HighCWriter::renderBinOp(const HighExpr &E, int ParentPrec) {
+  // Integer arithmetic and bitwise operators cannot take an array operand;
+  // a string literal among the operands contributes its address.
+  switch (E.Op) {
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_LEFT:
+  case NdOp::INT_RIGHT:
+  case NdOp::INT_ASHR:
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_MULT:
+  case NdOp::INT_DIV:
+  case NdOp::INT_SDIV:
+  case NdOp::INT_REM:
+  case NdOp::INT_SREM:
+    break;
+  default:
+    return renderBinOpOperands(E, ParentPrec);
+  }
+  std::vector<const HighExpr *> Added;
+  for (const auto &Operand : E.Operands)
+    if (Operand && Operand->Kind == ExprKind::Const &&
+        LiteralAddressOperands.insert(Operand.get()).second)
+      Added.push_back(Operand.get());
+  std::string Rendered = renderBinOpOperands(E, ParentPrec);
+  for (const HighExpr *Operand : Added)
+    LiteralAddressOperands.erase(Operand);
+  return Rendered;
+}
+
+std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
+                                             int ParentPrec) {
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;

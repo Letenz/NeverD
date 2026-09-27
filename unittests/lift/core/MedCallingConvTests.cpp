@@ -9,6 +9,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
@@ -4842,4 +4843,32 @@ TEST(LowToMedX64CallingConv, ByteWriteRebuildIsNotAParameter) {
   for (const MedVar &P : Full.Params)
     HasR8 |= P.RegOff == x86reg::R8;
   EXPECT_TRUE(HasR8) << Full.Params.size();
+}
+
+TEST(CallRegisterEffects, PartialWriteSatisfiesNarrowerRead) {
+  // `mov dl, r8b; ...; neg dl` reads DL only after writing it: DL is not an
+  // argument. `mov cl, r8b; ...; mov eax, ecx` still reads the upper ECX.
+  auto Family = [](uint64_t RegOff) { return RegOff / 8; };
+  RegisterStep WriteDL;
+  WriteDL.Reads[Family(x86reg::R8)] = 1;
+  WriteDL.LowWrites[Family(x86reg::RDX)] = 1;
+  RegisterStep ReadDL;
+  ReadDL.Reads[Family(x86reg::RDX)] = 1;
+  RegisterStep WriteCL;
+  WriteCL.LowWrites[Family(x86reg::RCX)] = 1;
+  RegisterStep ReadECX;
+  ReadECX.Reads[Family(x86reg::RCX)] = 4;
+  LocalRegisterEffect Effect;
+  Effect.Blocks.push_back({{WriteDL, ReadDL, WriteCL, ReadECX}, {}});
+  const va_t Entry = 0x140001000;
+  const GPRFamilyMask Args =
+      (1u << Family(x86reg::RCX)) | (1u << Family(x86reg::RDX)) |
+      (1u << Family(x86reg::R8)) | (1u << Family(x86reg::R9));
+  const auto Summaries =
+      solveCallRegisterEffects({{Entry, Effect}}, Args, Args);
+  ASSERT_TRUE(Summaries.EntryReads.count(Entry));
+  const GPRReadWidths &Reads = Summaries.EntryReads.at(Entry);
+  EXPECT_EQ(Reads[Family(x86reg::RDX)], 0u);
+  EXPECT_EQ(Reads[Family(x86reg::RCX)], 4u);
+  EXPECT_EQ(Reads[Family(x86reg::R8)], 1u);
 }

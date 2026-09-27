@@ -61,6 +61,9 @@ struct RegisterStep {
   GPRReadWidths Reads{};
   /// Families this step fully redefines (a 32- or 64-bit write).
   GPRFamilyMask Kills = 0;
+  /// Low bytes of a family this step writes without redefining the rest (1
+  /// for DL, 2 for DX). A later read no wider than that is satisfied here.
+  GPRReadWidths LowWrites{};
   /// A direct call or branch into another function's entry.
   va_t Callee = InvalidVA;
   /// \p Callee is entered by a tail call (a branch into its entry or a
