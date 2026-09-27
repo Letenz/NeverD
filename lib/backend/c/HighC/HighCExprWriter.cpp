@@ -601,7 +601,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     Name = functionIdentifier(Name);
   if (E.IsIndirectCall && E.IndirectTarget &&
       (Name.empty() || Name == "indirect" || Name == "indirect_call"))
-    Name = indirectCalleeStr(*E.IndirectTarget);
+    Name = indirectCalleeStr(*E.IndirectTarget, E.Type);
 
   // A callee defined in this file has a prototype: convert between pointer
   // and integer arguments the way the machine passed them, in the register.
@@ -2255,7 +2255,19 @@ std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
   return exprStr(*Inner);
 }
 
-std::string HighCWriter::indirectCalleeStr(const HighExpr &E) {
+std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
+                                           const TypeRef &ReturnType) {
+  // C calls only function pointers. A code address loaded as `void *` or held
+  // in an integer is called through an unprototyped pointer to a function
+  // returning what the call yields.
+  const std::string CalleeType =
+      "(" +
+      declarationToC(ReturnType ? cDisplayType(ReturnType) : NdType::makeVoid(),
+                     "(*)()") +
+      ")";
+  auto UntypedCallee = [&](const std::string &Code) {
+    return "(" + CalleeType + Code + ")";
+  };
   const unsigned PtrSize = Opts.TheArch == Arch::X86 ? 4u : 8u;
   const HighExpr *Cur = peelIntegerViewOps(&E);
   unsigned Depth = 0;
@@ -2321,17 +2333,21 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E) {
         } else {
           SlotBase = pointerObjectStr(*Ptr);
         }
-        return "(*(void **)((uintptr_t)(" + SlotBase + ") + " +
-               constStr(Off->ConstVal) + "))";
+        return UntypedCallee("(*(void **)((uintptr_t)(" + SlotBase + ") + " +
+                             constStr(Off->ConstVal) + "))");
       }
     }
   }
-  if (Depth == 0)
-    return "(*" + exprStr(E) + ")";
+  if (Depth == 0) {
+    if (E.Type && E.Type->Kind == NdTypeKind::Ptr && E.Type->Pointee &&
+        E.Type->Pointee->Kind == NdTypeKind::Func)
+      return "(*" + exprStr(E) + ")";
+    return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
+  }
   std::string B = pointerObjectStr(*Base);
   std::string Stars(Depth, '*');
   std::string Ptrs(Depth + 1, '*');
-  return "(" + Stars + "(void " + Ptrs + ")(" + B + "))";
+  return UntypedCallee("(" + Stars + "(void " + Ptrs + ")(" + B + "))");
 }
 
 bool HighCWriter::pointerNeedsIntegerView(const TypeRef &Ty) const {

@@ -7113,7 +7113,8 @@ TEST(HighCPointerAddresses, IndirectCallPrintsLoadedCallee) {
   Call.CallExpr->IndirectTarget = HighExpr::makeLoad(Object, NdType::makePtr());
   Func.Body = {Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("(*(void **)(p))("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((void (*)())(*(void **)(p)))("), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find(", 1)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("indirect("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("extern int indirect"), std::string::npos) << Source;
@@ -7135,7 +7136,8 @@ TEST(HighCPointerAddresses, IndirectCallPrintsNestedLoadedCallee) {
       HighExpr::makeLoad(Object, NdType::makeInt(8)), NdType::makeInt(8));
   Func.Body = {Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("(**(void ***)(p))("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("((void (*)())(**(void ***)(p)))("), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("*(int64_t *)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("indirect("), std::string::npos) << Source;
 }
@@ -7169,7 +7171,8 @@ TEST(HighCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
       HighExpr::makeLoad(std::move(AsI64), NdType::makePtr());
   Func.Body = {Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)(p)) + 88))("),
+  EXPECT_NE(Source.find("((void (*)())(*(void **)((uintptr_t)(*(void **)(p)) + "
+                        "88)))("),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("(uintptr_t)p, 1)"), std::string::npos) << Source;
@@ -9934,9 +9937,10 @@ TEST(HighCPointerAddresses, GuardedNullReturnIndirectCallUsesGuardThis) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("if (this->m_pBadge.p == 0)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)(this->m_pBadge.p)) + "
-                        "88))(this->m_pBadge.p,"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("(*(void **)((uintptr_t)(*(void **)(this->m_pBadge.p)) + "
+                  "88)))(this->m_pBadge.p,"),
+      std::string::npos)
       << Source;
   EXPECT_NE(Source.find("result)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("this->m_pBadge.p->p"), std::string::npos) << Source;
@@ -29505,6 +29509,26 @@ TEST(HighCPointerAddresses, SyntheticSpecialMemberDeclaresItsRecord) {
   ASSERT_NE(Typedef, std::string::npos) << Source;
   ASSERT_NE(Prototype, std::string::npos) << Source;
   EXPECT_LT(Typedef, Prototype) << Source;
+}
+
+TEST(HighCPointerAddresses, IndirectCallThroughIntegerUsesFunctionPointer) {
+  // A code address held in an integer cannot be dereferenced and called.
+  HighFunc Func;
+  Func.Name = "dispatch";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  HighStmt Call;
+  Call.Kind = StmtKind::Return;
+  Call.RetVal = HighExpr::makeCall("indirect", 0, {parameter(1)});
+  Call.RetVal->IsIndirectCall = true;
+  Call.RetVal->Type = NdType::makeInt(8);
+  Call.RetVal->IndirectTarget = HighExpr::makeBinop(
+      NdOp::INT_ADD, parameter(0), HighExpr::makeConst(0x40, 8));
+  Func.Body = {Call};
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("((int64_t (*)())(uintptr_t)("), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("(*(int64_t)"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {

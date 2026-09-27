@@ -218,7 +218,8 @@ public:
   /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void ***)p`.
   /// A loaded vtable slot `Load(Load(obj)+imm)` is
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
-  std::string indirectCalleeStr(const HighExpr &E);
+  std::string indirectCalleeStr(const HighExpr &E,
+                                const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
   const HighExpr *forwardedExpr(const HighExpr *E) const;
   /// True when \p E prints as an unsigned integer of exactly \p Width bytes.
