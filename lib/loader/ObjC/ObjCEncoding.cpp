@@ -99,8 +99,7 @@ std::optional<std::string> objcEncodedObjectClass(llvm::StringRef Encoding) {
   return Encoding.str();
 }
 
-std::optional<std::string>
-objcEncodedObjectProtocol(llvm::StringRef Encoding) {
+std::optional<std::string> objcEncodedObjectProtocol(llvm::StringRef Encoding) {
   if (Encoding.size() > 4096)
     return std::nullopt;
   while (!Encoding.empty() &&
@@ -113,9 +112,8 @@ objcEncodedObjectProtocol(llvm::StringRef Encoding) {
     return (C >= 'a' && C <= 'z') || (C >= 'A' && C <= 'Z') || C == '_';
   };
   if (!Letter(Encoding.front()) ||
-      !std::all_of(Encoding.begin(), Encoding.end(), [&](char C) {
-        return Letter(C) || (C >= '0' && C <= '9');
-      }))
+      !std::all_of(Encoding.begin(), Encoding.end(),
+                   [&](char C) { return Letter(C) || (C >= '0' && C <= '9'); }))
     return std::nullopt;
   return Encoding.str();
 }

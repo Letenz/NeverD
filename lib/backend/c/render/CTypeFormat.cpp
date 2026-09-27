@@ -65,8 +65,8 @@ std::string escapeCString(llvm::StringRef Str) {
   return Result;
 }
 
-std::optional<std::string> imageStringLiteral(const BinaryImage *Img,
-                                              va_t Addr, bool AllowEmpty) {
+std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
+                                              bool AllowEmpty) {
   if (!Img || Addr == 0 || Addr == InvalidVA)
     return std::nullopt;
   if (Img->findImportAt(Addr))
@@ -167,8 +167,7 @@ bool containsFunction(const TypeRef &Type) {
 std::string declarationToC(const TypeRef &Ty, llvm::StringRef Declarator) {
   if (Ty && Ty->Kind == NdTypeKind::Array && Ty->ElemType) {
     std::string Inner = Declarator.str();
-    Inner += Ty->ArrayCount ? "[" + std::to_string(Ty->ArrayCount) + "]"
-                            : "[]";
+    Inner += Ty->ArrayCount ? "[" + std::to_string(Ty->ArrayCount) + "]" : "[]";
     return declarationToC(Ty->ElemType, Inner);
   }
   if (!containsFunction(Ty))

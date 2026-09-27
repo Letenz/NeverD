@@ -4,14 +4,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../../../lib/backend/c/LLVMC/LLVMCWriter.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
-#include "../../../lib/backend/c/LLVMC/LLVMCWriter.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
-
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/Module.h"
@@ -54,9 +53,9 @@ void compileAndRun(const std::string &Source,
   }
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
-  const llvm::StringRef SanitizerTrap = RequestedCompiler.empty()
-                                           ? "-fsanitize-trap=all"
-                                           : "-fsanitize-undefined-trap-on-error";
+  const llvm::StringRef SanitizerTrap =
+      RequestedCompiler.empty() ? "-fsanitize-trap=all"
+                                : "-fsanitize-undefined-trap-on-error";
   for (llvm::StringRef Optimization : {"-O0", "-O2"}) {
     const llvm::SmallVector<llvm::StringRef, 12> Arguments{
         Compiler,
@@ -86,13 +85,16 @@ void compileAndRun(const std::string &Source,
 }
 
 std::string floatingVectorConstantSource(bool Double) {
-  const uint64_t FloatBits[] = {
-      0, 0x80000000, 0x7FC12345, 0x7F812345,
-      0xFFC54321, 0xFF854321, 1, 0x7F7FFFFF};
-  const uint64_t DoubleBits[] = {
-      0, 0x8000000000000000ULL, 0x7FF8123456789ABCULL,
-      0x7FF0123456789ABCULL, 0xFFF8ABCDEF012345ULL,
-      0xFFF0ABCDEF012345ULL, 1, 0x7FEFFFFFFFFFFFFFULL};
+  const uint64_t FloatBits[] = {0,          0x80000000, 0x7FC12345, 0x7F812345,
+                                0xFFC54321, 0xFF854321, 1,          0x7F7FFFFF};
+  const uint64_t DoubleBits[] = {0,
+                                 0x8000000000000000ULL,
+                                 0x7FF8123456789ABCULL,
+                                 0x7FF0123456789ABCULL,
+                                 0xFFF8ABCDEF012345ULL,
+                                 0xFFF0ABCDEF012345ULL,
+                                 1,
+                                 0x7FEFFFFFFFFFFFFFULL};
   llvm::LLVMContext Context;
   neverd::CEmitterOptions Options;
   std::string Unused;
@@ -114,8 +116,8 @@ std::string floatingVectorConstantSource(bool Double) {
     auto *Vector = llvm::ConstantVector::get(Elements);
     Source += "  { " + neverd::typeToCLLVM(Vector->getType()) +
               " value = " + Writer.constStr(Vector) + ";\n    " + Scalar +
-              " actual[" + std::to_string(Lanes) + "];\n    const " +
-              Scalar + " expected[] = {";
+              " actual[" + std::to_string(Lanes) + "];\n    const " + Scalar +
+              " expected[] = {";
     for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
       if (Lane)
         Source += ", ";
@@ -326,22 +328,23 @@ TEST(LLVMCValues, NestedGEPsPreserveLayoutAndSignedIndicesInBothRenderPaths) {
   auto *I8 = llvm::Type::getInt8Ty(Context);
   auto *I32 = llvm::Type::getInt32Ty(Context);
   auto *I64 = llvm::Type::getInt64Ty(Context);
-  auto *Record = llvm::StructType::get(
-      Context, {I8, llvm::ArrayType::get(I32, 3), I64});
+  auto *Record =
+      llvm::StructType::get(Context, {I8, llvm::ArrayType::get(I32, 3), I64});
   auto *Rows = llvm::ArrayType::get(Record, 5);
   for (bool Materialized : {false, true}) {
     auto *Function = llvm::Function::Create(
-        llvm::FunctionType::get(I32, {llvm::PointerType::getUnqual(Context),
-                                      I32, I64}, false),
+        llvm::FunctionType::get(
+            I32, {llvm::PointerType::getUnqual(Context), I32, I64}, false),
         llvm::GlobalValue::ExternalLinkage,
         Materialized ? "nested_sum" : "nested_read", Module);
     llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
-    auto *Pointer = B.CreateGEP(
-        Rows, Function->getArg(0),
-        {B.getInt32(0), Function->getArg(1), B.getInt32(1), Function->getArg(2)});
+    auto *Pointer = B.CreateGEP(Rows, Function->getArg(0),
+                                {B.getInt32(0), Function->getArg(1),
+                                 B.getInt32(1), Function->getArg(2)});
     llvm::Value *Result = B.CreateAlignedLoad(I32, Pointer, llvm::Align(1));
     if (Materialized)
-      Result = B.CreateAdd(Result, B.CreateAlignedLoad(I32, Pointer, llvm::Align(1)));
+      Result = B.CreateAdd(Result,
+                           B.CreateAlignedLoad(I32, Pointer, llvm::Align(1)));
     B.CreateRet(Result);
   }
   ASSERT_EQ(Module.getDataLayout().getTypeAllocSize(Record), 24u);
@@ -371,16 +374,16 @@ TEST(LLVMCValues, ConstantGEPKeepsNonzeroGlobalOffset) {
   llvm::Module Module("constant-gep-offset", Context);
   Module.setDataLayout("e-p:64:64");
   auto *Bytes = llvm::ConstantDataArray::getString(Context, "vector-offset");
-  auto *Global = new llvm::GlobalVariable(
-      Module, Bytes->getType(), true, llvm::GlobalValue::InternalLinkage,
-      Bytes, "text_bytes");
+  auto *Global = new llvm::GlobalVariable(Module, Bytes->getType(), true,
+                                          llvm::GlobalValue::InternalLinkage,
+                                          Bytes, "text_bytes");
   auto *Function = llvm::Function::Create(
       llvm::FunctionType::get(llvm::Type::getInt8Ty(Context), {}, false),
       llvm::GlobalValue::ExternalLinkage, "offset_byte", Module);
   llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Constant *Indices[] = {B.getInt32(0), B.getInt32(7)};
-  auto *Address = llvm::ConstantExpr::getGetElementPtr(Bytes->getType(), Global,
-                                                      Indices);
+  auto *Address =
+      llvm::ConstantExpr::getGetElementPtr(Bytes->getType(), Global, Indices);
   B.CreateRet(B.CreateLoad(B.getInt8Ty(), Address));
   std::string Source;
   llvm::raw_string_ostream Out(Source);
@@ -400,7 +403,8 @@ TEST(LLVMCValues, UnsupportedGEPPointerLayoutsFailClosed) {
   B.CreateRet(B.CreateGEP(B.getInt32Ty(), Function->getArg(0), B.getInt32(1)));
   std::string Source;
   llvm::raw_string_ostream Out(Source);
-  EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}), std::runtime_error);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}),
+               std::runtime_error);
 }
 
 TEST(LLVMCValues, VectorMemoryUsesCCarrierAlignmentWithWeakerSourceABI) {
@@ -410,10 +414,12 @@ TEST(LLVMCValues, VectorMemoryUsesCCarrierAlignmentWithWeakerSourceABI) {
   auto *Vector = llvm::FixedVectorType::get(llvm::Type::getInt64Ty(Context), 2);
   auto *Ptr = llvm::PointerType::getUnqual(Context);
   auto *Function = llvm::Function::Create(
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false),
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr},
+                              false),
       llvm::GlobalValue::ExternalLinkage, "add_words", Module);
   llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Input = B.CreateAlignedLoad(Vector, Function->getArg(0), llvm::Align(4));
+  auto *Input =
+      B.CreateAlignedLoad(Vector, Function->getArg(0), llvm::Align(4));
   auto *Offsets = llvm::ConstantVector::get({B.getInt64(1), B.getInt64(3)});
   B.CreateAlignedStore(B.CreateAdd(Input, Offsets), Function->getArg(1),
                        llvm::Align(4));
@@ -456,7 +462,8 @@ TEST(LLVMCValues, SelectedFunctionRejectsReferencedVectorGlobalsBeforeOutput) {
           llvm::FunctionType::get(Integer, {Integer}, false),
           llvm::GlobalValue::ExternalLinkage, "selected", Module);
       llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
-      auto *Address = B.CreateGEP(Array, Global, {B.getInt32(0), B.getInt32(1)});
+      auto *Address =
+          B.CreateGEP(Array, Global, {B.getInt32(0), B.getInt32(1)});
       if (Store) {
         llvm::Value *Value = Function->getArg(0);
         if (!ScalarAccess)
@@ -474,8 +481,8 @@ TEST(LLVMCValues, SelectedFunctionRejectsReferencedVectorGlobalsBeforeOutput) {
       ASSERT_FALSE(llvm::verifyModule(Module));
       std::string Source;
       llvm::raw_string_ostream Out(Source);
-      EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr,
-                                               Function),
+      EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr,
+                                               nullptr, Function),
                    std::runtime_error);
       EXPECT_TRUE(Source.empty());
     }
@@ -497,10 +504,11 @@ TEST(LLVMCValues, SelectedScalarFunctionIgnoresUnrelatedVectorGlobal) {
   B.CreateRet(B.CreateAdd(Function->getArg(0), B.getInt64(1)));
   std::string Source;
   llvm::raw_string_ostream Out(Source);
-  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr,
-                                          Function));
+  ASSERT_TRUE(
+      neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr, Function));
   EXPECT_EQ(Source.find("unrelated"), std::string::npos);
-  compileAndRun(Source + "int main(void) { return selected(UINT64_MAX) != 0; }\n");
+  compileAndRun(Source +
+                "int main(void) { return selected(UINT64_MAX) != 0; }\n");
 }
 
 TEST(LLVMCValues, SurvivingVectorAllocationsFailClosedBeforeOutput) {
@@ -512,7 +520,8 @@ TEST(LLVMCValues, SurvivingVectorAllocationsFailClosedBeforeOutput) {
       auto *Vector = llvm::FixedVectorType::get(Integer, 2);
       auto *Fill = llvm::Function::Create(
           llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                                  {llvm::PointerType::getUnqual(Context)}, false),
+                                  {llvm::PointerType::getUnqual(Context)},
+                                  false),
           llvm::GlobalValue::ExternalLinkage, "external_fill", Module);
       auto *Function = llvm::Function::Create(
           llvm::FunctionType::get(Integer, {}, false),
@@ -528,7 +537,8 @@ TEST(LLVMCValues, SurvivingVectorAllocationsFailClosedBeforeOutput) {
       ASSERT_FALSE(llvm::verifyModule(Module));
       std::string Source;
       llvm::raw_string_ostream Out(Source);
-      EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr, nullptr,
+      EXPECT_THROW(neverd::LLVMCEmitter().emit(Module, Out, {}, nullptr,
+                                               nullptr,
                                                Selected ? Function : nullptr),
                    std::runtime_error);
       EXPECT_TRUE(Source.empty());
@@ -570,11 +580,13 @@ TEST(LLVMCValues, NativeVectorIntrinsicRequiresExactTargetAndSignature) {
     auto *Integer = llvm::Type::getInt128Ty(Context);
     auto *Accumulator =
         llvm::FixedVectorType::get(llvm::Type::getFloatTy(Context), 4);
-    auto *Input = llvm::FixedVectorType::get(
-        Malformed ? llvm::Type::getInt16Ty(Context)
-                  : llvm::Type::getBFloatTy(Context), 8);
+    auto *Input =
+        llvm::FixedVectorType::get(Malformed ? llvm::Type::getInt16Ty(Context)
+                                             : llvm::Type::getBFloatTy(Context),
+                                   8);
     auto *Intrinsic = llvm::Function::Create(
-        llvm::FunctionType::get(Accumulator, {Accumulator, Input, Input}, false),
+        llvm::FunctionType::get(Accumulator, {Accumulator, Input, Input},
+                                false),
         llvm::GlobalValue::ExternalLinkage, "llvm.aarch64.neon.bfmmla", Module);
     auto *Function = llvm::Function::Create(
         llvm::FunctionType::get(Integer, {Integer, Integer, Integer}, false),

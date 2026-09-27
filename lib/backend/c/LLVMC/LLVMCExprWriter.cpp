@@ -27,11 +27,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <stdexcept>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 namespace neverd {
@@ -94,8 +94,8 @@ std::string signedIntegerOperand(const llvm::Value *Value,
   const std::string Unsigned =
       Carrier == 128 ? "__uint128_t" : "uint" + std::to_string(Carrier) + "_t";
   const std::string Shift = std::to_string(Carrier - Width);
-  return "((" + Signed + ")((" + Unsigned + ")(" + Text + ") << " +
-         Shift + ") >> " + Shift + ")";
+  return "((" + Signed + ")((" + Unsigned + ")(" + Text + ") << " + Shift +
+         ") >> " + Shift + ")";
 }
 
 /// Drop one parenthesis pair that wraps a whole compare operand. `&&` and
@@ -123,8 +123,8 @@ std::string peelOperandWrap(std::string S) {
 }
 
 std::string syntheticFrameSlotName(int64_t Disp) {
-  const uint64_t Mag = Disp < 0 ? static_cast<uint64_t>(-Disp)
-                                : static_cast<uint64_t>(Disp);
+  const uint64_t Mag =
+      Disp < 0 ? static_cast<uint64_t>(-Disp) : static_cast<uint64_t>(Disp);
   return (Disp < 0 ? "var_m" : "var_") + llvm::utohexstr(Mag);
 }
 
@@ -461,8 +461,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         // C union member access preserves the representation, including NaN
         // payloads and signed zero, without compiler-specific bit-cast support.
         Text += "((union { " + typeToCLLVM(Integer) + " bits; " +
-                typeToCLLVM(Element->getType()) +
-                " value; }){ .bits = 0x" +
+                typeToCLLVM(Element->getType()) + " value; }){ .bits = 0x" +
                 llvm::utohexstr(Bits.getZExtValue()) + "ULL }).value";
       } else {
         Text += llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Element)
@@ -538,7 +537,7 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
       if (auto *CI = llvm::dyn_cast<llvm::ConstantInt>(CE->getOperand(0));
           CI && CI->getBitWidth() <= 64)
         if (auto Lit = imageStringLiteral(Img, CI->getZExtValue(),
-                                         /*AllowEmpty=*/true))
+                                          /*AllowEmpty=*/true))
           return *Lit;
     }
     if (CE->getOpcode() == llvm::Instruction::BitCast ||
@@ -627,7 +626,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
     return Bits.isNegative() ? std::to_string(Bits.getSExtValue())
                              : std::to_string(Bits.getZExtValue());
   };
-  // Wider values retain their full representation through constStr/renderInline.
+  // Wider values retain their full representation through
+  // constStr/renderInline.
   if (!SupportsWidth(V) || llvm::isa<llvm::FreezeInst>(V))
     return std::nullopt;
   if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(V))
@@ -666,8 +666,8 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
   }
 
   llvm::SmallPtrSet<const llvm::Value *, 16> Seen;
-  auto Rec = [&](auto &&Self, const llvm::Value *Cur)
-      -> std::optional<std::string> {
+  auto Rec = [&](auto &&Self,
+                 const llvm::Value *Cur) -> std::optional<std::string> {
     if (!SupportsWidth(Cur) || llvm::isa<llvm::FreezeInst>(Cur) ||
         !Seen.insert(Cur).second)
       return std::nullopt;
@@ -713,8 +713,7 @@ LLVMCWriter::foldImmediate(const llvm::Value *V) const {
       return std::nullopt;
     }
     if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Cur)) {
-      if (!Cast->getSrcTy()->isIntegerTy() ||
-          !Cast->getDestTy()->isIntegerTy())
+      if (!Cast->getSrcTy()->isIntegerTy() || !Cast->getDestTy()->isIntegerTy())
         return std::nullopt;
       auto Text = Self(Self, Cast->getOperand(0));
       if (!Text)
@@ -884,8 +883,8 @@ uint16_t LLVMCWriter::llvmAccessSize(const llvm::Type *Ty) const {
   if (!Ty)
     return 0;
   if (CurMod) {
-    const uint64_t Size = CurMod->getDataLayout().getTypeStoreSize(
-        const_cast<llvm::Type *>(Ty));
+    const uint64_t Size =
+        CurMod->getDataLayout().getTypeStoreSize(const_cast<llvm::Type *>(Ty));
     if (Size && Size <= UINT16_MAX)
       return static_cast<uint16_t>(Size);
   }
@@ -985,8 +984,7 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
       syntheticEntryStackResidue(Opts.TheArch, Opts.Format);
   if (FrameBaseOffset <= Residue)
     return;
-  const int64_t Aligned =
-      static_cast<int64_t>(FrameBaseOffset - Residue);
+  const int64_t Aligned = static_cast<int64_t>(FrameBaseOffset - Residue);
   std::map<int64_t, std::set<uint64_t>> Owners;
   std::set<uint64_t> Taken;
   std::set<const llvm::Value *> Seen;
@@ -1039,8 +1037,8 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
     }
   }
   for (uint64_t Off : Taken) {
-    const int64_t Disp = static_cast<int64_t>(Off) -
-                         static_cast<int64_t>(FrameBaseOffset);
+    const int64_t Disp =
+        static_cast<int64_t>(Off) - static_cast<int64_t>(FrameBaseOffset);
     for (int Delta = 0; Delta < 16 && Aligned - Delta > 0; ++Delta) {
       const int64_t Query = Disp + (Aligned - Delta);
       if (auto Var = Dbg->resolveStackPointerVariable(FunctionEntry, Query))
@@ -1073,16 +1071,14 @@ void LLVMCWriter::discoverSyntheticFrame(llvm::Function &Fn) {
   FrameDebugCache.clear();
 }
 
-std::optional<VariableSym>
-LLVMCWriter::debugFrameVariable(int64_t Disp) const {
+std::optional<VariableSym> LLVMCWriter::debugFrameVariable(int64_t Disp) const {
   if (auto Hit = FrameDebugCache.find(Disp); Hit != FrameDebugCache.end())
     return Hit->second;
-  auto Accept = [this](std::optional<VariableSym> Var)
-      -> std::optional<VariableSym> {
+  auto Accept =
+      [this](std::optional<VariableSym> Var) -> std::optional<VariableSym> {
     if (!Var || Var->IsParam || Var->Name.empty())
       return std::nullopt;
-    const std::string Name =
-        canonicalizeCProjectionIdentifier(Var->Name, "");
+    const std::string Name = canonicalizeCProjectionIdentifier(Var->Name, "");
     if (Name.empty() || Name != Var->Name || isReservedFrameName(Name) ||
         SpLocalAmbiguousNames.count(Name))
       return std::nullopt;
@@ -1129,7 +1125,7 @@ LLVMCWriter::debugFrameVariable(int64_t Disp) const {
 }
 
 const char *argListStandardField(const TypeRef &Ty, uint64_t Rel,
-                                  uint16_t AccessSize) {
+                                 uint16_t AccessSize) {
   if (!Ty || Ty->SourceName != "ArgList" || Ty->IsEnum)
     return nullptr;
   if (AccessSize != 0 && AccessSize != 8)
@@ -1173,9 +1169,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     NamedFrameSlot &Slot = FrameSlots[SlotOff];
     Slot.Off = SlotOff;
     Slot.Name = Var.Name;
-    if (Var.Type && (!Slot.Type ||
-                     Var.Type->FieldDisplayNames.size() >
-                         Slot.Type->FieldDisplayNames.size()))
+    if (Var.Type && (!Slot.Type || Var.Type->FieldDisplayNames.size() >
+                                       Slot.Type->FieldDisplayNames.size()))
       Slot.Type = Var.Type;
   };
 
@@ -1224,8 +1219,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
       if (!Var)
         continue;
       completeDisplayRecord(Dbg, Var->Type);
-      if (!Var->Type ||
-          (Var->Type->Size && Candidate >= Var->Type->Size))
+      if (!Var->Type || (Var->Type->Size && Candidate >= Var->Type->Size))
         continue;
       if (!Var->Type->displayFieldPathAt(Candidate, AccessSize) &&
           !(AccessSize == 0 && Var->Type->displayFieldPathAt(Candidate)))
@@ -1315,8 +1309,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
         }
       }
     }
-    if (const char *Std = argListStandardField(
-            Display ? Display : Owner->Type, /*Rel=*/0, AccessSize)) {
+    if (const char *Std = argListStandardField(Display ? Display : Owner->Type,
+                                               /*Rel=*/0, AccessSize)) {
       Out.Text = FieldText(Std);
       Out.Type = NdType::makeInt(8, false);
       return Out;
@@ -1333,8 +1327,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
         !Owner->Type->IsEnum && Owner->Type->Size > AccessSize &&
         (AccessSize == 1 || AccessSize == 2 || AccessSize == 4 ||
          AccessSize == 8)) {
-      Out.Text = "*(uint" + std::to_string(AccessSize * 8) + "_t *)&" +
-                 Owner->Name;
+      Out.Text =
+          "*(uint" + std::to_string(AccessSize * 8) + "_t *)&" + Owner->Name;
       Out.Type = NdType::makeInt(AccessSize, false);
       return Out;
     }
@@ -1343,8 +1337,9 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return Out;
   }
   const bool EnterNested = !AddressOf;
-  auto Field = Display ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested)
-                       : std::nullopt;
+  auto Field = Display
+                   ? Display->displayFieldPathAt(Rel, AccessSize, EnterNested)
+                   : std::nullopt;
   if (!Field && AccessSize == 0 && Display)
     Field = Display->displayFieldPathAt(Rel, 0, EnterNested);
   auto Path = Field ? canonicalizeDisplayPath(*Field) : std::nullopt;
@@ -1360,8 +1355,8 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     }
   }
   if (!Path) {
-    if (const char *Std = argListStandardField(
-            Display ? Display : Owner->Type, Rel, AccessSize)) {
+    if (const char *Std = argListStandardField(Display ? Display : Owner->Type,
+                                               Rel, AccessSize)) {
       Out.Text = FieldText(Std);
       Out.Type = Rel == 8 ? NdType::makePtr(NdType::makeInt(8))
                           : NdType::makeInt(8, false);
@@ -1372,8 +1367,7 @@ LLVMCWriter::frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize,
     return std::nullopt;
   }
   Out.Text = FieldText(*Path);
-  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize)
-                     : nullptr;
+  Out.Type = Display ? Display->displayFieldTypeAt(Rel, AccessSize) : nullptr;
   if (AddressOf)
     Out.Text = "&" + Out.Text;
   return Out;
@@ -1411,8 +1405,7 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
       if (BO->getOpcode() == llvm::Instruction::Add ||
           BO->getOpcode() == llvm::Instruction::Or) {
         const llvm::Value *Base = BO->getOperand(0);
-        const auto *CI =
-            llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
+        const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1));
         if (!CI) {
           CI = llvm::dyn_cast<llvm::ConstantInt>(Base);
           Base = BO->getOperand(1);
@@ -1517,8 +1510,7 @@ TypeRef LLVMCWriter::typeOfValue(const llvm::Value *V) const {
 }
 
 std::optional<LLVMCWriter::TypedAccess>
-LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr,
-                               uint16_t AccessSize,
+LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
                                bool EnterNestedAtZero) const {
   if (!Ptr)
     return std::nullopt;
@@ -1569,8 +1561,8 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr,
   } else
     return std::nullopt;
   completeDisplayRecord(Dbg, Rec);
-  auto Field = Rec->displayFieldPathAt(Peeled->second, AccessSize,
-                                      EnterNestedAtZero);
+  auto Field =
+      Rec->displayFieldPathAt(Peeled->second, AccessSize, EnterNestedAtZero);
   if (!Field)
     return std::nullopt;
   auto Path = canonicalizeDisplayPath(*Field);
@@ -1583,10 +1575,12 @@ LLVMCWriter::typedRecordAccess(const llvm::Value *Ptr,
 }
 
 namespace {
-const llvm::Value *peelMulScale(
-    const llvm::Value *V, uint64_t Scale,
-    const std::function<const llvm::Value *(const llvm::AllocaInst *)> &StoredOf,
-    const std::function<const llvm::AllocaInst *(const llvm::Value *)> &AsSlot) {
+const llvm::Value *
+peelMulScale(const llvm::Value *V, uint64_t Scale,
+             const std::function<const llvm::Value *(const llvm::AllocaInst *)>
+                 &StoredOf,
+             const std::function<const llvm::AllocaInst *(const llvm::Value *)>
+                 &AsSlot) {
   if (!V || !Scale)
     return nullptr;
   std::set<const llvm::Value *> Seen;
@@ -1599,8 +1593,7 @@ const llvm::Value *peelMulScale(
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
       if (const llvm::AllocaInst *Slot = AsSlot(LI->getPointerOperand())) {
-        if (const llvm::Value *Stored = StoredOf(Slot);
-            Stored && Stored != V) {
+        if (const llvm::Value *Stored = StoredOf(Slot); Stored && Stored != V) {
           V = Stored;
           continue;
         }
@@ -1639,7 +1632,8 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
       continue;
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Addr)) {
-      if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand())) {
+      if (const llvm::AllocaInst *Slot =
+              asAllocaPointer(LI->getPointerOperand())) {
         if (auto Last = AllocaLastValues.find(Slot);
             Last != AllocaLastValues.end() && Last->second &&
             Last->second != Addr) {
@@ -1679,7 +1673,8 @@ LLVMCWriter::typedIndexAccess(const llvm::Value *Ptr) {
   if (auto Acc = typedRecordAccess(Base, 8))
     BaseName = Acc->Text;
   else if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Base)) {
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand())) {
+    if (const llvm::AllocaInst *Slot =
+            asAllocaPointer(LI->getPointerOperand())) {
       if (auto Text = AllocaTexts.find(Slot); Text != AllocaTexts.end())
         BaseName = Text->second;
       else if (auto Name = ValNames.find(Slot); Name != ValNames.end())
@@ -1714,7 +1709,8 @@ std::string LLVMCWriter::indexExprStr(const llvm::Value *V) {
       }
     }
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-      if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand())) {
+      if (const llvm::AllocaInst *Slot =
+              asAllocaPointer(LI->getPointerOperand())) {
         if (const llvm::Value *Stored = allocaStoredValue(Slot);
             Stored && Stored != V) {
           V = Stored;
@@ -1745,8 +1741,7 @@ std::string LLVMCWriter::indexExprStr(const llvm::Value *V) {
       if (!LHS.empty() && !RHS.empty()) {
         if (BO->getOpcode() == llvm::Instruction::URem) {
           const std::string Type = typeToCLLVM(BO->getType());
-          return "((" + Type + ")(" + LHS + ") % (" + Type + ")(" +
-                 RHS + "))";
+          return "((" + Type + ")(" + LHS + ") % (" + Type + ")(" + RHS + "))";
         }
         return "(" + signedIntegerOperand(BO->getOperand(0), LHS) + " % " +
                signedIntegerOperand(BO->getOperand(1), RHS) + ")";
@@ -1806,8 +1801,7 @@ std::string LLVMCWriter::ultimateComposedText(const llvm::Value *V) {
   return {};
 }
 
-const llvm::Value *
-LLVMCWriter::jleZeroCore(const llvm::BinaryOperator *BO) {
+const llvm::Value *LLVMCWriter::jleZeroCore(const llvm::BinaryOperator *BO) {
   if (!BO || BO->getOpcode() != llvm::Instruction::Or)
     return nullptr;
   const llvm::Value *LHS = peelIntegerView(BO->getOperand(0));
@@ -1955,7 +1949,8 @@ std::string LLVMCWriter::condStr(const llvm::Value *V) {
         const llvm::Value *LHS = peelIntegerView(BO->getOperand(0));
         const llvm::Value *RHS = peelIntegerView(BO->getOperand(1));
         if (BO->getOpcode() == llvm::Instruction::And) {
-          auto zeroIcmp = [&](const llvm::Value *Val) -> const llvm::ICmpInst * {
+          auto zeroIcmp =
+              [&](const llvm::Value *Val) -> const llvm::ICmpInst * {
             Val = peelIntegerView(Val);
             const auto *Cmp = llvm::dyn_cast<llvm::ICmpInst>(Val);
             if (!Cmp || Cmp->getPredicate() != llvm::CmpInst::ICMP_EQ)
@@ -1967,16 +1962,16 @@ std::string LLVMCWriter::condStr(const llvm::Value *V) {
                 CI && CI->isZero()) {
               Zero = CI;
               Tested = Cmp->getOperand(0);
-            } else if (const auto *CI =
-                           llvm::dyn_cast<llvm::ConstantInt>(Cmp->getOperand(0));
+            } else if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
+                           Cmp->getOperand(0));
                        CI && CI->isZero()) {
               Zero = CI;
               Tested = Cmp->getOperand(1);
             }
             if (!Zero)
               return Cmp;
-            if (const auto *Inner = llvm::dyn_cast<llvm::ICmpInst>(
-                    peelIntegerView(Tested)))
+            if (const auto *Inner =
+                    llvm::dyn_cast<llvm::ICmpInst>(peelIntegerView(Tested)))
               return Inner;
             return Cmp;
           };
@@ -2087,8 +2082,9 @@ bool LLVMCWriter::isComposedRemValue(const llvm::Value *V) {
     break;
   }
   const auto *BO = llvm::dyn_cast<llvm::BinaryOperator>(V);
-  return BO && (BO->getOpcode() == llvm::Instruction::URem ||
-                BO->getOpcode() == llvm::Instruction::SRem) &&
+  return BO &&
+         (BO->getOpcode() == llvm::Instruction::URem ||
+          BO->getOpcode() == llvm::Instruction::SRem) &&
          !indexExprStr(BO).empty();
 }
 
@@ -2277,7 +2273,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
   if (auto Imm = foldImmediate(V))
     return *Imm;
   if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(V);
-      Cast && llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(Cast)) {
+      Cast &&
+      llvm::isa<llvm::TruncInst, llvm::ZExtInst, llvm::SExtInst>(Cast)) {
     if (const llvm::Value *Inner = losslessIntegerView(Cast);
         Inner && Inner->getType() == Cast->getType())
       return valueStr(Inner);
@@ -2351,8 +2348,7 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
         const auto *SI = llvm::dyn_cast<llvm::StoreInst>(U);
         if (!SI || SI->getValueOperand() != StoredLoad)
           continue;
-        const llvm::AllocaInst *Slot =
-            asAllocaPointer(SI->getPointerOperand());
+        const llvm::AllocaInst *Slot = asAllocaPointer(SI->getPointerOperand());
         if (!Slot || !isTypedRecordCursorSlot(Slot) ||
             !cursorSlotIsObserved(Slot))
           continue;
@@ -2384,7 +2380,8 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V) {
     }
   }
   if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(V)) {
-    if (const llvm::AllocaInst *Slot = asAllocaPointer(LI->getPointerOperand())) {
+    if (const llvm::AllocaInst *Slot =
+            asAllocaPointer(LI->getPointerOperand())) {
       if (joinFieldDefaultText(Slot))
         return getName(const_cast<llvm::AllocaInst *>(Slot));
       if (isJoinCallArgAlloca(Slot) && Slot != PhiTailSlot)
@@ -2573,7 +2570,7 @@ bool LLVMCWriter::operandIsUnsignedWidth(const llvm::Value *V,
 }
 
 std::string LLVMCWriter::unsignedCompareOperand(const llvm::Value *V,
-                                               std::string Text) const {
+                                                std::string Text) const {
   unsigned Bits = 0;
   if (V && V->getType()->isIntegerTy())
     Bits = V->getType()->getIntegerBitWidth();
@@ -2635,7 +2632,7 @@ std::string LLVMCWriter::cmpStr(llvm::CmpInst::Predicate Pred,
 }
 
 std::string LLVMCWriter::logicalShiftLhs(const llvm::Instruction &Shift,
-                                           std::string LHS) {
+                                         std::string LHS) {
   if ((Shift.getOpcode() != llvm::Instruction::LShr &&
        Shift.getOpcode() != llvm::Instruction::Shl) ||
       !Shift.getType()->isIntegerTy())
@@ -2649,8 +2646,8 @@ std::string LLVMCWriter::logicalShiftLhs(const llvm::Instruction &Shift,
   const llvm::CastInst *Widen = nullptr;
   while (Cur && Seen.insert(Cur).second) {
     if (const auto *LI = llvm::dyn_cast<llvm::LoadInst>(Cur)) {
-      if (const llvm::Value *Stored = allocaStoredValue(
-              asAllocaPointer(LI->getPointerOperand()));
+      if (const llvm::Value *Stored =
+              allocaStoredValue(asAllocaPointer(LI->getPointerOperand()));
           Stored && Stored != Cur) {
         Cur = Stored;
         continue;
@@ -2820,14 +2817,13 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
         Inst.getOpcode() == llvm::Instruction::Or ||
         Inst.getOpcode() == llvm::Instruction::Add ||
         Inst.getOpcode() == llvm::Instruction::Sub;
-    std::string LHS = logicalShiftLhs(
-        Inst, NeedsIntegerPointerOperand
-                  ? integerPointerOperandStr(Inst.getOperand(0))
-                  : valueStr(Inst.getOperand(0)));
-    const std::string RHS =
-        NeedsIntegerPointerOperand
-            ? integerPointerOperandStr(Inst.getOperand(1))
-            : valueStr(Inst.getOperand(1));
+    std::string LHS =
+        logicalShiftLhs(Inst, NeedsIntegerPointerOperand
+                                  ? integerPointerOperandStr(Inst.getOperand(0))
+                                  : valueStr(Inst.getOperand(0)));
+    const std::string RHS = NeedsIntegerPointerOperand
+                                ? integerPointerOperandStr(Inst.getOperand(1))
+                                : valueStr(Inst.getOperand(1));
     return "(" + binopStr(Inst.getOpcode(), LHS, RHS, Inst.getType()) + ")";
   }
   if (const auto *Trunc = llvm::dyn_cast<llvm::TruncInst>(&Inst)) {

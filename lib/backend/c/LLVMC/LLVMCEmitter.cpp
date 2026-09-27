@@ -51,7 +51,8 @@ bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
       Call.arg_size() != 3)
     return false;
   auto &Context = Call.getContext();
-  auto *Accumulator = llvm::FixedVectorType::get(llvm::Type::getFloatTy(Context), 4);
+  auto *Accumulator =
+      llvm::FixedVectorType::get(llvm::Type::getFloatTy(Context), 4);
   auto *Input = llvm::FixedVectorType::get(llvm::Type::getBFloatTy(Context), 8);
   return Call.getType() == Accumulator &&
          Call.getArgOperand(0)->getType() == Accumulator &&
@@ -362,8 +363,7 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
     }
     llvm::StringRef Raw = Name;
     if (Raw.starts_with("__imp_") || Raw.starts_with("_imp_") ||
-        Raw.starts_with("??") || Raw.starts_with("ord_") ||
-        Raw.contains("??"))
+        Raw.starts_with("??") || Raw.starts_with("ord_") || Raw.contains("??"))
       return;
     auto It = Objs.find(Name);
     if (It == Objs.end() ||
@@ -388,8 +388,8 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn) {
       OS << "static ";
     if (GV->isConstant())
       OS << "const ";
-    OS << "uint8_t " << namedImageObject(Base) << "["
-       << Array->getNumElements() << "] = {0};\n";
+    OS << "uint8_t " << namedImageObject(Base) << "[" << Array->getNumElements()
+       << "] = {0};\n";
   }
   if (!Objs.empty() || !ByteArrays.empty())
     OS << "\n";
@@ -435,8 +435,8 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     if (libc::isKnownFunction(Name))
       continue;
     if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name)) {
-      OS << msvcAtlSyntheticPrototype(Name, *Atl,
-                                      Opts.TheArch == Arch::X64 && Atl->FastCall)
+      OS << msvcAtlSyntheticPrototype(
+                Name, *Atl, Opts.TheArch == Arch::X64 && Atl->FastCall)
          << ";\n";
       continue;
     }
@@ -674,7 +674,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
                         const CEmitterOptions &Opts, DebugContext *Dbg,
                         const BinaryImage *Img, const llvm::Function *Only) {
   if (Only && referencesVectorGlobal(*Only))
-    throw std::runtime_error("C projection references unsupported vector global storage");
+    throw std::runtime_error(
+        "C projection references unsupported vector global storage");
   bool HasVectors = false;
   if (!Only)
     for (const auto &Global : Mod.globals())
@@ -685,7 +686,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     HasVectors |= containsVectorType(Function.getFunctionType());
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
-        if (const auto *Allocation = llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
+        if (const auto *Allocation =
+                llvm::dyn_cast<llvm::AllocaInst>(&Instruction))
           HasVectors |= containsVectorType(Allocation->getAllocatedType());
         HasVectors |= Instruction.getType()->isVectorTy();
         for (const auto &Operand : Instruction.operands())

@@ -185,7 +185,8 @@ std::vector<PortableStoreCall> portableStoreCalls(std::string_view Source) {
     if (TypeEnd != std::string_view::npos && Args && Args->size() == 2) {
       const auto Value = llvm::StringRef((*Args)[1]).trim();
       Stores.push_back({Source.substr(TypeStart, TypeEnd - TypeStart),
-                        (*Args)[0], std::string_view(Value.data(), Value.size())});
+                        (*Args)[0],
+                        std::string_view(Value.data(), Value.size())});
     }
   }
   return Stores;
@@ -367,7 +368,8 @@ TEST(HighCPointerAddresses, EmittedCExecutesByteLoadsStoresAndPointerResults) {
   }
 
   for (unsigned Form = 0; Form < 3; ++Form) {
-    auto IndirectStore = pointerFunction("frame_pointer_store", NdType::makeVoid());
+    auto IndirectStore =
+        pointerFunction("frame_pointer_store", NdType::makeVoid());
     IndirectStore.Name += std::to_string(Form);
     IndirectStore.FrameSize = 16;
     IndirectStore.Params = {{"arg0", I32Ptr}, {"arg1", I32}};
@@ -378,7 +380,7 @@ TEST(HighCPointerAddresses, EmittedCExecutesByteLoadsStoresAndPointerResults) {
     SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
     auto Home = [&](unsigned Offset) {
       return HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(SP),
-                                HighExpr::makeConst(Offset, 8));
+                                 HighExpr::makeConst(Offset, 8));
     };
     HighStmt SavePointer;
     SavePointer.Kind = StmtKind::Store;
@@ -504,7 +506,8 @@ TEST(HighCPointerAddresses, BytePointersKeepMachineAddressArithmetic) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("uint8_t* arg0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("*(uint8_t *)((uintptr_t)arg0 + arg1)"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, PointerOffsetAddressOmitsArithmeticWrap) {
@@ -514,19 +517,22 @@ TEST(HighCPointerAddresses, PointerOffsetAddressOmitsArithmeticWrap) {
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"p", NdType::makePtr(Rec)}};
-  auto Add = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                                 HighExpr::makeConst(8, 8));
+  auto Add =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(8, 8));
   Add->Type = NdType::makeInt(8, false);
   HighStmt Store;
   Store.Kind = StmtKind::Store;
   Store.StoreAddr = Add;
   Store.StoreVal = HighExpr::makeConst(1, 4);
   Store.StoreVal->Type = NdType::makeInt(4, true);
-  auto AtomicAddr = HighExpr::makeBinop(
-      NdOp::INT_ADD, parameter(0, Func.Params[0].Type), HighExpr::makeConst(8, 8));
+  auto AtomicAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(8, 8));
   AtomicAddr->Type = NdType::makeInt(8, false);
-  auto Atomic = HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
-                                    HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
+  auto Atomic =
+      HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
+                          HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
   Atomic->Type = NdType::makeInt(4, false);
   Atomic->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
   HighStmt Fetch;
@@ -555,11 +561,13 @@ TEST(HighCPointerAddresses, AtomicFetchAddComposesIntoCompare) {
   T.SSAVer = 7;
   T.Size = 4;
   T.TheArch = Arch::X64;
-  auto AtomicAddr = HighExpr::makeBinop(
-      NdOp::INT_ADD, parameter(0, Func.Params[0].Type), HighExpr::makeConst(8, 8));
+  auto AtomicAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(8, 8));
   AtomicAddr->Type = NdType::makeInt(8, false);
-  auto Atomic = HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
-                                    HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
+  auto Atomic =
+      HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
+                          HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
   Atomic->Type = NdType::makeInt(4, false);
   Atomic->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
   HighStmt Fetch;
@@ -576,9 +584,11 @@ TEST(HighCPointerAddresses, AtomicFetchAddComposesIntoCompare) {
   Guard.Body = {Release};
   Func.Body = {Fetch, Guard};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (__atomic_fetch_add("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("if (__atomic_fetch_add("), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("t94_7"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(uintptr_t)((uintptr_t)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uintptr_t)((uintptr_t)"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, SameAddressIncrementStorePrintsPlusEquals) {
@@ -591,9 +601,9 @@ TEST(HighCPointerAddresses, SameAddressIncrementStorePrintsPlusEquals) {
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"p", NdType::makePtr(Rec)}};
   auto Addr = [&]() {
-    auto Add = HighExpr::makeBinop(NdOp::INT_ADD,
-                                   parameter(0, Func.Params[0].Type),
-                                   HighExpr::makeConst(8, 8));
+    auto Add =
+        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                            HighExpr::makeConst(8, 8));
     Add->Type = NdType::makeInt(8, false);
     return Add;
   };
@@ -637,9 +647,9 @@ TEST(HighCPointerAddresses, InlinedSameAddressIncrementStorePrintsPlusEquals) {
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"p", NdType::makePtr(Rec)}};
-  auto Addr = HighExpr::makeBinop(NdOp::INT_ADD,
-                                  parameter(0, Func.Params[0].Type),
-                                  HighExpr::makeConst(8, 8));
+  auto Addr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(8, 8));
   Addr->Type = NdType::makeInt(8, false);
   auto Add = HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeLoad(Addr, I32),
                                  HighExpr::makeConst(1, 4));
@@ -663,9 +673,9 @@ TEST(HighCPointerAddresses, IncrementLoadKeptWhenValueIsUsed) {
   Func.ReturnType = I32;
   Func.Params = {{"p", NdType::makePtr(Rec)}};
   auto Addr = [&]() {
-    auto Add = HighExpr::makeBinop(NdOp::INT_ADD,
-                                   parameter(0, Func.Params[0].Type),
-                                   HighExpr::makeConst(8, 8));
+    auto Add =
+        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                            HighExpr::makeConst(8, 8));
     Add->Type = NdType::makeInt(8, false);
     return Add;
   };
@@ -775,9 +785,8 @@ TEST(HighCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "Format", 0x140002000,
-      {HighExpr::makeConst(0x140003400, 8)});
+  Call.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                     {HighExpr::makeConst(0x140003400, 8)});
   Func.Body = {Call};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -792,15 +801,14 @@ TEST(HighCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
 }
 
 TEST(HighCPointerAddresses, ReadonlyNarrowImageStringPrintsLiteral) {
-  BinaryImage Img =
-      makeImageObjectFixture(0x140003500, {'h', 'i', 0}, false);
+  BinaryImage Img = makeImageObjectFixture(0x140003500, {'h', 'i', 0}, false);
   HighFunc Func;
   Func.Name = "puts_hi";
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr =
-      HighExpr::makeCall("puts", 0x140002000, {HighExpr::makeConst(0x140003500, 8)});
+  Call.CallExpr = HighExpr::makeCall("puts", 0x140002000,
+                                     {HighExpr::makeConst(0x140003500, 8)});
   Func.Body = {Call};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -822,8 +830,8 @@ TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
   Func.ReturnType = NdType::makeInt(8, false);
   returnValue(Func, HighExpr::makeBinop(
                         NdOp::INT_OR,
-                        HighExpr::makeConst(
-                            Value, 8, ConstantAddressProvenance::Scalar),
+                        HighExpr::makeConst(Value, 8,
+                                            ConstantAddressProvenance::Scalar),
                         HighExpr::makeConst(1, 8)));
   const auto Source = emitFunctions({Func}, Arch::X64, &Img);
   EXPECT_NE(Source.find("0x140003500"), std::string::npos) << Source;
@@ -870,8 +878,8 @@ TEST(HighCPointerAddresses, NonAsciiImageBytesStayAddress) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "puts", 0x140002000, {HighExpr::makeConst(0x140003600, 8)});
+  Call.CallExpr = HighExpr::makeCall("puts", 0x140002000,
+                                     {HighExpr::makeConst(0x140003600, 8)});
   Func.Body = {Call};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -902,8 +910,9 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "format_s", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Ptr = llvm::ConstantExpr::getIntToPtr(
-      llvm::ConstantInt::get(I64, 0x140003400), llvm::PointerType::getUnqual(I8));
+  auto *Ptr =
+      llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(I64, 0x140003400),
+                                      llvm::PointerType::getUnqual(I8));
   Builder.CreateCall(Puts, {Ptr});
   Builder.CreateRetVoid();
 
@@ -913,7 +922,8 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   EXPECT_NE(Source.find("L\"%s\""), std::string::npos) << Source;
   EXPECT_EQ(Source.find("0x140003400"), std::string::npos) << Source;
@@ -926,9 +936,8 @@ TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
   llvm::Module Module("llvm-c-format-arity", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::FunctionType *FmtTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                              {I64, I64, I64, I64}, false);
+  llvm::FunctionType *FmtTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I64, I64, I64, I64}, false);
   llvm::Function *Format = llvm::Function::Create(
       FmtTy, llvm::GlobalValue::ExternalLinkage, "Format", Module);
   llvm::FunctionType *FnTy =
@@ -937,8 +946,9 @@ TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "format_s", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Ptr = llvm::ConstantExpr::getIntToPtr(
-      llvm::ConstantInt::get(I64, 0x140003400), llvm::PointerType::getUnqual(I8));
+  auto *Ptr =
+      llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(I64, 0x140003400),
+                                      llvm::PointerType::getUnqual(I8));
   Builder.CreateCall(Format, {llvm::ConstantInt::get(I64, 1), Ptr,
                               llvm::ConstantInt::get(I64, 2),
                               llvm::ConstantInt::get(I64, 3)});
@@ -950,12 +960,14 @@ TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   const auto At = Source.rfind("Format(");
   ASSERT_NE(At, std::string::npos) << Source;
-  const auto Args = Source.substr(Source.find('(', At) + 1,
-                                  Source.find(')', At) - Source.find('(', At) - 1);
+  const auto Args =
+      Source.substr(Source.find('(', At) + 1,
+                    Source.find(')', At) - Source.find('(', At) - 1);
   EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 2) << Source;
   EXPECT_NE(Source.find("L\"%s\""), std::string::npos) << Source;
 }
@@ -969,26 +981,26 @@ TEST(LLVMCPointerAddresses, CxxEhInitialStateStoreIsOmitted) {
     llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
     llvm::FunctionType *FnTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
-    llvm::Function *Function = llvm::Function::Create(
-        FnTy, llvm::GlobalValue::ExternalLinkage,
-        Eh ? "eh_state" : "plain_state", Module);
+    llvm::Function *Function =
+        llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                               Eh ? "eh_state" : "plain_state", Module);
     if (Eh) {
       llvm::FunctionType *PersTy =
           llvm::FunctionType::get(I32, /*isVarArg=*/true);
-      llvm::Function *Pers = llvm::Function::Create(
-          PersTy, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler3",
-          Module);
+      llvm::Function *Pers =
+          llvm::Function::Create(PersTy, llvm::GlobalValue::ExternalLinkage,
+                                 "__CxxFrameHandler3", Module);
       Function->setPersonalityFn(Pers);
     }
-    llvm::FunctionType *UseTy = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(Context), {llvm::PointerType::get(Context, 0)},
-        false);
+    llvm::FunctionType *UseTy =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                                {llvm::PointerType::get(Context, 0)}, false);
     llvm::Function *Use = llvm::Function::Create(
         UseTy, llvm::GlobalValue::ExternalLinkage, "use_slot", Module);
     llvm::IRBuilder<> Builder(
         llvm::BasicBlock::Create(Context, "entry", Function));
-    llvm::Value *Frame = Builder.CreateAlloca(
-        llvm::ArrayType::get(I8, 512), nullptr, "frame");
+    llvm::Value *Frame =
+        Builder.CreateAlloca(llvm::ArrayType::get(I8, 512), nullptr, "frame");
     llvm::Value *State = Builder.CreateInBoundsGEP(
         I8, Frame, llvm::ConstantInt::get(I64, 288), "state");
     llvm::Value *Other = Builder.CreateInBoundsGEP(
@@ -1007,8 +1019,8 @@ TEST(LLVMCPointerAddresses, CxxEhInitialStateStoreIsOmitted) {
     Options.TheArch = Arch::X64;
     Options.Format = BinaryFormat::COFF;
     Options.EmitIncludes = false;
-    EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                    Function));
+    EXPECT_TRUE(
+        LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
     OS.flush();
     return Source;
   };
@@ -1031,14 +1043,14 @@ TEST(LLVMCPointerAddresses, CtorKeepsIntegerAddressSource) {
       llvm::Type::getVoidTy(Context), {I64, I64, I64, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64, I64}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I64, I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "copy_name", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
   llvm::Value *Slot = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 16), "slot");
   llvm::Value *Src = Builder.CreatePtrToInt(Slot, I64, "src");
@@ -1052,8 +1064,8 @@ TEST(LLVMCPointerAddresses, CtorKeepsIntegerAddressSource) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT_ctor(arg0, ((char*)&frame0 + 16))"),
             std::string::npos)
@@ -1062,22 +1074,20 @@ TEST(LLVMCPointerAddresses, CtorKeepsIntegerAddressSource) {
             std::string::npos)
       << Source;
 
-  llvm::FunctionType *MgrTy =
-      llvm::FunctionType::get(I64, {I64}, false);
+  llvm::FunctionType *MgrTy = llvm::FunctionType::get(I64, {I64}, false);
   llvm::Function *Mgr = llvm::Function::Create(
       MgrTy, llvm::GlobalValue::ExternalLinkage, "GetManager", Module);
   llvm::Function *Copy = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "copy_mgr", Module);
-  llvm::IRBuilder<> CopyB(
-      llvm::BasicBlock::Create(Context, "entry", Copy));
+  llvm::IRBuilder<> CopyB(llvm::BasicBlock::Create(Context, "entry", Copy));
   llvm::Value *Got = CopyB.CreateCall(Mgr, {Copy->getArg(0)}, "mgr");
-  CopyB.CreateCall(Ctor, {Copy->getArg(0), Got, Copy->getArg(1),
-                          Copy->getArg(1)});
+  CopyB.CreateCall(Ctor,
+                   {Copy->getArg(0), Got, Copy->getArg(1), Copy->getArg(1)});
   CopyB.CreateRetVoid();
   std::string MgrSource;
   llvm::raw_string_ostream MgrOS(MgrSource);
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, MgrOS, Options, nullptr, nullptr,
-                                  Copy));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, MgrOS, Options, nullptr, nullptr, Copy));
   MgrOS.flush();
   EXPECT_NE(MgrSource.find("CStringT_ctor(arg0, "), std::string::npos)
       << MgrSource;
@@ -1126,15 +1136,14 @@ TEST(LLVMCPointerAddresses, SpAlignDeltaDoesNotRenameNeighborSlot) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_str", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(I32, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "adjustment", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 128), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 64), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -1145,8 +1154,8 @@ TEST(LLVMCPointerAddresses, SpAlignDeltaDoesNotRenameNeighborSlot) {
   Builder.CreateCall(Use, {Builder.CreateIntToPtr(StrSlot, Ptr)});
   Builder.CreateStore(llvm::ConstantInt::get(I32, 48),
                       Builder.CreateIntToPtr(StateSlot, Ptr));
-  llvm::Value *State = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(StateSlot, Ptr), "state");
+  llvm::Value *State =
+      Builder.CreateLoad(I32, Builder.CreateIntToPtr(StateSlot, Ptr), "state");
   Builder.CreateRet(State);
 
   std::string Source;
@@ -1155,7 +1164,8 @@ TEST(LLVMCPointerAddresses, SpAlignDeltaDoesNotRenameNeighborSlot) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("&strAdjustmentRecord"), std::string::npos) << Source;
   EXPECT_NE(Source.find("var_m18 = 48"), std::string::npos) << Source;
@@ -1199,7 +1209,7 @@ TEST(LLVMCPointerAddresses, AtomicFetchAddPrintsBuiltin) {
   EXPECT_NE(Source.find("__atomic_fetch_add("), std::string::npos) << Source;
   EXPECT_NE(Source.find("__ATOMIC_SEQ_CST"), std::string::npos) << Source;
   EXPECT_NE(Source.find("-1"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("/* unhandled"), std::string::npos)       << Source;
+  EXPECT_EQ(Source.find("/* unhandled"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, AtomicMinMaxKeepsOldValueAndSignedOrdering) {
@@ -1371,8 +1381,7 @@ TEST(LLVMCPointerAddresses, CtorReturnPrintsObjectAddress) {
   llvm::Module Module("llvm-c-ctor-ret", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(I64, {Ptr, I64}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
   llvm::FunctionType *UseTy =
@@ -1410,8 +1419,7 @@ TEST(LLVMCPointerAddresses, UnreadCtorInReturningFunctionIsStatement) {
   llvm::Module Module("llvm-c-ctor-dead", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(I64, {Ptr, I64}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
   llvm::FunctionType *DtorTy = llvm::FunctionType::get(I64, {Ptr}, false);
@@ -1423,7 +1431,8 @@ TEST(LLVMCPointerAddresses, UnreadCtorInReturningFunctionIsStatement) {
   Function->getArg(0)->setName("result");
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  Builder.CreateCall(Ctor, {Function->getArg(0), llvm::ConstantInt::get(I64, 0)});
+  Builder.CreateCall(Ctor,
+                     {Function->getArg(0), llvm::ConstantInt::get(I64, 0)});
   Builder.CreateCall(Dtor, {Function->getArg(0)});
   Builder.CreateRet(Function->getArg(0));
 
@@ -1448,8 +1457,7 @@ TEST(LLVMCPointerAddresses, UnreadCtorStoredToUnloadedHomeIsStatement) {
   llvm::Module Module("llvm-c-ctor-home", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(I64, {Ptr, I64}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
   llvm::FunctionType *DtorTy = llvm::FunctionType::get(I64, {Ptr}, false);
@@ -1491,8 +1499,7 @@ TEST(LLVMCPointerAddresses, CtorResultLoadedFromHomeStaysAssigned) {
   llvm::Module Module("llvm-c-ctor-used-home", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(I64, {Ptr, I64}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
   llvm::FunctionType *UseTy =
@@ -1535,15 +1542,14 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesThroughRegisterHome) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "fill_len", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   llvm::Value *Loaded = Builder.CreateLoad(I64, Home);
   Builder.CreateStore(Loaded, Function->getArg(1));
@@ -1571,17 +1577,17 @@ TEST(LLVMCPointerAddresses, CallUsedTwiceStaysAssigned) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "keep_len", Module);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   llvm::Value *Loaded = Builder.CreateLoad(I64, Home);
   Builder.CreateCondBr(
@@ -1612,8 +1618,8 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesAcrossBlock) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "fill_next", Module);
   llvm::BasicBlock *Entry =
@@ -1621,8 +1627,7 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesAcrossBlock) {
   llvm::BasicBlock *Next = llvm::BasicBlock::Create(Context, "next", Function);
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   Builder.CreateBr(Next);
   Builder.SetInsertPoint(Next);
@@ -1692,9 +1697,9 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoHomeFedField) {
   Builder.CreateStore(Narrow, NarrowHome);
   llvm::Value *Wide =
       Builder.CreateSExt(Builder.CreateLoad(I32, NarrowHome), I64);
-  llvm::Value *Add = Builder.CreateAdd(
-      Builder.CreatePtrToInt(Function->getArg(0), I64),
-      llvm::ConstantInt::get(I64, 8));
+  llvm::Value *Add =
+      Builder.CreateAdd(Builder.CreatePtrToInt(Function->getArg(0), I64),
+                        llvm::ConstantInt::get(I64, 8));
   Builder.CreateStore(Wide, Builder.CreateIntToPtr(Add, Ptr));
   Builder.CreateRetVoid();
 
@@ -1739,8 +1744,7 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoLaterCall) {
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
   llvm::Value *Clobber = Builder.CreateAlloca(I64, nullptr, "rdx");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   Builder.CreateStore(Builder.CreateFreeze(llvm::UndefValue::get(I64)),
                       Clobber);
@@ -1811,12 +1815,12 @@ TEST(LLVMCPointerAddresses, OverLimitCallOperandDoesNotBlockInlining) {
   Builder.CreateStore(Builder.CreateFreeze(llvm::UndefValue::get(I64)),
                       Clobber);
   llvm::Value *Loaded = Builder.CreateLoad(I64, Home);
-  llvm::Value *Add = Builder.CreateAdd(
-      Builder.CreatePtrToInt(Function->getArg(0), I64),
-      llvm::ConstantInt::get(I64, 8));
+  llvm::Value *Add =
+      Builder.CreateAdd(Builder.CreatePtrToInt(Function->getArg(0), I64),
+                        llvm::ConstantInt::get(I64, 8));
   Builder.CreateStore(Loaded, Builder.CreateIntToPtr(Add, Ptr));
-  Builder.CreateCall(IsEmpty, {Function->getArg(0), Loaded, Loaded, Loaded,
-                               Loaded});
+  Builder.CreateCall(IsEmpty,
+                     {Function->getArg(0), Loaded, Loaded, Loaded, Loaded});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -1884,8 +1888,7 @@ TEST(LLVMCPointerAddresses, UnprintedCursorCopyDoesNotBlockSingleUseCall) {
   llvm::Value *Loaded = Builder.CreateLoad(I64, Home);
   Builder.CreateStore(Loaded, Dead);
   Builder.CreateCondBr(
-      Builder.CreateICmpEQ(Loaded, llvm::ConstantInt::get(I64, 0)), Then,
-      Else);
+      Builder.CreateICmpEQ(Loaded, llvm::ConstantInt::get(I64, 0)), Then, Else);
   Builder.SetInsertPoint(Then);
   Builder.CreateRetVoid();
   Builder.SetInsertPoint(Else);
@@ -1933,15 +1936,13 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoLaterIf) {
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
   llvm::Value *NarrowHome = Builder.CreateAlloca(I32, nullptr, "eax");
   llvm::Value *Clobber = Builder.CreateAlloca(I64, nullptr, "rdx");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   Builder.CreateStore(Builder.CreateFreeze(llvm::UndefValue::get(I64)),
                       Clobber);
   Builder.CreateBr(Next);
   Builder.SetInsertPoint(Next);
-  llvm::Value *Narrow =
-      Builder.CreateTrunc(Builder.CreateLoad(I64, Home), I32);
+  llvm::Value *Narrow = Builder.CreateTrunc(Builder.CreateLoad(I64, Home), I32);
   Builder.CreateStore(Narrow, NarrowHome);
   llvm::Value *Flag = Builder.CreateLoad(I32, NarrowHome);
   Builder.CreateCondBr(
@@ -1960,7 +1961,8 @@ TEST(LLVMCPointerAddresses, SingleUseCallInlinesIntoLaterIf) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("if (!((uint32_t)(GetLength("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("if (!((uint32_t)(GetLength("), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("= GetLength("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("GetLength("), Source.rfind("GetLength(")) << Source;
 }
@@ -1976,8 +1978,8 @@ TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *DtorTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *DtorTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Dtor = llvm::Function::Create(
       DtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_dtor", Module);
   llvm::FunctionType *FnTy =
@@ -2019,7 +2021,8 @@ TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
   ASSERT_NE(DtorAt, std::string::npos) << Source;
   EXPECT_LT(IconAt, DtorAt) << Source;
   EXPECT_LT(LenAt, DtorAt) << Source;
-  EXPECT_EQ(Source.find("GetDisplayIcon(", DtorAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("GetDisplayIcon(", DtorAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("GetLength(", DtorAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("if (", DtorAt), std::string::npos) << Source;
 }
@@ -2032,8 +2035,8 @@ TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *DtorTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *DtorTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Dtor = llvm::Function::Create(
       DtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_dtor", Module);
   llvm::FunctionType *FnTy =
@@ -2049,8 +2052,7 @@ TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
   llvm::Value *Length = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateCall(Dtor, {Slot});
   Builder.CreateCondBr(
-      Builder.CreateICmpEQ(Length, llvm::ConstantInt::get(I64, 0)), Then,
-      Else);
+      Builder.CreateICmpEQ(Length, llvm::ConstantInt::get(I64, 0)), Then, Else);
   Builder.SetInsertPoint(Then);
   Builder.CreateRetVoid();
   Builder.SetInsertPoint(Else);
@@ -2094,13 +2096,12 @@ TEST(LLVMCPointerAddresses, JoinCallHomeStaysAssigned) {
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
   Builder.CreateCondBr(
-      Builder.CreateICmpNE(Function->getArg(0),
-                           llvm::ConstantPointerNull::get(
-                               llvm::cast<llvm::PointerType>(Ptr))),
+      Builder.CreateICmpNE(
+          Function->getArg(0),
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr))),
       Then, Else);
   Builder.SetInsertPoint(Then);
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   Builder.CreateBr(Join);
   Builder.SetInsertPoint(Else);
@@ -2146,13 +2147,12 @@ TEST(LLVMCPointerAddresses, PhiCallResultStaysAssigned) {
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::IRBuilder<> Builder(Entry);
   Builder.CreateCondBr(
-      Builder.CreateICmpNE(Function->getArg(0),
-                           llvm::ConstantPointerNull::get(
-                               llvm::cast<llvm::PointerType>(Ptr))),
+      Builder.CreateICmpNE(
+          Function->getArg(0),
+          llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr))),
       Then, Else);
   Builder.SetInsertPoint(Then);
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateBr(Join);
   Builder.SetInsertPoint(Else);
   Builder.CreateBr(Join);
@@ -2191,8 +2191,7 @@ TEST(LLVMCPointerAddresses, UnusedCallResultStaysAssigned) {
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Home = Builder.CreateAlloca(I64, nullptr, "rax");
-  llvm::Value *LenCall =
-      Builder.CreateCall(Len, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall = Builder.CreateCall(Len, {Function->getArg(0)}, "len");
   Builder.CreateStore(LenCall, Home);
   Builder.CreateRetVoid();
 
@@ -2253,8 +2252,8 @@ TEST(LLVMCPointerAddresses, IntrinsicCallIsNotInlined) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "count_bits", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Bits = Builder.CreateCall(
-      Ctpop, {llvm::ConstantInt::get(I64, 7)}, "bits");
+  llvm::Value *Bits =
+      Builder.CreateCall(Ctpop, {llvm::ConstantInt::get(I64, 7)}, "bits");
   Builder.CreateStore(Bits, Function->getArg(0));
   Builder.CreateRetVoid();
 
@@ -2314,12 +2313,11 @@ TEST(LLVMCPointerAddresses, InvokeCallIsNotInlined) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *PersTy =
-      llvm::FunctionType::get(I32, /*isVarArg=*/true);
+  llvm::FunctionType *PersTy = llvm::FunctionType::get(I32, /*isVarArg=*/true);
   llvm::Function *Pers = llvm::Function::Create(
       PersTy, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler3", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "invoke_len", Module);
   Function->setPersonalityFn(Pers);
@@ -2328,14 +2326,14 @@ TEST(LLVMCPointerAddresses, InvokeCallIsNotInlined) {
   llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
   llvm::BasicBlock *Pad = llvm::BasicBlock::Create(Context, "pad", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *LenCall = Builder.CreateInvoke(
-      Len, Cont, Pad, {Function->getArg(0)}, "len");
+  llvm::Value *LenCall =
+      Builder.CreateInvoke(Len, Cont, Pad, {Function->getArg(0)}, "len");
   Builder.SetInsertPoint(Cont);
   Builder.CreateStore(LenCall, Function->getArg(1));
   Builder.CreateRetVoid();
   Builder.SetInsertPoint(Pad);
-  llvm::LandingPadInst *LP = Builder.CreateLandingPad(
-      llvm::StructType::get(Context, {Ptr, I32}), 0);
+  llvm::LandingPadInst *LP =
+      Builder.CreateLandingPad(llvm::StructType::get(Context, {Ptr, I32}), 0);
   LP->setCleanup(true);
   Builder.CreateUnreachable();
 
@@ -2418,8 +2416,7 @@ TEST(LLVMCPointerAddresses, AtlCtorKeepsEmptyWideImageArg) {
   auto *Base = new llvm::GlobalVariable(
       Module, I8, /*isConstant=*/true, llvm::GlobalValue::ExternalLinkage,
       nullptr, (kNdCodePtrPrefix + llvm::utohexstr(0x140030000)).str());
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(I64, {I64, I64}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(I64, {I64, I64}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {I64}, false);
@@ -2444,8 +2441,8 @@ TEST(LLVMCPointerAddresses, AtlCtorKeepsEmptyWideImageArg) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
   EXPECT_NE(Source.find("L\"\""), std::string::npos) << Source;
@@ -2454,8 +2451,7 @@ TEST(LLVMCPointerAddresses, AtlCtorKeepsEmptyWideImageArg) {
 }
 
 TEST(HighCPointerAddresses, NamedEmptyWideImageConstPrintsAddressOfObject) {
-  BinaryImage Img =
-      makeImageObjectFixture(0x1400050E0, {0, 0}, false);
+  BinaryImage Img = makeImageObjectFixture(0x1400050E0, {0, 0}, false);
   class NamedWide : public NullDebugContext {
   public:
     std::vector<DataObjectSym> allDataObjects() const override {
@@ -2471,7 +2467,8 @@ TEST(HighCPointerAddresses, NamedEmptyWideImageConstPrintsAddressOfObject) {
   HighFunc Func;
   Func.Name = "GetDisplayName";
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))}};
+  Func.Params = {
+      {"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))}};
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
   Ctor.CallExpr = HighExpr::makeCall(
@@ -2490,7 +2487,8 @@ TEST(HighCPointerAddresses, NamedEmptyWideImageConstPrintsAddressOfObject) {
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("int16_t pwstr"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("CStringT_ctor(result, 0x1400050E0)"), std::string::npos)
+  EXPECT_EQ(Source.find("CStringT_ctor(result, 0x1400050E0)"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("L\"\""), std::string::npos) << Source;
 }
@@ -2531,7 +2529,8 @@ TEST(HighCPointerAddresses, MsvcStringLiteralPublicEmptyWidePrintsLEmpty) {
   EXPECT_NE(Source.find("CStringT_ctor(result, L\"\")"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("_11LOCGONAA"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("CStringT_ctor(result, 0x1400050E0)"), std::string::npos)
+  EXPECT_EQ(Source.find("CStringT_ctor(result, 0x1400050E0)"),
+            std::string::npos)
       << Source;
 }
 
@@ -2607,8 +2606,8 @@ TEST(HighCPointerAddresses, TypedCallArgPromotesImageObjectPointerType) {
       FS.Addr = Addr;
       FS.CallConv = DebugCallConv::Thiscall;
       FS.ReturnType = NdType::makeInt(4, false);
-      FS.Params.emplace_back(
-          "this", NdType::makePtr(NdType::makeNamedRecord("CRecordDataTable", 8)));
+      FS.Params.emplace_back("this", NdType::makePtr(NdType::makeNamedRecord(
+                                         "CRecordDataTable", 8)));
       FS.Params.emplace_back("eRecord",
                              NdType::makeNamedRecord("eRecordRank", 4, true));
       return FS;
@@ -2630,10 +2629,10 @@ TEST(HighCPointerAddresses, TypedCallArgPromotesImageObjectPointerType) {
   Copy.Dst = HighExpr::makeVar(Temp, NdType::makeInt(8));
   Copy.Val = Table;
   Func.Body.push_back(std::move(Copy));
-  returnValue(Func, HighExpr::makeCall(
-                        "CRecordDataTable_LookupColor", 0x140002000,
-                        {HighExpr::makeVar(Temp, NdType::makeInt(8)),
-                         HighExpr::makeConst(1, 4)}));
+  returnValue(Func,
+              HighExpr::makeCall("CRecordDataTable_LookupColor", 0x140002000,
+                                 {HighExpr::makeVar(Temp, NdType::makeInt(8)),
+                                  HighExpr::makeConst(1, 4)}));
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -2683,9 +2682,9 @@ TEST(HighCPointerAddresses, ImageObjectLoadComposesIntoIfCondAndCall) {
   If.Cond = HighExpr::makeVar(Temp, NdType::makeInt(8));
   HighStmt Use;
   Use.Kind = StmtKind::ExprStmt;
-  Use.Val = HighExpr::makeCall("GetPeriodID", 0x140003000,
-                              {HighExpr::makeVar(Temp, NdType::makeInt(8)),
-                               HighExpr::makeConst(1, 4)});
+  Use.Val = HighExpr::makeCall(
+      "GetPeriodID", 0x140003000,
+      {HighExpr::makeVar(Temp, NdType::makeInt(8)), HighExpr::makeConst(1, 4)});
   If.Body.push_back(std::move(Use));
   Func.Body.push_back(std::move(If));
 
@@ -2698,8 +2697,7 @@ TEST(HighCPointerAddresses, ImageObjectLoadComposesIntoIfCondAndCall) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_NE(Source.find("if (s_instance)"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("GetPeriodID(s_instance"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("GetPeriodID(s_instance"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t76"), std::string::npos) << Source;
 }
 
@@ -2743,7 +2741,7 @@ TEST(HighCPointerAddresses, ImageObjectLoadKeepsTempAfterInterveningCall) {
   HighStmt Use;
   Use.Kind = StmtKind::ExprStmt;
   Use.Val = HighExpr::makeCall("GetPeriodID", 0x140003000,
-                              {HighExpr::makeVar(Temp, NdType::makeInt(8))});
+                               {HighExpr::makeVar(Temp, NdType::makeInt(8))});
   If.Body.push_back(std::move(Use));
   Func.Body.push_back(std::move(If));
 
@@ -2757,8 +2755,7 @@ TEST(HighCPointerAddresses, ImageObjectLoadKeepsTempAfterInterveningCall) {
   OS.flush();
   EXPECT_NE(Source.find("other()"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("if (s_instance)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("GetPeriodID(s_instance"), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("GetPeriodID(s_instance"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, FieldLoadComposesIntoIfCondAndStore) {
@@ -2779,10 +2776,10 @@ TEST(HighCPointerAddresses, FieldLoadComposesIntoIfCondAndStore) {
   Load.Dst = HighExpr::makeVar(Cnt, NdType::makeInt(4));
   Load.Val = HighExpr::makeUnary(
       NdOp::INT_SEXT,
-      HighExpr::makeLoad(
-          HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                              HighExpr::makeConst(80, 8)),
-          NdType::makeInt(4)));
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                             parameter(0, Func.Params[0].Type),
+                                             HighExpr::makeConst(80, 8)),
+                         NdType::makeInt(4)));
   Load.Val->Type = NdType::makeInt(4);
   Func.Body.push_back(std::move(Load));
   HighStmt If;
@@ -2822,16 +2819,14 @@ TEST(HighCPointerAddresses, ExternalPrototypeMatchesLeadingUnderscoreCall) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "__report_gsfailure", 0x140002000,
-      {HighExpr::makeConst(7, 8)});
+  Call.CallExpr = HighExpr::makeCall("__report_gsfailure", 0x140002000,
+                                     {HighExpr::makeConst(7, 8)});
   Func.Body.push_back(std::move(Call));
 
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("extern int _report_gsfailure("), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("_report_gsfailure(7);"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("_report_gsfailure(7);"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("extern int report_gsfailure("), std::string::npos)
       << Source;
 }
@@ -2844,8 +2839,7 @@ TEST(HighCPointerAddresses, ExternalCallsKeepDistinctUnderscoreSpellings) {
     HighStmt Call;
     Call.Kind = StmtKind::Call;
     Call.CallExpr = HighExpr::makeCall(
-        Name, 0,
-        {HighExpr::makeConst(Name[1] == '_' ? 2 : 1, 8)});
+        Name, 0, {HighExpr::makeConst(Name[1] == '_' ? 2 : 1, 8)});
     Func.Body.push_back(std::move(Call));
   }
 
@@ -2930,7 +2924,8 @@ TEST(HighCPointerAddresses, WidenedParamCopyPrintsAsParamInCompare) {
   Temp.Id = 29;
   Temp.Size = 8;
   Temp.TheArch = Arch::X64;
-  auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, parameter(0, NdType::makeInt(4)));
+  auto Wide =
+      HighExpr::makeUnary(NdOp::INT_ZEXT, parameter(0, NdType::makeInt(4)));
   Wide->Type = NdType::makeInt(8, false);
   HighStmt Copy;
   Copy.Kind = StmtKind::Assign;
@@ -2942,9 +2937,9 @@ TEST(HighCPointerAddresses, WidenedParamCopyPrintsAsParamInCompare) {
   Then.RetVal = HighExpr::makeConst(1, 4);
   HighStmt Branch;
   Branch.Kind = StmtKind::IfElse;
-  Branch.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, HighExpr::makeVar(Temp, NdType::makeInt(8)),
-      HighExpr::makeConst(7, 8));
+  Branch.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL,
+                                    HighExpr::makeVar(Temp, NdType::makeInt(8)),
+                                    HighExpr::makeConst(7, 8));
   Branch.Body.push_back(std::move(Then));
   Func.Body.push_back(std::move(Branch));
   HighStmt ElseRet;
@@ -3014,10 +3009,10 @@ TEST(HighCPointerAddresses, TypedCallPeelsWidenedImmediate) {
   Dest.Size = 8;
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
-  Call.Val = HighExpr::makeCall(
-      "Catalog_Lookup", 0x140002000,
-      {HighExpr::makeConst(0x140006000, 8), HighExpr::makeConst(0x140005000, 8),
-       Wide, HighExpr::makeConst(42, 4)});
+  Call.Val = HighExpr::makeCall("Catalog_Lookup", 0x140002000,
+                                {HighExpr::makeConst(0x140006000, 8),
+                                 HighExpr::makeConst(0x140005000, 8), Wide,
+                                 HighExpr::makeConst(42, 4)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3148,9 +3143,8 @@ TEST(HighCPointerAddresses, MsvcNonTemplateDtorKeepsDtorStem) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "??1PtrBox@@QEAA@XZ", 0x140021377,
-      {HighExpr::makeConst(0x140001040, 8)});
+  Call.CallExpr = HighExpr::makeCall("??1PtrBox@@QEAA@XZ", 0x140021377,
+                                     {HighExpr::makeConst(0x140001040, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3167,9 +3161,9 @@ TEST(HighCPointerAddresses, DemangledTemplateDtorKeepsDtorStem) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "PtrBox<CAuxData *>::~PtrBox<CAuxData *>", 0x140021377,
-      {HighExpr::makeConst(0x140001040, 8)});
+  Call.CallExpr =
+      HighExpr::makeCall("PtrBox<CAuxData *>::~PtrBox<CAuxData *>", 0x140021377,
+                         {HighExpr::makeConst(0x140001040, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3185,9 +3179,8 @@ TEST(HighCPointerAddresses, MsvcTemplateDtorIsNotHexEscaped) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "__imp_??1?$Foo@H@@QEAA@XZ", 0x1400329f0,
-      {HighExpr::makeConst(0x140001040, 8)});
+  Call.CallExpr = HighExpr::makeCall("__imp_??1?$Foo@H@@QEAA@XZ", 0x1400329f0,
+                                     {HighExpr::makeConst(0x140001040, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3206,7 +3199,8 @@ TEST(HighCPointerAddresses, MsvcTemplateAssignIsNotHexEscaped) {
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall(
       "__imp_??4?$CStringT@H@@QEAAAEAV0@AEBV0@@Z", 0x1400329f8,
-      {HighExpr::makeConst(0x140001040, 8), HighExpr::makeConst(0x140001048, 8)});
+      {HighExpr::makeConst(0x140001040, 8),
+       HighExpr::makeConst(0x140001048, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3222,9 +3216,9 @@ TEST(HighCPointerAddresses, MsvcTemplateCstrIsNotHexEscaped) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "__imp_??B?$CSimpleStringT@_W$00@ATL@@QEBAPEB_WXZ", 0x1400329d8,
-      {HighExpr::makeConst(0x140001040, 8)});
+  Call.CallExpr =
+      HighExpr::makeCall("__imp_??B?$CSimpleStringT@_W$00@ATL@@QEBAPEB_WXZ",
+                         0x1400329d8, {HighExpr::makeConst(0x140001040, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3345,7 +3339,7 @@ TEST(HighCPointerAddresses, PhiCopyUndefAssignPrintsZeroNotUnknown) {
   HighStmt If;
   If.Kind = StmtKind::IfElse;
   If.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
-                               HighExpr::makeConst(0, 8));
+                                HighExpr::makeConst(0, 8));
   If.Body = {Then};
   If.ElseBody = {Else};
   HighStmt Call;
@@ -3429,8 +3423,8 @@ TEST(HighCPointerAddresses, OrdinalImportUsesDebugDataName) {
   ThunkCaller.ReturnType = NdType::makeVoid();
   HighStmt ThunkCall;
   ThunkCall.Kind = StmtKind::Call;
-  ThunkCall.CallExpr = HighExpr::makeCall(
-      "ord_1031", 0x140020280, {HighExpr::makeConst(1, 8)});
+  ThunkCall.CallExpr =
+      HighExpr::makeCall("ord_1031", 0x140020280, {HighExpr::makeConst(1, 8)});
   ThunkCaller.Body.push_back(std::move(ThunkCall));
   HighStmt ThunkRet;
   ThunkRet.Kind = StmtKind::Return;
@@ -3440,7 +3434,8 @@ TEST(HighCPointerAddresses, OrdinalImportUsesDebugDataName) {
   CEmitterOptions ThunkOptions;
   ThunkOptions.TheArch = Arch::X64;
   ThunkOptions.Image = &Img;
-  EXPECT_TRUE(HighCEmitter().emit({ThunkCaller}, ThunkOS, ThunkOptions, &ThunkDbg));
+  EXPECT_TRUE(
+      HighCEmitter().emit({ThunkCaller}, ThunkOS, ThunkOptions, &ThunkDbg));
   ThunkOS.flush();
   EXPECT_NE(ThunkSource.find("Foo_dtor("), std::string::npos) << ThunkSource;
   EXPECT_EQ(ThunkSource.find("GetRecordNameWithRankColor("), std::string::npos)
@@ -3492,8 +3487,9 @@ TEST(HighCPointerAddresses, NamedClassReturnIsIndirectResult) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
+      std::string::npos)
       << Source;
   EXPECT_NE(Source.find("return result;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("void MakeName"), std::string::npos) << Source;
@@ -3530,9 +3526,9 @@ TEST(HighCPointerAddresses, MemberSretKeepsThisInRcx) {
   Dest.Size = 8;
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
-  Call.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                               {parameter(0, NdType::makeInt(8)),
-                                parameter(1, NdType::makeInt(8))});
+  Call.Val = HighExpr::makeCall(
+      "CRecord_GetRecordName", 0x140002000,
+      {parameter(0, NdType::makeInt(8)), parameter(1, NdType::makeInt(8))});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3549,9 +3545,11 @@ TEST(HighCPointerAddresses, MemberSretKeepsThisInRcx) {
                         "CRecord* this, CStringT* result)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this, result)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRecordName(this, result)"),
+            std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("CRecord_GetRecordName(result, this)"), std::string::npos)
+  EXPECT_EQ(Source.find("CRecord_GetRecordName(result, this)"),
+            std::string::npos)
       << Source;
   EXPECT_NE(Source.find("return result;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(CStringT*)(uintptr_t)(result)"), std::string::npos)
@@ -3617,7 +3615,7 @@ TEST(HighCPointerAddresses, DebugCalleePointerArgsOmitIntegerView) {
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
   Call.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                               {parameter(0, Func.Params[0].Type), Home});
+                                {parameter(0, Func.Params[0].Type), Home});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -3639,7 +3637,8 @@ TEST(HighCPointerAddresses, DebugCalleePointerArgsOmitIntegerView) {
   ASSERT_EQ(Args->size(), 2u) << Source;
   EXPECT_EQ((*Args)[0], "this") << Source;
   EXPECT_NE((*Args)[1].find("(CStringT*)(uintptr_t)((frame_base - 8))"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m8 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("CStringT* var_m8"), std::string::npos) << Source;
@@ -3672,14 +3671,15 @@ TEST(HighCPointerAddresses, AnalysisOnlyEmitsDebugCalleePrototype) {
   Func.Name = "GetRecordNameWithRankColor";
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
+  Func.Params = {
+      {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall("CRecord_GetRank", 0x140002000,
-                                    {parameter(0, Func.Params[0].Type)});
+                                     {parameter(0, Func.Params[0].Type)});
   Try.Body.push_back(std::move(Call));
   Func.Body.push_back(std::move(Try));
 
@@ -3689,7 +3689,8 @@ TEST(HighCPointerAddresses, AnalysisOnlyEmitsDebugCalleePrototype) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("extern __fastcall eRecordRank CRecord_GetRank(CRecord* this)"),
+  EXPECT_NE(Source.find(
+                "extern __fastcall eRecordRank CRecord_GetRank(CRecord* this)"),
             std::string::npos)
       << Source;
 }
@@ -3712,9 +3713,8 @@ TEST(HighCPointerAddresses, EnumCallArgOmitsIntegerViewWraps) {
       if (Addr == 0x140002100) {
         FS.Name = "CRecordDataTable_LookupColor";
         FS.ReturnType = NdType::makeInt(4, false);
-        FS.Params.emplace_back(
-            "this",
-            NdType::makePtr(NdType::makeNamedRecord("CRecordDataTable", 8)));
+        FS.Params.emplace_back("this", NdType::makePtr(NdType::makeNamedRecord(
+                                           "CRecordDataTable", 8)));
         FS.Params.emplace_back("eRecord", Rank);
         return FS;
       }
@@ -3727,11 +3727,12 @@ TEST(HighCPointerAddresses, EnumCallArgOmitsIntegerViewWraps) {
   HighFunc Func;
   Func.Name = "GetRecordNameWithRankColor";
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"table", NdType::makePtr(NdType::makeNamedRecord(
-                               "CRecordDataTable", 8))},
-                 {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
+  Func.Params = {
+      {"table",
+       NdType::makePtr(NdType::makeNamedRecord("CRecordDataTable", 8))},
+      {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
   auto GetRank = HighExpr::makeCall("CRecord_GetRank", 0x140002000,
-                                   {parameter(1, Func.Params[1].Type)});
+                                    {parameter(1, Func.Params[1].Type)});
   GetRank->Type = Rank;
   auto Narrow = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(GetRank));
   Narrow->Type = NdType::makeInt(4, false);
@@ -3739,9 +3740,9 @@ TEST(HighCPointerAddresses, EnumCallArgOmitsIntegerViewWraps) {
   Wide->Type = NdType::makeInt(8, false);
   HighStmt Color;
   Color.Kind = StmtKind::ExprStmt;
-  Color.Val = HighExpr::makeCall(
-      "CRecordDataTable_LookupColor", 0x140002100,
-      {parameter(0, Func.Params[0].Type), std::move(Wide)});
+  Color.Val =
+      HighExpr::makeCall("CRecordDataTable_LookupColor", 0x140002100,
+                         {parameter(0, Func.Params[0].Type), std::move(Wide)});
   Func.Body = {Color};
 
   std::string Source;
@@ -3750,7 +3751,8 @@ TEST(HighCPointerAddresses, EnumCallArgOmitsIntegerViewWraps) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecordDataTable_LookupColor(table, CRecord_GetRank(record))"),
+  EXPECT_NE(Source.find(
+                "CRecordDataTable_LookupColor(table, CRecord_GetRank(record))"),
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
@@ -3862,7 +3864,8 @@ TEST(HighCPointerAddresses, MemberSretCallKeepsLiveInThis) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRecordName(this"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CRecord_GetRecordName(this"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("CRecord_GetRecordName(result"), std::string::npos)
       << Source;
 }
@@ -4142,10 +4145,9 @@ TEST(HighCPointerAddresses, LabelIfElsePrintsGreaterOnMaxCount) {
   Guard.Kind = StmtKind::IfElse;
   Guard.Cond = HighExpr::makeUnary(
       NdOp::BOOL_NOT,
-      HighExpr::makeBinop(
-          NdOp::BOOL_AND,
-          HighExpr::makeBinop(NdOp::INT_LESSEQUAL, Kill, Max),
-          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Kill, Max)));
+      HighExpr::makeBinop(NdOp::BOOL_AND,
+                          HighExpr::makeBinop(NdOp::INT_LESSEQUAL, Kill, Max),
+                          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Kill, Max)));
   Guard.Body = {Master};
   Guard.ElseBody = {Taken};
   Func.Body = {Guard};
@@ -4178,13 +4180,14 @@ TEST(HighCPointerAddresses, AddressOfWrapperRecordOmitsOffset0Field) {
   Func.Name = "aux_name";
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"this", NdType::makePtr(Record)}};
-  auto Addr = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                                  HighExpr::makeConst(32, 8));
+  auto Addr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(32, 8));
   HighStmt GetLen;
   GetLen.Kind = StmtKind::If;
-  GetLen.Cond = HighExpr::makeBinop(
-      NdOp::INT_SLESS, HighExpr::makeConst(0, 4),
-      HighExpr::makeCall("GetLength", 0x140032a40, {Addr}));
+  GetLen.Cond =
+      HighExpr::makeBinop(NdOp::INT_SLESS, HighExpr::makeConst(0, 4),
+                          HighExpr::makeCall("GetLength", 0x140032a40, {Addr}));
   HighStmt Assign;
   Assign.Kind = StmtKind::Call;
   Assign.CallExpr =
@@ -4254,8 +4257,9 @@ TEST(HighCPointerAddresses, UnionOverlayPicksUniqueAccessWidth) {
   Func.Params = {{"p", NdType::makePtr(Aux)}};
   const auto I32 = NdType::makeInt(4, true);
   auto Addr = [&]() {
-    auto Add = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                                   HighExpr::makeConst(8, 8));
+    auto Add =
+        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                            HighExpr::makeConst(8, 8));
     Add->Type = NdType::makeInt(8, false);
     return Add;
   };
@@ -4276,11 +4280,13 @@ TEST(HighCPointerAddresses, UnionOverlayPicksUniqueAccessWidth) {
   Store.Kind = StmtKind::Store;
   Store.StoreAddr = Addr();
   Store.StoreVal = Inc;
-  auto AtomicAddr = HighExpr::makeBinop(
-      NdOp::INT_ADD, parameter(0, Func.Params[0].Type), HighExpr::makeConst(8, 8));
+  auto AtomicAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(8, 8));
   AtomicAddr->Type = NdType::makeInt(8, false);
-  auto Atomic = HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
-                                    HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
+  auto Atomic =
+      HighExpr::makeBinop(NdOp::ATOMIC_ADD, std::move(AtomicAddr),
+                          HighExpr::makeConst(static_cast<uint64_t>(-1), 4));
   Atomic->Type = NdType::makeInt(4, false);
   Atomic->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
   HighStmt Fetch;
@@ -4304,7 +4310,8 @@ TEST(HighCPointerAddresses, SameWidthUnionOverlayStaysRaw) {
   auto Rec = NdType::makeNamedRecord("CPtred", 24);
   Rec->FieldDisplayNames = {"_m_nRef", "_m_count"};
   Rec->FieldDisplayOffsets = {8, 8};
-  Rec->FieldDisplayTypes = {NdType::makeInt(4, true), NdType::makeInt(4, false)};
+  Rec->FieldDisplayTypes = {NdType::makeInt(4, true),
+                            NdType::makeInt(4, false)};
   HighFunc Func;
   Func.Name = "raw_union";
   Func.ReturnType = NdType::makeInt(4);
@@ -4469,15 +4476,14 @@ TEST(HighCPointerAddresses, SplitAddFieldLoadPrintsNestedMember) {
   HighStmt LoadId;
   LoadId.Kind = StmtKind::Assign;
   LoadId.Dst = HighExpr::makeVar(IdDest, NdType::makeInt(4));
-  LoadId.Val =
-      HighExpr::makeLoad(HighExpr::makeVar(Addr, NdType::makeInt(8)),
-                         NdType::makeInt(4));
+  LoadId.Val = HighExpr::makeLoad(HighExpr::makeVar(Addr, NdType::makeInt(8)),
+                                  NdType::makeInt(4));
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "GetData", 0x140002000,
-      {parameter(0, Func.Params[0].Type),
-       HighExpr::makeVar(IdDest, NdType::makeInt(4))});
+  Call.CallExpr =
+      HighExpr::makeCall("GetData", 0x140002000,
+                         {parameter(0, Func.Params[0].Type),
+                          HighExpr::makeVar(IdDest, NdType::makeInt(4))});
   Func.Body = {LoadPtr, Lea, LoadId, Call};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("GetData("), std::string::npos) << Source;
@@ -4544,13 +4550,14 @@ TEST(HighCPointerAddresses, WidenedFieldLoadPrintsNestedMember) {
                                  HighExpr::makeVar(Loaded, NdType::makeInt(4)));
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "GetData", 0x140002000,
-      {parameter(0, Func.Params[0].Type),
-       HighExpr::makeVar(Wide, NdType::makeInt(8))});
+  Call.CallExpr =
+      HighExpr::makeCall("GetData", 0x140002000,
+                         {parameter(0, Func.Params[0].Type),
+                          HighExpr::makeVar(Wide, NdType::makeInt(8))});
   Func.Body = {LoadPtr, LoadId, Zext, Call};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("this->m_pRecordData.p->m_aux.auxID"), std::string::npos)
+  EXPECT_NE(Source.find("this->m_pRecordData.p->m_aux.auxID"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
 }
@@ -4679,7 +4686,8 @@ TEST(HighCPointerAddresses, CallArgZextOfFieldLoadPrintsNestedMember) {
 
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
   EXPECT_NE(Source.find("GetData("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("this->m_pRecordData.p->m_aux.auxID"), std::string::npos)
+  EXPECT_NE(Source.find("this->m_pRecordData.p->m_aux.auxID"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t94"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t76"), std::string::npos) << Source;
@@ -5192,9 +5200,8 @@ TEST(HighCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
       FS.Addr = Addr;
       FS.CallConv = DebugCallConv::Thiscall;
       FS.ReturnType = NdType::makePtr(HolderTy);
-      FS.Params.emplace_back("this",
-                             NdType::makePtr(NdType::makeNamedRecord(
-                                 "CAuxDataTable", 8)));
+      FS.Params.emplace_back(
+          "this", NdType::makePtr(NdType::makeNamedRecord("CAuxDataTable", 8)));
       FS.Params.emplace_back("result", NdType::makePtr(HolderTy));
       FS.Params.emplace_back("auxID", NdType::makeInt(4, false));
       return FS;
@@ -5234,10 +5241,9 @@ TEST(HighCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
       HighExpr::makeConst(16, 8));
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "CAuxDataTable_GetData", 0x140002000,
-      {parameter(0, Func.Params[0].Type), PtrBoxAddr,
-       HighExpr::makeConst(1, 4)});
+  Call.CallExpr = HighExpr::makeCall("CAuxDataTable_GetData", 0x140002000,
+                                     {parameter(0, Func.Params[0].Type),
+                                      PtrBoxAddr, HighExpr::makeConst(1, 4)});
   Func.Body.push_back(std::move(Call));
   MedVar Copy;
   Copy.Kind = MedVar::Temp;
@@ -5293,7 +5299,8 @@ TEST(HighCPointerAddresses, NamedRecordFieldAddressPrintsAmpersand) {
   Func.Body.push_back(std::move(Call));
   returnValue(Func, HighExpr::makeConst(0, 4));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("IsEmpty(&this->m_virtualRecordName)"), std::string::npos)
+  EXPECT_NE(Source.find("IsEmpty(&this->m_virtualRecordName)"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("+ (uint64_t)(240)"), std::string::npos) << Source;
 }
@@ -5338,8 +5345,8 @@ TEST(HighCPointerAddresses, FieldLoadCallArgPrintsMember) {
       NdType::makeInt(4));
   Func.Body.push_back(std::move(Load));
   auto Rank = HighExpr::makeVar(Dest, NdType::makeInt(4));
-  auto Slice = HighExpr::makeBinop(NdOp::SUBBYTES, Rank,
-                                  HighExpr::makeConst(0, 4));
+  auto Slice =
+      HighExpr::makeBinop(NdOp::SUBBYTES, Rank, HighExpr::makeConst(0, 4));
   Slice->Type = NdType::makeInt(4, false);
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, Slice);
   Wide->Type = NdType::makeInt(8, false);
@@ -5351,8 +5358,9 @@ TEST(HighCPointerAddresses, FieldLoadCallArgPrintsMember) {
   CallDest.Size = 8;
   CallDest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(CallDest, NdType::makeInt(8));
-  Call.Val = HighExpr::makeCall("TextToHtml_GetRecordNameWithColor", 0x140002000,
-                               {parameter(1, NdType::makeInt(8)), Wide});
+  Call.Val =
+      HighExpr::makeCall("TextToHtml_GetRecordNameWithColor", 0x140002000,
+                         {parameter(1, NdType::makeInt(8)), Wide});
   Func.Body.push_back(std::move(Call));
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -5360,8 +5368,9 @@ TEST(HighCPointerAddresses, FieldLoadCallArgPrintsMember) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("TextToHtml_GetRecordNameWithColor(result, this->m_rank)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("TextToHtml_GetRecordNameWithColor(result, this->m_rank)"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t25"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)"), std::string::npos) << Source;
@@ -5393,8 +5402,10 @@ TEST(HighCPointerAddresses, ClassByValueStringArgTakesPointer) {
       FS.Addr = Addr;
       FS.CallConv = DebugCallConv::Thiscall;
       FS.ReturnType = NdType::makeNamedRecord("CStringT", 8);
-      FS.Params.emplace_back("recordName", NdType::makeNamedRecord("CStringT", 8));
-      FS.Params.emplace_back("grade", NdType::makeNamedRecord("eRecordRank", 4, true));
+      FS.Params.emplace_back("recordName",
+                             NdType::makeNamedRecord("CStringT", 8));
+      FS.Params.emplace_back("grade",
+                             NdType::makeNamedRecord("eRecordRank", 4, true));
       return FS;
     }
     bool hasInfo() const override { return true; }
@@ -5407,8 +5418,9 @@ TEST(HighCPointerAddresses, ClassByValueStringArgTakesPointer) {
   Func.Entry = 0x140001000;
   Func.FrameSize = 16;
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"this", NdType::makePtr(Record)},
-                 {"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))}};
+  Func.Params = {
+      {"this", NdType::makePtr(Record)},
+      {"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))}};
   const TargetRegInfo &TRI = getTargetRegInfo(Arch::X64);
   MedVar SP;
   SP.Kind = MedVar::Reg;
@@ -5426,9 +5438,8 @@ TEST(HighCPointerAddresses, ClassByValueStringArgTakesPointer) {
   HighStmt GetName;
   GetName.Kind = StmtKind::Assign;
   GetName.Dst = HighExpr::makeVar(Name, NdType::makeInt(8));
-  GetName.Val = HighExpr::makeCall(
-      "CRecord_GetRecordName", 0x140002000,
-      {parameter(0, Func.Params[0].Type), Home});
+  GetName.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
+                                   {parameter(0, Func.Params[0].Type), Home});
   Func.Body.push_back(std::move(GetName));
   MedVar Grade;
   Grade.Kind = MedVar::Temp;
@@ -5444,17 +5455,17 @@ TEST(HighCPointerAddresses, ClassByValueStringArgTakesPointer) {
       NdType::makeInt(4));
   Func.Body.push_back(std::move(Load));
   auto RankExpr = HighExpr::makeVar(Grade, NdType::makeInt(4));
-  auto Slice = HighExpr::makeBinop(NdOp::SUBBYTES, RankExpr,
-                                  HighExpr::makeConst(0, 4));
+  auto Slice =
+      HighExpr::makeBinop(NdOp::SUBBYTES, RankExpr, HighExpr::makeConst(0, 4));
   Slice->Type = NdType::makeInt(4, false);
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, Slice);
   Wide->Type = NdType::makeInt(8, false);
   HighStmt Color;
   Color.Kind = StmtKind::ExprStmt;
-  Color.Val = HighExpr::makeCall(
-      "TextToHtml_GetRecordNameWithColor", 0x140002010,
-      {parameter(1, Func.Params[1].Type),
-       HighExpr::makeVar(Name, NdType::makeInt(8)), Wide});
+  Color.Val =
+      HighExpr::makeCall("TextToHtml_GetRecordNameWithColor", 0x140002010,
+                         {parameter(1, Func.Params[1].Type),
+                          HighExpr::makeVar(Name, NdType::makeInt(8)), Wide});
   Func.Body.push_back(std::move(Color));
 
   std::string Source;
@@ -5500,8 +5511,8 @@ TEST(HighCPointerAddresses, NullPathJoinsNameSourceWithoutDanglingGoto) {
   auto NotNeg = HighExpr::makeUnary(
       NdOp::BOOL_NOT,
       HighExpr::makeBinop(NdOp::INT_SLESS, Len, HighExpr::makeConst(0, 4)));
-  auto NonZero = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Len,
-                                    HighExpr::makeConst(0, 4));
+  auto NonZero =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, Len, HighExpr::makeConst(0, 4));
   HighStmt RecordAsg;
   RecordAsg.Kind = StmtKind::Assign;
   RecordAsg.Dst = SrcVar;
@@ -5542,7 +5553,7 @@ TEST(HighCPointerAddresses, NullPathJoinsNameSourceWithoutDanglingGoto) {
   HighStmt NullIf;
   NullIf.Kind = StmtKind::If;
   NullIf.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
-                                   HighExpr::makeConst(0, 8));
+                                    HighExpr::makeConst(0, 8));
   NullIf.Body = {ToName};
   Func.Body = {NullIf, Try};
 
@@ -5589,21 +5600,21 @@ TEST(HighCPointerAddresses, SingleUseCallsComposeAtUse) {
   GetRank.Kind = StmtKind::Assign;
   GetRank.Dst = HighExpr::makeVar(Rank, NdType::makeInt(4));
   GetRank.Val = HighExpr::makeCall("CRecord_GetRank", 0x140002010,
-                                  {parameter(1, NdType::makeInt(8))});
+                                   {parameter(1, NdType::makeInt(8))});
   Func.Body.push_back(std::move(GetRank));
   HighStmt GetColor;
   GetColor.Kind = StmtKind::Assign;
   GetColor.Dst = HighExpr::makeVar(Color, NdType::makeInt(4));
-  GetColor.Val = HighExpr::makeCall(
-      "CRecordDataTable_LookupColor", 0x140002020,
-      {HighExpr::makeConst(0x140070000, 8),
-       HighExpr::makeVar(Rank, NdType::makeInt(4))});
+  GetColor.Val =
+      HighExpr::makeCall("CRecordDataTable_LookupColor", 0x140002020,
+                         {HighExpr::makeConst(0x140070000, 8),
+                          HighExpr::makeVar(Rank, NdType::makeInt(4))});
   Func.Body.push_back(std::move(GetColor));
   HighStmt Html;
   Html.Kind = StmtKind::ExprStmt;
-  Html.Val = HighExpr::makeCall(
-      "TextToHtml_GetHtmlText", 0x140002030,
-      {parameter(0, NdType::makeInt(8)), HighExpr::makeVar(Color, NdType::makeInt(4))});
+  Html.Val = HighExpr::makeCall("TextToHtml_GetHtmlText", 0x140002030,
+                                {parameter(0, NdType::makeInt(8)),
+                                 HighExpr::makeVar(Color, NdType::makeInt(4))});
   Func.Body.push_back(std::move(Html));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("TextToHtml_GetHtmlText(result, "
@@ -5638,14 +5649,14 @@ TEST(HighCPointerAddresses, SingleUseCallKeepsForwardedFrameBacking) {
   GetName.Kind = StmtKind::Assign;
   GetName.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
   GetName.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                                  {parameter(0, NdType::makeInt(8)), Home});
+                                   {parameter(0, NdType::makeInt(8)), Home});
   Func.Body.push_back(std::move(GetName));
   HighStmt Color;
   Color.Kind = StmtKind::ExprStmt;
-  Color.Val = HighExpr::makeCall(
-      "TextToHtml_GetRecordNameWithColor", 0x140002010,
-      {parameter(1, NdType::makeInt(8)),
-       HighExpr::makeVar(Dest, NdType::makeInt(8))});
+  Color.Val =
+      HighExpr::makeCall("TextToHtml_GetRecordNameWithColor", 0x140002010,
+                         {parameter(1, NdType::makeInt(8)),
+                          HighExpr::makeVar(Dest, NdType::makeInt(8))});
   Func.Body.push_back(std::move(Color));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("uint8_t stack_storage[24]"), std::string::npos)
@@ -5656,7 +5667,8 @@ TEST(HighCPointerAddresses, SingleUseCallKeepsForwardedFrameBacking) {
   EXPECT_EQ((*Args)[0], "this") << Source;
   EXPECT_NE((*Args)[1].find("frame_base"), std::string::npos) << Source;
   EXPECT_NE(Source.find("TextToHtml_GetRecordNameWithColor(result, "
-                        "CRecord_GetRecordName(this,"), std::string::npos)
+                        "CRecord_GetRecordName(this,"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t24"), std::string::npos) << Source;
@@ -5677,16 +5689,16 @@ TEST(HighCPointerAddresses, SingleUseCallDoesNotEnterCxxTry) {
   GetName.Kind = StmtKind::Assign;
   GetName.Dst = HighExpr::makeVar(Name, NdType::makeInt(8));
   GetName.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                                  {parameter(1, NdType::makeInt(8))});
+                                   {parameter(1, NdType::makeInt(8))});
   Func.Body.push_back(std::move(GetName));
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
   HighStmt Html;
   Html.Kind = StmtKind::ExprStmt;
-  Html.Val = HighExpr::makeCall(
-      "TextToHtml_GetHtmlText", 0x140002030,
-      {parameter(0, NdType::makeInt(8)), HighExpr::makeVar(Name, NdType::makeInt(8))});
+  Html.Val = HighExpr::makeCall("TextToHtml_GetHtmlText", 0x140002030,
+                                {parameter(0, NdType::makeInt(8)),
+                                 HighExpr::makeVar(Name, NdType::makeInt(8))});
   Try.Body.push_back(std::move(Html));
   HighEHClause Cleanup;
   Cleanup.Kind = HighEHClauseKind::CxxCleanup;
@@ -5694,7 +5706,8 @@ TEST(HighCPointerAddresses, SingleUseCallDoesNotEnterCxxTry) {
   Try.EHClauseBodies.emplace_back();
   Func.Body.push_back(std::move(Try));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("CRecord_GetRecordName(record)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CRecord_GetRecordName(record)"), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("RecordName = CRecord_GetRecordName(record)"),
             std::string::npos)
       << Source;
@@ -5737,17 +5750,16 @@ TEST(HighCPointerAddresses, CallResultTempUsesDebugReturnType) {
   GetName.Kind = StmtKind::Assign;
   GetName.Dst = HighExpr::makeVar(Name, NdType::makeInt(8));
   GetName.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                                  {parameter(1, NdType::makeInt(8))});
+                                   {parameter(1, NdType::makeInt(8))});
   Func.Body.push_back(std::move(GetName));
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
   HighStmt Html;
   Html.Kind = StmtKind::ExprStmt;
-  Html.Val = HighExpr::makeCall(
-      "TextToHtml_GetHtmlText", 0x140002030,
-      {parameter(0, NdType::makeInt(8)),
-       HighExpr::makeVar(Name, NdType::makeInt(8))});
+  Html.Val = HighExpr::makeCall("TextToHtml_GetHtmlText", 0x140002030,
+                                {parameter(0, NdType::makeInt(8)),
+                                 HighExpr::makeVar(Name, NdType::makeInt(8))});
   Try.Body.push_back(std::move(Html));
   HighEHClause Cleanup;
   Cleanup.Kind = HighEHClauseKind::CxxCleanup;
@@ -5812,9 +5824,9 @@ TEST(HighCPointerAddresses, TypedCallResultLocalProjectsZeroOffsetField) {
   Func.Body.push_back(std::move(UseField));
   HighStmt UseObject;
   UseObject.Kind = StmtKind::Call;
-  UseObject.CallExpr = HighExpr::makeCall(
-      "consume_provider", 0x140002200,
-      {HighExpr::makeVar(ProviderVar, NdType::makeInt(8))});
+  UseObject.CallExpr =
+      HighExpr::makeCall("consume_provider", 0x140002200,
+                         {HighExpr::makeVar(ProviderVar, NdType::makeInt(8))});
   Func.Body.push_back(std::move(UseObject));
 
   std::string Source;
@@ -5826,8 +5838,7 @@ TEST(HighCPointerAddresses, TypedCallResultLocalProjectsZeroOffsetField) {
   EXPECT_NE(Source.find("Provider* t1;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("consume_worker(t1->m_worker)"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("consume_worker(*(int64_t *)(t1))"),
-            std::string::npos)
+  EXPECT_EQ(Source.find("consume_worker(*(int64_t *)(t1))"), std::string::npos)
       << Source;
 }
 
@@ -5848,9 +5859,10 @@ TEST(HighCPointerAddresses, PostIfElseAssignComposesIntoElseUse) {
   Then.CallExpr = HighExpr::makeCall("label", 0x140002000, {});
   HighStmt Fmt;
   Fmt.Kind = StmtKind::Call;
-  Fmt.CallExpr = HighExpr::makeCall(
-      "Format", 0x140002100,
-      {parameter(0, NdType::makeInt(8)), HighExpr::makeVar(Dest, NdType::makeInt(8))});
+  Fmt.CallExpr =
+      HighExpr::makeCall("Format", 0x140002100,
+                         {parameter(0, NdType::makeInt(8)),
+                          HighExpr::makeVar(Dest, NdType::makeInt(8))});
   HighStmt Guard;
   Guard.Kind = StmtKind::IfElse;
   Guard.Cond = HighExpr::makeConst(1, 4);
@@ -5885,7 +5897,7 @@ TEST(HighCPointerAddresses, SingleUseCallDoesNotEnterIfBody) {
   GetRank.Kind = StmtKind::Assign;
   GetRank.Dst = HighExpr::makeVar(Rank, NdType::makeInt(4));
   GetRank.Val = HighExpr::makeCall("CRecord_GetRank", 0x140002010,
-                                  {parameter(0, NdType::makeInt(8))});
+                                   {parameter(0, NdType::makeInt(8))});
   Func.Body.push_back(std::move(GetRank));
   HighStmt If;
   If.Kind = StmtKind::If;
@@ -5893,13 +5905,15 @@ TEST(HighCPointerAddresses, SingleUseCallDoesNotEnterIfBody) {
   HighStmt Use;
   Use.Kind = StmtKind::ExprStmt;
   Use.Val = HighExpr::makeCall("use_rank", 0x140002040,
-                              {HighExpr::makeVar(Rank, NdType::makeInt(4))});
+                               {HighExpr::makeVar(Rank, NdType::makeInt(4))});
   If.Body.push_back(std::move(Use));
   Func.Body.push_back(std::move(If));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("use_rank(Rank)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("use_rank(CRecord_GetRank"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("use_rank(CRecord_GetRank"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, DebugParamFieldLoadUsesTpiDisplayName) {
@@ -5934,10 +5948,10 @@ TEST(HighCPointerAddresses, DebugParamFieldLoadUsesTpiDisplayName) {
   HighStmt Load;
   Load.Kind = StmtKind::Assign;
   Load.Dst = HighExpr::makeVar(Dest, NdType::makeInt(4));
-  Load.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                          HighExpr::makeConst(100, 8)),
-      NdType::makeInt(4));
+  Load.Val =
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                             HighExpr::makeConst(100, 8)),
+                         NdType::makeInt(4));
   Func.Body.push_back(std::move(Load));
   returnValue(Func, HighExpr::makeVar(Dest, NdType::makeInt(4)));
   std::string Source;
@@ -6025,8 +6039,7 @@ TEST(HighCPointerAddresses, UnusedFieldLoadAliasesUndeclaredRegCompare) {
   Load.Kind = StmtKind::Assign;
   Load.Dst = HighExpr::makeVar(Loaded, NdType::makeInt(4));
   Load.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD,
-                          parameter(0, Func.Params[0].Type),
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
                           HighExpr::makeConst(32, 8)),
       NdType::makeInt(4));
   MedVar Cnt;
@@ -6160,8 +6173,8 @@ TEST(HighCPointerAddresses, UnusedFieldLoadViewAssignComposesIntoCondAndStore) {
   LenStore.Kind = StmtKind::Store;
   LenStore.StoreAddr = HighExpr::makeConst(0x140008008, 8);
   LenStore.StoreVal = HighExpr::makeUnary(
-      NdOp::INT_ZEXT, HighExpr::makeBinop(
-                          NdOp::SUBBYTES,
+      NdOp::INT_ZEXT,
+      HighExpr::makeBinop(NdOp::SUBBYTES,
                           HighExpr::makeVar(Ghost, NdType::makeInt(8)),
                           HighExpr::makeConst(0, 4)));
   HighStmt Inner;
@@ -6175,9 +6188,9 @@ TEST(HighCPointerAddresses, UnusedFieldLoadViewAssignComposesIntoCondAndStore) {
   Work.CallExpr = HighExpr::makeCall("master", 0x140002000, {});
   HighStmt Guard;
   Guard.Kind = StmtKind::IfElse;
-  Guard.Cond = HighExpr::makeBinop(
-      NdOp::INT_LESSEQUAL, HighExpr::makeVar(Wide, NdType::makeInt(8)),
-      HighExpr::makeConst(10, 8));
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_LESSEQUAL,
+                                   HighExpr::makeVar(Wide, NdType::makeInt(8)),
+                                   HighExpr::makeConst(10, 8));
   Guard.Body = {Work};
   Guard.ElseBody = {Inner};
   Func.Body = {Load, Slice, Guard};
@@ -6317,16 +6330,17 @@ TEST(HighCPointerAddresses, CollidingPointerPrototypeStillPrintsEnumerator) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt PtrCall;
   PtrCall.Kind = StmtKind::Call;
-  PtrCall.CallExpr = HighExpr::makeCall(
-      "takeKind", 0x140002000, {parameter(0, NdType::makePtr(NdType::makeInt(1)))});
+  PtrCall.CallExpr =
+      HighExpr::makeCall("takeKind", 0x140002000,
+                         {parameter(0, NdType::makePtr(NdType::makeInt(1)))});
   HighStmt AltCall;
   AltCall.Kind = StmtKind::Call;
-  AltCall.CallExpr = HighExpr::makeCall("takeKind", 0x140002100,
-                                       {HighExpr::makeConst(0, 4)});
+  AltCall.CallExpr =
+      HighExpr::makeCall("takeKind", 0x140002100, {HighExpr::makeConst(0, 4)});
   HighStmt EnumCall;
   EnumCall.Kind = StmtKind::Call;
-  EnumCall.CallExpr = HighExpr::makeCall("takeKind", 0x140002000,
-                                        {HighExpr::makeConst(7, 4)});
+  EnumCall.CallExpr =
+      HighExpr::makeCall("takeKind", 0x140002000, {HighExpr::makeConst(7, 4)});
   Func.Body = {PtrCall, AltCall, EnumCall};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -6377,10 +6391,10 @@ TEST(HighCPointerAddresses, CollidingSretPointerStillPrintsAssignedEnumerator) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt PtrCall;
   PtrCall.Kind = StmtKind::Call;
-  PtrCall.CallExpr = HighExpr::makeCall(
-      "LookupTextW", 0x140002000,
-      {HighExpr::makeConst(0x140001040, 8), HighExpr::makeConst(0x140001080, 8),
-       HighExpr::makeConst(0x1400010C0, 8)});
+  PtrCall.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
+                                        {HighExpr::makeConst(0x140001040, 8),
+                                         HighExpr::makeConst(0x140001080, 8),
+                                         HighExpr::makeConst(0x1400010C0, 8)});
   Func.Body.push_back(std::move(PtrCall));
   MedVar Dest;
   Dest.Kind = MedVar::Reg;
@@ -6405,11 +6419,11 @@ TEST(HighCPointerAddresses, CollidingSretPointerStillPrintsAssignedEnumerator) {
   Func.Body.push_back(std::move(Guard));
   HighStmt EnumCall;
   EnumCall.Kind = StmtKind::Call;
-  EnumCall.CallExpr = HighExpr::makeCall(
-      "LookupTextW", 0x140002100,
-      {HighExpr::makeConst(0x140001040, 8),
-       HighExpr::makeVar(Dest, NdType::makeInt(8)),
-       HighExpr::makeConst(0x140001080, 8)});
+  EnumCall.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002100,
+                         {HighExpr::makeConst(0x140001040, 8),
+                          HighExpr::makeVar(Dest, NdType::makeInt(8)),
+                          HighExpr::makeConst(0x140001080, 8)});
   Func.Body.push_back(std::move(EnumCall));
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -6444,7 +6458,8 @@ TEST(HighCPointerAddresses, CompleteTypeAttachesEnumeratorsOnConstAssign) {
       return FS;
     }
     void completeType(const TypeRef &Complete) const override {
-      if (!Complete || !Complete->IsEnum || !Complete->FieldDisplayNames.empty())
+      if (!Complete || !Complete->IsEnum ||
+          !Complete->FieldDisplayNames.empty())
         return;
       Complete->FieldDisplayNames = {"KindA", "KindB"};
       Complete->FieldDisplayOffsets = {7, 8};
@@ -6533,10 +6548,10 @@ TEST(HighCPointerAddresses, UnusedPointerLoadDoesNotRetypeParameter) {
   Guard.Kind = StmtKind::If;
   Guard.Cond = HighExpr::makeBinop(
       NdOp::INT_NOTEQUAL,
-      HighExpr::makeLoad(
-          HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                              HighExpr::makeConst(144, 8)),
-          NdType::makeInt(8)),
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                             parameter(0, Func.Params[0].Type),
+                                             HighExpr::makeConst(144, 8)),
+                         NdType::makeInt(8)),
       HighExpr::makeConst(0, 8));
   Guard.Body = {Work};
   Func.Body = {Load, Guard};
@@ -6569,16 +6584,16 @@ TEST(HighCPointerAddresses, GuardPointerAliasesUndeclaredCallArg) {
   Arg.TheArch = Arch::X64;
   HighStmt Work;
   Work.Kind = StmtKind::Call;
-  Work.CallExpr = HighExpr::makeCall("look", 0x140002000,
-                                     {HighExpr::makeVar(Arg, NdType::makeInt(8))});
+  Work.CallExpr = HighExpr::makeCall(
+      "look", 0x140002000, {HighExpr::makeVar(Arg, NdType::makeInt(8))});
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
   Guard.Cond = HighExpr::makeBinop(
       NdOp::INT_NOTEQUAL,
-      HighExpr::makeLoad(
-          HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                              HighExpr::makeConst(144, 8)),
-          NdType::makeInt(8)),
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                             parameter(0, Func.Params[0].Type),
+                                             HighExpr::makeConst(144, 8)),
+                         NdType::makeInt(8)),
       HighExpr::makeConst(0, 8));
   Guard.Body = {Work};
   Func.Body = {Guard};
@@ -6604,10 +6619,10 @@ TEST(HighCPointerAddresses, GuardAndDoesNotAliasInnerCallArg) {
   Func.Params = {{"this", NdType::makePtr(Record)}};
   ExprPtr Kind = HighExpr::makeCall(
       "isBadge", 0x140003000,
-      {HighExpr::makeLoad(
-          HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                              HighExpr::makeConst(80, 8)),
-          NdType::makeInt(8))});
+      {HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD,
+                                              parameter(0, Func.Params[0].Type),
+                                              HighExpr::makeConst(80, 8)),
+                          NdType::makeInt(8))});
   MedVar Arg;
   Arg.Kind = MedVar::Temp;
   Arg.Id = 76;
@@ -6616,8 +6631,8 @@ TEST(HighCPointerAddresses, GuardAndDoesNotAliasInnerCallArg) {
   Arg.TheArch = Arch::X64;
   HighStmt Work;
   Work.Kind = StmtKind::Call;
-  Work.CallExpr = HighExpr::makeCall("look", 0x140002000,
-                                     {HighExpr::makeVar(Arg, NdType::makeInt(8))});
+  Work.CallExpr = HighExpr::makeCall(
+      "look", 0x140002000, {HighExpr::makeVar(Arg, NdType::makeInt(8))});
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
   Guard.Cond = HighExpr::makeBinop(
@@ -6653,8 +6668,7 @@ TEST(HighCPointerAddresses, OrGuardAliasesUndeclaredElseCallArg) {
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"this", NdType::makePtr(Record)}};
   ExprPtr Skip = HighExpr::makeBinop(
-      NdOp::BOOL_OR,
-      HighExpr::makeCall("isMedia", 0x140003000, {}),
+      NdOp::BOOL_OR, HighExpr::makeCall("isMedia", 0x140003000, {}),
       HighExpr::makeBinop(
           NdOp::INT_EQUAL,
           HighExpr::makeLoad(
@@ -6671,9 +6685,9 @@ TEST(HighCPointerAddresses, OrGuardAliasesUndeclaredElseCallArg) {
   Arg.TheArch = Arch::X64;
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
-  Empty.CallExpr = HighExpr::makeCall(
-      "isEmptyPayload", 0x140002000,
-      {HighExpr::makeVar(Arg, NdType::makeInt(8))});
+  Empty.CallExpr =
+      HighExpr::makeCall("isEmptyPayload", 0x140002000,
+                         {HighExpr::makeVar(Arg, NdType::makeInt(8))});
   HighStmt Table;
   Table.Kind = StmtKind::Call;
   Table.CallExpr = HighExpr::makeCall("table", 0x140004000, {});
@@ -6705,8 +6719,7 @@ TEST(HighCPointerAddresses, OrGuardAliasesForwardedElseCallArg) {
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"this", NdType::makePtr(Record)}};
   ExprPtr Skip = HighExpr::makeBinop(
-      NdOp::BOOL_OR,
-      HighExpr::makeCall("isMedia", 0x140003000, {}),
+      NdOp::BOOL_OR, HighExpr::makeCall("isMedia", 0x140003000, {}),
       HighExpr::makeBinop(
           NdOp::INT_EQUAL,
           HighExpr::makeLoad(
@@ -6730,17 +6743,16 @@ TEST(HighCPointerAddresses, OrGuardAliasesForwardedElseCallArg) {
   HighStmt Empty;
   Empty.Kind = StmtKind::Assign;
   Empty.Dst = HighExpr::makeVar(Result, NdType::makeInt(8));
-  Empty.Val = HighExpr::makeCall(
-      "isEmptyPayload", 0x140002000,
-      {HighExpr::makeVar(Arg, NdType::makeInt(8))});
+  Empty.Val = HighExpr::makeCall("isEmptyPayload", 0x140002000,
+                                 {HighExpr::makeVar(Arg, NdType::makeInt(8))});
   HighStmt Label;
   Label.Kind = StmtKind::Call;
   Label.CallExpr = HighExpr::makeCall("label", 0x140005000, {});
   HighStmt Pred;
   Pred.Kind = StmtKind::If;
-  Pred.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, HighExpr::makeVar(Result, NdType::makeInt(8)),
-      HighExpr::makeConst(0, 8));
+  Pred.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL,
+                                  HighExpr::makeVar(Result, NdType::makeInt(8)),
+                                  HighExpr::makeConst(0, 8));
   Pred.Body = {Label};
   HighStmt Table;
   Table.Kind = StmtKind::Call;
@@ -6805,17 +6817,16 @@ TEST(HighCPointerAddresses, OrGuardAliasesZeroSizeFieldCompareOrNull) {
   HighStmt Empty;
   Empty.Kind = StmtKind::Assign;
   Empty.Dst = HighExpr::makeVar(Result, NdType::makeInt(8));
-  Empty.Val = HighExpr::makeCall(
-      "isEmptyPayload", 0x140002000,
-      {HighExpr::makeVar(Arg, NdType::makeInt(8))});
+  Empty.Val = HighExpr::makeCall("isEmptyPayload", 0x140002000,
+                                 {HighExpr::makeVar(Arg, NdType::makeInt(8))});
   HighStmt Label;
   Label.Kind = StmtKind::Call;
   Label.CallExpr = HighExpr::makeCall("label", 0x140005000, {});
   HighStmt Pred;
   Pred.Kind = StmtKind::If;
-  Pred.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, HighExpr::makeVar(Result, NdType::makeInt(8)),
-      HighExpr::makeConst(0, 8));
+  Pred.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL,
+                                  HighExpr::makeVar(Result, NdType::makeInt(8)),
+                                  HighExpr::makeConst(0, 8));
   Pred.Body = {Label};
   HighStmt Table;
   Table.Kind = StmtKind::Call;
@@ -6850,7 +6861,8 @@ TEST(HighCPointerAddresses, PoorerDeclaredParamPrefersRicherDebugType) {
   Poor->FieldDisplayOffsets = {72};
   Poor->FieldDisplayTypes = {Holder};
   auto Rich = NdType::makeNamedRecord("CRecord", 512);
-  Rich->FieldDisplayNames = {"m_completedCount", "m_pRecordData", "m_pRecordBadge"};
+  Rich->FieldDisplayNames = {"m_completedCount", "m_pRecordData",
+                             "m_pRecordBadge"};
   Rich->FieldDisplayOffsets = {32, 72, 136};
   Rich->FieldDisplayTypes = {NdType::makeInt(4, false), Holder, Holder};
   HighFunc Func;
@@ -6907,8 +6919,8 @@ TEST(HighCPointerAddresses, PointerClassReturnIsIndirectResult) {
       FS.Name = "MakeName";
       FS.Addr = Addr;
       FS.CallConv = DebugCallConv::Thiscall;
-      FS.ReturnType = NdType::makePtr(
-          NdType::makeNamedRecord("ATL::CStringT<wchar_t>", 8));
+      FS.ReturnType =
+          NdType::makePtr(NdType::makeNamedRecord("ATL::CStringT<wchar_t>", 8));
       FS.Params.emplace_back(
           "record", NdType::makePtr(NdType::makeNamedRecord("ProbeRecord", 8)));
       return FS;
@@ -6945,8 +6957,9 @@ TEST(HighCPointerAddresses, PointerClassReturnIsIndirectResult) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_NE(Source.find("__fastcall "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
+      std::string::npos)
       << Source;
 }
 
@@ -6971,7 +6984,8 @@ TEST(HighCPointerAddresses, PointerClassReturnDropsZeroSretOperand) {
   Func.Name = "useInfo";
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"this", NdType::makePtr(NdType::makeNamedRecord("ProbeOwner", 8))}};
+  Func.Params = {
+      {"this", NdType::makePtr(NdType::makeNamedRecord("ProbeOwner", 8))}};
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.CallExpr = HighExpr::makeCall(
@@ -7013,15 +7027,16 @@ TEST(HighCPointerAddresses, PointerClassReturnKeepsObservedSretOperand) {
   Func.Name = "useDisplay";
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeVoid();
-  Func.Params = {{"this", NdType::makePtr(NdType::makeNamedRecord("CRecordBadge", 8))}};
+  Func.Params = {
+      {"this", NdType::makePtr(NdType::makeNamedRecord("CRecordBadge", 8))}};
   auto Addr = std::make_shared<HighExpr>();
   Addr->Kind = ExprKind::Addr;
   Addr->Type = NdType::makePtr(NdType::makeNamedRecord("CStringT", 8));
   Addr->Operands.push_back(parameter(0, Func.Params[0].Type));
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "GetDisplayName", 0x140002000, {parameter(0, Func.Params[0].Type), Addr});
+  Call.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
+                                     {parameter(0, Func.Params[0].Type), Addr});
   Func.Body = {Call};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -7031,8 +7046,10 @@ TEST(HighCPointerAddresses, PointerClassReturnKeepsObservedSretOperand) {
   OS.flush();
   EXPECT_NE(Source.find("GetDisplayName(this, &this)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("CStringT* GetDisplayName(CRecordBadge* this, CStringT* result)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find(
+          "CStringT* GetDisplayName(CRecordBadge* this, CStringT* result)"),
+      std::string::npos)
       << Source;
 }
 
@@ -7048,8 +7065,8 @@ TEST(HighCPointerAddresses, StaticPointerClassGetterIgnoresLiveIntegerParam) {
         FS.Params.emplace_back("sizeInBytes", NdType::makeInt(8, false));
       } else if (Addr == 0x140002000) {
         FS.Name = "MemManager_Get";
-        FS.ReturnType = NdType::makePtr(
-            NdType::makeNamedRecord("MemManager", 8));
+        FS.ReturnType =
+            NdType::makePtr(NdType::makeNamedRecord("MemManager", 8));
       } else {
         return std::nullopt;
       }
@@ -7065,9 +7082,8 @@ TEST(HighCPointerAddresses, StaticPointerClassGetterIgnoresLiveIntegerParam) {
   Func.Params = {{"sizeInBytes", NdType::makeInt(8, false)}};
   HighStmt Call;
   Call.Kind = StmtKind::Call;
-  Call.CallExpr = HighExpr::makeCall(
-      "MemManager_Get", 0x140002000,
-      {parameter(0, NdType::makeInt(8, false))});
+  Call.CallExpr = HighExpr::makeCall("MemManager_Get", 0x140002000,
+                                     {parameter(0, NdType::makeInt(8, false))});
   Func.Body = {Call};
 
   std::string Source;
@@ -7150,8 +7166,8 @@ TEST(HighCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   Func.Params = {{"p", NdType::makePtr(NdType::makeInt(8))}};
   auto Object = parameter(0, Func.Params[0].Type);
   auto Vtbl = HighExpr::makeLoad(Object, NdType::makeInt(8));
-  auto Slot = HighExpr::makeBinop(NdOp::INT_ADD, Vtbl,
-                                  HighExpr::makeConst(88, 8));
+  auto Slot =
+      HighExpr::makeBinop(NdOp::INT_ADD, Vtbl, HighExpr::makeConst(88, 8));
   auto AsU64 = std::make_shared<HighExpr>();
   AsU64->Kind = ExprKind::Cast;
   AsU64->CastTo = NdType::makeInt(8, false);
@@ -7213,8 +7229,9 @@ TEST(HighCPointerAddresses, ForwardNamedClassReturnIsIndirectResult) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("CStringT* MakeName(CStringT* result, ProbeRecord* record)"),
+      std::string::npos)
       << Source;
   EXPECT_NE(Source.find("return result;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("void MakeName"), std::string::npos) << Source;
@@ -7326,11 +7343,11 @@ TEST(LLVMCPointerAddresses, CallClobberPrintsAsUnknownWithoutName) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "after_raise", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Unused = Builder.CreateFreeze(
-      Function->getArg(0), "RDX_2_call_clobber_unknown26");
+  llvm::Value *Unused =
+      Builder.CreateFreeze(Function->getArg(0), "RDX_2_call_clobber_unknown26");
   Builder.CreateZExt(Unused, I64, "RDX_3_013");
-  llvm::Value *Used = Builder.CreateFreeze(
-      Function->getArg(0), "RCX_call_clobber_unknown7");
+  llvm::Value *Used =
+      Builder.CreateFreeze(Function->getArg(0), "RCX_call_clobber_unknown7");
   llvm::Value *Sum =
       Builder.CreateAdd(Used, llvm::ConstantInt::get(I32, 1), "sum");
   Builder.CreateFreeze(llvm::PoisonValue::get(I32), "dead_poison_freeze");
@@ -7356,16 +7373,17 @@ TEST(LLVMCPointerAddresses, CallResultRegisterHomeCopyIsNotPrinted) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *IsKindTy = llvm::FunctionType::get(I32, {Ptr}, false);
-  llvm::Function *IsKind = llvm::Function::Create(
-      IsKindTy, llvm::GlobalValue::ExternalLinkage, "CRecordData_IsMediaPayload",
-      Module);
+  llvm::Function *IsKind =
+      llvm::Function::Create(IsKindTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecordData_IsMediaPayload", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "kind_guard", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Call = Builder.CreateCall(IsKind, {Function->getArg(0)}, "call8");
+  llvm::Value *Call =
+      Builder.CreateCall(IsKind, {Function->getArg(0)}, "call8");
   llvm::Value *RAX = Builder.CreateAlloca(I32, nullptr, "RAX.33");
   Builder.CreateStore(Call, RAX);
   llvm::Value *Home = Builder.CreateLoad(I32, RAX, "RAX_33_v");
@@ -7382,8 +7400,8 @@ TEST(LLVMCPointerAddresses, CallResultRegisterHomeCopyIsNotPrinted) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CRecordData_IsMediaPayload("), std::string::npos)
       << Source;
@@ -7435,11 +7453,13 @@ TEST(LLVMCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
       FindTy, llvm::GlobalValue::ExternalLinkage, "Catalog_Lookup", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecord_GetRecordName", Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecord_GetRecordName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140012040);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
@@ -7452,16 +7472,16 @@ TEST(LLVMCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
         Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
     llvm::Value *PAddr =
         Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 80), "p_addr");
-    llvm::Value *P = Builder.CreateLoad(
-        I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
+    llvm::Value *P =
+        Builder.CreateLoad(I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
     llvm::Value *IdAddr =
         Builder.CreateAdd(P, llvm::ConstantInt::get(I64, 152), "id_addr");
     return Builder.CreateLoad(I32, Builder.CreateIntToPtr(IdAddr, Ptr), "id");
   };
 
-  llvm::Value *PGuardAddr = Builder.CreateAdd(
-      Builder.CreatePtrToInt(Function->getArg(0), I64),
-      llvm::ConstantInt::get(I64, 80), "guard_addr");
+  llvm::Value *PGuardAddr =
+      Builder.CreateAdd(Builder.CreatePtrToInt(Function->getArg(0), I64),
+                        llvm::ConstantInt::get(I64, 80), "guard_addr");
   llvm::Value *PGuard = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(PGuardAddr, Ptr), "guard_p");
   Builder.CreateCondBr(
@@ -7482,17 +7502,19 @@ TEST(LLVMCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
   NKey->addIncoming(Then64, Then);
   NKey->addIncoming(Else64, Else);
   llvm::Value *Reload = LoadId();
-  llvm::Value *Table = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
+  llvm::Value *Table =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
   llvm::Value *Name = Table;
-  Builder.CreateCall(Find, {Table, Name, llvm::ConstantInt::get(I32, 1), Reload});
+  Builder.CreateCall(Find,
+                     {Table, Name, llvm::ConstantInt::get(I32, 1), Reload});
   Builder.CreateRetVoid();
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto CallAt = Source.rfind("Catalog_Lookup(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
@@ -7549,11 +7571,13 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeKeepsElseZeroAtCall) {
       FindTy, llvm::GlobalValue::ExternalLinkage, "Catalog_Lookup", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecord_GetRecordName", Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecord_GetRecordName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140012040);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
@@ -7567,16 +7591,16 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeKeepsElseZeroAtCall) {
         Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
     llvm::Value *PAddr =
         Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 80), "p_addr");
-    llvm::Value *P = Builder.CreateLoad(
-        I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
+    llvm::Value *P =
+        Builder.CreateLoad(I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
     llvm::Value *IdAddr =
         Builder.CreateAdd(P, llvm::ConstantInt::get(I64, 152), "id_addr");
     return Builder.CreateLoad(I32, Builder.CreateIntToPtr(IdAddr, Ptr), "id");
   };
 
-  llvm::Value *PGuardAddr = Builder.CreateAdd(
-      Builder.CreatePtrToInt(Function->getArg(0), I64),
-      llvm::ConstantInt::get(I64, 80), "guard_addr");
+  llvm::Value *PGuardAddr =
+      Builder.CreateAdd(Builder.CreatePtrToInt(Function->getArg(0), I64),
+                        llvm::ConstantInt::get(I64, 80), "guard_addr");
   llvm::Value *PGuard = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(PGuardAddr, Ptr), "guard_p");
   Builder.CreateCondBr(
@@ -7594,17 +7618,18 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeKeepsElseZeroAtCall) {
   Builder.SetInsertPoint(Join);
   (void)Builder.CreateLoad(I64, R9, "r9_join");
   llvm::Value *Reload = LoadId();
-  llvm::Value *Table = llvm::ConstantPointerNull::get(
-      llvm::cast<llvm::PointerType>(Ptr));
-  Builder.CreateCall(Find, {Table, Table, llvm::ConstantInt::get(I32, 1), Reload});
+  llvm::Value *Table =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
+  Builder.CreateCall(Find,
+                     {Table, Table, llvm::ConstantInt::get(I32, 1), Reload});
   Builder.CreateRetVoid();
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto CallAt = Source.rfind("Catalog_Lookup(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
@@ -7634,7 +7659,8 @@ TEST(LLVMCPointerAddresses, JoinImmediateArmsPrintAtCall) {
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "aux_kind", Module);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
@@ -7661,8 +7687,8 @@ TEST(LLVMCPointerAddresses, JoinImmediateArmsPrintAtCall) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("= 24"), std::string::npos) << Source;
   EXPECT_NE(Source.find("= 23"), std::string::npos) << Source;
@@ -7719,11 +7745,13 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeLoadIsCallArg) {
       FindTy, llvm::GlobalValue::ExternalLinkage, "Catalog_Lookup", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecord_GetRecordName", Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecord_GetRecordName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140012040);
 
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
@@ -7737,16 +7765,16 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeLoadIsCallArg) {
         Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
     llvm::Value *PAddr =
         Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 80), "p_addr");
-    llvm::Value *P = Builder.CreateLoad(
-        I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
+    llvm::Value *P =
+        Builder.CreateLoad(I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
     llvm::Value *IdAddr =
         Builder.CreateAdd(P, llvm::ConstantInt::get(I64, 152), "id_addr");
     return Builder.CreateLoad(I32, Builder.CreateIntToPtr(IdAddr, Ptr), "id");
   };
 
-  llvm::Value *PGuardAddr = Builder.CreateAdd(
-      Builder.CreatePtrToInt(Function->getArg(0), I64),
-      llvm::ConstantInt::get(I64, 80), "guard_addr");
+  llvm::Value *PGuardAddr =
+      Builder.CreateAdd(Builder.CreatePtrToInt(Function->getArg(0), I64),
+                        llvm::ConstantInt::get(I64, 80), "guard_addr");
   llvm::Value *PGuard = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(PGuardAddr, Ptr), "guard_p");
   Builder.CreateCondBr(
@@ -7763,19 +7791,18 @@ TEST(LLVMCPointerAddresses, JoinAllocaHomeLoadIsCallArg) {
 
   Builder.SetInsertPoint(Join);
   llvm::Value *JoinLoad = Builder.CreateLoad(I64, R9, "r9_join");
-  llvm::Value *Table = llvm::ConstantPointerNull::get(
-      llvm::cast<llvm::PointerType>(Ptr));
-  Builder.CreateCall(
-      Find, {Table, Table, llvm::ConstantInt::get(I32, 1),
-             Builder.CreateTrunc(JoinLoad, I32)});
+  llvm::Value *Table =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
+  Builder.CreateCall(Find, {Table, Table, llvm::ConstantInt::get(I32, 1),
+                            Builder.CreateTrunc(JoinLoad, I32)});
   Builder.CreateRetVoid();
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto CallAt = Source.rfind("Catalog_Lookup(");
   ASSERT_NE(CallAt, std::string::npos) << Source;
@@ -7797,7 +7824,8 @@ TEST(LLVMCPointerAddresses, EntryXorZeroKilledByLaterImmediate) {
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "killed_entry_zero", Module);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Use = llvm::BasicBlock::Create(Context, "use", Function);
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *RDX = Builder.CreateAlloca(I64, nullptr, "RDX.98231");
@@ -7814,8 +7842,8 @@ TEST(LLVMCPointerAddresses, EntryXorZeroKilledByLaterImmediate) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("RDX_98231 = 0"), std::string::npos) << Source;
   EXPECT_TRUE(Source.find("RDX_98231 = 1416") != std::string::npos ||
@@ -7855,8 +7883,9 @@ TEST(LLVMCPointerAddresses, TestAndIcmpOfThisFieldDoesNotAssignFlagHome) {
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecord_GetRecordName", Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecord_GetRecordName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140012040);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
@@ -7864,13 +7893,13 @@ TEST(LLVMCPointerAddresses, TestAndIcmpOfThisFieldDoesNotAssignFlagHome) {
       Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
   llvm::Value *PAddr =
       Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 80), "p_addr");
-  llvm::Value *P = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
+  llvm::Value *P =
+      Builder.CreateLoad(I64, Builder.CreateIntToPtr(PAddr, Ptr), "p");
   llvm::Value *And = Builder.CreateAnd(P, P, "test");
-  llvm::Value *ZfAnd = Builder.CreateICmpEQ(
-      And, llvm::ConstantInt::get(I64, 0), "zf_and");
-  llvm::Value *ZfEq = Builder.CreateICmpEQ(
-      P, llvm::ConstantInt::get(I64, 0), "zf_eq");
+  llvm::Value *ZfAnd =
+      Builder.CreateICmpEQ(And, llvm::ConstantInt::get(I64, 0), "zf_and");
+  llvm::Value *ZfEq =
+      Builder.CreateICmpEQ(P, llvm::ConstantInt::get(I64, 0), "zf_eq");
   llvm::Value *ZF = Builder.CreateAlloca(I8, nullptr, "ZF.2309");
   Builder.CreateStore(Builder.CreateZExt(ZfAnd, I8), ZF);
   Builder.CreateStore(Builder.CreateZExt(ZfEq, I8), ZF);
@@ -7886,14 +7915,15 @@ TEST(LLVMCPointerAddresses, TestAndIcmpOfThisFieldDoesNotAssignFlagHome) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_TRUE(Source.find("if (this->m_pRecordData.p)") != std::string::npos ||
               Source.find("if (!(this->m_pRecordData.p)") != std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("ZF"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("& this->m_pRecordData.p"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("& this->m_pRecordData.p"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, UsesDebugDataObjectName) {
@@ -8093,9 +8123,9 @@ TEST(HighCPointerAddresses, InvertSkipInsideSehTryFoldsRaise) {
   SkipGoto.GotoTarget = 0x40108D;
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   parameter(0, NdType::makeInt(4)),
-                                   HighExpr::makeConst(7, 4));
+  Guard.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0, NdType::makeInt(4)),
+                          HighExpr::makeConst(7, 4));
   Guard.Body = {SkipGoto};
   HighStmt Raise;
   Raise.Kind = StmtKind::Call;
@@ -8183,7 +8213,7 @@ TEST(HighCPointerAddresses, X86CallPushStoresAreHidden) {
   HighStmt S3;
   S3.Kind = StmtKind::Store;
   S3.StoreAddr = HighExpr::makeBinop(NdOp::INT_SUB, Sub4(Esp(9)),
-                                    HighExpr::makeConst(4, 4));
+                                     HighExpr::makeConst(4, 4));
   S3.StoreVal = HighExpr::makeVar(Code);
   HighStmt Raise;
   Raise.Kind = StmtKind::Call;
@@ -8225,9 +8255,9 @@ TEST(HighCPointerAddresses, X86SehRegistrationSlotIsHidden) {
   HighStmt LoadFS;
   LoadFS.Kind = StmtKind::Assign;
   LoadFS.Dst = HighExpr::makeVar(Saved);
-  LoadFS.Val = HighExpr::makeLoad(HighExpr::makeConst(0, 4), NdType::makeInt(4),
-                                  NdMemoryOrdering::None,
-                                  NdMemoryAddressSpace::X86FS);
+  LoadFS.Val =
+      HighExpr::makeLoad(HighExpr::makeConst(0, 4), NdType::makeInt(4),
+                         NdMemoryOrdering::None, NdMemoryAddressSpace::X86FS);
   HighStmt Save;
   Save.Kind = StmtKind::Store;
   Save.StoreAddr = Home;
@@ -8388,7 +8418,7 @@ TEST(HighCPointerAddresses, X86UnmatchedSubStoreBeforeCallStays) {
   HighStmt Store;
   Store.Kind = StmtKind::Store;
   Store.StoreAddr = HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(P),
-                                       HighExpr::makeConst(4, 4));
+                                        HighExpr::makeConst(4, 4));
   Store.StoreVal = HighExpr::makeConst(41, 4);
   HighStmt Call;
   Call.Kind = StmtKind::Call;
@@ -8414,14 +8444,13 @@ TEST(HighCPointerAddresses, InvertEmptySkipInsideCxxTryFoldsThrow) {
   Phi.Val = parameter(0, NdType::makeInt(4));
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   parameter(0, NdType::makeInt(4)),
-                                   HighExpr::makeConst(7, 4));
+  Guard.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0, NdType::makeInt(4)),
+                          HighExpr::makeConst(7, 4));
   Guard.Body = {Phi};
   HighStmt Throw;
   Throw.Kind = StmtKind::Call;
-  Throw.CallExpr =
-      HighExpr::makeCall("_CxxThrowException", 0x140002610, {});
+  Throw.CallExpr = HighExpr::makeCall("_CxxThrowException", 0x140002610, {});
   HighStmt Join;
   Join.Kind = StmtKind::Store;
   Join.Addr = 0x14000127A;
@@ -8719,7 +8748,8 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedAndConjuncts) {
   auto Field = NeZero(parameter(2));
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt InnerGoto;
   InnerGoto.Kind = StmtKind::Goto;
   InnerGoto.GotoTarget = 0x140001457;
@@ -8734,9 +8764,9 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedAndConjuncts) {
   OuterGoto.GotoTarget = 0x140001509;
   HighStmt Outer;
   Outer.Kind = StmtKind::IfElse;
-  Outer.Cond = HighExpr::makeBinop(NdOp::BOOL_AND, NeZero(parameter(0)),
-                                   NeZero(HighExpr::makeCall(
-                                       "IsKind", 0x140002100, {parameter(0)})));
+  Outer.Cond = HighExpr::makeBinop(
+      NdOp::BOOL_AND, NeZero(parameter(0)),
+      NeZero(HighExpr::makeCall("IsKind", 0x140002100, {parameter(0)})));
   Outer.Body = {Inner};
   Outer.ElseBody = {OuterGoto};
   Func.Body = {Outer};
@@ -8830,7 +8860,8 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfDropsImpliedOr) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t MediaCount = 0;
   for (size_t Pos = BodyAt;
-       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos; Pos += 13)
+       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
+       Pos += 13)
     ++MediaCount;
   EXPECT_EQ(MediaCount, 1u) << Source;
 }
@@ -8868,10 +8899,10 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfIgnoresTrailingNop) {
   Label.CallExpr = HighExpr::makeCall("label", 0x140002300, {parameter(0)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(
-      NdOp::BOOL_OR, EqZero(IsMedia()),
-      HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
-                          HighExpr::makeConst(0, 8)));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_OR, EqZero(IsMedia()),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
+                                              HighExpr::makeConst(0, 8)));
   Inner.Body = {Table};
   Inner.ElseBody = {Label};
   HighStmt Ret;
@@ -8883,7 +8914,8 @@ TEST(HighCPointerAddresses, FallthroughAfterExitingIfIgnoresTrailingNop) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t MediaCount = 0;
   for (size_t Pos = BodyAt;
-       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos; Pos += 13)
+       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
+       Pos += 13)
     ++MediaCount;
   EXPECT_EQ(MediaCount, 1u) << Source;
 }
@@ -8915,10 +8947,10 @@ TEST(HighCPointerAddresses, FallthroughSkipsGuardedFieldAssign) {
   HighStmt LoadId;
   LoadId.Kind = StmtKind::Assign;
   LoadId.Dst = HighExpr::makeVar(Id, NdType::makeInt(4));
-  LoadId.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                          HighExpr::makeConst(328, 8)),
-      NdType::makeInt(4));
+  LoadId.Val =
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                             HighExpr::makeConst(328, 8)),
+                         NdType::makeInt(4));
   HighStmt GuardId;
   GuardId.Kind = StmtKind::If;
   GuardId.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
@@ -8955,7 +8987,8 @@ TEST(HighCPointerAddresses, FallthroughSkipsGuardedFieldAssign) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t MediaCount = 0;
   for (size_t Pos = BodyAt;
-       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos; Pos += 13)
+       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
+       Pos += 13)
     ++MediaCount;
   EXPECT_EQ(MediaCount, 1u) << Source;
   EXPECT_NE(Source.find("Find("), std::string::npos) << Source;
@@ -9008,10 +9041,10 @@ TEST(HighCPointerAddresses, FallthroughComposesReloadedPredCall) {
   Label.CallExpr = HighExpr::makeCall("label", 0x140002300, {parameter(0)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(
-      NdOp::BOOL_OR, EqZero(PredVar(2)),
-      HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
-                          HighExpr::makeConst(0, 8)));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_OR, EqZero(PredVar(2)),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
+                                              HighExpr::makeConst(0, 8)));
   Inner.Body = {Table};
   Inner.ElseBody = {Label};
   HighStmt Ret;
@@ -9020,8 +9053,10 @@ TEST(HighCPointerAddresses, FallthroughComposesReloadedPredCall) {
   invertSkipGotos(Func);
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("if (arg2 == 0)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("IsMediaPayload(arg0) ||"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("!IsMediaPayload(arg0) ||"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("IsMediaPayload(arg0) ||"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("!IsMediaPayload(arg0) ||"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, FallthroughDropsNotAndAfterExitingIf) {
@@ -9052,12 +9087,11 @@ TEST(HighCPointerAddresses, FallthroughDropsNotAndAfterExitingIf) {
   Inner.Kind = StmtKind::IfElse;
   Inner.Cond = HighExpr::makeUnary(
       NdOp::BOOL_NOT,
-      HighExpr::makeBinop(
-          NdOp::BOOL_AND,
-          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, IsMedia(),
-                              HighExpr::makeConst(0, 4)),
-          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
-                              HighExpr::makeConst(0, 8))));
+      HighExpr::makeBinop(NdOp::BOOL_AND,
+                          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, IsMedia(),
+                                              HighExpr::makeConst(0, 4)),
+                          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
+                                              HighExpr::makeConst(0, 8))));
   Inner.Body = {Table};
   Inner.ElseBody = {Label};
   HighStmt Ret;
@@ -9069,7 +9103,8 @@ TEST(HighCPointerAddresses, FallthroughDropsNotAndAfterExitingIf) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t MediaCount = 0;
   for (size_t Pos = BodyAt;
-       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos; Pos += 13)
+       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
+       Pos += 13)
     ++MediaCount;
   EXPECT_EQ(MediaCount, 1u) << Source;
   EXPECT_NE(Source.find("arg2"), std::string::npos) << Source;
@@ -9101,11 +9136,12 @@ TEST(HighCPointerAddresses, FallthroughDropsBangCallAgainstEqZeroOr) {
   Label.CallExpr = HighExpr::makeCall("label", 0x140002300, {parameter(0)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(
-      NdOp::BOOL_OR,
-      HighExpr::makeBinop(NdOp::INT_EQUAL, IsMedia(), HighExpr::makeConst(0, 4)),
-      HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
-                          HighExpr::makeConst(0, 8)));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_OR,
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, IsMedia(),
+                                              HighExpr::makeConst(0, 4)),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
+                                              HighExpr::makeConst(0, 8)));
   Inner.Body = {Table};
   Inner.ElseBody = {Label};
   HighStmt Ret;
@@ -9117,7 +9153,8 @@ TEST(HighCPointerAddresses, FallthroughDropsBangCallAgainstEqZeroOr) {
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t MediaCount = 0;
   for (size_t Pos = BodyAt;
-       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos; Pos += 13)
+       (Pos = Source.find("IsMediaPayload(", Pos)) != std::string::npos;
+       Pos += 13)
     ++MediaCount;
   EXPECT_EQ(MediaCount, 1u) << Source;
   EXPECT_NE(Source.find("arg2 == 0"), std::string::npos) << Source;
@@ -9152,7 +9189,8 @@ TEST(HighCPointerAddresses, NegatedIfElseSwapsToPositiveCond) {
   EXPECT_EQ(Func.Body[0].Cond->CallTarget, "GetAdjustmentLevel");
   ASSERT_FALSE(Func.Body[0].Body.empty());
   EXPECT_TRUE(Func.Body[0].Body[0].CallExpr &&
-              Func.Body[0].Body[0].CallExpr->CallTarget == "unlimitedAdjustment");
+              Func.Body[0].Body[0].CallExpr->CallTarget ==
+                  "unlimitedAdjustment");
   const std::string Source = emitFunctions({Func});
   const auto BodyAt = Source.find("void adjustment_pos");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -9222,7 +9260,8 @@ TEST(HighCPointerAddresses, NegatedIfElseComposedCallResultSwapsToPositive) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level);
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   HighStmt Regular;
   Regular.Kind = StmtKind::Call;
   Regular.CallExpr =
@@ -9278,7 +9317,8 @@ TEST(HighCPointerAddresses, CallCondI32UndefStoreKeepsUnknownValue) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level);
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   HighStmt Cmp;
   Cmp.Kind = StmtKind::Assign;
   Cmp.Dst = HighExpr::makeVar(View);
@@ -9290,8 +9330,8 @@ TEST(HighCPointerAddresses, CallCondI32UndefStoreKeepsUnknownValue) {
       HighExpr::makeCall("regularAdjustment", 0x140002000, {parameter(0)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002300,
-                                     {parameter(0)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002300, {parameter(0)});
   HighStmt Spill;
   Spill.Kind = StmtKind::Store;
   Spill.StoreAddr = HighExpr::makeVar(Slot);
@@ -9305,8 +9345,8 @@ TEST(HighCPointerAddresses, CallCondI32UndefStoreKeepsUnknownValue) {
   Format.Kind = StmtKind::Call;
   Format.CallExpr = HighExpr::makeCall(
       "LookupTextW", 0x140002400,
-      {parameter(0), HighExpr::makeLoad(HighExpr::makeVar(Slot),
-                                        NdType::makeInt(4))});
+      {parameter(0),
+       HighExpr::makeLoad(HighExpr::makeVar(Slot), NdType::makeInt(4))});
   HighStmt Guard;
   Guard.Kind = StmtKind::IfElse;
   Guard.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(View),
@@ -9372,13 +9412,13 @@ TEST(HighCPointerAddresses, CallCondUndefStoreAfterSetupKeepsUnknownValue) {
   Use.Kind = StmtKind::Call;
   Use.CallExpr = HighExpr::makeCall(
       "LookupTextW", 0x140002400,
-      {parameter(0), HighExpr::makeLoad(HighExpr::makeVar(Leftover),
-                                        NdType::makeInt(16))});
+      {parameter(0),
+       HighExpr::makeLoad(HighExpr::makeVar(Leftover), NdType::makeInt(16))});
   Then.push_back(std::move(Use));
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period),
-                                   HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period), HighExpr::makeConst(0, 4));
   Guard.Body = std::move(Then);
   Func.Body = {Get, Guard};
   invertSkipGotos(Func);
@@ -9461,12 +9501,12 @@ TEST(HighCPointerAddresses, PackedUnknownValueDoesNotAcquirePriorCallResult) {
   Addr->Operands.push_back(HighExpr::makeLoad(First, ArgTy));
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), Addr});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), Addr});
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period),
-                                   HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period), HighExpr::makeConst(0, 4));
   Guard.Body = {InitFirst, Spill, LoadHome, Pack, Use};
   Func.Body = {Get, Guard};
   invertSkipGotos(Func);
@@ -9484,7 +9524,8 @@ TEST(HighCPointerAddresses, PackedUnknownValueDoesNotAcquirePriorCallResult) {
       KeptUnknownHome = true;
   }
   EXPECT_TRUE(KeptUnknownHome);
-  EXPECT_EQ(PeriodStores, 0u) << "undef has no proven relation to the prior call";
+  EXPECT_EQ(PeriodStores, 0u)
+      << "undef has no proven relation to the prior call";
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("PeriodID"), std::string::npos) << Source;
   for (const auto &Store : portableStoreCalls(Source))
@@ -9513,8 +9554,8 @@ TEST(HighCPointerAddresses, AddressTakenValuesHomePreservesWideStore) {
   PtrBox->FieldDisplayNames = {"p", "_Ptr", "_Rep"};
   PtrBox->FieldDisplayOffsets = {8, 0, 4};
   PtrBox->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(8)),
-                             NdType::makePtr(NdType::makeInt(8)),
-                             NdType::makeInt(4, false)};
+                               NdType::makePtr(NdType::makeInt(8)),
+                               NdType::makeInt(4, false)};
   auto ArgTy = NdType::makeNamedRecord("ArgList", 16);
   ArgTy->FieldDisplayNames = {"types_", "values_"};
   ArgTy->FieldDisplayOffsets = {0, 8};
@@ -9528,7 +9569,8 @@ TEST(HighCPointerAddresses, AddressTakenValuesHomePreservesWideStore) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Adjustment, NdType::makeInt(4, false));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   HighStmt InitOwner;
   InitOwner.Kind = StmtKind::Store;
   InitOwner.StoreAddr = Owner;
@@ -9557,9 +9599,9 @@ TEST(HighCPointerAddresses, AddressTakenValuesHomePreservesWideStore) {
   Args->Operands.push_back(HighExpr::makeLoad(Owner, PtrBox));
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), HighExpr::makeConst(0, 8),
-                                     Args});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000,
+                         {parameter(0), HighExpr::makeConst(0, 8), Args});
   Func.Body = {Get, InitOwner, Fill, Values, Types, Use};
   class CalleeDbg : public NullDebugContext {
   public:
@@ -9585,7 +9627,8 @@ TEST(HighCPointerAddresses, AddressTakenValuesHomePreservesWideStore) {
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  expectPortableStore(Source, "__int128", "frame_base) - 80", "AdjustmentLevel");
+  expectPortableStore(Source, "__int128", "frame_base) - 80",
+                      "AdjustmentLevel");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 }
 
@@ -9605,8 +9648,8 @@ TEST(HighCPointerAddresses, CallCondUndefStoreInsideCxxTryKeepsUnknownValue) {
   Get.Val = HighExpr::makeCall("GetPeriodID", 0x140002200, {parameter(0)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002300,
-                                     {parameter(0)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002300, {parameter(0)});
   MedVar Leftover;
   Leftover.Kind = MedVar::Stack;
   Leftover.Id = 88;
@@ -9621,8 +9664,8 @@ TEST(HighCPointerAddresses, CallCondUndefStoreInsideCxxTryKeepsUnknownValue) {
   Use.Kind = StmtKind::Call;
   Use.CallExpr = HighExpr::makeCall(
       "LookupTextW", 0x140002400,
-      {parameter(0), HighExpr::makeLoad(HighExpr::makeVar(Leftover),
-                                        NdType::makeInt(8))});
+      {parameter(0),
+       HighExpr::makeLoad(HighExpr::makeVar(Leftover), NdType::makeInt(8))});
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
@@ -9633,8 +9676,8 @@ TEST(HighCPointerAddresses, CallCondUndefStoreInsideCxxTryKeepsUnknownValue) {
   Try.EHClauseBodies.emplace_back();
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period),
-                                   HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(Period), HighExpr::makeConst(0, 4));
   Guard.Body = {Ctor, Try};
   Func.Body = {Get, Guard};
   invertSkipGotos(Func);
@@ -9664,7 +9707,8 @@ TEST(HighCPointerAddresses, CallCondI32ZeroStoreKeepsZero) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level);
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   HighStmt Regular;
   Regular.Kind = StmtKind::Call;
   Regular.CallExpr =
@@ -9705,7 +9749,8 @@ TEST(HighCPointerAddresses, CallCondAndDoesNotFillUndefStore) {
   Spill.StoreVal = HighExpr::makeUndef(4);
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Guard;
   Guard.Kind = StmtKind::IfElse;
   Guard.Cond = HighExpr::makeBinop(
@@ -9739,13 +9784,15 @@ TEST(HighCPointerAddresses, IfNarrowCastOfAssignedCallPrintsBare) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   Get.Val->Type = NdType::makeInt(4, true);
   auto Narrow = std::make_shared<HighExpr>();
   Narrow->Kind = ExprKind::Cast;
   Narrow->CastTo = NdType::makeInt(2, true);
   Narrow->Type = NdType::makeInt(2, true);
-  Narrow->Operands.push_back(HighExpr::makeVar(Level, NdType::makeInt(4, true)));
+  Narrow->Operands.push_back(
+      HighExpr::makeVar(Level, NdType::makeInt(4, true)));
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
   Guard.Cond = std::move(Narrow);
@@ -9773,11 +9820,12 @@ TEST(HighCPointerAddresses, IfSubbytesZeroOfAssignedCallPrintsBare) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   Get.Val->Type = NdType::makeInt(4, true);
-  auto View = HighExpr::makeBinop(NdOp::SUBBYTES,
-                                  HighExpr::makeVar(Level, NdType::makeInt(4, true)),
-                                  HighExpr::makeConst(0, 4));
+  auto View = HighExpr::makeBinop(
+      NdOp::SUBBYTES, HighExpr::makeVar(Level, NdType::makeInt(4, true)),
+      HighExpr::makeConst(0, 4));
   View->Type = NdType::makeInt(2, true);
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
@@ -9908,8 +9956,8 @@ TEST(HighCPointerAddresses, GuardedNullReturnIndirectCallUsesGuardThis) {
       NdType::makeInt(8));
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, Badge,
-                                   HighExpr::makeConst(0, 8));
+  Guard.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, Badge, HighExpr::makeConst(0, 8));
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
   Ctor.CallExpr = HighExpr::makeCall(
@@ -9990,7 +10038,8 @@ TEST(HighCPointerAddresses, NestedIfElseDropsImpliedFieldPointer) {
   };
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
   HighStmt InnerGoto;
   InnerGoto.Kind = StmtKind::Goto;
   InnerGoto.GotoTarget = 0x140001457;
@@ -10040,10 +10089,9 @@ TEST(HighCPointerAddresses, NestedIfElseDropsReloadedFieldPointer) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(SSA));
-    S.Val = HighExpr::makeLoad(
-        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                            HighExpr::makeConst(256, 8)),
-        NdType::makeInt(8));
+    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                   HighExpr::makeConst(256, 8)),
+                               NdType::makeInt(8));
     return S;
   };
   auto NeZero = [](ExprPtr X) {
@@ -10052,11 +10100,12 @@ TEST(HighCPointerAddresses, NestedIfElseDropsReloadedFieldPointer) {
   };
   auto Kind = [&](int SSA) {
     return NeZero(HighExpr::makeCall("IsKind", 0x140002100,
-                                    {HighExpr::makeVar(Temp(SSA))}));
+                                     {HighExpr::makeVar(Temp(SSA))}));
   };
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
   HighStmt InnerGoto;
   InnerGoto.Kind = StmtKind::Goto;
   InnerGoto.GotoTarget = 0x140001457;
@@ -10074,9 +10123,8 @@ TEST(HighCPointerAddresses, NestedIfElseDropsReloadedFieldPointer) {
   OuterGoto.GotoTarget = 0x140001509;
   HighStmt Outer;
   Outer.Kind = StmtKind::IfElse;
-  Outer.Cond = HighExpr::makeBinop(NdOp::BOOL_AND,
-                                   NeZero(HighExpr::makeVar(Temp(33))),
-                                   Kind(33));
+  Outer.Cond = HighExpr::makeBinop(
+      NdOp::BOOL_AND, NeZero(HighExpr::makeVar(Temp(33))), Kind(33));
   Outer.Body = {LoadP(34), Inner};
   Outer.ElseBody = {OuterGoto};
   Func.Body = {LoadP(33), Outer};
@@ -10159,12 +10207,11 @@ TEST(HighCPointerAddresses, InvertIntOrOfEqZeroPrintsAndOfOperands) {
   Guard.Kind = StmtKind::If;
   Guard.Cond = HighExpr::makeUnary(
       NdOp::BOOL_NOT,
-      HighExpr::makeBinop(
-          NdOp::INT_OR,
-          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
-                              HighExpr::makeConst(0, 8)),
-          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(1),
-                              HighExpr::makeConst(0, 8))));
+      HighExpr::makeBinop(NdOp::INT_OR,
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
+                                              HighExpr::makeConst(0, 8)),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(1),
+                                              HighExpr::makeConst(0, 8))));
   Guard.Body = {Work};
   Func.Body = {Guard};
   const std::string Source = emitFunctions({Func});
@@ -10438,15 +10485,14 @@ TEST(LLVMCPointerAddresses, RegisterChainArgListValuesStoreUsesField) {
   llvm::Function *Fmt = llvm::Function::Create(
       FmtTy, llvm::GlobalValue::ExternalLinkage, "StringUtil_FormatW", Module);
   rewrite_source::setOriginalVA(*Fmt, 0x140002000);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(I64, {Ptr, Ptr}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr, Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "format_chain", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Frame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr,
-                                     "frame");
+  auto *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   auto *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 88), "frame_end");
   auto *RSP = Builder.CreateAlloca(I64, nullptr, "RSP");
@@ -10456,32 +10502,27 @@ TEST(LLVMCPointerAddresses, RegisterChainArgListValuesStoreUsesField) {
   auto *Slot56 = Builder.CreateAlloca(I64, nullptr, "slot56");
   auto *Slot64 = Builder.CreateAlloca(I64, nullptr, "slot64");
   Builder.CreateStore(Builder.CreatePtrToInt(End, I64, "rsp_init"), RSP);
+  Builder.CreateStore(Builder.CreateSub(Builder.CreateLoad(I64, RSP),
+                                        llvm::ConstantInt::get(I64, 8)),
+                      RSP1);
+  Builder.CreateStore(Builder.CreateSub(Builder.CreateLoad(I64, RSP1),
+                                        llvm::ConstantInt::get(I64, 64)),
+                      RSP2);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
+                                        llvm::ConstantInt::get(I64, 32)),
+                      Slot48);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
+                                        llvm::ConstantInt::get(I64, 40)),
+                      Slot56);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
+                                        llvm::ConstantInt::get(I64, 48)),
+                      Slot64);
   Builder.CreateStore(
-      Builder.CreateSub(Builder.CreateLoad(I64, RSP),
-                        llvm::ConstantInt::get(I64, 8)),
-      RSP1);
+      llvm::ConstantInt::get(I64, 2),
+      Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot48), Ptr));
   Builder.CreateStore(
-      Builder.CreateSub(Builder.CreateLoad(I64, RSP1),
-                        llvm::ConstantInt::get(I64, 64)),
-      RSP2);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
-                        llvm::ConstantInt::get(I64, 32)),
-      Slot48);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
-                        llvm::ConstantInt::get(I64, 40)),
-      Slot56);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
-                        llvm::ConstantInt::get(I64, 48)),
-      Slot64);
-  Builder.CreateStore(llvm::ConstantInt::get(I64, 2),
-                      Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot48),
-                                             Ptr));
-  Builder.CreateStore(Builder.CreateLoad(I64, Slot64),
-                      Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot56),
-                                             Ptr));
+      Builder.CreateLoad(I64, Slot64),
+      Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot56), Ptr));
   Builder.CreateCall(Fmt, {Function->getArg(0), Function->getArg(1),
                            Builder.CreateLoad(I64, Slot48)});
   Builder.CreateRet(Builder.CreateLoad(I64, Slot48));
@@ -10492,8 +10533,8 @@ TEST(LLVMCPointerAddresses, RegisterChainArgListValuesStoreUsesField) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("format_chain(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -10541,37 +10582,33 @@ TEST(LLVMCPointerAddresses,
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *I128 = llvm::Type::getInt128Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
-  llvm::FunctionType *FmtTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                              {Ptr, Ptr, I64}, false);
+  llvm::FunctionType *FmtTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr, I64}, false);
   llvm::Function *Fmt = llvm::Function::Create(
       FmtTy, llvm::GlobalValue::ExternalLinkage, "StringUtil_FormatW", Module);
   rewrite_source::setOriginalVA(*Fmt, 0x140002000);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                              {Ptr, Ptr, I32}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {Ptr, Ptr, I32}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "format_narrow_color", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   Function->getArg(2)->setName("color");
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Frame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr,
-                                     "frame");
+  auto *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   auto *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 88), "frame_end");
   auto *RSP = Builder.CreateAlloca(I64, nullptr, "RSP");
   auto *RSP1 = Builder.CreateAlloca(I64, nullptr, "RSP1");
   auto *RSP2 = Builder.CreateAlloca(I64, nullptr, "RSP2");
   Builder.CreateStore(Builder.CreatePtrToInt(End, I64), RSP);
-  Builder.CreateStore(
-      Builder.CreateSub(Builder.CreateLoad(I64, RSP),
-                        llvm::ConstantInt::get(I64, 8)),
-      RSP1);
-  Builder.CreateStore(
-      Builder.CreateSub(Builder.CreateLoad(I64, RSP1),
-                        llvm::ConstantInt::get(I64, 64)),
-      RSP2);
+  Builder.CreateStore(Builder.CreateSub(Builder.CreateLoad(I64, RSP),
+                                        llvm::ConstantInt::get(I64, 8)),
+                      RSP1);
+  Builder.CreateStore(Builder.CreateSub(Builder.CreateLoad(I64, RSP1),
+                                        llvm::ConstantInt::get(I64, 64)),
+                      RSP2);
   auto *Slot48 = Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
                                    llvm::ConstantInt::get(I64, 32));
   auto *Slot56 = Builder.CreateAdd(Builder.CreateLoad(I64, RSP2),
@@ -10594,14 +10631,13 @@ TEST(LLVMCPointerAddresses,
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("ArgList var_m28;"), std::string::npos) << Source;
   EXPECT_NE(Source.find("*(uint32_t *)&var_m28 = color;"), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("\n    var_m28 = color;"), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("\n    var_m28 = color;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("\n    var_m28.types_ = color;"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("var_m18 = var_m28;"), std::string::npos) << Source;
@@ -10662,8 +10698,8 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Frame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr,
-                                     "frame");
+  auto *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr, "frame");
   auto *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 80), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -10671,10 +10707,8 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
       Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 32));
   llvm::Value *Past =
       Builder.CreateAdd(StrSlot, llvm::ConstantInt::get(I64, 8));
-  llvm::Value *Pack =
-      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 64));
-  llvm::Value *Vals =
-      Builder.CreateAdd(Pack, llvm::ConstantInt::get(I64, 8));
+  llvm::Value *Pack = Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 64));
+  llvm::Value *Vals = Builder.CreateAdd(Pack, llvm::ConstantInt::get(I64, 8));
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0),
                       Builder.CreateIntToPtr(Past, Ptr));
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0),
@@ -10688,8 +10722,8 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
   rewrite_source::setOriginalVA(*Kept, 0x140001100);
   llvm::IRBuilder<> KeptBuilder(
       llvm::BasicBlock::Create(Context, "entry", Kept));
-  auto *KeptFrame = KeptBuilder.CreateAlloca(
-      llvm::ArrayType::get(I8, 128), nullptr, "frame");
+  auto *KeptFrame =
+      KeptBuilder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr, "frame");
   auto *KeptEnd = KeptBuilder.CreateInBoundsGEP(
       I8, KeptFrame, llvm::ConstantInt::get(I64, 80), "frame_end");
   llvm::Value *KeptRsp = KeptBuilder.CreatePtrToInt(KeptEnd, I64, "rsp_init");
@@ -10708,8 +10742,7 @@ TEST(LLVMCPointerAddresses, ZeroPastEightByteCallArgumentIsOmitted) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  nullptr));
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, nullptr));
   OS.flush();
   const auto BodyAt = Source.find("spill_past_string(");
   const auto KeptAt = Source.find("keep_past_string(");
@@ -10733,9 +10766,11 @@ TEST(LLVMCPointerAddresses, DropsDeclarationWithNoPrintedUse) {
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "orphan_decl", Module);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Edge = llvm::BasicBlock::Create(Context, "edge", Function);
-  llvm::BasicBlock *Later = llvm::BasicBlock::Create(Context, "later", Function);
+  llvm::BasicBlock *Later =
+      llvm::BasicBlock::Create(Context, "later", Function);
   llvm::IRBuilder<> Builder(Entry);
   auto *Home = Builder.CreateAlloca(I64, nullptr, "RAX.5");
   auto *Copy = Builder.CreateAlloca(I64, nullptr, "RAX.4");
@@ -10791,19 +10826,17 @@ TEST(LLVMCPointerAddresses, OmitsNestedPointerTestImpliedByOuter) {
   llvm::IRBuilder<> Builder(Entry);
   auto *Slot = Builder.CreateAlloca(I64, nullptr, "p");
   Builder.CreateStore(Function->getArg(0), Slot);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
-                           llvm::ConstantInt::get(I64, 0)),
-      Have, Done);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Have, Done);
   Builder.SetInsertPoint(Have);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(Function->getArg(1), llvm::ConstantInt::get(I32, 0)),
       Gate, Done);
   Builder.SetInsertPoint(Gate);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
-                           llvm::ConstantInt::get(I64, 0)),
-      Release, Done);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Release, Done);
   Builder.SetInsertPoint(Release);
   Builder.CreateCall(Dtor);
   Builder.CreateBr(Done);
@@ -10848,10 +10881,9 @@ TEST(LLVMCPointerAddresses, OmitsNestedFlagPointerTestImpliedByOuter) {
     llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                            llvm::ConstantInt::get(I64, 0));
     Builder.CreateStore(Builder.CreateZExt(Eq, I8), Flag);
-    Builder.CreateCondBr(
-        Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag),
-                             llvm::ConstantInt::get(I8, 0)),
-        TakenOnZero, TakenOnNonZero);
+    Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         TakenOnZero, TakenOnNonZero);
   };
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
@@ -10925,10 +10957,9 @@ TEST(LLVMCPointerAddresses, OmitsPointerRetestAfterConjunct) {
   llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                          llvm::ConstantInt::get(I64, 0));
   Builder.CreateStore(Builder.CreateZExt(Eq, I8), Flag);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag),
-                           llvm::ConstantInt::get(I8, 0)),
-      Done, Kind);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag),
+                                            llvm::ConstantInt::get(I8, 0)),
+                       Done, Kind);
   Builder.SetInsertPoint(Kind);
   llvm::Value *Called = Builder.CreateCall(
       IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot), Ptr)});
@@ -10939,10 +10970,9 @@ TEST(LLVMCPointerAddresses, OmitsPointerRetestAfterConjunct) {
   llvm::Value *Eq2 = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                           llvm::ConstantInt::get(I64, 0));
   Builder.CreateStore(Builder.CreateZExt(Eq2, I8), Flag2);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag2),
-                           llvm::ConstantInt::get(I8, 0)),
-      Done, Body);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, Flag2),
+                                            llvm::ConstantInt::get(I8, 0)),
+                       Done, Body);
   Builder.SetInsertPoint(Body);
   Builder.CreateCall(Dtor);
   Builder.CreateBr(Done);
@@ -11026,19 +11056,17 @@ TEST(LLVMCPointerAddresses, OmitsReloadedFieldPointerTest) {
     llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                            llvm::ConstantInt::get(I64, 0));
     Builder.CreateStore(Builder.CreateZExt(Eq, I8), FlagSlot);
-    Builder.CreateCondBr(
-        Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
-                             llvm::ConstantInt::get(I8, 0)),
-        OnZero, OnNonZero);
+    Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         OnZero, OnNonZero);
   };
   Stage(Addr1, Slot1);
   FlagBr(Slot1, Flag, OtherBB, Kind);
   Builder.SetInsertPoint(Kind);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(
-          Builder.CreateCall(
-              IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot1),
-                                              Ptr)}),
+          Builder.CreateCall(IsKind, {Builder.CreateIntToPtr(
+                                         Builder.CreateLoad(I64, Slot1), Ptr)}),
           llvm::ConstantInt::get(I32, 0)),
       Retest, Join);
   Builder.SetInsertPoint(Retest);
@@ -11049,9 +11077,8 @@ TEST(LLVMCPointerAddresses, OmitsReloadedFieldPointerTest) {
   Builder.SetInsertPoint(Again);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(
-          Builder.CreateCall(
-              IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot2),
-                                              Ptr)}),
+          Builder.CreateCall(IsKind, {Builder.CreateIntToPtr(
+                                         Builder.CreateLoad(I64, Slot2), Ptr)}),
           llvm::ConstantInt::get(I32, 0)),
       Body, Join);
   Builder.SetInsertPoint(Body);
@@ -11135,16 +11162,15 @@ TEST(LLVMCPointerAddresses, KeepsFieldPointerTestAfterFieldStore) {
     llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                            llvm::ConstantInt::get(I64, 0));
     Builder.CreateStore(Builder.CreateZExt(Eq, I8), FlagSlot);
-    Builder.CreateCondBr(
-        Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
-                             llvm::ConstantInt::get(I8, 0)),
-        OnZero, OnNonZero);
+    Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         OnZero, OnNonZero);
   };
   Stage(Addr1, Slot1);
   FlagBr(Slot1, Flag, Done, Mid);
   Builder.SetInsertPoint(Mid);
   llvm::Value *Sum = Builder.CreateAdd(Builder.CreateLoad(I64, Self),
-                                      llvm::ConstantInt::get(I64, 8));
+                                       llvm::ConstantInt::get(I64, 8));
   Builder.CreateStore(llvm::ConstantInt::get(I64, 1),
                       Builder.CreateIntToPtr(Sum, Ptr));
   Builder.CreateBr(Retest);
@@ -11237,19 +11263,17 @@ TEST(LLVMCPointerAddresses, OmitsDeadNullAssignAfterImpliedField) {
     llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                            llvm::ConstantInt::get(I64, 0));
     Builder.CreateStore(Builder.CreateZExt(Eq, I8), FlagSlot);
-    Builder.CreateCondBr(
-        Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
-                             llvm::ConstantInt::get(I8, 0)),
-        OnZero, OnNonZero);
+    Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         OnZero, OnNonZero);
   };
   Stage(Addr1, Slot1);
   FlagBr(Slot1, Flag, OtherBB, Kind);
   Builder.SetInsertPoint(Kind);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(
-          Builder.CreateCall(
-              IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot1),
-                                              Ptr)}),
+          Builder.CreateCall(IsKind, {Builder.CreateIntToPtr(
+                                         Builder.CreateLoad(I64, Slot1), Ptr)}),
           llvm::ConstantInt::get(I32, 0)),
       Retest, Join);
   Builder.SetInsertPoint(Retest);
@@ -11259,10 +11283,10 @@ TEST(LLVMCPointerAddresses, OmitsDeadNullAssignAfterImpliedField) {
   Builder.CreateStore(Builder.CreateLoad(I32, ZeroHome), Id);
   Builder.CreateBr(Join);
   Builder.SetInsertPoint(Field);
-  llvm::Value *FieldAddr = Builder.CreateAdd(
-      Builder.CreateLoad(I64, Slot2), llvm::ConstantInt::get(I64, 16));
-  llvm::Value *FieldVal = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(FieldAddr, Ptr));
+  llvm::Value *FieldAddr = Builder.CreateAdd(Builder.CreateLoad(I64, Slot2),
+                                             llvm::ConstantInt::get(I64, 16));
+  llvm::Value *FieldVal =
+      Builder.CreateLoad(I32, Builder.CreateIntToPtr(FieldAddr, Ptr));
   Builder.CreateStore(FieldVal, Id);
   Builder.CreateBr(Join);
   Builder.SetInsertPoint(OtherBB);
@@ -11354,8 +11378,8 @@ TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
         llvm::FunctionType::get(VoidTy->getReturnType(), {Ptr}, false);
     llvm::Function *Function = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, Name, Module);
-    rewrite_source::setOriginalVA(*Function, SecondUse ? 0x140000670
-                                                      : 0x140000660);
+    rewrite_source::setOriginalVA(*Function,
+                                  SecondUse ? 0x140000670 : 0x140000660);
     llvm::BasicBlock *Entry =
         llvm::BasicBlock::Create(Context, "entry", Function);
     llvm::BasicBlock *Kind =
@@ -11380,8 +11404,7 @@ TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
     auto *Id = Builder.CreateAlloca(I32, nullptr, "id_slot");
     auto *Flag = Builder.CreateAlloca(I8, nullptr, "ZF");
     auto *Flag2 = Builder.CreateAlloca(I8, nullptr, "ZF2");
-    Builder.CreateStore(Builder.CreatePtrToInt(Function->getArg(0), I64),
-                        Self);
+    Builder.CreateStore(Builder.CreatePtrToInt(Function->getArg(0), I64), Self);
     Builder.CreateStore(llvm::ConstantInt::get(I32, 0), ZeroHome);
     auto Stage = [&](llvm::AllocaInst *Addr, llvm::AllocaInst *Slot) {
       llvm::Value *Sum = Builder.CreateAdd(Builder.CreateLoad(I64, Self),
@@ -11407,8 +11430,8 @@ TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
     Builder.CreateCondBr(
         Builder.CreateICmpNE(
             Builder.CreateCall(
-                IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot1),
-                                                Ptr)}),
+                IsKind,
+                {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot1), Ptr)}),
             llvm::ConstantInt::get(I32, 0)),
         Retest, OtherBB);
     Builder.SetInsertPoint(Retest);
@@ -11483,7 +11506,8 @@ TEST(LLVMCPointerAddresses, ForwardsDeadNullFieldIntoCall) {
 }
 
 TEST(LLVMCPointerAddresses, KeepsNullAssignWhenDeadArmCalls) {
-  // A printed call on the null edge is not a zero substitute, so the test stays.
+  // A printed call on the null edge is not a zero substitute, so the test
+  // stays.
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-kept-null-call", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
@@ -11503,8 +11527,8 @@ TEST(LLVMCPointerAddresses, KeepsNullAssignWhenDeadArmCalls) {
       VoidTy, llvm::GlobalValue::ExternalLinkage, "keep_side", Module);
   llvm::Function *Other = llvm::Function::Create(
       VoidTy, llvm::GlobalValue::ExternalLinkage, "other_step", Module);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "kept_null_call", Module);
   llvm::BasicBlock *Entry =
@@ -11541,19 +11565,17 @@ TEST(LLVMCPointerAddresses, KeepsNullAssignWhenDeadArmCalls) {
     llvm::Value *Eq = Builder.CreateICmpEQ(Builder.CreateLoad(I64, Slot),
                                            llvm::ConstantInt::get(I64, 0));
     Builder.CreateStore(Builder.CreateZExt(Eq, I8), FlagSlot);
-    Builder.CreateCondBr(
-        Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
-                             llvm::ConstantInt::get(I8, 0)),
-        OnZero, OnNonZero);
+    Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I8, FlagSlot),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         OnZero, OnNonZero);
   };
   Stage(Addr1, Slot1);
   FlagBr(Slot1, Flag, OtherBB, Kind);
   Builder.SetInsertPoint(Kind);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(
-          Builder.CreateCall(
-              IsKind, {Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot1),
-                                              Ptr)}),
+          Builder.CreateCall(IsKind, {Builder.CreateIntToPtr(
+                                         Builder.CreateLoad(I64, Slot1), Ptr)}),
           llvm::ConstantInt::get(I32, 0)),
       Retest, Join);
   Builder.SetInsertPoint(Retest);
@@ -11564,8 +11586,8 @@ TEST(LLVMCPointerAddresses, KeepsNullAssignWhenDeadArmCalls) {
   Builder.CreateStore(llvm::ConstantInt::get(I32, 0), Id);
   Builder.CreateBr(Join);
   Builder.SetInsertPoint(Field);
-  llvm::Value *FieldAddr = Builder.CreateAdd(
-      Builder.CreateLoad(I64, Slot2), llvm::ConstantInt::get(I64, 16));
+  llvm::Value *FieldAddr = Builder.CreateAdd(Builder.CreateLoad(I64, Slot2),
+                                             llvm::ConstantInt::get(I64, 16));
   Builder.CreateStore(
       Builder.CreateLoad(I32, Builder.CreateIntToPtr(FieldAddr, Ptr)), Id);
   Builder.CreateBr(Join);
@@ -11614,16 +11636,14 @@ TEST(LLVMCPointerAddresses, KeepsNestedPointerTestAfterPointerStore) {
   llvm::IRBuilder<> Builder(Entry);
   auto *Slot = Builder.CreateAlloca(I64, nullptr, "p");
   Builder.CreateStore(Function->getArg(0), Slot);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
-                           llvm::ConstantInt::get(I64, 0)),
-      Have, Done);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Have, Done);
   Builder.SetInsertPoint(Have);
   Builder.CreateStore(Builder.CreateCall(Ident, {Function->getArg(0)}), Slot);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
-                           llvm::ConstantInt::get(I64, 0)),
-      Release, Done);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Builder.CreateLoad(I64, Slot),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Release, Done);
   Builder.SetInsertPoint(Release);
   Builder.CreateCall(Dtor);
   Builder.CreateBr(Done);
@@ -11667,10 +11687,10 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "spill_frame_zero", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Frame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr,
-                                     "frame");
-  auto *End = Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 88),
-                                       "frame_end");
+  auto *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  auto *End = Builder.CreateInBoundsGEP(
+      I8, Frame, llvm::ConstantInt::get(I64, 88), "frame_end");
   auto *RSP = Builder.CreateAlloca(I64, nullptr, "RSP");
   auto *RSP1 = Builder.CreateAlloca(I64, nullptr, "RSP1");
   auto *RSP2 = Builder.CreateAlloca(I64, nullptr, "RSP2");
@@ -11686,15 +11706,15 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
   Builder.CreateStore(Builder.CreateLoad(I64, RBX), RBX);
   llvm::Value *Sub = Builder.CreateSub(Builder.CreateLoad(I64, RSP), Eight);
   Builder.CreateStore(Sub, RSP1);
-  Builder.CreateStore(Builder.CreateLoad(I64, RBX),
-                      Builder.CreateIntToPtr(Builder.CreateLoad(I64, RSP1), Ptr));
+  Builder.CreateStore(
+      Builder.CreateLoad(I64, RBX),
+      Builder.CreateIntToPtr(Builder.CreateLoad(I64, RSP1), Ptr));
   llvm::Value *Sub2 =
       Builder.CreateSub(Builder.CreateLoad(I64, RSP1), SixtyFour);
   Builder.CreateStore(Sub2, RSP2);
   llvm::Value *Addr48 =
       Builder.CreateAdd(Builder.CreateLoad(I64, RSP2), ThirtyTwo);
-  llvm::Value *Addr56 =
-      Builder.CreateAdd(Builder.CreateLoad(I64, RSP2), Forty);
+  llvm::Value *Addr56 = Builder.CreateAdd(Builder.CreateLoad(I64, RSP2), Forty);
   llvm::Value *Addr64 =
       Builder.CreateAdd(Builder.CreateLoad(I64, RSP2), FortyEight);
   Builder.CreateStore(llvm::ConstantInt::get(I64, 2),
@@ -11710,8 +11730,8 @@ TEST(LLVMCPointerAddresses, RecordVisibleRegisterSpillOfZeroIsKept) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "spill_frame_kept", Module);
   llvm::IRBuilder<> KeptBuilder(
       llvm::BasicBlock::Create(Context, "entry", Kept));
-  auto *KeptFrame = KeptBuilder.CreateAlloca(llvm::ArrayType::get(I8, 168),
-                                             nullptr, "frame");
+  auto *KeptFrame =
+      KeptBuilder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   auto *KeptEnd = KeptBuilder.CreateInBoundsGEP(
       I8, KeptFrame, llvm::ConstantInt::get(I64, 88), "frame_end");
   auto *KeptRSP = KeptBuilder.CreateAlloca(I64, nullptr, "RSP");
@@ -11783,30 +11803,30 @@ TEST(LLVMCPointerAddresses, UnreadZeroSpillPastCallRecordIsOmitted) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "spill_zero", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  auto *Frame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr,
-                                     "frame");
+  auto *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
   auto *RBX = Builder.CreateAlloca(I64, nullptr, "RBX");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), RBX);
   llvm::Value *Copied = Builder.CreateLoad(I64, RBX, "RBX_v");
   Builder.CreateStore(Copied, RBX);
   llvm::Value *Reloaded = Builder.CreateLoad(I64, RBX, "RBX_v7");
-  llvm::Value *At8 = Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 8));
-  llvm::Value *At16 = Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 16));
+  llvm::Value *At8 =
+      Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 8));
+  llvm::Value *At16 =
+      Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 16));
   Builder.CreateCall(Use, {Frame});
   Builder.CreateStore(llvm::ConstantInt::get(I64, 7), At8);
   Builder.CreateStore(llvm::ConstantInt::get(I32, 48), Frame);
   Builder.CreateStore(Reloaded, At16);
   Builder.CreateRetVoid();
 
-  llvm::Function *Keep = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage,
-      "keep_spill_for_later_record", Module);
+  llvm::Function *Keep =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "keep_spill_for_later_record", Module);
   Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Keep));
   auto *KeepFrame = Builder.CreateAlloca(llvm::ArrayType::get(I8, 64));
-  llvm::Value *KeepAt16 = Builder.CreateInBoundsGEP(
-      I8, KeepFrame, llvm::ConstantInt::get(I64, 16));
+  llvm::Value *KeepAt16 =
+      Builder.CreateInBoundsGEP(I8, KeepFrame, llvm::ConstantInt::get(I64, 16));
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), KeepAt16);
   Builder.CreateCall(Use, {KeepFrame});
   Builder.CreateRetVoid();
@@ -11854,10 +11874,8 @@ TEST(LLVMCPointerAddresses, SpecializesOneCallPhiTailAtEdges) {
   Function->getArg(0)->setName("flag");
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *ArmA =
-      llvm::BasicBlock::Create(Context, "arm_a", Function);
-  llvm::BasicBlock *ArmB =
-      llvm::BasicBlock::Create(Context, "arm_b", Function);
+  llvm::BasicBlock *ArmA = llvm::BasicBlock::Create(Context, "arm_a", Function);
+  llvm::BasicBlock *ArmB = llvm::BasicBlock::Create(Context, "arm_b", Function);
   llvm::BasicBlock *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
   llvm::BasicBlock *Epi = llvm::BasicBlock::Create(Context, "epi", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
@@ -12086,21 +12104,17 @@ TEST(LLVMCPointerAddresses, OmitsDeadCopyBridgeBeforeSharedReturn) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("dead_copy_return(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_dead_copy", BodyAt), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("L_dead_copy:", BodyAt), std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find("unused_copy", BodyAt), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("acquire_value(", BodyAt), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("CStringT_dtor(", BodyAt), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("L_dead_copy:", BodyAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unused_copy", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("acquire_value(", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CStringT_dtor(", BodyAt), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, KeepsObservedCopyBridgeBeforeSharedReturn) {
@@ -12116,9 +12130,9 @@ TEST(LLVMCPointerAddresses, KeepsObservedCopyBridgeBeforeSharedReturn) {
       ObserveTy, llvm::GlobalValue::ExternalLinkage, "observe_copy", Module);
   llvm::Function *Dtor = llvm::Function::Create(
       DtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_dtor", Module);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {llvm::Type::getInt1Ty(Context), I64},
-      false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                              {llvm::Type::getInt1Ty(Context), I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "live_copy_return", Module);
   Function->getArg(0)->setName("flag");
@@ -12156,10 +12170,8 @@ TEST(LLVMCPointerAddresses, KeepsObservedCopyBridgeBeforeSharedReturn) {
   OS.flush();
   const auto BodyAt = Source.find("live_copy_return(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("observe_copy(", BodyAt), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("copy_slot0 =", BodyAt), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("observe_copy(", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("copy_slot0 =", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("observe_copy(&copy_slot", BodyAt), std::string::npos)
       << Source;
 }
@@ -12185,10 +12197,8 @@ TEST(LLVMCPointerAddresses, PrintsSharedReturnEpilogueAtGotoEdges) {
   Function->getArg(0)->setName("flag");
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *ArmB =
-      llvm::BasicBlock::Create(Context, "arm_b", Function);
-  llvm::BasicBlock *ArmA =
-      llvm::BasicBlock::Create(Context, "arm_a", Function);
+  llvm::BasicBlock *ArmB = llvm::BasicBlock::Create(Context, "arm_b", Function);
+  llvm::BasicBlock *ArmA = llvm::BasicBlock::Create(Context, "arm_a", Function);
   llvm::BasicBlock *Epi = llvm::BasicBlock::Create(Context, "epi", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   auto *Obj = EntryBuilder.CreateAlloca(Ptr, nullptr, "obj");
@@ -12252,10 +12262,8 @@ TEST(LLVMCPointerAddresses, KeepsGotoWhenReturnTailHasTwoCalls) {
   Function->getArg(0)->setName("flag");
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *ArmB =
-      llvm::BasicBlock::Create(Context, "arm_b", Function);
-  llvm::BasicBlock *ArmA =
-      llvm::BasicBlock::Create(Context, "arm_a", Function);
+  llvm::BasicBlock *ArmB = llvm::BasicBlock::Create(Context, "arm_b", Function);
+  llvm::BasicBlock *ArmA = llvm::BasicBlock::Create(Context, "arm_a", Function);
   llvm::BasicBlock *Epi = llvm::BasicBlock::Create(Context, "epi", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(Function->getArg(0), ArmA, ArmB);
@@ -12314,8 +12322,8 @@ TEST(LLVMCPointerAddresses, FoldsNullFieldDiamondIntoUse) {
   llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   auto *Slot = EntryBuilder.CreateAlloca(I64, nullptr, "id_slot");
-  llvm::Value *PtrNull = llvm::ConstantPointerNull::get(
-      llvm::cast<llvm::PointerType>(Ptr));
+  llvm::Value *PtrNull =
+      llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr));
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpEQ(Function->getArg(0), PtrNull), Zero, Field);
   llvm::IRBuilder<> ZeroBuilder(Zero);
@@ -12474,14 +12482,11 @@ TEST(LLVMCPointerAddresses, InlinesSinglePredPhiAssignArm) {
   Function->getArg(0)->setName("flag");
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *Also =
-      llvm::BasicBlock::Create(Context, "also", Function);
+  llvm::BasicBlock *Also = llvm::BasicBlock::Create(Context, "also", Function);
   llvm::BasicBlock *Shared =
       llvm::BasicBlock::Create(Context, "shared", Function);
-  llvm::BasicBlock *Pick =
-      llvm::BasicBlock::Create(Context, "pick", Function);
-  llvm::BasicBlock *Join =
-      llvm::BasicBlock::Create(Context, "join", Function);
+  llvm::BasicBlock *Pick = llvm::BasicBlock::Create(Context, "pick", Function);
+  llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   auto *Slot = EntryBuilder.CreateAlloca(I64, nullptr, "picked");
   EntryBuilder.CreateCondBr(Function->getArg(0), Pick, Shared);
@@ -12545,8 +12550,7 @@ TEST(LLVMCPointerAddresses, KeepsAssignArmOutsideInvertedSkip) {
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Body = llvm::BasicBlock::Create(Context, "body", Function);
-  llvm::BasicBlock *Pick =
-      llvm::BasicBlock::Create(Context, "pick", Function);
+  llvm::BasicBlock *Pick = llvm::BasicBlock::Create(Context, "pick", Function);
   llvm::BasicBlock *After =
       llvm::BasicBlock::Create(Context, "after", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
@@ -12605,8 +12609,8 @@ TEST(LLVMCPointerAddresses, FoldsConditionChainIntoConjunctionElse) {
   llvm::Function *Use = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "use_step", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "cond_chain", Module);
   Function->getArg(0)->setName("flag");
@@ -12618,8 +12622,7 @@ TEST(LLVMCPointerAddresses, FoldsConditionChainIntoConjunctionElse) {
       llvm::BasicBlock::Create(Context, "check2", Function);
   llvm::BasicBlock *Check3 =
       llvm::BasicBlock::Create(Context, "check3", Function);
-  llvm::BasicBlock *HitBB =
-      llvm::BasicBlock::Create(Context, "hit", Function);
+  llvm::BasicBlock *HitBB = llvm::BasicBlock::Create(Context, "hit", Function);
   llvm::BasicBlock *MissBB =
       llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::BasicBlock *After =
@@ -12690,12 +12693,9 @@ TEST(LLVMCPointerAddresses, FoldsFalseEdgeConditionChainIntoConjunctionElse) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Check =
       llvm::BasicBlock::Create(Context, "check", Function);
-  llvm::BasicBlock *HitBB =
-      llvm::BasicBlock::Create(Context, "hit", Function);
-  llvm::BasicBlock *Phi1 =
-      llvm::BasicBlock::Create(Context, "phi1", Function);
-  llvm::BasicBlock *Phi2 =
-      llvm::BasicBlock::Create(Context, "phi2", Function);
+  llvm::BasicBlock *HitBB = llvm::BasicBlock::Create(Context, "hit", Function);
+  llvm::BasicBlock *Phi1 = llvm::BasicBlock::Create(Context, "phi1", Function);
+  llvm::BasicBlock *Phi2 = llvm::BasicBlock::Create(Context, "phi2", Function);
   llvm::BasicBlock *MissBB =
       llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::BasicBlock *After =
@@ -13193,9 +13193,9 @@ TEST(LLVMCPointerAddresses, PrintsCallInsideAssignSelectElseIf) {
   llvm::FunctionType *FlagTy = llvm::FunctionType::get(I64, false);
   llvm::Function *OtherFn = llvm::Function::Create(
       FlagTy, llvm::GlobalValue::ExternalLinkage, "other_step", Module);
-  llvm::FunctionType *KeepTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {llvm::PointerType::getUnqual(I8)},
-      false);
+  llvm::FunctionType *KeepTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                              {llvm::PointerType::getUnqual(I8)}, false);
   llvm::Function *Keep = llvm::Function::Create(
       KeepTy, llvm::GlobalValue::ExternalLinkage, "keep_slot", Module);
   llvm::FunctionType *UseTy =
@@ -13274,8 +13274,8 @@ TEST(LLVMCPointerAddresses, FoldsAssignSelectIntoElseIf) {
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_picked", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "assign_select", Module);
   Function->getArg(0)->setName("skip");
@@ -13325,9 +13325,9 @@ TEST(LLVMCPointerAddresses, FoldsAssignSelectIntoElseIf) {
   const auto LabelAt = Source.find("= 11;", BodyAt);
   const auto VirtAt = Source.find("= 22;", BodyAt);
   const auto FirstDef = Source.find("= 33;", BodyAt);
-  const auto SecondDef =
-      FirstDef == std::string::npos ? std::string::npos
-                                    : Source.find("= 33;", FirstDef + 4);
+  const auto SecondDef = FirstDef == std::string::npos
+                             ? std::string::npos
+                             : Source.find("= 33;", FirstDef + 4);
   const auto ElseIf = Source.find("else if (flag2)", BodyAt);
   const auto UseAt = Source.find("use_picked(", BodyAt);
   ASSERT_NE(LabelAt, std::string::npos) << Source;
@@ -13353,8 +13353,7 @@ TEST(LLVMCPointerAddresses, FoldsCursorLoopIntoFor) {
   llvm::Module Module("llvm-c-cursor-loop", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::FunctionType *InitTy =
-      llvm::FunctionType::get(I64, false);
+  llvm::FunctionType *InitTy = llvm::FunctionType::get(I64, false);
   llvm::Function *Init = llvm::Function::Create(
       InitTy, llvm::GlobalValue::ExternalLinkage, "init_step", Module);
   llvm::FunctionType *NextTy = llvm::FunctionType::get(I64, {I64}, false);
@@ -13393,20 +13392,24 @@ TEST(LLVMCPointerAddresses, FoldsCursorLoopIntoFor) {
       HeaderBuilder.CreateICmpEQ(Cur, llvm::ConstantInt::get(I64, 0), "isnull"),
       Miss, HashBB);
   llvm::IRBuilder<> HashBuilder(HashBB);
-  llvm::Value *HashV = HashBuilder.CreateCall(Hash, {HashBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *HashV =
+      HashBuilder.CreateCall(Hash, {HashBuilder.CreateLoad(I64, Slot)});
   HashBuilder.CreateCondBr(
       HashBuilder.CreateICmpNE(HashV, Function->getArg(0), "hashne"), Latch,
       KeyBB);
   llvm::IRBuilder<> KeyBuilder(KeyBB);
-  llvm::Value *KeyV = KeyBuilder.CreateCall(KeyOf, {KeyBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *KeyV =
+      KeyBuilder.CreateCall(KeyOf, {KeyBuilder.CreateLoad(I64, Slot)});
   KeyBuilder.CreateCondBr(
       KeyBuilder.CreateICmpEQ(KeyV, Function->getArg(0), "keyeq"), Hit, Latch);
   llvm::IRBuilder<> LatchBuilder(Latch);
-  llvm::Value *Nxt = LatchBuilder.CreateCall(Next, {LatchBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *Nxt =
+      LatchBuilder.CreateCall(Next, {LatchBuilder.CreateLoad(I64, Slot)});
   LatchBuilder.CreateStore(Nxt, Slot);
   LatchBuilder.CreateBr(Header);
   llvm::IRBuilder<> HitBuilder(Hit);
-  HitBuilder.CreateRet(HitBuilder.CreateCall(ValueOf, {HitBuilder.CreateLoad(I64, Slot)}));
+  HitBuilder.CreateRet(
+      HitBuilder.CreateCall(ValueOf, {HitBuilder.CreateLoad(I64, Slot)}));
   llvm::IRBuilder<> MissBuilder(Miss);
   MissBuilder.CreateRet(llvm::ConstantInt::get(I32, 7));
 
@@ -13443,7 +13446,8 @@ TEST(LLVMCPointerAddresses, FoldsCursorLoopIntoFor) {
   EXPECT_EQ(Source.find("hash_step(", HashAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("key_step(", KeyAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("next_step(", NextAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("value_step(", ValueAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("value_step(", ValueAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("init_step(", InitAt + 1), std::string::npos) << Source;
   // A for-header load and the copies printed from it must be declared.
   // The pre-fix body used cur3 / v4 without a declaration line.
@@ -13454,8 +13458,8 @@ TEST(LLVMCPointerAddresses, FoldsCursorLoopIntoFor) {
       LineEnd = Source.size();
     const std::string Line = Source.substr(LineStart, LineEnd - LineStart);
     if (Line.find('=') == std::string::npos &&
-        Line.find('(') == std::string::npos &&
-        !Line.empty() && Line.back() == ';') {
+        Line.find('(') == std::string::npos && !Line.empty() &&
+        Line.back() == ';') {
       size_t NameAt = Line.find_last_of(" \t");
       if (NameAt != std::string::npos && NameAt + 1 < Line.size())
         DeclaredNames.insert(Line.substr(NameAt + 1, Line.size() - NameAt - 2));
@@ -13533,8 +13537,7 @@ TEST(LLVMCPointerAddresses, CursorFieldIncrementStaysInForHeader) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Header =
       llvm::BasicBlock::Create(Context, "header", Function);
-  llvm::BasicBlock *Body =
-      llvm::BasicBlock::Create(Context, "body", Function);
+  llvm::BasicBlock *Body = llvm::BasicBlock::Create(Context, "body", Function);
   llvm::BasicBlock *Latch =
       llvm::BasicBlock::Create(Context, "latch", Function);
   llvm::BasicBlock *Hit = llvm::BasicBlock::Create(Context, "hit", Function);
@@ -13554,15 +13557,17 @@ TEST(LLVMCPointerAddresses, CursorFieldIncrementStaysInForHeader) {
   llvm::Value *ThisI = EntryBuilder.CreatePtrToInt(Function->getArg(0), I64);
   EntryBuilder.CreateStore(
       EntryBuilder.CreateLoad(
-          I64, EntryBuilder.CreateIntToPtr(
-                   EntryBuilder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)),
-                   Ptr)),
+          I64,
+          EntryBuilder.CreateIntToPtr(
+              EntryBuilder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)),
+              Ptr)),
       BinsHome);
   EntryBuilder.CreateStore(
       EntryBuilder.CreateLoad(
-          I32, EntryBuilder.CreateIntToPtr(
-                   EntryBuilder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)),
-                   Ptr)),
+          I32,
+          EntryBuilder.CreateIntToPtr(
+              EntryBuilder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)),
+              Ptr)),
       NBinsHome);
   EntryBuilder.CreateStore(Function->getArg(1), KeyHome);
   EntryBuilder.CreateBr(Late);
@@ -13588,8 +13593,8 @@ TEST(LLVMCPointerAddresses, CursorFieldIncrementStaysInForHeader) {
       LatchBuilder.CreateLoad(I64, Cursor), llvm::ConstantInt::get(I64, 8));
   LatchBuilder.CreateStore(Addr, AddrSlot);
   llvm::Value *Field = LatchBuilder.CreateLoad(
-      I64, LatchBuilder.CreateIntToPtr(LatchBuilder.CreateLoad(I64, AddrSlot),
-                                       Ptr));
+      I64,
+      LatchBuilder.CreateIntToPtr(LatchBuilder.CreateLoad(I64, AddrSlot), Ptr));
   LatchBuilder.CreateStore(Field, ValSlot);
   LatchBuilder.CreateStore(LatchBuilder.CreateLoad(I64, ValSlot), NextHome);
   LatchBuilder.CreateStore(LatchBuilder.CreateLoad(I64, NextHome), Cursor);
@@ -13606,9 +13611,9 @@ TEST(LLVMCPointerAddresses, CursorFieldIncrementStaysInForHeader) {
   MissBuilder.CreateRet(llvm::ConstantInt::get(I32, 7));
 
   llvm::IRBuilder<> LateBuilder(Late);
-  llvm::Value *Rem = LateBuilder.CreateURem(
-      LateBuilder.CreateLoad(I32, KeyHome),
-      LateBuilder.CreateLoad(I32, NBinsHome));
+  llvm::Value *Rem =
+      LateBuilder.CreateURem(LateBuilder.CreateLoad(I32, KeyHome),
+                             LateBuilder.CreateLoad(I32, NBinsHome));
   llvm::Value *Idx = LateBuilder.CreateZExt(Rem, I64);
   llvm::Value *Node = LateBuilder.CreateLoad(
       I64, LateBuilder.CreateIntToPtr(
@@ -13623,8 +13628,8 @@ TEST(LLVMCPointerAddresses, CursorFieldIncrementStaysInForHeader) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("cursor_field_inc(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -13686,21 +13691,25 @@ TEST(LLVMCPointerAddresses, KeepsCursorLoopGotoWhenLatchHasSideEffect) {
       HeaderBuilder.CreateICmpEQ(Cur, llvm::ConstantInt::get(I64, 0), "isnull"),
       Miss, HashBB);
   llvm::IRBuilder<> HashBuilder(HashBB);
-  llvm::Value *HashV = HashBuilder.CreateCall(Hash, {HashBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *HashV =
+      HashBuilder.CreateCall(Hash, {HashBuilder.CreateLoad(I64, Slot)});
   HashBuilder.CreateCondBr(
       HashBuilder.CreateICmpNE(HashV, Function->getArg(0), "hashne"), Latch,
       KeyBB);
   llvm::IRBuilder<> KeyBuilder(KeyBB);
-  llvm::Value *KeyV = KeyBuilder.CreateCall(KeyOf, {KeyBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *KeyV =
+      KeyBuilder.CreateCall(KeyOf, {KeyBuilder.CreateLoad(I64, Slot)});
   KeyBuilder.CreateCondBr(
       KeyBuilder.CreateICmpEQ(KeyV, Function->getArg(0), "keyeq"), Hit, Latch);
   llvm::IRBuilder<> LatchBuilder(Latch);
   LatchBuilder.CreateCall(Side);
-  llvm::Value *Nxt = LatchBuilder.CreateCall(Next, {LatchBuilder.CreateLoad(I64, Slot)});
+  llvm::Value *Nxt =
+      LatchBuilder.CreateCall(Next, {LatchBuilder.CreateLoad(I64, Slot)});
   LatchBuilder.CreateStore(Nxt, Slot);
   LatchBuilder.CreateBr(Header);
   llvm::IRBuilder<> HitBuilder(Hit);
-  HitBuilder.CreateRet(HitBuilder.CreateCall(ValueOf, {HitBuilder.CreateLoad(I64, Slot)}));
+  HitBuilder.CreateRet(
+      HitBuilder.CreateCall(ValueOf, {HitBuilder.CreateLoad(I64, Slot)}));
   llvm::IRBuilder<> MissBuilder(Miss);
   MissBuilder.CreateRet(llvm::ConstantInt::get(I32, 7));
 
@@ -14152,8 +14161,10 @@ TEST(LLVMCPointerAddresses, FoldsCondArmIntoPrivateJoinElse) {
   EXPECT_EQ(Source.find("goto ", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("inner_hi(", HiAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("inner_lo(", LoAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("outer_else(", ElseAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("outer_more(", MoreAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("outer_else(", ElseAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("outer_more(", MoreAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
 }
 
@@ -14438,7 +14449,8 @@ TEST(LLVMCPointerAddresses, KeepsSkipRegionWhenSideExitFollowsJoin) {
   EXPECT_EQ(Source.find("more_step(", MoreAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("join_step(", JoinAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("side_step(", SideAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("after_step(", AfterAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("after_step(", AfterAt + 1), std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
@@ -14468,14 +14480,15 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
   llvm::Module Module("llvm-c-cursor-default", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::Type *Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
+  llvm::Type *Ptr =
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
   llvm::FunctionType *UseTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_color", Module);
-  auto *ColorMem = new llvm::GlobalVariable(
-      Module, I32, false, llvm::GlobalValue::ExternalLinkage, nullptr,
-      "color_mem");
+  auto *ColorMem = new llvm::GlobalVariable(Module, I32, false,
+                                            llvm::GlobalValue::ExternalLinkage,
+                                            nullptr, "color_mem");
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr, I32}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "cursor_default", Module);
@@ -14509,8 +14522,9 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), NextHome);
   Builder.CreateStore(Function->getArg(1), KeyHome);
   llvm::Value *Node = Builder.CreatePtrToInt(Function->getArg(0), I64);
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)),
-                       Miss, EntryPhi);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)), Miss,
+      EntryPhi);
 
   Builder.SetInsertPoint(EntryPhi);
   Builder.CreateStore(Node, Cursor);
@@ -14522,28 +14536,30 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
 
   Builder.SetInsertPoint(Header);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)),
-                       Step, KeyBB);
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)), Step,
+      KeyBB);
 
   Builder.SetInsertPoint(KeyBB);
   llvm::Value *Key = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, Cursor), Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)),
-                       Hit, Step);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)), Hit, Step);
 
   Builder.SetInsertPoint(Step);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, NextHome);
-  Builder.CreateCondBr(Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)),
-                       LatchPhi, Miss);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)), LatchPhi,
+      Miss);
 
   Builder.SetInsertPoint(Miss);
   Builder.CreateStore(llvm::ConstantInt::get(I32, 16777215), Color);
@@ -14557,7 +14573,7 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
 
   Builder.SetInsertPoint(Hit);
   llvm::Value *Addr = Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                       llvm::ConstantInt::get(I64, 4));
+                                        llvm::ConstantInt::get(I64, 4));
   Builder.CreateStore(Addr, FieldAddr);
   llvm::Value *Field = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, FieldAddr), Ptr));
@@ -14570,7 +14586,8 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("cursor_default(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -14587,9 +14604,8 @@ TEST(LLVMCPointerAddresses, PrintsDefaultColorOnCursorMiss) {
   EXPECT_EQ(Source.find("use_color(", UseAt + 1), std::string::npos) << Source;
   const auto BreakAt = Source.find("break;", ValueAt);
   const auto GotoAt = Source.find("goto ", ValueAt);
-  const bool Leaves =
-      (BreakAt != std::string::npos && BreakAt < UseAt) ||
-      (GotoAt != std::string::npos && GotoAt < UseAt);
+  const bool Leaves = (BreakAt != std::string::npos && BreakAt < UseAt) ||
+                      (GotoAt != std::string::npos && GotoAt < UseAt);
   EXPECT_TRUE(Leaves) << Source;
   const auto DefLine = Source.rfind('\n', DefaultAt);
   ASSERT_NE(DefLine, std::string::npos) << Source;
@@ -14652,13 +14668,13 @@ TEST(LLVMCPointerAddresses, BreaksCursorLoopAtSharedTail) {
   llvm::Module Module("llvm-c-cursor-break", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::Type *Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
+  llvm::Type *Ptr =
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
   llvm::FunctionType *UseTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_cursor", Module);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(I64, {Ptr, I32}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr, I32}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "cursor_break", Module);
   Function->getArg(1)->setName("key");
@@ -14685,8 +14701,9 @@ TEST(LLVMCPointerAddresses, BreaksCursorLoopAtSharedTail) {
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), NextHome);
   Builder.CreateStore(Function->getArg(1), KeyHome);
   llvm::Value *Node = Builder.CreatePtrToInt(Function->getArg(0), I64);
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)),
-                       Tail, EntryPhi);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)), Tail,
+      EntryPhi);
 
   Builder.SetInsertPoint(EntryPhi);
   Builder.CreateStore(Node, Cursor);
@@ -14698,28 +14715,30 @@ TEST(LLVMCPointerAddresses, BreaksCursorLoopAtSharedTail) {
 
   Builder.SetInsertPoint(Header);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)),
-                       Step, KeyBB);
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)), Step,
+      KeyBB);
 
   Builder.SetInsertPoint(KeyBB);
   llvm::Value *Key = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, Cursor), Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)),
-                       Tail, Step);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)), Tail, Step);
 
   Builder.SetInsertPoint(Step);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, NextHome);
-  Builder.CreateCondBr(Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)),
-                       LatchPhi, Tail);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)), LatchPhi,
+      Tail);
 
   Builder.SetInsertPoint(Tail);
   Builder.CreateCall(Use, {Builder.CreateLoad(I64, Cursor)});
@@ -14729,7 +14748,8 @@ TEST(LLVMCPointerAddresses, BreaksCursorLoopAtSharedTail) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("cursor_break(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -14775,7 +14795,8 @@ TEST(LLVMCPointerAddresses, OmitsElseContinueWhenHitBreaks) {
   llvm::Module Module("llvm-c-cursor-hit", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::Type *Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
+  llvm::Type *Ptr =
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {Ptr, I32}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "cursor_hit", Module);
@@ -14806,8 +14827,9 @@ TEST(LLVMCPointerAddresses, OmitsElseContinueWhenHitBreaks) {
   Builder.CreateStore(Function->getArg(1), KeyHome);
   Builder.CreateStore(llvm::ConstantInt::get(I32, 7), Value);
   llvm::Value *Node = Builder.CreatePtrToInt(Function->getArg(0), I64);
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)),
-                       Tail, EntryPhi);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)), Tail,
+      EntryPhi);
   Builder.SetInsertPoint(EntryPhi);
   Builder.CreateStore(Node, Cursor);
   Builder.CreateBr(Header);
@@ -14816,34 +14838,36 @@ TEST(LLVMCPointerAddresses, OmitsElseContinueWhenHitBreaks) {
   Builder.CreateBr(Header);
   Builder.SetInsertPoint(Header);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)),
-                       Step, KeyBB);
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)), Step,
+      KeyBB);
   Builder.SetInsertPoint(KeyBB);
   llvm::Value *Key = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, Cursor), Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)),
-                       Hit, Step);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)), Hit, Step);
   Builder.SetInsertPoint(Hit);
   llvm::Value *Loaded = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 4)),
-               Ptr));
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 4)),
+                             Ptr));
   Builder.CreateStore(Loaded, Value);
   Builder.CreateBr(Tail);
   Builder.SetInsertPoint(Step);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, NextHome);
-  Builder.CreateCondBr(Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)),
-                       LatchPhi, Tail);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)), LatchPhi,
+      Tail);
   Builder.SetInsertPoint(Tail);
   Builder.CreateRet(Builder.CreateLoad(I32, Value));
 
@@ -14851,7 +14875,8 @@ TEST(LLVMCPointerAddresses, OmitsElseContinueWhenHitBreaks) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("cursor_hit(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -14900,15 +14925,15 @@ TEST(LLVMCPointerAddresses, ForwardsSingleCursorCopy) {
     llvm::Type *Ptr = llvm::PointerType::get(Context, 0);
     llvm::FunctionType *UseTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
-    llvm::Function *Use = llvm::Function::Create(
-        UseTy, llvm::GlobalValue::ExternalLinkage,
-        SecondUse ? "use_both" : "use_cur", Module);
+    llvm::Function *Use =
+        llvm::Function::Create(UseTy, llvm::GlobalValue::ExternalLinkage,
+                               SecondUse ? "use_both" : "use_cur", Module);
     llvm::FunctionType *FnTy =
         llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
     llvm::Function *Function = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, Name, Module);
-    rewrite_source::setOriginalVA(*Function, SecondUse ? 0x140000650
-                                                      : 0x140000640);
+    rewrite_source::setOriginalVA(*Function,
+                                  SecondUse ? 0x140000650 : 0x140000640);
     llvm::BasicBlock *Entry =
         llvm::BasicBlock::Create(Context, "entry", Function);
     llvm::IRBuilder<> Builder(Entry);
@@ -14964,7 +14989,7 @@ TEST(LLVMCPointerAddresses, ForwardsSingleCursorCopy) {
     ASSERT_NE(BodyAt, std::string::npos) << Source;
     EXPECT_NE(Source.find("use_both(", BodyAt), std::string::npos) << Source;
     EXPECT_NE(Source.find("use_both(", Source.find("use_both(", BodyAt) + 1),
-               std::string::npos)
+              std::string::npos)
         << Source;
     EXPECT_NE(Source.find("m_pNext", BodyAt), std::string::npos) << Source;
   }
@@ -14997,7 +15022,8 @@ TEST(LLVMCPointerAddresses, KeepsElseContinueWhenMissCalls) {
   llvm::Module Module("llvm-c-cursor-miss", Context);
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::Type *Ptr = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
+  llvm::Type *Ptr =
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(Context));
   llvm::FunctionType *VoidTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Keep = llvm::Function::Create(
@@ -15033,8 +15059,9 @@ TEST(LLVMCPointerAddresses, KeepsElseContinueWhenMissCalls) {
   Builder.CreateStore(Function->getArg(1), KeyHome);
   Builder.CreateStore(llvm::ConstantInt::get(I32, 7), Value);
   llvm::Value *Node = Builder.CreatePtrToInt(Function->getArg(0), I64);
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)),
-                       Tail, EntryPhi);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Node, llvm::ConstantInt::get(I64, 0)), Tail,
+      EntryPhi);
   Builder.SetInsertPoint(EntryPhi);
   Builder.CreateStore(Node, Cursor);
   Builder.CreateBr(Header);
@@ -15043,24 +15070,25 @@ TEST(LLVMCPointerAddresses, KeepsElseContinueWhenMissCalls) {
   Builder.CreateBr(Header);
   Builder.SetInsertPoint(Header);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)),
-                       Step, KeyBB);
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)), Step,
+      KeyBB);
   Builder.SetInsertPoint(KeyBB);
   llvm::Value *Key = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, Cursor), Ptr));
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)),
-                       Hit, Miss);
+  Builder.CreateCondBr(
+      Builder.CreateICmpEQ(Key, Builder.CreateLoad(I32, KeyHome)), Hit, Miss);
   Builder.SetInsertPoint(Hit);
   Builder.CreateStore(
-      Builder.CreateLoad(
-          I32, Builder.CreateIntToPtr(
-                   Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                     llvm::ConstantInt::get(I64, 4)),
-                   Ptr)),
+      Builder.CreateLoad(I32,
+                         Builder.CreateIntToPtr(
+                             Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 4)),
+                             Ptr)),
       Value);
   Builder.CreateBr(Tail);
   Builder.SetInsertPoint(Miss);
@@ -15068,13 +15096,14 @@ TEST(LLVMCPointerAddresses, KeepsElseContinueWhenMissCalls) {
   Builder.CreateBr(Step);
   Builder.SetInsertPoint(Step);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, NextHome);
-  Builder.CreateCondBr(Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)),
-                       LatchPhi, Tail);
+  Builder.CreateCondBr(
+      Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)), LatchPhi,
+      Tail);
   Builder.SetInsertPoint(Tail);
   Builder.CreateRet(Builder.CreateLoad(I32, Value));
 
@@ -15082,7 +15111,8 @@ TEST(LLVMCPointerAddresses, KeepsElseContinueWhenMissCalls) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("cursor_miss(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -15199,8 +15229,8 @@ TEST(LLVMCPointerAddresses, InvertsSkipReachedThroughPassthroughs) {
   llvm::Function *TailFn = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "tail_step", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "passthrough_skip", Module);
   Function->getArg(0)->setName("gate");
@@ -15299,7 +15329,8 @@ TEST(LLVMCPointerAddresses, InvertsSkipReachedThroughPassthroughs) {
   EXPECT_EQ(Source.find("head_step(", HeadAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("body_step(", WorkAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("more_step(", MoreAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("shared_step(", SharedAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("shared_step(", SharedAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("skip_step(", SkipAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
   auto ClosedBefore = [](const std::string &Text, size_t Open, size_t Call) {
@@ -15337,10 +15368,11 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenPassthroughHasOutsideEntry) {
   llvm::Function *TailFn = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "tail_step", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "passthrough_skip_extra", Module);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "passthrough_skip_extra", Module);
   Function->getArg(0)->setName("gate");
   Function->getArg(1)->setName("flag");
   Function->getArg(2)->setName("leave");
@@ -15403,7 +15435,8 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenPassthroughHasOutsideEntry) {
   ASSERT_NE(SharedAt, std::string::npos) << Source;
   ASSERT_NE(SkipAt, std::string::npos) << Source;
   ASSERT_NE(TailAt, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("shared_step(", SharedAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("shared_step(", SharedAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("skip_step(", SkipAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
   EXPECT_NE(Source.find("head_step(", BodyAt), std::string::npos) << Source;
@@ -15425,8 +15458,8 @@ TEST(LLVMCPointerAddresses, PrintedSkipTargetDoesNotGotoOverFollowingCall) {
   llvm::Function *AfterFn = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "after_step", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "printed_skip", Module);
   Function->getArg(0)->setName("gate");
@@ -15483,7 +15516,8 @@ TEST(LLVMCPointerAddresses, PrintedSkipTargetDoesNotGotoOverFollowingCall) {
   ASSERT_NE(AfterAt, std::string::npos) << Source;
   ASSERT_NE(UseAt, std::string::npos) << Source;
   EXPECT_LT(UseAt, AfterAt) << Source;
-  EXPECT_EQ(Source.find("after_step(", AfterAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("after_step(", AfterAt + 1), std::string::npos)
+      << Source;
   size_t CloseAt = std::string::npos;
   const auto IfAt = Source.find("if (", BodyAt);
   ASSERT_NE(IfAt, std::string::npos) << Source;
@@ -15501,7 +15535,8 @@ TEST(LLVMCPointerAddresses, PrintedSkipTargetDoesNotGotoOverFollowingCall) {
   }
   ASSERT_NE(CloseAt, std::string::npos) << Source;
   EXPECT_LT(CloseAt, AfterAt) << Source;
-  EXPECT_EQ(Source.find("goto L_default;", CloseAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_default;", CloseAt), std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, TakenCallDoesNotFallIntoLaterSkip) {
@@ -15754,7 +15789,8 @@ TEST(LLVMCPointerAddresses, LaterTrueArmJoinsFallthroughAsIfElse) {
   EXPECT_LT(CtorAt, ElseAt) << Source;
   EXPECT_LT(ElseAt, WorkAt) << Source;
   EXPECT_LT(WorkAt, ReleaseAt) << Source;
-  EXPECT_EQ(Source.find("goto L_release;", BodyAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_release;", BodyAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("L_release:", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("ctor_step(", CtorAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("work_step(", WorkAt + 1), std::string::npos) << Source;
@@ -15810,7 +15846,8 @@ TEST(LLVMCPointerAddresses, KeepsJoinGotoWhenLaterArmJoinHasAnotherEntry) {
   OS.flush();
   const auto BodyAt = Source.find("later_arm_join_extra(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("goto L_release;", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("goto L_release;", BodyAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("else {", BodyAt), std::string::npos) << Source;
   const auto CtorAt = Source.find("ctor_step(", BodyAt);
   const auto WorkAt = Source.find("work_step(", BodyAt);
@@ -15925,9 +15962,9 @@ TEST(LLVMCPointerAddresses, SharedCtorBetweenTestsPrintsInBothMissArms) {
   const auto UseAAt = Source.find("use_a(", BodyAt);
   const auto UseBAt = Source.find("use_b(", BodyAt);
   const auto CtorAt = Source.find("ctor_step(", BodyAt);
-  const auto Ctor2 =
-      CtorAt == std::string::npos ? std::string::npos
-                                  : Source.find("ctor_step(", CtorAt + 1);
+  const auto Ctor2 = CtorAt == std::string::npos
+                         ? std::string::npos
+                         : Source.find("ctor_step(", CtorAt + 1);
   const auto TailAt = Source.find("tail_step(", BodyAt);
   const auto CleanupAt = Source.find("cleanup_step(", BodyAt);
   const auto FinishAt = Source.find("finish_step(", BodyAt);
@@ -15952,8 +15989,10 @@ TEST(LLVMCPointerAddresses, SharedCtorBetweenTestsPrintsInBothMissArms) {
   EXPECT_EQ(Source.find("goto L_shared;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_shared:", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("goto L_head2;", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("period_a(", PeriodAAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("period_b(", PeriodBAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("period_a(", PeriodAAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("period_b(", PeriodBAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("use_a(", UseAAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("use_b(", UseBAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
@@ -16157,7 +16196,8 @@ TEST(LLVMCPointerAddresses, GuardWithLateHopPrintsBodyInsideTest) {
   EXPECT_LT(CloseAt, MissAt) << Source;
   EXPECT_EQ(Source.find("goto L_miss;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_miss:", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("work_step(", WorkAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("miss_step(", MissAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("trap_step(", TrapAt + 1), std::string::npos) << Source;
@@ -16254,7 +16294,8 @@ TEST(LLVMCPointerAddresses, GuardWithLateBodyPrintsBodyInsideTest) {
   EXPECT_LT(CloseAt, MissAt) << Source;
   EXPECT_EQ(Source.find("goto L_miss;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_miss:", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("prep_step(", PrepAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("work_step(", WorkAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("miss_step(", MissAt + 1), std::string::npos) << Source;
@@ -16353,7 +16394,8 @@ TEST(LLVMCPointerAddresses, GuardWithLateCondPrintsWalkBeforeTail) {
   EXPECT_LT(CloseAt, TailAt) << Source;
   EXPECT_EQ(Source.find("goto L_tail;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_tail:", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("init_step(", InitAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("work_step(", WorkAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
@@ -16366,8 +16408,8 @@ TEST(LLVMCPointerAddresses, PostTailCursorWalkPrintsBeforeTail) {
   llvm::FunctionType *WorkTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   auto Decl = [&](const char *Name) {
-    return llvm::Function::Create(
-        WorkTy, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    return llvm::Function::Create(WorkTy, llvm::GlobalValue::ExternalLinkage,
+                                  Name, Module);
   };
   llvm::Function *CheckFn = Decl("check_step");
   llvm::Function *EnterFn = Decl("enter_step");
@@ -16485,10 +16527,13 @@ TEST(LLVMCPointerAddresses, PostTailCursorWalkPrintsBeforeTail) {
   EXPECT_LT(HeaderAt, TailAt) << Source;
   EXPECT_EQ(Source.find("goto L_late;", BodyAt), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_late:", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("check_step(", CheckAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("init_step(", InitAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("enter_step(", EnterAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("header_step(", HeaderAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("enter_step(", EnterAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("header_step(", HeaderAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("tail_step(", TailAt + 1), std::string::npos) << Source;
   EXPECT_EQ(Source.find("trap_step(", TrapAt + 1), std::string::npos) << Source;
   const auto LatchAt = Source.find("latch_step(", BodyAt);
@@ -16498,10 +16543,13 @@ TEST(LLVMCPointerAddresses, PostTailCursorWalkPrintsBeforeTail) {
   ASSERT_NE(StepAt, std::string::npos) << Source;
   ASSERT_NE(FoundAt, std::string::npos) << Source;
   EXPECT_LT(HeaderAt, LatchAt) << Source;
-  EXPECT_EQ(Source.find("enter_step(", EnterAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("latch_step(", LatchAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("enter_step(", EnterAt + 1), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("latch_step(", LatchAt + 1), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("step_step(", StepAt + 1), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("found_step(", FoundAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("found_step(", FoundAt + 1), std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, KeepsAssignSelectGotoWhenArmHasAnotherEntry) {
@@ -16513,8 +16561,8 @@ TEST(LLVMCPointerAddresses, KeepsAssignSelectGotoWhenArmHasAnotherEntry) {
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_picked", Module);
   llvm::Type *I1 = llvm::Type::getInt1Ty(Context);
-  llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
+  llvm::FunctionType *FnTy = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(Context), {I1, I1, I1}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "assign_select_extra", Module);
   Function->getArg(0)->setName("skip");
@@ -16574,7 +16622,8 @@ TEST(LLVMCPointerAddresses, KeepsAssignSelectGotoWhenArmHasAnotherEntry) {
   ASSERT_NE(DefAt, std::string::npos) << Source;
   ASSERT_NE(UseAt, std::string::npos) << Source;
   ASSERT_NE(JoinGoto, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("else if (flag2)", BodyAt), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("else if (flag2)", BodyAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("= 11;", LabelAt + 4), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= 22;", VirtAt + 4), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= 33;", DefAt + 4), std::string::npos) << Source;
@@ -16816,14 +16865,12 @@ TEST(LLVMCPointerAddresses, KeepsConditionChainGotoWhenDefaultHasAnotherEntry) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Check =
       llvm::BasicBlock::Create(Context, "check", Function);
-  llvm::BasicBlock *HitBB =
-      llvm::BasicBlock::Create(Context, "hit", Function);
+  llvm::BasicBlock *HitBB = llvm::BasicBlock::Create(Context, "hit", Function);
   llvm::BasicBlock *MissBB =
       llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::BasicBlock *After =
       llvm::BasicBlock::Create(Context, "after", Function);
-  llvm::BasicBlock *Side =
-      llvm::BasicBlock::Create(Context, "side", Function);
+  llvm::BasicBlock *Side = llvm::BasicBlock::Create(Context, "side", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(Function->getArg(0), Check, MissBB);
   llvm::IRBuilder<> CheckBuilder(Check);
@@ -17054,8 +17101,7 @@ TEST(LLVMCPointerAddresses, OmitsGotoAcrossInlinedArm) {
       llvm::BasicBlock::Create(Context, "work", Function);
   llvm::BasicBlock *TakenBB =
       llvm::BasicBlock::Create(Context, "taken", Function);
-  llvm::BasicBlock *Join =
-      llvm::BasicBlock::Create(Context, "join", Function);
+  llvm::BasicBlock *Join = llvm::BasicBlock::Create(Context, "join", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(Function->getArg(0), TakenBB, WorkBB);
   llvm::IRBuilder<> WorkBuilder(WorkBB);
@@ -17253,14 +17299,13 @@ TEST(LLVMCPointerAddresses, InlinesDivisionTrapAtTheCheck) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Work = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "work_step", Module);
-  llvm::Function *Trap = llvm::Intrinsic::getOrInsertDeclaration(
-      &Module, llvm::Intrinsic::trap);
+  llvm::Function *Trap =
+      llvm::Intrinsic::getOrInsertDeclaration(&Module, llvm::Intrinsic::trap);
   llvm::Function *Hit = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "hit_step", Module);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {llvm::Type::getInt1Ty(Context),
-                                       llvm::Type::getInt1Ty(Context)},
-      false);
+      llvm::Type::getVoidTy(Context),
+      {llvm::Type::getInt1Ty(Context), llvm::Type::getInt1Ty(Context)}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "div_trap", Module);
   Function->getArg(0)->setName("present");
@@ -17927,8 +17972,8 @@ TEST(LLVMCPointerAddresses, KeepsSkipGotoWhenJoinAssignsPhi) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Arm = llvm::Function::Create(
       WorkTy, llvm::GlobalValue::ExternalLinkage, "arm_step", Module);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      I32, {llvm::Type::getInt1Ty(Context)}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(I32, {llvm::Type::getInt1Ty(Context)}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "skip_false_phi", Module);
   Function->getArg(0)->setName("flag");
@@ -17973,8 +18018,7 @@ TEST(LLVMCPointerAddresses, SameWidthUnsignedArithOmitsRedundantWrap) {
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   auto AddFn = [&](llvm::Instruction::BinaryOps Op, const char *Name) {
-    llvm::FunctionType *FnTy =
-        llvm::FunctionType::get(I32, {I32, I32}, false);
+    llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {I32, I32}, false);
     llvm::Function *Function = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, Name, Module);
     Function->getArg(0)->setName("left");
@@ -18028,8 +18072,7 @@ TEST(LLVMCPointerAddresses, NarrowMulKeepsUnsignedWrap) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *L = Builder.CreateZExt(Function->getArg(0), I32);
   llvm::Value *R = Builder.CreateZExt(Function->getArg(1), I32);
-  Builder.CreateRet(
-      Builder.CreateTrunc(Builder.CreateMul(L, R), I16));
+  Builder.CreateRet(Builder.CreateTrunc(Builder.CreateMul(L, R), I16));
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -18080,8 +18123,7 @@ TEST(LLVMCPointerAddresses, SignedSameWidthWidenTruncOmitsRedundantWrap) {
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   auto AddFn = [&](llvm::Instruction::BinaryOps Op, const char *Name) {
-    llvm::FunctionType *FnTy =
-        llvm::FunctionType::get(I32, {I32, I32}, false);
+    llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {I32, I32}, false);
     llvm::Function *Function = llvm::Function::Create(
         FnTy, llvm::GlobalValue::ExternalLinkage, Name, Module);
     Function->getArg(0)->setName("left");
@@ -18201,12 +18243,9 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosComposeAnd) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *KindBB =
       llvm::BasicBlock::Create(Context, "kind", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Tail =
-      llvm::BasicBlock::Create(Context, "tail", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpEQ(Function->getArg(0),
@@ -18269,10 +18308,8 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosKeepDuplicateCall) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Again =
       llvm::BasicBlock::Create(Context, "again", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpEQ(
@@ -18332,12 +18369,9 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosForwardsStoredCall) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *KindBB =
       llvm::BasicBlock::Create(Context, "kind", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Tail =
-      llvm::BasicBlock::Create(Context, "tail", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   llvm::AllocaInst *Home = EntryBuilder.CreateAlloca(I64, nullptr, "home");
   EntryBuilder.CreateStore(llvm::ConstantInt::get(I64, 0), Home);
@@ -18408,12 +18442,9 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosKeepsAssignedCall) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *KindBB =
       llvm::BasicBlock::Create(Context, "kind", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Tail =
-      llvm::BasicBlock::Create(Context, "tail", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpEQ(Function->getArg(0),
@@ -18443,7 +18474,8 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosKeepsAssignedCall) {
   OS.flush();
   const auto BodyAt = Source.find("skip_assign(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("= IsKind(record)", BodyAt), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= IsKind(record)", BodyAt), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("&&", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("taken_step(", BodyAt), std::string::npos) << Source;
   EXPECT_NE(Source.find("rest_step(", BodyAt), std::string::npos) << Source;
@@ -18470,12 +18502,9 @@ TEST(LLVMCPointerAddresses, SameTargetSkipGotosComposeCompareOr) {
       llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *NullBB =
       llvm::BasicBlock::Create(Context, "nullb", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Tail =
-      llvm::BasicBlock::Create(Context, "tail", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Tail = llvm::BasicBlock::Create(Context, "tail", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpNE(Function->getArg(0),
@@ -18535,10 +18564,8 @@ TEST(LLVMCPointerAddresses, StandaloneCompareOmitsExtraParentheses) {
   Function->getArg(0)->setName("flag");
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *Work =
-      llvm::BasicBlock::Create(Context, "work", Function);
-  llvm::BasicBlock *Skip =
-      llvm::BasicBlock::Create(Context, "skip", Function);
+  llvm::BasicBlock *Work = llvm::BasicBlock::Create(Context, "work", Function);
+  llvm::BasicBlock *Skip = llvm::BasicBlock::Create(Context, "skip", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpNE(Function->getArg(0),
@@ -18589,8 +18616,7 @@ TEST(LLVMCPointerAddresses, FollowingRejoinTestPrintsAnd) {
       llvm::BasicBlock::Create(Context, "check", Function);
   llvm::BasicBlock *MissBB =
       llvm::BasicBlock::Create(Context, "miss", Function);
-  llvm::BasicBlock *HitBB =
-      llvm::BasicBlock::Create(Context, "hit", Function);
+  llvm::BasicBlock *HitBB = llvm::BasicBlock::Create(Context, "hit", Function);
   llvm::IRBuilder<> EntryBuilder(Entry);
   EntryBuilder.CreateCondBr(
       EntryBuilder.CreateICmpNE(Function->getArg(0), Function->getArg(2)),
@@ -18749,17 +18775,17 @@ TEST(LLVMCPointerAddresses, InvertedFlagOrNonPositivePrintsGreaterThanZero) {
   llvm::AllocaInst *Flag = Builder.CreateAlloca(I32, nullptr, "test");
   Builder.CreateStore(Test, Flag);
   llvm::Value *ZF = Builder.CreateICmpEQ(Builder.CreateLoad(I32, Flag),
-                                        llvm::ConstantInt::get(I32, 0));
-  llvm::Value *SF = Builder.CreateICmpSLT(Builder.CreateLoad(I32, Flag),
                                          llvm::ConstantInt::get(I32, 0));
+  llvm::Value *SF = Builder.CreateICmpSLT(Builder.CreateLoad(I32, Flag),
+                                          llvm::ConstantInt::get(I32, 0));
   llvm::Value *Z8 = Builder.CreateZExt(ZF, I8);
-  llvm::Value *S8 = Builder.CreateZExt(
-      Builder.CreateICmpNE(Builder.CreateZExt(SF, I8),
-                           llvm::ConstantInt::get(I8, 0)),
-      I8);
+  llvm::Value *S8 =
+      Builder.CreateZExt(Builder.CreateICmpNE(Builder.CreateZExt(SF, I8),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         I8);
   llvm::Value *Bor = Builder.CreateOr(Z8, S8);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Bor, llvm::ConstantInt::get(I8, 0)), After, Body);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Bor, llvm::ConstantInt::get(I8, 0)),
+                       After, Body);
   llvm::IRBuilder<> BodyBuilder(Body);
   BodyBuilder.CreateCall(Arm);
   BodyBuilder.CreateBr(After);
@@ -18878,8 +18904,9 @@ TEST(LLVMCPointerAddresses, KeepsElseGotoWhenFalseTargetLeavesNextBlock) {
   const auto BodyAt = Source.find("else_not_next(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   EXPECT_NE(Source.find("} else", BodyAt), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("resume_step(", Source.find("resume_step(", BodyAt) + 1),
-            std::string::npos)
+  EXPECT_EQ(
+      Source.find("resume_step(", Source.find("resume_step(", BodyAt) + 1),
+      std::string::npos)
       << Source;
 }
 
@@ -18970,8 +18997,8 @@ TEST(LLVMCPointerAddresses, DecoratedImpGlobalUsesClassStem) {
   auto *Slot = new llvm::GlobalVariable(
       Module, I64, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
       nullptr, "__imp_??1?$CStringT@_W@@QEAA@XZ");
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
   llvm::IRBuilder<> Builder(
@@ -19009,15 +19036,13 @@ TEST(LLVMCPointerAddresses, AtlCalleeUsesSharedPrototypeAndArity) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
-  llvm::IRBuilder<> Builder(
-      llvm::BasicBlock::Create(Context, "entry", Caller));
-  Builder.CreateCall(Module.getFunction("IsEmpty"),
-                     {llvm::ConstantInt::get(I64, 1),
-                      llvm::UndefValue::get(I64)});
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
   Builder.CreateCall(
-      Module.getFunction("??1?$CStringT@H@@QEAA@XZ"),
-      {llvm::ConstantInt::get(I64, 2), llvm::UndefValue::get(I64),
-       llvm::UndefValue::get(I64)});
+      Module.getFunction("IsEmpty"),
+      {llvm::ConstantInt::get(I64, 1), llvm::UndefValue::get(I64)});
+  Builder.CreateCall(Module.getFunction("??1?$CStringT@H@@QEAA@XZ"),
+                     {llvm::ConstantInt::get(I64, 2),
+                      llvm::UndefValue::get(I64), llvm::UndefValue::get(I64)});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -19030,15 +19055,16 @@ TEST(LLVMCPointerAddresses, AtlCalleeUsesSharedPrototypeAndArity) {
   EXPECT_NE(Source.find("extern __fastcall bool IsEmpty(CStringT* this);"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("extern __fastcall void CStringT_dtor(CStringT* this);"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("extern __fastcall void CStringT_dtor(CStringT* this);"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("extern int IsEmpty"), std::string::npos) << Source;
   const auto IsEmptyAt = Source.rfind("IsEmpty(");
   ASSERT_NE(IsEmptyAt, std::string::npos) << Source;
-  const auto IsEmptyArgs =
-      Source.substr(Source.find('(', IsEmptyAt) + 1,
-                    Source.find(')', IsEmptyAt) - Source.find('(', IsEmptyAt) - 1);
+  const auto IsEmptyArgs = Source.substr(Source.find('(', IsEmptyAt) + 1,
+                                         Source.find(')', IsEmptyAt) -
+                                             Source.find('(', IsEmptyAt) - 1);
   EXPECT_EQ(std::count(IsEmptyArgs.begin(), IsEmptyArgs.end(), ','), 0)
       << Source;
   const auto DtorAt = Source.rfind("CStringT_dtor(");
@@ -19065,20 +19091,18 @@ TEST(LLVMCPointerAddresses, AtlConcatenatePeelsWidenedLengthArgs) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
-  llvm::IRBuilder<> Builder(
-      llvm::BasicBlock::Create(Context, "entry", Caller));
-  llvm::Value *Badge = Builder.CreateCall(
-      GetLength, {llvm::ConstantInt::get(I64, 0x140007000)});
-  llvm::Value *Name = Builder.CreateCall(
-      GetLength, {llvm::ConstantInt::get(I64, 0x140008000)});
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
+  llvm::Value *Badge =
+      Builder.CreateCall(GetLength, {llvm::ConstantInt::get(I64, 0x140007000)});
+  llvm::Value *Name =
+      Builder.CreateCall(GetLength, {llvm::ConstantInt::get(I64, 0x140008000)});
   llvm::AllocaInst *LenHome = Builder.CreateAlloca(I32, nullptr, "len_home");
   Builder.CreateStore(Builder.CreateTrunc(Name, I32), LenHome);
-  Builder.CreateCall(
-      Concat, {llvm::ConstantInt::get(I64, 0x140004000),
-               llvm::ConstantInt::get(I64, 0x140005000),
-               Builder.CreateTrunc(Badge, I32),
-               llvm::ConstantInt::get(I64, 0x140006000),
-               Builder.CreateLoad(I32, LenHome)});
+  Builder.CreateCall(Concat, {llvm::ConstantInt::get(I64, 0x140004000),
+                              llvm::ConstantInt::get(I64, 0x140005000),
+                              Builder.CreateTrunc(Badge, I32),
+                              llvm::ConstantInt::get(I64, 0x140006000),
+                              Builder.CreateLoad(I32, LenHome)});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -19116,8 +19140,8 @@ TEST(LLVMCPointerAddresses, EnumCallArgPrintsEnumerator) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-enum-arg", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::FunctionType *TakeTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64}, false);
+  llvm::FunctionType *TakeTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Take = llvm::Function::Create(
       TakeTy, llvm::GlobalValue::ExternalLinkage, "takeKind", Module);
   rewrite_source::setOriginalVA(*Take, 0x140002000);
@@ -19125,8 +19149,7 @@ TEST(LLVMCPointerAddresses, EnumCallArgPrintsEnumerator) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
-  llvm::IRBuilder<> Builder(
-      llvm::BasicBlock::Create(Context, "entry", Caller));
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
   llvm::AllocaInst *Home = Builder.CreateAlloca(I64, nullptr, "kind_home");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 7), Home);
   Builder.CreateCall(Take, {Builder.CreateLoad(I64, Home)});
@@ -19178,10 +19201,8 @@ TEST(LLVMCPointerAddresses, EnumFieldComparePrintsEnumerator) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *Then =
-      llvm::BasicBlock::Create(Context, "then", Function);
-  llvm::BasicBlock *Else =
-      llvm::BasicBlock::Create(Context, "else", Function);
+  llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
+  llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *Slot = Builder.CreateAlloca(I64, nullptr, "t0.1");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
@@ -19192,8 +19213,8 @@ TEST(LLVMCPointerAddresses, EnumFieldComparePrintsEnumerator) {
   llvm::Value *Addr = Builder.CreateLoad(I64, Slot, "t0.1_v");
   llvm::Value *MemPtr = Builder.CreateIntToPtr(Addr, Ptr, "memptr");
   llvm::Value *Ld = Builder.CreateLoad(I32, MemPtr, "ld");
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I32, 1)), Then, Else);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I32, 1)),
+                       Then, Else);
   Builder.SetInsertPoint(Then);
   Builder.CreateRet(llvm::ConstantInt::get(I32, 1));
   Builder.SetInsertPoint(Else);
@@ -19203,8 +19224,8 @@ TEST(LLVMCPointerAddresses, EnumFieldComparePrintsEnumerator) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("KIND_ACTIVE"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("!= 1"), std::string::npos) << Source;
@@ -19218,16 +19239,14 @@ TEST(LLVMCPointerAddresses, ZeroTestOfTruncatedCallPreservesIntegerView) {
   llvm::FunctionType *PredTy = llvm::FunctionType::get(I64, {I64}, false);
   llvm::Function *Pred = llvm::Function::Create(
       PredTy, llvm::GlobalValue::ExternalLinkage, "IsMediaPayload", Module);
-  llvm::FunctionType *CallerTy =
-      llvm::FunctionType::get(I32, {I64}, false);
+  llvm::FunctionType *CallerTy = llvm::FunctionType::get(I32, {I64}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
   llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Caller);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Caller);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Caller);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Call =
-      Builder.CreateCall(Pred, {Caller->getArg(0)}, "payload");
+  llvm::Value *Call = Builder.CreateCall(Pred, {Caller->getArg(0)}, "payload");
   llvm::Value *Narrow = Builder.CreateTrunc(Call, I32);
   Builder.CreateCondBr(
       Builder.CreateICmpEQ(Narrow, llvm::ConstantInt::get(I32, 0)), Then, Else);
@@ -19242,7 +19261,8 @@ TEST(LLVMCPointerAddresses, ZeroTestOfTruncatedCallPreservesIntegerView) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("if (!((uint32_t)(IsMediaPayload("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("if (!((uint32_t)(IsMediaPayload("), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("payload0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
 }
@@ -19256,8 +19276,7 @@ TEST(LLVMCPointerAddresses, TestAndSignFlagOrPrintsSignedLessEqualZero) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {I64}, false);
   llvm::Function *Len = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *CallerTy =
-      llvm::FunctionType::get(I32, {I64}, false);
+  llvm::FunctionType *CallerTy = llvm::FunctionType::get(I32, {I64}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
   llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Caller);
@@ -19274,17 +19293,17 @@ TEST(LLVMCPointerAddresses, TestAndSignFlagOrPrintsSignedLessEqualZero) {
   llvm::AllocaInst *Flag = Builder.CreateAlloca(I32, nullptr, "test");
   Builder.CreateStore(Test, Flag);
   llvm::Value *ZF = Builder.CreateICmpEQ(Builder.CreateLoad(I32, Flag),
-                                        llvm::ConstantInt::get(I32, 0));
-  llvm::Value *SF = Builder.CreateICmpSLT(Builder.CreateLoad(I32, Flag),
                                          llvm::ConstantInt::get(I32, 0));
+  llvm::Value *SF = Builder.CreateICmpSLT(Builder.CreateLoad(I32, Flag),
+                                          llvm::ConstantInt::get(I32, 0));
   llvm::Value *Z8 = Builder.CreateZExt(ZF, I8);
-  llvm::Value *S8 = Builder.CreateZExt(
-      Builder.CreateICmpNE(Builder.CreateZExt(SF, I8),
-                           llvm::ConstantInt::get(I8, 0)),
-      I8);
+  llvm::Value *S8 =
+      Builder.CreateZExt(Builder.CreateICmpNE(Builder.CreateZExt(SF, I8),
+                                              llvm::ConstantInt::get(I8, 0)),
+                         I8);
   llvm::Value *Bor = Builder.CreateOr(Z8, S8);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Bor, llvm::ConstantInt::get(I8, 0)), Then, Else);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Bor, llvm::ConstantInt::get(I8, 0)),
+                       Then, Else);
   Builder.SetInsertPoint(Then);
   Builder.CreateRet(llvm::ConstantInt::get(I32, 0));
   Builder.SetInsertPoint(Else);
@@ -19296,7 +19315,9 @@ TEST(LLVMCPointerAddresses, TestAndSignFlagOrPrintsSignedLessEqualZero) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("if ((int32_t)((uint32_t)(GetLength("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("if ((int32_t)((uint32_t)(GetLength("),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("<= 0)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("len0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find(" & "), std::string::npos) << Source;
@@ -19326,16 +19347,15 @@ TEST(LLVMCPointerAddresses, DebugArityDropsLeftoverLiveInArgs) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::FunctionType *IsMediaTy =
       llvm::FunctionType::get(I32, {I64, I64, I64, I64}, false);
-  llvm::Function *IsMedia = llvm::Function::Create(
-      IsMediaTy, llvm::GlobalValue::ExternalLinkage, "CRecordData_IsMediaPayload",
-      Module);
+  llvm::Function *IsMedia =
+      llvm::Function::Create(IsMediaTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecordData_IsMediaPayload", Module);
   rewrite_source::setOriginalVA(*IsMedia, 0x140002100);
   llvm::FunctionType *CallerTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
-  llvm::IRBuilder<> Builder(
-      llvm::BasicBlock::Create(Context, "entry", Caller));
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
   Builder.CreateCall(IsMedia,
                      {Caller->getArg(0), llvm::ConstantInt::get(I64, 1),
                       llvm::ConstantInt::get(I64, 2),
@@ -19383,16 +19403,15 @@ TEST(LLVMCPointerAddresses, LeftoverExtraCallArgCopyIsHidden) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::FunctionType *IsMediaTy =
       llvm::FunctionType::get(I32, {I64, I64, I64, I64}, false);
-  llvm::Function *IsMedia = llvm::Function::Create(
-      IsMediaTy, llvm::GlobalValue::ExternalLinkage, "CRecordData_IsMediaPayload",
-      Module);
+  llvm::Function *IsMedia =
+      llvm::Function::Create(IsMediaTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecordData_IsMediaPayload", Module);
   rewrite_source::setOriginalVA(*IsMedia, 0x140002100);
   llvm::FunctionType *CallerTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Caller = llvm::Function::Create(
       CallerTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
-  llvm::IRBuilder<> Builder(
-      llvm::BasicBlock::Create(Context, "entry", Caller));
+  llvm::IRBuilder<> Builder(llvm::BasicBlock::Create(Context, "entry", Caller));
   llvm::BasicBlock *Next = llvm::BasicBlock::Create(Context, "next", Caller);
   llvm::AllocaInst *Home = Builder.CreateAlloca(I64, nullptr, "r8_home");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Home);
@@ -19400,9 +19419,9 @@ TEST(LLVMCPointerAddresses, LeftoverExtraCallArgCopyIsHidden) {
   Builder.CreateBr(Next);
   Builder.SetInsertPoint(Next);
   llvm::Value *Extra = Builder.CreateLoad(I64, Home, "r8_copy");
-  Builder.CreateCall(IsMedia, {Caller->getArg(0), Extra,
-                               llvm::ConstantInt::get(I64, 2),
-                               llvm::ConstantInt::get(I64, 3)});
+  Builder.CreateCall(IsMedia,
+                     {Caller->getArg(0), Extra, llvm::ConstantInt::get(I64, 2),
+                      llvm::ConstantInt::get(I64, 3)});
   Builder.CreateRetVoid();
 
   std::string Source;
@@ -19433,8 +19452,7 @@ TEST(LLVMCPointerAddresses, TemplateDtorIATUsesClassStem) {
       Module, I64, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
       nullptr, (kNdCodePtrPrefix + llvm::utohexstr(0x1400329f0)).str());
   llvm::FunctionType *FnTy =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
-                              {I64}, false);
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
   llvm::IRBuilder<> Builder(
@@ -19475,16 +19493,16 @@ TEST(LLVMCPointerAddresses, NdDataGepIATUsesClassStem) {
   auto *RunGV = new llvm::GlobalVariable(
       Module, RunTy, /*isConstant=*/false, llvm::GlobalValue::ExternalLinkage,
       nullptr, (kNdDataPrefix + llvm::utohexstr(Run)).str());
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "caller", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Ptr = Builder.CreateInBoundsGEP(
-      RunTy, RunGV,
-      {llvm::ConstantInt::get(I64, 0),
-       llvm::ConstantInt::get(I64, Slot - Run)});
+  llvm::Value *Ptr =
+      Builder.CreateInBoundsGEP(RunTy, RunGV,
+                                {llvm::ConstantInt::get(I64, 0),
+                                 llvm::ConstantInt::get(I64, Slot - Run)});
   llvm::Value *Loaded = Builder.CreateLoad(I64, Ptr, "icall.import.target");
   llvm::Value *Callee =
       Builder.CreateIntToPtr(Loaded, llvm::PointerType::getUnqual(Context));
@@ -19612,10 +19630,9 @@ TEST(HighCPointerAddresses, ZeroArgMsvcThrowCtorDropsStaleCallOperands) {
        HighExpr::makeConst(22, 8), HighExpr::makeConst(33, 8)});
   HighStmt Throw;
   Throw.Kind = StmtKind::Call;
-  Throw.CallExpr = HighExpr::makeCall(
-      "_CxxThrowException", Base + 0x2200,
-      {HighExpr::makeConst(ThrownObject, 8),
-       HighExpr::makeConst(ThrowInfo, 8)});
+  Throw.CallExpr = HighExpr::makeCall("_CxxThrowException", Base + 0x2200,
+                                      {HighExpr::makeConst(ThrownObject, 8),
+                                       HighExpr::makeConst(ThrowInfo, 8)});
   Func.Body = {Ctor, Throw};
 
   const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
@@ -19658,7 +19675,8 @@ TEST(HighCPointerAddresses, UnassignedRegisterReturnTrapsAtUse) {
   Func.Body.push_back(std::move(Ret));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("return;"), std::string::npos) << Source;
 }
 
@@ -19733,10 +19751,10 @@ TEST(HighCPointerAddresses, AttachesCxxUnwindFuncletAsDestructorCall) {
   HighStmt CallDtor;
   CallDtor.Kind = StmtKind::Assign;
   CallDtor.Dst = HighExpr::makeVar(T0);
-  CallDtor.Val = HighExpr::makeCall(
-      "dtor", 0x140003000,
-      {HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
-                           HighExpr::makeConst(40, 8))});
+  CallDtor.Val =
+      HighExpr::makeCall("dtor", 0x140003000,
+                         {HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
+                                              HighExpr::makeConst(40, 8))});
   Dtor.Body.push_back(std::move(CallDtor));
   HighStmt UnwindRet;
   UnwindRet.Kind = StmtKind::Return;
@@ -19835,9 +19853,9 @@ TEST(HighCPointerAddresses, CleanupScalarCopyForwardsIntoDtor) {
   Copy.Val = HighExpr::makeVar(Badge, NdType::makePtr());
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
-  Dtor.CallExpr = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeVar(CopyDest, NdType::makePtr())});
+  Dtor.CallExpr =
+      HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                         {HighExpr::makeVar(CopyDest, NdType::makePtr())});
   Try.EHClauseBodies.push_back({Copy, Dtor});
   Func.Body = {Try};
   const std::string Source = emitFunctions({Func});
@@ -19909,9 +19927,9 @@ TEST(HighCPointerAddresses, CleanupFuncletFrameSlotLoadForwardsIntoDtor) {
       NdType::makeInt(8));
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
-  Dtor.CallExpr = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeVar(CopyDest, NdType::makeInt(8))});
+  Dtor.CallExpr =
+      HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                         {HighExpr::makeVar(CopyDest, NdType::makeInt(8))});
   Try.EHClauseBodies.push_back({Copy, Dtor});
   Func.Body = {Try};
 
@@ -20002,9 +20020,9 @@ TEST(HighCPointerAddresses, CleanupSretHomeLoadPrintsResultNotVarField) {
       NdType::makeInt(8));
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
-  Dtor.CallExpr = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeVar(CopyDest, NdType::makeInt(8))});
+  Dtor.CallExpr =
+      HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                         {HighExpr::makeVar(CopyDest, NdType::makeInt(8))});
   Try.EHClauseBodies.push_back({Copy, Dtor});
   Func.Body = {Try};
 
@@ -20041,9 +20059,9 @@ TEST(HighCPointerAddresses, SharedDtorPhiDeclaresClassPointer) {
   SP.TheArch = Arch::X64;
   SP.RegOff = TRI.StackPointer;
   auto Slot = [&](int64_t Off) {
-    return HighExpr::makeBinop(NdOp::INT_SUB,
-                               HighExpr::makeVar(SP, NdType::makeInt(8, false)),
-                               HighExpr::makeConst(static_cast<uint64_t>(Off), 8));
+    return HighExpr::makeBinop(
+        NdOp::INT_SUB, HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+        HighExpr::makeConst(static_cast<uint64_t>(Off), 8));
   };
   HighStmt Then;
   Then.Kind = StmtKind::Assign;
@@ -20064,9 +20082,9 @@ TEST(HighCPointerAddresses, SharedDtorPhiDeclaresClassPointer) {
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
   Dtor.Addr = 0x1400017D6;
-  Dtor.CallExpr = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeVar(Dest, NdType::makeInt(8))});
+  Dtor.CallExpr =
+      HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                         {HighExpr::makeVar(Dest, NdType::makeInt(8))});
   Func.Body = {Guard, ElseA, Dtor};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("CStringT* v26"), std::string::npos) << Source;
@@ -20171,8 +20189,8 @@ TEST(HighCPointerAddresses, IncomingHomeReuseKeepsFrameAddress) {
         FS.Addr = Addr;
         FS.CallConv = DebugCallConv::Thiscall;
         FS.ReturnType = NdType::makeNamedRecord("CStringT", 8);
-        FS.Params.emplace_back(
-            "this", NdType::makePtr(NdType::makeNamedRecord("CStringTable", 8)));
+        FS.Params.emplace_back("this", NdType::makePtr(NdType::makeNamedRecord(
+                                           "CStringTable", 8)));
         FS.Params.emplace_back(
             "result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8)));
         FS.Params.emplace_back("nType", NdType::makeInt(4));
@@ -20213,10 +20231,10 @@ TEST(HighCPointerAddresses, IncomingHomeReuseKeepsFrameAddress) {
       HighExpr::makeConst(8, 8));
   HighStmt Find;
   Find.Kind = StmtKind::Call;
-  Find.CallExpr = HighExpr::makeCall(
-      "Catalog_Lookup", 0x140002000,
-      {HighExpr::makeConst(0x140070000, 8), Home, HighExpr::makeConst(1, 4),
-       HighExpr::makeConst(0, 4)});
+  Find.CallExpr = HighExpr::makeCall("Catalog_Lookup", 0x140002000,
+                                     {HighExpr::makeConst(0x140070000, 8), Home,
+                                      HighExpr::makeConst(1, 4),
+                                      HighExpr::makeConst(0, 4)});
   Func.Body = {Find};
   returnValue(Func, parameter(1, Func.Params[1].Type));
 
@@ -20257,9 +20275,9 @@ TEST(HighCPointerAddresses, CtorHomeSlotUsesTypedFrameAddress) {
   Init.StoreVal = HighExpr::makeConst(0, 8);
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003000,
-      {Home, HighExpr::makeConst(0x140004000, 8)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140003000,
+                         {Home, HighExpr::makeConst(0x140004000, 8)});
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
   Dtor.CallExpr = HighExpr::makeCall("CStringT_dtor", 0x140003100, {Home});
@@ -20308,13 +20326,15 @@ TEST(HighCPointerAddresses, WrapperRecordSameWidthPointerStoreKeepsByteWidth) {
   SP.TheArch = Arch::X64;
   SP.RegOff = TRI.StackPointer;
   auto Sp = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-  auto Home = HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(16, 8));
-  auto Badge = HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(8, 8));
+  auto Home =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(16, 8));
+  auto Badge =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(8, 8));
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003000,
-      {Home, HighExpr::makeConst(0x140004000, 8)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140003000,
+                         {Home, HighExpr::makeConst(0x140004000, 8)});
   HighStmt Overlay;
   Overlay.Kind = StmtKind::Assign;
   Overlay.Dst = HighExpr::makeLoad(Badge, NdType::makeInt(8));
@@ -20354,8 +20374,9 @@ TEST(HighCPointerAddresses, CollidingGetStemKeepsCalleeReturnOnSecondDest) {
       if (Addr != 0x140002000 && Addr != 0x140002100)
         return std::nullopt;
       FunctionSym FS;
-      FS.Name = Addr == 0x140002000 ? "UnlimitedAdjustmentInfo_GetAdjustmentLevel"
-                                    : "CRecordAdjustmentInfo_GetAdjustmentLevel";
+      FS.Name = Addr == 0x140002000
+                    ? "UnlimitedAdjustmentInfo_GetAdjustmentLevel"
+                    : "CRecordAdjustmentInfo_GetAdjustmentLevel";
       FS.Addr = Addr;
       FS.ReturnType = NdType::makeInt(4, true);
       FS.Params.emplace_back("this", NdType::makePtr());
@@ -20398,9 +20419,8 @@ TEST(HighCPointerAddresses, CollidingGetStemKeepsCalleeReturnOnSecondDest) {
   UseB.Cond = HighExpr::makeVar(Second, NdType::makeInt(8));
   UseB.Body = {HighStmt{}};
   UseB.Body[0].Kind = StmtKind::Call;
-  UseB.Body[0].CallExpr =
-      HighExpr::makeCall("take", 0x140002200,
-                         {HighExpr::makeVar(Second, NdType::makeInt(8))});
+  UseB.Body[0].CallExpr = HighExpr::makeCall(
+      "take", 0x140002200, {HighExpr::makeVar(Second, NdType::makeInt(8))});
   Func.Body = {GetA, UseA, GetB, UseB};
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -20412,7 +20432,8 @@ TEST(HighCPointerAddresses, CollidingGetStemKeepsCalleeReturnOnSecondDest) {
               Source.find("int32_t AdjustmentLevel") != std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("int64_t v115"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("int64_t AdjustmentLevel"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("int64_t AdjustmentLevel"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, DisjointSameStemCallDestsShareName) {
@@ -20433,15 +20454,16 @@ TEST(HighCPointerAddresses, DisjointSameStemCallDestsShareName) {
   HighStmt GetA;
   GetA.Kind = StmtKind::Assign;
   GetA.Dst = HighExpr::makeVar(First, NdType::makeInt(4, false));
-  GetA.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID", 0x140002000,
-                                {parameter(0)});
+  GetA.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID",
+                                0x140002000, {parameter(0)});
   HighStmt UseA;
   UseA.Kind = StmtKind::If;
   UseA.Cond = HighExpr::makeVar(First, NdType::makeInt(4, false));
   UseA.Body.push_back(HighStmt{});
   UseA.Body.back().Kind = StmtKind::Call;
-  UseA.Body.back().CallExpr = HighExpr::makeCall(
-      "take", 0x140002200, {HighExpr::makeVar(First, NdType::makeInt(4, false))});
+  UseA.Body.back().CallExpr =
+      HighExpr::makeCall("take", 0x140002200,
+                         {HighExpr::makeVar(First, NdType::makeInt(4, false))});
   HighStmt Then;
   Then.Kind = StmtKind::If;
   Then.Cond = parameter(0);
@@ -20449,8 +20471,8 @@ TEST(HighCPointerAddresses, DisjointSameStemCallDestsShareName) {
   HighStmt GetB;
   GetB.Kind = StmtKind::Assign;
   GetB.Dst = HighExpr::makeVar(Second, NdType::makeInt(4, false));
-  GetB.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID", 0x140002000,
-                                {parameter(0)});
+  GetB.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID",
+                                0x140002000, {parameter(0)});
   HighStmt UseB;
   UseB.Kind = StmtKind::If;
   UseB.Cond = HighExpr::makeVar(Second, NdType::makeInt(4, false));
@@ -20486,13 +20508,13 @@ TEST(HighCPointerAddresses, OverlappingSameStemCallDestsKeepDistinctNames) {
   HighStmt GetA;
   GetA.Kind = StmtKind::Assign;
   GetA.Dst = HighExpr::makeVar(First, NdType::makeInt(4, false));
-  GetA.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID", 0x140002000,
-                                {parameter(0)});
+  GetA.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID",
+                                0x140002000, {parameter(0)});
   HighStmt GetB;
   GetB.Kind = StmtKind::Assign;
   GetB.Dst = HighExpr::makeVar(Second, NdType::makeInt(4, false));
-  GetB.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID", 0x140002000,
-                                {parameter(0)});
+  GetB.Val = HighExpr::makeCall("RecordCatalogBoxTable_GetPeriodID",
+                                0x140002000, {parameter(0)});
   HighStmt Use;
   Use.Kind = StmtKind::Call;
   Use.CallExpr = HighExpr::makeCall(
@@ -20515,9 +20537,10 @@ TEST(HighCPointerAddresses, RicherDtorSymStillPrintsUnaryThis) {
       FunctionSym FS;
       FS.Name = "PtrBox_dtor";
       FS.Addr = Addr;
-      FS.Params = {{"this", NdType::makePtr(NdType::makeNamedRecord("PtrBox", 16))},
-                   {"p", NdType::makePtr()},
-                   {"p", NdType::makePtr()}};
+      FS.Params = {
+          {"this", NdType::makePtr(NdType::makeNamedRecord("PtrBox", 16))},
+          {"p", NdType::makePtr()},
+          {"p", NdType::makePtr()}};
       return FS;
     }
   } Dbg;
@@ -20527,9 +20550,8 @@ TEST(HighCPointerAddresses, RicherDtorSymStillPrintsUnaryThis) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "PtrBox_dtor", 0x140021377,
-      {HighExpr::makeConst(0x140004000, 8)});
+  Call.Val = HighExpr::makeCall("PtrBox_dtor", 0x140021377,
+                                {HighExpr::makeConst(0x140004000, 8)});
   Func.Body.push_back(std::move(Call));
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -20554,9 +20576,9 @@ TEST(HighCPointerAddresses, TemplateDtorPrototypeUsesClassThis) {
                                 {HighExpr::makeConst(0x140004000, 8)});
   Func.Body.push_back(std::move(Call));
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find(
-                "extern __fastcall void CStringT_dtor(CStringT* this);"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("extern __fastcall void CStringT_dtor(CStringT* this);"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("extern int CStringT_dtor"), std::string::npos)
       << Source;
@@ -20573,9 +20595,9 @@ TEST(HighCPointerAddresses, CtorSyntheticPrototypeAllowsExtraArgs) {
                                        {HighExpr::makeConst(0x140004000, 8)});
   HighStmt StringCtor;
   StringCtor.Kind = StmtKind::ExprStmt;
-  StringCtor.Val = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003100,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8)});
+  StringCtor.Val = HighExpr::makeCall("CStringT_ctor", 0x140003100,
+                                      {HighExpr::makeConst(0x140004000, 8),
+                                       HighExpr::makeConst(0x140005000, 8)});
   Func.Body = {DefaultCtor, StringCtor};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("extern __fastcall void CStringT_ctor(CStringT* this, "
@@ -20592,8 +20614,8 @@ TEST(HighCPointerAddresses, MsvcAtlCalleeTableOwnsExactAndSuffixNames) {
   EXPECT_NE(msvcAtlCallee("GetManager"), nullptr);
   EXPECT_NE(msvcAtlCallee("CStringT_dtor"), nullptr);
   EXPECT_NE(msvcAtlCallee("CStringT_ctor"), nullptr);
-  EXPECT_NE(msvcAtlSyntheticPrototype("CStringT_ctor", *msvcAtlCallee("CStringT_ctor"),
-                                     true)
+  EXPECT_NE(msvcAtlSyntheticPrototype("CStringT_ctor",
+                                      *msvcAtlCallee("CStringT_ctor"), true)
                 .find("CStringT* this, ..."),
             std::string::npos);
   EXPECT_NE(msvcAtlCallee("CStringT_assign"), nullptr);
@@ -20620,17 +20642,17 @@ TEST(HighCPointerAddresses, AtlUnaryThisPrototypesAreTyped) {
     S.Val = HighExpr::makeCall(Name, Addr, std::move(Args));
     return S;
   };
-  Func.Body.push_back(Call("IsEmpty", 0x140032a38,
-                           {HighExpr::makeConst(0x140004000, 8)}));
-  Func.Body.push_back(Call("GetLength", 0x140032a40,
-                           {HighExpr::makeConst(0x140004000, 8)}));
-  Func.Body.push_back(Call("GetManager", 0x140032a48,
-                           {HighExpr::makeConst(0x140004000, 8)}));
+  Func.Body.push_back(
+      Call("IsEmpty", 0x140032a38, {HighExpr::makeConst(0x140004000, 8)}));
+  Func.Body.push_back(
+      Call("GetLength", 0x140032a40, {HighExpr::makeConst(0x140004000, 8)}));
+  Func.Body.push_back(
+      Call("GetManager", 0x140032a48, {HighExpr::makeConst(0x140004000, 8)}));
   Func.Body.push_back(Call("CSimpleStringT_cstr", 0x1400329d8,
                            {HighExpr::makeConst(0x140004000, 8)}));
-  Func.Body.push_back(Call(
-      "CStringT_assign", 0x1400329f8,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140004008, 8)}));
+  Func.Body.push_back(Call("CStringT_assign", 0x1400329f8,
+                           {HighExpr::makeConst(0x140004000, 8),
+                            HighExpr::makeConst(0x140004008, 8)}));
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("extern __fastcall bool IsEmpty(CStringT* this);"),
             std::string::npos)
@@ -20645,9 +20667,10 @@ TEST(HighCPointerAddresses, AtlUnaryThisPrototypesAreTyped) {
                         "CSimpleStringT* this);"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("extern __fastcall void CStringT_assign(CStringT* this, "
-                        "CStringT* src);"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("extern __fastcall void CStringT_assign(CStringT* this, "
+                  "CStringT* src);"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("extern int IsEmpty"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("extern int CSimpleStringT_cstr"), std::string::npos)
@@ -20663,10 +20686,10 @@ TEST(HighCPointerAddresses, AtlFormatAndConcatenatePrototypesAreTyped) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Format;
   Format.Kind = StmtKind::ExprStmt;
-  Format.Val = HighExpr::makeCall(
-      "Format", 0x140032a50,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       HighExpr::makeConst(0x140006000, 8)});
+  Format.Val = HighExpr::makeCall("Format", 0x140032a50,
+                                  {HighExpr::makeConst(0x140004000, 8),
+                                   HighExpr::makeConst(0x140005000, 8),
+                                   HighExpr::makeConst(0x140006000, 8)});
   HighStmt Concat;
   Concat.Kind = StmtKind::ExprStmt;
   Concat.Val = HighExpr::makeCall(
@@ -20688,9 +20711,9 @@ TEST(HighCPointerAddresses, AtlFormatAndConcatenatePrototypesAreTyped) {
   EXPECT_EQ(Source.find("extern int Concatenate"), std::string::npos) << Source;
   EXPECT_NE(Source.find("Format("), std::string::npos) << Source;
   const auto FormatAt = Source.rfind("Format(");
-  const auto FormatArgs =
-      Source.substr(Source.find('(', FormatAt) + 1,
-                    Source.find(')', FormatAt) - Source.find('(', FormatAt) - 1);
+  const auto FormatArgs = Source.substr(Source.find('(', FormatAt) + 1,
+                                        Source.find(')', FormatAt) -
+                                            Source.find('(', FormatAt) - 1);
   EXPECT_EQ(std::count(FormatArgs.begin(), FormatArgs.end(), ','), 2) << Source;
 }
 
@@ -20708,15 +20731,15 @@ TEST(HighCPointerAddresses, AtlFormatPeelsWidenedIntArg) {
   Assign.Kind = StmtKind::Assign;
   Assign.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
   Assign.Val = HighExpr::makeConst(7, 4);
-  auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                  HighExpr::makeVar(Level, NdType::makeInt(4, true)));
+  auto Wide = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeVar(Level, NdType::makeInt(4, true)));
   Wide->Type = NdType::makeInt(8, false);
   HighStmt Format;
   Format.Kind = StmtKind::ExprStmt;
-  Format.Val = HighExpr::makeCall(
-      "Format", 0x140032a50,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       std::move(Wide)});
+  Format.Val = HighExpr::makeCall("Format", 0x140032a50,
+                                  {HighExpr::makeConst(0x140004000, 8),
+                                   HighExpr::makeConst(0x140005000, 8),
+                                   std::move(Wide)});
   Func.Body = {Assign, Format};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("Format("), std::string::npos) << Source;
@@ -20748,7 +20771,8 @@ TEST(HighCPointerAddresses, AtlFormatComposesIntegerViewBeforeIf) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   Get.Val->Type = NdType::makeInt(4, true);
   auto ToI16 = std::make_shared<HighExpr>();
   ToI16->Kind = ExprKind::Cast;
@@ -20769,15 +20793,15 @@ TEST(HighCPointerAddresses, AtlFormatComposesIntegerViewBeforeIf) {
   WideAssign.Kind = StmtKind::Assign;
   WideAssign.Dst = HighExpr::makeVar(Wide, NdType::makeInt(4, true));
   WideAssign.Val = std::move(ToI32);
-  auto Arg = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                 HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
+  auto Arg = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
   Arg->Type = NdType::makeInt(8, false);
   HighStmt Format;
   Format.Kind = StmtKind::ExprStmt;
-  Format.Val = HighExpr::makeCall(
-      "Format", 0x140032a50,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       std::move(Arg)});
+  Format.Val =
+      HighExpr::makeCall("Format", 0x140032a50,
+                         {HighExpr::makeConst(0x140004000, 8),
+                          HighExpr::makeConst(0x140005000, 8), std::move(Arg)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::ExprStmt;
   Ctor.Val = HighExpr::makeCall("CStringT_ctor", 0x1400329e0,
@@ -20787,9 +20811,9 @@ TEST(HighCPointerAddresses, AtlFormatComposesIntegerViewBeforeIf) {
   const std::string Source = emitFunctions({Func});
   const auto FormatAt = Source.rfind("Format(");
   ASSERT_NE(FormatAt, std::string::npos) << Source;
-  const auto FormatArgs =
-      Source.substr(Source.find('(', FormatAt),
-                    Source.find(')', FormatAt) - Source.find('(', FormatAt) + 1);
+  const auto FormatArgs = Source.substr(Source.find('(', FormatAt),
+                                        Source.find(')', FormatAt) -
+                                            Source.find('(', FormatAt) + 1);
   EXPECT_NE(FormatArgs.find("AdjustmentLevel"), std::string::npos) << Source;
   EXPECT_EQ(FormatArgs.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(FormatArgs.find("(uint32_t)"), std::string::npos) << Source;
@@ -20804,8 +20828,9 @@ TEST(HighCPointerAddresses, AtlFormatNarrowViewInsideIfElseComposes) {
       if (Addr != 0x140002000 && Addr != 0x140002100)
         return std::nullopt;
       FunctionSym FS;
-      FS.Name = Addr == 0x140002000 ? "UnlimitedAdjustmentInfo_GetAdjustmentLevel"
-                                    : "CRecordAdjustmentInfo_GetAdjustmentLevel";
+      FS.Name = Addr == 0x140002000
+                    ? "UnlimitedAdjustmentInfo_GetAdjustmentLevel"
+                    : "CRecordAdjustmentInfo_GetAdjustmentLevel";
       FS.Addr = Addr;
       FS.ReturnType = NdType::makeInt(4, true);
       FS.Params.emplace_back("this", NdType::makePtr());
@@ -20905,8 +20930,8 @@ TEST(HighCPointerAddresses, AtlFormatNarrowViewInsideIfElseComposes) {
   WideAssign.Kind = StmtKind::Assign;
   WideAssign.Dst = HighExpr::makeVar(Wide, NdType::makeInt(4, true));
   WideAssign.Val = std::move(ToI32);
-  auto Arg = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                 HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
+  auto Arg = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
   Arg->Type = NdType::makeInt(8, false);
   HighStmt Format;
   Format.Kind = StmtKind::Call;
@@ -20922,14 +20947,14 @@ TEST(HighCPointerAddresses, AtlFormatNarrowViewInsideIfElseComposes) {
                                      {HighExpr::makeConst(0x140004100, 8)});
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   HighExpr::makeVar(CondView, NdType::makeInt(4, true)),
-                                   HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(CondView, NdType::makeInt(4, true)),
+      HighExpr::makeConst(0, 4));
   Guard.Body = {Ctor, WideAssign, Format};
   HighStmt ElseCtor;
   ElseCtor.Kind = StmtKind::Call;
-  ElseCtor.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x1400329e0, {HighExpr::makeConst(0x140004300, 8)});
+  ElseCtor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x1400329e0,
+                                         {HighExpr::makeConst(0x140004300, 8)});
   HighStmt Outer;
   Outer.Kind = StmtKind::IfElse;
   Outer.Cond = HighExpr::makeVar(First, NdType::makeInt(4, true));
@@ -20954,9 +20979,9 @@ TEST(HighCPointerAddresses, AtlFormatNarrowViewInsideIfElseComposes) {
   OS.flush();
   const auto FormatAt = Source.rfind("Format(");
   ASSERT_NE(FormatAt, std::string::npos) << Source;
-  const auto FormatArgs =
-      Source.substr(Source.find('(', FormatAt),
-                    Source.find(')', FormatAt) - Source.find('(', FormatAt) + 1);
+  const auto FormatArgs = Source.substr(Source.find('(', FormatAt),
+                                        Source.find(')', FormatAt) -
+                                            Source.find('(', FormatAt) + 1);
   EXPECT_TRUE(FormatArgs.find("v115") != std::string::npos ||
               FormatArgs.find("AdjustmentLevel") != std::string::npos)
       << Source;
@@ -20992,7 +21017,8 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   Get.Val->Type = NdType::makeInt(4, true);
   auto ToI16 = std::make_shared<HighExpr>();
   ToI16->Kind = ExprKind::Cast;
@@ -21017,15 +21043,15 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   WideAssign.Kind = StmtKind::Assign;
   WideAssign.Dst = HighExpr::makeVar(Wide, NdType::makeInt(4, true));
   WideAssign.Val = std::move(ToI32);
-  auto Arg = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                 HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
+  auto Arg = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
   Arg->Type = NdType::makeInt(8, false);
   HighStmt Format;
   Format.Kind = StmtKind::ExprStmt;
-  Format.Val = HighExpr::makeCall(
-      "Format", 0x140032a50,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       std::move(Arg)});
+  Format.Val =
+      HighExpr::makeCall("Format", 0x140032a50,
+                         {HighExpr::makeConst(0x140004000, 8),
+                          HighExpr::makeConst(0x140005000, 8), std::move(Arg)});
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
@@ -21040,9 +21066,9 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   const std::string Source = emitFunctions({Func});
   const auto FormatAt = Source.rfind("Format(");
   ASSERT_NE(FormatAt, std::string::npos) << Source;
-  const auto FormatArgs =
-      Source.substr(Source.find('(', FormatAt),
-                    Source.find(')', FormatAt) - Source.find('(', FormatAt) + 1);
+  const auto FormatArgs = Source.substr(Source.find('(', FormatAt),
+                                        Source.find(')', FormatAt) -
+                                            Source.find('(', FormatAt) + 1);
   EXPECT_NE(FormatArgs.find("AdjustmentLevel"), std::string::npos) << Source;
   EXPECT_EQ(FormatArgs.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t99_25"), std::string::npos) << Source;
@@ -21069,7 +21095,8 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewIgnoresDtorClobber) {
   HighStmt Get;
   Get.Kind = StmtKind::Assign;
   Get.Dst = HighExpr::makeVar(Level, NdType::makeInt(4, true));
-  Get.Val = HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
+  Get.Val =
+      HighExpr::makeCall("GetAdjustmentLevel", 0x140002200, {parameter(0)});
   Get.Val->Type = NdType::makeInt(4, true);
   auto ToI32 = HighExpr::makeUnary(
       NdOp::INT_ZEXT, HighExpr::makeVar(Level, NdType::makeInt(4, true)));
@@ -21078,29 +21105,29 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewIgnoresDtorClobber) {
   WideAssign.Kind = StmtKind::Assign;
   WideAssign.Dst = HighExpr::makeVar(Wide, NdType::makeInt(4, true));
   WideAssign.Val = std::move(ToI32);
-  auto Arg = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                 HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
+  auto Arg = HighExpr::makeUnary(
+      NdOp::INT_ZEXT, HighExpr::makeVar(Wide, NdType::makeInt(4, true)));
   Arg->Type = NdType::makeInt(8, false);
   HighStmt Format;
   Format.Kind = StmtKind::ExprStmt;
-  Format.Val = HighExpr::makeCall(
-      "Format", 0x140032a50,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       std::move(Arg)});
+  Format.Val =
+      HighExpr::makeCall("Format", 0x140032a50,
+                         {HighExpr::makeConst(0x140004000, 8),
+                          HighExpr::makeConst(0x140005000, 8), std::move(Arg)});
   HighStmt Dtor;
   Dtor.Kind = StmtKind::ExprStmt;
-  Dtor.Val = HighExpr::makeCall(
-      "CStringT_dtor", 0x1400329f0,
-      {HighExpr::makeConst(0x140004000, 8),
-       HighExpr::makeVar(Wide, NdType::makeInt(4, true)),
-       HighExpr::makeConst(0, 8)});
+  Dtor.Val =
+      HighExpr::makeCall("CStringT_dtor", 0x1400329f0,
+                         {HighExpr::makeConst(0x140004000, 8),
+                          HighExpr::makeVar(Wide, NdType::makeInt(4, true)),
+                          HighExpr::makeConst(0, 8)});
   Func.Body = {Get, WideAssign, Format, Dtor};
   const std::string Source = emitFunctions({Func});
   const auto FormatAt = Source.rfind("Format(");
   ASSERT_NE(FormatAt, std::string::npos) << Source;
-  const auto FormatArgs =
-      Source.substr(Source.find('(', FormatAt),
-                    Source.find(')', FormatAt) - Source.find('(', FormatAt) + 1);
+  const auto FormatArgs = Source.substr(Source.find('(', FormatAt),
+                                        Source.find(')', FormatAt) -
+                                            Source.find('(', FormatAt) + 1);
   EXPECT_NE(FormatArgs.find("AdjustmentLevel"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t99_25"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
@@ -21126,10 +21153,10 @@ TEST(HighCPointerAddresses, AtlConcatenatePeelsWidenedLengthArgs) {
       "Concatenate", 0x140032b18,
       {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
        WideLen(HighExpr::makeCall("GetLength", 0x140032a40,
-                                 {HighExpr::makeConst(0x140007000, 8)})),
+                                  {HighExpr::makeConst(0x140007000, 8)})),
        HighExpr::makeConst(0x140006000, 8),
        WideLen(HighExpr::makeCall("GetLength", 0x140032a40,
-                                 {HighExpr::makeConst(0x140008000, 8)}))});
+                                  {HighExpr::makeConst(0x140008000, 8)}))});
   Func.Body = {Concat};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.rfind("Concatenate("), std::string::npos) << Source;
@@ -21159,8 +21186,8 @@ TEST(HighCPointerAddresses, TypedCallResultOmitsSameTypeCast) {
   Dest.Size = 8;
   Dest.TheArch = Arch::X64;
   Store.Dst = HighExpr::makeVar(Dest);
-  Store.Val = WideLen(HighExpr::makeCall("GetLength", 0x140032a40,
-                                        {HighExpr::makeConst(0x140007000, 8)}));
+  Store.Val = WideLen(HighExpr::makeCall(
+      "GetLength", 0x140032a40, {HighExpr::makeConst(0x140007000, 8)}));
   auto Empty = HighExpr::makeCall("IsEmpty", 0x140032a50,
                                   {HighExpr::makeConst(0x140008000, 8)});
   auto Cast = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Empty));
@@ -21291,8 +21318,7 @@ TEST(HighCPointerAddresses, CollidingDebugStemsKeepRicherPrototype) {
                         "CStringT* result, int32_t msgID, CStringT* name);"),
             std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("extern int LookupTextW"), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("extern int LookupTextW"), std::string::npos) << Source;
   const auto First = Source.find("LookupTextW(");
   ASSERT_NE(First, std::string::npos) << Source;
   const auto Second = Source.find("LookupTextW(", First + 1);
@@ -21334,9 +21360,9 @@ TEST(HighCPointerAddresses, DebugArityDoesNotInventMissingCallArgs) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "Catalog_Lookup", 0x140002000,
-      {HighExpr::makeConst(0x140006000, 8), HighExpr::makeConst(0x140005000, 8)});
+  Call.Val = HighExpr::makeCall("Catalog_Lookup", 0x140002000,
+                                {HighExpr::makeConst(0x140006000, 8),
+                                 HighExpr::makeConst(0x140005000, 8)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -21388,10 +21414,10 @@ TEST(HighCPointerAddresses, DtorStemDropsLeftoverClobberArgsAndUnknownAssigns) {
 
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeVar(V9),
-       HighExpr::makeVar(V11), HighExpr::makeVar(V10)});
+  Call.Val = HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                                {HighExpr::makeConst(0x140004000, 8),
+                                 HighExpr::makeVar(V9), HighExpr::makeVar(V11),
+                                 HighExpr::makeVar(V10)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -21447,10 +21473,10 @@ TEST(HighCPointerAddresses, CtorStemDropsLeftoverClobberArgsAndUnknownAssigns) {
 
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003000,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeVar(Src),
-       HighExpr::makeVar(V22), HighExpr::makeVar(V21)});
+  Call.Val = HighExpr::makeCall("CStringT_ctor", 0x140003000,
+                                {HighExpr::makeConst(0x140004000, 8),
+                                 HighExpr::makeVar(Src), HighExpr::makeVar(V22),
+                                 HighExpr::makeVar(V21)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -21499,10 +21525,10 @@ TEST(HighCPointerAddresses, CtorStemDropsCopiedUnknownJoinArgs) {
   Func.Body.push_back(std::move(Copy));
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003000,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeConst(0x140005000, 8),
-       HighExpr::makeVar(V21)});
+  Call.Val = HighExpr::makeCall("CStringT_ctor", 0x140003000,
+                                {HighExpr::makeConst(0x140004000, 8),
+                                 HighExpr::makeConst(0x140005000, 8),
+                                 HighExpr::makeVar(V21)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -21584,10 +21610,10 @@ TEST(HighCPointerAddresses, CtorStemDropsKnownNonSourceLeftoverRegs) {
   Func.Body.push_back(AssignImm(V81, 5));
   HighStmt Call;
   Call.Kind = StmtKind::ExprStmt;
-  Call.Val = HighExpr::makeCall(
-      "CStringT_ctor", 0x140003000,
-      {HighExpr::makeConst(0x140004000, 8), HighExpr::makeVar(V79),
-       HighExpr::makeVar(V80), HighExpr::makeVar(V81)});
+  Call.Val = HighExpr::makeCall("CStringT_ctor", 0x140003000,
+                                {HighExpr::makeConst(0x140004000, 8),
+                                 HighExpr::makeVar(V79), HighExpr::makeVar(V80),
+                                 HighExpr::makeVar(V81)});
   Func.Body.push_back(std::move(Call));
   HighStmt Ret;
   Ret.Kind = StmtKind::Return;
@@ -21638,7 +21664,7 @@ TEST(HighCPointerAddresses, UnusedIntermediateFrameSlotIsNotDeclared) {
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
   Call.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                               {parameter(0, NdType::makeInt(8)), Folded});
+                                {parameter(0, NdType::makeInt(8)), Folded});
   Func.Body.push_back(std::move(Call));
   returnValue(Func, parameter(1, NdType::makeInt(8)));
   const std::string Source = emitFunctions({Func});
@@ -21673,10 +21699,10 @@ TEST(HighCPointerAddresses, CatchFuncletParentFrameStoreBecomesReturn) {
   HighStmt LoadPtr;
   LoadPtr.Kind = StmtKind::Assign;
   LoadPtr.Dst = HighExpr::makeVar(T11);
-  LoadPtr.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
-                          HighExpr::makeConst(40, 8)),
-      NdType::makeInt(8));
+  LoadPtr.Val =
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(1),
+                                             HighExpr::makeConst(40, 8)),
+                         NdType::makeInt(8));
   HighStmt LoadVal;
   LoadVal.Kind = StmtKind::Assign;
   LoadVal.Dst = HighExpr::makeVar(T25);
@@ -21725,8 +21751,8 @@ TEST(HighCPointerAddresses, DynamicIndexOnRealSecondArgumentStaysArgument) {
                  {"arg1", NdType::makePtr(NdType::makeInt(1))}};
   HighStmt IndexedStore;
   IndexedStore.Kind = StmtKind::Store;
-  IndexedStore.StoreAddr = HighExpr::makeBinop(
-      NdOp::INT_ADD, parameter(1), parameter(0));
+  IndexedStore.StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(1), parameter(0));
   IndexedStore.StoreVal = HighExpr::makeConst(2, 1);
   Func.Body.push_back(std::move(IndexedStore));
 
@@ -21748,10 +21774,9 @@ TEST(HighCPointerAddresses, DynamicFrameReadKeepsAliasedFixedStore) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto SlotAddr = [&] {
-    return HighExpr::makeBinop(
-        NdOp::INT_SUB,
-        HighExpr::makeVar(SP, NdType::makeInt(8, false)),
-        HighExpr::makeConst(16, 8));
+    return HighExpr::makeBinop(NdOp::INT_SUB,
+                               HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+                               HighExpr::makeConst(16, 8));
   };
   HighStmt FixedStore;
   FixedStore.Kind = StmtKind::Store;
@@ -22067,8 +22092,10 @@ TEST(HighCPointerAddresses, Win64MemberCallUsesRewrittenRcxNotSret) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("CRecord_GetRank(result)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("CRecord_GetRank(result)"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromOtherParam) {
@@ -22076,8 +22103,9 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromOtherParam) {
   Func.Name = "MakeName";
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeInt(8);
-  Func.Params = {{"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))},
-                 {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
+  Func.Params = {
+      {"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))},
+      {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
   HighStmt Overwrite;
   Overwrite.Kind = StmtKind::Assign;
   Overwrite.Dst = parameter(1, Func.Params[1].Type);
@@ -22092,12 +22120,13 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromOtherParam) {
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(4));
   Call.Val = HighExpr::makeCall("CRecord_GetRank", 0x140002000,
-                               {parameter(1, Func.Params[1].Type)});
+                                {parameter(1, Func.Params[1].Type)});
   Func.Body.push_back(std::move(Call));
   returnValue(Func, parameter(0, Func.Params[0].Type));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 
@@ -22106,8 +22135,9 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromTemp) {
   Func.Name = "MakeName";
   Func.Entry = 0x140001000;
   Func.ReturnType = NdType::makeInt(8);
-  Func.Params = {{"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))},
-                 {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
+  Func.Params = {
+      {"result", NdType::makePtr(NdType::makeNamedRecord("CStringT", 8))},
+      {"record", NdType::makePtr(NdType::makeNamedRecord("CRecord", 8))}};
   MedVar Saved;
   Saved.Kind = MedVar::Temp;
   Saved.Id = 24;
@@ -22127,13 +22157,14 @@ TEST(HighCPointerAddresses, IncomingParamIsNotReassignedFromTemp) {
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(4));
   Call.Val = HighExpr::makeCall("CRecord_GetRank", 0x140002000,
-                               {parameter(1, Func.Params[1].Type)});
+                                {parameter(1, Func.Params[1].Type)});
   Func.Body.push_back(std::move(Call));
   returnValue(Func, parameter(0, Func.Params[0].Type));
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"), std::string::npos)
+  EXPECT_NE(Source.find("CRecord_GetRank((uintptr_t)record)"),
+            std::string::npos)
       << Source;
 }
 
@@ -22200,7 +22231,8 @@ TEST(HighCPointerAddresses, FrameHomeDoesNotReuseParamName) {
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
   EXPECT_EQ(Source.find("record ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("CRecord_GetRank(record)"), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, NestedPrologueThisHomeIsHidden) {
@@ -22275,9 +22307,9 @@ TEST(HighCPointerAddresses, CleanupEmptyIfDoesNotKeepCondTemp) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto SlotAddr = [&]() {
-    return HighExpr::makeBinop(
-        NdOp::INT_SUB, HighExpr::makeVar(SP, NdType::makeInt(8, false)),
-        HighExpr::makeConst(8, 8));
+    return HighExpr::makeBinop(NdOp::INT_SUB,
+                               HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+                               HighExpr::makeConst(8, 8));
   };
   HighStmt Init;
   Init.Kind = StmtKind::Store;
@@ -22316,9 +22348,8 @@ TEST(HighCPointerAddresses, CleanupEmptyIfDoesNotKeepCondTemp) {
   Clear.StoreVal->Type = NdType::makeInt(4, false);
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
-  Dtor.CallExpr = HighExpr::makeCall(
-      "CStringT_dtor", 0x140003000,
-      {HighExpr::makeConst(0x140004000, 8)});
+  Dtor.CallExpr = HighExpr::makeCall("CStringT_dtor", 0x140003000,
+                                     {HighExpr::makeConst(0x140004000, 8)});
   HighStmt Try;
   Try.Kind = StmtKind::CxxTry;
   Try.EHIsReducible = true;
@@ -22350,9 +22381,9 @@ TEST(HighCPointerAddresses, LiveSlotAfterDeadZeroInitIsDeclared) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto ParentSlot = [&]() {
-    return HighExpr::makeBinop(
-        NdOp::INT_SUB, HighExpr::makeVar(SP, NdType::makeInt(8, false)),
-        HighExpr::makeConst(40, 8));
+    return HighExpr::makeBinop(NdOp::INT_SUB,
+                               HighExpr::makeVar(SP, NdType::makeInt(8, false)),
+                               HighExpr::makeConst(40, 8));
   };
   auto CleanupSlot = [&]() {
     // The cleanup receives the established frame. Express that adjustment
@@ -22443,8 +22474,8 @@ TEST(HighCPointerAddresses, CleanupFuncletAssignDoesNotExposePrologueHome) {
   StoreThis.StoreVal = parameter(0, NdType::makeInt(8));
   HighStmt Work;
   Work.Kind = StmtKind::Call;
-  Work.CallExpr =
-      HighExpr::makeCall("use", 0x140002000, {parameter(0, NdType::makeInt(8))});
+  Work.CallExpr = HighExpr::makeCall("use", 0x140002000,
+                                     {parameter(0, NdType::makeInt(8))});
   MedVar V1;
   V1.Kind = MedVar::Temp;
   V1.Id = 1;
@@ -22970,8 +23001,9 @@ TEST(HighCPointerAddresses, TypedPointerIndexLoadPrintsBucketsAndNodeFields) {
   auto NodePtr = NdType::makePtr(Node);
   Node->FieldDisplayNames = {"m_key", "m_value", "m_pNext", "m_nHash"};
   Node->FieldDisplayOffsets = {0, 4, 8, 16};
-  Node->FieldDisplayTypes = {NdType::makeInt(4, false), NdType::makeInt(4, false),
-                             NodePtr, NdType::makeInt(4, false)};
+  Node->FieldDisplayTypes = {NdType::makeInt(4, false),
+                             NdType::makeInt(4, false), NodePtr,
+                             NdType::makeInt(4, false)};
   auto BinsPtr = NdType::makePtr(NodePtr);
   auto Map = NdType::makeNamedRecord("CAtlMap", 72);
   Map->FieldDisplayNames = {"m_ppBins", "m_nBins"};
@@ -23035,8 +23067,9 @@ TEST(HighCPointerAddresses, TypedPointerIndexLoadPrintsBucketsAndNodeFields) {
   HighStmt TakeRem;
   TakeRem.Kind = StmtKind::Assign;
   TakeRem.Dst = HighExpr::makeVar(Rem, NdType::makeInt(4, false));
-  TakeRem.Val = HighExpr::makeBinop(
-      NdOp::INT_REM, Record, HighExpr::makeVar(NBins, NdType::makeInt(4, false)));
+  TakeRem.Val =
+      HighExpr::makeBinop(NdOp::INT_REM, Record,
+                          HighExpr::makeVar(NBins, NdType::makeInt(4, false)));
 
   auto Scale = HighExpr::makeBinop(
       NdOp::INT_MULT, HighExpr::makeVar(Rem, NdType::makeInt(4, false)),
@@ -23057,8 +23090,9 @@ TEST(HighCPointerAddresses, TypedPointerIndexLoadPrintsBucketsAndNodeFields) {
   HighStmt LoadHash;
   LoadHash.Kind = StmtKind::Assign;
   LoadHash.Dst = HighExpr::makeVar(Hash, NdType::makeInt(4, false));
-  LoadHash.Val = HighExpr::makeLoad(
-      AddImm(HighExpr::makeVar(Cursor, NodePtr), 16), NdType::makeInt(4, false));
+  LoadHash.Val =
+      HighExpr::makeLoad(AddImm(HighExpr::makeVar(Cursor, NodePtr), 16),
+                         NdType::makeInt(4, false));
 
   HighStmt LoadKey;
   LoadKey.Kind = StmtKind::Assign;
@@ -23069,8 +23103,8 @@ TEST(HighCPointerAddresses, TypedPointerIndexLoadPrintsBucketsAndNodeFields) {
   HighStmt LoadNext;
   LoadNext.Kind = StmtKind::Assign;
   LoadNext.Dst = HighExpr::makeVar(Next, NodePtr);
-  LoadNext.Val =
-      HighExpr::makeLoad(AddImm(HighExpr::makeVar(Cursor, NodePtr), 8), NodePtr);
+  LoadNext.Val = HighExpr::makeLoad(
+      AddImm(HighExpr::makeVar(Cursor, NodePtr), 8), NodePtr);
 
   HighStmt Step;
   Step.Kind = StmtKind::Assign;
@@ -23102,8 +23136,8 @@ TEST(HighCPointerAddresses, TypedPointerIndexLoadPrintsBucketsAndNodeFields) {
   Miss.Kind = StmtKind::Return;
   Miss.RetVal = HighExpr::makeConst(0xFFFFFF, 4);
 
-  Func.Body = {LoadBins, LoadNBins, TakeRem, LoadBucket, TakeCursor,
-               LoadHash, LoadKey, LoadValue, Hit, LoadNext, Step, Miss};
+  Func.Body = {LoadBins, LoadNBins, TakeRem, LoadBucket, TakeCursor, LoadHash,
+               LoadKey,  LoadValue, Hit,     LoadNext,   Step,       Miss};
 
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("this->m_colorTable.m_ppBins["), std::string::npos)
@@ -23210,10 +23244,10 @@ TEST(HighCPointerAddresses, TypedMapCursorComposesHashKeyNextValue) {
                                  Untyped(NBins, Int32));
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Rem));
   Wide->Type = Int64;
-  auto Scale =
-      HighExpr::makeBinop(NdOp::INT_MULT, std::move(Wide), HighExpr::makeConst(8, 8));
-  auto BucketAddr =
-      HighExpr::makeBinop(NdOp::INT_ADD, Untyped(Bins, Int64), std::move(Scale));
+  auto Scale = HighExpr::makeBinop(NdOp::INT_MULT, std::move(Wide),
+                                   HighExpr::makeConst(8, 8));
+  auto BucketAddr = HighExpr::makeBinop(NdOp::INT_ADD, Untyped(Bins, Int64),
+                                        std::move(Scale));
 
   HighStmt LoadBucket;
   LoadBucket.Kind = StmtKind::Assign;
@@ -23227,8 +23261,9 @@ TEST(HighCPointerAddresses, TypedMapCursorComposesHashKeyNextValue) {
 
   HighStmt Miss;
   Miss.Kind = StmtKind::If;
-  Miss.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Cursor, NodePtr),
-                                  HighExpr::makeConst(0, 8));
+  Miss.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Cursor, NodePtr),
+                          HighExpr::makeConst(0, 8));
   HighStmt MissRet;
   MissRet.Kind = StmtKind::Return;
   MissRet.RetVal = HighExpr::makeConst(0xFFFFFF, 4);
@@ -23247,7 +23282,8 @@ TEST(HighCPointerAddresses, TypedMapCursorComposesHashKeyNextValue) {
       HighExpr::makeBinop(NdOp::INT_EQUAL, Untyped(Hash, Int32), Record),
       HighExpr::makeBinop(
           NdOp::INT_EQUAL,
-          HighExpr::makeLoad(HighExpr::makeVar(Cursor, NodePtr), Int32), Record));
+          HighExpr::makeLoad(HighExpr::makeVar(Cursor, NodePtr), Int32),
+          Record));
   HighStmt HitBreak;
   HitBreak.Kind = StmtKind::Break;
   Hit.Body.push_back(std::move(HitBreak));
@@ -23278,8 +23314,8 @@ TEST(HighCPointerAddresses, TypedMapCursorComposesHashKeyNextValue) {
   Ret.Kind = StmtKind::Return;
   Ret.RetVal = Untyped(Value, Int32);
 
-  Func.Body = {LoadBins, LoadNBins, LoadBucket, TakeCursor, Loop, LoadValue,
-               Ret};
+  Func.Body = {LoadBins, LoadNBins, LoadBucket, TakeCursor,
+               Loop,     LoadValue, Ret};
 
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("this->m_colorTable.m_ppBins["), std::string::npos)
@@ -23321,10 +23357,9 @@ TEST(HighCPointerAddresses, X86DivPreconditionSnipauxUsesStmtIndent) {
   auto Call = std::make_shared<HighExpr>();
   Call->Kind = ExprKind::Call;
   Call->IntrinsicId = Intrinsic::X86RequireDivPrecondition;
-  Call->Operands = {parameter(0, Func.Params[0].Type),
-                    parameter(1, Func.Params[1].Type),
-                    HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned),
-                                        1)};
+  Call->Operands = {
+      parameter(0, Func.Params[0].Type), parameter(1, Func.Params[1].Type),
+      HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned), 1)};
   Trap.CallExpr = std::move(Call);
   Func.Body.push_back(std::move(Trap));
 
@@ -23354,9 +23389,9 @@ TEST(HighCPointerAddresses, X86DivPreconditionPeelsTypedIntegerView) {
   auto Call = std::make_shared<HighExpr>();
   Call->Kind = ExprKind::Call;
   Call->IntrinsicId = Intrinsic::X86RequireDivPrecondition;
-  Call->Operands = {std::move(Wide), parameter(1, Func.Params[1].Type),
-                    HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned),
-                                        1)};
+  Call->Operands = {
+      std::move(Wide), parameter(1, Func.Params[1].Type),
+      HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned), 1)};
   Trap.CallExpr = std::move(Call);
   Func.Body.push_back(std::move(Trap));
 
@@ -23375,8 +23410,9 @@ TEST(HighCPointerAddresses, X86DivPreconditionKeepsArithmeticWraps) {
   Func.Params = {{"eRecord", NdType::makeInt(4, false)},
                  {"nBins", NdType::makeInt(4, false)}};
 
-  auto Add = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                                 HighExpr::makeConst(1, 4));
+  auto Add =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(1, 4));
   Add->Type = NdType::makeInt(4, false);
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Add));
   Wide->Type = NdType::makeInt(8, false);
@@ -23386,9 +23422,9 @@ TEST(HighCPointerAddresses, X86DivPreconditionKeepsArithmeticWraps) {
   auto Call = std::make_shared<HighExpr>();
   Call->Kind = ExprKind::Call;
   Call->IntrinsicId = Intrinsic::X86RequireDivPrecondition;
-  Call->Operands = {std::move(Wide), parameter(1, Func.Params[1].Type),
-                    HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned),
-                                        1)};
+  Call->Operands = {
+      std::move(Wide), parameter(1, Func.Params[1].Type),
+      HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned), 1)};
   Trap.CallExpr = std::move(Call);
   Func.Body.push_back(std::move(Trap));
 
@@ -23473,8 +23509,9 @@ HighFunc divFieldPrecondition(bool UnsignedField) {
   Func.ReturnType = NdType::makeVoid();
   Func.Params = {{"this", NdType::makePtr(Table)}, {"eRecord", Rank}};
 
-  auto Addr = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
-                                  HighExpr::makeConst(184, 8));
+  auto Addr =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(184, 8));
   Addr->Type = NdType::makeInt(8, false);
   auto Load = HighExpr::makeLoad(std::move(Addr), NdType::makeInt(4, true));
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT, parameter(1, Rank));
@@ -23485,9 +23522,9 @@ HighFunc divFieldPrecondition(bool UnsignedField) {
   auto Call = std::make_shared<HighExpr>();
   Call->Kind = ExprKind::Call;
   Call->IntrinsicId = Intrinsic::X86RequireDivPrecondition;
-  Call->Operands = {std::move(Wide), std::move(Load),
-                    HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned),
-                                        1)};
+  Call->Operands = {
+      std::move(Wide), std::move(Load),
+      HighExpr::makeConst(static_cast<uint64_t>(X86DivKind::Unsigned), 1)};
   Trap.CallExpr = std::move(Call);
   Func.Body.push_back(std::move(Trap));
   return Func;
@@ -23508,9 +23545,9 @@ TEST(HighCPointerAddresses, DivPreconditionUnsignedFieldOmitsWidthCast) {
 
 TEST(HighCPointerAddresses, DivPreconditionSignedFieldKeepsWidthCast) {
   const std::string Source = emitFunctions({divFieldPrecondition(false)});
-  EXPECT_NE(Source.find(
-                "neverd_divisor = (uint32_t)(this->m_colorTable.m_nBins)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("neverd_divisor = (uint32_t)(this->m_colorTable.m_nBins)"),
+      std::string::npos)
       << Source;
 }
 
@@ -23995,8 +24032,8 @@ TEST(HighCPointerAddresses, Win64JoinPhiR9IsFourthCallArg) {
   Join.StartAddr = 0x14000101c;
   Join.Preds = {1, 2};
   Join.Phis.push_back({R9Join, {{1, R9Then}, {2, R9Else}}});
-  Join.Ops.push_back(Copy(Reg(13, 4, x86reg::R9, 4), MedVar::makeConst(0, 4),
-                         0x14000101c));
+  Join.Ops.push_back(
+      Copy(Reg(13, 4, x86reg::R9, 4), MedVar::makeConst(0, 4), 0x14000101c));
   Join.Ops.push_back(Copy(R8, MedVar::makeConst(1, 4), 0x140001020));
   Join.Ops.push_back(Copy(RDX, MedVar::makeConst(0x140005000, 8), 0x140001028));
   Join.Ops.push_back(Copy(RCX, MedVar::makeConst(0x140006000, 8), 0x140001030));
@@ -24206,8 +24243,10 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredSetupR8) {
   Setup.Id = 0;
   Setup.StartAddr = 0x140001000;
   Setup.Succs = {1};
-  Setup.Ops.push_back(Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001000));
-  Setup.Ops.push_back(Copy(RDX1, MedVar::makeConst(0x140006000, 8), 0x140001008));
+  Setup.Ops.push_back(
+      Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001000));
+  Setup.Ops.push_back(
+      Copy(RDX1, MedVar::makeConst(0x140006000, 8), 0x140001008));
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -24316,8 +24355,10 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockIgnoresLeftoverR9) {
   Setup.StartAddr = 0x140001010;
   Setup.Preds = {0};
   Setup.Succs = {2};
-  Setup.Ops.push_back(Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001010));
-  Setup.Ops.push_back(Copy(RDX1, MedVar::makeConst(0x140006000, 8), 0x140001018));
+  Setup.Ops.push_back(
+      Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001010));
+  Setup.Ops.push_back(
+      Copy(RDX1, MedVar::makeConst(0x140006000, 8), 0x140001018));
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -24422,7 +24463,8 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   Setup.StartAddr = 0x140001010;
   Setup.Preds = {0};
   Setup.Succs = {2};
-  Setup.Ops.push_back(Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001010));
+  Setup.Ops.push_back(
+      Copy(RCX1, MedVar::makeConst(0x140005000, 8), 0x140001010));
   MedOp Lea;
   Lea.Opcode = NdOp::INT_ADD;
   Lea.Output = R81;
@@ -24441,8 +24483,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   CallBlk.Id = 2;
   CallBlk.StartAddr = 0x140001028;
   CallBlk.Preds = {1};
-  CallBlk.Ops.push_back(
-      Copy(RDX2, MedVar::makeConst(0xCF1, 4), 0x140001028));
+  CallBlk.Ops.push_back(Copy(RDX2, MedVar::makeConst(0xCF1, 4), 0x140001028));
   MedOp Call;
   Call.Opcode = NdOp::CALL;
   Call.Addr = 0x140001030;
@@ -24462,9 +24503,7 @@ TEST(HighCPointerAddresses, Win64SameBlockRdxRecoversPredSetupR8) {
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
   const auto Args = lastCallArguments(Source, "LookupTextW");
   ASSERT_TRUE(Args) << Source;
-  EXPECT_EQ(Args->size(), 3u)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3) {
     EXPECT_NE((*Args)[1].find("3313"), std::string_view::npos) << Source;
     EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
@@ -24605,9 +24644,7 @@ TEST(HighCPointerAddresses, Win64CallJoinRecoversDominatingR8) {
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
   const auto Args = lastCallArguments(Source, "LookupTextW");
   ASSERT_TRUE(Args) << Source;
-  EXPECT_EQ(Args->size(), 3u)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
   if (Args->size() == 3)
     EXPECT_NE((*Args)[2].find("+ (uint64_t)(64)"), std::string_view::npos)
         << Source;
@@ -24910,9 +24947,9 @@ TEST(HighCPointerAddresses, NestedBackEdgeElseFoldsTypePhi) {
   HighStmt Use;
   Use.Kind = StmtKind::Call;
   Use.Addr = 0x140001200;
-  Use.CallExpr = HighExpr::makeCall(
-      "LookupTextW", 0x140002000,
-      {parameter(1), HighExpr::makeVar(Key), parameter(2)});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000,
+                         {parameter(1), HighExpr::makeVar(Key), parameter(2)});
 
   HighStmt Exit;
   Exit.Kind = StmtKind::Goto;
@@ -24992,9 +25029,9 @@ TEST(HighCPointerAddresses, ThenGotoJoinFoldsIdPhi) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.Addr = 0x140001086;
-  Call.CallExpr = HighExpr::makeCall(
-      "Catalog_Lookup", 0x140002000,
-      {HighExpr::makeConst(1, 8), HighExpr::makeVar(Key)});
+  Call.CallExpr =
+      HighExpr::makeCall("Catalog_Lookup", 0x140002000,
+                         {HighExpr::makeConst(1, 8), HighExpr::makeVar(Key)});
 
   HighStmt Outer;
   Outer.Kind = StmtKind::CxxTry;
@@ -25024,8 +25061,8 @@ TEST(HighCPointerAddresses, ThenGotoJoinFoldsCallDiamond) {
 
   HighStmt Master;
   Master.Kind = StmtKind::Call;
-  Master.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1418, 4)});
+  Master.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                       {HighExpr::makeConst(1418, 4)});
   HighStmt MasterJoin;
   MasterJoin.Kind = StmtKind::Goto;
   MasterJoin.GotoTarget = 0x1400016B3;
@@ -25033,15 +25070,15 @@ TEST(HighCPointerAddresses, ThenGotoJoinFoldsCallDiamond) {
   HighStmt None;
   None.Kind = StmtKind::Call;
   None.Addr = 0x1400015A8;
-  None.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1416, 4)});
+  None.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                     {HighExpr::makeConst(1416, 4)});
   HighStmt NoneJoin;
   NoneJoin.Kind = StmtKind::Goto;
   NoneJoin.GotoTarget = 0x1400016B3;
   HighStmt Kill;
   Kill.Kind = StmtKind::Call;
-  Kill.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1417, 4)});
+  Kill.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                     {HighExpr::makeConst(1417, 4)});
   HighStmt KillJoin;
   KillJoin.Kind = StmtKind::Goto;
   KillJoin.GotoTarget = 0x1400016B3;
@@ -25121,7 +25158,8 @@ TEST(HighCPointerAddresses, ThenGotoJoinDoesNotSwallowSiblingSkip) {
   HighStmt ChoiceBWork;
   ChoiceBWork.Kind = StmtKind::Call;
   ChoiceBWork.Addr = 0x140001342;
-  ChoiceBWork.CallExpr = HighExpr::makeCall("choice_b", 0x140002100, {parameter(0)});
+  ChoiceBWork.CallExpr =
+      HighExpr::makeCall("choice_b", 0x140002100, {parameter(0)});
   HighStmt ChoiceBCleanup;
   ChoiceBCleanup.Kind = StmtKind::Goto;
   ChoiceBCleanup.GotoTarget = 0x1400017D6;
@@ -25157,7 +25195,8 @@ TEST(HighCPointerAddresses, ThenGotoJoinDoesNotSwallowSiblingSkip) {
   EXPECT_NE(Source.find("badge(arg0)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("badge(arg0)"), Source.rfind("badge(arg0)")) << Source;
-  EXPECT_EQ(Source.find("choice_b(arg0)"), Source.rfind("choice_b(arg0)")) << Source;
+  EXPECT_EQ(Source.find("choice_b(arg0)"), Source.rfind("choice_b(arg0)"))
+      << Source;
   EXPECT_EQ(Source.find("period(arg0)"), Source.rfind("period(arg0)"))
       << Source;
 }
@@ -25301,10 +25340,10 @@ TEST(HighCPointerAddresses, ThenSkipOverFoldsNestedAfterLabel) {
   T.Size = 8;
   T.TheArch = Arch::X64;
   Load.Dst = HighExpr::makeVar(T);
-  Load.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                          HighExpr::makeConst(256, 8)),
-      NdType::makeInt(8));
+  Load.Val =
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                             HighExpr::makeConst(256, 8)),
+                         NdType::makeInt(8));
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
@@ -25427,8 +25466,8 @@ TEST(HighCPointerAddresses, SmallExclusiveJoinInlinesElseOnlyCtor) {
   HighStmt RetB;
   RetB.Kind = StmtKind::Return;
 
-  Func.Body = {ChoiceA, Aux, AuxToB, Ctor, ToCleanupB, DtorA, RetA, DtorB,
-               RetB};
+  Func.Body = {ChoiceA, Aux,  AuxToB, Ctor, ToCleanupB,
+               DtorA,   RetA, DtorB,  RetB};
   invertSkipGotos(Func);
   ASSERT_FALSE(Func.Body.empty());
   ASSERT_EQ(Func.Body[0].Kind, StmtKind::IfElse);
@@ -25474,7 +25513,8 @@ TEST(HighCPointerAddresses, SmallExclusiveJoinInlinesEmptyLabelAssignCtor) {
 
   HighStmt ChoiceBWork;
   ChoiceBWork.Kind = StmtKind::Call;
-  ChoiceBWork.CallExpr = HighExpr::makeCall("choice_b", 0x140002050, {parameter(0)});
+  ChoiceBWork.CallExpr =
+      HighExpr::makeCall("choice_b", 0x140002050, {parameter(0)});
   HighStmt ChoiceBToA;
   ChoiceBToA.Kind = StmtKind::Goto;
   ChoiceBToA.GotoTarget = 0x1400017D6;
@@ -25484,7 +25524,7 @@ TEST(HighCPointerAddresses, SmallExclusiveJoinInlinesEmptyLabelAssignCtor) {
   HighStmt ChoiceB;
   ChoiceB.Kind = StmtKind::IfElse;
   ChoiceB.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(1),
-                                  HighExpr::makeConst(0, 8));
+                                     HighExpr::makeConst(0, 8));
   ChoiceB.Body = {ChoiceBWork, ChoiceBToA};
   ChoiceB.ElseBody = {ChoiceBToDefault};
 
@@ -25541,8 +25581,8 @@ TEST(HighCPointerAddresses, SmallExclusiveJoinInlinesEmptyLabelAssignCtor) {
   HighStmt RetB;
   RetB.Kind = StmtKind::Return;
 
-  Func.Body = {ChoiceA, ChoiceB, Aux, AuxToB, Label, Ctor, Phi, ToCleanupB,
-               OtherLabel, Distant, DtorA, RetA, DtorB, RetB};
+  Func.Body = {ChoiceA,    ChoiceB,    Aux,     AuxToB, Label, Ctor,  Phi,
+               ToCleanupB, OtherLabel, Distant, DtorA,  RetA,  DtorB, RetB};
   invertSkipGotos(Func);
   size_t ElseCtorCount = 0;
   for (const HighStmt &S : Func.Body) {
@@ -25701,9 +25741,8 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksIntoOpenArms) {
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
   Ctor.Addr = 0x140001174;
-  Ctor.CallExpr =
-      HighExpr::makeCall("CStringT_ctor", 0x140002200,
-                         {parameter(2), LabelVar(2, 41)});
+  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002200,
+                                     {parameter(2), LabelVar(2, 41)});
   HighStmt Find;
   Find.Kind = StmtKind::Call;
   Find.CallExpr = HighExpr::makeCall("Find", 0x140002300, {parameter(0)});
@@ -25784,10 +25823,10 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksRegPhiWithoutRenameTag) {
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
   Ctor.Addr = 0x140001174;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002200,
-                                     {parameter(2), LabelVar(2, 41),
-                                      HighExpr::makeVar(Phi2),
-                                      HighExpr::makeVar(Extra)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002200,
+                         {parameter(2), LabelVar(2, 41),
+                          HighExpr::makeVar(Phi2), HighExpr::makeVar(Extra)});
   HighStmt Find;
   Find.Kind = StmtKind::Call;
   Find.CallExpr = HighExpr::makeCall("Find", 0x140002300, {parameter(0)});
@@ -25922,7 +25961,8 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksTrailingSkipGoto) {
   EXPECT_NE(Source.find("table("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksLabelInsideFallthroughIf) {
+TEST(HighCPointerAddresses,
+     GotoJoinDefaultAssignSinksLabelInsideFallthroughIf) {
   HighFunc Func;
   Func.Name = "label_join_fallthrough";
   Func.Entry = 0x140001000;
@@ -26105,9 +26145,9 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignKeepsLabelInPredicateWrapper) {
   Leftover.Val = HighExpr::makeCall("IsKind", 0x140002400, {parameter(0)});
   HighStmt Inner;
   Inner.Kind = StmtKind::If;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   HighExpr::makeVar(KindDest),
-                                   HighExpr::makeConst(0, 4));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(KindDest),
+                          HighExpr::makeConst(0, 4));
   Inner.Body = {Custom};
   HighStmt Find;
   Find.Kind = StmtKind::Call;
@@ -26212,9 +26252,9 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignKeepsMemberAddressIncoming) {
   InnerBody.push_back(Custom);
   HighStmt Inner;
   Inner.Kind = StmtKind::If;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   HighExpr::makeVar(KindDest),
-                                   HighExpr::makeConst(0, 4));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(KindDest),
+                          HighExpr::makeConst(0, 4));
   Inner.Body = std::move(InnerBody);
   HighStmt Find;
   Find.Kind = StmtKind::Call;
@@ -26438,8 +26478,9 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksAfterGotoFold) {
                                      {parameter(2), LabelVar(70)});
   Func.Body = {Empty, Default, Ctor};
   structureIfElse(Func, 1);
-  EXPECT_EQ(Func.Body.size(), 2u) << "kind=" << static_cast<int>(Func.Body[0].Kind)
-                                  << " else=" << Func.Body[0].ElseBody.size();
+  EXPECT_EQ(Func.Body.size(), 2u)
+      << "kind=" << static_cast<int>(Func.Body[0].Kind)
+      << " else=" << Func.Body[0].ElseBody.size();
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
@@ -26525,9 +26566,8 @@ TEST(HighCPointerAddresses, GotoJoinDoesNotDuplicateSameCallAsElse) {
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
   Guard.Cond = HighExpr::makeUnary(
-      NdOp::BOOL_NOT,
-      HighExpr::makeBinop(NdOp::INT_SLESSEQUAL, parameter(3),
-                          HighExpr::makeConst(0, 4)));
+      NdOp::BOOL_NOT, HighExpr::makeBinop(NdOp::INT_SLESSEQUAL, parameter(3),
+                                          HighExpr::makeConst(0, 4)));
   Guard.Body = {Taken};
   HighStmt Use;
   Use.Kind = StmtKind::Call;
@@ -26740,9 +26780,8 @@ TEST(HighCPointerAddresses, GotoJoinPhiKeepsPointerAddIncoming) {
   EXPECT_NE(Source.find("+ (uint64_t)(240)"), std::string::npos)
       << Source << "\nHighIR:\n"
       << HighDump;
-  EXPECT_NE(Source.find("table("), std::string::npos)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  EXPECT_NE(Source.find("table("), std::string::npos) << Source << "\nHighIR:\n"
+                                                      << HighDump;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos)
       << Source << "\nHighIR:\n"
       << HighDump;
@@ -26866,8 +26905,14 @@ TEST(HighCPointerAddresses, GotoJoinNestedVirtIncomingSurvivesLabelFold) {
   Ctor.Addr = 0x140001174;
   Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002200,
                                      {parameter(2), Dest(18)});
-  Func.Body = {SkipToDefault(0x140001113), SkipToDefault(0x140001123),
-               LabelIf, EmptyCall, VirtIf, Fallthrough, Default, Ctor};
+  Func.Body = {SkipToDefault(0x140001113),
+               SkipToDefault(0x140001123),
+               LabelIf,
+               EmptyCall,
+               VirtIf,
+               Fallthrough,
+               Default,
+               Ctor};
   structureIfElse(Func, 10);
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
@@ -26940,8 +26985,8 @@ TEST(HighCPointerAddresses, IdenticalIfElseUndefSuffixHoistsOnce) {
   Dest.TheArch = Arch::X64;
   HighStmt ThenWork;
   ThenWork.Kind = StmtKind::Call;
-  ThenWork.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
-                                         {parameter(0)});
+  ThenWork.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt ElseWork;
   ElseWork.Kind = StmtKind::Call;
   ElseWork.CallExpr =
@@ -27080,8 +27125,8 @@ TEST(HighCPointerAddresses, WholeSlotXmmCopyForwardsWithoutTemp) {
   Store.StoreVal = HighExpr::makeVar(Wide, NdType::makeInt(16));
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), SlotB});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), SlotB});
   Func.Body = {Init, Load, Store, Use};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("LookupTextW("), std::string::npos) << Source;
@@ -27133,13 +27178,13 @@ TEST(HighCPointerAddresses, WholeSlotCopyPropagatesRecordType) {
   Store.StoreVal = HighExpr::makeVar(Wide, NdType::makeInt(16));
   HighStmt UseA;
   UseA.Kind = StmtKind::Call;
-  UseA.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                     {parameter(0), SlotA});
+  UseA.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), SlotA});
   HighStmt UseB;
   UseB.Kind = StmtKind::Call;
-  UseB.CallExpr = HighExpr::makeCall(
-      "use_pack", 0x140002100,
-      {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
+  UseB.CallExpr =
+      HighExpr::makeCall("use_pack", 0x140002100,
+                         {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
   Func.Body = {Init, Load, Store, UseA, UseB};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
@@ -27189,15 +27234,17 @@ TEST(HighCPointerAddresses, WholeSlotCopyPrefersSourceRecordOverOverlay) {
   Copy.StoreVal = HighExpr::makeLoad(SlotA, ArgTy);
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall(
-      "use_pack", 0x140002100,
-      {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
+  Use.CallExpr =
+      HighExpr::makeCall("use_pack", 0x140002100,
+                         {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
   Func.Body = {InitSrc, InitDst, Copy, Use};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("PtrBox "), std::string::npos) << Source;
   EXPECT_EQ(Source.find("ArgList var_"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("__int128", Source.find("void tptr_copy_over_arglist(")),
-            std::string::npos) << Source;
+  EXPECT_EQ(
+      Source.find("__int128", Source.find("void tptr_copy_over_arglist(")),
+      std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, WholeSlotCopyPrefersNameOnlySourceRecord) {
@@ -27246,9 +27293,9 @@ TEST(HighCPointerAddresses, WholeSlotCopyPrefersNameOnlySourceRecord) {
       HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), Addr});
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall(
-      "use_pack", 0x140002100,
-      {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
+  Use.CallExpr =
+      HighExpr::makeCall("use_pack", 0x140002100,
+                         {HighExpr::makeLoad(SlotB, NdType::makeInt(16))});
   Func.Body = {InitSrc, InitDst, Copy, UseFirst, Use};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("PtrBox "), std::string::npos) << Source;
@@ -27292,8 +27339,8 @@ TEST(HighCPointerAddresses, ArgListScalarStorePrintsTypesField) {
   Values.StoreVal = HighExpr::makeConst(0x140005000, 8);
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), Slot});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), Slot});
   Func.Body = {Init, Types, Values, Use};
   const std::string Source = emitFunctions({Func});
   expectPortableStore(Source, "uint64_t", "- 128", "43");
@@ -27302,7 +27349,8 @@ TEST(HighCPointerAddresses, ArgListScalarStorePrintsTypesField) {
   EXPECT_EQ(Source.find("var_m80 = 43"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NarrowStoreIntoArgListBeforeWideCopyPreservesWidth) {
+TEST(HighCPointerAddresses,
+     NarrowStoreIntoArgListBeforeWideCopyPreservesWidth) {
   HighFunc Func;
   Func.Name = "arglist_narrow_before_copy";
   Func.Entry = 0x140001000;
@@ -27314,10 +27362,10 @@ TEST(HighCPointerAddresses, NarrowStoreIntoArgListBeforeWideCopyPreservesWidth) 
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto Sp = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-  auto First = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                   HighExpr::makeConst(128, 8));
-  auto Second = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                    HighExpr::makeConst(112, 8));
+  auto First =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(128, 8));
+  auto Second =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(112, 8));
   auto ArgTy = NdType::makeNamedRecord("ArgList", 16);
   First->Type = ArgTy;
   Second->Type = ArgTy;
@@ -27335,8 +27383,7 @@ TEST(HighCPointerAddresses, NarrowStoreIntoArgListBeforeWideCopyPreservesWidth) 
   Tag.StoreVal = HighExpr::makeConst(2, 8);
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("use_args", 0x140002000,
-                                    {First, Second});
+  Use.CallExpr = HighExpr::makeCall("use_args", 0x140002000, {First, Second});
   Func.Body = {Color, Copy, Tag, Use};
 
   const std::string Source = emitFunctions({Func});
@@ -27345,7 +27392,8 @@ TEST(HighCPointerAddresses, NarrowStoreIntoArgListBeforeWideCopyPreservesWidth) 
   EXPECT_EQ(Stores[0].Type, "uint32_t") << Source;
   EXPECT_EQ(Stores[0].Value, "0x12345678") << Source;
   EXPECT_EQ(Stores[1].Type, "__int128") << Source;
-  EXPECT_NE(Stores[1].Value.find("neverd_mem_load_"), std::string::npos) << Source;
+  EXPECT_NE(Stores[1].Value.find("neverd_mem_load_"), std::string::npos)
+      << Source;
   EXPECT_EQ(Stores[2].Type, "uint64_t") << Source;
   EXPECT_EQ(Stores[2].Value, "2") << Source;
   EXPECT_EQ(Stores[0].Address, Stores[2].Address) << Source;
@@ -27397,17 +27445,16 @@ TEST(HighCPointerAddresses, PointerStoreIntoNamedRecordPreservesWidth) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto Sp = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-  auto Slot = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                  HighExpr::makeConst(128, 8));
-  auto Alias = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                   HighExpr::makeConst(112, 8));
+  auto Slot =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(128, 8));
+  auto Alias =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(112, 8));
   auto RecordTy = NdType::makeNamedRecord("PtrBox", 16);
   Slot->Type = RecordTy;
   auto OverlayTy = NdType::makeNamedRecord("ArgList", 16);
   OverlayTy->FieldDisplayNames = {"types_", "values_"};
   OverlayTy->FieldDisplayOffsets = {0, 8};
-  OverlayTy->FieldDisplayTypes = {NdType::makeInt(8, false),
-                                  NdType::makePtr()};
+  OverlayTy->FieldDisplayTypes = {NdType::makeInt(8, false), NdType::makePtr()};
   Alias->Type = OverlayTy;
   HighStmt Store;
   Store.Kind = StmtKind::Store;
@@ -27416,8 +27463,7 @@ TEST(HighCPointerAddresses, PointerStoreIntoNamedRecordPreservesWidth) {
   Store.StoreVal->Type = NdType::makePtr();
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("use_record", 0x140002000,
-                                    {Slot, Alias});
+  Use.CallExpr = HighExpr::makeCall("use_record", 0x140002000, {Slot, Alias});
   Func.Body = {Store, Use};
 
   RecordSlotDbg Dbg;
@@ -27450,17 +27496,16 @@ TEST(HighCPointerAddresses, FullWidthIntegerStoreIntoNamedRecordIsValidC) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto Sp = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-  auto Slot = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                  HighExpr::makeConst(128, 8));
-  auto Alias = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                   HighExpr::makeConst(112, 8));
+  auto Slot =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(128, 8));
+  auto Alias =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(112, 8));
   auto RecordTy = NdType::makeNamedRecord("PtrBox", 16);
   Slot->Type = RecordTy;
   auto OverlayTy = NdType::makeNamedRecord("ArgList", 16);
   OverlayTy->FieldDisplayNames = {"types_", "values_"};
   OverlayTy->FieldDisplayOffsets = {0, 8};
-  OverlayTy->FieldDisplayTypes = {NdType::makeInt(8, false),
-                                  NdType::makePtr()};
+  OverlayTy->FieldDisplayTypes = {NdType::makeInt(8, false), NdType::makePtr()};
   Alias->Type = OverlayTy;
   HighStmt Store;
   Store.Kind = StmtKind::Store;
@@ -27468,8 +27513,7 @@ TEST(HighCPointerAddresses, FullWidthIntegerStoreIntoNamedRecordIsValidC) {
   Store.StoreVal = HighExpr::makeConst(178, 16);
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("use_record", 0x140002000,
-                                    {Slot, Alias});
+  Use.CallExpr = HighExpr::makeCall("use_record", 0x140002000, {Slot, Alias});
   Func.Body = {Store, Use};
 
   RecordSlotDbg Dbg;
@@ -27482,8 +27526,7 @@ TEST(HighCPointerAddresses, FullWidthIntegerStoreIntoNamedRecordIsValidC) {
   OS.flush();
   expectPortableStore(Source, "unsigned __int128", "- 128", "178");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("\n    var_m80 = 178;"), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("\n    var_m80 = 178;"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, InteriorPartialStoreKeepsMachineWidth) {
@@ -27498,10 +27541,10 @@ TEST(HighCPointerAddresses, InteriorPartialStoreKeepsMachineWidth) {
   SP.TheArch = Arch::X64;
   SP.RegOff = getTargetRegInfo(Arch::X64).StackPointer;
   auto Sp = HighExpr::makeVar(SP, NdType::makeInt(8, false));
-  auto Slot = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                  HighExpr::makeConst(128, 8));
-  auto Field = HighExpr::makeBinop(NdOp::INT_SUB, Sp,
-                                   HighExpr::makeConst(120, 8));
+  auto Slot =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(128, 8));
+  auto Field =
+      HighExpr::makeBinop(NdOp::INT_SUB, Sp, HighExpr::makeConst(120, 8));
   auto RecordTy = NdType::makeNamedRecord("PtrBox", 16);
   RecordTy->FieldDisplayNames = {"p"};
   RecordTy->FieldDisplayOffsets = {8};
@@ -27559,8 +27602,8 @@ TEST(HighCPointerAddresses, ArgListWidenedImmediateStorePrintsTypesField) {
   Types.StoreVal = HighExpr::makeConst(178, 16);
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), Slot});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), Slot});
   Func.Body = {Init, Types, Use};
   const std::string Source = emitFunctions({Func});
   expectPortableStore(Source, "unsigned __int128", "- 128", "178");
@@ -27656,8 +27699,8 @@ TEST(HighCPointerAddresses, ArgListOffsetStorePrintsValuesField) {
   PtrBox->FieldDisplayNames = {"p", "_Ptr", "_Rep"};
   PtrBox->FieldDisplayOffsets = {8, 0, 4};
   PtrBox->FieldDisplayTypes = {NdType::makePtr(NdType::makeInt(8)),
-                             NdType::makePtr(NdType::makeInt(8)),
-                             NdType::makeInt(4, false)};
+                               NdType::makePtr(NdType::makeInt(8)),
+                               NdType::makeInt(4, false)};
   auto ArgTy = NdType::makeNamedRecord("ArgList", 16);
   ArgTy->FieldDisplayNames = {"types_", "values_"};
   ArgTy->FieldDisplayOffsets = {0, 8};
@@ -27789,9 +27832,9 @@ TEST(HighCPointerAddresses, SignedIntegerStoreIntoPointerFieldCastsWidth) {
   Init.StoreVal->Type = PtrBox;
   HighStmt Length;
   Length.Kind = StmtKind::Store;
-  Length.StoreAddr = HighExpr::makeBinop(
-      NdOp::INT_ADD, HighExpr::makeLoad(Slot, PtrBox),
-      HighExpr::makeConst(8, 8));
+  Length.StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeLoad(Slot, PtrBox),
+                          HighExpr::makeConst(8, 8));
   auto Call = HighExpr::makeCall("GetLength", 0x140004000, {parameter(0)});
   Call->Type = NdType::makeInt(4, true);
   Length.StoreVal = HighExpr::makeUnary(NdOp::INT_SEXT, Call);
@@ -27855,8 +27898,8 @@ TEST(HighCPointerAddresses, PackedValueAfterTakenSlotKeepsStore) {
   Addr->Operands.push_back(HighExpr::makeLoad(First, ArgTy));
   HighStmt Use;
   Use.Kind = StmtKind::Call;
-  Use.CallExpr = HighExpr::makeCall("LookupTextW", 0x140002000,
-                                    {parameter(0), Addr});
+  Use.CallExpr =
+      HighExpr::makeCall("LookupTextW", 0x140002000, {parameter(0), Addr});
   Func.Body = {Get, Init, Pack, Use};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
@@ -27925,7 +27968,8 @@ TEST(HighCPointerAddresses, ThenWorkGotoJoinFoldsElse) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
@@ -27937,7 +27981,8 @@ TEST(HighCPointerAddresses, ThenWorkGotoJoinFoldsElse) {
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -27962,20 +28007,21 @@ TEST(HighCPointerAddresses, ThenPredChainGotoJoinFoldsElse) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(2)});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
   HighStmt Badge;
   Badge.Kind = StmtKind::If;
   Badge.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
-                                 HighExpr::makeConst(0, 8));
+                                   HighExpr::makeConst(0, 8));
   Badge.Body = {Display, ToJoin};
 
   HighStmt IsBadge;
   IsBadge.Kind = StmtKind::If;
   IsBadge.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(1),
-                                   HighExpr::makeConst(0, 8));
+                                     HighExpr::makeConst(0, 8));
   IsBadge.Body = {Badge};
 
   HighStmt Data;
@@ -27986,7 +28032,8 @@ TEST(HighCPointerAddresses, ThenPredChainGotoJoinFoldsElse) {
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(3)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(3)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -28022,7 +28069,8 @@ TEST(HighCPointerAddresses, ThenPredChainIfElseLoadGotoJoinFoldsElse) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {HighExpr::makeVar(Ptr)});
+  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
+                                        {HighExpr::makeVar(Ptr)});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
@@ -28040,7 +28088,8 @@ TEST(HighCPointerAddresses, ThenPredChainIfElseLoadGotoJoinFoldsElse) {
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(2)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(2)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -28087,15 +28136,16 @@ TEST(HighCPointerAddresses, ThenPredChainUndefSkipArmFoldsElse) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr =
-      HighExpr::makeCall("GetDisplayName", 0x140002000, {HighExpr::makeVar(Temp(35))});
+  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
+                                        {HighExpr::makeVar(Temp(35))});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
   HighStmt Taken;
   Taken.Kind = StmtKind::If;
-  Taken.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
-                                   HighExpr::makeConst(0, 8));
+  Taken.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
+                          HighExpr::makeConst(0, 8));
   Taken.Body = {Display, ToJoin};
 
   HighStmt LoadPtr;
@@ -28121,7 +28171,8 @@ TEST(HighCPointerAddresses, ThenPredChainUndefSkipArmFoldsElse) {
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(2)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(2)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -28169,20 +28220,22 @@ TEST(HighCPointerAddresses, ThenPredChainLoadThenAbiCopiesFoldsElse) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr =
-      HighExpr::makeCall("GetDisplayName", 0x140002000, {HighExpr::makeVar(Temp(35))});
+  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
+                                        {HighExpr::makeVar(Temp(35))});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
   HighStmt Taken;
   Taken.Kind = StmtKind::If;
-  Taken.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
-                                   HighExpr::makeConst(0, 8));
+  Taken.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
+                          HighExpr::makeConst(0, 8));
   Taken.Body = {Display, ToJoin};
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -28231,14 +28284,16 @@ TEST(HighCPointerAddresses, ThenPredChainClobberSkipArmFoldsElse) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(Dest, DestSSA));
-    S.Val = HighExpr::makeUnary(NdOp::INT_ZEXT, HighExpr::makeVar(Temp(Src, SrcSSA)));
+    S.Val = HighExpr::makeUnary(NdOp::INT_ZEXT,
+                                HighExpr::makeVar(Temp(Src, SrcSSA)));
     return S;
   };
 
   HighStmt Display;
   Display.Kind = StmtKind::Assign;
   Display.Dst = HighExpr::makeVar(Temp(80));
-  Display.Val = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.Val =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
@@ -28250,8 +28305,8 @@ TEST(HighCPointerAddresses, ThenPredChainClobberSkipArmFoldsElse) {
 
   HighStmt KindIf;
   KindIf.Kind = StmtKind::IfElse;
-  KindIf.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(79)),
-                                    HighExpr::makeConst(0, 8));
+  KindIf.Cond = HighExpr::makeBinop(
+      NdOp::INT_EQUAL, HighExpr::makeVar(Temp(79)), HighExpr::makeConst(0, 8));
   KindIf.Body = {AssignUndef(76), AssignVar(53, 51), AssignCast(50, 34)};
   KindIf.ElseBody = {Taken};
 
@@ -28269,9 +28324,9 @@ TEST(HighCPointerAddresses, ThenPredChainClobberSkipArmFoldsElse) {
 
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x140002100,
-      {parameter(1), HighExpr::makeVar(Temp(76)), HighExpr::makeVar(Temp(53, 1))});
+  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100,
+                                     {parameter(1), HighExpr::makeVar(Temp(76)),
+                                      HighExpr::makeVar(Temp(53, 1))});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -28299,15 +28354,17 @@ TEST(HighCPointerAddresses, NestedIfAndComposesKindGuard) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
 
   HighStmt Badge;
   Badge.Kind = StmtKind::IfElse;
   Badge.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
-                                 HighExpr::makeConst(0, 8));
+                                   HighExpr::makeConst(0, 8));
   Badge.Body = {Display};
   Badge.ElseBody = {Ctor};
 
@@ -28361,14 +28418,16 @@ TEST(HighCPointerAddresses, NestedIfAndComposesCallPrefix) {
   KindCall.Val = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
   HighStmt Badge;
   Badge.Kind = StmtKind::IfElse;
   Badge.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
-                                 HighExpr::makeConst(0, 8));
+                                   HighExpr::makeConst(0, 8));
   Badge.Body = {Display};
   Badge.ElseBody = {Ctor};
   HighStmt KindIf;
@@ -28433,23 +28492,26 @@ TEST(HighCPointerAddresses, NestedIfAndDropsReloadedPredicate) {
     Sub->Type = NdType::makeInt(4, true);
     return HighExpr::makeBinop(
         NdOp::BOOL_AND,
-        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, SSA)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                            HighExpr::makeVar(Temp(76, SSA)),
                             HighExpr::makeConst(0, 8)),
         HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(Sub),
                             HighExpr::makeConst(0, 4)));
   };
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(NdOp::BOOL_AND, Pred(34, false),
-                                   HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                                       parameter(2),
-                                                       HighExpr::makeConst(0, 8)));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_AND, Pred(34, false),
+                          HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(2),
+                                              HighExpr::makeConst(0, 8)));
   Inner.Body = {Display};
   Inner.ElseBody = {Ctor};
   HighStmt Guard;
@@ -28489,10 +28551,9 @@ TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(76, SSA));
-    S.Val = HighExpr::makeLoad(
-        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                            HighExpr::makeConst(Off, 8)),
-        NdType::makeInt(8));
+    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                   HighExpr::makeConst(Off, 8)),
+                               NdType::makeInt(8));
     return S;
   };
   auto Pred = [&](int SSA, bool Leftover) {
@@ -28504,7 +28565,8 @@ TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
     }
     return HighExpr::makeBinop(
         NdOp::BOOL_AND,
-        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, SSA)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                            HighExpr::makeVar(Temp(76, SSA)),
                             HighExpr::makeConst(0, 8)),
         HighExpr::makeBinop(
             NdOp::INT_NOTEQUAL,
@@ -28514,10 +28576,11 @@ TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
   HighStmt Display;
   Display.Kind = StmtKind::Call;
   Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
-                                     {HighExpr::makeVar(Temp(76, 35))});
+                                        {HighExpr::makeVar(Temp(76, 35))});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
   Inner.Cond = HighExpr::makeBinop(
@@ -28547,7 +28610,8 @@ TEST(HighCPointerAddresses, NestedIfKeepsDistinctFieldGuard) {
   ASSERT_NE(DisplayAt, std::string::npos) << Source;
   const auto IfBeforeDisplay = Source.rfind("if (", DisplayAt);
   ASSERT_NE(IfBeforeDisplay, std::string::npos) << Source;
-  EXPECT_EQ(Source.find("IsKind(", IfBeforeDisplay), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("IsKind(", IfBeforeDisplay), std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardAfterCall) {
@@ -28566,7 +28630,8 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardAfterCall) {
   Find.CallExpr = HighExpr::makeCall("Find", 0x140002400, {parameter(1)});
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Inner;
   Inner.Kind = StmtKind::If;
   Inner.Cond = KindPred();
@@ -28588,8 +28653,8 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardAfterCall) {
     ++KindCount;
   EXPECT_EQ(KindCount, 1u) << Source;
   size_t IfCount = 0;
-  for (size_t Pos = BodyAt; (Pos = Source.find("if (", Pos)) != std::string::npos;
-       Pos += 4)
+  for (size_t Pos = BodyAt;
+       (Pos = Source.find("if (", Pos)) != std::string::npos; Pos += 4)
     ++IfCount;
   EXPECT_EQ(IfCount, 1u) << Source;
 }
@@ -28649,8 +28714,8 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedGuardThroughNestedIf) {
   const auto BodyAt = Source.find("void implied_through_nested");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t IfCount = 0;
-  for (size_t Pos = BodyAt; (Pos = Source.find("if (", Pos)) != std::string::npos;
-       Pos += 4)
+  for (size_t Pos = BodyAt;
+       (Pos = Source.find("if (", Pos)) != std::string::npos; Pos += 4)
     ++IfCount;
   EXPECT_EQ(IfCount, 2u) << Source;
   size_t PtrIfCount = 0;
@@ -28697,8 +28762,8 @@ TEST(HighCPointerAddresses, NestedIfKeepsImpliedGuardAfterPointerAssign) {
   const auto BodyAt = Source.find("void keep_after_assign");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t IfCount = 0;
-  for (size_t Pos = BodyAt; (Pos = Source.find("if (", Pos)) != std::string::npos;
-       Pos += 4)
+  for (size_t Pos = BodyAt;
+       (Pos = Source.find("if (", Pos)) != std::string::npos; Pos += 4)
     ++IfCount;
   EXPECT_EQ(IfCount, 3u) << Source;
 }
@@ -28740,8 +28805,8 @@ TEST(HighCPointerAddresses, NestedIfKeepsImpliedGuardAfterPointerCall) {
   const auto BodyAt = Source.find("void keep_after_call");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
   size_t IfCount = 0;
-  for (size_t Pos = BodyAt; (Pos = Source.find("if (", Pos)) != std::string::npos;
-       Pos += 4)
+  for (size_t Pos = BodyAt;
+       (Pos = Source.find("if (", Pos)) != std::string::npos; Pos += 4)
     ++IfCount;
   EXPECT_EQ(IfCount, 3u) << Source;
 }
@@ -28764,10 +28829,9 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedFalseElseInNestedIfElse) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(76, SSA));
-    S.Val = HighExpr::makeLoad(
-        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                            HighExpr::makeConst(56, 8)),
-        NdType::makeInt(8));
+    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                   HighExpr::makeConst(56, 8)),
+                               NdType::makeInt(8));
     return S;
   };
   auto Skip = [&](int Id) {
@@ -28786,32 +28850,33 @@ TEST(HighCPointerAddresses, NestedIfFlattensImpliedFalseElseInNestedIfElse) {
                            HighExpr::makeConst(8, 8))});
   HighStmt Bump;
   Bump.Kind = StmtKind::Store;
-  Bump.StoreAddr = HighExpr::makeBinop(NdOp::INT_ADD,
-                                       HighExpr::makeVar(Temp(76, 21)),
-                                       HighExpr::makeConst(8, 8));
+  Bump.StoreAddr =
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeVar(Temp(76, 21)),
+                          HighExpr::makeConst(8, 8));
   Bump.StoreVal = HighExpr::makeConst(1, 4);
   HighStmt Release;
   Release.Kind = StmtKind::Call;
-  Release.CallExpr =
-      HighExpr::makeCall("dtor", 0x140002600, {HighExpr::makeVar(Temp(76, 22))});
+  Release.CallExpr = HighExpr::makeCall("dtor", 0x140002600,
+                                        {HighExpr::makeVar(Temp(76, 22))});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 22)),
-                                   HighExpr::makeConst(0, 8));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 22)),
+                          HighExpr::makeConst(0, 8));
   Inner.Body = {Skip(41)};
   Inner.ElseBody = {Release};
   HighStmt Last;
   Last.Kind = StmtKind::IfElse;
-  Last.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                  HighExpr::makeVar(Temp(94, 7, 4)),
-                                  HighExpr::makeConst(1, 4));
+  Last.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(94, 7, 4)),
+                          HighExpr::makeConst(1, 4));
   Last.Body = {Skip(33)};
   Last.ElseBody = {LoadP(21), Bump, LoadP(22), Inner};
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   HighExpr::makeVar(Temp(76, 20)),
-                                   HighExpr::makeConst(0, 8));
+  Guard.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, 20)),
+                          HighExpr::makeConst(0, 8));
   Guard.Body = {Fetch, Last};
   Func.Body = {LoadP(20), Guard};
   invertSkipGotos(Func);
@@ -28913,10 +28978,9 @@ TEST(HighCPointerAddresses, NestedIfAndDropsPredicateAfterIndependentWork) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(76, SSA));
-    S.Val = HighExpr::makeLoad(
-        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                            HighExpr::makeConst(256, 8)),
-        NdType::makeInt(8));
+    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                   HighExpr::makeConst(256, 8)),
+                               NdType::makeInt(8));
     return S;
   };
   auto KindAssign = [&](int DestId, int DestSSA, int PtrSSA, bool Leftover) {
@@ -28961,8 +29025,9 @@ TEST(HighCPointerAddresses, NestedIfAndDropsPredicateAfterIndependentWork) {
       NdType::makeInt(4));
   HighStmt NullId;
   NullId.Kind = StmtKind::IfElse;
-  NullId.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 6)),
-                                    HighExpr::makeConst(0, 8));
+  NullId.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(76, 6)),
+                          HighExpr::makeConst(0, 8));
   NullId.Body = {ZeroId};
   NullId.ElseBody = {LoadId};
   HighStmt Find;
@@ -28971,13 +29036,14 @@ TEST(HighCPointerAddresses, NestedIfAndDropsPredicateAfterIndependentWork) {
       HighExpr::makeCall("Find", 0x140002400, {HighExpr::makeVar(Temp(14, 0))});
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Custom;
   Custom.Kind = StmtKind::If;
-  Custom.Cond = HighExpr::makeBinop(
-      NdOp::BOOL_AND, KindCond(18, 0),
-      HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
-                          HighExpr::makeConst(1, 4)));
+  Custom.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_AND, KindCond(18, 0),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
+                                              HighExpr::makeConst(1, 4)));
   Custom.Body = {Display};
   HighStmt Mid;
   Mid.Kind = StmtKind::If;
@@ -29018,13 +29084,14 @@ TEST(HighCPointerAddresses, NestedIfDropsPredicateFromEmptyThenElse) {
   Find.CallExpr = HighExpr::makeCall("Find", 0x140002400, {parameter(1)});
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Custom;
   Custom.Kind = StmtKind::If;
-  Custom.Cond = HighExpr::makeBinop(
-      NdOp::BOOL_AND, KindPred(false),
-      HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
-                          HighExpr::makeConst(1, 4)));
+  Custom.Cond =
+      HighExpr::makeBinop(NdOp::BOOL_AND, KindPred(false),
+                          HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(2),
+                                              HighExpr::makeConst(1, 4)));
   Custom.Body = {Display};
   HighStmt Mid;
   Mid.Kind = StmtKind::If;
@@ -29032,7 +29099,8 @@ TEST(HighCPointerAddresses, NestedIfDropsPredicateFromEmptyThenElse) {
   Mid.Body = {Custom};
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
   HighStmt Guard;
   Guard.Kind = StmtKind::IfElse;
   Guard.Cond = KindPred(true);
@@ -29071,10 +29139,9 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
     HighStmt S;
     S.Kind = StmtKind::Assign;
     S.Dst = HighExpr::makeVar(Temp(76, SSA));
-    S.Val = HighExpr::makeLoad(
-        HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                            HighExpr::makeConst(Off, 8)),
-        NdType::makeInt(8));
+    S.Val = HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                                   HighExpr::makeConst(Off, 8)),
+                               NdType::makeInt(8));
     return S;
   };
   auto KindAssign = [&](int DestId, int PtrSSA, bool Leftover) {
@@ -29100,7 +29167,8 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
   Find.CallExpr = HighExpr::makeCall("Find", 0x140002400, {parameter(1)});
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt Field;
   Field.Kind = StmtKind::Assign;
   Field.Dst = HighExpr::makeVar(Temp(92, 6));
@@ -29110,8 +29178,9 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
       NdType::makeInt(4));
   HighStmt Custom;
   Custom.Kind = StmtKind::If;
-  Custom.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(92, 6)),
-                                    HighExpr::makeConst(1, 4));
+  Custom.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(92, 6)),
+                          HighExpr::makeConst(1, 4));
   Custom.Body = {Display};
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
@@ -29119,8 +29188,14 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
       NdOp::INT_NOTEQUAL,
       HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)}),
       HighExpr::makeConst(0, 4));
-  Guard.Body = {Find, LoadOff(8, 256), KindAssign(16, 8, true), LoadOff(9, 256),
-                KindAssign(17, 9, false), LoadOff(10, 256), Field, Custom};
+  Guard.Body = {Find,
+                LoadOff(8, 256),
+                KindAssign(16, 8, true),
+                LoadOff(9, 256),
+                KindAssign(17, 9, false),
+                LoadOff(10, 256),
+                Field,
+                Custom};
   Func.Body = {Guard};
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
@@ -29159,12 +29234,13 @@ TEST(HighCPointerAddresses, NestedIfKeepsSideEffectCallBeforeFieldGuard) {
   Slot.Val = HighExpr::makeLoad(parameter(2), NdType::makeInt(8));
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr =
-      HighExpr::makeCall("GetDisplayName", 0x140002000, {HighExpr::makeVar(Temp(19))});
+  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
+                                        {HighExpr::makeVar(Temp(19))});
   HighStmt Inner;
   Inner.Kind = StmtKind::If;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(19)),
-                                   HighExpr::makeConst(0, 8));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(19)),
+                          HighExpr::makeConst(0, 8));
   Inner.Body = {Display};
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
@@ -29202,22 +29278,23 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
   HighStmt Field;
   Field.Kind = StmtKind::Assign;
   Field.Dst = HighExpr::makeVar(Temp(76, 35));
-  Field.Val = HighExpr::makeLoad(
-      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
-                          HighExpr::makeConst(320, 8)),
-      NdType::makeInt(8));
+  Field.Val =
+      HighExpr::makeLoad(HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                             HighExpr::makeConst(320, 8)),
+                         NdType::makeInt(8));
   HighStmt Display;
   Display.Kind = StmtKind::Call;
   Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000,
-                                     {HighExpr::makeVar(Temp(76, 35))});
+                                        {HighExpr::makeVar(Temp(76, 35))});
   HighStmt Ctor;
   Ctor.Kind = StmtKind::Call;
-  Ctor.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Ctor.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                   HighExpr::makeVar(Temp(76, 35)),
-                                   HighExpr::makeConst(0, 8));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(76, 35)),
+                          HighExpr::makeConst(0, 8));
   Inner.Body = {Display};
   Inner.ElseBody = {Ctor};
   HighStmt Undef;
@@ -29556,11 +29633,11 @@ TEST(HighCPointerAddresses, SignedJleLengthPrintsGreaterThanZero) {
           NdOp::BOOL_OR,
           HighExpr::makeBinop(NdOp::INT_EQUAL, Masked(LenVar),
                               HighExpr::makeConst(0, 4)),
-          HighExpr::makeBinop(
-              NdOp::INT_NOTEQUAL,
-              HighExpr::makeBinop(NdOp::INT_SLESS, Masked(LenVar2),
-                                  HighExpr::makeConst(0, 4)),
-              HighExpr::makeConst(0, 4))));
+          HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                              HighExpr::makeBinop(NdOp::INT_SLESS,
+                                                  Masked(LenVar2),
+                                                  HighExpr::makeConst(0, 4)),
+                              HighExpr::makeConst(0, 4))));
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
   Guard.Cond = std::move(Jle);
@@ -29607,11 +29684,11 @@ TEST(HighCPointerAddresses, GetLengthJleComposesIntoGreaterThanZero) {
           NdOp::BOOL_OR,
           HighExpr::makeBinop(NdOp::INT_EQUAL, Masked(LenVar),
                               HighExpr::makeConst(0, 4)),
-          HighExpr::makeBinop(
-              NdOp::INT_NOTEQUAL,
-              HighExpr::makeBinop(NdOp::INT_SLESS, Masked(LenVar2),
-                                  HighExpr::makeConst(0, 4)),
-              HighExpr::makeConst(0, 4))));
+          HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                              HighExpr::makeBinop(NdOp::INT_SLESS,
+                                                  Masked(LenVar2),
+                                                  HighExpr::makeConst(0, 4)),
+                              HighExpr::makeConst(0, 4))));
   HighStmt Assign;
   Assign.Kind = StmtKind::Call;
   Assign.CallExpr =
@@ -29619,8 +29696,7 @@ TEST(HighCPointerAddresses, GetLengthJleComposesIntoGreaterThanZero) {
   Guard.Body = {Assign};
   HighStmt GetData;
   GetData.Kind = StmtKind::Call;
-  GetData.CallExpr =
-      HighExpr::makeCall("GetData", 0x140002020, {parameter(0)});
+  GetData.CallExpr = HighExpr::makeCall("GetData", 0x140002020, {parameter(0)});
   Func.Body = {GetLen, Guard, GetData};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("if (GetLength(arg0) > 0)"), std::string::npos)
@@ -29682,14 +29758,15 @@ TEST(HighCPointerAddresses, CompareNeZeroPrintsBareCompare) {
   Func.ReturnType = NdType::makeVoid();
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(
-      NdOp::INT_NOTEQUAL,
-      HighExpr::makeBinop(NdOp::INT_SLESS, parameter(0),
-                          HighExpr::makeConst(0, 8)),
-      HighExpr::makeConst(0, 4));
+  Guard.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
+                          HighExpr::makeBinop(NdOp::INT_SLESS, parameter(0),
+                                              HighExpr::makeConst(0, 8)),
+                          HighExpr::makeConst(0, 4));
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   Guard.Body = {Display};
   Func.Body = {Guard};
   const std::string Source = emitFunctions({Func});
@@ -29832,7 +29909,8 @@ TEST(HighCPointerAddresses, ThenPredChainConstArmIsNotSkippable) {
 
   HighStmt Display;
   Display.Kind = StmtKind::Call;
-  Display.CallExpr = HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
+  Display.CallExpr =
+      HighExpr::makeCall("GetDisplayName", 0x140002000, {parameter(0)});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
@@ -29850,7 +29928,8 @@ TEST(HighCPointerAddresses, ThenPredChainConstArmIsNotSkippable) {
 
   HighStmt Extra;
   Extra.Kind = StmtKind::Call;
-  Extra.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
+  Extra.CallExpr =
+      HighExpr::makeCall("CStringT_ctor", 0x140002100, {parameter(1)});
 
   HighStmt Empty;
   Empty.Kind = StmtKind::Call;
@@ -29861,8 +29940,7 @@ TEST(HighCPointerAddresses, ThenPredChainConstArmIsNotSkippable) {
   Func.Body = {Guard, Extra, Empty};
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("t6 = (CStringT*)(uintptr_t)(0)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("t6 = (CStringT*)(uintptr_t)(0)"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("CStringT_ctor("), std::string::npos) << Source;
 }
@@ -29900,15 +29978,17 @@ TEST(HighCPointerAddresses, ThenPredChainCastCondUndefAndJoinLabelFoldsElse) {
   Display.Kind = StmtKind::Assign;
   Display.Dst = HighExpr::makeVar(Temp(80));
   Display.Val = HighExpr::makeCall("GetDisplayName", 0x140002000,
-                                {HighExpr::makeVar(Temp(35))});
+                                   {HighExpr::makeVar(Temp(35))});
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x14000146C;
   HighStmt Taken;
   Taken.Kind = StmtKind::If;
-  Taken.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
-                                   HighExpr::makeConst(0, 8));
-  Taken.Body = {Display, UndefAssign(81), UndefAssign(82), UndefAssign(83), ToJoin};
+  Taken.Cond =
+      HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(35)),
+                          HighExpr::makeConst(0, 8));
+  Taken.Body = {Display, UndefAssign(81), UndefAssign(82), UndefAssign(83),
+                ToJoin};
 
   HighStmt KindIf;
   KindIf.Kind = StmtKind::IfElse;
@@ -29922,8 +30002,8 @@ TEST(HighCPointerAddresses, ThenPredChainCastCondUndefAndJoinLabelFoldsElse) {
   HighStmt KindCall;
   KindCall.Kind = StmtKind::Assign;
   KindCall.Dst = HighExpr::makeVar(Temp(79));
-  KindCall.Val = HighExpr::makeCall("IsKind", 0x140002300,
-                                    {HighExpr::makeVar(Temp(34))});
+  KindCall.Val =
+      HighExpr::makeCall("IsKind", 0x140002300, {HighExpr::makeVar(Temp(34))});
 
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
@@ -29950,17 +30030,19 @@ TEST(HighCPointerAddresses, ThenPredChainCastCondUndefAndJoinLabelFoldsElse) {
 
   HighStmt TailWork;
   TailWork.Kind = StmtKind::Call;
-  TailWork.CallExpr = HighExpr::makeCall("Concatenate", 0x140002400, {parameter(2)});
+  TailWork.CallExpr =
+      HighExpr::makeCall("Concatenate", 0x140002400, {parameter(2)});
   HighStmt TailGoto;
   TailGoto.Kind = StmtKind::Goto;
   TailGoto.GotoTarget = 0x1400017D6;
   HighStmt Dtor;
   Dtor.Kind = StmtKind::Call;
-  Dtor.CallExpr = HighExpr::makeCall("CStringT_dtor", 0x140002500, {parameter(2)});
+  Dtor.CallExpr =
+      HighExpr::makeCall("CStringT_dtor", 0x140002500, {parameter(2)});
   HighStmt EmptyIf;
   EmptyIf.Kind = StmtKind::IfElse;
-  EmptyIf.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(85)),
-                                     HighExpr::makeConst(0, 8));
+  EmptyIf.Cond = HighExpr::makeBinop(
+      NdOp::INT_EQUAL, HighExpr::makeVar(Temp(85)), HighExpr::makeConst(0, 8));
   EmptyIf.Body = {TailWork, TailGoto};
   EmptyIf.ElseBody = {Dtor};
 
@@ -29987,8 +30069,8 @@ TEST(HighCPointerAddresses, ThenNestedGotoJoinFoldsFormatElse) {
 
   HighStmt MasterCall;
   MasterCall.Kind = StmtKind::Call;
-  MasterCall.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1418, 4)});
+  MasterCall.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                           {HighExpr::makeConst(1418, 4)});
   HighStmt MasterGoto;
   MasterGoto.Kind = StmtKind::Goto;
   MasterGoto.GotoTarget = 0x1400016B3;
@@ -30000,15 +30082,15 @@ TEST(HighCPointerAddresses, ThenNestedGotoJoinFoldsFormatElse) {
 
   HighStmt NoneCall;
   NoneCall.Kind = StmtKind::Call;
-  NoneCall.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1416, 4)});
+  NoneCall.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                         {HighExpr::makeConst(1416, 4)});
   HighStmt NoneGoto;
   NoneGoto.Kind = StmtKind::Goto;
   NoneGoto.GotoTarget = 0x1400016B3;
   HighStmt KillCall;
   KillCall.Kind = StmtKind::Call;
-  KillCall.CallExpr =
-      HighExpr::makeCall("GetCommon", 0x140002000, {HighExpr::makeConst(1417, 4)});
+  KillCall.CallExpr = HighExpr::makeCall("GetCommon", 0x140002000,
+                                         {HighExpr::makeConst(1417, 4)});
   HighStmt KillGoto;
   KillGoto.Kind = StmtKind::Goto;
   KillGoto.GotoTarget = 0x1400016B3;
@@ -30127,8 +30209,8 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosComposeOr) {
   ToSkip2.GotoTarget = 0x140001342;
   HighStmt Second;
   Second.Kind = StmtKind::If;
-  Second.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, HighExpr::makeVar(Temp(49)),
-                                    HighExpr::makeConst(0, 8));
+  Second.Cond = HighExpr::makeBinop(
+      NdOp::INT_EQUAL, HighExpr::makeVar(Temp(49)), HighExpr::makeConst(0, 8));
   Second.Body = {UndefAssign(46), ToSkip2};
 
   HighStmt Work;
@@ -30156,8 +30238,7 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsDuplicatePredicate) {
   Func.ReturnType = NdType::makeVoid();
   auto CallEq0 = [](va_t Addr) {
     return HighExpr::makeBinop(
-        NdOp::INT_EQUAL,
-        HighExpr::makeCall("IsKind", Addr, {parameter(0)}),
+        NdOp::INT_EQUAL, HighExpr::makeCall("IsKind", Addr, {parameter(0)}),
         HighExpr::makeConst(0, 4));
   };
   HighStmt ToSkip;
@@ -30205,15 +30286,16 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsLeftoverClobberArgs) {
   First.Kind = StmtKind::If;
   First.Cond = HighExpr::makeBinop(
       NdOp::INT_EQUAL,
-      HighExpr::makeCall("IsKind", 0x140002300,
-                         {parameter(0), HighExpr::makeUndef(8),
-                          HighExpr::makeConst(0, 8)}),
+      HighExpr::makeCall(
+          "IsKind", 0x140002300,
+          {parameter(0), HighExpr::makeUndef(8), HighExpr::makeConst(0, 8)}),
       HighExpr::makeConst(0, 4));
   First.Body = {ToSkip};
   HighStmt Second;
   Second.Kind = StmtKind::If;
   Second.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, HighExpr::makeCall("IsKind", 0x140002308, {parameter(0)}),
+      NdOp::INT_EQUAL,
+      HighExpr::makeCall("IsKind", 0x140002308, {parameter(0)}),
       HighExpr::makeConst(0, 4));
   Second.Body = {ToSkip};
   HighStmt Work;
@@ -30266,9 +30348,9 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsReloadedCallPredicate) {
   HighStmt Cmp1;
   Cmp1.Kind = StmtKind::Assign;
   Cmp1.Dst = HighExpr::makeVar(Temp(49, 0), NdType::makeInt(4));
-  Cmp1.Val = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                 HighExpr::makeVar(Temp(48, 0), NdType::makeInt(4)),
-                                 HighExpr::makeConst(0, 4));
+  Cmp1.Val = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(48, 0), NdType::makeInt(4)),
+      HighExpr::makeConst(0, 4));
   HighStmt First;
   First.Kind = StmtKind::If;
   First.Cond = HighExpr::makeBinop(
@@ -30336,9 +30418,9 @@ TEST(HighCPointerAddresses, InvertThenKeepsReloadedCallInsideCxxTry) {
   HighStmt Cmp1;
   Cmp1.Kind = StmtKind::Assign;
   Cmp1.Dst = HighExpr::makeVar(Temp(49, 1), NdType::makeInt(4));
-  Cmp1.Val = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                                 HighExpr::makeVar(Temp(48, 0), NdType::makeInt(4)),
-                                 HighExpr::makeConst(0, 4));
+  Cmp1.Val = HighExpr::makeBinop(
+      NdOp::INT_NOTEQUAL, HighExpr::makeVar(Temp(48, 0), NdType::makeInt(4)),
+      HighExpr::makeConst(0, 4));
   HighStmt First;
   First.Kind = StmtKind::If;
   First.Cond = HighExpr::makeBinop(
@@ -30352,9 +30434,9 @@ TEST(HighCPointerAddresses, InvertThenKeepsReloadedCallInsideCxxTry) {
   HighStmt Call2;
   Call2.Kind = StmtKind::Assign;
   Call2.Dst = HighExpr::makeVar(Temp(52, 0), NdType::makeInt(4));
-  Call2.Val = HighExpr::makeCall(
-      "IsKind", 0x140002308,
-      {HighExpr::makeVar(Temp(76, 9), NdType::makeInt(8))});
+  Call2.Val =
+      HighExpr::makeCall("IsKind", 0x140002308,
+                         {HighExpr::makeVar(Temp(76, 9), NdType::makeInt(8))});
   HighStmt Second;
   Second.Kind = StmtKind::If;
   Second.Cond = HighExpr::makeBinop(
@@ -30476,8 +30558,8 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosSharedTailKeepsGoto) {
   Exit.Addr = 0x1400017DD;
   Exit.CallExpr = HighExpr::makeCall("rest", 0x140002300, {});
 
-  Func.Body = {First, Probe, Second, Work, Shared, ToExit, Outsider, IntoShared,
-               Exit};
+  Func.Body = {First,  Probe,    Second,     Work, Shared,
+               ToExit, Outsider, IntoShared, Exit};
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   // The shared tail has another incoming edge. Keep its entry outside the
@@ -30522,9 +30604,8 @@ TEST(HighCPointerAddresses, GotoJoinCallArgKeepsTakenAssign) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.Addr = 0x140001174;
-  Call.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x140002000,
-      {parameter(1), HighExpr::makeVar(Src)});
+  Call.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002000,
+                                     {parameter(1), HighExpr::makeVar(Src)});
 
   Func.Body = {Branch, Def, Call};
   const std::string Source = emitFunctions({Func});
@@ -30564,9 +30645,9 @@ TEST(HighCPointerAddresses, GotoJoinCtorKeepsLabelPhiNotFrameSlot) {
   HighStmt Taken;
   Taken.Kind = StmtKind::Assign;
   Taken.Dst = HighExpr::makeVar(Label);
-  Taken.Val = HighExpr::makeBinop(NdOp::INT_ADD,
-                                  parameter(0, Func.Params[0].Type),
-                                  HighExpr::makeConst(240, 8));
+  Taken.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Func.Params[0].Type),
+                          HighExpr::makeConst(240, 8));
   HighStmt ToJoin;
   ToJoin.Kind = StmtKind::Goto;
   ToJoin.GotoTarget = 0x140001174;
@@ -30591,9 +30672,8 @@ TEST(HighCPointerAddresses, GotoJoinCtorKeepsLabelPhiNotFrameSlot) {
   HighStmt Call;
   Call.Kind = StmtKind::Call;
   Call.Addr = 0x140001174;
-  Call.CallExpr = HighExpr::makeCall(
-      "CStringT_ctor", 0x140002000,
-      {parameter(1), HighExpr::makeVar(Label)});
+  Call.CallExpr = HighExpr::makeCall("CStringT_ctor", 0x140002000,
+                                     {parameter(1), HighExpr::makeVar(Label)});
   Func.Body = {Branch, Def, Call};
 
   const std::string Source = emitFunctions({Func});
@@ -30609,8 +30689,8 @@ TEST(HighCPointerAddresses, GotoJoinCtorKeepsLabelPhiNotFrameSlot) {
   EXPECT_NE(Source.find("v22 = (CStringT*)(&this->m_virtualRecordName)"),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("v22 = (CStringT*)(uintptr_t)"),
-            std::string::npos) << Source;
+  EXPECT_NE(Source.find("v22 = (CStringT*)(uintptr_t)"), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("frame_base"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 
@@ -30639,8 +30719,12 @@ TEST(HighCPointerAddresses, GotoJoinCtorKeepsLabelPhiNotFrameSlot) {
        << Source;
   }
   llvm::SmallVector<llvm::StringRef, 8> Arguments{
-      Compiler, "-std=c11", "-fsyntax-only", "-Werror=int-conversion",
-      "-Werror=incompatible-pointer-types", SourcePath};
+      Compiler,
+      "-std=c11",
+      "-fsyntax-only",
+      "-Werror=int-conversion",
+      "-Werror=incompatible-pointer-types",
+      SourcePath};
   const std::optional<llvm::StringRef> Redirects[] = {
       std::nullopt, std::nullopt, ErrorPath.str()};
   std::string Error;
@@ -30758,8 +30842,8 @@ TEST(HighCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
   HighStmt If;
   If.Kind = StmtKind::IfElse;
   If.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL,
-                               HighExpr::makeVar(Ptr, NdType::makeInt(8)),
-                               HighExpr::makeConst(0, 8));
+                                HighExpr::makeVar(Ptr, NdType::makeInt(8)),
+                                HighExpr::makeConst(0, 8));
   If.Body = {ThenLoad, ThenCopy};
   If.ElseBody = {ElseZero};
   HighStmt Pad;
@@ -30774,7 +30858,7 @@ TEST(HighCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
   Image.Kind = StmtKind::Assign;
   Image.Dst = HighExpr::makeVar(Table, NdType::makeInt(8));
   Image.Val = HighExpr::makeLoad(HighExpr::makeConst(0x140052550, 8),
-                                NdType::makeInt(8));
+                                 NdType::makeInt(8));
   MedVar Result;
   Result.Kind = MedVar::Temp;
   Result.Id = 6;
@@ -30783,11 +30867,11 @@ TEST(HighCPointerAddresses, JoinPhiMemberLoadKeepsElseZeroAtCall) {
   HighStmt Call;
   Call.Kind = StmtKind::Assign;
   Call.Dst = HighExpr::makeVar(Result, NdType::makePtr());
-  Call.Val = HighExpr::makeCall(
-      "Catalog_Lookup", 0x140002000,
-      {HighExpr::makeVar(Table, NdType::makeInt(8)),
-       HighExpr::makeConst(0x140005000, 8), HighExpr::makeConst(1, 4),
-       HighExpr::makeVar(Key)});
+  Call.Val =
+      HighExpr::makeCall("Catalog_Lookup", 0x140002000,
+                         {HighExpr::makeVar(Table, NdType::makeInt(8)),
+                          HighExpr::makeConst(0x140005000, 8),
+                          HighExpr::makeConst(1, 4), HighExpr::makeVar(Key)});
   Func.Body = {LoadPtr, If, Pad, Image, Call};
   invertSkipGotos(Func);
   const std::string Source = emitFunctions({Func});
@@ -30838,7 +30922,7 @@ TEST(HighCPointerAddresses, JoinPhiIncomingNotInlinedAsCallImmediate) {
   HighStmt If;
   If.Kind = StmtKind::IfElse;
   If.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, parameter(0),
-                               HighExpr::makeConst(0, 8));
+                                HighExpr::makeConst(0, 8));
   If.ElseBody = {Then, Jump};
 
   HighStmt Else;
@@ -31120,7 +31204,8 @@ TEST(HighCPointerAddresses, FrameAddressValueDeclaresSlot) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("stack_storage["), std::string::npos) << Source;
   EXPECT_NE(Source.find("return ((uint64_t)((uint64_t)(frame_base)"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   expectPortableStore(Source, "int64_t", "- 8", "arg0");
 }
 
@@ -31168,7 +31253,8 @@ TEST(HighCPointerAddresses, FrameAliasPointerTempIsNotDeclared) {
   Func.Name = "frame_ptr";
   Func.FrameSize = 64;
   Func.ReturnType = NdType::makeInt(8);
-  Func.Params = {{"record", NdType::makeInt(8)}, {"result", NdType::makeInt(8)}};
+  Func.Params = {{"record", NdType::makeInt(8)},
+                 {"result", NdType::makeInt(8)}};
   MedVar SP;
   SP.Kind = MedVar::Reg;
   SP.Size = 8;
@@ -31189,8 +31275,8 @@ TEST(HighCPointerAddresses, FrameAliasPointerTempIsNotDeclared) {
       HighExpr::makeConst(48, 8));
   Func.Body.push_back(std::move(Alias));
   auto Slot = HighExpr::makeBinop(NdOp::INT_ADD,
-                                 HighExpr::makeVar(Frame, NdType::makeInt(8)),
-                                 HighExpr::makeConst(64, 8));
+                                  HighExpr::makeVar(Frame, NdType::makeInt(8)),
+                                  HighExpr::makeConst(64, 8));
   HighStmt Call;
   Call.Kind = StmtKind::Assign;
   MedVar Dest;
@@ -31200,7 +31286,7 @@ TEST(HighCPointerAddresses, FrameAliasPointerTempIsNotDeclared) {
   Dest.TheArch = Arch::X64;
   Call.Dst = HighExpr::makeVar(Dest, NdType::makeInt(8));
   Call.Val = HighExpr::makeCall("CRecord_GetRecordName", 0x140002000,
-                               {parameter(0, NdType::makeInt(8)), Slot});
+                                {parameter(0, NdType::makeInt(8)), Slot});
   Func.Body.push_back(std::move(Call));
   returnValue(Func, parameter(1, NdType::makeInt(8)));
   const std::string Source = emitFunctions({Func});
@@ -31281,9 +31367,9 @@ TEST(HighCPointerAddresses, FrameBaseVarUsedAsMemoryPrintsSlotAddress) {
   Init.StoreAddr = HighExpr::makeVar(Base, NdType::makeInt(8));
   Init.StoreVal = HighExpr::makeConst(0, 16);
   Init.StoreVal->Type = ArgTy;
-  auto Values = HighExpr::makeBinop(
-      NdOp::INT_SUB, HighExpr::makeVar(Base, NdType::makeInt(8)),
-      HighExpr::makeConst(8, 8));
+  auto Values = HighExpr::makeBinop(NdOp::INT_SUB,
+                                    HighExpr::makeVar(Base, NdType::makeInt(8)),
+                                    HighExpr::makeConst(8, 8));
   HighStmt Store;
   Store.Kind = StmtKind::Store;
   Store.StoreAddr = Values;
@@ -31297,7 +31383,8 @@ TEST(HighCPointerAddresses, FrameBaseVarUsedAsMemoryPrintsSlotAddress) {
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("LookupTextW("), std::string::npos) << Source;
   EXPECT_NE(Source.find("t68_3 = "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("LookupTextW(arg0, t68_3)"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("LookupTextW(arg0, t68_3)"), std::string::npos)
+      << Source;
   expectPortableStore(Source, "int64_t", "t68_3", "t68_3");
   EXPECT_EQ(Source.find("unknown register"), std::string::npos) << Source;
 }
@@ -31404,9 +31491,11 @@ TEST(HighCPointerAddresses,
   EXPECT_EQ(Source.find("void cookie"), std::string::npos) << Source;
   EXPECT_NE(Source.find("sub_14000173C("), std::string::npos) << Source;
   EXPECT_NE(Source.find("return (int64_t)sub_14000173C(arg0)"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("__builtin_trap(); /* unknown return value */"),
-            std::string::npos) << Source;
+            std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("return;"), std::string::npos) << Source;
 }
 
@@ -32375,7 +32464,8 @@ va_t pdataEntryContaining(const BinaryImage &Img, va_t Addr) {
   return 0;
 }
 
-va_t findExecutableBytes(const BinaryImage &Img, llvm::ArrayRef<uint8_t> Needle) {
+va_t findExecutableBytes(const BinaryImage &Img,
+                         llvm::ArrayRef<uint8_t> Needle) {
   if (Needle.empty())
     return 0;
   for (const Segment &Seg : Img.Segments) {
@@ -32423,8 +32513,7 @@ std::string assignedNameBefore(const std::string &Source,
   while (End > 0 && llvm::isSpace(Source[End - 1]))
     --End;
   size_t Beg = End;
-  while (Beg > 0 &&
-         (llvm::isAlnum(Source[Beg - 1]) || Source[Beg - 1] == '_'))
+  while (Beg > 0 && (llvm::isAlnum(Source[Beg - 1]) || Source[Beg - 1] == '_'))
     --Beg;
   return Source.substr(Beg, End - Beg);
 }
@@ -32540,13 +32629,12 @@ std::string_view sourceLineContaining(std::string_view Source,
   if (At == std::string_view::npos)
     return {};
   const size_t PreviousLine = Source.rfind('\n', At);
-  const size_t Begin = PreviousLine == std::string_view::npos
-                           ? 0
-                           : PreviousLine + 1;
+  const size_t Begin =
+      PreviousLine == std::string_view::npos ? 0 : PreviousLine + 1;
   const size_t NextLine = Source.find('\n', At);
   return Source.substr(Begin, NextLine == std::string_view::npos
-                                 ? Source.size() - Begin
-                                 : NextLine - Begin);
+                                  ? Source.size() - Begin
+                                  : NextLine - Begin);
 }
 
 TEST(HighCPointerAddresses, CorpusBufferedCatchUsesParentFrameForIndex) {
@@ -32898,8 +32986,8 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbePrintsUnwindDestructor) {
 TEST(LLVMCPointerAddresses, AllocaImmediateImageLoadPrintsSyntheticGlobal) {
   // MedLLVM homes: store 0; store image VA; load; inttoptr; load.
   // imageDataVA must recover the VA without a __nd_data_* global.
-  BinaryImage Img = makeImageObjectFixture(
-      0x1400050E0, {0, 0, 0, 0, 0, 0, 0, 0}, true);
+  BinaryImage Img =
+      makeImageObjectFixture(0x1400050E0, {0, 0, 0, 0, 0, 0, 0, 0}, true);
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-alloca-image", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
@@ -32922,8 +33010,8 @@ TEST(LLVMCPointerAddresses, AllocaImmediateImageLoadPrintsSyntheticGlobal) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   EXPECT_NE(Source.find("extern uint64_t g_1400050E0;"), std::string::npos)
       << Source;
@@ -32951,16 +33039,16 @@ TEST(LLVMCPointerAddresses, AllocaReadonlyImageLoadFoldsImmediate) {
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0x140003260), Slot);
   llvm::Value *Addr = Builder.CreateLoad(I64, Slot, "t0_v");
-  llvm::Value *Ld = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(Addr, Ptr), "ld");
+  llvm::Value *Ld =
+      Builder.CreateLoad(I32, Builder.CreateIntToPtr(Addr, Ptr), "ld");
   Builder.CreateRet(Ld);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
   OS.flush();
   EXPECT_NE(Source.find("0xE0421001"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("g_140003260"), std::string::npos) << Source;
@@ -32968,8 +33056,8 @@ TEST(LLVMCPointerAddresses, AllocaReadonlyImageLoadFoldsImmediate) {
 }
 
 TEST(LLVMCPointerAddresses, AllocaImageLoadUsesDebugObjectName) {
-  BinaryImage Img = makeImageObjectFixture(
-      0x1400050E0, {0, 0, 0, 0, 0, 0, 0, 0}, true);
+  BinaryImage Img =
+      makeImageObjectFixture(0x1400050E0, {0, 0, 0, 0, 0, 0, 0, 0}, true);
   class NamedData : public NullDebugContext {
   public:
     std::optional<DataObjectSym> resolveDataObject(va_t Addr) const override {
@@ -32994,8 +33082,7 @@ TEST(LLVMCPointerAddresses, AllocaImageLoadUsesDebugObjectName) {
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0x1400050E0), Slot);
   llvm::Value *Ld = Builder.CreateLoad(
-      I64,
-      Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot, "t76_v"), Ptr),
+      I64, Builder.CreateIntToPtr(Builder.CreateLoad(I64, Slot, "t76_v"), Ptr),
       "ld");
   Builder.CreateRet(Ld);
 
@@ -33043,17 +33130,17 @@ TEST(LLVMCPointerAddresses, NamedImageLoadComposesIntoIfAndCall) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "use_guard", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Ld = Builder.CreateLoad(
-      I64,
-      llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(I64, 0x1400050E0),
-                                      Ptr),
-      "ld");
+  llvm::Value *Ld =
+      Builder.CreateLoad(I64,
+                         llvm::ConstantExpr::getIntToPtr(
+                             llvm::ConstantInt::get(I64, 0x1400050E0), Ptr),
+                         "ld");
   llvm::Value *Copy = Builder.CreateAlloca(I64, nullptr, "t76");
   Builder.CreateStore(Ld, Copy);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I64, 0)), Then, Miss);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I64, 0)),
+                       Then, Miss);
   Builder.SetInsertPoint(Then);
   Builder.CreateCall(Period, {Ld, llvm::ConstantInt::get(I32, 1)});
   Builder.CreateRetVoid();
@@ -33068,8 +33155,7 @@ TEST(LLVMCPointerAddresses, NamedImageLoadComposesIntoIfAndCall) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, &Img, Function));
   OS.flush();
-  EXPECT_NE(Source.find("GetPeriodID(s_instance"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("GetPeriodID(s_instance"), std::string::npos) << Source;
   EXPECT_TRUE(Source.find("if (s_instance)") != std::string::npos ||
               Source.find("if (!(s_instance)") != std::string::npos)
       << Source;
@@ -33150,12 +33236,11 @@ TEST(LLVMCPointerAddresses, NdDataGepPrintsSyntheticGlobalNotNullLoad) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("uint8_t g_140005000[256] = {0};"),
-            std::string::npos)
+  EXPECT_NE(Source.find("uint8_t g_140005000[256] = {0};"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("g_140005000 + 64"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("g_140005040"), std::string::npos) << Source;
@@ -33177,8 +33262,7 @@ TEST(LLVMCPointerAddresses, StaleAllocaZeroDoesNotFoldLaterComputedLoad) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Slot = Builder.CreateAlloca(I64, nullptr, "t0.1");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
-  llvm::Value *Base =
-      Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
+  llvm::Value *Base = Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
   llvm::Value *Add =
       Builder.CreateAdd(Base, llvm::ConstantInt::get(I64, 344), "add");
   Builder.CreateStore(Add, Slot);
@@ -33191,8 +33275,8 @@ TEST(LLVMCPointerAddresses, StaleAllocaZeroDoesNotFoldLaterComputedLoad) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)0x0"), std::string::npos) << Source;
@@ -33227,8 +33311,8 @@ TEST(LLVMCPointerAddresses, ConditionalStoreDoesNotKillEntryZeroOnBypass) {
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   Source += R"(
 int main(void) {
@@ -33246,8 +33330,8 @@ int main(void) {
   const std::string Compiler = *FoundCompiler;
 #endif
   llvm::SmallString<128> SourcePath, ExecutablePath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-entry-zero", "c",
-                                                  SourcePath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-entry-zero", "c", SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-entry-zero", "exe",
                                                   ExecutablePath));
@@ -33273,8 +33357,8 @@ int main(void) {
       << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
       << Source;
   llvm::SmallVector<llvm::StringRef, 1> RunArgs{ExecutablePath};
-  EXPECT_EQ(llvm::sys::ExecuteAndWait(ExecutablePath, RunArgs, std::nullopt,
-                                      {}, 30, 0, &Error),
+  EXPECT_EQ(llvm::sys::ExecuteAndWait(ExecutablePath, RunArgs, std::nullopt, {},
+                                      30, 0, &Error),
             0)
       << Error << "\n"
       << Source;
@@ -33379,8 +33463,7 @@ TEST(LLVMCPointerAddresses, NamedRecordFieldLoadPrintsArrow) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Slot = Builder.CreateAlloca(I64, nullptr, "t0.1");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
-  llvm::Value *Base =
-      Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
+  llvm::Value *Base = Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
   llvm::Value *Add =
       Builder.CreateAdd(Base, llvm::ConstantInt::get(I64, 100), "add");
   Builder.CreateStore(Add, Slot);
@@ -33393,8 +33476,8 @@ TEST(LLVMCPointerAddresses, NamedRecordFieldLoadPrintsArrow) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CRecord* this"), std::string::npos) << Source;
   EXPECT_NE(Source.find("this->m_rank"), std::string::npos) << Source;
@@ -33433,8 +33516,8 @@ TEST(LLVMCPointerAddresses, AddressOfWrapperRecordOmitsOffset0Field) {
   llvm::FunctionType *LenTy = llvm::FunctionType::get(I64, {Ptr}, false);
   llvm::Function *GetLength = llvm::Function::Create(
       LenTy, llvm::GlobalValue::ExternalLinkage, "GetLength", Module);
-  llvm::FunctionType *UseTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I64}, false);
+  llvm::FunctionType *UseTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I64}, false);
   llvm::Function *Use = llvm::Function::Create(
       UseTy, llvm::GlobalValue::ExternalLinkage, "use_ptr", Module);
   llvm::FunctionType *FnTy =
@@ -33445,8 +33528,7 @@ TEST(LLVMCPointerAddresses, AddressOfWrapperRecordOmitsOffset0Field) {
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Base = Builder.CreatePtrToInt(Function->getArg(0), I64);
-  llvm::Value *Add =
-      Builder.CreateAdd(Base, llvm::ConstantInt::get(I64, 32));
+  llvm::Value *Add = Builder.CreateAdd(Base, llvm::ConstantInt::get(I64, 32));
   llvm::Value *MemPtr = Builder.CreateIntToPtr(Add, Ptr);
   Builder.CreateCall(GetLength, {MemPtr});
   Builder.CreateCall(Use, {Builder.CreateLoad(I64, MemPtr)});
@@ -33456,8 +33538,8 @@ TEST(LLVMCPointerAddresses, AddressOfWrapperRecordOmitsOffset0Field) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("GetLength(&this->m_auxName)"), std::string::npos)
       << Source;
@@ -33515,10 +33597,11 @@ TEST(LLVMCPointerAddresses, IntegerFieldStorePreservesCallViewAndStoreWidth) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("*(uint64_t*)&this->values_ = "), std::string::npos) << Source;
+  EXPECT_NE(Source.find("*(uint64_t*)&this->values_ = "), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("(uint32_t)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uint64_t)"), std::string::npos) << Source;
 }
@@ -33533,21 +33616,24 @@ TEST(LLVMCPointerAddresses, UnsignedAbovePrintsGreater) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "above", Module);
   Function->getArg(0)->setName("maxCount");
   Function->getArg(1)->setName("cnt");
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Else = llvm::BasicBlock::Create(Context, "else", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Sub = Builder.CreateSub(Function->getArg(0), Function->getArg(1));
+  llvm::Value *Sub =
+      Builder.CreateSub(Function->getArg(0), Function->getArg(1));
   llvm::Value *Eq = Builder.CreateICmpEQ(Sub, llvm::ConstantInt::get(I32, 0));
-  llvm::Value *Ult = Builder.CreateICmpULT(Function->getArg(0), Function->getArg(1));
+  llvm::Value *Ult =
+      Builder.CreateICmpULT(Function->getArg(0), Function->getArg(1));
   llvm::Value *NotUlt = Builder.CreateICmpEQ(Builder.CreateZExt(Ult, I8),
-                                            llvm::ConstantInt::get(I8, 0));
+                                             llvm::ConstantInt::get(I8, 0));
   llvm::Value *NotEq = Builder.CreateICmpEQ(Builder.CreateZExt(Eq, I8),
-                                           llvm::ConstantInt::get(I8, 0));
+                                            llvm::ConstantInt::get(I8, 0));
   llvm::Value *And = Builder.CreateAnd(Builder.CreateZExt(NotUlt, I8),
-                                      Builder.CreateZExt(NotEq, I8));
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(And, llvm::ConstantInt::get(I8, 0)), Then, Else);
+                                       Builder.CreateZExt(NotEq, I8));
+  Builder.CreateCondBr(Builder.CreateICmpNE(And, llvm::ConstantInt::get(I8, 0)),
+                       Then, Else);
   Builder.SetInsertPoint(Then);
   Builder.CreateRet(llvm::ConstantInt::get(I32, 1));
   Builder.SetInsertPoint(Else);
@@ -33606,8 +33692,7 @@ TEST(LLVMCPointerAddresses, NestedMapFieldLoadPrintsBinsPath) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Slot = Builder.CreateAlloca(I64, nullptr, "t0.1");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), Slot);
-  llvm::Value *Base =
-      Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
+  llvm::Value *Base = Builder.CreatePtrToInt(Function->getArg(0), I64, "RCX");
   llvm::Value *Add =
       Builder.CreateAdd(Base, llvm::ConstantInt::get(I64, 168), "add");
   Builder.CreateStore(Add, Slot);
@@ -33620,11 +33705,10 @@ TEST(LLVMCPointerAddresses, NestedMapFieldLoadPrintsBinsPath) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("this->m_colorTable.m_ppBins"),
-            std::string::npos)
+  EXPECT_NE(Source.find("this->m_colorTable.m_ppBins"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
 }
@@ -33683,11 +33767,10 @@ TEST(LLVMCPointerAddresses, ThisHomeLaterBlockPrintsNestedField) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("this->m_colorTable.m_nBins"),
-            std::string::npos)
+  EXPECT_NE(Source.find("this->m_colorTable.m_nBins"), std::string::npos)
       << Source;
 }
 
@@ -33744,13 +33827,12 @@ TEST(LLVMCPointerAddresses, NestedPtrBoxInnerRecordFieldPrintsArrow) {
       Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 80), "add"),
       AddrSlot);
   llvm::Value *PtrV = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(Builder.CreateLoad(I64, AddrSlot), Ptr),
-      "p");
+      I64, Builder.CreateIntToPtr(Builder.CreateLoad(I64, AddrSlot), Ptr), "p");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), ValSlot);
   Builder.CreateStore(PtrV, ValSlot);
-  llvm::Value *Inner = Builder.CreateAdd(
-      Builder.CreateLoad(I64, ValSlot, "p_v"),
-      llvm::ConstantInt::get(I64, 152), "id_addr");
+  llvm::Value *Inner =
+      Builder.CreateAdd(Builder.CreateLoad(I64, ValSlot, "p_v"),
+                        llvm::ConstantInt::get(I64, 152), "id_addr");
   llvm::Value *Ld =
       Builder.CreateLoad(I32, Builder.CreateIntToPtr(Inner, Ptr), "id");
   Builder.CreateRet(Ld);
@@ -33759,8 +33841,8 @@ TEST(LLVMCPointerAddresses, NestedPtrBoxInnerRecordFieldPrintsArrow) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("this->m_pRecordData.p->m_core.id"), std::string::npos)
       << Source;
@@ -33793,8 +33875,7 @@ TEST(LLVMCPointerAddresses, NamedRecordFieldAddressPrintsAmpersand) {
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *IsEmptyTy =
-      llvm::FunctionType::get(I32, {Ptr}, false);
+  llvm::FunctionType *IsEmptyTy = llvm::FunctionType::get(I32, {Ptr}, false);
   llvm::Function *IsEmpty = llvm::Function::Create(
       IsEmptyTy, llvm::GlobalValue::ExternalLinkage, "IsEmpty", Module);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {Ptr}, false);
@@ -33814,8 +33895,8 @@ TEST(LLVMCPointerAddresses, NamedRecordFieldAddressPrintsAmpersand) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("IsEmpty(&this->m_auxName)"), std::string::npos)
       << Source;
@@ -33853,9 +33934,9 @@ TEST(LLVMCPointerAddresses, ThisFieldAddressHomePrintsNestedMember) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecordBadge_GetDisplayName",
-      Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecordBadge_GetDisplayName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140016d30);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
@@ -33873,9 +33954,8 @@ TEST(LLVMCPointerAddresses, ThisFieldAddressHomePrintsNestedMember) {
       llvm::BasicBlock::Create(Context, "isnull", Function);
   llvm::BasicBlock *CallBlk =
       llvm::BasicBlock::Create(Context, "vcall", Function);
-  Builder.CreateCondBr(
-      Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I64, 0)), CallBlk,
-      NullBlk);
+  Builder.CreateCondBr(Builder.CreateICmpNE(Ld, llvm::ConstantInt::get(I64, 0)),
+                       CallBlk, NullBlk);
   Builder.SetInsertPoint(NullBlk);
   Builder.CreateRet(Function->getArg(1));
   Builder.SetInsertPoint(CallBlk);
@@ -33885,8 +33965,8 @@ TEST(LLVMCPointerAddresses, ThisFieldAddressHomePrintsNestedMember) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("this->m_pBadge.p"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
@@ -33924,9 +34004,9 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I64, {Ptr, I64}, false);
-  llvm::Function *Function = llvm::Function::Create(
-      FnTy, llvm::GlobalValue::ExternalLinkage, "CRecordBadge_GetDisplayName",
-      Module);
+  llvm::Function *Function =
+      llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                             "CRecordBadge_GetDisplayName", Module);
   rewrite_source::setOriginalVA(*Function, 0x140016d30);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
@@ -33961,8 +34041,7 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   llvm::Value *FnI = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(SlotAddr, Ptr, "slotptr"), "fn");
   llvm::Value *Callee = Builder.CreateIntToPtr(FnI, Ptr, "fp");
-  llvm::FunctionType *CallTy =
-      llvm::FunctionType::get(I64, {I64, I64}, false);
+  llvm::FunctionType *CallTy = llvm::FunctionType::get(I64, {I64, I64}, false);
   Builder.CreateCall(CallTy, Callee, {BadgeV, Function->getArg(1)});
   Builder.CreateRet(Function->getArg(1));
 
@@ -33970,15 +34049,16 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("(*(void **)((uintptr_t)(*(void **)("),
             std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("CStringT* CRecordBadge_GetDisplayName(CRecordBadge* this, "
-                        "CStringT* result)"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find("CStringT* CRecordBadge_GetDisplayName(CRecordBadge* this, "
+                  "CStringT* result)"),
+      std::string::npos)
       << Source;
   EXPECT_NE(Source.find("this->m_pBadge.p"), std::string::npos) << Source;
   EXPECT_NE(Source.find(" + 88))"), std::string::npos) << Source;
@@ -33997,8 +34077,8 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsNestedLoadedCallee) {
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "release", Module);
   llvm::IRBuilder<> Builder(
@@ -34009,8 +34089,7 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsNestedLoadedCallee) {
   llvm::Value *FnI = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(Vtbl, Ptr, "slotptr"), "fn");
   llvm::Value *Callee = Builder.CreateIntToPtr(FnI, Ptr, "fp");
-  llvm::FunctionType *CallTy =
-      llvm::FunctionType::get(I64, {Ptr, I32}, false);
+  llvm::FunctionType *CallTy = llvm::FunctionType::get(I64, {Ptr, I32}, false);
   Builder.CreateCall(CallTy, Callee,
                      {Function->getArg(0), llvm::ConstantInt::get(I32, 1)});
   Builder.CreateRetVoid();
@@ -34019,8 +34098,8 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsNestedLoadedCallee) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("(**(void ***)("), std::string::npos) << Source;
   EXPECT_NE(Source.find(", 1)"), std::string::npos) << Source;
@@ -34042,8 +34121,8 @@ TEST(LLVMCPointerAddresses, SyntheticFrameRbxSpillIsHidden) {
   llvm::Value *RBX = Builder.CreateAlloca(I64, nullptr, "RBX");
   llvm::Value *RSP = Builder.CreateAlloca(I64, nullptr, "RSP");
   llvm::Value *RSP1 = Builder.CreateAlloca(I64, nullptr, "RSP.1");
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), RBX);
   llvm::Value *FrameEnd = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
@@ -34063,8 +34142,8 @@ TEST(LLVMCPointerAddresses, SyntheticFrameRbxSpillIsHidden) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("&frame"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;
@@ -34083,8 +34162,8 @@ TEST(LLVMCPointerAddresses, SyntheticFrameSlotFoldsAddSubChain) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "frame_fold", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Addr = Builder.CreatePtrToInt(End, I64);
@@ -34098,8 +34177,8 @@ TEST(LLVMCPointerAddresses, SyntheticFrameSlotFoldsAddSubChain) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("&frame"), std::string::npos) << Source;
   EXPECT_NE(Source.find("40"), std::string::npos) << Source;
@@ -34114,13 +34193,13 @@ TEST(LLVMCPointerAddresses, SyntheticFrameOrNeedsKnownZeroBits) {
     llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
     llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
     llvm::FunctionType *FnTy = llvm::FunctionType::get(Ptr, false);
-    llvm::Function *Function = llvm::Function::Create(
-        FnTy, llvm::GlobalValue::ExternalLinkage,
-        BitwiseOr ? "frame_or" : "frame_add", Module);
+    llvm::Function *Function =
+        llvm::Function::Create(FnTy, llvm::GlobalValue::ExternalLinkage,
+                               BitwiseOr ? "frame_or" : "frame_add", Module);
     llvm::IRBuilder<> Builder(
         llvm::BasicBlock::Create(Context, "entry", Function));
-    llvm::Value *Frame = Builder.CreateAlloca(
-        llvm::ArrayType::get(I8, 64), nullptr, "frame");
+    llvm::Value *Frame =
+        Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
     llvm::Value *Base = Builder.CreatePtrToInt(Frame, I64);
     llvm::Value *Eight = llvm::ConstantInt::get(I64, 8);
     llvm::Value *Address = BitwiseOr ? Builder.CreateOr(Base, Eight)
@@ -34131,8 +34210,8 @@ TEST(LLVMCPointerAddresses, SyntheticFrameOrNeedsKnownZeroBits) {
     llvm::raw_string_ostream OS(Source);
     CEmitterOptions Options;
     Options.EmitIncludes = false;
-    EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                    Function));
+    EXPECT_TRUE(
+        LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
     OS.flush();
     return Source;
   };
@@ -34157,26 +34236,25 @@ TEST(LLVMCPointerAddresses, RepeatedFrameOrKeepsStoreLoadAlias) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "frame_or_alias", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 64), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 64), nullptr, "frame");
   llvm::Value *Base = Builder.CreatePtrToInt(Frame, I64);
   llvm::Value *Once =
       Builder.CreateOr(Base, llvm::ConstantInt::get(I64, 8), "once");
   llvm::Value *Twice =
       Builder.CreateOr(Once, llvm::ConstantInt::get(I64, 8), "twice");
-  llvm::Value *Sentinel = Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 16));
+  llvm::Value *Sentinel =
+      Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 16));
   Builder.CreateStore(llvm::ConstantInt::get(I8, 7), Sentinel);
   Builder.CreateStore(llvm::ConstantInt::get(I8, 42),
                       Builder.CreateIntToPtr(Once, Ptr));
-  Builder.CreateRet(
-      Builder.CreateLoad(I8, Builder.CreateIntToPtr(Twice, Ptr)));
+  Builder.CreateRet(Builder.CreateLoad(I8, Builder.CreateIntToPtr(Twice, Ptr)));
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find(" | 8"), std::string::npos) << Source;
   Source += R"(
@@ -34193,14 +34271,14 @@ int main(void) {
   const std::string Compiler = *FoundCompiler;
 #endif
   llvm::SmallString<128> SourcePath, ExecutablePath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-frame-or", "c",
-                                                  SourcePath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-frame-or", "c", SourcePath));
   llvm::FileRemover RemoveSource(SourcePath);
   ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-frame-or", "exe",
                                                   ExecutablePath));
   llvm::FileRemover RemoveExecutable(ExecutablePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-frame-or", "err",
-                                                  ErrorPath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-frame-or", "err", ErrorPath));
   llvm::FileRemover RemoveError(ErrorPath);
   std::error_code EC;
   {
@@ -34220,8 +34298,8 @@ int main(void) {
       << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
       << Source;
   llvm::SmallVector<llvm::StringRef, 1> RunArgs{ExecutablePath};
-  EXPECT_EQ(llvm::sys::ExecuteAndWait(ExecutablePath, RunArgs, std::nullopt,
-                                      {}, 30, 0, &Error),
+  EXPECT_EQ(llvm::sys::ExecuteAndWait(ExecutablePath, RunArgs, std::nullopt, {},
+                                      30, 0, &Error),
             0)
       << Error << "\n"
       << Source;
@@ -34270,17 +34348,17 @@ TEST(LLVMCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *GetDataTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, I32}, false);
-  llvm::Function *GetData = llvm::Function::Create(
-      GetDataTy, llvm::GlobalValue::ExternalLinkage, "CAuxDataTable_GetData",
-      Module);
+  llvm::Function *GetData =
+      llvm::Function::Create(GetDataTy, llvm::GlobalValue::ExternalLinkage,
+                             "CAuxDataTable_GetData", Module);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(I32, {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "aux_type", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -34290,24 +34368,24 @@ TEST(LLVMCPointerAddresses, FramePtrBoxInteriorLoadPrintsArrow) {
       Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16), "field");
   llvm::Value *SlotHome = Builder.CreateAlloca(I64, nullptr, "rdx");
   Builder.CreateStore(Slot, SlotHome);
-  Builder.CreateCall(GetData, {Function->getArg(0),
-                               Builder.CreateIntToPtr(
-                                   Builder.CreateLoad(I64, SlotHome), Ptr),
-                               llvm::ConstantInt::get(I32, 1)});
-  llvm::Value *P = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(Field, Ptr), "p");
+  Builder.CreateCall(
+      GetData, {Function->getArg(0),
+                Builder.CreateIntToPtr(Builder.CreateLoad(I64, SlotHome), Ptr),
+                llvm::ConstantInt::get(I32, 1)});
+  llvm::Value *P =
+      Builder.CreateLoad(I64, Builder.CreateIntToPtr(Field, Ptr), "p");
   llvm::Value *TypeAddr =
       Builder.CreateAdd(P, llvm::ConstantInt::get(I64, 24), "type_addr");
-  llvm::Value *Ty = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(TypeAddr, Ptr), "m_type");
+  llvm::Value *Ty =
+      Builder.CreateLoad(I32, Builder.CreateIntToPtr(TypeAddr, Ptr), "m_type");
   Builder.CreateRet(Ty);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CAuxDataTable_GetData"), std::string::npos) << Source;
@@ -34360,9 +34438,9 @@ TEST(LLVMCPointerAddresses, FramePtrBoxPointerLoadComposesIntoIf) {
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *GetDataTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, I32}, false);
-  llvm::Function *GetData = llvm::Function::Create(
-      GetDataTy, llvm::GlobalValue::ExternalLinkage, "CAuxDataTable_GetData",
-      Module);
+  llvm::Function *GetData =
+      llvm::Function::Create(GetDataTy, llvm::GlobalValue::ExternalLinkage,
+                             "CAuxDataTable_GetData", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
@@ -34370,8 +34448,8 @@ TEST(LLVMCPointerAddresses, FramePtrBoxPointerLoadComposesIntoIf) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -34381,20 +34459,19 @@ TEST(LLVMCPointerAddresses, FramePtrBoxPointerLoadComposesIntoIf) {
       Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16), "field");
   llvm::Value *SlotHome = Builder.CreateAlloca(I64, nullptr, "rdx");
   Builder.CreateStore(Slot, SlotHome);
-  Builder.CreateCall(GetData, {Function->getArg(0),
-                               Builder.CreateIntToPtr(
-                                   Builder.CreateLoad(I64, SlotHome), Ptr),
-                               llvm::ConstantInt::get(I32, 1)});
-  llvm::Value *P = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(Field, Ptr), "p");
+  Builder.CreateCall(
+      GetData, {Function->getArg(0),
+                Builder.CreateIntToPtr(Builder.CreateLoad(I64, SlotHome), Ptr),
+                llvm::ConstantInt::get(I32, 1)});
+  llvm::Value *P =
+      Builder.CreateLoad(I64, Builder.CreateIntToPtr(Field, Ptr), "p");
   llvm::Value *Copy = Builder.CreateAlloca(I64, nullptr, "t76");
   Builder.CreateStore(P, Copy);
   llvm::Value *Reload = Builder.CreateLoad(I64, Copy, "t76_v");
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
   Builder.CreateCondBr(
-      Builder.CreateICmpNE(Reload, llvm::ConstantInt::get(I64, 0)), Then,
-      Miss);
+      Builder.CreateICmpNE(Reload, llvm::ConstantInt::get(I64, 0)), Then, Miss);
   Builder.SetInsertPoint(Then);
   Builder.CreateRetVoid();
   Builder.SetInsertPoint(Miss);
@@ -34404,8 +34481,8 @@ TEST(LLVMCPointerAddresses, FramePtrBoxPointerLoadComposesIntoIf) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_TRUE(Source.find("if (pAuxData.p)") != std::string::npos ||
               Source.find("if (!(pAuxData.p)") != std::string::npos)
@@ -34478,8 +34555,8 @@ TEST(LLVMCPointerAddresses, SPFrameLocalOwnsNameOverStaleFrameProcOffset) {
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   auto *Take = llvm::Function::Create(
       CallTy, llvm::GlobalValue::ExternalLinkage, "TakeAux", Module);
-  auto *Use = llvm::Function::Create(
-      CallTy, llvm::GlobalValue::ExternalLinkage, "UseArgs", Module);
+  auto *Use = llvm::Function::Create(CallTy, llvm::GlobalValue::ExternalLinkage,
+                                     "UseArgs", Module);
   rewrite_source::setOriginalVA(*Take, 0x140002000);
   rewrite_source::setOriginalVA(*Use, 0x140003000);
   auto *Function = llvm::Function::Create(
@@ -34490,8 +34567,8 @@ TEST(LLVMCPointerAddresses, SPFrameLocalOwnsNameOverStaleFrameProcOffset) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 208), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
+                                  "frame_end");
   llvm::Value *Actual = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 48), "actual");
   llvm::Value *Stale = Builder.CreateInBoundsGEP(
@@ -34508,8 +34585,8 @@ TEST(LLVMCPointerAddresses, SPFrameLocalOwnsNameOverStaleFrameProcOffset) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("ArgList var_m20"), std::string::npos) << Source;
@@ -34578,8 +34655,8 @@ TEST(LLVMCPointerAddresses, WideArgListCopyViewsReusedPtrBoxStorage) {
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Frame =
       Builder.CreateAlloca(llvm::ArrayType::get(I8, 208), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
+                                  "frame_end");
   llvm::Value *Aux = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 48), "aux");
   llvm::Value *Copy = Builder.CreateInBoundsGEP(
@@ -34596,13 +34673,12 @@ TEST(LLVMCPointerAddresses, WideArgListCopyViewsReusedPtrBoxStorage) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m18 = *((ArgList *)&pAuxData)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("var_m18 = *((ArgList *)&pAuxData)"), std::string::npos)
       << Source;
 }
 
@@ -34671,18 +34747,17 @@ TEST(LLVMCPointerAddresses, ArgListCallTypeOverlaysPtrBoxIntegerStore) {
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "pack", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -34707,8 +34782,8 @@ TEST(LLVMCPointerAddresses, ArgListCallTypeOverlaysPtrBoxIntegerStore) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("((ArgList *)&pAuxData)->types_ = 178"),
@@ -34773,27 +34848,26 @@ TEST(LLVMCPointerAddresses, ArgListMixedCallStoresCastToFieldTypes) {
   llvm::Type *I32 = llvm::Type::getInt32Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  auto MakeCallee = [&](llvm::StringRef Name, va_t Addr,
-                        llvm::Type *Ret) {
+  auto MakeCallee = [&](llvm::StringRef Name, va_t Addr, llvm::Type *Ret) {
     auto *Ty = llvm::FunctionType::get(Ret, {Ptr}, false);
-    auto *Fn = llvm::Function::Create(
-        Ty, llvm::GlobalValue::ExternalLinkage, Name, Module);
+    auto *Fn = llvm::Function::Create(Ty, llvm::GlobalValue::ExternalLinkage,
+                                      Name, Module);
     rewrite_source::setOriginalVA(*Fn, Addr);
     return Fn;
   };
   llvm::Function *Cstr = MakeCallee("CSimpleStringT_cstr", 0x140003000, I64);
   llvm::Function *GetLen = MakeCallee("GetLength", 0x140004000, I32);
-  llvm::Function *Use = MakeCallee("format_args", 0x140002000,
-                                   llvm::Type::getVoidTy(Context));
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::Function *Use =
+      MakeCallee("format_args", 0x140002000, llvm::Type::getVoidTy(Context));
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "pack_mixed_calls", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -34802,8 +34876,7 @@ TEST(LLVMCPointerAddresses, ArgListMixedCallStoresCastToFieldTypes) {
   llvm::Value *Field =
       Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 16), "field");
   llvm::Value *Home = Builder.CreateIntToPtr(Slot, Ptr, "home");
-  llvm::Value *Chars =
-      Builder.CreateCall(Cstr, {Function->getArg(0)}, "chars");
+  llvm::Value *Chars = Builder.CreateCall(Cstr, {Function->getArg(0)}, "chars");
   Builder.CreateStore(Chars, Home);
   llvm::Value *Length =
       Builder.CreateCall(GetLen, {Function->getArg(0)}, "length");
@@ -34816,8 +34889,8 @@ TEST(LLVMCPointerAddresses, ArgListMixedCallStoresCastToFieldTypes) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("((ArgList *)&pAuxData)->types_ = (uintptr_t)("),
@@ -34830,11 +34903,9 @@ TEST(LLVMCPointerAddresses, ArgListMixedCallStoresCastToFieldTypes) {
                         "GetLength(arg0))))"),
             std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("->types_ = CSimpleStringT_cstr("),
-            std::string::npos)
+  EXPECT_EQ(Source.find("->types_ = CSimpleStringT_cstr("), std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("->values_ = GetLength("), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("->values_ = GetLength("), std::string::npos) << Source;
 
   const std::string ExecutableSource = R"(
 #include <stdint.h>
@@ -34991,18 +35062,17 @@ TEST(LLVMCPointerAddresses, ExtraClippedArgListHomeTakesCallType) {
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "pack_extra", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35036,15 +35106,14 @@ TEST(LLVMCPointerAddresses, ExtraClippedArgListHomeTakesCallType) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox pAuxData"), std::string::npos) << Source;
   EXPECT_NE(Source.find("ArgList var_m8"), std::string::npos) << Source;
   EXPECT_NE(Source.find("types_ = 178"), std::string::npos) << Source;
   EXPECT_NE(Source.find("values_"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("pAuxData.p = (uint64_t)(uint32_t)"),
-            std::string::npos)
+  EXPECT_EQ(Source.find("pAuxData.p = (uint64_t)(uint32_t)"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("pAuxData.p ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("values_ = arg0"), std::string::npos) << Source;
@@ -35088,15 +35157,14 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *I128 = llvm::Type::getInt128Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *SinkTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I128}, false);
+  llvm::FunctionType *SinkTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I128}, false);
   llvm::Function *Sink = llvm::Function::Create(
       SinkTy, llvm::GlobalValue::ExternalLinkage, "sink_wide", Module);
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
   llvm::FunctionType *FnTy = llvm::FunctionType::get(
       llvm::Type::getVoidTy(Context), {Ptr, I64}, false);
@@ -35105,8 +35173,8 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35133,8 +35201,8 @@ TEST(LLVMCPointerAddresses, WideArgListCopyTypesWeakerDest) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("ArgList var_m8"), std::string::npos) << Source;
   EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
@@ -35178,18 +35246,17 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "taken_values", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35215,8 +35282,8 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
   EXPECT_NE(Source.find("types_ = 43"), std::string::npos) << Source;
@@ -35299,20 +35366,20 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "leftover_eax", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 80), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35338,8 +35405,7 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
       Builder.CreateCall(Period, {Function->getArg(0)}, "period");
   llvm::Value *PeriodHome = Builder.CreateAlloca(I32, nullptr, "period_home");
   Builder.CreateStore(PeriodV, PeriodHome);
-  llvm::Value *PeriodLd =
-      Builder.CreateLoad(I32, PeriodHome, "period_ld");
+  llvm::Value *PeriodLd = Builder.CreateLoad(I32, PeriodHome, "period_ld");
   llvm::Value *Cmp =
       Builder.CreateICmpEQ(PeriodLd, llvm::ConstantInt::get(I32, 0), "is_zero");
   Builder.CreateCondBr(Cmp, Miss, Then);
@@ -35366,8 +35432,8 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("ArgList var_m18"), std::string::npos) << Source;
   EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
@@ -35376,8 +35442,7 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("pAuxData._Ptr = 0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("var_m28 = *((ArgList *)&pAuxData)"),
-            std::string::npos)
+  EXPECT_NE(Source.find("var_m28 = *((ArgList *)&pAuxData)"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("var_m28 = pAuxData"), std::string::npos) << Source;
 }
@@ -35457,20 +35522,20 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "leftover_eax_copy", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 80), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35493,8 +35558,7 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
       Builder.CreateCall(Period, {Function->getArg(0)}, "period");
   llvm::Value *PeriodHome = Builder.CreateAlloca(I32, nullptr, "period_home");
   Builder.CreateStore(PeriodV, PeriodHome);
-  llvm::Value *PeriodLd =
-      Builder.CreateLoad(I32, PeriodHome, "period_ld");
+  llvm::Value *PeriodLd = Builder.CreateLoad(I32, PeriodHome, "period_ld");
   llvm::Value *Cmp =
       Builder.CreateICmpEQ(PeriodLd, llvm::ConstantInt::get(I32, 0), "is_zero");
   Builder.CreateCondBr(Cmp, Miss, Then);
@@ -35521,16 +35585,16 @@ TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_"), std::string::npos) << Source;
   unsigned PeriodCalls = 0;
-  for (size_t At = 0; (At = Source.find("GetPeriodID(", At)) != std::string::npos;
-       At += 1)
+  for (size_t At = 0;
+       (At = Source.find("GetPeriodID(", At)) != std::string::npos; At += 1)
     ++PeriodCalls;
   EXPECT_EQ(PeriodCalls, 1u) << Source;
 }
@@ -35595,33 +35659,35 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
   llvm::Type *I128 = llvm::Type::getInt128Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
   llvm::FunctionType *AdjustmentTy = llvm::FunctionType::get(I32, {Ptr}, false);
-  llvm::Function *Adjustment = llvm::Function::Create(
-      AdjustmentTy, llvm::GlobalValue::ExternalLinkage, "GetAdjustmentLevel", Module);
+  llvm::Function *Adjustment =
+      llvm::Function::Create(AdjustmentTy, llvm::GlobalValue::ExternalLinkage,
+                             "GetAdjustmentLevel", Module);
   rewrite_source::setOriginalVA(*Adjustment, 0x140002300);
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "adjustment_level", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 480), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 480), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 400), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
   auto Slot = [&](uint64_t Delta, const char *Name) {
     llvm::Value *Addr =
         Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, Delta), Name);
-    return Builder.CreateIntToPtr(Addr, Ptr, (std::string(Name) + "_p").c_str());
+    return Builder.CreateIntToPtr(Addr, Ptr,
+                                  (std::string(Name) + "_p").c_str());
   };
   llvm::Value *Src = Slot(0xC8, "src");
   llvm::Value *Dest = Slot(0x50, "dest");
@@ -35638,11 +35704,10 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
   ThenBuilder.CreateStore(ThenBuilder.CreateLoad(I32, LevelHome, "level_use"),
                           Src);
   ThenBuilder.CreateStore(ThenBuilder.CreateLoad(I128, Src, "wide"), Dest);
-  ThenBuilder.CreateCall(Common,
-                         {Function->getArg(0),
-                          llvm::ConstantPointerNull::get(
-                              llvm::cast<llvm::PointerType>(Ptr)),
-                          Dest});
+  ThenBuilder.CreateCall(Common, {Function->getArg(0),
+                                  llvm::ConstantPointerNull::get(
+                                      llvm::cast<llvm::PointerType>(Ptr)),
+                                  Dest});
   ThenBuilder.CreateRetVoid();
   llvm::IRBuilder<>(Miss).CreateRetVoid();
 
@@ -35650,20 +35715,22 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("var_m50.types_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m50 = var_mC8"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_mC8.types_"), std::string::npos) << Source;
   unsigned Calls = 0;
-  for (size_t At = 0; (At = Source.find("GetAdjustmentLevel(", At)) != std::string::npos;
+  for (size_t At = 0;
+       (At = Source.find("GetAdjustmentLevel(", At)) != std::string::npos;
        At += 1)
     ++Calls;
   EXPECT_EQ(Calls, 1u) << Source;
 }
 
-TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResultThroughInvoke) {
+TEST(LLVMCPointerAddresses,
+     LeftoverEaxPackedSiblingTakesCallResultThroughInvoke) {
   auto Aux = NdType::makeNamedRecord("CAuxData", 64);
   Aux->FieldDisplayNames = {"m_type"};
   Aux->FieldDisplayOffsets = {24};
@@ -35731,11 +35798,9 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResultThroughInvoke
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *I128 = llvm::Type::getInt128Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *PersTy =
-      llvm::FunctionType::get(I32, /*isVarArg=*/true);
+  llvm::FunctionType *PersTy = llvm::FunctionType::get(I32, /*isVarArg=*/true);
   llvm::Function *Pers = llvm::Function::Create(
-      PersTy, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler3",
-      Module);
+      PersTy, llvm::GlobalValue::ExternalLinkage, "__CxxFrameHandler3", Module);
   llvm::FunctionType *CtorTy = llvm::FunctionType::get(Ptr, {Ptr, Ptr}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
@@ -35746,24 +35811,24 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResultThroughInvoke
   llvm::FunctionType *CommonTy =
       llvm::FunctionType::get(Ptr, {Ptr, Ptr, Ptr}, false);
   llvm::Function *Common = llvm::Function::Create(
-      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW",
-      Module);
+      CommonTy, llvm::GlobalValue::ExternalLinkage, "LookupTextW", Module);
   rewrite_source::setOriginalVA(*Common, 0x140002000);
-  llvm::FunctionType *FnTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *FnTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Function = llvm::Function::Create(
       FnTy, llvm::GlobalValue::ExternalLinkage, "leftover_eax", Module);
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   Function->setPersonalityFn(Pers);
-  llvm::BasicBlock *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  llvm::BasicBlock *Entry =
+      llvm::BasicBlock::Create(Context, "entry", Function);
   llvm::BasicBlock *Mid = llvm::BasicBlock::Create(Context, "mid", Function);
   llvm::BasicBlock *Then = llvm::BasicBlock::Create(Context, "then", Function);
   llvm::BasicBlock *Unwind =
       llvm::BasicBlock::Create(Context, "unwind", Function);
   llvm::BasicBlock *Miss = llvm::BasicBlock::Create(Context, "miss", Function);
   llvm::IRBuilder<> Builder(Entry);
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 80), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35786,8 +35851,7 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResultThroughInvoke
       Builder.CreateCall(Period, {Function->getArg(0)}, "period");
   llvm::Value *PeriodHome = Builder.CreateAlloca(I32, nullptr, "period_home");
   Builder.CreateStore(PeriodV, PeriodHome);
-  llvm::Value *PeriodLd =
-      Builder.CreateLoad(I32, PeriodHome, "period_ld");
+  llvm::Value *PeriodLd = Builder.CreateLoad(I32, PeriodHome, "period_ld");
   llvm::Value *Cmp =
       Builder.CreateICmpEQ(PeriodLd, llvm::ConstantInt::get(I32, 0), "is_zero");
   Builder.CreateCondBr(Cmp, Miss, Mid);
@@ -35826,8 +35890,8 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResultThroughInvoke
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("var_m18.types_"), std::string::npos) << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
@@ -35842,12 +35906,11 @@ TEST(LLVMCPointerAddresses, CtorHomeSlotDeclaresClassRecord) {
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(Ptr, {Ptr, Ptr}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(Ptr, {Ptr, Ptr}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
-  llvm::FunctionType *DtorTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {Ptr}, false);
+  llvm::FunctionType *DtorTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
   llvm::Function *Dtor = llvm::Function::Create(
       DtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_dtor", Module);
   llvm::FunctionType *FnTy =
@@ -35856,8 +35919,8 @@ TEST(LLVMCPointerAddresses, CtorHomeSlotDeclaresClassRecord) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "ctor_home", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -35873,8 +35936,8 @@ TEST(LLVMCPointerAddresses, CtorHomeSlotDeclaresClassRecord) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT var_m8"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT_ctor(&var_m8"), std::string::npos) << Source;
@@ -35922,25 +35985,25 @@ TEST(LLVMCPointerAddresses, FindDestSlotTakesDebugPointee) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "find_home", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
   llvm::Value *Slot =
       Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 24), "slot");
   llvm::Value *Home = Builder.CreateIntToPtr(Slot, Ptr, "home");
-  Builder.CreateCall(Find, {Function->getArg(0), Home,
-                            llvm::ConstantInt::get(I32, 1),
-                            llvm::ConstantInt::get(I32, 0)});
+  Builder.CreateCall(Find,
+                     {Function->getArg(0), Home, llvm::ConstantInt::get(I32, 1),
+                      llvm::ConstantInt::get(I32, 0)});
   Builder.CreateRet(Home);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT var_m18"), std::string::npos) << Source;
   EXPECT_NE(Source.find("&var_m18"), std::string::npos) << Source;
@@ -35991,29 +36054,27 @@ TEST(LLVMCPointerAddresses, FindSiblingSlotTakesCStringT) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
-  llvm::Value *Named =
-      Builder.CreateIntToPtr(
-          Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 8)), Ptr);
-  llvm::Value *Unnamed =
-      Builder.CreateIntToPtr(
-          Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 24)), Ptr);
-  Builder.CreateCall(Find, {Function->getArg(0), Named,
-                            llvm::ConstantInt::get(I32, 1)});
-  Builder.CreateCall(Find, {Function->getArg(0), Unnamed,
-                            llvm::ConstantInt::get(I32, 1)});
+  llvm::Value *Named = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 8)), Ptr);
+  llvm::Value *Unnamed = Builder.CreateIntToPtr(
+      Builder.CreateSub(Rsp, llvm::ConstantInt::get(I64, 24)), Ptr);
+  Builder.CreateCall(
+      Find, {Function->getArg(0), Named, llvm::ConstantInt::get(I32, 1)});
+  Builder.CreateCall(
+      Find, {Function->getArg(0), Unnamed, llvm::ConstantInt::get(I32, 1)});
   Builder.CreateRet(Unnamed);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT name"), std::string::npos) << Source;
   EXPECT_NE(Source.find("CStringT var_m18"), std::string::npos) << Source;
@@ -36028,12 +36089,11 @@ TEST(LLVMCPointerAddresses, WideFrameCopyPrintsSyntheticSlot) {
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
   llvm::Type *I128 = llvm::Type::getInt128Ty(Context);
   llvm::Type *Ptr = llvm::PointerType::getUnqual(I8);
-  llvm::FunctionType *CtorTy =
-      llvm::FunctionType::get(Ptr, {Ptr, Ptr}, false);
+  llvm::FunctionType *CtorTy = llvm::FunctionType::get(Ptr, {Ptr, Ptr}, false);
   llvm::Function *Ctor = llvm::Function::Create(
       CtorTy, llvm::GlobalValue::ExternalLinkage, "CStringT_ctor", Module);
-  llvm::FunctionType *SinkTy = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(Context), {I128}, false);
+  llvm::FunctionType *SinkTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {I128}, false);
   llvm::Function *Sink = llvm::Function::Create(
       SinkTy, llvm::GlobalValue::ExternalLinkage, "sink_wide", Module);
   llvm::FunctionType *FnTy =
@@ -36042,8 +36102,8 @@ TEST(LLVMCPointerAddresses, WideFrameCopyPrintsSyntheticSlot) {
       FnTy, llvm::GlobalValue::ExternalLinkage, "wide_copy", Module);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 168), nullptr, "frame");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 168), nullptr, "frame");
   llvm::Value *End = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 56), "frame_end");
   llvm::Value *Rsp = Builder.CreatePtrToInt(End, I64, "rsp_init");
@@ -36064,8 +36124,8 @@ TEST(LLVMCPointerAddresses, WideFrameCopyPrintsSyntheticSlot) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("CStringT var_m8"), std::string::npos) << Source;
   EXPECT_NE(Source.find("var_m18"), std::string::npos) << Source;
@@ -36099,8 +36159,7 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
       FunctionSym FS;
       FS.Name = "LookupColor";
       FS.Addr = Addr;
-      FS.Params = {{"this", NdType::makePtr(Table)},
-                   {"eRecord", Rank}};
+      FS.Params = {{"this", NdType::makePtr(Table)}, {"eRecord", Rank}};
       return FS;
     }
     bool hasInfo() const override { return true; }
@@ -36118,8 +36177,7 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
   rewrite_source::setOriginalVA(*Function, 0x140014f80);
   llvm::BasicBlock *Entry =
       llvm::BasicBlock::Create(Context, "entry", Function);
-  llvm::BasicBlock *Cont =
-      llvm::BasicBlock::Create(Context, "cont", Function);
+  llvm::BasicBlock *Cont = llvm::BasicBlock::Create(Context, "cont", Function);
   llvm::IRBuilder<> Builder(Entry);
   llvm::Value *T2 = Builder.CreateAlloca(I64, nullptr, "t2");
   llvm::Value *Cursor = Builder.CreateAlloca(I64, nullptr, "v1");
@@ -36137,34 +36195,36 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
   llvm::Value *ThisI =
       Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
   llvm::Value *Bins = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr),
+      I64,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr),
       "bins");
   Builder.CreateStore(Bins, T2);
   llvm::Value *NBins = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr),
+      I32,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr),
       "nbins");
   Builder.CreateStore(NBins, T19);
   Builder.CreateStore(Function->getArg(1), Eax1);
   Builder.CreateBr(Cont);
 
   Builder.SetInsertPoint(Cont);
-  llvm::Value *Rem = Builder.CreateURem(Builder.CreateLoad(I32, Eax1, "eax1_v"),
-                                        Builder.CreateLoad(I32, T19, "t19_v"),
-                                        "urem");
+  llvm::Value *Rem =
+      Builder.CreateURem(Builder.CreateLoad(I32, Eax1, "eax1_v"),
+                         Builder.CreateLoad(I32, T19, "t19_v"), "urem");
   Builder.CreateStore(Rem, Edx3);
-  llvm::Value *Idx = Builder.CreateZExt(Builder.CreateLoad(I32, Edx3, "edx3_v"),
-                                        I64, "idx");
+  llvm::Value *Idx =
+      Builder.CreateZExt(Builder.CreateLoad(I32, Edx3, "edx3_v"), I64, "idx");
   Builder.CreateStore(Idx, Rdx3);
   Builder.CreateStore(
       Builder.CreateMul(Builder.CreateLoad(I64, Rdx3, "RDX.3_v"),
                         llvm::ConstantInt::get(I64, 8), "scale"),
       ScaleSlot);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, T2),
-                        Builder.CreateLoad(I64, ScaleSlot), "add"),
-      AddrSlot);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, T2),
+                                        Builder.CreateLoad(I64, ScaleSlot),
+                                        "add"),
+                      AddrSlot);
   llvm::Value *Node = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(Builder.CreateLoad(I64, AddrSlot), Ptr),
       "node");
@@ -36191,25 +36251,24 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
   llvm::PHINode *UnusedCursorPhi = Builder.CreatePHI(I64, 1, "RAX.4");
   UnusedCursorPhi->addIncoming(CurLoad, Cont);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr),
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr),
       "hash");
   llvm::Value *Hit = Builder.CreateICmpEQ(
       Hash, Builder.CreateLoad(I32, Eax1, "eax1_cmp"), "hit");
-  Builder.CreateRet(Builder.CreateSelect(
-      Hit, Hash, llvm::ConstantInt::get(I32, 0x00FFFFFF)));
+  Builder.CreateRet(
+      Builder.CreateSelect(Hit, Hash, llvm::ConstantInt::get(I32, 0x00FFFFFF)));
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("this->m_colorTable.m_ppBins"),
-            std::string::npos)
+  EXPECT_NE(Source.find("this->m_colorTable.m_ppBins"), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("CNode*"), std::string::npos) << Source;
   EXPECT_NE(Source.find("eRecordRank eRecord"), std::string::npos) << Source;
@@ -36219,24 +36278,16 @@ TEST(LLVMCPointerAddresses, TypedMapCursorPrintsHashNextValue) {
       << Source;
   EXPECT_EQ(Source.find("m_ppBins[RDX_"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("m_ppBins[rdx"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find(
-                "] == 0"),
-            std::string::npos)
-      << Source;
-  EXPECT_EQ(Source.find(
-                "] + 16"),
-            std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("->m_nHash == eRecord"), std::string::npos)
-      << Source;
+  EXPECT_EQ(Source.find("] == 0"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("] + 16"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("->m_nHash == eRecord"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("]->m_nHash"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint32_t*)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("urem ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("edx3 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("m_ppBins &"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("+ 168"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("= this->m_colorTable.m_ppBins["),
-            std::string::npos)
+  EXPECT_NE(Source.find("= this->m_colorTable.m_ppBins["), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("eax1 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find(" = eRecord;"), std::string::npos) << Source;
@@ -36331,24 +36382,24 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
   Builder.CreateStore(llvm::ConstantInt::get(I64, 0), NextHome);
   llvm::Value *ThisI = Builder.CreatePtrToInt(Function->getArg(0), I64);
   llvm::Value *Bins = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
+      I64,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
   Builder.CreateStore(Bins, BinsHome);
   llvm::Value *NBins = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr));
+      I32,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr));
   Builder.CreateStore(NBins, NBinsHome);
   Builder.CreateStore(Function->getArg(2), KeyHome);
-  Builder.CreateCondBr(
-      Builder.CreateICmpEQ(Builder.CreateLoad(I64, BinsHome),
-                           llvm::ConstantInt::get(I64, 0)),
-      Miss, Check);
+  Builder.CreateCondBr(Builder.CreateICmpEQ(Builder.CreateLoad(I64, BinsHome),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Miss, Check);
 
   Builder.SetInsertPoint(Check);
-  Builder.CreateCondBr(
-      Builder.CreateICmpEQ(Builder.CreateLoad(I32, NBinsHome),
-                           llvm::ConstantInt::get(I32, 0)),
-      Trap, Late);
+  Builder.CreateCondBr(Builder.CreateICmpEQ(Builder.CreateLoad(I32, NBinsHome),
+                                            llvm::ConstantInt::get(I32, 0)),
+                       Trap, Late);
 
   Builder.SetInsertPoint(EntryPhi);
   Builder.CreateStore(Builder.CreateLoad(I64, CursorTmp), Cursor);
@@ -36360,10 +36411,10 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
 
   Builder.SetInsertPoint(Header);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
   Builder.CreateCondBr(
       Builder.CreateICmpNE(Hash, Builder.CreateLoad(I32, KeyHome)), Step,
       KeyBB);
@@ -36376,10 +36427,10 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
 
   Builder.SetInsertPoint(Step);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, NextHome);
   Builder.CreateCondBr(
       Builder.CreateICmpNE(Next, llvm::ConstantInt::get(I64, 0)), LatchPhi,
@@ -36390,10 +36441,10 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
 
   Builder.SetInsertPoint(Hit);
   llvm::Value *Value = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 4)),
-               Ptr));
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 4)),
+                             Ptr));
   Builder.CreateRet(Builder.CreateZExt(Value, I64));
 
   Builder.SetInsertPoint(Trap);
@@ -36406,22 +36457,21 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
   llvm::Value *Idx = Builder.CreateZExt(Rem, I64);
   llvm::Value *Node = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, BinsHome),
-                                 Builder.CreateMul(Idx, llvm::ConstantInt::get(
-                                                            I64, 8))),
+               Builder.CreateAdd(
+                   Builder.CreateLoad(I64, BinsHome),
+                   Builder.CreateMul(Idx, llvm::ConstantInt::get(I64, 8))),
                Ptr));
   Builder.CreateStore(Node, CursorTmp);
-  Builder.CreateCondBr(
-      Builder.CreateICmpEQ(Builder.CreateLoad(I64, CursorTmp),
-                           llvm::ConstantInt::get(I64, 0)),
-      Miss, EntryPhi);
+  Builder.CreateCondBr(Builder.CreateICmpEQ(Builder.CreateLoad(I64, CursorTmp),
+                                            llvm::ConstantInt::get(I64, 0)),
+                       Miss, EntryPhi);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   const auto BodyAt = Source.find("LookupColorStr(");
   ASSERT_NE(BodyAt, std::string::npos) << Source;
@@ -36458,7 +36508,9 @@ TEST(LLVMCPointerAddresses, SplitPhiCursorWalkPrintsFor) {
   ASSERT_NE(ForClose, std::string::npos) << Source;
   EXPECT_LT(HashAt, ForClose) << Source;
   EXPECT_LT(ValueAt, ForClose) << Source;
-  EXPECT_EQ(Source.find("(uint32_t)(eRecord) % ", IndexAt + 1), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(uint32_t)(eRecord) % ", IndexAt + 1),
+            std::string::npos)
+      << Source;
   size_t BareCopies = 0;
   for (size_t Line = BodyAt; Line < Source.size();) {
     size_t End = Source.find('\n', Line);
@@ -36547,43 +36599,41 @@ TEST(LLVMCPointerAddresses, ForwardedCursorFieldLoadIsNotDeclared) {
   llvm::Value *HashHome = Builder.CreateAlloca(I32, nullptr, "t19.2");
   llvm::Value *ThisI = Builder.CreatePtrToInt(Function->getArg(0), I64);
   llvm::Value *Bins = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
+      I64,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
   Builder.CreateStore(Bins, BinsHome);
   llvm::Value *NBins = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr));
+      I32,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr));
   Builder.CreateStore(NBins, NBinsHome);
   Builder.CreateStore(Function->getArg(1), Eax1);
-  llvm::Value *Rem = Builder.CreateURem(
-      Builder.CreateLoad(I32, Eax1), Builder.CreateLoad(I32, NBinsHome));
+  llvm::Value *Rem = Builder.CreateURem(Builder.CreateLoad(I32, Eax1),
+                                        Builder.CreateLoad(I32, NBinsHome));
   Builder.CreateStore(Rem, Edx3);
-  llvm::Value *Idx =
-      Builder.CreateZExt(Builder.CreateLoad(I32, Edx3), I64);
+  llvm::Value *Idx = Builder.CreateZExt(Builder.CreateLoad(I32, Edx3), I64);
   Builder.CreateStore(Idx, Rdx3);
-  Builder.CreateStore(
-      Builder.CreateMul(Builder.CreateLoad(I64, Rdx3),
-                        llvm::ConstantInt::get(I64, 8)),
-      ScaleSlot);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, BinsHome),
-                        Builder.CreateLoad(I64, ScaleSlot)),
-      NodeAddr);
+  Builder.CreateStore(Builder.CreateMul(Builder.CreateLoad(I64, Rdx3),
+                                        llvm::ConstantInt::get(I64, 8)),
+                      ScaleSlot);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, BinsHome),
+                                        Builder.CreateLoad(I64, ScaleSlot)),
+                      NodeAddr);
   llvm::Value *Node = Builder.CreateLoad(
       I64, Builder.CreateIntToPtr(Builder.CreateLoad(I64, NodeAddr), Ptr));
   Builder.CreateStore(Node, Cursor);
-  Builder.CreateStore(
-      Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                        llvm::ConstantInt::get(I64, 16)),
-      FieldAddr);
+  Builder.CreateStore(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                        llvm::ConstantInt::get(I64, 16)),
+                      FieldAddr);
   llvm::Value *Hash = Builder.CreateLoad(
       I32, Builder.CreateIntToPtr(Builder.CreateLoad(I64, FieldAddr), Ptr),
       "hash");
   Builder.CreateStore(Hash, HashHome);
-  llvm::Value *Cmp = Builder.CreateICmpNE(
-      Builder.CreateLoad(I32, HashHome), Function->getArg(1));
-  Builder.CreateRet(Builder.CreateSelect(
-      Cmp, llvm::ConstantInt::get(I32, 1), llvm::ConstantInt::get(I32, 0)));
+  llvm::Value *Cmp = Builder.CreateICmpNE(Builder.CreateLoad(I32, HashHome),
+                                          Function->getArg(1));
+  Builder.CreateRet(Builder.CreateSelect(Cmp, llvm::ConstantInt::get(I32, 1),
+                                         llvm::ConstantInt::get(I32, 0)));
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
@@ -36591,8 +36641,8 @@ TEST(LLVMCPointerAddresses, ForwardedCursorFieldLoadIsNotDeclared) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("->m_nHash"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("hash0"), std::string::npos) << Source;
@@ -36644,33 +36694,33 @@ TEST(LLVMCPointerAddresses, CursorNextStoreDoesNotRecurse) {
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
   llvm::Value *Cursor = Builder.CreateAlloca(I64, nullptr, "v1");
-  llvm::Value *ThisI =
-      Builder.CreatePtrToInt(Function->getArg(0), I64);
+  llvm::Value *ThisI = Builder.CreatePtrToInt(Function->getArg(0), I64);
   llvm::Value *Bins = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
-  llvm::Value *Node = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(Bins, Ptr));
+      I64,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 168)), Ptr));
+  llvm::Value *Node =
+      Builder.CreateLoad(I64, Builder.CreateIntToPtr(Bins, Ptr));
   Builder.CreateStore(Node, Cursor);
   llvm::Value *Next = Builder.CreateLoad(
-      I64, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 8)),
-               Ptr));
+      I64,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 8)),
+                             Ptr));
   Builder.CreateStore(Next, Cursor);
   llvm::Value *Hash = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
-                                 llvm::ConstantInt::get(I64, 16)),
-               Ptr));
+      I32,
+      Builder.CreateIntToPtr(Builder.CreateAdd(Builder.CreateLoad(I64, Cursor),
+                                               llvm::ConstantInt::get(I64, 16)),
+                             Ptr));
   Builder.CreateRet(Hash);
 
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("m_ppBins"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
@@ -36701,8 +36751,8 @@ TEST(LLVMCPointerAddresses, X86DivCheckPreservesIntegerViewWidths) {
   llvm::Value *Hi =
       Builder.CreateLShr(Z2, llvm::ConstantInt::get(I64, 32), "hi");
   llvm::Value *Hi32 = Builder.CreateTrunc(Hi, I32, "hi32");
-  llvm::Value *IsZero = Builder.CreateICmpEQ(
-      NBins, llvm::ConstantInt::get(I32, 0), "iszero");
+  llvm::Value *IsZero =
+      Builder.CreateICmpEQ(NBins, llvm::ConstantInt::get(I32, 0), "iszero");
   llvm::Value *Wide = Builder.CreateICmpUGE(Hi32, NBins, "wide");
   Builder.CreateCondBr(Builder.CreateOr(IsZero, Wide, "bad"), Overflow, Ok);
   llvm::IRBuilder<> OverflowBuilder(Overflow);
@@ -36716,10 +36766,13 @@ TEST(LLVMCPointerAddresses, X86DivCheckPreservesIntegerViewWidths) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("(uint64_t)((uint32_t)(eRecord)) >> 32"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("(uint64_t)((uint32_t)(eRecord)) >> 32"),
+            std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("nBins == 0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("||"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("(uint32_t)(uint64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(unsigned)(uint32_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(unsigned)(uint64_t)(uint32_t)"), std::string::npos)
@@ -36751,8 +36804,8 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   llvm::Value *Hi =
       Builder.CreateLShr(Z2, llvm::ConstantInt::get(I64, 32), "hi");
   llvm::Value *Hi32 = Builder.CreateTrunc(Hi, I32, "hi32");
-  llvm::Value *IsZero = Builder.CreateICmpEQ(
-      NBins, llvm::ConstantInt::get(I32, 0), "iszero");
+  llvm::Value *IsZero =
+      Builder.CreateICmpEQ(NBins, llvm::ConstantInt::get(I32, 0), "iszero");
   llvm::Value *Wide = Builder.CreateICmpUGE(Hi32, NBins, "wide");
   Builder.CreateCondBr(Builder.CreateOr(IsZero, Wide, "bad"), Overflow, Ok);
   llvm::IRBuilder<> OverflowBuilder(Overflow);
@@ -36771,7 +36824,8 @@ TEST(LLVMCPointerAddresses, DivOverflowOrPreservesUnsignedShiftPrecedence) {
   EXPECT_NE(Source.find("if (nBins == 0 || ", BodyAt), std::string::npos)
       << Source;
   EXPECT_NE(Source.find("(uint32_t)(((uint64_t)((uint32_t)(eRecord)) >> 32)) "
-                        ">= (unsigned)nBins)", BodyAt),
+                        ">= (unsigned)nBins)",
+                        BodyAt),
             std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(unsigned)eRecord >> 32", BodyAt), std::string::npos)
@@ -36824,13 +36878,14 @@ std::string emitUnsignedFieldCompare(bool UnsignedField) {
   llvm::Value *ThisI =
       Builder.CreatePtrToInt(Function->getArg(0), I64, "this_i");
   llvm::Value *NBins = Builder.CreateLoad(
-      I32, Builder.CreateIntToPtr(
-               Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr),
+      I32,
+      Builder.CreateIntToPtr(
+          Builder.CreateAdd(ThisI, llvm::ConstantInt::get(I64, 184)), Ptr),
       "nbins");
   Builder.CreateStore(NBins, Home);
   llvm::Value *Reloaded = Builder.CreateLoad(I32, Home, "t19_v");
-  llvm::Value *Wide = Builder.CreateICmpUGE(
-      Reloaded, llvm::ConstantInt::get(I32, 1), "wide");
+  llvm::Value *Wide =
+      Builder.CreateICmpUGE(Reloaded, llvm::ConstantInt::get(I32, 1), "wide");
   Builder.CreateCondBr(Wide, Yes, No);
   Builder.SetInsertPoint(Yes);
   Builder.CreateRet(llvm::ConstantInt::get(I32, 1));
@@ -36841,15 +36896,15 @@ std::string emitUnsignedFieldCompare(bool UnsignedField) {
   llvm::raw_string_ostream OS(Source);
   CEmitterOptions Options;
   Options.EmitIncludes = false;
-  EXPECT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
+  EXPECT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   return Source;
 }
 
 TEST(LLVMCPointerAddresses, UnsignedFieldCompareOmitsWidthCast) {
   const std::string Source = emitUnsignedFieldCompare(true);
-  EXPECT_NE(Source.find("this->m_colorTable.m_nBins >= "),
-            std::string::npos)
+  EXPECT_NE(Source.find("this->m_colorTable.m_nBins >= "), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(unsigned)this->m_colorTable.m_nBins"),
             std::string::npos)
@@ -36988,16 +37043,16 @@ TEST(LLVMCPointerAddresses, X86DivCheckKeepsWidenedHomeShift) {
   Builder.CreateStore(Function->getArg(0), Edx);
   Builder.CreateStore(Builder.CreateZExt(Builder.CreateLoad(I32, Edx), I64),
                       Rax);
-  Builder.CreateStore(
-      Builder.CreateTrunc(Builder.CreateLoad(I64, Rax), I32), Eax);
+  Builder.CreateStore(Builder.CreateTrunc(Builder.CreateLoad(I64, Rax), I32),
+                      Eax);
   Builder.CreateStore(Builder.CreateZExt(Builder.CreateLoad(I32, Eax), I64),
                       Home);
-  llvm::Value *Hi = Builder.CreateTrunc(
-      Builder.CreateLShr(Builder.CreateLoad(I64, Home),
-                         llvm::ConstantInt::get(I64, 32)),
-      I32);
-  llvm::Value *IsZero = Builder.CreateICmpEQ(
-      Function->getArg(1), llvm::ConstantInt::get(I32, 0));
+  llvm::Value *Hi =
+      Builder.CreateTrunc(Builder.CreateLShr(Builder.CreateLoad(I64, Home),
+                                             llvm::ConstantInt::get(I64, 32)),
+                          I32);
+  llvm::Value *IsZero =
+      Builder.CreateICmpEQ(Function->getArg(1), llvm::ConstantInt::get(I32, 0));
   llvm::Value *Wide = Builder.CreateICmpUGE(Hi, Function->getArg(1));
   Builder.CreateCondBr(Builder.CreateOr(IsZero, Wide), Overflow, Ok);
   Builder.SetInsertPoint(Overflow);
@@ -37011,15 +37066,16 @@ TEST(LLVMCPointerAddresses, X86DivCheckKeepsWidenedHomeShift) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::COFF;
   Options.EmitIncludes = false;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
   EXPECT_NE(
       Source.find("(uint64_t)((uint32_t)((uint64_t)((uint32_t)(eRecord))))"
                   " >> 32"),
       std::string::npos)
       << Source;
-  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos)
+      << Source;
   EXPECT_NE(Source.find("nBins == 0"), std::string::npos) << Source;
   EXPECT_NE(Source.find("||"), std::string::npos) << Source;
 }
@@ -37051,8 +37107,11 @@ TEST(LLVMCPointerAddresses, X86DivCheckStatementShiftKeepsZext) {
   Options.EmitIncludes = false;
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   OS.flush();
-  EXPECT_NE(Source.find("= (uint64_t)((uint32_t)(eRecord)) >> 32"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("= (uint64_t)((uint32_t)(eRecord)) >> 32"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("(unsigned)eRecord >> 32"), std::string::npos)
+      << Source;
   EXPECT_EQ(Source.find("hi = (unsigned)"), std::string::npos) << Source;
 }
 
@@ -37119,7 +37178,7 @@ TEST(HighCPointerAddresses, ReturnZextFromNarrowerKeepsSourceWidth) {
   Func.ReturnType = NdType::makeInt(4, true);
   Func.Params = {{"arg0", NdType::makeInt(2, true)}};
   auto Wide = HighExpr::makeUnary(NdOp::INT_ZEXT,
-                                 parameter(0, NdType::makeInt(2, true)));
+                                  parameter(0, NdType::makeInt(2, true)));
   Wide->Type = NdType::makeInt(8, false);
   Wide->Operands[0]->Type = NdType::makeInt(2, true);
   returnValue(Func, Wide);
@@ -37143,9 +37202,10 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   const std::string Source = highcOnlyFunction(std::move(*Img), 0x140001050);
   EXPECT_NE(Source.find("RaiseException(0xE0421001"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find(
-                "extern int RaiseException(int64_t, int64_t, int64_t, int64_t);"),
-            std::string::npos)
+  EXPECT_NE(
+      Source.find(
+          "extern int RaiseException(int64_t, int64_t, int64_t, int64_t);"),
+      std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t22_1"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v36_0"), std::string::npos) << Source;
@@ -37160,8 +37220,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadSehProbeRaisesImmediate) {
   EXPECT_NE(Source.find("return (int32_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("(int64_t)(uint32_t)(int32_t)"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("return (int32_t)(var_m18 + 1);"),
-            std::string::npos)
+  EXPECT_NE(Source.find("return (int32_t)(var_m18 + 1);"), std::string::npos)
       << Source;
 }
 
@@ -37441,13 +37500,13 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
     GTEST_SKIP() << Path.string() << " is missing";
 
   llvm::SmallString<128> OutputPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-seh-llvmc", "c",
-                                                  OutputPath));
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-seh-llvmc", "c", OutputPath));
   llvm::FileRemover RemoveOutput(OutputPath);
   const std::string InputPath = Path.string();
   llvm::SmallVector<llvm::StringRef, 10> Arguments{
-      NEVERD_BINARY, "decompile", "--llvm", "--no-debug", "--func",
-      "0x140001050", "-o", OutputPath, InputPath};
+      NEVERD_BINARY, "decompile", "--llvm",   "--no-debug", "--func",
+      "0x140001050", "-o",        OutputPath, InputPath};
   std::string Error;
   ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_BINARY, Arguments, std::nullopt,
                                       {}, 30, 0, &Error),
@@ -37508,10 +37567,8 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   ASSERT_NE(NormalJoinedCarrier, std::string::npos) << Source;
   EXPECT_LT(NormalJoinedCarrier, ExceptAt) << Source;
   EXPECT_NE(Source.find("= " + Carrier + ";"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("llvm_x2E_seh_x2E_try"), std::string::npos)
-      << Source;
-  EXPECT_NE(Source.find("L_seh_catch_pad_0:\n        ;\n"),
-            std::string::npos)
+  EXPECT_EQ(Source.find("llvm_x2E_seh_x2E_try"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("L_seh_catch_pad_0:\n        ;\n"), std::string::npos)
       << Source;
 
   // The CLI's analysis-only LLVM route can print register-home assignments
@@ -37520,9 +37577,9 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
   size_t Start = 0;
   while (Start < Source.size()) {
     const size_t End = Source.find('\n', Start);
-    const std::string_view Line(Source.data() + Start,
-                                (End == std::string::npos ? Source.size()
-                                                          : End) - Start);
+    const std::string_view Line(
+        Source.data() + Start,
+        (End == std::string::npos ? Source.size() : End) - Start);
     const size_t First = Line.find_first_not_of(" \t");
     if (First != std::string_view::npos) {
       size_t NameEnd = First;
@@ -37535,7 +37592,8 @@ TEST(LLVMCPointerAddresses, CorpusSehProbeCliLlvmcKeepsProtectedEffects) {
       if (NameEnd > First && Line.substr(NameEnd).starts_with(" = ")) {
         const std::string Name(Line.substr(First, NameEnd - First));
         EXPECT_NE(Source.rfind(" " + Name + ";", Start), std::string::npos)
-            << "assignment to undeclared " << Name << "\n" << Source;
+            << "assignment to undeclared " << Name << "\n"
+            << Source;
       }
     }
     if (End == std::string::npos)
@@ -37797,14 +37855,14 @@ TEST(HighCPointerAddresses, X86ExceptEbpStoreUsesTryResultSlot) {
   HighStmt SetFrame;
   SetFrame.Kind = StmtKind::Assign;
   SetFrame.Dst = HighExpr::makeVar(V0, I32U);
-  SetFrame.Val = HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(ESP, I32U),
-                                     HighExpr::makeConst(4, 4));
+  SetFrame.Val = HighExpr::makeBinop(
+      NdOp::INT_SUB, HighExpr::makeVar(ESP, I32U), HighExpr::makeConst(4, 4));
   Func.Body.push_back(std::move(SetFrame));
 
   HighStmt Init;
   Init.Kind = StmtKind::Store;
-  Init.StoreAddr = HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeVar(V0, I32U),
-                                       HighExpr::makeConst(28, 4));
+  Init.StoreAddr = HighExpr::makeBinop(
+      NdOp::INT_SUB, HighExpr::makeVar(V0, I32U), HighExpr::makeConst(28, 4));
   Init.StoreVal = HighExpr::makeConst(0, 4);
   Func.Body.push_back(std::move(Init));
 
@@ -37945,12 +38003,10 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   HighOS.flush();
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   ASSERT_FALSE(Source.empty()) << Source << "\n" << Blocks << HighDump;
-  EXPECT_NE(Source.find("__except"), std::string::npos)
-      << Source << "\n"
-      << Blocks << HighDump;
-  EXPECT_EQ(Source.find("goto L_"), std::string::npos)
-      << Source << "\n"
-      << Blocks << HighDump;
+  EXPECT_NE(Source.find("__except"), std::string::npos) << Source << "\n"
+                                                        << Blocks << HighDump;
+  EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source << "\n"
+                                                       << Blocks << HighDump;
   const auto Stores = portableStoreCalls(Source);
   const auto Normal = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint32_t" && S.Value == "0xFFFFFF9C";
@@ -38100,8 +38156,7 @@ TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   auto WideTy = NdType::makeNamedRecord("ArgList", 16);
   WideTy->FieldDisplayNames = {"types_", "values_"};
   WideTy->FieldDisplayOffsets = {0, 8};
-  WideTy->FieldDisplayTypes = {NdType::makeInt(8, false),
-                               NdType::makePtr()};
+  WideTy->FieldDisplayTypes = {NdType::makeInt(8, false), NdType::makePtr()};
   class NarrowWideDbg : public NullDebugContext {
   public:
     TypeRef Narrow;
@@ -38139,10 +38194,10 @@ TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 96), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 64), "frame_end");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 96), nullptr, "frame");
+  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 64),
+                                  "frame_end");
   llvm::Value *SourceSlot = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 40), "source_slot");
   llvm::Value *DestSlot = Builder.CreateInBoundsGEP(
@@ -38157,8 +38212,8 @@ TEST(LLVMCPointerAddresses, CachedNarrowFrameTypeDoesNotClaimWideLoad) {
   CEmitterOptions Options;
   Options.EmitIncludes = false;
   Options.TheArch = Arch::X64;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_NE(Source.find("PtrBox narrow"), std::string::npos) << Source;
   EXPECT_NE(Source.find("ArgList packed"), std::string::npos) << Source;
@@ -38179,8 +38234,7 @@ TEST(LLVMCPointerAddresses, OverlappingSameNameSPCandidatesKeepSlotsDistinct) {
       return Var;
     }
     std::optional<VariableSym>
-    resolveStackPointerVariable(va_t FuncAddr,
-                                int64_t Offset) const override {
+    resolveStackPointerVariable(va_t FuncAddr, int64_t Offset) const override {
       if (FuncAddr != 0x140001000 || (Offset != 24 && Offset != 32))
         return std::nullopt;
       VariableSym Var;
@@ -38206,10 +38260,10 @@ TEST(LLVMCPointerAddresses, OverlappingSameNameSPCandidatesKeepSlotsDistinct) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Frame = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 128), nullptr, "frame");
-  (void)Builder.CreateInBoundsGEP(
-      I8, Frame, llvm::ConstantInt::get(I64, 96), "frame_end");
+  llvm::Value *Frame =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 128), nullptr, "frame");
+  (void)Builder.CreateInBoundsGEP(I8, Frame, llvm::ConstantInt::get(I64, 96),
+                                  "frame_end");
   llvm::Value *First = Builder.CreateInBoundsGEP(
       I8, Frame, llvm::ConstantInt::get(I64, 40), "first");
   llvm::Value *Second = Builder.CreateInBoundsGEP(
@@ -38223,8 +38277,8 @@ TEST(LLVMCPointerAddresses, OverlappingSameNameSPCandidatesKeepSlotsDistinct) {
   CEmitterOptions Options;
   Options.EmitIncludes = false;
   Options.TheArch = Arch::X64;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Source.find("UseSlot(&shared)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("UseSlot(&var_m38)"), std::string::npos) << Source;
@@ -38243,8 +38297,8 @@ TEST(LLVMCPointerAddresses, StaticPointerClassGetterOmitsLiveIntegerOperand) {
         FS.Params.emplace_back("sizeInBytes", NdType::makeInt(8, false));
       } else if (Addr == 0x140002000) {
         FS.Name = "MemManager_Get";
-        FS.ReturnType = NdType::makePtr(
-            NdType::makeNamedRecord("MemManager", 8));
+        FS.ReturnType =
+            NdType::makePtr(NdType::makeNamedRecord("MemManager", 8));
       } else {
         return std::nullopt;
       }
@@ -38279,8 +38333,8 @@ TEST(LLVMCPointerAddresses, StaticPointerClassGetterOmitsLiveIntegerOperand) {
   CEmitterOptions Options;
   Options.EmitIncludes = false;
   Options.TheArch = Arch::X64;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Call->arg_size(), 2u);
   const auto Body = Source.find("AllocateProbe(");
@@ -38323,8 +38377,8 @@ TEST(LLVMCPointerAddresses, StaticPointerClassSretKeepsObservedPointer) {
   rewrite_source::setOriginalVA(*Function, 0x140001000);
   llvm::IRBuilder<> Builder(
       llvm::BasicBlock::Create(Context, "entry", Function));
-  llvm::Value *Result = Builder.CreateAlloca(
-      llvm::ArrayType::get(I8, 8), nullptr, "result_home");
+  llvm::Value *Result =
+      Builder.CreateAlloca(llvm::ArrayType::get(I8, 8), nullptr, "result_home");
   auto *Call = Builder.CreateCall(Build, {Result});
   Builder.CreateRetVoid();
 
@@ -38333,8 +38387,8 @@ TEST(LLVMCPointerAddresses, StaticPointerClassSretKeepsObservedPointer) {
   CEmitterOptions Options;
   Options.EmitIncludes = false;
   Options.TheArch = Arch::X64;
-  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr,
-                                  Function));
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, &Dbg, nullptr, Function));
   OS.flush();
   EXPECT_EQ(Call->arg_size(), 1u);
   const auto Body = Source.find("use_name(");
@@ -39276,10 +39330,10 @@ TEST(HighCPointerAddresses, GroupSwitchCasesKeepsLabeledCaseBodies) {
 
 TEST(HighCPointerAddresses, ReduceGotosMergesJumpsToOneTarget) {
   // if (a) goto L; if (b) goto L; x = 0; return; L: x = 1; return;
-  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1040),
-                                condGoto(0x1008, 0, 0x1040),
-                                assignConst(0x1010, 1, 0), returnAt(0x1018),
-                                assignConst(0x1040, 1, 1), returnAt(0x1048)};
+  std::vector<HighStmt> Body = {
+      condGoto(0x1000, 1, 0x1040), condGoto(0x1008, 0, 0x1040),
+      assignConst(0x1010, 1, 0),   returnAt(0x1018),
+      assignConst(0x1040, 1, 1),   returnAt(0x1048)};
   ASSERT_TRUE(reduceSingleUseGotos(Body));
   // The two jumps merge, and the single-use block moves into the `if`.
   EXPECT_EQ(countGotos(Body), 0u);
@@ -39293,11 +39347,10 @@ TEST(HighCPointerAddresses, ReduceGotosMergesJumpsToOneTarget) {
 
 TEST(HighCPointerAddresses, ReduceGotosBuildsIfElseAroundJoin) {
   // if (c) goto X; a = 1; J: b = 2; return; X: a = 3; goto J;
-  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1040),
-                                assignConst(0x1008, 1, 1),
-                                assignConst(0x1010, 2, 2), returnAt(0x1018),
-                                assignConst(0x1040, 1, 3),
-                                gotoAt(0x1048, 0x1010)};
+  std::vector<HighStmt> Body = {
+      condGoto(0x1000, 1, 0x1040), assignConst(0x1008, 1, 1),
+      assignConst(0x1010, 2, 2),   returnAt(0x1018),
+      assignConst(0x1040, 1, 3),   gotoAt(0x1048, 0x1010)};
   ASSERT_TRUE(reduceSingleUseGotos(Body));
   EXPECT_EQ(countGotos(Body), 0u);
   ASSERT_EQ(Body[0].Kind, StmtKind::IfElse);
@@ -39334,8 +39387,7 @@ TEST(HighCPointerAddresses, ReduceGotosKeepsLabelOfRemovedGoto) {
 TEST(HighCPointerAddresses, ReduceGotosFormsLoopFromBackEdge) {
   // H: a = 1; if (c) goto H; return;   ->   do { a = 1; } while (c); return;
   std::vector<HighStmt> Body = {assignConst(0x1000, 1, 1),
-                                condGoto(0x1008, 1, 0x1000),
-                                returnAt(0x1010)};
+                                condGoto(0x1008, 1, 0x1000), returnAt(0x1010)};
   ASSERT_TRUE(reduceSingleUseGotos(Body));
   EXPECT_EQ(countGotos(Body), 0u);
   ASSERT_EQ(Body[0].Kind, StmtKind::DoWhile);
@@ -39558,7 +39610,8 @@ TEST(HighCPointerAddresses, MsrAccessKeepsSelectorAndValue) {
   EXPECT_EQ(HighC.find("__writemsr()"), std::string::npos) << HighC;
   // LLVM-to-C spells the i32 selector 0xC0000084 as unsigned or signed.
   EXPECT_TRUE(std::regex_search(
-      LLVMC, std::regex(R"(__readmsr\(((\(uint32_t\))?3221225604|-1073741692)\))")))
+      LLVMC,
+      std::regex(R"(__readmsr\(((\(uint32_t\))?3221225604|-1073741692)\))")))
       << LLVMC;
   EXPECT_TRUE(std::regex_search(
       LLVMC,
@@ -39778,8 +39831,8 @@ TEST(HighCPointerAddresses, NarrowStoreToAWiderSlotChangesOnlyItsBytes) {
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
   // Either a byte write through the slot, or frame bytes that the byte store
   // and the eight-byte read share.
-  const bool Interior = std::regex_search(
-      HighC, std::regex(R"(\(\*\(int8_t \*\)&var_\w+\) =)"));
+  const bool Interior =
+      std::regex_search(HighC, std::regex(R"(\(\*\(int8_t \*\)&var_\w+\) =)"));
   const bool FrameBytes = HighC.find("stack_storage[") != std::string::npos &&
                           HighC.find("+ 8), arg1)") != std::string::npos &&
                           HighC.find("+ 8));") != std::string::npos;

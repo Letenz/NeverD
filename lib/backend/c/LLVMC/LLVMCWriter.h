@@ -61,8 +61,7 @@ public:
   explicit LLVMCOut(llvm::raw_ostream &Primary) : Target(&Primary) {}
   llvm::raw_ostream &stream() const { return *Target; }
   void retarget(llvm::raw_ostream *Next) { Target = Next; }
-  template <typename T>
-  llvm::raw_ostream &operator<<(T &&Value) {
+  template <typename T> llvm::raw_ostream &operator<<(T &&Value) {
     return (*Target) << std::forward<T>(Value);
   }
 };
@@ -170,20 +169,18 @@ public:
   TypeRef typeOfValue(const llvm::Value *V) const;
   std::string indirectCalleeStr(const llvm::Value *Callee,
                                 bool MarkChain = false);
-  std::optional<TypedAccess> typedRecordAccess(const llvm::Value *Ptr,
-                                               uint16_t AccessSize,
-                                               bool EnterNestedAtZero = true) const;
+  std::optional<TypedAccess>
+  typedRecordAccess(const llvm::Value *Ptr, uint16_t AccessSize,
+                    bool EnterNestedAtZero = true) const;
   /// PDB/S_LOCAL or HighC `var_mHEX` name for a synthetic `[N x i8] frame`
   /// GEP.  Address-of a slot is `&record` / `&var_m188`; a load of an
   /// interior field is `record.p`.  `Synthesize` creates a `var_m*` only
   /// for call-argument addresses; unnamed load/store soup stays soup.
   /// `Overlay` uses `CallType` (`ArgList.types_`) on integer stores of a
   /// richer PDB record (`TPtr.p`). Loads and address-of stay the PDB field.
-  std::optional<TypedAccess> frameSlotAccess(const llvm::Value *Ptr,
-                                             uint16_t AccessSize,
-                                             bool AddressOf,
-                                             bool Synthesize = false,
-                                             bool Overlay = false) const;
+  std::optional<TypedAccess>
+  frameSlotAccess(const llvm::Value *Ptr, uint16_t AccessSize, bool AddressOf,
+                  bool Synthesize = false, bool Overlay = false) const;
   std::optional<TypedAccess> typedIndexAccess(const llvm::Value *Ptr);
   std::string indexExprStr(const llvm::Value *V);
   bool isComposedRemValue(const llvm::Value *V);
@@ -196,7 +193,8 @@ public:
   void omitSingleCopyCursorTemp(llvm::Function &Fn);
   /// A field stored beside a dead null arm is the call argument.
   void forwardDeadNullFieldArg(
-      llvm::ArrayRef<std::pair<const llvm::CallBase *, const llvm::AllocaInst *>>
+      llvm::ArrayRef<
+          std::pair<const llvm::CallBase *, const llvm::AllocaInst *>>
           Uses);
   std::string composedReprintText(const llvm::Value *V);
   bool isNamedParamValue(const llvm::Value *V) const;
@@ -225,16 +223,16 @@ public:
   const llvm::BasicBlock *printBranchTarget(const llvm::BasicBlock *To);
   /// A block that only computes one store and branches to \p Join. Null when
   /// the arm has a call, a phi, or more than one predecessor.
-  const llvm::BasicBlock *straightAssignArmJoin(const llvm::BasicBlock *Arm) const;
+  const llvm::BasicBlock *
+  straightAssignArmJoin(const llvm::BasicBlock *Arm) const;
   bool joinPrintsNext(const llvm::BasicBlock *From,
                       const llvm::BasicBlock *Join);
   /// False successor that is not the next block, but whose only predecessor
   /// is \p From and whose unconditional branch targets that next block.
   /// Null when the block is already next, has another entry, or branches
   /// elsewhere.
-  const llvm::BasicBlock *
-  elseBodyFallsIntoNext(const llvm::BasicBlock *From,
-                        const llvm::BasicBlock *Else);
+  const llvm::BasicBlock *elseBodyFallsIntoNext(const llvm::BasicBlock *From,
+                                                const llvm::BasicBlock *Else);
   /// True successor with only this edge, printed inside the if. A chain of
   /// print-passthrough hops is followed when the block after them still has
   /// only that edge. Null when another edge enters it, it is an EH pad, or
@@ -247,10 +245,11 @@ public:
                                               bool InlineAssignArm = false);
   /// Single-entry blocks reached by an inlined arm, up to a rejoin that
   /// already has another entry. Empty when the tail returns or is shared.
-  bool singleEntryUncondTail(
-      const llvm::BasicBlock *From, const llvm::BasicBlock *Arm,
-      const llvm::BasicBlock *Edge,
-      llvm::SmallVectorImpl<const llvm::BasicBlock *> &Chain);
+  bool
+  singleEntryUncondTail(const llvm::BasicBlock *From,
+                        const llvm::BasicBlock *Arm,
+                        const llvm::BasicBlock *Edge,
+                        llvm::SmallVectorImpl<const llvm::BasicBlock *> &Chain);
   /// Single-entry conditional block whose two arms are straight tails to the
   /// same rejoin. The block is printed at the branch instead of a goto.
   bool singleEntryCondRegion(
@@ -297,7 +296,7 @@ public:
   /// and that target falls through. Null when a straight true arm already
   /// owns the if, the body has another entry, or either edge assigns a phi.
   const llvm::BasicBlock *straightLineFalseSkip(const llvm::BasicBlock *From,
-                                                 const llvm::BasicBlock *Else);
+                                                const llvm::BasicBlock *Else);
   /// False edge is the next block. Every path through it reaches the true
   /// edge's target, and that target already has another entry. The region
   /// prints once inside the inverted test; the shared target stays outside.
@@ -317,14 +316,16 @@ public:
       llvm::SmallVectorImpl<char> &FlatTaken,
       llvm::SmallVectorImpl<unsigned> &FlatCounts,
       llvm::SmallVectorImpl<const llvm::BasicBlock *> &Elided);
-  bool writeExclusiveSkip(
-      llvm::ArrayRef<const llvm::BasicBlock *> Headers,
-      llvm::ArrayRef<const llvm::BasicBlock *> Arms,
-      llvm::ArrayRef<char> ArmOnTrue, const llvm::BasicBlock *Tail,
-      llvm::ArrayRef<const llvm::BasicBlock *> Owned,
-      llvm::ArrayRef<const llvm::BasicBlock *> FlatConds,
-      llvm::ArrayRef<char> FlatTaken, llvm::ArrayRef<unsigned> FlatCounts,
-      llvm::ArrayRef<const llvm::BasicBlock *> Elided, int Indent);
+  bool writeExclusiveSkip(llvm::ArrayRef<const llvm::BasicBlock *> Headers,
+                          llvm::ArrayRef<const llvm::BasicBlock *> Arms,
+                          llvm::ArrayRef<char> ArmOnTrue,
+                          const llvm::BasicBlock *Tail,
+                          llvm::ArrayRef<const llvm::BasicBlock *> Owned,
+                          llvm::ArrayRef<const llvm::BasicBlock *> FlatConds,
+                          llvm::ArrayRef<char> FlatTaken,
+                          llvm::ArrayRef<unsigned> FlatCounts,
+                          llvm::ArrayRef<const llvm::BasicBlock *> Elided,
+                          int Indent);
   void writeExclusiveArm(
       const llvm::BasicBlock *BB, const llvm::BasicBlock *Tail,
       const llvm::SmallPtrSetImpl<const llvm::BasicBlock *> &Owned,
@@ -332,12 +333,13 @@ public:
       llvm::SmallPtrSetImpl<const llvm::BasicBlock *> &Seen, int Indent);
   /// Two or more tests whose arms only reach one private join. The arms
   /// print as if/else and that join stays a single tail.
-  bool privateJoinElseIf(
-      const llvm::BasicBlock *From,
-      llvm::SmallVectorImpl<const llvm::BasicBlock *> &Conds,
-      llvm::SmallVectorImpl<const llvm::BasicBlock *> &TrueEdges,
-      const llvm::BasicBlock *&ElseEdge, const llvm::BasicBlock *&Join,
-      llvm::SmallVectorImpl<const llvm::BasicBlock *> &Skip);
+  bool
+  privateJoinElseIf(const llvm::BasicBlock *From,
+                    llvm::SmallVectorImpl<const llvm::BasicBlock *> &Conds,
+                    llvm::SmallVectorImpl<const llvm::BasicBlock *> &TrueEdges,
+                    const llvm::BasicBlock *&ElseEdge,
+                    const llvm::BasicBlock *&Join,
+                    llvm::SmallVectorImpl<const llvm::BasicBlock *> &Skip);
   /// False edge is a region that ends before the true edge's only block.
   /// The region prints inside the inverted test and that block falls through.
   bool regionBeforeSkipTarget(
@@ -358,8 +360,7 @@ public:
                           std::vector<const llvm::BasicBlock *> &Conds,
                           const llvm::BasicBlock *&Arm,
                           const llvm::BasicBlock *&Def,
-                          const llvm::BasicBlock *&Join,
-                          bool &InvertCond);
+                          const llvm::BasicBlock *&Join, bool &InvertCond);
   bool blockOnlyFeedsBranch(const llvm::BasicBlock *BB);
   /// Next block's false edge rejoins this condition's true target, and its
   /// true edge is a straight arm. Null when the block has a printed
@@ -367,7 +368,8 @@ public:
   const llvm::BasicBlock *andRejoinTest(const llvm::BasicBlock *From,
                                         const llvm::BasicBlock *Else);
   /// Next block is only a conditional goto to \p Target, same as \p Pred.
-  /// Null when it has a printed statement, another entry, or a different target.
+  /// Null when it has a printed statement, another entry, or a different
+  /// target.
   bool pureSameTargetSkip(const llvm::BasicBlock *BB,
                           const llvm::BasicBlock *Target,
                           const llvm::BasicBlock *Pred);
@@ -391,9 +393,10 @@ public:
   impliedPointerSuccessor(const llvm::CondBrInst *Br) const;
   /// Untaken edge of an implied pointer test when its printed instructions
   /// only store 0 into slots the taken edge also stores.
-  bool deadNullAssignBlocks(
-      const llvm::CondBrInst *Br, const llvm::BasicBlock *Taken,
-      llvm::SmallVectorImpl<const llvm::BasicBlock *> &Blocks);
+  bool
+  deadNullAssignBlocks(const llvm::CondBrInst *Br,
+                       const llvm::BasicBlock *Taken,
+                       llvm::SmallVectorImpl<const llvm::BasicBlock *> &Blocks);
   /// True when \p Succ leaves the cursor for that is currently printing.
   /// The exit can be the next block in layout and still sit outside the
   /// for, so that edge stays a break.
@@ -423,8 +426,7 @@ public:
   const llvm::Value *peelIntegerView(const llvm::Value *V) const;
   /// Logical shift whose amount does not fit the peeled source. Keep the
   /// widening cast so `>> 32` is not applied to a 32-bit C operand.
-  std::string logicalShiftLhs(const llvm::Instruction &Shift,
-                              std::string LHS);
+  std::string logicalShiftLhs(const llvm::Instruction &Shift, std::string LHS);
   std::string condStr(const llvm::Value *V);
   /// Value tested by the x86 `ZF || SF` pattern. `condStr` prints it as
   /// `value <= 0`. Null for every other `or`.
@@ -500,7 +502,7 @@ public:
   std::string callArgStr(const llvm::Value *Arg, const llvm::CallBase &Call,
                          unsigned ArgIdx);
   std::optional<std::string> enumeratorDisplay(const TypeRef &Ty,
-                                              uint64_t Val) const;
+                                               uint64_t Val) const;
   TypeRef enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const;
   std::string comparedOperandText(const llvm::Value *V,
                                   const llvm::Value *Other);
@@ -551,7 +553,8 @@ public:
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
   std::string resolveNdDataName(llvm::StringRef Name) const;
   bool isImageDataAddress(va_t Addr) const;
-  std::optional<va_t> uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
+  std::optional<va_t>
+  uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
   std::optional<va_t> imageDataVA(const llvm::Value *V) const;
   static unsigned imageIntegerAccessSize(const llvm::Type *Ty) {
@@ -568,8 +571,8 @@ public:
   imageByteArrayBacking(const llvm::Value *V, uint64_t AccessSize) const;
   /// Pointer into that backing range.  Interior offsets must not become
   /// independent C globals.
-  std::optional<std::string>
-  imageByteArrayPointer(const llvm::Value *V, uint64_t AccessSize) const;
+  std::optional<std::string> imageByteArrayPointer(const llvm::Value *V,
+                                                   uint64_t AccessSize) const;
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> foldImmediate(const llvm::Value *V) const;
   std::string imageDataCName(const llvm::Value *V) const;
@@ -638,7 +641,8 @@ public:
   mutable llvm::DenseMap<const llvm::StoreInst *, bool> KilledEntryZeroCache;
   /// The LLVM function is immutable while it is projected to C.  Cache the
   /// address-escape classification until setupFunction selects another one.
-  mutable llvm::DenseMap<const llvm::AllocaInst *, bool> AllocaAddressTakenCache;
+  mutable llvm::DenseMap<const llvm::AllocaInst *, bool>
+      AllocaAddressTakenCache;
   struct ImmediateUser {
     const llvm::StoreInst *Store = nullptr;
     bool IsSelfCopy = false;
@@ -661,8 +665,8 @@ public:
   /// across blocks; reused cursor homes stay out.
   std::set<const llvm::AllocaInst *> UniqueHomes;
   std::set<const llvm::AllocaInst *> JoinCallArgAllocas;
-  std::map<const llvm::AllocaInst *,
-           std::set<const llvm::BasicBlock *>> JoinArmBlocks;
+  std::map<const llvm::AllocaInst *, std::set<const llvm::BasicBlock *>>
+      JoinArmBlocks;
   /// Assign-and-branch arms already printed inside a conditional.
   std::set<const llvm::BasicBlock *> FoldedJoinArms;
   /// Single-predecessor else bodies printed at the branch so their later
