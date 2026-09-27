@@ -2245,6 +2245,31 @@ class _RecordingSynthesisHost:
 
 
 class SynthesizeExpressionTests(unittest.TestCase):
+    def test_selects_optional_solver_and_checks_availability(self) -> None:
+        from neverd_plugin import NeverDError, synthesize_expression
+
+        class BackendHost(_RecordingSynthesisHost):
+            available = True
+
+            def call(self, name: str, *arguments: object) -> object:
+                if name == "neverd_solver_backend_available":
+                    self.backend = arguments[0]
+                    return int(self.available)
+                return super().call(name, *arguments)
+
+        host = BackendHost(ok=1, input=b"x", output=b"x")
+        synthesize_expression("x", solver="z3", solver_timeout_ms=75, host=host)
+        self.assertEqual(host.backend, 1)
+        self.assertEqual(host.options.solver_backend, 1)
+        self.assertEqual(host.options.solver_timeout_ms, 75)
+        self.assertEqual(host.disposals, 1)
+        host.available = False
+        with self.assertRaisesRegex(NeverDError, "not enabled"):
+            synthesize_expression("x", solver="z3", host=host)
+        self.assertEqual(host.disposals, 1)
+        with self.assertRaises(ValueError):
+            synthesize_expression("x", solver="invalid", host=host)
+
     def test_reports_proof_and_search_telemetry(self) -> None:
         from neverd_plugin import ProofStatus, SynthesisOutcome
         from neverd_plugin import synthesize_expression

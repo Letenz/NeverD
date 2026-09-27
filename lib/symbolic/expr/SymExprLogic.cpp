@@ -295,7 +295,7 @@ SymRef SymContext::mkAShr(SymRef A, SymRef B) {
 SymRef SymContext::mkRol(SymRef A, SymRef B) {
   uint32_t W = width(A);
   if (isConst(B)) {
-    uint64_t Amt = constValue(B).urem(llvm::APInt(W, W)).getZExtValue();
+    uint64_t Amt = constValue(B).urem(W);
     if (Amt == 0)
       return A;
     if (isConst(A))
@@ -307,7 +307,7 @@ SymRef SymContext::mkRol(SymRef A, SymRef B) {
 SymRef SymContext::mkRor(SymRef A, SymRef B) {
   uint32_t W = width(A);
   if (isConst(B)) {
-    uint64_t Amt = constValue(B).urem(llvm::APInt(W, W)).getZExtValue();
+    uint64_t Amt = constValue(B).urem(W);
     if (Amt == 0)
       return A;
     if (isConst(A))

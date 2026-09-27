@@ -34,6 +34,24 @@
 namespace neverd {
 
 namespace {
+llvm::APInt shiftInteger(NdOp Opcode, const llvm::APInt &Value,
+                         const llvm::APInt &Count) {
+  const unsigned Width = Value.getBitWidth();
+  const unsigned Amount = static_cast<unsigned>(Count.getLimitedValue(Width));
+  // ISA-specific count masks have already been emitted by the lifter.  LowIR
+  // shifts use the value's declared width and saturate an out-of-range count.
+  switch (Opcode) {
+  case NdOp::INT_LEFT:
+    return Value.shl(Amount);
+  case NdOp::INT_RIGHT:
+    return Value.lshr(Amount);
+  case NdOp::INT_ASHR:
+    return Value.ashr(std::min(Amount, Width - 1));
+  default:
+    llvm_unreachable("expected an integer shift");
+  }
+}
+
 uint8_t aesMul(uint8_t A, uint8_t B) {
   uint8_t R = 0;
   while (B) {
@@ -204,8 +222,6 @@ bool NdOpEmulator::executeArith(const LowOp &Op) {
       return false;
 
     llvm::APInt WideResult(BitWidth, 0);
-    const uint64_t Shift =
-        B.getLimitedValue(UINT64_MAX) & static_cast<uint64_t>(BitWidth - 1);
     switch (Op.Opcode) {
     case NdOp::INT_MULT:
       WideResult = A * B;
@@ -223,13 +239,9 @@ bool NdOpEmulator::executeArith(const LowOp &Op) {
       WideResult = A.srem(B);
       break;
     case NdOp::INT_LEFT:
-      WideResult = A.shl(Shift);
-      break;
     case NdOp::INT_RIGHT:
-      WideResult = A.lshr(Shift);
-      break;
     case NdOp::INT_ASHR:
-      WideResult = A.ashr(Shift);
+      WideResult = shiftInteger(Op.Opcode, A, B);
       break;
     default:
       return false;
@@ -267,23 +279,12 @@ bool NdOpEmulator::executeArith(const LowOp &Op) {
     Result = A ^ B;
     break;
   case NdOp::INT_LEFT:
-    Result = A << (B & 63);
-    break;
   case NdOp::INT_RIGHT:
-    Result = A >> (B & 63);
-    break;
   case NdOp::INT_ASHR: {
-    uint64_t SignExtended = A;
-    const uint16_t InputSize = Op.Inputs[0].Size;
-    if (InputSize > 0 && InputSize < sizeof(SignExtended)) {
-      const unsigned Bits = InputSize * 8;
-      const uint64_t Mask = (1ULL << Bits) - 1;
-      SignExtended &= Mask;
-      if (SignExtended & (1ULL << (Bits - 1)))
-        SignExtended |= ~Mask;
-    }
-    int64_t SA = std::bit_cast<int64_t>(SignExtended);
-    Result = static_cast<uint64_t>(SA >> (B & 63));
+    const unsigned Width =
+        Op.Inputs[0].Size ? unsigned(Op.Inputs[0].Size) * 8 : 64;
+    Result = shiftInteger(Op.Opcode, llvm::APInt(Width, A), llvm::APInt(64, B))
+                 .getZExtValue();
     break;
   }
   case NdOp::INT_DIV:
@@ -299,8 +300,7 @@ bool NdOpEmulator::executeArith(const LowOp &Op) {
         Op.Inputs[1].Size != Op.Output.Size)
       return false;
     const unsigned Bits = Op.Output.Size * 8;
-    const uint64_t Mask = Bits == 64 ? UINT64_MAX
-                                     : (UINT64_C(1) << Bits) - 1;
+    const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
     const uint64_t Sign = UINT64_C(1) << (Bits - 1);
     const auto Signed = [Mask, Sign](uint64_t Value) {
       Value &= Mask;
@@ -328,8 +328,7 @@ bool NdOpEmulator::executeArith(const LowOp &Op) {
         Op.Inputs[1].Size != Op.Output.Size)
       return false;
     const unsigned Bits = Op.Output.Size * 8;
-    const uint64_t Mask = Bits == 64 ? UINT64_MAX
-                                     : (UINT64_C(1) << Bits) - 1;
+    const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
     const uint64_t Sign = UINT64_C(1) << (Bits - 1);
     const auto Signed = [Mask, Sign](uint64_t Value) {
       Value &= Mask;
@@ -656,9 +655,8 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
 
   if (Id == Intrinsic::Enqcmd || Id == Intrinsic::Enqcmds) {
     const auto IsKnownScalar = [&](const NdVar &Value) {
-      return Value.isConst() ||
-             ((Value.isReg() || Value.isTemp()) &&
-              Registers.contains(Value.Offset));
+      return Value.isConst() || ((Value.isReg() || Value.isTemp()) &&
+                                 Registers.contains(Value.Offset));
     };
     if (Img.Arch != Arch::X64 || Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.NumInputs != 3 || Op.Inputs[0].Size != 2 ||
@@ -668,8 +666,7 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
             Id, Op.NumInputs, Op.Output.Size, Op.Inputs[1].Size,
             Op.Inputs[2].Size, 0) ||
         !IsKnownScalar(Op.Inputs[1]) || !IsKnownScalar(Op.Inputs[2]) ||
-        !X86CurrentPrivilegeLevel || !X86IA32Pasid ||
-        !X86LinearAddressBits)
+        !X86CurrentPrivilegeLevel || !X86IA32Pasid || !X86LinearAddressBits)
       return false;
 
     // These feature-specific checks precede even the ordinary source load.
@@ -708,13 +705,11 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     uint32_t Header = 0;
     std::memcpy(&Header, Command->data(), sizeof(Header));
     if ((Id == Intrinsic::Enqcmd && Header != 0) ||
-        (Id == Intrinsic::Enqcmds &&
-         (Header & UINT32_C(0x7ff00000)) != 0))
+        (Id == Intrinsic::Enqcmds && (Header & UINT32_C(0x7ff00000)) != 0))
       return false;
 
     const uint64_t PortalAddress = readOperand(Op.Inputs[2]);
-    if ((PortalAddress & 63) != 0 ||
-        !IsCanonicalRange(PortalAddress, 64))
+    if ((PortalAddress & 63) != 0 || !IsCanonicalRange(PortalAddress, 64))
       return false;
     for (uint64_t Offset = 0; Offset != 64; ++Offset) {
       const Segment *Mapped = Img.getSegmentFor(PortalAddress + Offset);
@@ -1189,13 +1184,13 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
     // [id, effective address, old ZMM destination, source-block base,
     // compact k mask, zeroing bit].  The four-register source block and the
     // m128 Tuple1_4X are architectural: do not model this as one vector add.
-    if (!intrinsicX86VP4DPShapeIsValid(
-            Id, Op.NumInputs, Op.Output.Size,
-            Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
-            Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
-            Op.NumInputs > 3 ? Op.Inputs[3].Size : 0,
-            Op.NumInputs > 4 ? Op.Inputs[4].Size : 0,
-            Op.NumInputs > 5 ? Op.Inputs[5].Size : 0) ||
+    if (!intrinsicX86VP4DPShapeIsValid(Id, Op.NumInputs, Op.Output.Size,
+                                       Op.NumInputs > 1 ? Op.Inputs[1].Size : 0,
+                                       Op.NumInputs > 2 ? Op.Inputs[2].Size : 0,
+                                       Op.NumInputs > 3 ? Op.Inputs[3].Size : 0,
+                                       Op.NumInputs > 4 ? Op.Inputs[4].Size : 0,
+                                       Op.NumInputs > 5 ? Op.Inputs[5].Size
+                                                        : 0) ||
         !Op.Inputs[3].isConst() ||
         (!Op.Inputs[4].isConst() && !Op.Inputs[4].isReg()) ||
         !Op.Inputs[5].isConst())
@@ -1263,17 +1258,16 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
       for (unsigned I = 0; I < 4; ++I) {
         const int64_t Product =
             static_cast<int64_t>(readWord(Sources[I], Lane * 4)) *
-                static_cast<int64_t>(static_cast<int16_t>(
-                    MemoryWords[I] & UINT32_C(0xffff))) +
+                static_cast<int64_t>(
+                    static_cast<int16_t>(MemoryWords[I] & UINT32_C(0xffff))) +
             static_cast<int64_t>(readWord(Sources[I], Lane * 4 + 2)) *
-                static_cast<int64_t>(static_cast<int16_t>(
-                    MemoryWords[I] >> 16));
-        const int64_t Sum = static_cast<int64_t>(static_cast<int32_t>(Acc)) +
-                            Product;
+                static_cast<int64_t>(
+                    static_cast<int16_t>(MemoryWords[I] >> 16));
+        const int64_t Sum =
+            static_cast<int64_t>(static_cast<int32_t>(Acc)) + Product;
         if (Saturating) {
-          const int64_t Clamped =
-              std::max<int64_t>(-2147483648LL,
-                                std::min<int64_t>(2147483647LL, Sum));
+          const int64_t Clamped = std::max<int64_t>(
+              -2147483648LL, std::min<int64_t>(2147483647LL, Sum));
           Acc = static_cast<uint32_t>(static_cast<int32_t>(Clamped));
         } else {
           // VP4DPWSSD wraps after every one of the four sequential updates.
@@ -1293,26 +1287,26 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       return false;
     const uint64_t RawKind = readOperand(Op.Inputs[1]);
-    if (RawKind > static_cast<uint64_t>(
-                      F16CConvertKind::SingleToHalfSuppressExceptions))
+    if (RawKind >
+        static_cast<uint64_t>(F16CConvertKind::SingleToHalfSuppressExceptions))
       return false;
     const auto Kind = static_cast<F16CConvertKind>(RawKind);
-    const bool HalfToSingle = Kind == F16CConvertKind::HalfToSingle ||
-                              Kind == F16CConvertKind::
-                                          HalfToSingleSuppressExceptions;
+    const bool HalfToSingle =
+        Kind == F16CConvertKind::HalfToSingle ||
+        Kind == F16CConvertKind::HalfToSingleSuppressExceptions;
     const bool SuppressExceptions =
         Kind == F16CConvertKind::HalfToSingleSuppressExceptions ||
         Kind == F16CConvertKind::SingleToHalfSuppressExceptions;
     if (HalfToSingle) {
       if ((Op.Output.Size != 16 && Op.Output.Size != 32 &&
            Op.Output.Size != 64) ||
-          Op.Inputs[2].Size < Op.Output.Size / 2 ||
-          Op.Inputs[2].Size > 32)
+          Op.Inputs[2].Size < Op.Output.Size / 2 || Op.Inputs[2].Size > 32)
         return false;
     } else if ((Op.Output.Size != 16 && Op.Output.Size != 32) ||
                (Op.Inputs[2].Size != 16 && Op.Inputs[2].Size != 32 &&
                 Op.Inputs[2].Size != 64) ||
-               Op.Output.Size != std::max<uint16_t>(16, Op.Inputs[2].Size / 2)) {
+               Op.Output.Size !=
+                   std::max<uint16_t>(16, Op.Inputs[2].Size / 2)) {
       return false;
     }
 
@@ -2717,16 +2711,13 @@ bool NdOpEmulator::executeCompare(const LowOp &Op) {
     return false;
   if (Op.Inputs[0].Size > sizeof(uint64_t) ||
       Op.Inputs[1].Size > sizeof(uint64_t)) {
-    if (Op.Inputs[0].Size == 0 ||
-        Op.Inputs[0].Size != Op.Inputs[1].Size || Op.Output.Size == 0 ||
-        Op.Output.Size > sizeof(uint64_t) ||
-        (Op.Opcode != NdOp::INT_EQUAL &&
-         Op.Opcode != NdOp::INT_NOTEQUAL))
+    if (Op.Inputs[0].Size == 0 || Op.Inputs[0].Size != Op.Inputs[1].Size ||
+        Op.Output.Size == 0 || Op.Output.Size > sizeof(uint64_t) ||
+        (Op.Opcode != NdOp::INT_EQUAL && Op.Opcode != NdOp::INT_NOTEQUAL))
       return false;
     const bool Equal =
         readOperandBytes(Op.Inputs[0]) == readOperandBytes(Op.Inputs[1]);
-    writeOutput(Op.Output,
-                Op.Opcode == NdOp::INT_EQUAL ? Equal : !Equal);
+    writeOutput(Op.Output, Op.Opcode == NdOp::INT_EQUAL ? Equal : !Equal);
     return true;
   }
   uint64_t A = readOperand(Op.Inputs[0]);

@@ -3009,6 +3009,8 @@ def synthesize_expression(
     solver_max_conflicts: int = 0,
     solver_max_propagations: int = 0,
     solver_max_watch_visits: int = 0,
+    solver: str = "builtin",
+    solver_timeout_ms: int = 0,
     exhaustive: bool = False,
     host: HostAPI | None = None,
 ) -> SynthesisResult:
@@ -3021,6 +3023,8 @@ def synthesize_expression(
     """
 
     text = _utf8_argument("expression", expression, allow_empty=False)
+    if solver not in ("builtin", "z3"):
+        raise ValueError("solver must be 'builtin' or 'z3'")
     options = NeverDSynthesizeOptions()
     options.struct_size = ctypes.sizeof(NeverDSynthesizeOptions)
     options.width = _unsigned("width", width, 32)
@@ -3047,10 +3051,14 @@ def synthesize_expression(
         "solver_max_watch_visits", solver_max_watch_visits, 64
     )
     options.exhaustive = 1 if _boolean("exhaustive", exhaustive) else 0
+    options.solver_backend = 1 if solver == "z3" else 0
+    options.solver_timeout_ms = _unsigned("solver_timeout_ms", solver_timeout_ms, 32)
 
     result = NeverDSynthesizeResult()
     result.struct_size = ctypes.sizeof(NeverDSynthesizeResult)
     library = host if host is not None else _simplify_host()
+    if solver == "z3" and not library.call("neverd_solver_backend_available", 1):
+        raise NeverDError("Z3 backend is not enabled in this build")
     status = library.call(
         "neverd_synthesize_expr", text, ctypes.byref(options), ctypes.byref(result)
     )

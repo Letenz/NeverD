@@ -84,6 +84,19 @@ TEST(SymExecConcreteShadow, CoreIntegerSemanticsUseEverySupportedSeedWidth) {
   }
 }
 
+TEST(SymExecConcreteShadow, WiderShiftCountCannotWrapIntoAnInRangeCount) {
+  for (NdOp Opcode : {NdOp::INT_LEFT, NdOp::INT_RIGHT, NdOp::INT_ASHR}) {
+    SymExecConcreteShadow Shadow;
+    ASSERT_TRUE(Shadow.reset(llvm::endianness::little));
+    ASSERT_TRUE(Shadow.setRegister(0, 1, 0x91));
+    ASSERT_TRUE(Shadow.setRegister(8, 2, 256));
+    ASSERT_TRUE(Shadow.step(
+        op(Opcode, NdVar::reg(16, 1), {NdVar::reg(0, 1), NdVar::reg(8, 2)})));
+    EXPECT_EQ(Shadow.value(NdVar::reg(16, 1)),
+              Opcode == NdOp::INT_ASHR ? 0xffu : 0u);
+  }
+}
+
 TEST(SymExecConcreteShadow, SeedsAreCompleteNonOverlappingByteRanges) {
   SymExecConcreteShadow Shadow;
 

@@ -492,6 +492,45 @@ TEST(BitVectorSolver, SynthesisVerifierKeepsOnlyARelevantRefutation) {
   EXPECT_EQ(Verify.report().Proof, ProofStatus::Invalid);
 }
 
+TEST(BitVectorSolver, SynthesisVerifierRefutationsBelongToTheCurrentContext) {
+  for (ProofBackend Backend : {ProofBackend::BuiltIn, ProofBackend::Z3}) {
+    if (!proofBackendAvailable(Backend))
+      continue;
+    SCOPED_TRACE(static_cast<unsigned>(Backend));
+    SymContext First;
+    const SymRef X = First.mkVar("x", 8);
+    const SymRef FirstCandidate = First.mkZero(8);
+    SymContext Second;
+    Second.mkVar("unrelated", 8);
+    const SymRef Y = Second.mkVar("y", 16);
+    const SymRef SecondCandidate = Second.mkConst(16, 7);
+
+    SymSynthVerifier Verify({}, Backend);
+    ASSERT_EQ(Verify(First, X, FirstCandidate), SynthVerification::Different);
+    ASSERT_EQ(Verify(Second, Y, SecondCandidate), SynthVerification::Different);
+    const auto &Report = Verify.report();
+    EXPECT_EQ(Report.Stats.Queries, 2u);
+    EXPECT_EQ(Report.RejectedCandidate, SecondCandidate);
+    ASSERT_TRUE(Report.Counterexample.has_value());
+    ASSERT_TRUE(Report.Counterexample->contains(Second.varId(Y)));
+    EXPECT_EQ(Report.Counterexample->value(Second.varId(Y))->getBitWidth(),
+              16u);
+    const auto Values = Report.Counterexample->asVarValues(Second);
+    EXPECT_NE(Second.eval(Y, Values), Second.eval(SecondCandidate, Values));
+
+    // Further candidates in this context keep its first refutation.
+    ASSERT_EQ(Verify(Second, Y, Second.mkOne(16)),
+              SynthVerification::Different);
+    EXPECT_EQ(Report.RejectedCandidate, SecondCandidate);
+    EXPECT_EQ(Report.Stats.Queries, 3u);
+    ASSERT_EQ(Verify(First, X, FirstCandidate), SynthVerification::Different);
+    EXPECT_EQ(Report.RejectedCandidate, FirstCandidate);
+    ASSERT_TRUE(Report.Counterexample.has_value());
+    EXPECT_EQ(Report.Counterexample->value(First.varId(X))->getBitWidth(), 8u);
+    EXPECT_EQ(Report.Stats.Queries, 4u);
+  }
+}
+
 TEST(BitVectorSolver, SynthesisVerifierReportsDeterministicBudgetUnknown) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

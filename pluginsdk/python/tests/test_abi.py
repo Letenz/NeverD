@@ -276,6 +276,8 @@ class ABIInventoryTests(unittest.TestCase):
                 "solver_max_propagations",
                 "solver_max_watch_visits",
                 "exhaustive",
+                "solver_backend",
+                "solver_timeout_ms",
             ],
         )
         self.assertEqual(

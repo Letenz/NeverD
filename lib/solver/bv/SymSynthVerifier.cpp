@@ -8,6 +8,7 @@
 
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/solver/SatTypes.h"
+#include "neverd/solver/Z3Solver.h"
 #include "neverd/symbolic/SymExpr.h"
 #include "neverd/symbolic/SymSynth.h"
 
@@ -31,13 +32,26 @@ bool isValidRef(const symbolic::SymContext &Ctx, symbolic::SymRef R) {
 
 } // namespace
 
-SymSynthVerifier::SymSynthVerifier(SolverOptions Options)
-    : Options(std::move(Options)) {
+bool proofBackendAvailable(ProofBackend Backend) {
+  switch (Backend) {
+  case ProofBackend::BuiltIn:
+    return true;
+  case ProofBackend::Z3:
+    return Z3Solver::available();
+  }
+  return false;
+}
+
+SymSynthVerifier::SymSynthVerifier(SolverOptions Options, ProofBackend Backend,
+                                   uint32_t TimeoutMs)
+    : Options(std::move(Options)), Backend(Backend), TimeoutMs(TimeoutMs) {
   // A refutation without its assignment is not useful to a synthesis caller.
   // Keep model ownership as an invariant even if a generic solver option was
   // copied from a proof-only call site.
   this->Options.BuildModel = true;
 }
+
+SymSynthVerifier::~SymSynthVerifier() = default;
 
 void SymSynthVerifier::addStats(const SatStats &Stats) {
   addSaturating(Report.Stats.Conflicts, Stats.Conflicts);
@@ -55,13 +69,43 @@ SymSynthVerifier::operator()(symbolic::SymContext &Ctx,
                              symbolic::SymRef Original,
                              symbolic::SymRef Candidate) {
   addSaturating(Report.Stats.Queries, 1);
+  if (ReportContext != &Ctx) {
+    // A retained counterexample owns values, but its variable ids and candidate
+    // handle still belong to the context that produced them.
+    clearRefutation();
+    ReportContext = &Ctx;
+  }
 
   EquivResult Result = EquivResult::Invalid;
   std::optional<BitVectorModel> Counterexample;
 
   if (isValidRef(Ctx, Original) && isValidRef(Ctx, Candidate) &&
       Ctx.width(Original) == Ctx.width(Candidate)) {
-    if (Original == Candidate) {
+    if (Backend == ProofBackend::Z3) {
+      if (!Z3 || Z3Context != &Ctx) {
+        Z3SolverOptions Z3Options;
+        Z3Options.TimeoutMs = TimeoutMs;
+        Z3 = std::make_unique<Z3Solver>(Ctx, Z3Options);
+        Z3Context = &Ctx;
+      }
+      switch (Z3->checkDistinct(Original, Candidate)) {
+      case SatResult::Unsat:
+        Result = EquivResult::Equal;
+        break;
+      case SatResult::Sat:
+        Result = EquivResult::Different;
+        Counterexample = Z3->model();
+        break;
+      case SatResult::Unknown:
+        Result = EquivResult::Unknown;
+        break;
+      case SatResult::Invalid:
+        Result = EquivResult::Invalid;
+        break;
+      }
+    } else if (Backend != ProofBackend::BuiltIn) {
+      Result = EquivResult::Invalid;
+    } else if (Original == Candidate) {
       Result = EquivResult::Equal;
     } else {
       BitVectorSolver Solver(Ctx, Options);
