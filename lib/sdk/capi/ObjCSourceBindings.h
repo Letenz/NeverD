@@ -1837,6 +1837,131 @@ swiftSmallStringStorageHint(const BinaryImage &Image, va_t Address) {
              : std::nullopt;
 }
 
+// An inline Swift String is two value words, not a pointer to its bytes.
+// Authenticate both the complete tag and the narrow W-register construction
+// before a full-width store whose payload happens to equal an image VA is
+// treated as numeric. The four instructions are an indivisible local recipe:
+// MOVZ Wn, MOVK Wn, MOVZ Xm, STP Xn, Xm, [Xbase].
+inline bool swiftInlineSmallStringStorePair(const HighStmt &First,
+                                            const HighStmt &Second,
+                                            const HighFunc &Function,
+                                            const BinaryImage &Image) {
+  if (Image.Format != BinaryFormat::MachO || Image.Arch != Arch::AArch64 ||
+      Image.Bits != Bitness::Bits64 || Image.IsRelocatable ||
+      Image.MachOChainedFixupsAmbiguous || First.Kind != StmtKind::Store ||
+      Second.Kind != StmtKind::Store || !First.Addr ||
+      First.Addr != Second.Addr || First.Addr < Function.Entry ||
+      First.Addr - Function.Entry < 12 || First.Addr > InvalidVA - 3 ||
+      First.MemoryOrdering != NdMemoryOrdering::None ||
+      Second.MemoryOrdering != NdMemoryOrdering::None ||
+      First.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Second.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      !First.StoreVal || !Second.StoreVal ||
+      First.StoreVal->Kind != ExprKind::Const ||
+      Second.StoreVal->Kind != ExprKind::Const || !First.StoreVal->Type ||
+      !Second.StoreVal->Type || First.StoreVal->Type->Kind != NdTypeKind::Int ||
+      Second.StoreVal->Type->Kind != NdTypeKind::Int ||
+      First.StoreVal->Type->Size != 8 || Second.StoreVal->Type->Size != 8 ||
+      !First.StoreVal->Operands.empty() || !Second.StoreVal->Operands.empty() ||
+      First.StoreVal->IntrinsicId != Intrinsic::None ||
+      Second.StoreVal->IntrinsicId != Intrinsic::None ||
+      !First.StoreVal->IntrinsicOutputs.empty() ||
+      !Second.StoreVal->IntrinsicOutputs.empty() ||
+      First.StoreVal->IndirectTarget || Second.StoreVal->IndirectTarget ||
+      First.StoreVal->ConstProvenance != ConstantAddressProvenance::Scalar ||
+      isAddressProvenance(Second.StoreVal->ConstProvenance) ||
+      First.StoreVal->AddressOwnerVA != InvalidVA ||
+      Second.StoreVal->AddressOwnerVA != InvalidVA ||
+      !Image.getSectionFor(First.StoreVal->ConstVal))
+    return false;
+
+  const uint64_t Payload = First.StoreVal->ConstVal;
+  const uint64_t Tag = Second.StoreVal->ConstVal;
+  const uint8_t Marker = Tag >> 56;
+  if ((Marker & 0xf0) != 0xe0)
+    return false;
+  const unsigned Length = Marker & 0x0f;
+  for (unsigned Index = 0; Index < 15; ++Index) {
+    const uint8_t Byte =
+        Index < 8 ? Payload >> (Index * 8) : Tag >> ((Index - 8) * 8);
+    if ((Index < Length && Byte >= 0x80) || (Index >= Length && Byte != 0))
+      return false;
+  }
+
+  const auto SameAddress = [&](auto &&Self, const ExprPtr &Left,
+                               const ExprPtr &Right, unsigned Depth) -> bool {
+    if (!Left || !Right || Depth > 4 || !Left->Type || !Right->Type ||
+        Left->Type->Kind != NdTypeKind::Int ||
+        Right->Type->Kind != NdTypeKind::Int || Left->Type->Size != 8 ||
+        Right->Type->Size != 8 ||
+        Left->MemoryOrdering != NdMemoryOrdering::None ||
+        Right->MemoryOrdering != NdMemoryOrdering::None ||
+        Left->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Right->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Left->IntrinsicId != Intrinsic::None ||
+        Right->IntrinsicId != Intrinsic::None ||
+        !Left->IntrinsicOutputs.empty() || !Right->IntrinsicOutputs.empty() ||
+        Left->IndirectTarget || Right->IndirectTarget ||
+        Left->Kind != Right->Kind)
+      return false;
+    if (Left->Kind == ExprKind::Var)
+      return Left->Operands.empty() && Right->Operands.empty() &&
+             Left->Var.Size == 8 && Right->Var.Size == 8 &&
+             Left->Var == Right->Var;
+    return Left->Kind == ExprKind::BinOp && Left->Op == NdOp::INT_ADD &&
+           Right->Op == NdOp::INT_ADD && Left->Operands.size() == 2 &&
+           Right->Operands.size() == 2 &&
+           Self(Self, Left->Operands[0], Right->Operands[0], Depth + 1) &&
+           Self(Self, Left->Operands[1], Right->Operands[1], Depth + 1);
+  };
+  const auto &Address = Second.StoreAddr;
+  if (!Address || Address->Kind != ExprKind::BinOp ||
+      Address->Op != NdOp::INT_ADD || Address->Operands.size() != 2 ||
+      !Address->Type || Address->Type->Kind != NdTypeKind::Int ||
+      Address->Type->Size != 8)
+    return false;
+  const auto &Offset = Address->Operands[1];
+  if (!Offset || Offset->Kind != ExprKind::Const || !Offset->Type ||
+      Offset->Type->Kind != NdTypeKind::Int || Offset->Type->Size != 8 ||
+      Offset->ConstVal != 8 ||
+      Offset->ConstProvenance != ConstantAddressProvenance::Scalar ||
+      Offset->AddressOwnerVA != InvalidVA || !Offset->Operands.empty() ||
+      Offset->IntrinsicId != Intrinsic::None || Offset->IndirectTarget ||
+      !SameAddress(SameAddress, First.StoreAddr, Address->Operands[0], 0))
+    return false;
+
+  const auto *Section = Image.getSectionFor(First.Addr - 12);
+  if (!Section || !Section->isExecutable() ||
+      Image.getSectionFor(First.Addr + 3) != Section)
+    return false;
+  for (va_t Address = First.Addr - 12; Address <= First.Addr; Address += 4)
+    if (Image.hasRelocationProvenanceAt(Address) ||
+        Image.DataAddressRelocOperands.count(Address) ||
+        Image.CodeAddressRelocOperands.count(Address))
+      return false;
+  const auto *Code = Image.readVA(First.Addr - 12, 16);
+  if (!Code)
+    return false;
+  const uint32_t Low = llvm::support::endian::read32le(Code);
+  const uint32_t High = llvm::support::endian::read32le(Code + 4);
+  const uint32_t MarkerWord = llvm::support::endian::read32le(Code + 8);
+  const uint32_t Pair = llvm::support::endian::read32le(Code + 12);
+  const unsigned LowRegister = Low & 31;
+  const unsigned MarkerRegister = MarkerWord & 31;
+  if ((Low & 0x7f800000) != 0x52800000 || (High & 0x7f800000) != 0x72800000 ||
+      (MarkerWord & 0xff800000) != 0xd2800000 ||
+      (Pair & 0xffc00000) != 0xa9000000 || ((Low >> 21) & 3) != 0 ||
+      ((High >> 21) & 3) != 1 || ((MarkerWord >> 21) & 3) != 3 ||
+      ((Pair >> 15) & 127) != 0 || LowRegister == 31 || MarkerRegister == 31 ||
+      LowRegister == MarkerRegister || (High & 31) != LowRegister ||
+      (Pair & 31) != LowRegister || ((Pair >> 10) & 31) != MarkerRegister)
+    return false;
+  const uint64_t DecodedPayload =
+      ((Low >> 5) & 0xffff) | (uint64_t((High >> 5) & 0xffff) << 16);
+  const uint64_t DecodedTag = uint64_t((MarkerWord >> 5) & 0xffff) << 48;
+  return Payload == DecodedPayload && Tag == DecodedTag;
+}
+
 // Swift can leave a file-private literal array of (String, String) pairs in
 // writable __data without an nlist entry for the array itself. The two words
 // immediately before it give the pair and string counts; the next data symbol
@@ -4663,8 +4788,13 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       Fail("source reference control flow exceeds its depth budget");
       return;
     }
-    for (auto &Statement : Body) {
+    for (size_t Index = 0; Index < Body.size(); ++Index) {
+      auto &Statement = Body[Index];
       StatementAddress = Statement.Addr;
+      const bool InlineSmallStringPayload =
+          Index + 1 < Body.size() &&
+          swiftInlineSmallStringStorePair(Statement, Body[Index + 1], Function,
+                                          Image);
       const bool BoundStore =
           Statement.Kind == StmtKind::Store && Statement.StoreVal &&
           BindMemoryAddress(Statement.StoreAddr, Statement.StoreVal->Type,
@@ -4709,15 +4839,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         }
         if (!BoundStore || Expression != Statement.StoreAddr) {
           // A direct sub-pointer-width integer store retains the literal bits.
-          // A mapped VA collision is numeric only when this exact occurrence
-          // has scalar provenance and cannot store a complete pointer.
+          // A full word does so only for an authenticated inline Swift String
+          // payload produced by W-register immediates at this exact store.
           const bool NumericStoreValue =
               Expression == Statement.StoreVal && Expression &&
               Expression->Kind == ExprKind::Const && Expression->Type &&
               Image.Bits == Bitness::Bits64 &&
               (Image.Arch == Arch::AArch64 || Image.Arch == Arch::X64) &&
               Expression->Type->Kind == NdTypeKind::Int &&
-              Expression->Type->Size > 0 && Expression->Type->Size < 8 &&
+              Expression->Type->Size > 0 &&
+              (Expression->Type->Size < 8 || InlineSmallStringPayload) &&
               Expression->ConstProvenance ==
                   ConstantAddressProvenance::Scalar &&
               Expression->AddressOwnerVA == InvalidVA;

@@ -5207,6 +5207,108 @@ TEST(ObjCSourceBindings, StoredStringsRejectIncompleteAndNumericProvenance) {
   }
 }
 
+TEST(ObjCSourceBindings, NarrowSwiftInlineStringStoreKeepsNumericPayload) {
+  for (unsigned Mutation = 0; Mutation < 12; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ConstantStringFixture F;
+    Segment Collision;
+    Collision.Name = "__TEXT";
+    Collision.VA = 0x626b00;
+    Collision.Size = Collision.FileSz = 0x100;
+    Collision.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Collision.Data.resize(0x100);
+    F.Image.Segments.push_back(Collision);
+    Section CollisionSection;
+    CollisionSection.Name = "__text";
+    CollisionSection.SegmentName = Collision.Name;
+    CollisionSection.VA = Collision.VA;
+    CollisionSection.Size = CollisionSection.FileSz = Collision.Size;
+    CollisionSection.Flags = Collision.Flags;
+    F.Image.Sections.push_back(CollisionSection);
+
+    F.Function.Entry = 0x1080;
+    const uint32_t Code[] = {0x528d6c69, 0x72a00c49, 0xd2fc600a, 0xa9002909};
+    for (unsigned Index = 0; Index < 4; ++Index)
+      llvm::support::endian::write32le(
+          F.Image.Segments[1].Data.data() + 0x80 + Index * 4, Code[Index]);
+    MedVar BaseVar;
+    BaseVar.Kind = MedVar::Temp;
+    BaseVar.Id = 1;
+    BaseVar.Size = 8;
+    MedVar IndexVar = BaseVar;
+    IndexVar.Id = 2;
+    const auto Word = NdType::makeInt(8, false);
+    const auto Address = [&] {
+      return HighExpr::makeBinop(NdOp::INT_ADD,
+                                 HighExpr::makeVar(BaseVar, Word),
+                                 HighExpr::makeVar(IndexVar, Word));
+    };
+    HighStmt Payload;
+    Payload.Kind = StmtKind::Store;
+    Payload.Addr = 0x108c;
+    Payload.StoreAddr = Address();
+    Payload.StoreVal =
+        HighExpr::makeConst(0x626b63, 8, ConstantAddressProvenance::Scalar);
+    HighStmt Marker;
+    Marker.Kind = StmtKind::Store;
+    Marker.Addr = Payload.Addr;
+    Marker.StoreAddr = HighExpr::makeBinop(
+        NdOp::INT_ADD, Address(),
+        HighExpr::makeConst(8, 8, ConstantAddressProvenance::Scalar));
+    Marker.StoreVal = HighExpr::makeConst(0xe300000000000000, 8);
+    F.Function.Body = {Payload, Marker};
+    switch (Mutation) {
+    case 1:
+      F.Function.Body[1].StoreVal->ConstVal = 0xe400000000000000;
+      break;
+    case 2:
+      F.Function.Body[0].StoreVal->ConstProvenance =
+          ConstantAddressProvenance::Unknown;
+      break;
+    case 3:
+      F.Function.Body[0].StoreVal->AddressOwnerVA = 0x626b63;
+      break;
+    case 4:
+      F.Function.Body[1].StoreAddr->Operands[1]->ConstVal = 16;
+      break;
+    case 5:
+      F.Function.Body[1].Addr += 4;
+      break;
+    case 6:
+      llvm::support::endian::write32le(F.Image.Segments[1].Data.data() + 0x84,
+                                       0x72a00c4a);
+      break;
+    case 7:
+      F.Image.CodePtrRelocSlots.insert(0x1080);
+      break;
+    case 8:
+      F.Function.Body[1].StoreVal->ConstProvenance =
+          ConstantAddressProvenance::DataAddress;
+      break;
+    case 9:
+      F.Function.Body.pop_back();
+      break;
+    case 10:
+      std::swap(F.Function.Body[0], F.Function.Body[1]);
+      break;
+    case 11: {
+      HighStmt Extra = Payload;
+      Extra.Addr = 0x1090;
+      F.Function.Body.push_back(Extra);
+      break;
+    }
+    }
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    if (Mutation == 0) {
+      ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+      ASSERT_EQ(Bound.Function.Body[0].StoreVal->Kind, ExprKind::Const);
+      EXPECT_EQ(Bound.Function.Body[0].StoreVal->ConstVal, 0x626b63U);
+    } else {
+      EXPECT_FALSE(Bound.Limitation.empty());
+    }
+  }
+}
+
 TEST(ObjCSourceBindings, ReplacesLoadedSelectorAndKeepsOriginalProjection) {
   Fixture F;
   auto Result = bindObjCSourceReferences(F.Function, F.Image);
