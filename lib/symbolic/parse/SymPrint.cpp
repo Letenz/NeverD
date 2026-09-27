@@ -232,15 +232,23 @@ Fragment Printer::render(SymRef R) const {
   }
 
   case SymOp::Add: {
-    std::string T;
+    unsigned Lead = 0;
+    // A positive term lets an earlier negative product use binary
+    // subtraction, avoiding a separate unary sign. Literal prefixes keep
+    // their established ordering; node identities remain unchanged.
+    if (!Ctx.isConst(Ops[0]) && negatedTerm(Ops[0]))
+      for (unsigned I = 1; I < Ops.size(); ++I)
+        if (!negatedTerm(Ops[I])) {
+          Lead = I;
+          break;
+        }
+    std::optional<Magnitude> First = negatedTerm(Ops[Lead]);
+    std::string T =
+        First ? negate(*First) : wrap(frag(Ops[Lead]), PrecAdditive);
     for (unsigned I = 0, E = Ops.size(); I < E; ++I) {
-      std::optional<Magnitude> Neg = negatedTerm(Ops[I]);
-      if (I == 0) {
-        // The leading sign is unary; every later one is the binary minus of
-        // the sum itself, whose right operand only has to out-bind addition.
-        T += Neg ? negate(*Neg) : wrap(frag(Ops[I]), PrecAdditive);
+      if (I == Lead)
         continue;
-      }
+      std::optional<Magnitude> Neg = negatedTerm(Ops[I]);
       T += Neg ? " - " : " + ";
       T += wrap(Neg ? Neg->Frag : frag(Ops[I]), PrecAdditive + 1);
     }

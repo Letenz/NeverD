@@ -1348,6 +1348,12 @@ Complements on those arithmetic paths are read as `~X = -1-X`; bitwise
 consumers and other operations remain opaque. The chosen spelling is
 re-expanded before acceptance. Bounded checks stop further region search for
 proved minimal unary variables and products of distinct free variables.
+Equal word coefficients can also be factored without modular division,
+including noninvertible even coefficients. A coefficient-only opportunity is
+read once at the end of the public shallow or deep request, rather than at
+each layer of a growing arithmetic tail. The final polynomial comparison,
+strict cost decrease, and remaining work and storage allowances still apply;
+an incomplete optional attempt retains the previously established expression.
 
 Hidden affine inputs may supply exact inverse relations when a coefficient
 is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic

@@ -19,6 +19,12 @@ using Factor = std::pair<uint32_t, uint32_t>;
 using Monomial = std::vector<Factor>;
 using Polynomial = std::map<Monomial, llvm::APInt>;
 
+struct CoefficientLess {
+  bool operator()(const llvm::APInt &A, const llvm::APInt &B) const {
+    return A.ult(B);
+  }
+};
+
 // Allocation charges are conservative and cumulative for one attempt. Keeping
 // even released storage charged bounds all temporary tables and candidate
 // construction together, without making reclamation order part of the policy.
@@ -334,6 +340,45 @@ public:
         }
       }
       if (!BestPower) {
+        // Equal coefficients can be removed without division in the modular
+        // ring, including even coefficients that have no multiplicative
+        // inverse. Unit coefficients would only introduce extra operators.
+        std::map<llvm::APInt, size_t, CoefficientLess> Coefficients;
+        for (const auto &[Key, Coefficient] : F.P) {
+          if (Key.empty() || Coefficient.isOne() || Coefficient.isAllOnes())
+            continue;
+          if (!Resources.charge(1, 64) ||
+              !Resources.array(Words, sizeof(uint64_t)))
+            return std::nullopt;
+          ++Coefficients[Coefficient];
+        }
+        auto Best = Coefficients.end();
+        for (auto It = Coefficients.begin(); It != Coefficients.end(); ++It)
+          if (It->second >= 2 &&
+              (Best == Coefficients.end() || It->second > Best->second))
+            Best = It;
+        if (Best != Coefficients.end()) {
+          Frame Next;
+          if (!Resources.array(Words, sizeof(uint64_t)))
+            return std::nullopt;
+          const llvm::APInt One(Width, 1);
+          for (const auto &[Key, Coefficient] : F.P) {
+            if (Coefficient == Best->first) {
+              if (!add(Next.P, Key, One))
+                return std::nullopt;
+            } else if (!add(F.Rest, Key, Coefficient)) {
+              return std::nullopt;
+            }
+          }
+          if (!Resources.charge(1, sizeof(Frame) + 128) ||
+              !Resources.array(Words, sizeof(uint64_t)))
+            return std::nullopt;
+          F.Factor = Ctx.mkConst(Best->first);
+          F.P.clear();
+          F.Stage = 1;
+          Stack.push_back(std::move(Next));
+          continue;
+        }
         auto Leaf = expanded(F.P);
         if (!Leaf)
           return std::nullopt;
@@ -404,12 +449,8 @@ bool mayImproveArithmetic(const SymContext &Ctx, SymRef Root) {
   return false;
 }
 
-} // namespace
-
-SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                       WorkBudget &Budget, SolveReport &Rep) {
-  if (!mayImproveArithmetic(Ctx, E))
-    return E;
+SymRef normalizeArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                           WorkBudget &Budget, SolveReport &Rep) {
   ArithmeticResources Resources(Budget, Opts.MaxTableBytes);
   ArithmeticNormalizer Normalizer(Ctx, Resources, Ctx.width(E));
   auto Stop = [&]() {
@@ -448,6 +489,47 @@ SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   Rep.Outcome = MBAOutcome::Rewritten;
   Rep.Evidence = MBAEvidence::Derivation;
   return Best;
+}
+
+bool hasRepeatedCoefficients(const SymContext &Ctx, SymRef E) {
+  if (Ctx.op(E) != SymOp::Add)
+    return false;
+  // Constant identities admit repeated coefficients without allocating a
+  // table. Collisions only admit an extra budgeted normalization attempt.
+  uint64_t Seen = 0;
+  for (SymRef Term : Ctx.operands(E)) {
+    if (Ctx.op(Term) != SymOp::Mul)
+      continue;
+    SymRef Factor = Ctx.operand(Term, 0);
+    if (!Ctx.isConst(Factor))
+      continue;
+    // Wide values are not copied before the resource guard is established.
+    if (Ctx.width(Factor) <= 64 &&
+        (Ctx.constValue(Factor).isOne() || Ctx.constValue(Factor).isAllOnes()))
+      continue;
+    const uint64_t Bit = uint64_t(1) << (Factor.index() % 64);
+    if (Seen & Bit)
+      return true;
+    Seen |= Bit;
+  }
+  return false;
+}
+
+} // namespace
+
+SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                       WorkBudget &Budget, SolveReport &Rep) {
+  return mayImproveArithmetic(Ctx, E)
+             ? normalizeArithmetic(Ctx, E, Opts, Budget, Rep)
+             : E;
+}
+
+SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
+                               const MBAOptions &Opts, WorkBudget &Budget,
+                               SolveReport &Rep) {
+  return hasRepeatedCoefficients(Ctx, E)
+             ? normalizeArithmetic(Ctx, E, Opts, Budget, Rep)
+             : E;
 }
 
 } // namespace neverd::symbolic::detail

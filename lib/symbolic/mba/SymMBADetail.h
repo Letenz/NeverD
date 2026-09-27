@@ -411,6 +411,11 @@ struct SolveReport {
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                        WorkBudget &Budget, SolveReport &Rep);
 
+/// A final coefficient reading, kept outside the repeated region walk.
+SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
+                               const MBAOptions &Opts, WorkBudget &Budget,
+                               SolveReport &Rep);
+
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to
 /// it once it has split a masked expression into mask-free columns, so keeping
