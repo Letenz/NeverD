@@ -790,6 +790,80 @@ swiftMangledClassScalarGetterSourceABI(const BinaryImage &Image, va_t Entry) {
              : std::nullopt;
 }
 
+// Swift 6.1 arm64 IR gives a direct class-instance getter returning either a
+// Swift or imported ObjC class reference swiftcc ptr(ptr swiftself). Keep the
+// closed mangled Class result; optional, generic and thunk results have
+// distinct contracts.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledClassReferenceGetterSourceABI(const BinaryImage &Image,
+                                          va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
+    return N.Kind == Kind && !N.Text && !N.Index &&
+           N.Children.size() == Children;
+  };
+  const auto Named = [](const Node &N, llvm::StringRef Kind) {
+    return N.Kind == Kind && N.Text && !N.Text->empty() && !N.Index &&
+           N.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "Getter", 1) ||
+      !Shape(Parsed.Root->Children[0].Children[0], "Variable", 3))
+    return std::nullopt;
+  const auto &Variable = Parsed.Root->Children[0].Children[0];
+  const auto &Owner = Variable.Children[0];
+  const auto &Property = Variable.Children[1];
+  const auto &Type = Variable.Children[2];
+  const bool NamedProperty =
+      Named(Property, "Identifier") ||
+      (Shape(Property, "PrivateDeclName", 2) &&
+       Named(Property.Children[0], "Identifier") &&
+       Named(Property.Children[1], "Identifier"));
+  if (!Shape(Owner, "Class", 2) ||
+      !Named(Owner.Children[0], "Module") ||
+      !Named(Owner.Children[1], "Identifier") ||
+      !NamedProperty || !Shape(Type, "Type", 1) ||
+      !Shape(Type.Children[0], "Class", 2) ||
+      !Named(Type.Children[0].Children[0], "Module") ||
+      !Named(Type.Children[0].Children[1], "Identifier"))
+    return std::nullopt;
+
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
+  Hint.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters[0].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // A Swift class Bool or Int property setter takes its new value in x0 and the
 // instance in swiftself. Its mangled Setter/Variable tree distinguishes the
 // void result from the Bool, Int, or arm64 CGFloat property type; generic
