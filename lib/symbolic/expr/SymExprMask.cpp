@@ -87,23 +87,47 @@ SymRef SymContext::simplifyLowMaskedAdd(SymRef Sum, const llvm::APInt &Mask) {
   if (op(Sum) != SymOp::Add || !Mask.isMask() || Mask.isAllOnes())
     return Sum;
 
+  auto CoveredBase = [&](SymRef Term) {
+    if (op(Term) == SymOp::Mul && numOperands(Term) == 2 &&
+        isConst(operand(Term, 0)))
+      Term = operand(Term, 1);
+    if (!hasConstantMask(*this, Term) ||
+        (constValue(operand(Term, 0)) & Mask) != Mask)
+      return SymRef();
+    return Term;
+  };
   auto Ops = operands(Sum);
+  if (llvm::none_of(Ops, [&](SymRef R) { return CoveredBase(R).isValid(); }))
+    return Sum;
   llvm::SmallVector<SymRef, 8> Terms(Ops.begin(), Ops.end());
-  bool Changed = false;
-  for (SymRef &Term : Terms) {
-    if (!hasConstantMask(*this, Term))
+
+  // Collect repeated sources before mkAdd can flatten them. A shared sum
+  // exposed by several masks must not expand once per masked occurrence.
+  // Canonical sums may already encode repeated masks with a coefficient.
+  std::map<SymRef, llvm::APInt> Counts;
+  for (SymRef Term : Terms) {
+    llvm::APInt Coeff(Mask.getBitWidth(), 1);
+    if (SymRef Base = CoveredBase(Term); Base.isValid()) {
+      if (Base != Term)
+        Coeff = constValue(operand(Term, 0));
+      auto Factors = operands(Base);
+      llvm::SmallVector<SymRef, 8> Source(Factors.begin() + 1, Factors.end());
+      Term = internMaskedSource(Source,
+                                llvm::APInt::getAllOnes(Mask.getBitWidth()));
+    }
+    auto [It, Inserted] = Counts.try_emplace(Term, Coeff);
+    if (!Inserted)
+      It->second += Coeff;
+  }
+  Terms.clear();
+  for (const auto &[Source, Count] : Counts) {
+    if (Count.isZero())
       continue;
-    auto Factors = operands(Term);
-    if ((constValue(Factors[0]) & Mask) != Mask)
-      continue;
-    llvm::SmallVector<SymRef, 8> Source(Factors.begin() + 1, Factors.end());
-    Term =
-        internMaskedSource(Source, llvm::APInt::getAllOnes(Mask.getBitWidth()));
-    Changed = true;
+    Terms.push_back(Count.isOne() ? Source : mkMul(mkConst(Count), Source));
   }
   // Carries into the low prefix depend only on that prefix of each addend.
   // The caller retains Mask; the new sum's high bits need not match Sum.
-  return Changed ? mkAdd(Terms) : Sum;
+  return Terms.empty() ? mkZero(Mask.getBitWidth()) : mkAdd(Terms);
 }
 
 std::optional<unsigned> detail::matchingShiftPower(const SymContext &Ctx,

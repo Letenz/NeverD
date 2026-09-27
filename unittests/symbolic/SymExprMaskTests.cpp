@@ -212,6 +212,81 @@ TEST(SymExprMask, SharedDeepSourcesAreOpaqueAndMBARequiresNoSamples) {
             Ctx.mkAnd(Ctx.mkAdd(X, Y), Low));
 }
 
+TEST(SymExprMask, CollectedShiftSlicesKeepSumsCanonical) {
+  for (uint32_t W : {3u, 8u, 32u, 64u, 128u, 256u}) {
+    SCOPED_TRACE(W);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", W);
+    SymRef Y = Ctx.mkVar("y", W);
+    SymRef Count = Ctx.mkConst(32, 1);
+    SymRef Shifted = Ctx.mkLShr(X, Count);
+    SymRef Slice = Ctx.mkAnd(X, Ctx.mkConst(~llvm::APInt(W, 1)));
+    SymRef Sum = Ctx.mkAdd({Shifted, Shifted, Slice});
+    EXPECT_EQ(Sum, Ctx.mkMul(Ctx.mkConst(W, 2), Slice));
+    EXPECT_EQ(Ctx.rebuild(Sum, Ctx.operands(Sum)), Sum);
+    EXPECT_EQ(Ctx.mkAdd({Shifted, Shifted, Ctx.mkNeg(Slice)}), Ctx.mkZero(W));
+    if (W <= 8)
+      for (uint64_t Value = 0; Value < (uint64_t(1) << W); ++Value)
+        EXPECT_EQ(Ctx.evalU64(Sum, {Value, 0}),
+                  ((Value >> 1) * 2 + (Value & ~uint64_t(1))) &
+                      ((uint64_t(1) << W) - 1));
+
+    SymRef ZeroShift = Ctx.mkLShr(Ctx.mkAnd(X, Ctx.mkConst(W, 1)), Count);
+    EXPECT_EQ(Ctx.mkAdd({ZeroShift, ZeroShift, Y}), Y);
+    EXPECT_EQ(Ctx.mkAdd(ZeroShift, ZeroShift), Ctx.mkZero(W));
+  }
+}
+
+TEST(SymExprMask, LowMaskDemandPreservesRepeatedSharedSums) {
+  SymContext Ctx;
+  llvm::SmallVector<SymRef, 8> Variables;
+  for (unsigned I = 0; I < 1024; ++I)
+    Variables.push_back(Ctx.mkVar("x" + std::to_string(I), 32));
+  SymRef Shared = Ctx.mkAdd(Variables);
+  SymRef Low = Ctx.mkConst(32, 255);
+  llvm::SmallVector<SymRef, 8> MaskedTerms;
+  for (unsigned I = 0; I < 257; ++I)
+    MaskedTerms.push_back(Ctx.mkAnd(Shared, Ctx.mkConst(32, 255 | (I << 8))));
+  SymRef Sum = Ctx.mkAdd(MaskedTerms);
+  size_t Before = Ctx.numNodes();
+  SymRef Masked = Ctx.mkAnd(Sum, Low);
+  EXPECT_LE(Ctx.numNodes() - Before, 4u);
+  EXPECT_EQ(Masked, Ctx.mkAnd(Ctx.mkMul(Ctx.mkConst(32, 257), Shared), Low));
+  EXPECT_EQ(Ctx.operands(Shared), llvm::ArrayRef<SymRef>(Variables));
+  for (uint64_t Value : {0u, 1u, 255u, 256u, 0xffffffffu}) {
+    llvm::SmallVector<llvm::APInt, 8> Values(Variables.size(),
+                                             llvm::APInt(32, Value));
+    // Keep a nonzero low byte even though the shared sum has 1024 inputs.
+    Values.front() = llvm::APInt(32, uint32_t(Value + 1));
+    EXPECT_EQ(Ctx.eval(Masked, Values),
+              Ctx.eval(Sum, Values) & llvm::APInt(32, 255));
+  }
+
+  SymContext Narrow;
+  SymRef X = Narrow.mkVar("x", 8);
+  SymRef Y = Narrow.mkVar("y", 8);
+  SymRef Source = Narrow.mkAdd(X, Y);
+  SymRef M1 = Narrow.mkConst(8, 1);
+  SymRef A = Narrow.mkAnd(Source, M1);
+  SymRef B = Narrow.mkAnd(Source, Narrow.mkConst(8, 3));
+  SymRef FullConsumer = Narrow.mkXor(Source, Narrow.mkConst(8, 128));
+  for (uint32_t Count : {256u, 257u}) {
+    llvm::SmallVector<SymRef, 8> Repeated(128, A);
+    Repeated.append(Count - 128, B);
+    SymRef Original = Narrow.mkAdd(Repeated);
+    SymRef Reduced = Narrow.mkAnd(Original, M1);
+    EXPECT_EQ(Reduced, Count == 256 ? Narrow.mkZero(8) : A);
+    for (uint64_t V = 0; V < 256; ++V) {
+      EXPECT_EQ(Narrow.evalU64(Reduced, {V, 1}),
+                Narrow.evalU64(Original, {V, 1}) & 1);
+      EXPECT_EQ(Narrow.evalU64(FullConsumer, {V, 1}), ((V + 1) & 255) ^ 128);
+    }
+  }
+  SymRef Negative = Narrow.mkAdd(Narrow.mkMul(Narrow.mkConst(8, 253), A),
+                                 Narrow.mkMul(Narrow.mkConst(8, 2), B));
+  EXPECT_EQ(Narrow.mkAnd(Negative, M1), Narrow.mkAnd(Narrow.mkNeg(Source), M1));
+}
+
 TEST(SymExprMask, ComposedMaskRulesDoNotReenterDeepSources) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 8);
