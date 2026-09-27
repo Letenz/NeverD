@@ -536,6 +536,55 @@ TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   EXPECT_FALSE(sdk::swiftMangledClassScalarGetterSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, SwiftClassReferenceGetterUsesSwiftSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$s3WMF13ConfigurationC6routerAA6RouterCvg", 0x1000, 0, true});
+  auto Hint = sdk::swiftMangledClassReferenceGetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  ASSERT_EQ(Hint->Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  Image.Symbols[0].Name =
+      "_$s13WMFComponents17WMFAppEnvironmentC15traitCollectionSo07UITraitE0Cvg";
+  Hint = sdk::swiftMangledClassReferenceGetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  Image.Symbols[0].Name =
+      "_$s3WMF12TimelineViewC18squiggleShapeLayer33_CCCFBA6168377C4D3BACC0F9F7AE2E61LLSo07CAShapeF0Cvg";
+  Hint = sdk::swiftMangledClassReferenceGetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name += "To";
+  EXPECT_FALSE(sdk::swiftMangledClassReferenceGetterSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledClassReferenceGetterSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledClassReferenceGetterSourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints,
      SwiftClassOptionalExistentialGetterUsesIndirectResultAndSwiftSelf) {
   BinaryImage Image;
@@ -813,6 +862,19 @@ TEST(NativeSourceHints, OptionalUInt64AndObjCClassGettersKeepTheirReturns) {
             SourceParameterTypeHint::Role::SwiftContext);
   EXPECT_EQ(Class->Parameters[0].Location.RegisterOffset, a64reg::X20);
   EXPECT_TRUE(validateSourceABI(*Class, Error)) << Error;
+
+  Image.Symbols[0].Name =
+      "_$s3WMF5ThemeC26searchFieldBackgroundImageSo7UIImageCSgvg";
+  const auto ClassMember =
+      sdk::swiftMangledObjCOptionalUInt64OrClassGetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(ClassMember);
+  EXPECT_EQ(ClassMember->ReturnType->Size, 8U);
+  EXPECT_EQ(ClassMember->ReturnLocation.RegisterOffset, a64reg::X0);
+  ASSERT_EQ(ClassMember->Parameters.size(), 1U);
+  EXPECT_EQ(ClassMember->Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(ClassMember->Parameters[0].Location.RegisterOffset, a64reg::X20);
+  EXPECT_TRUE(validateSourceABI(*ClassMember, Error)) << Error;
 
   auto Wrong = Image;
   Wrong.Symbols[0].Name += "To";

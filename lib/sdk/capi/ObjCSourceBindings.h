@@ -1257,6 +1257,48 @@ swiftTypeMetadataPair(const BinaryImage &Image, va_t CacheAddress,
   return Proof->Address;
 }
 
+/// The compiler's concrete-type instantiator dereferences both address
+/// registers, although lifting may type the MR reference as an integer. Keep
+/// the same carrier rule in the local-alias proof and the direct call binder.
+inline bool swiftTypeMetadataPairCallCarrier(const HighExpr &Call,
+                                             Arch Architecture) {
+  if (Call.Kind != ExprKind::Call || !Call.SourceCallHint ||
+      Call.SourceCallHint->CallKind != SourceCallTypeHint::Kind::Native ||
+      Call.Operands.size() < 2 || Call.Operands.size() > 4)
+    return false;
+  const auto &Signature = Call.SourceCallHint->Signature;
+  if (Signature.Parameters.size() != Call.Operands.size())
+    return false;
+  std::string Reason;
+  if (!validateSourceABI(Signature, Reason))
+    return false;
+  const bool PointerParameters = std::all_of(
+      Signature.Parameters.begin(), Signature.Parameters.end(),
+      [](const auto &Parameter) {
+        return Parameter.Type && Parameter.Type->Kind == NdTypeKind::Ptr;
+      });
+  if (PointerParameters)
+    return true;
+  const auto MetadataInstantiator = [](llvm::StringRef Name) {
+    return Name.ltrim('_') == "swift_instantiateConcreteTypeFromMangledNameV2";
+  };
+  const llvm::StringRef CalleeName = Call.SourceCallHint->TargetName.empty()
+                                         ? Call.CallTarget
+                                         : Call.SourceCallHint->TargetName;
+  return Architecture == Arch::AArch64 &&
+         Signature.Origin ==
+             SourceFunctionTypeHint::OriginKind::NativeAnalysis &&
+         !Call.IsIndirectCall &&
+         Call.CallAddr == Call.SourceCallHint->TargetAddress &&
+         MetadataInstantiator(CalleeName) && Signature.Parameters.size() == 2 &&
+         std::all_of(Signature.Parameters.begin(), Signature.Parameters.end(),
+                     [](const auto &Parameter) {
+                       return Parameter.Type && Parameter.Type->Size == 8 &&
+                              (Parameter.Type->Kind == NdTypeKind::Ptr ||
+                               Parameter.Type->Kind == NdTypeKind::Int);
+                     });
+}
+
 inline std::optional<SourceCallTypeHint> swiftTypeMetadataAddressHint(
     const BinaryImage &Image, va_t Address,
     const SourceCallTypeHint::SwiftTypeMetadataAddress &Candidate) {
@@ -1865,6 +1907,97 @@ inline bool exactParameterValue(const ExprPtr &Value, size_t Parameter,
       Value->Operands[0]->Type && Value->Operands[0]->Type->Size == 8)
     return exactParameterValue(Value->Operands[0], Parameter, Depth + 1);
   return false;
+}
+
+/// A lifted callback may keep its static KVO context in a register before
+/// comparing it with the context parameter. Rebuild the register's definition
+/// only when it has one exact image-address definition and every read is that
+/// callback comparison; other uses must retain the image-data diagnostic.
+inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
+    const HighFunc &Function, const BinaryImage &Image,
+    std::optional<size_t> ContextParameter) {
+  std::map<HighSourceLocalIdentity, va_t> Aliases;
+  if (!ContextParameter)
+    return Aliases;
+  struct Definition {
+    va_t Address = 0;
+    unsigned Count = 0;
+    bool Valid = false;
+  };
+  std::map<HighSourceLocalIdentity, Definition> Definitions;
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    if (!Statement.Dst ||
+        (Statement.Dst->Kind != ExprKind::Var &&
+         Statement.Dst->Kind != ExprKind::Phi) ||
+        !Statement.Dst->Operands.empty() ||
+        (Statement.Dst->Var.Kind != MedVar::Reg &&
+         Statement.Dst->Var.Kind != MedVar::Temp))
+      return;
+    auto &Def = Definitions[highSourceLocalIdentity(Statement.Dst->Var)];
+    ++Def.Count;
+    const auto &Value = Statement.Val;
+    Def.Valid = Def.Count == 1 && Statement.Kind == StmtKind::Assign &&
+                Value && Value->Kind == ExprKind::Const && Value->Type &&
+                Value->Type->Size == 8 && Statement.Dst->Type &&
+                Statement.Dst->Type->Size == 8 &&
+                isExactAddressProvenance(Value->ConstProvenance) &&
+                !isCodeAddressProvenance(Value->ConstProvenance) &&
+                (Value->AddressOwnerVA == InvalidVA ||
+                 Value->AddressOwnerVA == Value->ConstVal) &&
+                bool(kvoContextHint(Image, Value->ConstVal));
+    if (Def.Valid)
+      Def.Address = Value->ConstVal;
+  });
+  std::map<HighSourceLocalIdentity, unsigned> Reads, ComparedReads;
+  size_t Budget = 1000000;
+  bool Complete = true;
+  std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)> Scan =
+      [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
+          unsigned Depth) {
+        if (!Value)
+          return;
+        if (Depth > 200 || !Budget--) {
+          Complete = false;
+          return;
+        }
+        if ((Value->Kind == ExprKind::Var || Value->Kind == ExprKind::Phi) &&
+            Value->Operands.empty() &&
+            (Value->Var.Kind == MedVar::Reg ||
+             Value->Var.Kind == MedVar::Temp)) {
+          const auto Local = highSourceLocalIdentity(Value->Var);
+          if (const auto Found = Definitions.find(Local);
+              Found != Definitions.end() && Found->second.Valid) {
+            ++Reads[Local];
+            if (Parent && Parent->Kind == ExprKind::BinOp &&
+                (Parent->Op == NdOp::INT_EQUAL ||
+                 Parent->Op == NdOp::INT_NOTEQUAL) &&
+                Parent->Operands.size() == 2 && Index < 2 &&
+                exactParameterValue(Parent->Operands[1 - Index],
+                                    *ContextParameter))
+              ++ComparedReads[Local];
+          }
+        }
+        for (size_t I = 0; I < Value->Operands.size(); ++I)
+          Scan(Value->Operands[I], Value.get(), I, Depth + 1);
+      };
+  walkStmts(Function.Body, [&](const HighStmt &Statement) {
+    if (Statement.Dst)
+      for (size_t I = 0; I < Statement.Dst->Operands.size(); ++I)
+        Scan(Statement.Dst->Operands[I], Statement.Dst.get(), I, 0);
+    forEachRhsExpr(Statement,
+                   [&](const ExprPtr &Value) { Scan(Value, nullptr, 0, 0); });
+  });
+  if (!Complete)
+    return Aliases;
+  for (const auto &[Local, Def] : Definitions)
+    if (Def.Valid && Reads[Local] && Reads[Local] == ComparedReads[Local])
+      Aliases.emplace(Local, Def.Address);
+  if (!Aliases.empty()) {
+    const auto Flow = analyzeHighSourceFlow(Function, false);
+    if (!Flow.Complete || !Flow.Items.empty())
+      Aliases.clear();
+  }
+  return Aliases;
 }
 
 inline std::optional<SourceCallTypeHint> profileStorageHint(Arch Architecture,
@@ -2805,6 +2938,8 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       directLocalStorageAccessExtents(Function, Image);
   const auto KVOCallbackParameter =
       kvoCallbackContextParameter(Function, Image);
+  const auto KVOContextAliases =
+      kvoContextLocalAliases(Function, Image, KVOCallbackParameter);
   // A metadata pair can be moved through locals before an outlined helper
   // call. Bind its defining address only when every read of each local is a
   // direct argument of an exact, typed call carrying the proven pair.
@@ -2872,51 +3007,37 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         }
         if (const auto Local = MetadataLocalAt(Value))
           ++MetadataReads[*Local];
-        if (Value->Kind == ExprKind::Call && Value->SourceCallHint &&
-            Value->SourceCallHint->CallKind ==
-                SourceCallTypeHint::Kind::Native &&
-            Value->Operands.size() >= 2 && Value->Operands.size() <= 4 &&
-            Value->SourceCallHint->Signature.Parameters.size() ==
-                Value->Operands.size()) {
-          const auto &Signature = Value->SourceCallHint->Signature;
-          std::string Reason;
-          const bool PointerParameters = std::all_of(
-              Signature.Parameters.begin(), Signature.Parameters.end(),
-              [](const auto &Parameter) {
-                return Parameter.Type &&
-                       Parameter.Type->Kind == NdTypeKind::Ptr;
-              });
-          if (PointerParameters && validateSourceABI(Signature, Reason))
-            for (size_t I = 0; I < Value->Operands.size(); ++I)
-              for (size_t J = I + 1; J < Value->Operands.size(); ++J) {
-                if (Value->Operands.size() == 4 && (I != 2 || J != 3))
-                  continue;
-                // Direct constants are handled by the ordinary call binder.
-                // This prepass only needs pairs involving a local alias.
-                if (!MetadataLocalAt(Value->Operands[I]) &&
-                    !MetadataLocalAt(Value->Operands[J]))
-                  continue;
-                const auto First = MetadataAddressAt(Value->Operands[I]);
-                const auto Second = MetadataAddressAt(Value->Operands[J]);
-                if (!First || !Second)
-                  continue;
-                auto Pair = swiftTypeMetadataPair(Image, *First, *Second);
-                if (!Pair)
-                  Pair = swiftTypeMetadataPair(Image, *Second, *First);
-                if (!Pair)
-                  continue;
-                for (const auto Index : {I, J})
-                  if (const auto Local =
-                          MetadataLocalAt(Value->Operands[Index])) {
-                    ++MetadataPairedReads[*Local];
-                    const MetadataAlias Alias{
-                        MetadataDefinitions.at(*Local).Address, *Pair};
-                    const auto [Found, Fresh] =
-                        MetadataPairCandidates.emplace(*Local, Alias);
-                    if (!Fresh && Found->second != Alias)
-                      MetadataConflicts.insert(*Local);
-                  }
-              }
+        if (swiftTypeMetadataPairCallCarrier(*Value, Image.Arch)) {
+          for (size_t I = 0; I < Value->Operands.size(); ++I)
+            for (size_t J = I + 1; J < Value->Operands.size(); ++J) {
+              if (Value->Operands.size() == 4 && (I != 2 || J != 3))
+                continue;
+              // Direct constants are handled by the ordinary call binder.
+              // This prepass only needs pairs involving a local alias.
+              if (!MetadataLocalAt(Value->Operands[I]) &&
+                  !MetadataLocalAt(Value->Operands[J]))
+                continue;
+              const auto First = MetadataAddressAt(Value->Operands[I]);
+              const auto Second = MetadataAddressAt(Value->Operands[J]);
+              if (!First || !Second)
+                continue;
+              auto Pair = swiftTypeMetadataPair(Image, *First, *Second);
+              if (!Pair)
+                Pair = swiftTypeMetadataPair(Image, *Second, *First);
+              if (!Pair)
+                continue;
+              for (const auto Index : {I, J})
+                if (const auto Local =
+                        MetadataLocalAt(Value->Operands[Index])) {
+                  ++MetadataPairedReads[*Local];
+                  const MetadataAlias Alias{
+                      MetadataDefinitions.at(*Local).Address, *Pair};
+                  const auto [Found, Fresh] =
+                      MetadataPairCandidates.emplace(*Local, Alias);
+                  if (!Fresh && Found->second != Alias)
+                    MetadataConflicts.insert(*Local);
+                }
+            }
         }
         for (const auto &Operand : Value->Operands)
           ScanMetadata(Operand, Depth + 1);
@@ -3586,58 +3707,58 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
       Result.Dependencies.insert(Expression->SourceCallHint->TargetAddress);
     std::optional<SourceCallTypeHint::SwiftTypeMetadataAddress>
         SwiftMetadataPair;
-    if (Expression->Kind == ExprKind::Call && Expression->SourceCallHint &&
-        Expression->SourceCallHint->CallKind ==
-            SourceCallTypeHint::Kind::Native &&
-        Expression->Operands.size() >= 2 && Expression->Operands.size() <= 4 &&
-        Expression->SourceCallHint->Signature.Parameters.size() ==
-            Expression->Operands.size()) {
-      const auto &Signature = Expression->SourceCallHint->Signature;
-      std::string Reason;
-      const bool PointerParameters = std::all_of(
-          Signature.Parameters.begin(), Signature.Parameters.end(),
-          [](const auto &Parameter) {
-            return Parameter.Type && Parameter.Type->Kind == NdTypeKind::Ptr;
-          });
-      if (PointerParameters && validateSourceABI(Signature, Reason)) {
-        bool Ambiguous = false;
-        for (size_t FirstIndex = 0; FirstIndex < Expression->Operands.size();
-             ++FirstIndex) {
-          if (!Expression->Operands[FirstIndex])
+    const auto MetadataArgumentAddress =
+        [&](const ExprPtr &Operand) -> std::optional<va_t> {
+      if (!Operand)
+        return std::nullopt;
+      if (const auto Address = constantAddress(*Operand))
+        return Address;
+      const auto Local = MetadataLocalAt(Operand);
+      const auto Plan =
+          Local ? MetadataAliasPlans.find(*Local) : MetadataAliasPlans.end();
+      return Plan == MetadataAliasPlans.end()
+                 ? std::nullopt
+                 : std::optional<va_t>(Plan->second.first);
+    };
+    if (swiftTypeMetadataPairCallCarrier(*Expression, Image.Arch)) {
+      bool Ambiguous = false;
+      for (size_t FirstIndex = 0; FirstIndex < Expression->Operands.size();
+           ++FirstIndex) {
+        if (!Expression->Operands[FirstIndex])
+          continue;
+        const auto First =
+            MetadataArgumentAddress(Expression->Operands[FirstIndex]);
+        if (!First)
+          continue;
+        for (size_t SecondIndex = FirstIndex + 1;
+             SecondIndex < Expression->Operands.size(); ++SecondIndex) {
+          // Four-argument value helpers pass destination and source first;
+          // only their trailing cache/reference pair is a metadata recipe.
+          if (Expression->Operands.size() == 4 &&
+              (FirstIndex != 2 || SecondIndex != 3))
             continue;
-          const auto First = constantAddress(*Expression->Operands[FirstIndex]);
-          if (!First)
+          if (!Expression->Operands[SecondIndex])
             continue;
-          for (size_t SecondIndex = FirstIndex + 1;
-               SecondIndex < Expression->Operands.size(); ++SecondIndex) {
-            // Four-argument value helpers pass destination and source first;
-            // only their trailing cache/reference pair is a metadata recipe.
-            if (Expression->Operands.size() == 4 &&
-                (FirstIndex != 2 || SecondIndex != 3))
-              continue;
-            if (!Expression->Operands[SecondIndex])
-              continue;
-            const auto Second =
-                constantAddress(*Expression->Operands[SecondIndex]);
-            if (!Second)
-              continue;
-            auto Candidate = swiftTypeMetadataPair(Image, *First, *Second);
-            if (!Candidate)
-              Candidate = swiftTypeMetadataPair(Image, *Second, *First);
-            if (!Candidate)
-              continue;
-            if (SwiftMetadataPair && *SwiftMetadataPair != *Candidate) {
-              Ambiguous = true;
-              break;
-            }
-            SwiftMetadataPair = std::move(Candidate);
-          }
-          if (Ambiguous)
+          const auto Second =
+              MetadataArgumentAddress(Expression->Operands[SecondIndex]);
+          if (!Second)
+            continue;
+          auto Candidate = swiftTypeMetadataPair(Image, *First, *Second);
+          if (!Candidate)
+            Candidate = swiftTypeMetadataPair(Image, *Second, *First);
+          if (!Candidate)
+            continue;
+          if (SwiftMetadataPair && *SwiftMetadataPair != *Candidate) {
+            Ambiguous = true;
             break;
+          }
+          SwiftMetadataPair = std::move(Candidate);
         }
         if (Ambiguous)
-          SwiftMetadataPair.reset();
+          break;
       }
+      if (Ambiguous)
+        SwiftMetadataPair.reset();
     }
     std::optional<va_t> SingletonDescriptor;
     size_t SingletonDescriptorIndex = 0;
@@ -4190,6 +4311,20 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
              Statement.Dst->Kind == ExprKind::Phi) &&
             Statement.Dst->Operands.empty()) {
           const auto Local = highSourceLocalIdentity(Statement.Dst->Var);
+          if (const auto Found = KVOContextAliases.find(Local);
+              Found != KVOContextAliases.end() && Expression &&
+              Expression->Kind == ExprKind::Const &&
+              Expression->ConstVal == Found->second) {
+            if (auto Hint = kvoContextHint(Image, Found->second)) {
+              auto Context = HighExpr::makeCall({}, 0, {});
+              Context->Type = Expression->Type;
+              Context->SourceCallHint =
+                  std::make_shared<SourceCallTypeHint>(std::move(*Hint));
+              Expression = std::move(Context);
+              Result.KVOContexts.insert(Found->second);
+              return;
+            }
+          }
           if (const auto Found = MetadataAliasPlans.find(Local);
               Found != MetadataAliasPlans.end()) {
             const auto &[Address, Pair] = Found->second;

@@ -210,6 +210,9 @@ struct SourceCallTypeHint {
     /// A complete counter/metadata factory projected only in one verified
     /// Objective-C caller. Its counter retains the shared profiling storage.
     RuntimeObjCMetadataFactory,
+    /// A verified ObjC initializer wrapper whose shared body calls the
+    /// caller-selected class accessor before objc_msgSendSuper2.
+    RuntimeObjCForwardedInitializer,
     /// Caller-proven normalization of a raw Swift i1 result. The logical
     /// byte signature describes the source expression, never the runtime ABI.
     SwiftBooleanProjection

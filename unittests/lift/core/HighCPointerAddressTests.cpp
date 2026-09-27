@@ -811,6 +811,54 @@ TEST(HighCPointerAddresses, ReadonlyNarrowImageStringPrintsLiteral) {
   EXPECT_EQ(Source.find("L\"hi\""), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
+  constexpr va_t Value = 0x140003500;
+  BinaryImage Img = makeImageObjectFixture(Value, {'h', 'i', 0}, false);
+  HighFunc Func;
+  Func.Name = "masked_numeric";
+  Func.ReturnType = NdType::makeInt(8, false);
+  returnValue(Func, HighExpr::makeBinop(
+                        NdOp::INT_OR,
+                        HighExpr::makeConst(
+                            Value, 8, ConstantAddressProvenance::Scalar),
+                        HighExpr::makeConst(1, 8)));
+  const auto Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(Source.find("0x140003500"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("\"hi\""), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, NestedGotoLabelAfterReturnIsEmitted) {
+  HighFunc Func;
+  Func.Name = "nested_join_after_return";
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"flag", NdType::makeInt(1, false)}};
+
+  HighStmt Jump;
+  Jump.Kind = StmtKind::Goto;
+  Jump.GotoTarget = 0x120;
+  HighStmt EarlyReturn;
+  EarlyReturn.Kind = StmtKind::Return;
+  HighStmt Join;
+  Join.Kind = StmtKind::Block;
+  Join.Addr = 0x120;
+  HighStmt ElseReturn;
+  ElseReturn.Kind = StmtKind::Return;
+  HighStmt Conditional;
+  Conditional.Kind = StmtKind::IfElse;
+  Conditional.Addr = 0x110;
+  Conditional.Cond = parameter(0, NdType::makeInt(1, false));
+  Conditional.Body = {Join};
+  Conditional.ElseBody = {ElseReturn};
+  Func.Body = {Jump, EarlyReturn, Conditional};
+
+  const auto Source = emitFunctions({Func});
+  const auto GotoAt = Source.find("goto L_120;");
+  const auto JoinAt = Source.find("L_120:");
+  ASSERT_NE(GotoAt, std::string::npos) << Source;
+  ASSERT_NE(JoinAt, std::string::npos) << Source;
+  EXPECT_LT(GotoAt, JoinAt) << Source;
+}
+
 TEST(HighCPointerAddresses, NonAsciiImageBytesStayAddress) {
   BinaryImage Img =
       makeImageObjectFixture(0x140003600, {0xE4, 0xB8, 0xAD, 0}, false);
@@ -2435,7 +2483,8 @@ TEST(HighCPointerAddresses, NamedEmptyWideImageConstPrintsAddressOfObject) {
   Options.Image = &Img;
   ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options, &Dbg));
   OS.flush();
-  EXPECT_NE(Source.find("CStringT_ctor(result, &pwstr)"), std::string::npos)
+  EXPECT_NE(Source.find("CStringT_ctor(result, (uint64_t)(uintptr_t)(&pwstr))"),
+            std::string::npos)
       << Source;
   EXPECT_NE(Source.find("int16_t pwstr"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("CStringT_ctor(result, 0x1400050E0)"), std::string::npos)
@@ -2508,6 +2557,30 @@ TEST(HighCPointerAddresses, NamesImageDataFromDebugObject) {
   OS.flush();
   EXPECT_NE(Source.find("__security_cookie"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("g_1400050E0"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, IntegerImageAddressStoreCastsNamedObjectPointer) {
+  constexpr va_t DataVA = 0x1400050E0;
+  BinaryImage Img = makeImageObjectFixture(
+      DataVA, {0x80, 0x13, 0x37, 0x42, 0, 0, 0, 0}, false);
+  Symbol Data;
+  Data.Name = "_block_descriptor";
+  Data.Addr = DataVA;
+  Img.Symbols.push_back(Data);
+
+  HighFunc Func;
+  Func.Name = "store_descriptor_address";
+  Func.ReturnType = NdType::makeVoid();
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeConst(0x2000, 8);
+  Store.StoreVal = HighExpr::makeConst(DataVA, 8);
+  Func.Body = {Store};
+
+  const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
+  EXPECT_NE(Source.find("(uint64_t)(uintptr_t)(&block_descriptor)"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(HighCPointerAddresses, TypedCallArgPromotesImageObjectPointerType) {
@@ -29947,7 +30020,7 @@ TEST(HighCPointerAddresses, ConsecutiveSkipGotosDropsReloadedCallPredicate) {
   EXPECT_EQ(Count, 1u) << Source;
 }
 
-TEST(HighCPointerAddresses, InvertThenDropsReloadedSkipInsideCxxTry) {
+TEST(HighCPointerAddresses, InvertThenKeepsReloadedCallInsideCxxTry) {
   HighFunc Func;
   Func.Name = "skip_dup_try";
   Func.Entry = 0x140001000;
@@ -30034,7 +30107,9 @@ TEST(HighCPointerAddresses, InvertThenDropsReloadedSkipInsideCxxTry) {
         Walk(T);
   };
   Walk(Func.Body[0]);
-  EXPECT_EQ(Count, 1u);
+  // The second predicate is a distinct call, and no purity proof allows its
+  // side effects to disappear even when both guards jump to the same label.
+  EXPECT_EQ(Count, 2u);
 }
 
 TEST(HighCPointerAddresses, ConsecutiveSkipGotosSharedTailKeepsGoto) {
@@ -32781,7 +32856,11 @@ TEST(LLVMCPointerAddresses, NdDataGepPrintsSyntheticGlobalNotNullLoad) {
                                   Function));
   OS.flush();
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("g_140005040"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("uint8_t g_140005000[256] = {0};"),
+            std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("g_140005000 + 64"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("g_140005040"), std::string::npos) << Source;
 }
 
 TEST(LLVMCPointerAddresses, StaleAllocaZeroDoesNotFoldLaterComputedLoad) {

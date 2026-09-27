@@ -1527,6 +1527,71 @@ TEST(ObjCSourceBindings, SwiftStdlibDescriptorRejectsUnprovenImports) {
   }
 }
 
+TEST(ObjCSourceBindings,
+     SwiftConcreteTypeInstantiatorAcceptsIntegerReferenceCarrier) {
+  SwiftTypeMetadataFixture F(Arch::AArch64);
+  auto Call = F.Function.Body.front().Val;
+  ASSERT_TRUE(Call && Call->SourceCallHint);
+  auto Native = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+  Native->TargetName = "___swift_instantiateConcreteTypeFromMangledNameV2";
+  Native->Signature.Parameters[1].Type = NdType::makeInt(8, false);
+  std::string Diagnostic;
+  ASSERT_TRUE(
+      assignDarwinScalarSourceABI(Native->Signature, F.Image.Arch, Diagnostic))
+      << Diagnostic;
+  Call->SourceCallHint = Native;
+  Call->Operands[1]->Type = NdType::makeInt(8, false);
+
+  const auto Result = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Result.Limitation.empty()) << Result.Limitation;
+  ASSERT_EQ(Result.SwiftTypeMetadataPairs.size(), 1U);
+  auto Reference = Result.Function.Body.front().Val->Operands[1];
+  ASSERT_TRUE(Reference->SourceCallHint);
+  EXPECT_EQ(Reference->SourceCallHint->CallKind,
+            SourceCallTypeHint::Kind::RuntimeSwiftTypeMetadataAddress);
+  EXPECT_EQ(Reference->SourceCallHint->TargetAddress,
+            SwiftTypeMetadataFixture::Reference);
+  EXPECT_TRUE(objcSourceCallBound(*Reference, F.Image, {}));
+
+  MedVar ReferenceLocal;
+  ReferenceLocal.Kind = MedVar::Temp;
+  ReferenceLocal.Id = 503;
+  ReferenceLocal.Size = 8;
+  HighStmt Assignment;
+  Assignment.Kind = StmtKind::Assign;
+  Assignment.Dst = HighExpr::makeVar(ReferenceLocal, NdType::makeInt(8, false));
+  Assignment.Val = HighExpr::makeConst(SwiftTypeMetadataFixture::Reference, 8,
+                                       ConstantAddressProvenance::DataAddress);
+  F.Function.Body.insert(F.Function.Body.begin(), Assignment);
+  Call->Operands[1] =
+      HighExpr::makeVar(ReferenceLocal, NdType::makeInt(8, false));
+  EXPECT_TRUE(objc_binding_detail::swiftTypeMetadataPairCallCarrier(
+      *Call, F.Image.Arch));
+  const auto AliasFlow = analyzeHighSourceFlow(F.Function, false);
+  EXPECT_TRUE(AliasFlow.Complete);
+  EXPECT_TRUE(AliasFlow.Items.empty());
+  const auto Aliased = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_EQ(Aliased.SwiftTypeMetadataPairs.size(), 1U);
+  EXPECT_TRUE(Aliased.Function.Body.front().Val->SourceCallHint);
+  ASSERT_TRUE(Aliased.Limitation.empty()) << Aliased.Limitation;
+  ASSERT_EQ(Aliased.SwiftTypeMetadataPairs.size(), 1U);
+  ASSERT_TRUE(Aliased.Function.Body.front().Val->SourceCallHint);
+  F.Function.Body.erase(F.Function.Body.begin());
+  Call->Operands[1] =
+      HighExpr::makeConst(SwiftTypeMetadataFixture::Reference, 8,
+                          ConstantAddressProvenance::DataAddress);
+  Call->Operands[1]->Type = NdType::makeInt(8, false);
+
+  Native->TargetName = "unrelated_helper";
+  const auto Unrelated = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_TRUE(Unrelated.SwiftTypeMetadataPairs.empty());
+  EXPECT_FALSE(Unrelated.Limitation.empty());
+  Native->TargetName = "___swift_instantiateConcreteTypeFromMangledNameV2";
+  Native->Signature.Parameters[1].Type = NdType::makeInt(4, false);
+  const auto Narrow = bindObjCSourceReferences(F.Function, F.Image);
+  EXPECT_TRUE(Narrow.SwiftTypeMetadataPairs.empty());
+}
+
 TEST(ObjCSourceBindings, SwiftStdlibMetadataRecipeExecutesWithSharedCache) {
   auto F = swiftStdlibTypeMetadataFixture();
   const auto Result = bindObjCSourceReferences(F.Function, F.Image);
@@ -2180,6 +2245,24 @@ TEST(ObjCSourceBindings, CountdownByteTableRebasesOnlyBoundedPrivatePointer) {
     EXPECT_TRUE(objcSourceCallBound(*Helper, F.Image, {}, nullptr, &Allowed));
   }
   Bound.Function.Body[1].Val->ConstVal = 3;
+  EXPECT_TRUE(readOnlyScalarSourceHelpers(Bound.Function, F.Image).empty());
+}
+
+TEST(ObjCSourceBindings, CountdownByteTableMayTestBeforeDecrementing) {
+  auto F = countdownByteTableFixture();
+  auto &Steps = F.Function.Body[2].Body;
+  // The last iteration exits before either induction local advances.
+  std::rotate(Steps.begin() + 3, Steps.begin() + 4, Steps.begin() + 6);
+  auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+  ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+  ASSERT_EQ(Bound.BorrowedBytes.size(), 1U);
+  EXPECT_EQ(*Bound.BorrowedBytes.begin(), (BorrowedByteRange{0x1040, 720}));
+  EXPECT_EQ(readOnlyScalarSourceHelpers(Bound.Function, F.Image).size(), 3U);
+
+  // The publication proof must reject a modified exit condition, even after
+  // the helper was already installed by the binder.
+  auto &Exit = Bound.Function.Body[2].Body[4];
+  Exit.Cond->Op = NdOp::INT_NEGATE;
   EXPECT_TRUE(readOnlyScalarSourceHelpers(Bound.Function, F.Image).empty());
 }
 
@@ -2843,6 +2926,40 @@ TEST(ObjCSourceBindings, ImmutableScalarsPreserveWidthSignAndFloatingBits) {
         EXPECT_EQ(Load->Operands[0]->ConstVal, 0x1040U);
       }
     }
+  }
+}
+
+TEST(ObjCSourceBindings, BooleanConditionsDoNotTurnScalarReadsIntoAddresses) {
+  for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
+    Fixture F;
+    F.Image.Arch = Architecture;
+    F.Image.ObjCSourceReferences.clear();
+    llvm::support::endian::write64le(F.Image.Segments[0].Data.data() + 0x40,
+                                     7);
+    MedVar Parameter;
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 0;
+    Parameter.Size = 8;
+    auto Pointer = HighExpr::makeVar(Parameter, NdType::makePtr());
+    auto Load = HighExpr::makeLoad(HighExpr::makeConst(0x1040, 8),
+                                   NdType::makeInt(8));
+    auto Compare = HighExpr::makeBinop(NdOp::INT_EQUAL, Load,
+                                       HighExpr::makeConst(7, 8));
+    auto Condition = HighExpr::makeBinop(NdOp::BOOL_OR, Pointer, Compare);
+    ASSERT_EQ(Compare->Type->Kind, NdTypeKind::Int);
+    ASSERT_EQ(Compare->Type->Size, 1U);
+    ASSERT_EQ(Condition->Type->Kind, NdTypeKind::Int);
+    ASSERT_EQ(Condition->Type->Size, 1U);
+    F.Function.ReturnType = Condition->Type;
+    F.Function.Body[0].RetVal = Condition;
+
+    const auto Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    const auto Scalar = Bound.Function.Body[0].RetVal->Operands[1]->Operands[0];
+    ASSERT_EQ(Scalar->Kind, ExprKind::BitCast);
+    ASSERT_EQ(Scalar->Operands[0]->Kind, ExprKind::Const);
+    EXPECT_EQ(Scalar->Operands[0]->ConstVal, 7U);
+    EXPECT_EQ(Load->Kind, ExprKind::Load);
   }
 }
 
@@ -5201,6 +5318,35 @@ TEST(ObjCSourceBindings,
     EXPECT_EQ(ComparedContext->SourceCallHint->CallKind,
               SourceCallTypeHint::Kind::RuntimeKVOContext);
     EXPECT_TRUE(objcSourceCallBound(*ComparedContext, F.Image, {}));
+
+    MedVar Local;
+    Local.Kind = MedVar::Temp;
+    Local.Id = 50001;
+    Local.Size = 8;
+    HighStmt Define;
+    Define.Kind = StmtKind::Assign;
+    Define.Dst = HighExpr::makeVar(Local, NdType::makePtr());
+    Define.Val = HighExpr::makeConst(
+        Address, 8, ConstantAddressProvenance::DataAddress);
+    F.Function.Body.insert(F.Function.Body.begin(), Define);
+    auto LocalValue = HighExpr::makeVar(Local, NdType::makePtr());
+    F.Function.Body[1].RetVal =
+        HighExpr::makeBinop(NdOp::INT_EQUAL, Context, LocalValue);
+    Bound = bindObjCSourceReferences(F.Function, F.Image);
+    ASSERT_TRUE(Bound.Limitation.empty()) << Bound.Limitation;
+    EXPECT_EQ(Bound.KVOContexts, std::set<va_t>{Address});
+    ASSERT_TRUE(Bound.Function.Body[0].Val->SourceCallHint);
+    EXPECT_EQ(Bound.Function.Body[0].Val->SourceCallHint->CallKind,
+              SourceCallTypeHint::Kind::RuntimeKVOContext);
+
+    F.Function.Body[1].RetVal =
+        HighExpr::makeBinop(NdOp::BOOL_OR,
+                            HighExpr::makeBinop(NdOp::INT_EQUAL, Context,
+                                               LocalValue),
+                            LocalValue);
+    Bound = bindObjCSourceReferences(F.Function, F.Image);
+    EXPECT_FALSE(Bound.Limitation.empty());
+    EXPECT_TRUE(Bound.KVOContexts.empty());
   }
 }
 

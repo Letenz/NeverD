@@ -3,6 +3,9 @@
 
 #include "neverd/loader/ExceptionInfo.h"
 
+#include <algorithm>
+#include <set>
+
 namespace neverd {
 /// Structural unwind metadata that introduces no language dispatch.
 inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
@@ -45,6 +48,35 @@ inline bool isPlainSourceUnwind(const ExceptionFunction &Metadata) {
            CompactUnwindSemanticStatus::Complete))
     return false;
   return !Metadata.Dwarf || Metadata.Dwarf->LSDAVA == 0;
+}
+
+/// An unwind record can enclose several independently decoded Mach-O entries.
+/// Its Objective-C runtime-call inventory belongs to the whole record, not to
+/// every subentry. Only when the frame has no language dispatch or landing pads
+/// may a complete source projection use the calls present in this entry's
+/// decoded instructions. Keep the structural record and every other language
+/// annotation intact; an incomplete function audit is rejected separately.
+inline ExceptionFunction sourceUnwindForDecodedSubentry(
+    const ExceptionFunction &Metadata, va_t Entry,
+    const std::set<va_t> &DecodedInstructions) {
+  if (Entry == Metadata.CodeRange.Begin ||
+      !Metadata.CodeRange.contains(Entry) ||
+      !DecodedInstructions.count(Entry) || !Metadata.ObjC ||
+      Metadata.ObjC->RuntimeCalls.empty() ||
+      !Metadata.ObjC->LandingPads.empty() ||
+      Metadata.ObjC->UsesFragileSetjmp || Metadata.ObjC->UsesMSVCTables)
+    return Metadata;
+  ExceptionFunction Scoped = Metadata;
+  Scoped.ObjC.reset();
+  if (!isPlainSourceUnwind(Scoped))
+    return Metadata;
+  Scoped.ObjC = Metadata.ObjC;
+  std::erase_if(Scoped.ObjC->RuntimeCalls, [&](const ObjCRuntimeCall &Call) {
+    return !DecodedInstructions.count(Call.CallVA);
+  });
+  if (Scoped.ObjC->RuntimeCalls.empty())
+    Scoped.ObjC.reset();
+  return Scoped;
 }
 } // namespace neverd
 #endif

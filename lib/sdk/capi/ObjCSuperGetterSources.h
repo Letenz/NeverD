@@ -562,6 +562,32 @@ inline bool objCSuperGetterSourceCallBound(
          &Expression == Call.Operands[3].get();
 }
 
+inline std::string
+renderObjCSelectorReferenceHelpers(const std::map<va_t, std::string> &Selectors,
+                                   std::set<std::string> &SharedFunctions) {
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  for (const auto &[Slot, Selector] : Selectors) {
+    const auto Name = objc_super_getter_detail::selectorName(Slot);
+    if (!SharedFunctions.insert(Name).second)
+      continue;
+    OS << "\nuintptr_t " << Name
+       << "(void) {\n"
+          "  static void *reference;\n  static unsigned state;\n"
+          "  if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) != 2) {\n"
+          "    unsigned expected = 0;\n"
+          "    if (__atomic_compare_exchange_n(&state, &expected, 1, 0, "
+          "__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {\n"
+          "      reference = sel_registerName(\"";
+    OS.write_escaped(Selector);
+    OS << "\");\n      __atomic_store_n(&state, 2, __ATOMIC_RELEASE);\n"
+          "    } else {\n"
+          "      while (__atomic_load_n(&state, __ATOMIC_ACQUIRE) != 2) {}\n"
+          "    }\n  }\n  return (uintptr_t)&reference;\n}\n";
+  }
+  return Source;
+}
+
 inline std::string renderObjCSuperGetterHelpers(
     const BinaryImage &Image, const ObjCSuperGetterSourcePlan &Plan,
     const std::set<va_t> &Callers, std::set<std::string> &SharedFunctions) {
@@ -582,23 +608,7 @@ inline std::string renderObjCSuperGetterHelpers(
   llvm::raw_string_ostream OS(Source);
   OS << "\n#include <objc/runtime.h>\n"
         "extern void objc_msgSendSuper2(void);\n";
-  for (const auto &[Slot, Selector] : Selectors) {
-    const auto Name = objc_super_getter_detail::selectorName(Slot);
-    SharedFunctions.insert(Name);
-    OS << "\nuintptr_t " << Name
-       << "(void) {\n"
-          "  static void *reference;\n  static unsigned state;\n"
-          "  if (__atomic_load_n(&state, __ATOMIC_ACQUIRE) != 2) {\n"
-          "    unsigned expected = 0;\n"
-          "    if (__atomic_compare_exchange_n(&state, &expected, 1, 0, "
-          "__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {\n"
-          "      reference = sel_registerName(\"";
-    OS.write_escaped(Selector);
-    OS << "\");\n      __atomic_store_n(&state, 2, __ATOMIC_RELEASE);\n"
-          "    } else {\n"
-          "      while (__atomic_load_n(&state, __ATOMIC_ACQUIRE) != 2) {}\n"
-          "    }\n  }\n  return (uintptr_t)&reference;\n}\n";
-  }
+  OS << renderObjCSelectorReferenceHelpers(Selectors, SharedFunctions);
   for (const auto &[Entry, Contract] : Contracts) {
     const auto Name = objc_super_getter_detail::helperName(Entry);
     SharedFunctions.insert(Name);

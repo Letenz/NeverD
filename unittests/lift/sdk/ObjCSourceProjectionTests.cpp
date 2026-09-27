@@ -320,6 +320,45 @@ TEST(ObjCSourceProjection, OrdinaryDarwinUnwindDoesNotImplyExceptionCode) {
 }
 
 TEST(ObjCSourceProjection,
+     EnclosingUnwindRuntimeCallsBelongOnlyToDecodedSubentries) {
+  Projection P;
+  P.Func.Entry = P.Audit.Entry = 0x1100;
+  ExceptionFunction Metadata;
+  Metadata.CodeRange = {0x1000, 0x1200};
+  Metadata.Encoding = ExceptionEncoding::CompactUnwind;
+  Metadata.Compact.emplace();
+  Metadata.ObjC.emplace().RuntimeCalls = {
+      {0x1004, 0x2000, "objc_exception_throw", ObjCRuntimeCallKind::Throw}};
+
+  P.Func.ExceptionMetadata = sourceUnwindForDecodedSubentry(
+      Metadata, P.Func.Entry, {0x1100, 0x1104});
+  ASSERT_TRUE(P.Func.ExceptionMetadata);
+  EXPECT_FALSE(P.Func.ExceptionMetadata->ObjC);
+  EXPECT_TRUE(P.limitation().empty()) << P.limitation();
+
+  Metadata.ObjC->RuntimeCalls.push_back(
+      {0x1104, 0x2000, "objc_exception_throw", ObjCRuntimeCallKind::Throw});
+  const auto LocalThrow =
+      sourceUnwindForDecodedSubentry(Metadata, P.Func.Entry, {0x1100, 0x1104});
+  ASSERT_TRUE(LocalThrow.ObjC);
+  ASSERT_EQ(LocalThrow.ObjC->RuntimeCalls.size(), 1U);
+  EXPECT_EQ(LocalThrow.ObjC->RuntimeCalls[0].CallVA, 0x1104U);
+  EXPECT_FALSE(isPlainSourceUnwind(LocalThrow));
+
+  EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1000, {0x1000})
+                .ObjC->RuntimeCalls.size(),
+            2U);
+  EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1100, {0x1104})
+                .ObjC->RuntimeCalls.size(),
+            2U);
+  Metadata.Compact->HasLSDA = true;
+  EXPECT_EQ(sourceUnwindForDecodedSubentry(Metadata, 0x1100,
+                                          {0x1100, 0x1104})
+                .ObjC->RuntimeCalls.size(),
+            2U);
+}
+
+TEST(ObjCSourceProjection,
      UnwindWithLanguageDispatchOrPartialMetadataIsRejected) {
   using Mutation = std::function<void(ExceptionFunction &)>;
   const std::vector<std::pair<const char *, Mutation>> Mutations = {

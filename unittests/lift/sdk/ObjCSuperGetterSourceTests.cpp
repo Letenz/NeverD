@@ -1,3 +1,4 @@
+#include "../../../lib/sdk/capi/ObjCForwardedInitializerSources.h"
 #include "../../../lib/sdk/capi/ObjCSuperGetterSources.h"
 #include "gtest/gtest.h"
 
@@ -212,6 +213,257 @@ struct SuperGetterFixture {
     EXPECT_TRUE(Result.Success) << Result.Error;
   }
 };
+
+void makeForwardedInitializer(SuperGetterFixture &F) {
+  F.word(F.Root, 0x90000002);
+  F.word(F.Root + 4, 0x91080042);
+  const uint32_t Body[] = {0xd100c3ff,
+                           0xa9014ff4,
+                           0xa9027bfd,
+                           0x910083fd,
+                           0xaa0003f3,
+                           0xd63f0040,
+                           0xa90003f3,
+                           0xb0000008,
+                           0xf9408101,
+                           0x910003e0,
+                           F.branch(F.Getter + 40, 0x1260),
+                           0xa9427bfd,
+                           0xa9414ff4,
+                           0x9100c3ff,
+                           0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Body); ++I)
+    F.word(F.Getter + I * 4, Body[I]);
+  auto &Method = F.Image.ObjCMethods.front();
+  Method.Selector = "init";
+  Method.TypeEncoding = "@16@0:8";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  std::string Error;
+  ASSERT_TRUE(assignDarwinObjCSourceABI(*Method.TypeHint, F.Image.Arch, Error));
+  F.Image.ObjCSourceReferences[F.SelectorSlot].Name = "init";
+  const auto *Metadata =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Metadata);
+  ASSERT_NE(Metadata, nullptr);
+  ASSERT_TRUE(Metadata->SourceTypeHint);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Root, F.Getter, F.Metadata};
+  Options.SourceTypeHints.emplace(F.Metadata, *Metadata->SourceTypeHint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+}
+
+TEST(ObjCForwardedInitializerSources,
+     KeepsCallerClassAccessorAndSelectorLoadInOneHelper) {
+  SuperGetterFixture F;
+  makeForwardedInitializer(F);
+  PipelineOptions Seeded;
+  EXPECT_EQ(seedObjCForwardedInitializerAccessorHints(F.Image, Seeded), 1U);
+  EXPECT_TRUE(Seeded.SourceTypeHints.count(F.Metadata));
+  const auto C =
+      objc_forwarded_initializer_detail::prove(F.Image, F.Result, F.Root);
+  ASSERT_TRUE(C);
+  EXPECT_EQ(C->Accessor.Entry, F.Metadata);
+  EXPECT_EQ(C->SelectorSlot, F.SelectorSlot);
+  const auto Plan = discoverObjCForwardedInitializerSources(F.Image, F.Result);
+  EXPECT_EQ(Plan.Callers, std::set<va_t>{F.Root});
+  const auto *Root =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Root);
+  ASSERT_NE(Root, nullptr);
+  auto Projection = projectObjCForwardedInitializer(*Root, F.Image, Plan);
+  ASSERT_TRUE(Projection.Projected);
+  EXPECT_EQ(Projection.Dependencies, std::set<va_t>{F.Metadata});
+  std::map<va_t, const HighFunc *> Functions;
+  for (const auto &Function : F.Result.HighFuncs)
+    Functions.emplace(Function.Entry, &Function);
+  const auto Bound = [&](const HighExpr &Expression) {
+    return objCForwardedInitializerSourceCallBound(
+        Expression, F.Image, Plan, Projection.Function, Functions);
+  };
+  const auto &Call = *Projection.Function.Body.front().RetVal;
+  EXPECT_TRUE(Bound(Call));
+  EXPECT_TRUE(Bound(*Call.Operands[2]));
+  EXPECT_TRUE(Bound(*Call.Operands[3]));
+  const auto *Audit =
+      objc_super_getter_detail::uniqueEntry(F.Result.FunctionAudits, F.Root);
+  ASSERT_NE(Audit, nullptr);
+  EXPECT_TRUE(sourceBodyLimitation(Projection.Function,
+                                   *Projection.Function.SourceTypeHint, Audit,
+                                   Bound)
+                  .empty());
+  std::set<std::string> Helpers;
+  const auto Source =
+      renderObjCForwardedInitializerHelpers(F.Image, Plan, {F.Root}, Helpers);
+  EXPECT_NE(Source.find("sel_registerName(\"init\")"), std::string::npos);
+  EXPECT_LT(Source.find("(*)(void))metadata)()"),
+            Source.find("*(void **)selector_slot"));
+  EXPECT_NE(Source.find("objc_msgSendSuper2)(&super, selector)"),
+            std::string::npos);
+  EXPECT_EQ(Helpers.size(), 2U);
+}
+
+TEST(ObjCForwardedInitializerSources, SharedBodyKeepsEachCallersClassAccessor) {
+  SuperGetterFixture F;
+  makeForwardedInitializer(F);
+  constexpr va_t OtherRoot = 0x1020;
+  constexpr va_t OtherAccessor = 0x1140;
+  constexpr va_t OtherClass = 0x2400;
+  F.word(OtherRoot, 0x90000002);
+  F.word(OtherRoot + 4, 0x91050042);
+  F.word(OtherRoot + 8, F.branch(OtherRoot + 8, F.Getter, false));
+  const uint32_t Accessor[] = {0xa9bf7bfd,
+                               0x910003fd,
+                               0xb0000000,
+                               0x91100000,
+                               F.branch(OtherAccessor + 16, 0x1240),
+                               0xd2800001,
+                               0xa8c17bfd,
+                               0xd65f03c0};
+  for (unsigned I = 0; I < std::size(Accessor); ++I)
+    F.word(OtherAccessor + I * 4, Accessor[I]);
+  F.pointer(OtherClass, 0x2460);
+  F.pointer(OtherClass + 0x20, 0x2600);
+  F.pointer(0x2480, 0x2680);
+  F.pointer(0x2680, 1);
+  F.pointer(0x2618, 0x2780);
+  F.pointer(0x2698, 0x2780);
+  const char Name[] = "OtherReceiver";
+  ASSERT_TRUE(F.Image.writeVA(0x2780, reinterpret_cast<const uint8_t *>(Name),
+                              sizeof(Name)));
+  ObjCClass Class;
+  Class.Address = OtherClass;
+  Class.Name = Name;
+  Class.SuperclassName = "UIControl";
+  Class.InheritanceStatus = "resolved";
+  F.Image.ObjCClasses.push_back(Class);
+  auto Method = F.Image.ObjCMethods.front();
+  Method.Implementation = OtherRoot;
+  Method.ClassAddress = OtherClass;
+  Method.ClassName = Name;
+  F.Image.ObjCMethods.push_back(Method);
+  F.Image.Symbols.push_back({"other_root", OtherRoot, 0, true});
+  F.Image.Symbols.push_back({"other_accessor", OtherAccessor, 0, true});
+  F.Image.Exports.push_back({"other_root", 0, OtherRoot});
+  F.Image.Exports.push_back({"other_accessor", 0, OtherAccessor});
+  const auto *Metadata =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Metadata);
+  ASSERT_NE(Metadata, nullptr);
+  ASSERT_TRUE(Metadata->SourceTypeHint);
+  PipelineOptions Options;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries = {F.Root, OtherRoot, F.Getter, F.Metadata,
+                                 OtherAccessor};
+  Options.SourceTypeHints.emplace(F.Metadata, *Metadata->SourceTypeHint);
+  Options.SourceTypeHints.emplace(OtherAccessor, *Metadata->SourceTypeHint);
+  F.Result = Pipeline().run(F.Image, F.Context, Options);
+  ASSERT_TRUE(F.Result.Success) << F.Result.Error;
+  EXPECT_TRUE(objc_super_getter_detail::completeLow(F.Result, OtherRoot, 3));
+  EXPECT_TRUE(
+      objc_super_getter_detail::completeLow(F.Result, OtherAccessor, 8));
+  EXPECT_TRUE(objc_super_getter_detail::validatedClassAccessor(
+      F.Image, F.Result, OtherAccessor));
+  EXPECT_TRUE(
+      objc_binding_detail::classObjectIdentities(F.Image).count(OtherClass));
+  const auto Plan = discoverObjCForwardedInitializerSources(F.Image, F.Result);
+  EXPECT_EQ(Plan.Callers, (std::set<va_t>{F.Root, OtherRoot}));
+  const auto *First =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, F.Root);
+  const auto *Second =
+      objc_super_getter_detail::uniqueEntry(F.Result.HighFuncs, OtherRoot);
+  ASSERT_NE(First, nullptr);
+  ASSERT_NE(Second, nullptr);
+  auto A = projectObjCForwardedInitializer(*First, F.Image, Plan);
+  auto B = projectObjCForwardedInitializer(*Second, F.Image, Plan);
+  ASSERT_TRUE(A.Projected);
+  ASSERT_TRUE(B.Projected);
+  EXPECT_EQ(A.Dependencies, std::set<va_t>{F.Metadata});
+  EXPECT_EQ(B.Dependencies, std::set<va_t>{OtherAccessor});
+  EXPECT_EQ(A.Function.Body.front()
+                .RetVal->Operands[3]
+                ->SourceCallHint->TargetAddress,
+            F.Metadata);
+  EXPECT_EQ(B.Function.Body.front()
+                .RetVal->Operands[3]
+                ->SourceCallHint->TargetAddress,
+            OtherAccessor);
+  std::set<std::string> Helpers;
+  const auto Source = renderObjCForwardedInitializerHelpers(
+      F.Image, Plan, {F.Root, OtherRoot}, Helpers);
+  EXPECT_EQ(Helpers.size(), 2U);
+  EXPECT_EQ(Source.find("neverd_objc_forwarded_initializer_"),
+            Source.rfind("neverd_objc_forwarded_initializer_"));
+}
+
+TEST(ObjCForwardedInitializerSources,
+     DisconnectedAdjacentEntryCannotChangeTheMethodWrapper) {
+  SuperGetterFixture F;
+  makeForwardedInitializer(F);
+  auto Low = std::find_if(F.Result.LowFuncs.begin(), F.Result.LowFuncs.end(),
+                          [&](const auto &L) { return L.Entry == F.Root; });
+  auto Audit = std::find_if(F.Result.FunctionAudits.begin(),
+                            F.Result.FunctionAudits.end(),
+                            [&](const auto &A) { return A.Entry == F.Root; });
+  ASSERT_NE(Low, F.Result.LowFuncs.end());
+  ASSERT_NE(Audit, F.Result.FunctionAudits.end());
+  ASSERT_EQ(Low->Blocks.size(), 1U);
+  auto Adjacent = Low->Blocks.front();
+  Adjacent.Id = 1;
+  Adjacent.StartAddr += 12;
+  Adjacent.EndAddr += 12;
+  for (auto &Op : Adjacent.Ops)
+    Op.Addr += 12;
+  for (auto &Boundary : Adjacent.InstructionBoundaries)
+    Boundary.Address += 12;
+  Low->Blocks.push_back(Adjacent);
+  Audit->DecodedInstructions += 3;
+  Audit->LiftedInstructions += 3;
+  ASSERT_TRUE(
+      objc_forwarded_initializer_detail::completeCallerLow(F.Result, F.Root));
+  EXPECT_TRUE(
+      objc_forwarded_initializer_detail::prove(F.Image, F.Result, F.Root));
+  Low->Blocks.front().Succs.push_back(1);
+  EXPECT_FALSE(
+      objc_forwarded_initializer_detail::completeCallerLow(F.Result, F.Root));
+  Low->Blocks.front().Succs.clear();
+  Low->Blocks[1].Ops.front().Addr = F.Root + 4;
+  EXPECT_FALSE(
+      objc_forwarded_initializer_detail::completeCallerLow(F.Result, F.Root));
+}
+
+TEST(ObjCForwardedInitializerSources, RejectsChangedMachineAndClassEvidence) {
+  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    SuperGetterFixture F;
+    makeForwardedInitializer(F);
+    ASSERT_TRUE(
+        objc_forwarded_initializer_detail::prove(F.Image, F.Result, F.Root));
+    if (Mutation == 0)
+      F.word(F.Getter + 20, 0xd63f0060); // x3 rather than x2
+    if (Mutation == 1)
+      F.word(F.Getter + 32, 0xf9408501); // shifted selector load
+    if (Mutation == 2)
+      F.word(F.Getter + 48, 0xd503201f); // missing restore
+    if (Mutation == 3)
+      F.word(F.Root + 4, 0x91084042); // different accessor
+    if (Mutation == 4)
+      F.word(F.Root + 8, F.branch(F.Root + 8, F.Getter + 4, false));
+    if (Mutation == 5)
+      F.Image.ObjCSourceReferences[F.SelectorSlot].Name = "other";
+    if (Mutation == 6)
+      F.Image.ObjCMethods[0].ClassName = "Other";
+    if (Mutation == 7)
+      F.Image.ObjCMethods[0].Status = "ambiguous_dispatch";
+    if (Mutation == 8)
+      F.Image.DyldBindSlots[0x2f08].WeakImport = true;
+    if (Mutation == 9)
+      F.Result.FunctionAudits.clear();
+    if (Mutation == 10)
+      F.Image.ObjCMethods[0].ClassAddress += 8;
+    EXPECT_FALSE(
+        objc_forwarded_initializer_detail::prove(F.Image, F.Result, F.Root));
+  }
+}
 
 TEST(ObjCSuperGetterSources, KeepsAccessorAndDynamicSelectorInOneHelper) {
   SuperGetterFixture F;
