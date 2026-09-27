@@ -814,6 +814,71 @@ TEST(SwiftOnceSources,
   EXPECT_EQ(Caller.Dependencies, std::set<va_t>{Original.Entry});
 }
 
+TEST(SwiftOnceSources, SharedObjCGetterRootsIndependentNestedCallback) {
+  const auto Prepare = [](NestedCallbackFixture &F) {
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto Param = [&](unsigned Id) {
+      MedVar V;
+      V.Kind = MedVar::Param;
+      V.Id = Id;
+      V.Size = 8;
+      return HighExpr::makeVar(V, Pointer);
+    };
+    auto &Getter = F.Pipeline.HighFuncs[0];
+    Getter.Params.insert(Getter.Params.begin(),
+                         {{"objc_self", Pointer}, {"objc_cmd", Pointer}});
+    Getter.Body[0].Val->Operands[0] = Param(2);
+    F.Once->Operands = {Param(2), Param(4), Param(2)};
+    Getter.Body[2].RetVal->Operands[0] = Param(3);
+    SourceFunctionTypeHint Signature;
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Signature.ReturnType = Pointer;
+    for (unsigned I = 0; I < 5; ++I)
+      Signature.Parameters.push_back({"arg" + std::to_string(I), Pointer});
+    std::string Error;
+    EXPECT_TRUE(assignDarwinScalarSourceABI(Signature, F.Image.Arch, Error))
+        << Error;
+    Getter.SourceTypeHint = Signature;
+    auto &Call = F.Pipeline.HighFuncs[2].Body[0].RetVal;
+    Call->Operands.insert(Call->Operands.begin(), {Param(0), Param(1)});
+    auto CallHint = std::make_shared<SourceCallTypeHint>(*Call->SourceCallHint);
+    CallHint->Signature = Signature;
+    Call->SourceCallHint = std::move(CallHint);
+  };
+
+  NestedCallbackFixture F;
+  Prepare(F);
+  const auto Plan = discoverSwiftOnceSources(F.Image, F.Pipeline);
+  ASSERT_EQ(Plan.Getters.size(), 1U);
+  ASSERT_EQ(Plan.CallbackHints.count(F.Pipeline.HighFuncs[1].Entry), 1U);
+  ASSERT_EQ(Plan.NestedCallbacks.size(), 1U);
+  const auto Projected = projectSwiftOnceNestedCallback(
+      F.Pipeline.HighFuncs[1], F.Image, Plan, F.functions());
+  ASSERT_TRUE(Projected);
+  auto Functions = F.functions();
+  Functions[F.Pipeline.HighFuncs[1].Entry] = &Projected->Function;
+  const auto Bound = bindSwiftOnceSourceReferences(F.Pipeline.HighFuncs[2],
+                                                   F.Image, Plan, Functions);
+  EXPECT_EQ(Bound.Dependencies, std::set<va_t>{F.Pipeline.HighFuncs[1].Entry});
+
+  NestedCallbackFixture ReadsContext;
+  Prepare(ReadsContext);
+  HighStmt Use;
+  Use.Kind = StmtKind::ExprStmt;
+  MedVar Context;
+  Context.Kind = MedVar::Param;
+  Context.Id = 0;
+  Context.Size = 8;
+  Use.Val = HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+  ReadsContext.Pipeline.HighFuncs.back().Body.insert(
+      ReadsContext.Pipeline.HighFuncs.back().Body.begin(), Use);
+  const auto Rejected =
+      discoverSwiftOnceSources(ReadsContext.Image, ReadsContext.Pipeline);
+  EXPECT_FALSE(
+      Rejected.CallbackHints.count(ReadsContext.Pipeline.HighFuncs[1].Entry));
+  EXPECT_TRUE(Rejected.NestedCallbacks.empty());
+}
+
 TEST(SwiftOnceSources, NestedCallbackPreservesRetainInIgnoredReturn) {
   NestedCallbackFixture F;
   constexpr va_t RetainSlot = 0x2088;
