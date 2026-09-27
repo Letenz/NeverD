@@ -237,6 +237,9 @@ int main(int Argc, char *Argv[]) {
     outs() << ", " << Stats.Unreadable << " unreadable members";
   if (Stats.Patterns.TooSmall)
     outs() << ", " << Stats.Patterns.TooSmall << " functions below --min-size";
+  if (Stats.Patterns.TooWeak)
+    outs() << ", " << Stats.Patterns.TooWeak
+           << " functions stating too few exact bytes";
   if (Stats.Patterns.UnsupportedRelocation)
     outs() << ", " << Stats.Patterns.UnsupportedRelocation
            << " functions with unsupported relocations";

@@ -10,6 +10,7 @@
 #include "neverd/sigs/PatternParser.h"
 #include "neverd/sigs/SignatureMatcher.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/ObjectFile.h"
 
@@ -255,7 +256,7 @@ TEST(PatternGeneratorCOFF, RelocationWidthsCoverWholeRewrittenFields) {
 }
 
 TEST(PatternGeneratorCOFF, Mov32TPairIsWildcardedAcrossBothInstructions) {
-  std::vector<uint8_t> Code = sequentialCode(48);
+  std::vector<uint8_t> Code = sequentialCode(64);
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_ARMNT, Code);
   Builder.addFunction("?Run@Task@@QAAXXZ", 0);
   Builder.addFunction("helper", 40, COFF::IMAGE_SYM_CLASS_STATIC);
@@ -281,8 +282,8 @@ TEST(PatternGeneratorCOFF, Mov32TPairIsWildcardedAcrossBothInstructions) {
   EXPECT_TRUE(StringRef(Out.Lines[0]).contains(" 08 "));
   EXPECT_TRUE(
       StringRef(Out.Lines[0]).ends_with(" 0028 :0000 ?Run@Task@@QAAXXZ"));
-  EXPECT_TRUE(StringRef(Out.Lines[1]).ends_with(" 0008 :0000 helper"));
-  EXPECT_TRUE(StringRef(Out.Lines[1]).starts_with("68696A6B........ "));
+  EXPECT_TRUE(StringRef(Out.Lines[1]).ends_with(" 0018 :0000 helper"));
+  EXPECT_TRUE(StringRef(Out.Lines[1]).starts_with("68696A6B........"));
 
   // A linker rewrites every relocated byte; the signature must still match.
   std::vector<uint8_t> Linked(Code.begin(), Code.begin() + 40);
@@ -319,18 +320,21 @@ TEST(PatternGeneratorCOFF, LabelsDoNotEndAFunction) {
 }
 
 TEST(PatternGeneratorCOFF, Addr64IsWildcardedAcrossEightBytes) {
-  // mov rax, imm64 (the address) ; call rel32
-  std::vector<uint8_t> Code = {0x48, 0xB8, 1,    2, 3,  4,  5,  6,
-                               7,    8,    0xE8, 9, 10, 11, 12, 0xC3};
+  // sub rsp, 28h ; mov rax, imm64 (the address) ; call rel32 ;
+  // add rsp, 28h ; xor eax, eax ; ret ; int3 padding
+  std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28, 0x48, 0xB8, 1,    2,
+                               3,    4,    5,    6,    7,    8,    0xE8, 9,
+                               10,   11,   12,   0x48, 0x83, 0xC4, 0x28, 0x33,
+                               0xC0, 0xC3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC};
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_AMD64, Code);
   Builder.addFunction("load_address", 0);
-  Builder.addRelocation(2, COFF::IMAGE_REL_AMD64_ADDR64);
-  Builder.addRelocation(11, COFF::IMAGE_REL_AMD64_REL32);
+  Builder.addRelocation(6, COFF::IMAGE_REL_AMD64_ADDR64);
+  Builder.addRelocation(15, COFF::IMAGE_REL_AMD64_REL32);
 
   Generated Out = generate(Builder.build());
   ASSERT_EQ(Out.Lines.size(), 1u);
-  EXPECT_EQ(Out.Lines[0], "48B8................E8........C3 00 0000 0010 "
-                          ":0000 load_address");
+  EXPECT_EQ(Out.Lines[0], "4883EC2848B8................E8........4883C4283"
+                          "3C0C3CCCCCCCCCCCC 00 0000 0020 :0000 load_address");
 }
 
 TEST(PatternGeneratorCOFF, UnknownRelocationLeavesOnlyItsFunctionOut) {
@@ -350,7 +354,7 @@ TEST(PatternGeneratorCOFF, UnknownRelocationLeavesOnlyItsFunctionOut) {
 }
 
 TEST(PatternGeneratorCOFF, DataSectionFunctionSymbolsAreNotFunctions) {
-  std::vector<uint8_t> Data = sequentialCode(16);
+  std::vector<uint8_t> Data = sequentialCode(32);
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, Data,
                             COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
                                 COFF::IMAGE_SCN_MEM_READ);
@@ -361,8 +365,9 @@ TEST(PatternGeneratorCOFF, DataSectionFunctionSymbolsAreNotFunctions) {
 }
 
 TEST(PatternGeneratorCOFF, ShortFunctionsAreCountedNotWritten) {
-  std::vector<uint8_t> Code = {0x33, 0xC0, 0xC3, 0xCC, 0x55,
-                               0x8B, 0xEC, 0x5D, 0xC3};
+  std::vector<uint8_t> Code = {0x33, 0xC0, 0xC3, 0xCC};
+  std::vector<uint8_t> Frame = sequentialCode(20);
+  Code.insert(Code.end(), Frame.begin(), Frame.end());
   COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, Code);
   Builder.addFunction("_zero", 0);
   Builder.addFunction("_frame", 4);
@@ -371,6 +376,34 @@ TEST(PatternGeneratorCOFF, ShortFunctionsAreCountedNotWritten) {
 
   Generated Out = generate(Builder.build(), Opts);
   ASSERT_EQ(Out.Lines.size(), 1u);
-  EXPECT_EQ(Out.Lines[0], "558BEC5DC3 00 0000 0005 :0000 _frame");
+  EXPECT_TRUE(StringRef(Out.Lines[0]).ends_with(" 0014 :0000 _frame"));
   EXPECT_EQ(Out.Stats.TooSmall, 1u);
+}
+
+TEST(PatternGeneratorCOFF, LinesStatingTooFewExactBytesAreNotWritten) {
+  std::vector<uint8_t> Code = sequentialCode(28 + 12 + 32);
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_ARM64, Code);
+  // Every instruction relocated: the line would state nothing at all.
+  Builder.addFunction("?RmDirRecursive@fuzzer@@YAXXZ", 0);
+  for (uint32_t Offset = 0; Offset < 28; Offset += 4)
+    Builder.addRelocation(Offset, COFF::IMAGE_REL_ARM64_BRANCH26);
+  // Eight exact bytes then a relocated instruction: below the floor.
+  Builder.addFunction("eight", 28);
+  Builder.addRelocation(28 + 8, COFF::IMAGE_REL_ARM64_BRANCH26);
+  // Sixteen exact bytes, a relocated instruction, and twelve more: enough.
+  Builder.addFunction("sixteen", 40);
+  Builder.addRelocation(40 + 16, COFF::IMAGE_REL_ARM64_BRANCH26);
+
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  EXPECT_TRUE(StringRef(Out.Lines[0]).ends_with(":0000 sixteen"));
+  EXPECT_EQ(Out.Stats.TooWeak, 2u);
+
+  SmallVector<bool> AllRelocated(28, true);
+  EXPECT_EQ(statedByteCount(AllRelocated, Opts), 0u);
+  SmallVector<bool> Floor(20, false);
+  Floor[16] = Floor[17] = Floor[18] = Floor[19] = true;
+  EXPECT_EQ(statedByteCount(Floor, Opts), SignatureMatcher::MinStatedBytes);
 }

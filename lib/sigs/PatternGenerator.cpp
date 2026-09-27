@@ -29,6 +29,7 @@ PatternGeneratorStats &
 PatternGeneratorStats::operator+=(const PatternGeneratorStats &Other) {
   Functions += Other.Functions;
   TooSmall += Other.TooSmall;
+  TooWeak += Other.TooWeak;
   UnsupportedRelocation += Other.UnsupportedRelocation;
   UnsupportedCOFFRelocations.insert(Other.UnsupportedCOFFRelocations.begin(),
                                     Other.UnsupportedCOFFRelocations.end());
@@ -178,6 +179,18 @@ void markWildcard(MutableArrayRef<bool> Wildcard, uint64_t Offset,
     Wildcard[I] = true;
 }
 
+/// Writes a function's line, or counts why it has none.
+void countOrEmit(raw_ostream &OS, StringRef Name, ArrayRef<uint8_t> Data,
+                 ArrayRef<bool> Wildcard, const PatternGeneratorOptions &Opts,
+                 PatternGeneratorStats &Stats) {
+  if (Data.size() < Opts.MinFuncSize)
+    ++Stats.TooSmall;
+  else if (statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes)
+    ++Stats.TooWeak;
+  else if (emitPatternLine(OS, Name, Data, Wildcard, Opts))
+    ++Stats.Functions;
+}
+
 /// The reading every object format shares: each function symbol ends at the
 /// next symbol of any kind in its section, and every relocation covers four
 /// bytes. ELF and Mach-O signatures have always been made this way.
@@ -267,10 +280,7 @@ PatternGeneratorStats generateGeneric(const ObjectFile &Obj,
 
     ArrayRef<uint8_t> Data(
         reinterpret_cast<const uint8_t *>(Contents->data()) + Offset, FuncSize);
-    if (emitPatternLine(OS, Name, Data, Wildcard, Opts))
-      ++Stats.Functions;
-    else
-      ++Stats.TooSmall;
+    countOrEmit(OS, Name, Data, Wildcard, Opts, Stats);
   }
   return Stats;
 }
@@ -399,21 +409,35 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
     }
 
     ArrayRef<uint8_t> Data = Sec.Contents.slice(Fn.Offset, Size);
-    if (emitPatternLine(OS, Fn.Name, Data, Wildcard, Opts))
-      ++Stats.Functions;
-    else
-      ++Stats.TooSmall;
+    countOrEmit(OS, Fn.Name, Data, Wildcard, Opts, Stats);
   }
   return Stats;
 }
 
 } // anonymous namespace
 
+size_t statedByteCount(ArrayRef<bool> Wildcard,
+                       const PatternGeneratorOptions &Opts) {
+  const size_t Size = Wildcard.size();
+  const size_t LeadBytes = std::min(static_cast<size_t>(Opts.LeadingLen), Size);
+  const size_t CRCLen = crcSpan(Wildcard, LeadBytes);
+  const size_t TailStart = LeadBytes + CRCLen;
+  const size_t TailEnd =
+      std::min(Size, TailStart + static_cast<size_t>(Opts.TailLen));
+  size_t Stated = CRCLen;
+  for (size_t I = 0; I < LeadBytes; ++I)
+    Stated += Wildcard[I] ? 0 : 1;
+  for (size_t I = TailStart; I < TailEnd; ++I)
+    Stated += Wildcard[I] ? 0 : 1;
+  return Stated;
+}
+
 bool emitPatternLine(raw_ostream &OS, StringRef Name, ArrayRef<uint8_t> Data,
                      ArrayRef<bool> Wildcard,
                      const PatternGeneratorOptions &Opts) {
   const size_t Size = Data.size();
-  if (Size < Opts.MinFuncSize || Wildcard.size() != Size)
+  if (Size < Opts.MinFuncSize || Wildcard.size() != Size ||
+      statedByteCount(Wildcard, Opts) < SignatureMatcher::MinStatedBytes)
     return false;
 
   const size_t LeadBytes = std::min(static_cast<size_t>(Opts.LeadingLen), Size);

@@ -241,20 +241,6 @@ void SignatureDB::apply(const BinaryImage &Img,
   }
 }
 
-namespace {
-
-/// The fewest bytes a module may state exactly and still be allowed to name a
-/// personality routine.
-///
-/// Whole-function agreement is the main gate, but on its own it would also be
-/// satisfied by a short pattern that is mostly wildcards -- a thing that
-/// agrees with a great deal of code.  Sixteen exact bytes is several
-/// instructions of one specific routine, which no unrelated function reaches
-/// by coincidence.
-constexpr size_t kMinFixedBytesForPersonality = 16;
-
-} // namespace
-
 size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
   const std::vector<va_t> Candidates = collectUnnamedPersonalityRoutines(Img);
   if (Candidates.empty() || Modules.empty())
@@ -275,9 +261,12 @@ size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
     SignatureMatcher::scanAtAddresses(
         Seg.Data.data(), Seg.Data.size(), Seg.VA, Candidates, Modules, Index,
         [&](uint64_t Addr, const PatternModule &Mod) {
+          // Whole-function agreement is the main gate, but on its own it
+          // would also be satisfied by a short pattern that is mostly
+          // wildcards.
           if (!SignatureMatcher::isFullyVerified(Mod) ||
               SignatureMatcher::fixedByteCount(Mod) <
-                  kMinFixedBytesForPersonality)
+                  SignatureMatcher::MinStatedBytes)
             return;
 
           for (const FuncRef &Ref : Mod.PublicNames) {

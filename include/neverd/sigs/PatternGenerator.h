@@ -56,6 +56,9 @@ struct PatternGeneratorOptions {
 struct PatternGeneratorStats {
   unsigned Functions = 0;
   unsigned TooSmall = 0;
+  /// Functions left out because their line would state fewer than
+  /// SignatureMatcher::MinStatedBytes bytes exactly.
+  unsigned TooWeak = 0;
   /// Functions left out because a relocation inside them has a type whose
   /// width is unknown. Writing them would state placeholder bytes as if they
   /// were the function's own.
@@ -76,10 +79,16 @@ struct PatternGeneratorStats {
 /// std::nullopt for a machine or type this table does not know.
 std::optional<unsigned> coffRelocationWidth(uint16_t Machine, uint16_t Type);
 
+/// How many bytes the line for a function would state exactly: the fixed
+/// ones among the leading bytes and the tail, and every byte of the CRC span.
+size_t statedByteCount(llvm::ArrayRef<bool> Wildcard,
+                       const PatternGeneratorOptions &Opts);
+
 /// Writes one .pat line for \p Data, the complete bytes of function
 /// \p Name, where \p Wildcard marks the bytes relocations rewrite.
 /// Returns false, writing nothing, when the function is shorter than
-/// Opts.MinFuncSize.
+/// Opts.MinFuncSize or its line would state fewer than
+/// SignatureMatcher::MinStatedBytes bytes exactly.
 bool emitPatternLine(llvm::raw_ostream &OS, llvm::StringRef Name,
                      llvm::ArrayRef<uint8_t> Data,
                      llvm::ArrayRef<bool> Wildcard,

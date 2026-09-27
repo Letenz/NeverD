@@ -13,7 +13,8 @@ Tooling that builds the `.pat` signatures in the `signatures` submodule
 
 Every line is produced by `neverd-sigmaker` from a real library, and states
 the bytes of one function with a wildcard wherever a relocation rewrites
-them. `neverd::sigs::PatternGenerator` owns those rules, including how wide
+them. The tail starts where the CRC span ends. A function whose line would
+state fewer than sixteen bytes exactly is not written at all. `neverd::sigs::PatternGenerator` owns those rules, including how wide
 each COFF relocation is. The name on a line is the linkage name the
 library's symbol table spells, byte for byte: `?Close@CFile@@UEAAXXZ`,
 `_ZNSt6thread4joinEv`, x86 `_memcpy`. It is never demangled, sanitized,
@@ -126,9 +127,12 @@ The driver reports four numbers, and the last one is the one that matters:
 ```
 
 "Strong enough" means the line passes the same gate the loader applies —
-whole-function coverage and at least sixteen bytes stated exactly. A line that
-fails it is still written, because it remains useful for renaming a function,
-but it will never be allowed to decide a personality. The run fails outright
+whole-function coverage and at least sixteen bytes stated exactly. The
+signature maker never writes a line that states fewer than sixteen bytes
+(`SignatureMatcher::MinStatedBytes`), since such a line agrees with a great
+deal of unrelated code. A line that only falls short of whole-function coverage
+is still written, because it remains useful for renaming a function, but it
+will never be allowed to decide a personality. The run fails outright
 when *no* line passes, because a database like that cannot do the job it was
 built for; raise `--tail` if that happens.
 
