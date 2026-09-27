@@ -134,9 +134,12 @@ bool scenarioSucceeded(const DriverResult &Result) {
     if (!Request.Completed || !Request.DispatchStatus || !Request.IOStatus ||
         (*Request.DispatchStatus & profile::NTStatusFailureMask))
       return false;
-    if (Request.Origin == DriverRequestOrigin::FrameworkWaitWake &&
-        *Request.IOStatus == requestStatus::RequestCancelled && Request.Power &&
-        Request.Power->Minor == DevicePowerRequest::WaitWake &&
+    const bool CancelledWake =
+        Request.Origin == DriverRequestOrigin::FrameworkWaitWake ||
+        (Request.Origin == DriverRequestOrigin::PoRequestPowerIrp &&
+         Request.CancelRequestedAt100ns);
+    if (CancelledWake && *Request.IOStatus == requestStatus::RequestCancelled &&
+        Request.Power && Request.Power->Minor == DevicePowerRequest::WaitWake &&
         Request.Power->BusStatus == requestStatus::RequestCancelled &&
         Request.Power->BusCompletedAt100ns)
       return true;

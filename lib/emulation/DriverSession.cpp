@@ -442,7 +442,15 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
                           bool Nested = false,
                           uint64_t PayloadSize =
                               0) -> llvm::Expected<std::unique_ptr<Execution>> {
-    if (!CPU.executable(PC) || (PC >= ThunkBase && PC < ThunkBase + ThunkSize))
+    // A modeled bus cancel routine is an actual nested callback with a scoped
+    // thunk identity. Its model validates the live cancel token, PDO and IRP;
+    // ordinary exports remain invalid driver callback targets.
+    const auto *Export = Nested ? Exports.lookup(PC) : nullptr;
+    const bool ProviderCallback =
+        Export &&
+        Export->Kind == KernelExportRegistry::ExportKind::ProviderFunction;
+    if (!CPU.executable(PC) ||
+        ((PC >= ThunkBase && PC < ThunkBase + ThunkSize) && !ProviderCallback))
       return failure("driver callback does not name guest executable code");
     if (Arguments.size() > MaxCallbackArguments)
       return failure("scheduled callback exceeds the argument limit");
@@ -926,6 +934,13 @@ llvm::Expected<DriverResult> emulateDriver(const std::filesystem::path &Path,
              Error);
         break;
       }
+      // A native provider callback can release its cancel lock and invoke an
+      // upper completion in one modeled call. Save the provider frame at its
+      // new IRQL before entering that completion; IoCancelIrp's caller keeps
+      // its own pre-cancel CPU context.
+      if (Pending->Kind == KernelExportRegistry::ExportKind::ProviderFunction)
+        if (auto E = CPU.setReg(X64Register::CR8, Kernel.currentIRQL()))
+          return E;
       if (auto E = RefreshWaiters())
         return E;
       if (auto Status = Kernel.takeThreadTermination()) {

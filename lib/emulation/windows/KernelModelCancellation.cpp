@@ -28,6 +28,16 @@ KernelModel::planWDMCancellation(uint64_t IRP,
                                  const ActiveRequest &Request) const {
   if (Request.Completed)
     return cancellationError("WDM cancellation requires a live IRP");
+  if (Request.ChildPower &&
+      Request.ChildPower->Origin == DriverRequestOrigin::FrameworkWaitWake)
+    return cancellationError("framework owns cancellation of its WAIT_WAKE");
+  const auto Wake = ProviderWakeIRPs.find(Request.PnpDevice);
+  if (Wake != ProviderWakeIRPs.end() && Wake->second.IRP == IRP) {
+    auto Validated = preflightProviderWake(Request.PnpDevice, IRP,
+                                           framework::RequestCancelled);
+    if (!Validated)
+      return Validated.takeError();
+  }
   auto Routine = Memory.readInteger(IRP + windows::IRPCancelRoutineOffset, 8);
   if (!Routine)
     return Routine.takeError();

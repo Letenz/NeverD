@@ -276,6 +276,8 @@ KernelModel::argumentCount(const KernelExportRegistry::Export &Export) {
     return argumentCount(Export.Name);
   if (Export.Kind == KernelExportRegistry::ExportKind::DMAFunction)
     return dmaArgumentCount(Export.Name);
+  if (Export.Kind == KernelExportRegistry::ExportKind::ProviderFunction)
+    return providerArgumentCount(Export.Name);
   return KernelFramework::argumentCount(Export);
 }
 
@@ -288,6 +290,8 @@ llvm::Expected<uint64_t> KernelModel::call(
     return call(Export.Name, Arguments, ReadArgument);
   if (Export.Kind == KernelExportRegistry::ExportKind::DMAFunction)
     return callDMAExport(Export, Arguments);
+  if (Export.Kind == KernelExportRegistry::ExportKind::ProviderFunction)
+    return callProviderExport(Export, Arguments);
   if (!Framework)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "framework model is not initialized");

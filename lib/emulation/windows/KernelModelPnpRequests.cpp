@@ -26,6 +26,39 @@ llvm::Error pnpError(const llvm::Twine &Message) {
 }
 } // namespace
 
+llvm::Expected<uint64_t>
+KernelModel::waitWakeStartEpoch(uint64_t PDO, bool AllowStarting) const {
+  const auto *Provider = pnpDeviceForPDO(PDO);
+  if (!Provider || !isProviderDevice(PDO))
+    return pnpError("wait/wake requires a live provider");
+  auto State = Lifecycle.snapshot(PDO);
+  if (!State)
+    return State.takeError();
+  if (AllowStarting && State->PnpOperation) {
+    for (const auto &[IRP, Request] : Requests) {
+      (void)IRP;
+      if (Request.PnpDevice != PDO ||
+          Request.PnpTicket != State->PnpOperation || !Request.PnpOperation ||
+          Request.PnpOperation->Minor != DevicePnpRequest::Start)
+        continue;
+      const auto &Observation = Result.Requests[Request.ResultIndex].Pnp;
+      if (Observation && Observation->BusCompletedAt100ns &&
+          Observation->BusStatus &&
+          !(*Observation->BusStatus & profile::NTStatusFailureMask))
+        return Request.PnpTicket->Sequence;
+      return pnpError("wait/wake requires successful lower START completion");
+    }
+  }
+  // Query-stop/remove do not retire the successful START. A retained wake
+  // can still finish while the driver decides or handles those requests.
+  const bool Started = State->Pnp == DevicePnpState::Started ||
+                       State->Pnp == DevicePnpState::StopPending ||
+                       State->Pnp == DevicePnpState::RemovePending;
+  if (!Started || !Provider->StartEpoch)
+    return pnpError("wait/wake requires a completed START epoch");
+  return Provider->StartEpoch;
+}
+
 llvm::Error
 KernelModel::validatePnpTopologyTransition(uint64_t PDO,
                                            DevicePnpRequest Minor) const {
@@ -56,7 +89,7 @@ KernelModel::validatePnpTopologyTransition(uint64_t PDO,
     if (!State)
       return State.takeError();
     if (State->PnpOperation || State->DevicePowerOperation ||
-        State->SystemPowerOperation || FrameworkWakeIRPs.contains(Child.PDO))
+        State->SystemPowerOperation || ProviderWakeIRPs.contains(Child.PDO))
       return pnpError("parent teardown requires child transitions and wake "
                       "obligations to drain");
     if (State->Pnp == DevicePnpState::Started ||
@@ -110,9 +143,9 @@ KernelModel::beginPnpRequest(const DriverRequest &Input, size_t Index) {
     }
     if (std::any_of(Requests.begin(), Requests.end(), [&](const auto &Entry) {
           return Entry.second.PnpDevice == PDO &&
-                 (!Entry.second.ChildPower ||
-                  Entry.second.ChildPower->Origin !=
-                      DriverRequestOrigin::FrameworkWaitWake);
+                 (!Entry.second.ChildPower || !Entry.second.PowerOperation ||
+                  Entry.second.PowerOperation->Minor !=
+                      DevicePowerRequest::WaitWake);
         }))
       return pnpError("remove requires earlier device requests to finalize");
   }
@@ -281,6 +314,21 @@ llvm::Error KernelModel::finishRequestLifecycle(ActiveRequest &Request,
       return E;
     if (auto E = Lifecycle.finishPnp(*Request.PnpTicket, Status))
       return E;
+    if (!(Status & profile::NTStatusFailureMask)) {
+      auto *Provider = pnpDeviceForPDO(Request.PnpDevice);
+      switch (Request.PnpOperation->Minor) {
+      case DevicePnpRequest::Start:
+        Provider->StartEpoch = Request.PnpTicket->Sequence;
+        break;
+      case DevicePnpRequest::Stop:
+      case DevicePnpRequest::Remove:
+      case DevicePnpRequest::SurpriseRemoval:
+        Provider->StartEpoch = 0;
+        break;
+      default:
+        break;
+      }
+    }
     auto State = Lifecycle.snapshot(Request.PnpDevice);
     if (!State)
       return State.takeError();

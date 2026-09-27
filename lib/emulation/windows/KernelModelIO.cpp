@@ -184,13 +184,19 @@ KernelModel::requestForIRP(uint64_t IRP) const {
 bool KernelModel::requestPending(uint64_t IRP,
                                  PendingRequestScope Scope) const {
   auto Pending = [&](const ActiveRequest &Request) {
-    return Request.DispatchReturned &&
-           (!Request.Completed ||
-            (Request.ChildPower && !Request.ChildPower->CallbackReturned)) &&
-           (Scope == PendingRequestScope::All || !Framework ||
-            (!(Request.PowerOperation &&
-               Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) &&
-             !Framework->isPowerParkedIRP(Request.IRP)));
+    if (!Request.DispatchReturned ||
+        (Request.Completed &&
+         (!Request.ChildPower || Request.ChildPower->CallbackReturned)))
+      return false;
+    if (Scope == PendingRequestScope::All)
+      return true;
+    if (!Request.Completed && Request.PowerOperation &&
+        Request.PowerOperation->Minor == DevicePowerRequest::WaitWake) {
+      const auto Wake = ProviderWakeIRPs.find(Request.PnpDevice);
+      if (Wake != ProviderWakeIRPs.end() && Wake->second.IRP == Request.IRP)
+        return false;
+    }
+    return !Framework || !Framework->isPowerParkedIRP(Request.IRP);
   };
   if (IRP) {
     const auto *Request = requestForIRP(IRP);

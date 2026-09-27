@@ -56,7 +56,26 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
     const ActiveRequest &Request, uint32_t Status, bool ProviderProbe) const {
   if (auto E = Lifecycle.validatePnpCompletion(*Request.PnpTicket, Status))
     return E;
-  if (!(Status & profile::NTStatusFailureMask))
+  const auto Minor = Request.PnpOperation->Minor;
+  const bool Failed = Status & profile::NTStatusFailureMask;
+  const bool RetiresStart =
+      (Minor == DevicePnpRequest::Start && Failed) ||
+      (!Failed &&
+       (Minor == DevicePnpRequest::Stop || Minor == DevicePnpRequest::Remove ||
+        Minor == DevicePnpRequest::SurpriseRemoval));
+  if (RetiresStart)
+    for (const auto &[IRP, Other] : Requests) {
+      (void)IRP;
+      if (Other.PnpDevice == Request.PnpDevice && Other.ChildPower &&
+          Other.ChildPower->Origin == DriverRequestOrigin::PoRequestPowerIrp &&
+          Other.PowerOperation &&
+          Other.PowerOperation->Minor == DevicePowerRequest::WaitWake)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "PnP completion requires native wait/wake IRPs and callbacks to "
+            "drain");
+    }
+  if (!Failed)
     if (auto E = validatePnpTopologyTransition(Request.PnpDevice,
                                                Request.PnpOperation->Minor))
       return E;
@@ -65,7 +84,6 @@ llvm::Error KernelModel::validatePnpRequestCompletion(
   // forwarding to the provider. Final completion validates both paths.
   if (ProviderProbe && Request.PnpOperation->Minor == DevicePnpRequest::Start)
     return llvm::Error::success();
-  const auto Minor = Request.PnpOperation->Minor;
   if (!(Status & profile::NTStatusFailureMask) &&
       (Minor == DevicePnpRequest::Stop || Minor == DevicePnpRequest::Remove))
     if (auto E = PoFx.canReleasePDO(Request.PnpDevice))
@@ -114,7 +132,7 @@ llvm::Error KernelModel::publishProviderHardware(ActiveRequest &Request,
           }
         if (auto E = Resources.enterD3Cold(
                 Request.PnpDevice, System,
-                FrameworkWakeIRPs.contains(Request.PnpDevice)))
+                ProviderWakeIRPs.contains(Request.PnpDevice)))
           return E;
       }
     }

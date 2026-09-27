@@ -22,29 +22,150 @@ llvm::Error policyError(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "power policy: " + Text);
 }
-llvm::Expected<uint64_t> componentPolicyEpoch(const KernelResources &Resources,
-                                              const KernelFramework *Framework,
-                                              const KernelPoFx &PoFx,
-                                              uint64_t PDO) {
-  const auto Handle = PoFx.handleForPDO(PDO);
-  if (!Handle)
-    return policyError("PoFx decision requires a live registration");
-  if (PoFx.registration(*Handle)->Owner ==
-      KernelPoFx::RegistrationOwner::Framework) {
-    if (!Framework)
-      return policyError("internal registration lost its framework owner");
-    return Framework->powerPolicyEpoch(PDO);
-  }
-  if (const auto *Resource = Resources.find(PDO)) {
-    if (!Resource->Present || !Resource->Assigned)
-      return policyError("PoFx decision requires an assigned START epoch");
-    return Resource->Epoch;
-  }
-  // Resource-free WDM devices have no resource assignment epoch. Their unique
-  // captured registration is retired before a successful STOP or REMOVE.
+namespace callback {
+#define NEVERD_PROVIDER_CALLBACK(Name, Arity)                                  \
+  constexpr llvm::StringLiteral Name = #Name;
+#include "KernelProviderCallbacks.def"
+#undef NEVERD_PROVIDER_CALLBACK
+} // namespace callback
+} // namespace
+
+std::optional<unsigned>
+KernelModel::providerArgumentCount(llvm::StringRef Name) {
+#define NEVERD_PROVIDER_CALLBACK(Routine, Arity)                               \
+  if (Name == callback::Routine)                                               \
+    return Arity;
+#include "KernelProviderCallbacks.def"
+#undef NEVERD_PROVIDER_CALLBACK
+  return std::nullopt;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::callProviderExport(const KernelExportRegistry::Export &Export,
+                                llvm::ArrayRef<uint64_t> Arguments) {
+  const auto Arity = providerArgumentCount(Export.Name);
+  if (Export.Kind != KernelExportRegistry::ExportKind::ProviderFunction ||
+      !Arity || Arguments.size() != *Arity ||
+      Export.Name != callback::CancelWaitWake)
+    return policyError("unknown provider callback or invalid argument count");
+  const uint64_t PDO = Arguments[0], IRP = Arguments[1];
+  const auto Wake = ProviderWakeIRPs.find(PDO);
+  const auto Call = IRPCalls.find(CurrentGuestCall.ID);
+  if (Export.Binding != PDO || Wake == ProviderWakeIRPs.end() ||
+      Wake->second.IRP != IRP || Wake->second.CancelRoutine != Export.Address ||
+      Wake->second.FrameworkEpoch ||
+      CurrentGuestCall.Owner != GuestCallOwner::WDM || Call == IRPCalls.end() ||
+      Call->second.Kind != IRPCallKind::Cancel ||
+      !Call->second.AwaitingCallback || Call->second.IRP != IRP ||
+      !CancelLock.Callback || !CancelLock.Held || CancelLock.IRP != IRP ||
+      CancelLock.Owner != CurrentExecution)
+    return policyError("provider cancel callback requires its active owner");
+  if (auto E = releaseCancelSpinLock(CancelLock.OldIRQL))
+    return std::move(E);
+  if (auto E = completeProviderWake(PDO, IRP, framework::RequestCancelled,
+                                    std::nullopt))
+    return std::move(E);
   return 0;
 }
-} // namespace
+
+llvm::Expected<uint64_t> KernelModel::retainProviderWake(uint64_t PDO,
+                                                         uint64_t IRP) {
+  auto *Request = requestForIRP(IRP);
+  const auto *Provider = pnpDeviceForPDO(PDO);
+  if (!Request || Request->Completed || Request->PnpDevice != PDO ||
+      !Request->PowerOperation || !Request->ChildPower || !Provider ||
+      Request->PowerOperation->Minor != DevicePowerRequest::WaitWake)
+    return policyError("WAIT_WAKE requires its generated provider request");
+  const bool Managed =
+      Request->ChildPower->Origin == DriverRequestOrigin::FrameworkWaitWake;
+  if (!Managed &&
+      Request->ChildPower->Origin != DriverRequestOrigin::PoRequestPowerIrp)
+    return policyError("WAIT_WAKE has an unsupported issuing owner");
+  auto StartEpoch = waitWakeStartEpoch(PDO, true);
+  if (!StartEpoch)
+    return StartEpoch.takeError();
+  ProviderWake Wake;
+  Wake.IRP = IRP;
+  Wake.StartEpoch = *StartEpoch;
+  uint32_t Status = windows::StatusPending;
+  auto CancelRequested = Memory.readInteger(IRP + windows::IRPCancelOffset, 1);
+  if (!CancelRequested)
+    return CancelRequested.takeError();
+  if (Managed) {
+    if (!Framework || ProviderWakeIRPs.contains(PDO))
+      return policyError(
+          "framework WAIT_WAKE requires one live provider owner");
+    auto Epoch = Framework->powerPolicyEpoch(PDO);
+    if (!Epoch)
+      return Epoch.takeError();
+    Wake.FrameworkEpoch = *Epoch;
+  } else {
+    if (Request->ChildPower->StartEpoch != *StartEpoch)
+      return policyError("WAIT_WAKE send belongs to an earlier START epoch");
+    auto State = Lifecycle.snapshot(PDO);
+    if (!State)
+      return State.takeError();
+    if (*CancelRequested)
+      Status = framework::RequestCancelled;
+    else if (State->DevicePower != DevicePowerState::D0 ||
+             State->DevicePowerOperation || State->SystemPowerOperation)
+      Status = windows::StatusInvalidDeviceState;
+    else if (ProviderWakeIRPs.contains(PDO))
+      Status = windows::StatusDeviceBusy;
+    else if (!Provider->WakeCapabilities || (!Provider->WakeCapabilities->S0 &&
+                                             !Provider->WakeCapabilities->Sx))
+      Status = windows::StatusNotSupported;
+    else if (!(Request->PowerOperation->State ==
+                       uint32_t(SystemPowerState::Working)
+                   ? Provider->WakeCapabilities->S0
+                   : Provider->WakeCapabilities->Sx))
+      Status = windows::StatusInvalidDeviceState;
+  }
+  auto Cancel = Memory.readInteger(IRP + windows::IRPCancelRoutineOffset, 8);
+  if (!Cancel)
+    return Cancel.takeError();
+  if (*Cancel)
+    return policyError("WAIT_WAKE reached the bus with a foreign cancel owner");
+  auto &Observation = *Result.Requests[Request->ResultIndex].Power;
+  if (Status != windows::StatusPending) {
+    auto Plan = planIRPCompletion(IRP, Status);
+    if (!Plan)
+      return Plan.takeError();
+    if (NextIRPCall == UINT64_MAX)
+      return policyError("WAIT_WAKE completion identity exhausted");
+    if (auto E = Memory.writeInteger(IRP + windows::IRPStatusOffset, Status, 4))
+      return E;
+    if (auto E = Memory.writeInteger(IRP + windows::IRPInformationOffset, 0, 8))
+      return E;
+    Request->IOStatusWritten.fill(true);
+    Observation.BusReceivedAt100ns = Scheduler.now100ns();
+    Observation.BusCompletedAt100ns = Scheduler.now100ns();
+    Observation.BusStatus = Status;
+    if (auto E = completeRequest(IRP, 0))
+      return E;
+    if (PendingWdmCall)
+      IRPCalls.at(PendingWdmCall->Token.ID).ReturnValue = Status;
+    return Status;
+  }
+  if (!Managed) {
+    if (!Exports)
+      return policyError(
+          "native WAIT_WAKE requires a provider callback registry");
+    auto Routine =
+        Exports->insertProviderFunction(PDO, callback::CancelWaitWake);
+    if (!Routine)
+      return Routine.takeError();
+    Wake.CancelRoutine = *Routine;
+    if (auto E = Memory.writeInteger(IRP + windows::IRPCancelRoutineOffset,
+                                     *Routine, 8))
+      return E;
+  }
+  if (auto E = markRequestPending(IRP))
+    return E;
+  Observation.BusReceivedAt100ns = Scheduler.now100ns();
+  ProviderWakeIRPs.emplace(PDO, std::move(Wake));
+  return windows::StatusPending;
+}
 
 void KernelModel::configureFrameworkPowerPolicyHost() {
   KernelFramework::PowerPolicyHost Host;
@@ -161,7 +282,7 @@ llvm::Error KernelModel::armFrameworkWake(uint64_t Device, bool Sleeping) {
                  : Provider->WakeCapabilities->S0))
     return policyError(
         "wake arm requires the provider's explicit D3hot capability");
-  if (FrameworkWakeIRPs.contains(*PDO))
+  if (ProviderWakeIRPs.contains(*PDO))
     return policyError("a wait/wake IRP is already pending for the PDO");
   DriverRequest Input;
   Input.Kind = DriverRequestKind::Power;
@@ -193,7 +314,7 @@ llvm::Error KernelModel::finishFrameworkWake(uint64_t Device, bool Triggered) {
   auto PDO = pnpDeviceForRoute(Device);
   if (!PDO)
     return PDO.takeError();
-  if (!FrameworkWakeIRPs.contains(*PDO))
+  if (!ProviderWakeIRPs.contains(*PDO))
     return llvm::Error::success();
   if (Triggered)
     return completeFrameworkWakes(Device, {Device});
@@ -202,18 +323,44 @@ llvm::Error KernelModel::finishFrameworkWake(uint64_t Device, bool Triggered) {
 
 llvm::Expected<uint64_t>
 KernelModel::preflightFrameworkWake(uint64_t PDO, uint32_t Status) const {
-  const auto Pending = FrameworkWakeIRPs.find(PDO);
-  if (Pending == FrameworkWakeIRPs.end())
-    return policyError("wake completion requires a retained WAIT_WAKE IRP");
-  const uint64_t IRP = Pending->second.IRP;
+  const auto Wake = ProviderWakeIRPs.find(PDO);
+  if (Wake == ProviderWakeIRPs.end() || !Wake->second.FrameworkEpoch)
+    return policyError("framework wake requires its retained WAIT_WAKE IRP");
+  auto IRP = preflightProviderWake(PDO, Wake->second.IRP, Status);
+  if (!IRP)
+    return IRP.takeError();
+  auto Plan = planIRPCompletion(*IRP, Status,
+                                Status == framework::RequestCancelled
+                                    ? std::optional<bool>{true}
+                                    : std::nullopt);
+  if (!Plan)
+    return Plan.takeError();
+  if (Plan->PC)
+    return policyError(
+        "framework wait/wake cannot own a WDM completion callback");
+  return *IRP;
+}
+
+llvm::Expected<uint64_t>
+KernelModel::preflightProviderWake(uint64_t PDO, uint64_t IRP,
+                                   uint32_t Status) const {
+  const auto Pending = ProviderWakeIRPs.find(PDO);
+  if (Pending == ProviderWakeIRPs.end() || Pending->second.IRP != IRP)
+    return policyError("wake completion requires its exact retained WAIT_WAKE");
+  const auto &Wake = Pending->second;
   const auto *Request = requestForIRP(IRP);
   if (!Request || Request->Completed || !Request->PowerOperation ||
       Request->PowerOperation->Minor != DevicePowerRequest::WaitWake ||
-      !Request->ChildPower || Request->ChildPower->Callback ||
-      Request->ChildPower->Origin != DriverRequestOrigin::FrameworkWaitWake ||
-      Request->PnpDevice != PDO || Request->PowerTicket ||
-      Request->FrameworkTransitionAwaiting || ProviderCompletions.contains(IRP))
+      !Request->ChildPower || Request->PnpDevice != PDO ||
+      Request->PowerTicket || Request->FrameworkTransitionAwaiting ||
+      ProviderCompletions.contains(IRP))
     return policyError("wait/wake completion lost its retained IRP");
+  const auto ExpectedOrigin = Wake.FrameworkEpoch
+                                  ? DriverRequestOrigin::FrameworkWaitWake
+                                  : DriverRequestOrigin::PoRequestPowerIrp;
+  if (Request->ChildPower->Origin != ExpectedOrigin ||
+      (Wake.FrameworkEpoch && Request->ChildPower->Callback))
+    return policyError("wait/wake completion lost its issuing owner");
   if (CancelLock.Held || PendingWdmCall ||
       (Framework && Framework->hasPendingGuestCall()))
     return policyError(
@@ -224,24 +371,42 @@ KernelModel::preflightFrameworkWake(uint64_t PDO, uint32_t Status) const {
                                           sizeof(uint64_t));
   if (!CancelRoutine)
     return CancelRoutine.takeError();
-  if (*CancelRoutine)
-    return policyError("wait/wake completion cannot own a cancel routine");
+  const bool CancelCallback = Status == framework::RequestCancelled &&
+                              CancelLock.Callback && CancelLock.IRP == IRP;
+  if (*CancelRoutine != (CancelCallback ? 0 : Wake.CancelRoutine))
+    return policyError(
+        "wait/wake cancel routine lost its provider cancel owner");
   const auto &Observation = Result.Requests[Request->ResultIndex].Power;
   if (!Observation || !Observation->BusReceivedAt100ns ||
       Observation->BusCompletedAt100ns)
     return policyError("wait/wake completion lost its provider retention");
   if (Status == windows::StatusSuccess) {
-    if (!Framework || !isProviderDevice(PDO))
-      return policyError("wake source lost its live framework provider");
-    auto Epoch = Framework->powerPolicyEpoch(PDO);
+    auto Epoch = waitWakeStartEpoch(PDO, false);
     if (!Epoch)
       return Epoch.takeError();
-    if (*Epoch != Pending->second.Epoch)
+    if (*Epoch != Wake.StartEpoch)
       return policyError("wait/wake belongs to an earlier START epoch");
+    auto State = Lifecycle.snapshot(PDO);
+    if (!State)
+      return State.takeError();
+    if (uint32_t(State->SystemPower) > Request->PowerOperation->State)
+      return policyError("wake source cannot wake the current system state");
+    const auto *Provider = pnpDeviceForPDO(PDO);
+    if (!Provider || !Provider->WakeCapabilities ||
+        !(State->SystemPower == SystemPowerState::Working
+              ? Provider->WakeCapabilities->S0
+              : Provider->WakeCapabilities->Sx))
+      return policyError("provider cannot wake the current system state");
+    if (Wake.FrameworkEpoch) {
+      if (!Framework)
+        return policyError("wake source lost its live framework provider");
+      auto FrameworkEpoch = Framework->powerPolicyEpoch(PDO);
+      if (!FrameworkEpoch)
+        return FrameworkEpoch.takeError();
+      if (*FrameworkEpoch != *Wake.FrameworkEpoch)
+        return policyError("framework wait/wake belongs to an earlier START");
+    }
   }
-  auto State = Lifecycle.snapshot(PDO);
-  if (!State)
-    return State.takeError();
   auto Writable = Memory.canAccess(
       IRP, windows::IRPSize + Request->StackCount * windows::StackSize,
       Read | Write);
@@ -249,20 +414,27 @@ KernelModel::preflightFrameworkWake(uint64_t PDO, uint32_t Status) const {
     return Writable.takeError();
   if (!*Writable)
     return policyError("wait/wake packet must remain writable kernel memory");
-  auto Plan = planIRPCompletion(IRP, Status);
+  auto Plan = planIRPCompletion(IRP, Status,
+                                Status == framework::RequestCancelled
+                                    ? std::optional<bool>{true}
+                                    : std::nullopt);
   if (!Plan)
     return Plan.takeError();
-  if (Plan->PC)
-    return policyError(
-        "framework wait/wake cannot own a WDM completion callback");
   return IRP;
 }
 
 llvm::Error
-KernelModel::completeFrameworkWake(uint64_t PDO, uint32_t Status,
-                                   std::optional<uint64_t> SourcePDO) {
-  const uint64_t IRP = FrameworkWakeIRPs.at(PDO).IRP;
+KernelModel::completeProviderWake(uint64_t PDO, uint64_t IRP, uint32_t Status,
+                                  std::optional<uint64_t> SourcePDO) {
+  auto Validated = preflightProviderWake(PDO, IRP, Status);
+  if (!Validated)
+    return Validated.takeError();
+  const auto *Source = SourcePDO ? pnpDeviceForPDO(*SourcePDO) : nullptr;
+  if (SourcePDO && !Source)
+    return policyError("wake completion lost its source provider");
   auto *Request = requestForIRP(IRP);
+  if (auto E = Memory.writeInteger(IRP + windows::IRPCancelRoutineOffset, 0, 8))
+    return E;
   if (auto E = Memory.writeInteger(IRP + windows::IRPStatusOffset, Status, 4))
     return E;
   if (auto E = Memory.writeInteger(IRP + windows::IRPInformationOffset, 0, 8))
@@ -271,12 +443,12 @@ KernelModel::completeFrameworkWake(uint64_t PDO, uint32_t Status,
   auto &Observation = *Result.Requests[Request->ResultIndex].Power;
   Observation.BusStatus = Status;
   Observation.BusCompletedAt100ns = Scheduler.now100ns();
-  if (SourcePDO) {
-    const auto *Source = pnpDeviceForPDO(*SourcePDO);
+  if (Source) {
     Observation.WakeSourceDeviceID = Result.PnpDevices[Source->ResultIndex].ID;
     Observation.WakeSourcePDO = *SourcePDO;
   }
-  FrameworkWakeIRPs.erase(PDO);
+  // Publish retirement before guest completions can rearm the same provider.
+  ProviderWakeIRPs.erase(PDO);
   if (auto E = completeRequest(IRP, 0))
     return E;
   return tryFinalizePowerRequest(IRP);
@@ -313,7 +485,8 @@ KernelModel::completeFrameworkWakes(uint64_t SourceDevice,
   // No guest callback can run between validation and these completions. The
   // provider owns every writable packet, and each unwinds without a callback.
   for (uint64_t PDO : Providers)
-    if (auto E = completeFrameworkWake(PDO, windows::StatusSuccess, *SourcePDO))
+    if (auto E = completeProviderWake(PDO, ProviderWakeIRPs.at(PDO).IRP,
+                                      windows::StatusSuccess, *SourcePDO))
       return E;
   return llvm::Error::success();
 }
@@ -325,7 +498,7 @@ KernelModel::cancelFrameworkWakes(llvm::ArrayRef<uint64_t> WakeDevices) {
     auto PDO = pnpDeviceForRoute(Device);
     if (!PDO)
       return PDO.takeError();
-    if (!FrameworkWakeIRPs.contains(*PDO))
+    if (!ProviderWakeIRPs.contains(*PDO))
       continue;
     if (!Providers.insert(*PDO).second)
       return policyError("wake cancellation cannot retire a source twice");
@@ -336,172 +509,11 @@ KernelModel::cancelFrameworkWakes(llvm::ArrayRef<uint64_t> WakeDevices) {
   if (Providers.size() > UINT64_MAX - NextIRPCall)
     return policyError("wake cancellation identity exhausted");
   for (uint64_t PDO : Providers)
-    if (auto E = completeFrameworkWake(PDO, framework::RequestCancelled,
-                                       std::nullopt))
+    if (auto E =
+            completeProviderWake(PDO, ProviderWakeIRPs.at(PDO).IRP,
+                                 framework::RequestCancelled, std::nullopt))
       return E;
   return llvm::Error::success();
 }
 
-llvm::Error KernelModel::canArmPowerPolicyEvents(
-    llvm::ArrayRef<DriverPowerPolicyEvent> Events) const {
-  if (Events.size() > DriverPowerPolicyEventLimit - PowerPolicyEvents.size())
-    return policyError("event limit exceeded");
-  for (const auto &Event : Events) {
-    if (auto E = validateDriverPowerPolicyEvent(Event))
-      return E;
-    auto Provider = PnpDevices.find(Event.DeviceID);
-    if (Provider == PnpDevices.end() || !Provider->second.AddDeviceStatus ||
-        (*Provider->second.AddDeviceStatus & profile::NTStatusFailureMask))
-      return policyError("event requires a successfully added device");
-    if (isPoFxPowerPolicyAction(Event.Action)) {
-      const uint64_t PDO = Provider->second.PDO;
-      const auto Handle = PoFx.handleForPDO(PDO);
-      auto State = Lifecycle.snapshot(PDO);
-      if (!State)
-        return State.takeError();
-      if (State->Pnp != DevicePnpState::Started || !Handle)
-        return policyError("PoFx decision requires a registered START epoch");
-      auto Epoch = componentPolicyEpoch(Resources, Framework.get(), PoFx, PDO);
-      if (!Epoch)
-        return Epoch.takeError();
-      if (Event.Action == DriverPowerPolicyAction::ComponentIdleState) {
-        const auto &Components = PoFx.registration(*Handle)->Components;
-        if (*Event.Component >= Components.size() ||
-            *Event.State >= Components[*Event.Component].IdleStates.size())
-          return policyError(
-              "PoFx decision names an unknown component or state");
-      }
-    } else {
-      if (!Framework || !Provider->second.FrameworkAdd)
-        return policyError(
-            "event requires a successfully added framework device");
-      auto Epoch = Framework->powerPolicyEpoch(Provider->second.PDO);
-      if (!Epoch)
-        return Epoch.takeError();
-    }
-    if (Event.After100ns > uint64_t(INT64_MAX) - Scheduler.now100ns())
-      return policyError("event deadline exceeds the virtual clock range");
-    if (Event.Action == DriverPowerPolicyAction::Wake &&
-        !Provider->second.WakeCapabilities)
-      return policyError("wake event requires explicit provider capabilities");
-  }
-  return llvm::Error::success();
-}
-llvm::Error
-KernelModel::armPowerPolicyEvents(llvm::ArrayRef<DriverPowerPolicyEvent> Events,
-                                  size_t SourceIndex) {
-  if (auto E = canArmPowerPolicyEvents(Events))
-    return E;
-  for (size_t I = 0; I < Events.size(); ++I) {
-    const auto &Event = Events[I];
-    const auto &Provider = PnpDevices.at(Event.DeviceID);
-    uint64_t Epoch = 0, Handle = 0;
-    if (isPoFxPowerPolicyAction(Event.Action)) {
-      auto Captured =
-          componentPolicyEpoch(Resources, Framework.get(), PoFx, Provider.PDO);
-      if (!Captured)
-        return Captured.takeError();
-      Epoch = *Captured;
-      Handle = *PoFx.handleForPDO(Provider.PDO);
-    } else {
-      auto Captured = Framework->powerPolicyEpoch(Provider.PDO);
-      if (!Captured)
-        return Captured.takeError();
-      Epoch = *Captured;
-    }
-    PowerPolicyEvents.push_back(
-        {Provider.PDO, Epoch, Result.PowerPolicyEvents.size(), Handle});
-    Result.PowerPolicyEvents.push_back(
-        {uint32_t(SourceIndex), uint32_t(I), Event.DeviceID, Event.Action,
-         Scheduler.now100ns() + Event.After100ns, std::nullopt, Epoch,
-         Event.Component, Event.State});
-  }
-  return llvm::Error::success();
-}
-llvm::Error KernelModel::processPowerPolicyEvents() {
-  for (auto &Event : PowerPolicyEvents) {
-    auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
-    if (Observation.OccurredAt100ns ||
-        Observation.DueAt100ns > Scheduler.now100ns())
-      continue;
-    if (!isProviderDevice(Event.PDO))
-      return policyError("event reached a retired provider");
-    if (isPoFxPowerPolicyAction(Observation.Action)) {
-      auto Epoch =
-          componentPolicyEpoch(Resources, Framework.get(), PoFx, Event.PDO);
-      if (!Epoch)
-        return Epoch.takeError();
-      auto State = Lifecycle.snapshot(Event.PDO);
-      if (!State)
-        return State.takeError();
-      if (State->Pnp != DevicePnpState::Started || *Epoch != Event.Epoch)
-        return policyError("event belongs to an earlier START epoch");
-      if (PoFx.handleForPDO(Event.PDO) != Event.PoFxHandle)
-        return policyError("event belongs to a retired PoFx registration");
-      const auto *Resource = Resources.find(Event.PDO);
-      if (State->DevicePower != DevicePowerState::D0 ||
-          (Resource &&
-           (Resource->Power != DevicePowerState::D0 || Resource->Cold)))
-        return policyError(
-            "PoFx decision requires a physically powered device");
-      if (auto E = PoFx.process(Scheduler.now100ns()))
-        return E;
-    } else {
-      if (!Framework)
-        return policyError("framework event lost its power-policy owner");
-      auto Epoch = Framework->powerPolicyEpoch(Event.PDO);
-      if (!Epoch)
-        return Epoch.takeError();
-      if (*Epoch != Event.Epoch)
-        return policyError("event belongs to an earlier START epoch");
-    }
-    llvm::Error E = llvm::Error::success();
-    switch (Observation.Action) {
-    case DriverPowerPolicyAction::Idle:
-      E = Framework->powerPolicyIdle(Event.PDO);
-      break;
-    case DriverPowerPolicyAction::Active:
-      E = Framework->powerPolicyActive(Event.PDO);
-      break;
-    case DriverPowerPolicyAction::Wake:
-      E = Framework->powerPolicyWake(Event.PDO);
-      break;
-    case DriverPowerPolicyAction::ComponentIdleState:
-      E = PoFx.requestIdleState(Event.PoFxHandle, *Observation.Component,
-                                *Observation.State);
-      break;
-    case DriverPowerPolicyAction::PowerNotRequired:
-      E = PoFx.requestDevicePowerNotRequired(Event.PoFxHandle);
-      break;
-    }
-    if (E)
-      return E;
-    Observation.OccurredAt100ns = Scheduler.now100ns();
-  }
-  if (auto E = queuePoFxCallbacks())
-    return E;
-  if (!Framework)
-    return llvm::Error::success();
-  if (auto E = Framework->processPowerPolicy())
-    return E;
-  return completeFrameworkTransitionIfReady();
-}
-std::optional<uint64_t> KernelModel::nextPowerPolicyEventTime() const {
-  std::optional<uint64_t> Next =
-      Framework ? Framework->nextPowerPolicyTime() : std::nullopt;
-  for (const auto &Event : PowerPolicyEvents) {
-    const auto &Observation = Result.PowerPolicyEvents[Event.ResultIndex];
-    if (!Observation.OccurredAt100ns &&
-        (!Next || Observation.DueAt100ns < *Next))
-      Next = Observation.DueAt100ns;
-  }
-  return Next;
-}
-bool KernelModel::hasPendingPowerPolicyEvents() const {
-  return std::any_of(
-      PowerPolicyEvents.begin(), PowerPolicyEvents.end(),
-      [&](const auto &Event) {
-        return !Result.PowerPolicyEvents[Event.ResultIndex].OccurredAt100ns;
-      });
-}
 } // namespace neverd::emulation

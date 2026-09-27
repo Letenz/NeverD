@@ -32,6 +32,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <variant>
 namespace neverd::emulation {
 struct DriverImage;
 class KernelExportRegistry;
@@ -274,8 +275,15 @@ private:
   llvm::Error finishFrameworkWake(uint64_t Device, bool Triggered);
   llvm::Expected<uint64_t> preflightFrameworkWake(uint64_t PDO,
                                                   uint32_t Status) const;
-  llvm::Error completeFrameworkWake(uint64_t PDO, uint32_t Status,
-                                    std::optional<uint64_t> SourcePDO);
+  llvm::Expected<uint64_t> retainProviderWake(uint64_t PDO, uint64_t IRP);
+  llvm::Expected<uint64_t> preflightProviderWake(uint64_t PDO, uint64_t IRP,
+                                                 uint32_t Status) const;
+  llvm::Error completeProviderWake(uint64_t PDO, uint64_t IRP, uint32_t Status,
+                                   std::optional<uint64_t> SourcePDO);
+  static std::optional<unsigned> providerArgumentCount(llvm::StringRef Name);
+  llvm::Expected<uint64_t>
+  callProviderExport(const KernelExportRegistry::Export &Export,
+                     llvm::ArrayRef<uint64_t> Arguments);
   llvm::Error completeFrameworkWakes(uint64_t SourceDevice,
                                      llvm::ArrayRef<uint64_t> Devices);
   llvm::Error cancelFrameworkWakes(llvm::ArrayRef<uint64_t> Devices);
@@ -287,18 +295,34 @@ private:
   llvm::Error processPowerPolicyEvents();
   std::optional<uint64_t> nextPowerPolicyEventTime() const;
   bool hasPendingPowerPolicyEvents() const;
+  struct FrameworkPowerEvent {
+    uint64_t Epoch;
+  };
+  struct WdmWakeEvent {
+    uint64_t StartEpoch;
+    uint64_t IRP;
+  };
+  struct PoFxPowerEvent {
+    uint64_t Epoch;
+    uint64_t Handle;
+  };
+  using PowerEventOwner =
+      std::variant<FrameworkPowerEvent, WdmWakeEvent, PoFxPowerEvent>;
   struct PowerPolicyEvent {
-    uint64_t PDO = 0;
-    uint64_t Epoch = 0;
-    size_t ResultIndex = 0;
-    uint64_t PoFxHandle = 0;
+    uint64_t PDO;
+    size_t ResultIndex;
+    PowerEventOwner Owner;
   };
+  llvm::Expected<PowerEventOwner>
+  capturePowerEventOwner(const DriverPowerPolicyEvent &Event) const;
   std::vector<PowerPolicyEvent> PowerPolicyEvents;
-  struct FrameworkWake {
+  struct ProviderWake {
     uint64_t IRP = 0;
-    uint64_t Epoch = 0;
+    uint64_t StartEpoch = 0;
+    std::optional<uint64_t> FrameworkEpoch;
+    uint64_t CancelRoutine = 0;
   };
-  std::map<uint64_t, FrameworkWake> FrameworkWakeIRPs;
+  std::map<uint64_t, ProviderWake> ProviderWakeIRPs;
   void configureFrameworkInterruptHost();
   void configureFrameworkLockHost();
   llvm::Expected<std::optional<uint32_t>>
@@ -596,6 +620,8 @@ private:
     std::optional<DevicePowerState> InitialReportedDevicePower;
     std::vector<DriverPowerOperation> RequestedDevicePower;
     uint32_t RequestedPowerIndex = 0;
+    // Identity of the last successfully committed START transaction.
+    uint64_t StartEpoch = 0;
     std::optional<DriverWakeCapabilities> WakeCapabilities;
   };
   uint64_t PnpProviderDriver = 0;
@@ -607,6 +633,8 @@ private:
   PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO);
   const PnpDeviceRecord *pnpDeviceForPDO(uint64_t PDO) const;
   llvm::Expected<uint64_t> pnpDeviceForRoute(uint64_t Device) const;
+  llvm::Expected<uint64_t> waitWakeStartEpoch(uint64_t PDO,
+                                              bool AllowStarting) const;
   llvm::Error validatePnpTopologyTransition(uint64_t PDO,
                                             DevicePnpRequest Minor) const;
   llvm::Error finishPnpRemoval(uint64_t PDO);
@@ -634,6 +662,7 @@ private:
     // A separate callback input snapshot; the completed IRP stays retired.
     uint64_t StatusBlock = 0;
     uint32_t ResponseIndex = 0;
+    std::optional<uint64_t> StartEpoch;
     bool CallbackStarted = false;
     bool CallbackReturned = false;
     DriverRequestOrigin Origin = DriverRequestOrigin::PoRequestPowerIrp;
@@ -774,9 +803,10 @@ private:
     bool PowerCompletion = false;
     std::vector<uint64_t> Arguments;
   };
-  llvm::Expected<IRPCompletionPlan> planIRPCompletion(
-      uint64_t IRP,
-      std::optional<uint32_t> StatusOverride = std::nullopt) const;
+  llvm::Expected<IRPCompletionPlan>
+  planIRPCompletion(uint64_t IRP,
+                    std::optional<uint32_t> StatusOverride = std::nullopt,
+                    std::optional<bool> CancelOverride = std::nullopt) const;
   struct ProviderCompletion {
     enum class Kind {
       WDM,
@@ -821,6 +851,8 @@ private:
                       std::optional<RequestedPower> Child = std::nullopt);
   llvm::Expected<uint32_t> dispatchPreparedPowerRequest(const Invocation &Call);
   llvm::Expected<bool> beginFrameworkPowerPolicy(uint64_t IRP);
+  llvm::Expected<bool> canAllocatePowerRequest(uint64_t Device,
+                                               bool Callback) const;
   llvm::Expected<uint64_t> requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> setPowerState(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Error startNextPowerIrp(uint64_t IRP);
