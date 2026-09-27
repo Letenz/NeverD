@@ -806,6 +806,66 @@ public:
   }
 };
 
+// Complementary affine offsets have opposite parity. Inspect only immediate
+// terms; a nested linear source keeps the full relation search enabled. A
+// forced source also stays eligible for the direct -Source-1 relation.
+bool mayHaveComplements(const SymContext &Ctx, llvm::ArrayRef<uint32_t> Roots,
+                        const llvm::DenseSet<uint32_t> &ForcedAtoms,
+                        const llvm::DenseMap<uint32_t, Role> &Roles,
+                        AffineResources &Resources) {
+  if (Roots.size() < 2)
+    return false;
+  auto termParity = [&](SymRef R, bool IsRoot) -> std::optional<bool> {
+    if (!Resources.charge(1))
+      return std::nullopt;
+    if (Ctx.isConst(R))
+      return Ctx.constValue(R)[0];
+    if (!IsRoot) {
+      if (ForcedAtoms.contains(R.index()))
+        return std::nullopt;
+      if (Roles.lookup(R.index()) != Role::Linear)
+        return false;
+    }
+    if (Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
+        Ctx.isConst(Ctx.operand(R, 0))) {
+      if (!Ctx.constValue(Ctx.operand(R, 0))[0])
+        return false;
+      SymRef Source = Ctx.operand(R, 1);
+      if (ForcedAtoms.contains(Source.index()) ||
+          Roles.lookup(Source.index()) == Role::Linear)
+        return std::nullopt;
+      return false;
+    }
+    if (Ctx.op(R) == SymOp::Add || Ctx.op(R) == SymOp::Not)
+      return std::nullopt;
+    return false;
+  };
+  unsigned Parities = 0;
+  for (uint32_t Index : Roots) {
+    SymRef R(Index);
+    bool Parity = false;
+    if (Ctx.op(R) == SymOp::Add) {
+      if (!Resources.charge(1))
+        return true;
+      for (SymRef Term : Ctx.operands(R)) {
+        auto Part = termParity(Term, false);
+        if (!Part)
+          return true;
+        Parity ^= *Part;
+      }
+    } else {
+      auto Part = termParity(R, true);
+      if (!Part)
+        return true;
+      Parity = *Part;
+    }
+    Parities |= 1u << Parity;
+    if (Parities == 3)
+      return true;
+  }
+  return false;
+}
+
 /// Recover arithmetic uses of bases from exact hidden affine relations.
 /// Subtracting a candidate may fold -(-x) to x, or flatten a+(a+b) to 2*a+b.
 /// Reabstracting those forms must not forget the relation to the hidden input.
@@ -832,20 +892,10 @@ SymRef restoreAffineRelations(
       Roots.push_back(Index);
     }
   }
-  // Pure scaled atomic inputs have zero affine offsets, so none can sum to
-  // -1. Avoid the relation index entirely for that common miss shape.
-  bool MayComplement = false;
-  if (Roots.size() > 1)
-    for (uint32_t Index : Roots) {
-      if (!Resources.charge(1))
-        return Body;
-      SymRef R(Index);
-      MayComplement |= Ctx.op(R) == SymOp::Add || Ctx.op(R) == SymOp::Not;
-      if (Ctx.op(R) == SymOp::Mul && Ctx.numOperands(R) == 2 &&
-          Ctx.isConst(Ctx.operand(R, 0)))
-        MayComplement |=
-            OriginalRoles.lookup(Ctx.operand(R, 1).index()) == Role::Linear;
-    }
+  const bool MayComplement =
+      mayHaveComplements(Ctx, Roots, ForcedAtoms, OriginalRoles, Resources);
+  if (!Resources.complete())
+    return Body;
   AffineCache Cache;
   if (!cacheSharedAffineInputs(Ctx, Roots, ForcedAtoms, OriginalRoles, Cache,
                                Resources))
