@@ -4707,13 +4707,27 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
             }
           }
         }
-        if (!BoundStore || Expression != Statement.StoreAddr)
+        if (!BoundStore || Expression != Statement.StoreAddr) {
+          // A direct sub-pointer-width integer store retains the literal bits.
+          // A mapped VA collision is numeric only when this exact occurrence
+          // has scalar provenance and cannot store a complete pointer.
+          const bool NumericStoreValue =
+              Expression == Statement.StoreVal && Expression &&
+              Expression->Kind == ExprKind::Const && Expression->Type &&
+              Image.Bits == Bitness::Bits64 &&
+              (Image.Arch == Arch::AArch64 || Image.Arch == Arch::X64) &&
+              Expression->Type->Kind == NdTypeKind::Int &&
+              Expression->Type->Size > 0 && Expression->Type->Size < 8 &&
+              Expression->ConstProvenance ==
+                  ConstantAddressProvenance::Scalar &&
+              Expression->AddressOwnerVA == InvalidVA;
           Expression =
-              Copy(Expression, 0, false,
+              Copy(Expression, 0, NumericStoreValue,
                    Expression == Statement.StoreAddr ||
                        (Expression == Statement.RetVal && Function.ReturnType &&
                         Function.ReturnType->Kind == NdTypeKind::Ptr),
                    Expression == Statement.StoreAddr);
+        }
       });
       Walk(Statement.Body, Depth + 1);
       Walk(Statement.ElseBody, Depth + 1);

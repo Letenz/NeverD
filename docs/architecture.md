@@ -674,6 +674,12 @@ have one direct constant definition, be definitely assigned before use, and be
 read only as an argument in typed native calls carrying that same proven pair.
 Any reassignment or other use leaves the address unbound.
 
+On 64-bit AArch64 and x64 images, a direct integer store value narrower than a
+pointer remains numeric when its exact IR occurrence has scalar provenance,
+even if its bits collide with a mapped image address. Full-width values,
+unknown or address provenance, address consumers, and pointer-typed values
+still require a relocatable binding.
+
 An explicit pointer-typed load or store supplies the same eight-byte cell extent
 as an integer machine carrier. It uses the existing named writable-storage and
 initializer proofs, including zero-initialized cells. The pointer value itself

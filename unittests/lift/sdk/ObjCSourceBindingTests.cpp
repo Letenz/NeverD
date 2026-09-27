@@ -680,6 +680,54 @@ TEST(ObjCSourceBindings,
   }
 }
 
+TEST(ObjCSourceBindings,
+     IntegerStorePreservesOnlyProvenScalarAddressCollision) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Mapping;
+  Mapping.VA = 0x1000;
+  Mapping.Size = Mapping.FileSz = 0x100;
+  Mapping.Flags = SegmentFlags::Readable;
+  Mapping.Data.resize(0x100);
+  Image.Segments.push_back(Mapping);
+  Section Data;
+  Data.VA = 0x1000;
+  Data.Size = Data.FileSz = 0x100;
+  Data.Flags = SegmentFlags::Readable;
+  Image.Sections.push_back(Data);
+  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    HighFunc Function;
+    Function.ReturnType = NdType::makeVoid();
+    MedVar Destination;
+    Destination.Kind = MedVar::Param;
+    Destination.Id = 0;
+    Destination.Size = 8;
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = HighExpr::makeVar(
+        Destination, NdType::makePtr(NdType::makeInt(4, false)));
+    Store.StoreVal =
+        HighExpr::makeConst(0x1010, 4, ConstantAddressProvenance::Scalar);
+    if (Mutation == 1)
+      Store.StoreVal->ConstProvenance = ConstantAddressProvenance::Unknown;
+    if (Mutation == 2)
+      Store.StoreVal->ConstProvenance = ConstantAddressProvenance::Address;
+    if (Mutation == 3)
+      Store.StoreVal->AddressOwnerVA = 0x1000;
+    if (Mutation == 4)
+      Store.StoreVal->Type = NdType::makePtr(NdType::makeVoid());
+    if (Mutation == 5)
+      Store.StoreVal->Type = NdType::makeInt(8, false);
+    Function.Body.push_back(std::move(Store));
+    const auto Bound = bindObjCSourceReferences(Function, Image);
+    EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+    EXPECT_EQ(Bound.Function.Body[0].StoreVal->Kind, ExprKind::Const);
+  }
+}
+
 struct SwiftTypeMetadataFixture {
   BinaryImage Image;
   HighFunc Function;
