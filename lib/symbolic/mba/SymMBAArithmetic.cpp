@@ -342,7 +342,8 @@ public:
       if (!BestPower) {
         // Equal coefficients can be removed without division in the modular
         // ring, including even coefficients that have no multiplicative
-        // inverse. Unit coefficients would only introduce extra operators.
+        // inverse. Positive units need no factor; negative units retain the
+        // established sign spelling used by the repeated region walk.
         std::map<llvm::APInt, size_t, CoefficientLess> Coefficients;
         for (const auto &[Key, Coefficient] : F.P) {
           if (Key.empty() || Coefficient.isOne() || Coefficient.isAllOnes())
