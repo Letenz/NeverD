@@ -1348,6 +1348,12 @@ Complements on those arithmetic paths are read as `~X = -1-X`; bitwise
 consumers and other operations remain opaque. The chosen spelling is
 re-expanded before acceptance. Bounded checks stop further region search for
 proved minimal unary variables and products of distinct free variables.
+Equal word coefficients can also be factored without modular division,
+including noninvertible even coefficients. A coefficient-only opportunity is
+read once at the end of the public shallow or deep request, rather than at
+each layer of a growing arithmetic tail. The final polynomial comparison,
+strict cost decrease, and remaining work and storage allowances still apply;
+an incomplete optional attempt retains the previously established expression.
 
 Hidden affine inputs may supply exact inverse relations when a coefficient
 is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic
@@ -1387,6 +1393,15 @@ Already-completed roots and candidates whose children are all completed keep
 their fast exit; the extra reading does not extend the fixed frontier.
 When child rewrites obscure an arithmetic input shared by a sum's bitwise
 terms, the original region remains a bounded alternative.
+An immediate sum of products may also retain a complete shared operand before
+child rewrites erase it. At most two such operands are removed syntactically
+from their terms and the original factor is restored. Distributivity proves
+this candidate directly; an optional quotient replacement requires its own
+proof. A completed factorization survives refusal of the optional search.
+Shallow bitwise quotient terms on disjoint free variables skip that search
+above one bit. Only a strictly smaller complete expression is retained.
+Fixed term and edge limits bound both the scan and canonical flattening
+before construction, and this reading never reenters itself.
 
 After the established linear and polynomial readings have been proved, a
 two- or three-input region may subtract one affine atom from its measured
@@ -1396,6 +1411,12 @@ division. The search reuses the existing small Boolean recipes, accounts for
 wide coefficient storage, and independently proves each form before restoring
 hidden inputs. Exhausting this optional search preserves earlier proved
 candidates.
+A three-input, four-weight table may additionally describe a sum of two
+Boolean selectors when the opposite weight sums agree modulo the word width.
+At most 24 labelings share six cached selector recipes. The earlier affine
+reading already covers singleton selectors and two-input tables, so those
+cases are skipped. The additional candidates use the same proof, restoration,
+cost and remaining-resource checks, including for even or wide coefficients.
 
 Boolean synthesis can peel independent singleton XOR terms from an algebraic
 normal form, leaving a kernel of at most three inputs for cached exact

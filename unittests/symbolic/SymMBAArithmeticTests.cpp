@@ -28,6 +28,81 @@ TEST(SymMBAArithmetic, ExtractsSharedFactors) {
   }
 }
 
+TEST(SymMBAArithmetic, ExtractsRepeatedWordCoefficients) {
+  for (uint32_t Width : {8u, 32u, 64u, 128u, 257u}) {
+    for (int64_t Coefficient : {3, 6, -3, -4}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Coefficient);
+      SymContext Ctx;
+      const std::string K = std::to_string(Coefficient);
+      auto P = parseSymExpr(Ctx, K + "*x+" + K + "*y+(x&y)+5", Width);
+      auto Want = parseSymExpr(Ctx, K + "*(x+y)+(x&y)+5", Width);
+      ASSERT_TRUE(P.ok());
+      ASSERT_TRUE(Want.ok());
+      MBAOptions Opts;
+      detail::WorkBudget Budget(Opts.MaxWork);
+      detail::SolveReport Report;
+      SymRef R =
+          detail::solveCoefficientFactors(Ctx, P.Root, Opts, Budget, Report);
+      EXPECT_EQ(R, Want.Root) << Ctx.toString(R);
+      EXPECT_EQ(Report.Evidence, MBAEvidence::Derivation);
+      EXPECT_LT(Ctx.readabilityCost(R), Ctx.readabilityCost(P.Root));
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, CoefficientGroupsPreserveOpaqueAtomsAndRemainders) {
+  test::simplifiesTo("6*(x/y)+6*(x>>y)+3*(x&y)", "6*((x/y)+(x>>y))+3*(x&y)",
+                     32);
+  test::simplifiesTo("5*x+5*y+7*z+7*w", "5*(x+y)+7*(z+w)", 128);
+  test::simplifiesTo("6*x+6*y+6", "6*(x+y+1)", 257);
+}
+
+TEST(SymMBAArithmetic, CoefficientSearchHonorsWorkAndStorageLimits) {
+  for (bool LimitStorage : {false, true}) {
+    SymContext Ctx;
+    auto P = parseSymExpr(Ctx, "6*x+6*y+3*z", 257);
+    ASSERT_TRUE(P.ok());
+    MBAOptions Opts;
+    if (LimitStorage)
+      Opts.MaxTableBytes = 128;
+    else
+      Opts.MaxWork = 10;
+    detail::WorkBudget Budget(Opts.MaxWork);
+    detail::SolveReport Report;
+    EXPECT_EQ(
+        detail::solveCoefficientFactors(Ctx, P.Root, Opts, Budget, Report),
+        P.Root);
+    EXPECT_TRUE(Report.BudgetExhausted);
+    EXPECT_LE(Budget.used(), Opts.MaxWork);
+  }
+}
+
+TEST(SymMBAArithmetic, InterruptedCoefficientConstructionKeepsItsInput) {
+  SymContext Ctx;
+  auto P = parseSymExpr(Ctx, "6*x+6*y+6", 257);
+  auto Want = parseSymExpr(Ctx, "6*(x+y+1)", 257);
+  ASSERT_TRUE(P.ok());
+  ASSERT_TRUE(Want.ok());
+  MBAOptions Opts;
+  detail::WorkBudget Full(Opts.MaxWork);
+  detail::SolveReport Complete;
+  ASSERT_EQ(detail::solveCoefficientFactors(Ctx, P.Root, Opts, Full, Complete),
+            Want.Root);
+  for (size_t Limit = 0; Limit <= Full.used(); ++Limit) {
+    detail::WorkBudget Budget(Limit);
+    detail::SolveReport Report;
+    SymRef R =
+        detail::solveCoefficientFactors(Ctx, P.Root, Opts, Budget, Report);
+    EXPECT_TRUE(R == P.Root || R == Want.Root);
+    EXPECT_LE(Budget.used(), Limit);
+    if (R != P.Root)
+      EXPECT_EQ(Report.Evidence, MBAEvidence::Derivation);
+    else
+      EXPECT_TRUE(Report.BudgetExhausted);
+  }
+}
+
 TEST(SymMBAArithmetic, PreservesOpaqueOperationsAsExactAtoms) {
   test::simplifiesTo("(x / z) * (y + 1) - (x / z) * y", "x / z", 32);
   test::simplifiesTo("(x & z) * (y + 1) - (x & z) * y", "x & z", 32);
@@ -135,7 +210,8 @@ TEST(SymMBAArithmetic, DoesNotExpandAnAlreadyFactoredProduct) {
 TEST(SymMBAArithmetic, DerivedFormsAgreeAtEverySmallWidthAssignment) {
   for (const char *Text :
        {"(x+y)*(x-y)-x*x+y*y", "(x+y)*z-x*z-y*z", "x*x*y+x*x*z+x*z",
-        "7*(x+y)*z+x*z+3*y*z", "(x/y)*(z+1)-(x/y)*z"}) {
+        "7*(x+y)*z+x*z+3*y*z", "(x/y)*(z+1)-(x/y)*z", "6*x+6*y+3*z",
+        "-3*x-3*y+(x&z)", "5*(x/y)+5*(x>>y)+3*z"}) {
     SymContext Ctx;
     auto P = parseSymExpr(Ctx, Text, 4);
     ASSERT_TRUE(P.ok());

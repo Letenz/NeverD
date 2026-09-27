@@ -275,6 +275,29 @@ TEST(SymParse, PrintingPrefersTheShortSpelling) {
   EXPECT_EQ(Ctx.toString(Ctx.mkConst(W32, 0x7FFFFFFF)), "0x7FFFFFFF");
 }
 
+TEST(SymParse, PrintingUsesBinarySubtractionForAnEarlierNegativeProduct) {
+  for (uint32_t Width : {8u, 32u, 128u}) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", Width);
+    SymRef Negative = Ctx.mkNeg(X);
+    SymRef Y = Ctx.mkVar("y", Width);
+    SymRef Z = Ctx.mkVar("z", Width);
+    SymRef Sum = Ctx.mkAdd(Negative, Ctx.mkOr(Y, Z));
+    EXPECT_EQ(Ctx.toString(Sum), "(y | z) - x");
+    auto Parsed = parseSymExpr(Ctx, Ctx.toString(Sum), Width);
+    ASSERT_TRUE(Parsed.ok());
+    EXPECT_EQ(Parsed.Root, Sum);
+
+    SymRef Grouped = Ctx.mkNeg(Ctx.mkUDiv(X, Y));
+    SymRef Later = Ctx.mkXor(Y, Z);
+    Sum = Ctx.mkAdd(Grouped, Later);
+    EXPECT_EQ(Ctx.toString(Sum), "(y ^ z) - (x / y)");
+    Parsed = parseSymExpr(Ctx, Ctx.toString(Sum), Width);
+    ASSERT_TRUE(Parsed.ok());
+    EXPECT_EQ(Parsed.Root, Sum);
+  }
+}
+
 TEST(SymParse, PrintingBracketsExactlyWhereRegroupingWouldChangeMeaning) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

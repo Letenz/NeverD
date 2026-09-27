@@ -208,7 +208,17 @@ void affineResidualCandidates(SymContext &Ctx,
                               llvm::ArrayRef<llvm::APInt> Weights,
                               llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
                               const SolverLimits &Limits, WorkBudget &Budget,
-                              llvm::SmallVectorImpl<SymRef> &Out);
+                              llvm::SmallVectorImpl<SymRef> &Out,
+                              bool *MayHaveBooleanPair = nullptr);
+
+/// Four distinct weights can be the sums of two independently selected
+/// coefficients and an offset. Only small, exactly synthesized selectors are
+/// offered; the caller proves every form before restoring hidden inputs.
+void booleanResidualCandidates(SymContext &Ctx,
+                               llvm::ArrayRef<llvm::APInt> Weights,
+                               llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
+                               const SolverLimits &Limits, WorkBudget &Budget,
+                               llvm::SmallVectorImpl<SymRef> &Out);
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates);
 
@@ -410,6 +420,16 @@ struct SolveReport {
 /// operations remain opaque atoms; resource refusal leaves the region intact.
 SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                        WorkBudget &Budget, SolveReport &Rep);
+
+/// A final coefficient reading, kept outside the repeated region walk.
+SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
+                               const MBAOptions &Opts, WorkBudget &Budget,
+                               SolveReport &Rep);
+
+/// Factor complete immediate operands before other readings erase their
+/// shared spelling; measure at most two quotients using the same budget.
+SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                              WorkBudget &Budget, SolveReport &Rep);
 
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to

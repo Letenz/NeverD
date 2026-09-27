@@ -9,6 +9,7 @@ add_neverd_unittest(NeverDSymbolicTests
   SymExprComplementTests.cpp
   SymExprMaskTests.cpp
   SymMBAAffineResidualTests.cpp
+  SymMBABooleanResidualTests.cpp
   SymMBAArithmeticTests.cpp
   SymMBAAffineFastPathTests.cpp
   SymMBACandidateSelectionTests.cpp
@@ -24,6 +25,8 @@ add_neverd_unittest(NeverDSymbolicTests
   SymMBARestoredTests.cpp
   SymMBASelectorTests.cpp
   SymMBAStressTests.cpp
+  SymMBAFactorCostTests.cpp
+  SymMBAStructuralFactorTests.cpp
   SymMBAWeightedTests.cpp
   SymMBAComplementTests.cpp
   SymMBATests.cpp
