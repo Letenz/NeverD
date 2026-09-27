@@ -76,6 +76,9 @@ public:
   llvm::Expected<DeviceLifecycleTicket>
   beginDevicePower(uint64_t Device, DevicePowerRequest Request,
                    DevicePowerState Target);
+  llvm::Error validateSystemPowerRequest(uint64_t Device,
+                                         DevicePowerRequest Request,
+                                         SystemPowerState Target) const;
   llvm::Expected<DeviceLifecycleTicket>
   beginSystemPower(uint64_t Device, DevicePowerRequest Request,
                    SystemPowerState Target);

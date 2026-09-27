@@ -36,6 +36,10 @@ _Static_assert(WdmWakeCommandIoctl == CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801,
                                                METHOD_BUFFERED,
                                                FILE_ANY_ACCESS),
                "command control code");
+_Static_assert(WdmWakeExtendedSnapshotIoctl == CTL_CODE(FILE_DEVICE_UNKNOWN,
+                                                        0x802, METHOD_BUFFERED,
+                                                        FILE_ANY_ACCESS),
+               "extended snapshot control code");
 typedef VOID (*WAKE_CALLBACK_ABI)(PDEVICE_OBJECT, UCHAR, POWER_STATE, PVOID,
                                   PIO_STATUS_BLOCK);
 _Static_assert(__builtin_types_compatible_p(PREQUEST_POWER_COMPLETE,
@@ -50,10 +54,20 @@ enum {
   InvalidCancellation = 1U << 4,
   InvalidWorker = 1U << 5,
   InvalidPnp = 1U << 6,
-  InvalidUnload = 1U << 7
+  InvalidUnload = 1U << 7,
+  InvalidQueuedPower = 1U << 8
 };
 
+typedef struct WAKE_EXTENSION WAKE_EXTENSION;
 typedef struct {
+  WAKE_EXTENSION *Owner;
+  PIRP Irp;
+  UCHAR Minor;
+  DEVICE_POWER_STATE State;
+  BOOLEAN Pending;
+} QUEUED_POWER_CONTEXT;
+
+struct WAKE_EXTENSION {
   PDEVICE_OBJECT Self;
   PDEVICE_OBJECT PDO;
   PDEVICE_OBJECT Lower;
@@ -63,13 +77,22 @@ typedef struct {
   KEVENT PnpDone;
   KEVENT PowerDone;
   KDPC CancelDpc;
-  ULONG Values[WdmWakeSnapshotWords];
+  ULONG Values[WdmWakeExtendedSnapshotWords];
+  QUEUED_POWER_CONTEXT PowerContext;
+  ULONG Sequence;
+  UCHAR DpcCommand;
   UCHAR AfterWake;
-} WAKE_EXTENSION;
+};
 
 static UCHAR Mode;
 static ULONG Failures;
 static ULONG LiveDevices;
+
+static KIRQL ReadGuestCR8(VOID) {
+  ULONG64 Value;
+  __asm__ volatile("movq %%cr8, %0" : "=r"(Value));
+  return (KIRQL)Value;
+}
 
 static VOID Check(WAKE_EXTENSION *Extension, BOOLEAN Condition, ULONG Failure) {
   if (!Condition) {
@@ -135,6 +158,69 @@ static NTSTATUS RequestD0(WAKE_EXTENSION *Extension) {
   return Status;
 }
 
+static VOID QueuedPowerComplete(PDEVICE_OBJECT Device, UCHAR Minor,
+                                POWER_STATE State, PVOID Context,
+                                PIO_STATUS_BLOCK IoStatus) {
+  QUEUED_POWER_CONTEXT *Power = Context;
+  WAKE_EXTENSION *Extension = Power->Owner;
+  Extension->Values[WdmWakePowerCallbackIrql] = KeGetCurrentIrql();
+  Extension->Values[WdmWakePowerCallbackCR8] = ReadGuestCR8();
+  Extension->Values[WdmWakePowerCallbackOrder] = ++Extension->Sequence;
+  Check(Extension,
+        Power == &Extension->PowerContext && Power->Pending &&
+            Device == Extension->Self && Minor == Power->Minor &&
+            State.DeviceState == Power->State &&
+            KeGetCurrentIrql() == PASSIVE_LEVEL &&
+            ReadGuestCR8() == PASSIVE_LEVEL &&
+            IoStatus->Status == STATUS_SUCCESS && !IoStatus->Information &&
+            Extension->Values[WdmWakePowerDispatchOrder] >
+                Extension->Values[WdmWakeCallerReturnOrder] &&
+            Extension->Values[WdmWakePowerCallbackOrder] >
+                Extension->Values[WdmWakePowerDispatchOrder],
+        InvalidQueuedPower);
+  Power->Pending = FALSE;
+  Power->Irp = NULL;
+  ++Extension->Values[WdmWakeQueuedCompletions];
+  if (Minor == IRP_MN_SET_POWER && State.DeviceState == PowerDeviceD0)
+    ++Extension->Values[WdmWakeD0Callbacks];
+}
+
+static VOID RequestQueuedPower(WAKE_EXTENSION *Extension, UCHAR Minor,
+                               DEVICE_POWER_STATE DeviceState) {
+  QUEUED_POWER_CONTEXT *Context = &Extension->PowerContext;
+  const KIRQL Irql = KeGetCurrentIrql();
+  Check(Extension,
+        !Context->Pending && (Irql == APC_LEVEL || Irql == DISPATCH_LEVEL) &&
+            ReadGuestCR8() == Irql,
+        InvalidQueuedPower);
+  Context->Owner = Extension;
+  Context->Minor = Minor;
+  Context->State = DeviceState;
+  Context->Pending = TRUE;
+  Context->Irp = NULL;
+  Extension->Values[WdmWakeCallerReturnOrder] = 0;
+  Extension->Values[WdmWakePowerDispatchOrder] = 0;
+  Extension->Values[WdmWakePowerCallbackOrder] = 0;
+  Extension->Values[WdmWakeQueuedMinor] = Minor;
+  Extension->Values[WdmWakeQueuedDeviceState] = DeviceState;
+  Extension->Values[WdmWakeCallerIrqlBefore] = Irql;
+  Extension->Values[WdmWakeCallerCR8Before] = ReadGuestCR8();
+  ++Extension->Values[WdmWakeQueuedSubmissions];
+  POWER_STATE State;
+  State.DeviceState = DeviceState;
+  const NTSTATUS Status = PoRequestPowerIrp(Extension->Self, Minor, State,
+                                            QueuedPowerComplete, Context, NULL);
+  Extension->Values[WdmWakeQueuedAPIStatus] = Status;
+  Extension->Values[WdmWakeCallerIrqlAfter] = KeGetCurrentIrql();
+  Extension->Values[WdmWakeCallerCR8After] = ReadGuestCR8();
+  Check(Extension,
+        Status == STATUS_PENDING && !Context->Irp && Context->Pending &&
+            KeGetCurrentIrql() == Irql && ReadGuestCR8() == Irql &&
+            !Extension->Values[WdmWakePowerDispatchOrder] &&
+            !Extension->Values[WdmWakePowerCallbackOrder],
+        InvalidQueuedPower);
+}
+
 static VOID PowerWorker(PDEVICE_OBJECT Device, PVOID Context) {
   WAKE_EXTENSION *Extension = Context;
   PIO_WORKITEM Work = Extension->Work;
@@ -175,6 +261,12 @@ static VOID WakeComplete(PDEVICE_OBJECT Device, UCHAR Minor, POWER_STATE State,
     Check(Extension, Irql == DISPATCH_LEVEL, InvalidWorker);
     IoQueueWorkItem(Extension->Work, PowerWorker, DelayedWorkQueue, Extension);
   }
+  if (Status == STATUS_CANCELLED &&
+      Extension->DpcCommand == WdmWakeCancelDpcDirect) {
+    Check(Extension, Irql == DISPATCH_LEVEL && ReadGuestCR8() == Irql,
+          InvalidQueuedPower);
+    RequestQueuedPower(Extension, IRP_MN_SET_POWER, PowerDeviceD0);
+  }
   if (Status == STATUS_SUCCESS) {
     const UCHAR AfterWake = Extension->AfterWake;
     Extension->AfterWake = 0;
@@ -186,7 +278,7 @@ static VOID WakeComplete(PDEVICE_OBJECT Device, UCHAR Minor, POWER_STATE State,
   // A nested request must not reuse the old callback's status storage.
   Check(Extension,
         IoStatus->Status == Status && !IoStatus->Information &&
-            KeGetCurrentIrql() == Irql,
+            KeGetCurrentIrql() == Irql && ReadGuestCR8() == Irql,
         InvalidCallback);
 }
 
@@ -208,6 +300,10 @@ static NTSTATUS PowerCompletion(PDEVICE_OBJECT Device, PIRP Irp,
     if (Mode == WdmWakeModeNoCallback)
       Extension->WakeIRP = NULL;
   }
+  if (Extension->PowerContext.Pending &&
+      Stack->Parameters.Power.Type == DevicePowerState &&
+      Stack->MinorFunction != IRP_MN_WAIT_WAKE)
+    Check(Extension, Extension->PowerContext.Irp == Irp, InvalidQueuedPower);
   if (Irp->PendingReturned)
     IoMarkIrpPending(Irp);
   return STATUS_SUCCESS;
@@ -233,6 +329,23 @@ static NTSTATUS DispatchPower(PDEVICE_OBJECT Device, PIRP Irp) {
     Extension->Values[WdmWakeIRPHigh] = (ULONG)((ULONG_PTR)Irp >> 32);
   } else if (Stack->Parameters.Power.Type == DevicePowerState) {
     ++Extension->Values[WdmWakeDeviceDispatches];
+    QUEUED_POWER_CONTEXT *Context = &Extension->PowerContext;
+    if (Context->Pending) {
+      Extension->Values[WdmWakePowerDispatchIrql] = KeGetCurrentIrql();
+      Extension->Values[WdmWakePowerDispatchCR8] = ReadGuestCR8();
+      Extension->Values[WdmWakePowerDispatchOrder] = ++Extension->Sequence;
+      Check(Extension,
+            !Context->Irp && Stack->MinorFunction == Context->Minor &&
+                Stack->Parameters.Power.State.DeviceState == Context->State &&
+                KeGetCurrentIrql() == PASSIVE_LEVEL &&
+                ReadGuestCR8() == PASSIVE_LEVEL &&
+                Extension->Values[WdmWakeCallerReturnOrder] &&
+                Extension->Values[WdmWakePowerDispatchOrder] >
+                    Extension->Values[WdmWakeCallerReturnOrder],
+            InvalidQueuedPower);
+      Context->Irp = Irp;
+      ++Extension->Values[WdmWakeQueuedDispatches];
+    }
   }
   IoCopyCurrentIrpStackLocationToNext(Irp);
   IoSetCompletionRoutine(Irp, PowerCompletion, Extension, TRUE, TRUE, TRUE);
@@ -259,7 +372,41 @@ static VOID CancelDpc(PKDPC Dpc, PVOID Context, PVOID Argument1,
   Check(Extension,
         Dpc == &Extension->CancelDpc && KeGetCurrentIrql() == DISPATCH_LEVEL,
         InvalidCancellation);
-  CancelWake(Extension);
+  switch (Extension->DpcCommand) {
+  case WdmWakeCancelDpc:
+    CancelWake(Extension);
+    return;
+  case WdmWakeCancelDpcDirect:
+    CancelWake(Extension);
+    break;
+  case WdmWakeQueryDpc:
+  case WdmWakeSetDpc:
+    RequestQueuedPower(Extension,
+                       Extension->DpcCommand == WdmWakeQueryDpc
+                           ? IRP_MN_QUERY_POWER
+                           : IRP_MN_SET_POWER,
+                       PowerDeviceD2);
+    break;
+  case WdmWakeWaitWakeDpc: {
+    POWER_STATE State;
+    State.SystemState = WakeLimit();
+    PoRequestPowerIrp(Extension->Self, IRP_MN_WAIT_WAKE, State, WakeComplete,
+                      Extension, &Extension->WakeIRP);
+    break;
+  }
+  default:
+    Check(Extension, FALSE, InvalidQueuedPower);
+    break;
+  }
+  Check(Extension,
+        KeGetCurrentIrql() == DISPATCH_LEVEL &&
+            ReadGuestCR8() == DISPATCH_LEVEL,
+        InvalidQueuedPower);
+  Extension->DpcCommand = 0;
+  PIRP Outer = Extension->Outer;
+  Extension->Outer = NULL;
+  Complete(Outer, STATUS_SUCCESS, 0);
+  Extension->Values[WdmWakeCallerReturnOrder] = ++Extension->Sequence;
 }
 
 static NTSTATUS PnpCompletion(PDEVICE_OBJECT Device, PIRP Irp, PVOID Context) {
@@ -286,7 +433,8 @@ static NTSTATUS DispatchPnp(PDEVICE_OBJECT Device, PIRP Irp) {
   if (Minor == IRP_MN_REMOVE_DEVICE) {
     PDEVICE_OBJECT Lower = Extension->Lower;
     Check(Extension,
-          !Extension->WakeIRP && !Extension->Work && !Extension->Outer,
+          !Extension->WakeIRP && !Extension->Work && !Extension->Outer &&
+              !Extension->PowerContext.Pending,
           InvalidPnp);
     IoSkipCurrentIrpStackLocation(Irp);
     const NTSTATUS Status = IoCallDriver(Lower, Irp);
@@ -318,15 +466,18 @@ static NTSTATUS DispatchFile(PDEVICE_OBJECT Device, PIRP Irp) {
   if (Stack->MajorFunction != IRP_MJ_DEVICE_CONTROL)
     return Complete(Irp, STATUS_SUCCESS, 0);
   const ULONG Code = Stack->Parameters.DeviceIoControl.IoControlCode;
-  if (Code == WdmWakeSnapshotIoctl &&
-      Stack->Parameters.DeviceIoControl.OutputBufferLength >=
-          sizeof(Extension->Values)) {
+  const ULONG SnapshotBytes =
+      (Code == WdmWakeExtendedSnapshotIoctl ? WdmWakeExtendedSnapshotWords
+                                            : WdmWakeSnapshotWords) *
+      sizeof(ULONG);
+  if ((Code == WdmWakeSnapshotIoctl || Code == WdmWakeExtendedSnapshotIoctl) &&
+      Stack->Parameters.DeviceIoControl.OutputBufferLength >= SnapshotBytes) {
     Extension->Values[WdmWakeActive] = Extension->WakeIRP != NULL;
     Extension->Values[WdmWakeHasCancelRoutine] =
         Extension->WakeIRP && Extension->WakeIRP->CancelRoutine != NULL;
     RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, Extension->Values,
-                  sizeof(Extension->Values));
-    return Complete(Irp, STATUS_SUCCESS, sizeof(Extension->Values));
+                  SnapshotBytes);
+    return Complete(Irp, STATUS_SUCCESS, SnapshotBytes);
   }
   if (Code != WdmWakeCommandIoctl ||
       Stack->Parameters.DeviceIoControl.InputBufferLength != sizeof(UCHAR))
@@ -355,11 +506,42 @@ static NTSTATUS DispatchFile(PDEVICE_OBJECT Device, PIRP Irp) {
     Extension->Work = IoAllocateWorkItem(Device);
     if (!Extension->Work)
       return Complete(Irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    Extension->DpcCommand = Command;
     Extension->Outer = Irp;
     IoMarkIrpPending(Irp);
     Check(Extension, KeInsertQueueDpc(&Extension->CancelDpc, NULL, NULL),
           InvalidCancellation);
     return STATUS_PENDING;
+  case WdmWakeCancelDpcDirect:
+  case WdmWakeQueryDpc:
+  case WdmWakeSetDpc:
+  case WdmWakeWaitWakeDpc:
+    if (Extension->Outer || Extension->PowerContext.Pending ||
+        (Command == WdmWakeCancelDpcDirect &&
+         (!Extension->WakeIRP || Mode == WdmWakeModeNoCallback)))
+      return Complete(Irp, STATUS_INVALID_DEVICE_STATE, 0);
+    if (Command == WdmWakeWaitWakeDpc)
+      CancelWake(Extension);
+    Extension->DpcCommand = Command;
+    Extension->Outer = Irp;
+    IoMarkIrpPending(Irp);
+    Check(Extension, KeInsertQueueDpc(&Extension->CancelDpc, NULL, NULL),
+          InvalidQueuedPower);
+    return STATUS_PENDING;
+  case WdmWakeQueryApc:
+  case WdmWakeSetApc: {
+    if (Extension->PowerContext.Pending)
+      return Complete(Irp, STATUS_INVALID_DEVICE_STATE, 0);
+    KIRQL Previous;
+    KeRaiseIrql(APC_LEVEL, &Previous);
+    RequestQueuedPower(Extension,
+                       Command == WdmWakeQueryApc ? IRP_MN_QUERY_POWER
+                                                  : IRP_MN_SET_POWER,
+                       PowerDeviceD2);
+    KeLowerIrql(Previous);
+    Extension->Values[WdmWakeCallerReturnOrder] = ++Extension->Sequence;
+    break;
+  }
   default:
     return Complete(Irp, STATUS_INVALID_PARAMETER, 0);
   }

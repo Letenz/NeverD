@@ -170,6 +170,76 @@ bool KernelScheduler::isWorkItemQueued(uint64_t Object) const {
   return containsObject(Workers, Object, CallbackKind::WorkItem);
 }
 
+llvm::Error KernelScheduler::canEnqueueWDMDispatch() const {
+  if (auto E = validateTime())
+    return E;
+  return checkCapacity(1);
+}
+
+bool KernelScheduler::hasWDMDispatch(uint64_t Object) const {
+  auto Matches = [Object](const Invocation &Call) {
+    return Call.Object == Object &&
+           (Call.Kind == CallbackKind::WDMDispatch ||
+            Call.Kind == CallbackKind::WDMProviderDispatch);
+  };
+  return (Active && Matches(*Active)) || llvm::any_of(Workers, Matches) ||
+         llvm::any_of(Suspended,
+                      [&](const auto &Entry) { return Matches(Entry.second); });
+}
+
+llvm::Expected<uint64_t>
+KernelScheduler::enqueueWDMDispatch(Callback Dispatch) {
+  if (auto E = validateCallback(Dispatch))
+    return E;
+  if (Dispatch.Arguments.size() != 2 ||
+      Dispatch.Arguments[0] != Dispatch.Owner ||
+      Dispatch.Arguments[1] != Dispatch.Object ||
+      Dispatch.SynchronizationObject)
+    return schedulerError("WDM dispatch requires its device and IRP arguments");
+  if (hasWDMDispatch(Dispatch.Object))
+    return schedulerError("WDM dispatch is already outstanding for this IRP");
+  if (auto E = canEnqueueWDMDispatch())
+    return E;
+  Workers.push_back(
+      makeInvocation(std::move(Dispatch), CallbackKind::WDMDispatch, Now));
+  return Workers.back().ID;
+}
+
+llvm::Expected<uint64_t>
+KernelScheduler::enqueueWDMProviderDispatch(uint64_t IRP, uint64_t PDO,
+                                           uint64_t Thread) {
+  if (!IRP || !PDO || !Thread)
+    return schedulerError(
+        "provider dispatch requires nonzero IRP, PDO and thread identities");
+  if (hasWDMDispatch(IRP))
+    return schedulerError("WDM dispatch is already outstanding for this IRP");
+  if (auto E = canEnqueueWDMDispatch())
+    return E;
+  Workers.push_back(makeInvocation({IRP, PDO, Thread, 0, {PDO, IRP}},
+                                   CallbackKind::WDMProviderDispatch, Now));
+  return Workers.back().ID;
+}
+
+llvm::Expected<KernelScheduler::Invocation>
+KernelScheduler::beginWDMProviderCompletion(uint64_t ID, Callback Completion) {
+  if (auto E = canFinish(ID))
+    return E;
+  if (Active->Kind != CallbackKind::WDMProviderDispatch || Active->PC ||
+      Active->IRQL != scheduler::PassiveLevel)
+    return schedulerError("completion requires its active provider dispatch");
+  if (Completion.Object != Active->Object ||
+      Completion.Owner != Active->Owner || Completion.Thread != Active->Thread ||
+      Completion.SynchronizationObject)
+    return schedulerError("provider completion changed its dispatch identity");
+  if (auto E = validateCallback(Completion))
+    return E;
+  if (containsObject(Completions, Completion.Object))
+    return schedulerError("request completion is already queued");
+  static_cast<Callback &>(*Active) = std::move(Completion);
+  Active->Kind = CallbackKind::WDMCompletion;
+  return *Active;
+}
+
 llvm::Expected<uint64_t>
 KernelScheduler::enqueueFrameworkCancel(Callback Cancellation) {
   if (auto E = validateCallback(Cancellation))

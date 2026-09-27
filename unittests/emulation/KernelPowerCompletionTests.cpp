@@ -116,6 +116,7 @@ protected:
     success(Exports.initialize(Options));
     Model = std::make_unique<KernelModel>(*Memory, Result, &Exports);
     success(Model->initialize(Image, Options));
+    Model->enterExecution(profile::StackBase);
     const uint64_t Extension =
         get(Model->driverObject() + DriverExtensionOffset);
     put(Extension + DriverAddDeviceOffset, DispatchPC);
@@ -175,6 +176,74 @@ protected:
       EXPECT_EQ(get(Output), Result.Requests.back().IRP);
     }
     return pendingCall(DispatchPC);
+  }
+  uint64_t queuePower(DevicePowerState State, uint64_t Callback = PowerPC,
+                      uint64_t Device = 0,
+                      DevicePowerRequest Minor = DevicePowerRequest::Set) {
+    const size_t Count = Result.Requests.size();
+    EXPECT_EQ(call("PoRequestPowerIrp",
+                   {Device ? Device : FDO, uint8_t(Minor), uint32_t(State),
+                    Callback, Scratch + 0x100, 0}),
+              StatusPending);
+    EXPECT_FALSE(Model->takeGuestCall());
+    EXPECT_EQ(Result.Requests.size(), Count + 1);
+    return Result.Requests.size() == Count + 1 ? Result.Requests.back().IRP : 0;
+  }
+  std::optional<KernelScheduler::Invocation> powerWorker() {
+    auto Next = take(Model->nextScheduled(false));
+    EXPECT_TRUE(Next);
+    if (Next) {
+      EXPECT_EQ(Next->Kind, KernelScheduler::CallbackKind::WDMDispatch);
+      EXPECT_EQ(Next->PC, DispatchPC);
+      EXPECT_EQ(Next->IRQL, scheduler::PassiveLevel);
+      EXPECT_EQ(Next->Arguments.size(), 2u);
+    }
+    return Next;
+  }
+  void finishWorker(const KernelScheduler::Invocation &Call, uint32_t Status) {
+    EXPECT_FALSE(take(Model->continueScheduled(Call.ID, Status)));
+    success(Model->finishScheduled(Call.ID));
+  }
+  void providerQueued(uint64_t Delay, bool Callback) {
+    initialize({operation(DevicePowerState::D3, Delay)});
+    call("IoDetachDevice", {PDO});
+    call("IoDeleteDevice", {FDO});
+    const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+    const auto IRP =
+        queuePower(DevicePowerState::D3, Callback ? PowerPC : 0, PDO);
+    ASSERT_NE(IRP, 0u);
+    EXPECT_EQ(call("KeGetCurrentIrql", {}), scheduler::DispatchLevel);
+    EXPECT_FALSE(Result.Requests.back().DispatchStatus);
+    EXPECT_FALSE(Result.Requests.back().Power->BusReceivedAt100ns);
+    call("KeLowerIrql", {Old});
+    auto Next = take(Model->nextScheduled(false));
+    EXPECT_EQ(Result.Requests.back().DispatchStatus,
+              Delay ? StatusPending : StatusSuccess);
+    EXPECT_EQ(Result.Requests.back().Power->BusReceivedAt100ns, 0u);
+    if (Delay) {
+      EXPECT_FALSE(Next);
+      EXPECT_FALSE(Result.Requests.back().Completed);
+      Next = take(Model->nextScheduled(true));
+    }
+    if (Callback) {
+      ASSERT_TRUE(Next);
+      EXPECT_EQ(Next->Kind, KernelScheduler::CallbackKind::WDMCompletion);
+      EXPECT_EQ(Next->PC, PowerPC);
+      EXPECT_EQ(Next->IRQL, scheduler::PassiveLevel);
+      ASSERT_EQ(Next->Arguments.size(), 5u);
+      EXPECT_EQ(Next->Arguments[0], PDO);
+      EXPECT_EQ(Next->Arguments[3], Scratch + 0x100);
+      EXPECT_EQ(get(Next->Arguments[4], 4), StatusSuccess);
+      finishWorker(*Next, StatusSuccess);
+    } else {
+      EXPECT_FALSE(Next);
+    }
+    EXPECT_TRUE(Result.Requests.back().Completed);
+    EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+              DevicePowerState::D3);
+    EXPECT_EQ(Result.Requests.back().Power->BusCompletedAt100ns, Delay);
+    EXPECT_FALSE(Model->requestPending());
+    EXPECT_FALSE(take(Model->nextScheduled(false)));
   }
   KernelGuestCall pendingCall(uint64_t ExpectedPC) {
     auto Call = Model->takeGuestCall();
@@ -474,24 +543,48 @@ TEST_F(KernelPowerCompletion,
 }
 
 TEST_F(KernelPowerCompletion,
-       DPCRequestIsExplicitlyUnsupportedBeforeAnySideEffects) {
-  initialize({operation(DevicePowerState::D3)});
+       DPCRequestReservesOnePacketBeforePassiveDispatch) {
+  initialize(
+      {operation(DevicePowerState::D3), operation(DevicePowerState::D3)});
   const uint64_t Dpc = Scratch + 0x600;
   call("KeInitializeDpc", {Dpc, WorkerPC, 0});
   EXPECT_EQ(call("KeInsertQueueDpc", {Dpc, 0, 0}), 1u);
-  const auto Next = take(Model->nextScheduled(false));
-  ASSERT_TRUE(Next);
-  ASSERT_EQ(Next->IRQL, scheduler::DispatchLevel);
-  rejected(Model->call("PoRequestPowerIrp", {FDO, 2, 4, PowerPC, 0, 0}),
-           "PASSIVE_LEVEL");
-  EXPECT_EQ(Result.Requests.size(), 1u);
-  EXPECT_FALSE(Model->takeGuestCall());
-  success(Model->finishScheduled(Next->ID));
-  const auto Dispatch = request(DevicePowerState::D3, 0);
-  copyDown(Dispatch.Arguments[1]);
-  call("IofCallDriver", {PDO, Dispatch.Arguments[1]});
-  finishCall(Dispatch, 0, StatusPending);
+  const auto DPC = take(Model->nextScheduled(false));
+  ASSERT_TRUE(DPC);
+  ASSERT_EQ(DPC->IRQL, scheduler::DispatchLevel);
+  const uint64_t IRP = queuePower(DevicePowerState::D3);
+  ASSERT_NE(IRP, 0u);
+  EXPECT_EQ(call("KeGetCurrentIrql", {}), scheduler::DispatchLevel);
+  EXPECT_FALSE(Result.Requests.back().DispatchStatus);
+  EXPECT_FALSE(Result.Requests.back().Power->BusReceivedAt100ns);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateBefore,
+            DevicePowerState::D0);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D0);
   EXPECT_EQ(Result.Requests.back().ResponseIndex, 0u);
+  rejected(Model->call("PoRequestPowerIrp", {FDO, 2, 4, 0, 0, 0}),
+           "already active");
+  EXPECT_EQ(Result.Requests.size(), 2u);
+  rejected(Model->nextScheduled(false), "unfinished callback");
+  success(Model->finishScheduled(DPC->ID));
+  const auto Dispatch = powerWorker();
+  ASSERT_TRUE(Dispatch);
+  ASSERT_EQ(Dispatch->Arguments.size(), 2u);
+  EXPECT_EQ(Dispatch->Arguments[0], FDO);
+  EXPECT_EQ(Dispatch->Arguments[1], IRP);
+  EXPECT_EQ(call("KeGetCurrentIrql", {}), scheduler::PassiveLevel);
+  copyDown(IRP);
+  EXPECT_EQ(call("PoCallDriver", {PDO, IRP}), StatusSuccess);
+  const auto Completion = pendingCall(PowerPC);
+  ASSERT_EQ(Completion.Arguments.size(), 5u);
+  EXPECT_EQ(Completion.Arguments[0], FDO);
+  EXPECT_EQ(Completion.Arguments[3], Scratch + 0x100);
+  finishCall(Completion, 0, StatusSuccess);
+  finishWorker(*Dispatch, StatusSuccess);
+  EXPECT_EQ(Result.Requests.back().DispatchStatus, StatusSuccess);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D3);
+  EXPECT_FALSE(Model->requestPending());
 }
 
 TEST_F(KernelPowerCompletion,
@@ -889,6 +982,164 @@ TEST_F(KernelPowerCompletion, RetainedWaitWakeIsNotASystemPowerTransaction) {
   success(Model->finalizeRequest(Parent));
   EXPECT_FALSE(Result.Requests[1].Completed);
   EXPECT_EQ(Result.Requests.back().ResponseIndex, 0u);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D3);
+}
+
+TEST_F(KernelPowerCompletion, APCQueryUsesPassiveDispatchAndPreservesFailure) {
+  initialize({operation(DevicePowerState::D3, 0, DevicePowerRequest::Query,
+                        StatusUnsuccessful)});
+  const auto Old = call("KfRaiseIrql", {APCLevel});
+  const auto IRP =
+      queuePower(DevicePowerState::D3, 0, 0, DevicePowerRequest::Query);
+  ASSERT_NE(IRP, 0u);
+  EXPECT_EQ(call("KeGetCurrentIrql", {}), APCLevel);
+  EXPECT_FALSE(Result.Requests.back().Power->BusStatus);
+  call("KeLowerIrql", {Old});
+  const auto Dispatch = powerWorker();
+  ASSERT_TRUE(Dispatch);
+  copyDown(IRP);
+  EXPECT_EQ(call("PoCallDriver", {PDO, IRP}), StatusUnsuccessful);
+  EXPECT_FALSE(Model->takeGuestCall());
+  finishWorker(*Dispatch, StatusUnsuccessful);
+  EXPECT_EQ(Result.Requests.back().IOStatus, StatusUnsuccessful);
+  EXPECT_EQ(Result.Requests.back().DispatchStatus, StatusUnsuccessful);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D0);
+}
+
+TEST_F(KernelPowerCompletion, ElevatedWaitWakeStillRejectsBeforePublication) {
+  initialize({}, DriverWakeCapabilities{true, true});
+  for (uint8_t IRQL : {APCLevel, scheduler::DispatchLevel}) {
+    const auto Old = call("KfRaiseIrql", {IRQL});
+    rejected(Model->call("PoRequestPowerIrp",
+                         {FDO, uint8_t(DevicePowerRequest::WaitWake),
+                          uint32_t(SystemPowerState::Working), PowerPC, 0,
+                          Scratch + 0x800}),
+             "PASSIVE_LEVEL");
+    EXPECT_EQ(call("KeGetCurrentIrql", {}), IRQL);
+    EXPECT_EQ(Result.Requests.size(), 1u);
+    EXPECT_FALSE(Model->takeGuestCall());
+    call("KeLowerIrql", {Old});
+  }
+  EXPECT_FALSE(take(Model->nextScheduled(false)));
+}
+
+TEST_F(KernelPowerCompletion,
+       ProviderOnlyWorkerReusesItsSlotForInlineCallback) {
+  providerQueued(0, true);
+}
+
+TEST_F(KernelPowerCompletion,
+       ProviderOnlyWorkerWithoutCallbackRetiresInternally) {
+  providerQueued(0, false);
+}
+
+TEST_F(KernelPowerCompletion, ProviderOnlyWorkerRetainsDelayedCallback) {
+  providerQueued(11, true);
+}
+
+TEST_F(KernelPowerCompletion,
+       ProviderOnlyDelayedWorkerWithoutCallbackCompletes) {
+  providerQueued(11, false);
+}
+
+TEST_F(KernelPowerCompletion, FullDPCQueueFailurePreservesPacketBudgetAndFIFO) {
+  initialize({operation(DevicePowerState::D3)});
+  call("KeInitializeDpc", {Scratch + 0x600, WorkerPC, 0});
+  call("KeInsertQueueDpc", {Scratch + 0x600, 0, 0});
+  const auto DPC = take(Model->nextScheduled(false));
+  ASSERT_TRUE(DPC);
+  for (unsigned I = 1; I < scheduler::DefaultMaxPendingCallbacks; ++I) {
+    const auto Item = call("IoAllocateWorkItem", {FDO});
+    call("IoQueueWorkItem", {Item, WorkerPC, profile::DelayedWorkQueue, 0});
+  }
+  const uint64_t Before = call("IoAllocateIrp", {1, 0});
+  ASSERT_NE(Before, 0u);
+  call("IoFreeIrp", {Before});
+  rejected(Model->call("PoRequestPowerIrp", {FDO, 2, 4, PowerPC, 0, 0}),
+           "pending callback limit");
+  EXPECT_EQ(Result.Requests.size(), 1u);
+  EXPECT_EQ(call("KeGetCurrentIrql", {}), scheduler::DispatchLevel);
+  EXPECT_FALSE(Model->takeGuestCall());
+  const uint64_t After = call("IoAllocateIrp", {1, 0});
+  ASSERT_NE(After, 0u);
+  EXPECT_EQ(After, (Before + IRPSize + StackSize + PoolAlignment - 1) &
+                       ~(PoolAlignment - 1));
+  call("IoFreeIrp", {After});
+  success(Model->finishScheduled(DPC->ID));
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  ASSERT_NE(queuePower(DevicePowerState::D3), 0u);
+  call("KeLowerIrql", {Old});
+  EXPECT_EQ(Result.Requests.size(), 2u);
+  EXPECT_EQ(Result.Requests.back().ResponseIndex, 0u);
+  EXPECT_FALSE(Result.Requests.back().DispatchStatus);
+}
+
+TEST_F(KernelPowerCompletion,
+       QueuedPowerOwnsCapturedRouteAfterDetachAndDelete) {
+  initialize({operation(DevicePowerState::D3)});
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  const uint64_t IRP = queuePower(DevicePowerState::D3, 0);
+  ASSERT_NE(IRP, 0u);
+  call("KeLowerIrql", {Old});
+  call("IoDetachDevice", {PDO});
+  call("IoDeleteDevice", {FDO});
+  success(Model->validateGuestAccess(FDO + DeviceFlagsOffset, 4, false));
+  rejected(Model->beginUnload(), "provider devices");
+  const auto Dispatch = powerWorker();
+  ASSERT_TRUE(Dispatch);
+  ASSERT_EQ(Dispatch->Arguments.size(), 2u);
+  EXPECT_EQ(Dispatch->Arguments[0], FDO);
+  copyDown(IRP);
+  EXPECT_EQ(call("PoCallDriver", {PDO, IRP}), StatusSuccess);
+  success(Model->validateGuestAccess(FDO + DeviceFlagsOffset, 4, false));
+  finishWorker(*Dispatch, StatusSuccess);
+  EXPECT_TRUE(Result.Requests.back().Completed);
+  denied(FDO + DeviceFlagsOffset, 4);
+}
+
+TEST_F(KernelPowerCompletion, QueuedPowerMPRRetainsItsTerminalCallback) {
+  initialize({operation(DevicePowerState::D3)});
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  const uint64_t IRP = queuePower(DevicePowerState::D3);
+  ASSERT_NE(IRP, 0u);
+  call("KeLowerIrql", {Old});
+  const auto Dispatch = powerWorker();
+  ASSERT_TRUE(Dispatch);
+  copyDown(IRP, CompletionPC);
+  EXPECT_EQ(call("PoCallDriver", {PDO, IRP}), StatusSuccess);
+  const auto Completion = pendingCall(CompletionPC);
+  call("IoMarkIrpPending", {IRP});
+  finishCall(Completion, StatusMoreProcessingRequired, StatusSuccess);
+  finishWorker(*Dispatch, StatusPending);
+  EXPECT_TRUE(Model->requestPending(IRP));
+  EXPECT_FALSE(Result.Requests.back().Completed);
+  call("IofCompleteRequest", {IRP, 0});
+  const auto Terminal = pendingCall(PowerPC);
+  ASSERT_EQ(Terminal.Arguments.size(), 5u);
+  EXPECT_EQ(get(Terminal.Arguments[4], 4), StatusSuccess);
+  finishCall(Terminal, 0, 0);
+  EXPECT_FALSE(Model->requestPending());
+}
+
+TEST_F(KernelPowerCompletion, QueuedPowerDelayedProviderKeepsRealPendingState) {
+  initialize({operation(DevicePowerState::D3, 19)});
+  const auto Old = call("KfRaiseIrql", {scheduler::DispatchLevel});
+  const uint64_t IRP = queuePower(DevicePowerState::D3);
+  ASSERT_NE(IRP, 0u);
+  call("KeLowerIrql", {Old});
+  const auto Dispatch = powerWorker();
+  ASSERT_TRUE(Dispatch);
+  copyDown(IRP);
+  EXPECT_EQ(call("PoCallDriver", {PDO, IRP}), StatusPending);
+  finishWorker(*Dispatch, StatusPending);
+  EXPECT_FALSE(Result.Requests.back().Completed);
+  EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
+            DevicePowerState::D0);
+  const auto Completion = scheduled(PowerPC);
+  EXPECT_EQ(Completion.DueTime100ns, 19u);
+  finishWorker(Completion, StatusSuccess);
   EXPECT_EQ(Result.Requests.back().Power->DeviceStateAfter,
             DevicePowerState::D3);
 }

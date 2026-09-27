@@ -1,0 +1,151 @@
+{
+  "service_name": "NeverDWdmWaitWakeW",
+  "load_address": "0x190000000",
+  "unload": true,
+  "pnp_devices": [
+    {
+      "id": "native-wake",
+      "bus": "resource_free",
+      "initial_device_power": "D0",
+      "initial_system_power": "working",
+      "wake_capabilities": {
+        "s0": true,
+        "sx": true
+      },
+      "requested_device_power": [
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D0",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 11
+          }
+        },
+        {
+          "minor": "query",
+          "power_type": "device",
+          "power_state": "D2",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 0
+          }
+        },
+        {
+          "minor": "set",
+          "power_type": "device",
+          "power_state": "D2",
+          "power_action": "none",
+          "system_context": 0,
+          "bus_completion": {
+            "status": 0,
+            "delay_100ns": 7
+          }
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "kind": "pnp",
+      "device_id": "native-wake",
+      "minor": "start",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "create",
+      "device_id": "native-wake",
+      "file": 1
+    },
+    {
+      "kind": "power",
+      "device_id": "native-wake",
+      "minor": "set",
+      "power_type": "device",
+      "power_state": "D2",
+      "power_action": "none",
+      "system_context": 0,
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 7
+      }
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222004",
+      "input": "45"
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222008",
+      "output_size": 152
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222004",
+      "input": "51"
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222008",
+      "output_size": 152
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222004",
+      "input": "54"
+    },
+    {
+      "kind": "ioctl",
+      "device_id": "native-wake",
+      "file": 1,
+      "code": "0x222008",
+      "output_size": 152
+    },
+    {
+      "kind": "cleanup",
+      "device_id": "native-wake",
+      "file": 1
+    },
+    {
+      "kind": "close",
+      "device_id": "native-wake",
+      "file": 1
+    },
+    {
+      "kind": "pnp",
+      "device_id": "native-wake",
+      "minor": "query_remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    },
+    {
+      "kind": "pnp",
+      "device_id": "native-wake",
+      "minor": "remove",
+      "bus_completion": {
+        "status": 0,
+        "delay_100ns": 3
+      }
+    }
+  ]
+}

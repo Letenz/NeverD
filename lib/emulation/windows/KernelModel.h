@@ -669,6 +669,15 @@ private:
     uint64_t FrameworkParent = 0;
     bool PrepareSystemSleep = false;
   };
+  enum class PowerRequestDelivery { Inline, Queued };
+  struct PowerRequestPlan {
+    uint64_t PDO = 0, Top = 0, PC = 0;
+    uint8_t StackCount = 0;
+    DeviceLifecycleSnapshot Before;
+    std::vector<uint64_t> Route;
+    bool WaitWake = false, FrameworkPower = false;
+    std::optional<uint64_t> StartEpoch;
+  };
   struct UserRegion {
     DriverUserBufferKind Kind;
     std::string ID;
@@ -849,9 +858,19 @@ private:
   llvm::Expected<Invocation>
   preparePowerRequest(const DriverRequest &Input, size_t ResultIndex,
                       std::optional<RequestedPower> Child = std::nullopt);
+  llvm::Expected<PowerRequestPlan>
+  planPowerRequest(const DriverRequest &Input, size_t ResultIndex,
+                   const std::optional<RequestedPower> &Child,
+                   PowerRequestDelivery Delivery) const;
+  llvm::Expected<Invocation>
+  commitPowerRequest(const DriverRequest &Input, size_t ResultIndex,
+                     std::optional<RequestedPower> Child,
+                     PowerRequestPlan Plan);
   llvm::Expected<uint32_t> dispatchPreparedPowerRequest(const Invocation &Call);
+  llvm::Expected<std::optional<KernelScheduler::Invocation>>
+  dispatchScheduledPowerProvider(const KernelScheduler::Invocation &Call);
   llvm::Expected<bool> beginFrameworkPowerPolicy(uint64_t IRP);
-  llvm::Expected<bool> canAllocatePowerRequest(uint64_t Device,
+  llvm::Expected<bool> canAllocatePowerRequest(const PowerRequestPlan &Plan,
                                                bool Callback) const;
   llvm::Expected<uint64_t> requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments);
   llvm::Expected<uint64_t> setPowerState(llvm::ArrayRef<uint64_t> Arguments);

@@ -29,15 +29,18 @@ llvm::Expected<uint64_t>
 KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   if (Arguments.size() != 6)
     return powerError("PoRequestPowerIrp requires six arguments");
-  // The real DDI permits DISPATCH_LEVEL. This pageable profile has no queued
-  // power-dispatch adapter, so never lower an executing DPC's IRQL implicitly.
-  if (CurrentIRQL != scheduler::PassiveLevel)
-    return powerError("this profile requires PASSIVE_LEVEL PoRequestPowerIrp");
+  if (CurrentIRQL > scheduler::DispatchLevel)
+    return powerError("PoRequestPowerIrp requires IRQL <= DISPATCH_LEVEL");
   const auto Minor = static_cast<DevicePowerRequest>(uint8_t(Arguments[1]));
   const bool WaitWake = Minor == DevicePowerRequest::WaitWake;
   if (!WaitWake && Minor != DevicePowerRequest::Set &&
       Minor != DevicePowerRequest::Query)
     return StatusInvalidParameter2;
+  if (WaitWake && CurrentIRQL != scheduler::PassiveLevel)
+    return powerError("WAIT_WAKE issuance requires PASSIVE_LEVEL");
+  const auto Delivery = CurrentIRQL == scheduler::PassiveLevel
+                            ? PowerRequestDelivery::Inline
+                            : PowerRequestDelivery::Queued;
   if (Arguments[5]) {
     if (!WaitWake)
       return powerError("Query/Set power requires a null output IRP pointer");
@@ -76,11 +79,6 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
       return powerError("PoRequestPowerIrp does not match the next explicit "
                         "requested_device_power response");
   }
-  auto Space = canAllocatePowerRequest(Device, Arguments[3] != 0);
-  if (!Space)
-    return Space.takeError();
-  if (!*Space)
-    return StatusInsufficientResources;
   DriverRequest Input;
   Input.Kind = DriverRequestKind::Power;
   Input.DeviceID = Result.PnpDevices[Provider->ResultIndex].ID;
@@ -90,28 +88,58 @@ KernelModel::requestPowerIrp(llvm::ArrayRef<uint64_t> Arguments) {
   Child.Callback = Arguments[3];
   Child.Context = Arguments[4];
   Child.ResponseIndex = Index;
-  auto Invocation = preparePowerRequest(Input, Result.Requests.size(), Child);
+  auto Plan = planPowerRequest(Input, Result.Requests.size(), Child, Delivery);
+  if (!Plan)
+    return Plan.takeError();
+  auto Space = canAllocatePowerRequest(*Plan, Child.Callback != 0);
+  if (!Space)
+    return Space.takeError();
+  if (!*Space)
+    return StatusInsufficientResources;
+  if (Delivery == PowerRequestDelivery::Queued)
+    if (auto E = Scheduler.canEnqueueWDMDispatch())
+      return E;
+  auto Invocation = commitPowerRequest(Input, Result.Requests.size(),
+                                       std::move(Child), std::move(*Plan));
   if (!Invocation)
     return Invocation.takeError();
-  // Preparation publishes a distinct packet/result only after validation.
-  // The immutable provider record remains live through the retained route.
-  if (!WaitWake)
-    ++Provider->RequestedPowerIndex;
+  // The real packet and its lifecycle ticket reserve the captured route before
+  // an elevated caller returns, without changing that caller's execution level.
   const uint64_t IRP = Invocation->IRP;
   if (Arguments[5])
     if (auto E = Memory.writeInteger(Arguments[5], IRP, profile::PointerSize))
       return E;
-  if (Invocation->PC) {
+  if (Delivery == PowerRequestDelivery::Queued || Invocation->PC) {
     const uint64_t Token = NextIRPCall++;
     IRPCalls.emplace(Token,
                      IRPCall{IRPCallKind::PowerDispatch, IRP,
                              uint32_t(requestForIRP(IRP)->StackCount - 1), true,
                              StatusPending});
-    PendingWdmCall = KernelGuestCall{{GuestCallOwner::WDM, Token},
-                                     Invocation->PC,
-                                     {Invocation->Argument0, IRP}};
+    if (Delivery == PowerRequestDelivery::Queued) {
+      llvm::Expected<uint64_t> ID =
+          Invocation->PC
+              ? Scheduler.enqueueWDMDispatch({IRP,
+                                              Invocation->Argument0,
+                                              profile::WorkerThreadIdentity,
+                                              Invocation->PC,
+                                              {Invocation->Argument0, IRP}})
+              : Scheduler.enqueueWDMProviderDispatch(
+                    IRP, Invocation->Argument0, profile::WorkerThreadIdentity);
+      if (!ID)
+        return ID.takeError();
+      ScheduledModelContinuations.emplace(
+          *ID, GuestCallToken{GuestCallOwner::WDM, Token});
+    } else {
+      PendingWdmCall = KernelGuestCall{{GuestCallOwner::WDM, Token},
+                                       Invocation->PC,
+                                       {Invocation->Argument0, IRP}};
+    }
+    if (!WaitWake)
+      ++Provider->RequestedPowerIndex;
     return StatusPending;
   }
+  if (!WaitWake)
+    ++Provider->RequestedPowerIndex;
   auto Status = callProviderDriver(Invocation->Argument0, IRP);
   if (!Status)
     return Status.takeError();

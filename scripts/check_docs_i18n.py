@@ -2255,6 +2255,7 @@ def validate_driver_documents(errors: list[str], view: RepositoryView) -> None:
         "IOCTL_INTERNAL_USB_SUBMIT_IDLE_NOTIFICATION",
         "NEVERD_WDM_WAIT_WAKE_FIXTURE", "NEVERD_WDM_WAIT_WAKE_CFG_FIXTURE",
         "driver-wdm-wait-wake-scenario.json",
+        "driver-wdm-elevated-power-scenario.json", "CR8",
         "DxState", "PowerDeviceMaximum", "IdleUsbSelectiveSuspend",
         "KMDF",
         "UMDF",

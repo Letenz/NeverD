@@ -49,6 +49,8 @@ public:
     DPC,
     FrameworkCancel,
     WDMCancel,
+    WDMDispatch,
+    WDMProviderDispatch,
     WDMCompletion,
     FrameworkCompletion,
     FrameworkDeferred,
@@ -112,6 +114,22 @@ public:
   llvm::Expected<uint64_t> enqueuePoFx(Callback Call);
   bool cancelWorkItem(uint64_t Object);
   bool isWorkItemQueued(uint64_t Object) const;
+
+  /// Reserve nothing: validate capacity and identity space for one power
+  /// dispatch before the model allocates its real IRP. Both kinds use the
+  /// PASSIVE worker FIFO and are independent of driver work-item removal.
+  llvm::Error canEnqueueWDMDispatch() const;
+  llvm::Expected<uint64_t> enqueueWDMDispatch(Callback Dispatch);
+  /// A provider-only dispatch is a model task, with no guest executable PC.
+  /// The model consumes it at selection before returning a guest invocation.
+  llvm::Expected<uint64_t> enqueueWDMProviderDispatch(uint64_t IRP,
+                                                     uint64_t PDO,
+                                                     uint64_t Thread);
+  /// Replace only the active provider task with its real completion callback.
+  /// Preserve its ID, time, owner, thread and occupied capacity. No new
+  /// callback identity or dispatch budget is consumed by this transition.
+  llvm::Expected<Invocation>
+  beginWDMProviderCompletion(uint64_t ID, Callback Completion);
 
   /// Framework cancellation has its own object namespace and PASSIVE_LEVEL
   /// FIFO, independent of work-item removal. The framework owns cancellation
@@ -303,6 +321,7 @@ private:
   llvm::Error validateDMAAdmission(llvm::ArrayRef<uint64_t> IDs,
                                    std::optional<CallbackKind> Kind) const;
   llvm::Error checkCapacity(uint64_t Additional) const;
+  bool hasWDMDispatch(uint64_t Object) const;
   Invocation makeInvocation(Callback Work, CallbackKind Kind, uint64_t DueTime);
   llvm::Error expireTimers(uint64_t Time);
   llvm::Error validateTimerExpirations(uint64_t Time,

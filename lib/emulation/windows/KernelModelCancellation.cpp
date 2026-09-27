@@ -206,6 +206,7 @@ KernelModel::continueScheduled(uint64_t ID, uint64_t ReturnValue) {
       Kind != KernelScheduler::CallbackKind::PoFx &&
       !KernelScheduler::isFrameworkInterruptCallbackKind(Kind) &&
       Kind != KernelScheduler::CallbackKind::WDMCompletion &&
+      Kind != KernelScheduler::CallbackKind::WDMDispatch &&
       Kind != KernelScheduler::CallbackKind::Interrupt &&
       !KernelScheduler::isDMACallbackKind(Kind))
     return std::optional<KernelGuestCall>{};

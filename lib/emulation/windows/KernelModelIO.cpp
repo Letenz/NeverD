@@ -184,9 +184,12 @@ KernelModel::requestForIRP(uint64_t IRP) const {
 bool KernelModel::requestPending(uint64_t IRP,
                                  PendingRequestScope Scope) const {
   auto Pending = [&](const ActiveRequest &Request) {
-    if (!Request.DispatchReturned ||
-        (Request.Completed &&
-         (!Request.ChildPower || Request.ChildPower->CallbackReturned)))
+    // An accepted child already owns its packet and power ticket while its
+    // elevated issuer waits for the passive dispatch worker to run.
+    if (!Request.DispatchReturned)
+      return bool(Request.ChildPower);
+    if (Request.Completed &&
+        (!Request.ChildPower || Request.ChildPower->CallbackReturned))
       return false;
     if (Scope == PendingRequestScope::All)
       return true;
