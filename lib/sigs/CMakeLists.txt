@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDSigs
+  PatternGenerator.cpp
   PatternParser.cpp
   SignatureDB.cpp
   SignatureMatcher.cpp
