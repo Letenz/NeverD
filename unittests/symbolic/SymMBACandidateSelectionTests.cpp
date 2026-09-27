@@ -130,4 +130,17 @@ TEST(SymMBACandidateSelection, ReusesSharedGeneratedRegionsBehindOpaqueUses) {
   }
 }
 
+TEST(SymMBACandidateSelection, AvoidsRepeatedWholeReadingsOfProductFactors) {
+  SymContext C;
+  auto Input = parseSymExpr(C, "(x+~y)*(z^w)+(x+~y)*(a|b)+(x+~y)", 64);
+  ASSERT_TRUE(Input.ok());
+  MBAOptions Options;
+  Options.VerifySamples = 0;
+  auto Result = simplifyMBADeep(C, Input.Root, Options);
+  EXPECT_TRUE(Result.Changed);
+  EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+  EXPECT_LE(Result.Work, 3300u);
+  EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+}
+
 } // namespace

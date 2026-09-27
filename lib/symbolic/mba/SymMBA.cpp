@@ -283,13 +283,16 @@ SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
 
 // Child rewrites can hide a shared arithmetic input in one bitwise use while
 // its other uses retain the original spelling. Keep a whole-region reading
-// there; complements alone remain with the cheaper arithmetic reading.
+// there. A product retains the arithmetic reading for distribution and
+// cancellation; remeasuring its already simplified factors as one bitwise
+// region often repeats their work. Complements alone use that same route.
 bool hasBitwiseInteraction(const SymContext &Ctx, SymRef R) {
   auto Bitwise = [&](SymRef N) {
     SymOp Op = Ctx.op(N);
     return Op == SymOp::And || Op == SymOp::Or || Op == SymOp::Xor;
   };
-  return Bitwise(R) || llvm::any_of(Ctx.operands(R), Bitwise);
+  return Bitwise(R) ||
+         (Ctx.op(R) == SymOp::Add && llvm::any_of(Ctx.operands(R), Bitwise));
 }
 
 // A candidate can introduce a factored sum that was absent from the original
@@ -341,12 +344,13 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     // Charge cumulative scratch and memo storage, including edge slots,
     // before extending either collection.
     constexpr size_t NodeBytes = 128;
-    if (Storage < NodeBytes ||
-        Children > (Storage - NodeBytes) / sizeof(SymRef))
+    constexpr size_t EdgeBytes = 4 * sizeof(SymRef);
+    if (Storage < NodeBytes || Children > (Storage - NodeBytes) / EdgeBytes)
       return Stop();
     if (!Budget.consume(Children))
       return Stop();
-    Storage -= NodeBytes + Children * sizeof(SymRef);
+    // Both the pending and rebuilt-operand buffers can retain spare capacity.
+    Storage -= NodeBytes + Children * EdgeBytes;
     Seen.insert(R.index());
     Order.push_back(R.index());
     Pending.append(Ctx.operands(R).begin(), Ctx.operands(R).end());
@@ -365,8 +369,8 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     SymRef Rebuilt = Changed ? Ctx.rebuild(R, Ops) : R;
     SymRef Best =
         readingCost(Ctx, Rebuilt) <= readingCost(Ctx, R) ? Rebuilt : R;
-    // The emitted root was just measured by the caller. Its children must
-    // change before another measurement can reveal anything new there.
+    // Give the emitted root another reading only when its children changed;
+    // otherwise this bounded pass keeps the caller's selected spelling.
     if ((R != E || Changed) && canMeasureAtRoot(Ctx, Rebuilt)) {
       if (Budget.exhausted() || !Budget.consume(Ctx.dagSize(Rebuilt)))
         return Stop();
@@ -465,6 +469,18 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   WorkBudget Budget(Opts.MaxWork);
   bool Skipped = false;
   size_t RefinementStorage = Opts.MaxTableBytes;
+  auto Remember = [&](uint32_t Index, SymRef Value, bool Complete) {
+    Solved[Index] = Value;
+    // A replacement root was also visited by this layer. Remember it under
+    // its own identity so a later candidate does not measure that same root
+    // again merely because it was emitted under another original node.
+    constexpr size_t EntryBytes = 128;
+    if (Complete && !Budget.exhausted() && !Solved.contains(Value.index()) &&
+        RefinementStorage >= EntryBytes && Budget.consume()) {
+      RefinementStorage -= EntryBytes;
+      Solved.try_emplace(Value.index(), Value);
+    }
+  };
   // The weakest evidence any layer rested on is what the whole answer rests on,
   // because the layers above were measured over what it produced.
   bool AnySampled = false;
@@ -495,10 +511,12 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     // Do not compute a subtree size after the budget has gone: the argument to
     // consume() would otherwise repeat the very traversal the exhausted budget
     // is meant to stop paying for at every remaining node.
+    bool Complete = false;
     if (!Budget.exhausted() && Budget.consume(Ctx.dagSize(Rebuilt))) {
       const bool ChildrenChanged = Rebuilt != R;
       SolveReport Rep;
       SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep);
+      Complete = !Rep.BudgetExhausted;
       if (Measured != Rebuilt) {
         SolveReport Refined;
         Rebuilt = refineCandidate(Ctx, Measured, Opts, Order, Solved, Budget,
@@ -508,6 +526,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
         AnySampled |= Rep.Evidence == MBAEvidence::Samples;
         AnySampled |= Refined.Evidence == MBAEvidence::Samples;
         Skipped |= Refined.BudgetExhausted;
+        Complete &= !Refined.BudgetExhausted;
       } else if (Rep.Outcome == MBAOutcome::BudgetExhausted) {
         Skipped = true;
       } else if (Rep.Outcome == MBAOutcome::TooManyInputs &&
@@ -528,6 +547,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
                        ? solveRegionOrSplit(Ctx, R, Opts, Budget, OriginalRep)
                        : solveArithmetic(Ctx, R, Opts, Budget, OriginalRep);
       Skipped |= OriginalRep.BudgetExhausted;
+      Complete &= !OriginalRep.BudgetExhausted;
       if (Original != R && !Budget.exhausted()) {
         SolveReport Refined;
         Original = refineCandidate(Ctx, Original, Opts, Order, Solved, Budget,
@@ -536,6 +556,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
         if (Refined.Evidence == MBAEvidence::Samples)
           OriginalRep.Evidence = MBAEvidence::Samples;
         Skipped |= Refined.BudgetExhausted;
+        Complete &= !Refined.BudgetExhausted;
       }
       if (Original != R &&
           readingCost(Ctx, Original) < readingCost(Ctx, Rebuilt)) {
@@ -550,11 +571,12 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
         AnySampled |= Refined.Evidence == MBAEvidence::Samples;
         AnySampled |= OriginalRep.Evidence == MBAEvidence::Samples;
         Skipped |= Refined.BudgetExhausted;
+        Complete &= !Refined.BudgetExhausted;
       }
     } else {
       Skipped = true;
     }
-    Solved[Index] = Rebuilt;
+    Remember(Index, Rebuilt, Complete);
   }
 
   Result.Work = Budget.used();
