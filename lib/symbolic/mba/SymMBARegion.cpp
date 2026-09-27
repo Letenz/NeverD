@@ -277,10 +277,18 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     return E;
 
   llvm::SmallVector<SymRef, 16> Parts;
+  llvm::SmallVector<size_t, 4> OffsetGroups;
+  const bool HasOffset = Constants.size() == 1 &&
+                         Ctx.isConst(Constants.front()) &&
+                         !Ctx.isConstZero(Constants.front());
   unsigned Widest = 0;
   bool AnySolved = false;
   for (const auto &Group : Groups) {
     llvm::ArrayRef<SymRef> GroupTerms = Group.second;
+    // A shared offset can expose a complement in one nontrivial region.
+    // Keep a fixed number of alternatives, not every partition of that offset.
+    if (HasOffset && GroupTerms.size() > 1 && OffsetGroups.size() < 4)
+      OffsetGroups.push_back(Parts.size());
     SymRef Part =
         GroupTerms.size() == 1 ? GroupTerms[0] : Ctx.mkAdd(GroupTerms);
     SolveReport PartRep;
@@ -292,13 +300,53 @@ SymRef solveIndependentTerms(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     }
     Parts.push_back(Solved);
   }
-  if (!AnySolved)
+  if (!AnySolved && OffsetGroups.empty())
     return E;
 
   Parts.append(Constants.begin(), Constants.end());
-  SymRef Rebuilt = Parts.size() == 1 ? Parts[0] : Ctx.mkAdd(Parts);
-  if (!Abstract->Hidden.empty())
-    Rebuilt = Ctx.substitute(Rebuilt, Abstract->Hidden);
+  auto restoreParts = [&]() {
+    SymRef R = Ctx.mkAdd(Parts);
+    return Abstract->Hidden.empty() ? R : Ctx.substitute(R, Abstract->Hidden);
+  };
+  SymRef Rebuilt = AnySolved ? restoreParts() : E;
+  if (!OffsetGroups.empty() && !Budget.exhausted()) {
+    const size_t InputCost = readingCost(Ctx, E);
+    size_t BestCost = readingCost(Ctx, Rebuilt);
+    const size_t RestoreWork = Ctx.dagSize(E);
+    // Bound the temporary sum edges separately from the solver's tables.
+    const bool Fits = Parts.size() <= Opts.MaxTableBytes / (2 * sizeof(SymRef));
+    if (!Fits)
+      Rep.BudgetExhausted = true;
+    for (size_t I : OffsetGroups) {
+      if (!Fits || Budget.exhausted())
+        break;
+      if (!Budget.consume(Parts.size()) || !Budget.consume(RestoreWork)) {
+        Rep.BudgetExhausted = true;
+        break;
+      }
+      SymRef Previous = Parts[I];
+      SymRef WithOffset = Ctx.mkAdd(Previous, Constants.front());
+      SolveReport OffsetRep;
+      SymRef Solved = solveRegion(Ctx, WithOffset, Opts, Budget, OffsetRep);
+      Rep.BudgetExhausted |= OffsetRep.BudgetExhausted;
+      if (Solved == WithOffset)
+        continue;
+
+      // The offset belongs to this group exactly once. Every other group
+      // keeps its independently proved value, including on later attempts.
+      Parts[I] = Solved;
+      Parts.pop_back();
+      SymRef Candidate = restoreParts();
+      Parts.push_back(Constants.front());
+      Parts[I] = Previous;
+      size_t Cost = readingCost(Ctx, Candidate);
+      if (Cost < InputCost && Cost < BestCost) {
+        Rebuilt = Candidate;
+        BestCost = Cost;
+        Widest = std::max(Widest, OffsetRep.NumAtoms);
+      }
+    }
+  }
   if (Rebuilt == E)
     return E;
 
