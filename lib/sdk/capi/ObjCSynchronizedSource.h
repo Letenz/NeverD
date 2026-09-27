@@ -268,12 +268,128 @@ proveObjCSynchronizedRegisterReceiverCleanup(const BinaryImage &Image,
       UnprotectedReleases, ReceiverFromRetainResult};
 }
 
+// The token mutators skip the lock entirely for a null argument. On the
+// non-null path clang keeps that argument in x19, the retained lock in x20,
+// and the receiver in x21. Only the exact forward skip and one protected,
+// straight-line mutation may use this cleanup source guard.
+inline std::optional<ObjCSynchronizedSourceProof>
+proveObjCSynchronizedBranchedLocalReceiverCleanup(const BinaryImage &Image,
+                                                  const HighFunc &Function) {
+  const auto Region = objcSynchronizedSourceRegion(Image, Function);
+  if (!Region || Function.Entry > InvalidVA - 0xbc ||
+      Region->Begin != Function.Entry + 0x4c ||
+      Region->End != Function.Entry + 0x68 ||
+      Region->Landing != Function.Entry + 0xa8)
+    return std::nullopt;
+  const va_t Entry = Function.Entry;
+  const va_t End = Region->End;
+  const va_t Landing = Region->Landing;
+  const auto Word = [&](va_t Address) {
+    return objcSynchronizedWord(Image, Address);
+  };
+  const auto HasCall = [&](va_t Address, llvm::StringRef Name) {
+    return objcSynchronizedCallIs(Image, Address, Name);
+  };
+  const auto Tail = Word(End + 60);
+  if (!Tail || (*Tail & 0xfc000000U) != 0x14000000U)
+    return std::nullopt;
+  const int64_t TailDisplacement =
+      static_cast<int64_t>(static_cast<int32_t>(*Tail << 6) >> 6) * 4;
+  const va_t ReleaseTarget = objcSynchronizedBranchTarget(Image, End + 4);
+  if (!ReleaseTarget ||
+      (TailDisplacement >= 0
+           ? End + 60 > InvalidVA - static_cast<uint64_t>(TailDisplacement) ||
+                 End + 60 + static_cast<uint64_t>(TailDisplacement) !=
+                     ReleaseTarget
+           : End + 60 < static_cast<uint64_t>(-TailDisplacement) ||
+                 End + 60 - static_cast<uint64_t>(-TailDisplacement) !=
+                     ReleaseTarget))
+    return std::nullopt;
+  if (Word(Entry) != 0xa9bd57f6U || Word(Entry + 4) != 0xa9014ff4U ||
+      Word(Entry + 8) != 0xa9027bfdU || Word(Entry + 12) != 0x910083fdU ||
+      Word(Entry + 16) != 0xaa0203f3U || // save argument in x19
+      Word(Entry + 20) != 0xaa0003f5U || // save objc_self in x21
+      Word(Entry + 24) != 0xaa0203e0U ||
+      !HasCall(Entry + 0x1c, "_objc_retain") ||
+      Word(Entry + 0x30) != 0xb40002b3U || // cbz x19, after unlock
+      Word(Entry + 0x34) != 0xaa1503e0U ||
+      !HasCall(Entry + 0x38, "_objc_msgSend$runningTokens") ||
+      Word(Entry + 0x3c) != 0xaa1d03fdU ||
+      !HasCall(Entry + 0x40, "_objc_retainAutoreleasedReturnValue") ||
+      Word(Entry + 0x44) != 0xaa0003f4U || // retained lock in x20
+      !HasCall(Entry + 0x48, "_objc_sync_enter") ||
+      Word(Entry + 0x4c) != 0xaa1503e0U ||
+      !HasCall(Entry + 0x50, "_objc_msgSend$runningTokens") ||
+      !HasCall(Entry + 0x58, "_objc_retainAutoreleasedReturnValue") ||
+      Word(Entry + 0x5c) != 0xaa0003f5U || // retained mutation receiver
+      Word(Entry + 0x60) != 0xaa1303e2U ||
+      (!HasCall(Entry + 0x64, "_objc_msgSend$addObject:") &&
+       !HasCall(Entry + 0x64, "_objc_msgSend$removeObject:")) ||
+      Word(End) != 0xaa1503e0U || !HasCall(End + 4, "_objc_release") ||
+      Word(End + 8) != 0xaa1403e0U || !HasCall(End + 12, "_objc_sync_exit") ||
+      Word(End + 16) != 0xaa1403e0U || !HasCall(End + 20, "_objc_release") ||
+      Word(End + 24) != 0x14000005U || // normal path joins after skip
+      Word(End + 44) != 0xaa1303e0U || Word(End + 48) != 0xa9427bfdU ||
+      Word(End + 52) != 0xa9414ff4U || Word(End + 56) != 0xa8c357f6U ||
+      Word(Landing) != 0xaa0003f3U || // preserve exception in x19
+      Word(Landing + 4) != 0xaa1403e0U ||
+      !HasCall(Landing + 8, "_objc_sync_exit") ||
+      Word(Landing + 12) != 0xaa1303e0U ||
+      !HasCall(Landing + 16, "__Unwind_Resume"))
+    return std::nullopt;
+
+  Decoder Decoder;
+  if (!Decoder.init(Arch::AArch64))
+    return std::nullopt;
+  for (va_t Address = Entry; Address < End + 44; Address += 4) {
+    const uint8_t *Bytes = Image.readVA(Address, 4);
+    DecodedInsn Instruction{};
+    if (!Bytes || Decoder.decodeOne(Bytes, 4, Address, Instruction) != 4 ||
+        !Instruction.Raw)
+      return std::nullopt;
+    cs_regs Reads{}, Writes{};
+    uint8_t ReadCount = 0, WriteCount = 0;
+    if (cs_regs_access(Decoder.getHandle(), Instruction.Raw, Reads, &ReadCount,
+                       Writes, &WriteCount) != CS_ERR_OK)
+      return std::nullopt;
+    for (uint8_t I = 0; I < WriteCount; ++I) {
+      if ((Address > Entry + 16 &&
+           (Writes[I] == ARM64_REG_X19 || Writes[I] == ARM64_REG_W19)) ||
+          (((Address > Entry + 20 && Address < Entry + 0x4c) ||
+            (Address > Entry + 0x5c)) &&
+           (Writes[I] == ARM64_REG_X21 || Writes[I] == ARM64_REG_W21)) ||
+          (Address > Entry + 0x44 &&
+           (Writes[I] == ARM64_REG_X20 || Writes[I] == ARM64_REG_W20)))
+        return std::nullopt;
+    }
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_RET))
+      return std::nullopt;
+    if (cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_JUMP) &&
+        Address != Entry + 0x30 && Address != End + 24)
+      return std::nullopt;
+    if (Address >= End + 28 &&
+        cs_insn_group(Decoder.getHandle(), Instruction.Raw, CS_GRP_CALL))
+      return std::nullopt;
+  }
+  return ObjCSynchronizedSourceProof{
+      Entry + 0x48,
+      End + 4,
+      End + 12,
+      Landing,
+      objcSynchronizedBranchTarget(Image, Landing + 16),
+      1,
+      true};
+}
+
 inline std::optional<ObjCSynchronizedSourceProof>
 proveObjCSynchronizedReceiverCleanup(const BinaryImage &Image,
                                      const HighFunc &Function) {
   if (auto Proof = proveObjCSynchronizedStackReceiverCleanup(Image, Function))
     return Proof;
-  return proveObjCSynchronizedRegisterReceiverCleanup(Image, Function);
+  if (auto Proof =
+          proveObjCSynchronizedRegisterReceiverCleanup(Image, Function))
+    return Proof;
+  return proveObjCSynchronizedBranchedLocalReceiverCleanup(Image, Function);
 }
 
 // The proved pad is an exceptional entry, not a normal source path. A full
