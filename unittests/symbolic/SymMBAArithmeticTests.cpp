@@ -116,7 +116,7 @@ TEST(SymMBAArithmetic, NormalizesDeepArithmeticWithoutRecursiveTraversal) {
   detail::WorkBudget Budget(Opts.MaxWork);
   detail::SolveReport Report;
   SymRef R = detail::solveArithmetic(Ctx, E, Opts, Budget, Report);
-  EXPECT_EQ(R, Ctx.mkConst(llvm::APInt(32, uint64_t(-2))));
+  EXPECT_EQ(R, Ctx.mkConst(-llvm::APInt(32, 2)));
   EXPECT_EQ(Report.Evidence, MBAEvidence::Derivation);
   EXPECT_FALSE(Report.BudgetExhausted);
 }
