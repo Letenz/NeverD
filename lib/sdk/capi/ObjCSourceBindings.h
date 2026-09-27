@@ -3398,6 +3398,7 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
     return true;
   };
   std::function<ExprPtr(const ExprPtr &, unsigned, bool, bool, bool)> Copy;
+  const std::map<va_t, const HighFunc *> EmptyFunctions;
   Copy = [&](const ExprPtr &Original, unsigned Depth, bool NumericOperand,
              bool AddressContext, bool MemoryAddress) -> ExprPtr {
     if (!Original)
@@ -4529,6 +4530,40 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
         Operand = Copy(Scalar, Depth + 1, true, false, false);
         continue;
+      }
+      // A selector stub and an exact receiver declaration authenticate an
+      // Objective-C integer parameter. Preserve a proven scalar immediate
+      // even when its bits coincide with an unrelated image address. Unknown
+      // or address-derived constants still require a relocation binding.
+      if (Operand && Operand->Kind == ExprKind::Const &&
+          Operand->ConstProvenance == ConstantAddressProvenance::Scalar &&
+          Operand->AddressOwnerVA == InvalidVA && Operand->Type &&
+          Operand->Type->Kind == NdTypeKind::Int &&
+          Image.getSectionFor(Operand->ConstVal) && !OperandAddress &&
+          !MemoryAddress && Expression->Kind == ExprKind::Call &&
+          Expression->SourceCallHint && !Expression->IsIndirectCall) {
+        const auto &Binding = *Expression->SourceCallHint;
+        const auto &Signature = Binding.Signature;
+        if (Binding.CallKind == SourceCallTypeHint::Kind::ObjCMessage &&
+            Binding.Receiver &&
+            Signature.Origin ==
+                SourceFunctionTypeHint::OriginKind::ObjCRuntime &&
+            Signature.HasExplicitABI &&
+            Expression->CallAddr == Binding.TargetAddress &&
+            Expression->Operands.size() == Signature.Parameters.size() &&
+            Index < Signature.Parameters.size() &&
+            Signature.Parameters[Index].Type &&
+            Signature.Parameters[Index].Type->Kind == NdTypeKind::Int &&
+            Signature.Parameters[Index].Type->Size == Operand->Type->Size &&
+            objcSelectorStubMatches(Image, Binding.TargetAddress,
+                                    Binding.SelectorReferenceAddress,
+                                    Binding.Selector) &&
+            objcSourceCallBound(*Expression, Image,
+                                Functions ? *Functions : EmptyFunctions,
+                                ProfileStorage, nullptr, &Function)) {
+          Operand = Copy(Operand, Depth + 1, true, false, false);
+          continue;
+        }
       }
       const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
                             Expression->Kind == ExprKind::UnaryOp) &&

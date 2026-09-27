@@ -385,3 +385,5 @@ Direct references to exported Swift struct and enum metadata also use their exac
 The ARM64 Swift `UIColor.init(_ value: Int)` extension gets a source ABI only after its complete mangled allocator shape, unique function symbol, and native pipeline audit agree. Its integer color argument remains numeric when a folded literal happens to fall inside an image section. Address-provenance values and inferred native integer carriers still require ordinary relocation proof.
 
 HighIR preserves scalar provenance across a symbolic fold only when every contributing literal, including those reached through visible local definitions, is already a proven scalar. Unknown or address-derived inputs do not gain numeric provenance.
+
+Objective-C selector-stub calls also retain an address-shaped scalar as an integer argument only when the exact receiver declaration and selector stub revalidate, the parameter has the matching integer width, and the literal has scalar provenance without an address owner. Unknown or address-derived values still require relocation evidence.

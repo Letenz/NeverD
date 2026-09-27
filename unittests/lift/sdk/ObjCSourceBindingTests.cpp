@@ -558,6 +558,128 @@ TEST(ObjCSourceBindings,
   }
 }
 
+TEST(ObjCSourceBindings,
+     BoundIntegerMessagePreservesOnlyProvenScalarCollision) {
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Format = BinaryFormat::MachO;
+  Image.Bits = Bitness::Bits64;
+  Segment Mapping;
+  Mapping.VA = 0x1000;
+  Mapping.Size = Mapping.FileSz = 0x2000;
+  Mapping.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Mapping.Data.resize(0x2000);
+  Image.Segments.push_back(Mapping);
+  Section Text;
+  Text.Name = "__objc_stubs";
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x1000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Image.Sections.push_back(Text);
+  Section Data;
+  Data.VA = 0x2000;
+  Data.FileOff = 0x1000;
+  Data.Size = Data.FileSz = 0x1000;
+  Data.Flags = SegmentFlags::Readable;
+  Image.Sections.push_back(Data);
+  Image.ImportPtrSlots[0x2180] = "_objc_msgSend";
+  Image.ObjCSourceReferences[0x2100] = {ObjCSourceReference::Kind::Selector,
+                                        0x2100,
+                                        8,
+                                        "setAnimationOptions:",
+                                        {}};
+  ObjCClass Class;
+  Class.Name = "Transition";
+  Class.RootClass = true;
+  Class.InheritanceStatus = "root";
+  Image.ObjCClasses.push_back(Class);
+  ObjCMethod Method;
+  Method.ClassName = Class.Name;
+  Method.Selector = "setAnimationOptions:";
+  Method.Implementation = 0x1200;
+  Method.TypeEncoding = "v24@0:8Q16";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  Image.ObjCMethods.push_back(Method);
+  const uint32_t Stub[] = {0xb0000001, 0xf9408021, 0xb0000010, 0xf940c210,
+                           0xd61f0200};
+  for (size_t I = 0; I < 5; ++I)
+    llvm::support::endian::write32le(
+        Image.Segments[0].Data.data() + 0x100 + I * 4, Stub[I]);
+  const auto Receiver =
+      objcMethodReceiverTypeHint(Image, Method.Implementation);
+  ASSERT_TRUE(Receiver);
+  const auto Declaration =
+      objcReceiverSourceTypeHint(Image, Method.Selector, *Receiver);
+  ASSERT_TRUE(Declaration.Signature);
+  ASSERT_TRUE(objcSelectorStubMatches(Image, 0x1100, 0x2100, Method.Selector));
+
+  SourceCallTypeHint Binding;
+  Binding.CallKind = SourceCallTypeHint::Kind::ObjCMessage;
+  Binding.TargetAddress = 0x1100;
+  Binding.TargetName = "objc_msgSend";
+  Binding.Selector = Method.Selector;
+  Binding.SelectorReferenceAddress = 0x2100;
+  Binding.Receiver = *Receiver;
+  Binding.Signature = *Declaration.Signature;
+  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Current = Binding;
+    auto Literal =
+        HighExpr::makeConst(0x1040, 8, ConstantAddressProvenance::Scalar);
+    auto Call = HighExpr::makeCall(
+        "objc_msgSend", 0x1100,
+        {HighExpr::makeConst(0, 8), HighExpr::makeConst(0, 8), Literal});
+    Call->Type = NdType::makeVoid();
+    switch (Mutation) {
+    case 1:
+      Literal->ConstProvenance = ConstantAddressProvenance::Unknown;
+      break;
+    case 2:
+      Literal->ConstProvenance = ConstantAddressProvenance::DataAddress;
+      break;
+    case 3:
+      Literal->AddressOwnerVA = 0x1000;
+      break;
+    case 4:
+      Current.Signature.Parameters[2].Type =
+          NdType::makePtr(NdType::makeVoid());
+      break;
+    case 5:
+      Current.TargetAddress = Call->CallAddr = 0x1104;
+      break;
+    case 6:
+      Current.Selector = "other:";
+      break;
+    case 7:
+      Current.Signature.Origin =
+          SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+      break;
+    case 8:
+      Call->IsIndirectCall = true;
+      break;
+    case 9:
+      Literal->Type = NdType::makeInt(4, false);
+      break;
+    case 10:
+      Current.Receiver.reset();
+      break;
+    }
+    Call->SourceCallHint = std::make_shared<SourceCallTypeHint>(Current);
+    HighFunc Function;
+    Function.Entry = Method.Implementation;
+    Function.ReturnType = NdType::makeVoid();
+    HighStmt Statement;
+    Statement.Kind = StmtKind::ExprStmt;
+    Statement.Val = Call;
+    Function.Body.push_back(Statement);
+    const auto Bound = bindObjCSourceReferences(Function, Image);
+    EXPECT_EQ(Bound.Limitation.empty(), Mutation == 0) << Bound.Limitation;
+    EXPECT_EQ(Bound.Function.Body[0].Val->Operands[2]->Kind, ExprKind::Const);
+  }
+}
+
 struct SwiftTypeMetadataFixture {
   BinaryImage Image;
   HighFunc Function;
