@@ -45,12 +45,16 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
         std::string("Windows SEH establisher frame: ") + Why);
   };
   const ExceptionFunction &EH = *Low.ExceptionMetadata;
+  const bool UnwindV1 =
+      EH.Encoding == ExceptionEncoding::X64UnwindV1 && EH.UnwindVersion == 1;
+  const bool UnwindV2 =
+      EH.Encoding == ExceptionEncoding::X64UnwindV2 && EH.UnwindVersion == 2;
   if (EH.ParseStatus != ExceptionParseStatus::Complete ||
-      EH.Encoding != ExceptionEncoding::X64UnwindV1 || EH.UnwindVersion != 1 ||
-      EH.Kind != RuntimeFunctionKind::Primary || EH.ChainedPrimaryRange ||
-      EH.ChainedUnwindInfoRVA || EH.PrimaryFunctionIndex ||
-      (EH.UnwindFlags & ~3u) || EH.FrameRegister || EH.FrameOffset ||
-      EH.CodeRange.Begin != Low.Entry || !EH.CodeRange.contains(Handler))
+      (!UnwindV1 && !UnwindV2) || EH.Kind != RuntimeFunctionKind::Primary ||
+      EH.ChainedPrimaryRange || EH.ChainedUnwindInfoRVA ||
+      EH.PrimaryFunctionIndex || (EH.UnwindFlags & ~3u) || EH.FrameRegister ||
+      EH.FrameOffset || EH.CodeRange.Begin != Low.Entry ||
+      !EH.CodeRange.contains(Handler))
     Fail("unsupported unwind or frame-register contract");
   if (Low.Blocks.empty() || Low.Blocks.front().StartAddr != Low.Entry ||
       EH.PrologueSize > EH.CodeRange.End - Low.Entry)
@@ -127,6 +131,11 @@ uint64_t proveSEHEstablisherFrame(const LowFunc &Low, const MedFunc &Med,
   uint32_t PreviousOffset = EH.PrologueSize;
   uint64_t FrameBytes = 0;
   for (const UnwindOperation &Op : EH.UnwindOperations) {
+    // A version 2 epilog descriptor locates an epilog for the unwinder. It
+    // is not a prologue action and its offset is not a prologue position;
+    // the decoded protected blocks below still prove SP stable.
+    if (UnwindV2 && Op.Kind == UnwindOperationKind::Epilog)
+      continue;
     if (!Op.CodeOffset || Op.CodeOffset > PreviousOffset)
       Fail("invalid unwind instruction offset");
     PreviousOffset = Op.CodeOffset;

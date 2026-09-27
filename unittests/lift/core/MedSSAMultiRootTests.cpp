@@ -361,6 +361,56 @@ TEST(MedSEHEstablisherFrame, NormalHandlerAndJoinUseTheSameLocalSlot) {
   EXPECT_EQ(Seen, Expected);
 }
 
+TEST(MedSEHEstablisherFrame, AcceptsVersion2EpilogDescriptors) {
+  // Version 2 unwind info lists epilog descriptors before the prologue codes.
+  // They locate epilogs for the unwinder and do not move the frame.
+  auto Img = makeFixedSEHFrameImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto &EH = *Low.ExceptionMetadata;
+  EH.Encoding = ExceptionEncoding::X64UnwindV2;
+  EH.UnwindVersion = 2;
+  UnwindOperation Epilog;
+  Epilog.Kind = UnwindOperationKind::Epilog;
+  Epilog.CodeOffset = 13;
+  Epilog.StackOffset = 13;
+  EH.UnwindOperations.insert(EH.UnwindOperations.begin(), Epilog);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-establisher-v2"));
+  bool SawHandlerLoad = false;
+  for (const MedBlock &B : Med.Blocks)
+    for (const MedOp &Op : B.Ops)
+      if (Op.Opcode == NdOp::LOAD && Op.Addr == Img.Entry + 0x20) {
+        ASSERT_GT(Op.NumInputs, 0u);
+        EXPECT_EQ(entrySPOffset(Med, Op.Inputs[0]), -100);
+        SawHandlerLoad = true;
+      }
+  EXPECT_TRUE(SawHandlerLoad);
+}
+
+TEST(MedSEHEstablisherFrame, RejectsEpilogCodesOutsideVersion2) {
+  for (unsigned Case = 0; Case != 2; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Img = makeFixedSEHFrameImage();
+    auto Low = decodeFixedSEHFrame(Img);
+    auto &EH = *Low.ExceptionMetadata;
+    UnwindOperation Extra;
+    Extra.CodeOffset = 13;
+    if (Case == 0) {
+      // Version 1 has no epilog descriptors.
+      Extra.Kind = UnwindOperationKind::Epilog;
+    } else {
+      // A version 2 spare code has no certified SP effect.
+      EH.Encoding = ExceptionEncoding::X64UnwindV2;
+      EH.UnwindVersion = 2;
+      Extra.Kind = UnwindOperationKind::Spare;
+    }
+    EH.UnwindOperations.insert(EH.UnwindOperations.begin(), Extra);
+    EXPECT_THROW(
+        LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+        LowToMedConversionError);
+  }
+}
+
 TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   auto Img = makeFixedSEHFrameImage();
   auto Low = decodeFixedSEHFrame(Img);
