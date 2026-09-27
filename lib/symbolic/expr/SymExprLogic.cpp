@@ -315,10 +315,17 @@ SymRef SymContext::mkNot(SymRef A) {
     size_t Added = 0;
     size_t Removed = 1; // The outer complement disappears.
     for (SymRef Term : Terms.drop_front(HasConstant ? 1 : 0)) {
-      if (op(Term) != SymOp::Mul) {
+      if (isVar(Term)) {
         ++Added;
-      } else if (numOperands(Term) == 2 && isConstOnes(operand(Term, 0))) {
-        ++Removed;
+      } else if (op(Term) == SymOp::Mul && numOperands(Term) == 2 &&
+                 isConst(operand(Term, 0)) && isVar(operand(Term, 1))) {
+        if (isConstOnes(operand(Term, 0)))
+          ++Removed;
+      } else {
+        // Compound inputs need their complement boundary intact: rewriting
+        // one use can hide its relation to the same source in a product or
+        // bitwise identity, even when this local spelling becomes shorter.
+        return intern(SymOp::Not, W, {A}, 0);
       }
     }
     if (Offset.isZero() && Terms.size() == 2 && HasConstant)

@@ -16,15 +16,9 @@ using namespace neverd::symbolic;
 
 TEST(SymExprComplement, RecoversShorterAffineWordSpellings) {
   const std::pair<const char *, const char *> Cases[] = {
-      {"~(-1-x-y)", "x+y"},
-      {"~(-1+2*x-4*y)", "-2*x+4*y"},
-      {"~(-1-x+y)", "x-y"},
-      {"~(-1+x)", "-x"},
-      {"~(9-x-y)", "-10+x+y"},
-      {"~(-x-y)", "-1+x+y"},
-      {"~(-1-2*x*y)", "2*x*y"},
-      {"~(-1-x*(y|z))", "x*(y|z)"},
-      {"~(-1-(x/y)-(z^w))", "x/y+(z^w)"}};
+      {"~(-1-x-y)", "x+y"},    {"~(-1+2*x-4*y)", "-2*x+4*y"},
+      {"~(-1-x+y)", "x-y"},    {"~(-1+x)", "-x"},
+      {"~(9-x-y)", "-10+x+y"}, {"~(-x-y)", "-1+x+y"}};
   for (unsigned Width : {3u, 8u, 32u, 64u, 128u, 257u}) {
     for (auto [Input, Expected] : Cases) {
       SCOPED_TRACE(Width);
@@ -94,7 +88,14 @@ TEST(SymExprComplement, PreservesSharedSourcesAndWidthAdapters) {
   SymRef Source = Ctx.mkXor(X, Y);
   SymRef Sum = Ctx.mkAdd({Ctx.mkOnes(128), Ctx.mkNeg(Source), Ctx.mkNeg(X)});
   SymRef Wide = Ctx.mkNot(Sum);
-  EXPECT_EQ(Wide, Ctx.mkAdd(Source, X));
+  EXPECT_EQ(Ctx.op(Wide), SymOp::Not);
+  EXPECT_EQ(Ctx.operand(Wide, 0), Sum);
+  EXPECT_EQ(Ctx.mkNot(Wide), Sum);
+  for (uint64_t A : {uint64_t(0), uint64_t(1), UINT64_MAX}) {
+    std::array<llvm::APInt, 2> Values{llvm::APInt(128, A),
+                                      llvm::APInt(128, ~A)};
+    EXPECT_EQ(Ctx.eval(Wide, Values), ~Ctx.eval(Sum, Values));
+  }
   EXPECT_EQ(Ctx.op(Source), SymOp::Xor);
   SymRef Narrow = Ctx.mkExtract(Sum, 0, 8);
   EXPECT_EQ(Ctx.op(Ctx.mkNot(Narrow)), SymOp::Not);
@@ -108,4 +109,31 @@ TEST(SymExprComplement, KeepsDeepPositiveTailsLinearInStorage) {
     Tail = Ctx.mkNot(Ctx.mkAdd(Tail, One));
   EXPECT_LE(Ctx.numNodes() - Before, 8192u);
   EXPECT_EQ(Ctx.op(Tail), SymOp::Not);
+}
+
+TEST(SymExprComplement, RetainsOpaqueAndNonlinearSourceBoundaries) {
+  for (unsigned Width : {3u, 8u, 32u, 64u, 128u, 257u})
+    for (const char *Text :
+         {"-1-2*x*y", "-1-x*(y|z)", "-1-(x/y)-(z^w)", "y*y-y", "y*y*y-3*y"}) {
+      SCOPED_TRACE(Width);
+      SCOPED_TRACE(Text);
+      SymContext Ctx;
+      auto Input = parseSymExpr(Ctx, Text, Width);
+      ASSERT_TRUE(Input.ok());
+      ASSERT_EQ(Ctx.op(Input.Root), SymOp::Add);
+      const size_t Before = Ctx.numNodes();
+      SymRef Result = Ctx.mkNot(Input.Root);
+      EXPECT_EQ(Ctx.op(Result), SymOp::Not);
+      EXPECT_EQ(Ctx.operand(Result, 0), Input.Root);
+      EXPECT_EQ(Ctx.numNodes(), Before + 1);
+      EXPECT_EQ(Ctx.mkNot(Result), Input.Root);
+      for (uint64_t A : {uint64_t(0), uint64_t(1), UINT64_MAX}) {
+        std::array<llvm::APInt, 4> Values{
+            llvm::APInt(64, A).zextOrTrunc(Width),
+            llvm::APInt(64, ~A).zextOrTrunc(Width),
+            llvm::APInt(64, A / 2).zextOrTrunc(Width),
+            llvm::APInt(64, A ^ 3).zextOrTrunc(Width)};
+        EXPECT_EQ(Ctx.eval(Result, Values), ~Ctx.eval(Input.Root, Values));
+      }
+    }
 }
