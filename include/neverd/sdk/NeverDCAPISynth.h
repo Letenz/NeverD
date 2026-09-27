@@ -133,6 +133,7 @@ typedef struct neverd_synthesize_result {
   const char *input;
   const char *output;
   int changed;
+  /// Expanded spelling nodes; equal sizes can hide fewer printed operations.
   size_t cost_before;
   size_t cost_after;
   unsigned inputs;

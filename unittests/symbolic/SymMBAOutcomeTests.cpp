@@ -464,6 +464,69 @@ TEST(SymMBA, RetainsAnIndependentIdentityWhenItsAffineRelationIsUnused) {
   }
 }
 
+TEST(SymMBA, KeepsBitwiseIdentitiesBeforeAffineRebinding) {
+  MBAOptions Options;
+  Options.VerifySamples = 0;
+  for (unsigned Width : {3u, 8u, 32u, 64u, 128u, 257u})
+    for (unsigned Scale : {1u, 3u, 6u})
+      for (unsigned Offset : {0u, 1u, 7u})
+        for (bool Deep : {false, true}) {
+          SCOPED_TRACE(Width);
+          SCOPED_TRACE(Scale);
+          SCOPED_TRACE(Offset);
+          SCOPED_TRACE(Deep);
+          SymContext Ctx;
+          SymRef X = Ctx.mkVar("x", Width);
+          SymRef P = Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(Width, Scale), X),
+                               Ctx.mkConst(Width, Offset));
+          // Both identities hold for independent X and P. Replacing only the
+          // arithmetic X by an inverse relation must not hide those readings.
+          for (auto [Input, Expected] :
+               {std::pair{Ctx.mkAdd(X, Ctx.mkAnd(Ctx.mkNot(X), P)),
+                          Ctx.mkOr(X, P)},
+                std::pair{Ctx.mkSub(X, Ctx.mkAnd(X, Ctx.mkNot(P))),
+                          Ctx.mkAnd(X, P)}}) {
+            MBAResult R = Deep ? simplifyMBADeep(Ctx, Input, Options)
+                               : simplifyMBA(Ctx, Input, Options);
+            EXPECT_LE(Ctx.readability(R.Expr), Ctx.readability(Expected))
+                << Ctx.toString(Input) << " -> " << Ctx.toString(R.Expr);
+            EXPECT_LE(R.Work, Options.MaxWork);
+            if (R.Changed)
+              EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+          }
+        }
+}
+
+TEST(SymMBA, IndependentReadingKeepsRelatedNeighborsExactAtSmallBudgets) {
+  for (unsigned Scale : {1u, 3u, 6u})
+    for (size_t Work : {size_t(0), size_t(64), MBAOptions{}.MaxWork})
+      for (bool Deep : {false, true}) {
+        SCOPED_TRACE(Scale);
+        SCOPED_TRACE(Work);
+        SCOPED_TRACE(Deep);
+        SymContext Ctx;
+        SymRef X = Ctx.mkVar("x", 3);
+        SymRef P = Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(3, Scale), X), Ctx.mkOne(3));
+        MBAOptions Options;
+        Options.VerifySamples = 0;
+        Options.MaxWork = Work;
+        for (SymRef Input : {Ctx.mkAdd(X, Ctx.mkAnd(Ctx.mkNot(X), P)),
+                             Ctx.mkAdd(X, Ctx.mkOr(Ctx.mkNot(X), P)),
+                             Ctx.mkSub(X, Ctx.mkAnd(X, Ctx.mkNot(P)))}) {
+          MBAResult R = Deep ? simplifyMBADeep(Ctx, Input, Options)
+                             : simplifyMBA(Ctx, Input, Options);
+          EXPECT_LE(R.Work, Work);
+          EXPECT_LE(Ctx.readability(R.Expr), Ctx.readability(Input));
+          SymEvalPlan Before(Ctx, Input), After(Ctx, R.Expr);
+          std::vector<uint64_t> Values(Ctx.numVars(), 0);
+          for (unsigned Value = 0; Value != 8; ++Value) {
+            Values[Ctx.varId(X)] = Value;
+            EXPECT_EQ(Before.evalU64(Values), After.evalU64(Values));
+          }
+        }
+      }
+}
+
 TEST(SymMBA, AffineRecoveryBudgetRefusalIsAtomicAndRetryable) {
   for (unsigned Width : {4u, 64u, 256u}) {
     SCOPED_TRACE(Width);
