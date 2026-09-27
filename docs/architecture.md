@@ -595,7 +595,9 @@ storage object.
 A compiler-emitted zero-argument Swift lazy-global addressor is rebuilt only
 when the exact `vau`/`vpZ`/`_Wz`/`_WZ` symbol family agrees with one canonical
 load, completion test, authenticated `swift_once` call, and the same storage
-return on both paths. Its initializer must ignore the incidental context and
+return on both paths. The load may be a separate statement or be inlined into
+the test; both forms must preserve the same single predicate read. Its
+initializer must ignore the incidental context and
 close as ordinary source. Projection creates a fresh shared once token and
 value cell; no predicate, value, or initializer address from the loaded image
 is retained. Its zero-argument source callee ABI applies only at call sites;

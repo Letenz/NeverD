@@ -259,6 +259,11 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
         continue;
       auto BlockBinding = bindObjCBlockSourceReferences(*Func, BlockSource,
                                                         BlockPlan, Functions);
+      if (const auto Cleanup =
+              proveObjCSynchronizedReceiverCleanup(S->Img,
+                                                   BlockBinding.Function))
+        (void)omitProvenObjCSynchronizedLandingPad(BlockBinding.Function,
+                                                   *Cleanup);
       auto Inputs =
           snapshotObjCEntryInputs(BlockBinding.Function, S->Img, Functions);
       auto OnceBinding = bindSwiftOnceSourceReferences(
@@ -843,7 +848,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       SourceOS << BlockHelpers << IdentityHelpers << StorageHelpers;
       const auto CleanupSource =
           Emitted && SynchronizedCleanup
-              ? addObjCSynchronizedReceiverCleanup(Source)
+              ? addObjCSynchronizedReceiverCleanup(Source, *SynchronizedCleanup)
               : std::optional<std::string>{};
       if (CleanupSource)
         Source = *CleanupSource;
