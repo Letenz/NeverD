@@ -315,6 +315,12 @@ Legacy cancellation tests retain the API continuation across cancellation, neste
 
 ## Test layout
 
+For optional independent bitvector oracles, configure `NEVERD_ENABLE_Z3=ON`
+and run `NeverDSolverTests`; see [solver validation](solver.md) for the
+cross-backend benchmark and replayable query export. Validate an OFF build too
+when changing this boundary, so the default dependency-free backend remains
+usable and explicit unavailable-backend requests are rejected.
+
 `add_neverd_unittest` creates one GoogleTest executable and assigns every
 discovered case a CTest label equal to that executable's target name.
 

@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## Z3
+
+The optional solver backend (`NEVERD_ENABLE_Z3`) uses Z3 under the MIT license.
+The default FetchContent provider builds the unmodified 4.13.3 sources at
+revision `54d30f26f72ce62f5dcb5a5258f632f84858714f`; a system-library provider is
+also available. The original copyright and license are preserved in
+[LICENSES/Z3.txt](LICENSES/Z3.txt) and staged under `licenses/z3` beside enabled
+binaries and in the SDK. See the [upstream source](https://github.com/Z3Prover/z3/tree/54d30f26f72ce62f5dcb5a5258f632f84858714f).
+
 ## Unicorn Engine
 
 The optional Windows driver emulator (`NEVERD_ENABLE_DRIVER_EMULATION`) links

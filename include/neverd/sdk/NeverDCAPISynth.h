@@ -51,6 +51,12 @@ enum neverd_proof_status {
 };
 typedef uint32_t neverd_proof_status_t;
 
+enum neverd_solver_backend { NEVERD_SOLVER_BUILTIN = 0, NEVERD_SOLVER_Z3 = 1 };
+typedef uint64_t neverd_solver_backend_t;
+
+/// Whether this build provides the requested backend; unknown values return 0.
+NEVERD_API int neverd_solver_backend_available(neverd_solver_backend_t Backend);
+
 /// Why synthesis did or did not return a shorter expression.  These values
 /// are append-only, use fixed-width public storage, and match the semantic
 /// simplifier's public contract.
@@ -107,12 +113,19 @@ typedef struct neverd_synthesize_options {
   uint64_t solver_max_watch_visits;
   /// Remove parser, search-work, and solver ceilings explicitly.
   int exhaustive;
+  /// Zero selects the built-in solver. Explicit unavailable backends fail.
+  /// The 64-bit field starts beyond the legacy structure's trailing padding.
+  neverd_solver_backend_t solver_backend;
+  /// Z3 check timeout in milliseconds; zero chooses 1000 ms. Translation time
+  /// is excluded. Exhaustive mode removes this limit. Built-in SAT work limits
+  /// and this timeout cannot be used with the other backend.
+  uint32_t solver_timeout_ms;
 } neverd_synthesize_options;
 
 /// Typed result from one proof-gated synthesis request.
 typedef struct neverd_synthesize_result {
   size_t struct_size;
-  /// Zero only when the expression could not be parsed.
+  /// Zero when the expression or requested configuration is invalid.
   int ok;
   const char *error;
   size_t error_offset;
@@ -136,9 +149,9 @@ typedef struct neverd_synthesize_result {
   const char *counterexample_json;
 } neverd_synthesize_result;
 
-/// Search for a shorter expression and commit it only after the built-in
+/// Search for a shorter expression and commit it only after the selected
 /// solver proves equivalence.  A refutation, incomplete proof, or exhausted
-/// budget returns the input unchanged.  Parse errors are reported through
+/// budget returns the input unchanged. Parse and configuration errors use
 /// `Result`; non-zero is reserved for unusable result arguments.
 NEVERD_API int neverd_synthesize_expr(const char *Expr,
                                       const neverd_synthesize_options *Options,

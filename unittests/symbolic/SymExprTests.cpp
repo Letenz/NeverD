@@ -96,6 +96,70 @@ TEST(SymExpr, ShiftsByConstantsBecomeProductsSoSumsCanCollectThem) {
   EXPECT_EQ(Ctx.mkLShr(X, Ctx.mkConst(W32, 99)), Ctx.mkZero(W32));
 }
 
+TEST(SymExpr, RotatesAcceptIndependentlySizedAmounts) {
+  struct Case {
+    uint32_t Width;
+    llvm::APInt Amount;
+    uint64_t Left;
+    uint64_t Right;
+  };
+  const Case Cases[] = {
+      {3, llvm::APInt(1, 1), 2, 4},
+      {3, llvm::APInt(2, 3), 1, 1},
+      {3, llvm::APInt(8, 4), 2, 4},
+      {3, llvm::APInt::getOneBitSet(128, 64), 2, 4},
+      {3, llvm::APInt::getOneBitSet(128, 127), 4, 2},
+      {3, llvm::APInt::getAllOnes(128), 1, 1},
+      {1, llvm::APInt::getAllOnes(128), 1, 1},
+  };
+  for (const Case &T : Cases) {
+    SCOPED_TRACE(T.Width);
+    SCOPED_TRACE(T.Amount.getBitWidth());
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", T.Width);
+    SymRef Y = Ctx.mkVar("amount", T.Amount.getBitWidth());
+    SymRef One = Ctx.mkConst(T.Width, 1);
+    SymRef Amount = Ctx.mkConst(T.Amount);
+    EXPECT_EQ(Ctx.mkRol(One, Amount), Ctx.mkConst(T.Width, T.Left));
+    EXPECT_EQ(Ctx.mkRor(One, Amount), Ctx.mkConst(T.Width, T.Right));
+
+    llvm::APInt Values[] = {llvm::APInt(T.Width, 1), T.Amount};
+    EXPECT_EQ(Ctx.eval(Ctx.mkRol(X, Y), Values), llvm::APInt(T.Width, T.Left));
+    EXPECT_EQ(Ctx.eval(Ctx.mkRor(X, Y), Values), llvm::APInt(T.Width, T.Right));
+    if (T.Amount.getBitWidth() <= 64) {
+      uint64_t ValuesU64[] = {1, T.Amount.getZExtValue()};
+      EXPECT_EQ(Ctx.evalU64(Ctx.mkRol(X, Y), ValuesU64), T.Left);
+      EXPECT_EQ(Ctx.evalU64(Ctx.mkRor(X, Y), ValuesU64), T.Right);
+    }
+  }
+}
+
+TEST(SymExpr, ShiftsKeepHighBitsOfIndependentlySizedAmounts) {
+  const llvm::APInt Amounts[] = {llvm::APInt(16, 256),
+                                 llvm::APInt::getOneBitSet(128, 64)};
+  for (const llvm::APInt &Amount : Amounts) {
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", 8);
+    SymRef Y = Ctx.mkVar("amount", Amount.getBitWidth());
+    SymRef Value = Ctx.mkConst(8, 0x81);
+    SymRef Count = Ctx.mkConst(Amount);
+    EXPECT_EQ(Ctx.mkShl(Value, Count), Ctx.mkZero(8));
+    EXPECT_EQ(Ctx.mkLShr(Value, Count), Ctx.mkZero(8));
+    EXPECT_EQ(Ctx.mkAShr(Value, Count), Ctx.mkOnes(8));
+
+    llvm::APInt Values[] = {llvm::APInt(8, 0x81), Amount};
+    EXPECT_EQ(Ctx.eval(Ctx.mkShl(X, Y), Values), llvm::APInt(8, 0));
+    EXPECT_EQ(Ctx.eval(Ctx.mkLShr(X, Y), Values), llvm::APInt(8, 0));
+    EXPECT_EQ(Ctx.eval(Ctx.mkAShr(X, Y), Values), llvm::APInt(8, 0xff));
+    if (Amount.getBitWidth() <= 64) {
+      uint64_t ValuesU64[] = {0x81, Amount.getZExtValue()};
+      EXPECT_EQ(Ctx.evalU64(Ctx.mkShl(X, Y), ValuesU64), 0u);
+      EXPECT_EQ(Ctx.evalU64(Ctx.mkLShr(X, Y), ValuesU64), 0u);
+      EXPECT_EQ(Ctx.evalU64(Ctx.mkAShr(X, Y), ValuesU64), 0xffu);
+    }
+  }
+}
+
 TEST(SymExpr, BitwiseIdentitiesHoldOnConstruction) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", W32);

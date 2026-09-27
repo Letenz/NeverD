@@ -189,6 +189,19 @@ add_custom_command(TARGET neverd_shared POST_BUILD
         "${NEVERD_STAGED_SDK_DIRECTORY}"
     COMMENT "Copying SDK headers and legal notices next to libneverd")
 
+if(NEVERD_ENABLE_Z3)
+  foreach(_neverd_z3_notices_dir
+      "$<TARGET_FILE_DIR:neverd_shared>/licenses/z3"
+      "${NEVERD_STAGED_SDK_DIRECTORY}/licenses/z3")
+    add_custom_command(TARGET neverd_shared POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_neverd_z3_notices_dir}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${CMAKE_SOURCE_DIR}/LICENSES/Z3.txt"
+          "${_neverd_z3_notices_dir}/LICENSE.txt"
+      VERBATIM)
+  endforeach()
+endif()
+
 if(NEVERD_ENABLE_DRIVER_EMULATION)
   # The production library now contains Unicorn. Preserve the dependency's
   # original notices both beside binaries and inside the staged SDK.
