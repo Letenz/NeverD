@@ -365,7 +365,7 @@ bool acceptsRegression(size_t Loss, size_t Tolerance, uint64_t &State) {
 SearchOutcome searchStochastically(SymContext &Ctx, const SynthProblem &P,
                                    const SynthOptions &Opts,
                                    const OpSemantics &Sem, SearchEffort &Effort,
-                                   const Checker &Check,
+                                   Checker &Check,
                                    const std::optional<SynthVerifyFn> &Verify,
                                    uint64_t &ProofQueries) {
   SearchOutcome Result;
@@ -388,10 +388,9 @@ SearchOutcome searchStochastically(SymContext &Ctx, const SynthProblem &P,
   // being free to wander the whole space.
   const size_t Tolerance = std::max<size_t>(P.Width, 1);
 
-  // A check evaluates two expressions at every point of its own grid, so it is
-  // worth hundreds of ordinary steps.  Charging it that much is what stops a
-  // walk that keeps rediscovering one refuted coincidence from spending the
-  // whole budget on the same answer.
+  // Keep charging a grid's worth of work even for cached refutations, as the
+  // enumerator does.  A walk rediscovering one coincidence must still consume
+  // its original budget rather than gaining extra mutation attempts.
   const size_t CheckCost = std::max<size_t>(Check.Grid.size(), 1);
 
   uint64_t State = Opts.Seed;
@@ -421,8 +420,7 @@ SearchOutcome searchStochastically(SymContext &Ctx, const SynthProblem &P,
         if (!Effort.spend(CheckCost))
           return Result;
         SymRef Node = buildProgram(Ctx, Prog, Terminals);
-        const Verdict Said =
-            Check.check(Ctx, P.Body, Node, Verify, ProofQueries);
+        const Verdict Said = Check.check(Node, Verify, ProofQueries);
         if (Said == Verdict::AcceptedBySamples ||
             Said == Verdict::AcceptedByVerifier) {
           Result.Candidate = Node;

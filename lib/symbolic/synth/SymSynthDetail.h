@@ -31,6 +31,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <cstddef>
@@ -273,6 +274,8 @@ enum class Verdict : uint8_t {
 /// selection worked.  Points it was never fitted to are the only ones that can
 /// say anything.
 struct Checker {
+  Checker(SymContext &Ctx, SymRef Body) : Ctx(Ctx), Body(Body) {}
+
   std::vector<SamplePoint> Grid;
   llvm::SmallVector<uint32_t, 8> LeafVars;
 
@@ -281,14 +284,23 @@ struct Checker {
   /// Sampling runs first even when a procedure is supplied, and can veto on
   /// its own: a disagreement at a concrete point refutes the pair outright, so
   /// finding one is both cheaper than a decision procedure and beyond appeal.
-  Verdict check(SymContext &Ctx, SymRef Body, SymRef Candidate,
-                const std::optional<SynthVerifyFn> &Verify,
-                uint64_t &ProofQueries) const;
+  Verdict check(SymRef Candidate, const std::optional<SynthVerifyFn> &Verify,
+                uint64_t &ProofQueries);
+
+private:
+  // A checker belongs to one synthesis request, shared by its enumeration and
+  // stochastic search.  Node IDs and cached answers never cross contexts,
+  // bodies, verification grids, or caller-supplied proof procedures.
+  SymContext &Ctx;
+  SymRef Body;
+  std::optional<Signature> BodySignature;
+  llvm::DenseSet<uint32_t> Refuted;
 };
 
 /// The check \p P's answers have to survive, over points drawn away from the
 /// ones \p P was measured at.
-Checker makeChecker(const SynthProblem &P, const SynthOptions &Opts);
+Checker makeChecker(SymContext &Ctx, const SynthProblem &P,
+                    const SynthOptions &Opts);
 
 //===----------------------------------------------------------------------===//
 // The searches
@@ -323,7 +335,7 @@ struct SearchOutcome {
 SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
                                 const SynthOptions &Opts,
                                 const OpSemantics &Sem, SearchEffort &Effort,
-                                const Checker &Check,
+                                Checker &Check,
                                 const std::optional<SynthVerifyFn> &Verify,
                                 uint64_t &ProofQueries);
 
@@ -334,7 +346,7 @@ SearchOutcome enumerateShortest(SymContext &Ctx, const SynthProblem &P,
 SearchOutcome searchStochastically(SymContext &Ctx, const SynthProblem &P,
                                    const SynthOptions &Opts,
                                    const OpSemantics &Sem, SearchEffort &Effort,
-                                   const Checker &Check,
+                                   Checker &Check,
                                    const std::optional<SynthVerifyFn> &Verify,
                                    uint64_t &ProofQueries);
 
