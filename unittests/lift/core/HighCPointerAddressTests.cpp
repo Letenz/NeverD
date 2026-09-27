@@ -24031,16 +24031,11 @@ TEST(HighCPointerAddresses, Win64ThreeArgCallIgnoresLiveInR9) {
   Converter.setFuncNames(&Names);
   HighFunc High = Converter.convert(Med, Arch::X64);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
-  const auto CallAt = Source.rfind("GSHandlerCheckCommon(");
-  ASSERT_NE(CallAt, std::string::npos) << Source;
-  const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
-  ASSERT_NE(Open, std::string::npos) << Source;
-  ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 2) << Source;
-  EXPECT_NE(Args.find("arg1"), std::string::npos) << Source;
-  EXPECT_NE(Args.find("arg3"), std::string::npos) << Source;
+  const auto Args = lastCallArguments(Source, "GSHandlerCheckCommon");
+  ASSERT_TRUE(Args) << Source;
+  ASSERT_EQ(Args->size(), 3u) << Source;
+  EXPECT_NE((*Args)[0].find("arg1"), std::string_view::npos) << Source;
+  EXPECT_NE((*Args)[1].find("arg3"), std::string_view::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, Win64JoinPhiR9IsFourthCallArg) {
@@ -24363,16 +24358,9 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockRecoversPredSetupR8) {
   llvm::raw_string_ostream HighOS(HighDump);
   Pipeline::dumpHighIR({High}, HighOS);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
-  const auto CallAt = Source.rfind("GetCustomRecordName(");
-  ASSERT_NE(CallAt, std::string::npos) << Source;
-  const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
-  ASSERT_NE(Open, std::string::npos) << Source;
-  ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 2)
-      << Source << "\nHighIR:\n"
-      << HighDump;
+  const auto Args = lastCallArguments(Source, "GetCustomRecordName");
+  ASSERT_TRUE(Args) << Source;
+  EXPECT_EQ(Args->size(), 3u) << Source << "\nHighIR:\n" << HighDump;
 }
 
 TEST(HighCPointerAddresses, Win64CallOnlyBlockIgnoresLeftoverR9) {
@@ -24472,14 +24460,9 @@ TEST(HighCPointerAddresses, Win64CallOnlyBlockIgnoresLeftoverR9) {
   Converter.setFuncNames(&Names);
   HighFunc High = Converter.convert(Med, Arch::X64);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
-  const auto CallAt = Source.rfind("GetCustomRecordName(");
-  ASSERT_NE(CallAt, std::string::npos) << Source;
-  const auto Open = Source.find('(', CallAt);
-  const auto Close = Source.find(')', Open);
-  ASSERT_NE(Open, std::string::npos) << Source;
-  ASSERT_NE(Close, std::string::npos) << Source;
-  const std::string Args = Source.substr(Open + 1, Close - Open - 1);
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 2) << Source;
+  const auto Args = lastCallArguments(Source, "GetCustomRecordName");
+  ASSERT_TRUE(Args) << Source;
+  EXPECT_EQ(Args->size(), 3u) << Source;
   EXPECT_EQ(Source.find(", 42"), std::string::npos) << Source;
 }
 
@@ -31224,13 +31207,9 @@ TEST(HighCPointerAddresses, Win64GsHandlerRestoresParamsAcrossCall) {
   HighFunc High = Converter.convert(Med, Arch::X64);
   const std::string Source = emitFunctions({High}, Arch::X64, &Img);
 
-  const auto GsAt = Source.rfind("GSHandlerCheckCommon(");
-  ASSERT_NE(GsAt, std::string::npos) << Source;
-  const auto GsOpen = Source.find('(', GsAt);
-  const auto GsClose = Source.find(')', GsOpen);
-  ASSERT_NE(GsClose, std::string::npos) << Source;
-  const std::string GsArgs = Source.substr(GsOpen + 1, GsClose - GsOpen - 1);
-  EXPECT_EQ(std::count(GsArgs.begin(), GsArgs.end(), ','), 2) << Source;
+  const auto GsArgs = lastCallArguments(Source, "GSHandlerCheckCommon");
+  ASSERT_TRUE(GsArgs) << Source;
+  EXPECT_EQ(GsArgs->size(), 3u) << Source;
 
   const auto CxxAt = Source.rfind("CxxFrameHandler3(");
   ASSERT_NE(CxxAt, std::string::npos) << Source;
@@ -39173,14 +39152,11 @@ TEST(HighCPointerAddresses, Win64StackArgumentsFollowTheHomeArea) {
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
   // The call may be assigned, returned or a statement; the prototype
   // `sub_140001040()` has no arguments and does not match.
-  std::smatch Call;
-  ASSERT_TRUE(std::regex_search(
-      HighC, Call, std::regex(R"(sub_140001040\(([^;)][^;]*)\);)")))
-      << HighC;
-  const std::string Args = Call[1].str();
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 5) << HighC;
-  EXPECT_EQ(Args.rfind("arg0", 0), 0u) << HighC;
-  EXPECT_EQ(Args.substr(Args.size() - 1), "0") << HighC;
+  const auto Args = lastCallArguments(HighC, "sub_140001040");
+  ASSERT_TRUE(Args) << HighC;
+  ASSERT_EQ(Args->size(), 6u) << HighC;
+  EXPECT_EQ(llvm::StringRef((*Args)[0]).trim(), "arg0") << HighC;
+  EXPECT_EQ(llvm::StringRef(Args->back()).trim(), "0") << HighC;
 }
 
 TEST(HighCPointerAddresses, SummarizedCalleeTakesOnlyTheArgumentsItReads) {
@@ -39223,13 +39199,10 @@ TEST(HighCPointerAddresses, Win64StackArgumentsThroughEntryStackCopy) {
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
   // The call may be assigned, returned or a statement; the prototype
   // `sub_140001040()` has no arguments and does not match.
-  std::smatch Call;
-  ASSERT_TRUE(std::regex_search(
-      HighC, Call, std::regex(R"(sub_140001040\(([^;)][^;]*)\);)")))
-      << HighC;
-  const std::string Args = Call[1].str();
-  EXPECT_EQ(std::count(Args.begin(), Args.end(), ','), 6) << HighC;
-  EXPECT_NE(Args.find(", 5, "), std::string::npos) << HighC;
+  const auto Args = lastCallArguments(HighC, "sub_140001040");
+  ASSERT_TRUE(Args) << HighC;
+  ASSERT_EQ(Args->size(), 7u) << HighC;
+  EXPECT_EQ(llvm::StringRef((*Args)[4]).trim(), "5") << HighC;
 }
 
 TEST(HighCPointerAddresses, GotoToSmallReturnTailBecomesItsCopy) {
