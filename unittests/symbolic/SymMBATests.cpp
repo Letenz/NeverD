@@ -49,6 +49,14 @@ TEST(SymMBA, RecoversAdditionFromItsBitwiseRewriting) {
   simplifiesTo("2 * (x | y) - (x ^ y)", "x + y");
 }
 
+TEST(SymMBA, RecoversOverlappingSelectorsFromLinearWeights) {
+  for (uint32_t Width : {3u, 8u, 32u, 64u, 256u}) {
+    simplifiesTo("2 * x + (~x & y)", "x + (x | y)", Width);
+    simplifiesTo("3 * x + (~x & y)", "2 * x + (x | y)", Width);
+    simplifiesTo("-2 * x - (~x & y)", "-x - (x | y)", Width);
+  }
+}
+
 TEST(SymMBA, RewritePreservesStructuredInputVariableIdentity) {
   SymContext Ctx;
   SymRef X = Ctx.mkInputVar("reg$0", W32,
@@ -263,6 +271,36 @@ TEST(SymMBA, StillPrefersAUnionOfCubesWhereThatIsShorter) {
 //===----------------------------------------------------------------------===//
 // Regions too wide to measure whole
 //===----------------------------------------------------------------------===//
+
+TEST(SymMBA, SplitsIndependentSumsBeforeSpendingTheWholeRegionBudget) {
+  for (uint32_t Width : {8u, 32u, 64u, 256u}) {
+    for (bool Deep : {false, true}) {
+      SymContext Ctx;
+      llvm::SmallVector<SymRef, 24> Terms;
+      llvm::SmallVector<SymRef, 24> Inputs;
+      for (unsigned I = 0; I < 9; ++I) {
+        SymRef A = Ctx.mkVar("a" + std::to_string(I), Width);
+        SymRef B = Ctx.mkVar("b" + std::to_string(I), Width);
+        Inputs.push_back(A);
+        Inputs.push_back(B);
+        Terms.push_back(Ctx.mkXor(A, B));
+        Terms.push_back(Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(A, B)));
+      }
+      SymRef Original = Ctx.mkAdd(Terms);
+      SymRef Expected = Ctx.mkAdd(Inputs);
+      MBAOptions Opts;
+      Opts.MaxWork = 4096;
+      Opts.VerifySamples = 0;
+      ASSERT_GE(Opts.MaxAtoms, Inputs.size());
+      MBAResult R = Deep ? simplifyMBADeep(Ctx, Original, Opts)
+                         : simplifyMBA(Ctx, Original, Opts);
+      EXPECT_EQ(R.Expr, Expected) << "width=" << Width << " deep=" << Deep;
+      EXPECT_EQ(R.Evidence, MBAEvidence::Derivation);
+      EXPECT_EQ(R.Outcome, MBAOutcome::Rewritten);
+      EXPECT_LT(R.Work, Opts.MaxWork);
+    }
+  }
+}
 
 TEST(SymMBA, RecoversASumWiderThanOneMeasurementCanReach) {
   // Eleven carry-save additions side by side: twenty-two inputs, well past

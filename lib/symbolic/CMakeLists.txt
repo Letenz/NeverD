@@ -13,6 +13,7 @@ add_neverd_component_library(NeverDSymbolic
   mba/SymBitwise.cpp
   mba/SymMBA.cpp
   mba/SymMBAAbstract.cpp
+  mba/SymMBAArithmetic.cpp
   mba/SymMBAMeasure.cpp
   mba/SymMBAPoly.cpp
   mba/SymMBAProduct.cpp

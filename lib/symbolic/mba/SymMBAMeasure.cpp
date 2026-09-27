@@ -14,7 +14,7 @@
 /// pattern therefore reads off every weight, and the size the expression was
 /// written at has nothing to do with it.
 ///
-/// Three ways of writing the weights back out are tried, because none of them
+/// Four ways of writing the weights back out are tried, because none of them
 /// is shortest for every function:
 ///
 ///   - *Constant*, when the weights agree.
@@ -24,6 +24,8 @@
 ///   - *Conjunction basis*, the weights inverted over the subset lattice.
 ///     This is what turns `(x ^ y) + 2 * (x & y)` back into `x + y`, which the
 ///     grouped form cannot: it would return the input.
+///   - *Nested*, weighted differences over cumulative selectors. Overlapping
+///     selectors can spell the same weights more cheaply than disjoint ones.
 ///
 /// They are offered in that order and the caller keeps the cheapest, so the
 /// order they are appended in decides ties.
@@ -71,14 +73,31 @@ struct APIntLess {
   }
 };
 
+/// Whether the weights already describe a sum of independently scaled inputs.
+///
+/// A zero constant weight and W[K] = W[K without one bit] + W[that bit]
+/// characterize this form modulo the word width, including negative and wide
+/// coefficients. The cumulative selectors otherwise spend a combinatorial
+/// search on threshold functions for an ordinary weighted variable sum.
+bool isIndependentWeightedSum(llvm::ArrayRef<llvm::APInt> Weights) {
+  if (!Weights[0].isZero())
+    return false;
+  for (size_t K = 1; K < Weights.size(); ++K) {
+    const size_t Rest = K & (K - 1);
+    if (Rest != 0 && Weights[K] != Weights[Rest] + Weights[K ^ Rest])
+      return false;
+  }
+  return true;
+}
+
 /// `sum over distinct weights v of v * B_v`, with `B_v` selecting the patterns
 /// carrying that weight.  Exact because the minterms of one weight are
 /// disjoint, so their union is a bitwise function like any other.
 std::optional<SymRef> groupedForm(SymContext &Ctx,
                                   llvm::ArrayRef<llvm::APInt> Weights,
                                   llvm::ArrayRef<SymRef> Atoms,
-                                  size_t TermBudget,
-                                  const SolverLimits &Limits) {
+                                  size_t TermBudget, const SolverLimits &Limits,
+                                  llvm::SmallVectorImpl<SymRef> &Nested) {
   const auto NumAtoms = static_cast<unsigned>(Atoms.size());
   if (NumAtoms > Limits.MaxSynthesisAtoms)
     return std::nullopt;
@@ -111,6 +130,38 @@ std::optional<SymRef> groupedForm(SymContext &Ctx,
     return Ctx.mkZero(Ctx.width(Atoms[0]));
 
   const BitwiseSynthesisLimits Synthesis = Limits.synthesis(TermBudget);
+  // Only the new cumulative search is skipped for independent weighted sums;
+  // the grouped and conjunction candidates remain available, since this test
+  // establishes a shape rather than a minimum expression cost.
+  if (Groups.size() > 1 && Groups.size() <= Holdable / 2 &&
+      !isIndependentWeightedSum(Weights)) {
+    TruthTable Nonzero = TruthTable::zero(NumAtoms);
+    for (const auto &[Value, Table] : Groups)
+      Nonzero |= Table;
+
+    // For weights v1,...,vn in any fixed order, let Si select groups i..n.
+    // Then sum_i (vi - v(i-1)) * Si, with v0=0, has weight vj on group j.
+    // This telescopes modulo the word width, including negative coefficients.
+    // Both orders are useful because complements can make one selector cheap.
+    auto appendNested = [&](const auto &Ordered) {
+      TruthTable Remaining = Nonzero;
+      llvm::APInt Previous(Ctx.width(Atoms[0]), 0);
+      llvm::SmallVector<SymRef, 8> Terms;
+      for (const auto &[Value, Table] : Ordered) {
+        std::optional<SymRef> Selector =
+            synthesizeBitwise(Ctx, Remaining, Atoms, Synthesis);
+        if (!Selector)
+          return;
+        Terms.push_back(Ctx.mkMul(Ctx.mkConst(Value - Previous), *Selector));
+        Previous = Value;
+        Remaining ^= Table;
+      }
+      Nested.push_back(Ctx.mkAdd(Terms));
+    };
+    appendNested(Groups);
+    appendNested(llvm::reverse(Groups));
+  }
+
   llvm::SmallVector<SymRef, 8> Terms;
   for (const auto &[Value, Table] : Groups) {
     // Synthesis declines when no spelling of the selector fits the budget.
@@ -318,17 +369,26 @@ void linearCandidates(SymContext &Ctx, std::vector<llvm::APInt> Weights,
                       llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
                       const SolverLimits &Limits,
                       llvm::SmallVectorImpl<SymRef> &Out) {
+  auto append = [&](SymRef Form) {
+    if (!llvm::is_contained(Out, Form))
+      Out.push_back(Form);
+  };
   if (llvm::all_of(Weights,
                    [&](const llvm::APInt &W) { return W == Weights[0]; }))
-    Out.push_back(Ctx.mkConst(-Weights[0]));
+    append(Ctx.mkConst(-Weights[0]));
+  llvm::SmallVector<SymRef, 2> Nested;
   if (std::optional<SymRef> Grouped =
-          groupedForm(Ctx, Weights, Atoms, TermBudget, Limits))
-    Out.push_back(*Grouped);
+          groupedForm(Ctx, Weights, Atoms, TermBudget, Limits, Nested))
+    append(*Grouped);
   // Handing the weights over rather than copying: at the widths and arity this
   // reaches, a copy would be tens of thousands of allocations.
   if (std::optional<SymRef> Conjunctions =
           conjunctionForm(Ctx, std::move(Weights), Atoms, TermBudget, Limits))
-    Out.push_back(*Conjunctions);
+    append(*Conjunctions);
+  // Preserve the established tie order; the new forms must improve the cost
+  // to displace a grouped or conjunction-basis answer.
+  for (SymRef Form : Nested)
+    append(Form);
 }
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates) {

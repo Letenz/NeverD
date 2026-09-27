@@ -118,10 +118,10 @@ TEST(SymMBA, RecoversTwoProductsOfDifferentDegreesFromOneSum) {
   // ones from a quadratic product.  Matching each degree against its own part
   // of the target is a decomposition rather than a guess, and it is what
   // reaches the shape an obfuscator leaves when it expands a square and a cube
-  // into the same sum.
+  // into the same sum. The restored products then share a common factor.
   simplifiesTo("(x & y) * (x | y) + (x & ~y) * (~x & y) + "
                "x * (y & z) * (y | z) + x * (y & ~z) * (~y & z)",
-               "x * y + x * y * z");
+               "x * y * (1 + z)");
 }
 
 TEST(SymMBA, NoticesWhenDegreeThreeProductsCancel) {

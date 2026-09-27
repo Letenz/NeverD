@@ -387,6 +387,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     // consume() would otherwise repeat the very traversal the exhausted budget
     // is meant to stop paying for at every remaining node.
     if (!Budget.exhausted() && Budget.consume(Ctx.dagSize(Rebuilt))) {
+      const bool ChildrenChanged = Rebuilt != R;
       SolveReport Rep;
       SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep);
       if (Measured != Rebuilt) {
@@ -401,6 +402,27 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
       } else if (Rep.Outcome == MBAOutcome::AlreadyShortest &&
                  Result.Outcome == MBAOutcome::NotApplicable) {
         Result.Outcome = MBAOutcome::AlreadyShortest;
+      }
+      // A shorter child can hide arithmetic behind an opaque operator. Keep
+      // the original region as a second exact reading before discarding it.
+      // The main reading gets first use of the shared work budget.
+      SolveReport OriginalRep;
+      SymRef Original = ChildrenChanged && !Budget.exhausted()
+                            ? solveArithmetic(Ctx, R, Opts, Budget, OriginalRep)
+                            : R;
+      Skipped |= OriginalRep.BudgetExhausted;
+      if (Original != R &&
+          readingCost(Ctx, Original) < readingCost(Ctx, Rebuilt)) {
+        // Arithmetic cancellation may expose a fresh linear MBA. It was not
+        // in the original postorder, so finish that region before selecting it.
+        SolveReport Refined;
+        if (!Budget.exhausted())
+          Original = solveRegionOrSplit(Ctx, Original, Opts, Budget, Refined);
+        Rebuilt = Original;
+        Result.NumAtoms =
+            std::max({Result.NumAtoms, OriginalRep.NumAtoms, Refined.NumAtoms});
+        AnySampled |= Refined.Evidence == MBAEvidence::Samples;
+        Skipped |= Refined.BudgetExhausted;
       }
     } else {
       Skipped = true;

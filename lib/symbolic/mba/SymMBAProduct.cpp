@@ -192,6 +192,12 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
       splitIntoTerms(Ctx, Body);
   if (!Terms)
     return std::nullopt;
+  // The expansion cannot contribute a candidate without a nonlinear term.
+  // Check its factors before allocating and evaluating whole minterm tables.
+  if (std::none_of(Terms->begin(), Terms->end(), [](const PolyTerm &Term) {
+        return Term.Factors.size() > 1;
+      }))
+    return std::nullopt;
 
   const uint32_t Width = Ctx.width(Body);
   std::optional<PolyForm> Form =
