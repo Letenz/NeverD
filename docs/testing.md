@@ -38,6 +38,12 @@ prebuilt-LLVM guidance.
 
 ## Modular MBA simplification
 
+`SymReadability.*` covers subtraction and complement spelling, n-ary operator
+cost, one-bit and wide literals, shared-tree saturation, budgeted selection,
+and exhaustive three-bit equivalence with sampling disabled. Candidate quality
+comparisons across scoring revisions must recount both outputs with the same
+metric; the SDK's version-specific size counters are diagnostic only.
+
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 

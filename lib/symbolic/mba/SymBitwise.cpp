@@ -113,9 +113,9 @@ size_t optimalTableWork(unsigned NumVars) {
 
 /// The shortest expression for every boolean function of a given small arity.
 ///
-/// Cost counts nodes in a tree, which over-charges a shared subterm.  That
-/// only affects the ranking between two forms of the same function, and at
-/// these sizes the two measures agree on the winner.
+/// Recipes minimize printed tree nodes over independent unit-cost atoms,
+/// breaking node-count ties by operations. Restoring compound atoms can change
+/// their costs, so completed candidates are still compared with actual scores.
 class SynthTable {
 public:
   explicit SynthTable(unsigned NumVars);
@@ -123,16 +123,18 @@ public:
   const Recipe &recipe(uint32_t Packed) const { return Recipes[Packed]; }
 
 private:
-  void relax(uint32_t T, unsigned Cost, Recipe R) {
-    if (Cost >= Costs[T])
+  void relax(uint32_t T, unsigned Cost, unsigned OpCount, Recipe R) {
+    if (Cost > Costs[T] || (Cost == Costs[T] && OpCount >= Operations[T]))
       return;
     Costs[T] = Cost;
+    Operations[T] = OpCount;
     Recipes[T] = R;
     Improved = true;
   }
 
   std::vector<Recipe> Recipes;
   std::vector<unsigned> Costs;
+  std::vector<unsigned> Operations;
   bool Improved = false;
 };
 
@@ -140,12 +142,13 @@ SynthTable::SynthTable(unsigned NumVars) {
   const auto Mask = static_cast<uint32_t>(TruthTable::ones(NumVars).packed());
   const uint32_t Count = Mask + 1;
   Costs.assign(Count, kUnreachable);
+  Operations.assign(Count, kUnreachable);
   Recipes.assign(Count, Recipe{});
 
-  relax(0, 1, Recipe{Recipe::Zero, 0, 0});
-  relax(Mask, 1, Recipe{Recipe::Ones, 0, 0});
+  relax(0, 1, 0, Recipe{Recipe::Zero, 0, 0});
+  relax(Mask, 1, 0, Recipe{Recipe::Ones, 0, 0});
   for (unsigned J = 0; J < NumVars; ++J)
-    relax(static_cast<uint32_t>(atomTruthTable(J, NumVars).packed()), 1,
+    relax(static_cast<uint32_t>(atomTruthTable(J, NumVars).packed()), 1, 0,
           Recipe{Recipe::Atom, J, 0});
 
   // Relax to a fixed point.  Costs only ever fall and are bounded below, so
@@ -156,14 +159,16 @@ SynthTable::SynthTable(unsigned NumVars) {
     for (uint32_t A = 0; A < Count; ++A) {
       if (Costs[A] == kUnreachable)
         continue;
-      relax(~A & Mask, Costs[A] + 1, Recipe{Recipe::Not, A, 0});
+      relax(~A & Mask, Costs[A] + 1, Operations[A] + 1,
+            Recipe{Recipe::Not, A, 0});
       for (uint32_t B = A + 1; B < Count; ++B) {
         if (Costs[B] == kUnreachable)
           continue;
         unsigned Cost = Costs[A] + Costs[B] + 1;
-        relax(A & B, Cost, Recipe{Recipe::And, A, B});
-        relax(A | B, Cost, Recipe{Recipe::Or, A, B});
-        relax(A ^ B, Cost, Recipe{Recipe::Xor, A, B});
+        unsigned OpCount = Operations[A] + Operations[B] + 1;
+        relax(A & B, Cost, OpCount, Recipe{Recipe::And, A, B});
+        relax(A | B, Cost, OpCount, Recipe{Recipe::Or, A, B});
+        relax(A ^ B, Cost, OpCount, Recipe{Recipe::Xor, A, B});
       }
     }
   }
@@ -224,15 +229,21 @@ SymRef buildRecipe(SymContext &Ctx, const SynthTable &Table, uint32_t Packed,
   return Result;
 }
 
-/// A lower bound on the reading cost of any expression that depends on every
-/// atom in \p Atoms.  It is deliberately cheap enough to compute before the
-/// optimal table is requested: a cost budget that cannot hold even the atoms
-/// must not trigger that table merely to learn the same answer.
+/// Independent free inputs need one leaf each and binary joins connecting
+/// them. Repeated or compound inputs may be related and collapse after
+/// substitution, so only a literal's cost is a sound bound in that case.
+/// The separate table-work gate still runs before this inexpensive check.
 size_t minimumRecipeCost(const SymContext &Ctx, llvm::ArrayRef<SymRef> Atoms) {
-  size_t Cost = Atoms.size() > 1 ? 1 : 0;
-  for (SymRef Atom : Atoms)
-    Cost = saturatingAdd(Cost, Ctx.readabilityCost(Atom));
-  return Cost;
+  if (Atoms.empty())
+    return 1;
+  for (size_t I = 0; I < Atoms.size(); ++I) {
+    if (!Ctx.isVar(Atoms[I]))
+      return 1;
+    for (size_t J = 0; J < I; ++J)
+      if (Atoms[I] == Atoms[J])
+        return 1;
+  }
+  return saturatingAdd(Atoms.size(), Atoms.size() - 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -253,19 +264,25 @@ struct AtomCosts {
     for (SymRef A : Atoms) {
       const size_t Cost = Ctx.readabilityCost(A);
       Plain.push_back(Cost);
-      Complemented.push_back(saturatingAdd(Cost, 1));
+      // These complements fold during construction without building a
+      // candidate: double complement, literal complement, and != spelling.
+      if (Ctx.op(A) == SymOp::Not)
+        Complemented.push_back(Ctx.readabilityCost(Ctx.operand(A, 0)));
+      else if (Ctx.isConst(A) || Ctx.op(A) == SymOp::Eq)
+        Complemented.push_back(Cost);
+      else
+        Complemented.push_back(saturatingAdd(Cost, 1));
     }
   }
 };
 
-/// The cost of joining \p Parts under one n-ary operator.  One part needs no
-/// operator at all, which is what keeps a single-literal product from being
-/// charged for an `and` that never gets built.
+/// A flattened infix operator still prints one binary join between each
+/// adjacent pair. A single part needs no join.
 size_t joinCost(llvm::ArrayRef<size_t> Parts) {
   size_t Total = 0;
   for (size_t Part : Parts)
     Total = saturatingAdd(Total, Part);
-  return Parts.size() <= 1 ? Total : saturatingAdd(Total, 1);
+  return Parts.empty() ? Total : saturatingAdd(Total, Parts.size() - 1);
 }
 
 //===----------------------------------------------------------------------===//
@@ -410,9 +427,9 @@ std::optional<Cover> sumOfProductsCover(const TruthTable &Table,
       FactorCosts.push_back((P.Value & (1u << J)) ? Costs.Plain[J]
                                                   : Costs.Complemented[J]);
     }
-    // A product constraining nothing is the all-ones word, which reads free.
+    // A product constraining nothing is a literal all-ones word.
     Running =
-        saturatingAdd(Running, FactorCosts.empty() ? 0 : joinCost(FactorCosts));
+        saturatingAdd(Running, FactorCosts.empty() ? 1 : joinCost(FactorCosts));
     Out.Products.push_back(P);
     // Abandoning a cover that has already outgrown what it may replace is the
     // point of costing as it is built rather than after.
@@ -420,7 +437,9 @@ std::optional<Cover> sumOfProductsCover(const TruthTable &Table,
       return std::nullopt;
   }
 
-  Out.Cost = Out.Products.size() <= 1 ? Running : saturatingAdd(Running, 1);
+  Out.Cost = Out.Products.empty()
+                 ? Running
+                 : saturatingAdd(Running, Out.Products.size() - 1);
   if (Out.Cost > CostBudget)
     return std::nullopt;
   return Out;
@@ -481,19 +500,28 @@ llvm::SmallVector<uint32_t, 16> exclusiveOrTerms(const TruthTable &Table) {
 size_t exclusiveOrCost(llvm::ArrayRef<uint32_t> Terms, const AtomCosts &Costs,
                        unsigned NumVars, size_t Budget) {
   size_t Running = 0;
+  size_t Nonconstant = 0;
+  bool Complement = false;
   llvm::SmallVector<size_t, 8> FactorCosts;
   for (uint32_t Term : Terms) {
+    if (!Term) {
+      // mkXor consumes all-ones as a complement of the remaining expression.
+      // It contributes one unary operation, rather than a literal and a join.
+      Complement = true;
+      continue;
+    }
+    ++Nonconstant;
     FactorCosts.clear();
     for (unsigned J = 0; J < NumVars; ++J)
       if (Term & (1u << J))
         FactorCosts.push_back(Costs.Plain[J]);
-    // The empty conjunction is the all-ones literal, which reads free.
-    Running =
-        saturatingAdd(Running, FactorCosts.empty() ? 0 : joinCost(FactorCosts));
+    Running = saturatingAdd(Running, joinCost(FactorCosts));
     if (Running > Budget)
       return kCostCeiling;
   }
-  return Terms.size() <= 1 ? Running : saturatingAdd(Running, 1);
+  if (!Nonconstant)
+    return 1; // Both zero and all-ones are literal leaves.
+  return saturatingAdd(Running, Nonconstant - 1 + (Complement ? 1 : 0));
 }
 
 SymRef buildExclusiveOr(SymContext &Ctx, llvm::ArrayRef<uint32_t> Terms,
@@ -513,7 +541,7 @@ SymRef buildExclusiveOr(SymContext &Ctx, llvm::ArrayRef<uint32_t> Terms,
 }
 
 /// Cost a cached small recipe before interning it. This upper bound keeps the
-/// binary recipe's joins even when the builders would flatten or cancel them.
+/// binary recipe's joins even when the builders would cancel them.
 size_t recipeCost(const SynthTable &Table, uint32_t Packed,
                   llvm::ArrayRef<size_t> Atoms,
                   llvm::DenseMap<uint32_t, size_t> &Memo) {
@@ -527,7 +555,7 @@ size_t recipeCost(const SynthTable &Table, uint32_t Packed,
     Cost = 1;
     break;
   case Recipe::Ones:
-    Cost = 0;
+    Cost = 1;
     break;
   case Recipe::Atom:
     Cost = Atoms[R.A];
@@ -589,10 +617,11 @@ std::optional<ParityKernel> parityKernel(llvm::ArrayRef<uint32_t> Terms,
   if (!Out.Peeled || !Nonlinear || !charge(NumVars))
     return std::nullopt;
 
-  // Every supported atom must still be read. Reject unaffordable candidates
-  // before requesting the cached recipe or constructing any expression.
+  // Keep this optional construction within the estimated cost of the existing
+  // candidates. With compound or related inputs this is a conservative search
+  // gate, not a lower bound on every expression after substitution.
   const size_t Limit = std::min(BestCost, Limits.MaxCost);
-  if (joinCost(Costs.Plain) >= Limit)
+  if (joinCost(Costs.Plain) > Limit)
     return std::nullopt;
   llvm::SmallVector<size_t, 3> KernelCosts;
   size_t PeeledCost = 0;
@@ -630,9 +659,10 @@ std::optional<ParityKernel> parityKernel(llvm::ArrayRef<uint32_t> Terms,
     return std::nullopt;
   llvm::DenseMap<uint32_t, size_t> Memo;
   const size_t Cost = saturatingAdd(
-      1, saturatingAdd(PeeledCost, recipeCost(synthTable(Size), Out.Packed,
-                                              KernelCosts, Memo)));
-  if (Cost > Limits.MaxCost || Cost >= BestCost)
+      std::popcount(Out.Peeled),
+      saturatingAdd(PeeledCost, recipeCost(synthTable(Size), Out.Packed,
+                                           KernelCosts, Memo)));
+  if (Cost > Limits.MaxCost || Cost > BestCost)
     return std::nullopt;
   return Out;
 }
@@ -714,6 +744,8 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
          "the table's arity has to be the number of atoms it is written over");
 
   const uint32_t Width = Ctx.width(Atoms[0]);
+  if (Limits.MaxCost < 1)
+    return std::nullopt;
   if (Table.isZero())
     return Ctx.mkZero(Width);
   if (Table.isOnes())
@@ -771,18 +803,22 @@ std::optional<SymRef> synthesizeBitwise(SymContext &Ctx,
                           saturatingMul(Projected.entries(), NumVars),
                           std::min(SumCost, ExclusiveCost), Limits);
   SymRef Best;
-  if (SumCost <= ExclusiveCost && SumCost != kCostCeiling)
-    Best = buildCover(Ctx, *Sum, KeptAtoms, Width);
-  else if (ExclusiveCost != kCostCeiling && ExclusiveCost <= Limits.MaxCost)
-    Best = buildExclusiveOr(Ctx, Terms, KeptAtoms, Width);
-  if (Kernel) {
-    SymRef Candidate = buildParityKernel(Ctx, *Kernel, KeptAtoms, Width);
-    // Opaque or repeated atoms may make the established form collapse during
-    // construction. Keep it on an actual-cost tie as well as an estimated one.
-    if (!Best.isValid() ||
-        Ctx.readabilityCost(Candidate) < Ctx.readabilityCost(Best))
+  auto consider = [&](SymRef Candidate) {
+    const SymReadability Score = Ctx.readability(Candidate);
+    if (Score.Nodes > Limits.MaxCost)
+      return;
+    if (!Best.isValid() || Score < Ctx.readability(Best))
       Best = Candidate;
-  }
+  };
+  // Keep the existing estimate-based construction bound. Only a node-count
+  // tie needs both forms to resolve their actual operation counts.
+  if (SumCost <= ExclusiveCost && SumCost != kCostCeiling)
+    consider(buildCover(Ctx, *Sum, KeptAtoms, Width));
+  if (ExclusiveCost <= SumCost && ExclusiveCost != kCostCeiling &&
+      ExclusiveCost <= Limits.MaxCost)
+    consider(buildExclusiveOr(Ctx, Terms, KeptAtoms, Width));
+  if (Kernel)
+    consider(buildParityKernel(Ctx, *Kernel, KeptAtoms, Width));
   return Best.isValid() ? std::optional<SymRef>(Best) : std::nullopt;
 }
 

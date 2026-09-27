@@ -473,10 +473,10 @@ SymRef normalizeArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
     auto Factored = Normalizer.factored(*Original);
     if (!Factored)
       return Stop();
-    if (readingCost(Ctx, *Factored) < readingCost(Ctx, Best))
+    if (readingScore(Ctx, *Factored) < readingScore(Ctx, Best))
       Best = *Factored;
   }
-  if (Best == E || readingCost(Ctx, Best) >= readingCost(Ctx, E))
+  if (Best == E || readingScore(Ctx, Best) >= readingScore(Ctx, E))
     return E;
 
   // Re-expand the chosen spelling: factor selection and emission are not

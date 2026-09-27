@@ -50,6 +50,9 @@ TEST(SymMBACandidateRoot, MeasuresAnExposedAddRootAfterProductRecovery) {
       EXPECT_LE(Result.SizeAfter, Ctx.readabilityCost(C.Expected))
           << Ctx.toString(Result.Expr);
       EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      // Losing the shared complement makes this bounded recovery spend the
+      // entire default allowance without reaching the product identity.
+      EXPECT_LT(Result.Work, size_t(1) << 20);
       if (Width <= 3) {
         std::vector<uint64_t> Values(Ctx.numVars(), 0);
         for (unsigned X = 0; X < (1u << Width); ++X)

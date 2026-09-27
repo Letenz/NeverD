@@ -245,7 +245,7 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
     // Ranking the product alone rather than the whole sum is the same order:
     // the remainder is the same term under every candidate.
     SymRef Best;
-    size_t BestCost = 0;
+    SymReadability BestCost;
     forEachProductMatch(
         Part, Degree, NumAtoms, Width, MaxCandidates, Budget,
         [&](const llvm::APInt &Coeff, llvm::ArrayRef<TruthTable> Match) {
@@ -260,7 +260,7 @@ std::optional<SymRef> solvePolynomial(SymContext &Ctx, SymRef Body,
             Factors.push_back(*Written);
           }
           SymRef Candidate = Ctx.mkMul(Factors);
-          const size_t Cost = readingCost(Ctx, Candidate);
+          const SymReadability Cost = readingScore(Ctx, Candidate);
           if (!Best.isValid() || Cost < BestCost) {
             Best = Candidate;
             BestCost = Cost;

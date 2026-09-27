@@ -333,6 +333,17 @@ size_t readingCost(const SymContext &Ctx, SymRef R) {
   return Ctx.readabilityCost(R);
 }
 
+SymReadability readingScore(const SymContext &Ctx, SymRef R) {
+  return Ctx.readability(R);
+}
+
+bool doesNotGrow(const SymContext &Ctx, SymRef Candidate, SymRef Input) {
+  const SymReadability Score = readingScore(Ctx, Candidate);
+  // Saturation cannot establish that two actual printed trees have equal size.
+  return Score.Nodes != std::numeric_limits<size_t>::max() &&
+         Score <= readingScore(Ctx, Input);
+}
+
 bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
                     unsigned Samples) {
   SymEvalPlan PlanA(Ctx, A);
@@ -445,9 +456,10 @@ void affineResidualCandidates(SymContext &Ctx,
         break;
       }
   }
-  // Every essential input needs a leaf, and a multi-input result needs an
-  // operation. This bound does not assume a particular Boolean form.
-  if (TermBudget < Support + 1)
+  // Every essential input needs a leaf and connecting the leaves requires
+  // at least Support - 1 printed binary operations. The three distinct
+  // values above guarantee more than one essential input.
+  if (TermBudget < 2 * Support - 1)
     return;
 
   // Reuse this charged classification in the later pair reading. Most
@@ -549,6 +561,16 @@ void affineResidualCandidates(SymContext &Ctx,
             Ctx.mkAdd({Ctx.mkConst(-Base),
                        Ctx.mkMul(Ctx.mkConst(Other - Base), Found->second),
                        Ctx.mkMul(Ctx.mkConst(Coefficient), Atoms[Axis])});
+        // With offset -1, reversing the two coefficients under a complement
+        // spells the same word: ~(-a*B-c*X) = -1+a*B+c*X. Reuse the proven
+        // selector and keep one form per orientation; no new search is needed.
+        if (Base.isOne() && Budget.consume(Weights.size())) {
+          SymRef Complement = Ctx.mkNot(
+              Ctx.mkAdd(Ctx.mkMul(Ctx.mkConst(Base - Other), Found->second),
+                        Ctx.mkMul(Ctx.mkConst(-Coefficient), Atoms[Axis])));
+          if (readingScore(Ctx, Complement) < readingScore(Ctx, Form))
+            Form = Complement;
+        }
         if (readingCost(Ctx, Form) <= TermBudget &&
             !llvm::is_contained(Out, Form))
           Out.push_back(Form);
@@ -606,7 +628,7 @@ void booleanResidualCandidates(SymContext &Ctx,
         break;
       }
   }
-  if (Support < 3 || TermBudget < Support + 1)
+  if (Support < 3 || TermBudget < 2 * Support - 1)
     return;
 
   llvm::DenseMap<uint32_t, SymRef> Synthesized;
@@ -678,9 +700,9 @@ void booleanResidualCandidates(SymContext &Ctx,
 
 SymRef cheapestOf(const SymContext &Ctx, llvm::ArrayRef<SymRef> Candidates) {
   SymRef Best;
-  size_t BestCost = 0;
+  SymReadability BestCost;
   for (SymRef Candidate : Candidates) {
-    size_t Cost = readingCost(Ctx, Candidate);
+    SymReadability Cost = readingScore(Ctx, Candidate);
     if (!Best.isValid() || Cost < BestCost) {
       Best = Candidate;
       BestCost = Cost;

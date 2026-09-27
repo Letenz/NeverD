@@ -366,9 +366,10 @@ SymRef SymContext::mkNot(SymRef A) {
       if (!Offset.isZero())
         Negated.push_back(mkConst(Offset));
       SymRef Reduced = mkAdd(Negated);
-      const size_t Cost = readabilityCost(A);
-      if (Cost != std::numeric_limits<size_t>::max() &&
-          readabilityCost(Reduced) < Cost + 1)
+      const SymReadability Cost = readability(A);
+      if (Cost.Nodes < std::numeric_limits<size_t>::max() - 1 &&
+          readability(Reduced) <
+              SymReadability{Cost.Nodes + 1, Cost.Operations + 1})
         return Reduced;
     }
   }

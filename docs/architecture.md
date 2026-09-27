@@ -1354,6 +1354,19 @@ full-word consumers retain their original values. Node/edge limits and unknown
 shapes leave the original expression intact without invoking a solver.
 
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Candidate selection uses one cached rendering score: expanded operator and
+leaf count first, then fewer operations on a size tie. Associative infix
+chains count every printed binary operator. Signed literals are leaves;
+all-ones is omitted only as an implicit negative unit coefficient. A sum's
+binary subtraction absorbs that term's unary sign, and `Not(Eq)` prints as
+one inequality. The printer and score share the sign and leading-term rules.
+Shared sources are charged per appearance, so a smaller DAG cannot justify
+duplicating a larger printed tree. Saturated sizes do not authorize growth.
+The cache grows geometrically and visits each appended node and edge once;
+it never expands shared trees into strings to compare them. Public size
+counters report the first component; an equal-size rewrite can improve the
+second component. These counters are not directly comparable with older
+versions that counted n-ary nodes once and omitted all all-ones literals.
 Region candidates are independently proved over the completed abstraction,
 then instantiated with that abstraction's hidden-input mapping. The identity
 holds for arbitrary independent inputs, so restoring related sources cannot

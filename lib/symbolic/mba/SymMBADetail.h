@@ -149,28 +149,18 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
 // Ranking and checking
 //===----------------------------------------------------------------------===//
 
-/// What an expression costs whoever reads it.
-///
-/// Two things make this different from the size of the graph.
-///
-/// The first is sharing.  A subterm reachable by three paths is one node in
-/// the graph and three appearances in anything that writes the expression out,
-/// because writing it out is a walk of the tree the graph denotes.  Ranking by
-/// graph size therefore calls an expression that says the same thing three
-/// times cheaper than one that says two things once each, which is backwards.
-/// So this counts the tree.
-///
-/// The second is the all-ones literal, which costs nothing.  It is never a
-/// quantity: it is the sign of a negation — which is how negation is stored —
-/// or the mask of a complement.  Charging for it would make `x - y` dearer
-/// than `~(~x + y)` and rank the bitwise form above the arithmetic one this
-/// exists to recover.
-///
-/// SymContext caches this per node.  Candidate generation appends nodes to the
-/// context and asks for their costs repeatedly; extending one prefix cache
-/// keeps all of those queries linear in the number of nodes built, while the
-/// number returned still describes the tree a reader sees.
+/// The node component of the context's cached printed-tree score, used by
+/// candidate construction bounds; actual storage has its own byte budget.
+/// Shared expressions count once per printed appearance;
+/// signs and n-ary joins follow the same spelling rules as the printer.
 size_t readingCost(const SymContext &Ctx, SymRef R);
+
+/// Rank completed candidates by printed tree nodes, then printed operations.
+SymReadability readingScore(const SymContext &Ctx, SymRef R);
+
+/// Whether a completed candidate is no larger than its input. Saturated node
+/// counts cannot establish this relation, even when both scores are saturated.
+bool doesNotGrow(const SymContext &Ctx, SymRef Candidate, SymRef Input);
 
 /// Compare two expressions at random points.
 ///
