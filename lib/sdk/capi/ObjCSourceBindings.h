@@ -1806,10 +1806,9 @@ swiftInlineStringPairArrayHint(const BinaryImage &Image, va_t Address) {
       return std::nullopt;
     if (Symbol.Addr == Address + Width && !Symbol.IsFunc)
       ++BoundarySymbols;
-    if (Symbol.Size &&
-        (Symbol.Addr > InvalidVA - Symbol.Size ||
-         (Symbol.Addr < Address + Width &&
-          Address < Symbol.Addr + Symbol.Size)))
+    if (Symbol.Size && (Symbol.Addr > InvalidVA - Symbol.Size ||
+                        (Symbol.Addr < Address + Width &&
+                         Address < Symbol.Addr + Symbol.Size)))
       return std::nullopt;
   }
   if (BoundarySymbols != 1)
@@ -2099,9 +2098,9 @@ inline bool exactParameterValue(const ExprPtr &Value, size_t Parameter,
 /// comparing it with the context parameter. Rebuild the register's definition
 /// only when it has one exact image-address definition and every read is that
 /// callback comparison; other uses must retain the image-data diagnostic.
-inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
-    const HighFunc &Function, const BinaryImage &Image,
-    std::optional<size_t> ContextParameter) {
+inline std::map<HighSourceLocalIdentity, va_t>
+kvoContextLocalAliases(const HighFunc &Function, const BinaryImage &Image,
+                       std::optional<size_t> ContextParameter) {
   std::map<HighSourceLocalIdentity, va_t> Aliases;
   if (!ContextParameter)
     return Aliases;
@@ -2122,8 +2121,8 @@ inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
     auto &Def = Definitions[highSourceLocalIdentity(Statement.Dst->Var)];
     ++Def.Count;
     const auto &Value = Statement.Val;
-    Def.Valid = Def.Count == 1 && Statement.Kind == StmtKind::Assign &&
-                Value && Value->Kind == ExprKind::Const && Value->Type &&
+    Def.Valid = Def.Count == 1 && Statement.Kind == StmtKind::Assign && Value &&
+                Value->Kind == ExprKind::Const && Value->Type &&
                 Value->Type->Size == 8 && Statement.Dst->Type &&
                 Statement.Dst->Type->Size == 8 &&
                 isExactAddressProvenance(Value->ConstProvenance) &&
@@ -2137,9 +2136,9 @@ inline std::map<HighSourceLocalIdentity, va_t> kvoContextLocalAliases(
   std::map<HighSourceLocalIdentity, unsigned> Reads, ComparedReads;
   size_t Budget = 1000000;
   bool Complete = true;
-  std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)> Scan =
-      [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
-          unsigned Depth) {
+  std::function<void(const ExprPtr &, const HighExpr *, size_t, unsigned)>
+      Scan = [&](const ExprPtr &Value, const HighExpr *Parent, size_t Index,
+                 unsigned Depth) {
         if (!Value)
           return;
         if (Depth > 200 || !Budget--) {
@@ -4496,6 +4495,40 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
         if (Index < Parameters.size() && Parameters[Index].Type &&
             Parameters[Index].Type->Kind == NdTypeKind::Ptr)
           OperandAddress = true;
+      }
+      // A compiler-authenticated Swift.Int argument is numeric even when a
+      // folded color literal happens to equal an address in the image. Do not
+      // grant this to inferred native integer carriers or address-provenance
+      // constants: those may still carry pointer identity.
+      if (Operand && Operand->Kind == ExprKind::Const &&
+          Operand->AddressOwnerVA == InvalidVA &&
+          (Operand->ConstProvenance == ConstantAddressProvenance::Unknown ||
+           Operand->ConstProvenance == ConstantAddressProvenance::Scalar) &&
+          !OperandAddress && !MemoryAddress &&
+          Expression->Kind == ExprKind::Call && !Expression->IsIndirectCall &&
+          Expression->SourceCallHint &&
+          Expression->SourceCallHint->CallKind ==
+              SourceCallTypeHint::Kind::Native &&
+          Expression->CallAddr == Expression->SourceCallHint->TargetAddress &&
+          Expression->SourceCallHint->Signature.Origin ==
+              SourceFunctionTypeHint::OriginKind::SwiftMangled &&
+          Expression->SourceCallHint->Signature.HasExplicitABI &&
+          Expression->SourceCallHint->Signature.Convention ==
+              SourceFunctionTypeHint::ConventionKind::Swift &&
+          Expression->Operands.size() ==
+              Expression->SourceCallHint->Signature.Parameters.size() &&
+          Index < Expression->SourceCallHint->Signature.Parameters.size() &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type &&
+          Expression->SourceCallHint->Signature.Parameters[Index].Type->Kind ==
+              NdTypeKind::Int &&
+          Operand->Type && Operand->Type->Kind == NdTypeKind::Int &&
+          Operand->Type->Size ==
+              Expression->SourceCallHint->Signature.Parameters[Index]
+                  .Type->Size) {
+        auto Scalar = std::make_shared<HighExpr>(*Operand);
+        Scalar->ConstProvenance = ConstantAddressProvenance::Scalar;
+        Operand = Copy(Scalar, Depth + 1, true, false, false);
+        continue;
       }
       const bool Numeric = (Expression->Kind == ExprKind::BinOp ||
                             Expression->Kind == ExprKind::UnaryOp) &&
