@@ -81,7 +81,7 @@ std::optional<Region> readRegion(SymContext &Ctx, SymRef E,
       Out.AtomIds.size() > MaxAtoms || !cornerCount(Out.AtomIds.size());
   if (TooWide)
     Rep.TooWide = true;
-  if (Out.AtomIds.empty() || TooWide)
+  if (TooWide || (Out.AtomIds.empty() && !Ctx.isConst(Out.Abstract.Body)))
     return std::nullopt;
   for (uint32_t Id : Out.AtomIds)
     Out.Atoms.push_back(Ctx.varRef(Id));
@@ -115,9 +115,15 @@ SymRef solveRegion(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       Rep.BudgetExhausted = true;
     } else {
       llvm::SmallVector<SymRef, 4> Forms;
-      linearCandidates(Ctx,
-                       measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
-                       Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
+      // Exact abstraction can eliminate every input. The literal is already
+      // the candidate; bitwise synthesis requires at least one atom. Keep the
+      // one-corner budget charge and the same proof and selection gates below.
+      if (Linear->AtomIds.empty())
+        Forms.push_back(Linear->Abstract.Body);
+      else
+        linearCandidates(Ctx,
+                         measure(Ctx, Linear->Abstract.Body, Linear->AtomIds),
+                         Linear->Atoms, termBudget(Ctx, E, Opts), Limits, Forms);
       for (SymRef Form : Forms) {
         // Prove the identity over independent inputs before restoring their
         // sources. Restoration may combine coefficients and erase the shared
