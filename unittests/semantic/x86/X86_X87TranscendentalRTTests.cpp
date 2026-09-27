@@ -165,8 +165,8 @@ class X64X87FpremAntiEmulationRT
       public ::testing::WithParamInterface<RoundTripTC> {};
 TEST_P(X64X87FpremAntiEmulationRT, Verify) { roundTripX64(GetParam()); }
 
-// Adapted from Packmad's MIT-licensed fprem-anti-emulation, revision
-// f49ff009e062af2a23c5c5eec91649520ca605f0 (2026-09-26).
+// Operand construction and status checks use Packmad's MIT-licensed sequence:
+// https://github.com/gmh5225/fprem-anti-emulation/blob/f49ff009e062af2a23c5c5eec91649520ca605f0/fprem-anti-emu.asm
 // See THIRD_PARTY_NOTICES.md and LICENSES/FPREM-Anti-Emulation.txt.
 // fprem-anti-emulation uses a single FPREM with an exponent gap of exactly 64.
 // The negative divisor's sign bit is intentional: the original PoC constructs
