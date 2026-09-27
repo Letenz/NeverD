@@ -347,12 +347,6 @@ SynthVerification findsCounterexample(SymContext &, SymRef, SymRef) {
   return SynthVerification::Different;
 }
 
-SynthVerification refutesOneCandidate(SymContext &, SymRef, SymRef) {
-  ++HookCalls;
-  return HookCalls == 1 ? SynthVerification::Different
-                        : SynthVerification::Equivalent;
-}
-
 SynthVerification cannotDecide(SymContext &, SymRef, SymRef) {
   ++HookCalls;
   return SynthVerification::Unknown;
@@ -444,15 +438,131 @@ TEST(SymSynth, ReportsWhenTheProcedureFindsACounterexample) {
 
 TEST(SymSynth, KeepsSearchingAfterOneCandidateHasACounterexample) {
   SymContext Ctx;
+  SymRef E = parsed(Ctx, "(1 << y) & (1 << 200)", 256);
+  SymRef Zero = Ctx.mkZero(256);
+  SynthOptions Opts = quick();
+  Opts.MaxCost = 3;
+  Opts.AllowVariableShifts = true;
+
+  unsigned Calls = 0;
+  SynthResult R = synthesize(
+      Ctx, E, Opts, [&](SymContext &C, SymRef Body, SymRef Candidate) {
+        ++Calls;
+        if (Candidate != Zero)
+          return SynthVerification::Unknown;
+
+        // The search grids miss y = 200, where zero is a false coincidence.
+        // Different is a stable answer for this candidate, so the next proof
+        // call must concern another candidate rather than retrying zero.
+        std::vector<llvm::APInt> Assignment(C.numVars(), llvm::APInt(256, 200));
+        EXPECT_NE(SymEvalPlan(C, Body).eval(Assignment),
+                  SymEvalPlan(C, Candidate).eval(Assignment));
+        return SynthVerification::Different;
+      });
+
+  EXPECT_FALSE(R.Changed);
+  EXPECT_EQ(R.Expr, E);
+  EXPECT_EQ(R.Outcome, SynthOutcome::ProofIncomplete);
+  EXPECT_EQ(R.Verification, SynthVerification::Unknown);
+  EXPECT_EQ(Calls, 2u);
+  EXPECT_EQ(R.ProofQueries, Calls);
+}
+
+TEST(SymSynth, DoesNotRecheckARefutedCandidateAcrossBothSearches) {
+  SymContext Ctx;
+  SymRef E = parsed(Ctx, "x + ((1 << y) & (1 << 200))", 256);
+  SymRef X = Ctx.mkVar("x", 256);
+  SynthOptions Opts;
+  Opts.MaxCost = 1;
+  Opts.MaxWork = 50000;
+
+  unsigned Calls = 0;
+  SynthResult R = synthesize(
+      Ctx, E, Opts, [&](SymContext &C, SymRef Body, SymRef Candidate) {
+        ++Calls;
+        EXPECT_EQ(Candidate, X);
+        std::vector<llvm::APInt> Assignment;
+        for (size_t I = 0; I < C.numVars(); ++I) {
+          const auto &Var = C.varInfo(uint32_t(I));
+          Assignment.emplace_back(Var.Width, Var.Name == "y" ? 200 : 0);
+        }
+        const bool Different = SymEvalPlan(C, Body).eval(Assignment) !=
+                               SymEvalPlan(C, Candidate).eval(Assignment);
+        EXPECT_TRUE(Different);
+        return Different ? SynthVerification::Different
+                         : SynthVerification::Unknown;
+      });
+
+  EXPECT_FALSE(R.Changed);
+  EXPECT_EQ(R.Expr, E);
+  EXPECT_EQ(R.Outcome, SynthOutcome::BudgetExhausted);
+  EXPECT_EQ(R.Work, Opts.MaxWork);
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_EQ(R.ProofQueries, Calls);
+}
+
+TEST(SymSynth, RefutationsDoNotEscapeTheSynthesisRequest) {
+  SynthOptions Opts = quick();
+  Opts.MaxCost = 1;
+  unsigned Calls = 0;
+  for (unsigned Context = 0; Context < 2; ++Context) {
+    SymContext Ctx;
+    SymRef E = parsed(Ctx, "x + ((1 << y) & (1 << 200))", 256);
+    SymRef X = Ctx.mkVar("x", 256);
+    auto Refute = [&](SymContext &C, SymRef Body, SymRef Candidate) {
+      ++Calls;
+      EXPECT_EQ(Candidate, X);
+      std::vector<llvm::APInt> Assignment;
+      for (size_t I = 0; I < C.numVars(); ++I) {
+        const auto &Var = C.varInfo(uint32_t(I));
+        Assignment.emplace_back(Var.Width, Var.Name == "y" ? 200 : 0);
+      }
+      EXPECT_NE(SymEvalPlan(C, Body).eval(Assignment),
+                SymEvalPlan(C, Candidate).eval(Assignment));
+      return SynthVerification::Different;
+    };
+
+    // Both a repeated request on one context and a fresh context with reused
+    // node IDs must ask their own verifier about the candidate.
+    for (unsigned Request = 0; Request < 2; ++Request) {
+      SynthResult R = synthesize(Ctx, E, Opts, Refute);
+      EXPECT_FALSE(R.Changed);
+      EXPECT_EQ(R.Outcome, SynthOutcome::Counterexample);
+      EXPECT_EQ(R.ProofQueries, 1u);
+      EXPECT_EQ(Calls, Context * 2 + Request + 1);
+    }
+
+    // The same candidate is correct for another body in this context.  Its
+    // earlier refutation must not prevent this request from accepting it.
+    SymRef Other = parsed(Ctx, "x + (x >> 4) - ((x >> 2) >> 2)", 256);
+    SynthResult R = synthesize(Ctx, Other, Opts, provesEquivalent);
+    EXPECT_TRUE(R.Changed);
+    EXPECT_EQ(R.Expr, X);
+    EXPECT_EQ(R.ProofQueries, 1u);
+    EXPECT_EQ(R.Verification, SynthVerification::Equivalent);
+    EXPECT_TRUE(behavesTheSame(Ctx, Other, R.Expr));
+  }
+}
+
+TEST(SymSynth, RetriesAnUnknownCandidateInANewRequest) {
+  SymContext Ctx;
   SymRef E = parsed(Ctx, "(x >> 4) + ((x >> 2) >> 2)");
+  SymRef Want = parsed(Ctx, "2 * (x >> 4)");
 
   HookCalls = 0;
-  SynthResult R = synthesize(Ctx, E, quick(), refutesOneCandidate);
+  SynthResult First = synthesize(Ctx, E, quick(), cannotDecideOnce);
+  EXPECT_EQ(First.Expr, E);
+  EXPECT_EQ(First.Outcome, SynthOutcome::ProofIncomplete);
+  EXPECT_EQ(First.ProofQueries, 1u);
+  EXPECT_EQ(HookCalls, 1u);
+
+  SynthResult R = synthesize(Ctx, E, quick(), cannotDecideOnce);
   EXPECT_TRUE(R.Changed);
+  EXPECT_EQ(R.Expr, Want);
   EXPECT_EQ(R.Outcome, SynthOutcome::Synthesized);
   EXPECT_EQ(R.Verification, SynthVerification::Equivalent);
   EXPECT_EQ(HookCalls, 2u);
-  EXPECT_EQ(R.ProofQueries, 2u);
+  EXPECT_EQ(R.ProofQueries, 1u);
 }
 
 TEST(SymSynth, ReportsWhenProofIsIncomplete) {

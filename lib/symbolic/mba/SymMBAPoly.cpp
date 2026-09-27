@@ -265,13 +265,14 @@ std::optional<PolyForm> expandOverMinterms(const SymContext &Ctx,
 }
 
 bool proveLinearIdentity(SymContext &Ctx, SymRef Before, SymRef After,
-                         unsigned MaxAtoms, WorkBudget &Budget) {
+                         unsigned MaxAtoms, WorkBudget &Budget,
+                         size_t MaxBytes) {
   SymRef Delta = Ctx.mkSub(Before, After);
   if (Ctx.isConstZero(Delta))
     return true;
 
   std::optional<Abstraction> Abstract =
-      abstractToMBA(Ctx, Delta, /*AllowProducts=*/false);
+      abstractToMBA(Ctx, Delta, /*AllowProducts=*/false, &Budget, MaxBytes);
   if (!Abstract)
     return false;
 
@@ -291,13 +292,14 @@ bool proveLinearIdentity(SymContext &Ctx, SymRef Before, SymRef After,
 }
 
 bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
-                             unsigned MaxAtoms, WorkBudget &Budget) {
+                             unsigned MaxAtoms, WorkBudget &Budget,
+                             size_t MaxBytes) {
   SymRef Delta = Ctx.mkSub(Before, After);
   if (Ctx.isConstZero(Delta))
     return true;
 
   std::optional<Abstraction> Abstract =
-      abstractToMBA(Ctx, Delta, /*AllowProducts=*/true);
+      abstractToMBA(Ctx, Delta, /*AllowProducts=*/true, &Budget, MaxBytes);
   if (!Abstract)
     return false;
 

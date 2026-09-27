@@ -24,6 +24,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -226,6 +227,436 @@ private:
   unsigned Next = 0;
 };
 
+/// An exact affine relation for a hidden input.  Its bases stop at bitwise or
+/// opaque expressions; no truth-table sampling is used to discover a relation.
+struct AffineInput {
+  std::map<uint32_t, llvm::APInt> Terms;
+  llvm::APInt Offset;
+};
+
+/// Limits only the optional recovery of affine relations. Keeping allocation
+/// charges after storage is released also bounds temporary coefficient maps.
+class AffineResources {
+  WorkBudget Fallback{MBAOptions{}.MaxWork};
+  WorkBudget &Work;
+  size_t Bytes;
+
+public:
+  AffineResources(WorkBudget *Budget, size_t MaxBytes)
+      : Work(Budget ? *Budget : Fallback), Bytes(MaxBytes) {}
+
+  bool charge(size_t Units, size_t Storage = 0) {
+    if (Storage > Bytes || !Work.consume(Units))
+      return false;
+    Bytes -= Storage;
+    return true;
+  }
+
+  bool array(size_t Count, size_t ElementBytes) {
+    if (ElementBytes &&
+        Count > std::numeric_limits<size_t>::max() / ElementBytes)
+      return false;
+    return charge(Count, Count * ElementBytes);
+  }
+
+  bool product(const llvm::APInt &Value) {
+    const size_t Words = Value.getNumWords();
+    if (Words > std::numeric_limits<size_t>::max() / Words)
+      return false;
+    return charge(Words * Words, Words * sizeof(uint64_t));
+  }
+
+  bool order(size_t Count) {
+    size_t Levels = 0;
+    for (size_t N = Count ? Count - 1 : 0; N; N >>= 1)
+      ++Levels;
+    if (Levels && Count > std::numeric_limits<size_t>::max() / Levels)
+      return false;
+    return charge(Count * Levels);
+  }
+
+  template <typename MapT>
+  bool add(MapT &Map, uint32_t Index, const llvm::APInt &Coefficient) {
+    const size_t Words = Coefficient.getNumWords();
+    if (!charge(1 + Words))
+      return false;
+    if (Coefficient.isZero())
+      return true;
+    auto It = Map.find(Index);
+    if (It != Map.end()) {
+      It->second += Coefficient;
+      return true;
+    }
+    if (!charge(1, 128) || !array(Words, sizeof(uint64_t)))
+      return false;
+    Map.emplace(Index, Coefficient);
+    return true;
+  }
+};
+
+using AffineCache = std::map<uint32_t, AffineInput>;
+
+bool expandsAffine(const SymContext &Ctx, SymRef R) {
+  if (Ctx.op(R) == SymOp::Add || Ctx.op(R) == SymOp::Not)
+    return true;
+  llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+  return Ctx.op(R) == SymOp::Mul && Ops.size() == 2 && Ctx.isConst(Ops[0]);
+}
+
+std::optional<AffineInput>
+affineInput(const SymContext &Ctx, SymRef Root,
+            const llvm::DenseSet<uint32_t> &ForcedAtoms,
+            const llvm::DenseMap<uint32_t, Role> &Roles,
+            const AffineCache &Cache, AffineResources &Resources) {
+  const unsigned Width = Ctx.width(Root);
+  if (!Resources.array((size_t(Width) + 63) / 64, sizeof(uint64_t)))
+    return std::nullopt;
+  AffineInput Out{{}, llvm::APInt(Width, 0)};
+  // Parents have larger indices than children.  Combining all incoming
+  // coefficients before visiting a child avoids expanding shared DAG paths.
+  std::map<uint32_t, llvm::APInt, std::greater<uint32_t>> Pending;
+  if (!Resources.add(Pending, Root.index(), llvm::APInt(Width, 1)))
+    return std::nullopt;
+  while (!Pending.empty()) {
+    if (!Resources.charge(1))
+      return std::nullopt;
+    auto It = Pending.begin();
+    SymRef R(It->first);
+    llvm::APInt Coefficient = std::move(It->second);
+    Pending.erase(It);
+    if (Coefficient.isZero())
+      continue;
+    if (Ctx.isConst(R)) {
+      if (!Resources.product(Coefficient))
+        return std::nullopt;
+      Out.Offset += Coefficient * Ctx.constValue(R);
+      continue;
+    }
+    if (R != Root && (ForcedAtoms.contains(R.index()) ||
+                      Roles.lookup(R.index()) != Role::Linear)) {
+      if (!Resources.add(Out.Terms, R.index(), Coefficient))
+        return std::nullopt;
+      continue;
+    }
+    auto Cached = Cache.find(R.index());
+    if (Cached != Cache.end()) {
+      if (!Resources.product(Coefficient))
+        return std::nullopt;
+      Out.Offset += Coefficient * Cached->second.Offset;
+      for (const auto &[Base, Scale] : Cached->second.Terms) {
+        if (!Resources.product(Coefficient) ||
+            !Resources.add(Out.Terms, Base, Coefficient * Scale))
+          return std::nullopt;
+      }
+      continue;
+    }
+
+    llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+    if (Ctx.op(R) == SymOp::Add) {
+      for (SymRef C : Ops)
+        if (!Resources.add(Pending, C.index(), Coefficient))
+          return std::nullopt;
+    } else if (Ctx.op(R) == SymOp::Mul && Ops.size() == 2 &&
+               Ctx.isConst(Ops[0])) {
+      if (!Resources.product(Coefficient) ||
+          !Resources.add(Pending, Ops[1].index(),
+                         Coefficient * Ctx.constValue(Ops[0])))
+        return std::nullopt;
+    } else if (Ctx.op(R) == SymOp::Not) {
+      Out.Offset -= Coefficient;
+      if (!Resources.add(Pending, Ops[0].index(), -Coefficient))
+        return std::nullopt;
+    } else {
+      if (!Resources.add(Out.Terms, R.index(), Coefficient))
+        return std::nullopt;
+    }
+  }
+  for (auto It = Out.Terms.begin(); It != Out.Terms.end();) {
+    if (!Resources.charge(1))
+      return std::nullopt;
+    if (It->second.isZero()) {
+      It = Out.Terms.erase(It);
+    } else {
+      ++It;
+    }
+  }
+  return Out;
+}
+
+/// Cache shared linear tails, not every prefix of a linear chain. Memoizing
+/// every prefix would itself use quadratic space when each adds a new base.
+bool cacheSharedAffineInputs(const SymContext &Ctx,
+                             llvm::ArrayRef<uint32_t> Roots,
+                             const llvm::DenseSet<uint32_t> &ForcedAtoms,
+                             const llvm::DenseMap<uint32_t, Role> &Roles,
+                             AffineCache &Cache, AffineResources &Resources) {
+  llvm::SmallVector<uint32_t, 32> Pending, Shared;
+  llvm::DenseSet<uint32_t> Seen;
+  llvm::DenseMap<uint32_t, uint8_t> Uses;
+  if (!Resources.array(Roots.size(), 2 * sizeof(uint32_t)))
+    return false;
+  Pending.append(Roots.begin(), Roots.end());
+  while (!Pending.empty()) {
+    const uint32_t Index = Pending.pop_back_val();
+    if (!Resources.charge(1))
+      return false;
+    if (Seen.contains(Index))
+      continue;
+    if (!Resources.charge(1, 64))
+      return false;
+    Seen.insert(Index);
+    SymRef R(Index);
+    if (!expandsAffine(Ctx, R))
+      continue;
+    for (SymRef C : Ctx.operands(R)) {
+      if (!Resources.charge(1))
+        return false;
+      if (ForcedAtoms.contains(C.index()) ||
+          Roles.lookup(C.index()) != Role::Linear)
+        continue;
+      auto It = Uses.find(C.index());
+      if (It == Uses.end()) {
+        if (!Resources.charge(1, 64))
+          return false;
+        It = Uses.insert({C.index(), 0}).first;
+      }
+      if (It->second < 2 && ++It->second == 2) {
+        if (!Resources.array(1, 2 * sizeof(uint32_t)))
+          return false;
+        Shared.push_back(C.index());
+      }
+      if (!Resources.array(1, 2 * sizeof(uint32_t)))
+        return false;
+      Pending.push_back(C.index());
+    }
+  }
+  if (!Resources.order(Shared.size()))
+    return false;
+  llvm::sort(Shared);
+  for (uint32_t Index : Shared) {
+    auto Input =
+        affineInput(Ctx, SymRef(Index), ForcedAtoms, Roles, Cache, Resources);
+    if (!Input || !Resources.charge(1, 128))
+      return false;
+    Cache.emplace(Index, std::move(*Input));
+  }
+  return true;
+}
+
+std::optional<llvm::APInt> inverseOdd(const llvm::APInt &Coefficient,
+                                      AffineResources &Resources) {
+  // Newton iteration doubles the correct low bits each time.  All arithmetic
+  // remains modulo the original word width, including widths above 64 bits.
+  if (!Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+    return std::nullopt;
+  llvm::APInt Inverse(Coefficient.getBitWidth(), 1);
+  for (uint64_t Bits = 1; Bits < Coefficient.getBitWidth(); Bits *= 2) {
+    if (!Resources.product(Coefficient) || !Resources.product(Coefficient))
+      return std::nullopt;
+    Inverse *= 2 - Coefficient * Inverse;
+  }
+  return Inverse;
+}
+
+bool affineOrder(const SymContext &Ctx, SymRef Root,
+                 std::vector<uint32_t> &Order, AffineResources &Resources) {
+  llvm::SmallVector<SymRef, 32> Pending;
+  llvm::DenseSet<uint32_t> Seen;
+  if (!Resources.array(1, 2 * sizeof(SymRef)))
+    return false;
+  Pending.push_back(Root);
+  while (!Pending.empty()) {
+    SymRef R = Pending.pop_back_val();
+    if (!Resources.charge(1))
+      return false;
+    if (Seen.contains(R.index()))
+      continue;
+    if (!Resources.charge(1, 64) || !Resources.array(1, 2 * sizeof(uint32_t)))
+      return false;
+    Seen.insert(R.index());
+    Order.push_back(R.index());
+    llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+    if (!Resources.array(Ops.size(), 2 * sizeof(SymRef)))
+      return false;
+    Pending.append(Ops.begin(), Ops.end());
+  }
+  if (!Resources.order(Order.size()))
+    return false;
+  llvm::sort(Order);
+  return true;
+}
+
+bool chargeAffineNode(const SymContext &Ctx, SymOp Op,
+                      llvm::ArrayRef<SymRef> Ops, AffineResources &Resources) {
+  size_t Count = 0;
+  for (SymRef C : Ops) {
+    const size_t N = (Op == SymOp::Add || Op == SymOp::Mul) && Ctx.op(C) == Op
+                         ? Ctx.numOperands(C)
+                         : 1;
+    if (N > std::numeric_limits<size_t>::max() - Count)
+      return false;
+    Count += N;
+  }
+  return Resources.charge(1, 128) && Resources.array(Count, 32);
+}
+
+/// Recover arithmetic uses of bases from exact hidden affine relations.
+/// Subtracting a candidate may fold -(-x) to x, or flatten a+(a+b) to 2*a+b.
+/// Reabstracting those forms must not forget the relation to the hidden input.
+/// For P = c*T + Rest with odd c, T = inverse(c)*(P-Rest) modulo the word
+/// width. This substitution is valid for every original assignment, while the
+/// later coefficient proof still quantifies over all abstract inputs
+/// independently.
+SymRef restoreAffineRelations(
+    SymContext &Ctx, SymRef Body, llvm::ArrayRef<uint32_t> OriginalOrder,
+    const llvm::DenseSet<uint32_t> &ForcedAtoms,
+    const llvm::DenseMap<uint32_t, Role> &OriginalRoles,
+    const llvm::DenseMap<uint32_t, SymRef> &OriginalRewritten,
+    bool AllowProducts, WorkBudget *Budget, size_t MaxBytes) {
+  if (ForcedAtoms.empty())
+    return Body;
+  AffineResources Resources(Budget, MaxBytes);
+  llvm::SmallVector<uint32_t, 4> Roots;
+  for (uint32_t Index : OriginalOrder) {
+    if (!Resources.charge(1))
+      return Body;
+    if (ForcedAtoms.contains(Index)) {
+      if (!Resources.array(1, 2 * sizeof(uint32_t)))
+        return Body;
+      Roots.push_back(Index);
+    }
+  }
+  AffineCache Cache;
+  if (!cacheSharedAffineInputs(Ctx, Roots, ForcedAtoms, OriginalRoles, Cache,
+                               Resources))
+    return Body;
+  llvm::SmallVector<std::pair<uint32_t, AffineInput>, 4> Inputs;
+  for (uint32_t Index : Roots) {
+    auto Input = affineInput(Ctx, SymRef(Index), ForcedAtoms, OriginalRoles,
+                             Cache, Resources);
+    if (!Input)
+      return Body;
+    if (Input->Terms.contains(Index) ||
+        llvm::none_of(Input->Terms,
+                      [](const auto &Term) { return Term.second[0]; }))
+      continue;
+    if (!Resources.array(1, 2 * sizeof(std::pair<uint32_t, AffineInput>)))
+      return Body;
+    Inputs.emplace_back(Index, std::move(*Input));
+  }
+  if (Inputs.empty())
+    return Body;
+
+  std::vector<uint32_t> Order;
+  if (!affineOrder(Ctx, Body, Order, Resources) ||
+      !Resources.array(Order.size(), 320))
+    return Body;
+  llvm::DenseMap<uint32_t, Role> Roles;
+  classify(Ctx, Order, {}, AllowProducts, Roles);
+  llvm::DenseSet<uint32_t> VisibleBitwise;
+  for (uint32_t Index : Order) {
+    if (!Resources.charge(1))
+      return Body;
+    if (Roles.lookup(Index) == Role::Bitwise) {
+      VisibleBitwise.insert(Index);
+      for (SymRef C : Ctx.operands(SymRef(Index))) {
+        if (!Resources.charge(1))
+          return Body;
+        VisibleBitwise.insert(C.index());
+      }
+    }
+  }
+
+  llvm::DenseMap<uint32_t, SymRef> Aliases;
+  for (const auto &[Index, Input] : Inputs) {
+    auto Pivot = Input.Terms.end();
+    for (auto It = Input.Terms.begin(); It != Input.Terms.end(); ++It) {
+      if (!Resources.charge(1))
+        return Body;
+      SymRef Base = OriginalRewritten.lookup(It->first);
+      if (!It->second[0] || Aliases.contains(Base.index()))
+        continue;
+      if (Pivot == Input.Terms.end())
+        Pivot = It;
+      // A visible bitwise base must keep its own independent input.  Prefer
+      // eliminating one that appears only in arithmetic positions instead.
+      if (!VisibleBitwise.contains(Base.index())) {
+        Pivot = It;
+        break;
+      }
+    }
+    if (Pivot == Input.Terms.end())
+      continue;
+
+    if (!Resources.charge(1, 128) ||
+        !Resources.array(Input.Offset.getNumWords(), sizeof(uint64_t)) ||
+        !Resources.array(Input.Terms.size(), 2 * sizeof(SymRef)))
+      return Body;
+    llvm::SmallVector<SymRef, 8> Rest{Ctx.mkConst(Input.Offset)};
+    for (const auto &[Base, Coefficient] : Input.Terms) {
+      if (!Resources.charge(1))
+        return Body;
+      if (Base == Pivot->first)
+        continue;
+      if (!Resources.charge(1, 128) ||
+          !Resources.array(Coefficient.getNumWords(), sizeof(uint64_t)))
+        return Body;
+      SymRef Factors[] = {Ctx.mkConst(Coefficient),
+                          OriginalRewritten.lookup(Base)};
+      if (!chargeAffineNode(Ctx, SymOp::Mul, Factors, Resources))
+        return Body;
+      Rest.push_back(Ctx.mkMul(Factors));
+    }
+    auto Inverse = inverseOdd(Pivot->second, Resources);
+    if (!Inverse || !chargeAffineNode(Ctx, SymOp::Add, Rest, Resources))
+      return Body;
+    SymRef RestSum = Ctx.mkAdd(Rest);
+    if (!Resources.charge(1, 128) ||
+        !Resources.array(Inverse->getNumWords(), sizeof(uint64_t)))
+      return Body;
+    SymRef Negative[] = {Ctx.mkOnes(Ctx.width(RestSum)), RestSum};
+    if (!chargeAffineNode(Ctx, SymOp::Mul, Negative, Resources))
+      return Body;
+    SymRef Difference[] = {OriginalRewritten.lookup(Index),
+                           Ctx.mkMul(Negative)};
+    if (!chargeAffineNode(Ctx, SymOp::Add, Difference, Resources))
+      return Body;
+    SymRef Factors[] = {Ctx.mkConst(*Inverse), Ctx.mkAdd(Difference)};
+    if (!chargeAffineNode(Ctx, SymOp::Mul, Factors, Resources) ||
+        !Resources.charge(1, 64))
+      return Body;
+    SymRef Alias = Ctx.mkMul(Factors);
+    Aliases[OriginalRewritten.lookup(Pivot->first).index()] = Alias;
+  }
+  if (Aliases.empty())
+    return Body;
+
+  // Templates use only the completed original abstraction, never one another.
+  // The fixed traversal excludes newly built templates, so shared pivots and
+  // dependent relations cannot recursively expand aliases or create cycles.
+  llvm::DenseMap<uint32_t, SymRef> Rewritten;
+  llvm::DenseMap<uint32_t, SymRef> Arithmetic;
+  for (uint32_t Index : Order) {
+    if (!Resources.charge(1))
+      return Body;
+    SymRef R(Index);
+    const bool IsArithmetic = Roles.lookup(Index) == Role::Linear;
+    if (!Resources.array(Ctx.numOperands(R), 2 * sizeof(SymRef)))
+      return Body;
+    llvm::SmallVector<SymRef, 8> Ops;
+    for (SymRef C : Ctx.operands(R))
+      Ops.push_back(IsArithmetic ? Arithmetic.lookup(C.index())
+                                 : Rewritten.lookup(C.index()));
+    if (!Ops.empty() && !chargeAffineNode(Ctx, Ctx.op(R), Ops, Resources))
+      return Body;
+    SymRef Rebuilt = Ops.empty() ? R : Ctx.rebuild(R, Ops);
+    Rewritten[Index] = Rebuilt;
+    auto It = Aliases.find(Index);
+    Arithmetic[Index] = It == Aliases.end() ? Rebuilt : It->second;
+  }
+  return Rewritten.lookup(Body.index());
+}
+
 } // namespace
 
 bool canMeasureAtRoot(const SymContext &Ctx, SymRef R) {
@@ -259,7 +690,8 @@ std::vector<uint32_t> reachableInOrder(const SymContext &Ctx, SymRef Root) {
 }
 
 std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
-                                         bool AllowProducts) {
+                                         bool AllowProducts, WorkBudget *Budget,
+                                         size_t MaxBytes) {
   std::vector<uint32_t> Order = reachableInOrder(Ctx, Root);
   llvm::DenseSet<uint32_t> ForcedAtoms;
   llvm::DenseMap<uint32_t, Role> Roles;
@@ -330,7 +762,9 @@ std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
     Rewritten[Index] = Ctx.rebuild(R, NewOps);
   }
 
-  Out.Body = Rewritten.lookup(Root.index());
+  Out.Body = restoreAffineRelations(Ctx, Rewritten.lookup(Root.index()), Order,
+                                    ForcedAtoms, Roles, Rewritten,
+                                    AllowProducts, Budget, MaxBytes);
   return Out;
 }
 

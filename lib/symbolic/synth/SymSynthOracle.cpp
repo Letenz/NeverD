@@ -585,13 +585,18 @@ std::vector<Signature> terminalSignatures(const SymContext &Ctx,
 // Checking
 //===----------------------------------------------------------------------===//
 
-Verdict Checker::check(SymContext &Ctx, SymRef Body, SymRef Candidate,
+Verdict Checker::check(SymRef Candidate,
                        const std::optional<SynthVerifyFn> &Verify,
-                       uint64_t &ProofQueries) const {
-  Signature Want = evaluateOnGrid(Ctx, Body, LeafVars, Grid);
-  Signature Got = evaluateOnGrid(Ctx, Candidate, LeafVars, Grid);
-  if (!signaturesEqual(Want, Got))
+                       uint64_t &ProofQueries) {
+  if (Refuted.contains(Candidate.index()))
     return Verdict::Refuted;
+  if (!BodySignature)
+    BodySignature = evaluateOnGrid(Ctx, Body, LeafVars, Grid);
+  Signature Got = evaluateOnGrid(Ctx, Candidate, LeafVars, Grid);
+  if (!signaturesEqual(*BodySignature, Got)) {
+    Refuted.insert(Candidate.index());
+    return Verdict::Refuted;
+  }
   if (!Verify)
     return Verdict::AcceptedBySamples;
   ++ProofQueries;
@@ -599,15 +604,19 @@ Verdict Checker::check(SymContext &Ctx, SymRef Body, SymRef Candidate,
   case SynthVerification::Equivalent:
     return Verdict::AcceptedByVerifier;
   case SynthVerification::Different:
+    Refuted.insert(Candidate.index());
     return Verdict::Refuted;
   case SynthVerification::Unknown:
+    // No refutation was established.  A later request with more resources
+    // must still be allowed to ask about the same candidate.
     return Verdict::ProofIncomplete;
   }
   llvm_unreachable("unhandled synthesis verification");
 }
 
-Checker makeChecker(const SynthProblem &P, const SynthOptions &Opts) {
-  Checker C;
+Checker makeChecker(SymContext &Ctx, const SynthProblem &P,
+                    const SynthOptions &Opts) {
+  Checker C(Ctx, P.Body);
   C.LeafVars = P.LeafVars;
   C.Grid = buildGrid(static_cast<unsigned>(P.Leaves.size()), P.Width,
                      Opts.VerifySamples, Opts.Seed ^ kCheckSeedSalt);

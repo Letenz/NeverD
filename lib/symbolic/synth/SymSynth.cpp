@@ -108,7 +108,7 @@ SynthResult synthesizeImpl(SymContext &Ctx, SymRef E, const SynthOptions &Opts,
   Result.NumLeaves = static_cast<unsigned>(Problem.Leaves.size());
 
   const OpSemantics Sem(Ctx, Problem.Width);
-  const Checker Check = makeChecker(Problem, Opts);
+  Checker Check = makeChecker(Ctx, Problem, Opts);
   SearchEffort Effort(Opts.MaxWork);
 
   SearchOutcome Found = enumerateShortest(Ctx, Problem, Opts, Sem, Effort,

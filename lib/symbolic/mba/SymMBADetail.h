@@ -44,6 +44,8 @@
 
 namespace neverd::symbolic::detail {
 
+class WorkBudget;
+
 //===----------------------------------------------------------------------===//
 // Resolving the public dials
 //===----------------------------------------------------------------------===//
@@ -116,8 +118,13 @@ struct Abstraction {
 /// With \p AllowProducts a product of two bitwise terms survives as itself
 /// rather than becoming one opaque input, which is what lets the degree-two
 /// expansion further down see the factors it needs.
-std::optional<Abstraction> abstractToMBA(SymContext &Ctx, SymRef Root,
-                                         bool AllowProducts);
+/// Optional affine recovery uses \p Budget and \p MaxBytes. Without a supplied
+/// work budget it uses the default bounded policy; refusal keeps the original
+/// abstraction rather than applying an incomplete relation.
+std::optional<Abstraction>
+abstractToMBA(SymContext &Ctx, SymRef Root, bool AllowProducts,
+              WorkBudget *Budget = nullptr,
+              size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
 //===----------------------------------------------------------------------===//
 // Measurement
@@ -187,8 +194,8 @@ size_t termBudget(const SymContext &Ctx, SymRef E, const MBAOptions &Opts);
 
 /// Every way of writing a set of minterm weights that the solver knows.
 ///
-/// The constant, grouped and conjunction-basis forms are appended in that
-/// order and the caller keeps the cheapest, so on a tie the earlier form wins.
+/// The constant, grouped, conjunction-basis and nested forms are appended in
+/// that order and the caller keeps the cheapest, so on a tie the earlier wins.
 void linearCandidates(SymContext &Ctx, std::vector<llvm::APInt> Weights,
                       llvm::ArrayRef<SymRef> Atoms, size_t TermBudget,
                       const SolverLimits &Limits,
@@ -349,7 +356,8 @@ void forEachMonomial(
 /// chosen and therefore cannot bless a candidate merely because the code that
 /// produced it says so.
 bool proveLinearIdentity(SymContext &Ctx, SymRef Before, SymRef After,
-                         unsigned MaxAtoms, WorkBudget &Budget);
+                         unsigned MaxAtoms, WorkBudget &Budget,
+                         size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
 /// Prove \p Before and \p After equal as sparse polynomials over bitwise
 /// minterms.
@@ -359,7 +367,8 @@ bool proveLinearIdentity(SymContext &Ctx, SymRef Before, SymRef After,
 /// rewrite is accepted only when no linear or higher-degree coefficient
 /// remains.
 bool provePolynomialIdentity(SymContext &Ctx, SymRef Before, SymRef After,
-                             unsigned MaxAtoms, WorkBudget &Budget);
+                             unsigned MaxAtoms, WorkBudget &Budget,
+                             size_t MaxBytes = MBAOptions{}.MaxTableBytes);
 
 //===----------------------------------------------------------------------===//
 // Solving
@@ -388,7 +397,12 @@ struct SolveReport {
   bool BudgetExhausted = false;
 };
 
-/// Measure \p E as one region, then in independent parts when it is too wide.
+/// Normalize and factor Add/Mul regions over fixed-width words. Other
+/// operations remain opaque atoms; resource refusal leaves the region intact.
+SymRef solveArithmetic(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
+                       WorkBudget &Budget, SolveReport &Rep);
+
+/// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to
 /// it once it has split a masked expression into mask-free columns, so keeping
 /// it separate is what stops the mask split from recursing into itself.
