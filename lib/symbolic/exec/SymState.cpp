@@ -33,6 +33,35 @@
 
 namespace neverd::symbolic {
 
+llvm::SmallVector<SymConstantByte, 32>
+SymState::constantScalarBytes() const {
+  llvm::SmallVector<SymConstantByte, 32> Result;
+  const auto Collect = [&](SymSpace Space, const Bank &Storage) {
+    for (const auto &[Offset, Value] : Storage.Bytes)
+      if (const auto Constant = Ctx->asConst(Value))
+        Result.push_back({Space, Offset,
+                          static_cast<uint8_t>(Constant->getZExtValue())});
+  };
+  Collect(SymSpace::Register, Registers);
+  Collect(SymSpace::Temporary, Temporaries);
+  return Result;
+}
+
+llvm::SmallVector<SymConstantRegionByte, 32>
+SymState::constantRegionBytes(SymRef Base) const {
+  llvm::SmallVector<SymConstantRegionByte, 32> Result;
+  if (!Base)
+    return Result;
+  const auto Found = Regions.find(Base.index());
+  if (Found == Regions.end())
+    return Result;
+  for (const auto &[Offset, Value] : Found->second.Bytes)
+    if (const auto Constant = Ctx->asConst(Value))
+      Result.push_back(
+          {Offset, static_cast<uint8_t>(Constant->getZExtValue())});
+  return Result;
+}
+
 namespace {
 constexpr uint32_t kByteBits = 8;
 

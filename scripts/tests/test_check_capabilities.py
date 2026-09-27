@@ -3130,6 +3130,7 @@ class RepositoryCapabilityTests(unittest.TestCase):
             {row["id"]: row["status"] for row in document["capabilities"]},
             {
                 "analysis.ir-view.instruction-anchors": "experimental",
+                "analysis.interpreter-source-recovery": "experimental",
                 "debug.hardware": "unsupported",
                 "debug.local": "unsupported",
                 "debug.remote": "unsupported",
@@ -3150,6 +3151,20 @@ class RepositoryCapabilityTests(unittest.TestCase):
         )
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
+            "analysis.interpreter-source-recovery": {
+                "c": ["neverd_devirtualize_source_v1"],
+                "python": [],
+                "cli": [
+                    "neverd decompile --devirtualize",
+                    "neverd decompile --recovery-report",
+                    "neverd decompile --vm-control",
+                    "neverd decompile --vm-control-stack",
+                    "neverd decompile --vm-max-contexts",
+                    "neverd decompile --vm-max-nodes",
+                    "neverd decompile --vm-max-operations",
+                ],
+                "json": [],
+            },
             "analysis.ir-view.instruction-anchors": {
                 "c": ["neverd_ir_view_json"],
                 "python": [],

@@ -28,6 +28,17 @@ cmake --build build-release --parallel 4
 克隆、构建配置与 macOS 预编译 LLVM 说明见
 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+## 解释器恢复检查
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+核心测试检查上下文拆分、固定点汇合、动态循环、重叠寄存器、别名失效、有限目标派发，以及拒绝时不提供部分替代代码。源码测试汇编两套独立原创的 x64 机器，恢复两条 C 输出路径，在 O0/O2 下开启未定义行为陷阱编译，并将执行结果与独立的无符号算术和内存参考实现比较。测试还覆盖公开 CLI 和不支持输入的报告。需要支持跨目标编译的 Clang 和 LLD；原始 ELF 的执行还要求 x64 Linux 主机。工具缺失或主机不匹配属于跳过的覆盖，不代表通过。
+
 ## 驱动模拟检查
 
 同时启用 `NEVERD_ENABLE_DRIVER_EMULATION=ON` 与 `BUILD_TESTING=ON`，即可构建专项执行套件及共享 C API／CLI 检查：

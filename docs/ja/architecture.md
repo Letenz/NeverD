@@ -61,6 +61,8 @@ Objective-C の受信側の事実は、メソッド入口の self と正確な�
 
 ## IR 表現と経路
 
+実験的な[インタープリター復元段階](interpreter-recovery.md)は、共通の MedIR 境界より前で、厳密にリフトした LowIR を特化します。provider は不変のイメージに関する証拠、`SymExec` は命令意味論を担当し、残余 CFG は通常の SSA とソースバックエンドを再利用します。復元の証拠は、ネイティブ命令実体やバイナリ patch の証明情報とは別に保持します。
+
 | 表現 | 目的 | 主な定義と変換 |
 |------|------|----------------|
 | LowIR | アーキテクチャ非依存の `NdOp` 操作、基本ブロック、CFG、ジャンプテーブルメタデータ | `include/neverd/ir/low`、`lib/ir/low`。`lib/decode` + `lib/lift` が生成 |

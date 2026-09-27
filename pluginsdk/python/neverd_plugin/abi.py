@@ -538,6 +538,34 @@ class NeverDTranslateObjectResultV1(ctypes.Structure):
     ]
 
 
+class NeverDDevirtualizeFrameSlotV1(ctypes.Structure):
+    """Entry-RSP-relative context hint; no initialization or alias assumption."""
+
+    _fields_ = [
+        ("offset", ctypes.c_int64),
+        ("bytes", ctypes.c_uint16),
+        ("reserved", ctypes.c_uint16),
+    ]
+
+
+class NeverDDevirtualizeOptionsV1(ctypes.Structure):
+    """Exact layout of ``neverd_devirtualize_options_v1``."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("control_registers", ctypes.POINTER(ctypes.c_char_p)),
+        ("control_register_count", ctypes.c_size_t),
+        ("control_frame_slots", ctypes.POINTER(NeverDDevirtualizeFrameSlotV1)),
+        ("control_frame_slot_count", ctypes.c_size_t),
+        ("max_nodes", ctypes.c_uint32),
+        ("max_contexts_per_address", ctypes.c_uint32),
+        ("max_operations", ctypes.c_uint64),
+        ("use_llvm", ctypes.c_int),
+        ("no_opt", ctypes.c_int),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
 class NeverDSymbolicExploreOptions(ctypes.Structure):
     """Layout of ``neverd_symbolic_explore_options``."""
 
@@ -644,6 +672,11 @@ _C_TYPES: dict[str, object] = {
     "neverd_translate_proof_status_t": ctypes.c_uint32,
     "neverd_sanitize_status_t": ctypes.c_uint32,
     "const char *": ctypes.c_char_p,
+    # Preserve the owned report address so callers can free it explicitly.
+    "const char * *": ctypes.POINTER(ctypes.c_void_p),
+    "const neverd_devirtualize_options_v1 *": ctypes.POINTER(
+        NeverDDevirtualizeOptionsV1
+    ),
     "unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "const unsigned char *": ctypes.POINTER(ctypes.c_ubyte),
     "unsigned long long *": ctypes.POINTER(ctypes.c_ulonglong),
@@ -1374,6 +1407,13 @@ _declare(
     "void",
     ["neverd_translate_object_result_v1 *"],
 )
+_declare(
+    "neverd_devirtualize_source_v1",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t",
+     "const neverd_devirtualize_options_v1 *", "const char * *"],
+    ownership=Ownership.OWNED_STRING,
+)
 _declare("neverd_version", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_project_name", "const char *", [], ownership=Ownership.OWNED_STRING)
 _declare("neverd_version_number", "const char *", [], ownership=Ownership.OWNED_STRING)
@@ -1389,6 +1429,8 @@ __all__ = [
     "FunctionSpec",
     "NeverDEvent",
     "NeverDDriverOptionsV1",
+    "NeverDDevirtualizeFrameSlotV1",
+    "NeverDDevirtualizeOptionsV1",
     "NeverDPlugin",
     "NeverDOptimizeLLVMOptions",
     "NeverDOptimizeLLVMResult",

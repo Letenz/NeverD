@@ -33,6 +33,26 @@ su fixture es cobertura no ejecutada, no una aprobación de ese objetivo.
 Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para clonación, perfiles de
 compilación y LLVM precompilado en macOS.
 
+## Comprobaciones de recuperación de intérpretes
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+Las pruebas del núcleo comprueban la separación de contextos, uniones de punto
+fijo, bucles dinámicos, registros superpuestos, invalidación de alias, despacho
+finito y rechazo sin sustitución parcial. Las pruebas de fuente ensamblan dos
+máquinas x64 originales e independientes, recuperan ambas rutas C, compilan
+con O0/O2 y trampas de comportamiento indefinido y comparan la ejecución con
+un oráculo de aritmética sin signo y memoria. También prueban la CLI pública
+y los informes de entradas no admitidas. Se necesitan Clang multidestino y LLD;
+ejecutar el ELF original requiere además un anfitrión Linux x64. La falta de
+herramientas o un anfitrión incompatible es cobertura omitida, no una prueba
+superada.
+
 ## Comprobaciones de emulación de controladores
 
 Active `NEVERD_ENABLE_DRIVER_EMULATION=ON` junto con `BUILD_TESTING=ON` para

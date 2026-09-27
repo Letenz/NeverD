@@ -30,6 +30,23 @@ cmake --build build-release --parallel 4
 راجع [CONTRIBUTING.md](CONTRIBUTING.md) للاستنساخ وملفات البناء وLLVM
 الجاهز على macOS.
 
+## فحوص استعادة المفسّر
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+تفحص اختبارات النواة فصل السياقات والتقاءها عند النقطة الثابتة والحلقات الديناميكية
+والسجلات المتداخلة وإبطال حقائق الأسماء المستعارة والتوزيع المحدود والرفض دون
+استبدال جزئي. تُجمّع اختبارات المصدر آلتين أصليتين مستقلتين لمعمارية x64، وتستعيد
+مساري C، ثم تترجم عند O0/O2 مع إيقاف السلوك غير المعرّف، وتقارن التنفيذ بمرجع
+للحساب غير الموقّع والذاكرة. تختبر أيضًا CLI العامة وتقارير المدخلات غير المدعومة.
+يلزم Clang متعدد الأهداف وLLD؛ ويتطلب تنفيذ ELF الأصلي أيضًا مضيف Linux x64.
+غياب الأدوات أو عدم توافق المضيف يعني تغطية متخطاة، وليس نجاح الاختبار.
+
 ## فحوص محاكاة برامج التشغيل
 
 فعّل `NEVERD_ENABLE_DRIVER_EMULATION=ON` مع `BUILD_TESTING=ON` لبناء مجموعة اختبارات التنفيذ المركّزة وفحوص واجهة C API/CLI المشتركة:

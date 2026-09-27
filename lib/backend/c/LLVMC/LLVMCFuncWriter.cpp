@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <functional>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -2169,6 +2170,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   SpLocalNameCandidates.clear();
   SpLocalAmbiguousNames.clear();
   FrameSlots.clear();
+  OverlappingFrameAccessOffsets.clear();
   FrameDebugCache.clear();
   ThisHomes.clear();
   ValueTypes.clear();
@@ -2246,6 +2248,51 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   markInlinable(Fn);
   analyzeDeadFrameStores(Analysis, Fn);
   analyzeStoreForwarding(Analysis, Fn);
+
+  // A byte update and a qword read at the same address share storage. Naming
+  // only the narrow store would allocate a byte local, then make the wider
+  // access run past it. Likewise, an interior byte cannot be split from its
+  // containing word. Collect extents before any synthesized names are cached.
+  std::vector<std::pair<uint64_t, uint64_t>> FrameAccesses;
+  for (const auto &BB : Fn) {
+    for (const auto &Inst : BB) {
+      const llvm::Value *Pointer = nullptr;
+      uint16_t Size = 0;
+      if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
+        Pointer = Load->getPointerOperand();
+        Size = llvmAccessSize(Load->getType());
+      } else if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
+        Pointer = Store->getPointerOperand();
+        Size = llvmAccessSize(Store->getValueOperand()->getType());
+      }
+      if (!Pointer || !Size)
+        continue;
+      const auto Peeled = peelPointerOffset(Pointer);
+      if (!Peeled || Peeled->first != SyntheticFrame)
+        continue;
+      const uint64_t Offset = Peeled->second;
+      if (Offset > std::numeric_limits<uint64_t>::max() - Size) {
+        OverlappingFrameAccessOffsets.insert(Offset);
+        continue;
+      }
+      FrameAccesses.emplace_back(Offset, Offset + Size);
+    }
+  }
+  std::sort(FrameAccesses.begin(), FrameAccesses.end());
+  FrameAccesses.erase(std::unique(FrameAccesses.begin(), FrameAccesses.end()),
+                      FrameAccesses.end());
+  for (size_t First = 0; First < FrameAccesses.size();) {
+    size_t End = First + 1;
+    uint64_t Limit = FrameAccesses[First].second;
+    while (End < FrameAccesses.size() && FrameAccesses[End].first < Limit) {
+      Limit = std::max(Limit, FrameAccesses[End].second);
+      ++End;
+    }
+    if (End - First > 1)
+      for (size_t I = First; I < End; ++I)
+        OverlappingFrameAccessOffsets.insert(FrameAccesses[I].first);
+    First = End;
+  }
   InferredVoid = analyzeVoidReturn(Analysis, Fn);
 
   if (InferredVoid)

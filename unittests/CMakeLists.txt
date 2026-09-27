@@ -135,6 +135,7 @@ set_tests_properties(NeverDSimplifySurfaceAgreement PROPERTIES
 )
 
 add_subdirectory(symbolic)
+add_subdirectory(devirtualization)
 
 add_subdirectory(mobile)
 add_custom_target(check-neverd-mobile

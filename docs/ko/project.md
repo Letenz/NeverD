@@ -73,6 +73,17 @@ Low/Med/High IR, 검증된 LLVM, portable C11, 안전한 stable Rust를 사용�
 
 복원 범위는 지원되는 코드 패턴에 따라 달라집니다. 제한 사항은 각 가이드를 참조하세요.
 
+### 인터프리터 소스 복원(실험적)
+
+`neverd decompile --devirtualize`는 링크된 x64 ELF/PE의 단일 함수를 예산 안에서 특수화합니다. 충분한 근거로 해석한 디스패치를 제거하고 HighC 또는 LLVMC 소스 출력 경로를 사용합니다. 제어 힌트는 런타임 입력값을 제공하지 않습니다. 미해결 제어 흐름이나 예산 소진은 실패이며 부분 교체 코드를 출력하지 않습니다.
+
+```sh
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+```
+
+이미지 내용과 권한은 고정되어야 하며 외부에서 유래한 모든 저장 대상 범위가 진입 시 반환 주소 슬롯과 겹치지 않아야 합니다. 이는 호출자／환경의 전제입니다. 바이너리 patch나 예외 스택 풀기의 안전성을 증명하는 기능은 아닙니다. 입력 의존 바이트코드 주소와 디코더 상태 관계는 아직 일반적으로 지원하지 않습니다. 전체 계약, `--llvm` 경로 및 제한은 [인터프리터 소스 복원 가이드](interpreter-recovery.md)를 참조하세요.
+
 ## 동작 방식
 
 ```text

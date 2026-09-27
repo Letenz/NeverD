@@ -59,6 +59,24 @@ observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
 
+## Interpreter recovery checks
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+The core tests check context splitting, fixed-point joins, dynamic loops,
+overlapping registers, alias invalidation, finite dispatch, and refusal without
+a partial replacement. Source tests assemble two independent original x64
+machines, recover both C routes, compile at O0/O2 with undefined-behavior traps,
+and compare execution with an unsigned arithmetic and memory oracle. They also
+exercise the public CLI and unsupported-input reports. Cross-target Clang and
+LLD are required; original ELF execution additionally requires an x64 Linux
+host. Missing tools or a nonmatching host are skipped coverage, not a pass.
+
 ## Driver emulation checks
 
 Enable `NEVERD_ENABLE_DRIVER_EMULATION=ON` together with `BUILD_TESTING=ON`

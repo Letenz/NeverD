@@ -9352,6 +9352,86 @@
           "neverd_emulate_driver_scenario_json"
         ]
       }
+    },
+    {
+      "id": "analysis.interpreter-source-recovery",
+      "kind": "analysis",
+      "status": "experimental",
+      "owner": "analysis",
+      "targets": [
+        "x86_64 ELF",
+        "x86_64 PE"
+      ],
+      "docs": [
+        "docs/interpreter-recovery.md",
+        "docs/testing.md"
+      ],
+      "limitations": [
+        "Fixed mapped bytes and permissions; immutable reads require mapping evidence.",
+        "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
+        "Calls, exception/reentry boundaries, mutable code, unresolved control and exhausted budgets refuse recovery.",
+        "Input-dependent bytecode addressing and decoder correlations are not generally resolved; source recovery does not certify binary replacement."
+      ],
+      "tests": [
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.ImmutableBytesSpecializeWithoutFreezingNativeInput",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.BusinessLoopConvergesByWeakeningConstants",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/InterpreterSpecializationTests.cpp",
+          "filter": "InterpreterSpecialization.UnknownIndirectAndOpaqueEffectsPublishNothing",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "*/DevirtualizationRoundTripTest.RecoversMachineAndPreservesExecution/*",
+          "platforms": [
+            "linux"
+          ]
+        }
+      ],
+      "public_surfaces": {
+        "c": [
+          "neverd_devirtualize_source_v1"
+        ],
+        "python": [],
+        "cli": [
+          "neverd decompile --devirtualize",
+          "neverd decompile --recovery-report",
+          "neverd decompile --vm-control",
+          "neverd decompile --vm-control-stack",
+          "neverd decompile --vm-max-contexts",
+          "neverd decompile --vm-max-nodes",
+          "neverd decompile --vm-max-operations"
+        ],
+        "json": []
+      }
     }
   ]
 }

@@ -13,6 +13,7 @@
 
 #include "PipelineHighIRDetail.h"
 
+#include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
@@ -197,6 +198,13 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   PipelineResult Result;
   Result.SourceImage = &Img;
 
+  if (Opts.InterpreterSpecialization &&
+      (Opts.PatchMode || Opts.OnlyFunctionEntries.size() != 1 ||
+       Img.Arch != Arch::X64)) {
+    Result.Error = "interpreter recovery requires one x64 entry and source/lift mode";
+    return Result;
+  }
+
   if (Img.Arch == Arch::EVM) {
     // The loader kept the container rather than the executable remainder,
     // because unwrapping it walks a constructor whose instruction boundaries
@@ -296,104 +304,123 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return Result;
   }
 
-  Trace.start(NativePipelineTrace::Stage::FunctionDetection);
-  auto Candidates = detectFunctions(Img, Dec, Opts, Dbg, Result);
-
-  // Phase 1: Build LowIR (parallel).
-  Trace.start(NativePipelineTrace::Stage::LowIR);
-  buildLowIR(Img, Candidates, Opts, Dbg, Result);
-
-  Trace.start(NativePipelineTrace::Stage::CandidateCleanup);
-  // Remove spurious functions whose entry coincides with a jump-table
-  // target of another function.  The function detector may promote
-  // call-scan targets that are actually switch-case destinations.
-  {
-    std::set<va_t> JTTargets;
-    for (auto &LF : Result.LowFuncs)
-      for (auto &JT : LF.JumpTables)
-        for (va_t T : JT.Targets)
-          JTTargets.insert(T);
-
-    if (!JTTargets.empty()) {
-      for (const auto &LF : Result.LowFuncs) {
-        if (!JTTargets.count(LF.Entry) || !LF.JumpTables.empty())
-          continue;
-        auto AuditIt = std::find_if(Result.FunctionAudits.begin(),
-                                    Result.FunctionAudits.end(),
-                                    [&](const PipelineFunctionAudit &Audit) {
-                                      return Audit.Entry == LF.Entry;
-                                    });
-        if (AuditIt != Result.FunctionAudits.end()) {
-          AuditIt->Disposition =
-              PipelineFunctionDisposition::RemovedJumpTableTarget;
-          AuditIt->HasLowIR = false;
-        }
-      }
-      size_t Before = Result.LowFuncs.size();
-      Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
-                                           Result.LowFuncs.end(),
-                                           [&](const LowFunc &LF) {
-                                             return JTTargets.count(LF.Entry) &&
-                                                    LF.JumpTables.empty();
-                                           }),
-                            Result.LowFuncs.end());
-      size_t Removed = Before - Result.LowFuncs.size();
-      if (Removed > 0)
-        LLVM_DEBUG(llvm::dbgs()
-                   << "pipeline: removed " << Removed
-                   << " spurious functions (jump-table targets)\n");
+  if (Opts.InterpreterSpecialization) {
+    Trace.start(NativePipelineTrace::Stage::LowIR);
+    const va_t Entry = *Opts.OnlyFunctionEntries.begin();
+    Result.InterpreterRecovery = analysis::specializeBinaryInterpreter(
+        Img, Entry, *Opts.InterpreterSpecialization);
+    auto &Recovery = *Result.InterpreterRecovery;
+    if (!Recovery.complete()) {
+      Result.Error = "interpreter recovery: " + Recovery.Diagnostic;
+      Trace.finish(false);
+      return Result;
     }
-  }
+    Result.LowFuncs.push_back(Recovery.Residual);
+    PipelineFunctionAudit Audit;
+    Audit.Entry = Entry;
+    Audit.Name = Recovery.Residual.Name;
+    Audit.HasLowIR = true;
+    Result.FunctionAudits.push_back(std::move(Audit));
+  } else {
+    Trace.start(NativePipelineTrace::Stage::FunctionDetection);
+    auto Candidates = detectFunctions(Img, Dec, Opts, Dbg, Result);
 
-  // A padding-boundary guess that another function reaches by a direct jump
-  // is that function's split chunk, now lifted as part of it (see
-  // BinaryImage::boundaryGuessFunctionStarts).  Keep it as a separate
-  // function only when nothing absorbed it.
-  {
-    const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
-    std::set<va_t> Absorbed;
-    if (!Guesses.empty())
-      for (const auto &LF : Result.LowFuncs)
-        for (const auto &Block : LF.Blocks)
-          if (Block.StartAddr != LF.Entry && Guesses.count(Block.StartAddr))
-            Absorbed.insert(Block.StartAddr);
-    // Win64 requires unwind data for every function that moves RSP or calls
-    // (a tail jump needs neither).  In an image with an exception directory,
-    // a guess that does either without a RUNTIME_FUNCTION is not a function:
-    // usually data in a code section or the remnant of a split chunk.
-    // This holds for any start that neither a primary unwind record nor a
-    // real name (PDB, export) vouches for, however it was discovered.
-    std::set<va_t> NonLeaf;
-    if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF &&
-        !Img.KnownCodeRanges.empty()) {
-      std::set<va_t> UnwindStarts;
-      for (const auto &[Start, End] : Img.KnownCodeRanges)
-        if (!Img.ContinuationCodeStarts.count(Start))
-          UnwindStarts.insert(Start);
-      for (const auto &LF : Result.LowFuncs)
-        if (!Absorbed.count(LF.Entry) && !UnwindStarts.count(LF.Entry) &&
-            isSynthesizedFuncName(LF.Name) && movesStackOrCalls(LF))
-          NonLeaf.insert(LF.Entry);
-    }
-    if (!Absorbed.empty() || !NonLeaf.empty()) {
-      for (auto &Audit : Result.FunctionAudits) {
-        if (Absorbed.count(Audit.Entry)) {
-          Audit.Disposition =
-              PipelineFunctionDisposition::AbsorbedFunctionChunk;
-          Audit.HasLowIR = false;
-        } else if (NonLeaf.count(Audit.Entry)) {
-          Audit.Disposition =
-              PipelineFunctionDisposition::RejectedUnwindlessNonLeaf;
-          Audit.HasLowIR = false;
+    // Phase 1: Build LowIR (parallel).
+    Trace.start(NativePipelineTrace::Stage::LowIR);
+    buildLowIR(Img, Candidates, Opts, Dbg, Result);
+
+    Trace.start(NativePipelineTrace::Stage::CandidateCleanup);
+    // Remove spurious functions whose entry coincides with a jump-table
+    // target of another function.  The function detector may promote
+    // call-scan targets that are actually switch-case destinations.
+    {
+      std::set<va_t> JTTargets;
+      for (auto &LF : Result.LowFuncs)
+        for (auto &JT : LF.JumpTables)
+          for (va_t T : JT.Targets)
+            JTTargets.insert(T);
+
+      if (!JTTargets.empty()) {
+        for (const auto &LF : Result.LowFuncs) {
+          if (!JTTargets.count(LF.Entry) || !LF.JumpTables.empty())
+            continue;
+          auto AuditIt = std::find_if(Result.FunctionAudits.begin(),
+                                      Result.FunctionAudits.end(),
+                                      [&](const PipelineFunctionAudit &Audit) {
+                                        return Audit.Entry == LF.Entry;
+                                      });
+          if (AuditIt != Result.FunctionAudits.end()) {
+            AuditIt->Disposition =
+                PipelineFunctionDisposition::RemovedJumpTableTarget;
+            AuditIt->HasLowIR = false;
+          }
         }
+        size_t Before = Result.LowFuncs.size();
+        Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
+                                             Result.LowFuncs.end(),
+                                             [&](const LowFunc &LF) {
+                                               return JTTargets.count(LF.Entry) &&
+                                                      LF.JumpTables.empty();
+                                             }),
+                              Result.LowFuncs.end());
+        size_t Removed = Before - Result.LowFuncs.size();
+        if (Removed > 0)
+          LLVM_DEBUG(llvm::dbgs()
+                     << "pipeline: removed " << Removed
+                     << " spurious functions (jump-table targets)\n");
       }
-      Absorbed.insert(NonLeaf.begin(), NonLeaf.end());
-      Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
-                                           Result.LowFuncs.end(),
-                                           [&](const LowFunc &LF) {
-                                             return Absorbed.count(LF.Entry);
-                                           }),
-                            Result.LowFuncs.end());
+    }
+
+    // A padding-boundary guess that another function reaches by a direct jump
+    // is that function's split chunk, now lifted as part of it (see
+    // BinaryImage::boundaryGuessFunctionStarts).  Keep it as a separate
+    // function only when nothing absorbed it.
+    {
+      const std::set<va_t> Guesses = Img.boundaryGuessFunctionStarts();
+      std::set<va_t> Absorbed;
+      if (!Guesses.empty())
+        for (const auto &LF : Result.LowFuncs)
+          for (const auto &Block : LF.Blocks)
+            if (Block.StartAddr != LF.Entry && Guesses.count(Block.StartAddr))
+              Absorbed.insert(Block.StartAddr);
+      // Win64 requires unwind data for every function that moves RSP or calls
+      // (a tail jump needs neither).  In an image with an exception directory,
+      // a guess that does either without a RUNTIME_FUNCTION is not a function:
+      // usually data in a code section or the remnant of a split chunk.
+      // This holds for any start that neither a primary unwind record nor a
+      // real name (PDB, export) vouches for, however it was discovered.
+      std::set<va_t> NonLeaf;
+      if (Img.Arch == Arch::X64 && Img.Format == BinaryFormat::COFF &&
+          !Img.KnownCodeRanges.empty()) {
+        std::set<va_t> UnwindStarts;
+        for (const auto &[Start, End] : Img.KnownCodeRanges)
+          if (!Img.ContinuationCodeStarts.count(Start))
+            UnwindStarts.insert(Start);
+        for (const auto &LF : Result.LowFuncs)
+          if (!Absorbed.count(LF.Entry) && !UnwindStarts.count(LF.Entry) &&
+              isSynthesizedFuncName(LF.Name) && movesStackOrCalls(LF))
+            NonLeaf.insert(LF.Entry);
+      }
+      if (!Absorbed.empty() || !NonLeaf.empty()) {
+        for (auto &Audit : Result.FunctionAudits) {
+          if (Absorbed.count(Audit.Entry)) {
+            Audit.Disposition =
+                PipelineFunctionDisposition::AbsorbedFunctionChunk;
+            Audit.HasLowIR = false;
+          } else if (NonLeaf.count(Audit.Entry)) {
+            Audit.Disposition =
+                PipelineFunctionDisposition::RejectedUnwindlessNonLeaf;
+            Audit.HasLowIR = false;
+          }
+        }
+        Absorbed.insert(NonLeaf.begin(), NonLeaf.end());
+        Result.LowFuncs.erase(std::remove_if(Result.LowFuncs.begin(),
+                                             Result.LowFuncs.end(),
+                                             [&](const LowFunc &LF) {
+                                               return Absorbed.count(LF.Entry);
+                                             }),
+                              Result.LowFuncs.end());
+      }
     }
   }
 
@@ -425,7 +452,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     dumpMedIR(Result.MedFuncs);
 
   if (Result.MedIRVerifierFailures != 0 &&
-      (Opts.PatchMode || Opts.LiftMode)) {
+      (Opts.PatchMode || Opts.LiftMode || Opts.InterpreterSpecialization)) {
     Result.Error = "MedIR verification failed";
     Result.Success = false;
     Trace.finish(false);

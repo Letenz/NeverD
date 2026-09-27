@@ -77,6 +77,17 @@ Low/Med/High IR、已验证 LLVM、可移植 C11 与安全 stable Rust。详见
 
 恢复范围取决于受支持的代码模式；覆盖范围与限制见[移动端总览](mobile.md)及各平台指南。
 
+### 解释器源码恢复（实验性）
+
+`neverd decompile --devirtualize` 可对一个已链接 x64 ELF/PE 函数进行有预算限制的解释器特化，消除有充分证据解析的派发，并复用 HighC 或 LLVMC 源码输出。控制提示不提供运行时输入值；未解析控制流或预算耗尽都会导致失败，不输出部分替代代码。
+
+```sh
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+```
+
+映像内容与权限必须固定，且所有外部来源存储的目标范围均不得与入口返回地址槽重叠。这是调用方／环境前提；该功能不证明二进制 patch 或异常展开安全。输入相关的字节码寻址和解码器状态关联尚未普遍支持。完整契约、`--llvm` 路径和限制见[解释器源码恢复指南](interpreter-recovery.md)。
+
 ## 工作原理
 
 ```text

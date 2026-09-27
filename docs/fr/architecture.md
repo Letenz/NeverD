@@ -65,6 +65,13 @@ Le chargeur valide des graphes bornés et acycliques de chaînes constantes, obj
 
 ## Représentations IR et parcours
 
+L’[étape expérimentale de récupération d’interpréteur](interpreter-recovery.md)
+spécialise LowIR issu du lifting strict avant la frontière MedIR commune. Son
+fournisseur gère les preuves d’immuabilité de l’image, `SymExec` définit la
+sémantique des instructions et le CFG résiduel réutilise SSA et les générateurs
+de source ordinaires. Les preuves de récupération restent distinctes des
+certificats d’occurrences natives et de patch binaire.
+
 | Représentation | Rôle | Définitions et transformations principales |
 |----------------|------|--------------------------------------------|
 | LowIR | Opérations `NdOp` indépendantes de l’architecture, blocs de base, CFG et métadonnées de tables de saut | `include/neverd/ir/low`, `lib/ir/low`, produit par `lib/decode` + `lib/lift` |

@@ -65,6 +65,13 @@ Der Loader validiert begrenzte, azyklische Graphen aus konstanten Darwin-Zeichen
 
 ## IR-Darstellungen und Pfade
 
+Die experimentelle [Interpreter-Rekonstruktion](interpreter-recovery.md)
+spezialisiert strikt geliftetes LowIR vor der gemeinsamen MedIR-Grenze. Ihr
+Provider verantwortet die Nachweise für unveränderliche Abbilder, `SymExec`
+die Instruktionssemantik. Das verbleibende CFG verwendet die gewöhnlichen
+SSA- und Quelltext-Backends. Rekonstruktionsnachweise bleiben von Nachweisen
+nativer Instruktionsvorkommen und binärer Patches getrennt.
+
 | Darstellung | Zweck | Primäre Definitionen und Transformationen |
 |-------------|-------|--------------------------------------------|
 | LowIR | Architekturunabhängige `NdOp`-Operationen, Basisblöcke, CFG und Sprungtabellenmetadaten | `include/neverd/ir/low`, `lib/ir/low`, erzeugt durch `lib/decode` + `lib/lift` |

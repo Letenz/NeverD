@@ -1,0 +1,6 @@
+add_subdirectory(interpreter)
+
+add_neverd_component_library(NeverDBinaryInterpreterSpecialization
+  BinaryInterpreterSpecialization.cpp
+  LINK_COMPONENTS InterpreterSpecialization Decode Loader
+)

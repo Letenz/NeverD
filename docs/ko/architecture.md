@@ -60,6 +60,8 @@ Objective-C 수신자 정보는 메서드 진입점의 self와 정확한 클래�
 
 ## IR 표현 및 경로
 
+실험적 [인터프리터 복원 단계](interpreter-recovery.md)는 공통 MedIR 경계 이전에 엄격하게 리프트한 LowIR을 특수화합니다. provider는 불변 이미지의 근거를, `SymExec`는 명령어 의미론을 담당하며 잔여 CFG는 일반 SSA와 소스 백엔드를 재사용합니다. 복원 근거는 네이티브 명령어 인스턴스 및 바이너리 patch 증명 정보와 별도로 유지합니다.
+
 | 표현 | 목적 | 주요 정의 및 변환 |
 |------|------|-------------------|
 | LowIR | 아키텍처 독립 `NdOp` 연산, 기본 블록, CFG, jump-table 메타데이터 | `include/neverd/ir/low`, `lib/ir/low`; `lib/decode` + `lib/lift`가 생성 |

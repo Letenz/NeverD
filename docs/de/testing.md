@@ -34,6 +34,26 @@ bestandener Zielpfad.
 Klonen, Build-Profile und vorgefertigtes LLVM unter macOS beschreibt
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Prüfungen der Interpreter-Rekonstruktion
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+Die Kerntests prüfen Kontexttrennung, Fixpunkt-Zusammenführungen, dynamische
+Schleifen, überlappende Register, Alias-Invalidierung, endlichen Dispatch und
+Ablehnung ohne teilweisen Ersatz. Die Quelltexttests assemblieren zwei
+unabhängig entwickelte x64-Maschinen, rekonstruieren beide C-Pfade, kompilieren
+mit O0/O2 und Traps für undefiniertes Verhalten und vergleichen die Ausführung
+mit einem vorzeichenlosen Arithmetik- und Speicher-Oracle. Sie prüfen auch die
+öffentliche CLI und Berichte zu nicht unterstützten Eingaben. Clang mit
+Cross-Target-Unterstützung und LLD werden benötigt; die Ausführung des
+Original-ELF erfordert zusätzlich einen x64-Linux-Host. Fehlende Werkzeuge oder
+ein unpassender Host bedeuten ausgelassene Abdeckung, keinen bestandenen Test.
+
 ## Prüfungen der Treiberemulation
 
 Aktivieren Sie `NEVERD_ENABLE_DRIVER_EMULATION=ON` zusammen mit `BUILD_TESTING=ON`,

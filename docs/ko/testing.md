@@ -30,6 +30,17 @@ linker(`ld.lld`, `lld-link`)가 필요합니다. CMake는 많은 재배치 가�
 복제, 빌드 프로필, macOS 사전 빌드 LLVM은
 [CONTRIBUTING.md](CONTRIBUTING.md)를 참고하세요.
 
+## 인터프리터 복원 검사
+
+```sh
+cmake --build build-release --target NeverDInterpreterSpecializationTests \
+  NeverDDevirtualizationSourceTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  --output-on-failure
+```
+
+코어 테스트는 컨텍스트 분리, 고정점 합류, 동적 루프, 겹치는 레지스터, 별칭 무효화, 유한 대상 디스패치 및 거부 시 부분 교체를 내보내지 않는지 확인합니다. 소스 테스트는 독립적으로 직접 작성한 x64 머신을 어셈블하고 두 C 출력 경로를 복원합니다. 정의되지 않은 동작 트랩을 켜고 O0/O2로 컴파일하여 독립적인 부호 없는 산술과 메모리 참조 구현에 실행 결과를 대조합니다. 공개 CLI와 지원하지 않는 입력의 보고서도 검사합니다. 교차 대상 Clang과 LLD가 필요하며 원래 ELF를 실행하려면 x64 Linux 호스트도 필요합니다. 도구 누락이나 호스트 불일치로 건너뛴 범위는 통과한 검증이 아닙니다.
+
 ## 드라이버 에뮬레이션 검사
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON`과 `BUILD_TESTING=ON`을 함께 활성화하면 전용 실행 스위트와 공유 C API/CLI 검사를 빌드할 수 있습니다.
