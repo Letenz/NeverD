@@ -797,8 +797,7 @@ TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
       NdOp::INT_AND, HighExpr::makeConst(0x140003400, 8), parameter(0));
   Func.Body = {Call, Return};
   const std::string Source = emitFunctions({Func}, Arch::X64, &Img);
-  EXPECT_NE(Source.find("(uintptr_t)L\"%s\" & "), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)L\"%s\" & "), std::string::npos) << Source;
   EXPECT_NE(Source.find("Format(L\"%s\")"), std::string::npos) << Source;
 }
 
