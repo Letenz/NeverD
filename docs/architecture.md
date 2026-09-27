@@ -1337,9 +1337,10 @@ Independent summand groups are measured separately before a whole-region
 truth table is attempted. A nonzero constant may accompany one group in up
 to four bounded trials; each trial includes it exactly once and must reduce
 the cost of the complete restored expression. Add/Mul regions also have a
-bounded sparse polynomial reading over integers modulo the word width;
-other operations remain opaque, and the chosen spelling is re-expanded
-before acceptance.
+bounded sparse polynomial reading over integers modulo the word width.
+Complements on those arithmetic paths are read as `~X = -1-X`; bitwise
+consumers and other operations remain opaque. The chosen spelling is
+re-expanded before acceptance.
 
 Hidden affine inputs may supply exact inverse relations when a coefficient
 is odd. An even-scaled hidden input `P = k*T` can replace an arithmetic
@@ -1351,11 +1352,28 @@ coefficient summaries; optional relation recovery spends the same work
 budget and also bounds its temporary storage. An incomplete recovery leaves
 the original abstraction intact.
 
+Complete hidden affine inputs may also be identified as bitwise complements
+after their offsets and every coefficient establish `F+G=-1` at the original
+word width. This relation needs no inverse, including for even coefficients.
+A hash index only selects candidates for the full comparison. Replacements
+refer to the original placeholders without following newly created aliases;
+the same work and storage bounds cover indexing and rebuilding.
+If this exact abstraction becomes a literal constant, the region retains it
+through the ordinary proof and cost checks, charging the single zero-input
+corner. Nonliteral zero-input expressions remain ineligible.
+
 Restoring hidden inputs can expose a new bitwise relation outside the deep
 walk's original postorder. A strictly smaller restored Add/Mul result with
 a visible bitwise term gets at most one further region reading, using the
 same remaining budget. Only a strict cost decrease is retained; this does
 not introduce a recursive fixed-point search.
+
+Boolean synthesis can peel independent singleton XOR terms from an algebraic
+normal form, leaving a kernel of at most three inputs for cached exact
+recipes. The scan, projection and construction share the existing allowance;
+this does not raise the exhaustive synthesis ceiling. The resulting candidate
+must improve on the established construction's actual cost. An unavailable
+construction remains unavailable even when the caller's cost limit is unlimited.
 
 Synthesis shares one candidate checker within a request. It remembers
 counterexamples and validation-grid mismatches for canonical candidates, but
