@@ -1170,10 +1170,11 @@ inline bool swiftSingletonDescriptorForwardedByNativeHelper(
   return Valid && RuntimeCalls == 1;
 }
 
-// A value-witness call needs the original concrete metadata identity. A
-// copied metadata record would have different runtime identity and witness
-// pointers, so accept only one exported Swift struct metadata symbol whose
-// descriptor word points to its matching exported nominal descriptor.
+// A value-witness call and a direct metadata reference need the original
+// concrete metadata identity. A copied metadata record would have different
+// runtime identity and witness pointers, so accept only an exported Swift
+// struct or enum metadata symbol whose descriptor word points to its matching
+// exported nominal descriptor.
 inline std::optional<SourceCallTypeHint>
 swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
@@ -1185,8 +1186,7 @@ swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   const auto Bytes = readImmutableImageBytes(Image, Address, 8);
   const auto DescriptorAddress = readImmutableImagePointer(Image, Address + 8);
   if (!Section || Image.getSectionFor(Address + 15) != Section || !Bytes ||
-      !DescriptorAddress ||
-      llvm::support::endian::read64le(Bytes->data()) != 0x200)
+      !DescriptorAddress)
     return std::nullopt;
   const Symbol *Metadata = nullptr;
   for (const auto &Candidate : Image.Symbols)
@@ -1199,7 +1199,11 @@ swiftNominalMetadataAddressHint(const BinaryImage &Image, va_t Address) {
   if (!Metadata || (Metadata->Size && Metadata->Size < 16))
     return std::nullopt;
   llvm::StringRef Name(Metadata->Name);
-  if (!Name.starts_with("_$s") || !Name.ends_with("VN"))
+  if (!Name.starts_with("_$s") ||
+      !((Name.ends_with("VN") &&
+         llvm::support::endian::read64le(Bytes->data()) == 0x200) ||
+        (Name.ends_with("ON") &&
+         llvm::support::endian::read64le(Bytes->data()) == 0x201)))
     return std::nullopt;
   const auto Descriptor =
       swiftDirectTypeMetadataDescriptor(Image, *DescriptorAddress);
@@ -3505,6 +3509,16 @@ inline ObjCSourceBindingResult bindObjCSourceReferences(
           Expression->SourceCallHint =
               std::make_shared<SourceCallTypeHint>(std::move(*Identity));
           Result.StaticIdentities.insert(*Address);
+          return Expression;
+        }
+      if (ObjectAddress && Address)
+        if (auto Metadata = swiftNominalMetadataAddressHint(Image, *Address)) {
+          *Expression = *HighExpr::makeCall({}, 0, {});
+          Expression->Type = Original->Type;
+          Expression->SourceCallHint =
+              std::make_shared<SourceCallTypeHint>(std::move(*Metadata));
+          Result.SwiftNominalMetadata[*Address] =
+              Expression->SourceCallHint->TargetName;
           return Expression;
         }
       if (ObjectAddress && Address)
