@@ -460,9 +460,12 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
       return R;
     }
   }
-  if (!A.isValid() || !B.isValid() || !isBitwiseComplement(Ctx, A, B))
+  if (!A.isValid() || !B.isValid())
     return R;
-  return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(R), 1));
+  if (isBitwiseComplement(Ctx, A, B))
+    return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(R), 1));
+  SymRef Partitioned = foldPartitionedMaskSum(Ctx, A, B, Offset);
+  return Partitioned.isValid() ? Partitioned : R;
 }
 
 } // namespace
@@ -529,6 +532,29 @@ SymRef detail::completeComplementarySums(SymContext &Ctx, SymRef Root,
              ? Answer
              : Root;
 }
+
+namespace {
+
+SymRef finishCompletedSums(SymContext &Ctx, SymRef Root, const MBAOptions &Opts,
+                           WorkBudget &Budget, SolveReport &Rep) {
+  SymRef Completed = completeComplementarySums(Ctx, Root, Opts, Budget);
+  if (Completed == Root || Budget.exhausted())
+    return Completed;
+
+  // Removing a partition can expose a new whole-region relation. Read that
+  // region once with the remaining budget, then keep only a strict improvement.
+  SolveReport Refined;
+  SymRef Candidate = solveRegionOrSplit(Ctx, Completed, Opts, Budget, Refined);
+  Rep.BudgetExhausted |= Refined.BudgetExhausted;
+  if (readingScore(Ctx, Candidate) >= readingScore(Ctx, Completed))
+    return Completed;
+  Rep.NumAtoms = std::max(Rep.NumAtoms, Refined.NumAtoms);
+  if (Rep.Evidence != MBAEvidence::Samples)
+    Rep.Evidence = Refined.Evidence;
+  return Candidate;
+}
+
+} // namespace
 
 const char *mbaOutcomeName(MBAOutcome Outcome) {
   switch (Outcome) {
@@ -603,7 +629,7 @@ MBAResult simplifyMBA(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     }
   }
   if (Result.Expr != E && !Budget.exhausted())
-    Result.Expr = completeComplementarySums(Ctx, Result.Expr, Opts, Budget);
+    Result.Expr = finishCompletedSums(Ctx, Result.Expr, Opts, Budget, Rep);
   if (Result.Expr != E && !Opts.AllowGrowth &&
       !doesNotGrow(Ctx, Result.Expr, E)) {
     Result.Expr = E;
@@ -773,8 +799,13 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     AnySampled |= Final.Evidence == MBAEvidence::Samples;
     Skipped |= Final.BudgetExhausted;
   }
-  if (Out != E && !Budget.exhausted())
-    Out = completeComplementarySums(Ctx, Out, Opts, Budget);
+  if (Out != E && !Budget.exhausted()) {
+    SolveReport Completed;
+    Out = finishCompletedSums(Ctx, Out, Opts, Budget, Completed);
+    Result.NumAtoms = std::max(Result.NumAtoms, Completed.NumAtoms);
+    AnySampled |= Completed.Evidence == MBAEvidence::Samples;
+    Skipped |= Completed.BudgetExhausted;
+  }
   Result.Work = Budget.used();
 
   // Every layer refused to grow and every layer was checked on its own, but

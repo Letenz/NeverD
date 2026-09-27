@@ -93,6 +93,84 @@ TEST(SymMBAArithmetic, ComplementCompletionKeepsNearMissAndResourceFallback) {
       Complement.Root);
 }
 
+TEST(SymMBAArithmetic, CompletesPartitionedMasksAfterSelection) {
+  for (uint32_t Width : {1u, 3u, 8u, 32u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto Input =
+        parseSymExpr(Ctx, "(y & -(y ^ ~x)) + (y & (-2 - (y ^ x)))", Width);
+    ASSERT_TRUE(Input.ok());
+    MBAOptions Opts;
+    detail::WorkBudget Budget(Opts.MaxWork);
+    SymRef Answer =
+        detail::completeComplementarySums(Ctx, Input.Root, Opts, Budget);
+    EXPECT_EQ(Answer, Ctx.mkVar("y", Width)) << Ctx.toString(Answer);
+    EXPECT_LE(Budget.used(), Opts.MaxWork);
+  }
+}
+
+TEST(SymMBAArithmetic, PartitionCompletionRequiresSharedFactorAndMasks) {
+  SymContext Ctx;
+  MBAOptions Opts;
+  for (const char *Text : {
+           "(y & -(y ^ ~x)) + (z & (-2 - (y ^ x)))",
+           "(y & -(y ^ ~x)) + (y & (-3 - (y ^ x)))",
+       }) {
+    auto Input = parseSymExpr(Ctx, Text, 8);
+    ASSERT_TRUE(Input.ok());
+    detail::WorkBudget Budget(Opts.MaxWork);
+    EXPECT_EQ(detail::completeComplementarySums(Ctx, Input.Root, Opts, Budget),
+              Input.Root);
+  }
+
+  auto Shared = parseSymExpr(
+      Ctx, "((x | z) & -(y ^ ~x)) + ((x | z) & (-2 - (y ^ x)))", 8);
+  ASSERT_TRUE(Shared.ok());
+  detail::WorkBudget Budget(Opts.MaxWork);
+  SymRef Answer =
+      detail::completeComplementarySums(Ctx, Shared.Root, Opts, Budget);
+  EXPECT_EQ(Answer, Ctx.mkOr(Ctx.mkVar("x", 8), Ctx.mkVar("z", 8)))
+      << Ctx.toString(Answer);
+}
+
+TEST(SymMBAArithmetic, XorComplementsRequireOddOperandParity) {
+  for (uint32_t Width : {1u, 8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    MBAOptions Opts;
+    auto Complement = parseSymExpr(Ctx, "(x ^ ~y ^ z) + (x ^ y ^ z)", Width);
+    ASSERT_TRUE(Complement.ok());
+    detail::WorkBudget Budget(Opts.MaxWork);
+    EXPECT_EQ(
+        detail::completeComplementarySums(Ctx, Complement.Root, Opts, Budget),
+        Ctx.mkOnes(Width));
+
+    auto Even = parseSymExpr(Ctx, "(x ^ ~y ^ ~z) + (x ^ y ^ z)", Width);
+    ASSERT_TRUE(Even.ok());
+    detail::WorkBudget EvenBudget(Opts.MaxWork);
+    EXPECT_EQ(
+        detail::completeComplementarySums(Ctx, Even.Root, Opts, EvenBudget),
+        Even.Root);
+  }
+}
+
+TEST(SymMBAArithmetic, RechecksRegionExposedByMaskCompletion) {
+  constexpr const char *InputText =
+      "3*((a & -(a ^ ~b)) + (a & (-2 - (a ^ b)))) - 2*(a ^ b) "
+      "- 4*(a & b) + ((c | d) + (c & d))";
+  for (uint32_t Width : {8u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto Input = parseSymExpr(Ctx, InputText, Width);
+    auto Expected = parseSymExpr(Ctx, "a - 2*b + c + d", Width);
+    ASSERT_TRUE(Input.ok());
+    ASSERT_TRUE(Expected.ok());
+    MBAResult Answer = simplifyMBADeep(Ctx, Input.Root);
+    EXPECT_EQ(Answer.Expr, Expected.Root) << Ctx.toString(Answer.Expr);
+    EXPECT_EQ(Answer.Evidence, MBAEvidence::Derivation);
+  }
+}
+
 TEST(SymMBAArithmetic, CoefficientGroupsPreserveOpaqueAtomsAndRemainders) {
   test::simplifiesTo("6*(x/y)+6*(x>>y)+3*(x&y)", "6*((x/y)+(x>>y))+3*(x&y)",
                      32);

@@ -248,6 +248,42 @@ unsigned atomsFittingEntries(size_t Entries) {
   return Atoms;
 }
 
+/// Recognize a reduction over each measured input exactly once. At Boolean
+/// corners its result depends only on whether the pattern is empty, complete,
+/// or has odd parity; evaluating the full expression at every corner is then
+/// unnecessary.
+std::optional<SymOp> fullCornerReduction(const SymContext &Ctx, SymRef R,
+                                         llvm::ArrayRef<uint32_t> SortedAtoms) {
+  SymOp Op = Ctx.op(R);
+  if (Op != SymOp::And && Op != SymOp::Or && Op != SymOp::Xor)
+    return std::nullopt;
+  llvm::ArrayRef<SymRef> Terms = Ctx.operands(R);
+  if (Terms.size() != SortedAtoms.size())
+    return std::nullopt;
+  llvm::SmallVector<uint32_t, 8> Seen;
+  for (SymRef Term : Terms) {
+    if (!Ctx.isVar(Term))
+      return std::nullopt;
+    Seen.push_back(Ctx.varId(Term));
+  }
+  llvm::sort(Seen);
+  return llvm::equal(Seen, SortedAtoms) ? std::optional<SymOp>(Op)
+                                        : std::nullopt;
+}
+
+bool reductionSelects(SymOp Op, size_t Pattern, size_t Corners) {
+  switch (Op) {
+  case SymOp::And:
+    return Pattern == Corners - 1;
+  case SymOp::Or:
+    return Pattern != 0;
+  case SymOp::Xor:
+    return std::popcount(Pattern) & 1;
+  default:
+    llvm_unreachable("not a corner reduction");
+  }
+}
+
 } // namespace
 
 std::optional<size_t> cornerCount(size_t NumAtoms) {
@@ -296,8 +332,34 @@ std::vector<llvm::APInt> measure(const SymContext &Ctx, SymRef Body,
   const std::optional<size_t> Corners = cornerCount(NumAtoms);
   assert(Corners && "corner table does not fit the host address space");
 
-  SymEvalPlan Plan(Ctx, Body);
   std::vector<llvm::APInt> Weights(*Corners);
+
+  // A pair of full-input Boolean reductions is common in wide MBAs. Its
+  // exact weights are just the number of reductions selecting each corner.
+  // Keep the general evaluator for smaller tables and every other shape.
+  if (NumAtoms >= 8) {
+    llvm::SmallVector<uint32_t, 8> SortedAtoms(Atoms.begin(), Atoms.end());
+    llvm::sort(SortedAtoms);
+    std::optional<SymOp> First = fullCornerReduction(Ctx, Body, SortedAtoms);
+    std::optional<SymOp> Second;
+    if (!First && Ctx.op(Body) == SymOp::Add && Ctx.numOperands(Body) == 2) {
+      First = fullCornerReduction(Ctx, Ctx.operand(Body, 0), SortedAtoms);
+      Second = fullCornerReduction(Ctx, Ctx.operand(Body, 1), SortedAtoms);
+      if (!Second)
+        First.reset();
+    }
+    if (First) {
+      for (size_t Pattern = 0; Pattern < *Corners; ++Pattern) {
+        unsigned Selected = reductionSelects(*First, Pattern, *Corners);
+        if (Second)
+          Selected += reductionSelects(*Second, Pattern, *Corners);
+        Weights[Pattern] = llvm::APInt(Width, Selected);
+      }
+      return Weights;
+    }
+  }
+
+  SymEvalPlan Plan(Ctx, Body);
 
   if (Plan.fitsU64()) {
     const uint64_t Ones =
