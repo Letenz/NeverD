@@ -2201,12 +2201,10 @@ unsigned sourceAddCount(const llvm::Function &F) {
   return N;
 }
 
-// Why the deeper order is the default.  Both orders recover the same
-// arithmetic; only the deeper one goes on to notice the function computes one
-// thing twice.  Reading a decompiled listing means ruling out every apparent
-// difference between two computations that turn out to be one, so a redundancy
-// left standing in it is work handed to the reader.
-TEST(SymSimplifyGuard, TheDeepOrderRemovesRedundancyTheThinOrderLeaves) {
+// Coefficient recovery can reconstruct 2*(x+y) directly from the combined
+// arithmetic. Both orders should now eliminate the repeated source sum,
+// even when the thin order does not perform global value numbering.
+TEST(SymSimplifyGuard, BothOrdersRecoverRepeatedArithmeticAcrossAJoin) {
   llvm::LLVMContext C;
   llvm::Module ThinModule("thin", C);
   llvm::Module DeepModule("deep", C);
@@ -2225,7 +2223,7 @@ TEST(SymSimplifyGuard, TheDeepOrderRemovesRedundancyTheThinOrderLeaves) {
   Deep = DeepModule.getFunction("cross_block_redundancy");
   ASSERT_NE(Thin, nullptr);
   ASSERT_NE(Deep, nullptr);
-  EXPECT_EQ(sourceAddCount(*Thin), 2u) << printFunction(*Thin);
+  EXPECT_EQ(sourceAddCount(*Thin), 1u) << printFunction(*Thin);
   EXPECT_EQ(sourceAddCount(*Deep), 1u) << printFunction(*Deep);
 }
 

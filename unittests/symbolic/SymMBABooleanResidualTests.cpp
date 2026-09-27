@@ -162,9 +162,9 @@ TEST(SymMBABooleanResidual, RejectsNonrectangularAndRepeatedValueTables) {
 TEST(SymMBABooleanResidual, KeepsPreviouslyCoveredTwoInputRectangles) {
   SymContext Ctx;
   SymRef X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
-  SymRef E = Ctx.mkAdd({scaled(Ctx, llvm::APInt(8, 7), X),
-                        scaled(Ctx, llvm::APInt(8, 5), Y),
-                        scaled(Ctx, llvm::APInt(8, -10), Ctx.mkAnd(X, Y))});
+  SymRef E = Ctx.mkAdd(
+      {scaled(Ctx, llvm::APInt(8, 7), X), scaled(Ctx, llvm::APInt(8, 5), Y),
+       scaled(Ctx, llvm::APInt(8, -10, true), Ctx.mkAnd(X, Y))});
   SymRef Expected = Ctx.mkAdd(scaled(Ctx, llvm::APInt(8, 2), X),
                               scaled(Ctx, llvm::APInt(8, 5), Ctx.mkXor(X, Y)));
   auto Result = simplifyMBA(Ctx, E);
