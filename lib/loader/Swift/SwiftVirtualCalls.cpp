@@ -59,8 +59,12 @@ public:
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           Value.isReg() &&
           !getTargetRegInfo(Image.Arch)
-               .isCallPreserved(Value.Offset, Value.Size))
+               .isCallPreserved(Value.Offset, Value.Size)) {
+        if (Op.Output == Value && Op.MemoryOrdering == NdMemoryOrdering::None &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+          return Definition{Definition::Kind::Operation, Value, &Op, Index};
         return std::nullopt;
+      }
       if (!overlaps(Op.Output, Value))
         continue;
       if (Op.Output != Value || Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -162,6 +166,28 @@ public:
     return false;
   }
 
+  bool retainedMethodSelf(const Definition &Context) {
+    if (Context.TheKind != Definition::Kind::Operation ||
+        Context.Op->Opcode != NdOp::CALL ||
+        Context.Op->Output != NdVar::reg(a64reg::X0, 8) ||
+        Context.Op->NumInputs != 1 || !Context.Op->Inputs[0].isConst())
+      return false;
+    const auto *Import = Image.findImportStubAt(Context.Op->Inputs[0].Offset);
+    if (!Import ||
+        (Import->Name != "_objc_retain" &&
+         Import->Name != "_objc_retain_x19") ||
+        !darwinExportModuleMatches("/usr/lib/libobjc.A.dylib", Import->Module))
+      return false;
+    // ARC's register-specific retain entry reads x19 directly; the ordinary
+    // retain entry reads x0. Neither authorizes an unrelated retained object.
+    const auto RetainedRegister =
+        Import->Name == "_objc_retain_x19" ? a64reg::X19 : a64reg::X0;
+    const auto Self = resolve(NdVar::reg(RetainedRegister, 8), Context.Index,
+                              Context.Op->Addr);
+    return Self && Self->TheKind == Definition::Kind::Entry &&
+           Self->Value == NdVar::reg(a64reg::X0, 8);
+  }
+
   std::optional<va_t> maskImport(const Definition &D) {
     auto GlobalAddress = loadAddress(D);
     if (!GlobalAddress)
@@ -184,7 +210,7 @@ public:
 
   std::optional<std::pair<va_t, uint32_t>>
   virtualTarget(const Definition &Target, const Definition &Context,
-                llvm::StringRef ClassName) {
+                llvm::StringRef ClassName, bool DirectSelf) {
     auto Address = loadAddress(Target);
     if (!Address)
       return std::nullopt;
@@ -194,7 +220,8 @@ public:
         BaseAndOffset->first.TheKind != Definition::Kind::Operation ||
         BaseAndOffset->first.Op->Opcode != NdOp::INT_AND ||
         BaseAndOffset->first.Op->NumInputs != 2 ||
-        !ivarReceiver(Context, ClassName))
+        !(DirectSelf ? retainedMethodSelf(Context)
+                     : ivarReceiver(Context, ClassName)))
       return std::nullopt;
     const auto &Masked = BaseAndOffset->first;
     for (unsigned I = 0; I < 2; ++I) {
@@ -209,6 +236,21 @@ public:
     return std::nullopt;
   }
 };
+
+bool exactRetainedSelfVoidCallWindow(const LowBlock &Block, size_t Index) {
+  if (Index < 2)
+    return false;
+  const auto &Context = Block.Ops[Index - 2];
+  const auto &Link = Block.Ops[Index - 1];
+  return Context.Opcode == NdOp::COPY &&
+         Context.Output == NdVar::reg(a64reg::X20, 8) &&
+         Context.NumInputs == 1 &&
+         Context.Inputs[0] == NdVar::reg(a64reg::X19, 8) &&
+         Link.Opcode == NdOp::COPY &&
+         Link.Output == NdVar::reg(a64reg::X30, 8) && Link.NumInputs == 1 &&
+         Link.Inputs[0].isConst() &&
+         Link.Inputs[0].Offset == Block.Ops[Index].Addr + 4;
+}
 
 std::optional<uint8_t> exactVoidMethodCallWindow(const BinaryImage &Image,
                                                  const LowBlock &Block,
@@ -248,16 +290,16 @@ std::optional<uint8_t> exactVoidMethodCallWindow(const BinaryImage &Image,
              : std::nullopt;
 }
 
-std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
-                                                    va_t Entry, va_t CallSite,
-                                                    va_t IsaMaskImport,
-                                                    uint32_t Slot,
-                                                    uint8_t ZeroArgumentWords) {
+std::optional<SourceCallTypeHint>
+canonicalAccessor(const BinaryImage &Image, va_t Entry, va_t CallSite,
+                  va_t IsaMaskImport, uint32_t Slot, uint8_t ZeroArgumentWords,
+                  bool DirectSelf) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry ||
       !CallSite || !IsaMaskImport || Slot < 0x40 || Slot > 0x1000 || Slot % 8 ||
       (ZeroArgumentWords != 0 && ZeroArgumentWords != 2) ||
-      !Image.isCodeAddress(Entry) || !Image.isCodeAddress(CallSite))
+      (DirectSelf && ZeroArgumentWords) || !Image.isCodeAddress(Entry) ||
+      !Image.isCodeAddress(CallSite))
     return std::nullopt;
   const auto Import = darwinRuntimeImport(Image, IsaMaskImport);
   const auto Bind = Image.DyldBindSlots.find(IsaMaskImport);
@@ -282,6 +324,8 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   const bool BoolSetter = Method->TypeEncoding == "v20@0:8B16";
   const bool VoidMethod = Method->TypeEncoding == "v16@0:8" &&
                           Method->Selector.find(':') == std::string::npos;
+  if (DirectSelf && !VoidMethod)
+    return std::nullopt;
   const bool Setter = DoubleSetter || BoolSetter;
   const bool Floating = DoubleGetter || DoubleSetter;
   if (ZeroArgumentWords && !VoidMethod)
@@ -290,9 +334,20 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
       !VoidMethod)
     return std::nullopt;
   const auto Bytes = Image.readVA(CallSite, 4);
+  // The retained-self bridge puts the same object in Swift's context
+  // register immediately before its virtual call. Keep that instruction in
+  // the immutable image proof as well as in the LowIR window.
+  constexpr std::array<uint8_t, 4> MoveSelfToContext = {0xf4, 0x03, 0x13, 0xaa};
+  const auto ContextBytes =
+      DirectSelf && CallSite >= 4 ? Image.readVA(CallSite - 4, 4) : nullptr;
+  if (DirectSelf &&
+      (!ContextBytes || !std::equal(MoveSelfToContext.begin(),
+                                    MoveSelfToContext.end(), ContextBytes)))
+    return std::nullopt;
   constexpr std::array<uint8_t, 4> BlrX21 = {0xa0, 0x02, 0x3f, 0xd6};
   constexpr std::array<uint8_t, 4> BlrX22 = {0xc0, 0x02, 0x3f, 0xd6};
-  const auto &ExpectedCall = BoolSetter ? BlrX22 : BlrX21;
+  constexpr std::array<uint8_t, 4> BlrX8 = {0x00, 0x01, 0x3f, 0xd6};
+  const auto &ExpectedCall = DirectSelf ? BlrX8 : BoolSetter ? BlrX22 : BlrX21;
   if (!Bytes || !std::equal(ExpectedCall.begin(), ExpectedCall.end(), Bytes))
     return std::nullopt;
   const auto EntryType = objcMethodSourceTypeHint(Image, Entry);
@@ -335,7 +390,7 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
   Hint.TargetName = "swift_virtual";
   Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
-      Entry, CallSite, IsaMaskImport, Slot, ZeroArgumentWords};
+      Entry, CallSite, IsaMaskImport, Slot, ZeroArgumentWords, DirectSelf};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Signature.ReturnType =
       (Setter || VoidMethod)
@@ -376,7 +431,7 @@ bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
   const auto Expected = canonicalAccessor(
       Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
       Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset,
-      Hint.Virtual->ZeroArgumentWords);
+      Hint.Virtual->ZeroArgumentWords, Hint.Virtual->DirectSelf);
   return Expected && Expected->Virtual == Hint.Virtual &&
          equalSourceABIs(Expected->Signature, Hint.Signature);
 }
@@ -403,11 +458,15 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
   size_t CallsAtSite = 0;
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     const auto &Op = Block.Ops[I];
-    if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 ||
-        Op.Inputs[0] != NdVar::reg(Method->TypeEncoding == "v20@0:8B16"
-                                       ? a64reg::X22
-                                       : a64reg::X21,
-                                   8) ||
+    if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1)
+      continue;
+    const bool DirectSelf = Method->TypeEncoding == "v16@0:8" &&
+                            Op.Inputs[0] == NdVar::reg(a64reg::X8, 8);
+    if ((!DirectSelf &&
+         Op.Inputs[0] != NdVar::reg(Method->TypeEncoding == "v20@0:8B16"
+                                        ? a64reg::X22
+                                        : a64reg::X21,
+                                    8)) ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       continue;
@@ -420,10 +479,15 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
       continue;
     uint8_t ZeroArgumentWords = 0;
     if (Method->TypeEncoding == "v16@0:8") {
-      const auto Window = exactVoidMethodCallWindow(Image, Block, I);
-      if (!Window)
-        continue;
-      ZeroArgumentWords = *Window;
+      if (DirectSelf) {
+        if (!exactRetainedSelfVoidCallWindow(Block, I))
+          continue;
+      } else {
+        const auto Window = exactVoidMethodCallWindow(Image, Block, I);
+        if (!Window)
+          continue;
+        ZeroArgumentWords = *Window;
+      }
     }
     BlockTrace Trace(Image, Function, Block);
     auto Target = Trace.resolve(Op.Inputs[0], I, Op.Addr);
@@ -431,12 +495,12 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
     if (!Target || !Context)
       continue;
     const auto Virtual =
-        Trace.virtualTarget(*Target, *Context, Method->ClassName);
+        Trace.virtualTarget(*Target, *Context, Method->ClassName, DirectSelf);
     if (!Virtual)
       continue;
     auto Hint =
         canonicalAccessor(Image, Function.Entry, Op.Addr, Virtual->first,
-                          Virtual->second, ZeroArgumentWords);
+                          Virtual->second, ZeroArgumentWords, DirectSelf);
     if (Hint)
       Result.emplace(Op.Addr, std::move(*Hint));
   }

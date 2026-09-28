@@ -277,6 +277,95 @@ TEST(SwiftVirtualCalls, ExactVoidMethodWindowRejectsOrdinaryArguments) {
   EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
 }
 
+TEST(SwiftVirtualCalls, RetainedSelfVoidMethodUsesSwiftContext) {
+  Fixture F;
+  auto &Method = F.Image.ObjCMethods[0];
+  Method.ClassName = "_TtC6Lottie17AnimationViewBase";
+  Method.Selector = "layoutSubviews";
+  Method.TypeEncoding = "v16@0:8";
+  Method.TypeHint->ReturnType = NdType::makeVoid();
+  F.Image.Symbols[0].Name =
+      "_$s6Lottie17AnimationViewBaseC14layoutSubviewsyyFTo";
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 + 0] = 0x00;
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 + 1] = 0x01;
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4 + 0] = 0xf4;
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4 + 1] = 0x03;
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4 + 2] = 0x13;
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4 + 3] = 0xaa;
+  F.Image.Imports.push_back({"/usr/lib/libobjc.A.dylib", "_objc_retain", 0, 0});
+  F.Image.ImportStubIndices[0x1300] = 0;
+
+  auto &Ops = F.Function.Blocks[0].Ops;
+  Ops.clear();
+  const auto X0 = NdVar::reg(a64reg::X0, 8);
+  const auto X8 = NdVar::reg(a64reg::X8, 8);
+  const auto X9 = NdVar::reg(a64reg::X9, 8);
+  const auto X19 = NdVar::reg(a64reg::X19, 8);
+  const auto X20 = NdVar::reg(a64reg::X20, 8);
+  auto Add = [&](va_t Address, NdOp Code, NdVar Output,
+                 std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Addr = Address;
+    Op.Opcode = Code;
+    Op.Output = Output;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Ops.push_back(Op);
+  };
+  Add(0x1110, NdOp::COPY, X19, {X0});
+  Add(0x1114, NdOp::COPY, X0, {X19});
+  Add(0x1118, NdOp::CALL, X0, {NdVar::codeAddress(0x1300, 8)});
+  Add(0x111c, NdOp::COPY, X19, {X0});
+  Add(0x1120, NdOp::LOAD, X8, {X19});
+  Add(0x1124, NdOp::COPY, X9, {NdVar::dataAddress(Fixture::MaskSlot, 8)});
+  Add(0x1128, NdOp::LOAD, X9, {X9});
+  Add(0x112c, NdOp::LOAD, X9, {X9});
+  Add(0x1130, NdOp::INT_AND, X8, {X8, X9});
+  Add(0x1138, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
+      {X8, NdVar::scalar(96, 8)});
+  Add(0x1138, NdOp::LOAD, X8, {NdVar::tmp(TmpBase, 8)});
+  Add(0x1168, NdOp::COPY, X20, {X19});
+  Add(Fixture::CallSite, NdOp::COPY, NdVar::reg(a64reg::X30, 8),
+      {NdVar::scalar(Fixture::CallSite + 4, 8)});
+  Add(Fixture::CallSite, NdOp::INDIR_CALL, X0, {X8});
+
+  const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Fixture::CallSite);
+  ASSERT_TRUE(Hint.Virtual);
+  EXPECT_TRUE(Hint.Virtual->DirectSelf);
+  EXPECT_EQ(Hint.Virtual->VtableByteOffset, 96U);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint.Signature.Parameters.size(), 1U);
+  EXPECT_EQ(Hint.Signature.Parameters[0].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4] = 0x00;
+  EXPECT_FALSE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000 - 4] = 0xf4;
+
+  F.Image.DyldBindSlots[Fixture::MaskSlot].Module =
+      "/usr/lib/libSystem.B.dylib";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+  F.Image.DyldBindSlots[Fixture::MaskSlot].Module =
+      "/usr/lib/swift/libswiftCore.dylib";
+  F.Image.Imports[0].Name = "_objc_release";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+  F.Image.Imports[0].Name = "_objc_retain";
+  Ops[Ops.size() - 3].Inputs[0] = X0;
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+  Ops[Ops.size() - 3].Inputs[0] = X19;
+  Ops[0].Inputs[0] = NdVar::reg(a64reg::X1, 8);
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+  Ops[0].Inputs[0] = X0;
+  F.Image.Imports[0].Name = "_objc_retain_x19";
+  Ops[1].Inputs[0] = NdVar::reg(a64reg::X1, 8);
+  EXPECT_EQ(buildSwiftVirtualCallHints(F.Image, F.Function).size(), 1U);
+  F.Image.Imports[0].Name = "_objc_retain";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+}
+
 TEST(SwiftVirtualCalls, RejectsAlteredCodeImportAndReceiverEvidence) {
   Fixture F;
   F.Image.Segments[0].Data[Fixture::CallSite - 0x1000] = 0x00;

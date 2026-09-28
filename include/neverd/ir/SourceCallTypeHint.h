@@ -249,6 +249,9 @@ struct SourceCallTypeHint {
     va_t IsaMaskImport = 0;
     uint32_t VtableByteOffset = 0;
     uint8_t ZeroArgumentWords = 0;
+    /// The virtual receiver is the retained Objective-C method self, rather
+    /// than an object loaded from one of its ivars.
+    bool DirectSelf = false;
     bool operator==(const SwiftVirtualEvidence &) const = default;
   };
   std::optional<SwiftVirtualEvidence> Virtual;
