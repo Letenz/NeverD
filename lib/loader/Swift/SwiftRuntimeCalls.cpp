@@ -297,6 +297,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "bpppppC"},
     {"$ss018_bridgeAnyObjectToB0yypyXlSgF", "/usr/lib/swift/libswiftCore.dylib",
      "vIp"},
+    // SetAlgebra.init<S: Sequence>(_:) carries an indirect result and
+    // sequence address, followed by generic metadata and witnesses. Swift
+    // 6.1.2 arm64 and x86_64 clients put T metadata in swiftself.
+    {"$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj",
+     "/usr/lib/swift/libswiftCore.dylib", "vIpppCpp"},
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},
