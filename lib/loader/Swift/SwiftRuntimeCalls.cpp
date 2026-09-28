@@ -235,6 +235,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // DispatchQueue.global(qos:) reads the QoSClass value by address and
+    // receives the queue metatype in swiftself on both Darwin targets.
+    {"$sSo17OS_dispatch_queueC8DispatchE6global3qosAbC0D3QoSV0G6SClassO_tFZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "ppC"},
     // DispatchSource.makeTimerSource takes TimerFlags by address, a queue
     // optional in one integer carrier, and the source metatype in swiftself.
     {"$sSo18OS_dispatch_sourceC8DispatchE15makeTimerSource5flags5queueSo0a1_"

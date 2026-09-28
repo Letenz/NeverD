@@ -3128,8 +3128,10 @@ TEST(ObjCCallHints, DispatchTimerCallsKeepCompilerObservedSwiftABI) {
     }
 }
 
-TEST(ObjCCallHints, DispatchTimerSourceAndHandlerKeepSwiftABI) {
+TEST(ObjCCallHints, DispatchQueueAndTimerSourceCallsKeepSwiftABI) {
   constexpr const char *Names[] = {
+      "$sSo17OS_dispatch_queueC8DispatchE6global3qosAbC0D3QoSV0G6SClassO_"
+      "tFZ",
       "$sSo18OS_dispatch_sourceC8DispatchE15makeTimerSource5flags5queueSo0a1_"
       "b1_C6_timer_pAbCE0F5FlagsV_So0a1_b1_I0CSgtFZ",
       "$sSo18OS_dispatch_sourceP8DispatchE15setEventHandler3qos5flags7handler"
@@ -3138,7 +3140,7 @@ TEST(ObjCCallHints, DispatchTimerSourceAndHandlerKeepSwiftABI) {
   constexpr llvm::StringLiteral Provider =
       "/usr/lib/swift/libswiftDispatch.dylib";
   for (auto Architecture : {Arch::AArch64, Arch::X64})
-    for (unsigned Index = 0; Index != 2; ++Index) {
+    for (unsigned Index = 0; Index != 3; ++Index) {
       SCOPED_TRACE(std::string(Names[Index]) + ":" +
                    std::to_string(static_cast<int>(Architecture)));
       const std::string Import = "_" + std::string(Names[Index]);
@@ -3154,8 +3156,9 @@ TEST(ObjCCallHints, DispatchTimerSourceAndHandlerKeepSwiftABI) {
                 SourceFunctionTypeHint::ConventionKind::Swift);
       ASSERT_TRUE(Signature.ReturnType);
       EXPECT_EQ(Signature.ReturnType->Kind,
-                Index == 0 ? NdTypeKind::Ptr : NdTypeKind::Void);
-      ASSERT_EQ(Signature.Parameters.size(), Index == 0 ? 3U : 5U);
+                Index == 2 ? NdTypeKind::Void : NdTypeKind::Ptr);
+      ASSERT_EQ(Signature.Parameters.size(),
+                Index == 0 ? 2U : Index == 1 ? 3U : 5U);
       const auto &TRI = getTargetRegInfo(Architecture);
       for (unsigned I = 0; I + 1 < Signature.Parameters.size(); ++I) {
         const auto &Parameter = Signature.Parameters[I];
@@ -3163,8 +3166,9 @@ TEST(ObjCCallHints, DispatchTimerSourceAndHandlerKeepSwiftABI) {
                   SourceParameterTypeHint::Role::Ordinary);
         EXPECT_EQ(Parameter.Location.RegisterOffset, TRI.IntParamRegs[I]);
         EXPECT_EQ(Parameter.Type->Kind,
-                  I == (Index == 0 ? 1U : 2U) ? NdTypeKind::Int
-                                               : NdTypeKind::Ptr);
+                  I == (Index == 1 ? 1U : Index == 2 ? 2U : 99U)
+                      ? NdTypeKind::Int
+                      : NdTypeKind::Ptr);
       }
       const auto &Context = Signature.Parameters.back();
       EXPECT_EQ(Context.TheRole,
