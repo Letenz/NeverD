@@ -1253,10 +1253,12 @@ add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/RewriteFunctionProvenanceTests.cpp
 
   LINK_COMPONENTS
+  BackendC
   BackendLLVM
   CodeGen
   LibC
   Lift
+  Pipeline
 )
 
 target_include_directories(NeverDNativeExceptionRewriteContractTests PRIVATE

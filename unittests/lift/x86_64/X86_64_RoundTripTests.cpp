@@ -1,4 +1,5 @@
-//===- X86_64_RoundTripTests.cpp - Semantic round-trip validation ----------===//
+//===- X86_64_RoundTripTests.cpp - Semantic round-trip validation
+//----------===//
 //
 // NeverD Decompiler
 //
@@ -18,9 +19,7 @@ static fs::path roundtripObj() {
   return fs::path(TEST_OBJ_DIR) / "test_roundtrip.o";
 }
 
-TEST_F(X86_64_RoundTrip, AllStagesSucceed) {
-  verifyAllStages(roundtripObj());
-}
+TEST_F(X86_64_RoundTrip, AllStagesSucceed) { verifyAllStages(roundtripObj()); }
 
 TEST_F(X86_64_RoundTrip, NoVerifierErrors) {
   verifyLLVMIRNoVerifierErrors(roundtripObj());
@@ -43,7 +42,7 @@ TEST_F(X86_64_RoundTrip, DecompiledCHasFunctionNames) {
   auto CFile = tmpFile("decompiled_high.c");
   std::ifstream Ifs(CFile);
   std::string Content((std::istreambuf_iterator<char>(Ifs)),
-                       std::istreambuf_iterator<char>());
+                      std::istreambuf_iterator<char>());
   EXPECT_TRUE(Content.find("rt_simple_add") != std::string::npos ||
               Content.find("sub_") != std::string::npos)
       << "Expected function names or sub_ prefixes in decompiled C";
@@ -77,16 +76,16 @@ TEST_F(X86_64_RoundTrip, LLVMIRHasArithOps) {
 TEST_F(X86_64_RoundTrip, LLVMIRHasBitwiseOps) {
   auto R = liftToLLVMIRUnopt(roundtripObj());
   ASSERT_EQ(R.exitCode, 0) << R.err;
-  bool HasBitwise = R.contains("and ") || R.contains("or ") ||
-                    R.contains("xor ");
+  bool HasBitwise =
+      R.contains("and ") || R.contains("or ") || R.contains("xor ");
   EXPECT_TRUE(HasBitwise) << "Expected bitwise ops in LLVM IR";
 }
 
 TEST_F(X86_64_RoundTrip, LLVMIRHasShifts) {
   auto R = liftToLLVMIRUnopt(roundtripObj());
   ASSERT_EQ(R.exitCode, 0) << R.err;
-  bool HasShift = R.contains("shl ") || R.contains("lshr ") ||
-                  R.contains("ashr ");
+  bool HasShift =
+      R.contains("shl ") || R.contains("lshr ") || R.contains("ashr ");
   EXPECT_TRUE(HasShift) << "Expected shift ops in LLVM IR";
 }
 
@@ -131,8 +130,7 @@ TEST_F(X86_64_RoundTrip, DecompileLLVMRoute) {
 
 TEST_F(X86_64_RoundTrip, SignedTernaryComparesInputsOnBothCRoutes) {
   for (bool UseLLVM : {false, true}) {
-    const auto CFile =
-        tmpFile(UseLLVM ? "ternary_llvm.c" : "ternary_high.c");
+    const auto CFile = tmpFile(UseLLVM ? "ternary_llvm.c" : "ternary_high.c");
     std::vector<std::string> Args = {"decompile"};
     if (UseLLVM)
       Args.push_back("--llvm");
@@ -145,10 +143,36 @@ TEST_F(X86_64_RoundTrip, SignedTernaryComparesInputsOnBothCRoutes) {
     const std::string Source((std::istreambuf_iterator<char>(Ifs)),
                              std::istreambuf_iterator<char>());
     ASSERT_NE(Source.find("rt_ternary("), std::string::npos) << Source;
-    EXPECT_NE(Source.find("<="), std::string::npos) << Source;
+    EXPECT_TRUE(Source.find("<=") != std::string::npos ||
+                Source.find("neverd_llvm_smax_i32") != std::string::npos)
+        << Source;
     EXPECT_EQ(Source.find("__builtin_sub_overflow_p"), std::string::npos)
         << Source;
     EXPECT_EQ(Source.find(">> 31"), std::string::npos) << Source;
     EXPECT_EQ(Source.find("var_mC - var_m10"), std::string::npos) << Source;
+
+    const auto Harness = tmpFile("ternary_execute.c");
+    std::ofstream(Harness) << Source << R"(
+int main(void) {
+  static const int32_t edges[] = {
+      INT32_MIN, INT32_MIN + 1, -1, 0, 1, INT32_MAX - 1, INT32_MAX};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (rt_ternary(edges[i], edges[j]) !=
+          (edges[i] > edges[j] ? edges[i] : edges[j]))
+        return 1;
+  return 0;
+}
+)";
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile("ternary_execute");
+      const auto Recompiled = exec(
+          NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-fsanitize=undefined",
+                              "-fsanitize-trap=undefined", Harness.string(),
+                              "-o", Executable.string()});
+      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+      EXPECT_TRUE(exec(Executable.string(), {}).ok()) << Source;
+    }
   }
 }

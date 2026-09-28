@@ -72,6 +72,8 @@ oracles. A full-product counterexample ensures low-word rules do not discard
 observable upper bits. The symbolic and HighIR tests additionally check signed
 extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
+The x64 ELF, COFF, and Mach-O cases also exercise single-function LLVMC
+decompilation and execute its simplified result at `-O0` and `-O2`.
 Nested source expressions additionally compile at `-O0` for x86-32/64,
 ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and
@@ -133,6 +135,10 @@ decompilation must report the ambiguity instead of silently omitting a function.
 Single-function decompilation must give the same mode diagnostic.
 ELF mapping and Windows ARMNT machine evidence separately accept matching
 assertions and reject contradictory ones.
+An ELF object stripped of its mapping and function symbols must reject an
+unmarked ARM or Thumb entry in both C routes. Exact caller assertions recover
+both, and their single-function HighC and LLVMC output must simplify a
+carry-save addition and execute at `-O0` and `-O2`.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

@@ -69,6 +69,12 @@ new image into an SDK session resets its previous decoder state; data symbols
 and unrelated names do not select a decoder mode. A fully stripped image can
 leave an indirect target's state unknowable from static bytes alone; the
 file-level default is not proof that all of its executable bytes use one mode.
+An ELF function entry without exact mode evidence requires a caller assertion
+before either C route can decode it, even when the file-level decoder starts in
+ARM mode. A single-function LLVMC request runs the same semantic LLVM
+optimization as the full-image route before emitting C.
+Both LLVM C routes retain verified output with only temporary-alloca
+promotion when an incomplete native exception contract excludes optimization.
 
 For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
 `N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct

@@ -88,8 +88,10 @@ llvm::Error loadELF(llvm::object::ELFObjectFile<ELFT> &Obj, BinaryImage &Img) {
 
   Img.Bits = ELFT::Is64Bits ? Bitness::Bits64 : Bitness::Bits32;
   Img.Entry = EH.e_entry;
-  if (Img.Arch == Arch::ARM)
+  if (Img.Arch == Arch::ARM) {
     Img.Entry = clearThumbBit(Img.Entry);
+    Img.ARMModeRequiresLocalEvidence = true;
+  }
 
   auto SectionsOr = ELF.sections();
   if (!SectionsOr)
