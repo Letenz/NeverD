@@ -45,15 +45,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests` vérifie l’indépendance de deux exécutions sur des graphes LowIR complets et acycliques. Les entrées ordinaires sont partagées ; chaque nouvelle valeur indéfinie par l’architecture conserve ses corrélations dans les copies, écritures superposées, sauvegardes en pile et rechargements. Les prédicats de contrôle sont vérifiés avant les hypothèses de chemin. Un certificat exige des métadonnées d’effets `Complete`, liées exactement aux limites complètes de chaque instruction et à l’empreinte de ses opérations. Preuves manquantes, boucles accessibles, appels, alias inconnus et budgets épuisés entraînent un refus. Le résultat dépend des observations explicites et du contrat de frame sans faute mémoire ; ce n’est pas une preuve complète d’équivalence du code natif vers C.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` utilise des octets x64 indépendants avec des mappages fixes pour vérifier la collecte complète des branches originales, la liaison exacte aux octets, la préservation du RSP d’entrée et de l’adresse de retour, la satisfaisabilité de la séparation cadre/image et le refus sans code résiduel. Il couvre instructions absentes ou chevauchantes, branches non prises non auditées, appels, transferts indirects, cycles, profils/contrats incompatibles et budgets de métadonnées/collecte. Ce contrôle facultatif ne certifie ni exceptions, ni exécution avec CET activé, ni équivalence du natif à C ; la récupération ordinaire reste distincte.
 
 `NeverDX86UndefinedEffectsTests` vérifie les métadonnées des bits indéfinis, les drapeaux définis ou conservés et le refus des certificats périmés. `NeverDX86CarryArithmeticFlagTests` compare la retenue auxiliaire d’ADC/SBB, pour les formes registre et mémoire, à un oracle arithmétique. `NeverDX86LogicIdentityTests` vérifie qu’AND avec deux opérandes identiques efface encore les bits 63:32 du registre de 64 bits correspondant lors de l’écriture d’une destination de 32 bits en mode 64 bits, tout en préservant les bits non écrits des destinations plus étroites.
 

@@ -41,15 +41,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 يتحقق `NeverDLowIRUndefinedIndependenceTests` من استقلال تنفيذين لرسم LowIR كامل وخالٍ من الدورات. يشترك التنفيذان في مدخلات الدخول العادية، وتحافظ كل قيمة جديدة غير معرّفة معماريًا على ترابطها عبر النسخ والكتابات المتداخلة والحفظ في المكدس وإعادة التحميل. تُفحص شروط التحكم قبل إضافة افتراضات المسار. تتطلب الشهادة بيانات وصفية للتأثيرات بحالة `Complete` مرتبطة بدقة بحدود كل تعليمة كاملة وبصمة عملياتها. تُرفض الشهادة عند نقص الأدلة أو وجود حلقات قابلة للوصول أو استدعاءات أو تداخلات عناوين مجهولة أو نفاد الميزانية. يقتصر الاستنتاج على عناصر الملاحظة الصريحة وعقد الوصول إلى إطار المكدس دون أخطاء؛ وهو ليس برهان تكافؤ كامل من الشيفرة الأصلية إلى C.
+
+يستخدم `NeverDOriginalBinaryUndefinedIndependenceTests` بايتات x64 مستقلة ذات خرائط ثابتة للتحقق من جمع الفروع الأصلية كاملة، والارتباط الدقيق بالبايتات، وحفظ RSP وخانة الرجوع عند الدخول، وقابلية تحقيق فصل الإطار عن الصورة، والرفض دون شيفرة متبقية. ويغطي التعليمات المفقودة أو المتداخلة، والفروع غير المسلوكة غير المدققة، والاستدعاءات والانتقالات غير المباشرة والدورات وعدم تطابق ملفات التنفيذ والعقود وميزانيات البيانات والجمع. لا يعتمد هذا الشرط الاختياري الاستثناءات أو التنفيذ مع CET مفعّلًا أو تكافؤ الشيفرة الأصلية مع C؛ وتظل الاستعادة العادية منفصلة.
 
 يتحقق `NeverDX86UndefinedEffectsTests` من بيانات البتات غير المعرّفة والأعلام المعرّفة أو المحفوظة ورفض الشهادات القديمة. يقارن `NeverDX86CarryArithmeticFlagTests` الحمل المساعد في ADC/SBB لصيغ السجلات والذاكرة بمرجع حسابي. ويتحقق `NeverDX86LogicIdentityTests` من أن AND بمعاملين متطابقين ما زال يصفر البتات 63:32 من السجل المقابل ذي 64 بت عند الكتابة إلى وجهة من 32 بت في نمط 64 بت، مع حفظ البتات التي لا تشملها الكتابات الأضيق.
 

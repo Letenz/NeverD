@@ -195,15 +195,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests` checks two-execution independence on complete acyclic LowIR graphs. Ordinary entry inputs are shared; fresh architecture-undefined producers retain their correlations through copies, overlapping writes, spills and reloads. Control predicates are checked before path assumptions. Certificates require `Complete` effect metadata bound to each full instruction boundary and exact operation digest. Missing evidence, reachable loops, calls, unknown aliases and exhausted budgets refuse a certificate. The explicit observation and nonfaulting frame contracts limit the result; this is not full native-to-C equivalence.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to check complete original branch collection, exact byte binding, mandatory entry RSP/return-slot preservation, image-disjoint frame feasibility and refusal without residual code. It covers missing or overlapping instructions, unaudited untaken arms, calls, indirect transfers, cycles, profile/contract mismatches and metadata/collection budgets. This optional gate does not certify exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate.
 
 `NeverDX86UndefinedEffectsTests` checks undefined-bit metadata, defined/preserved flags and stale-certificate refusal. `NeverDX86CarryArithmeticFlagTests` checks ADC/SBB auxiliary carry for register and memory forms against an arithmetic oracle. `NeverDX86LogicIdentityTests` checks that AND with identical operands still clears bits 63:32 of the enclosing 64-bit register for a 32-bit destination in 64-bit mode while preserving unwritten bits for narrower writes.
 

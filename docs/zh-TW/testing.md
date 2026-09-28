@@ -39,15 +39,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests` 檢查完整無環 LowIR 圖的兩次執行獨立性。兩側共用一般入口輸入；每次新產生的架構未定義值在複製、重疊寫入、溢出儲存與重新載入中保持來源關聯。控制述詞先於路徑假設接受檢查。憑證要求 `Complete` 效果中繼資料，並精確綁定每條指令的完整邊界與操作摘要。缺少證據、可達迴圈、呼叫、未知別名或預算耗盡都會拒絕憑證。結論受明確觀察項與無故障堆疊框架契約限制，並非原生程式碼到 C 的完整等價證明。
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，檢查原始分支完整收集、精確位元組綁定、入口 RSP／返回位址槽強制保持、堆疊框架與映像分離前提的可滿足性，以及失敗時不傳回殘餘程式碼。涵蓋缺失或重疊指令、靜態不走但未審計的分支、呼叫、間接轉移、迴圈、執行設定／契約不符及中繼資料／收集預算。此選用閘門不認證例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。
 
 `NeverDX86UndefinedEffectsTests` 檢查未定義位元中繼資料、已定義／保留旗標及過期憑證拒絕。`NeverDX86CarryArithmeticFlagTests` 以算術參考實作檢查暫存器和記憶體形式 ADC/SBB 的輔助進位。`NeverDX86LogicIdentityTests` 檢查相同運算元的 AND 在 64 位元模式下寫入 32 位元目的暫存器時，仍清零其所屬 64 位元暫存器的位元 63:32，同時保留窄位寬寫入未涵蓋的位元。
 

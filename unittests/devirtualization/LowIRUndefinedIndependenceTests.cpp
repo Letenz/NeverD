@@ -492,4 +492,370 @@ TEST(LowIRUndefinedIndependence, AdditionalEntriesAreNotSilentlyOmitted) {
   P.Function.OrdinaryModuleAnalysisRoots.insert(0x200);
   expectStatus(P, Status::Unsupported);
 }
+
+TEST(LowIRUndefinedIndependence, PairwiseEqualStackChangesViolatePreservation) {
+  Program P;
+  P.frame();
+  P.instruction({op(NdOp::INT_ADD, reg(32), {reg(32), number(8)})});
+  P.finish();
+  expectStatus(P, Status::Proved); // Both executions make the same change.
+  P.Contract.PreservedRegisters = {{32, 8}};
+  expectStatus(P, Status::ContractViolation);
+
+  Program Restored;
+  Restored.frame();
+  Restored.Contract.PreservedRegisters = {{32, 8}};
+  Restored.instruction({op(NdOp::COPY, reg(40), {reg(32)}),
+                        op(NdOp::INT_ADD, reg(32), {reg(32), number(8)}),
+                        op(NdOp::COPY, reg(32), {reg(40)})});
+  Restored.finish();
+  expectStatus(Restored, Status::Proved);
+}
+
+TEST(LowIRUndefinedIndependence, PreservedSnapshotsIncludeEntryConstants) {
+  Program P;
+  P.Contract.PreservedRegisters = {{0, 8}};
+  P.instruction({op(NdOp::COPY, reg(0), {number(42)})});
+  P.finish();
+  expectStatus(P, Status::ContractViolation);
+  P.Contract.EntryConstants = {{reg(0), 42}};
+  expectStatus(P, Status::Proved);
+  P.Contract.EntryConstants[0].Value = 43;
+  expectStatus(P, Status::ContractViolation);
+
+  // Only a low lane is initially bound; snapshotting must keep that binding
+  // together with the shared, unbound high bytes of the same register.
+  Program Partial;
+  Partial.Contract.EntryConstants = {{reg(0, 4), 42}};
+  Partial.Contract.PreservedRegisters = {{0, 8}};
+  Partial.instruction({op(NdOp::COPY, reg(0, 4), {number(42, 4)})});
+  Partial.finish();
+  expectStatus(Partial, Status::Proved);
+}
+
+TEST(LowIRUndefinedIndependence,
+     PreservedUndefinedOutputsAreContractViolations) {
+  Program P;
+  P.Contract.PreservedRegisters = {{0, 8}};
+  P.arbitrary(reg(0), 0, 64);
+  P.finish();
+  // Preservation is checked before the ordinary return-register observation.
+  expectStatus(P, Status::ContractViolation);
+
+  Program Restored;
+  Restored.Contract.PreservedRegisters = {{0, 8}};
+  Restored.instruction({op(NdOp::COPY, reg(8), {reg(0)})});
+  Restored.arbitrary(reg(0), 0, 64);
+  Restored.instruction({op(NdOp::COPY, reg(0), {reg(8)})});
+  Restored.finish();
+  expectStatus(Restored, Status::Proved);
+}
+
+TEST(LowIRUndefinedIndependence, EntryReturnSlotMustRestoreItsOriginalBytes) {
+  Program P;
+  P.frame();
+  P.Contract.ObserveWrittenFrameBytes = false;
+  P.instruction({op(NdOp::STORE, {}, {reg(32), number(0x1234)})});
+  P.finish();
+  expectStatus(P, Status::Proved);
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  expectStatus(P, Status::ContractViolation);
+
+  Program Restored;
+  Restored.frame();
+  Restored.Contract.PreservedFrameRanges = {{0, 8}};
+  Restored.instruction({op(NdOp::LOAD, reg(8), {reg(32)}),
+                        op(NdOp::STORE, {}, {reg(32), number(0x1234)}),
+                        op(NdOp::STORE, {}, {reg(32), reg(8)})});
+  Restored.finish();
+  expectStatus(Restored, Status::Proved);
+  Restored.Function.Blocks[0].Ops[2].Inputs[1] = number(0);
+  expectStatus(Restored,
+               Status::Invalid); // The former effect binding is stale.
+  Restored.rebind();
+  expectStatus(Restored, Status::ContractViolation);
+}
+
+TEST(LowIRUndefinedIndependence, PreservationCoversEveryFeasibleReturnPath) {
+  auto P = diamond(reg(8, 1));
+  P.Contract.PreservedRegisters = {{0, 8}};
+  P.Contract.EntryConstants = {{reg(0), 0}};
+  // Only one return path breaks preservation; completing the other path
+  // cannot authorize a partial certificate.
+  P.Function.Blocks[1].Ops[0].Inputs[0] = number(1);
+  P.rebind();
+  expectStatus(P, Status::ContractViolation);
+  P.Function.Blocks[0].Ops[0].Inputs[1] = number(0, 1);
+  P.rebind();
+  expectStatus(P, Status::Proved);
+  P.Function.Blocks[0].Ops[0].Inputs[1] = number(1, 1);
+  P.rebind();
+  expectStatus(P, Status::ContractViolation);
+}
+
+TEST(LowIRUndefinedIndependence,
+     PreservationUsesOnlyIndependentlyProvedGuards) {
+  Program P;
+  P.Contract.PreservedRegisters = {{0, 8}};
+  P.Function.Blocks[0].Succs = {1, 2};
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {reg(0), number(0)}),
+                 op(NdOp::COND_BR, {}, {number(0x200), NdVar::tmp(0, 1)})});
+  P.block(1, 0x200);
+  P.instruction({op(NdOp::COPY, reg(0), {number(0)})});
+  P.finish();
+  P.block(2, 0x300);
+  P.finish();
+  expectStatus(P, Status::Proved); // The written arm already had entry RAX=0.
+}
+
+TEST(LowIRUndefinedIndependence, PreservedFrameSlicesAreByteExactAcrossZero) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+    Program P;
+    P.frame();
+    P.Contract.ByteOrder = Order;
+    P.Contract.PreservedFrameRanges = {{-4, 8}};
+    const auto Address = NdVar::tmp(0, 8);
+    P.instruction({op(NdOp::INT_SUB, Address, {reg(32), number(4)}),
+                   op(NdOp::LOAD, reg(8), {Address}),
+                   op(NdOp::STORE, {}, {Address, number(0)}),
+                   op(NdOp::STORE, {}, {Address, reg(8)})});
+    P.finish();
+    expectStatus(P, Status::Proved);
+    // Restoring just four bytes cannot restore the original eight-byte slice.
+    P.Function.Blocks[0].Ops[3].Inputs[1] = reg(8, 4);
+    P.rebind();
+    expectStatus(P, Status::ContractViolation);
+  }
+}
+
+TEST(LowIRUndefinedIndependence,
+     PreservedRangesRejectMalformedAndOverlappingInput) {
+  Program P;
+  P.finish();
+  P.Contract.PreservedRegisters = {{0, 0}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.PreservedRegisters = {{0, 9}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.PreservedRegisters = {{UINT64_MAX, 2}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.PreservedRegisters = {{0, 8}, {7, 1}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.PreservedRegisters = {{0, 4}, {4, 4}};
+  expectStatus(P, Status::Proved);
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  expectStatus(P, Status::Invalid); // There is no frame contract yet.
+  P.frame();
+  for (auto Range : {LowIRIndependenceFrameRange{0, 0},
+                     {-17, 1},
+                     {15, 2},
+                     {INT64_MAX, 1},
+                     {INT64_MIN, UINT16_MAX}}) {
+    P.Contract.PreservedFrameRanges = {Range};
+    expectStatus(P, Status::Invalid);
+  }
+  P.Contract.PreservedFrameRanges = {{-1, 2}, {0, 1}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.PreservedFrameRanges = {{-16, 8}, {-8, 8}, {0, 8}, {8, 8}};
+  expectStatus(P, Status::Proved);
+}
+
+TEST(LowIRUndefinedIndependence,
+     PreservationSnapshotAndBothExecutionChecksAreBounded) {
+  Program P;
+  P.frame();
+  P.Contract.ReturnRegisters.clear();
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  P.finish();
+  LowIRIndependenceLimits L;
+  L.MaxObservations = 7;
+  expectStatus(P, Status::BudgetExceeded, L); // Eight entry snapshot bytes.
+  L.MaxObservations = 15;
+  expectStatus(P, Status::BudgetExceeded, L); // Both executions are checked.
+  L.MaxObservations = 16;
+  expectStatus(P, Status::Proved, L);
+  L = {};
+  L.MaxInstructions = 1;
+  P.Contract.PreservedFrameRanges = {{0, 1}, {1, 1}};
+  expectStatus(P, Status::BudgetExceeded, L);
+  P.Contract.PreservedFrameRanges.clear();
+  P.Contract.PreservedRegisters = {{0, 1}, {1, 1}};
+  expectStatus(P, Status::BudgetExceeded, L);
+}
+
+TEST(LowIRUndefinedIndependence, CertificateBindsEveryPreservationRange) {
+  Program P;
+  P.frame();
+  P.finish();
+  auto A = P.check();
+  ASSERT_TRUE(A.proved()) << A.Diagnostic;
+  P.Contract.PreservedRegisters = {{32, 8}};
+  auto B = P.check();
+  ASSERT_TRUE(B.proved()) << B.Diagnostic;
+  EXPECT_NE(A.Certificate->InputDigest, B.Certificate->InputDigest);
+  EXPECT_EQ(B.Certificate->Contract.PreservedRegisters.size(), 1u);
+  P.Contract.PreservedRegisters[0].Bytes = 4;
+  auto C = P.check();
+  ASSERT_TRUE(C.proved()) << C.Diagnostic;
+  EXPECT_NE(B.Certificate->InputDigest, C.Certificate->InputDigest);
+  P.Contract.PreservedFrameRanges = {{0, 8}};
+  auto D = P.check();
+  ASSERT_TRUE(D.proved()) << D.Diagnostic;
+  EXPECT_NE(C.Certificate->InputDigest, D.Certificate->InputDigest);
+  EXPECT_EQ(D.Certificate->Contract.PreservedFrameRanges[0].Offset, 0);
+  P.Contract.PreservedFrameRanges[0].Offset = -8;
+  auto E = P.check();
+  ASSERT_TRUE(E.proved()) << E.Diagnostic;
+  EXPECT_NE(D.Certificate->InputDigest, E.Certificate->InputDigest);
+  P.Contract.PreservedFrameRanges[0].Bytes = 4;
+  auto F = P.check();
+  ASSERT_TRUE(F.proved()) << F.Diagnostic;
+  EXPECT_NE(E.Certificate->InputDigest, F.Certificate->InputDigest);
+}
+
+TEST(LowIRUndefinedIndependence,
+     ExclusionsCoverTheWholeFrameWithoutMemoryAccesses) {
+  Program P;
+  P.frame();
+  P.Contract.EntryConstants = {{reg(32), 0x1000}};
+  P.finish();
+  // The accessible frame is [0x0ff0, 0x1010), even though no LOAD or STORE
+  // runs.
+  P.Contract.Frame->ExcludedAddressRanges = {{0x100f, 0x1010}};
+  expectStatus(P, Status::InfeasibleEntry);
+  P.Contract.Frame->ExcludedAddressRanges = {{0x0ff0, 0x0ff1}};
+  expectStatus(P, Status::InfeasibleEntry);
+  P.Contract.Frame->ExcludedAddressRanges = {{0x1000, 0x1001}};
+  expectStatus(P, Status::InfeasibleEntry);
+  P.Contract.Frame->ExcludedAddressRanges.clear();
+  expectStatus(P, Status::Proved);
+}
+
+TEST(LowIRUndefinedIndependence, ExclusionAdjacencyIsAllowedOnEitherSide) {
+  Program P;
+  P.Contract.Frame = LowIRIndependenceFrame{{32, 8}, -8, 8};
+  P.Contract.EntryConstants = {{reg(32), 0x1008}};
+  P.finish();
+  // Accessible bytes [0x1000, 0x1010) fit exactly between these ranges.
+  P.Contract.Frame->ExcludedAddressRanges = {{0, 0x1000}, {0x1010, 0x1020}};
+  expectStatus(P, Status::Proved);
+  P.Contract.Frame->ExcludedAddressRanges[0].End = 0x1001;
+  expectStatus(P, Status::InfeasibleEntry);
+  P.Contract.Frame->ExcludedAddressRanges[0].End = 0x1000;
+  P.Contract.Frame->ExcludedAddressRanges[1].Begin = 0x100f;
+  expectStatus(P, Status::InfeasibleEntry);
+}
+
+TEST(LowIRUndefinedIndependence,
+     ExclusionsConstrainASymbolicRootWithoutAssumingIt) {
+  Program P;
+  P.Contract.Frame = LowIRIndependenceFrame{{32, 8}, -8, 8};
+  P.Contract.PreservedRegisters = {{32, 8}};
+  P.instruction({op(NdOp::COPY, reg(32), {number(0x1008)})});
+  P.finish();
+  expectStatus(P, Status::ContractViolation);
+  // The only location for all sixteen accessible bytes is [0x1000, 0x1010).
+  // No entry constant pins RSP. A root-only exclusion check would be too weak
+  // to prove that writing 0x1008 restores every permitted entry root.
+  P.Contract.Frame->ExcludedAddressRanges = {{0, 0x1000}, {0x1010, UINT64_MAX}};
+  expectStatus(P, Status::Proved);
+  P.Contract.Frame->ExcludedAddressRanges[1].Begin = 0x100f;
+  expectStatus(P, Status::InfeasibleEntry); // The remaining gap is too small.
+}
+
+TEST(LowIRUndefinedIndependence, ExclusionsAllowTheLastUnsignedAddress) {
+  Program P;
+  P.Contract.Frame = LowIRIndependenceFrame{{32, 8}, 0, 1};
+  P.Contract.EntryConstants = {{reg(32), UINT64_MAX}};
+  P.Contract.Frame->ExcludedAddressRanges = {{0, UINT64_MAX}};
+  P.finish();
+  // The last accessible byte is representable; the mathematical exclusive
+  // frame end is 2^64 and must never be formed as a wrapped address.
+  expectStatus(P, Status::Proved);
+  P.Contract.Frame->Begin = -1;
+  expectStatus(P, Status::InfeasibleEntry);
+  P.Contract.Frame->ExcludedAddressRanges[0].End = UINT64_MAX - 1;
+  expectStatus(P, Status::Proved);
+
+  P.Contract.Frame->End = 0;
+  P.Contract.EntryConstants[0].Value = 0;
+  P.Contract.Frame->ExcludedAddressRanges = {{1, UINT64_MAX}};
+  expectStatus(P, Status::InfeasibleEntry); // Negative offset would wrap.
+  P.Contract.EntryConstants[0].Value = 1;
+  expectStatus(P, Status::Proved); // Accessible range is exactly [0, 1).
+  P.Contract.Frame->ExcludedAddressRanges = {{0, 1}};
+  expectStatus(P, Status::InfeasibleEntry);
+}
+
+TEST(LowIRUndefinedIndependence,
+     ExclusionsUseUnsignedAddressesAndSignedOffsets) {
+  Program P;
+  P.Contract.Frame = LowIRIndependenceFrame{{32, 8}, INT64_MIN, INT64_MIN + 8};
+  P.Contract.EntryConstants = {{reg(32), uint64_t{1} << 63}};
+  P.Contract.Frame->ExcludedAddressRanges = {{8, 16}};
+  P.finish();
+  expectStatus(P, Status::Proved); // Translating INT64_MIN gives [0, 8).
+  P.Contract.Frame->ExcludedAddressRanges[0].Begin = 7;
+  expectStatus(P, Status::InfeasibleEntry);
+
+  P.Contract.Frame->Begin = 0;
+  P.Contract.Frame->End = 8;
+  const uint64_t High = uint64_t{1} << 63;
+  P.Contract.Frame->ExcludedAddressRanges = {{0, High}, {High + 8, UINT64_MAX}};
+  expectStatus(P, Status::Proved);
+  P.Contract.Frame->ExcludedAddressRanges[0].End = High + 1;
+  expectStatus(P, Status::InfeasibleEntry);
+}
+
+TEST(LowIRUndefinedIndependence, ExclusionInputsAndWorkAreBounded) {
+  Program P;
+  P.frame();
+  P.finish();
+  P.Contract.Frame->ExcludedAddressRanges = {{0x1000, 0x1000}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.Frame->ExcludedAddressRanges = {{UINT64_MAX, 0}};
+  expectStatus(P, Status::Invalid);
+  P.Contract.Frame->ExcludedAddressRanges = {{0x1000, 0x2000},
+                                             {0x3000, 0x4000}};
+  LowIRIndependenceLimits L;
+  L.MaxInstructions = 1;
+  expectStatus(P, Status::BudgetExceeded, L);
+  L = {};
+  L.MaxSymbolicNodes = 1;
+  expectStatus(P, Status::BudgetExceeded, L);
+  L = {};
+  L.MaxSolverQueries = 0;
+  expectStatus(P, Status::BudgetExceeded, L);
+}
+
+TEST(LowIRUndefinedIndependence, ExclusionsPermitRedundancyAndBindExactInput) {
+  Program P;
+  P.frame();
+  P.finish();
+  auto A = P.check();
+  ASSERT_TRUE(A.proved()) << A.Diagnostic;
+  P.Contract.Frame->ExcludedAddressRanges = {{0x1000, 0x2000}};
+  auto B = P.check();
+  ASSERT_TRUE(B.proved()) << B.Diagnostic;
+  EXPECT_NE(A.Certificate->InputDigest, B.Certificate->InputDigest);
+  P.Contract.Frame->ExcludedAddressRanges[0].Begin = 0x1001;
+  auto C = P.check();
+  ASSERT_TRUE(C.proved()) << C.Diagnostic;
+  EXPECT_NE(B.Certificate->InputDigest, C.Certificate->InputDigest);
+  P.Contract.Frame->ExcludedAddressRanges[0].End = 0x2001;
+  auto D = P.check();
+  ASSERT_TRUE(D.proved()) << D.Diagnostic;
+  EXPECT_NE(C.Certificate->InputDigest, D.Certificate->InputDigest);
+  // User and image ranges may repeat or overlap; neither is malformed.
+  P.Contract.Frame->ExcludedAddressRanges.push_back({0x1001, 0x2001});
+  P.Contract.Frame->ExcludedAddressRanges.push_back({0x1500, 0x2500});
+  auto E = P.check();
+  ASSERT_TRUE(E.proved()) << E.Diagnostic;
+  EXPECT_NE(D.Certificate->InputDigest, E.Certificate->InputDigest);
+  EXPECT_EQ(E.Certificate->Contract.Frame->ExcludedAddressRanges.size(), 3u);
+  std::swap(P.Contract.Frame->ExcludedAddressRanges[0],
+            P.Contract.Frame->ExcludedAddressRanges[2]);
+  auto F = P.check();
+  ASSERT_TRUE(F.proved()) << F.Diagnostic;
+  EXPECT_NE(E.Certificate->InputDigest, F.Certificate->InputDigest);
+}
 } // namespace

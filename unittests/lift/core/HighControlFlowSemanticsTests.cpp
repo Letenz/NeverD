@@ -24,6 +24,7 @@ void structureIfElse(HighFunc &, int, const MedFunc * = nullptr);
 void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
+void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
 void simplifyAllExprs(std::vector<HighStmt> &);
 void recoverSwitchStatements(HighFunc &);
@@ -2555,6 +2556,104 @@ TEST(HighControlFlowSemantics, SharedExpressionKeepsItsRepeatedInputUse) {
   EXPECT_EQ(execute(F, 0), 36u);
   EXPECT_EQ(Shared->Operands[0]->Kind, ExprKind::Var);
   EXPECT_EQ(Shared->Operands[0]->Var.Id, 2u);
+}
+
+TEST(HighControlFlowSemantics, CopyChainKeepsItsSharedSourceDefinition) {
+  HighFunc F;
+  auto Shared = local(1);
+  auto Copy = assign(0x1004, 2, 0);
+  Copy.Val = Shared;
+  F.Body = {
+      assign(0x1000, 1, 7), Copy,
+      result(0x1008, HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(2)))};
+  ASSERT_EQ(execute(F, 0), 14u);
+  const auto Before = analyzeHighSourceFlow(F, true);
+  ASSERT_TRUE(Before.Complete);
+  ASSERT_TRUE(Before.Items.empty());
+
+  // Sharing an expression object does not merge its two source use sites.
+  foldCopyChains(F);
+
+  const auto After = analyzeHighSourceFlow(F, true);
+  EXPECT_TRUE(After.Complete);
+  EXPECT_TRUE(After.Items.empty());
+  EXPECT_EQ(execute(F, 0), 14u);
+}
+
+TEST(HighControlFlowSemantics, CopyChainKeepsDependenciesOfParallelRewrites) {
+  HighFunc F;
+  auto FirstCopy = assign(0x1004, 2, 0);
+  FirstCopy.Val = local(1);
+  auto SecondCopy = assign(0x1008, 3, 0);
+  SecondCopy.Val = local(2);
+  F.Body = {assign(0x1000, 1, 7), FirstCopy, SecondCopy,
+            result(0x100c, local(3))};
+  ASSERT_EQ(execute(F, 0), 7u);
+
+  foldCopyChains(F);
+
+  // Rewriting the second copy can still depend on the first copy's source.
+  for (bool CleanDeadValues : {false, true}) {
+    SCOPED_TRACE(CleanDeadValues);
+    if (CleanDeadValues)
+      eliminateUnusedValues(F.Body);
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    EXPECT_EQ(execute(F, 0), 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, CopyChainCountsUsesInEverySwitchArm) {
+  for (bool InDefault : {false, true}) {
+    SCOPED_TRACE(InDefault);
+    HighFunc F;
+    auto Copy = assign(0x1004, 2, 0);
+    Copy.Val = local(1);
+    auto Sum = HighExpr::makeBinop(NdOp::INT_ADD, local(1), local(2));
+    HighStmt Dispatch;
+    Dispatch.Kind = StmtKind::Switch;
+    Dispatch.Addr = 0x1008;
+    MedVar Selector;
+    Selector.Kind = MedVar::Param;
+    Selector.Size = 8;
+    Dispatch.SwitchExpr = HighExpr::makeVar(Selector);
+    Dispatch.Cases.push_back({0, {result(0x100c, InDefault ? local(2) : Sum)}});
+    Dispatch.DefaultBody = {result(0x1010, InDefault ? Sum : local(2))};
+    F.Body = {assign(0x1000, 1, 7), Copy, Dispatch};
+    for (uint64_t Selector : {0, 1})
+      ASSERT_EQ(execute(F, Selector), bool(Selector) == InDefault ? 14u : 7u);
+
+    foldCopyChains(F);
+    eliminateUnusedValues(F.Body);
+
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    for (uint64_t Selector : {0, 1})
+      EXPECT_EQ(execute(F, Selector), bool(Selector) == InDefault ? 14u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, CopyChainRetainsItsSourceBranchEntry) {
+  HighFunc F;
+  auto Copy = assign(0x1008, 2, 0);
+  Copy.Val = local(1);
+  F.Body = {jump(0x1000, 0x1004), assign(0x1004, 1, 7), Copy,
+            result(0x100c, local(2))};
+  ASSERT_EQ(execute(F, 0, true), 7u);
+
+  foldCopyChains(F);
+
+  for (bool CleanDeadValues : {false, true}) {
+    SCOPED_TRACE(CleanDeadValues);
+    if (CleanDeadValues)
+      eliminateUnusedValues(F.Body);
+    const auto Flow = analyzeHighSourceFlow(F, true);
+    EXPECT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    EXPECT_EQ(execute(F, 0, true), 7u);
+  }
 }
 
 TEST(HighControlFlowSemantics, NestedCallRetainsItsPrecedingMemorySnapshot) {
