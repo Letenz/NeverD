@@ -516,7 +516,7 @@ jobs:
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("SourceABI.EntryByteDemandsKeepPhiEffectsAndRejectIncompleteGraphs",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
-                  ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledCarriers",
+                  ("SourceABI.SwiftWordCallsKeepConventionAndRejectUnmodelledResults",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
                   ("ObjCSourceBindings.SwiftMetadataCallsRevalidateDeclarationAndConvention",
                    "NeverDLiftTests", "NeverDObjCSourceCallTests"),
