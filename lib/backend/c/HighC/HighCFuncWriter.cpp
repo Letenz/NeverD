@@ -2330,21 +2330,11 @@ bool HighCWriter::isForwardableValueExpr(const HighExpr &E) const {
     }
   }
   if (E.Kind == ExprKind::Call) {
-    // The statement renderer must keep a segment override attached to its
-    // target memory operand. Inlining this call into another intrinsic's
-    // operand would turn it into an unsupported nested expression.
-    if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default)
-      return false;
-    if (E.IntrinsicId != Intrinsic::None &&
-        isSideeffectIntrinsic(E.IntrinsicId))
-      return false;
-    if (E.IntrinsicId != Intrinsic::None && !E.IntrinsicOutputs.empty())
-      return false;
-    if (isNoreturnCallExpr(E))
-      return false;
-    if (isMsvcCxxThrowCallName(E.CallTarget))
-      return false;
-    return !E.CallTarget.empty() || E.CallAddr != 0;
+    // Calls are sequenced at their HighIR statement. Folding a single-use
+    // result into a later expression can move the call past another call or
+    // store, even when the result itself is a scalar integer view. Keep the
+    // original statement as the evaluation point.
+    return false;
   }
   if (E.Kind == ExprKind::BinOp &&
       (E.Op == NdOp::ATOMIC_ADD || E.Op == NdOp::ATOMIC_XCHG ||
