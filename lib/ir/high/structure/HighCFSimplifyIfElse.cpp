@@ -419,6 +419,14 @@ static bool invertSkipGotosIn(std::vector<HighStmt> &Body) {
     if ((Stmt.Kind != StmtKind::If && Stmt.Kind != StmtKind::IfElse) ||
         !Stmt.Cond || exprHasCall(Stmt.Cond.get()) || !bodyIsSkipArm(Stmt.Body))
       continue;
+    // The rewrite replaces both arms with the skipped work. An else arm that
+    // does anything is code the rewrite would drop.
+    if (!std::all_of(Stmt.ElseBody.begin(), Stmt.ElseBody.end(),
+                     [](const HighStmt &S) {
+                       return S.Kind == StmtKind::Nop ||
+                              (S.Kind == StmtKind::Block && S.Body.empty());
+                     }))
+      continue;
     const size_t NextI = static_cast<size_t>(I) + 1;
     size_t TargetIndex = SIZE_MAX;
     if (bodyIsSkipGoto(Stmt.Body)) {

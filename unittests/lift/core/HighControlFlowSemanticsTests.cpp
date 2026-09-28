@@ -3506,3 +3506,39 @@ TEST(HighControlFlowSemantics, CopyOnlyThenArmReadAfterItsListStays) {
   for (uint64_t Input : {uint64_t{0}, uint64_t{3}, uint64_t{5}})
     EXPECT_EQ(execute(F, Input), Input == 5 ? 7u : 2u);
 }
+
+TEST(HighControlFlowSemantics, SkipInvertKeepsAnElseArmThatDoesWork) {
+  // In a try body, `if (c) goto L; else { work; goto J; } fall; L: ...` is not
+  // a skip over `fall`: the else arm never reaches it. Rewriting the pair as
+  // `if (!c) { fall }` would drop the else arm's work.
+  auto Store = [](va_t Address, uint64_t Slot, uint64_t Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = HighExpr::makeConst(Slot, 8);
+    S.StoreVal = HighExpr::makeConst(Value, 8);
+    return S;
+  };
+  HighStmt Check;
+  Check.Kind = StmtKind::IfElse;
+  Check.Addr = 0x100c;
+  Check.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                   HighExpr::makeConst(0, 8));
+  Check.Body = {jump(0x100c, 0x1020)};
+  Check.ElseBody = {Store(0x1010, 0x300, 7), jump(0x1014, 0x1030)};
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x100c;
+  Try.Body = {Check, Store(0x1018, 0x308, 1), Store(0x1020, 0x310, 2),
+              jump(0x1028, 0x1030)};
+  HighFunc F;
+  F.Body = {Try, result(0x1030, HighExpr::makeConst(0, 8))};
+  invertSkipGotos(F);
+  bool ElseWork = false;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    ElseWork |= S.Kind == StmtKind::Store && S.StoreAddr &&
+                S.StoreAddr->Kind == ExprKind::Const &&
+                S.StoreAddr->ConstVal == 0x300;
+  });
+  EXPECT_TRUE(ElseWork);
+}
