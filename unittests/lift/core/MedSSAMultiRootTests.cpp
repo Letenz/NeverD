@@ -483,6 +483,19 @@ TEST(MedSEHHandlerEntry, EAXHoldsTheExceptionCode) {
   EXPECT_EQ(Code->Kind, MedVar::SEHExceptionCode) << Code->display();
 }
 
+TEST(MedSEHHandlerEntry, ScratchRegisterIsNotTheNormalPathValue) {
+  auto Img = makeSEHHandlerRegisterImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-entry"));
+  // The handler reads ECX as it arrives, not the normal path's `mov ecx,5`.
+  auto Scratch = storedValueAt(Med, Img.Entry + 0x24);
+  ASSERT_TRUE(Scratch);
+  EXPECT_FALSE(Scratch->isConst()) << Scratch->display();
+  EXPECT_EQ(Scratch->Kind, MedVar::Reg) << Scratch->display();
+  EXPECT_EQ(Scratch->SSAVer, 0) << Scratch->display();
+}
+
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
   auto Img = makeSEHHandlerRegisterImage();
   auto Low = decodeFixedSEHFrame(Img);

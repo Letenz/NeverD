@@ -336,6 +336,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
         SccHasIncoming[SccOf[S]] = true;
 
   std::vector<int> Roots;
+  // Variables some root other than the entry reads on arrival.
+  std::set<int> NonEntryRootLiveIns;
   std::vector<bool> IsRoot(N, false);
   auto AddRoot = [&](int Root) {
     if (Root < 0 || Root >= N || IsRoot[Root])
@@ -690,6 +692,8 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
 
     for (int Root : Roots) {
+      if (Root != 0)
+        NonEntryRootLiveIns.insert(LiveIn[Root].begin(), LiveIn[Root].end());
       std::vector<MedOp> InitOps;
       const bool IsItaniumEHRoot =
           !Func.Blocks[Root].ExceptionalPreds.empty() &&
@@ -825,6 +829,12 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
   // Step 5: SSA renaming (assign version numbers)
   std::map<int, int> VarCounter;
   std::map<int, std::vector<int>> VarStack;
+  // Version 0 is the value a variable holds when a root is entered.  A root
+  // other than the entry reads it after the entry's subtree has been
+  // renamed, so its definitions start at 1 instead of taking version 0 and
+  // becoming what that root reads.
+  for (int Id : NonEntryRootLiveIns)
+    VarCounter[Id] = std::max(VarCounter[Id], 1);
 
   auto GetVersion = [&](int VarId) -> int {
     if (VarStack[VarId].empty())
