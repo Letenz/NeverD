@@ -8,6 +8,8 @@
 #include "gtest/gtest.h"
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include <map>
@@ -106,6 +108,17 @@ public:
   }
 };
 
+void defineModelledFlags(Provider &P) {
+  // Explicit guest writes make the later snapshot independent of caller flags.
+  P.add(0x100, {op(NdOp::COPY, reg(x86reg::CF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::PF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::AF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::ZF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::SF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::DF, 1), {constant(0, 1)}),
+                op(NdOp::COPY, reg(x86reg::OF, 1), {constant(0, 1)})});
+}
+
 size_t count(const LowFunc &Function, NdOp Opcode) {
   size_t Count = 0;
   for (const auto &Block : Function.Blocks)
@@ -119,7 +132,8 @@ size_t count(const LowFunc &Function, NdOp Opcode) {
 /// lanes.
 std::optional<uint64_t> execute(const LowFunc &Function,
                                 std::map<uint64_t, uint64_t> Inputs = {},
-                                std::map<uint64_t, uint8_t> Memory = {}) {
+                                std::map<uint64_t, uint8_t> Memory = {},
+                                uint64_t Flags = 0) {
   using Location = std::pair<VnodeSpace, uint64_t>;
   std::map<Location, uint8_t> Bytes;
   bool Defined = true;
@@ -227,6 +241,20 @@ std::optional<uint64_t> execute(const LowFunc &Function,
         return Defined ? std::optional<uint64_t>(Value) : std::nullopt;
       }
       case NdOp::NOP:
+        break;
+      case NdOp::INTRINSIC:
+        if (!Op.Inputs[0].isConst()) {
+          ADD_FAILURE() << "oracle received a dynamic intrinsic ID";
+          return std::nullopt;
+        }
+        if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Pushf))
+          write(Op.Output, Flags);
+        else if (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::Popf))
+          Flags = read(Op.Inputs[1]);
+        else {
+          ADD_FAILURE() << "oracle received an unsupported intrinsic";
+          return std::nullopt;
+        }
         break;
       default:
         ADD_FAILURE() << "oracle does not implement " << ndOpName(Op.Opcode);
@@ -415,6 +443,105 @@ TEST(InterpreterSpecialization, UnknownIndirectAndOpaqueEffectsPublishNothing) {
     EXPECT_FALSE(Result.complete());
     EXPECT_TRUE(Result.Residual.Blocks.empty());
     EXPECT_FALSE(Result.Diagnostic.empty());
+  }
+}
+
+TEST(InterpreterSpecialization,
+     RuntimeFlagSnapshotsRetainEffectsAndBoundFiniteDispatch) {
+  Provider P;
+  defineModelledFlags(P);
+  const NdVar Flags = NdVar::tmp(100, 8);
+  P.add(0x101,
+        {op(NdOp::INTRINSIC, Flags,
+            {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+         op(NdOp::INT_AND, reg(16), {Flags, constant(uint64_t{1} << 9)}),
+         op(NdOp::SELECT, reg(24), {reg(16), constant(0x110), constant(0x120)}),
+         op(NdOp::INDIR_BR, {}, {reg(24)})});
+  P.add(0x110,
+        {op(NdOp::INTRINSIC, {},
+            {NdVar::cst(static_cast<uint64_t>(Intrinsic::Popf), 2), Flags}),
+         op(NdOp::COPY, reg(0), {constant(11)}), ret()});
+  P.add(0x120, {op(NdOp::COPY, reg(0), {constant(22)}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(count(Result.Residual, NdOp::INTRINSIC), 2u);
+  EXPECT_EQ(count(Result.Residual, NdOp::INDIR_BR), 0u);
+  EXPECT_EQ(execute(Result.Residual, {}, {}, 0), 22u);
+  EXPECT_EQ(execute(Result.Residual, {}, {}, uint64_t{1} << 9), 11u);
+}
+
+TEST(InterpreterSpecialization,
+     UnknownFlagImageCannotBorrowTheExternalStoreNonaliasContract) {
+  Provider P;
+  defineModelledFlags(P);
+  const NdVar Flags = NdVar::tmp(100, 8);
+  P.add(0x101, {op(NdOp::INTRINSIC, Flags,
+                   {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+                op(NdOp::STORE, {}, {Flags, constant(7, 1)}), ret()});
+  SpecializationOptions Options;
+  Options.FrameBaseRegister = SymRegisterRange{32, 8};
+  Options.RequireRestoredFrameAtReturn = true;
+  Options.ExternalStoresPreserveEntryReturnSlot = true;
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+
+  P.add(0x101, {op(NdOp::INTRINSIC, Flags,
+                   {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+                op(NdOp::INDIR_BR, {}, {Flags})});
+  Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::UnresolvedControl);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, UnboundEntryFlagsDoNotPublishSource) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INTRINSIC, NdVar::tmp(100, 8),
+                   {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+                ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, AlgebraCannotDefineAnUnboundEntryFlag) {
+  Provider P;
+  P.add(0x100, {op(NdOp::INT_XOR, reg(x86reg::CF, 1),
+                   {reg(x86reg::CF, 1), reg(x86reg::CF, 1)}),
+                ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+  EXPECT_NE(Result.Diagnostic.find("unbound entry flag"), std::string::npos);
+}
+
+TEST(InterpreterSpecialization, FlagDefinitionMustHoldAcrossEveryPredecessor) {
+  Provider P;
+  P.add(0x100, {op(NdOp::COND_BR, {}, {constant(0x110), reg(8, 1)})}, 0x120);
+  P.add(0x110,
+        {op(NdOp::COPY, reg(x86reg::CF, 1), {constant(0, 1)}), jump(0x130)});
+  P.add(0x120, {jump(0x130)});
+  P.add(0x130, {op(NdOp::COPY, reg(0, 1), {reg(x86reg::CF, 1)}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, MalformedRuntimeFlagIntrinsicsFailClosed) {
+  for (const LowOp &Bad :
+       {op(NdOp::INTRINSIC, NdVar::tmp(100, 4),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+        op(NdOp::INTRINSIC, reg(0),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+        op(NdOp::INTRINSIC, {},
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::Popf), 2)}),
+        op(NdOp::INTRINSIC, reg(0),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::Popf), 2), reg(8)})}) {
+    Provider P;
+    P.add(0x100, {Bad, ret()});
+    auto Result = specializeInterpreter(P, {0x100});
+    EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+    EXPECT_TRUE(Result.Residual.Blocks.empty());
   }
 }
 

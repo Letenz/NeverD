@@ -72,6 +72,10 @@ für Relokation, Stack-Unwinding, asynchrone Ausnahmen oder binären Ersatz nach
 Der Patch-Modus lehnt diese Option ab. Eine Unterstützung aller Interpreter
 oder Schutzkonfigurationen wird nicht zugesichert.
 
+Die exakten x64-Formen von `PUSHFQ`/`POPFQ` bleiben im Restprogramm erhalten. Die Analyse behandelt jeden Schnappschuss der Maschinenflags als unbekannten Laufzeitwert; der Lifter fügt die separat modellierten arithmetischen Flags hinzu. Auch das Wiederherstellen der Flags bleibt ein Laufzeiteffekt. Für eine aus unbekannten Flags abgeleitete Adresse gilt der Vertrag zur Überschneidungsfreiheit externer Zeiger mit der Rücksprungadresse nicht; ein daraus abgeleiteter Dispatch ohne nachweislich endliche Ziele schlägt weiterhin fehl.
+
+Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetische Flag und das Richtungsflag innerhalb der rekonstruierten Funktion definiert sein. Auch ein direkter Flag-Lesezugriff braucht auf jedem erreichbaren Vorgängerpfad eine Definition, selbst wenn die symbolische Vereinfachung seinen Wert aufhebt. Andernfalls wird die Rekonstruktion abgelehnt, statt C mit einer Falle für ein unbekanntes Register auszugeben.
+
 ## Aktuelle Grenzen
 
 Eingabeabhängige Bytecode-Adressen und Beziehungen zwischen Decoder-Zuständen werden nur unterstützt, wenn die erforderlichen endlichen Wertebereiche und Korrelationen innerhalb der konfigurierten Grenzen nachweisbar sind. Daraus folgt keine Unterstützung beliebiger indirekter Decodierschemata. Dynamische Verzweigungen und Schleifen können rekonstruiert werden, wenn jedes Dispatch-Ziel bewiesen ist; gewöhnliche Zweigabdeckung genügt dafür nicht. Nicht aufgelöster Kontrollfluss und ausgeschöpfte erforderliche Beweisbudgets sind Fehler: Es wird weder rekonstruierter Quelltext noch ein teilweiser Ersatz veröffentlicht. Native Hilfsaufrufe, Ausnahme- und Wiedereintrittsgrenzen, veränderlicher Code und andere Architekturen bleiben außerhalb des Ausführungsvertrags.

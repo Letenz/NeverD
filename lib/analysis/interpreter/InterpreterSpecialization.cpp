@@ -8,6 +8,8 @@
 
 #include "FiniteValues.h"
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/symbolic/SymExec.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -30,6 +32,10 @@ using Constants = std::map<ByteKey, uint8_t>;
 using detail::FiniteValues;
 using detail::FiniteValueStatus;
 
+constexpr uint64_t X64PushfModelledFlags[] = {
+    x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF,
+    x86reg::SF, x86reg::DF, x86reg::OF};
+
 /// A finite relation over selected control fields. Empty Fields denotes Top.
 /// Field IDs index the register hints followed by the frame-slot hints. Only
 /// numeric tuples cross a node boundary; symbolic identities remain local.
@@ -41,9 +47,13 @@ struct ControlRelation {
 };
 
 struct FrameOrigins {
-  /// May originate from the entry root or from memory of unknown provenance.
+  /// May originate from the entry root or memory of unknown provenance.
   /// This survives projection even when the affine value itself is lost.
   std::set<ByteKey> UnsafeScalars;
+  /// May-undefined x64 flags; joins take the union. An undefined entry flag
+  /// cannot become source-defined merely because symbolic algebra simplifies
+  /// an expression that still reads it in the residual program.
+  std::set<uint64_t> UndefinedFlags;
   /// Unlike physical entry registers, an unseen lifter temporary is not a
   /// caller-supplied external input. It needs a positive defining provenance.
   std::set<uint64_t> ExternalTemporaries;
@@ -199,6 +209,10 @@ bool intersect(Projection &Into, const Projection &Incoming,
   Into.Origins.UnsafeScalars.insert(Incoming.Origins.UnsafeScalars.begin(),
                                     Incoming.Origins.UnsafeScalars.end());
   Changed |= OldUnsafe != Into.Origins.UnsafeScalars.size();
+  const auto OldUndefined = Into.Origins.UndefinedFlags.size();
+  Into.Origins.UndefinedFlags.insert(Incoming.Origins.UndefinedFlags.begin(),
+                                     Incoming.Origins.UndefinedFlags.end());
+  Changed |= OldUndefined != Into.Origins.UndefinedFlags.size();
   for (auto It = Into.Origins.ExternalTemporaries.begin();
        It != Into.Origins.ExternalTemporaries.end();) {
     if (!Incoming.Origins.ExternalTemporaries.count(*It)) {
@@ -293,6 +307,22 @@ bool validValue(const NdVar &Value) {
          (Value.isConst() || Value.Offset <= InvalidVA - (Value.Size - 1));
 }
 
+/// The x64 lifter uses these exact shapes to read and restore the system
+/// portion of RFLAGS. The residual keeps both intrinsics. During analysis a
+/// PUSHFQ snapshot is an unconstrained runtime value: this overapproximates
+/// every architectural flag image without inventing a constant or an alias
+/// fact. POPFQ has no modelled scalar output; later snapshots are fresh again.
+bool runtimeFlagsIntrinsic(const LowOp &Op) {
+  if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2)
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (Id == Intrinsic::Pushf)
+    return Op.NumInputs == 1 && Op.Output.isTemp() && Op.Output.Size == 8;
+  if (Id == Intrinsic::Popf)
+    return Op.NumInputs == 2 && Op.Output.Size == 0 && Op.Inputs[1].Size == 8;
+  return false;
+}
+
 /// The allowlist is intentionally narrower than SymExec. In particular its BV
 /// division model does not certify architectural division faults, and naming an
 /// opaque result is not permission to publish a replacement of its instruction.
@@ -362,6 +392,8 @@ bool supported(const LowOp &Op) {
     return NoOutput && Op.NumInputs <= 1;
   case NdOp::NOP:
     return NoOutput && Op.NumInputs == 0;
+  case NdOp::INTRINSIC:
+    return runtimeFlagsIntrinsic(Op);
   default:
     return false;
   }
@@ -922,6 +954,15 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::Unsupported,
                     std::string("unsupported specialization operation: ") +
                         ndOpName(Original.Opcode));
+      for (unsigned J = 0; J < Original.NumInputs; ++J) {
+        const NdVar &Input = Original.Inputs[J];
+        if (!Input.isReg())
+          continue;
+        for (uint16_t B = 0; B < Input.Size; ++B)
+          if (Origins.UndefinedFlags.count(Input.Offset + B))
+            return fail(SpecializationStatus::Unsupported,
+                        "native operation reads an unbound entry flag");
+      }
       const auto ReservedTemporary = [](const NdVar &V) {
         return V.isTemp() &&
                (V.Offset >= DispatchTemp || V.Size > DispatchTemp - V.Offset);
@@ -1069,8 +1110,25 @@ bool Specializer::evaluate(int Id) {
       const unsigned BeforeOpaque = Exec.opaqueOperationCount();
       // Do not seed certified reads by pretending a guest STORE happened:
       // that would clobber retained frame facts under the correct alias rules.
-      const StepResult Flow =
-          Exec.step(FoldedImmutableRead ? Residual : Original);
+      StepResult Flow = StepResult::Continue;
+      if (Original.Opcode == NdOp::INTRINSIC) {
+        // The allowlist above admits only the two exact x64 flag shapes. Keep
+        // the original runtime operation in the residual while using a fresh
+        // symbolic input for each machine snapshot. Its origin is unknown,
+        // especially for the entry-return-slot nonalias proof.
+        if (static_cast<Intrinsic>(Original.Inputs[0].Offset) ==
+            Intrinsic::Pushf) {
+          if (!Origins.UndefinedFlags.empty())
+            return fail(SpecializationStatus::Unsupported,
+                        "PUSHFQ reads a modelled flag without a source "
+                        "definition");
+          State.write(SymSpace::Temporary, Original.Output.Offset,
+                      State.freshInput("x64_pushfq", 64));
+          OutputUnsafe = true;
+        }
+      } else {
+        Flow = Exec.step(FoldedImmutableRead ? Residual : Original);
+      }
       if (Flow == StepResult::Unmodelled ||
           Exec.opaqueOperationCount() != BeforeOpaque)
         return fail(SpecializationStatus::Unsupported,
@@ -1084,10 +1142,13 @@ bool Specializer::evaluate(int Id) {
                     Original.Output.Offset, FiniteReadValue);
         OutputUnsafe = false;
       }
-      if (FrameRoot && scalarLocation(Original.Output)) {
+      if (scalarLocation(Original.Output)) {
         if (Ctx.asConst(Exec.operandValue(Original.Output)))
           OutputUnsafe = false;
         setUnsafeOrigin(Original.Output, OutputUnsafe, Origins);
+        if (Original.Output.isReg())
+          for (uint16_t B = 0; B < Original.Output.Size; ++B)
+            Origins.UndefinedFlags.erase(Original.Output.Offset + B);
       }
       if (Flow == StepResult::Continue) {
         if (ImmutableOps.empty())
@@ -1314,6 +1375,13 @@ SpecializationResult Specializer::run() {
       Seeded.emplace(SymSpace::Register, Offset + I);
     setUnsafeOrigin(NdVar::reg(Offset, 8), true, InitialOrigins);
   }
+  // Source ABIs do not provide arbitrary incoming arithmetic flag values.
+  // A retained PUSHFQ may use them only after reachable native code has
+  // defined every modelled flag; must-provenance joins preserve this condition.
+  for (uint64_t Flag : X64PushfModelledFlags) {
+    setUnsafeOrigin(NdVar::reg(Flag, 1), true, InitialOrigins);
+    InitialOrigins.UndefinedFlags.insert(Flag);
+  }
   for (const auto &Constant : Options.EntryConstants) {
     const NdVar &Location = Constant.Location;
     if (!scalarLocation(Location) || !validValue(Location)) {
@@ -1332,6 +1400,9 @@ SpecializationResult Specializer::run() {
     Initial.write(Space, Location.Offset,
                   Ctx.mkConst(8 * Location.Size, Constant.Value));
     setUnsafeOrigin(Location, false, InitialOrigins);
+    if (Location.isReg())
+      for (uint16_t I = 0; I < Location.Size; ++I)
+        InitialOrigins.UndefinedFlags.erase(Location.Offset + I);
   }
   enqueue(Entry, project(Initial, FrameRoot, AffineCandidates, InitialOrigins));
   while (!Failed && !Pending.empty()) {

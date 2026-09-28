@@ -155,8 +155,13 @@ struct SpecializationResult {
 /// Provider-neutral partial evaluation of strictly lifted integer/control
 /// LowIR. Uncertified ordinary memory effects remain in the residual CFG.
 /// Exhaustively covered, certified immutable reads may become pure selections.
-/// Calls, opaque semantics, ordered memory, and unsupported instruction
-/// guards are refused. Synthetic labels identify clones; NativeInstruction
+/// Calls, opaque semantics other than retained x64 runtime flag snapshots and
+/// restores, ordered memory, and unsupported instruction guards are refused.
+/// Flag snapshots are treated as unknown values for proof and may not certify
+/// an external pointer or finite target on their own. A PUSHFQ snapshot needs
+/// prior definitions for every modelled flag because the source ABI has no
+/// arbitrary incoming-flag parameter. Synthetic labels
+/// identify clones; NativeInstruction
 /// preserves provenance without copying stale address-occurrence certificates.
 SpecializationResult
 specializeInterpreter(SpecializationProvider &Provider,

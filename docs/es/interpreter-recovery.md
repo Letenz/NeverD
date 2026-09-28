@@ -69,6 +69,10 @@ de las relocaciones, el desenrollado de pila, las excepciones asíncronas ni la
 sustitución binaria. El modo patch rechaza esta opción. No se afirma que todos
 los intérpretes o configuraciones de protección estén admitidos.
 
+Las formas x64 exactas de `PUSHFQ`/`POPFQ` permanecen en el programa residual. El análisis trata cada instantánea de los indicadores de la máquina como un valor desconocido en tiempo de ejecución; el levantador combina por separado los indicadores aritméticos modelados. Restaurar los indicadores sigue siendo un efecto de ejecución. Una dirección derivada de indicadores desconocidos no puede acogerse al contrato de no solapamiento del puntero externo con la dirección de retorno; un despacho derivado sin destinos acotados sigue fallando.
+
+Antes de capturar todos los indicadores, cada indicador aritmético o de dirección modelado debe estar definido dentro de la función recuperada. Toda lectura directa de un indicador también requiere una definición en cada ruta predecesora alcanzable, aunque la simplificación simbólica anule su valor. De lo contrario, la recuperación se rechaza en lugar de emitir C con una trampa de «registro desconocido».
+
 ## Límites actuales
 
 Las direcciones de bytecode dependientes de la entrada y las relaciones entre estados del decodificador solo se admiten cuando los dominios finitos y las correlaciones necesarios pueden demostrarse dentro de los límites configurados. Esto no demuestra compatibilidad con todos los esquemas de decodificación indirecta. Se pueden recuperar ramas y bucles dinámicos si se demuestra cada destino de despacho; la cobertura de ramas ordinarias no basta para probarlo. El control sin resolver o el agotamiento de un presupuesto de prueba necesario son fallos y no publican código recuperado ni sustituciones parciales. Las llamadas auxiliares nativas, los límites de excepciones o reentrada, el código mutable y otras arquitecturas siguen fuera del contrato del adaptador.

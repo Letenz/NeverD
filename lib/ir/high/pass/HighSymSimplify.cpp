@@ -732,7 +732,7 @@ ExprPtr literalExpr(const llvm::APInt &Val, uint16_t Bytes,
         NdOp::INT_NEG2, HighExpr::makeConst(*Magnitude, Bytes, Provenance));
   if (std::optional<uint64_t> Complement = (~Val).tryZExtValue())
     return HighExpr::makeUnary(
-      NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes, Provenance));
+        NdOp::INT_NOT, HighExpr::makeConst(*Complement, Bytes, Provenance));
   return nullptr;
 }
 

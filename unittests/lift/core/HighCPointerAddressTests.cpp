@@ -32978,7 +32978,11 @@ TEST(HighCPointerAddresses, CorpusSehIndexedBufferUsesSameFrame) {
   const auto Load = sourceLineContaining(Source, "t38_3 =");
   const auto Clear = sourceLineContaining(Source, "neverd_di =");
   const auto Home = sourceLineContaining(Source, ", arg0);");
-  const auto ExceptStore = sourceLineContaining(Source, "+= 20;");
+  // The update can remain compound C or be rendered as a portable
+  // load/add/store when the value passes through the SEH clause boundary.
+  auto ExceptStore = sourceLineContaining(Source, "+= 20;");
+  if (ExceptStore.empty())
+    ExceptStore = sourceLineContaining(Source, "(uint32_t)(20)");
   ASSERT_NE(Store, Stores.end()) << Source;
   ASSERT_FALSE(Load.empty()) << Source;
   ASSERT_FALSE(Clear.empty()) << Source;

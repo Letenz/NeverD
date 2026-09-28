@@ -36,8 +36,9 @@ and can still return a JSON diagnostic. Both owned strings use
 The binary adapter currently accepts linked x64 ELF and PE images at their
 mapped addresses. Mappings, bytes, and permissions must remain fixed, with no
 concurrent mutation. Strict on-demand lifting follows reachable machine code;
-unsupported instructions, calls, opaque operations, ordered memory, unresolved
-control, and language exception handling stop recovery.
+unsupported instructions, calls, opaque operations outside the flag forms
+described below, ordered memory, unresolved control, and language exception
+handling stop recovery.
 
 PE recovery requires full image metadata, including image-wide relocations and
 exception records. The CLI loads that metadata before applying `--func`; C API
@@ -68,6 +69,10 @@ unwind, asynchronous-exception, or binary replacement safety. Patch mode rejects
 this option. There is no claim that every interpreter or protection
 configuration is supported.
 
+The exact x64 `PUSHFQ`/`POPFQ` forms remain in the residual program. Analysis treats each machine flag snapshot as an unknown runtime value; the lifter merges its separately modelled arithmetic flags. Restoring flags remains a runtime effect. A flag-derived address cannot borrow the external-pointer return-slot contract, and an unbounded flag-derived dispatch still fails.
+
+Before a full flag snapshot, every modelled arithmetic or direction flag must have a definition within the recovered function. Any direct flag read also needs a definition on every reachable predecessor, even when symbolic simplification cancels its value. Otherwise recovery refuses instead of emitting an unknown-register trap in C.
+
 ## Current limits
 
 Input-dependent bytecode addresses and decoder-state relationships are supported
@@ -86,7 +91,8 @@ outside this adapter's execution contract.
 read witnesses. `NeverDInterpreterSpecialization` uses the existing `SymExec`
 semantics to partially evaluate integer and control operations. The binary
 adapter owns mapping and instruction decoding; it does not implement a second
-instruction evaluator.
+instruction evaluator. The narrow flag-snapshot rule in the specializer is an
+overapproximation, not an evaluator for the machine's system flags.
 
 For a finite symbolic read address, the built-in bitvector solver enumerates
 candidate addresses under the current constraints. The set is accepted only

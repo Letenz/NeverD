@@ -80,6 +80,52 @@ generic_vm_callee_pop:
 .size generic_vm_callee_pop, .-generic_vm_callee_pop
 #endif
 
+.globl generic_vm_direct_call
+#if defined(__ELF__)
+.type generic_vm_direct_call, @function
+#elif defined(_WIN32)
+.def generic_vm_direct_call; .scl 2; .type 32; .endef
+#endif
+generic_vm_direct_call:
+  callq .Lcall_target
+  retq
+.Lcall_target:
+  retq
+#if defined(__ELF__)
+.size generic_vm_direct_call, .-generic_vm_direct_call
+#endif
+
+.globl generic_vm_indirect_call
+#if defined(__ELF__)
+.type generic_vm_indirect_call, @function
+#elif defined(_WIN32)
+.def generic_vm_indirect_call; .scl 2; .type 32; .endef
+#endif
+generic_vm_indirect_call:
+  leaq .Lindirect_target(%rip), %rax
+  callq *%rax
+  retq
+.Lindirect_target:
+  retq
+#if defined(__ELF__)
+.size generic_vm_indirect_call, .-generic_vm_indirect_call
+#endif
+
+.globl generic_vm_unbound_flags
+#if defined(__ELF__)
+.type generic_vm_unbound_flags, @function
+#elif defined(_WIN32)
+.def generic_vm_unbound_flags; .scl 2; .type 32; .endef
+#endif
+generic_vm_unbound_flags:
+  // The source ABI does not supply the caller's arbitrary arithmetic flags.
+  pushfq
+  popq %rax
+  retq
+#if defined(__ELF__)
+.size generic_vm_unbound_flags, .-generic_vm_unbound_flags
+#endif
+
 // These system/far transfers must not be collapsed into an ordinary C return.
 .globl generic_vm_far_return
 #if defined(__ELF__)

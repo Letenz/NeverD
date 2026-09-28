@@ -70,6 +70,10 @@ ou du remplacement binaire. Le mode patch refuse cette option. La prise en
 charge de tous les interpréteurs ou de toutes les configurations de protection
 n’est pas garantie.
 
+Les formes x64 exactes de `PUSHFQ`/`POPFQ` restent dans le programme résiduel. L’analyse traite chaque instantané des drapeaux machine comme une valeur d’exécution inconnue ; le lifter y combine séparément les drapeaux arithmétiques modélisés. La restauration des drapeaux reste un effet d’exécution. Une adresse dérivée de drapeaux inconnus ne peut pas bénéficier du contrat de non-recouvrement du pointeur externe avec l’adresse de retour ; un dispatch dérivé dont les cibles ne sont pas bornées provoque toujours un échec.
+
+Avant une capture complète des drapeaux, chaque drapeau arithmétique ou de direction modélisé doit être défini dans la fonction reconstruite. Toute lecture directe d’un drapeau exige aussi une définition sur chaque chemin prédécesseur atteignable, même si la simplification symbolique annule sa valeur. Sinon, la récupération refuse de produire du C contenant un piège « registre inconnu ».
+
 ## Limites actuelles
 
 Les adresses de bytecode dépendant des entrées et les relations entre états du décodeur sont prises en charge uniquement lorsque les domaines finis et les corrélations nécessaires peuvent être prouvés dans les limites configurées. Cela ne démontre pas la prise en charge de tous les schémas de décodage indirect. Les branches et boucles dynamiques peuvent être récupérées si chaque cible de distribution est prouvée ; la couverture des branches ordinaires ne suffit pas à établir cette propriété. Un contrôle non résolu ou l’épuisement d’un budget de preuve requis entraîne un échec, sans source récupéré ni remplacement partiel. Les appels auxiliaires natifs, frontières d’exception ou de réentrée, code modifiable et autres architectures restent hors du contrat de cet adaptateur.

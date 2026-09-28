@@ -69,6 +69,10 @@ rilocazione, unwinding, eccezioni asincrone o sostituzione binaria. La modalità
 patch rifiuta questa opzione. Non si garantisce il supporto di ogni interprete
 o configurazione di protezione.
 
+Le forme x64 esatte di `PUSHFQ`/`POPFQ` restano nel programma residuo. L’analisi tratta ogni istantanea dei flag della macchina come un valore di runtime sconosciuto; il lifter combina separatamente i flag aritmetici modellati. Anche il ripristino dei flag resta un effetto di runtime. Un indirizzo derivato da flag sconosciuti non può usare il contratto di non sovrapposizione del puntatore esterno con lo slot dell’indirizzo di ritorno; un dispatch derivato senza destinazioni dimostrate finite continua a fallire.
+
+Prima di acquisire l’intera immagine dei flag, ogni flag aritmetico o di direzione modellato deve essere definito nella funzione recuperata. Ogni lettura diretta di un flag richiede inoltre una definizione su tutti i percorsi predecessori raggiungibili, anche se la semplificazione simbolica ne annulla il valore. Altrimenti il recupero viene rifiutato, invece di emettere C con una trappola per un registro sconosciuto.
+
 ## Limiti attuali
 
 Gli indirizzi di bytecode dipendenti dall’ingresso e le relazioni fra stati del decodificatore sono supportati solo quando i domini finiti e le correlazioni necessari sono dimostrabili entro i limiti configurati. Questo non dimostra il supporto di qualsiasi schema di decodifica indiretta. Rami e cicli dinamici possono essere recuperati se ogni destinazione di dispatch è dimostrata; la copertura dei normali rami non basta a provarlo. Controllo irrisolto o esaurimento di un budget di prova necessario costituiscono un errore, senza pubblicare sorgenti recuperati o sostituzioni parziali. Chiamate ausiliarie native, confini di eccezione o rientro, codice modificabile e altre architetture restano fuori dal contratto dell’adattatore.

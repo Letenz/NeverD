@@ -45,6 +45,14 @@ va_t dataAddress(const BinaryImage &Image, const std::string &Name) {
   return InvalidVA;
 }
 
+size_t count(const LowFunc &Function, NdOp Opcode) {
+  size_t Result = 0;
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Op : Block.Ops)
+      Result += Op.Opcode == Opcode;
+  return Result;
+}
+
 bool hasCycle(const LowFunc &Function) {
   std::map<int, const LowBlock *> Blocks;
   std::map<int, unsigned> Color;
@@ -229,6 +237,81 @@ INSTANTIATE_TEST_SUITE_P(
              (Info.param.LLVM ? "_LLVMC" : "_HighC");
     });
 
+TEST_F(DevirtualizationSourceTest,
+       RuntimeFlagsRemainLiveAcrossRecoveredFiniteDispatch) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "public x64 flag fixture requires clang";
+  const auto Binary = tmpFile("generic-vm-flags.elf");
+  const auto Compiled = buildFixture(Binary, "generic_vm_flags.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = functionEntry(*Image, "generic_vm_flags");
+  ASSERT_NE(Entry, InvalidVA);
+
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.InterpreterSpecialization = recoveryOptions();
+    Options.OnlyFunctionEntries.insert(Entry);
+    Options.LiftMode = LLVM;
+    Options.EmitDumpOutput = false;
+    auto Result = Pipeline().run(*Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.InterpreterRecovery.has_value());
+    ASSERT_TRUE(Result.InterpreterRecovery->complete())
+        << Result.InterpreterRecovery->Diagnostic;
+    EXPECT_EQ(count(Result.InterpreterRecovery->Residual, NdOp::INTRINSIC), 2u);
+    EXPECT_EQ(count(Result.InterpreterRecovery->Residual, NdOp::INDIR_BR), 0u);
+    EXPECT_EQ(Result.BackendUnhandledValueIntrinsics, 0u);
+
+    CEmitterOptions COptions;
+    COptions.TheArch = Image->Arch;
+    COptions.Format = Image->Format;
+    COptions.Image = &*Image;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    if (LLVM) {
+      ASSERT_NE(Result.LlvmModule, nullptr);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, OS, COptions, nullptr,
+                                      &*Image));
+    } else {
+      ASSERT_EQ(Result.HighFuncs.size(), 1u);
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, COptions));
+    }
+    OS.flush();
+    const auto Harness = tmpFile("generic-vm-flags-recovered.c");
+    {
+      std::ofstream Output(Harness);
+      Output << "#include <x86intrin.h>\n"
+             << Source << R"(
+#include <stdint.h>
+int main(void) {
+  const uint64_t values[] = {0, 1, 42, UINT64_MAX - 42, UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    if ((uint64_t)generic_vm_flags(values[i]) != values[i] + 42)
+      return 1;
+  return 0;
+}
+)";
+    }
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile("generic-vm-flags-recovered");
+      const auto Recompiled =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", Optimization, "-Werror=return-type",
+                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+                "-fsanitize-trap=undefined", "-I", tmp().string(),
+                Harness.string(), "-o", Executable.string()});
+      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+      const auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+    }
+  }
+}
+
 TEST_F(DevirtualizationSourceTest, RefusesUncertifiedControl) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public VM negative fixtures require clang";
@@ -243,6 +326,9 @@ TEST_F(DevirtualizationSourceTest, RefusesUncertifiedControl) {
       {"generic_vm_writable_dispatch", Status::UnresolvedControl},
       {"generic_vm_return_dispatch", Status::Unsupported},
       {"generic_vm_callee_pop", Status::Unsupported},
+      {"generic_vm_direct_call", Status::Unsupported},
+      {"generic_vm_indirect_call", Status::Unsupported},
+      {"generic_vm_unbound_flags", Status::Unsupported},
       {"generic_vm_far_return", Status::Unsupported},
       {"generic_vm_interrupt_return", Status::Unsupported},
       {"generic_vm_system_return", Status::Unsupported}};

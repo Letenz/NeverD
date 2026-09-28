@@ -153,6 +153,10 @@ public:
       case NdOp::INDIR_CALL:
         B.Control = LowInstructionControl::Call;
         B.ControlFlags |= LowInstructionControlFlag::Call;
+        if (Op.Opcode == NdOp::INDIR_CALL)
+          B.ControlFlags |= LowInstructionControlFlag::Indirect;
+        else if (Op.NumInputs && Op.Inputs[0].isConst())
+          B.Immediate = Op.Inputs[0].Offset;
         break;
       case NdOp::RETURN:
         if (Insn.Id != X86_INS_RET)
