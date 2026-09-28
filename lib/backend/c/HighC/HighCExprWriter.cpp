@@ -2237,6 +2237,25 @@ TypeRef HighCWriter::typedMemberType(const HighExpr &Addr,
   return Record->displayFieldTypeAt(Peeled->second, AccessSize);
 }
 
+std::string HighCWriter::unknownVarUse(const HighExpr &E,
+                                       const std::string &Name,
+                                       const std::string &RawName) {
+  // Definitions consisting only of unknown values are omitted from C.
+  // Their observable uses must still fail, including renamed SSA temps.
+  if (UnknownOnlyNames.count(Name))
+    return "(__builtin_trap(), 0 /* unknown value */)";
+  // An unassigned architectural register or flag can be a genuine unknown
+  // live-in. Keep the failure at the point of use instead of emitting an
+  // undeclared name or inventing zero.
+  if ((E.Var.Kind == MedVar::Reg || E.Var.Kind == MedVar::Flag) &&
+      E.Var.SSAVer == 0 && Name == RawName && !AssignedNames.count(RawName) &&
+      !isEmittedParamName(RawName) &&
+      !(CurrentFunc &&
+        isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)))
+    return "(__builtin_trap(), 0 /* unknown register */)";
+  return {};
+}
+
 std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
   const HighExpr *Inner = peelIntegerViewOps(&E);
   if (!Inner)
@@ -2256,6 +2275,11 @@ std::string HighCWriter::pointerObjectStr(const HighExpr &E) {
     if (auto Printed = printedForwardedVar(Name, 16);
         !Printed.empty() && Printed != Name)
       return Printed;
+    // An unknown value fails at this use too, instead of printing a name
+    // nothing declares.
+    if (std::string Unknown = unknownVarUse(*Inner, Name, varName(Inner->Var));
+        !Unknown.empty())
+      return Unknown;
     return Name;
   }
   return exprStr(*Inner);
@@ -2690,19 +2714,8 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     }
     if (auto Printed = printedForwardedVar(Name, ParentPrec); Printed != Name)
       return Printed;
-    // Definitions consisting only of unknown values are omitted from C.
-    // Their observable uses must still fail, including renamed SSA temps.
-    if (UnknownOnlyNames.count(Name))
-      return "(__builtin_trap(), 0 /* unknown value */)";
-    // An unassigned architectural register or flag can be a genuine unknown
-    // live-in. Keep the failure at the point of use instead of emitting an
-    // undeclared name or inventing zero.
-    if ((E.Var.Kind == MedVar::Reg || E.Var.Kind == MedVar::Flag) &&
-        E.Var.SSAVer == 0 && Name == RawName && !AssignedNames.count(RawName) &&
-        !isEmittedParamName(RawName) &&
-        !(CurrentFunc &&
-          isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch)))
-      return "(__builtin_trap(), 0 /* unknown register */)";
+    if (std::string Unknown = unknownVarUse(E, Name, RawName); !Unknown.empty())
+      return Unknown;
     if (auto Slot = namedFrameSlot(E)) {
       if (const auto Disp = frameDisplacement(E)) {
         auto It = FrameSlots.find(*Disp);

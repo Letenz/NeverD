@@ -238,6 +238,10 @@ public:
   bool pointerNeedsIntegerView(const TypeRef &Ty) const;
   /// Pointer object used as an `INDIR_CALL` base, without `(uintptr_t)`.
   std::string pointerObjectStr(const HighExpr &E);
+  /// The failure an unknown value prints at its use, or empty when \p E
+  /// names a value the function defines.
+  std::string unknownVarUse(const HighExpr &E, const std::string &Name,
+                            const std::string &RawName);
   /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void
   /// ***)p`. A loaded vtable slot `Load(Load(obj)+imm)` is
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.

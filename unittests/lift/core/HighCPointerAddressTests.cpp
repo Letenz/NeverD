@@ -7186,6 +7186,36 @@ TEST(HighCPointerAddresses, IndirectCallPrintsNestedLoadedCallee) {
   EXPECT_EQ(Source.find("indirect("), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, SlotCalleeThroughUnknownRegisterFailsAtUse) {
+  // `jmp [rdi+0x70]` where RDI is not an argument register: the callee's base
+  // fails at its use like any other read of the unknown register, instead of
+  // printing a name nothing declares.
+  HighFunc Func;
+  Func.Name = "unknown_base_call";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  MedVar Rdi;
+  Rdi.Kind = MedVar::Reg;
+  Rdi.TheArch = Arch::X64;
+  Rdi.Id = 23;
+  Rdi.Size = 8;
+  Rdi.RegOff = x86reg::RDI;
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr = HighExpr::makeCall("indirect", 0, {});
+  Call.CallExpr->IsIndirectCall = true;
+  Call.CallExpr->IndirectTarget = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD,
+                          HighExpr::makeVar(Rdi, NdType::makeInt(8)),
+                          HighExpr::makeConst(112, 8)),
+      NdType::makeInt(8));
+  Func.Body = {Call};
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("(__builtin_trap(), 0 /* unknown register */)) + 112"),
+            std::string::npos)
+      << Source;
+}
+
 TEST(HighCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
   HighFunc Func;
   Func.Name = "look";
