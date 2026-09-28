@@ -879,6 +879,20 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   return {};
 }
 
+bool HighCWriter::knownVoidCall(const HighExpr &E) const {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
+    return false;
+  // Other special-member rows are declared `void` too, but an MSVC
+  // constructor or assignment returns `this`, and so does an ARM32 Itanium
+  // destructor: a read of their result is real.
+  if (const MsvcAtlCallee *Atl = msvcAtlCallee(callIdentifier(E)))
+    return Atl->Kind == MsvcAtlCalleeKind::Dtor &&
+           isMsvcDestructorName(resolvedCallTarget(E));
+  const auto Callee = debugCallee(E);
+  return Callee && Callee->ReturnType &&
+         Callee->ReturnType->Kind == NdTypeKind::Void;
+}
+
 std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)

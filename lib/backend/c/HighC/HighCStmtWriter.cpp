@@ -376,6 +376,23 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       OS << exprStr(*Stmt.Val) << ";\n";
       break;
     }
+    // A callee declared to return nothing leaves no value in the result
+    // register. Keep the call; a destination that is still read gets the
+    // explicit unknown value rather than a void expression.
+    if (knownVoidCall(*Stmt.Val) &&
+        (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi)) {
+      emitIndent(Indent);
+      OS << exprStr(*Stmt.Val) << ";\n";
+      const std::string Dest = varName(Stmt.Dst->Var);
+      const std::string Printed = printedForwardedVar(Dest, 0);
+      if (!Analysis.OmittedCallResults.count(&Stmt) &&
+          (isEmittedParamName(Dest) || DeclaredCNames.count(Dest) ||
+           DeclaredCNames.count(Printed))) {
+        emitIndent(Indent);
+        OS << Printed << " = 0 /* unknown */;\n";
+      }
+      break;
+    }
     // A call with custom statement rendering can have live auxiliary outputs
     // even when its primary result is unused. Render those effects first.
     // A self call of a function printed `void` has no value to assign.

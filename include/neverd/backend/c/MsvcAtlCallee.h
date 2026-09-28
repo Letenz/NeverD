@@ -85,6 +85,12 @@ inline bool msvcAtlMatchIdentifier(const MsvcAtlCallee &Row,
   return false;
 }
 
+/// An MSVC-decorated destructor (`??1`). Its decoration encodes no return
+/// type, unlike a constructor or `operator=`, which return `this`.
+inline bool isMsvcDestructorName(llvm::StringRef Name) {
+  return Name.starts_with("??1");
+}
+
 inline const MsvcAtlCallee *msvcAtlCallee(llvm::StringRef Identifier) {
   for (const MsvcAtlCallee &Row : msvcAtlCallees())
     if (msvcAtlMatchIdentifier(Row, Identifier))

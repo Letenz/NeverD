@@ -323,6 +323,13 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
     Analysis.AssignedVars.insert(VarFn(S.Dst->Var));
   });
   InferredVoid = analyzeVoidReturn(Analysis, Func, VarFn, ExprFn);
+  // An MSVC destructor returns nothing, and its callers declare it so. What
+  // its tail call leaves in RAX is not a result.
+  if (!InferredVoid && isMsvcDestructorName(Func.Name) &&
+      !(Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)) {
+    const auto DebugFn = debugFunction(Dbg, Func.Entry);
+    InferredVoid = !DebugFn || !DebugFn->ReturnType;
+  }
 
   HiLoPairs.clear();
   auto RegisterHiLo = [this](const HighStmt &S, const HighExpr &CE) {
@@ -3544,6 +3551,9 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
     if (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi)
       return;
     if (S.Val->Kind != ExprKind::Call || Analysis.OmittedCallResults.count(&S))
+      return;
+    // The destination does not receive a result: no type or name from it.
+    if (knownVoidCall(*S.Val))
       return;
     const std::string Name = varName(S.Dst->Var);
     if (Name.empty() || ValueForward.count(Name) || FieldForward.count(Name) ||

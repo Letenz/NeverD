@@ -39148,6 +39148,46 @@ int main(void) {
   }
 }
 
+
+TEST(HighCPointerAddresses, DestructorDoesNotReturnItsTailCallResult) {
+  // `??1SC_DISK` ends by tail-calling the base destructor. MSVC destructors
+  // return nothing, so what the base leaves in RAX is not a result.
+  HighFunc Func;
+  Func.Name = "??1SC_DISK@@UEAA@XZ";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  const MedVar Result = temporary(1, 1);
+  Func.Body = {assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
+                                                   0x140002000,
+                                                   {parameter(0)}))};
+  returnValue(Func, HighExpr::makeVar(Result));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("void SC_DISK_dtor("), std::string::npos) << Source;
+  EXPECT_NE(Source.find("    SC_DEVICE_dtor(arg0);"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
+  // A caller that is not a destructor itself still reads RAX after the call.
+  // The callee returns nothing, so the read has no defined value.
+  HighFunc Func;
+  Func.Name = "release_disk";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  const MedVar Result = temporary(1, 1);
+  Func.Body = {assignTo(Result, HighExpr::makeCall("??1SC_DEVICE@@QEAA@XZ",
+                                                   0x140002000,
+                                                   {parameter(0)}))};
+  returnValue(Func, HighExpr::makeVar(Result));
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("    SC_DEVICE_dtor(arg0);"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find(" = 0 /* unknown */;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
+}
 } // namespace
 
 BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {

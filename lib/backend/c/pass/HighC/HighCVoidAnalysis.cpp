@@ -265,6 +265,32 @@ void analyzeVoidDeadChain(HighCAnalysisState &State, const HighFunc &Func,
     if (S.Kind == StmtKind::Return && S.RetVal)
       Collect(*S.RetVal);
   });
+
+  // A void return reads nothing: a call whose result only reached one prints
+  // as a plain call, without a declared destination.
+  std::set<std::string> Read;
+  std::function<void(const HighExpr &)> CollectRead = [&](const HighExpr &E) {
+    if (isNamedValueExpr(E))
+      Read.insert(VarFn(E.Var));
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      if (Child)
+        CollectRead(*Child);
+    });
+  };
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Return || State.DeadStmts.count(&S))
+      return;
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      if (E)
+        CollectRead(*E);
+    });
+  });
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+        S.Val->Kind == ExprKind::Call && isNamedValueExpr(*S.Dst) &&
+        !Read.count(VarFn(S.Dst->Var)))
+      State.OmittedCallResults.insert(&S);
+  });
 }
 
 void analyzeUnusedAssigns(HighCAnalysisState &State, const HighFunc &Func,

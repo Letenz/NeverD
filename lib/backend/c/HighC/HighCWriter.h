@@ -270,6 +270,9 @@ public:
   bool isCtorSourceExpr(const HighExpr *Op) const;
   bool isCtorDisplayOperand(const HighExpr *Op) const;
   TypeRef knownCallReturnType(const HighExpr &E) const;
+  /// A call whose prototype returns nothing: TPI says `void`, or the callee
+  /// is a destructor. The result register it leaves holds no defined value.
+  bool knownVoidCall(const HighExpr &E) const;
   const HighExpr *typedCallResult(const HighExpr *E) const;
   const HighExpr *peelIntegerViewOps(const HighExpr *E) const;
   /// Peel zext/trunc around a named scalar or field load for x86 intrinsic
