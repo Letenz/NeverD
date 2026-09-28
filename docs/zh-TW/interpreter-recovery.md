@@ -7,15 +7,29 @@
 實驗性的直譯器特化階段會從已連結的 x64 函式中消除能夠靜態解析的派發，同時保留執行期輸入、記憶體效果、分支與迴圈。它依據指令語意運作，不依賴 handler 特徵或特定保護器的操作碼表。
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
 `--vm-control` 選取用來區分直譯器上下文的完整通用暫存器。此選項可重複使用，但不會提供任何具體值。例如，可選擇由入口程式碼初始化的位元碼游標。用作計數器的執行期輸入必須保持動態。如果不同游標值在匯合時缺少必要的上下文區分，還原可能停止；引擎不得透過猜測派發目標來彌補。若游標溢出儲存至堆疊，`--vm-control-stack=-16:8` 可選取入口 RSP 減去 16 處的八個位元組。此位移是相對於函式入口，而非調整後的目前堆疊指標。
 
 C API 是 `neverd/sdk/NeverDCAPIDevirtualize.h` 中的 `neverd_devirtualize_source_v1()`。它使用獨立交易，不修改工作階段的一般反編譯快取。失敗時不傳回原始碼，但仍可傳回 JSON 診斷。兩個傳回字串皆以 `neverd_free_string()` 釋放。
+
+## 自動探索控制狀態
+
+CLI 與兩個原始碼還原 C API 預設啟用自動探索。不依賴特定二進位提供者的 C++ 介面預設 `SpecializationOptions::DiscoverControlState = false`，呼叫端可明確設為 `true`。手動 `--vm-control` 與 `--vm-control-stack` 提示仍是可選的上下文鍵；一般自動探索的欄位只保留有界的聯合有限取值關係，不新增上下文鍵，也不將執行期輸入綁定為取樣值。除非下述選擇性記憶體細化需要其已證明常數，一般計數器仍維持動態。
+
+探索程序沿未解析控制流程與位址的相依關係，追蹤結構化暫存器輸入與精確的入口相對堆疊框架讀取，包括窄位元組範圍。找到缺漏相依關係後，會從函式入口重新分析。每個欄位仍須具備完整的有限取值證明，可能產生別名的寫入仍會使記憶體事實失效。自動探索不會將任意外部記憶體或無界的相關值變成有限域。
+
+若已追蹤的記憶體相依關係仍反覆阻止精確位址證明，後續細化可將其已證明的傳入常數提升為上下文鍵。目前不會將多值元組拆成新邊，也不會為選擇上下文增加客體記憶體讀取：有限取值證明本身無法證明新增讀取安全。因此，動態或無界的記憶體相關狀態仍可能在設定限制內使還原停止。
+
+反向生產者需求由原生節點入口、指令模式、欄位種類及位元組範圍識別。只有後繼節點需要該欄位的邊才繼續展開生產者相依關係，包括取值有限但精度仍不足的情況。這可能觸發受預算限制的入口重啟，而不會將重複使用的實體暫存器視為始終承擔相同角色。相依關係探索有界且不完備，無法保證所有解譯器都能在沒有手動提示時還原。
+
+預設 `MaxControlFields = 16` 同時限制手動與自動欄位；`MaxControlRefinements = 16`，`MaxDiscoveryVisits = 65536`。各次重啟共用全域節點（包含合成節點）、操作、求值、求解查詢與探索存取預算。報告中的 `contexts` 計算原生上下文；它與 `evaluatedOperations`、`nodeEvaluations`、`solverQueries` 均跨嘗試累計。每個位址的上下文數、有效原生返回槽、控制欄位數與元組數仍為單次嘗試的結構上限。求解查詢預設上限仍為 4096。預算用盡不發布部分結果；`residualBlocks` 僅描述最終殘餘圖。
+
+JSON 報告新增 `discoverControlState`、`maxControlRefinements`、`maxDiscoveryVisits`、`discoveredControlFields`、`discoveredContextFields`、`controlRefinements` 與 `discoveryVisits`，記錄啟用行為、上限與分析工作量。探索到欄位本身不代表還原成功。
 
 ## 執行契約
 

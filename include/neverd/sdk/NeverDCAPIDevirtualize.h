@@ -24,6 +24,12 @@ typedef struct neverd_devirtualize_frame_slot_v1 {
 
 /// Experimental, bounded x64 interpreter specialization. Control registers
 /// select context separation; they never supply concrete entry input values.
+/// Both recovery entry points enable automatic control-state discovery. Its
+/// ordinary finite projections do not create context keys. Repeated unresolved
+/// memory dependencies may additionally separate proven incoming constants;
+/// no extra guest-memory reads or multivalue edge partitions are introduced.
+/// Manual hints remain optional context keys; discovery never binds inputs to
+/// samples. Refinement restarts share global work and proof budgets.
 /// Use full x64 GPR names, e.g. "r10". Null options select default budgets.
 /// struct_size must cover this complete v1 structure; future tails are ignored.
 typedef struct neverd_devirtualize_options_v1 {

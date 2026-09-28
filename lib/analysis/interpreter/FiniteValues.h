@@ -27,6 +27,16 @@ struct FiniteValues {
   std::vector<std::vector<uint64_t>> Tuples;
 };
 
+/// True only when Value is one variable whose type has more than Limit values
+/// and whose exact symbol does not occur in Predicate. This does not establish
+/// that Predicate is satisfiable: optional projection may omit the field, but
+/// reachability still needs its own proof. An incomplete bounded DAG walk
+/// returns false. The walk neither creates expressions nor invokes a solver.
+bool hasUnconstrainedProjectionInput(const symbolic::SymContext &Ctx,
+                                     symbolic::SymRef Predicate,
+                                     symbolic::SymRef Value, uint32_t Limit,
+                                     uint64_t MaxVisited);
+
 FiniteValues
 enumerateFiniteValues(symbolic::SymContext &Ctx, symbolic::SymRef Predicate,
                       llvm::ArrayRef<symbolic::SymRef> Values, uint32_t Limit,

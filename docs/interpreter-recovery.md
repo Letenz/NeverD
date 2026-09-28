@@ -10,13 +10,13 @@ effects, branches, and loops. It uses instruction semantics rather than handler
 signatures or a particular protector's opcode table.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
-`--vm-control` selects full general registers that distinguish interpreter
+Optional `--vm-control` selects full general registers that distinguish interpreter
 contexts. It can be repeated, and it supplies no concrete values. For example,
 select a bytecode cursor whose value is established by the entry stub. A runtime
 input used as a counter must remain dynamic. Missing context separation can
@@ -30,6 +30,54 @@ The C API is `neverd_devirtualize_source_v1()` in
 modifying the session's ordinary decompilation cache. Failure returns no source
 and can still return a JSON diagnostic. Both owned strings use
 `neverd_free_string()`.
+
+## Automatic control-state discovery
+
+The CLI and both source-recovery C APIs enable automatic discovery by default.
+Provider-neutral C++ callers opt in with `SpecializationOptions::DiscoverControlState = true`;
+its default is `false`. Manual `--vm-control` and `--vm-control-stack` hints remain
+optional context keys. Ordinary automatically discovered fields preserve bounded
+joint finite-value relations without creating context keys or binding runtime
+inputs to sampled values. Ordinary counters remain dynamic unless their proven
+constants are needed for the selective memory refinement below.
+
+Discovery follows unresolved control and address dependencies through structured register
+inputs and exact entry-relative frame loads, including narrow byte slices.
+Missing dependencies trigger refinement from the function entry. Every field
+still needs a complete finite-value proof, and aliasing writes still invalidate
+memory facts. Arbitrary external memory and unbounded correlated values are not
+made finite by discovery.
+
+If already tracked memory dependencies repeatedly prevent an exact address
+proof, refinement may additionally use their proven incoming constants as
+context keys. It does not partition multivalue tuples into new edges or emit
+extra guest-memory reads: a finite-value proof alone does not establish that an
+added load is safe. Dynamic or unbounded memory-dependent state may therefore
+still stop recovery within the configured limits.
+
+Backward producer demands identify a native node entry, instruction mode, and
+field kind and byte range. Only an edge whose successor demands that field
+expands its producer dependencies, including finite domains that remain too
+imprecise. This may trigger bounded restarts from entry without assigning one
+global role to a reused physical register. Dependency discovery is bounded and
+incomplete; recovery without manual hints is not guaranteed for every
+interpreter.
+
+Defaults are `MaxControlFields = 16` for manual and automatic fields together,
+`MaxControlRefinements = 16`, and `MaxDiscoveryVisits = 65536`. Restarts share
+global node (including synthetic nodes), operation, evaluation, solver-query,
+and discovery-visit budgets. The reported `contexts` counts native contexts;
+`contexts`, `evaluatedOperations`, `nodeEvaluations`, and `solverQueries` accumulate
+across attempts. Per-address contexts, active native return slots, control-field
+counts, and tuple counts remain structural limits within each attempt. The
+default solver-query limit remains 4096. Exhaustion publishes no partial result;
+`residualBlocks` describes only the final residual graph.
+
+The JSON report adds `discoverControlState`, `maxControlRefinements`,
+`maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`,
+`controlRefinements`, and `discoveryVisits`. These record enabled behavior,
+limits, and analysis work; field discovery alone does not establish successful
+recovery.
 
 ## Default execution contract
 
@@ -167,12 +215,13 @@ widening remain conservative. Partial SAT samples or unknown solver results are
 not proofs of a complete address or target set. This mechanism does not require
 the optional Z3 backend.
 
-A node is identified by its native cursor, instruction mode, and selected
-control-register and entry-frame-slot constants. Other byte-level facts meet by
-intersection. When an incoming fact weakens, the node is evaluated again. This
-keeps business loops as loops instead of expanding each observed iteration. All
-reachable values of an indirect target must belong to a bounded, exhaustively
-proved set; selected targets become explicit residual comparisons and CFG edges.
+A node is identified by its native cursor and instruction mode, active native
+return-stack state, and proven constants in manual or selectively promoted
+context fields. Other byte-level facts meet by intersection. When an incoming
+fact weakens, the node is evaluated again. Ordinary business values remain
+dynamic; promoted state remains subject to context limits. All reachable values
+of an indirect target must belong to a bounded, exhaustively proved set;
+selected targets become explicit residual comparisons and CFG edges.
 
 Dynamic operations and ordinary loads/stores stay in LowIR. Scalar constants,
 affine entry-frame pointers, and proven constant frame bytes can cross nodes;

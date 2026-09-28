@@ -11,9 +11,9 @@ sémantique des instructions, sans signatures de handlers ni table d’opcodes
 propre à un logiciel de protection.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
@@ -33,6 +33,20 @@ L’API C est `neverd_devirtualize_source_v1()`, déclarée dans
 modifier le cache de décompilation ordinaire de la session. En cas d’échec, elle
 ne renvoie aucun source, mais peut fournir un diagnostic JSON. Les deux chaînes
 allouées se libèrent avec `neverd_free_string()`.
+
+## Découverte automatique de l’état de contrôle
+
+La CLI et les deux API C de récupération activent la découverte automatique par défaut. L’API C++ indépendante du fournisseur conserve `SpecializationOptions::DiscoverControlState = false` ; l’appelant peut choisir `true`. Les indications manuelles `--vm-control` et `--vm-control-stack` restent des clés de contexte facultatives. Les champs automatiques ordinaires ne conservent que des relations conjointes finies et bornées, sans créer de clés de contexte ni fixer les entrées à des valeurs échantillonnées. Les compteurs restent dynamiques, sauf si le raffinement mémoire sélectif ci-dessous nécessite leurs constantes prouvées.
+
+La découverte suit les dépendances de contrôle et d’adresse non résolues jusqu’aux entrées structurées des registres et aux lectures exactes de la pile relatives à l’entrée, y compris des portions d’octet. Une dépendance manquante relance l’analyse depuis l’entrée de la fonction. Chaque champ exige encore une preuve exhaustive de son domaine fini ; les écritures pouvant créer un alias invalident toujours les faits mémoire. La mémoire externe arbitraire et les relations de valeurs non bornées ne deviennent pas finies.
+
+Si des dépendances mémoire déjà suivies empêchent à plusieurs reprises une preuve d’adresse exacte, le raffinement peut promouvoir leurs constantes entrantes prouvées en clés de contexte. Il ne partitionne pas les tuples à plusieurs valeurs en nouvelles arêtes et n’ajoute pas de lectures de mémoire invitée pour choisir un contexte : une preuve de valeurs finies ne garantit pas la sûreté d’une lecture supplémentaire. Un état mémoire dynamique ou non borné peut donc encore arrêter la récupération dans les limites configurées.
+
+Les demandes remontant vers les producteurs sont identifiées par l’entrée du nœud natif, le mode d’instruction, le type de champ et sa plage d’octets. Seule une arête dont le successeur demande ce champ développe ses dépendances, même si son domaine fini reste trop imprécis. Cela peut relancer l’analyse depuis l’entrée dans les budgets fixés, sans attribuer un rôle global unique à un registre physique réutilisé. La découverte des dépendances est bornée et incomplète ; la récupération sans indications manuelles n’est pas garantie pour tous les interpréteurs.
+
+Les valeurs par défaut sont `MaxControlFields = 16` pour les champs manuels et automatiques réunis, `MaxControlRefinements = 16` et `MaxDiscoveryVisits = 65536`. Les reprises partagent les budgets globaux de nœuds (y compris synthétiques), opérations, évaluations, requêtes et visites de découverte. `contexts` compte les contextes natifs ; comme `evaluatedOperations`, `nodeEvaluations` et `solverQueries`, il cumule les tentatives. Les contextes par adresse, emplacements de retour natifs actifs, champs et tuples restent des limites structurelles par tentative. La limite de requêtes reste 4096. L’épuisement ne publie aucun résultat partiel ; `residualBlocks` décrit seulement le graphe résiduel final.
+
+Le rapport JSON ajoute `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` et `discoveryVisits` pour décrire l’activation, les limites et le travail effectué. Découvrir des champs ne prouve pas la réussite de la récupération.
 
 ## Contrat d’exécution
 

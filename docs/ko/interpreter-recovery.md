@@ -7,15 +7,29 @@
 실험적 인터프리터 특수화 단계는 링크된 x64 함수에서 정적으로 해석할 수 있는 디스패치를 제거하면서 런타임 입력, 메모리 효과, 분기와 루프를 유지합니다. 핸들러 패턴이나 특정 보호기의 연산 코드 표가 아닌 명령어 의미론을 사용합니다.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
 `--vm-control`은 인터프리터 컨텍스트를 구분할 전체 범용 레지스터를 선택합니다. 여러 번 지정할 수 있지만 구체적인 값을 제공하지는 않습니다. 예를 들어 진입 코드가 값을 설정하는 바이트코드 커서를 선택할 수 있습니다. 카운터로 쓰이는 런타임 입력은 동적인 상태로 유지해야 합니다. 서로 다른 커서 값이 합류할 때 필요한 컨텍스트 구분이 없으면 복원이 중단될 수 있습니다. 엔진은 이를 보완하려고 디스패치 대상을 추측하지 않습니다. 커서가 스택에 스필된 경우 `--vm-control-stack=-16:8`은 진입 시 RSP보다 16바이트 앞에 있는 8바이트를 선택합니다. 오프셋은 조정된 현재 스택 포인터가 아닌 함수 진입 시점을 기준으로 합니다.
 
 C API는 `neverd/sdk/NeverDCAPIDevirtualize.h`의 `neverd_devirtualize_source_v1()`입니다. 별도 트랜잭션에서 실행되므로 세션의 일반 디컴파일 캐시를 변경하지 않습니다. 실패하면 소스를 반환하지 않으며 JSON 진단은 반환할 수 있습니다. 반환된 두 문자열은 모두 `neverd_free_string()`으로 해제합니다.
+
+## 제어 상태 자동 탐색
+
+CLI와 두 소스 복원 C API는 기본적으로 자동 탐색을 활성화합니다. 특정 제공자에 종속되지 않는 C++ API에서는 `SpecializationOptions::DiscoverControlState = false`가 기본값이며 호출자가 `true`로 설정할 수 있습니다. 수동 `--vm-control` 및 `--vm-control-stack` 힌트는 선택적인 컨텍스트 키로 유지됩니다. 일반적인 자동 탐색 필드는 유한 값의 제한된 결합 관계만 보존하며, 컨텍스트 키를 추가하거나 런타임 입력을 표본 값으로 고정하지 않습니다. 아래의 선택적 메모리 정밀화에서 증명된 상수가 필요한 경우를 제외하면 일반 카운터는 동적으로 남습니다.
+
+미해결 제어 흐름과 주소의 의존 관계에서 구조화된 레지스터 입력과 정확한 진입점 상대 프레임 읽기를 추적하며, 좁은 바이트 범위도 처리합니다. 누락된 의존 관계를 찾으면 함수 진입점부터 분석을 다시 수행합니다. 각 필드는 여전히 완전한 유한 값 증명이 필요하며, 별칭 가능성이 있는 쓰기는 메모리 사실을 무효화합니다. 임의의 외부 메모리나 무한한 상관 값이 자동으로 유한해지는 것은 아닙니다.
+
+이미 추적 중인 메모리 의존 관계 때문에 정확한 주소 증명이 반복해서 막히면, 추가 정밀화가 증명된 진입 상수를 컨텍스트 키로 승격할 수 있습니다. 여러 값의 튜플을 새로운 간선으로 분할하거나 컨텍스트 선택을 위해 게스트 메모리 읽기를 추가하지는 않습니다. 유한 값 증명만으로는 추가 읽기의 안전성을 입증할 수 없기 때문입니다. 따라서 동적이거나 무한한 메모리 의존 상태는 설정된 제한 내에서 복원을 멈추게 할 수 있습니다.
+
+생산자에 대한 역방향 요구는 네이티브 노드 진입점, 명령 모드, 필드 종류와 바이트 범위로 식별합니다. 후속 노드가 해당 필드를 요구하는 간선만 생산자 의존 관계를 확장하며, 유한하지만 정밀도가 부족한 값의 범위도 포함합니다. 이 과정은 예산 내에서 진입점부터 다시 분석할 수 있지만, 재사용되는 물리 레지스터에 하나의 전역 역할을 부여하지는 않습니다. 의존 관계 탐색은 제한적이며 완전하지 않으므로, 모든 인터프리터를 수동 힌트 없이 복원할 수 있다고 보장하지 않습니다.
+
+기본값은 수동·자동 필드 합계에 대해 `MaxControlFields = 16`, `MaxControlRefinements = 16`, `MaxDiscoveryVisits = 65536`입니다. 재시작은 전역 노드(합성 노드 포함), 연산, 평가, 솔버 쿼리, 탐색 방문 예산을 공유합니다. `contexts`는 네이티브 컨텍스트 수이며, `evaluatedOperations`, `nodeEvaluations`, `solverQueries`와 함께 시도 전체에 걸쳐 누적됩니다. 주소별 컨텍스트 수, 활성 네이티브 반환 슬롯, 제어 필드 수, 튜플 수는 각 시도 안의 구조적 제한입니다. 기본 솔버 쿼리 제한은 여전히 4096입니다. 예산 소진 시 부분 결과를 게시하지 않으며, `residualBlocks`는 최종 잔여 그래프만 나타냅니다.
+
+JSON 보고서에는 `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements`, `discoveryVisits`가 추가되어 활성화 상태, 제한 및 분석 작업량을 기록합니다. 필드를 찾았다는 사실만으로 복원 성공이 입증되지는 않습니다.
 
 ## 실행 계약
 

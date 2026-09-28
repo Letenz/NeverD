@@ -1,6 +1,9 @@
 add_neverd_unittest(NeverDInterpreterSpecializationTests
   InterpreterSpecializationTests.cpp
   NativeStackSpecializationTests.cpp
+  ControlStateRecoveryTests.cpp
+  ControlDiscoveryTests.cpp
+  FiniteValuesTests.cpp
   LINK_COMPONENTS InterpreterSpecialization
 )
 
