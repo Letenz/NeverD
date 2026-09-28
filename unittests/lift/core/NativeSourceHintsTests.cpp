@@ -583,6 +583,67 @@ TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   EXPECT_FALSE(sdk::swiftMangledClassScalarGetterSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, SwiftDoubleFloatingPropertyUsesFPLanes) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$sSd6LottieE7cgFloat12CoreGraphics7CGFloatVvg", 0x1000, 0, true});
+  auto Hint = sdk::swiftMangledDoubleFloatingPropertySourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->ReturnType->Size, 8U);
+  EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPReturnReg);
+  ASSERT_EQ(Hint->Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->Parameters[0].Location.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPParamRegs[0]);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Initializer = Image;
+  Initializer.Symbols[0].Name =
+      "_$s6Lottie18CoreAnimationLayerC26CAMediaTimingConfigurationV10timeOffs"
+      "etSdvpfi";
+  Hint = sdk::swiftMangledDoubleFloatingPropertySourceABI(Initializer, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_TRUE(Hint->Parameters.empty());
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPReturnReg);
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSd6LottieE7cgFloatSdvg";
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name += "To";
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Initializer;
+  Wrong.Symbols[0].Name.replace(Wrong.Symbols[0].Name.find("Sdvpfi"), 6,
+                                "Sivpfi");
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints, SwiftClassReferenceGetterUsesSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
@@ -1098,6 +1159,137 @@ TEST(NativeSourceHints, CoderClassInitializerUsesSwiftSelf) {
   Wrong = Image;
   Wrong.Arch = Arch::X64;
   EXPECT_FALSE(sdk::swiftMangledCoderClassInitializerSourceABI(Wrong, 0x1000));
+}
+
+TEST(NativeSourceHints, NibBundleClassInitializerUsesSwiftSelf) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$s4main8TestViewC7nibName6bundleACSSSg_So8NSBundleCSgtcfc", 0x1000, 0,
+       true});
+  const auto Hint =
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  ASSERT_EQ(Hint->Parameters.size(), 4U);
+  for (unsigned I = 0; I != 3; ++I)
+    EXPECT_EQ(Hint->Parameters[I].Location.RegisterOffset, a64reg::X0 + 8 * I);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Hint->Parameters[1].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->Parameters[2].Type->Kind, NdTypeKind::Ptr);
+  EXPECT_EQ(Hint->Parameters[3].TheRole,
+            SourceParameterTypeHint::Role::SwiftContext);
+  EXPECT_EQ(Hint->Parameters[3].Location.RegisterOffset, a64reg::X20);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name =
+      "_$s4main8TestViewC7nibName6bundleACSSSg_So8NSBundleCSgtcfC";
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name += "To";
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name =
+      "_$s4main8TestViewC7nibName6bundleACSS_So8NSBundleCSgtcfc";
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name =
+      "_$s4main8TestViewC7nibName6bundleACSSSg_So8NSObjectCSgtcfc";
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(
+      sdk::swiftMangledNibBundleClassInitializerSourceABI(Wrong, 0x1000));
+}
+
+TEST(NativeSourceHints, BundleModuleClosureRequiresContextFreeBody) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  constexpr const char *Name = "_$sSo8NSBundleC7TestPkgE6moduleABvpZfiAByXEfU_";
+  Image.Symbols.push_back({Name, 0x1000, 0, true});
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = Name;
+  Function.ReturnType = NdType::makePtr(NdType::makeVoid());
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal = HighExpr::makeConst(0, 8);
+  Return.RetVal->Type = Function.ReturnType;
+  Function.Body.push_back(Return);
+  const auto Hint =
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Function);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_TRUE(Hint->Parameters.empty());
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset, a64reg::X0);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo8NSObjectC7TestPkgE6moduleABvpZfiAByXEfU_";
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSo8NSBundleC7TestPkgE5otherABvpZfiAByXEfU_";
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Wrong, 0x1000, Function));
+
+  auto Capturing = Function;
+  MedVar Context;
+  Context.Kind = MedVar::Reg;
+  Context.Id = 20;
+  Context.RegOff = a64reg::X20;
+  Context.Size = 8;
+  Capturing.Body[0].RetVal =
+      HighExpr::makeVar(Context, NdType::makePtr(NdType::makeVoid()));
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
+  Capturing = Function;
+  Capturing.Body.clear();
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
+  Capturing = Function;
+  Capturing.Body[0].RetVal = HighExpr::makeUndef(8);
+  EXPECT_FALSE(
+      sdk::swiftMangledBundleModuleClosureSourceABI(Image, 0x1000, Capturing));
 }
 
 namespace {

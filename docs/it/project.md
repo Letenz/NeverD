@@ -40,6 +40,13 @@ La CLI sperimentale `neverd mobile app.apk -o recovered-app` recupera Java da AP
 
 Il flusso iOS sperimentale `neverd mobile App.ipa -o recovered-ios` esporta C nativo e sorgenti Objective-C/Swift supportati da IPA, `.app` o Mach-O. Layout runtime, unità sorgente e omissioni per metodo rimangono espliciti; il codice generato non usa ponti verso il binario originale. Configurazione, copertura e ricompilazione indipendente sono nella [guida iOS](ios.md).
 
+Il recupero sperimentale `neverd decompile --devirtualize` specializza interpreti
+in immagini x64 ELF/PE già collegate e produce C tramite HighC o LLVMC. Richiede
+un’immagine invariata e precondizioni esplicite sullo slot di ritorno ABI;
+destinazioni sconosciute e budget esauriti causano un errore. Il risultato serve
+all’analisi e non prova la sicurezza di patch o gestione delle eccezioni. La
+[guida al recupero](interpreter-recovery.md) descrive controlli, report e limiti.
+
 ## Perché NeverD?
 
 - **Semantica 1:1** — lifter scritti a mano; gli opcode non supportati lanciano eccezione in strict di default
@@ -124,6 +131,10 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
+# Recupero sperimentale del sorgente da interpreti
+./build/bin/neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
 ./build/bin/neverd decompile --language=c contract.evm -o contract.c
@@ -149,7 +160,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Le librerie di firme vengono installate in `build/bin/signatures/` a build time. `sigs --auto` sceglie il set da formato, architettura e bitness.
+Le librerie di firme vengono installate in `build/bin/signatures/` a build time. `sigs --auto` sceglie il set da formato, architettura e bitness. Se l’intestazione Rich di un file PE indica la versione di Visual Studio del suo linker, carica solo il `vs<year>.pat` di quella versione, oltre ai file che non appartengono a nessuna versione. `--sig-base <dir>` sceglie allo stesso modo da un altro albero di firme.
 
 ## Compilazione
 

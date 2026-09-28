@@ -427,6 +427,22 @@ int runDecompile(neverd_session_t Sess) {
     return 1;
   }
 
+  if (Devirtualize && (ExportFunc.empty() || DedicatedLanguage)) {
+    WithColor::error() << "--devirtualize requires --func and C output\n";
+    return 1;
+  }
+  if (!Devirtualize &&
+      (!VMControlRegisters.empty() || !VMControlFrameSlots.empty() ||
+       !VMRecoveryReport.empty() || VMMaxNodes.getNumOccurrences() ||
+       VMMaxContexts.getNumOccurrences() ||
+       VMMaxOperations.getNumOccurrences())) {
+    WithColor::error() << "VM recovery options require --devirtualize\n";
+    return 1;
+  }
+  if (Devirtualize && (!VMMaxNodes || !VMMaxContexts || !VMMaxOperations)) {
+    WithColor::error() << "VM recovery budgets must be positive\n";
+    return 1;
+  }
   const char *Source = nullptr;
   if (!ExportFunc.empty()) {
     int FuncIdx = -1;
@@ -453,8 +469,54 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
-    Source = LlvmRoute ? neverd_decompile_llvm(Sess, Entry)
-                       : neverd_decompile(Sess, Entry);
+    if (Devirtualize) {
+      std::vector<const char *> Controls;
+      for (const auto &Name : VMControlRegisters)
+        Controls.push_back(Name.c_str());
+      std::vector<neverd_devirtualize_frame_slot_v1> FrameSlots;
+      for (const auto &Text : VMControlFrameSlots) {
+        const auto Parts = StringRef(Text).split(':');
+        int64_t Offset = 0;
+        unsigned Bytes = 0;
+        if (Parts.first.empty() || Parts.second.empty() ||
+            Parts.first.getAsInteger(0, Offset) ||
+            Parts.second.getAsInteger(0, Bytes) || !Bytes || Bytes > 8) {
+          WithColor::error()
+              << "--vm-control-stack expects signed-offset:bytes (1..8)\n";
+          return 1;
+        }
+        FrameSlots.push_back({Offset, static_cast<uint16_t>(Bytes), 0});
+      }
+      neverd_devirtualize_options_v1 Recovery{};
+      Recovery.struct_size = sizeof(Recovery);
+      Recovery.control_registers = Controls.data();
+      Recovery.control_register_count = Controls.size();
+      Recovery.control_frame_slots = FrameSlots.data();
+      Recovery.control_frame_slot_count = FrameSlots.size();
+      Recovery.max_nodes = VMMaxNodes;
+      Recovery.max_contexts_per_address = VMMaxContexts;
+      Recovery.max_operations = VMMaxOperations;
+      Recovery.use_llvm = LlvmRoute;
+      Recovery.no_opt = NoOpt;
+      const char *Report = nullptr;
+      Source = neverd_devirtualize_source_v1(Sess, Entry, &Recovery, &Report);
+      if (!VMRecoveryReport.empty() && Report) {
+        std::error_code EC;
+        raw_fd_ostream OS(VMRecoveryReport, EC);
+        if (EC) {
+          WithColor::error()
+              << "cannot write recovery report: " << EC.message() << "\n";
+          neverd_free_string(Report);
+          neverd_free_string(Source);
+          return 1;
+        }
+        OS << Report << '\n';
+      }
+      neverd_free_string(Report);
+    } else {
+      Source = LlvmRoute ? neverd_decompile_llvm(Sess, Entry)
+                         : neverd_decompile(Sess, Entry);
+    }
   } else {
     Source =
         DedicatedLanguage

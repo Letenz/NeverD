@@ -40,6 +40,12 @@ CLI والمكاملون ووكلاء الذكاء الاصطناعي يستخد
 
 يصدر مسار iOS التجريبي `neverd mobile App.ipa -o recovered-ios` شيفرة C أصلية ومصادر Objective-C/Swift مدعومة من IPA أو `.app` أو Mach-O. يحفظ تخطيطات وقت التشغيل ووحدات المصدر وأسباب حذف الطرائق صراحة، ولا يستخدم جسراً إلى الملف الثنائي الأصلي. راجع [دليل iOS](ios.md) للإعداد والتغطية وإعادة التجميع المستقلة.
 
+تخصص الاستعادة التجريبية `neverd decompile --devirtualize` المفسّرات في صور
+x64 ELF/PE المرتبطة، وتنتج C عبر HighC أو LLVMC. تشترط صورة ثابتة وشروطًا مسبقة
+صريحة لخانة العودة وفق ABI؛ وتفشل عند وجهة مجهولة أو نفاد الميزانية. النتيجة
+للتحليل ولا تثبت أمان الترقيع أو معالجة الاستثناءات. راجع
+[دليل الاستعادة](interpreter-recovery.md) للخيارات والتقارير والحدود.
+
 ## لماذا NeverD؟
 
 - **دلالات 1:1** — lifter مكتوب يدويًا؛ العمليات غير المدعومة ترمي استثناءً في strict الافتراضي
@@ -123,6 +129,10 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
+# استعادة تجريبية للشيفرة المصدرية من المفسّرات
+./build/bin/neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
 ./build/bin/neverd decompile --language=c contract.evm -o contract.c
@@ -148,7 +158,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-تُثبَّت مكتبات التوقيع في `build/bin/signatures/` عند البناء. `sigs --auto` يختار المجموعة حسب الصيغة والمعمارية وعرض البت.
+تُثبَّت مكتبات التوقيع في `build/bin/signatures/` عند البناء. `sigs --auto` يختار المجموعة حسب الصيغة والمعمارية وعرض البت. إذا ذكر ترويسة Rich في ملف PE إصدار Visual Studio الخاص بالرابط، فإنه يحمّل ملف `vs<year>.pat` لذلك الإصدار فقط إلى جانب الملفات التي لا تتبع أي إصدار. ويختار `--sig-base <dir>` بالطريقة نفسها من شجرة توقيعات أخرى.
 
 ## البناء
 

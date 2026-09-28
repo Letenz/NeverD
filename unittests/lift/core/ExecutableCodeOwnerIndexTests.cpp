@@ -264,16 +264,55 @@ TEST(ExecutableCodeOwnerIndex, KeepsMappingPrecedenceAndLiveEntryEvidence) {
   }
 }
 
+TEST(ExecutableCodeOwnerIndex,
+     ArmELFMappingDataBeatsExecutableSectionAndFunctionExtent) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::ELF;
+  Image.Arch = Arch::ARM;
+  Image.Mode = InstructionMode::ARM;
+  Segment Text;
+  Text.VA = 0x100;
+  Text.Size = 0x80;
+  Text.Data.resize(0x80);
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Image.Segments.push_back(Text);
+  Section TextSection;
+  TextSection.VA = Text.VA;
+  TextSection.Size = Text.Size;
+  TextSection.Flags = Text.Flags;
+  Image.Sections.push_back(TextSection);
+  Image.Symbols = {Symbol::makeFunc(0x100, 0x80)};
+
+  // Without mapping symbols the section remains the only code evidence.
+  EXPECT_TRUE(Image.isCodeAddress(0x148));
+  Image.ARMCodeRegions = {{0x100, 0x140, ARMCodeRegionKind::ARM},
+                          {0x140, 0x160, ARMCodeRegionKind::Data},
+                          {0x160, 0x180, ARMCodeRegionKind::ARM}};
+  const ExecutableCodeOwnerIndex Index(Image);
+  EXPECT_TRUE(Image.isCodeRange(0x130, 4));
+  EXPECT_FALSE(Image.isCodeRange(0x130, 0x38));
+  EXPECT_FALSE(Image.isCodeRange(0x13c, 8));
+  EXPECT_TRUE(Image.isCodeRange(0x160, 4));
+  for (va_t Addr : {0x140ull, 0x148ull, 0x15full}) {
+    EXPECT_FALSE(Image.isCodeAddress(Addr));
+    EXPECT_TRUE(Image.isDataAddress(Addr));
+    EXPECT_FALSE(Image.hasExecutableCodeOwnerAt(Addr));
+    EXPECT_FALSE(Image.hasExecutableCodeOwnerAt(Addr, &Index));
+    EXPECT_EQ(Image.mappedObjectOwnerEnd(Addr), 0x160u);
+  }
+  EXPECT_TRUE(Image.hasExecutableCodeOwnerAt(0x160, &Index));
+}
+
 TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
   for (BinaryFormat Format :
        {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
     for (bool Thumb : {false, true}) {
       BinaryImage Image = makeMetadataImage(Format, Thumb);
       Image.KnownCodeRanges = {
-          {0x100, 0x140}, {0x100, 0x120}, {0x110, 0x150},
-          {0x140, 0x180}, {0x180, 0x180}, {0x190, 0x188},
+          {0x100, 0x140},     {0x100, 0x120}, {0x110, 0x150},
+          {0x140, 0x180},     {0x180, 0x180}, {0x190, 0x188},
           {0x200, InvalidVA}, {0x300, 0x340}, {0x300, 0x310},
-          {0x401, 0x411}, {0, 0x10}, {InvalidVA - 8, InvalidVA}};
+          {0x401, 0x411},     {0, 0x10},      {InvalidVA - 8, InvalidVA}};
       Image.Symbols = {Symbol::makeFunc(0, 4),
                        Symbol::makeFunc(0x100, 0x18),
                        Symbol::makeFunc(0x200, 0x20),
@@ -288,14 +327,26 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
       Data.Addr = 0x500;
       Data.Size = 4;
       Image.Symbols.push_back(Data);
-      const std::pair<va_t, va_t> Expected[] = {
-          {0, 4}, {1, InvalidVA}, {0x100, 0x118}, {0x108, InvalidVA},
-          {0x110, 0x150}, {0x140, 0x180}, {0x180, InvalidVA},
-          {0x190, InvalidVA}, {0x200, 0x220}, {0x220, InvalidVA},
-          {0x230, InvalidVA}, {0x240, InvalidVA}, {0x300, 0x310},
-          {0x400, InvalidVA}, {0x401, 0x405}, {0x402, InvalidVA},
-          {0x500, InvalidVA}, {InvalidVA - 16, InvalidVA - 8},
-          {InvalidVA - 8, InvalidVA}, {InvalidVA, InvalidVA}};
+      const std::pair<va_t, va_t> Expected[] = {{0, 4},
+                                                {1, InvalidVA},
+                                                {0x100, 0x118},
+                                                {0x108, InvalidVA},
+                                                {0x110, 0x150},
+                                                {0x140, 0x180},
+                                                {0x180, InvalidVA},
+                                                {0x190, InvalidVA},
+                                                {0x200, 0x220},
+                                                {0x220, InvalidVA},
+                                                {0x230, InvalidVA},
+                                                {0x240, InvalidVA},
+                                                {0x300, 0x310},
+                                                {0x400, InvalidVA},
+                                                {0x401, 0x405},
+                                                {0x402, InvalidVA},
+                                                {0x500, InvalidVA},
+                                                {InvalidVA - 16, InvalidVA - 8},
+                                                {InvalidVA - 8, InvalidVA},
+                                                {InvalidVA, InvalidVA}};
       for (unsigned Order = 0; Order < 2; ++Order) {
         {
           const ExecutableCodeOwnerIndex Index(Image);
@@ -305,7 +356,8 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndsKeepExactRawEntriesAndSmallestEnd) {
                 << Entry;
           }
         }
-        std::reverse(Image.KnownCodeRanges.begin(), Image.KnownCodeRanges.end());
+        std::reverse(Image.KnownCodeRanges.begin(),
+                     Image.KnownCodeRanges.end());
         std::reverse(Image.Symbols.begin(), Image.Symbols.end());
       }
     }
@@ -336,7 +388,14 @@ TEST(ExecutableCodeOwnerIndex, FunctionEndScopeObservesEditsAndImageMismatch) {
 }
 
 TEST(ExecutableCodeOwnerIndex, IndexedFunctionEndsPreserveNativeInteriorRoots) {
-  enum class Bound { Metadata, Exception, NextEntry, NextOnly, Containing, None };
+  enum class Bound {
+    Metadata,
+    Exception,
+    NextEntry,
+    NextOnly,
+    Containing,
+    None
+  };
   constexpr va_t Entry = 0x1000;
   for (Arch TargetArch : {Arch::AArch64, Arch::X64})
     for (Bound Kind : {Bound::Metadata, Bound::Exception, Bound::NextEntry,
@@ -385,8 +444,8 @@ TEST(ExecutableCodeOwnerIndex, IndexedFunctionEndsPreserveNativeInteriorRoots) {
       if (Kind == Bound::Exception || Kind == Bound::Containing) {
         ExceptionFunction Metadata;
         Metadata.Kind = RuntimeFunctionKind::Primary;
-        Metadata.CodeRange = {
-            Kind == Bound::Exception ? Entry : Entry - 0x10, Entry + 0x20};
+        Metadata.CodeRange = {Kind == Bound::Exception ? Entry : Entry - 0x10,
+                              Entry + 0x20};
         Image.ExceptionMetadata.Functions.push_back(Metadata);
         if (Kind == Bound::Exception)
           Expected.erase(Entry + 0x20);

@@ -181,6 +181,14 @@ extern llvm::cl::SubCommand HuntCmd;
 extern llvm::cl::SubCommand ConcolicCmd;
 extern llvm::cl::SubCommand MobileCmd;
 
+extern llvm::cl::opt<bool> Devirtualize;
+extern llvm::cl::list<std::string> VMControlRegisters;
+extern llvm::cl::list<std::string> VMControlFrameSlots;
+extern llvm::cl::opt<unsigned> VMMaxNodes;
+extern llvm::cl::opt<unsigned> VMMaxContexts;
+extern llvm::cl::opt<uint64_t> VMMaxOperations;
+extern llvm::cl::opt<std::string> VMRecoveryReport;
+
 int runMobile(const char *Argv0);
 extern llvm::cl::opt<std::string> MobilePlatform;
 extern llvm::cl::opt<std::string> MobileBackend;
@@ -346,6 +354,7 @@ extern llvm::cl::opt<std::string> TextSection;
 extern llvm::cl::opt<std::string> SigDir;
 extern llvm::cl::opt<std::string> SigFile;
 extern llvm::cl::opt<bool> SigAuto;
+extern llvm::cl::opt<std::string> SigBase;
 
 // Simplify.
 extern llvm::cl::opt<std::string> SimplifyExpr;

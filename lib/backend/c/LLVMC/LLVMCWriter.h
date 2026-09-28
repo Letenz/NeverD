@@ -705,6 +705,9 @@ public:
     bool AddressTaken = false;
   };
   mutable std::map<uint64_t, NamedFrameSlot> FrameSlots;
+  /// Different overlapping memory extents cannot become independent scalar
+  /// locals. Keep unnamed views of those bytes in the shared backing frame.
+  std::set<uint64_t> OverlappingFrameAccessOffsets;
   mutable std::map<int64_t, std::optional<VariableSym>> FrameDebugCache;
   /// Allocas whose current value is exactly `this` (ptrtoint). Survives
   /// per-block `AllocaLastValues` resets so `this+imm` in a later block

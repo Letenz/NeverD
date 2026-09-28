@@ -19,6 +19,7 @@
 
 #include "llvm/Support/Error.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 
 #include <filesystem>
 #include <memory>
@@ -70,6 +71,9 @@ protected:
           llvm::inconvertibleErrorCode());
     auto &Buf = *BufOrErr;
     Img.Format = Fmt;
+    Img.InputFileSHA256 = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+        reinterpret_cast<const uint8_t *>(Buf->getBufferStart()),
+        Buf->getBufferSize()));
     if (CopyRaw)
       Img.Raw.assign(reinterpret_cast<const uint8_t *>(Buf->getBufferStart()),
                      reinterpret_cast<const uint8_t *>(Buf->getBufferEnd()));

@@ -2728,19 +2728,21 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec) {
     return Name;
   }
   case ExprKind::Const: {
+    // Numeric equality with a collected global or string is not pointer
+    // provenance. Explicit scalar/fragment occurrences must stay numeric even
+    // when another memory use materializes an object at the same image VA.
+    // LOAD/STORE addresses use addrStr() separately to project actual memory.
+    if (E.ConstProvenance == ConstantAddressProvenance::Scalar ||
+        E.ConstProvenance == ConstantAddressProvenance::AddressFragment)
+      return constStr(E.ConstVal, E.Type);
     bool AllowEmpty = false;
     if (Dbg) {
       if (auto Data = Dbg->resolveDataObject(E.ConstVal);
           Data && llvm::StringRef(Data->Name).starts_with("??_C@"))
         AllowEmpty = true;
     }
-    // A scalar immediate may numerically fall inside a string section. In
-    // arithmetic it must remain the original number, never become a pointer
-    // to bytes at the coincident address.
-    if (E.ConstProvenance != ConstantAddressProvenance::Scalar &&
-        E.ConstProvenance != ConstantAddressProvenance::AddressFragment)
-      if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
-        return LiteralAddressOperands.count(&E) ? "(uintptr_t)" + *Lit : *Lit;
+    if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
+      return LiteralAddressOperands.count(&E) ? "(uintptr_t)" + *Lit : *Lit;
     // Preserve the existing exact-object spelling, but do not turn an
     // unrelated numeric immediate that happens to lie inside a backing range
     // into an address.

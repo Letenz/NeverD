@@ -40,6 +40,14 @@ La CLI experimental `neverd mobile app.apk -o recovered-app` recupera Java de AP
 
 El flujo iOS experimental `neverd mobile App.ipa -o recovered-ios` exporta C nativo y fuentes Objective-C/Swift compatibles desde IPA, `.app` o Mach-O. Conserva disposiciones runtime, unidades fuente y omisiones por método; el código generado no usa puentes al binario original. Consulte la [guía iOS](ios.md) para configuración, cobertura y recompilación independiente.
 
+La recuperación experimental `neverd decompile --devirtualize` especializa
+intérpretes en imágenes x64 ELF/PE enlazadas y genera C mediante HighC o LLVMC.
+Exige una imagen fija y precondiciones explícitas sobre el espacio de retorno
+ABI; los destinos desconocidos y presupuestos agotados provocan un fallo. El
+resultado sirve para análisis y no demuestra seguridad para aplicar parches
+ni manejar excepciones. La [guía de recuperación](interpreter-recovery.md)
+describe los controles, informes y límites.
+
 ## ¿Por qué NeverD?
 
 - **Semántica 1:1** — lifters a mano; opcodes no soportados lanzan excepción en modo strict por defecto
@@ -123,6 +131,10 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
+# Recuperación experimental de código fuente de intérpretes
+./build/bin/neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
+
 # EVM
 ./build/bin/neverd lift contract.evm -o contract.ll
 ./build/bin/neverd decompile --language=c contract.evm -o contract.c
@@ -148,7 +160,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Las bibliotecas de firmas se instalan en `build/bin/signatures/` en tiempo de compilación. `sigs --auto` elige el conjunto según formato, arquitectura y bitness.
+Las bibliotecas de firmas se instalan en `build/bin/signatures/` en tiempo de compilación. `sigs --auto` elige el conjunto según formato, arquitectura y bitness. Si la cabecera Rich de un archivo PE indica la versión de Visual Studio de su enlazador, solo carga el `vs<year>.pat` de esa versión, además de los archivos que no pertenecen a ninguna versión. `--sig-base <dir>` elige de la misma forma desde otro árbol de firmas.
 
 ## Compilación
 

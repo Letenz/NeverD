@@ -16,13 +16,6 @@
 #include "neverd/ir/NdTypes.h"
 #include "neverd/loader/BinaryImage.h"
 
-// Parallel.h includes windows.h through StackSizeMain.h. Parse LLVM's COFF
-// declarations first so Windows' IMAGE_SYM_* macros cannot replace them.
-// clang-format off
-#include "llvm/Object/COFF.h"
-#include "neverd/support/Parallel.h"
-// clang-format on
-
 #define DEBUG_TYPE "neverd-pdb-loader"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -50,12 +43,17 @@
 #include "llvm/DebugInfo/PDB/Native/SymbolStream.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
 #include "llvm/DebugInfo/PDB/PDB.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Support/BinaryStreamReader.h"
 #include "llvm/Support/BinaryStreamRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
+
+// Parallel.h includes the Windows SDK for worker stacks. Its IMAGE_SYM_*
+// macros must not precede LLVM's COFF declarations and inline definitions.
+#include "neverd/support/Parallel.h"
 
 #include <algorithm>
 #include <atomic>

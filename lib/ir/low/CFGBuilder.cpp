@@ -3259,7 +3259,7 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
     };
     for (const LowOp &Op : Rec.Ops) {
       if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
-          Op.Output.isReg() && Op.Output.Size == 4) {
+          (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size == 4) {
         int PCSide = -1;
         for (int Side = 0; Side < 2; ++Side) {
           const std::optional<uint32_t> PC = knownValue(Op.Inputs[Side]);

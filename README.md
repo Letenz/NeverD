@@ -40,6 +40,13 @@ Android Java recovery is available through the experimental `neverd mobile app.a
 
 The experimental iOS workflow `neverd mobile App.ipa -o recovered-ios` exports native C and supported Objective-C/Swift sources from IPA, `.app`, or Mach-O. Runtime layouts, source units, and per-method omissions remain explicit; generated source does not use a bridge to the original binary. See the [iOS guide](docs/ios.md) for setup, coverage semantics, and independent compilation checks.
 
+Experimental [interpreter source recovery](docs/interpreter-recovery.md) uses
+`neverd decompile --devirtualize --func ENTRY` to specialize supported linked
+x64 ELF/PE interpreters into HighC or LLVMC through the shared LowIR/MedIR
+pipeline. Control hints separate decoder contexts without fixing runtime inputs.
+Unresolved control, unsupported semantics, and exhausted budgets fail explicitly;
+this mode does not certify binary replacement or exception equivalence.
+
 ## Why NeverD?
 
 - **1:1 semantics** — hand-written lifters; unsupported opcodes throw under default strict mode
@@ -145,7 +152,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Signature libraries are installed to `build/bin/signatures/` at build time. `sigs --auto` selects the matching set from format, architecture, and bitness.
+Signature libraries are installed to `build/bin/signatures/` at build time. `sigs --auto` selects the matching set from format, architecture, and bitness. For a PE file whose Rich header names its linker's Visual Studio release, it loads only that release's `vs<year>.pat` beside the files that belong to no release. `--sig-base <dir>` selects the same way from another signature tree.
 
 ## Building
 
@@ -284,10 +291,13 @@ neverd <command> [options] <binary>
 | `lift` | `.ll` | Lift to LLVM IR |
 | `decompile` | `.c` / `.sol` / `.rs` | C, EVM Solidity, or SBF Rust selected with `--language` |
 | `decompile -llvm` | `.c` | Via LLVM IR + optimizer |
+| `decompile --devirtualize` | `.c` + optional JSON | Experimental x64 interpreter recovery; requires `--func`; [contract and examples](docs/interpreter-recovery.md) |
 | `mobile` | `.java` / `.c` / `.m` / `.swift` + JSON | Experimental: [Android](docs/android.md), [iOS](docs/ios.md) |
 | `patch` | binary | Rewrite machine code |
 
 ```bash
+neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+  --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
 neverd patch --from-c repl.c --func 0x401000 -o patched binary

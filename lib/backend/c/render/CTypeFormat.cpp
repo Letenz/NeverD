@@ -48,16 +48,21 @@ std::string escapeCString(llvm::StringRef Str) {
     case '"':
       Result += "\\\"";
       break;
-    case '\0':
-      Result += "\\0";
+    case '?':
+      // Avoid trigraph translation in C11 consumers of arbitrary bytes.
+      Result += "\\?";
       break;
     default:
       if (Ch >= 32 && Ch < 127) {
         Result += static_cast<char>(Ch);
       } else {
-        Result += "\\x";
-        Result += llvm::hexdigit(Ch >> 4);
-        Result += llvm::hexdigit(Ch & 0xF);
+        // Hex escapes consume any following hex digits, and a short NUL
+        // escape consumes following octal digits. Exactly three octal
+        // digits encode one byte regardless of the next byte's spelling.
+        Result += '\\';
+        Result += static_cast<char>('0' + (Ch >> 6));
+        Result += static_cast<char>('0' + ((Ch >> 3) & 7));
+        Result += static_cast<char>('0' + (Ch & 7));
       }
       break;
     }

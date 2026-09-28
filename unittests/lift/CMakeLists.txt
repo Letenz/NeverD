@@ -944,6 +944,12 @@ target_include_directories(NeverDLiftTests PRIVATE
 
 # Run source call ABI, binding, and emitted-code checks without rebuilding the
 # complete fixture inventory during mobile decompiler development.
+# MSVC's standard COFF object section limit is too small for this large test
+# translation unit in Release; it is also part of NeverDLiftTests.
+if(MSVC)
+  set_source_files_properties(core/ObjCCallHintTests.cpp PROPERTIES
+    COMPILE_OPTIONS /bigobj)
+endif()
 add_neverd_unittest(NeverDObjCSourceCallTests
   ../loader/SwiftValueWitnessCallTests.cpp
   core/ObjCCategoryTests.cpp

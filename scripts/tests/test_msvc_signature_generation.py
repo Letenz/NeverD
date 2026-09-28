@@ -83,6 +83,44 @@ class FoldTests(unittest.TestCase):
         result = fold(["BB 00 0000 0004 :0000 b", "AA 00 0000 0004 :0000 a"])
         self.assertEqual(result.texts, ["AA 00 0000 0004 :0000 a", "BB 00 0000 0004 :0000 b"])
 
+    def test_references_are_not_part_of_the_key(self) -> None:
+        line = parse_line("AAE8........C3 00 0000 0007 :0000 f ^0002 g ^0002 h C3")
+        self.assertEqual(line.key, "AAE8........C3 00 0000 0007 C3")
+        self.assertEqual(line.refs, ((2, "g"), (2, "h")))
+        self.assertEqual(line.with_refs(((2, "g"),)).text,
+                         "AAE8........C3 00 0000 0007 :0000 f ^0002 g C3")
+
+    def test_copies_under_one_name_keep_the_references_they_share(self) -> None:
+        # The release build calls free, the debug build _free_dbg.
+        result = fold(
+            [
+                "AAE8........C3 00 0000 0007 :0000 f ^0002 free ^0005 g",
+                "AAE8........C3 00 0000 0007 :0000 f ^0002 _free_dbg ^0005 g",
+            ]
+        )
+        self.assertEqual(result.texts, ["AAE8........C3 00 0000 0007 :0000 f ^0005 g"])
+
+    def test_same_bytes_that_call_different_routines_are_kept(self) -> None:
+        result = fold(
+            [
+                "AAE8........C3 00 0000 0007 :0000 ??$less@H@@YA_NXZ ^0002 ??$cmp@H@@YA_NXZ",
+                "AAE8........C3 00 0000 0007 :0000 ??$less@I@@YA_NXZ ^0002 ??$cmp@I@@YA_NXZ",
+            ]
+        )
+        self.assertEqual(len(result.texts), 2)
+        self.assertEqual(result.distinguished_lines, 2)
+        self.assertEqual(result.ambiguous_keys, set())
+
+    def test_a_twin_without_a_telling_reference_leaves_the_bytes_ambiguous(self) -> None:
+        result = fold(
+            [
+                "AAE8........C3 00 0000 0007 :0000 ??$less@H@@YA_NXZ ^0002 ??$cmp@H@@YA_NXZ",
+                "AAE8........C3 00 0000 0007 :0000 unreferenced_twin",
+            ]
+        )
+        self.assertEqual(result.texts, [])
+        self.assertEqual(result.ambiguous_keys, {"AAE8........C3 00 0000 0007"})
+
 
 class SettleDirectoryTests(unittest.TestCase):
     def test_bytes_one_file_found_ambiguous_are_dropped_from_the_others(self) -> None:
@@ -117,6 +155,25 @@ class SettleDirectoryTests(unittest.TestCase):
         self.assertEqual(older.dropped_across_files, 1)
         self.assertEqual(newer.dropped_across_files, 1)
 
+    def test_references_do_not_tell_apart_what_two_files_name_differently(self) -> None:
+        # The Rich header loads one of these files; the line it keeps would
+        # have no rival there, so nothing would check its references.
+        older = fold(["AAE8........C3 00 0000 0007 :0000 _fseeki64_nolock ^0002 _lseeki64"])
+        newer = fold(["AAE8........C3 00 0000 0007 :0000 _fseeki64 ^0002 _fseeki64_nolock"])
+        settle_directory({Path("vs2017.pat"): older, Path("vs2026.pat"): newer})
+        self.assertEqual(older.texts, [])
+        self.assertEqual(newer.texts, [])
+
+    def test_files_that_keep_the_same_told_apart_group_keep_it(self) -> None:
+        group = [
+            "AAE8........C3 00 0000 0007 :0000 ??$less@H@@YA_NXZ ^0002 ??$cmp@H@@YA_NXZ",
+            "AAE8........C3 00 0000 0007 :0000 ??$less@I@@YA_NXZ ^0002 ??$cmp@I@@YA_NXZ",
+        ]
+        older, newer = fold(group), fold(group)
+        settle_directory({Path("vs2022.pat"): older, Path("vs2026.pat"): newer})
+        self.assertEqual(len(older.texts), 2)
+        self.assertEqual(len(newer.texts), 2)
+
     def test_a_claim_several_files_repeat_under_one_name_is_kept(self) -> None:
         line = "11223344 00 0000 0004 :0000 memcpy"
         older, newer = fold([line]), fold([line])
@@ -142,7 +199,7 @@ class OpeningTests(unittest.TestCase):
         result = fold([funclet, longer])
         settle_directory({Path("vs2026.pat"): result})
         self.assertEqual(result.texts, [longer])
-        self.assertEqual(result.dropped_openings, 1)
+        self.assertEqual(result.dropped_covered, 1)
 
     def test_the_same_routine_at_another_length_does_not_drop_it(self) -> None:
         short = f"{self.PROLOGUE} 00 0000 0010 :0000 ?g@@YAXXZ"
@@ -153,6 +210,25 @@ class OpeningTests(unittest.TestCase):
         short = f"{self.PROLOGUE}F30300AA 00 0000 0014 :0000 ?f@@YAXXZ"
         longer = f"{self.PROLOGUE}........FD7BC1A8 00 0000 0018 :0000 ?g@@YAXXZ"
         self.assertEqual(sorted(self._settle(short, longer)), sorted([short, longer]))
+
+    def test_a_line_whose_wildcards_hide_what_another_routine_states(self) -> None:
+        # MFC's initializers differ only in the message they register; a
+        # routine that relocates a whole MOVW/MOVT pair where they state it
+        # matches every one of them.
+        short = "2DE90048EB46................024B1860BDE80088FEDE........ 00 0000 001C :0000 ?f@@YAXXZ"
+        other = "2DE90048EB4640F2000CC0F2000C024B1860BDE80088FEDE........ 00 0000 001C :0000 ?g@@YAXXZ"
+        self.assertEqual(self._settle(short, other), [other])
+
+    def test_a_routine_that_relocates_what_a_line_states_does_not_cover_it(self) -> None:
+        stated = "2DE90048EB4640F2000CC0F2000C024B1860BDE80088 00 0000 0016 :0000 ?f@@YAXXZ"
+        relocated = "2DE90048EB46................024B1860BDE80088 00 0000 0016 :0000 ?g@@YAXXZ"
+        # The relocated line is the one that matches both routines.
+        self.assertEqual(self._settle(stated, relocated), [stated])
+
+    def test_a_line_that_starts_with_a_relocation_is_kept(self) -> None:
+        first = "E8........4883C428C3CCCCCCCCCCCCCCCC 00 0000 0012 :0000 ?f@@YAXXZ"
+        other = "E8000000004883C428C3CCCCCCCCCCCCCCCC 00 0000 0012 :0000 ?g@@YAXXZ"
+        self.assertEqual(sorted(self._settle(first, other)), sorted([first, other]))
 
     def test_a_long_line_opens_one_with_the_same_crc_and_a_longer_tail(self) -> None:
         lead = "48895C2408574883EC20488BD9E8........488BCBE8........488B5C2430"
@@ -317,6 +393,40 @@ class BuildTests(unittest.TestCase):
             [source["asset"] for source in provenance["sources"]],
             ["vs2026-14.50.1-arm64", "vs2026-14.51.2-arm64"],
         )
+
+    def test_imported_lines_join_the_generated_file_under_the_same_rules(self) -> None:
+        self._asset(
+            "vs2010-10.0.30319-x86",
+            {"kind": "toolset", "arch": "x86", "visual_studio": {"year": 2010},
+             "toolset_version": "10.0.30319"},
+            {"vc/lib/x86/libcmt.lib": b"a"},
+        )
+        directory = self.root / "sigs/pe/x86/32"
+        directory.mkdir(parents=True)
+        (directory / "vs2010.imported").write_text(
+            "0102030405060708 00 0000 0008 :0000 ?Create@CWnd@@UAEHPB_W0KABUtagRECT@@PAV1@IPAUCCreateContext@@@Z\n"
+            "AA06CCDD 00 0000 0004 :0000 claimed_by_libcmt_too\n"
+            "; unresolved: 0A0B0C0D0E0F1011 00 0000 0008 :0000 _Rizin_spelled__YAXXZ\n"
+        )
+
+        report = self._run()
+
+        lines = (directory / "vs2010.pat").read_text().splitlines()
+        # The ATL/MFC line no collected library has joins the file; the line
+        # whose bytes the runtime library names differently is ambiguous.
+        self.assertIn(
+            "0102030405060708 00 0000 0008 :0000 "
+            "?Create@CWnd@@UAEHPB_W0KABUtagRECT@@PAV1@IPAUCCreateContext@@@Z",
+            lines,
+        )
+        self.assertFalse(any("AA06CCDD" in line for line in lines))
+        # A line kept as a comment has no linkage name and stays out.
+        self.assertFalse(any("0A0B0C0D" in line for line in lines))
+        provenance = json.loads((directory / "vs2010.sources.json").read_text())
+        self.assertIn({"asset": "vs2010.imported", "kind": "imported", "lines": 2},
+                      [{k: v for k, v in source.items() if k != "archive_sha256"}
+                       for source in provenance["sources"]])
+        self.assertIn("ambiguous groups dropped", report)
 
     def test_archive_that_disagrees_with_its_manifest_fails(self) -> None:
         self._asset(

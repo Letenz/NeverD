@@ -14,6 +14,7 @@
 #ifndef NEVERD_PIPELINE_PIPELINE_H
 #define NEVERD_PIPELINE_PIPELINE_H
 
+#include "neverd/analysis/InterpreterSpecialization.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
 #include "neverd/ir/high/HighIR.h"
@@ -50,6 +51,9 @@ class PipelineTestPeer;
 class Decoder;
 
 struct PipelineOptions {
+  /// Experimental source recovery of one interpreter entry. Requires exactly
+  /// one OnlyFunctionEntries element; never authorizes binary patching.
+  std::optional<analysis::SpecializationOptions> InterpreterSpecialization;
   bool DumpLow = false;
   bool DumpMed = false;
   bool DumpHigh = false;
@@ -167,6 +171,8 @@ struct PipelineResult {
   /// image's segment, symbol, and object metadata.
   const BinaryImage *SourceImage = nullptr;
   std::vector<LowFunc> LowFuncs;
+  /// Recovery evidence is separate from ordinary native lift provenance.
+  std::optional<analysis::SpecializationResult> InterpreterRecovery;
   /// Direct-callee GPR write summaries (see CallRegisterEffects.h), keyed by
   /// callee entry.  Absent entries keep the ABI clobber set.
   std::map<va_t, uint32_t> CallMayWriteGPRs;

@@ -176,6 +176,9 @@ keeps in a release:
 - Visual Studio 2015 (v140) for x86, x64 and ARM32.
 - Windows SDK 10.0.17763 through 10.0.26100: the Universal CRT and the
   user-mode libraries.
+- Visual Studio 2005 through 2013 for x86 and x64, and 2012 and 2013 for
+  ARM32, unpacked from Microsoft's installation media together with the
+  Windows SDK libraries those media install.
 
 ```bash
 cmake --build build --target neverd-sigmaker
@@ -192,7 +195,13 @@ so do lines from every SDK version.
 
 A file is rebuilt from its assets alone, so the lines it held before are
 replaced; download every release before running the script, as the
-signatures repository's `msvc-signatures.yml` does.
+signatures repository's `msvc-signatures.yml` does. The one other input is a
+`<name>.imported` file next to the output, which the signatures repository
+keeps for a release whose libraries it collects only in part: the lines an
+earlier import holds for routines no collected library defines, renamed to
+the linkage names the libraries spell. Its lines join the generated ones and
+every rule below applies to them alike; its comment lines, which hold what
+could not be renamed, are not read, and neither does the loader read the file.
 
 When two lines state the same bytes under different names, all of them are
 dropped and the count is reported: the pattern cannot tell those routines
@@ -203,10 +212,30 @@ are bytes that two files name differently. Without this, a debug-CRT wrapper
 that is unique among the SDK's libraries would still name the byte-identical
 template instantiations that `vs2026.pat` had dropped as ambiguous.
 
-The matcher compares a line only as far as the line's own length, so a line
-whose bytes open a longer routine of another name is dropped as well. An ARM64
-catch funclet that is nothing but a prologue is the typical case: its line
-would name every function that begins with the same prologue.
+Each line also names, as `^offset name`, the routines its function branches
+to directly (`neverd-sigmaker --references`): the rel32 field of an x86 or x64
+`call` or `jmp`, and the ARM64 `B`/`BL` or Thumb-2 `B.W`/`BL`/`BLX`
+instruction. The matcher follows each branch in the image. A target that the
+other matches name differently drops the match; a target they name the same,
+or that the named routine's own pattern matches, confirms it; a target nothing
+names, such as an import thunk, a veneer or a routine the program replaced,
+decides nothing. Lines of one file that state the same bytes under different
+names are therefore kept when, for every two of them, one offset holds a
+reference in both to different routines: at a match only one of them can be
+confirmed. Bytes that two files name differently are still dropped from both,
+because the Rich header loads only one of them, where the line would have no
+rival to be told apart from.
+Copies of one routine whose builds call different routines, such as the
+debug CRT's `_free_dbg` where the release CRT calls `free`, keep the
+references they share. A loader older than the references rejects such lines.
+
+The matcher compares a line only as far as the line's own length and accepts
+any byte where the line has a wildcard, so a line is dropped as well when a
+routine of another name, at least as long, states every byte the line states.
+An ARM64 catch funclet that is nothing but a prologue is the typical case: its
+line would name every function that begins with the same prologue. So is a
+short routine whose relocated operands are wildcards in its own line but
+fixed in a longer routine's.
 
 Every file written is read back through `neverd-sigmaker --verify`, which uses
 the loader's parser, because one bad line makes the loader reject its whole

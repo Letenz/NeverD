@@ -355,6 +355,43 @@ TEST(HighSymSimplify, AddressConstantsRetainTheirOriginAcrossNumericRewrites) {
   }
 }
 
+TEST(HighSymSimplify, SynthesizedNumericConstantsKeepScalarIdentity) {
+  using P = ConstantAddressProvenance;
+  constexpr uint64_t Base = 0x402000;
+  MedVar Input;
+  Input.Kind = MedVar::Param;
+  Input.Size = 8;
+  const auto X = HighExpr::makeVar(Input);
+  for (bool ConstantResult : {false, true}) {
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    auto Numeric = HighExpr::makeConst(Base, 8, P::Scalar);
+    // Reassociation synthesizes an address-shaped number used in arithmetic;
+    // cancellation also exercises a wholly constant rewritten expression.
+    auto Value = HighExpr::makeBinop(
+        NdOp::INT_ADD, HighExpr::makeBinop(NdOp::INT_ADD, X, Numeric),
+        HighExpr::makeConst(4, 8, P::Scalar));
+    Return.RetVal =
+        ConstantResult ? HighExpr::makeBinop(NdOp::INT_SUB, Value, X) : Value;
+    std::vector<HighStmt> Body{Return};
+    simplifyExprSemantics(Body);
+    std::vector<ExprPtr> Pending{Body[0].RetVal};
+    bool FoundCombined = false;
+    while (!Pending.empty()) {
+      auto E = Pending.back();
+      Pending.pop_back();
+      ASSERT_TRUE(E);
+      if (E->Kind == ExprKind::Const) {
+        FoundCombined |= E->ConstVal == Base + 4;
+        EXPECT_EQ(E->ConstProvenance, P::Scalar);
+        EXPECT_EQ(E->AddressOwnerVA, InvalidVA);
+      }
+      Pending.insert(Pending.end(), E->Operands.begin(), E->Operands.end());
+    }
+    EXPECT_TRUE(FoundCombined);
+  }
+}
+
 TEST(HighSymSimplify, KeepsWhatItCannotSeeInsideOf) {
   // A memory read contributes to the sum. It must survive as a snapshot at
   // its original statement while the surrounding arithmetic is simplified.

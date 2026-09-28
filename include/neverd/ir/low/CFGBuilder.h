@@ -1211,6 +1211,9 @@ private:
     std::vector<uint16_t> AlternativeFrameValueOffsets;
     std::vector<JumpTableValueOccurrence> AuthenticatedFrameStoreWriters;
     std::vector<JumpTableValueOccurrence> AuthenticatedFrameMemcpyWriters;
+    /// Fold pure, exactly sized scalar AND/OR/SHL nodes while proving a
+    /// constant at this use. Other relations retain producer identity.
+    bool FoldScalarConstantOps = false;
   };
 
   struct JumpTableFrameAddressUse {
@@ -1683,11 +1686,10 @@ private:
   /// Return each branch's separate finite runtime coordinates only after
   /// replaying every pair on the frozen owner graph.
   bool proveCandidateFiniteAbsoluteSiblings(
-      CFGBuilder &Scratch, const InsnRecord &Current,
-      const JumpTableInfo &Info, const std::vector<va_t> &PhysicalTargets,
+      CFGBuilder &Scratch, const InsnRecord &Current, const JumpTableInfo &Info,
+      const std::vector<va_t> &PhysicalTargets,
       std::map<va_t, std::vector<uint32_t>> &FiniteDomains,
-      size_t *EvidenceBudget,
-      bool *AnalysisIncomplete) const;
+      size_t *EvidenceBudget, bool *AnalysisIncomplete) const;
   uint32_t proveGroupDenseMaskBound(const InsnRecord &Rec,
                                     const JumpTableInfo &Info,
                                     size_t *AggregateEvidenceBudget,
@@ -1959,9 +1961,8 @@ private:
   /// The absolute singleton output is minted only by the paired, closed-world
   /// finite proof. Keep the ordinary signature for other resolver callers.
   uint32_t inferBoundsFromMaskWithAbsoluteProof(
-      const InsnRecord &Rec, const JumpTableInfo &Info,
-      bool AllowNonContiguous, bool *IncompleteIndexDomain,
-      bool *UsedNonContiguous,
+      const InsnRecord &Rec, const JumpTableInfo &Info, bool AllowNonContiguous,
+      bool *IncompleteIndexDomain, bool *UsedNonContiguous,
       std::vector<uint32_t> *FeasibleCoordinates,
       std::vector<JumpTableMaskKnownOneWitness> *KnownOneWitnesses,
       bool RequireProducerReachability,

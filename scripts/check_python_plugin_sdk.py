@@ -322,6 +322,36 @@ def check_output_languages(errors: list[str]) -> None:
         )
 
 
+def check_devirtualization_abi(errors: list[str]) -> None:
+    import ctypes
+
+    from neverd_plugin import abi
+
+    source = (ROOT / "include/neverd/sdk/NeverDCAPIDevirtualize.h").read_text(
+        encoding="utf-8"
+    )
+    native_ctypes = {
+        "size_t": ctypes.c_size_t,
+        "int": ctypes.c_int,
+        "int64_t": ctypes.c_int64,
+        "uint16_t": ctypes.c_uint16,
+        "uint32_t": ctypes.c_uint32,
+        "uint64_t": ctypes.c_uint64,
+        "const char *const *": ctypes.POINTER(ctypes.c_char_p),
+        "const neverd_devirtualize_frame_slot_v1 *": ctypes.POINTER(
+            abi.NeverDDevirtualizeFrameSlotV1
+        ),
+    }
+    for name, struct in (
+        ("neverd_devirtualize_frame_slot_v1", abi.NeverDDevirtualizeFrameSlotV1),
+        ("neverd_devirtualize_options_v1", abi.NeverDDevirtualizeOptionsV1),
+    ):
+        native = parse_c_struct_layout(source, name)
+        expected = tuple((field, native_ctypes.get(kind)) for field, kind in native)
+        if expected != tuple(struct._fields_) or any(t is None for _, t in expected):
+            errors.append(f"{name} Python field types/order differ from the C ABI")
+
+
 def check_translation_abi(errors: list[str]) -> None:
     import ctypes
 
@@ -800,6 +830,7 @@ def audit_repository(*, include_workflows: bool = True) -> list[str]:
     check_plugin_enums(errors)
     check_output_languages(errors)
     check_translation_abi(errors)
+    check_devirtualization_abi(errors)
     check_driver_emulation_abi(errors)
     check_sanitizer_abi(errors)
     check_concolic_abi(errors)

@@ -284,6 +284,12 @@ inline size_t inferObjCNativeDependencies(
         continue;
       }
       if (auto Mangled =
+              swiftMangledDoubleFloatingPropertySourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
+      if (auto Mangled =
               swiftMangledClassReferenceGetterSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
@@ -334,6 +340,18 @@ inline size_t inferObjCNativeDependencies(
       }
       if (auto Mangled =
               swiftMangledCoderClassInitializerSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
+      if (auto Mangled =
+              swiftMangledNibBundleClassInitializerSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
+      if (auto Mangled = swiftMangledBundleModuleClosureSourceABI(Image, Target,
+                                                                  *H->second)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;
         continue;

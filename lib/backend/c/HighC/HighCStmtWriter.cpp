@@ -622,8 +622,17 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       const uint16_t AccessSize =
           Stmt.StoreVal->Type ? Stmt.StoreVal->Type->Size : 0;
       if (auto Member = typedMemberAccess(*Stmt.StoreAddr, AccessSize)) {
-        const std::string ValS = exprStr(*Stmt.StoreVal);
-        if (ValS == *Member || ValS.find(*Member) != std::string::npos)
+        // Text containing a destination can still compute a new value (for
+        // example a modular increment). Only an exact, ordinary self-load
+        // proves this field assignment redundant.
+        const HighExpr &Value = *Stmt.StoreVal;
+        if (Stmt.MemoryOrdering == NdMemoryOrdering::None &&
+            Stmt.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Value.Kind == ExprKind::Load &&
+            Value.MemoryOrdering == NdMemoryOrdering::None &&
+            Value.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Value.Operands.size() == 1 && Value.Operands[0] &&
+            Stmt.StoreAddr->structuralEq(*Value.Operands[0]))
           break;
       }
     }
@@ -2489,10 +2498,10 @@ const HighExpr *HighCWriter::asIncrementBase(const HighExpr &Val,
     Delta = static_cast<int64_t>(Imm | ~Mask);
   else
     Delta = static_cast<int64_t>(Imm);
-  if (Minus)
-    Delta = -Delta;
   if (Delta == 0 || Delta == std::numeric_limits<int64_t>::min())
     return nullptr;
+  if (Minus)
+    Delta = -Delta;
   const uint64_t Abs =
       Delta > 0 ? static_cast<uint64_t>(Delta) : static_cast<uint64_t>(-Delta);
   if (Abs > 0xFFFFu)
@@ -2506,15 +2515,13 @@ bool HighCWriter::incrementBaseMatchesAddr(const HighExpr &Base,
   if (!B)
     B = &Base;
   if (B->Kind == ExprKind::Load && !B->Operands.empty() && B->Operands[0])
-    return samePeeledAddr(*B->Operands[0], Addr);
+    return B->Operands[0]->structuralEq(Addr);
   if (B->Kind != ExprKind::Var && B->Kind != ExprKind::Phi)
     return false;
   auto MatchesLoad = [&](const HighExpr *E) {
-    const HighExpr *Fwd = peelIntegerViewOps(E);
-    if (!Fwd)
-      Fwd = E;
-    return Fwd && Fwd->Kind == ExprKind::Load && !Fwd->Operands.empty() &&
-           Fwd->Operands[0] && samePeeledAddr(*Fwd->Operands[0], Addr);
+    return E && E->Kind == ExprKind::Load && E->Type && B->Type &&
+           E->Type->Size == B->Type->Size && !E->Operands.empty() &&
+           E->Operands[0] && E->Operands[0]->structuralEq(Addr);
   };
   const std::string Name = varName(B->Var);
   auto It = ValueForward.find(Name);
@@ -2610,10 +2617,40 @@ bool HighCWriter::isInplaceAddStore(const HighStmt &S, int64_t &Delta) const {
       S.MemoryAddressSpace != NdMemoryAddressSpace::Default)
     return false;
   const TypeRef &Ty = S.StoreVal->Type;
-  if (!Ty || Ty->Kind != NdTypeKind::Int)
+  // A signed compound assignment can overflow. It is safe to abbreviate a
+  // signed IR update only when the actual displayed lvalue is an unsigned
+  // field or named slot of the same width.
+  if (!Ty || Ty->Kind != NdTypeKind::Int || Ty->IsEnum)
     return false;
   if (Ty->Size != 1 && Ty->Size != 2 && Ty->Size != 4 && Ty->Size != 8)
     return false;
+  // A displayed field/slot may have a different signedness from its IR view.
+  // Both load hiding and statement rendering must make the same decision.
+  TypeRef DisplayType = typedMemberType(*S.StoreAddr, Ty->Size);
+  if (auto Disp = frameDisplacement(*S.StoreAddr)) {
+    auto Slot = FrameSlots.find(*Disp);
+    if (Slot != FrameSlots.end())
+      DisplayType = Slot->second.Type;
+  }
+  if (DisplayType &&
+      (DisplayType->Kind != NdTypeKind::Int || DisplayType->IsSigned ||
+       DisplayType->IsEnum || DisplayType->Size != Ty->Size))
+    return false;
+  if (Ty->IsSigned &&
+      (!DisplayType || (!namedFrameSlot(*S.StoreAddr) &&
+                        !typedMemberAccess(*S.StoreAddr, Ty->Size))))
+    return false;
+  // Peeling a narrowing/widening view or a narrow signed immediate changes
+  // the update's value. Only abbreviate an exact same-width arithmetic step.
+  const auto *Arithmetic = peelIntegerViewOps(S.StoreVal.get());
+  if (Arithmetic != S.StoreVal.get() || !Arithmetic->Type ||
+      Arithmetic->Type->Size != Ty->Size || Arithmetic->Operands.size() != 2)
+    return false;
+  for (const auto &Operand : Arithmetic->Operands)
+    if (!Operand || !Operand->Type || Operand->Type->Kind != NdTypeKind::Int ||
+        Operand->Type->Size != Ty->Size ||
+        peelIntegerViewOps(Operand.get()) != Operand.get())
+      return false;
   const HighExpr *Base = asIncrementBase(*S.StoreVal, Delta);
   return Base && incrementBaseMatchesAddr(*Base, *S.StoreAddr);
 }

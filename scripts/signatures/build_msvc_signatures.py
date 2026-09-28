@@ -25,7 +25,11 @@ Four rules decide what a file holds:
 
   * A file is rebuilt from its assets alone.  Lines it held before, from an
     earlier run or from another tool, are replaced, so give the script every
-    asset of a directory at once.
+    asset of a directory at once.  The exception is `<file>.imported`, which
+    the signatures repository keeps for a release whose libraries it collects
+    only in part: the lines an earlier import holds for routines no collected
+    library defines, already renamed to linkage names.  They join the
+    generated lines under every rule below.
 
   * When lines state the same bytes under different names, all of them are
     dropped.  The pattern cannot tell those routines apart -- MSVC folds
@@ -34,10 +38,18 @@ Four rules decide what a file holds:
     reads every file of a directory together, so this holds across the
     directory: bytes that one file's libraries give two names are dropped
     from every file of it, and so are bytes two files name differently.
-    NeverD's matcher compares a line only as far as the line's own length,
-    so a line whose bytes open a longer routine of another name is dropped
-    as well: in a linked image it would name that routine too.  The counts
-    are reported.
+    NeverD's matcher compares a line only as far as the line's own length
+    and accepts any byte where the line has a wildcard, so a line is dropped
+    as well when a routine of another name, at least as long, states every
+    byte the line states: in a linked image it would name that routine too.
+    The counts are reported.
+
+  * Lines state the routines they branch to as `^offset name` references,
+    which the matcher checks in the image (`neverd-sigmaker --references`).
+    Lines of one file with the same bytes and different names are kept when
+    references tell every two of them apart, because at a match only one of
+    them can be confirmed.  Across files the rule above stands: the Rich
+    header loads one release's file, where such a line would have no rival.
 
 Every file written is read back through `neverd-sigmaker --verify`, the
 loader's own parser: the loader rejects a whole directory for one bad line.
@@ -53,7 +65,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import fnmatch
+import hashlib
 import json
 import shutil
 import subprocess
@@ -76,6 +90,15 @@ ARCHITECTURES = {
 }
 
 LIBRARY_SUFFIXES = (".lib", ".obj")
+
+# Lines whose first bytes are relocated are not searched for routines that
+# state them; see settle_directory.
+MIN_PREFIX_BYTES = 4
+
+# neverd-sigmaker's leading pattern, and the size of a candidate range worth
+# indexing rather than scanning.
+LEAD_BYTES = 32
+SMALL_RANGE = 64
 
 
 class BuildError(RuntimeError):
@@ -181,11 +204,61 @@ def extract(asset: Asset, destination: Path) -> list[Path]:
 
 @dataclass(frozen=True)
 class PatternLine:
-    """One .pat line split into what it asserts and what it names."""
+    """One .pat line split into what it asserts and what it names.
+
+    `refs` are its `^offset name` references: the routines it branches to,
+    which the matcher checks against the image.  They are not part of the
+    key, because they state nothing about the line's own bytes.
+    """
 
     text: str
     key: str
     names: tuple[str, ...]
+    refs: tuple[tuple[int, str], ...] = ()
+
+    def with_refs(self, refs: tuple[tuple[int, str], ...]) -> "PatternLine":
+        """This line stating only `refs`."""
+
+        tokens = self.key.split()
+        head, tail = tokens[:4], tokens[4:]
+        stated = [f"^{offset:04X} {name}" for offset, name in refs]
+        text = " ".join([*head, *self.names, *stated, *tail])
+        return PatternLine(text, self.key, self.names, refs)
+
+
+def distinguished(lines: list[PatternLine]) -> bool:
+    """Whether references tell apart every two of these same-byte lines.
+
+    Two lines are told apart when one offset holds a reference in both and
+    they name different routines there: at a match, only one of them can be
+    confirmed.  Anything less leaves the bytes naming several routines.
+    """
+
+    tables = [dict(line.refs) for line in lines]
+    for first in range(len(tables)):
+        for second in range(first + 1, len(tables)):
+            a, b = tables[first], tables[second]
+            if not any(offset in b and b[offset] != name for offset, name in a.items()):
+                return False
+    return True
+
+
+def common_refs(lines: list[PatternLine]) -> PatternLine:
+    """One line for copies that make the same claim under the same names.
+
+    Builds of one library can call different routines from byte-identical
+    code -- the debug CRT's `_free_dbg` where the release one calls `free` --
+    so only the references every copy states are kept; the others would
+    contradict the build that lacks them.
+    """
+
+    first = lines[0]
+    if all(line.refs == first.refs for line in lines[1:]):
+        return first
+    shared = set(first.refs)
+    for line in lines[1:]:
+        shared &= set(line.refs)
+    return first.with_refs(tuple(sorted(shared)))
 
 
 @dataclass(frozen=True)
@@ -204,25 +277,49 @@ class Shape:
         tail = tokens[4] if len(tokens) > 4 else ""
         return cls(tokens[0], int(tokens[1], 16), tokens[2], int(tokens[3], 16), tail)
 
-    def opens(self, other: "Shape") -> bool:
-        """Whether a longer routine's line states every byte this one states.
+    def stated_prefix(self) -> str:
+        """The leading bytes up to the first one a relocation rewrites."""
 
-        Only what both lines state can be compared, so a byte that one line
-        leaves to a relocation and the other states counts as a difference;
-        the check errs toward keeping a line.
+        for index in range(0, len(self.lead), 2):
+            if self.lead[index] == ".":
+                return self.lead[:index]
+        return self.lead
+
+    def covered_by(self, other: "Shape") -> bool:
+        """Whether a routine at least as long states every byte this line states.
+
+        NeverD's matcher compares a line only as far as its own length and
+        accepts anything where the line has a wildcard, so such a routine
+        matches this line wherever it is linked.  Only what the other line
+        states can be compared: a byte it leaves to a relocation, or covers by
+        a CRC of a different span, counts as a difference, so the check errs
+        toward keeping a line.
         """
 
-        if other.total <= self.total:
+        if other.total < self.total:
+            return False
+        lead_bytes = min(len(self.lead), 2 * self.total)
+        if not _states(self.lead[:lead_bytes], other.lead):
             return False
         if len(self.lead) >= 2 * self.total:
             # The whole routine fits in the leading pattern.
-            return other.lead.startswith(self.lead)
-        return (
-            other.lead == self.lead
-            and other.crc_len == self.crc_len
-            and other.crc == self.crc
-            and other.tail.startswith(self.tail)
-        )
+            return True
+        if other.crc_len != self.crc_len or (self.crc_len and other.crc != self.crc):
+            return False
+        return _states(self.tail, other.tail)
+
+
+def _states(pattern: str, other: str) -> bool:
+    """Whether `other` states every byte `pattern` states, the same way."""
+
+    if len(other) < len(pattern.rstrip(".")):
+        return False
+    for index in range(0, len(pattern), 2):
+        if pattern[index] == ".":
+            continue
+        if other[index : index + 2] != pattern[index : index + 2]:
+            return False
+    return True
 
 
 def parse_line(text: str) -> PatternLine | None:
@@ -239,6 +336,7 @@ def parse_line(text: str) -> PatternLine | None:
     if len(tokens) < 6:
         raise BuildError(f"malformed pattern line: {stripped[:120]}")
     names: list[str] = []
+    refs: list[tuple[int, str]] = []
     rest = tokens[:4]
     index = 4
     while index < len(tokens):
@@ -247,11 +345,15 @@ def parse_line(text: str) -> PatternLine | None:
             names.append(f"{token} {tokens[index + 1]}")
             index += 2
             continue
+        if token.startswith("^") and index + 1 < len(tokens):
+            refs.append((int(token[1:], 16), tokens[index + 1]))
+            index += 2
+            continue
         rest.append(token)
         index += 1
     if not names:
         raise BuildError(f"pattern line names nothing: {stripped[:120]}")
-    return PatternLine(stripped, " ".join(rest), tuple(names))
+    return PatternLine(stripped, " ".join(rest), tuple(names), tuple(sorted(refs)))
 
 
 @dataclass
@@ -265,9 +367,12 @@ class FoldResult:
     duplicates: int = 0
     conflicting_lines: int = 0
     conflicting_groups: int = 0
+    # Lines kept although others state the same bytes: references tell them
+    # apart.
+    distinguished_lines: int = 0
     conflict_examples: list[list[str]] = field(default_factory=list)
     dropped_across_files: int = 0
-    dropped_openings: int = 0
+    dropped_covered: int = 0
 
     @property
     def texts(self) -> list[str]:
@@ -280,21 +385,28 @@ def fold(lines: list[str]) -> FoldResult:
     A group of lines with the same key but more than one set of names is
     ambiguous: the bytes cannot say which routine they are.  All of its
     lines are dropped, and the key is kept so that `settle_directory` can
-    drop the same bytes from the other files of the directory.
+    drop the same bytes from the other files of the directory -- unless
+    their references tell every two of them apart (see `distinguished`),
+    when the matcher can: they are all kept.
     """
 
-    groups: dict[str, dict[tuple[str, ...], PatternLine]] = {}
+    copies: dict[str, dict[tuple[str, ...], list[PatternLine]]] = {}
     seen = 0
     for raw in lines:
         parsed = parse_line(raw)
         if parsed is None:
             continue
         seen += 1
-        groups.setdefault(parsed.key, {}).setdefault(parsed.names, parsed)
+        copies.setdefault(parsed.key, {}).setdefault(parsed.names, []).append(parsed)
 
     result = FoldResult(lines=[])
-    for key, variants in groups.items():
+    for key, by_names in copies.items():
+        variants = {names: common_refs(lines) for names, lines in by_names.items()}
         result.evidence.extend(variants.values())
+        if len(variants) > 1 and distinguished(list(variants.values())):
+            result.lines.extend(variants.values())
+            result.distinguished_lines += len(variants)
+            continue
         if len(variants) > 1:
             result.ambiguous_keys.add(key)
             result.conflicting_groups += 1
@@ -305,7 +417,7 @@ def fold(lines: list[str]) -> FoldResult:
         (line,) = variants.values()
         result.lines.append(line)
     result.lines.sort(key=lambda line: line.text)
-    result.duplicates = seen - sum(len(v) for v in groups.values())
+    result.duplicates = seen - sum(len(v) for v in copies.values())
     return result
 
 
@@ -320,45 +432,98 @@ def settle_directory(results: dict[Path, FoldResult]) -> None:
     a CRT routine that several toolsets share unchanged, are kept.
     """
 
-    claims: dict[str, tuple[str, ...] | None] = {}
+    # The names each file gives each key.  A key stays only if no file found
+    # it ambiguous and every file that states it gives it the same names:
+    # with the Rich header choosing one release's file, references tell
+    # same-byte routines apart only among the lines of that one file.
+    claims: dict[str, frozenset[tuple[str, ...]] | None] = {}
     for result in results.values():
         for key in result.ambiguous_keys:
             claims[key] = None
     for result in results.values():
+        named: dict[str, set[tuple[str, ...]]] = {}
         for line in result.lines:
-            if line.key not in claims:
-                claims[line.key] = line.names
-            elif claims[line.key] != line.names:
-                claims[line.key] = None
+            named.setdefault(line.key, set()).add(line.names)
+        for key, names in named.items():
+            if key not in claims:
+                claims[key] = frozenset(names)
+            elif claims[key] != frozenset(names):
+                claims[key] = None
     for result in results.values():
         kept = [line for line in result.lines if claims[line.key] is not None]
         result.dropped_across_files = len(result.lines) - len(kept)
         result.lines = kept
 
-    # A line that opens another agrees with it on its first 16 bytes, which
-    # every line states or leaves to a relocation, so bucketing by them
-    # loses nothing.
-    openings: dict[str, list[tuple[Shape, tuple[str, ...]]]] = {}
+    # A routine that states every byte of a line begins with the bytes the
+    # line states before its first wildcard, so sorting every claim by its
+    # leading bytes puts the candidates in one range.
+    claimed: list[tuple[str, Shape, tuple[str, ...]]] = []
     for result in results.values():
         for line in result.evidence:
             shape = Shape.of(line.key)
-            openings.setdefault(shape.lead[:32], []).append((shape, line.names))
-    for bucket in openings.values():
-        bucket.sort(key=lambda item: -item[0].total)
+            claimed.append((shape.lead, shape, line.names))
+    claimed.sort(key=lambda item: item[0])
+    leads = [item[0] for item in claimed]
+    # Within one range, which claims state which byte at which position of
+    # the leading pattern: a covering routine is in every set a line's own
+    # stated bytes pick out.
+    stating: dict[tuple[int, int], list[dict[str, set[int]]]] = {}
+
+    def index(start: int, end: int) -> list[dict[str, set[int]]]:
+        if (start, end) not in stating:
+            positions: list[dict[str, set[int]]] = [{} for _ in range(LEAD_BYTES)]
+            for k in range(start, end):
+                lead = claimed[k][0]
+                for offset in range(0, min(len(lead), 2 * LEAD_BYTES), 2):
+                    value = lead[offset : offset + 2]
+                    if value != "..":
+                        positions[offset // 2].setdefault(value, set()).add(k)
+            stating[(start, end)] = positions
+        return stating[(start, end)]
+
+    # A routine that covers a line longer than the leading pattern has the
+    # same CRC span with the same CRC.
+    by_crc: dict[tuple[int, str], list[int]] = {}
+    for k, (_, other, _) in enumerate(claimed):
+        if other.crc_len:
+            by_crc.setdefault((other.crc_len, other.crc), []).append(k)
+
     for result in results.values():
         kept = []
         for line in result.lines:
             shape = Shape.of(line.key)
-            opened = False
-            for other, names in openings.get(shape.lead[:32], ()):
-                if other.total <= shape.total:
-                    break
-                if names != line.names and shape.opens(other):
-                    opened = True
-                    break
-            if not opened:
+            prefix = shape.stated_prefix()
+            covered = False
+            if shape.crc_len and len(shape.lead) < 2 * shape.total:
+                for k in by_crc.get((shape.crc_len, shape.crc), ()):
+                    _, other, names = claimed[k]
+                    if names != line.names and other != shape and shape.covered_by(other):
+                        covered = True
+                        break
+            # A line whose first bytes are relocated has no range to search;
+            # it is kept.
+            elif len(prefix) >= 2 * MIN_PREFIX_BYTES:
+                start = bisect.bisect_left(leads, prefix)
+                end = bisect.bisect_right(leads, prefix + "~")
+                candidates: set[int] | None = None
+                if end - start > SMALL_RANGE:
+                    positions = index(start, end)
+                    for offset in range(len(prefix), min(len(shape.lead), 2 * shape.total), 2):
+                        value = shape.lead[offset : offset + 2]
+                        if value == "..":
+                            continue
+                        found = positions[offset // 2].get(value, set())
+                        candidates = found if candidates is None else candidates & found
+                        if not candidates:
+                            break
+                for k in sorted(candidates) if candidates is not None else range(start, end):
+                    _, other, names = claimed[k]
+                    if names != line.names and other != shape and shape.covered_by(other):
+                        covered = True
+                        break
+            if not covered:
                 kept.append(line)
-        result.dropped_openings = len(result.lines) - len(kept)
+        result.dropped_covered = len(result.lines) - len(kept)
         result.lines = kept
 
 
@@ -379,6 +544,7 @@ def run_sigmaker(
         machine,
         "--tail",
         str(tail),
+        "--references",
     ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.stderr.strip():
@@ -422,6 +588,30 @@ def generate(
     return generated, sources
 
 
+def imported_lines(output: Path, relative: Path) -> tuple[list[str], dict | None]:
+    """The lines a file keeps from an earlier import, and their provenance.
+
+    A Visual Studio release whose libraries the signatures repository collects
+    only in part keeps, in `<file>.imported`, the imported lines for routines
+    no collected library defines; the loader never reads that file.  Its lines
+    join the generated ones here, and every rule above applies to them as to
+    any other claim.  Comment lines, which hold what could not be given a
+    linkage name, are skipped.
+    """
+
+    path = output / relative.with_suffix(".imported")
+    if not path.is_file():
+        return [], None
+    data = path.read_bytes()
+    lines = [line for line in data.decode("utf-8").splitlines() if parse_line(line)]
+    return lines, {
+        "asset": path.name,
+        "archive_sha256": hashlib.sha256(data).hexdigest(),
+        "kind": "imported",
+        "lines": len(lines),
+    }
+
+
 def write(
     args: argparse.Namespace, relative: Path, result: FoldResult, sources: list[dict]
 ) -> None:
@@ -454,8 +644,9 @@ def write(
         f"ambiguous groups dropped, "
         f"{result.dropped_across_files} dropped for bytes another file of "
         f"{relative.parent.as_posix()} names differently, "
-        f"{result.dropped_openings} for bytes that open a longer routine of "
-        f"another name)",
+        f"{result.dropped_covered} for bytes a routine of another name states "
+        f"as well; {result.distinguished_lines} kept because references tell "
+        f"same-byte routines apart)",
         flush=True,
     )
     for example in result.conflict_examples[:5]:
@@ -475,6 +666,10 @@ def build(args: argparse.Namespace) -> int:
             sources: dict[Path, list[dict]] = {}
             for relative, members in sorted(outputs.items()):
                 generated, sources[relative] = generate(args, members, work_root)
+                imported, provenance = imported_lines(args.output, relative)
+                if provenance:
+                    generated.extend(imported)
+                    sources[relative].append(provenance)
                 results[relative] = fold(generated)
                 del generated
             settle_directory(results)

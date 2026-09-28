@@ -16,6 +16,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineWideIntReturn.cpp
 
   LINK_COMPONENTS
+  BinaryInterpreterSpecialization
   IR
   PassIR
   Decode

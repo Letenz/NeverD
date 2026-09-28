@@ -21,6 +21,7 @@
 #include "neverd/loader/BinaryImageDynamic.h"
 #include "neverd/loader/BinaryImageRelocation.h"
 #include "neverd/loader/BinaryImageSection.h"
+#include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/ExceptionTable.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
@@ -33,6 +34,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -520,16 +522,41 @@ struct BinaryImage {
     uint32_t RecordRVA = 0;
   };
   std::vector<COFFPDataRecord> COFFPDataRecords;
+  /// The PE file's Rich header: which builds of which Microsoft tools
+  /// produced the objects the linker combined.  Empty for other formats and
+  /// for images a non-Microsoft linker produced.
+  std::optional<RichHeader> COFFRichHeader;
   /// Checked, normalized table-based unwind and language exception metadata.
   /// Empty for formats/targets without a supported exception directory.
   ExceptionInfo ExceptionMetadata;
   std::vector<uint8_t> Raw;
+  /// Digest of the exact file buffer consumed by the loader. Kept when a
+  /// restricted load omits Raw; never recomputed by reopening a mutable path.
+  /// Absent for in-memory synthetic images or loaders without file evidence.
+  std::optional<std::array<uint8_t, 32>> InputFileSHA256;
 
   bool is64Bit() const { return neverd::is64Bit(Bits); }
   bool is32Bit() const { return neverd::is32Bit(Bits); }
   bool is256Bit() const { return neverd::is256Bit(Bits); }
   uint32_t getPointerSize() const {
     return getBitnessValue(Bits) / kBitsPerByte;
+  }
+
+  /// Exact ELF mapping interval, when one owns this AArch32 address. A $d
+  /// interval is data even when it lies inside an executable section or a
+  /// sized function symbol.
+  const ARMCodeRegion *armMappingRegionAt(va_t Addr) const {
+    if (Arch != neverd::Arch::ARM)
+      return nullptr;
+    const auto It =
+        std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+                         [](va_t Address, const ARMCodeRegion &Region) {
+                           return Address < Region.Start;
+                         });
+    if (It == ARMCodeRegions.begin())
+      return nullptr;
+    const ARMCodeRegion &Region = *std::prev(It);
+    return Addr < Region.End ? &Region : nullptr;
   }
 
   /// The loader's address-specific AArch32 evidence. An unknown byte in a
@@ -542,20 +569,12 @@ struct BinaryImage {
     if (!isCodeAddress(Addr))
       return std::nullopt;
     std::optional<InstructionMode> ProvenMode;
-    const auto It =
-        std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
-                         [](va_t Address, const ARMCodeRegion &Region) {
-                           return Address < Region.Start;
-                         });
-    if (It != ARMCodeRegions.begin()) {
-      const ARMCodeRegion &Region = *std::prev(It);
-      if (Addr < Region.End) {
-        if (Region.Kind == ARMCodeRegionKind::Data)
-          return std::nullopt;
-        ProvenMode = Region.Kind == ARMCodeRegionKind::Thumb
-                         ? InstructionMode::Thumb
-                         : InstructionMode::ARM;
-      }
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr)) {
+      if (Region->Kind == ARMCodeRegionKind::Data)
+        return std::nullopt;
+      ProvenMode = Region->Kind == ARMCodeRegionKind::Thumb
+                       ? InstructionMode::Thumb
+                       : InstructionMode::ARM;
     }
     const auto Reachable = std::upper_bound(
         ARMReachableCodeRegions.begin(), ARMReachableCodeRegions.end(), Addr,
@@ -864,6 +883,9 @@ struct BinaryImage {
         Seg->Data.size() > InvalidVA - Seg->VA)
       return std::nullopt;
     const va_t MaterializedEnd = Seg->VA + Seg->Data.size();
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr);
+        Region && Region->Kind == ARMCodeRegionKind::Data)
+      return std::min<va_t>(Region->End, MaterializedEnd);
     if (const Section *Sec = getSectionFor(Addr)) {
       if (Sec->Size == 0 || Sec->Size > InvalidVA - Sec->VA)
         return std::nullopt;
@@ -884,6 +906,9 @@ struct BinaryImage {
   bool isCodeAddress(va_t Addr) const {
     const Segment *Seg = getSegmentFor(Addr);
     if (!Seg)
+      return false;
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr);
+        Region && Region->Kind == ARMCodeRegionKind::Data)
       return false;
     if (const Section *Sec = getSectionFor(Addr)) {
       if (isMachO())
@@ -907,8 +932,24 @@ struct BinaryImage {
       return false;
     const Section *FirstSec = getSectionFor(Addr);
     const Section *LastSec = getSectionFor(Last);
-    return (!FirstSec && !LastSec) ||
-           (FirstSec && LastSec && FirstSec == LastSec);
+    if (!((!FirstSec && !LastSec) ||
+          (FirstSec && LastSec && FirstSec == LastSec)))
+      return false;
+    // Endpoints can both be instructions while a literal island lies between
+    // them. Never grant a complete code range across an intervening $d span.
+    if (Arch == neverd::Arch::ARM) {
+      auto It =
+          std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+                           [](va_t Address, const ARMCodeRegion &Region) {
+                             return Address < Region.Start;
+                           });
+      while (It != ARMCodeRegions.end() && It->Start <= Last) {
+        if (It->Kind == ARMCodeRegionKind::Data)
+          return false;
+        ++It;
+      }
+    }
+    return true;
   }
 
   bool isDataAddress(va_t Addr) const {

@@ -107,6 +107,134 @@ class Tracer {
   size_t RemainingBudget = 1U << 20;
   bool Exhausted = false;
   std::set<std::tuple<size_t, size_t, Variable>> Active;
+  std::set<std::tuple<size_t, size_t, int64_t>> ActiveSpills;
+
+  std::optional<int64_t> stackOffset(const Path &Address) const {
+    if (Address.Base.TheKind != Root::Kind::Entry ||
+        Address.Base.Space != VnodeSpace::REG ||
+        Address.Base.Offset != TRI.StackPointer || Address.Base.Bytes != 8)
+      return std::nullopt;
+    int64_t Offset = 0;
+    for (const auto &Part : Address.Steps) {
+      if (Part.TheKind != Step::Kind::Add ||
+          (Part.Offset > 0 && Offset > INT64_MAX - Part.Offset) ||
+          (Part.Offset < 0 && Offset < INT64_MIN - Part.Offset))
+        return std::nullopt;
+      Offset += Part.Offset;
+    }
+    return Offset >= -(1 << 20) && Offset <= 0 ? std::optional<int64_t>(Offset)
+                                               : std::nullopt;
+  }
+
+  std::optional<int64_t> privateFrameOffset(const Path &Address) const {
+    const auto Offset = stackOffset(Address);
+    // A caller-owned incoming argument slot is not a private spill.
+    return Offset && *Offset < 0 ? Offset : std::nullopt;
+  }
+
+  std::optional<Path> traceSpill(size_t BlockIndex, size_t Before,
+                                 int64_t Slot) {
+    if (!Budget || !RemainingBudget) {
+      Exhausted |= !RemainingBudget;
+      return std::nullopt;
+    }
+    --Budget;
+    --RemainingBudget;
+    const auto Guard = std::tuple{BlockIndex, Before, Slot};
+    if (!ActiveSpills.insert(Guard).second)
+      return std::nullopt;
+    struct Pop {
+      std::set<std::tuple<size_t, size_t, int64_t>> &Values;
+      decltype(Guard) Key;
+      ~Pop() { Values.erase(Key); }
+    } PopGuard{ActiveSpills, Guard};
+
+    const auto &Block = Function.Blocks[BlockIndex];
+    for (size_t Index = Before; Index-- > 0;) {
+      const auto &Operation = Block.Ops[Index];
+      // A call may write through a borrowed frame address. Keep this local
+      // proof independent of any inferred call signature or escape summary.
+      if (Operation.Opcode == NdOp::CALL ||
+          Operation.Opcode == NdOp::INDIR_CALL ||
+          Operation.Opcode == NdOp::INTRINSIC ||
+          Operation.Opcode == NdOp::ATOMIC_XCHG ||
+          Operation.Opcode == NdOp::ATOMIC_ADD ||
+          Operation.Opcode == NdOp::ATOMIC_CMPXCHG)
+        return std::nullopt;
+      if (Operation.Opcode != NdOp::STORE)
+        continue;
+      if (Operation.MemoryOrdering != NdMemoryOrdering::None ||
+          Operation.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return std::nullopt;
+      const auto Memory = lowMemoryOperands(Operation);
+      if (!Memory.Complete || !Memory.Address || !Memory.StoredValue ||
+          !Memory.AccessSize)
+        return std::nullopt;
+      const auto Address =
+          trace(BlockIndex, Index, *Memory.Address, Operation.Addr);
+      if (!Address)
+        return std::nullopt;
+      const auto Offset = privateFrameOffset(*Address);
+      // Without a separate escape proof even an image-backed destination
+      // could publish an alias to the current frame. Keep this query local to
+      // writes through exact, disjoint frame addresses.
+      if (!Offset)
+        return std::nullopt;
+      if (*Offset > Slot + 7 || Slot > *Offset + Memory.AccessSize - 1)
+        continue;
+      if (*Offset != Slot || Memory.AccessSize != 8 ||
+          Memory.StoredValue->Size != 8)
+        return std::nullopt;
+      // The store must establish this invocation's cell on the sole entry
+      // path. A prior opaque call or a non-frame store could have published
+      // the cell address for asynchronous mutation.
+      if (!Block.Preds.empty() || Block.StartAddr != Function.Entry)
+        return std::nullopt;
+      for (size_t Earlier = 0; Earlier < Index; ++Earlier) {
+        const auto &Prior = Block.Ops[Earlier];
+        if (Prior.Opcode == NdOp::CALL || Prior.Opcode == NdOp::INDIR_CALL ||
+            Prior.Opcode == NdOp::INTRINSIC)
+          return std::nullopt;
+        if (Prior.Opcode != NdOp::STORE)
+          continue;
+        const auto PriorMemory = lowMemoryOperands(Prior);
+        if (!PriorMemory.Complete || !PriorMemory.Address ||
+            !PriorMemory.StoredValue || !PriorMemory.AccessSize)
+          return std::nullopt;
+        const auto PriorAddress =
+            trace(BlockIndex, Earlier, *PriorMemory.Address, Prior.Addr);
+        const auto PriorValue =
+            trace(BlockIndex, Earlier, *PriorMemory.StoredValue, Prior.Addr);
+        if (!PriorAddress || !privateFrameOffset(*PriorAddress) ||
+            !PriorValue || PriorValue->Base.TheKind == Root::Kind::Definition ||
+            stackOffset(*PriorValue))
+          return std::nullopt;
+      }
+      const auto Stack = trace(BlockIndex, Index,
+                               NdVar::reg(TRI.StackPointer, 8), Operation.Addr);
+      const auto StackAtStore = Stack ? stackOffset(*Stack) : std::nullopt;
+      if (!StackAtStore || *StackAtStore > Slot)
+        return std::nullopt;
+      return trace(BlockIndex, Index, *Memory.StoredValue, Operation.Addr);
+    }
+    if (Block.Preds.empty())
+      return std::nullopt;
+    std::optional<Path> Result;
+    for (int PredecessorId : Block.Preds) {
+      const auto Found = Blocks.find(PredecessorId);
+      if (Found == Blocks.end())
+        return std::nullopt;
+      const auto &Predecessor = Function.Blocks[Found->second];
+      if (std::find(Predecessor.Succs.begin(), Predecessor.Succs.end(),
+                    Block.Id) == Predecessor.Succs.end())
+        return std::nullopt;
+      auto Incoming = traceSpill(Found->second, Predecessor.Ops.size(), Slot);
+      if (!Incoming || (Result && *Result != *Incoming))
+        return std::nullopt;
+      Result = std::move(Incoming);
+    }
+    return Result;
+  }
 
   std::optional<Path> trace(size_t BlockIndex, size_t Before,
                             const NdVar &Value, va_t TemporaryAddress) {
@@ -199,6 +327,16 @@ class Tracer {
         if (!Memory.Complete || !Memory.Address || Memory.AccessSize != 8)
           return std::nullopt;
         auto Result = trace(BlockIndex, Index, *Memory.Address, Operation.Addr);
+        if (Result)
+          if (const auto Slot = privateFrameOffset(*Result)) {
+            const auto Stack =
+                trace(BlockIndex, Index, NdVar::reg(TRI.StackPointer, 8),
+                      Operation.Addr);
+            const auto StackAtLoad = Stack ? stackOffset(*Stack) : std::nullopt;
+            return StackAtLoad && *StackAtLoad <= *Slot
+                       ? traceSpill(BlockIndex, Index, *Slot)
+                       : std::nullopt;
+          }
         return Result && Result->load(8) ? Result : std::nullopt;
       }
       return Path{Root{Root::Kind::Definition, BlockIndex, Index, Value.Space,
@@ -277,6 +415,7 @@ public:
   std::optional<Path> at(size_t Block, size_t Operation, const NdVar &Value) {
     Budget = 4096;
     Active.clear();
+    ActiveSpills.clear();
     return trace(Block, Operation, Value,
                  Operation < Function.Blocks[Block].Ops.size()
                      ? Function.Blocks[Block].Ops[Operation].Addr

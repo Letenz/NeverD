@@ -129,7 +129,13 @@ int neverd_auto_apply_signatures(neverd_session_t Sess,
   if (!std::filesystem::exists(SigPath))
     return 0;
 
-  auto Err = S->SigDB.loadDirectory(SigPath);
+  auto Files = sigs::SignatureDB::listDirectory(SigPath);
+  if (!Files) {
+    S->setError(llvm::toString(Files.takeError()));
+    return -1;
+  }
+  auto Err = S->SigDB.loadFiles(
+      sigs::SignatureDB::selectForImage(S->Img, std::move(*Files)));
   if (Err) {
     S->setError(llvm::toString(std::move(Err)));
     return -1;

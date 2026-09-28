@@ -65,6 +65,13 @@ El cargador valida grafos acíclicos y acotados de cadenas constantes, objetos e
 
 ## Representaciones IR y rutas
 
+La [etapa experimental de recuperación de intérpretes](interpreter-recovery.md)
+especializa LowIR obtenido mediante lifting estricto antes de la frontera MedIR
+común. Su proveedor gestiona la evidencia de imágenes inmutables, `SymExec` la
+semántica de instrucciones y el CFG residual reutiliza SSA y los generadores
+habituales de código fuente. Las evidencias de recuperación se mantienen
+separadas de los certificados de apariciones nativas y parches binarios.
+
 | Representación | Propósito | Definiciones y transformaciones principales |
 |----------------|-----------|----------------------------------------------|
 | LowIR | Operaciones `NdOp` independientes de arquitectura, bloques básicos, CFG y metadatos de jump tables | `include/neverd/ir/low`, `lib/ir/low`, producido por `lib/decode` + `lib/lift` |

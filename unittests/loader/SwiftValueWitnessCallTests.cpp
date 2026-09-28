@@ -261,6 +261,68 @@ TEST(SwiftValueWitnessCalls, DestroyProofRejectsConflictingJoinPaths) {
   EXPECT_TRUE(F.hints().empty());
 }
 
+TEST(SwiftValueWitnessCalls, ExactPrivateSpillAcrossBlocksPreservesWitness) {
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    Fixture F(Architecture, true);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    auto Add = [](LowBlock &Block, va_t Address, NdOp Code, NdVar Output,
+                  std::initializer_list<NdVar> Inputs) {
+      LowOp Operation;
+      Operation.Addr = Address;
+      Operation.Opcode = Code;
+      Operation.Output = Output;
+      for (const auto &Input : Inputs)
+        Operation.addInput(Input);
+      Block.Ops.push_back(Operation);
+    };
+    auto &Head = F.Function.Blocks[0];
+    Add(Head, 0x1002, NdOp::INT_ADD, NdVar::reg(TRI.StackPointer, 8),
+        {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(UINT64_C(-128), 8)});
+    Add(Head, 0x1004, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
+        {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(64, 8)});
+    Add(Head, 0x1004, NdOp::STORE, {},
+        {NdVar::tmp(TmpBase, 8), NdVar::reg(F.Target, 8)});
+    LowBlock &Tail = F.Function.Blocks[1];
+    auto Existing = std::move(Tail.Ops);
+    Tail.Ops.clear();
+    Add(Tail, 0x100c, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
+        {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(64, 8)});
+    Add(Tail, 0x100c, NdOp::LOAD, NdVar::reg(F.Target, 8),
+        {NdVar::tmp(TmpBase, 8)});
+    Tail.Ops.insert(Tail.Ops.end(), Existing.begin(), Existing.end());
+    ASSERT_EQ(F.hints().size(), 1U);
+
+    // A partial overwrite poisons the exact slot even if its remaining bytes
+    // still happen to carry the original pointer.
+    Add(Head, 0x1008, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
+        {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(68, 8)});
+    Add(Head, 0x1008, NdOp::STORE, {},
+        {NdVar::tmp(TmpBase, 8), NdVar::cst(0, 4)});
+    EXPECT_TRUE(F.hints().empty());
+    Head.Ops.pop_back();
+    Head.Ops.pop_back();
+
+    Add(Head, 0x1008, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
+        {NdVar::reg(TRI.StackPointer, 8), NdVar::cst(80, 8)});
+    Add(Head, 0x1008, NdOp::STORE, {},
+        {NdVar::tmp(TmpBase, 8), NdVar::cst(0, 8)});
+    EXPECT_EQ(F.hints().size(), 1U);
+    Head.Ops.pop_back();
+    Head.Ops.pop_back();
+
+    Add(Head, 0x1008, NdOp::STORE, {},
+        {NdVar::reg(F.Metadata, 8), NdVar::cst(0, 8)});
+    EXPECT_TRUE(F.hints().empty());
+    Head.Ops.pop_back();
+
+    // An opaque call is a barrier: it could have received the frame address.
+    Add(Head, 0x1008, NdOp::CALL, NdVar::reg(TRI.IntReturnReg, 8),
+        {NdVar::cst(0x2000, 8)});
+    EXPECT_TRUE(F.hints().empty());
+  }
+}
+
 TEST(SwiftValueWitnessCalls, DestroyProofRejectsMalformedControlFlow) {
   for (unsigned Case = 0; Case < 5; ++Case) {
     SCOPED_TRACE(Case);
