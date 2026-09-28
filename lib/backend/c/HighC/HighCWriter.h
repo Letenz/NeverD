@@ -189,6 +189,8 @@ public:
                       bool ProjectImageBacking = true);
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
   std::string resolvedCallTarget(const HighExpr &E) const;
+  /// The C identifier a direct call names; see HighCExprWriter.cpp.
+  std::string callIdentifier(const HighExpr &E) const;
   std::string renderCallExpr(const HighExpr &E);
   std::string renderSourceCallExpr(const HighExpr &E);
   const HighFunc *sourceCallDefinition(const SourceCallTypeHint &Hint,

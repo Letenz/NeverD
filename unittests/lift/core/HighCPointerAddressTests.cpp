@@ -20817,6 +20817,26 @@ TEST(HighCPointerAddresses, SingleQuestionMarkNameIsNotASpecialMember) {
       << Source;
 }
 
+TEST(HighCPointerAddresses, CalleeNamedLikeThisFunctionIsNotARecursion) {
+  // `SMKM_STORE_MGR<...>::SmPageRead` renders to the same identifier as the
+  // function being printed; the call must name a different function.
+  HighFunc Func;
+  Func.Name = "SmPageRead";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeInt(8);
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Ret.RetVal = HighExpr::makeCall(
+      "?SmPageRead@?$SMKM_STORE_MGR@USM_TRAITS@@@@SAJPEAU1@@Z", 0x140002000,
+      {parameter(0)});
+  Func.Body = {Ret};
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("SmPageRead_140002000(arg0)"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("return SmPageRead("), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, AtlUnaryThisPrototypesAreTyped) {
   HighFunc Func;
   Func.Name = "parent";

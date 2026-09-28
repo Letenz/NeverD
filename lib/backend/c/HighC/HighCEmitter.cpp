@@ -1029,7 +1029,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
           CIntrinsicNames.insert(Name);
         }
         if (Ex.IntrinsicId == Intrinsic::None)
-          Name = functionIdentifier(Name);
+          Name = callIdentifier(Ex);
         if (!isMsvcCxxThrowCallName(Name) &&
             !isMsvcCxxThrowCallName(Ex.CallTarget) &&
             !HiddenCxxCtorIdentifiers.count(Name)) {

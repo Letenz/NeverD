@@ -408,6 +408,22 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   }
 }
 
+/// A callee whose name renders to the identifier of a different function
+/// defined in this unit gets its own identifier: bound to that definition,
+/// the call would run the wrong code (`SMKM_STORE_MGR<...>::SmPageRead` and
+/// `SmPageRead` are both `SmPageRead`).
+std::string HighCWriter::callIdentifier(const HighExpr &E) const {
+  std::string Name = functionIdentifier(resolvedCallTarget(E));
+  if (!E.CallAddr || E.CallAddr == InvalidVA ||
+      E.IntrinsicId != Intrinsic::None)
+    return Name;
+  auto It = DefinedFunctionsByIdentifier.find(Name);
+  if (It == DefinedFunctionsByIdentifier.end() || !It->second ||
+      !It->second->Entry || It->second->Entry == E.CallAddr)
+    return Name;
+  return Name + "_" + llvm::utohexstr(E.CallAddr);
+}
+
 std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
   std::string Name = E.CallTarget;
   if (Name.empty() && E.CallAddr)
@@ -758,13 +774,13 @@ std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
     if (auto FS = Dbg->resolveFunction(E.CallAddr); FS) {
       if (!FS->Params.empty())
         return FS;
-      const std::string Name = functionIdentifier(resolvedCallTarget(E));
+      const std::string Name = callIdentifier(E);
       if (auto It = DebugExternSigs.find(Name);
           It != DebugExternSigs.end() && !It->second.Params.empty())
         return It->second;
       return FS;
     }
-  const std::string Name = functionIdentifier(resolvedCallTarget(E));
+  const std::string Name = callIdentifier(E);
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     return It->second;
   return std::nullopt;
@@ -855,7 +871,7 @@ void HighCWriter::collectCtorSourceNames(const HighFunc &Func) {
 TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return {};
-  const std::string Name = functionIdentifier(resolvedCallTarget(E));
+  const std::string Name = callIdentifier(E);
   if (const MsvcAtlCallee *Atl = msvcAtlCallee(Name))
     return msvcAtlSyntheticReturn(Atl->ReturnKind);
   if (const auto Callee = debugCallee(E))
@@ -1142,7 +1158,7 @@ size_t HighCWriter::debugCallArgLimit(const HighExpr &E) const {
   if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::None)
     return Have;
   auto Clamp = [&](size_t Limit) { return std::min(Limit, Have); };
-  const std::string Name = functionIdentifier(resolvedCallTarget(E));
+  const std::string Name = callIdentifier(E);
   const MsvcAtlCallee *Atl = msvcAtlCallee(Name);
   auto UnknownAt = [&](size_t I) {
     return I < Have && isUnknownCallOperand(E.Operands[I].get());
@@ -1210,7 +1226,7 @@ TypeRef HighCWriter::displayCallArgType(const HighExpr &Call,
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = FromFS(*FS))
       return Ty;
-  const std::string Name = functionIdentifier(resolvedCallTarget(Call));
+  const std::string Name = callIdentifier(Call);
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     if (TypeRef Ty = FromFS(It->second))
       return Ty;

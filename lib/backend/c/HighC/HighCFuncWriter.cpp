@@ -2138,7 +2138,7 @@ TypeRef HighCWriter::enumTypeForCallArg(const HighExpr &Call, size_t Index,
   if (auto FS = debugCallee(Call))
     if (TypeRef Ty = Consider(*FS))
       return Ty;
-  const std::string Name = functionIdentifier(resolvedCallTarget(Call));
+  const std::string Name = callIdentifier(Call);
   if (auto It = DebugExternSigs.find(Name); It != DebugExternSigs.end())
     if (TypeRef Ty = Consider(It->second))
       return Ty;
@@ -3272,7 +3272,7 @@ void HighCWriter::aliasCtorReturnThis(const HighFunc &Func) {
       return;
     if (S.Val->Kind != ExprKind::Call || S.Val->IntrinsicId != Intrinsic::None)
       return;
-    const std::string Callee = functionIdentifier(resolvedCallTarget(*S.Val));
+    const std::string Callee = callIdentifier(*S.Val);
     const MsvcAtlCallee *Atl = msvcAtlCallee(Callee);
     if (!Atl || Atl->Kind != MsvcAtlCalleeKind::Ctor)
       return;
@@ -3565,13 +3565,11 @@ void HighCWriter::collectCallResultNames(const HighFunc &Func) {
                                         Record->Size ? Record->Size : 8));
         }
       }
-    } else if (const MsvcAtlCallee *Atl = msvcAtlCallee(
-                   functionIdentifier(resolvedCallTarget(*S.Val))))
+    } else if (const MsvcAtlCallee *Atl = msvcAtlCallee(callIdentifier(*S.Val)))
       ReturnType = msvcAtlSyntheticReturn(Atl->ReturnKind);
     if (ReturnType)
       CallResultTypes[Name] = ReturnType;
-    std::string Stem =
-        callResultStem(functionIdentifier(resolvedCallTarget(*S.Val)));
+    std::string Stem = callResultStem(callIdentifier(*S.Val));
     if (Stem.empty() || isReservedParamDisplayName(Stem))
       return;
     if (Taken.count(Stem)) {
