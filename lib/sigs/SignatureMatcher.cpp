@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/SignatureMatcher.h"
 
+#include "neverd/support/Parallel.h"
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -42,14 +44,6 @@ size_t effectiveLeadingCount(const PatternModule &Mod) {
              : std::min(Mod.LeadingBytes.size(), size_t{Mod.TotalLen});
 }
 
-bool fixedLeadingByte(const PatternModule &Mod, size_t Offset, uint8_t &Value) {
-  if (Offset >= effectiveLeadingCount(Mod) ||
-      Mod.LeadingBytes[Offset].IsWildcard)
-    return false;
-  Value = Mod.LeadingBytes[Offset].Value;
-  return true;
-}
-
 void matchBucket(const std::vector<size_t> &Bucket,
                  const std::vector<PatternModule> &Modules, const uint8_t *Data,
                  size_t Available, uint64_t Address,
@@ -63,59 +57,120 @@ void matchBucket(const std::vector<size_t> &Bucket,
   }
 }
 
-size_t buildIndexNode(SignatureMatcher::HashIndex &Index,
-                      const std::vector<PatternModule> &Modules,
-                      std::vector<size_t> Candidates, size_t Offset) {
-  using HashIndex = SignatureMatcher::HashIndex;
-  if (Candidates.empty())
-    return HashIndex::kNoNode;
-  if (Candidates.size() <= HashIndex::kLeafCandidates ||
-      Offset >= HashIndex::kIndexedBytes) {
+/// The indexed prefix of one module: its bytes, and which of them it states.
+struct IndexedPrefix {
+  std::array<uint8_t, SignatureMatcher::HashIndex::kIndexedBytes> Bytes{};
+  uint32_t Stated = 0;
+};
+static_assert(SignatureMatcher::HashIndex::kIndexedBytes <= 32,
+              "the stated bytes of a prefix are one 32-bit mask");
+
+/// Builds the decision nodes over a permutation of the modules: a node
+/// partitions its range of the permutation, stably, into the modules that
+/// leave its byte unstated and those stating each value, and its children
+/// own those ranges.
+class IndexBuilder {
+public:
+  IndexBuilder(SignatureMatcher::HashIndex &Index,
+               const std::vector<PatternModule> &Modules)
+      : Index(Index), Prefixes(Modules.size()), Order(Modules.size()),
+        Scratch(Modules.size()) {
+    // Reading every prefix once, into one array, is what keeps the passes
+    // below off the modules' own allocations.
+    constexpr size_t Block = 4096;
+    neverd::parallelForEach(
+        (Modules.size() + Block - 1) / Block, [&](auto Claim, size_t Total) {
+          for (size_t B = Claim(); B < Total; B = Claim()) {
+            const size_t End = std::min(Modules.size(), (B + 1) * Block);
+            for (size_t I = B * Block; I < End; ++I) {
+              const PatternModule &Module = Modules[I];
+              IndexedPrefix &Prefix = Prefixes[I];
+              const size_t Count =
+                  std::min(effectiveLeadingCount(Module),
+                           SignatureMatcher::HashIndex::kIndexedBytes);
+              for (size_t K = 0; K < Count; ++K) {
+                if (Module.LeadingBytes[K].IsWildcard)
+                  continue;
+                Prefix.Bytes[K] = Module.LeadingBytes[K].Value;
+                Prefix.Stated |= uint32_t(1) << K;
+              }
+              Order[I] = I;
+            }
+          }
+        });
+  }
+
+  size_t build() { return buildRange(0, Order.size(), 0); }
+
+private:
+  static constexpr size_t kUnstated = 256;
+
+  size_t keyAt(size_t Module, size_t Offset) const {
+    const IndexedPrefix &Prefix = Prefixes[Module];
+    return (Prefix.Stated >> Offset) & 1 ? Prefix.Bytes[Offset] : kUnstated;
+  }
+
+  size_t buildRange(size_t Begin, size_t End, size_t Offset) {
+    using HashIndex = SignatureMatcher::HashIndex;
+    if (Begin == End)
+      return HashIndex::kNoNode;
+
+    // A byte every module of the range leaves unstated cannot dispatch a
+    // query, so the next one is tried.
+    std::array<size_t, kUnstated + 1> Count;
+    while (true) {
+      if (End - Begin <= HashIndex::kLeafCandidates ||
+          Offset >= HashIndex::kIndexedBytes) {
+        const size_t NodeIndex = Index.Nodes.size();
+        Index.Nodes.emplace_back();
+        Index.Nodes[NodeIndex].Candidates.assign(Order.begin() + Begin,
+                                                 Order.begin() + End);
+        return NodeIndex;
+      }
+      Count.fill(0);
+      for (size_t I = Begin; I < End; ++I)
+        ++Count[keyAt(Order[I], Offset)];
+      if (Count[kUnstated] != End - Begin)
+        break;
+      ++Offset;
+    }
+
+    std::array<size_t, kUnstated + 1> Start;
+    Start[kUnstated] = Begin;
+    size_t Next = Begin + Count[kUnstated];
+    for (size_t Value = 0; Value < kUnstated; ++Value) {
+      Start[Value] = Next;
+      Next += Count[Value];
+    }
+    std::array<size_t, kUnstated + 1> Fill = Start;
+    for (size_t I = Begin; I < End; ++I)
+      Scratch[Fill[keyAt(Order[I], Offset)]++] = Order[I];
+    std::copy(Scratch.begin() + Begin, Scratch.begin() + End,
+              Order.begin() + Begin);
+
     const size_t NodeIndex = Index.Nodes.size();
     Index.Nodes.emplace_back();
-    Index.Nodes[NodeIndex].Candidates = std::move(Candidates);
+    Index.Nodes[NodeIndex].Offset = static_cast<uint8_t>(Offset);
+    if (Count[kUnstated] != 0) {
+      const size_t Child = buildRange(
+          Start[kUnstated], Start[kUnstated] + Count[kUnstated], Offset + 1);
+      Index.Nodes[NodeIndex].WildcardChild = Child;
+    }
+    for (size_t Value = 0; Value < kUnstated; ++Value) {
+      if (Count[Value] == 0)
+        continue;
+      const size_t Child =
+          buildRange(Start[Value], Start[Value] + Count[Value], Offset + 1);
+      Index.Nodes[NodeIndex].ExactChildren.push_back(
+          {static_cast<uint8_t>(Value), Child});
+    }
     return NodeIndex;
   }
 
-  std::array<std::vector<size_t>, 256> Exact;
-  std::vector<size_t> Wildcard;
-  std::vector<uint8_t> UsedValues;
-  Wildcard.reserve(Candidates.size());
-  for (size_t ModuleIndex : Candidates) {
-    uint8_t Value = 0;
-    if (ModuleIndex >= Modules.size() ||
-        !fixedLeadingByte(Modules[ModuleIndex], Offset, Value)) {
-      Wildcard.push_back(ModuleIndex);
-      continue;
-    }
-    if (Exact[Value].empty())
-      UsedValues.push_back(Value);
-    Exact[Value].push_back(ModuleIndex);
-  }
-  std::vector<size_t>().swap(Candidates);
-
-  // A byte every remaining module leaves unspecified cannot dispatch a query.
-  if (UsedValues.empty())
-    return buildIndexNode(Index, Modules, std::move(Wildcard), Offset + 1);
-
-  std::sort(UsedValues.begin(), UsedValues.end());
-  const size_t NodeIndex = Index.Nodes.size();
-  Index.Nodes.emplace_back();
-  Index.Nodes[NodeIndex].Offset = static_cast<uint8_t>(Offset);
-
-  if (!Wildcard.empty()) {
-    const size_t Child =
-        buildIndexNode(Index, Modules, std::move(Wildcard), Offset + 1);
-    Index.Nodes[NodeIndex].WildcardChild = Child;
-  }
-  Index.Nodes[NodeIndex].ExactChildren.reserve(UsedValues.size());
-  for (uint8_t Value : UsedValues) {
-    const size_t Child =
-        buildIndexNode(Index, Modules, std::move(Exact[Value]), Offset + 1);
-    Index.Nodes[NodeIndex].ExactChildren.push_back({Value, Child});
-  }
-  return NodeIndex;
-}
+  SignatureMatcher::HashIndex &Index;
+  std::vector<IndexedPrefix> Prefixes;
+  std::vector<size_t> Order, Scratch;
+};
 
 const SignatureMatcher::HashIndex::Edge *
 findExactEdge(const SignatureMatcher::HashIndex::Node &Node, uint8_t Value) {
@@ -168,6 +223,21 @@ size_t countIndexNode(const SignatureMatcher::HashIndex &Index,
   return Exact > std::numeric_limits<size_t>::max() - Count
              ? std::numeric_limits<size_t>::max()
              : Count + Exact;
+}
+
+/// Report the modules that match at \p Entry, when it lies in the image.
+void scanEntry(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+               uint64_t Entry, const std::vector<PatternModule> &Modules,
+               const SignatureMatcher::HashIndex &Index,
+               const SignatureMatcher::MatchCallback &Callback) {
+  if (Entry < BaseVA)
+    return;
+  const uint64_t Offset = Entry - BaseVA;
+  if (Offset >= ImageSize)
+    return;
+  const size_t Available = ImageSize - static_cast<size_t>(Offset);
+  matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
+                 Entry, Callback);
 }
 
 } // namespace
@@ -299,11 +369,7 @@ void SignatureMatcher::HashIndex::build(
   if (Modules.empty())
     return;
 
-  std::vector<size_t> Candidates;
-  Candidates.reserve(Modules.size());
-  for (size_t I = 0; I < Modules.size(); ++I)
-    Candidates.push_back(I);
-  Root = buildIndexNode(*this, Modules, std::move(Candidates), 0);
+  Root = IndexBuilder(*this, Modules).build();
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {
@@ -345,14 +411,39 @@ void SignatureMatcher::scanAtAddresses(
   if ((ImageSize != 0 && !ImageBase) || !Callback)
     return;
 
-  for (uint64_t Entry : FuncEntries) {
-    if (Entry < BaseVA)
-      continue;
-    uint64_t Offset = Entry - BaseVA;
-    if (Offset >= ImageSize)
-      continue;
-    const size_t Available = ImageSize - static_cast<size_t>(Offset);
-    matchIndexNode(Index, Index.Root, Modules, ImageBase + Offset, Available,
-                   Entry, Callback);
-  }
+  for (uint64_t Entry : FuncEntries)
+    scanEntry(ImageBase, ImageSize, BaseVA, Entry, Modules, Index, Callback);
+}
+
+std::vector<SignatureMatcher::Hit> SignatureMatcher::findAtAddresses(
+    const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+    const std::vector<uint64_t> &FuncEntries,
+    const std::vector<PatternModule> &Modules, const HashIndex &Index) {
+  if (ImageSize != 0 && !ImageBase)
+    return {};
+
+  // Each block of entries keeps its hits apart, so that joining the blocks
+  // in order reports them in the order a sequential scan does.
+  constexpr size_t BlockEntries = 16;
+  const size_t Blocks = (FuncEntries.size() + BlockEntries - 1) / BlockEntries;
+  std::vector<std::vector<Hit>> BlockHits(Blocks);
+  neverd::parallelForEach(Blocks, [&](auto Claim, size_t Total) {
+    for (size_t B = Claim(); B < Total; B = Claim()) {
+      std::vector<Hit> &Hits = BlockHits[B];
+      const MatchCallback Record = [&](uint64_t Address,
+                                       const PatternModule &Module) {
+        Hits.push_back(
+            {Address, static_cast<size_t>(&Module - Modules.data())});
+      };
+      const size_t End = std::min(FuncEntries.size(), (B + 1) * BlockEntries);
+      for (size_t I = B * BlockEntries; I < End; ++I)
+        scanEntry(ImageBase, ImageSize, BaseVA, FuncEntries[I], Modules, Index,
+                  Record);
+    }
+  });
+
+  std::vector<Hit> Hits;
+  for (const std::vector<Hit> &Block : BlockHits)
+    Hits.insert(Hits.end(), Block.begin(), Block.end());
+  return Hits;
 }

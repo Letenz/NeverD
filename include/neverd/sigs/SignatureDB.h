@@ -14,6 +14,7 @@
 #define NEVERD_SIGS_SIGNATUREDB_H
 
 #include "neverd/sigs/Signature.h"
+#include "neverd/sigs/SignatureMatcher.h"
 
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -21,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -154,6 +156,11 @@ private:
   std::vector<PatternModule> Modules;
   std::vector<SigSource> LoadedFiles;
   std::vector<SigMatch> Matches;
+
+  /// The index of \ref Modules, built by \ref index when first needed and
+  /// dropped whenever the modules change.
+  std::unique_ptr<SignatureMatcher::HashIndex> Index;
+  const SignatureMatcher::HashIndex &index();
 
   /// Per entry of \ref Matches: the module that made it, or NoModule.
   static constexpr size_t NoModule = std::numeric_limits<size_t>::max();

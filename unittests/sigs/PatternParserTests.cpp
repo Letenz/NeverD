@@ -12,9 +12,11 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <string>
+#include <vector>
 
 using namespace neverd::sigs;
 
@@ -123,6 +125,216 @@ TEST(PatternParserStrictness, RejectsImpossibleDeclaredRanges) {
     auto ModuleOrErr = PatternParser::parseLine(Case.Line);
     ASSERT_FALSE(ModuleOrErr);
     EXPECT_NE(llvm::toString(ModuleOrErr.takeError()).find(Case.Error),
+              std::string::npos);
+  }
+}
+
+namespace {
+
+/// Every field of \p Module, so that two parses of one line can be compared.
+std::string describe(const PatternModule &Module) {
+  std::string Text;
+  llvm::raw_string_ostream Out(Text);
+  auto Bytes = [&](const std::vector<PatternByte> &Pattern) {
+    for (const PatternByte &Byte : Pattern)
+      if (Byte.IsWildcard)
+        Out << "..";
+      else
+        Out << llvm::format_hex_no_prefix(Byte.Value, 2);
+  };
+  Bytes(Module.LeadingBytes);
+  Out << ' ' << unsigned(Module.CRCLen) << ' ' << Module.CRC16 << ' '
+      << Module.TotalLen;
+  for (const FuncRef &Name : Module.PublicNames)
+    Out << " :" << Name.Offset << ' ' << Name.Name;
+  for (const FuncRef &Reference : Module.References)
+    Out << " ^" << Reference.Offset << ' ' << Reference.Name;
+  Out << ' ';
+  Bytes(Module.TailBytes);
+  return Text;
+}
+
+std::vector<std::string> describe(const std::vector<PatternModule> &Modules) {
+  std::vector<std::string> Descriptions;
+  for (const PatternModule &Module : Modules)
+    Descriptions.push_back(describe(Module));
+  return Descriptions;
+}
+
+std::string hexOf(unsigned Value, unsigned Digits, bool Lower) {
+  std::string Text;
+  llvm::raw_string_ostream(Text)
+      << llvm::format_hex_no_prefix(Value, Digits, /*Upper=*/!Lower);
+  return Text;
+}
+
+/// A module line that varies with \p I: wildcards, either case of hex,
+/// aliases, names inside the module, references, a tail or none, and the
+/// separators a line may use.
+std::string moduleLine(unsigned I) {
+  const bool Lower = I % 2;
+  std::string Line;
+  for (unsigned Byte = 0; Byte < 32; ++Byte)
+    Line += (I + Byte) % 7 == 0 ? ".."
+                                : hexOf((I * 31 + Byte * 17) & 0xFF, 2, Lower);
+  const char *Gap = I % 5 == 1 ? "\t" : " ";
+  Line += Gap + hexOf(I % 11, 2, Lower) + Gap + hexOf(I & 0xFFFF, 4, Lower) +
+          Gap + hexOf(0x40 + I % 200, 4, Lower) + " :0000 name_" +
+          std::to_string(I);
+  if (I % 3 == 0)
+    Line += " :0000 alias_" + std::to_string(I);
+  if (I % 4 == 0)
+    Line += " :0010 inner_" + std::to_string(I);
+  if (I % 5 == 0)
+    Line += " ^0020 callee_" + std::to_string(I) + " ^0024 ?other@@YAXXZ";
+  if (I % 2 == 0) {
+    Line += ' ';
+    for (unsigned Byte = 0; Byte < I % 23 + 1; ++Byte)
+      Line += Byte % 4 == 3 ? ".." : hexOf((I + Byte * 13) & 0xFF, 2, Lower);
+  }
+  return Line;
+}
+
+/// \p Lines lines of every kind a pattern text holds, the last without a line
+/// feed.
+std::string syntheticText(unsigned Lines) {
+  std::string Text;
+  for (unsigned I = 0; I < Lines; ++I) {
+    switch (I % 9) {
+    case 0:
+      Text += "; comment " + std::to_string(I);
+      break;
+    case 1:
+      Text += "---";
+      break;
+    case 2:
+      break;
+    case 3:
+      Text += "  # indented comment";
+      break;
+    default:
+      Text += moduleLine(I);
+      break;
+    }
+    if (I + 1 < Lines)
+      Text += I % 6 == 0 ? "\r\n" : "\n";
+  }
+  return Text;
+}
+
+std::vector<PatternModule> parseEachLine(llvm::StringRef Text) {
+  std::vector<PatternModule> Modules;
+  llvm::SmallVector<llvm::StringRef, 0> Lines;
+  Text.split(Lines, '\n');
+  for (llvm::StringRef Line : Lines) {
+    const llvm::StringRef Trimmed = Line.trim();
+    if (Trimmed.empty() || Trimmed.starts_with(";") ||
+        Trimmed.starts_with("#") || Trimmed == "---")
+      continue;
+    auto ModuleOrErr = PatternParser::parseLine(Line);
+    if (!ModuleOrErr) {
+      ADD_FAILURE() << llvm::toString(ModuleOrErr.takeError());
+      continue;
+    }
+    Modules.push_back(std::move(*ModuleOrErr));
+  }
+  return Modules;
+}
+
+} // namespace
+
+TEST(PatternParserChunks, ChunkedParsingEqualsParsingEachLine) {
+  const std::string Text = syntheticText(4000);
+  const std::vector<std::string> Expected = describe(parseEachLine(Text));
+  ASSERT_GT(Expected.size(), 2000u);
+
+  for (size_t ChunkBytes :
+       {size_t(1), size_t(64), size_t(4096), PatternParser::DefaultChunkBytes,
+        size_t(1) << 30}) {
+    SCOPED_TRACE(ChunkBytes);
+    auto ModulesOrErr = PatternParser::parseText(Text, ChunkBytes);
+    ASSERT_TRUE(static_cast<bool>(ModulesOrErr))
+        << llvm::toString(ModulesOrErr.takeError());
+    EXPECT_EQ(describe(*ModulesOrErr), Expected);
+  }
+}
+
+TEST(PatternParserChunks, ChunksEndAtLineFeeds) {
+  const std::string Text = syntheticText(500);
+  for (size_t ChunkBytes : {size_t(1), size_t(7), size_t(64), size_t(1000)}) {
+    SCOPED_TRACE(ChunkBytes);
+    const std::vector<PatternChunk> Chunks =
+        PatternParser::splitChunks(Text, ChunkBytes);
+    std::string Joined;
+    for (size_t I = 0; I < Chunks.size(); ++I) {
+      if (I + 1 < Chunks.size()) {
+        EXPECT_TRUE(Chunks[I].Text.ends_with("\n"));
+        EXPECT_GE(Chunks[I].Text.size(), ChunkBytes);
+      }
+      Joined += Chunks[I].Text.str();
+    }
+    EXPECT_EQ(Joined, Text);
+  }
+}
+
+TEST(PatternParserChunks, ReportsTheLineNumberInTheWholeText) {
+  // The malformed line is far past the first chunk, after comments, blank
+  // lines, and separators, which count as lines too.
+  std::string Text = syntheticText(700);
+  Text += "\nthis record is malformed\n" + moduleLine(4) + "\n";
+  for (size_t ChunkBytes : {size_t(64), size_t(1) << 30}) {
+    SCOPED_TRACE(ChunkBytes);
+    auto ModulesOrErr = PatternParser::parseText(Text, ChunkBytes);
+    ASSERT_FALSE(ModulesOrErr);
+    const std::string Message = llvm::toString(ModulesOrErr.takeError());
+    EXPECT_NE(Message.find("pattern line 701: invalid hex byte: th"),
+              std::string::npos)
+        << Message;
+  }
+}
+
+TEST(PatternParserChunks, ReportsTheFirstOfSeveralMalformedLines) {
+  std::string Text;
+  for (unsigned I = 0; I < 300; ++I)
+    Text += (I == 120 || I == 250 ? "AABB 00 0000 0002 :zz bad\n"
+                                  : moduleLine(I) + "\n");
+  auto ModulesOrErr = PatternParser::parseText(Text, 64);
+  ASSERT_FALSE(ModulesOrErr);
+  const std::string Message = llvm::toString(ModulesOrErr.takeError());
+  EXPECT_NE(Message.find("pattern line 121: invalid public name offset: :zz"),
+            std::string::npos)
+      << Message;
+}
+
+TEST(PatternParserChunks, TextsWithoutModulesParseToNone) {
+  for (const char *Text :
+       {"", "\n", "; only a comment", "# one\n---\n\n; two\r\n"}) {
+    SCOPED_TRACE(Text);
+    auto ModulesOrErr = PatternParser::parseText(Text, 1);
+    ASSERT_TRUE(static_cast<bool>(ModulesOrErr))
+        << llvm::toString(ModulesOrErr.takeError());
+    EXPECT_TRUE(ModulesOrErr->empty());
+  }
+}
+
+TEST(PatternParserHex, AcceptsEitherCaseAndRejectsHalfWildcards) {
+  auto ModuleOrErr = PatternParser::parseLine("aBcD.. 00 0000 0003 :0000 name");
+  ASSERT_TRUE(static_cast<bool>(ModuleOrErr))
+      << llvm::toString(ModuleOrErr.takeError());
+  ASSERT_EQ(ModuleOrErr->LeadingBytes.size(), 3u);
+  EXPECT_EQ(ModuleOrErr->LeadingBytes[0].Value, 0xAB);
+  EXPECT_EQ(ModuleOrErr->LeadingBytes[1].Value, 0xCD);
+  EXPECT_TRUE(ModuleOrErr->LeadingBytes[2].IsWildcard);
+
+  for (const char *Line :
+       {"AA.B 00 0000 0002 :0000 name", "AAB. 00 0000 0002 :0000 name",
+        "AAG0 00 0000 0002 :0000 name",
+        "AA 00 0000 0002 :0000 name AA.."
+        "0."}) {
+    SCOPED_TRACE(Line);
+    auto Rejected = PatternParser::parseLine(Line);
+    ASSERT_FALSE(Rejected);
+    EXPECT_NE(llvm::toString(Rejected.takeError()).find("invalid hex byte"),
               std::string::npos);
   }
 }

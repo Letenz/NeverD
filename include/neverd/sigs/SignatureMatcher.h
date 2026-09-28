@@ -129,6 +129,20 @@ public:
                               const std::vector<PatternModule> &Modules,
                               const HashIndex &Index, MatchCallback Callback);
 
+  /// A module that matches at an address: its index in the module set.
+  struct Hit {
+    uint64_t Address = 0;
+    size_t Module = 0;
+  };
+
+  /// What \ref scanAtAddresses reports, in the order it reports it, with the
+  /// entries checked on the worker threads.
+  static std::vector<Hit>
+  findAtAddresses(const uint8_t *ImageBase, size_t ImageSize, uint64_t BaseVA,
+                  const std::vector<uint64_t> &FuncEntries,
+                  const std::vector<PatternModule> &Modules,
+                  const HashIndex &Index);
+
 private:
   static bool matchLeading(const std::vector<PatternByte> &Pattern,
                            const uint8_t *Data, size_t Count);

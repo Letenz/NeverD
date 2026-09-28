@@ -13,18 +13,18 @@
 #include "neverd/sigs/SignatureMatcher.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
-#include <atomic>
 #include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -52,6 +52,7 @@ void SignatureDB::commitSource(std::vector<PatternModule> &&Mods,
       Source.ModuleStart = ModuleStart;
       ModuleStart += Source.ModuleCount;
     }
+    Index.reset();
     clearMatches();
     return;
   }
@@ -65,7 +66,16 @@ void SignatureDB::commitSource(std::vector<PatternModule> &&Mods,
 
   Modules.insert(Modules.end(), std::make_move_iterator(Mods.begin()),
                  std::make_move_iterator(Mods.end()));
+  Index.reset();
   clearMatches();
+}
+
+const SignatureMatcher::HashIndex &SignatureDB::index() {
+  if (!Index) {
+    Index = std::make_unique<SignatureMatcher::HashIndex>();
+    Index->build(Modules);
+  }
+  return *Index;
 }
 
 const std::string &SignatureDB::libraryNameOf(size_t ModuleIndex) const {
@@ -215,63 +225,67 @@ llvm::Error SignatureDB::loadDirectory(const std::filesystem::path &Dir) {
 
 llvm::Error
 SignatureDB::loadFiles(const std::vector<std::filesystem::path> &PatFiles) {
-  struct ParsedFile {
-    std::filesystem::path Path;
-    std::vector<PatternModule> Modules;
-    std::string ErrorMessage;
-  };
-  std::vector<ParsedFile> Parsed(PatFiles.size());
-  for (size_t I = 0; I < PatFiles.size(); ++I)
-    Parsed[I].Path = PatFiles[I];
-
-  const size_t NumThreads = std::min(
-      PatFiles.size(),
-      static_cast<size_t>(std::max(1u, std::thread::hardware_concurrency())));
-  std::atomic<size_t> NextIdx{0};
-  std::vector<std::thread> Workers;
-  Workers.reserve(NumThreads);
-  for (size_t T = 0; T < NumThreads; ++T) {
-    Workers.emplace_back([&]() {
-      while (true) {
-        const size_t I = NextIdx.fetch_add(1, std::memory_order_relaxed);
-        if (I >= Parsed.size())
-          break;
-        auto ModulesOrErr = PatternParser::parseFile(Parsed[I].Path);
-        if (!ModulesOrErr) {
-          Parsed[I].ErrorMessage = llvm::toString(ModulesOrErr.takeError());
-          continue;
-        }
-        Parsed[I].Modules = std::move(*ModulesOrErr);
-      }
-    });
-  }
-  for (std::thread &Worker : Workers)
-    Worker.join();
-
-  for (const ParsedFile &File : Parsed) {
-    if (File.ErrorMessage.empty())
+  // Every file is cut into chunks of whole lines, and one pool of workers
+  // parses the chunks of all of them: one large file keeps every worker as
+  // busy as many small ones do.
+  std::vector<std::unique_ptr<llvm::MemoryBuffer>> Buffers(PatFiles.size());
+  std::vector<PatternChunk> Chunks;
+  std::vector<size_t> FirstChunk(PatFiles.size() + 1);
+  for (size_t I = 0; I < PatFiles.size(); ++I) {
+    FirstChunk[I] = Chunks.size();
+    auto BufferOrErr =
+        llvm::MemoryBuffer::getFile(PatFiles[I].string(), /*IsText=*/false,
+                                    /*RequiresNullTerminator=*/false);
+    if (!BufferOrErr)
       continue;
-    return llvm::make_error<llvm::StringError>(
-        "cannot parse signature file: " + File.Path.string() + ": " +
-            File.ErrorMessage,
-        llvm::inconvertibleErrorCode());
+    Buffers[I] = std::move(*BufferOrErr);
+    std::vector<PatternChunk> FileChunks =
+        PatternParser::splitChunks(Buffers[I]->getBuffer());
+    Chunks.insert(Chunks.end(), std::make_move_iterator(FileChunks.begin()),
+                  std::make_move_iterator(FileChunks.end()));
+  }
+  FirstChunk[PatFiles.size()] = Chunks.size();
+  PatternParser::parseChunks(Chunks);
+
+  // The first file that cannot be read or parsed, in order, fails the batch
+  // and leaves the database as it was.
+  size_t Count = 0;
+  for (size_t I = 0; I < PatFiles.size(); ++I) {
+    const llvm::ArrayRef<PatternChunk> FileChunks(
+        Chunks.data() + FirstChunk[I], Chunks.data() + FirstChunk[I + 1]);
+    llvm::Error Error =
+        Buffers[I] ? PatternParser::firstError(FileChunks)
+                   : llvm::make_error<llvm::StringError>(
+                         "cannot open pattern file: " + PatFiles[I].string(),
+                         llvm::inconvertibleErrorCode());
+    if (Error)
+      return llvm::make_error<llvm::StringError>(
+          "cannot parse signature file: " + PatFiles[I].string() + ": " +
+              llvm::toString(std::move(Error)),
+          llvm::inconvertibleErrorCode());
+    for (const PatternChunk &Chunk : FileChunks)
+      Count += Chunk.Modules.size();
   }
 
   std::vector<PatternModule> NewModules;
+  NewModules.reserve(Count);
   std::vector<SigSource> NewSources;
-  for (ParsedFile &File : Parsed) {
+  NewSources.reserve(PatFiles.size());
+  for (size_t I = 0; I < PatFiles.size(); ++I) {
     SigSource Source;
-    Source.Path = File.Path.string();
-    Source.LibraryName = libraryName(File.Path);
+    Source.Path = PatFiles[I].string();
+    Source.LibraryName = libraryName(PatFiles[I]);
     Source.ModuleStart = NewModules.size();
-    Source.ModuleCount = File.Modules.size();
+    for (size_t C = FirstChunk[I]; C < FirstChunk[I + 1]; ++C)
+      NewModules.insert(NewModules.end(),
+                        std::make_move_iterator(Chunks[C].Modules.begin()),
+                        std::make_move_iterator(Chunks[C].Modules.end()));
+    Source.ModuleCount = NewModules.size() - Source.ModuleStart;
     NewSources.push_back(std::move(Source));
-    NewModules.insert(NewModules.end(),
-                      std::make_move_iterator(File.Modules.begin()),
-                      std::make_move_iterator(File.Modules.end()));
   }
   Modules.swap(NewModules);
   LoadedFiles.swap(NewSources);
+  Index.reset();
   clearMatches();
   return llvm::Error::success();
 }
@@ -282,39 +296,40 @@ void SignatureDB::apply(const BinaryImage &Img,
   if (Modules.empty() || FuncEntries.empty())
     return;
 
-  SignatureMatcher::HashIndex Index;
-  Index.build(Modules);
+  const SignatureMatcher::HashIndex &Idx = index();
 
   // Collect executable segment data for matching.
   for (const auto &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
 
-    SignatureMatcher::scanAtAddresses(
-        Seg.Data.data(), Seg.Data.size(), Seg.VA, FuncEntries, Modules, Index,
-        [&](uint64_t Addr, const PatternModule &Mod) {
-          const size_t ModIdx = static_cast<size_t>(&Mod - Modules.data());
-          // The names a module gives one offset are one routine's aliases,
-          // so each offset makes one match.
-          std::map<uint32_t, std::vector<std::string_view>> ByOffset;
-          for (const auto &Ref : Mod.PublicNames)
-            ByOffset[Ref.Offset].push_back(Ref.Name);
-          for (auto &[Offset, Names] : ByOffset) {
-            if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
-              continue;
-            std::sort(Names.begin(), Names.end(), preferredAliasOrder);
-            Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
-            SigMatch M;
-            M.Address = Addr + Offset;
-            M.Name = std::string(Names.front());
-            for (auto It = std::next(Names.begin()); It != Names.end(); ++It)
-              M.Aliases.emplace_back(*It);
-            M.LibraryName = libraryNameOf(ModIdx);
-            M.FuncLen = Mod.TotalLen;
-            Matches.push_back(std::move(M));
-            MatchModules.push_back(ModIdx);
-          }
-        });
+    for (const SignatureMatcher::Hit &Hit :
+         SignatureMatcher::findAtAddresses(Seg.Data.data(), Seg.Data.size(),
+                                           Seg.VA, FuncEntries, Modules, Idx)) {
+      const uint64_t Addr = Hit.Address;
+      const size_t ModIdx = Hit.Module;
+      const PatternModule &Mod = Modules[ModIdx];
+      // The names a module gives one offset are one routine's aliases, so
+      // each offset makes one match.
+      std::map<uint32_t, std::vector<std::string_view>> ByOffset;
+      for (const auto &Ref : Mod.PublicNames)
+        ByOffset[Ref.Offset].push_back(Ref.Name);
+      for (auto &[Offset, Names] : ByOffset) {
+        if (Offset > std::numeric_limits<uint64_t>::max() - Addr)
+          continue;
+        std::sort(Names.begin(), Names.end(), preferredAliasOrder);
+        Names.erase(std::unique(Names.begin(), Names.end()), Names.end());
+        SigMatch M;
+        M.Address = Addr + Offset;
+        M.Name = std::string(Names.front());
+        for (auto It = std::next(Names.begin()); It != Names.end(); ++It)
+          M.Aliases.emplace_back(*It);
+        M.LibraryName = libraryNameOf(ModIdx);
+        M.FuncLen = Mod.TotalLen;
+        Matches.push_back(std::move(M));
+        MatchModules.push_back(ModIdx);
+      }
+    }
   }
   checkReferences(Img);
 }
@@ -329,15 +344,14 @@ size_t SignatureDB::identifyPersonalityRoutines(BinaryImage &Img) {
   // differently is a routine neither of them has identified.
   std::map<uint64_t, SigMatch> Proposed;
   std::set<uint64_t> Disputed;
-  SignatureMatcher::HashIndex Index;
-  Index.build(Modules);
+  const SignatureMatcher::HashIndex &Idx = index();
 
   for (const Segment &Seg : Img.Segments) {
     if (!Seg.isExecutable() || Seg.Data.empty())
       continue;
 
     SignatureMatcher::scanAtAddresses(
-        Seg.Data.data(), Seg.Data.size(), Seg.VA, Candidates, Modules, Index,
+        Seg.Data.data(), Seg.Data.size(), Seg.VA, Candidates, Modules, Idx,
         [&](uint64_t Addr, const PatternModule &Mod) {
           // Whole-function agreement is the main gate, but on its own it
           // would also be satisfied by a short pattern that is mostly
@@ -475,6 +489,7 @@ std::unordered_map<uint64_t, std::string> SignatureDB::buildNameMap() const {
 void SignatureDB::clear() {
   Modules.clear();
   LoadedFiles.clear();
+  Index.reset();
   clearMatches();
 }
 
@@ -598,13 +613,19 @@ void SignatureDB::checkReferences(const BinaryImage &Img) {
   // against: an address two matches name differently names nothing.
   const std::unordered_map<uint64_t, SettledRoutine> Settled = settleRoutines();
 
-  // The modules that describe each routine from its start, to confirm a
-  // reference by the named routine's own pattern.
-  std::unordered_map<std::string, std::vector<size_t>> ByName;
+  // The modules that describe each routine the matches call from its start,
+  // to confirm a reference by the named routine's own pattern.  Only a
+  // called name is ever looked up.
+  std::unordered_map<std::string_view, std::vector<size_t>> ByName;
+  for (size_t I = 0; I < Matches.size(); ++I)
+    if (MatchModules[I] != NoModule)
+      for (const FuncRef &Ref : Modules[MatchModules[I]].References)
+        ByName.try_emplace(Ref.Name);
   for (size_t I = 0; I < Modules.size(); ++I)
     for (const FuncRef &Name : Modules[I].PublicNames)
       if (Name.Offset == 0)
-        ByName[Name.Name].push_back(I);
+        if (const auto It = ByName.find(Name.Name); It != ByName.end())
+          It->second.push_back(I);
 
   auto PatternAt = [&](const std::string &Name, uint64_t Address) {
     const auto Candidates = ByName.find(Name);

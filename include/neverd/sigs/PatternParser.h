@@ -15,6 +15,10 @@
 /// Example:
 ///   558BEC83EC..5356578B7D08 0A 1234 0042 :0000 _main :0010 _helper
 ///
+/// A signature directory holds hundreds of megabytes of such lines, so a
+/// text is cut into chunks of whole lines that are parsed in parallel (see
+/// \ref PatternChunk); the result is the same as parsing it line by line.
+///
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_SIGS_PATTERNPARSER_H
@@ -22,30 +26,68 @@
 
 #include "neverd/sigs/Signature.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
+#include <cstddef>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace neverd {
 namespace sigs {
+
+/// A run of whole lines of one pattern text, parsed on its own so that the
+/// chunks of a large text, or of many texts, can be parsed in parallel.
+struct PatternChunk {
+  /// The lines, each with its line feed except perhaps the text's last.
+  llvm::StringRef Text;
+  /// The modules its lines state, in order.
+  std::vector<PatternModule> Modules;
+  /// How many lines it holds, which is what numbers the lines of the chunks
+  /// after it.
+  size_t Lines = 0;
+  /// The first malformed line, counted from the chunk's first; parsing the
+  /// chunk stops there.
+  std::optional<size_t> ErrorLine;
+  std::string Error;
+};
 
 class PatternParser {
 public:
   /// Parse a single .pat line into a PatternModule.
   static llvm::Expected<PatternModule> parseLine(llvm::StringRef Line);
 
+  /// The size of the chunks a text is cut into: small enough that one large
+  /// file keeps every worker busy, large enough that a chunk is thousands of
+  /// lines.
+  static constexpr size_t DefaultChunkBytes = 256 * 1024;
+
   /// Parse pattern text as one transaction. Comments, blank lines, and
   /// separators are ignored; every other line must be a valid module.
   static llvm::Expected<std::vector<PatternModule>>
-  parseText(llvm::StringRef Text);
+  parseText(llvm::StringRef Text, size_t ChunkBytes = DefaultChunkBytes);
 
   /// Parse a .pat file, returning all valid modules.
   static llvm::Expected<std::vector<PatternModule>>
   parseFile(const std::filesystem::path &Path);
 
+  /// Cut \p Text into chunks of whole lines, each at least \p ChunkBytes
+  /// long except the last.
+  static std::vector<PatternChunk>
+  splitChunks(llvm::StringRef Text, size_t ChunkBytes = DefaultChunkBytes);
+
+  /// Parse every chunk, on the worker threads when there are enough of them.
+  static void parseChunks(llvm::MutableArrayRef<PatternChunk> Chunks);
+
+  /// The first malformed line of \p Chunks, the consecutive chunks of one
+  /// text, reported by its line number in that text.
+  static llvm::Error firstError(llvm::ArrayRef<PatternChunk> Chunks);
+
 private:
+  static void parseChunk(PatternChunk &Chunk);
   static bool parseHexByte(llvm::StringRef Hex, uint8_t &Out);
   static llvm::Expected<std::vector<PatternByte>>
   parseHexPattern(llvm::StringRef Pat);

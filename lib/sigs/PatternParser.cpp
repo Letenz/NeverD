@@ -6,14 +6,62 @@
 
 #include "neverd/sigs/PatternParser.h"
 
-#include "llvm/ADT/StringExtras.h"
+#include "neverd/support/Parallel.h"
+
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MemoryBuffer.h"
 
+#include <array>
 #include <string>
 
 using namespace neverd::sigs;
 
 namespace {
+
+/// Each character's value as a hex digit, or 0xFF when it is not one.
+constexpr std::array<uint8_t, 256> makeHexDigits() {
+  std::array<uint8_t, 256> Digits{};
+  for (uint8_t &Digit : Digits)
+    Digit = 0xFF;
+  for (unsigned C = '0'; C <= '9'; ++C)
+    Digits[C] = static_cast<uint8_t>(C - '0');
+  for (unsigned C = 'a'; C <= 'f'; ++C)
+    Digits[C] = static_cast<uint8_t>(C - 'a' + 10);
+  for (unsigned C = 'A'; C <= 'F'; ++C)
+    Digits[C] = static_cast<uint8_t>(C - 'A' + 10);
+  return Digits;
+}
+
+constexpr auto HexDigits = makeHexDigits();
+
+/// The characters that separate fields: the whitespace llvm::SplitString and
+/// StringRef::trim know.
+constexpr std::array<bool, 256> makeSeparators() {
+  std::array<bool, 256> Separators{};
+  for (char C : {' ', '\t', '\n', '\v', '\f', '\r'})
+    Separators[static_cast<uint8_t>(C)] = true;
+  return Separators;
+}
+
+constexpr auto Separators = makeSeparators();
+
+/// The whitespace-separated fields of \p Line, as llvm::SplitString gives
+/// them.
+void splitFields(llvm::StringRef Line,
+                 llvm::SmallVectorImpl<llvm::StringRef> &Fields) {
+  const char *Position = Line.begin();
+  const char *const End = Line.end();
+  while (true) {
+    while (Position != End && Separators[static_cast<uint8_t>(*Position)])
+      ++Position;
+    if (Position == End)
+      return;
+    const char *const Start = Position;
+    while (Position != End && !Separators[static_cast<uint8_t>(*Position)])
+      ++Position;
+    Fields.emplace_back(Start, static_cast<size_t>(Position - Start));
+  }
+}
 
 bool isIgnorablePatternLine(llvm::StringRef Line) {
   Line = Line.trim();
@@ -21,58 +69,41 @@ bool isIgnorablePatternLine(llvm::StringRef Line) {
          Line == "---";
 }
 
-llvm::Expected<std::vector<PatternModule>>
-parsePatternTextStrict(llvm::StringRef Text) {
-  std::vector<PatternModule> Modules;
-  llvm::SmallVector<llvm::StringRef, 0> Lines;
-  Text.split(Lines, '\n');
-
-  for (size_t I = 0; I < Lines.size(); ++I) {
-    if (isIgnorablePatternLine(Lines[I]))
-      continue;
-    auto ModOrErr = PatternParser::parseLine(Lines[I]);
-    if (!ModOrErr)
-      return llvm::make_error<llvm::StringError>(
-          "pattern line " + std::to_string(I + 1) + ": " +
-              llvm::toString(ModOrErr.takeError()),
-          llvm::inconvertibleErrorCode());
-    Modules.push_back(std::move(*ModOrErr));
-  }
-  return Modules;
-}
-
 } // namespace
 
 bool PatternParser::parseHexByte(llvm::StringRef Hex, uint8_t &Out) {
   if (Hex.size() != 2)
     return false;
-  unsigned Val;
-  if (Hex.getAsInteger(16, Val))
+  const uint8_t High = HexDigits[static_cast<uint8_t>(Hex[0])];
+  const uint8_t Low = HexDigits[static_cast<uint8_t>(Hex[1])];
+  if ((High | Low) > 0xF)
     return false;
-  Out = static_cast<uint8_t>(Val);
+  Out = static_cast<uint8_t>((High << 4) | Low);
   return true;
 }
 
 llvm::Expected<std::vector<PatternByte>>
 PatternParser::parseHexPattern(llvm::StringRef Pat) {
-  std::vector<PatternByte> Result;
   if (Pat.size() % 2 != 0)
     return llvm::make_error<llvm::StringError>("hex pattern has odd length",
                                                llvm::inconvertibleErrorCode());
 
-  for (size_t I = 0; I < Pat.size(); I += 2) {
-    auto Pair = Pat.substr(I, 2);
-    PatternByte PB;
-    if (Pair == "..") {
-      PB.IsWildcard = true;
-      PB.Value = 0;
-    } else {
-      if (!parseHexByte(Pair, PB.Value))
-        return llvm::make_error<llvm::StringError>(
-            "invalid hex byte: " + Pair.str(), llvm::inconvertibleErrorCode());
-      PB.IsWildcard = false;
+  std::vector<PatternByte> Result(Pat.size() / 2);
+  for (size_t I = 0; I < Result.size(); ++I) {
+    const char HighChar = Pat[2 * I], LowChar = Pat[2 * I + 1];
+    const uint8_t High = HexDigits[static_cast<uint8_t>(HighChar)];
+    const uint8_t Low = HexDigits[static_cast<uint8_t>(LowChar)];
+    if ((High | Low) <= 0xF) {
+      Result[I].Value = static_cast<uint8_t>((High << 4) | Low);
+      continue;
     }
-    Result.push_back(PB);
+    if (HighChar == '.' && LowChar == '.') {
+      Result[I].IsWildcard = true;
+      continue;
+    }
+    return llvm::make_error<llvm::StringError>("invalid hex byte: " +
+                                                   Pat.substr(2 * I, 2).str(),
+                                               llvm::inconvertibleErrorCode());
   }
   return Result;
 }
@@ -88,7 +119,7 @@ llvm::Expected<PatternModule> PatternParser::parseLine(llvm::StringRef Line) {
 
   // Split into tokens by whitespace.
   llvm::SmallVector<llvm::StringRef, 16> Tokens;
-  llvm::SplitString(Line, Tokens);
+  splitFields(Line, Tokens);
 
   if (Tokens.size() < 4)
     return llvm::make_error<llvm::StringError>("too few fields in pattern line",
@@ -212,14 +243,94 @@ llvm::Expected<PatternModule> PatternParser::parseLine(llvm::StringRef Line) {
   return Mod;
 }
 
+std::vector<PatternChunk> PatternParser::splitChunks(llvm::StringRef Text,
+                                                     size_t ChunkBytes) {
+  ChunkBytes = std::max<size_t>(ChunkBytes, 1);
+  std::vector<PatternChunk> Chunks;
+  Chunks.reserve(Text.size() / ChunkBytes + 1);
+  size_t Start = 0;
+  while (Start < Text.size()) {
+    // The chunk runs to the end of the line that holds its last byte.
+    size_t End = Text.size();
+    if (Text.size() - Start > ChunkBytes) {
+      const size_t LineFeed = Text.find('\n', Start + ChunkBytes - 1);
+      if (LineFeed != llvm::StringRef::npos)
+        End = LineFeed + 1;
+    }
+    Chunks.emplace_back();
+    Chunks.back().Text = Text.slice(Start, End);
+    Start = End;
+  }
+  return Chunks;
+}
+
+void PatternParser::parseChunk(PatternChunk &Chunk) {
+  llvm::StringRef Rest = Chunk.Text;
+  size_t Line = 0;
+  while (!Rest.empty()) {
+    const size_t LineFeed = Rest.find('\n');
+    const llvm::StringRef Text = Rest.take_front(LineFeed);
+    Rest = LineFeed == llvm::StringRef::npos ? llvm::StringRef()
+                                             : Rest.drop_front(LineFeed + 1);
+    if (!isIgnorablePatternLine(Text)) {
+      auto ModOrErr = parseLine(Text);
+      if (!ModOrErr) {
+        Chunk.ErrorLine = Line;
+        Chunk.Error = llvm::toString(ModOrErr.takeError());
+        return;
+      }
+      Chunk.Modules.push_back(std::move(*ModOrErr));
+    }
+    ++Line;
+  }
+  Chunk.Lines = Line;
+}
+
+void PatternParser::parseChunks(llvm::MutableArrayRef<PatternChunk> Chunks) {
+  neverd::parallelForEach(Chunks.size(), [&](auto Claim, size_t Total) {
+    for (size_t I = Claim(); I < Total; I = Claim())
+      parseChunk(Chunks[I]);
+  });
+}
+
+llvm::Error PatternParser::firstError(llvm::ArrayRef<PatternChunk> Chunks) {
+  // Every chunk before the first failure was parsed to its end, so their
+  // line counts are whole.
+  size_t LinesBefore = 0;
+  for (const PatternChunk &Chunk : Chunks) {
+    if (Chunk.ErrorLine)
+      return llvm::make_error<llvm::StringError>(
+          "pattern line " + std::to_string(LinesBefore + *Chunk.ErrorLine + 1) +
+              ": " + Chunk.Error,
+          llvm::inconvertibleErrorCode());
+    LinesBefore += Chunk.Lines;
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<std::vector<PatternModule>>
-PatternParser::parseText(llvm::StringRef Text) {
-  return parsePatternTextStrict(Text);
+PatternParser::parseText(llvm::StringRef Text, size_t ChunkBytes) {
+  std::vector<PatternChunk> Chunks = splitChunks(Text, ChunkBytes);
+  parseChunks(Chunks);
+  if (llvm::Error Error = firstError(Chunks))
+    return std::move(Error);
+
+  size_t Count = 0;
+  for (const PatternChunk &Chunk : Chunks)
+    Count += Chunk.Modules.size();
+  std::vector<PatternModule> Modules;
+  Modules.reserve(Count);
+  for (PatternChunk &Chunk : Chunks)
+    Modules.insert(Modules.end(),
+                   std::make_move_iterator(Chunk.Modules.begin()),
+                   std::make_move_iterator(Chunk.Modules.end()));
+  return Modules;
 }
 
 llvm::Expected<std::vector<PatternModule>>
 PatternParser::parseFile(const std::filesystem::path &Path) {
-  auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string());
+  auto BufOrErr = llvm::MemoryBuffer::getFile(Path.string(), /*IsText=*/false,
+                                              /*RequiresNullTerminator=*/false);
   if (!BufOrErr)
     return llvm::make_error<llvm::StringError>("cannot open pattern file: " +
                                                    Path.string(),
