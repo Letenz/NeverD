@@ -440,7 +440,7 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
 SymRef completeComplementarySums(SymContext &Ctx, SymRef Root,
                                  const MBAOptions &Opts, WorkBudget &Budget);
 
-/// Complete a selected sum when its two terms partition a shared bit mask.
+/// Complete a sum when its two terms partition a shared bit mask.
 SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
                               const llvm::APInt &Offset);
 
