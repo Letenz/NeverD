@@ -235,6 +235,16 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // DispatchSource.makeTimerSource takes TimerFlags by address, a queue
+    // optional in one integer carrier, and the source metatype in swiftself.
+    {"$sSo18OS_dispatch_sourceC8DispatchE15makeTimerSource5flags5queueSo0a1_"
+     "b1_C6_timer_pAbCE0F5FlagsV_So0a1_b1_I0CSgtFZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "ppzC"},
+    // The event-handler overload receives QoS and flags by address, the
+    // Objective-C block pointer bits, dynamic source type, and swiftself.
+    {"$sSo18OS_dispatch_sourceP8DispatchE15setEventHandler3qos5flags7handler"
+     "yAC0D3QoSV_AC0D13WorkItemFlagsVyyXBSgtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vppzpC"},
     // DispatchSourceProtocol.resume/suspend receive the dynamic source type
     // in the first ordinary argument and the source object in swiftself.
     // Swift's optimized arm64 and x86_64 IR declare both exact overlay
