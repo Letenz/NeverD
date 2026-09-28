@@ -88,11 +88,12 @@ public:
   /// \p FuncEntries are the known function entry addresses to check.
   ///
   /// A module's references (PatternModule::References) are then checked
-  /// against the image.  A reference whose branch goes to a routine the other
-  /// matches name differently contradicts the match, which is dropped.  One
-  /// whose target those matches name the same, or whose target the named
-  /// routine's own pattern matches, confirms it.  In an ELF image a branch
-  /// to an import's PLT stub confirms a reference to that import and
+  /// against the image, the references at one offset as one branch that
+  /// reaches one of the routines they name.  A branch that goes to a routine
+  /// the other matches name as none of them contradicts the match, which is
+  /// dropped.  One whose target those matches name as one of them, or whose
+  /// target the pattern of one of them matches, confirms it.  In an ELF image a
+  /// branch to an import's PLT stub confirms a reference to that import and
   /// contradicts one to anything else.  Anything else -- a COFF import thunk,
   /// a routine nothing names -- neither confirms nor contradicts.  A branch
   /// to a routine that only jumps on -- an incremental-linking thunk, a

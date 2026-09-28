@@ -422,6 +422,24 @@ std::string twinCallerLines(llvm::StringRef Offset) {
 
 } // namespace
 
+TEST(SignatureDBReferences, ReferencesAtOneOffsetAreAlternatives) {
+  // The branch reaches one of the routines its references name: the callee
+  // settles the line naming it among others, and contradicts the one that
+  // names only others.
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      CalleeLine + callerLine("caller", " ^0005 callee ^0005 callee_default") +
+          callerLine("caller_twin", " ^0005 other ^0005 other_default"),
+      "refs"));
+  Database.apply(makeCallingImage(0x1100), {0x1000, 0x1100});
+
+  ASSERT_EQ(Database.matches().size(), 2u);
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+  for (const SigMatch &Match : Database.matches())
+    if (Match.Address == 0x1000)
+      EXPECT_TRUE(Match.Confirmed);
+}
+
 TEST(SignatureDBReferences, AnELFImportsStubSettlesACallToIt) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(twinCallerLines("0005"), "refs"));

@@ -34,6 +34,7 @@
 #include "neverd/sigs/PatternGenerator.h"
 #include "neverd/sigs/PatternParser.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Archive.h"
@@ -95,20 +96,11 @@ struct InputStats {
   PatternGeneratorStats Patterns;
 };
 
-void processObject(const ObjectFile &Obj, std::optional<TargetMachine> Required,
-                   const PatternGeneratorOptions &Opts, raw_ostream &OS,
-                   InputStats &Stats) {
-  if (Required && !isObjectForMachine(Obj, *Required)) {
-    ++Stats.OtherMachine;
-    return;
-  }
-  ++Stats.Objects;
-  Stats.Patterns += generatePatterns(Obj, Opts, OS);
-}
-
-bool processInput(StringRef Path, std::optional<TargetMachine> Required,
-                  const PatternGeneratorOptions &Opts, raw_ostream &OS,
-                  InputStats &Stats) {
+/// Calls \p Visit with each object \p Path holds: the file itself, or every
+/// member of an archive.  Members that are no object, or that LLVM cannot
+/// read, are counted in \p Stats.
+bool forEachObject(StringRef Path, InputStats &Stats,
+                   function_ref<void(const ObjectFile &)> Visit) {
   auto BufOrErr = MemoryBuffer::getFile(Path);
   if (!BufOrErr) {
     WithColor::error() << "cannot open: " << Path << "\n";
@@ -124,7 +116,7 @@ bool processInput(StringRef Path, std::optional<TargetMachine> Required,
                          << toString(ObjOrErr.takeError()) << "\n";
       return false;
     }
-    processObject(**ObjOrErr, Required, Opts, OS, Stats);
+    Visit(**ObjOrErr);
     return true;
   }
 
@@ -146,7 +138,7 @@ bool processInput(StringRef Path, std::optional<TargetMachine> Required,
       continue;
     }
     if (auto *Obj = dyn_cast<ObjectFile>(BinOrErr->get()))
-      processObject(*Obj, Required, Opts, OS, Stats);
+      Visit(*Obj);
     else
       ++Stats.NotObjects; // import-library members and the like: no code
   }
@@ -212,9 +204,32 @@ int main(int Argc, char *Argv[]) {
   Opts.TailLen = TailLen;
   Opts.EmitReferences = References;
 
+  auto ForMachine = [&](const ObjectFile &Obj) {
+    return !Required || isObjectForMachine(Obj, *Required);
+  };
+  if (Opts.EmitReferences) {
+    // A COFF link resolves a symbol no object defines to the alternate name
+    // an `/alternatename` directive of any object it includes gives it, so
+    // the directives of every input count before any reference is stated.
+    InputStats Uncounted;
+    for (const std::string &Path : Inputs)
+      if (!forEachObject(Path, Uncounted, [&](const ObjectFile &Obj) {
+            if (ForMachine(Obj))
+              collectAlternateNames(Obj, Opts.AlternateNames);
+          }))
+        return 1;
+  }
+
   InputStats Stats;
   for (const std::string &Path : Inputs)
-    if (!processInput(Path, Required, Opts, OS, Stats))
+    if (!forEachObject(Path, Stats, [&](const ObjectFile &Obj) {
+          if (!ForMachine(Obj)) {
+            ++Stats.OtherMachine;
+            return;
+          }
+          ++Stats.Objects;
+          Stats.Patterns += generatePatterns(Obj, Opts, OS);
+        }))
       return 1;
 
   for (const auto &[Mach, Type] : Stats.Patterns.UnsupportedCOFFRelocations)

@@ -31,9 +31,12 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace llvm {
 namespace object {
@@ -56,6 +59,11 @@ struct PatternGeneratorOptions {
   /// `^offset name` references (see PatternModule::References). Off by
   /// default: a loader older than the references rejects a line with one.
   bool EmitReferences = false;
+  /// The names a COFF link resolves a symbol to when no object defines it,
+  /// as `/alternatename:symbol=alternate` directives give them (see
+  /// collectAlternateNames).  A reference to the symbol also names each
+  /// alternate, at the same offset: the branch reaches one of them.
+  std::map<std::string, std::vector<std::string>, std::less<>> AlternateNames;
 };
 
 /// What one object contributed, and what it could not.
@@ -172,6 +180,12 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
 std::optional<uint64_t>
 elfBranchReferenceOffset(uint16_t Machine, uint32_t Type,
                          llvm::ArrayRef<uint8_t> Function, uint64_t Offset);
+
+/// Adds the `/alternatename:symbol=alternate` directives of \p Obj's
+/// `.drectve` sections to \p Names, if it is a COFF object.
+void collectAlternateNames(
+    const llvm::object::ObjectFile &Obj,
+    std::map<std::string, std::vector<std::string>, std::less<>> &Names);
 
 /// Writes one .pat line per function \p Obj defines.
 ///
