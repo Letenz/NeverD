@@ -8,12 +8,14 @@
 
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
 #include "neverd/backend/codegen/MachO/MachOExceptionPatch.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
@@ -21,6 +23,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
@@ -763,6 +766,34 @@ TEST(ELFExceptionRewriteContract,
   CompiledImage Compiled;
   Compiled.Success = true;
   expectRejected(installELFEHFrame(Binary, std::nullopt, Compiled, *Module));
+}
+
+TEST(ExceptionRewriteContract,
+     COutputRetainsVerifiedModulesWithIncompleteNativeLowering) {
+  struct Case {
+    BinaryFormat Format;
+    ExceptionParseStatus Status;
+  };
+  for (const Case Current :
+       {Case{BinaryFormat::ELF, ExceptionParseStatus::Complete},
+        Case{BinaryFormat::MachO, ExceptionParseStatus::Partial}}) {
+    llvm::LLVMContext Context;
+    auto Module =
+        makeUnloweredExceptionModule(Context, Current.Format, Current.Status);
+    ASSERT_NE(Module, nullptr);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+
+    const OptimizationResult Result =
+        Pipeline::optimizeOrPromoteModule(*Module);
+    EXPECT_EQ(Result.Stop, OptimizationStopReason::InputInvalid);
+    EXPECT_FALSE(llvm::verifyModule(*Module));
+    expectOrdinaryCFG(*Module);
+
+    std::string Source;
+    llvm::raw_string_ostream Output(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, Output, {}));
+    EXPECT_NE(Source.find("unlowered_exception_contract"), std::string::npos);
+  }
 }
 
 TEST(MachOExceptionRewriteContract,

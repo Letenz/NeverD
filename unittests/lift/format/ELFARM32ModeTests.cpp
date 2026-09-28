@@ -271,7 +271,7 @@ TEST_F(ELFARM32ModeTest, LinkedEntryRetainsModeWithoutSymbolEvidence) {
   }
 }
 
-TEST_F(ELFARM32ModeTest, DirectModeEvidenceOverridesWeakImageFallback) {
+TEST_F(ELFARM32ModeTest, DirectEntryModeDoesNotCoverUnmarkedCode) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "ARM interworking fixture requires cross-target clang";
   auto Image = loadAssembly(R"(
@@ -291,13 +291,133 @@ thumb_target:
   ASSERT_EQ(Image->Mode, InstructionMode::ARM);
   EXPECT_EQ(Image->instructionModeAt(0x1000), InstructionMode::ARM);
   EXPECT_FALSE(Image->instructionModeAt(0x1000, InstructionMode::Thumb));
-  EXPECT_EQ(Image->instructionModeAt(0x1008), InstructionMode::ARM);
+  EXPECT_FALSE(Image->instructionModeAt(0x1008));
   EXPECT_EQ(Image->instructionModeAt(0x1008, InstructionMode::Thumb),
             InstructionMode::Thumb);
   Decoder Dec;
   ASSERT_TRUE(Dec.init(*Image));
   ASSERT_TRUE(Dec.selectMode(*Image, 0x1008, InstructionMode::Thumb));
   EXPECT_EQ(Dec.currentMode(), InstructionMode::Thumb);
+}
+
+TEST_F(ELFARM32ModeTest, UnmarkedObjectRequiresAnExactFunctionMode) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
+
+  for (bool Thumb : {false, true}) {
+    SCOPED_TRACE(Thumb ? "Thumb" : "ARM");
+    const auto Assembly = tmpFile("unmarked-mode.s");
+    std::ofstream(Assembly)
+        << ".syntax unified\n.text\n"
+        << (Thumb ? ".thumb\n" : ".arm\n")
+        << ".globl generic_add\n.type generic_add,%function\n"
+        << (Thumb ? ".thumb_func\n" : "") << "generic_add:\n"
+        << (Thumb ? "  eors r2, r0, r1\n  ands r0, r0, r1\n"
+                    "  lsls r0, r0, #1\n  adds r0, r0, r2\n"
+                  : "  eor r2, r0, r1\n  and r0, r0, r1\n"
+                    "  add r0, r2, r0, lsl #1\n")
+        << "  bx lr\n.size generic_add, .-generic_add\n";
+    const auto Object = tmpFile("unmarked-mode.o");
+    const auto Compiled =
+        exec(NEVERD_TEST_CLANG, {"-target", "armv7-linux-gnueabi", "-c",
+                                 Assembly.string(), "-o", Object.string()});
+    ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+    // Remove the symbol table, including the assembler's ARM/Thumb mapping
+    // symbols. The code and its executable section remain intact.
+    std::ifstream Input(Object, std::ios::binary);
+    std::vector<uint8_t> Bytes(std::istreambuf_iterator<char>(Input), {});
+    using ELFT = llvm::object::ELF32LE;
+    ELFT::Ehdr Header;
+    ASSERT_GE(Bytes.size(), sizeof(Header));
+    std::memcpy(&Header, Bytes.data(), sizeof(Header));
+    bool Removed = false;
+    for (unsigned Index = 0; Index != Header.e_shnum; ++Index) {
+      const auto Offset = Header.e_shoff + Index * Header.e_shentsize;
+      ASSERT_LE(Offset + Header.e_shentsize, Bytes.size());
+      ASSERT_GE(Header.e_shentsize, sizeof(ELFT::Shdr));
+      ELFT::Shdr Section;
+      std::memcpy(&Section, Bytes.data() + Offset, sizeof(Section));
+      if (Section.sh_type != llvm::ELF::SHT_SYMTAB)
+        continue;
+      std::memset(Bytes.data() + Offset, 0, Header.e_shentsize);
+      Removed = true;
+    }
+    ASSERT_TRUE(Removed);
+    std::ofstream Output(Object, std::ios::binary | std::ios::trunc);
+    Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+    Output.close();
+
+    auto Image = ELFLoader().load(Object);
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    EXPECT_FALSE(Image->instructionModeAt(0));
+    BinaryLoadOptions Options;
+    Options.ARMFunctionModes[0] =
+        Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+    auto Asserted = loadBinary(Object, Options);
+    ASSERT_TRUE(static_cast<bool>(Asserted))
+        << llvm::toString(Asserted.takeError());
+    EXPECT_EQ(Asserted->instructionModeAt(0), Options.ARMFunctionModes[0]);
+
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      const auto CFile = tmpFile("unmarked-mode.c");
+      std::vector<std::string> Args{"decompile", "--func=0"};
+      if (LLVM)
+        Args.push_back("--llvm");
+      Args.insert(Args.end(), {"-o", CFile.string(), Object.string()});
+      const auto Unknown = exec(ndBin(), Args);
+      EXPECT_FALSE(Unknown.ok());
+      EXPECT_NE(Unknown.err.find("--arm-function-mode"), std::string::npos)
+          << Unknown.err;
+
+      Args.insert(Args.begin() + 2, Thumb ? "--arm-function-mode=0x0:thumb"
+                                          : "--arm-function-mode=0x0:arm");
+      const auto Decompiled = exec(ndBin(), Args);
+      ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+      std::ifstream SourceInput(CFile);
+      const std::string Source(std::istreambuf_iterator<char>(SourceInput), {});
+      ASSERT_NE(Source.find("sub_0("), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(" ^ "), std::string::npos) << Source;
+      EXPECT_EQ(Source.find(" & "), std::string::npos) << Source;
+      const auto Harness = tmpFile("unmarked-mode-execute.c");
+      std::ofstream(Harness) << Source << R"(
+static int check(uint32_t x, uint32_t y) {
+  return (uint32_t)sub_0(x, y) == x + y;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xffffffffU};
+  for (unsigned i = 0; i < 6; ++i)
+    for (unsigned j = 0; j < 6; ++j)
+      if (!check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0xa0f6e732d41c895b);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t x = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (!check(x, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Executable = tmpFile("unmarked-mode-execute");
+        const auto Recompiled =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Optimization, "-Werror=return-type",
+                  "-Werror=implicit-function-declaration",
+                  "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                  Harness.string(), "-o", Executable.string()});
+        ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+        const auto Ran = exec(Executable.string(), {});
+        EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+      }
+    }
+  }
 }
 
 TEST_F(ELFARM32ModeTest, RejectsConditionalCallRelocation) {

@@ -193,10 +193,10 @@ void emitMedView(const MedFunc &F, const LowFunc *Low, const IRRowSink &Sink) {
 // ===--------------------------------------------------------------------===//
 
 namespace {
-std::optional<std::string> missingMachOARMModeReason(const BinaryImage &Img,
-                                                     va_t Entry) {
-  if (Img.Arch != Arch::ARM || Img.Format != BinaryFormat::MachO ||
-      !Img.isCodeAddress(Entry) || Img.instructionModeAt(Entry))
+std::optional<std::string> missingARMModeReason(const BinaryImage &Img,
+                                                va_t Entry) {
+  if (Img.Arch != Arch::ARM || !Img.isCodeAddress(Entry) ||
+      Img.instructionModeAt(Entry))
     return std::nullopt;
   return "ARM/Thumb mode cannot be established for function at 0x" +
          llvm::utohexstr(Entry) +
@@ -234,7 +234,7 @@ const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (auto Reason = missingMachOARMModeReason(S->Img, FuncEntry)) {
+  if (auto Reason = missingARMModeReason(S->Img, FuncEntry)) {
     S->setError(*Reason);
     return dupStr(std::string());
   }
@@ -307,7 +307,7 @@ const char *neverd_decompile_llvm(neverd_session_t Sess,
   auto *S = toSession(Sess);
   S->clearError();
 
-  if (auto Reason = missingMachOARMModeReason(S->Img, FuncEntry)) {
+  if (auto Reason = missingARMModeReason(S->Img, FuncEntry)) {
     S->setError(*Reason);
     return dupStr(std::string());
   }
@@ -693,16 +693,16 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;
-  // A named A-profile function with no instruction-state evidence is not a
+  // A named ARM function with no instruction-state evidence is not a
   // candidate for either C route. Reject the whole requested output before
   // analysis so a partly marked image cannot silently omit that function.
-  if (R.Img.Arch == Arch::ARM && R.Img.Format == BinaryFormat::MachO) {
+  if (R.Img.Arch == Arch::ARM) {
     for (const Symbol &Sym : R.Img.Symbols) {
       if (!Sym.IsFunc || R.Img.isImportStubAt(Sym.Addr) ||
           (!Opts.OnlyFunctionEntries.empty() &&
            !Opts.OnlyFunctionEntries.count(Sym.Addr)))
         continue;
-      if (auto Reason = missingMachOARMModeReason(R.Img, Sym.Addr)) {
+      if (auto Reason = missingARMModeReason(R.Img, Sym.Addr)) {
         if (S)
           S->setError(*Reason);
         return nullptr;

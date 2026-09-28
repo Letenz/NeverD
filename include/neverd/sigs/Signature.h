@@ -57,9 +57,11 @@ struct PatternModule {
   /// The routines the function branches to directly, as `^offset name`
   /// states them.  Offset is where the relocated branch field starts: the
   /// rel32 of an x86 or x64 `call`/`jmp` (E8/E9), and the branch instruction
-  /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  The bytes there are
-  /// wildcards, so matching checks the target separately; see
-  /// SignatureDB::apply.
+  /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  An ARM-state (A32)
+  /// B, BL or BLX is stated one byte past its instruction: its offset is
+  /// odd, which no Thumb-2 instruction's is, so the offset alone says which
+  /// instruction set the branch is in.  The bytes there are wildcards, so
+  /// matching checks the target separately; see SignatureDB::apply.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;
