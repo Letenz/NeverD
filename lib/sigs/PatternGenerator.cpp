@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <map>
+#include <tuple>
 #include <vector>
 
 using namespace llvm;
@@ -918,16 +919,30 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
       }
       // A branch to the function's own start is recursion, not a reference
       // to anything the image has to confirm.
-      if (isReferenceName(*TargetName) && *TargetName != Fn.Name)
-        References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
+      if (!isReferenceName(*TargetName) || *TargetName == Fn.Name)
+        continue;
+      References.push_back({static_cast<uint32_t>(*At), TargetName->str()});
+      // Where no object defines the symbol, the link resolves it to its
+      // alternate name, which the branch then reaches instead.
+      if (const auto It = Opts.AlternateNames.find(*TargetName);
+          It != Opts.AlternateNames.end())
+        for (const std::string &Alternate : It->second)
+          if (isReferenceName(Alternate) && Alternate != Fn.Name)
+            References.push_back({static_cast<uint32_t>(*At), Alternate});
     }
     if (!Supported) {
       ++Stats.UnsupportedRelocation;
       continue;
     }
     llvm::sort(References, [](const FuncRef &A, const FuncRef &B) {
-      return A.Offset < B.Offset;
+      return std::tie(A.Offset, A.Name) < std::tie(B.Offset, B.Name);
     });
+    References.erase(std::unique(References.begin(), References.end(),
+                                 [](const FuncRef &A, const FuncRef &B) {
+                                   return A.Offset == B.Offset &&
+                                          A.Name == B.Name;
+                                 }),
+                     References.end());
 
     ArrayRef<uint8_t> Data = Sec.Contents.slice(Fn.Offset, Size);
     countOrEmit(OS, Fn.Name, Data, Wildcard, Opts, Stats, References);
@@ -936,6 +951,62 @@ PatternGeneratorStats generateCOFF(const COFFObjectFile &Obj,
 }
 
 } // anonymous namespace
+
+void collectAlternateNames(
+    const ObjectFile &Obj,
+    std::map<std::string, std::vector<std::string>, std::less<>> &Names) {
+  const auto *COFFObj = dyn_cast<COFFObjectFile>(&Obj);
+  if (!COFFObj)
+    return;
+  for (const SectionRef &Sec : COFFObj->sections()) {
+    Expected<StringRef> SecName = Sec.getName();
+    if (!SecName) {
+      consumeError(SecName.takeError());
+      continue;
+    }
+    if (*SecName != ".drectve")
+      continue;
+    Expected<StringRef> Contents = Sec.getContents();
+    if (!Contents) {
+      consumeError(Contents.takeError());
+      continue;
+    }
+    // Directives are separated by spaces, and one that holds a space is
+    // quoted; MSVC may open the section with a UTF-8 byte order mark.
+    StringRef Rest = *Contents;
+    Rest.consume_front("\xEF\xBB\xBF");
+    while (!Rest.empty()) {
+      Rest = Rest.ltrim(" \t\r\n");
+      if (Rest.empty())
+        break;
+      StringRef Directive;
+      if (Rest.front() == '"') {
+        const size_t Close = Rest.find('"', 1);
+        Directive = Rest.slice(1, Close);
+        Rest =
+            Close == StringRef::npos ? StringRef() : Rest.drop_front(Close + 1);
+      } else {
+        const size_t End = Rest.find_first_of(" \t\r\n");
+        Directive = Rest.take_front(End);
+        Rest = End == StringRef::npos ? StringRef() : Rest.drop_front(End);
+      }
+      // `/ALTERNATENAME:` and `-alternatename:` alike.
+      constexpr StringRef Option = "alternatename:";
+      Directive = Directive.trim('\0');
+      if (Directive.empty() ||
+          (Directive.front() != '/' && Directive.front() != '-') ||
+          !Directive.drop_front().starts_with_insensitive(Option))
+        continue;
+      const auto [Symbol, Alternate] =
+          Directive.drop_front(1 + Option.size()).split('=');
+      if (Symbol.empty() || Alternate.empty())
+        continue;
+      std::vector<std::string> &List = Names[Symbol.str()];
+      if (!llvm::is_contained(List, Alternate))
+        List.push_back(Alternate.str());
+    }
+  }
+}
 
 size_t statedByteCount(ArrayRef<bool> Wildcard,
                        const PatternGeneratorOptions &Opts) {

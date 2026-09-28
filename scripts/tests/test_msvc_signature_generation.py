@@ -91,12 +91,25 @@ class FoldTests(unittest.TestCase):
         self.assertEqual(line.with_refs(((2, "g"),)).text,
                          "AAE8........C3 00 0000 0007 :0000 f ^0002 g C3")
 
-    def test_copies_under_one_name_keep_the_references_they_share(self) -> None:
-        # The release build calls free, the debug build _free_dbg.
+    def test_copies_under_one_name_keep_every_routine_a_branch_reaches(self) -> None:
+        # The release build calls free, the debug build _free_dbg: the branch
+        # reaches one of them.
         result = fold(
             [
                 "AAE8........C3 00 0000 0007 :0000 f ^0002 free ^0005 g",
                 "AAE8........C3 00 0000 0007 :0000 f ^0002 _free_dbg ^0005 g",
+            ]
+        )
+        self.assertEqual(
+            result.texts,
+            ["AAE8........C3 00 0000 0007 :0000 f ^0002 _free_dbg ^0002 free ^0005 g"])
+
+    def test_a_branch_one_copy_states_no_reference_for_is_left_unstated(self) -> None:
+        # One build calls itself there: the other's callee would contradict it.
+        result = fold(
+            [
+                "AAE8........C3 00 0000 0007 :0000 f ^0002 free ^0005 g",
+                "AAE8........C3 00 0000 0007 :0000 f ^0005 g",
             ]
         )
         self.assertEqual(result.texts, ["AAE8........C3 00 0000 0007 :0000 f ^0005 g"])
@@ -138,6 +151,17 @@ class FoldTests(unittest.TestCase):
         )
         self.assertEqual(result.texts, [])
         self.assertEqual(result.ambiguous_keys, {"AABBCCDD 00 0000 0004"})
+
+    def test_twins_whose_branches_may_reach_a_shared_routine_are_ambiguous(self) -> None:
+        # Both may reach _cmp_default, where neither can be confirmed alone.
+        result = fold(
+            [
+                "AAE8........C3 00 0000 0007 :0000 less_h ^0002 cmp_h ^0002 _cmp_default",
+                "AAE8........C3 00 0000 0007 :0000 less_i ^0002 cmp_i ^0002 _cmp_default",
+            ]
+        )
+        self.assertEqual(result.texts, [])
+        self.assertEqual(result.ambiguous_keys, {"AAE8........C3 00 0000 0007"})
 
     def test_a_twin_without_a_telling_reference_leaves_the_bytes_ambiguous(self) -> None:
         result = fold(

@@ -60,8 +60,12 @@ struct PatternModule {
   /// itself on ARM64 (B/BL) and Thumb-2 (B.W/BL/BLX).  An ARM-state (A32)
   /// B, BL or BLX is stated one byte past its instruction: its offset is
   /// odd, which no Thumb-2 instruction's is, so the offset alone says which
-  /// instruction set the branch is in.  The bytes there are wildcards, so
-  /// matching checks the target separately; see SignatureDB::apply.
+  /// instruction set the branch is in.  Several references at one offset
+  /// name the routines that one branch may reach -- a COFF symbol and the
+  /// alternate name a link resolves it to where no object defines it, or
+  /// the routines two builds of the same bytes call there -- and any of them
+  /// confirms it.  The bytes there are wildcards, so matching checks the
+  /// target separately; see SignatureDB::apply.
   std::vector<FuncRef> References;
 
   std::vector<PatternByte> TailBytes;

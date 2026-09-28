@@ -830,22 +830,29 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   };
 
   // Where each reference of each match branches: the branch's target and,
-  // when that is a thunk that only jumps on, the thunk's target.  A
-  // reference whose site holds no such branch is none of them, and leaves
-  // its match unconfirmed.  Match I's are Sites[FirstSite[I]] up to
-  // Sites[FirstSite[I + 1]].
+  // when that is a routine that only jumps on, the routine it reaches.  The
+  // references at one offset are one branch, which reaches one of the
+  // routines they name: a COFF link resolves a symbol no object defines to
+  // its alternate name.  A branch the image does not hold at its site is
+  // none of them, and leaves its match unconfirmed.  Match I's are
+  // Sites[FirstSite[I]] up to Sites[FirstSite[I + 1]], of Branches[I].
   struct Site {
-    std::string_view Name;
+    llvm::SmallVector<std::string_view, 1> Names;
     uint64_t Target = 0;
     std::optional<uint64_t> Onward;
   };
   std::vector<Site> Sites;
   std::vector<size_t> FirstSite(Matches.size() + 1, 0);
+  std::vector<uint32_t> Branches(Matches.size(), 0);
   for (size_t I = 0; I < Matches.size(); ++I) {
     FirstSite[I] = Sites.size();
-    const llvm::ArrayRef<StoredName> References = ReferencesOf(I);
+    llvm::SmallVector<StoredName, 8> References(ReferencesOf(I).begin(),
+                                                ReferencesOf(I).end());
     if (References.empty())
       continue;
+    llvm::stable_sort(References, [](const StoredName &A, const StoredName &B) {
+      return A.Offset < B.Offset;
+    });
     // Every public name of a module shares its references; the module's
     // start is the match address less the name's offset.
     uint64_t Start = Matches[I].Address;
@@ -856,14 +863,24 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
       }
     if (Img.Arch == Arch::ARM)
       Start &= ~uint64_t(1);
-    for (const StoredName &Ref : References)
+    for (size_t R = 0; R < References.size();) {
+      size_t End = R + 1;
+      while (End < References.size() &&
+             References[End].Offset == References[R].Offset)
+        ++End;
+      ++Branches[I];
       if (const std::optional<Branch> To =
-              branchTarget(Img, Start, Ref.Offset)) {
-        Site Where{Ref.Name, To->Target, std::nullopt};
+              branchTarget(Img, Start, References[R].Offset)) {
+        Site Where;
+        for (size_t Alternative = R; Alternative < End; ++Alternative)
+          Where.Names.push_back(References[Alternative].Name);
+        Where.Target = To->Target;
         if (const std::optional<Branch> Next = thunkTarget(Img, *To))
           Where.Onward = Next->Target;
-        Sites.push_back(Where);
+        Sites.push_back(std::move(Where));
       }
+      R = End;
+    }
   }
   FirstSite[Matches.size()] = Sites.size();
 
@@ -978,28 +995,40 @@ void SignatureDB::checkReferences(const BinaryImage &Img,
   };
 
   // Whether match \p I is contradicted, and whether every one of its
-  // references is confirmed.
+  // branches is confirmed.
   enum class Outcome : uint8_t { Unconfirmed, Confirmed, Contradicted };
   auto Check = [&](size_t I) {
     size_t Confirmed = 0;
     for (size_t S = FirstSite[I]; S < FirstSite[I + 1]; ++S) {
       const Site &Where = Sites[S];
-      ReferenceVerdict Verdict = Judge(Where.Name, Where.Target);
+      // Any routine the branch may reach confirms it; it contradicts the
+      // match only when the routine it reaches is none of them.
+      ReferenceVerdict Verdict = ReferenceVerdict::Contradicted;
+      for (std::string_view Name : Where.Names) {
+        const ReferenceVerdict One = Judge(Name, Where.Target);
+        if (One == ReferenceVerdict::Confirmed) {
+          Verdict = One;
+          break;
+        }
+        if (One == ReferenceVerdict::Unknown)
+          Verdict = One;
+      }
       // A routine that only jumps on is a thunk, or a routine that
       // tail-calls another -- `free` that jumps to `_free_base`, `operator
       // delete` to `free` -- and the bytes cannot tell which.  So the
       // routine it reaches confirms the reference when it is the one named,
       // and otherwise contradicts nothing.
       if (Verdict == ReferenceVerdict::Unknown && Where.Onward &&
-          Judge(Where.Name, *Where.Onward) == ReferenceVerdict::Confirmed)
+          llvm::any_of(Where.Names, [&](std::string_view Name) {
+            return Judge(Name, *Where.Onward) == ReferenceVerdict::Confirmed;
+          }))
         Verdict = ReferenceVerdict::Confirmed;
       if (Verdict == ReferenceVerdict::Contradicted)
         return Outcome::Contradicted;
       Confirmed += Verdict == ReferenceVerdict::Confirmed;
     }
-    return Confirmed != 0 && Confirmed == ReferencesOf(I).size()
-               ? Outcome::Confirmed
-               : Outcome::Unconfirmed;
+    return Confirmed != 0 && Confirmed == Branches[I] ? Outcome::Confirmed
+                                                      : Outcome::Unconfirmed;
   };
 
   // A routine the references name is one its callers' references can be

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -67,6 +68,9 @@ public:
     Relocations.push_back({Offset, Type});
   }
 
+  /// Linker directives, which build() writes to a `.drectve` section.
+  void setDirectives(StringRef Text) { Directives = Text.str(); }
+
   std::vector<uint8_t> build() const {
     std::vector<Symbol> All = Symbols;
     All.push_back(
@@ -76,11 +80,14 @@ public:
     // Two slots for the section symbol and its auxiliary record.
     const uint32_t TargetIndex = 2 + static_cast<uint32_t>(Symbols.size());
 
-    const uint32_t HeaderSize = 20 + 40;
+    const uint16_t SectionCount = Directives.empty() ? 1 : 2;
+    const uint32_t HeaderSize = 20 + 40 * SectionCount;
     const uint32_t RawOffset = HeaderSize;
     const uint32_t RelocOffset = RawOffset + static_cast<uint32_t>(Code.size());
-    const uint32_t SymbolOffset =
+    const uint32_t DirectiveOffset =
         RelocOffset + 10 * static_cast<uint32_t>(Relocations.size());
+    const uint32_t SymbolOffset =
+        DirectiveOffset + static_cast<uint32_t>(Directives.size());
     const uint32_t SymbolCount = 2 + static_cast<uint32_t>(All.size());
 
     std::vector<uint8_t> Out;
@@ -107,7 +114,7 @@ public:
 
     // File header.
     put16(Machine);
-    put16(1);
+    put16(SectionCount);
     put32(0);
     put32(SymbolOffset);
     put32(SymbolCount);
@@ -126,6 +133,19 @@ public:
     put16(static_cast<uint16_t>(Relocations.size()));
     put16(0);
     put32(Characteristics);
+    if (!Directives.empty()) {
+      putName(".drectve", Strings);
+      put32(0);
+      put32(0);
+      put32(static_cast<uint32_t>(Directives.size()));
+      put32(DirectiveOffset);
+      put32(0);
+      put32(0);
+      put16(0);
+      put16(0);
+      put32(COFF::IMAGE_SCN_LNK_INFO | COFF::IMAGE_SCN_LNK_REMOVE |
+            COFF::IMAGE_SCN_ALIGN_1BYTES);
+    }
 
     Out.insert(Out.end(), Code.begin(), Code.end());
 
@@ -134,6 +154,7 @@ public:
       put32(TargetIndex);
       put16(Type);
     }
+    Out.insert(Out.end(), Directives.begin(), Directives.end());
 
     // Section symbol and its auxiliary section-definition record.
     putName(".text", Strings);
@@ -170,6 +191,7 @@ private:
   uint32_t Characteristics;
   std::vector<Symbol> Symbols;
   std::vector<std::pair<uint32_t, uint16_t>> Relocations;
+  std::string Directives;
 };
 
 /// A relocatable ELF object with one code section, assembled in memory.
@@ -555,6 +577,56 @@ TEST(PatternGeneratorCOFF, DirectBranchesBecomeReferencesOnRequest) {
   ASSERT_EQ(Mod->References.size(), 1u);
   EXPECT_EQ(Mod->References[0].Offset, 9u);
   EXPECT_EQ(Mod->References[0].Name, "target");
+}
+
+TEST(PatternGeneratorCOFF, AlternateNamesComeFromTheDirectives) {
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, sequentialCode(32));
+  Builder.addFunction("_f", 0);
+  // MSVC's own spelling, a quoted one, another option, and a second
+  // alternate for one symbol.
+  Builder.setDirectives(
+      "\xEF\xBB\xBF   /ALTERNATENAME:___filter=___filter_default "
+      "/DEFAULTLIB:\"LIBCMT\" "
+      "\"-alternatename:_pRawDllMain=_pDefaultRawDllMain\" "
+      "/alternatename:___filter=___filter_other ");
+  const std::vector<uint8_t> Bytes = Builder.build();
+  auto ObjOrErr = object::ObjectFile::createObjectFile(MemoryBufferRef(
+      StringRef(reinterpret_cast<const char *>(Bytes.data()), Bytes.size()),
+      "directives.obj"));
+  ASSERT_TRUE(static_cast<bool>(ObjOrErr)) << toString(ObjOrErr.takeError());
+
+  std::map<std::string, std::vector<std::string>, std::less<>> Names;
+  collectAlternateNames(**ObjOrErr, Names);
+  ASSERT_EQ(Names.size(), 2u);
+  EXPECT_EQ(Names["___filter"],
+            (std::vector<std::string>{"___filter_default", "___filter_other"}));
+  EXPECT_EQ(Names["_pRawDllMain"],
+            std::vector<std::string>{"_pDefaultRawDllMain"});
+}
+
+TEST(PatternGeneratorCOFF, ABranchToASymbolWithAnAlternateNamesBoth) {
+  // x86: a call at 8 to `target`, which a link without it resolves to
+  // `target_default`.
+  std::vector<uint8_t> Code = sequentialCode(48);
+  Code[8] = 0xE8;
+  COFFObjectBuilder Builder(COFF::IMAGE_FILE_MACHINE_I386, Code);
+  Builder.addFunction("caller", 0);
+  Builder.addRelocation(9, COFF::IMAGE_REL_I386_REL32);
+  PatternGeneratorOptions Opts;
+  Opts.TailLen = 0xFFFF;
+  Opts.EmitReferences = true;
+  Opts.AlternateNames["target"] = {"target_default", "caller"};
+
+  Generated Out = generate(Builder.build(), Opts);
+  ASSERT_EQ(Out.Lines.size(), 1u);
+  auto Mod = PatternParser::parseLine(Out.Lines[0]);
+  ASSERT_TRUE(static_cast<bool>(Mod)) << toString(Mod.takeError());
+  // The routine's own name is no alternate the image confirms.
+  ASSERT_EQ(Mod->References.size(), 2u) << Out.Lines[0];
+  EXPECT_EQ(Mod->References[0].Offset, 9u);
+  EXPECT_EQ(Mod->References[0].Name, "target");
+  EXPECT_EQ(Mod->References[1].Offset, 9u);
+  EXPECT_EQ(Mod->References[1].Name, "target_default");
 }
 
 TEST(PatternGeneratorCOFF, BranchReferencesUseEachMachinesOffset) {
