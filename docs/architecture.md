@@ -35,6 +35,11 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Both source routes apply the same module-wide return modeling before recovering
+call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
+uses the two integer return registers; HighIR and LLVM emission must preserve
+both halves through callers and source returns.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
@@ -1399,6 +1404,15 @@ full-word consumers retain their original values. Node/edge limits and unknown
 shapes leave the original expression intact without invoking a solver.
 
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Split-word arithmetic recovery also lives there as a solver-independent
+candidate search: it proposes packed addition or subtraction from four
+same-width word inputs, then requires the caller's bitvector equivalence
+proof. Its deterministic samples only discard candidates. The HighIR and LLVM
+bridges translate exact concatenation and defined carry predicates into that
+shared expression; the LLVM bridge admits a disjoint packed OR and a widened
+no-wrap shift only when their operand widths prove the flags for every input.
+Unknown operators, incomplete proofs, and unprofitable output leave the
+original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and
