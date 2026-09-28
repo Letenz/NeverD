@@ -3730,3 +3730,63 @@ TEST(HighControlFlowSemantics, DefinitionLaidOutAfterItsUseIsStillBuilt) {
       EXPECT_TRUE(Defined.count(Key)) << "t" << Key.first << "_" << Key.second;
   }
 }
+
+TEST(HighControlFlowSemantics, SummarizedCallKeepsArgumentsAfterAnUnknownSlot) {
+  // The callee reads RCX, RDX, R8 and R9. An earlier call clobbered RCX, so
+  // its value is unknown, but the other three are known: the call keeps all
+  // four positions instead of stopping at the first.
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  MedFunc F;
+  F.Entry = 0x1000;
+  F.Name = "unknown_first_slot";
+  F.ReturnType = NdType::makeInt(8, false);
+  F.CC = CallingConv::Win64;
+  auto Reg = [](int Id, int Version, uint64_t Offset) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::X64;
+    V.Id = Id;
+    V.SSAVer = Version;
+    V.Size = 8;
+    V.RegOff = Offset;
+    return V;
+  };
+  const MedVar Clobbered = Reg(11, 1, TRI.IntParamRegs[0]);
+  const MedVar First = Reg(20, 1, TRI.IntReturnReg);
+  const MedVar Second = Reg(20, 2, TRI.IntReturnReg);
+  F.CallClobbers.push_back({Clobbered, 1, {}, 0});
+  F.Blocks.resize(1);
+  F.Blocks[0].Id = 0;
+  F.Blocks[0].StartAddr = 0x1000;
+  F.Blocks[0].EndAddr = 0x1040;
+  MedOp Earlier =
+      operation(NdOp::CALL, 0x1000, First, {MedVar::makeConst(0x2000, 8)});
+  Earlier.CallSiteId = 1;
+  MedOp Summarized = operation(
+      NdOp::CALL, 0x1010, Second,
+      {MedVar::makeConst(0x3000, 8), Clobbered, MedVar::makeConst(1, 8),
+       MedVar::makeConst(2, 8), MedVar::makeConst(3, 8)});
+  Summarized.CalleeRegisterArgs = 4;
+  F.Blocks[0].Ops = {Earlier, Summarized,
+                     operation(NdOp::RETURN, 0x1020, {}, {Second})};
+  const auto High = MedToHighConverter().convert(F, Arch::X64);
+  const HighExpr *Call = nullptr;
+  walkStmts(High.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) {
+      std::function<void(const HighExpr &)> Walk = [&](const HighExpr &N) {
+        if (N.Kind == ExprKind::Call && N.CallAddr == 0x3000)
+          Call = &N;
+        N.forEachChildExpr([&](const ExprPtr &C) { Walk(*C); });
+      };
+      if (E)
+        Walk(*E);
+    });
+  });
+  ASSERT_NE(Call, nullptr);
+  ASSERT_EQ(Call->Operands.size(), 4u);
+  EXPECT_EQ(Call->Operands[0]->Kind, ExprKind::Undef);
+  for (unsigned I = 1; I < 4; ++I) {
+    ASSERT_EQ(Call->Operands[I]->Kind, ExprKind::Const);
+    EXPECT_EQ(Call->Operands[I]->ConstVal, I);
+  }
+}

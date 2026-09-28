@@ -1186,11 +1186,19 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx) {
     return MatchOwnSignature(std::move(Hinted));
   }
   Args.clear();
+  // A summarized callee reads every register slot below its count, so an
+  // unknown value there still occupies its position; stopping at it would
+  // drop every argument after it.
+  const int ReadSlots = SummarizedCallee ? Ops[CallIdx].CalleeRegisterArgs : 0;
+  size_t End = 0;
   for (int K = 0; K < MaxArgs; ++K) {
-    if (!Found[K] || Found[K]->Kind == ExprKind::Undef)
+    if (Found[K] && Found[K]->Kind != ExprKind::Undef)
+      End = static_cast<size_t>(K) + 1;
+    else if (K >= ReadSlots)
       break;
-    Args.push_back(Found[K]);
   }
+  for (size_t K = 0; K < End; ++K)
+    Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));
   return BoundKnownCalleeArity(std::move(Args));
 }
 
