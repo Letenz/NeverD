@@ -365,4 +365,4 @@ HighIR 仅在参与符号折叠的每个字面量（包括通过可见局部定�
 
 Objective-C 选择器桩调用也仅在重新验证准确的接收者声明和选择器桩、参数整数宽度匹配，且字面量具有无地址所有者的标量来源时，才将数值碰巧落在映像地址内的标量保留为整数实参。来源未知或源于地址的值仍须提供重定位证明。
 
-在 ARM64 Mach-O 中，作为 Objective-C 方法暴露的 Swift CGFloat getter，只有当返回 double 的精确方法编码、唯一的 Swift getter thunk 符号、接收者 ivar 偏移引用、来自 libswiftCore 的强 _swift_isaMask 导入、经掩码 isa 的表项加载以及 blr x21 目标全部吻合时，才会绑定其虚调用。生成的 C 将表项加载保留在 retain/release 之前，并以 swiftcall 和 swift_context 调用目标；其他虚调用形态仍不恢复。
+在 ARM64 Mach-O 中，作为 Objective-C 方法暴露的 Swift CGFloat、Double 或 Bool getter，只有当精确的 `d16@0:8` 或 `B16@0:8` 方法编码、匹配且唯一的 Swift getter thunk 符号、接收者 ivar 偏移引用、来自 libswiftCore 的强 _swift_isaMask 导入、经掩码 isa 的表项加载以及 blr x21 目标全部吻合时，才会绑定其虚调用。生成的 C 将表项加载保留在 retain/release 之前，并以 swiftcall 和 swift_context 调用目标；Bool 结果使用 `_Bool`，其他虚调用形态仍不恢复。

@@ -9,8 +9,9 @@ namespace neverd {
 struct BinaryImage;
 struct LowFunc;
 
-/// Bind only arm64 Swift CGFloat getters with an exact masked-isa virtual
-/// target, declared Objective-C thunk, and preserved Swift self carrier.
+/// Bind only arm64 Swift CGFloat, Double, or Bool getters with an exact
+/// masked-isa virtual target, declared Objective-C thunk, and preserved Swift
+/// self carrier.
 std::map<va_t, SourceCallTypeHint>
 buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function);
 
