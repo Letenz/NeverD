@@ -110,6 +110,13 @@ both directions. Both C routes remove its arithmetic MBA and execute all five
 functions against edge and randomized modular-addition inputs at `-O0`/`-O2`.
 Loader tests separately require a Thumb symbol at object address zero to retain
 its mode and verify every reachable mixed-mode function entry.
+An additional Mach-O object has uncalled ARM and Thumb MBA functions whose
+first instructions carry mode-specific relocations, without Thumb nlist mode
+flags. Both C routes must recover and execute their simplified arithmetic.
+Loader tests check that ARM branch, Thumb branch and halfword relocations record
+only their exact instruction modes. Homogeneous ARM-only and Thumb-only objects
+must keep a uniform mode when relocation evidence supplies the first entry;
+contradictory symbol and relocation modes must fail loading.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

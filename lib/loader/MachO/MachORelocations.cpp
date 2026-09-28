@@ -196,6 +196,26 @@ llvm::Error relocationError(llvm::StringRef Reason, uint64_t SectionAddress,
       llvm::inconvertibleErrorCode());
 }
 
+llvm::Error recordARMRelocationMode(BinaryImage &Img, va_t Place,
+                                    InstructionMode Mode,
+                                    uint64_t SectionAddress,
+                                    uint64_t RelocationAddress) {
+  // An instruction relocation authenticates the encoding at its exact place,
+  // even when no call reaches the containing function. It says nothing about
+  // preceding bytes or an unflagged symbol elsewhere in the section.
+  if (!Img.hasExecutableCodeOwnerRange(Place, 4))
+    return llvm::Error::success();
+  const uint64_t Alignment = Mode == InstructionMode::Thumb ? 2 : 4;
+  if ((Place & (Alignment - 1)) != 0)
+    return relocationError("misaligned ARM/Thumb instruction relocation",
+                           SectionAddress, RelocationAddress);
+  const auto [It, Inserted] = Img.ARMCodeModeEntries.emplace(Place, Mode);
+  if (!Inserted && It->second != Mode)
+    return relocationError("conflicting ARM/Thumb instruction mode",
+                           SectionAddress, RelocationAddress);
+  return llvm::Error::success();
+}
+
 std::optional<uint64_t> addSigned(uint64_t Base, int64_t Addend) {
   if (Addend >= 0) {
     const uint64_t Magnitude = static_cast<uint64_t>(Addend);
@@ -848,6 +868,9 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                 (Instruction & 0xff000000u) |
                 (static_cast<uint32_t>(*Displacement >> 2) & 0x00ffffffu);
           }
+          if (llvm::Error Error = recordARMRelocationMode(
+                  Img, P, InstructionMode::ARM, SecAddr, RAddr))
+            return Error;
           std::memcpy(ApplySeg->Data.data() + SegOff, &Instruction, 4);
         } else if (RType == ARM_THUMB_RELOC_BR22) {
           if (Info.IsScattered || !Info.IsPCRel || Info.Length != 2)
@@ -931,6 +954,9 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                                               : 0xd000u) |
                                      (J1 << 13) | (J2 << 11) |
                                      ((Encoded >> 1) & 0x07ffu));
+          if (llvm::Error Error = recordARMRelocationMode(
+                  Img, P, InstructionMode::Thumb, SecAddr, RAddr))
+            return Error;
           writeLE<uint16_t>(ApplySeg->Data.data() + SegOff, Hi);
           writeLE<uint16_t>(ApplySeg->Data.data() + SegOff + 2, Lo);
         } else if (RType == ARM_RELOC_HALF) {
@@ -1018,6 +1044,11 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                           ((static_cast<uint32_t>(Result) & 0xf000u) << 4) |
                           (static_cast<uint32_t>(Result) & 0x0fffu);
           }
+          if (llvm::Error Error = recordARMRelocationMode(
+                  Img, P,
+                  IsThumb ? InstructionMode::Thumb : InstructionMode::ARM,
+                  SecAddr, RAddr))
+            return Error;
           std::memcpy(ApplySeg->Data.data() + SegOff, &Instruction, 4);
           recordARMAddressMaterialization(Img, P, *Target, SymOwnerVA);
           ++I;
