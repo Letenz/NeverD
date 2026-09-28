@@ -274,14 +274,16 @@ SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Rebuilt;
 }
 
-SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                             WorkBudget &Budget, SolveReport &Rep);
+SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
+                               const MBAOptions &Opts, WorkBudget &Budget,
+                               SolveReport &Rep);
 
 /// Measure \p E as one region, splitting a wide one into independent parts and
 /// a masked one into mask-uniform columns.
 SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep) {
-  if (SymRef Fast = tryFastPartitionedSum(Ctx, E, Opts, Budget, Rep); Fast != E)
+  if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, Rep);
+      Fast != E)
     return Fast;
   SymRef Solved = solveOneRegion(Ctx, E, Opts, Budget, Rep);
   return Solved == E ? solveMasked(Ctx, E, Opts, Budget, Rep) : Solved;
@@ -441,11 +443,23 @@ bool isBitwiseComplement(const SymContext &Ctx, SymRef A, SymRef B) {
     return false;
   llvm::ArrayRef<SymRef> OrTerms = Ctx.operands(A);
   llvm::ArrayRef<SymRef> AndTerms = Ctx.operands(B);
-  if (OrTerms.size() != AndTerms.size() || OrTerms.size() > 8)
+  if (OrTerms.size() != AndTerms.size())
     return false;
+  if (OrTerms.size() <= 8)
+    return llvm::all_of(OrTerms, [&](SymRef R) {
+      return llvm::any_of(
+          AndTerms, [&](SymRef S) { return isDirectComplement(Ctx, R, S); });
+    });
+  llvm::DenseSet<uint32_t> Exact, Negated;
+  for (SymRef Term : AndTerms) {
+    if (Ctx.op(Term) == SymOp::Not)
+      Negated.insert(Ctx.operand(Term, 0).index());
+    else
+      Exact.insert(Term.index());
+  }
   return llvm::all_of(OrTerms, [&](SymRef R) {
-    return llvm::any_of(
-        AndTerms, [&](SymRef S) { return isDirectComplement(Ctx, R, S); });
+    return Ctx.op(R) == SymOp::Not ? Exact.contains(Ctx.operand(R, 0).index())
+                                   : Negated.contains(R.index());
   });
 }
 
@@ -474,8 +488,9 @@ SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
   return Partitioned.isValid() ? Partitioned : R;
 }
 
-SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
-                             WorkBudget &Budget, SolveReport &Rep) {
+SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
+                               const MBAOptions &Opts, WorkBudget &Budget,
+                               SolveReport &Rep) {
   if (Ctx.op(E) != SymOp::Add || Opts.MaxTableBytes < 4096 ||
       !Budget.canConsume(16))
     return E;
@@ -483,11 +498,10 @@ SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   if (Terms.size() < 2 || Terms.size() > 3)
     return E;
   SymRef A, B;
-  llvm::APInt Offset(Ctx.width(E), 0);
   for (SymRef Term : Terms) {
-    if (Ctx.isConst(Term)) {
-      Offset += Ctx.constValue(Term);
-    } else if (!A.isValid()) {
+    if (Ctx.isConst(Term))
+      continue;
+    if (!A.isValid()) {
       A = Term;
     } else if (!B.isValid()) {
       B = Term;
@@ -495,18 +509,30 @@ SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       return E;
     }
   }
-  if (!A.isValid() || !B.isValid() || Ctx.op(A) != SymOp::And ||
-      Ctx.op(B) != SymOp::And || Ctx.numOperands(A) != 2 ||
-      Ctx.numOperands(B) != 2)
+  if (!A.isValid() || !B.isValid())
     return E;
-  llvm::ArrayRef<SymRef> AF = Ctx.operands(A), BF = Ctx.operands(B);
-  bool Shared = false;
-  for (SymRef F : AF)
-    Shared |= llvm::is_contained(BF, F);
-  if (!Shared)
+  const SymOp AOp = Ctx.op(A), BOp = Ctx.op(B);
+  const bool BitwiseTypes = (AOp == SymOp::Xor && BOp == SymOp::Xor) ||
+                            (AOp == SymOp::Or && BOp == SymOp::And) ||
+                            (AOp == SymOp::And && BOp == SymOp::Or);
+  const bool BitwisePair =
+      BitwiseTypes && Ctx.numOperands(A) > 8 &&
+      Ctx.numOperands(A) == Ctx.numOperands(B) &&
+      (llvm::any_of(Ctx.operands(A),
+                    [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }) ||
+       llvm::any_of(Ctx.operands(B),
+                    [&](SymRef R) { return Ctx.op(R) == SymOp::Not; }));
+  bool SharedPartition = false;
+  if (AOp == SymOp::And && BOp == SymOp::And && Ctx.numOperands(A) == 2 &&
+      Ctx.numOperands(B) == 2) {
+    llvm::ArrayRef<SymRef> AF = Ctx.operands(A), BF = Ctx.operands(B);
+    for (SymRef F : AF)
+      SharedPartition |= llvm::is_contained(BF, F);
+  }
+  if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition)
     return E;
 
-  // The pair is a plausible partition. Bound the linear matcher and its
+  // The pair is a plausible complement. Bound the linear matcher and its
   // scratch before considering it, including on the deep walk's first visit.
   const size_t Nodes = Ctx.dagSize(E);
   if (Nodes > Opts.MaxTableBytes / 64 ||
@@ -514,8 +540,8 @@ SymRef tryFastPartitionedSum(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
       !Budget.canConsume(4 * Nodes))
     return E;
   Budget.consume(4 * Nodes);
-  SymRef Fast = foldPartitionedMaskSum(Ctx, A, B, Offset);
-  if (!Fast.isValid() || readingScore(Ctx, Fast) >= readingScore(Ctx, E))
+  SymRef Fast = foldComplementaryAdd(Ctx, E);
+  if (Fast == E || readingScore(Ctx, Fast) >= readingScore(Ctx, E))
     return E;
   Rep.Outcome = MBAOutcome::Rewritten;
   Rep.Evidence = MBAEvidence::Derivation;
@@ -712,7 +738,7 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
   Result.SizeAfter = Result.SizeBefore;
   WorkBudget Budget(Opts.MaxWork);
   SolveReport FastRep;
-  if (SymRef Fast = tryFastPartitionedSum(Ctx, E, Opts, Budget, FastRep);
+  if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, FastRep);
       Fast != E) {
     Result.Expr = Fast;
     Result.SizeAfter = readingCost(Ctx, Fast);

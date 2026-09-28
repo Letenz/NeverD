@@ -153,6 +153,114 @@ TEST(SymMBAArithmetic, ProvesWideParityPartitionsBeforeCornerMeasurement) {
   }
 }
 
+TEST(SymMBAArithmetic, ProvesWideComplementSumsBeforeCornerMeasurement) {
+  for (uint32_t Width : {1u, 3u, 64u, 257u}) {
+    for (bool XorPair : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(XorPair);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        llvm::SmallVector<SymRef, 32> Vars, Negated;
+        for (unsigned I = 0; I < 30; ++I) {
+          SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+          Vars.push_back(Var);
+          Negated.push_back(Ctx.mkNot(Var));
+        }
+        SymRef A, B;
+        if (XorPair) {
+          A = Ctx.mkXor(Vars);
+          Vars[0] = Negated[0];
+          B = Ctx.mkXor(Vars);
+        } else {
+          A = Ctx.mkAnd(Vars);
+          B = Ctx.mkOr(Negated);
+        }
+        SymRef Input = Ctx.mkAdd(A, B);
+        SymRef Expected = Ctx.mkOnes(Width);
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkConst(Width, 4);
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, WideComplementSumsRespectBoundsAndNearMisses) {
+  constexpr unsigned Width = 8;
+  SymContext Ctx;
+  llvm::SmallVector<SymRef, 32> Vars, Negated;
+  for (unsigned I = 0; I < 30; ++I) {
+    SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+    Vars.push_back(Var);
+    Negated.push_back(Ctx.mkNot(Var));
+  }
+  SymRef Input = Ctx.mkAdd(Ctx.mkAnd(Vars), Ctx.mkOr(Negated));
+  for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+    MBAOptions Opts;
+    Opts.MaxWork = Limit;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Input);
+      EXPECT_LE(Result.Work, Limit);
+    }
+  }
+  MBAOptions NoStorage;
+  NoStorage.MaxTableBytes = 128;
+  NoStorage.MaxWork = 4096;
+  NoStorage.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+  EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+
+  Negated[0] = Ctx.mkNot(Ctx.mkVar("replacement", Width));
+  SymRef NearMiss = Ctx.mkAdd(Ctx.mkAnd(Vars), Ctx.mkOr(Negated));
+  MBAOptions Opts;
+  Opts.MaxWork = 4096;
+  EXPECT_NE(simplifyMBA(Ctx, NearMiss, Opts).Expr, Ctx.mkOnes(Width));
+  EXPECT_NE(simplifyMBADeep(Ctx, NearMiss, Opts).Expr, Ctx.mkOnes(Width));
+
+  llvm::SmallVector<SymRef, 32> EvenParity(Vars.begin(), Vars.end());
+  EvenParity[0] = Ctx.mkNot(Vars[0]);
+  EvenParity[1] = Ctx.mkNot(Vars[1]);
+  SymRef XorNearMiss = Ctx.mkAdd(Ctx.mkXor(Vars), Ctx.mkXor(EvenParity));
+  EXPECT_NE(simplifyMBA(Ctx, XorNearMiss, Opts).Expr, Ctx.mkOnes(Width));
+  EXPECT_NE(simplifyMBADeep(Ctx, XorNearMiss, Opts).Expr, Ctx.mkOnes(Width));
+}
+
+TEST(SymMBAArithmetic, WideComplementSumsMatchMixedPolarity) {
+  constexpr unsigned Width = 64;
+  SymContext Ctx;
+  llvm::SmallVector<SymRef, 32> AndTerms, OrTerms;
+  for (unsigned I = 0; I < 30; ++I) {
+    SymRef Var = Ctx.mkVar("x" + std::to_string(I), Width);
+    AndTerms.push_back(I % 2 ? Ctx.mkNot(Var) : Var);
+    OrTerms.push_back(I % 2 ? Var : Ctx.mkNot(Var));
+  }
+  SymRef Input = Ctx.mkAdd(Ctx.mkAnd(AndTerms), Ctx.mkOr(OrTerms));
+  MBAOptions Opts;
+  Opts.MaxWork = 4096;
+  Opts.VerifySamples = 0;
+  for (bool Deep : {false, true}) {
+    MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                            : simplifyMBA(Ctx, Input, Opts);
+    EXPECT_EQ(Result.Expr, Ctx.mkOnes(Width));
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+  }
+}
+
 TEST(SymMBAArithmetic, WideParityPartitionRejectsNearMissesAndLowBudgets) {
   SymContext Ctx;
   constexpr unsigned Width = 8;
