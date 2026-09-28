@@ -38,6 +38,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -112,6 +113,38 @@ llvm::Function *buildCarrySaveAddShift(llvm::Module &M) {
   llvm::Value *And = B.CreateAnd(X, Y);
   llvm::Value *Two = B.CreateShl(And, llvm::ConstantInt::get(I64, 1));
   B.CreateRet(B.CreateAdd(Xor, Two));
+  return F;
+}
+
+llvm::Function *buildSplitWordCarrySave(llvm::Module &M, bool SignedNoWrap) {
+  llvm::LLVMContext &C = M.getContext();
+  auto *I32 = llvm::Type::getInt32Ty(C);
+  auto *I64 = llvm::Type::getInt64Ty(C);
+  auto *FT = llvm::FunctionType::get(I64, {I32, I32, I32, I32}, false);
+  auto *F =
+      llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                             SignedNoWrap ? "packed_nsw" : "packed_nuw", &M);
+  llvm::IRBuilder<> B(llvm::BasicBlock::Create(C, "entry", F));
+  auto It = F->arg_begin();
+  llvm::Value *AL = &*It++;
+  llvm::Value *AH = &*It++;
+  llvm::Value *BL = &*It++;
+  llvm::Value *BH = &*It++;
+  llvm::Value *Parity = B.CreateXor(AL, BL);
+  llvm::Value *Both = B.CreateAnd(AL, BL);
+  llvm::Value *HighParity = B.CreateXor(AH, BH);
+  llvm::Value *HighBoth = B.CreateAnd(AH, BH);
+  auto *Funnel =
+      llvm::Intrinsic::getOrInsertDeclaration(&M, llvm::Intrinsic::fshl, {I32});
+  llvm::Value *Shifted = B.CreateCall(Funnel, {HighBoth, Both, B.getInt32(1)});
+  llvm::Value *Low = B.CreateAdd(AL, BL);
+  llvm::Value *Carry = B.CreateICmpULT(Low, Parity);
+  llvm::Value *High =
+      B.CreateAdd(B.CreateAdd(HighParity, Shifted), B.CreateZExt(Carry, I32));
+  llvm::Value *Upper =
+      B.CreateShl(B.CreateZExt(High, I64), B.getInt64(32), "",
+                  /*HasNUW=*/!SignedNoWrap, /*HasNSW=*/SignedNoWrap);
+  B.CreateRet(B.CreateDisjointOr(Upper, B.CreateZExt(Low, I64)));
   return F;
 }
 
@@ -290,6 +323,35 @@ TEST(SymSimplifyGuard, RewritesCarrySaveAdditionWithAConstantLeftShift) {
   EXPECT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
   for (const llvm::Instruction &I : llvm::instructions(*F))
     EXPECT_NE(I.getOpcode(), llvm::Instruction::Xor) << printFunction(*F);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, ProvesPackedDisjointOrAndUnsignedWidenedShift) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSplitWordCarrySave(M, /*SignedNoWrap=*/false);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+
+  const SymSimplifyResult Result = SymSimplifyPass::simplifyWithResult(*F);
+  EXPECT_GT(Result.Rewrites, 0u) << printFunction(*F);
+  EXPECT_EQ(Result.Proof, solver::ProofStatus::Equivalent);
+  const std::string After = printFunction(*F);
+  EXPECT_NE(After.find("add i64"), std::string::npos) << After;
+  EXPECT_EQ(After.find("@llvm.fshl"), std::string::npos) << After;
+  EXPECT_EQ(After.find("or disjoint"), std::string::npos) << After;
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, RetainsSignedNoWrapShiftWithUnprovedDomain) {
+  llvm::LLVMContext C;
+  llvm::Module M("m", C);
+  llvm::Function *F = buildSplitWordCarrySave(M, /*SignedNoWrap=*/true);
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+
+  SymSimplifyPass::simplify(*F);
+  const std::string After = printFunction(*F);
+  EXPECT_NE(After.find("shl nsw i64"), std::string::npos) << After;
+  EXPECT_NE(After.find("or disjoint i64"), std::string::npos) << After;
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 
