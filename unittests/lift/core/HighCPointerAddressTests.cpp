@@ -17,6 +17,7 @@
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/lift/X86Regs.h"
@@ -6100,6 +6101,179 @@ int main(void) {
         step = 0;
         fmt_else(23, then_path);
         if (bad || step != 3) return 1;
+    }
+    return 0;
+}
+)");
+}
+
+TEST(HighCPointerAddresses,
+     PostIfElseCopyKeepsEarlierDefinitionAndBranchValues) {
+  for (bool LaterConstant : {false, true}) {
+    SCOPED_TRACE(LaterConstant);
+    const auto Integer = NdType::makeInt(8, false);
+    const auto Pointer = NdType::makePtr(Integer);
+    const auto Local = [&](int Id) {
+      MedVar Variable;
+      Variable.Kind = MedVar::Temp;
+      Variable.Id = Id;
+      Variable.Size = 8;
+      Variable.TheArch = Arch::X64;
+      return HighExpr::makeVar(Variable, Integer);
+    };
+    const auto Assign = [&](int Id, ExprPtr Value) {
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Assign;
+      Statement.Dst = Local(Id);
+      Statement.Val = std::move(Value);
+      return Statement;
+    };
+    HighFunc Func;
+    Func.Name = "post_if_copy";
+    Func.ReturnType = NdType::makeVoid();
+    Func.Params = {{"out", Pointer}, {"take_then", Integer}};
+    HighStmt Store;
+    Store.Kind = StmtKind::Store;
+    Store.StoreAddr = parameter(0, Pointer);
+    Store.StoreVal = Local(1);
+    HighStmt Guard;
+    Guard.Kind = StmtKind::IfElse;
+    Guard.Cond = parameter(1, Integer);
+    Guard.Body = {Assign(2, HighExpr::makeConst(2, 8))};
+    Guard.ElseBody = {Store, Assign(2, HighExpr::makeConst(3, 8))};
+    // Both locals are mutable source variables. The store reads x's original
+    // definition, before either the else assignment to y or the final x = y.
+    Func.Body = {
+        Assign(1, HighExpr::makeConst(1, 8)), Guard,
+        Assign(1, LaterConstant ? HighExpr::makeConst(7, 8) : Local(2))};
+    const auto Flow = analyzeHighSourceFlow(Func, false);
+    ASSERT_TRUE(Flow.Complete);
+    ASSERT_TRUE(Flow.Items.empty())
+        << (Flow.Items.empty() ? "" : Flow.Items.front().Reason);
+
+    const std::string Source = emitFunctions({Func});
+    compileAndRunCallOrdering(
+        "#pragma clang diagnostic error \"-Wuninitialized\"\n"
+        "#pragma clang diagnostic error \"-Wsometimes-uninitialized\"\n" +
+        Source + R"(
+int main(void) {
+    for (uint64_t branch = 0; branch != 2; ++branch) {
+        uint64_t output = 19;
+        post_if_copy(&output, branch);
+        if (output != (branch ? 19 : 1)) return 1;
+    }
+    return 0;
+}
+)");
+  }
+}
+
+TEST(HighCPointerAddresses, PostIfElseKeepsEarlierReadAndWriteAddresses) {
+  const auto Integer = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Integer);
+  std::vector<HighFunc> Functions;
+  for (bool Read : {false, true}) {
+    SCOPED_TRACE(Read);
+    MedVar Address;
+    Address.Kind = MedVar::Temp;
+    Address.Id = 1;
+    Address.Size = 8;
+    Address.TheArch = Arch::X64;
+    const auto Local = [&] { return HighExpr::makeVar(Address, Pointer); };
+    const auto AssignAddress = [&](unsigned Parameter) {
+      HighStmt Statement;
+      Statement.Kind = StmtKind::Assign;
+      Statement.Dst = Local();
+      Statement.Val = parameter(Parameter, Pointer);
+      return Statement;
+    };
+    HighFunc Func;
+    Func.Name = Read ? "post_if_read" : "post_if_write";
+    Func.ReturnType = NdType::makeVoid();
+    Func.Params = {{"out", Pointer},
+                   {"original", Pointer},
+                   {"replacement", Pointer},
+                   {"take_then", Integer}};
+    HighStmt Then;
+    Then.Kind = StmtKind::Store;
+    Then.StoreAddr = parameter(0, Pointer);
+    Then.StoreVal = HighExpr::makeConst(42, 8);
+    HighStmt Else;
+    Else.Kind = StmtKind::Store;
+    Else.StoreAddr = Read ? parameter(0, Pointer) : Local();
+    Else.StoreVal =
+        Read ? HighExpr::makeLoad(Local(), Integer) : HighExpr::makeConst(7, 8);
+    HighStmt Guard;
+    Guard.Kind = StmtKind::IfElse;
+    Guard.Cond = parameter(3, Integer);
+    Guard.Body = {Then};
+    Guard.ElseBody = {Else};
+    Func.Body = {AssignAddress(1), Guard, AssignAddress(2)};
+    const auto Flow = analyzeHighSourceFlow(Func, false);
+    ASSERT_TRUE(Flow.Complete);
+    ASSERT_TRUE(Flow.Items.empty())
+        << (Flow.Items.empty() ? "" : Flow.Items.front().Reason);
+    Functions.push_back(std::move(Func));
+  }
+  compileAndRunCallOrdering(emitFunctions(Functions) + R"(
+int main(void) {
+    for (uint64_t branch = 0; branch != 2; ++branch) {
+        uint64_t output = 19, original = 11, replacement = 29;
+        post_if_read(&output, &original, &replacement, branch);
+        if (output != (branch ? 42 : 11) || original != 11 ||
+            replacement != 29) return 1;
+        output = 19;
+        post_if_write(&output, &original, &replacement, branch);
+        if (output != (branch ? 42 : 19) || original != (branch ? 11 : 7) ||
+            replacement != 29) return 2;
+    }
+    return 0;
+}
+)");
+}
+
+TEST(HighCPointerAddresses, BranchLocalSingleUseCopyStillForwards) {
+  const auto Integer = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Integer);
+  MedVar Temporary;
+  Temporary.Kind = MedVar::Temp;
+  Temporary.Id = 77;
+  Temporary.Size = 8;
+  Temporary.TheArch = Arch::X64;
+  HighFunc Func;
+  Func.Name = "forward_branch_copy";
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"out", Pointer}, {"take_then", Integer}, {"value", Integer}};
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.Dst = HighExpr::makeVar(Temporary, Integer);
+  Copy.Val = parameter(2, Integer);
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = parameter(0, Pointer);
+  Store.StoreVal = HighExpr::makeVar(Temporary, Integer);
+  HighStmt Then = Store;
+  Then.StoreVal = HighExpr::makeConst(42, 8);
+  HighStmt Guard;
+  Guard.Kind = StmtKind::IfElse;
+  Guard.Cond = parameter(1, Integer);
+  Guard.Body = {Then};
+  Guard.ElseBody = {Copy, Store};
+  Func.Body = {Guard};
+  const auto Flow = analyzeHighSourceFlow(Func, false);
+  ASSERT_TRUE(Flow.Complete);
+  ASSERT_TRUE(Flow.Items.empty());
+  const std::string Source = emitFunctions({Func});
+  EXPECT_EQ(Source.find("t77"), std::string::npos) << Source;
+  compileAndRunCallOrdering(Source + R"(
+int main(void) {
+    const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(0x8000000000000000)};
+    for (uint64_t branch = 0; branch != 2; ++branch) {
+        for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i) {
+            uint64_t output = 19;
+            forward_branch_copy(&output, branch, values[i]);
+            if (output != (branch ? 42 : values[i])) return 1;
+        }
     }
     return 0;
 }

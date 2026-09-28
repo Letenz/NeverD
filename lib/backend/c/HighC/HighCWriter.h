@@ -393,7 +393,6 @@ public:
   /// the this operand at later uses instead of a leftover dest temp.
   void aliasCtorReturnThis(const HighFunc &Func);
   void collectUnusedCallStoreAlias(const HighFunc &Func);
-  void collectPostIfElseValueForward(const HighFunc &Func);
   void collectCallResultNames(const HighFunc &Func);
   std::string printedForwardedVar(const std::string &Name, int ParentPrec);
 
