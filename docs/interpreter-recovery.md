@@ -122,6 +122,16 @@ blocked and immediate refinement produces no candidates. Fields promoted to
 context keys continue to expand their producers immediately. Discovery visits,
 restarts, and proof work retain their existing cumulative budgets.
 
+After a failed attempt and the usual candidate selection, a bounded backward
+worklist propagates pending exact bit demands through observed native
+transfers. It reuses the shared scalar evaluator only for ranges carried by
+current control fields, adding no fields or contexts. The old graph routes
+candidates; its values and path feasibility are not imported as new facts.
+Predecessor traversal, replay, and dependency discovery share the cumulative
+work budgets. This can pass demands through long chains without one full
+restart per native phase; publication still requires a fresh complete fixed
+point.
+
 A complete finite domain can also prove individual byte lanes constant even
 when the whole word varies. For example, the domain `{0, 0x100}` has a constant
 low byte. Only bytes equal in every enumerated tuple are retained, using the

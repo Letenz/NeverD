@@ -9445,6 +9445,61 @@
         {
           "runner": "gtest",
           "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LongTransparentLoopPhasesDoNotConsumeOneRefinementEach",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LongTransparentLoopCannotBoundUnknownSelectors",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LongTransparentLoopKeepsRefinementAndWorkBudgets",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.LongTransparentPhasesKeepExactBitDemands",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/ControlStateRecoveryTests.cpp",
+          "filter": "ControlStateRecovery.ProducerClosureChargesWorkBeforeAnotherRestart",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
           "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
           "filter": "NativeStackSpecialization.SharedCalleeKeepsDistinctReturnContexts",
           "platforms": [

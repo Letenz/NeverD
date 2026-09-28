@@ -301,6 +301,8 @@ arm64 UIKit カタログは `UIProgressView` の `observedProgress` のオブジ
 
 `UIProgressView` の `setProgress:` には、正確な ARC 同一性呼び出しを経ても保持される型付きプロパティ結果など、証明済みのレシーバが必要です。検証済みの親クラスとプロトコルの閉包により `float` 引数を選びます。UIKit とローカルクラスには同名のオブジェクト引数 setter もあるため、レシーバ未限定の呼び出しは曖昧なままです。
 
+Darwin ARM64 では UIKit は UIView の `setContentHuggingPriority:forAxis:` と `setContentCompressionResistancePriority:forAxis:` も宣言します。戻り値は void、`float` の優先度は `s0`、符号付き 64 ビットの軸は `x2` に入ります。正確な UIKit 提供元と現在のセレクター宣言が一致する必要があり、x86_64 と競合する宣言は未対応です。これらの呼び出しを結び付けても、呼び出し元の他のソース依存関係は自動では閉じません。
+
 arm64 UIKit カタログには、オブジェクト引数と符号なし 64 ビットの `UIControlState` を取る `UIButton` の `setTitleColor:forState:` と、`UIView` の void メソッド `invalidateIntrinsicContentSize` も記録されています。デバイスとシミュレーターの完全な AST の証拠は一致しています。確認済みの `UIImageView → UIView` 継承関係により、既存の receiver 証明は、ローカルのオブジェクト setter と無関係なクラスの同名浮動小数点 setter を区別できます。不明な receiver、サブクラス宣言の競合、親の提供元の欠落、x86_64 は引き続き未対応です。
 
 辞書検索が修飾なしの `id` を返す場合、`new` から既知のクラスを返す経路と合流しても、そのレシーバークラスを引き継ぐことはありません。すべての流入経路でレシーバーの根拠を保持する必要があり、明示的に型付けされたポインター引数だけでは、競合する浮動小数点の宣言を除外してオブジェクト値の setter を選択できません。

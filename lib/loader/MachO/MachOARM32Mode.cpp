@@ -60,6 +60,19 @@ llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary) {
 
   ModeInfo Result;
   Result.CPUSubtype = RawCPUSubtype & ~static_cast<uint32_t>(CPU_SUBTYPE_MASK);
+  switch (Result.CPUSubtype) {
+  case CPU_SUBTYPE_ARM_V6M:
+  case CPU_SUBTYPE_ARM_V7M:
+  case CPU_SUBTYPE_ARM_V7EM:
+  case CPU_SUBTYPE_ARM_V8M_MAIN:
+  case CPU_SUBTYPE_ARM_V8M_BASE:
+  case CPU_SUBTYPE_ARM_V8_1M_MAIN:
+    Result.RequiredMode = InstructionMode::Thumb;
+    Result.UniformMode = InstructionMode::Thumb;
+    break;
+  default:
+    break;
+  }
 
   uint64_t CommandsEnd = 0;
   if (Header.SizeOfCmds > Binary.size() - Header.HeaderSize)
@@ -107,8 +120,10 @@ llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary) {
   }
   if (CommandOffset != CommandsEnd)
     return modeError("load-command count does not match its byte size");
+  // A stripped image can lack LC_SYMTAB.  Its CPU subtype still supplies an
+  // architectural mode constraint, even though it has no symbol entries.
   if (!SymbolTable)
-    return modeError("function modes require an LC_SYMTAB command");
+    return Result;
 
   uint64_t SymbolBytes = 0;
   if (!checkedMultiply(SymbolTable->nsyms, sizeof(nlist), SymbolBytes) ||

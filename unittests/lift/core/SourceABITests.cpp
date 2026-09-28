@@ -1363,6 +1363,97 @@ int main(void) {
   }
 }
 
+TEST(SourceABI, SixDoubleIndirectCallWritesEveryField) {
+  const auto Architecture = Arch::AArch64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Word = NdType::makeInt(8, false);
+  const auto Double = NdType::makeFloat(8);
+  const auto Record =
+      NdType::makeStruct({Double, Double, Double, Double, Double, Double});
+  SourceFunctionTypeHint Entry;
+  Entry.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+  Entry.ReturnType = Word;
+  Entry.Parameters = {{"angle", Double}, {"output", NdType::makePtr(Double)}};
+  SourceFunctionTypeHint Callee;
+  Callee.ReturnType = Record;
+  Callee.Parameters = {{"angle", Double}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinScalarSourceABI(Entry, Architecture, Error)) << Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Callee, Architecture, Error)) << Error;
+
+  LowFunc Low;
+  Low.Entry = 0x1000;
+  Low.Name = "six_double_indirect";
+  LowBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Low.Entry;
+  auto Add = [&](NdOp Opcode, NdVar Output,
+                 std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Opcode;
+    Op.Addr = Low.Entry + Block.Ops.size() * 4;
+    Op.Output = Output;
+    for (const auto &Input : Inputs)
+      Op.addInput(Input);
+    Block.Ops.push_back(Op);
+  };
+  const auto X0 = NdVar::reg(TRI.IntReturnReg, 8);
+  const auto X8 = NdVar::reg(TRI.indirectResultReg(), 8);
+  Add(NdOp::COPY, NdVar::reg(a64reg::X19, 8),
+      {NdVar::reg(TRI.IntParamRegs[0], 8)});
+  Add(NdOp::COPY, X8, {NdVar::reg(a64reg::X19, 8)});
+  Add(NdOp::CALL, {}, {NdVar::cst(0x2000, 8)});
+  Add(NdOp::COPY, X8, {NdVar::cst(0, 8)});
+  Add(NdOp::COPY, X0, {NdVar::cst(0, 8)});
+  Add(NdOp::RETURN, {}, {X0});
+  Block.EndAddr = Low.Entry + Block.Ops.size() * 4;
+  Low.Blocks.push_back(Block);
+  std::map<va_t, SourceFunctionTypeHint> Hints{{Low.Entry, Entry},
+                                               {0x2000, Callee}};
+  LowToMedConverter Converter;
+  Converter.setSourceCallHintsEnabled(true);
+  Converter.setSourceCalleeTypeHints(&Hints);
+  auto Med = Converter.convert(Low, Architecture, BinaryFormat::MachO);
+  Med.SourceTypeHint = Entry;
+  const std::map<va_t, std::string> Names{{0x2000, "make_six"}};
+  recoverCallAbi(Med, Architecture, Names);
+  inferMedTypes(Med, Architecture);
+  MedToHighConverter HighConverter;
+  HighConverter.setFuncNames(&Names);
+  auto High = HighConverter.convert(Med, Architecture);
+  unsigned Unknown = 0;
+  walkStmts(High.Body, [&](const HighStmt &Statement) {
+    forEachExpr(Statement, [&](const ExprPtr &Expression) {
+      Unknown += Expression && Expression->Kind == ExprKind::Undef;
+    });
+  });
+  EXPECT_EQ(Unknown, 0U);
+  ASSERT_TRUE(High.SourceTypeHint);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Architecture;
+  ASSERT_TRUE(HighCEmitter().emit({High}, OS, Options));
+  Source += "\nstatic unsigned calls;\n" + typeToC(Record) +
+            " make_six(double angle) { ++calls; " + typeToC(Record) +
+            " result; double values[6] = {angle, angle + 1, angle + 2, "
+            "angle + 3, angle + 4, angle + 5}; "
+            "memcpy(&result, values, sizeof(result)); return result; }\n";
+  executeC(Source + R"(
+int main(void) {
+    for (int i = -3; i != 4; ++i) {
+        double output[7] = {-99, -99, -99, -99, -99, -99, -99};
+        unsigned before = calls;
+        if (six_double_indirect((double)i, output) != 0) return 1;
+        for (unsigned j = 0; j != 6; ++j)
+            if (output[j] != (double)i + j) return 2;
+        if (output[6] != -99 || calls != before + 1) return 3;
+    }
+    return 0;
+}
+)");
+}
+
 TEST(SourceABI, PartialFPRegisterPreservationDoesNotInventArguments) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     const auto &TRI = getTargetRegInfo(Architecture);

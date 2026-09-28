@@ -135,12 +135,15 @@ struct SpecializationOptions {
   uint32_t MaxControlTuples = 32;
   uint32_t MaxControlFields = 16;
   /// Refinement restarts the graph from entry. Global node, operation,
-  /// evaluation, and solver-query budgets are cumulative across restarts;
+  /// evaluation, and solver-query budgets are cumulative across restarts and
+  /// backward dependency replay after a failed attempt;
   /// these additionally bound discovery itself. Per-address contexts, active
   /// native return slots, fields, and tuples remain per-attempt structural
   /// limits. Context promotion adds no guest-memory reads: finite-value proof
   /// alone would not establish the accessibility of a new load.
   uint32_t MaxControlRefinements = 16;
+  /// Includes dependency DAG visits and observed-predecessor traversal. Replay
+  /// carries only candidate bit demands; publication needs a fresh fixed point.
   uint64_t MaxDiscoveryVisits = 65536;
   /// Global check count, per-query encoding/search limits, and per-node DAG
   /// bound. These limits also apply in builds without the optional Z3 backend;

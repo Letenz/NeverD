@@ -223,7 +223,10 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
     return {};
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;
   if (Floating) {
-    if (Result.size() > 4 ||
+    // Six doubles are the non-HFA CGAffineTransform shape. Darwin arm64
+    // returns it through x8; its by-value parameter ABI is not modeled yet.
+    if ((Result.size() > 4 &&
+         (Result.size() != 6 || Result.front().Type->Size != 8)) ||
         !std::all_of(Result.begin(), Result.end(),
                      [&](const auto &Member) {
                        return Member.Type->Kind == NdTypeKind::Float &&
@@ -403,6 +406,8 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     if (Members.empty() || Parts.size() != Members.size())
       return false;
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+    if (Floating && Members.size() > 4)
+      return false;
     const bool SwiftFourWordReturn =
         IsReturn && !Floating &&
         Hint.Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
@@ -444,10 +449,16 @@ bool validateSourceABI(const SourceFunctionTypeHint &Hint,
     const auto &Return = Hint.ReturnLocation;
     if (Return.Kind == SourceABICarrierKind::IndirectResultPointer) {
       const auto Members = sourceAggregateMembers(Hint.ReturnType);
+      const bool ThreeSignedWords =
+          Members.size() == 3 && Hint.ReturnType->Size == 24 &&
+          Members.front().Type->Kind != NdTypeKind::Float;
+      const bool SixDoubles = Members.size() == 6 &&
+                              Hint.ReturnType->Size == 48 &&
+                              Members.front().Type->Kind == NdTypeKind::Float &&
+                              Members.front().Type->Size == 8;
       if (Hint.Architecture != Arch::AArch64 ||
           Hint.Convention != SourceFunctionTypeHint::ConventionKind::C ||
-          Members.size() != 3 || Hint.ReturnType->Size != 24 ||
-          Members.front().Type->Kind == NdTypeKind::Float ||
+          (!ThreeSignedWords && !SixDoubles) ||
           Return.RegisterOffset != TRI.indirectResultReg() ||
           Return.EntryStackOffset != 0 || Return.ValueBytes != 8 ||
           Return.ExtendTo32Bits || !Hint.ReturnComponents.empty())
@@ -561,6 +572,8 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
       if (Members.empty())
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
       const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+      if (Floating && Members.size() > 4)
+        return fail(Diagnostic, "Unsupported Darwin indirect record parameter");
       if ((Floating && Architecture != Arch::AArch64) ||
           (!Floating && Members.size() > 2))
         return fail(Diagnostic, "Unsupported Darwin record parameter ABI");
@@ -626,6 +639,10 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
     if (Members.empty())
       return fail(Diagnostic, "Unsupported Darwin record return ABI");
     const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
+    const bool SixDoubles =
+        Floating && Members.size() == 6 && Hint.ReturnType->Size == 48 &&
+        Members.front().Type->Size == 8 && Architecture == Arch::AArch64 &&
+        Convention == SourceFunctionTypeHint::ConventionKind::C;
     const bool SwiftFourWordReturn =
         !Floating &&
         Convention == SourceFunctionTypeHint::ConventionKind::Swift &&
@@ -634,8 +651,9 @@ bool assignDarwinSourceABI(SourceFunctionTypeHint &Hint, Arch Architecture,
                       : SwiftFourWordReturn ? TRI.IntParamRegs
                                             : TRI.IntReturnRegs;
     const bool Indirect =
-        !Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
-        Convention == SourceFunctionTypeHint::ConventionKind::C;
+        SixDoubles ||
+        (!Floating && Members.size() == 3 && Architecture == Arch::AArch64 &&
+         Convention == SourceFunctionTypeHint::ConventionKind::C);
     if (Indirect)
       Hint.ReturnLocation = {SourceABICarrierKind::IndirectResultPointer,
                              TRI.indirectResultReg(), 0, 8};

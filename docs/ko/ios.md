@@ -301,6 +301,8 @@ arm64 UIKit 카탈로그는 `UIProgressView`의 `observedProgress` 객체 반환
 
 `UIProgressView`의 `setProgress:`에는 정확한 ARC 동일성 호출을 거쳐 보존된 타입 지정 속성 결과처럼 입증된 수신자가 필요합니다. 검증된 상위 클래스와 프로토콜 관계 전체가 `float` 인수를 선택합니다. UIKit과 로컬 클래스에 같은 selector의 객체 인수 setter도 있으므로 수신자가 한정되지 않은 호출은 모호한 상태로 남습니다.
 
+Darwin ARM64에서 UIKit은 UIView의 `setContentHuggingPriority:forAxis:`와 `setContentCompressionResistancePriority:forAxis:`도 선언합니다. 반환값은 void이고 `float` 우선순위는 `s0`, 부호 있는 64비트 축은 `x2`에 놓입니다. 정확한 UIKit 제공자와 현재 selector 선언이 일치해야 하며 x86_64와 충돌하는 선언은 지원하지 않습니다. 이 호출의 바인딩만으로 호출자의 다른 소스 의존성이 닫히지는 않습니다.
+
 arm64 UIKit 카탈로그는 객체 인수와 부호 없는 64비트 `UIControlState`를 받는 `UIButton`의 `setTitleColor:forState:` 및 `UIView`의 void 메서드 `invalidateIntrinsicContentSize`도 기록합니다. 기기와 시뮬레이터의 전체 AST 증거가 일치합니다. 확인된 `UIImageView → UIView` 상속 관계를 통해 기존 receiver 증명은 로컬 객체 setter와 관련 없는 클래스의 같은 이름 부동소수점 setter를 구별할 수 있습니다. 알 수 없는 receiver, 하위 클래스 선언 충돌, 부모 제공자 누락 및 x86_64는 계속 지원하지 않습니다.
 
 사전 조회가 한정되지 않은 `id`를 반환하면, `new`로 알려진 클래스를 반환하는 경로와 합쳐져도 해당 수신자 클래스를 얻지 않습니다. 모든 유입 경로가 수신자 증거를 유지해야 하며, 명시적으로 타입이 지정된 포인터 인자만으로는 충돌하는 부동소수점 선언 대신 객체 값 setter를 선택할 수 없습니다.

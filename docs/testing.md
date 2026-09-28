@@ -110,6 +110,19 @@ both directions. Both C routes remove its arithmetic MBA and execute all five
 functions against edge and randomized modular-addition inputs at `-O0`/`-O2`.
 Loader tests separately require a Thumb symbol at object address zero to retain
 its mode and verify every reachable mixed-mode function entry.
+An additional Mach-O object has uncalled ARM and Thumb MBA functions whose
+first instructions carry mode-specific relocations, without Thumb nlist mode
+flags. Both C routes must recover and execute their simplified arithmetic.
+Loader tests check that ARM branch, Thumb branch and halfword relocations record
+only their exact instruction modes. Homogeneous ARM-only and Thumb-only objects
+must keep a uniform mode when relocation evidence supplies the first entry;
+contradictory symbol and relocation modes must fail loading.
+Thumb-only ARMv6-M, ARMv7-M, ARMv7E-M, ARMv8-M Base/Main, and ARMv8.1-M Main
+Mach-O objects have unmarked MBA functions without instruction relocations.
+Both C routes must recover their arithmetic and execute it at `-O0`/`-O2`;
+loader tests require the subtype to prove Thumb mode, reject an ARM instruction
+relocation in a Thumb-only image, and fail loading on malformed subtype
+capability bits.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
@@ -165,6 +178,14 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 ```
 
 Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
+
+`ControlStateRecovery.LongTransparentLoop*` covers an independently authored
+20-phase loop, dynamic arithmetic oracles, unknown-selector refusal and budget
+exhaustion. `LongTransparentPhasesKeepExactBitDemands` checks that unrelated
+bits in the selector's byte remain observable runtime data without becoming
+control demands. `ProducerClosureChargesWorkBeforeAnotherRestart` checks that
+backward discovery and replay consume the shared budgets before a new graph
+starts, with no partial publication.
 
 `VMShapeSourceTests.cpp` adds three original shapes recovered without manual
 control hints: direct-threaded pointer bytecode, a bounded software CALL/RET

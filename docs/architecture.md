@@ -76,6 +76,15 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+Validated ARM and Thumb instruction relocations can also seed their exact
+instruction addresses. This can recover an otherwise uncalled function when
+its entry instruction has such a relocation, without assuming that an
+unmarked symbol elsewhere in the section is ARM code.
+The ARMv6-M, ARMv7-M, ARMv7E-M, ARMv8-M Base/Main, and ARMv8.1-M Main Mach-O
+CPU subtypes are Thumb-only, so their processor constraint supplies a mode even
+for unmarked functions without a relocation. An ARM instruction relocation in
+such an image is contradictory and fails loading. Other ARM CPU subtypes do not
+establish a function mode.
 
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
@@ -538,6 +547,10 @@ method entry, self operand, receiver declaration, record size and frame bounds;
 missing or changed evidence leaves the message unresolved.
 Three-word records with unsigned or pointer fields, three-word parameters and
 x86_64 indirect results remain unsupported.
+Darwin ARM64 fixed C calls also return naturally laid-out records of exactly
+six doubles through x8. These are not homogeneous floating aggregates under
+the four-member register limit. By-value six-double parameters remain
+unsupported until their indirect argument storage is modeled.
 Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.
@@ -762,6 +775,11 @@ specializes strictly lifted LowIR before the common MedIR boundary. Its
 provider owns immutable image evidence, `SymExec` owns instruction semantics,
 and the residual CFG reuses the ordinary SSA and source backends. Recovery
 evidence remains separate from native occurrence and binary patch certificates.
+
+`InterpreterSpecialization` owns bounded backward propagation of pending bit
+demands after a failed attempt. It reuses the scalar evaluator without changing
+graph facts or allocating control fields or contexts; all work remains
+budgeted and publication requires a fresh complete proof.
 
 | Representation | Purpose | Primary definitions and transformations |
 |----------------|---------|-----------------------------------------|

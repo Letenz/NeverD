@@ -1205,6 +1205,204 @@ INSTANTIATE_TEST_SUITE_P(HighCAndLLVMC, MBAMachOARMThumbSourceTest,
                            return Info.param ? "LLVMC" : "HighC";
                          });
 
+class MBAMachOARMRelocationModeSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<bool> {};
+
+TEST_P(MBAMachOARMRelocationModeSourceTest,
+       RecoversUncalledModesFromInstructionRelocations) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const bool LLVM = GetParam();
+  SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+  const auto Object = tmpFile("macho-relocation-mode.o");
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "armv7-apple-darwin", "-c",
+            (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_reloc_mode.s")
+                .string(),
+            "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-relocation-mode.c");
+  std::vector<std::string> Args{"decompile", "--no-debug"};
+  if (LLVM)
+    Args.push_back("--llvm");
+  Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Args);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  for (const char *Name : {"arm_reloc_mba", "thumb_reloc_mba"}) {
+    EXPECT_FALSE(functionBody(Source, Name).empty());
+    expectNoResidualMBA(Output, Name);
+  }
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(uint32_t a, uint32_t b) {
+  uint32_t expected = a + b;
+  if ((uint32_t)arm_reloc_mba(a, b) != expected ||
+      (uint32_t)thumb_reloc_mba(a, b) != expected) {
+    fprintf(stderr, "relocation-mode arithmetic mismatch a=%u b=%u\n", a, b);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x87a2604b5d13ec9f);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t a = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check(a, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-relocation-mode-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-relocation-mode-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(HighCAndLLVMC, MBAMachOARMRelocationModeSourceTest,
+                         ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool> &Info) {
+                           return Info.param ? "LLVMC" : "HighC";
+                         });
+
+struct ThumbOnlySubtypeCase {
+  const char *Name;
+  const char *Triple;
+  const char *Fixture;
+  bool LLVM;
+};
+
+class MBAMachOThumbOnlySubtypeSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<ThumbOnlySubtypeCase> {};
+
+TEST_P(MBAMachOThumbOnlySubtypeSourceTest,
+       RecoversUnmarkedFunctionAndExecutesArithmetic) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(Case.Name);
+  SCOPED_TRACE(Case.LLVM ? "LLVMC" : "HighC");
+  const auto Object =
+      tmpFile(std::string("macho-thumb-only-") + Case.Name + ".o");
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", Case.Triple, "-c",
+            (fs::path(TEST_SOURCE_DIR) / "core" / Case.Fixture).string(), "-o",
+            Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-thumb-only.c");
+  std::vector<std::string> Args{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    Args.push_back("--llvm");
+  Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Args);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  EXPECT_FALSE(functionBody(Source, "unmarked_mba").empty());
+  expectNoResidualMBA(Output, "unmarked_mba");
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(uint32_t a, uint32_t b) {
+  if ((uint32_t)unmarked_mba(a, b) != a + b) {
+    fprintf(stderr, "Thumb arithmetic mismatch a=%u b=%u\n", a, b);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x29b84e3c71a0d65f);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t a = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check(a, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-thumb-only-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-thumb-only-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    HighCAndLLVMC, MBAMachOThumbOnlySubtypeSourceTest,
+    ::testing::Values(
+        ThumbOnlySubtypeCase{"V6M", "armv6m-apple-darwin",
+                             "test_mba_macho_thumb_only_v6m.s", false},
+        ThumbOnlySubtypeCase{"V6M", "armv6m-apple-darwin",
+                             "test_mba_macho_thumb_only_v6m.s", true},
+        ThumbOnlySubtypeCase{"V7M", "armv7m-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", false},
+        ThumbOnlySubtypeCase{"V7M", "armv7m-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", true},
+        ThumbOnlySubtypeCase{"V7EM", "armv7em-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", false},
+        ThumbOnlySubtypeCase{"V7EM", "armv7em-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", true},
+        ThumbOnlySubtypeCase{"V8MBase", "armv8m.base-apple-darwin",
+                             "test_mba_macho_thumb_only_v6m.s", false},
+        ThumbOnlySubtypeCase{"V8MBase", "armv8m.base-apple-darwin",
+                             "test_mba_macho_thumb_only_v6m.s", true},
+        ThumbOnlySubtypeCase{"V8MMain", "armv8m.main-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", false},
+        ThumbOnlySubtypeCase{"V8MMain", "armv8m.main-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", true},
+        ThumbOnlySubtypeCase{"V81MMain", "armv8.1m.main-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", false},
+        ThumbOnlySubtypeCase{"V81MMain", "armv8.1m.main-apple-darwin",
+                             "test_mba_macho_thumb_only_v7m.s", true}),
+    [](const ::testing::TestParamInfo<ThumbOnlySubtypeCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "_LLVMC" : "_HighC");
+    });
+
 struct NativeFiveCase {
   const char *Name;
   const char *Triple;

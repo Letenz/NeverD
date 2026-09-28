@@ -44,6 +44,8 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 I test del nucleo verificano separazione dei contesti, ricongiungimenti a punto fisso, cicli dinamici, registri sovrapposti, invalidazione degli alias, dispatch finito e rifiuto senza sostituzioni parziali. I test dei sorgenti assemblano macchine x64 originali a registri, a stack e a indirizzi finiti; includono campi di controllo correlati e un oracolo nativo indipendente SysV/Win64. Entrambi i percorsi C sono compilati in O0/O2 con trap per comportamento indefinito e confrontati con un oracolo senza segno per calcoli, scritture in memoria e sentinelle di uscita. I casi negativi verificano certificati mancanti e budget insufficienti. La CLI pubblica e i rapporti verificano controlli, budget, contatori e rifiuti. Servono Clang con supporto cross-target e LLD; eseguire l’ELF originale richiede anche un host Linux x64. Uno strumento assente o un host incompatibile indica copertura saltata, non successo.
 
+`ControlStateRecovery.LongTransparentLoop*` copre un ciclo indipendente di 20 fasi, oracoli aritmetici dinamici, il rifiuto dei selettori sconosciuti e l’esaurimento dei budget. `LongTransparentPhasesKeepExactBitDemands` verifica che i bit non pertinenti nello stesso byte del selettore restino dati osservabili a runtime senza diventare richieste di controllo. `ProducerClosureChargesWorkBeforeAnotherRestart` verifica che l’individuazione inversa e la rivalutazione consumino i budget condivisi prima dell’avvio di un nuovo grafo, senza pubblicare risultati parziali.
+
 ## Verifiche dell’emulazione dei driver
 
 Abilitare `NEVERD_ENABLE_DRIVER_EMULATION=ON` insieme a `BUILD_TESTING=ON` per
