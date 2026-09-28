@@ -681,3 +681,50 @@ TEST(AArch64FunctionDiscovery,
 }
 
 } // namespace
+
+// bionic's AArch64 assembly opens each frame after the `bti c` that starts the
+// function.  The loader records where the function begins; the detector
+// reports that, and not the frame's first address as a function of its own.
+TEST(AArch64FunctionDiscovery, StartsAFrameAfterALandingPadAtThePad) {
+  constexpr va_t StubVA = 0x7000;
+  BinaryImage Img;
+  Img.Arch = Arch::AArch64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::ELF;
+  Img.Base = StubVA;
+
+  Segment Text;
+  Text.Name = "LOAD";
+  Text.VA = StubVA;
+  Text.Size = 0x10;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0);
+  writeLE<uint32_t>(Text.Data.data() + 0, 0xD503245Fu);  // bti c
+  writeLE<uint32_t>(Text.Data.data() + 4, 0xD2800408u);  // mov x8, #32
+  writeLE<uint32_t>(Text.Data.data() + 8, 0xD4000001u);  // svc #0
+  writeLE<uint32_t>(Text.Data.data() + 12, 0xD65F03C0u); // ret
+  Img.Segments.push_back(std::move(Text));
+  Section Code;
+  Code.Name = ".text";
+  Code.VA = StubVA;
+  Code.Size = 0x10;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Code));
+  Img.Symbols.push_back(Symbol::makeFunc(StubVA));
+  ExceptionFunction Frame;
+  Frame.CodeRange = {StubVA + 4, StubVA + 0x10};
+  Frame.FunctionEntry = StubVA;
+  Img.ExceptionMetadata.Functions.push_back(std::move(Frame));
+
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::AArch64));
+  FuncDetector Detector;
+  const auto Functions = Detector.detect(Img, Dec);
+
+  const auto At = [&](va_t VA) {
+    return std::count_if(Functions.begin(), Functions.end(),
+                         [&](const auto &F) { return F.first == VA; });
+  };
+  EXPECT_EQ(At(StubVA), 1);
+  EXPECT_EQ(At(StubVA + 4), 0);
+}
