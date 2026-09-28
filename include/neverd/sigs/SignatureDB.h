@@ -95,9 +95,11 @@ public:
   /// to an import's PLT stub confirms a reference to that import and
   /// contradicts one to anything else.  Anything else -- a COFF import thunk,
   /// a routine nothing names -- neither confirms nor contradicts.  A branch
-  /// to a thunk that only jumps on -- an incremental-linking thunk, a branch
-  /// island, a linker's long-branch or interworking thunk -- is followed to
-  /// the thunk's target when the thunk itself settles nothing.
+  /// to a routine that only jumps on -- an incremental-linking thunk, a
+  /// branch island, a linker's long-branch or interworking thunk -- is
+  /// followed when the routine itself settles nothing.  What it reaches
+  /// confirms a reference to it and contradicts nothing: the same bytes are
+  /// a routine that tail-calls another, `free` jumping to `_free_base`.
   ///
   /// What the references confirm and contradict names routines the bytes
   /// alone could not, and those are what the references of their callers are
