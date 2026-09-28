@@ -432,6 +432,79 @@ TEST(MedSEHEstablisherFrame, HighCPreservesTheCertifiedHandlerSlot) {
   EXPECT_EQ(Source.find("var_mEC"), std::string::npos) << Source;
 }
 
+// The normal path writes ECX before the guarded nop; the handler stores EAX
+// and ECX without writing either.
+BinaryImage makeSEHHandlerRegisterImage() {
+  BinaryImage Img = makeFixedSEHFrameImage();
+  auto &Data = Img.Segments.front().Data;
+  // mov ecx,5; nop; nop; nop in place of the slot initializer.
+  const uint8_t Normal[] = {0xb9, 5, 0, 0, 0, 0x90, 0x90, 0x90};
+  std::copy(std::begin(Normal), std::end(Normal), Data.begin() + 8);
+  // Handler: [rsp+36]=eax; [rsp+40]=ecx; nop; nop; nop; jmp join.
+  const uint8_t Handler[] = {0x89, 0x44, 0x24, 0x24, 0x89, 0x4c, 0x24,
+                             0x28, 0x90, 0x90, 0x90, 0xeb, 3};
+  std::copy(std::begin(Handler), std::end(Handler), Data.begin() + 0x20);
+  return Img;
+}
+
+// Follow copies and register-view extensions to the value a use reads.
+MedVar sourceValue(const MedFunc &F, MedVar V) {
+  for (unsigned Step = 0; Step != 16; ++Step) {
+    const MedOp *Def = nullptr;
+    for (const MedBlock &B : F.Blocks)
+      for (const MedOp &Op : B.Ops)
+        if (Op.Output.Kind == V.Kind && Op.Output.Id == V.Id &&
+            Op.Output.SSAVer == V.SSAVer)
+          Def = &Op;
+    if (!Def || Def->NumInputs == 0 ||
+        (Def->Opcode != NdOp::COPY && Def->Opcode != NdOp::INT_ZEXT))
+      return V;
+    V = Def->Inputs[0];
+  }
+  return V;
+}
+
+std::optional<MedVar> storedValueAt(const MedFunc &F, va_t Addr) {
+  for (const MedBlock &B : F.Blocks)
+    for (const MedOp &Op : B.Ops)
+      if (Op.Opcode == NdOp::STORE && Op.Addr == Addr && Op.NumInputs > 1)
+        return sourceValue(F, Op.Inputs[1]);
+  return std::nullopt;
+}
+
+TEST(MedSEHHandlerEntry, EAXHoldsTheExceptionCode) {
+  auto Img = makeSEHHandlerRegisterImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-entry"));
+  // __C_specific_handler resumes the handler with the code in EAX.
+  auto Code = storedValueAt(Med, Img.Entry + 0x20);
+  ASSERT_TRUE(Code);
+  EXPECT_EQ(Code->Kind, MedVar::SEHExceptionCode) << Code->display();
+}
+
+TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
+  auto Img = makeSEHHandlerRegisterImage();
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  auto High = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
+  Stream.flush();
+  const size_t Handler = Source.find("__except");
+  ASSERT_NE(Handler, std::string::npos) << Source;
+  const std::string Arm = Source.substr(Handler);
+  EXPECT_NE(Arm.find("exception_code = GetExceptionCode();"), std::string::npos)
+      << Source;
+  EXPECT_NE(Arm.find("var_m64 = exception_code;"), std::string::npos) << Source;
+  EXPECT_NE(Source.substr(0, Handler).find(" exception_code;"),
+            std::string::npos)
+      << Source;
+}
+
 TEST(MedSEHEstablisherFrame, RejectsUncertifiedFramesWithoutAborting) {
   for (unsigned Case = 0; Case != 11; ++Case) {
     SCOPED_TRACE(Case);

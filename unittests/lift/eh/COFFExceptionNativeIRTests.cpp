@@ -1815,6 +1815,129 @@ TEST(COFFExceptionIR, EmitsVerifierCleanNativeCatchAllSEH) {
   EXPECT_TRUE(Compiled.Unresolved.empty());
 }
 
+TEST(COFFExceptionIR, NativeSEHHandlerReadsTheCatchPadExceptionCode) {
+  MedFunc Func;
+  Func.Entry = 0x140001000;
+  Func.Name = "native_seh_code_test";
+  Func.ReturnType = NdType::makeVoid();
+  constexpr va_t MayThrowVA = 0x140001100;
+  MedVar Sink;
+  Sink.Kind = MedVar::Param;
+  Sink.TheArch = Arch::X64;
+  Sink.Id = 0;
+  Sink.Size = 8;
+  Sink.RegOff = x86reg::RCX;
+  Func.Params.push_back(Sink);
+  Func.TypedParams.push_back({"sink", NdType::makePtr()});
+
+  MedBlock Protected;
+  Protected.Id = 0;
+  Protected.StartAddr = Func.Entry;
+  Protected.EndAddr = Func.Entry + 0x10;
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.Addr = Func.Entry + 4;
+  Call.addInput(MedVar::makeConst(MayThrowVA, 8));
+  Protected.Ops.push_back(Call);
+  MedOp ProtectedReturn;
+  ProtectedReturn.Opcode = NdOp::RETURN;
+  ProtectedReturn.Addr = Func.Entry + 8;
+  Protected.Ops.push_back(ProtectedReturn);
+
+  MedBlock Handler;
+  Handler.Id = 1;
+  Handler.StartAddr = Func.Entry + 0x20;
+  Handler.EndAddr = Func.Entry + 0x30;
+  MedVar Code;
+  Code.Kind = MedVar::SEHExceptionCode;
+  Code.TheArch = Arch::X64;
+  Code.Id = MedVar::SEHExceptionCodeId;
+  Code.Size = 4;
+  MedOp StoreCode;
+  StoreCode.Opcode = NdOp::STORE;
+  StoreCode.Addr = Func.Entry + 0x20;
+  StoreCode.addInput(Sink);
+  StoreCode.addInput(Code);
+  Handler.Ops.push_back(StoreCode);
+  MedOp HandlerReturn;
+  HandlerReturn.Opcode = NdOp::RETURN;
+  HandlerReturn.Addr = Func.Entry + 0x28;
+  Handler.Ops.push_back(HandlerReturn);
+
+  Func.Blocks.push_back(std::move(Protected));
+  Func.Blocks.push_back(std::move(Handler));
+
+  ExceptionFunction EH;
+  EH.CodeRange = {Func.Entry, Func.Entry + 0x40};
+  EH.Encoding = ExceptionEncoding::X64UnwindV1;
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::CSpecificHandler;
+  EH.PersonalityVA = Func.Entry + 0x300;
+  SEHExceptionInfo SEH;
+  SEHScopeRecord Scope;
+  Scope.GuardedRange = {Func.Entry, Func.Entry + 0x10};
+  Scope.Kind = SEHScopeKind::CatchAll;
+  Scope.HandlerVA = Func.Entry + 0x20;
+  Scope.ContinuationVA = Scope.HandlerVA;
+  SEH.Scopes.push_back(Scope);
+  EH.SEH = std::move(SEH);
+  const va_t PersonalityVA = EH.PersonalityVA;
+  Func.ExceptionMetadata = std::move(EH);
+  MedFunc Personality =
+      makeAddressBackedPersonality(PersonalityVA, "\01__C_specific_handler");
+
+  llvm::LLVMContext Ctx;
+  MedLLVMEmitter Emitter;
+  auto Mod =
+      Emitter.emit({Func, Personality}, Ctx, "native_seh_code", Arch::X64,
+                   {{MayThrowVA, "may_throw"}}, nullptr, BinaryFormat::COFF);
+  ASSERT_NE(Mod, nullptr);
+  expectVerifierClean(*Mod);
+  llvm::Function *F = Mod->getFunction(Func.Name);
+  ASSERT_NE(F, nullptr);
+
+  // The pad stores its code before catchret, and the handler reads the slot.
+  const llvm::Value *Slot = nullptr;
+  const llvm::BasicBlock *HandlerTarget = nullptr;
+  for (llvm::BasicBlock &Block : *F)
+    for (llvm::Instruction &Instruction : Block) {
+      auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction);
+      auto *CodeCall =
+          Store ? llvm::dyn_cast<llvm::CallInst>(Store->getValueOperand())
+                : nullptr;
+      if (CodeCall &&
+          CodeCall->getIntrinsicID() == llvm::Intrinsic::eh_exceptioncode) {
+        EXPECT_TRUE(llvm::isa<llvm::CatchPadInst>(CodeCall->getArgOperand(0)));
+        EXPECT_EQ(CodeCall->getParent(), &Block);
+        Slot = Store->getPointerOperand();
+      }
+      if (auto *CatchReturn =
+              llvm::dyn_cast<llvm::CatchReturnInst>(&Instruction))
+        HandlerTarget = CatchReturn->getSuccessor();
+    }
+  ASSERT_NE(Slot, nullptr) << printModuleIR(*Mod);
+  ASSERT_NE(HandlerTarget, nullptr) << printModuleIR(*Mod);
+  bool HandlerLoadsSlot = false;
+  for (const llvm::Instruction &Instruction : *HandlerTarget)
+    if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Instruction))
+      HandlerLoadsSlot |= Load->getPointerOperand() == Slot;
+  EXPECT_TRUE(HandlerLoadsSlot) << printModuleIR(*Mod);
+
+  ensureCOFFCodegenTargets();
+  CompiledImage Compiled = compileImageForPatch(
+      *Mod, Arch::X64, BinaryFormat::COFF, 0x140004000,
+      [&](llvm::StringRef Symbol, uint32_t) -> std::optional<uint64_t> {
+        if (Symbol == "may_throw")
+          return MayThrowVA;
+        if (Symbol == "__C_specific_handler")
+          return PersonalityVA;
+        return std::nullopt;
+      },
+      0x140000000);
+  ASSERT_TRUE(Compiled.Success);
+  EXPECT_TRUE(Compiled.Unresolved.empty());
+}
+
 TEST(COFFExceptionIR,
      EmitsVerifierCleanReconstructableLegacyAArch64CatchAllSEH) {
   MedFunc Func;

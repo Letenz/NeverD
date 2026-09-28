@@ -264,7 +264,8 @@ inline void collectSourceBodyDiagnostics(
               "method contains an unexplained incoming register value", Address,
               Expression);
       } else if (Variable.Kind == MedVar::EHException ||
-                 Variable.Kind == MedVar::EHSelector) {
+                 Variable.Kind == MedVar::EHSelector ||
+                 Variable.Kind == MedVar::SEHExceptionCode) {
         Diagnostics.add(
             SourceProjectionIssue::Exception,
             "exception-dependent method projection is not supported", Address,

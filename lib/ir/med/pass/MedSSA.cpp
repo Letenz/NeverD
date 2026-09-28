@@ -499,6 +499,40 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     }
   }
 
+  // __C_specific_handler resumes a Windows x64 __except handler through
+  // RtlUnwindEx with the exception code as the return value: EAX holds the
+  // code and the upper half of RAX is zero.  Define those views at each
+  // handler entry so the handler never reads an ordinary path's RAX.
+  if (TargetArch == Arch::X64 && Low.ExceptionMetadata &&
+      Low.ExceptionMetadata->SEH) {
+    auto IdsIt = RegOffToIds.find(TRI.IntReturnReg);
+    for (int B = 0; B < N && IdsIt != RegOffToIds.end(); ++B) {
+      const auto &Preds = Func.Blocks[B].ExceptionalPreds;
+      if (std::none_of(Preds.begin(), Preds.end(),
+                       [](const ExceptionalEdge &E) {
+                         return E.Kind == ExceptionalEdgeKind::SEHHandler;
+                       }))
+        continue;
+      MedVar Code;
+      Code.Kind = MedVar::SEHExceptionCode;
+      Code.TheArch = TargetArch;
+      Code.Id = MedVar::SEHExceptionCodeId;
+      Code.Size = 4;
+      std::vector<MedOp> Defs;
+      for (int Id : IdsIt->second) {
+        MedOp Def;
+        Def.Output = RegVarOfId.at(Id);
+        // A narrower view keeps the low bytes of the code, as COPY does.
+        Def.Opcode = Def.Output.Size > Code.Size ? NdOp::INT_ZEXT : NdOp::COPY;
+        Def.addInput(Code);
+        Def.Addr = Func.Blocks[B].StartAddr;
+        Defs.push_back(Def);
+      }
+      Func.Blocks[B].Ops.insert(Func.Blocks[B].Ops.begin(), Defs.begin(),
+                                Defs.end());
+    }
+  }
+
   auto fullyPreserved = [&](uint64_t RegOff, uint16_t Size) {
     if (Size == 0)
       return false;

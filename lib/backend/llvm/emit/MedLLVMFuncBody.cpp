@@ -289,6 +289,7 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   FrameBaseInt = nullptr;
   EHExceptionAlloca = nullptr;
   EHSelectorAlloca = nullptr;
+  SEHExceptionCodeAlloca = nullptr;
 
   unsigned PI = 0;
   for (auto &Arg : LLVMFunc->args()) {

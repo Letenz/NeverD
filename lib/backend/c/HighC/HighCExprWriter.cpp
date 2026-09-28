@@ -138,6 +138,8 @@ std::string HighCWriter::varName(const MedVar &V) const {
     return "eh_exception";
   case MedVar::EHSelector:
     return "eh_selector";
+  case MedVar::SEHExceptionCode:
+    return "exception_code";
   case MedVar::Temp:
     return "t" + std::to_string(V.Id) +
            (V.SSAVer == 0 ? "" : "_" + std::to_string(V.SSAVer));
@@ -767,6 +769,14 @@ std::optional<FunctionSym> HighCWriter::debugCallee(const HighExpr &E) const {
   return std::nullopt;
 }
 
+std::string HighCWriter::sehExceptionCodeName() const {
+  MedVar Code;
+  Code.Kind = MedVar::SEHExceptionCode;
+  Code.Id = MedVar::SEHExceptionCodeId;
+  Code.Size = 4;
+  return varName(Code);
+}
+
 void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
   UnknownOnlyNames.clear();
   AssignedNames.clear();
@@ -787,6 +797,9 @@ void HighCWriter::collectUnknownOnlyNames(const HighFunc &Func) {
     if (!Name.empty())
       AssignedNames.insert(Name);
   });
+  // The `__except` arm assigns GetExceptionCode() to this name directly.
+  if (UsesSEHExceptionCode)
+    AssignedNames.insert(sehExceptionCodeName());
   bool Changed = true;
   unsigned Guard = 0;
   while (Changed && Guard++ < 8) {

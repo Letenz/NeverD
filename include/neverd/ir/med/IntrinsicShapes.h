@@ -29,6 +29,7 @@ inline bool isMedIntrinsicScalarInput(const MedVar &Value) {
   case MedVar::Flag:
   case MedVar::EHException:
   case MedVar::EHSelector:
+  case MedVar::SEHExceptionCode:
     return false;
   }
   return false;

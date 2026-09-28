@@ -48,8 +48,13 @@ struct MedVar {
     Flag,
     Const,
     EHException,
-    EHSelector
+    EHSelector,
+    /// The exception code a Windows __except handler is entered with.
+    SEHExceptionCode
   };
+  /// The id of every SEHExceptionCode value.  Value maps key a variable by
+  /// id and version, so it must differ from the -1 of other synthetic values.
+  static constexpr int SEHExceptionCodeId = -2;
   VarKind Kind = Temp;
   Arch TheArch = Arch::Unknown;
   int16_t RenameTag = -1;

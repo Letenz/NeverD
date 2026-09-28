@@ -29800,6 +29800,36 @@ TEST(HighCPointerAddresses, TryExitToNextStatementKeepsCodeAfterTry) {
   EXPECT_NE(Source.find("L_140001080:"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
+  // A handler that stores its exception code reads the value captured at the
+  // top of the __except arm, where GetExceptionCode() is valid.
+  HighFunc Func;
+  Func.Name = "store_exception_code";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"arg0", NdType::makeInt(8)}};
+  MedVar Code;
+  Code.Kind = MedVar::SEHExceptionCode;
+  Code.Id = MedVar::SEHExceptionCodeId;
+  Code.Size = 4;
+  Code.TheArch = Arch::X64;
+  HighStmt Save;
+  Save.Kind = StmtKind::Store;
+  Save.StoreAddr = HighExpr::makeBinop(NdOp::INT_ADD, parameter(0),
+                                       HighExpr::makeConst(8, 8));
+  Save.StoreVal = HighExpr::makeVar(Code, NdType::makeInt(4));
+  Func.Body = {exceptTry({callStmt("Probe", 0x140002000, {})}, {Save})};
+  const std::string Source = emitFunctions({Func});
+  const size_t ArmAt = Source.find("__except");
+  ASSERT_NE(ArmAt, std::string::npos) << Source;
+  const size_t CaptureAt =
+      Source.find("exception_code = GetExceptionCode();", ArmAt);
+  ASSERT_NE(CaptureAt, std::string::npos) << Source;
+  EXPECT_NE(Source.find("exception_code)", CaptureAt + 1), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("exception_code;"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, TryExitPastHandlerJoinStaysPrinted) {
   // Only the __except arm reaches the join after the try.  The body jumps
   // past it, so its goto is not a fall-through and must stay.

@@ -1022,6 +1022,10 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
       writeTryBody(Stmt.Body, Indent + 1);
       emitIndent(Indent);
       OS << "} __except (EXCEPTION_EXECUTE_HANDLER) {\n";
+      if (UsesSEHExceptionCode) {
+        emitIndent(Indent + 1);
+        OS << sehExceptionCodeName() << " = GetExceptionCode();\n";
+      }
       emitIndent(Indent + 1);
       OS << "/* unstructured SEH region [0x"
          << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
@@ -1076,6 +1080,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
         OS << FilterName << "(GetExceptionInformation())";
       }
       OS << ") {\n";
+      // GetExceptionCode() is only valid in the __except arm; the handler
+      // code, attached here or at its label, reads the captured value.
+      if (UsesSEHExceptionCode) {
+        emitIndent(Indent + 1);
+        OS << sehExceptionCodeName() << " = GetExceptionCode();\n";
+      }
       {
         const bool SavedHandler = InEHClauseBody;
         InEHClauseBody = true;

@@ -55,6 +55,9 @@ std::string MedVar::display() const {
   case EHSelector:
     Base = "eh_selector";
     break;
+  case SEHExceptionCode:
+    Base = "seh_exception_code";
+    break;
   default:
     break;
   }
