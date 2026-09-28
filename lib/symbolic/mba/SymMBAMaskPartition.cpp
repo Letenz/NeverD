@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Completes sums of complementary XOR masks before measurement or after
+/// Completes sums of complementary bitwise masks before measurement or after
 /// candidate selection.
 ///
 //===----------------------------------------------------------------------===//
@@ -13,16 +13,47 @@
 #include "SymMBADetail.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <algorithm>
 
 namespace neverd::symbolic {
-namespace {
 
-bool isDirectComplement(const SymContext &Ctx, SymRef A, SymRef B) {
+bool detail::isDirectComplement(const SymContext &Ctx, SymRef A, SymRef B) {
   return (Ctx.op(A) == SymOp::Not && Ctx.operand(A, 0) == B) ||
          (Ctx.op(B) == SymOp::Not && Ctx.operand(B, 0) == A);
 }
+
+bool detail::isBitwiseComplement(const SymContext &Ctx, SymRef A, SymRef B) {
+  if (isDirectComplement(Ctx, A, B))
+    return true;
+  if (Ctx.op(A) == SymOp::And)
+    std::swap(A, B);
+  if (Ctx.op(A) != SymOp::Or || Ctx.op(B) != SymOp::And)
+    return false;
+  llvm::ArrayRef<SymRef> OrTerms = Ctx.operands(A);
+  llvm::ArrayRef<SymRef> AndTerms = Ctx.operands(B);
+  if (OrTerms.size() != AndTerms.size())
+    return false;
+  if (OrTerms.size() <= 8)
+    return llvm::all_of(OrTerms, [&](SymRef R) {
+      return llvm::any_of(
+          AndTerms, [&](SymRef S) { return isDirectComplement(Ctx, R, S); });
+    });
+  llvm::DenseSet<uint32_t> Exact, Negated;
+  for (SymRef Term : AndTerms) {
+    if (Ctx.op(Term) == SymOp::Not)
+      Negated.insert(Ctx.operand(Term, 0).index());
+    else
+      Exact.insert(Term.index());
+  }
+  return llvm::all_of(OrTerms, [&](SymRef R) {
+    return Ctx.op(R) == SymOp::Not ? Exact.contains(Ctx.operand(R, 0).index())
+                                   : Negated.contains(R.index());
+  });
+}
+
+namespace {
 
 bool isXorComplement(const SymContext &Ctx, SymRef A, SymRef B) {
   if (Ctx.op(A) != SymOp::Xor || Ctx.op(B) != SymOp::Xor)
@@ -84,7 +115,7 @@ SymRef minusTwoMinusOperand(const SymContext &Ctx, SymRef R) {
 }
 
 bool isMaskComplement(const SymContext &Ctx, SymRef A, SymRef B) {
-  if (isDirectComplement(Ctx, A, B) || isXorComplement(Ctx, A, B))
+  if (detail::isBitwiseComplement(Ctx, A, B) || isXorComplement(Ctx, A, B))
     return true;
   for (unsigned Swap = 0; Swap < 2; ++Swap) {
     SymRef Negated = negatedOperand(Ctx, A);
@@ -98,17 +129,49 @@ bool isMaskComplement(const SymContext &Ctx, SymRef A, SymRef B) {
   return false;
 }
 
-SymRef sharedPartitionFactor(const SymContext &Ctx, SymRef A, SymRef B) {
-  if (Ctx.op(A) != SymOp::And || Ctx.op(B) != SymOp::And ||
-      Ctx.numOperands(A) != 2 || Ctx.numOperands(B) != 2)
+SymRef sharedPartitionFactor(SymContext &Ctx, SymRef A, SymRef B, SymOp Op) {
+  if (Ctx.op(A) != Op || Ctx.op(B) != Op)
     return SymRef();
   llvm::ArrayRef<SymRef> AF = Ctx.operands(A);
   llvm::ArrayRef<SymRef> BF = Ctx.operands(B);
-  for (unsigned I = 0; I < 2; ++I)
-    for (unsigned J = 0; J < 2; ++J)
-      if (AF[I] == BF[J] && isMaskComplement(Ctx, AF[1 - I], BF[1 - J]))
-        return AF[I];
-  return SymRef();
+  if (AF.size() == 2 && BF.size() == 2) {
+    for (unsigned I = 0; I < 2; ++I)
+      for (unsigned J = 0; J < 2; ++J)
+        if (AF[I] == BF[J] && isMaskComplement(Ctx, AF[1 - I], BF[1 - J]))
+          return AF[I];
+    return SymRef();
+  }
+
+  // The outer operator may have flattened one mask. Rebuild only its
+  // nonshared operands, then prove that the two residual masks complement.
+  const SymOp Dual = Op == SymOp::And ? SymOp::Or : SymOp::And;
+  auto ContainsDual = [&](llvm::ArrayRef<SymRef> Terms) {
+    return llvm::any_of(Terms, [&](SymRef R) { return Ctx.op(R) == Dual; });
+  };
+  if (!ContainsDual(AF) && !ContainsDual(BF))
+    return SymRef();
+  llvm::SmallVector<SymRef, 8> Shared, Left, Right;
+  size_t I = 0, J = 0;
+  while (I < AF.size() && J < BF.size()) {
+    if (AF[I] == BF[J]) {
+      Shared.push_back(AF[I]);
+      ++I;
+      ++J;
+    } else if (AF[I] < BF[J]) {
+      Left.push_back(AF[I++]);
+    } else {
+      Right.push_back(BF[J++]);
+    }
+  }
+  Left.append(AF.begin() + I, AF.end());
+  Right.append(BF.begin() + J, BF.end());
+  if (Shared.empty() || Left.empty() || Right.empty())
+    return SymRef();
+  SymRef LeftMask = Op == SymOp::And ? Ctx.mkAnd(Left) : Ctx.mkOr(Left);
+  SymRef RightMask = Op == SymOp::And ? Ctx.mkAnd(Right) : Ctx.mkOr(Right);
+  if (!isMaskComplement(Ctx, LeftMask, RightMask))
+    return SymRef();
+  return Op == SymOp::And ? Ctx.mkAnd(Shared) : Ctx.mkOr(Shared);
 }
 
 } // namespace
@@ -117,10 +180,12 @@ SymRef detail::foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
                                       const llvm::APInt &Offset) {
   if (isXorComplement(Ctx, A, B))
     return Ctx.mkConst(Offset - llvm::APInt(Ctx.width(A), 1));
-  SymRef Factor = sharedPartitionFactor(Ctx, A, B);
-  if (!Factor.isValid())
-    return SymRef();
-  return Offset.isZero() ? Factor : Ctx.mkAdd(Ctx.mkConst(Offset), Factor);
+  if (SymRef Factor = sharedPartitionFactor(Ctx, A, B, SymOp::And))
+    return Offset.isZero() ? Factor : Ctx.mkAdd(Ctx.mkConst(Offset), Factor);
+  if (SymRef Factor = sharedPartitionFactor(Ctx, A, B, SymOp::Or))
+    return Ctx.mkAdd(Ctx.mkConst(Offset - llvm::APInt(Ctx.width(A), 1)),
+                     Factor);
+  return SymRef();
 }
 
 } // namespace neverd::symbolic
