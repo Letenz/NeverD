@@ -41,15 +41,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests`는 완전한 비순환 LowIR 그래프에서 두 실행의 독립성을 검사합니다. 일반 진입 입력은 공유하며, 아키텍처에서 정의하지 않은 값을 새로 생성할 때마다 복사, 겹치는 쓰기, 스필과 재로드에 걸쳐 해당 값의 상관관계를 유지합니다. 제어 조건은 경로 가정을 추가하기 전에 검사합니다. 인증서는 `Complete` 효과 메타데이터와 각 명령의 전체 경계 및 정확한 연산 다이제스트와의 결합을 요구합니다. 증거 누락, 도달 가능한 루프, 호출, 알 수 없는 별칭, 예산 소진 시 인증서를 거부합니다. 결과는 명시적인 관찰 항목과 오류 없는 프레임 계약으로 제한되며, 네이티브 코드에서 C로의 완전한 동등성 증명이 아닙니다.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests`는 독립적으로 작성한 고정 매핑 x64 바이트로 원본 분기 전체 수집, 정확한 바이트 결합, 진입 RSP／반환 주소 슬롯 보존, 프레임과 이미지 분리 전제의 충족 가능성, 실패 시 잔여 코드 미반환을 검사합니다. 누락되거나 겹치는 명령, 정적으로 실행되지 않는 미감사 경로, 호출, 간접 전이, 루프, 실행 설정／계약 불일치, 메타데이터／수집 예산을 포함합니다. 이 선택적 게이트는 예외 디스패치, CET 활성 실행, 네이티브 코드에서 C로의 동등성을 인증하지 않으며 일반 복원은 별도로 유지됩니다.
 
 `NeverDX86UndefinedEffectsTests`는 미정의 비트 메타데이터, 정의되거나 보존되는 플래그, 오래된 인증서 거부를 검사합니다. `NeverDX86CarryArithmeticFlagTests`는 산술 오라클을 기준으로 레지스터 및 메모리 형태 ADC/SBB의 보조 캐리를 검사합니다. `NeverDX86LogicIdentityTests`는 동일 피연산자 AND가 64비트 모드에서 32비트 대상에 쓸 때 해당 64비트 레지스터의 비트 63:32를 0으로 만들면서 더 좁은 쓰기의 미기록 비트는 보존하는지 검사합니다.
 

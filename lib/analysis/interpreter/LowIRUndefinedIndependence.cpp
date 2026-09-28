@@ -83,7 +83,7 @@ std::string inputDigest(const LowFunc &F,
       Number(static_cast<uint64_t>(Edge.State));
     }
   };
-  Number(2); // Certificate semantic schema, independent of report formatting.
+  Number(4); // Certificate semantic schema, independent of report formatting.
   Number(F.Entry);
   Number(F.ModuleAnalysisRoots.size());
   for (va_t Root : F.ModuleAnalysisRoots)
@@ -147,10 +147,25 @@ std::string inputDigest(const LowFunc &F,
     Number(Contract.Frame->RootRegister.Bytes);
     Number(static_cast<uint64_t>(Contract.Frame->Begin));
     Number(static_cast<uint64_t>(Contract.Frame->End));
+    Number(Contract.Frame->ExcludedAddressRanges.size());
+    for (const auto &R : Contract.Frame->ExcludedAddressRanges) {
+      Number(R.Begin);
+      Number(R.End);
+    }
   }
   Number(Contract.ReturnRegisters.size());
   for (const auto &R : Contract.ReturnRegisters) {
     Number(R.Offset);
+    Number(R.Bytes);
+  }
+  Number(Contract.PreservedRegisters.size());
+  for (const auto &R : Contract.PreservedRegisters) {
+    Number(R.Offset);
+    Number(R.Bytes);
+  }
+  Number(Contract.PreservedFrameRanges.size());
+  for (const auto &R : Contract.PreservedFrameRanges) {
+    Number(static_cast<uint64_t>(R.Offset));
     Number(R.Bytes);
   }
   Number(Contract.ObserveWrittenFrameBytes);
@@ -192,6 +207,8 @@ class Checker {
   LowIRIndependenceResult Result;
   SymContext Ctx;
   SymRef EntryRoot, MemoryRoot;
+  std::vector<SymRef> PreservedRegisterEntries;
+  std::map<uint64_t, SymRef> PreservedFrameEntries;
   std::map<int, const LowBlock *> Blocks;
   std::map<va_t, int> Addresses;
   std::map<std::pair<int, va_t>, const LowInstructionBoundary *> Boundaries;
@@ -236,7 +253,7 @@ class Checker {
   }
 
   void equal(SymRef Predicate, SymRef Left, SymRef Right,
-             llvm::StringRef Observation) {
+             llvm::StringRef Observation, Status Failure = Status::Dependent) {
     nodes();
     if (++Result.Observations > Limits.MaxObservations)
       fail(Status::BudgetExceeded, "observation budget exhausted");
@@ -246,8 +263,29 @@ class Checker {
       return;
     if (query(Ctx.mkAnd(Predicate, Ctx.mkNe(Left, Right))) !=
         solver::SatResult::Unsat)
-      fail(Status::Dependent,
-           "architecture-arbitrary value affects " + Observation.str());
+      fail(Failure,
+           Failure == Status::ContractViolation
+               ? "return contract does not preserve " + Observation.str()
+               : "architecture-arbitrary value affects " + Observation.str());
+  }
+
+  void preservedReturn(Path &P) {
+    for (size_t I = 0; I != Contract.PreservedRegisters.size(); ++I) {
+      const auto &R = Contract.PreservedRegisters[I];
+      equal(P.Predicate, P.Left.read(SymSpace::Register, R.Offset, R.Bytes),
+            PreservedRegisterEntries[I], "entry register in left execution",
+            Status::ContractViolation);
+      equal(P.Predicate, P.Right.read(SymSpace::Register, R.Offset, R.Bytes),
+            PreservedRegisterEntries[I], "entry register in right execution",
+            Status::ContractViolation);
+    }
+    for (const auto &[Byte, Entry] : PreservedFrameEntries) {
+      const auto Address = Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, Byte));
+      equal(P.Predicate, P.Left.load(Address, 1), Entry,
+            "entry frame byte in left execution", Status::ContractViolation);
+      equal(P.Predicate, P.Right.load(Address, 1), Entry,
+            "entry frame byte in right execution", Status::ContractViolation);
+    }
   }
 
   SymRef ordinary(SymRef Value) {
@@ -556,6 +594,7 @@ class Checker {
         if (LF == StepResult::Return) {
           if (!B.Succs.empty())
             fail(Status::Invalid, "return block has successors");
+          preservedReturn(P);
           if (Original.NumInputs)
             equal(P.Predicate, Left.branchTarget(), Right.branchTarget(),
                   "RETURN operand");
@@ -626,7 +665,11 @@ class Checker {
         Function.OrdinaryModuleAnalysisRoots.size() > Limits.MaxBlockVisits ||
         Records.size() > Limits.MaxInstructions ||
         Contract.EntryConstants.size() > Limits.MaxInstructions ||
-        Contract.ReturnRegisters.size() > Limits.MaxInstructions)
+        Contract.ReturnRegisters.size() > Limits.MaxInstructions ||
+        Contract.PreservedRegisters.size() > Limits.MaxInstructions ||
+        Contract.PreservedFrameRanges.size() > Limits.MaxInstructions ||
+        (Contract.Frame &&
+         Contract.Frame->ExcludedAddressRanges.size() > Limits.MaxInstructions))
       fail(Status::BudgetExceeded, "input metadata budget exhausted");
     for (const auto &B : Function.Blocks) {
       Result.BlockId = B.Id;
@@ -733,6 +776,42 @@ class Checker {
           static_cast<uint64_t>(F.End) - static_cast<uint64_t>(F.Begin);
       if (FrameBytes > Limits.MaxFrameBytes)
         fail(Status::BudgetExceeded, "frame-byte budget exhausted");
+      for (const auto &R : F.ExcludedAddressRanges)
+        if (R.Begin >= R.End)
+          fail(Status::Invalid, "invalid excluded frame address range");
+    }
+    uint64_t PreservedBytes = 0;
+    const auto ChargePreservedBytes = [&](uint16_t Bytes) {
+      if (Bytes > Limits.MaxObservations - PreservedBytes)
+        fail(Status::BudgetExceeded,
+             "entry preservation snapshot budget exhausted");
+      PreservedBytes += Bytes;
+    };
+    std::set<uint64_t> PreservedRegisters;
+    for (const auto &R : Contract.PreservedRegisters) {
+      if (!scalar(NdVar::reg(R.Offset, R.Bytes)))
+        fail(Status::Invalid, "invalid preserved register range");
+      ChargePreservedBytes(R.Bytes);
+      for (uint16_t I = 0; I != R.Bytes; ++I)
+        if (!PreservedRegisters.insert(R.Offset + I).second)
+          fail(Status::Invalid, "overlapping preserved register ranges");
+    }
+    if (!Contract.Frame && !Contract.PreservedFrameRanges.empty())
+      fail(Status::Invalid,
+           "preserved frame ranges require an exact frame contract");
+    std::set<uint64_t> PreservedFrameBytes;
+    for (const auto &R : Contract.PreservedFrameRanges) {
+      const auto &F = *Contract.Frame;
+      if (!R.Bytes || R.Offset < F.Begin || R.Offset >= F.End ||
+          static_cast<uint64_t>(F.End) - static_cast<uint64_t>(R.Offset) <
+              R.Bytes)
+        fail(Status::Invalid, "preserved range exceeds the certified frame");
+      ChargePreservedBytes(R.Bytes);
+      const uint64_t First =
+          static_cast<uint64_t>(R.Offset) - static_cast<uint64_t>(F.Begin);
+      for (uint16_t I = 0; I != R.Bytes; ++I)
+        if (!PreservedFrameBytes.insert(First + I).second)
+          fail(Status::Invalid, "overlapping preserved frame ranges");
     }
   }
 
@@ -766,6 +845,19 @@ public:
               Ctx.mkUle(EntryRoot,
                         Ctx.mkConst(64, UINT64_MAX -
                                             static_cast<uint64_t>(F.End - 1))));
+        // The existing root bounds make these the unsigned first and last
+        // accessible bytes without wraparound. Exclusion is a symbolic entry
+        // precondition: adjacency is allowed, but no byte may overlap a range.
+        const auto First = Ctx.mkAdd(
+            EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.Begin)));
+        const auto Last = Ctx.mkAdd(
+            EntryRoot, Ctx.mkConst(64, static_cast<uint64_t>(F.End) - 1));
+        for (const auto &R : F.ExcludedAddressRanges) {
+          Predicate = Ctx.mkAnd(
+              Predicate, Ctx.mkOr(Ctx.mkUlt(Last, Ctx.mkConst(64, R.Begin)),
+                                  Ctx.mkUle(Ctx.mkConst(64, R.End), First)));
+          nodes();
+        }
         MemoryRoot = Ctx.mkFreshVar(64, "proof_frame");
         // Seed before the twin-state fork: normal frame bytes must stay shared
         // even when subsequent accesses use different overlapping widths.
@@ -778,6 +870,23 @@ public:
       if (query(Predicate) == solver::SatResult::Unsat)
         fail(Status::InfeasibleEntry,
              "entry frame precondition is unsatisfiable");
+      // Materialize one shared entry snapshot after all caller constants and
+      // ordinary frame bytes are initialized, before either execution starts.
+      for (const auto &R : Contract.PreservedRegisters) {
+        PreservedRegisterEntries.push_back(
+            Initial.read(SymSpace::Register, R.Offset, R.Bytes));
+        nodes();
+      }
+      for (const auto &R : Contract.PreservedFrameRanges) {
+        const uint64_t First = static_cast<uint64_t>(R.Offset) -
+                               static_cast<uint64_t>(Contract.Frame->Begin);
+        for (uint16_t I = 0; I != R.Bytes; ++I) {
+          const auto Address =
+              Ctx.mkAdd(MemoryRoot, Ctx.mkConst(64, First + I));
+          PreservedFrameEntries.emplace(First + I, Initial.load(Address, 1));
+          nodes();
+        }
+      }
       Path Entry{
           Addresses.at(Function.Entry), Initial, Initial, Predicate, {}, {}};
       schedule(std::move(Entry), Addresses.at(Function.Entry), Predicate);

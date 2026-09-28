@@ -42,15 +42,19 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 ```sh
 cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDOriginalBinaryUndefinedIndependenceTests \
   NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
   NeverDX86LogicIdentityTests --parallel 4
 build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDOriginalBinaryUndefinedIndependenceTests
 build-release/bin/NeverDX86UndefinedEffectsTests
 build-release/bin/NeverDX86CarryArithmeticFlagTests
 build-release/bin/NeverDX86LogicIdentityTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests` проверяет независимость двух выполнений полного ациклического графа LowIR. Обычные входные значения общие; каждое новое архитектурно неопределённое значение сохраняет связи между копиями, перекрывающимися записями, сохранением в стек и повторной загрузкой. Условия управления проверяются до добавления предположений о пути. Сертификат требует метаданных эффектов `Complete`, точно привязанных к полным границам каждой инструкции и хешу её операций. Недостаток доказательств, достижимые циклы, вызовы, неизвестные алиасы и исчерпание бюджета приводят к отказу. Результат ограничен явно заданными наблюдениями и контрактом безошибочного доступа к кадру; это не полное доказательство эквивалентности нативного кода и C.
+
+`NeverDOriginalBinaryUndefinedIndependenceTests` использует независимо составленные байты x64 с фиксированными отображениями для проверки полного сбора исходных ветвей, точной привязки к байтам, сохранения входного RSP и ячейки возврата, выполнимости разделения кадра и образа и отказа без остаточного кода. Проверяются отсутствующие или перекрывающиеся инструкции, непроверенные неисполняемые ветви, вызовы, косвенные переходы, циклы, несовместимые профили/контракты и бюджеты метаданных/сбора. Эта необязательная проверка не сертифицирует исключения, выполнение с CET или эквивалентность нативного кода C; обычное восстановление остаётся отдельным.
 
 `NeverDX86UndefinedEffectsTests` проверяет метаданные неопределённых битов, определённые и сохраняемые флаги, а также отказ при устаревшем сертификате. `NeverDX86CarryArithmeticFlagTests` сравнивает вспомогательный перенос ADC/SBB для регистровых форм и форм с памятью с арифметическим эталоном. `NeverDX86LogicIdentityTests` проверяет, что AND с одинаковыми операндами при записи в 32-битное назначение в 64-битном режиме по-прежнему обнуляет биты 63:32 соответствующего 64-битного регистра и сохраняет незаписанные биты при более узких записях.
 

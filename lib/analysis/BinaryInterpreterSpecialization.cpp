@@ -9,10 +9,15 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
+#include <climits>
 #include <limits>
+#include <map>
+#include <set>
 
 namespace neverd::analysis {
 namespace {
@@ -126,6 +131,9 @@ public:
     // integer contract; the core rejects their opaque/FP LowOps.
     Decode.resetX86FpuState();
     SpecializationInstruction Result;
+    Result.IsNativeCall = Insn.Id == X86_INS_CALL;
+    Result.NativeBytes.assign(S->Data.begin() + Offset,
+                              S->Data.begin() + Offset + Insn.Size);
     bool LoadedMemoryCall = false;
     try {
       // With shadow stacks explicitly disabled, RDSSP leaves its destination
@@ -133,14 +141,25 @@ public:
       // lifting: the general CET intrinsic requires a shadow-stack model.
       // Other CET operations, including INCSSP, retain their strict rejection.
       if (Options.X64CetDisabled &&
-          (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ))
+          (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ)) {
         Result.Ops.push_back(
             LowOp{.Opcode = NdOp::NOP, .Addr = Cursor.Address});
-      else {
+        // This execution-profile projection has no architecture-owned
+        // undefined-output certificate, even though its LowIR is a NOP.
+        Result.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
+        Result.UndefinedEffects.OpCount = Result.Ops.size();
+        Result.UndefinedEffects.OperationDigest =
+            lowUndefinedOperationDigest(Result.Ops);
+        Result.UndefinedEffects.Diagnostic =
+            "CET-disabled RDSSP projection has no audited undefined effects";
+      } else {
         if (Options.ExplicitMachineState && Options.X64CetDisabled)
-          LoadedMemoryCall = Decode.liftX64MemoryCallToLow(Insn, Result.Ops);
-        if (!LoadedMemoryCall)
-          Decode.liftToLow(Insn, Result.Ops);
+          LoadedMemoryCall = Decode.liftX64MemoryCallToLow(
+              Insn, Result.Ops, &Result.UndefinedEffects);
+        if (!LoadedMemoryCall) {
+          Result.UndefinedEffects = {};
+          Decode.liftToLow(Insn, Result.Ops, {}, {}, &Result.UndefinedEffects);
+        }
       }
     } catch (const UnliftedInstruction &Error) {
       return llvm::createStringError(llvm::errc::not_supported, "%s",
@@ -225,11 +244,9 @@ public:
         "file-backed read-only mapping; fixed permissions; no loader fixup"};
   }
 };
-} // namespace
-
-SpecializationResult
-specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
-                            const SpecializationOptions &Options) {
+std::optional<SpecializationResult>
+validateBinaryImage(const BinaryImage &Image,
+                    const SpecializationOptions &Options) {
   if (Image.Arch != Arch::X64 || Image.IsRelocatable ||
       Options.ByteOrder != llvm::endianness::little ||
       (Image.Format != BinaryFormat::ELF &&
@@ -277,23 +294,315 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
     Result.Diagnostic = "COPY relocation write footprints are not supported";
     return Result;
   }
+  if (Options.FrameBaseRegister &&
+      (Options.FrameBaseRegister->Offset !=
+           getTargetRegInfo(Arch::X64).StackPointer ||
+       Options.FrameBaseRegister->Bytes != 8)) {
+    SpecializationResult Result;
+    Result.Diagnostic = "binary recovery requires the entry RSP frame identity";
+    return Result;
+  }
+  return std::nullopt;
+}
+} // namespace
+
+SpecializationResult
+specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
+                            const SpecializationOptions &Options) {
+  if (auto Failure = validateBinaryImage(Image, Options))
+    return std::move(*Failure);
   ImageProvider Provider(Image, Options);
   SpecializationOptions Effective = Options;
   if (!Effective.FrameBaseRegister)
     Effective.FrameBaseRegister =
         symbolic::SymRegisterRange{getTargetRegInfo(Arch::X64).StackPointer, 8};
-  if (Effective.FrameBaseRegister->Offset !=
-          getTargetRegInfo(Arch::X64).StackPointer ||
-      Effective.FrameBaseRegister->Bytes != 8) {
-    SpecializationResult Result;
-    Result.Diagnostic = "binary recovery requires the entry RSP frame identity";
-    return Result;
-  }
   Effective.RequireRestoredFrameAtReturn = true;
   Effective.ExternalStoresPreserveEntryReturnSlot = true;
   auto Result = specializeInterpreter(Provider, {Entry, Image.Mode}, Effective);
   if (Result.complete())
     Result.Residual.Name = Image.getFunctionNameAt(Entry);
+  return Result;
+}
+namespace {
+std::string binaryIndependenceDigest(
+    const BinaryImage &Image, const SpecializationOptions &Options,
+    const LowIRIndependenceCertificate &Proof,
+    llvm::ArrayRef<SpecializationInstruction> Instructions) {
+  llvm::SHA256 Hash;
+  Hash.update("neverd-original-direct-leaf-independence-v1");
+  const auto Number = [&](uint64_t Value) {
+    uint8_t Bytes[8];
+    for (unsigned I = 0; I != 8; ++I)
+      Bytes[I] = static_cast<uint8_t>(Value >> (I * 8));
+    Hash.update(llvm::ArrayRef<uint8_t>(Bytes));
+  };
+  Number(static_cast<unsigned>(Image.Arch));
+  Number(static_cast<unsigned>(Image.Format));
+  Number(static_cast<unsigned>(Image.Mode));
+  Number(Image.IsRelocatable);
+  Number(Options.ExplicitMachineState);
+  Number(Options.NormalNonfaultingExecution);
+  Number(Options.X64CetDisabled);
+  Number(static_cast<unsigned>(Image.ExceptionMetadata.ParseStatus));
+  Number(Proof.InputDigest.size());
+  Hash.update(Proof.InputDigest);
+  Number(Instructions.size());
+  for (const auto &Instruction : Instructions) {
+    Number(Instruction.Origin.Address);
+    Number(Instruction.NativeBytes.size());
+    Hash.update(Instruction.NativeBytes);
+    Number(Instruction.Fallthrough.Address);
+    Number(static_cast<unsigned>(Instruction.Fallthrough.Mode));
+    Number(static_cast<unsigned>(Instruction.NativeStackControl));
+    Number(Instruction.IsNativeCall);
+    // The provider has already checked uniqueness, permissions, full file
+    // coverage and absence of fixups for this exact native instruction.
+    for (const auto &Mapping : Image.Segments)
+      if (Mapping.contains(Instruction.Origin.Address)) {
+        Number(Mapping.VA);
+        Number(Mapping.Size);
+        Number(Mapping.FileOff);
+        Number(Mapping.FileSz);
+        Number(Mapping.Data.size());
+        Number(static_cast<unsigned>(Mapping.Flags));
+        Number(Mapping.ReadOnlyAfterRelocations);
+      }
+  }
+  return llvm::toHex(Hash.final());
+}
+} // namespace
+
+BinaryUndefinedIndependenceResult
+checkBinaryUndefinedIndependence(const BinaryImage &Image, va_t Entry,
+                                 const SpecializationOptions &Options,
+                                 const LowIRIndependenceContract &Contract,
+                                 const LowIRIndependenceLimits &Limits) {
+  using Status = LowIRIndependenceStatus;
+  BinaryUndefinedIndependenceResult Result;
+  const auto Fail = [&](Status S, std::string Diagnostic) {
+    Result.Proof.Status = S;
+    Result.Proof.Diagnostic = std::move(Diagnostic);
+    return std::move(Result);
+  };
+  if (Image.Segments.size() > Limits.MaxInstructions ||
+      Image.Relocations.size() > Limits.MaxInstructions ||
+      Image.BaseRelocations.size() > Limits.MaxInstructions ||
+      Image.ExceptionMetadata.Functions.size() > Limits.MaxInstructions ||
+      Contract.EntryConstants.size() > Limits.MaxInstructions ||
+      Options.EntryConstants.size() > Limits.MaxInstructions ||
+      Contract.PreservedRegisters.size() > Limits.MaxInstructions ||
+      Contract.PreservedFrameRanges.size() > Limits.MaxInstructions ||
+      (Contract.Frame &&
+       Contract.Frame->ExcludedAddressRanges.size() > Limits.MaxInstructions))
+    return Fail(Status::BudgetExceeded,
+                "original-image metadata budget exhausted");
+  if (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
+      !Options.X64CetDisabled)
+    return Fail(Status::Unsupported,
+                "original-graph proof requires an explicit nonfaulting, "
+                "CET-disabled machine profile");
+  if (auto Failure = validateBinaryImage(Image, Options))
+    return Fail(Failure->Status == SpecializationStatus::InvalidInput
+                    ? Status::Invalid
+                    : Status::Unsupported,
+                std::move(Failure->Diagnostic));
+  const auto RSP = getTargetRegInfo(Arch::X64).StackPointer;
+  if (!Contract.Frame || Contract.Frame->RootRegister.Offset != RSP ||
+      Contract.Frame->RootRegister.Bytes != 8 || Contract.Frame->Begin > 0 ||
+      Contract.Frame->End < 8)
+    return Fail(
+        Status::Invalid,
+        "binary proof requires an accessible entry RSP frame and return slot");
+  if (Contract.ByteOrder != Options.ByteOrder ||
+      Contract.EntryConstants.size() != Options.EntryConstants.size())
+    return Fail(Status::Invalid, "proof and recovery entry contracts differ");
+  for (size_t I = 0; I != Contract.EntryConstants.size(); ++I) {
+    const auto &A = Contract.EntryConstants[I];
+    const auto &B = Options.EntryConstants[I];
+    if (A.Location.Space != B.Location.Space ||
+        A.Location.Offset != B.Location.Offset ||
+        A.Location.Size != B.Location.Size || A.Value != B.Value)
+      return Fail(Status::Invalid, "proof and recovery entry constants differ");
+  }
+
+  LowIRIndependenceContract Effective = Contract;
+  for (const auto &Mapping : Image.Segments) {
+    if (!Mapping.Size)
+      continue;
+    if (Mapping.VA > InvalidVA - Mapping.Size)
+      return Fail(Status::Invalid, "image mapping wraps the address space");
+    Effective.Frame->ExcludedAddressRanges.push_back(
+        {Mapping.VA, Mapping.VA + Mapping.Size});
+  }
+  // Add only uncovered bytes. Explicit overlapping user requirements remain
+  // visible to the common validator rather than silently normalizing them.
+  for (uint64_t I = 0; I != 8; ++I) {
+    const uint64_t Byte = RSP + I;
+    if (std::none_of(Contract.PreservedRegisters.begin(),
+                     Contract.PreservedRegisters.end(), [&](const auto &Range) {
+                       return Byte >= Range.Offset &&
+                              Byte - Range.Offset < Range.Bytes;
+                     }))
+      Effective.PreservedRegisters.push_back({Byte, 1});
+    if (std::none_of(Contract.PreservedFrameRanges.begin(),
+                     Contract.PreservedFrameRanges.end(),
+                     [&](const auto &Range) {
+                       return Range.Offset <= static_cast<int64_t>(I) &&
+                              static_cast<uint64_t>(I) -
+                                      static_cast<uint64_t>(Range.Offset) <
+                                  Range.Bytes;
+                     }))
+      Effective.PreservedFrameRanges.push_back({static_cast<int64_t>(I), 1});
+  }
+
+  ImageProvider Provider(Image, Options);
+  LowFunc Original;
+  Original.Entry = Entry;
+  std::vector<SpecializationInstruction> Instructions;
+  std::vector<LowIRUndefinedInstruction> Records;
+  std::vector<va_t> Pending{Entry};
+  std::map<va_t, int> Ids{{Entry, 0}};
+  std::map<va_t, va_t> Ranges;
+  uint64_t Operations = 0;
+  for (size_t Index = 0; Index != Pending.size(); ++Index) {
+    const va_t Address = Pending[Index];
+    Result.Proof.InstructionAddress = Address;
+    if (Pending.size() > Limits.MaxInstructions ||
+        Pending.size() > Limits.MaxBlockVisits || Pending.size() > INT_MAX)
+      return Fail(Status::BudgetExceeded,
+                  "original instruction graph budget exhausted");
+    auto Decoded = Provider.instruction({Address, Image.Mode});
+    if (!Decoded)
+      return Fail(Status::Unsupported, llvm::toString(Decoded.takeError()));
+    auto Instruction = std::move(*Decoded);
+    if (Instruction.IsNativeCall)
+      return Fail(Status::Unsupported,
+                  "original-graph proof requires call-free direct control");
+    if (Instruction.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete)
+      return Fail(
+          Status::Unsupported,
+          "original instruction lacks complete undefined-output evidence");
+    const auto &Boundary = Instruction.Origin;
+    const va_t End = Address + Boundary.Size;
+    auto Next = Ranges.lower_bound(Address);
+    if ((Next != Ranges.end() && Next->first < End) ||
+        (Next != Ranges.begin() && std::prev(Next)->second > Address))
+      return Fail(Status::Unsupported,
+                  "overlapping original instruction ranges");
+    Ranges.emplace(Address, End);
+    if (Instruction.Ops.size() > Limits.MaxOperations - Operations)
+      return Fail(Status::BudgetExceeded,
+                  "original operation budget exhausted");
+    Operations += Instruction.Ops.size();
+    std::vector<va_t> Successors;
+    bool Terminated = false;
+    for (size_t I = 0; I != Instruction.Ops.size(); ++I) {
+      const auto &Op = Instruction.Ops[I];
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INDIR_BR)
+        return Fail(Status::Unsupported,
+                    "original-graph proof requires call-free direct control");
+      if (Op.Opcode != NdOp::RETURN && Op.Opcode != NdOp::BRANCH &&
+          Op.Opcode != NdOp::COND_BR)
+        continue;
+      if (Terminated || I + 1 != Instruction.Ops.size())
+        return Fail(Status::Unsupported, "original control is not terminal");
+      Terminated = true;
+      if (Op.Opcode == NdOp::RETURN) {
+        if (Instruction.NativeStackControl !=
+            SpecializationNativeStackControl::Return)
+          return Fail(Status::Unsupported,
+                      "missing physical near-return evidence");
+      } else {
+        if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
+            Boundary.TargetMode != LowInstructionTargetMode::Preserve)
+          return Fail(Status::Unsupported, "unresolved original branch target");
+        Successors.push_back(Op.Inputs[0].Offset);
+        if (Op.Opcode == NdOp::COND_BR &&
+            Instruction.Fallthrough.Address != Op.Inputs[0].Offset)
+          Successors.push_back(Instruction.Fallthrough.Address);
+      }
+    }
+    if (!Terminated)
+      Successors.push_back(Instruction.Fallthrough.Address);
+    LowBlock Block;
+    Block.Id = static_cast<int>(Index);
+    Block.StartAddr = Address;
+    Block.EndAddr = End;
+    Block.Ops = Instruction.Ops;
+    Block.InstructionBoundaries.push_back(Boundary);
+    for (va_t Target : Successors) {
+      auto It = Ids.find(Target);
+      if (It == Ids.end()) {
+        if (Pending.size() >= Limits.MaxInstructions ||
+            Pending.size() >= Limits.MaxBlockVisits ||
+            Pending.size() >= INT_MAX)
+          return Fail(Status::BudgetExceeded,
+                      "original instruction graph budget exhausted");
+        It = Ids.emplace(Target, static_cast<int>(Pending.size())).first;
+        Pending.push_back(Target);
+      }
+      Block.Succs.push_back(It->second);
+    }
+    Records.push_back({Block.Id, Boundary, Instruction.UndefinedEffects});
+    Original.Blocks.push_back(std::move(Block));
+    Instructions.push_back(std::move(Instruction));
+  }
+  // Refuse even structurally cyclic arms before any symbolic feasibility
+  // pruning. Bounded unrolling cannot stand in for a loop invariant.
+  std::vector<size_t> Incoming(Original.Blocks.size());
+  for (const auto &Block : Original.Blocks)
+    for (int Successor : Block.Succs)
+      ++Incoming[Successor];
+  std::vector<int> Ready;
+  for (size_t I = 0; I != Incoming.size(); ++I)
+    if (!Incoming[I])
+      Ready.push_back(static_cast<int>(I));
+  for (size_t I = 0; I != Ready.size(); ++I)
+    for (int Successor : Original.Blocks[Ready[I]].Succs)
+      if (!--Incoming[Successor])
+        Ready.push_back(Successor);
+  if (Ready.size() != Original.Blocks.size())
+    return Fail(Status::Unsupported,
+                "original graph requires a loop invariant");
+  Result.Proof =
+      checkLowIRUndefinedIndependence(Original, Records, Effective, Limits);
+  if (Result.Proof.proved()) {
+    BinaryUndefinedIndependenceCertificate Certificate;
+    Certificate.InputDigest = binaryIndependenceDigest(
+        Image, Options, *Result.Proof.Certificate, Instructions);
+    Certificate.LowIR = *Result.Proof.Certificate;
+    Certificate.Instructions = std::move(Instructions);
+    Result.Certificate = std::move(Certificate);
+  }
+  return Result;
+}
+
+SpecializationWithIndependenceResult
+specializeBinaryInterpreterWithIndependence(
+    const BinaryImage &Image, va_t Entry, const SpecializationOptions &Options,
+    const LowIRIndependenceContract &Contract,
+    const LowIRIndependenceLimits &Limits) {
+  SpecializationWithIndependenceResult Result;
+  Result.Independence =
+      checkBinaryUndefinedIndependence(Image, Entry, Options, Contract, Limits);
+  if (!Result.Independence.proved()) {
+    switch (Result.Independence.Proof.Status) {
+    case LowIRIndependenceStatus::Invalid:
+    case LowIRIndependenceStatus::InfeasibleEntry:
+      Result.Recovery.Status = SpecializationStatus::InvalidInput;
+      break;
+    case LowIRIndependenceStatus::BudgetExceeded:
+      Result.Recovery.Status = SpecializationStatus::BudgetExceeded;
+      break;
+    default:
+      Result.Recovery.Status = SpecializationStatus::Unsupported;
+      break;
+    }
+    Result.Recovery.Diagnostic = Result.Independence.Proof.Diagnostic;
+    return Result;
+  }
+  Result.Recovery = specializeBinaryInterpreter(Image, Entry, Options);
   return Result;
 }
 } // namespace neverd::analysis

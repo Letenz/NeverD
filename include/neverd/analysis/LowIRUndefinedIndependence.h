@@ -30,6 +30,12 @@ struct LowIRIndependenceConstant {
   uint64_t Value = 0;
 };
 
+struct LowIRIndependenceAddressRange {
+  /// Absolute, nonempty, nonwrapping half-open address range [Begin, End).
+  uint64_t Begin = 0;
+  uint64_t End = 0;
+};
+
 struct LowIRIndependenceFrame {
   /// The current exact-frame model uses a 64-bit entry address register.
   symbolic::SymRegisterRange RootRegister;
@@ -38,12 +44,31 @@ struct LowIRIndependenceFrame {
   /// inferred from executing one input. Only this mutable region is supported.
   int64_t Begin = 0;
   int64_t End = 0;
+  /// The whole accessible frame must be disjoint from every excluded absolute
+  /// range. This restricts the symbolic entry root, not just constant roots.
+  /// Duplicate and overlapping exclusions are valid redundant constraints.
+  std::vector<LowIRIndependenceAddressRange> ExcludedAddressRanges;
+};
+
+struct LowIRIndependenceFrameRange {
+  /// Byte range relative to the shared entry frame root.
+  int64_t Offset = 0;
+  uint16_t Bytes = 0;
 };
 
 struct LowIRIndependenceContract {
   std::vector<LowIRIndependenceConstant> EntryConstants;
   std::optional<LowIRIndependenceFrame> Frame;
   std::vector<symbolic::SymRegisterRange> ReturnRegisters;
+  /// Each execution must restore these one-to-eight-byte register ranges to
+  /// their shared entry values at every RETURN, after EntryConstants apply.
+  /// Overlaps within this list are invalid; ReturnRegisters may overlap it.
+  std::vector<symbolic::SymRegisterRange> PreservedRegisters;
+  /// Each execution must restore these entry-frame bytes at every RETURN.
+  /// Requires Frame; ranges must be nonempty, contained in Frame and mutually
+  /// disjoint. This obligation applies even when written-byte observation is
+  /// disabled. Temporarily modifying and then restoring a range is allowed.
+  std::vector<LowIRIndependenceFrameRange> PreservedFrameRanges;
   bool ObserveWrittenFrameBytes = true;
   llvm::endianness ByteOrder = llvm::endianness::little;
 };
@@ -51,7 +76,7 @@ struct LowIRIndependenceContract {
 struct LowIRIndependenceLimits {
   uint64_t MaxOperations = 65536;
   /// Bounds both input metadata and dynamically visited instructions, including
-  /// instructions whose lifted operation spans are empty.
+  /// instructions whose lifted operation spans are empty and frame exclusions.
   uint64_t MaxInstructions = 65536;
   /// Total path states scheduled, including straight-line successor visits.
   uint32_t MaxPaths = 256;
@@ -59,6 +84,8 @@ struct LowIRIndependenceLimits {
   uint32_t MaxProducers = 4096;
   uint32_t MaxFrameBytes = 4096;
   uint32_t MaxSolverQueries = 4096;
+  /// Bounds checked equalities and the total bytes snapshotted for return
+  /// preservation contracts. Each preserved item is checked in both executions.
   uint64_t MaxObservations = 65536;
   uint64_t MaxSymbolicNodes = 262144;
   solver::SolverOptions Solver = [] {
@@ -78,6 +105,7 @@ enum class LowIRIndependenceStatus : uint8_t {
   Invalid,
   BudgetExceeded,
   InfeasibleEntry,
+  ContractViolation,
 };
 
 enum class LowIRIndependenceScope : uint8_t { CompleteAcyclicLowIR };
@@ -115,6 +143,8 @@ struct LowIRIndependenceResult {
 /// requested final observations are independent of architecture-arbitrary
 /// choices. Ordinary entry inputs are shared; each effect creates independent
 /// left/right choices that stay correlated with their own copies and spills.
+/// Preserved locations additionally must equal their shared entry snapshot in
+/// each execution at every RETURN; pairwise independence alone is insufficient.
 ///
 /// Starts at Function.Entry; additional declared entry roots are unsupported.
 /// The driver checks a branch before constraining its path. Calls, opaque
