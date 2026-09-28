@@ -53,6 +53,7 @@ void Decoder::reset() {
   InsnBuf = nullptr;
   Handle = 0;
   TargetArch = Arch::Unknown;
+  CurrentMode = InstructionMode::Default;
   X86.reset();
   ARM.reset();
   AArch64.reset();
@@ -122,10 +123,46 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
   Handle = NewHandle;
   InsnBuf = NewInsnBuf;
   TargetArch = TheArch;
+  CurrentMode = Mode;
   Detail = true;
   X86 = std::move(NewX86);
   ARM = std::move(NewARM);
   AArch64 = std::move(NewAArch64);
+  return true;
+}
+
+bool Decoder::init(const BinaryImage &Img) {
+  if (Img.Mode != InstructionMode::MixedARMThumb)
+    return init(Img.Arch, Img.Mode);
+  if (Img.Arch != Arch::ARM)
+    return false;
+  if (Img.Entry != 0)
+    if (const auto EntryMode = Img.instructionModeAt(Img.Entry))
+      return init(Img.Arch, *EntryMode);
+  for (const auto &[Addr, Mode] : Img.ARMCodeModeEntries)
+    if (Img.instructionModeAt(Addr) == Mode)
+      return init(Img.Arch, Mode);
+  for (const ARMCodeRegion &Region : Img.ARMCodeRegions)
+    if (const auto Mode = Img.instructionModeAt(Region.Start))
+      return init(Img.Arch, *Mode);
+  syncError() << "mixed ARM/Thumb image has no authenticated code mode\n";
+  return false;
+}
+
+bool Decoder::selectMode(const BinaryImage &Img, va_t Addr,
+                         std::optional<InstructionMode> IncomingMode) {
+  const auto Mode = Img.instructionModeAt(Addr, IncomingMode);
+  if (!Mode)
+    return false;
+  if (Img.Arch == Arch::ARM &&
+      (Addr % (*Mode == InstructionMode::Thumb ? 2 : 4)) != 0)
+    return false;
+  if (Handle && TargetArch == Img.Arch && CurrentMode == *Mode)
+    return true;
+  const bool WasDetail = Detail;
+  if (!init(Img.Arch, *Mode))
+    return false;
+  setDetail(WasDetail);
   return true;
 }
 

@@ -147,8 +147,7 @@ void validateMemoryAddressSpaceForC(NdMemoryAddressSpace AddressSpace,
         "FS/GS memory address spaces require an x86 C target");
 }
 
-bool useMsvcSegmentedRead(const CEmitterOptions &Opts,
-                          const HighFunc *Func) {
+bool useMsvcSegmentedRead(const CEmitterOptions &Opts, const HighFunc *Func) {
   return (Func && Func->ExceptionMetadata) ||
          (Opts.Image && Opts.Image->Format == BinaryFormat::COFF);
 }
@@ -369,8 +368,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         E.MemoryOrdering == NdMemoryOrdering::None &&
         E.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
         (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
-        E.Kind == ExprKind::Load &&
-        useMsvcSegmentedRead(Opts, CurrentFunc);
+        E.Kind == ExprKind::Load && useMsvcSegmentedRead(Opts, CurrentFunc);
     if (E.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
       validateMemoryAddressSpaceForC(E.MemoryAddressSpace, Opts.TheArch);
       if (!MsvcSegmentedScalar)
@@ -692,7 +690,8 @@ std::string HighCWriter::atomicCompareExchangeExpr(
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   std::string Type = memoryTypeName(Ty);
-  return "({ " + Type + " neverd_expected = " + atomicValueCast(Type, Expected) +
+  return "({ " + Type +
+         " neverd_expected = " + atomicValueCast(Type, Expected) +
          "; (void)__atomic_compare_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) +
          ", &neverd_expected, " + atomicValueCast(Type, Desired) + ", 0, " +
@@ -1134,8 +1133,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
         for (const auto &Parameter : Expr->SourceCallHint->Signature.Parameters)
           CheckType(Parameter.Type);
       }
-      for (size_t I = 0; I < Expr->Operands.size() &&
-                         I < debugCallArgLimit(*Expr); ++I)
+      for (size_t I = 0;
+           I < Expr->Operands.size() && I < debugCallArgLimit(*Expr); ++I)
         CheckType(displayCallArgType(*Expr, I));
     }
     for (const auto &Operand : Expr->Operands)
@@ -1330,6 +1329,35 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
     OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
   }
+
+  // Direct calls can precede the callee's body in address order. Declare the
+  // recovered internal signature before any body so C does not infer an
+  // obsolete implicit int/no-parameter declaration at that call site.
+  for (const auto &[Name, Function] : DefinedFunctionsByIdentifier) {
+    if (!CallTargets.count(Name) || !Prototyped.insert(Function).second)
+      continue;
+    CurrentFunc = Function;
+    Analysis = {};
+    runAnalysisPasses(*Function);
+    const auto ReturnType =
+        InferredVoid ? NdType::makeVoid() : Function->ReturnType;
+    if (Function->SourceTypeHint)
+      OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
+    if (Function->DoesNotReturn)
+      OS << "_Noreturn ";
+    std::string Declarator = Name + "(";
+    const size_t ParamCount = emittedParamCount(*Function);
+    for (size_t I = 0; I < ParamCount; ++I) {
+      if (I)
+        Declarator += ", ";
+      Declarator += typeToC(Function->Params[I].Type);
+    }
+    if (ParamCount == 0)
+      Declarator += "void";
+    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
+  }
+  CurrentFunc = nullptr;
+  Analysis = {};
 
   for (auto &Name : CallTargets) {
     if (HiddenCxxCtorIdentifiers.count(Name))
@@ -1544,8 +1572,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (!E.Operands[I])
         continue;
       const TypeRef Expected = expectedDebugCallArgType(*Callee, I);
-      if (!Expected || Expected->Kind != NdTypeKind::Ptr || !Expected->Pointee ||
-          Expected->Pointee->SourceName.empty())
+      if (!Expected || Expected->Kind != NdTypeKind::Ptr ||
+          !Expected->Pointee || Expected->Pointee->SourceName.empty())
         continue;
       if (auto VA = imageLoadVA(*E.Operands[I]))
         noteImageObject(*VA, Expected, false);
@@ -1554,7 +1582,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   for (const HighFunc &Func : Funcs)
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Kind == StmtKind::Store &&
-          S.MemoryAddressSpace == NdMemoryAddressSpace::Default && S.StoreAddr) {
+          S.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          S.StoreAddr) {
         if (auto VA = constAddress(*S.StoreAddr))
           noteImageObject(*VA, S.StoreVal ? S.StoreVal->Type : nullptr, true,
                           true);

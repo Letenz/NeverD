@@ -576,6 +576,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // every call to that arity.  The emitter spills these into the frame headroom
   // so the unchanged va_arg walk reads the caller's overflow arguments.
   finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.Format);
+  if (Img.Arch == Arch::ARM)
+    propagateARMForwardedPointerParams(Result.MedFuncs);
   // Late ABI remodelling may reconvert a function from LowIR.  Refresh the
   // interprocedural facts before either serial or sharded LLVM emission.
   propagateInternalNoReturn(Result.MedFuncs, Img.Arch);

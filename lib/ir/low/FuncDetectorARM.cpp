@@ -24,6 +24,10 @@ void scanSegmentCallsARM(const BinaryImage &Img, Decoder &Dec,
     size_t Off = static_cast<size_t>(Cur - Seg->VA);
     if (Off >= Seg->Data.size())
       break;
+    if (!Dec.selectMode(Img, Cur)) {
+      ++Cur;
+      continue;
+    }
     DecodedInsn DI;
     const size_t Remain =
         static_cast<size_t>(std::min<va_t>(Seg->Data.size() - Off, End - Cur));
@@ -32,7 +36,8 @@ void scanSegmentCallsARM(const BinaryImage &Img, Decoder &Dec,
       Cur++;
       continue;
     }
-    if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
+    if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz)) ||
+        Img.instructionModeAt(Cur + Sz - 1) != Dec.currentMode()) {
       Cur += Sz;
       continue;
     }

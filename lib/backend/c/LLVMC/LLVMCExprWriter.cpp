@@ -17,6 +17,7 @@
 #include "neverd/backend/c/MsvcAtlCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/NdTypes.h"
+#include "neverd/ir/TargetRegInfo.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -1413,7 +1414,11 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
         if (CI && CI->getValue().getActiveBits() <= 64 &&
             (BO->getOpcode() == llvm::Instruction::Add ||
              orCanPeelAsAdd(Base, CI))) {
-          Off += CI->getZExtValue();
+          // A narrow address add uses modular source-width arithmetic. A
+          // negative displacement (for example, a 32-bit stack push) must be
+          // sign-extended while peeling it back to the host-width alloca;
+          // zero extension would move the access several gigabytes away.
+          Off += static_cast<uint64_t>(CI->getSExtValue());
           V = Base;
           continue;
         }
@@ -1421,7 +1426,7 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
       if (BO->getOpcode() == llvm::Instruction::Sub) {
         if (const auto *CI =
                 llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1))) {
-          Off -= CI->getZExtValue();
+          Off -= static_cast<uint64_t>(CI->getSExtValue());
           V = BO->getOperand(0);
           continue;
         }
@@ -1438,7 +1443,7 @@ LLVMCWriter::peelPointerOffset(const llvm::Value *V) const {
       if (GEP->getNumOperands() == 2) {
         if (const auto *CI =
                 llvm::dyn_cast<llvm::ConstantInt>(GEP->getOperand(1))) {
-          Off += CI->getZExtValue();
+          Off += static_cast<uint64_t>(CI->getSExtValue());
           V = GEP->getPointerOperand();
           continue;
         }
@@ -2500,6 +2505,34 @@ std::string LLVMCWriter::integerPointerOperandStr(const llvm::Value *Operand) {
   return "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" + Text + ")";
 }
 
+std::optional<std::string>
+LLVMCWriter::targetPointerMaskIdentity(const llvm::BinaryOperator &Op) {
+  if (Op.getOpcode() != llvm::Instruction::And || !Op.getType()->isIntegerTy())
+    return std::nullopt;
+  const unsigned Width = Op.getType()->getIntegerBitWidth();
+  const unsigned PointerWidth = getTargetRegInfo(Opts.TheArch).PointerSize * 8;
+  if (!PointerWidth || Width <= PointerWidth || Width > 64)
+    return std::nullopt;
+  const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Op.getOperand(1));
+  const llvm::Value *Base = Op.getOperand(0);
+  if (!Mask) {
+    Mask = llvm::dyn_cast<llvm::ConstantInt>(Base);
+    Base = Op.getOperand(1);
+  }
+  if (!Mask ||
+      Mask->getValue() != llvm::APInt::getLowBitsSet(Width, PointerWidth))
+    return std::nullopt;
+  const auto *Cast = llvm::dyn_cast<llvm::Operator>(Base);
+  if (!Cast || Cast->getOpcode() != llvm::Instruction::PtrToInt ||
+      !Cast->getOperand(0)->getType()->isPointerTy())
+    return std::nullopt;
+  // The target-width mask is an identity on its pointer. A generated C
+  // pointer may occupy high host bits, so reapplying the numeric mask would
+  // truncate a valid host address before the matching inttoptr.
+  return "(" + typeToCLLVM(Op.getType()) + ")(uintptr_t)(" +
+         valueStr(Cast->getOperand(0)) + ")";
+}
+
 std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
                                  llvm::Type *SrcTy, llvm::Type *DstTy) {
   const std::string Dst = typeToCLLVM(DstTy);
@@ -2813,10 +2846,10 @@ std::string LLVMCWriter::renderInline(const llvm::Instruction &Inst) {
   if (const auto *Compare = llvm::dyn_cast<llvm::FCmpInst>(&Inst))
     return fcmpInlineText(*Compare);
   if (Inst.isBinaryOp()) {
-    const bool NeedsIntegerPointerOperand =
-        Inst.getOpcode() == llvm::Instruction::Or ||
-        Inst.getOpcode() == llvm::Instruction::Add ||
-        Inst.getOpcode() == llvm::Instruction::Sub;
+    if (auto Identity =
+            targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst)))
+      return *Identity;
+    const bool NeedsIntegerPointerOperand = Inst.getType()->isIntegerTy();
     std::string LHS =
         logicalShiftLhs(Inst, NeedsIntegerPointerOperand
                                   ? integerPointerOperandStr(Inst.getOperand(0))

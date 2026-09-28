@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <map>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -67,6 +68,7 @@ bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
   Dec.resetX86FpuState();
   const bool Found = [&]() {
     va_t Cur = Addr;
+    std::optional<InstructionMode> PathMode = Img.instructionModeAt(Addr);
     for (int I = 0; I < kMaxInsns; ++I) {
       if (Cur < Seg->VA)
         return false;
@@ -74,12 +76,19 @@ bool hasBoundedSemanticTerminator(const BinaryImage &Img, Decoder &Dec,
       if (Off >= Seg->Data.size())
         return false;
 
+      if (!Dec.selectMode(Img, Cur, PathMode))
+        return false;
+      PathMode = Dec.currentMode();
       DecodedInsn DI;
       const int Sz = Dec.decodeOneForLift(Seg->Data.data() + Off,
                                           Seg->Data.size() - Off, Cur, DI);
       if (Sz <= 0 || !DI.Raw)
         return false;
       if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz)))
+        return false;
+      if (Img.Arch == Arch::ARM &&
+          Img.instructionModeAt(Cur + Sz - 1, Dec.currentMode()) !=
+              Dec.currentMode())
         return false;
       if (Dec.isFunctionTerminator(DI))
         return true;
@@ -259,6 +268,8 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   if (Img.Entry != 0) {
     scanCallTargets(Img, Dec, DirectCallTargets);
     Entries.insert(DirectCallTargets.begin(), DirectCallTargets.end());
+    if (Img.Arch == Arch::ARM)
+      Entries.insert(Img.ARMVeneerTargets.begin(), Img.ARMVeneerTargets.end());
     if (IsX86LinkedCOFF)
       scanX86UnsymbolizedEntries(Img, Dec, Entries);
   }
@@ -399,7 +410,7 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
     } else {
       parallelForEach(NeedVerify.size(), [&](auto Claim, size_t Count) {
         Decoder LocalDec;
-        if (!LocalDec.init(Img.Arch, Img.Mode))
+        if (!LocalDec.init(Img))
           return;
         LocalDec.setDetail(Img.Arch == Arch::ARM);
         for (size_t P; (P = Claim()) < Count;)
@@ -492,6 +503,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     return false;
 
   va_t Cur = Addr;
+  std::optional<InstructionMode> PathMode = Img.instructionModeAt(Addr);
   bool SawTerminator = false;
   for (int I = 0; I < kMaxInsns; ++I) {
     size_t Off = static_cast<size_t>(Cur - Seg->VA);
@@ -503,6 +515,9 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     // is a function terminator.  The lightweight decode avoids lift-path
     // fixups; ARM callers nevertheless leave detail enabled because writes to
     // PC and POP/LDM register lists are operand-dependent.
+    if (!Dec.selectMode(Img, Cur, PathMode))
+      return false;
+    PathMode = Dec.currentMode();
     DecodedInsn DI;
     int Sz = Dec.decodeOneLight(Seg->Data.data() + Off, Remain, Cur, DI);
     if (Sz <= 0)
@@ -510,6 +525,10 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
     if (!DI.Raw)
       return false;
     if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz)))
+      return false;
+    if (Img.Arch == Arch::ARM &&
+        Img.instructionModeAt(Cur + Sz - 1, Dec.currentMode()) !=
+            Dec.currentMode())
       return false;
 
     if (Dec.isFunctionTerminator(DI)) {
@@ -539,17 +558,22 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
   const bool ReachablePathsDecode = [&]() {
     constexpr size_t kCFGProbeBudget =
         static_cast<size_t>(limits::kMaxVerifyInsns) * 4;
-    std::queue<va_t> Worklist;
-    std::set<va_t> Explored;
-    Worklist.push(Addr);
+    std::queue<std::pair<va_t, std::optional<InstructionMode>>> Worklist;
+    std::map<va_t, InstructionMode> Explored;
+    Worklist.push({Addr, Img.instructionModeAt(Addr)});
 
     while (!Worklist.empty()) {
-      va_t Cur = Worklist.front();
+      auto [Cur, PathMode] = Worklist.front();
       Worklist.pop();
 
       while (true) {
-        if (Explored.count(Cur))
+        if (const auto Existing = Explored.find(Cur);
+            Existing != Explored.end()) {
+          if (Img.Arch == Arch::ARM &&
+              Img.instructionModeAt(Cur, PathMode) != Existing->second)
+            return false;
           break;
+        }
         if (Explored.size() >= kCFGProbeBudget)
           return true;
 
@@ -560,6 +584,9 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         if (Off >= PathSeg->Data.size())
           return false;
 
+        if (!Dec.selectMode(Img, Cur, PathMode))
+          return false;
+        PathMode = Dec.currentMode();
         DecodedInsn DI;
         int Sz = Dec.decodeOneForLift(PathSeg->Data.data() + Off,
                                       PathSeg->Data.size() - Off, Cur, DI);
@@ -567,7 +594,11 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
           return false;
         if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz)))
           return false;
-        Explored.insert(Cur);
+        if (Img.Arch == Arch::ARM &&
+            Img.instructionModeAt(Cur + Sz - 1, Dec.currentMode()) !=
+                Dec.currentMode())
+          return false;
+        Explored.emplace(Cur, Dec.currentMode());
 
         std::vector<LowOp> Ops;
         try {
@@ -609,13 +640,28 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
         if (!IsBranch && !IsRet && Dec.isFunctionTerminator(DI))
           IsRet = true;
 
+        std::optional<InstructionMode> BranchMode = PathMode;
+        switch (Dec.controlTargetMode(DI, Dec.currentMode())) {
+        case LowInstructionTargetMode::ARM:
+          BranchMode = InstructionMode::ARM;
+          break;
+        case LowInstructionTargetMode::Thumb:
+          BranchMode = InstructionMode::Thumb;
+          break;
+        case LowInstructionTargetMode::FromTargetBit0:
+          BranchMode.reset();
+          break;
+        case LowInstructionTargetMode::Preserve:
+          break;
+        }
+
         if (IsNoReturnCall)
           break;
         if (IsRet && !(IsCond && IsBranch))
           break;
         if (IsRet && IsCond && IsBranch) {
           if (BranchTarget != InvalidVA)
-            Worklist.push(BranchTarget);
+            Worklist.push({BranchTarget, BranchMode});
           break;
         }
         if (!IsBranch) {
@@ -634,7 +680,7 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
           break;
         }
 
-        Worklist.push(BranchTarget);
+        Worklist.push({BranchTarget, BranchMode});
         if (!IsCond)
           break;
         Cur += static_cast<va_t>(Sz);
@@ -722,7 +768,7 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
 
   auto Worker = [&]() {
     Decoder LocalDec;
-    if (!LocalDec.init(Img.Arch, Img.Mode))
+    if (!LocalDec.init(Img))
       return;
     std::set<va_t> LocalEntries;
 

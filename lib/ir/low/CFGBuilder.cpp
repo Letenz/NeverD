@@ -1383,7 +1383,7 @@ bool CFGBuilder::prepareCandidateFiniteProofScratch(
 
   Decoder Dec;
   Dec.setStrict(true);
-  if (!Dec.init(Img.Arch, Img.Mode)) {
+  if (!Dec.init(Img)) {
     Scratch.CandidateFiniteProofDecodeBudget = nullptr;
     return Incomplete();
   }
@@ -1447,18 +1447,44 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
   // across a known entry. Decoded blocks keep all their physical predecessors.
   // Keeping its source on this local worklist prevents fallthrough, BL, and
   // unrelated exploration roots from inheriting another edge's permission.
-  std::queue<std::pair<va_t, std::optional<va_t>>> Worklist;
-  Worklist.push({Addr, std::nullopt});
+  struct PendingEdge {
+    va_t Address;
+    std::optional<va_t> SourceBranch;
+    std::optional<InstructionMode> Mode;
+  };
+  std::queue<PendingEdge> Worklist;
+  Worklist.push({Addr, std::nullopt, Img.instructionModeAt(Addr)});
+  auto branchMode =
+      [](const InsnRecord &Source) -> std::optional<InstructionMode> {
+    switch (Source.TargetMode) {
+    case LowInstructionTargetMode::ARM:
+      return InstructionMode::ARM;
+    case LowInstructionTargetMode::Thumb:
+      return InstructionMode::Thumb;
+    case LowInstructionTargetMode::Preserve:
+      return Source.Mode;
+    case LowInstructionTargetMode::FromTargetBit0:
+      return std::nullopt;
+    }
+    return std::nullopt;
+  };
   // Known entries reached by a conditional branch or by falling through.
-  std::vector<va_t> TailCallEntries;
+  std::vector<std::pair<va_t, std::optional<InstructionMode>>> TailCallEntries;
 
   while (!Worklist.empty()) {
-    auto [Cur, SourceBranch] = Worklist.front();
+    auto [Cur, SourceBranch, PathMode] = Worklist.front();
     Worklist.pop();
 
     while (true) {
-      if (ExploredAddrs.count(Cur))
+      if (ExploredAddrs.count(Cur)) {
+        if (Img.Arch == Arch::ARM) {
+          const auto Existing = Insns.find(Cur);
+          if (Existing != Insns.end() &&
+              Img.instructionModeAt(Cur, PathMode) != Existing->second.Mode)
+            DecodeFailureAddresses.insert(Cur);
+        }
         break;
+      }
       // Fallthrough or a queued edge into another function's entry belongs to
       // that function.  Following it here fuses callees into a multi-hundred-
       // thousand-op CFG and leaves the real PDB symbol as an empty HighC stub.
@@ -1471,7 +1497,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         // falling through (see the stubs after this walk).  A disposable
         // proof snapshot keeps its decode-only accounting.
         if (!CandidateFiniteProofDecodeOnly)
-          TailCallEntries.push_back(Cur);
+          TailCallEntries.emplace_back(Cur, PathMode);
         break;
       }
       SourceBranch.reset();
@@ -1524,6 +1550,11 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       }
       size_t Remain = Seg->Data.size() - Off;
 
+      if (!Dec.selectMode(Img, Cur, PathMode)) {
+        DecodeFailureAddresses.insert(Cur);
+        break;
+      }
+      PathMode = Dec.currentMode();
       DecodedInsn DI;
       int Sz = Dec.decodeOneForLift(Seg->Data.data() + Off, Remain, Cur, DI);
       if (Sz <= 0) {
@@ -1532,6 +1563,12 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       }
       if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
         TruncatedPathAddresses.insert(Cur);
+        break;
+      }
+      if (Img.Arch == Arch::ARM &&
+          Img.instructionModeAt(Cur + Sz - 1, Dec.currentMode()) !=
+              Dec.currentMode()) {
+        DecodeFailureAddresses.insert(Cur);
         break;
       }
       ++DecodedInstructionCount;
@@ -1547,7 +1584,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
       InsnRecord Rec;
       Rec.Addr = Cur;
       Rec.Size = static_cast<uint16_t>(Sz);
-      Rec.Mode = effectiveInstructionMode(Img.Arch, Img.Mode);
+      Rec.Mode = Dec.currentMode();
       Rec.Immediate = Dec.returnImmediate(DI);
       Rec.TargetMode = Dec.controlTargetMode(DI, Rec.Mode);
       Rec.FpuTopIn = Dec.getX86FpuTop();
@@ -1822,7 +1859,8 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         if (Saved.BranchTarget != InvalidVA) {
           BlockStarts.insert(Saved.BranchTarget);
           if (!ExploredAddrs.count(Saved.BranchTarget))
-            Worklist.push({Saved.BranchTarget, std::nullopt});
+            Worklist.push(
+                {Saved.BranchTarget, std::nullopt, branchMode(Saved)});
         }
         break;
       }
@@ -1839,7 +1877,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
                                      Saved.BranchTarget, KnownFuncEntries)) {
           BlockStarts.insert(Saved.BranchTarget);
           if (!ExploredAddrs.count(Saved.BranchTarget))
-            Worklist.push({Saved.BranchTarget, Saved.Addr});
+            Worklist.push({Saved.BranchTarget, Saved.Addr, branchMode(Saved)});
           break;
         }
         rewriteAsTailCall(Saved);
@@ -1855,7 +1893,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
               for (va_t T : Saved.JumpTableTargets) {
                 BlockStarts.insert(T);
                 if (!ExploredAddrs.count(T))
-                  Worklist.push({T, std::nullopt});
+                  Worklist.push({T, std::nullopt, branchMode(Saved)});
               }
             }
           }
@@ -1863,13 +1901,14 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         if (Saved.BranchTarget != InvalidVA) {
           BlockStarts.insert(Saved.BranchTarget);
           if (!ExploredAddrs.count(Saved.BranchTarget))
-            Worklist.push({Saved.BranchTarget, std::nullopt});
+            Worklist.push(
+                {Saved.BranchTarget, std::nullopt, branchMode(Saved)});
         }
         if (Saved.IsCond) {
           va_t Fall = Next;
           BlockStarts.insert(Fall);
           if (!ExploredAddrs.count(Fall))
-            Worklist.push({Fall, std::nullopt});
+            Worklist.push({Fall, std::nullopt, Saved.Mode});
         }
         break;
       }
@@ -1893,13 +1932,18 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
   // unconditional jump there; otherwise the edge has no block.  An
   // authenticated B later in this walk may have decoded the entry as a shared
   // epilogue instead, and then every edge keeps that real block.
-  for (va_t Entry : TailCallEntries) {
+  for (const auto &[Entry, IncomingMode] : TailCallEntries) {
     if (Insns.count(Entry))
       continue;
+    const auto Mode = Img.instructionModeAt(Entry, IncomingMode);
+    if (!Mode) {
+      DecodeFailureAddresses.insert(Entry);
+      continue;
+    }
     InsnRecord Stub;
     Stub.Addr = Entry;
     Stub.Size = 1;
-    Stub.Mode = effectiveInstructionMode(Img.Arch, Img.Mode);
+    Stub.Mode = *Mode;
     Stub.BranchTarget = Entry;
     rewriteAsTailCall(Stub);
     Insns[Entry] = std::move(Stub);

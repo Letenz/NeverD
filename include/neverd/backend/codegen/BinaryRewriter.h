@@ -165,6 +165,9 @@ struct CompiledFixupReference {
   bool IsPCRel = false;
   bool IsResolved = false;
   unsigned BitWidth = 0;
+  /// Exact pre-encoding value supplied by MC for this final fixup. For an
+  /// ARM PC-relative branch this retains the halfword bit a BL cannot encode.
+  uint64_t ResolvedValue = 0;
 };
 
 /// One native section produced for a CompiledImage.  Allocated in-image
@@ -319,6 +322,12 @@ CompiledImage compileImageForPatchWithFixedSectionVAs(
 void padWithNops(uint8_t *Dst, uint64_t Len, Arch TargetArch,
                  InstructionMode Mode = InstructionMode::Default);
 
+/// Validate final ARM call encodings against authenticated source modes and
+/// correct an internal ARM BL that must switch into a Thumb function.
+bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
+                                     const BinaryImage &Source,
+                                     std::string &Detail);
+
 /// Return the default single-byte fill/trap value for the target ISA.
 /// x86/x64 = INT3 (0xCC), ARM/AArch64 = UDF #0 (0x00).
 inline uint8_t getDefaultFillByte(Arch A) {
@@ -328,9 +337,10 @@ inline uint8_t getDefaultFillByte(Arch A) {
 /// Serialize an analyzed export address according to the target ABI only when
 /// the loaded image proves that the export points into executable code.
 inline uint64_t serializeExportAddress(const BinaryImage &Image, uint64_t VA) {
-  return Image.isCodeAddress(VA)
-             ? serializeCodePointer(VA, Image.Arch, Image.Mode)
-             : VA;
+  if (!Image.isCodeAddress(VA))
+    return VA;
+  const auto Mode = Image.instructionModeAt(VA);
+  return Mode ? serializeCodePointer(VA, Image.Arch, *Mode) : InvalidVA;
 }
 
 /// Classify a synthetic `__nd_data_<VA>` occurrence as a function identity
@@ -348,9 +358,10 @@ inline bool isAuthenticatedCodeDataSymbol(const BinaryImage &Image,
 /// resolvers from disagreeing about ARM/Thumb bit 0.
 inline uint64_t serializeImageDataSymbolAddress(const BinaryImage &Image,
                                                 uint64_t VA) {
-  return isAuthenticatedCodeDataSymbol(Image, VA)
-             ? serializeCodePointer(VA, Image.Arch, Image.Mode)
-             : VA;
+  if (!isAuthenticatedCodeDataSymbol(Image, VA))
+    return VA;
+  const auto Mode = Image.instructionModeAt(VA);
+  return Mode ? serializeCodePointer(VA, Image.Arch, *Mode) : InvalidVA;
 }
 
 class BinaryPatcher {
@@ -434,7 +445,8 @@ public:
       const std::vector<Export> *Exports = nullptr,
       std::vector<va_t> *PatchedOriginalEntries = nullptr,
       std::vector<std::pair<va_t, va_t>> *PatchedEntryMappings = nullptr,
-      std::vector<PatchedFunctionEntry> *PatchedFunctions = nullptr);
+      std::vector<PatchedFunctionEntry> *PatchedFunctions = nullptr,
+      const BinaryImage *SourceImage = nullptr);
 
   /// Provenance-aware variant used by binary rewrite output.  Original entries
   /// come only from the validated source-identity map; the installed target
@@ -452,7 +464,8 @@ public:
       std::vector<PatchedFunctionEntry> *PatchedFunctions,
       llvm::ArrayRef<llvm::mc_rewrite::RewriteSourceFunctionOwner>
           SourceFunctionOwners,
-      const std::map<std::string, uint64_t> &SourceFunctionOriginalVAs = {});
+      const std::map<std::string, uint64_t> &SourceFunctionOriginalVAs = {},
+      const BinaryImage *SourceImage = nullptr);
 
   /// Common file I/O skeleton shared by all patchers: reads the input
   /// binary, calls \p PatchFn to modify the in-memory buffer and fill
