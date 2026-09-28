@@ -813,9 +813,6 @@ void X86Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
       uint64_t ROffs = Op.Output.Offset;
       if (!x86reg::isGeneralRegOffset(ROffs))
         continue;
-      if (ROffs == x86reg::RSP || ROffs == x86reg::RBP)
-        continue;
-
       S.emit(NdOp::INT_ZEXT, NdVar::reg(ROffs, 8), {NdVar::reg(ROffs, 4)});
     }
   }

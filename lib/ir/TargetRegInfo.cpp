@@ -109,6 +109,13 @@ bool TargetRegInfo::isSubRegOf(uint64_t NarrowOff, uint16_t NarrowSz,
   return false;
 }
 
+bool isSameRegisterLowSlice(uint64_t OutputOffset, uint16_t OutputSize,
+                            uint64_t InputOffset, uint16_t InputSize,
+                            uint64_t SliceOffset) {
+  return OutputOffset == InputOffset && InputSize >= OutputSize &&
+         SliceOffset == 0;
+}
+
 bool TargetRegInfo::writeZeroExtends(uint64_t RegOff, uint16_t Size) const {
   const uint16_t MaxWidth = maxRegisterWidth(RegOff);
   for (const auto &E : SubRegs) {

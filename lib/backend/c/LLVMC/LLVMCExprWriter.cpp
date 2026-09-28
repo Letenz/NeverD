@@ -99,8 +99,10 @@ std::string signedIntegerOperand(const llvm::Value *Value,
          ") >> " + Shift + ")";
 }
 
-/// Drop one parenthesis pair that wraps a whole compare operand. `&&` and
-/// `||` inside stay wrapped so they do not bind tighter than the compare.
+/// Drop one parenthesis pair that wraps a whole compare operand only when
+/// doing so cannot expose an operator with lower or equal precedence. The
+/// rendered operand may forward a stored value through a load, so inspecting
+/// only the LLVM operand's opcode cannot establish its C precedence.
 std::string peelOperandWrap(std::string S) {
   if (S.size() < 2 || S.front() != '(' || S.back() != ')')
     return S;
@@ -117,8 +119,7 @@ std::string peelOperandWrap(std::string S) {
   if (Depth != 0)
     return S;
   const std::string Inner = S.substr(1, S.size() - 2);
-  if (Inner.find("&&") != std::string::npos ||
-      Inner.find("||") != std::string::npos)
+  if (Inner.find_first_of("&|^?:=<>!,") != std::string::npos)
     return S;
   return Inner;
 }

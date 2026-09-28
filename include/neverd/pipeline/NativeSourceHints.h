@@ -14,6 +14,23 @@ struct MedFunc;
 struct HighFunc;
 struct PipelineFunctionAudit;
 
+/// Prove that a call-free x64 function uses its restored entry stack pointer
+/// only to address initialized, private frame storage. Frame-derived scalar
+/// returns, branch conditions/targets, escaping values, and inexact addresses
+/// fail closed. Every private read must follow complete byte writes on every
+/// path. Incoming stack arguments and positive frame offsets are unsupported.
+/// ExternalMemoryDisjoint explicitly assumes every external-origin memory
+/// access range is disjoint from this invocation's private frame; without it,
+/// external-origin memory accesses are rejected.
+/// On success, RequiredFrameSize receives the minimum storage below entry SP,
+/// including intermediate affine frame addresses. A source publisher must
+/// verify its actual frame allocation is at least this large and independently
+/// bind every other observable entry input. This is not a machine-state ABI.
+bool certifiesPrivateNativeSourceFrame(const LowFunc &Function,
+                                       Arch Architecture,
+                                       bool ExternalMemoryDisjoint = false,
+                                       int64_t *RequiredFrameSize = nullptr);
+
 /// Independently authenticated, call-only native declarations for one current
 /// image/pipeline round. The producer must revalidate the callee body and ABI;
 /// existing MedIR hints and persisted PipelineOptions are not authentication.
@@ -65,13 +82,14 @@ std::set<va_t> observedNativeIntegerPairReturns(const LowFunc &Function,
 /// When Low is supplied from the same pipeline, observed full-width integer
 /// entry registers can become explicit auxiliary parameters. Caller-saved
 /// inputs may later be overwritten; preserved context inputs require either no
-/// preserved non-frame/link writes or a complete native state-restoration proof.
-/// Implicit call definitions do not establish entry inputs, including SSA zero.
-/// Both callers and definitions must use the resulting source projection;
-/// these parameters do not describe an external C or Swift calling convention.
-/// ObserveIntegerPair requests a two-field internal record only when both
-/// complete eight-byte results can be proved. Otherwise the existing scalar
-/// candidate remains available and second-word consumers remain unresolved.
+/// preserved non-frame/link writes or a complete native state-restoration
+/// proof. Implicit call definitions do not establish entry inputs, including
+/// SSA zero. Both callers and definitions must use the resulting source
+/// projection; these parameters do not describe an external C or Swift calling
+/// convention. ObserveIntegerPair requests a two-field internal record only
+/// when both complete eight-byte results can be proved. Otherwise the existing
+/// scalar candidate remains available and second-word consumers remain
+/// unresolved.
 std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
     const BinaryImage &Image, const MedFunc &Med, const HighFunc &High,
     const PipelineFunctionAudit &Audit, std::string &Diagnostic,
