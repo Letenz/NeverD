@@ -15,6 +15,7 @@
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 
+#include "LLVMCIntegerMinMax.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -66,6 +67,14 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
   FunctionIdentifiers.clear();
   for (llvm::Function &Fn : Mod) {
     llvm::StringRef Name = Fn.getName();
+    std::string IntrinsicHelper;
+    if (const char *Kind = integerMinMaxSpelling(Fn.getIntrinsicID())) {
+      IntrinsicHelper = std::string("neverd_llvm_") + Kind;
+      if (const auto *Integer =
+              llvm::dyn_cast<llvm::IntegerType>(Fn.getReturnType()))
+        IntrinsicHelper += "_i" + std::to_string(Integer->getBitWidth());
+      Name = IntrinsicHelper;
+    }
     std::string DebugName;
     if (isSynthesizedFuncName(Name)) {
       llvm::StringRef Hex = Name;
@@ -136,6 +145,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
   std::set<std::pair<unsigned, bool>> FunnelShifts;
+  std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -145,6 +155,10 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
       continue;
     for (auto &BB : Fn) {
       for (auto &Inst : BB) {
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst))
+          if (auto Shape = scalarIntegerMinMax(*Call))
+            IntegerMinMax.emplace(
+                functionIdentifier(*Call->getCalledFunction()), *Shape);
         if (llvm::isa<llvm::FenceInst>(&Inst))
           HasCIntrinsics = true;
         if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst)) {
@@ -198,6 +212,27 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
+  }
+  for (const auto &[Name, Shape] : IntegerMinMax) {
+    const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
+    const std::string Type = CarrierBits == 128
+                                 ? "unsigned __int128"
+                                 : "uint" + std::to_string(CarrierBits) + "_t";
+    OS << "static inline " << Type << " " << Name << "(" << Type << " a, "
+       << Type << " b) {\n";
+    if (Shape.Bits == 1)
+      OS << "    a &= 1;\n    b &= 1;\n";
+    if (Shape.Signed) {
+      // Flipping the sign bit maps two's-complement signed order to unsigned
+      // order without an out-of-range signed cast or a 128-bit truncation.
+      OS << "    const " << Type << " sign = (" << Type << ")1 << "
+         << Shape.Bits - 1 << ";\n"
+         << "    return (a ^ sign) " << (Shape.Minimum ? '<' : '>')
+         << " (b ^ sign) ? a : b;\n";
+    } else {
+      OS << "    return a " << (Shape.Minimum ? '<' : '>') << " b ? a : b;\n";
+    }
+    OS << "}\n\n";
   }
   for (const auto &[Width, Left] : FunnelShifts) {
     const std::string Type = Width == 128

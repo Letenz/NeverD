@@ -41,6 +41,10 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 `ControlStateRecovery.LongTransparentLoop*` 覆盖独立编写的 20 阶段循环、动态算术参考实现、未知 selector 拒绝和预算耗尽。`LongTransparentPhasesKeepExactBitDemands` 检查 selector 同字节内的无关位仍是可观察的运行时数据，不会成为控制需求。`ProducerClosureChargesWorkBeforeAnotherRestart` 检查反向发现和重放在新图启动前消耗共享预算，且不发布部分结果。
 
+`X86ShiftCarry.*` 用连续单比特移位校验窄位宽算术右移的进位、掩码后的计数，以及 APX 目标寄存器和标志抑制行为。
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下启用未定义行为陷阱，执行两条恢复 C 路径，覆盖全部字节值和原始计数。
+`NeverDLLVMCIntrinsicSemanticTests` 还在 O0/O2 下执行 i1/8/16/32/64/128 的有符号和无符号整数 min/max，检查赋值和内联结果、操作数生成顺序及单次求值。不支持的标量位宽和畸形操作数必须明确失败。
+
 ## 驱动模拟检查
 
 同时启用 `NEVERD_ENABLE_DRIVER_EMULATION=ON` 与 `BUILD_TESTING=ON`，即可构建专项执行套件及共享 C API／CLI 检查：

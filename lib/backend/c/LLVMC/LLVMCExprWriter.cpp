@@ -83,9 +83,9 @@ std::string unsignedCmpOperand(const std::string &S) {
   return looksUnsignedCExpr(S) ? S : "(unsigned)" + S;
 }
 
-std::string signedIntegerOperand(const llvm::Value *Value,
+std::string signedIntegerOperand(const llvm::Type *Type,
                                  const std::string &Text) {
-  const unsigned Width = Value->getType()->getIntegerBitWidth();
+  const unsigned Width = Type->getIntegerBitWidth();
   if (Width > 128)
     throw std::runtime_error("LLVMC signed operand exceeds 128-bit carrier");
   const unsigned Carrier = Width <= 8    ? 8
@@ -102,6 +102,11 @@ std::string signedIntegerOperand(const llvm::Value *Value,
   const std::string Shift = std::to_string(Carrier - Width);
   return "((" + Signed + ")((" + Unsigned + ")(" + Text + ") << " + Shift +
          ") >> " + Shift + ")";
+}
+
+std::string signedIntegerOperand(const llvm::Value *Value,
+                                 const std::string &Text) {
+  return signedIntegerOperand(Value->getType(), Text);
 }
 
 /// Drop one parenthesis pair that wraps a whole compare operand only when
@@ -2549,7 +2554,14 @@ std::string LLVMCWriter::binopStr(unsigned Opcode, const std::string &LHS,
   case llvm::Instruction::LShr:
     return Unsigned(LHS) + " >> " + RHS;
   case llvm::Instruction::AShr:
-    return LHS + " >> " + RHS;
+    // LLVM integers have no declared signedness. The C carrier is unsigned,
+    // so reconstruct the source-width sign before either assigned or inline
+    // arithmetic shifts (including narrow operands promoted by C).
+    // Restore an unsigned, width-normalized bitvector result as well: direct
+    // odd-width returns must not leak sign-extension bits, and following
+    // wrapping arithmetic must not inherit C signed-overflow behavior.
+    return castStr(llvm::Instruction::Trunc,
+                   signedIntegerOperand(Ty, LHS) + " >> " + RHS, Ty, Ty);
   case llvm::Instruction::And:
     return LHS + " & " + RHS;
   case llvm::Instruction::Or:

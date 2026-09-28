@@ -43,6 +43,10 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 `ControlStateRecovery.LongTransparentLoop*`는 독립적으로 작성한 20단계 루프, 동적 산술 참조 구현, 알 수 없는 선택자 거부 및 예산 소진을 검증합니다. `LongTransparentPhasesKeepExactBitDemands`는 선택자와 같은 바이트의 무관한 비트가 제어 요구가 되지 않고 관찰 가능한 런타임 데이터로 남는지 확인합니다. `ProducerClosureChargesWorkBeforeAnotherRestart`는 새 그래프가 시작되기 전의 역방향 탐색과 재실행에도 공유 예산을 적용하며 부분 결과를 게시하지 않는지 검증합니다.
 
+`X86ShiftCarry.*`는 반복적인 1비트 시프트를 기준으로 좁은 정수의 산술 오른쪽 시프트 캐리, 마스킹된 횟수, APX 대상 레지스터 및 플래그 억제 동작을 검사합니다.
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends`는 정의되지 않은 동작 트랩을 활성화하여 O0/O2에서 두 복원 C 경로를 실행하며 모든 바이트 값과 원시 시프트 횟수를 다룹니다.
+`NeverDLLVMCIntrinsicSemanticTests`는 i1/8/16/32/64/128 부호 있는/없는 정수 min/max도 O0/O2에서 실행하여 대입 및 인라인 결과, 피연산자 생성 순서와 단일 평가를 검사합니다. 지원하지 않는 스칼라 너비와 잘못된 피연산자는 명시적으로 실패해야 합니다.
+
 ## 드라이버 에뮬레이션 검사
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON`과 `BUILD_TESTING=ON`을 함께 활성화하면 전용 실행 스위트와 공유 C API/CLI 검사를 빌드할 수 있습니다.

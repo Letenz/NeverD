@@ -359,7 +359,9 @@ bool liftCoreShift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     }
 
     // CF = last bit Shifted out (valid when Cnt >= 1).
-    // SHL: bit (Bits - Cnt); SHR/SAR: bit (Cnt - 1)
+    // SHL: bit (Bits - Cnt); SHR/SAR: bit (Cnt - 1). SAR must sign-extend
+    // while extracting that bit: for narrow operands a masked count can
+    // exceed the width, and the last shifted-out bit is still the sign bit.
     if (!SuppressFlags) {
       NdVar CfIdx = S.makeTemp(Sz);
       if (InsnId == X86_INS_SHL || InsnId == X86_INS_SAL)
@@ -367,7 +369,8 @@ bool liftCoreShift(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
       else
         S.emit(NdOp::INT_SUB, CfIdx, {MaskedCnt, NdVar::scalar(1, Sz)});
       NdVar CfTmp = S.makeTemp(Sz);
-      S.emit(NdOp::INT_RIGHT, CfTmp, {DstR, CfIdx});
+      S.emit(InsnId == X86_INS_SAR ? NdOp::INT_ASHR : NdOp::INT_RIGHT, CfTmp,
+             {PreSrc, CfIdx});
       NdVar CfBit = S.makeTemp(1);
       S.emit(NdOp::SUBBYTES, CfBit, {CfTmp, NdVar::scalar(0, 4)});
       S.emit(NdOp::INT_AND, CfBit, {CfBit, NdVar::scalar(1, 1)});

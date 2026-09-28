@@ -2157,7 +2157,7 @@ TEST(LLVMCPointerAddresses, ConstructorThenDestructorPrintsBeforeCleanup) {
   EXPECT_NE(Source.find("if (", DtorAt), std::string::npos) << Source;
 }
 
-TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
+TEST(LLVMCPointerAddresses, UnrelatedDestructorKeepsSingleUseCallOrder) {
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-unrelated-dtor", Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
@@ -2197,9 +2197,16 @@ TEST(LLVMCPointerAddresses, UnrelatedDestructorStillInlinesSingleUseCall) {
   ASSERT_TRUE(
       LLVMCEmitter().emit(Module, OS, Options, nullptr, nullptr, Function));
   OS.flush();
-  EXPECT_NE(Source.find("if (!(GetLength("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("= GetLength("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
+  // Different pointer arguments do not prove these external calls have
+  // disjoint global effects or cannot throw. Keep their original order.
+  const auto LengthAt = Source.find("= GetLength(");
+  const auto DtorAt = Source.find("CStringT_dtor(");
+  const auto IfAt = Source.find("if (");
+  ASSERT_NE(LengthAt, std::string::npos) << Source;
+  ASSERT_NE(DtorAt, std::string::npos) << Source;
+  ASSERT_NE(IfAt, std::string::npos) << Source;
+  EXPECT_LT(LengthAt, DtorAt) << Source;
+  EXPECT_LT(DtorAt, IfAt) << Source;
 }
 
 TEST(LLVMCPointerAddresses, JoinCallHomeStaysAssigned) {

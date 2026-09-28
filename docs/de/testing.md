@@ -47,6 +47,16 @@ Die Kerntests prüfen Kontexttrennung, Fixpunkt-Zusammenführungen, dynamische S
 
 `ControlStateRecovery.LongTransparentLoop*` prüft eine unabhängig entwickelte Schleife mit 20 Phasen, dynamische arithmetische Orakel, die Ablehnung unbekannter Selektoren und Budgeterschöpfung. `LongTransparentPhasesKeepExactBitDemands` prüft, dass unabhängige Bits im Byte des Selektors beobachtbare Laufzeitdaten bleiben und nicht zu Kontrollanforderungen werden. `ProducerClosureChargesWorkBeforeAnotherRestart` prüft, dass Rückwärtserkennung und erneute Auswertung bereits vor dem Start eines neuen Graphen gemeinsame Budgets verbrauchen und kein Teilergebnis veröffentlichen.
 
+`X86ShiftCarry.*` prüft das Carry schmaler arithmetischer Rechtsschiebeoperationen,
+maskierte Zähler sowie APX-Zielregister und Flag-Unterdrückung anhand wiederholter
+Ein-Bit-Schritte. `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` führt beide
+rekonstruierten C-Ausgaben bei O0/O2 mit Fallen für undefiniertes Verhalten aus,
+einschließlich aller Bytewerte und rohen Schiebezähler.
+`NeverDLLVMCIntrinsicSemanticTests` führt vorzeichenbehaftetes und vorzeichenloses
+Integer-Min/Max für i1/8/16/32/64/128 bei O0/O2 aus und prüft zugewiesene und
+eingebettete Ergebnisse, Erzeugerreihenfolge und einmalige Auswertung. Nicht
+unterstützte skalare Breiten und fehlerhafte Operanden müssen explizit scheitern.
+
 ## Prüfungen der Treiberemulation
 
 Aktivieren Sie `NEVERD_ENABLE_DRIVER_EMULATION=ON` zusammen mit `BUILD_TESTING=ON`,

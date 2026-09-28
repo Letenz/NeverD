@@ -44,6 +44,10 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 `ControlStateRecovery.LongTransparentLoop*` は、独立に作成した 20 段階のループ、動的算術の参照実装、未知のセレクターの拒否、予算切れを検証します。`LongTransparentPhasesKeepExactBitDemands` は、セレクターと同じバイト内の無関係なビットが、制御要求にならず観測可能な実行時データとして残ることを確認します。`ProducerClosureChargesWorkBeforeAnotherRestart` は、新しいグラフを開始する前の逆向き検出と再実行にも共通予算を課し、部分結果を公開しないことを検証します。
 
+`X86ShiftCarry.*` は 1 ビットずつのシフトを基準に、狭い整数の算術右シフトのキャリー、マスク後の回数、APX の出力レジスターとフラグ抑制を検査します。
+`NarrowArithmeticShiftCarrySurvivesBothSourceBackends` は未定義動作のトラップを有効にし、O0/O2 で両方の復元 C 経路を実行し、すべてのバイト値と生のシフト回数を網羅します。
+`NeverDLLVMCIntrinsicSemanticTests` は i1/8/16/32/64/128 の符号付き・符号なし整数 min/max も O0/O2 で実行し、代入とインラインの結果、生成処理の順序、単一評価を検査します。未対応のスカラー幅と不正なオペランドは明示的に失敗する必要があります。
+
 ## ドライバーエミュレーションの検査
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON` と `BUILD_TESTING=ON` を両方有効にすると、専用の実行スイートと共有 C API／CLI の検査をビルドできます。
