@@ -545,6 +545,7 @@ TEST(ItaniumEHDriver, StartsAnAArch64FunctionAtTheLandingPadBeforeItsFrame) {
   // The frame still describes the code it covers...
   ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
   EXPECT_EQ(Img.ExceptionMetadata.Functions[0].CodeRange.Begin, StubVA + 4);
+  EXPECT_EQ(Img.ExceptionMetadata.Functions[0].FunctionEntry, StubVA);
   // ...but the function begins at its landing pad.
   const Symbol *Stub = functionAt(Img, StubVA);
   ASSERT_NE(Stub, nullptr);
@@ -576,6 +577,8 @@ TEST(ItaniumEHDriver, LeavesAFrameThatNoLandingPadPrecedesWhereItBegins) {
 
   EXPECT_NE(functionAt(Img, StubVA + 4), nullptr);
   EXPECT_EQ(functionAt(Img, StubVA), nullptr);
+  ASSERT_EQ(Img.ExceptionMetadata.Functions.size(), 1u);
+  EXPECT_EQ(Img.ExceptionMetadata.Functions[0].FunctionEntry, 0u);
 }
 
 TEST(ItaniumEHDriver, LeavesALandingPadAnotherFrameCovers) {

@@ -18,6 +18,7 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <algorithm>
+#include <capstone/x86.h>
 #include <cstring>
 #include <set>
 #include <vector>
@@ -25,30 +26,107 @@
 namespace neverd {
 namespace func_detect_detail {
 
+CodeInterval codeIntervalAround(const BinaryImage &Img, va_t Addr) {
+  if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
+    return {};
+  const Segment *Seg = Img.getSegmentFor(Addr);
+  if (!Seg || !Seg->isExecutable() || !Img.isCodeAddress(Addr) ||
+      Seg->Size > InvalidVA - Seg->VA)
+    return {};
+  CodeInterval Known{Seg->VA, Seg->VA + Seg->Size};
+  // The first segment and section containing an address own it, so every
+  // earlier one that overlaps the stretch cuts it short.
+  bool Inside = false;
+  auto Exclude = [&](va_t Begin, uint64_t Size) {
+    const va_t End = Size > InvalidVA - Begin ? InvalidVA : Begin + Size;
+    if (End <= Known.Lo || Begin >= Known.Hi)
+      return;
+    if (Addr < Begin)
+      Known.Hi = Begin;
+    else if (Addr >= End)
+      Known.Lo = End;
+    else
+      Inside = true;
+  };
+  for (const Segment &Other : Img.Segments) {
+    if (&Other == Seg)
+      break;
+    Exclude(Other.VA, Other.Size);
+  }
+  if (const Section *Sec = Img.getSectionFor(Addr)) {
+    if (Sec->Size > InvalidVA - Sec->VA)
+      return {};
+    Known.Lo = std::max(Known.Lo, Sec->VA);
+    Known.Hi = std::min(Known.Hi, Sec->VA + Sec->Size);
+    for (const Section &Other : Img.Sections) {
+      if (&Other == Sec)
+        break;
+      if (Other.isReadable())
+        Exclude(Other.VA, Other.Size);
+    }
+  } else if (Img.segmentHasReadableSectionMetadata(*Seg)) {
+    return {};
+  }
+  if (Inside || Known.Lo >= Known.Hi)
+    return {};
+  return Known;
+}
+
+std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
+                                         const Segment *Seg, va_t Cur, va_t End,
+                                         CodeInterval &Known) {
+  const size_t Off = static_cast<size_t>(Cur - Seg->VA);
+  if (Off >= Seg->Data.size())
+    return std::nullopt;
+  CallScanStep Step;
+  Step.Addr = Cur;
+  DecodedInsn DI;
+  const size_t Remain =
+      static_cast<size_t>(std::min<va_t>(Seg->Data.size() - Off, End - Cur));
+  const int Sz = Dec.decodeOneLight(Seg->Data.data() + Off, Remain, Cur, DI);
+  if (Sz <= 0) {
+    Step.Next = Cur + 1;
+    return Step;
+  }
+  Step.Next = Cur + static_cast<va_t>(Sz);
+  if (Known.Lo != Known.Hi && Cur >= Known.Hi)
+    Known = codeIntervalAround(Img, Cur);
+  const bool Owned = Known.Lo != Known.Hi && Cur >= Known.Lo &&
+                     Step.Next <= Known.Hi && Step.Next > Cur;
+  if (!Owned &&
+      !Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz)))
+    return Step;
+  // Only a call can have a direct target, and an instruction's size and id do
+  // not depend on operand detail, so a sweep run without detail decodes the
+  // calls again with it.
+  if (!Dec.detailEnabled()) {
+    if (DI.Id != X86_INS_CALL)
+      return Step;
+    Dec.setDetail(true);
+    const int Again =
+        Dec.decodeOneLight(Seg->Data.data() + Off, Remain, Cur, DI);
+    Dec.setDetail(false);
+    if (Again != Sz)
+      return Step;
+  }
+  const va_t Tgt = Dec.directCallTarget(DI);
+  if (Tgt != InvalidVA && Img.hasExecutableCodeOwnerAt(Tgt))
+    Step.Target = Tgt;
+  return Step;
+}
+
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,
                          std::set<va_t> &Out) {
-  va_t Cur = Start;
-  while (Cur < End) {
-    size_t Off = static_cast<size_t>(Cur - Seg->VA);
-    if (Off >= Seg->Data.size())
+  CodeInterval Known = codeIntervalAround(Img, Start);
+  for (va_t Cur = Start; Cur < End;) {
+    const std::optional<CallScanStep> Step =
+        stepCallsX86(Img, Dec, Seg, Cur, End, Known);
+    if (!Step)
       break;
-    DecodedInsn DI;
-    const size_t Remain =
-        static_cast<size_t>(std::min<va_t>(Seg->Data.size() - Off, End - Cur));
-    int Sz = Dec.decodeOneLight(Seg->Data.data() + Off, Remain, Cur, DI);
-    if (Sz <= 0) {
-      Cur++;
-      continue;
-    }
-    if (!Img.hasExecutableCodeOwnerRange(Cur, static_cast<uint64_t>(Sz))) {
-      Cur += Sz;
-      continue;
-    }
-    va_t Tgt = Dec.directCallTarget(DI);
-    if (Tgt != InvalidVA && Img.hasExecutableCodeOwnerAt(Tgt))
-      Out.insert(Tgt);
-    Cur += Sz;
+    if (Step->Target != InvalidVA)
+      Out.insert(Step->Target);
+    Cur = Step->Next;
   }
 }
 

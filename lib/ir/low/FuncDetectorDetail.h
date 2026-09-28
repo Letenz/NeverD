@@ -17,10 +17,40 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include <optional>
 #include <set>
 
 namespace neverd {
 namespace func_detect_detail {
+
+/// One step of the x86 call-target sweep: the instruction (or the byte that
+/// does not decode) at \p Addr, where the sweep goes next, and the direct
+/// call target it found there.
+struct CallScanStep {
+  va_t Addr = 0;
+  va_t Next = 0;
+  va_t Target = InvalidVA;
+};
+
+/// A stretch of an x86 image that one executable section of one executable
+/// segment owns alone -- or one section-less executable segment -- so that
+/// BinaryImage::hasExecutableCodeOwnerRange accepts every byte range inside
+/// it.  Lo == Hi when there is none.
+struct CodeInterval {
+  va_t Lo = 0;
+  va_t Hi = 0;
+};
+
+/// The widest such stretch around \p Addr.
+CodeInterval codeIntervalAround(const BinaryImage &Img, va_t Addr);
+
+/// The step a sweep of [..., \p End) of \p Seg takes at \p Cur, or nothing
+/// where the segment's bytes end.  A sweep is these steps from its start, so
+/// two sweeps of one range that reach the same address agree from there on.
+/// \p Known caches the code stretch the sweep is in.
+std::optional<CallScanStep> stepCallsX86(const BinaryImage &Img, Decoder &Dec,
+                                         const Segment *Seg, va_t Cur, va_t End,
+                                         CodeInterval &Known);
 
 void scanSegmentCallsX86(const BinaryImage &Img, Decoder &Dec,
                          const Segment *Seg, va_t Start, va_t End,

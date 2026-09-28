@@ -42,6 +42,10 @@ namespace neverd {
 
 struct ExceptionFunction {
   ExceptionAddressRange CodeRange;
+  /// The function's first instruction, when it comes before \ref CodeRange:
+  /// the call landing pad bionic's AArch64 assembly puts ahead of the frame.
+  /// Zero when the function begins where its frame does.
+  va_t FunctionEntry = 0;
   RuntimeFunctionKind Kind = RuntimeFunctionKind::Primary;
   ExceptionEncoding Encoding = ExceptionEncoding::Unknown;
   ExceptionParseStatus ParseStatus = ExceptionParseStatus::Complete;

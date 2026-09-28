@@ -348,10 +348,12 @@ int exerciseFailedPhaseSink(neverd_session_t Session, const std::string &Input,
 // A sectionless executable with one RX segment and a two-instruction body.
 // Keeping both ISAs in the fixture makes decoder state observable on reload.
 std::string makeNativeELF(bool AArch64, uint64_t Base = 0x400000,
-                          std::string_view TrailingCode = {}) {
+                          std::string_view TrailingCode = {},
+                          std::string_view Body = {}) {
   using ELF = llvm::object::ELF64LE;
   using namespace llvm::ELF;
-  std::string Code = AArch64
+  std::string Code = !Body.empty() ? std::string(Body)
+                     : AArch64
                          ? std::string("\xe0\x00\x80\x52\xc0\x03\x5f\xd6", 8)
                          : std::string("\xb8\x07\x00\x00\x00\xc3", 6);
   Code += TrailingCode;
@@ -1880,6 +1882,39 @@ TEST_F(SessionCAPITest, SignatureJSONListsTheRoutinesOtherNames) {
   // public one and lists the others.
   expectSignatureJSONName("puts", " :0000 __IO_puts_internal :0000 _IO_puts",
                           {"_IO_puts", "__IO_puts_internal"});
+}
+
+TEST_F(SessionCAPITest, SignaturesMatchARoutineOnlyACallReveals) {
+  // A stripped program without sections lists no function at all; its entry
+  // calls a routine no table names.  Signatures are tried where the
+  // pipeline's detector would find functions, so the routine is still named.
+  const std::string Body("\xe8\x01\x00\x00\x00\xc3"  // call helper; ret
+                         "\xb8\x2a\x00\x00\x00\xc3", // helper: mov eax, 42
+                         12);
+  const auto Input =
+      write("calls-helper.elf", makeNativeELF(false, 0x400000, {}, Body));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const neverd_va_t Entry = neverd_session_entry_addr(Session);
+  ASSERT_EQ(neverd_func_count(Session), 0);
+  const auto Pattern =
+      write("helper.pat", "B82A000000C3 00 0000 0006 :0000 helper_routine\n");
+
+  ASSERT_EQ(neverd_apply_signature_file(Session, Pattern.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+
+  auto Parsed = llvm::json::parse(takeString(neverd_sig_matches_json(Session)));
+  ASSERT_TRUE(static_cast<bool>(Parsed)) << llvm::toString(Parsed.takeError());
+  const auto *Matches = Parsed->getAsArray();
+  ASSERT_NE(Matches, nullptr);
+  ASSERT_EQ(Matches->size(), 1u);
+  const auto *Match = (*Matches)[0].getAsObject();
+  ASSERT_NE(Match, nullptr);
+  EXPECT_EQ(Match->getString("name"), "helper_routine");
+  uint64_t Address = 0;
+  ASSERT_FALSE(Match->getString("addr").value_or("").drop_front(2).getAsInteger(
+      16, Address));
+  EXPECT_EQ(Address, Entry + 6);
 }
 
 TEST_F(SessionCAPITest, AnnotationsPreserveExactNumericAddressKeys) {
