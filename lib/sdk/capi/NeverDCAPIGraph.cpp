@@ -120,7 +120,7 @@ const char *neverd_xrefs_scan(neverd_session_t Sess, const char *InputPath,
   PipelineRunner R;
   std::string Err;
   auto *S = static_cast<Session *>(Sess);
-  if (!R.load(InputPath, Err)) {
+  if (!R.load(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;
@@ -351,7 +351,7 @@ const char *neverd_cfg_dot(neverd_session_t Sess, const char *InputPath,
   PipelineRunner R;
   std::string Err;
   auto *S = static_cast<Session *>(Sess);
-  if (!R.load(InputPath, Err)) {
+  if (!R.load(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;

@@ -60,7 +60,7 @@ const char *neverd_bench_run(neverd_session_t Sess, const char *InputPath,
   auto *S = static_cast<Session *>(Sess);
   PipelineRunner R;
   std::string Err;
-  if (!R.load(InputPath, Err)) {
+  if (!R.load(InputPath, Err, S)) {
     if (S)
       S->setError(Err);
     return nullptr;

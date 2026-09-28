@@ -1107,6 +1107,81 @@ _first:
 }
 
 TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32AcceptsExplicitUnmarkedMixedEntriesAtZero) {
+  const fs::path Object =
+      compileCOFF("macho_unmarked_thumb_entry", "armv7-apple-darwin", R"(
+.syntax unified
+.thumb
+.section __TEXT,__text,regular,pure_instructions
+.globl _unmarked_entry
+_unmarked_entry:
+  eor.w r2, r0, r1
+  and.w r0, r0, r1
+  add.w r0, r2, r0, lsl #1
+  bx lr
+
+.p2align 2
+.arm
+.globl _unmarked_arm_entry
+_unmarked_arm_entry:
+  eor r2, r0, r1
+  and r0, r0, r1
+  add r0, r2, r0, lsl #1
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  BinaryLoadOptions Options;
+  Options.ARMFunctionModes.emplace(0, InstructionMode::Thumb);
+  Options.ARMFunctionModes.emplace(16, InstructionMode::ARM);
+  auto ImgOrErr = loadBinary(Object, Options);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(2), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(4), InstructionMode::Thumb);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(16), InstructionMode::ARM);
+  EXPECT_EQ(Img.instructionModeAt(16), InstructionMode::ARM);
+  EXPECT_TRUE(Img.ARMReachabilityConstrained);
+
+  Options.ARMFunctionModes.clear();
+  Options.ARMFunctionModes.emplace(2, InstructionMode::ARM);
+  auto Misaligned = loadBinary(Object, Options);
+  ASSERT_FALSE(static_cast<bool>(Misaligned));
+  EXPECT_NE(llvm::toString(Misaligned.takeError()).find("misaligned"),
+            std::string::npos);
+  Options.ARMFunctionModes.clear();
+  Options.ARMFunctionModes.emplace(0x100000000ULL, InstructionMode::Thumb);
+  auto Outside = loadBinary(Object, Options);
+  ASSERT_FALSE(static_cast<bool>(Outside));
+  EXPECT_NE(llvm::toString(Outside.takeError()).find("outside"),
+            std::string::npos);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32RejectsHintContradictingThumbSymbol) {
+  const fs::path Object =
+      compileCOFF("macho_marked_thumb_entry", "armv7-apple-darwin", R"(
+.syntax unified
+.thumb
+.section __TEXT,__text,regular,pure_instructions
+.thumb_func _marked_entry
+.globl _marked_entry
+_marked_entry:
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+  BinaryLoadOptions Options;
+  Options.ARMFunctionModes.emplace(0, InstructionMode::ARM);
+  auto ImgOrErr = loadBinary(Object, Options);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError()).find("conflicts"),
+            std::string::npos);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
        MachOARM32TracksReachableMixedFunctionModes) {
   const fs::path Object = tmpFile("macho_mixed_mode.o");
   const RunResult Compiled = exec(

@@ -11,6 +11,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/ELF/ELFLoader.h"
+#include "neverd/support/BinaryLoading.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -876,6 +877,40 @@ thumb32_add:
     EXPECT_NE(Lifted.out.find("arm32_add"), std::string::npos);
     EXPECT_NE(Lifted.out.find("thumb32_add"), std::string::npos);
   }
+}
+
+TEST_F(ELFARM32ModeTest, FunctionModeHintsRespectMappingEvidence) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "ARM mode fixture requires cross-target clang";
+  auto Image = loadAssembly(R"(
+.syntax unified
+.text
+.thumb
+.globl mapped_thumb
+.type mapped_thumb,%function
+.thumb_func
+mapped_thumb:
+  adds r0, r0, r1
+  bx lr
+.size mapped_thumb, .-mapped_thumb
+)");
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const auto Functions = Image->getFunctionSymbols();
+  ASSERT_EQ(Functions.size(), 1u);
+  const va_t Entry = Functions.front()->Addr;
+  BinaryLoadOptions Options;
+  Options.ARMFunctionModes.emplace(Entry, InstructionMode::Thumb);
+  const auto Object = tmpFile("mode.o");
+  auto Allowed = loadBinary(Object, Options);
+  ASSERT_TRUE(static_cast<bool>(Allowed))
+      << llvm::toString(Allowed.takeError());
+  EXPECT_EQ(Allowed->instructionModeAt(Entry), InstructionMode::Thumb);
+
+  Options.ARMFunctionModes[Entry] = InstructionMode::ARM;
+  auto Rejected = loadBinary(Object, Options);
+  ASSERT_FALSE(static_cast<bool>(Rejected));
+  EXPECT_NE(llvm::toString(Rejected.takeError()).find("conflicts"),
+            std::string::npos);
 }
 
 TEST_F(ELFARM32ModeTest, RejectsAThumbFunctionAliasOverARMMappingEvidence) {

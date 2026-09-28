@@ -123,6 +123,16 @@ Both C routes must recover their arithmetic and execute it at `-O0`/`-O2`;
 loader tests require the subtype to prove Thumb mode, reject an ARM instruction
 relocation in a Thumb-only image, and fail loading on malformed subtype
 capability bits.
+An A-profile Mach-O object with unmarked ARM and Thumb functions and no
+instruction relocations checks explicit function-entry mode assertions. Both
+HighC and LLVMC must simplify their MBA and execute correctly after host
+recompilation at `-O0` and `-O2`. Loader tests cover object address zero,
+alignment, out-of-range entries, and conflict with an exact Thumb symbol.
+Without mode evidence, or with only one of the two entries asserted, batch
+decompilation must report the ambiguity instead of silently omitting a function.
+Single-function decompilation must give the same mode diagnostic.
+ELF mapping and Windows ARMNT machine evidence separately accept matching
+assertions and reject contradictory ones.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

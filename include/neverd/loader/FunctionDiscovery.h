@@ -22,6 +22,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <map>
 
 namespace neverd {
 
@@ -65,6 +66,19 @@ void scanDataFuncPointers(BinaryImage &Img);
 /// Records only decoded reachable instruction spans; malformed or conflicting
 /// state transitions fail instead of assigning a file-wide default mode.
 llvm::Error discoverARMReachableModes(BinaryImage &Img);
+
+/// Add caller-asserted exact function entry modes after format metadata and
+/// relocations have been parsed, before reachable mode discovery. Contradictory
+/// assertions and non-executable entries fail the load.
+llvm::Error
+applyARMFunctionModeHints(BinaryImage &Img,
+                          const std::map<va_t, InstructionMode> &Hints);
+
+/// When reachable decoding ran, require every asserted entry to have decoded
+/// at least its first instruction in the asserted mode.
+llvm::Error
+verifyARMFunctionModeHints(const BinaryImage &Img,
+                           const std::map<va_t, InstructionMode> &Hints);
 
 /// Run all heuristic function discovery passes and emit the debug summary.
 /// Called at the end of every format-specific loader.

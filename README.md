@@ -305,6 +305,18 @@ neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
 
+For a 32-bit ARM binary that omits a function's ARM/Thumb mode metadata, assert
+the entry mode before decompiling:
+
+```bash
+neverd decompile --arm-function-mode=0xADDRESS:thumb -o output.c binary
+```
+
+Repeat the option for other ambiguous entries, using `:arm` where appropriate.
+Assertions that conflict with verified binary metadata fail loading. Valid
+assertions affect only their exact entries. The C API exposes the same pre-load
+setting as `neverd_session_set_arm_function_mode()`.
+
 <details>
 <summary><strong>Analysis commands</strong></summary>
 

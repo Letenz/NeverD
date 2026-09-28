@@ -97,6 +97,24 @@ std::string takeString(const char *Value) {
   return Text;
 }
 
+TEST(SessionARMFunctionMode, RejectsInvalidModeAndAcceptsObjectAddressZero) {
+  EXPECT_EQ(neverd_session_set_arm_function_mode(
+                nullptr, 0, NEVERD_ARM_FUNCTION_MODE_THUMB),
+            0);
+  neverd_session_t Session = neverd_session_create();
+  ASSERT_NE(Session, nullptr);
+  EXPECT_EQ(neverd_session_set_arm_function_mode(Session, 0, 99), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("ARM function mode"),
+            std::string::npos);
+  EXPECT_EQ(neverd_session_set_arm_function_mode(
+                Session, 0, NEVERD_ARM_FUNCTION_MODE_THUMB),
+            1);
+  EXPECT_EQ(neverd_session_set_arm_function_mode(
+                Session, 0, NEVERD_ARM_FUNCTION_MODE_CLEAR),
+            1);
+  neverd_session_destroy(Session);
+}
+
 // Owned linked Mach-O bytes, not a Swift compiler fixture. The symbol's raw
 // bytes make the pre-normalization observer boundary directly observable.
 std::string makeObservedMachO(bool AArch64, const std::string &Name) {

@@ -243,6 +243,9 @@ TEST(FunctionDiscoveryARM, PreservesVerifiedMachODirectCallInsideBroadRange) {
   Img.Symbols.push_back(std::move(Covering));
   Img.Exports.push_back({"_main", 0, ImageVA});
   Img.KnownCodeRanges.emplace_back(ImageVA, ImageVA + Code.size());
+  Img.ARMCodeModeEntries.emplace(ImageVA, InstructionMode::ARM);
+  if (llvm::Error Err = discoverARMReachableModes(Img))
+    FAIL() << llvm::toString(std::move(Err));
 
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::ARM, InstructionMode::Default));

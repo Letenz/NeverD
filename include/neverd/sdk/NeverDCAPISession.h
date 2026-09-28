@@ -91,6 +91,22 @@ NEVERD_API void neverd_session_set_debug_info_enabled(neverd_session_t Sess,
 NEVERD_API void neverd_session_restrict_function(neverd_session_t Sess,
                                                  neverd_va_t Entry);
 
+/// Assert the instruction state of one AArch32 function entry on subsequent
+/// loads. Use this for binaries whose ARM/Thumb mode metadata is missing.
+/// The entry is an untagged mapped address (including address zero in an
+/// object file). Conflicting symbols, mappings, relocations, CPU constraints,
+/// or an undecodable entry make neverd_session_load() fail. Repeating a call
+/// replaces that entry's assertion; CLEAR removes it. Returns 0 for an invalid
+/// mode or session, otherwise 1. Other architectures reject a nonempty set.
+enum neverd_arm_function_mode {
+  NEVERD_ARM_FUNCTION_MODE_CLEAR = 0,
+  NEVERD_ARM_FUNCTION_MODE_ARM = 1,
+  NEVERD_ARM_FUNCTION_MODE_THUMB = 2,
+};
+NEVERD_API int neverd_session_set_arm_function_mode(neverd_session_t Sess,
+                                                    neverd_va_t Entry,
+                                                    int Mode);
+
 /// Best-effort exact-name hint for a PE with an explicitly selected PDB.
 /// Call after neverd_session_set_pdb_path() and before neverd_session_load().
 /// Returns 0 if the name is absent or ambiguous, the files disagree, or the

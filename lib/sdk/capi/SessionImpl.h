@@ -91,6 +91,7 @@ struct Session {
   bool SBFFunctionsSynchronized = false;
   bool NativeFunctionsSynchronized = false;
   std::set<va_t> OnlyFunctionEntries;
+  std::map<va_t, InstructionMode> ARMFunctionModes;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
   bool EVMStrict = true;
   sbf::Version SBFVersion = sbf::Version::Auto;
@@ -463,7 +464,7 @@ struct PipelineRunner {
   llvm::LLVMContext LLVMCtx;
   PipelineResult Result;
 
-  bool load(const char *InputPath, std::string &Err);
+  bool load(const char *InputPath, std::string &Err, const Session *Policy);
   bool run(PipelineOptions Opts, std::string &Err);
 };
 

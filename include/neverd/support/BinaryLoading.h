@@ -18,6 +18,7 @@
 #include "llvm/Support/Error.h"
 
 #include <filesystem>
+#include <map>
 #include <set>
 
 namespace neverd {
@@ -26,6 +27,9 @@ namespace neverd {
 /// the historical full-image decode.
 struct BinaryLoadOptions {
   std::set<va_t> OnlyFunctionEntries;
+  /// Caller-asserted instruction state at exact AArch32 function entries.
+  /// Use only when the binary lacks mode evidence; conflicting evidence fails.
+  std::map<va_t, InstructionMode> ARMFunctionModes;
 };
 
 /// Normalize every externally sourced text field in an already loaded image so
@@ -34,9 +38,8 @@ void normalizeBinaryMetadata(BinaryImage &Img);
 
 /// Auto-detect binary format from magic bytes and load via the appropriate
 /// loader. Returns an error if the format is unrecognized.
-llvm::Expected<BinaryImage>
-loadBinary(const std::filesystem::path &Path,
-           const BinaryLoadOptions &Opts = {});
+llvm::Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
+                                       const BinaryLoadOptions &Opts = {});
 
 } // namespace neverd
 
