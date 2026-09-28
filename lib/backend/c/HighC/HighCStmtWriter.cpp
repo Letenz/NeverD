@@ -976,6 +976,13 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
 
   case StmtKind::Goto:
     emitIndent(Indent);
+    // The fail-closed form of an indirect branch whose targets were not
+    // proven. There is no label to name; the failure stays at run time.
+    if (Stmt.GotoTarget == InvalidVA) {
+      OS << "__builtin_trap(); /* unresolved indirect branch at 0x"
+         << llvm::utohexstr(Stmt.Addr) << " */\n";
+      break;
+    }
     OS << "goto L_" + llvm::utohexstr(Stmt.GotoTarget) + ";\n";
     break;
 

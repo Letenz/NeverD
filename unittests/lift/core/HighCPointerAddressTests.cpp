@@ -39650,6 +39650,26 @@ TEST(HighCPointerAddresses, ReadOfADestructorResultIsUnknown) {
   EXPECT_NE(Source.find(" = 0 /* unknown */;"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= SC_DEVICE_dtor("), std::string::npos) << Source;
 }
+
+TEST(HighCPointerAddresses, UnprovenIndirectBranchTrapsInsteadOfNamingNoLabel) {
+  // A jump table whose targets were not proven lowers to the fail-closed
+  // goto. No label exists for it, so the C traps at the branch.
+  HighFunc Func;
+  Func.Name = "dispatch";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  HighStmt Branch;
+  Branch.Kind = StmtKind::Goto;
+  Branch.Addr = 0x14000101d;
+  Branch.GotoTarget = InvalidVA;
+  Func.Body = {Branch};
+  const std::string Source = emitFunctions({Func});
+  EXPECT_NE(Source.find("__builtin_trap(); /* unresolved indirect branch at "
+                        "0x14000101D */"),
+            std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source;
+}
 } // namespace
 
 BinaryImage makeCodeFixture(va_t Entry, std::vector<uint8_t> Bytes) {
