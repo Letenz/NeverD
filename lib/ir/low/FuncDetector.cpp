@@ -169,10 +169,12 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
   std::set<va_t> ExceptionEntries;
   std::set<va_t> ExceptionThunks;
   for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions) {
+    // A frame can begin after its function's first instruction.
+    const va_t EHEntry =
+        EH.FunctionEntry != 0 ? EH.FunctionEntry : EH.CodeRange.Begin;
     if (EH.Kind == RuntimeFunctionKind::Primary && EH.CodeRange.isValid() &&
-        EH.CodeRange.Begin != 0 &&
-        Img.hasExecutableCodeOwnerAt(EH.CodeRange.Begin))
-      ExceptionEntries.insert(EH.CodeRange.Begin);
+        EHEntry != 0 && Img.hasExecutableCodeOwnerAt(EHEntry))
+      ExceptionEntries.insert(EHEntry);
     if (!EH.Registration)
       continue;
     for (const RegistrationScopeRecord &Scope : EH.Registration->Scopes) {
@@ -450,11 +452,24 @@ FuncDetector::detect(const BinaryImage &Img, Decoder &Dec) {
       SizedRanges.push_back({Sym.Addr, Sym.Addr + Sym.Size});
     }
     if (!SizedRanges.empty()) {
+      // Sorted by start, with the furthest end any range up to each one
+      // reaches: A is strictly inside some range exactly when a range that
+      // starts below A reaches past it.
+      std::sort(SizedRanges.begin(), SizedRanges.end());
+      std::vector<va_t> FurthestEnd(SizedRanges.size());
+      for (size_t I = 0; I < SizedRanges.size(); ++I)
+        FurthestEnd[I] =
+            std::max(I ? FurthestEnd[I - 1] : va_t(0), SizedRanges[I].second);
       auto InsideSized = [&](va_t A) -> bool {
-        for (auto &[S, E] : SizedRanges)
-          if (A > S && A < E)
-            return true;
-        return false;
+        const auto Below = std::lower_bound(
+            SizedRanges.begin(), SizedRanges.end(), A,
+            [](const std::pair<va_t, va_t> &Range, va_t Address) {
+              return Range.first < Address;
+            });
+        if (Below == SizedRanges.begin())
+          return false;
+        return FurthestEnd[static_cast<size_t>(Below - SizedRanges.begin()) -
+                           1] > A;
       };
       // A sized function symbol ordinarily claims its whole [Addr, Addr+Size)
       // extent.  An explicit function symbol at an interior address is stronger
@@ -705,6 +720,28 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     va_t End;
   };
   std::vector<ScanChunk> Chunks;
+  // An x86 sweep cannot start just anywhere: from the middle of an
+  // instruction it decodes other instructions.  So each piece of a long range
+  // is swept on its own, from its nominal start and with the range's end as
+  // the decode bound, and its steps are kept.  Joining the pieces in order,
+  // the sweep of each continues from where the previous one left off, and
+  // one piece's steps are taken as soon as that sweep reaches an address the
+  // piece also reached: from there on, the two are the same sweep.
+  struct PieceJob {
+    const Segment *Seg;
+    va_t Start;
+    va_t End;
+    va_t RangeEnd;
+  };
+  struct SplitRange {
+    const Segment *Seg;
+    va_t Start;
+    va_t End;
+    size_t FirstPiece;
+    size_t Pieces;
+  };
+  std::vector<PieceJob> PieceJobs;
+  std::vector<SplitRange> SplitRanges;
 
   const unsigned ThreadsN = workerThreadCount();
   constexpr size_t MinChunk = limits::kMinFuncScanChunk;
@@ -719,6 +756,24 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
         RequestedLen, Seg->Data.size() - static_cast<size_t>(StartOff)));
     if (ScanLen == 0)
       return;
+    if (Img.Arch == Arch::X86 || Img.Arch == Arch::X64) {
+      // A long range is swept in pieces on the worker threads and the pieces
+      // joined afterwards exactly as one sweep would have gone; see below.
+      // Joining costs a few instructions a seam, so the pieces can be small.
+      constexpr size_t MinPiece = 16 * 1024;
+      const size_t Pieces = std::min<size_t>(ThreadsN, ScanLen / MinPiece);
+      if (Pieces < 2) {
+        Chunks.push_back({Seg, Start, Start + ScanLen});
+        return;
+      }
+      SplitRange Range{Seg, Start, Start + ScanLen, PieceJobs.size(), Pieces};
+      for (size_t Piece = 0; Piece < Pieces; ++Piece)
+        PieceJobs.push_back({Seg, Start + ScanLen * Piece / Pieces,
+                             Start + ScanLen * (Piece + 1) / Pieces,
+                             Start + ScanLen});
+      SplitRanges.push_back(Range);
+      return;
+    }
     if (Img.Arch != Arch::AArch64) {
       Chunks.push_back({Seg, Start, Start + ScanLen});
       return;
@@ -757,26 +812,80 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     if (!Img.segmentHasReadableSectionMetadata(Seg))
       AddRange(&Seg, Seg.VA, Seg.Data.size());
 
-  if (Chunks.size() <= 1) {
+  // An x86 sweep reads only sizes and ids, and the targets of calls.
+  const bool SweepWithoutDetail =
+      Img.Arch == Arch::X86 || Img.Arch == Arch::X64;
+  const bool PreviousDetail = Dec.detailEnabled();
+  if (SweepWithoutDetail)
+    Dec.setDetail(false);
+
+  if (Chunks.size() <= 1 && PieceJobs.empty()) {
     for (auto &[Seg, Start, End] : Chunks)
       func_detect_detail::scanSegmentCalls(Img, Dec, Seg, Start, End, Out);
+    Dec.setDetail(PreviousDetail);
     return;
   }
 
+  // A range inside a split one -- a sized function symbol inside `.text`,
+  // say -- is swept again only where its own sweep can differ: from its
+  // start when the long sweep does not pass through it, and otherwise only
+  // across the instruction the long sweep decodes over its end.  Everything
+  // before that the long sweep has already done, and found.
+  struct Deferred {
+    size_t Range;
+    ScanChunk Chunk;
+  };
+  std::vector<Deferred> DeferredChunks;
+  if (!SplitRanges.empty()) {
+    std::vector<ScanChunk> Kept;
+    Kept.reserve(Chunks.size());
+    for (const ScanChunk &Chunk : Chunks) {
+      const auto Range = std::find_if(
+          SplitRanges.begin(), SplitRanges.end(), [&](const SplitRange &R) {
+            return R.Seg == Chunk.Seg && R.Start <= Chunk.Start &&
+                   Chunk.End <= R.End;
+          });
+      if (Range == SplitRanges.end())
+        Kept.push_back(Chunk);
+      else
+        DeferredChunks.push_back(
+            {static_cast<size_t>(Range - SplitRanges.begin()), Chunk});
+    }
+    Chunks = std::move(Kept);
+  }
+
   std::mutex Mtx;
-  std::atomic<size_t> NextChunk{0};
+  std::atomic<size_t> NextJob{0};
+  std::vector<std::vector<func_detect_detail::CallScanStep>> PieceSteps(
+      PieceJobs.size());
 
   auto Worker = [&]() {
     Decoder LocalDec;
     if (!LocalDec.init(Img))
       return;
+    if (SweepWithoutDetail)
+      LocalDec.setDetail(false);
     std::set<va_t> LocalEntries;
 
     while (true) {
-      size_t CI = NextChunk.fetch_add(1, std::memory_order_relaxed);
-      if (CI >= Chunks.size())
+      const size_t Job = NextJob.fetch_add(1, std::memory_order_relaxed);
+      if (Job < PieceJobs.size()) {
+        const PieceJob &Piece = PieceJobs[Job];
+        func_detect_detail::CodeInterval Known =
+            func_detect_detail::codeIntervalAround(Img, Piece.Start);
+        for (va_t Cur = Piece.Start; Cur < Piece.End;) {
+          const auto Step = func_detect_detail::stepCallsX86(
+              Img, LocalDec, Piece.Seg, Cur, Piece.RangeEnd, Known);
+          if (!Step)
+            break;
+          PieceSteps[Job].push_back(*Step);
+          Cur = Step->Next;
+        }
+        continue;
+      }
+      if (Job >= PieceJobs.size() + Chunks.size())
         break;
-      auto &[Seg, Start, End] = Chunks[CI];
+      auto &[Seg, Start, End] = Chunks[Job - PieceJobs.size()];
       func_detect_detail::scanSegmentCalls(Img, LocalDec, Seg, Start, End,
                                            LocalEntries);
     }
@@ -791,6 +900,69 @@ void FuncDetector::scanCallTargets(const BinaryImage &Img, Decoder &Dec,
     Ts.emplace_back(Worker);
   for (auto &T : Ts)
     T.join();
+
+  std::vector<std::vector<func_detect_detail::CallScanStep>> RangeSteps(
+      SplitRanges.size());
+  for (size_t RangeIndex = 0; RangeIndex < SplitRanges.size(); ++RangeIndex) {
+    const SplitRange &Range = SplitRanges[RangeIndex];
+    std::vector<func_detect_detail::CallScanStep> &Taken =
+        RangeSteps[RangeIndex];
+    va_t Pos = Range.Start;
+    func_detect_detail::CodeInterval Known =
+        func_detect_detail::codeIntervalAround(Img, Pos);
+    for (size_t Piece = Range.FirstPiece;
+         Piece < Range.FirstPiece + Range.Pieces; ++Piece) {
+      const auto &Steps = PieceSteps[Piece];
+      auto It =
+          std::lower_bound(Steps.begin(), Steps.end(), Pos,
+                           [](const func_detect_detail::CallScanStep &Step,
+                              va_t Address) { return Step.Addr < Address; });
+      // Sweep on until this piece's sweep is reached.
+      while (Pos < PieceJobs[Piece].End &&
+             (It == Steps.end() || It->Addr != Pos)) {
+        const auto Step = func_detect_detail::stepCallsX86(
+            Img, Dec, Range.Seg, Pos, Range.End, Known);
+        if (!Step) {
+          Pos = Range.End;
+          break;
+        }
+        if (Step->Target != InvalidVA)
+          Out.insert(Step->Target);
+        Taken.push_back(*Step);
+        Pos = Step->Next;
+        while (It != Steps.end() && It->Addr < Pos)
+          ++It;
+      }
+      for (; It != Steps.end() && It->Addr == Pos; ++It) {
+        if (It->Target != InvalidVA)
+          Out.insert(It->Target);
+        Taken.push_back(*It);
+        Pos = It->Next;
+      }
+    }
+  }
+
+  const auto ByAddress = [](const func_detect_detail::CallScanStep &Step,
+                            va_t Address) { return Step.Addr < Address; };
+  for (const Deferred &Item : DeferredChunks) {
+    const auto &Taken = RangeSteps[Item.Range];
+    const ScanChunk &Chunk = Item.Chunk;
+    va_t From = Chunk.Start;
+    const auto Start =
+        std::lower_bound(Taken.begin(), Taken.end(), Chunk.Start, ByAddress);
+    if (Start != Taken.end() && Start->Addr == Chunk.Start) {
+      // The last step the long sweep takes before the chunk's end.
+      const auto Past =
+          std::lower_bound(Start, Taken.end(), Chunk.End, ByAddress);
+      const auto Last = std::prev(Past);
+      if (Last->Next <= Chunk.End)
+        continue;
+      From = Last->Addr;
+    }
+    func_detect_detail::scanSegmentCalls(Img, Dec, Chunk.Seg, From, Chunk.End,
+                                         Out);
+  }
+  Dec.setDetail(PreviousDetail);
 }
 
 } // namespace neverd

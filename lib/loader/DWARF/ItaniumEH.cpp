@@ -269,8 +269,10 @@ void parseItaniumExceptions(BinaryImage &Img) {
 
     if (F.CodeRange.isValid()) {
       const va_t Entry = functionEntry(Img, F.CodeRange.Begin, FrameRanges);
-      if (Entry != F.CodeRange.Begin)
+      if (Entry != F.CodeRange.Begin) {
         PaddedFrameStarts.insert(F.CodeRange.Begin);
+        F.FunctionEntry = Entry;
+      }
       Img.KnownCodeRanges.emplace_back(Entry, F.CodeRange.End);
       // An FDE is an authoritative function boundary, which is stronger
       // evidence than the .eh_frame_hdr search table alone: the table only
