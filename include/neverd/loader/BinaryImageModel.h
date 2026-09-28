@@ -242,9 +242,9 @@ struct BinaryImage {
   // -Wchanges-meaning hard error under GCC.  All consumers still read `.Arch`.
   neverd::Arch Arch = neverd::Arch::Unknown;
   InstructionMode Mode = InstructionMode::Default;
-  /// Entry and function-symbol evidence identifies one exact instruction
-  /// address. It does not authorize decoding the rest of a function in that
-  /// mode when mapping symbols are absent.
+  /// Entry, function-symbol, and validated instruction-relocation evidence
+  /// identifies one exact instruction address. It does not authorize decoding
+  /// the rest of a function in that mode when mapping symbols are absent.
   std::map<va_t, InstructionMode> ARMCodeModeEntries;
   /// Sorted, disjoint section-relative ELF mapping intervals, including $d.
   std::vector<ARMCodeRegion> ARMCodeRegions;

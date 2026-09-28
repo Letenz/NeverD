@@ -8,6 +8,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/loader/DirectBranch.h"
+#include "neverd/loader/MachO/MachOARM32Mode.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
 
@@ -1042,6 +1043,9 @@ _data_target:
   const uint8_t *SlotBytes = Img.readVA(Slot->Addr, sizeof(uint32_t));
   ASSERT_NE(Instructions, nullptr);
   ASSERT_NE(SlotBytes, nullptr);
+  for (size_t Offset : {4u, 8u, 12u, 16u})
+    EXPECT_EQ(Img.ARMCodeModeEntries.at(Caller->Addr + Offset),
+              InstructionMode::ARM);
   const uint32_t Branch = readLE<uint32_t>(Instructions + 4);
   int32_t BranchWords = static_cast<int32_t>(Branch & 0x00ffffffu);
   if ((BranchWords & 0x00800000) != 0)
@@ -1129,6 +1133,134 @@ TEST_F(COFFRelocatableAbsoluteRelocation,
 }
 
 TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32RelocationsProveUncalledFunctionModes) {
+  const fs::path Object = tmpFile("macho_relocation_mode.o");
+  const RunResult Compiled =
+      exec(NEVERD_TEST_CLANG,
+           {"-target", "armv7-apple-darwin", "-c",
+            (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_reloc_mode.s")
+                .string(),
+            "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  auto BufferOrErr = llvm::MemoryBuffer::getFile(Object.string());
+  ASSERT_TRUE(static_cast<bool>(BufferOrErr));
+  const llvm::StringRef Bytes = (*BufferOrErr)->getBuffer();
+  auto ModeInfo = macho_arm32::parseModeInfo(llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()));
+  ASSERT_TRUE(static_cast<bool>(ModeInfo))
+      << llvm::toString(ModeInfo.takeError());
+  EXPECT_TRUE(ModeInfo->CodeSymbolModes.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  const Symbol *ARMFunction = findSymbol(Img, "_arm_reloc_mba");
+  const Symbol *ThumbFunction = findSymbol(Img, "_thumb_reloc_mba");
+  ASSERT_NE(ARMFunction, nullptr);
+  ASSERT_NE(ThumbFunction, nullptr);
+  ASSERT_EQ(ARMFunction->Addr, 0u);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(ARMFunction->Addr), InstructionMode::ARM);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(ThumbFunction->Addr),
+            InstructionMode::Thumb);
+  EXPECT_EQ(Img.Mode, InstructionMode::MixedARMThumb);
+  EXPECT_EQ(Img.instructionModeAt(ARMFunction->Addr + 4), InstructionMode::ARM);
+  EXPECT_EQ(Img.instructionModeAt(ThumbFunction->Addr), InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32ARMRelocationRetainsUniformMode) {
+  const fs::path Object =
+      compileCOFF("macho_arm_relocation_mode", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.arm
+.globl _only
+_only:
+  movw r3, :lower16:_target
+  add r0, r0, r1
+  bx lr
+
+.section __DATA,__data
+.p2align 2
+_target:
+  .long 0
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  const Symbol *Function = findSymbol(Img, "_only");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_EQ(Function->Addr, 0u);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(Function->Addr), InstructionMode::ARM);
+  EXPECT_EQ(Img.Mode, InstructionMode::ARM);
+  EXPECT_EQ(Img.instructionModeAt(Function->Addr + 4), InstructionMode::ARM);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32ThumbRelocationRetainsUniformMode) {
+  const fs::path Object =
+      compileCOFF("macho_thumb_relocation_mode", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.globl _only
+_only:
+  movw r3, :lower16:_target
+  adds r0, r0, r1
+  bx lr
+
+.section __DATA,__data
+.p2align 2
+_target:
+  .long 0
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  const Symbol *Function = findSymbol(Img, "_only");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_EQ(Function->Addr, 0u);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(Function->Addr), InstructionMode::Thumb);
+  EXPECT_EQ(Img.Mode, InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(Function->Addr + 4), InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32RejectsRelocationConflictingWithThumbSymbol) {
+  const fs::path Object =
+      compileCOFF("macho_conflicting_mode", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.arm
+.globl _mislabelled
+.thumb_func _mislabelled
+_mislabelled:
+  movw r0, :lower16:_target
+  bx lr
+
+.section __DATA,__data
+.p2align 2
+_target:
+  .long 0
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError())
+                .find("conflicting ARM/Thumb instruction mode"),
+            std::string::npos);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
        MachOARM32AppliesThumbBranchRelocations) {
   const fs::path Object =
       compileCOFF("macho_thumb32_branches", "armv7-apple-darwin", R"(
@@ -1186,6 +1318,9 @@ _thumb_back_caller:
   ASSERT_NE(BackCaller, nullptr);
   EXPECT_EQ(Caller->Size, 20u);
   EXPECT_EQ(ThumbCallee->Size, 2u);
+  for (size_t Offset : {2u, 6u})
+    EXPECT_EQ(Img.ARMCodeModeEntries.at(Caller->Addr + Offset),
+              InstructionMode::Thumb);
   EXPECT_EQ(ARMCallee->Size, 4u);
   EXPECT_EQ(BackCaller->Size, 6u);
   const uint8_t *Instructions = Img.readVA(Caller->Addr, 18);

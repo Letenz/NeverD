@@ -76,6 +76,10 @@ control-flow edges through the shared reachable-mode analysis. A cross-state
 `BLX` can establish an ARM target without treating an unflagged symbol as ARM
 proof. Decoding is limited to reached instruction spans; an unproved gap in a
 mixed image retains unknown mode.
+Validated ARM and Thumb instruction relocations can also seed their exact
+instruction addresses. This can recover an otherwise uncalled function when
+its entry instruction has such a relocation, without assuming that an
+unmarked symbol elsewhere in the section is ARM code.
 
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and

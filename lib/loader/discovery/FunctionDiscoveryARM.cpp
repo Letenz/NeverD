@@ -402,7 +402,9 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
     const InstructionMode Reached = Region.Kind == ARMCodeRegionKind::Thumb
                                         ? InstructionMode::Thumb
                                         : InstructionMode::ARM;
-    if (Img.Mode != Reached)
+    if (Img.Mode == InstructionMode::Default)
+      Img.Mode = Reached;
+    else if (Img.Mode != Reached)
       Img.Mode = InstructionMode::MixedARMThumb;
   }
   for (const auto &[Target, Mode] : VeneerCandidates)
