@@ -769,8 +769,22 @@ TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
                                   : "int64_t mba_pair_add("),
             std::string::npos)
       << Source;
-  EXPECT_FALSE(functionBody(Source, "mba_pair_add").empty());
+  const std::string PairBody = functionBody(Source, "mba_pair_add");
+  EXPECT_FALSE(PairBody.empty());
+  EXPECT_EQ(PairBody.find(" ^ "), std::string::npos) << PairBody;
+  EXPECT_EQ(PairBody.find(" & "), std::string::npos) << PairBody;
+  const std::string OrPairBody = functionBody(Source, "mba_pair_or_add");
+  EXPECT_FALSE(OrPairBody.empty());
+  EXPECT_EQ(OrPairBody.find(" ^ "), std::string::npos) << OrPairBody;
+  EXPECT_EQ(OrPairBody.find(" & "), std::string::npos) << OrPairBody;
+  const std::string SubPairBody = functionBody(Source, "mba_pair_sub");
+  EXPECT_FALSE(SubPairBody.empty());
+  EXPECT_EQ(SubPairBody.find(" ^ "), std::string::npos) << SubPairBody;
+  EXPECT_EQ(SubPairBody.find(" & "), std::string::npos) << SubPairBody;
+  EXPECT_EQ(SubPairBody.find("~"), std::string::npos) << SubPairBody;
   EXPECT_FALSE(functionBody(Source, "mba_pair_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_or_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_sub_fold").empty());
 
   const char *Harness = R"(
 #include <inttypes.h>
@@ -780,9 +794,17 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
   uint64_t y = ((uint64_t)yh << 32) | yl;
   uint64_t expected = x + y;
   uint64_t actual = (uint64_t)mba_pair_add(xl, xh, yl, yh);
+  uint64_t or_actual = (uint64_t)mba_pair_or_add(xl, xh, yl, yh);
+  uint64_t expected_difference = x - y;
+  uint64_t difference = (uint64_t)mba_pair_sub(xl, xh, yl, yh);
   uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
-  if (actual != expected ||
-      (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded) {
+  uint32_t folded_difference =
+      (uint32_t)expected_difference ^ (uint32_t)(expected_difference >> 32);
+  if (actual != expected || or_actual != expected ||
+      difference != expected_difference ||
+      (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded ||
+      (uint32_t)mba_pair_or_fold(xl, xh, yl, yh) != folded ||
+      (uint32_t)mba_pair_sub_fold(xl, xh, yl, yh) != folded_difference) {
     fprintf(stderr, "pair mismatch %08" PRIx32 ":%08" PRIx32
                     " %08" PRIx32 ":%08" PRIx32 "\n", xh, xl, yh, yl);
     return 1;

@@ -35,6 +35,7 @@
 #include "SymSimplifyDetail.h"
 
 #include "neverd/symbolic/SymMBA.h"
+#include "neverd/symbolic/SymWideArithmetic.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
@@ -327,7 +328,10 @@ SymSimplifyResult rewriteRoot(llvm::Instruction *Root,
                               bool *HadSharedBoundary = nullptr) {
   SymSimplifyResult Result;
   sym::SymContext Ctx;
-  Translator Xlat(Ctx, /*CarryComparisons=*/false, ExpandSharedPure);
+  const bool WideAssembly = Root->getOpcode() == llvm::Instruction::Or &&
+                            Root->getType()->isIntegerTy() &&
+                            Root->getType()->getIntegerBitWidth() >= 16;
+  Translator Xlat(Ctx, /*CarryComparisons=*/WideAssembly, ExpandSharedPure);
   const sym::SymRef Before = Xlat.in(Root);
   if (HadSharedBoundary)
     *HadSharedBoundary = Xlat.hasSharedBoundary();
@@ -339,6 +343,34 @@ SymSimplifyResult rewriteRoot(llvm::Instruction *Root,
   // The derivational engine runs first.  Nesting is not a budget: its deep
   // walk is iterative and visits the finite DAG without a recursion cutoff.
   const sym::MBAResult Derived = sym::simplifyMBADeep(Ctx, Before, Opts.MBA);
+  const sym::SymRef Measured =
+      Derived.Changed && Derived.Evidence == sym::MBAEvidence::Derivation
+          ? Derived.Expr
+          : Before;
+  if (WideAssembly) {
+    sym::SymRef Recovered = Measured;
+    if (Opts.Provider == ProofProvider::BuiltInSolver) {
+      solver::SymSynthVerifier Verifier(Opts.Solver);
+      Recovered = sym::recoverSplitWordArithmetic(
+          Ctx, Measured,
+          [&](sym::SymContext &Context, sym::SymRef A, sym::SymRef B) {
+            return Verifier(Context, A, B);
+          });
+      Result.ProofWork = Verifier.report().Stats;
+      Result.Proof = Verifier.report().Proof;
+    } else if (Opts.Provider == ProofProvider::Callback && Opts.ProofCallback) {
+      Recovered =
+          sym::recoverSplitWordArithmetic(Ctx, Measured, Opts.ProofCallback);
+      if (Recovered != Measured)
+        Result.Proof = solver::ProofStatus::Equivalent;
+    }
+    if (Recovered != Measured &&
+        materializeCandidate(Root, Xlat, Recovered, Opts, Dead)) {
+      Result.Rewrites = 1;
+      Result.Outcome = SymSimplifyOutcome::Rewritten;
+      return Result;
+    }
+  }
   if (Derived.Changed && Derived.Evidence == sym::MBAEvidence::Derivation &&
       materializeCandidate(Root, Xlat, Derived.Expr, Opts, Dead)) {
     Result.Rewrites = 1;

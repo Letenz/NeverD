@@ -56,17 +56,17 @@ enum class OpTag {
   ZExt,
   SExt,
   ICmp,
+  FShl,
 };
 
 OpTag tagOf(const llvm::Instruction &I);
 
 /// True for an integer instruction the engine has an operator for.
 ///
-/// A comparison is carried only when the caller asks for it, and only one
-/// caller does.  Rebuilding an expression is what the ordinary path is for, and
-/// a comparison has no place in one: it would have to come back out as an
-/// instruction, and the engine's answer for a comparison is worth having only
-/// when it is a constant.  Deciding a branch is that one case.
+/// A comparison is carried only when the caller asks for it. The ordinary
+/// simplifier treats it as an opaque boundary; branch folding and proof-gated
+/// split-word recovery can inspect it. A rewritten expression may only be
+/// materialized when no predicate remains in the candidate.
 bool isTranslatable(const llvm::Value *V, bool WithComparisons);
 
 //===----------------------------------------------------------------------===//
@@ -172,6 +172,8 @@ private:
     case OpTag::ZExt:
     case OpTag::SExt:
       return {I.getOperand(0)};
+    case OpTag::FShl:
+      return {I.getOperand(0), I.getOperand(1), I.getOperand(2)};
     default:
       return {I.getOperand(0), I.getOperand(1)};
     }
