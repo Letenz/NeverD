@@ -48,6 +48,8 @@ TEST(DirectBranch, RoundsTheBaseDownForAnInterworkingCall) {
   // counter rather than the halfword-aligned one a `bl` uses.  Sited at an
   // address that is not word aligned, the two disagree.
   EXPECT_EQ(decodeThumbAt(0x1002, 0xF000, 0xE87E), va_t(0x1100));
+  EXPECT_FALSE(decodeThumbAt(0x1002, 0xF000, 0xE87F).has_value());
+  EXPECT_FALSE(decodeThumbAt(InvalidVA - 1, 0xF000, 0xE87E).has_value());
 }
 
 TEST(DirectBranch, RejectsAConditionalThumbBranch) {

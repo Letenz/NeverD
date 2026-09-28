@@ -730,7 +730,7 @@ bool X86Lifter::liftControl(LiftState &S, const cs_insn *Insn,
         }
         S.emit(NdOp::CALL, NdVar::reg(x86reg::RAX, PtrSize), {TargetValue});
       }
-    } else if (X86.operands[0].type == X86_OP_MEM &&
+    } else if (!S.LoadMemoryCallTarget && X86.operands[0].type == X86_OP_MEM &&
                X86.operands[0].mem.index == X86_REG_INVALID &&
                LiftState::memoryAddressSpace(X86.operands[0]) ==
                    NdMemoryAddressSpace::Default &&

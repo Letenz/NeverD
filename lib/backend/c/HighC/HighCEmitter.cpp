@@ -759,8 +759,7 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
                    SourceCallTypeHint::Kind::SwiftValueWitness) {
           // The expression reloads the required witness from its runtime
           // metadata argument and therefore needs no linked declaration.
-        } else if (Hint.CallKind ==
-                   SourceCallTypeHint::Kind::SwiftVirtual) {
+        } else if (Hint.CallKind == SourceCallTypeHint::Kind::SwiftVirtual) {
           // The proven target is a local value loaded before the call.
         } else if (Hint.CallKind == SourceCallTypeHint::Kind::Native ||
                    Hint.CallKind == SourceCallTypeHint::Kind::ObjCRuntimeCall ||
@@ -1116,10 +1115,12 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // private type, so provide only the incomplete name needed for pointer
   // declarations and casts in a standalone translation unit.
   bool NeedsBlockObject = false;
+  bool NeedsBool = false;
   const auto CheckType = [&](const TypeRef &Type) {
     TypeRef Current = Type;
     while (Current && Current->Kind == NdTypeKind::Ptr)
       Current = Current->Pointee;
+    NeedsBool |= Current && Current->SourceName == "bool";
     NeedsBlockObject |=
         Current && Current->Kind == NdTypeKind::Struct && !Current->IsEnum &&
         cNamedTypeSpelling(Current->SourceName) == "_Block_object";
@@ -1131,6 +1132,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     CheckType(Expr->Type);
     CheckType(Expr->CastTo);
     if (Expr->Kind == ExprKind::Call) {
+      CheckType(knownCallReturnType(*Expr));
       if (Expr->SourceCallHint) {
         CheckType(Expr->SourceCallHint->Signature.ReturnType);
         for (const auto &Parameter : Expr->SourceCallHint->Signature.Parameters)
@@ -1165,6 +1167,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
 
   std::set<std::string> Headers;
   Headers.insert("stdint.h");
+  if (NeedsBool)
+    Headers.insert("stdbool.h");
   if (!MemoryTypes.empty())
     Headers.insert("string.h");
 
@@ -1292,8 +1296,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     CurrentFunc = &Function;
     Analysis = {};
     runAnalysisPasses(Function);
-    const auto ReturnType =
-        InferredVoid ? NdType::makeVoid() : Function.ReturnType;
+    const auto ReturnType = InferredVoid ? NdType::makeVoid() : FuncReturnType;
     const auto Convention = Function.SourceTypeHint
                                 ? Function.SourceTypeHint->Convention
                                 : SourceFunctionTypeHint::ConventionKind::C;
@@ -1319,6 +1322,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   for (const auto *Function : SourceAddressDefinitions) {
     if (!Prototyped.insert(Function).second)
       continue;
+    CurrentFunc = Function;
+    Analysis = {};
+    runAnalysisPasses(*Function);
+    const auto ReturnType = InferredVoid ? NdType::makeVoid() : FuncReturnType;
     std::string Declarator = functionIdentifier(*Function) + "(";
     const size_t ParamCount = emittedParamCount(*Function);
     for (size_t I = 0; I < ParamCount; ++I) {
@@ -1330,8 +1337,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       Declarator += "void";
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
-    OS << declarationToC(Function->ReturnType, Declarator + ")") << ";\n";
+    OS << declarationToC(ReturnType, Declarator + ")") << ";\n";
   }
+  CurrentFunc = nullptr;
+  Analysis = {};
 
   // Direct calls can precede the callee's body in address order. Declare the
   // recovered internal signature before any body so C does not infer an
@@ -1342,8 +1351,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     CurrentFunc = Function;
     Analysis = {};
     runAnalysisPasses(*Function);
-    const auto ReturnType =
-        InferredVoid ? NdType::makeVoid() : Function->ReturnType;
+    const auto ReturnType = InferredVoid ? NdType::makeVoid() : FuncReturnType;
     if (Function->SourceTypeHint)
       OS << sourceConventionAttribute(Function->SourceTypeHint->Convention);
     if (Function->DoesNotReturn)
@@ -1842,6 +1850,7 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                 Opts.Image && Opts.Image == PreparedImage
                     ? &PreparedImageFunctionNames
                     : nullptr);
+  W.prepareFunctionReturns(Working);
   W.writeAll(Working);
   return true;
 }

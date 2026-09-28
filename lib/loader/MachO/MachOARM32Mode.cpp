@@ -122,8 +122,7 @@ llvm::Expected<ModeInfo> parseModeInfo(llvm::ArrayRef<uint8_t> Binary) {
     const auto *Entry = reinterpret_cast<const nlist *>(
         Binary.data() + static_cast<size_t>(EntryOffset));
     if ((Entry->n_type & N_STAB) != 0 || (Entry->n_type & N_TYPE) != N_SECT ||
-        Entry->n_sect == NO_SECT || Entry->n_sect >= SectionsByIndex.size() ||
-        Entry->n_value == 0)
+        Entry->n_sect == NO_SECT || Entry->n_sect >= SectionsByIndex.size())
       continue;
 
     const va_t Address = clearThumbBit(Entry->n_value);

@@ -62,6 +62,9 @@ struct PipelineOptions {
   bool NoOpt = false;
   bool PatchMode = false;
   bool LiftMode = false;
+  /// LLVM-to-C uses the LLVM route without authorizing source-only rewrites
+  /// for binary lifting or patching.
+  bool SourceProjection = false;
   size_t MaxFunctions = 0;
   /// When non-empty, only these entries are lifted to Low/Med/High IR.
   /// Detection still reads image metadata; this bounds work for single-function

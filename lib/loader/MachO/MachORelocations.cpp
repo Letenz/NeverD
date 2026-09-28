@@ -6,6 +6,7 @@
 
 #include "MachORelocationsDetail.h"
 
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -127,6 +128,32 @@ resolveRelocationTarget(const MachOObjectFile &Obj, const RelocationRef &Reloc,
     return std::nullopt;
   const Section &Owner = Img.Sections[Info.SymbolNumber - 1];
   return ResolvedSymbol{Owner.VA, Owner.VA};
+}
+
+// A section-relative branch relocation names a section, not the function at
+// its encoded addend. An exact defined code symbol supplies the interworking
+// state used by the Mach-O linker; a nearby symbol does not.
+std::optional<bool> thumbStateAtBranchTarget(const MachOObjectFile &Obj,
+                                             uint32_t SectionNumber,
+                                             uint64_t Target) {
+  std::optional<bool> State;
+  for (auto SymIt = Obj.symbol_begin(); SymIt != Obj.symbol_end(); ++SymIt) {
+    if (symbolSectionNumber(Obj, SymIt) != SectionNumber)
+      continue;
+    const llvm::object::DataRefImpl DRI = SymIt->getRawDataRefImpl();
+    if (Obj.getNValue(DRI) != Target)
+      continue;
+    const uint16_t Description = Obj.is64Bit()
+                                     ? Obj.getSymbol64TableEntry(DRI).n_desc
+                                     : Obj.getSymbolTableEntry(DRI).n_desc;
+    const uint8_t Type = Obj.is64Bit() ? Obj.getSymbol64TableEntry(DRI).n_type
+                                       : Obj.getSymbolTableEntry(DRI).n_type;
+    if ((Description & llvm::MachO::N_ARM_THUMB_DEF) != 0)
+      return true;
+    if ((Type & llvm::MachO::N_EXT) != 0)
+      State = false;
+  }
+  return State;
 }
 
 std::optional<MappedObjectAddress> mapObjectAddress(const MachOObjectFile &Obj,
@@ -822,6 +849,90 @@ llvm::Error applyObjectRelocations(const llvm::object::MachOObjectFile &Obj,
                 (static_cast<uint32_t>(*Displacement >> 2) & 0x00ffffffu);
           }
           std::memcpy(ApplySeg->Data.data() + SegOff, &Instruction, 4);
+        } else if (RType == ARM_THUMB_RELOC_BR22) {
+          if (Info.IsScattered || !Info.IsPCRel || Info.Length != 2)
+            return relocationError("invalid Thumb BR22 metadata", SecAddr,
+                                   RAddr);
+          if (!rangeInBounds(SegOff, 4, ApplySeg->Data.size()))
+            return relocationError("Thumb BR22 field is out of bounds", SecAddr,
+                                   RAddr);
+          if (!Resolved) {
+            diagnoseRelocation("unresolved Thumb branch target", SecAddr,
+                               RAddr);
+            continue;
+          }
+          const uint8_t *Bytes = ApplySeg->Data.data() + SegOff;
+          uint16_t Hi = readLE<uint16_t>(Bytes);
+          uint16_t Lo = readLE<uint16_t>(Bytes + 2);
+          const uint16_t Opcode = Lo & 0xd000u;
+          const bool IsJump = Opcode == 0x9000u;
+          const bool IsBL = Opcode == 0xd000u;
+          const bool IsBLX = Opcode == 0xc000u;
+          if ((Hi & 0xf800u) != 0xf000u || (!IsJump && !IsBL && !IsBLX) ||
+              (IsBLX && (Lo & 1u) != 0))
+            return relocationError("invalid Thumb BR22 instruction", SecAddr,
+                                   RAddr);
+          if (P > UINT32_MAX - 4)
+            return relocationError("Thumb BR22 place overflows", SecAddr,
+                                   RAddr);
+          size_t Length = 0;
+          auto OriginalTarget = decodeDirectBranchTarget(
+              Arch::ARM, InstructionMode::Thumb, Bytes, 4, P, Length);
+          if (!OriginalTarget || Length != 4)
+            return relocationError("invalid Thumb BR22 target", SecAddr, RAddr);
+          std::optional<uint64_t> Target;
+          std::optional<bool> TargetIsThumb;
+          if (Info.IsExternal && *OriginalTarget <= UINT32_MAX) {
+            Target = addSigned(S, static_cast<int32_t>(*OriginalTarget));
+            TargetIsThumb = Resolved->IsThumb;
+          } else if (Info.SymbolNumber > 0 &&
+                     Info.SymbolNumber <= Img.Sections.size()) {
+            uint32_t SectionOrdinal = 0;
+            for (const llvm::object::SectionRef &ObjectSec : Obj.sections()) {
+              if (++SectionOrdinal != Info.SymbolNumber)
+                continue;
+              auto TargetOffset =
+                  signedDifference(*OriginalTarget, ObjectSec.getAddress());
+              if (TargetOffset) {
+                Target = addSigned(S, *TargetOffset);
+                TargetIsThumb = thumbStateAtBranchTarget(Obj, Info.SymbolNumber,
+                                                         *OriginalTarget);
+              }
+              break;
+            }
+          }
+          if (!Target || *Target > UINT32_MAX)
+            return relocationError("Thumb BR22 target overflows", SecAddr,
+                                   RAddr);
+          const bool ToARM = TargetIsThumb ? !*TargetIsThumb : IsBLX;
+          if (IsJump && ToARM)
+            return relocationError(
+                "Thumb branch needs an unsupported interworking veneer",
+                SecAddr, RAddr);
+          const uint64_t Base = ToARM ? ((P + 4) & ~uint64_t(3)) : P + 4;
+          auto Displacement = signedDifference(*Target, Base);
+          const int64_t Alignment = ToARM ? 4 : 2;
+          if (!Displacement || (*Displacement & (Alignment - 1)) != 0 ||
+              *Displacement < -(int64_t(1) << 24) ||
+              *Displacement > (int64_t(1) << 24) - Alignment)
+            return relocationError("Thumb BR22 target is out of range", SecAddr,
+                                   RAddr);
+          const uint32_t Encoded =
+              static_cast<uint32_t>(*Displacement) & 0x01ffffffu;
+          const uint32_t Sign = Encoded >> 24;
+          const uint32_t I1 = (Encoded >> 23) & 1u;
+          const uint32_t I2 = (Encoded >> 22) & 1u;
+          const uint32_t J1 = (~(I1 ^ Sign)) & 1u;
+          const uint32_t J2 = (~(I2 ^ Sign)) & 1u;
+          Hi = static_cast<uint16_t>(0xf000u | (Sign << 10) |
+                                     ((Encoded >> 12) & 0x03ffu));
+          Lo = static_cast<uint16_t>((IsJump  ? 0x9000u
+                                      : ToARM ? 0xc000u
+                                              : 0xd000u) |
+                                     (J1 << 13) | (J2 << 11) |
+                                     ((Encoded >> 1) & 0x07ffu));
+          writeLE<uint16_t>(ApplySeg->Data.data() + SegOff, Hi);
+          writeLE<uint16_t>(ApplySeg->Data.data() + SegOff + 2, Lo);
         } else if (RType == ARM_RELOC_HALF) {
           if (Info.IsScattered || Info.IsPCRel || I + 1 >= Relocations.size())
             return relocationError("malformed ARM HALF pair", SecAddr, RAddr);

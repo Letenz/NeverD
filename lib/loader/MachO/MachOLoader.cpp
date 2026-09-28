@@ -31,7 +31,9 @@
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #define DEBUG_TYPE "neverd-macho-loader"
 
@@ -98,9 +100,10 @@ MachOLoader::load(const std::filesystem::path &Path) {
         llvm::inconvertibleErrorCode());
   if (Img.Arch == Arch::ARM) {
     auto ModeInfo = macho_arm32::parseModeInfo(Img.Raw);
-    if (ModeInfo)
+    if (ModeInfo) {
       Img.Mode = ModeInfo->UniformMode;
-    else
+      Img.ARMCodeModeEntries = std::move(ModeInfo->CodeSymbolModes);
+    } else
       llvm::consumeError(ModeInfo.takeError());
   }
 
@@ -415,6 +418,35 @@ MachOLoader::load(const std::filesystem::path &Path) {
     }
   }
 
+  // MH_OBJECT nlists have no size field. In a pure-instruction section, the
+  // next distinct function symbol or the section end bounds each function.
+  // Do not extrapolate through a mixed code/data section.
+  if (Obj.getHeader().filetype == MH_OBJECT) {
+    for (const Section &Sec : Img.Sections) {
+      if ((Sec.Type & S_ATTR_PURE_INSTRUCTIONS) == 0 || Sec.Size == 0 ||
+          Sec.Size > InvalidVA - Sec.VA)
+        continue;
+      std::vector<size_t> Functions;
+      for (size_t I = 0; I < Img.Symbols.size(); ++I)
+        if (Img.Symbols[I].IsFunc && Sec.contains(Img.Symbols[I].Addr))
+          Functions.push_back(I);
+      std::sort(Functions.begin(), Functions.end(), [&](size_t A, size_t B) {
+        return Img.Symbols[A].Addr < Img.Symbols[B].Addr;
+      });
+      const va_t SectionEnd = Sec.VA + Sec.Size;
+      for (size_t I = 0; I < Functions.size(); ++I) {
+        Symbol &Sym = Img.Symbols[Functions[I]];
+        va_t End = SectionEnd;
+        for (size_t J = I + 1; J < Functions.size(); ++J)
+          if (Img.Symbols[Functions[J]].Addr > Sym.Addr) {
+            End = Img.Symbols[Functions[J]].Addr;
+            break;
+          }
+        Sym.Size = End - Sym.Addr;
+      }
+    }
+  }
+
   // --- Apply relocations for .o files ---
   if (Obj.getHeader().filetype == MH_OBJECT) {
     if (llvm::Error Err = macho_loader::applyObjectRelocations(Obj, Img))
@@ -445,6 +477,10 @@ MachOLoader::load(const std::filesystem::path &Path) {
 
   parseObjCMethods(Img);
   parseObjCStorage(Img);
+
+  if (Img.Arch == Arch::ARM)
+    if (llvm::Error Err = discoverARMReachableModes(Img))
+      return std::move(Err);
 
   runPostLoadDiscovery(Img, "macho: loaded " + Path.filename().string());
   // Classified before any table is read: a compact-unwind entry names a

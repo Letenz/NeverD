@@ -164,6 +164,13 @@ public:
                  llvm::ArrayRef<RelocatedAddressOperand> Relocs = {},
                  llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {});
 
+  /// Explicit target-value projection for ordinary unsegmented x64 r/m64
+  /// near CALL. Unlike the import-slot representation, this retains the
+  /// target LOAD even for a constant slot. Returns false without changing Ops
+  /// for other architectures or unsupported encodings; stack effects are
+  /// still the responsibility of the machine-state recovery contract.
+  bool liftX64MemoryCallToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops);
+
   /// Exact scalar relocation operand consumed by the most recently lifted x86
   /// instruction, if any.  The occurrence is reset for every instruction.
   std::optional<RelocatedInstructionScalarOperandOccurrence>

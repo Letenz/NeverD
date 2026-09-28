@@ -51,10 +51,11 @@ Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 
 ```sh
-cmake --build build-release --target NeverDSymbolicTests \
+cmake --build build-release --target NeverDSymbolicTests NeverDSolverTests \
   NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
   NeverDHighCStoreForwardingTests NeverDMetadataJSONTests --parallel 4
 build-release/bin/NeverDSymbolicTests
+build-release/bin/NeverDSolverTests
 build-release/bin/NeverDSymSimplifyGuardTests
 build-release/bin/NeverDLiftTests \
   --gtest_filter='HighSymSimplify.*:HighFrameStoreForwarding.*:ELFARM32ModeTest.*'
@@ -76,6 +77,39 @@ ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and
 random words. A pipeline guard checks that exact synthetic-frame accesses can
 be promoted while a dynamic store that may alias the frame remains observable.
+The 32-bit register-pair fixture separately checks that both C routes preserve
+an observed 64-bit return through a call on i386 (including PIC call/pop),
+ARM32, Thumb-1, and Thumb-2. Its edge and random-word oracles check the complete
+64-bit result and a caller that consumes both halves. Three independent
+Boolean forms exercise wide addition and subtraction; two more add a nonzero
+64-bit offset after the Boolean form. A three-input parity/majority form checks
+carry recovery across the two words, with a matching native 64-bit check on
+x86-64 and AArch64. A four-input carry-save form checks the same matrix with
+independently randomized operands and the corresponding native 64-bit paths.
+An independent five-input carry-save form extends the split-word matrix;
+Thumb-2 HighC also checks a frame-pointer alias established after earlier
+spills. Native x86-64 and AArch64 repeat the five-input check through both C
+routes. The output must remove their residual
+XOR, AND, and complement operations, while retaining the shifts and OR needed
+to assemble input halves. Thumb-1 compilers may place these offsets in a
+read-only literal island inside executable code; mapping and relocation
+evidence must authorize constant reads in both C routes. The shared symbolic
+candidate generator infers signed coefficients from basis responses and uses
+mixed samples only to discard candidates. `NeverDSolverTests` checks that an
+exact proof accepts equivalent arithmetic and rejects rare counterexamples or
+an incomplete proof.
+
+ARM, Thumb-1 and Thumb-2 Mach-O objects additionally run a complete
+two-function five-input case through both C routes. The check includes
+function-size recovery, a call to the first function at object address zero,
+source MBA elimination, and host-recompiled `-O0`/`-O2` execution. Dedicated
+MedIR tests cover exact stack-alignment offsets and reject dynamic, ambiguous,
+and stronger-than-ABI masks.
+One mixed ARM/Thumb Mach-O object checks mode recovery across direct calls in
+both directions. Both C routes remove its arithmetic MBA and execute all five
+functions against edge and randomized modular-addition inputs at `-O0`/`-O2`.
+Loader tests separately require a Thumb symbol at object address zero to retain
+its mode and verify every reachable mixed-mode function entry.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
@@ -112,6 +146,9 @@ Thumb to verify decoder recovery. `ARM32InterworkingPatchRT.*` links a generic
 mixed ARM/Thumb ELF and executes all four entries in Unicorn before and after
 both section and in-place rewriting. `InstructionMode.*` covers the decoder,
 code-pointer, direct-branch and code-generation boundaries.
+`COFFRelocatableAbsoluteRelocation.MachOARM32*` checks ARM32 Mach-O object
+relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
+call sites, backward calls, malformed encodings and jumps that need a veneer.
 
 ```sh
 cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
@@ -128,6 +165,55 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 ```
 
 Core tests check context splitting, fixed-point joins, dynamic loops, overlapping registers, alias invalidation, finite dispatch, and refusal without a partial replacement. Source tests assemble original register, stack and finite-address x64 machines, recover both C routes, compile at O0/O2 with undefined-behavior traps, and compare execution with independent unsigned arithmetic and memory oracles. Finite-address fixtures exercise input-selected records and related cursor/key controls; native checks cover SysV and Win64 calling conventions. The suite also exercises the public CLI, recovery budgets and unsupported-input reports. Cross-target Clang and LLD are required; original ELF execution additionally requires an x64 Linux host. Missing tools or a nonmatching host are skipped coverage, not a pass.
+
+`VMShapeSourceTests.cpp` adds three original shapes recovered without manual
+control hints: direct-threaded pointer bytecode, a bounded software CALL/RET
+stack with nested virtual calls, and a loop with rotating opcode-decoder state.
+The tests compare native SysV/Win64 execution and both recovered C backends at
+O0/O2 against independent mathematical oracles, including returned values,
+output stores and canaries. They also assemble ELF and COFF variants. COFF
+coverage is assembly-only; the Win64 calling-convention oracle runs as Linux
+ELF with `ms_abi`, not as a Windows PE executable. Unknown
+virtual return cursors, unconstrained decoder keys and an exhausted recovery
+budget must refuse source publication.
+
+`MachineControlSourceTests.cpp` exercises the explicit machine-state ABI with
+finite register-indirect native CALL and finite internal RET dispatch. Its
+separate native observer compares all 16 general registers, defined RFLAGS and
+every byte of the tested guest stack with HighC and LLVMC at O0/O2. Callees read
+and overwrite the target register; checks require one actual fallthrough-address
+store, preserved flags and restored RSP. Expected code addresses come from ELF
+symbols. Unknown targets, finite sets containing a missing or nonexecutable
+destination and an unproved target at entry `[rsp]` must fail without source.
+These original fixtures have been validated locally on x64 Linux;
+their coverage does not establish support for arbitrary virtual machines.
+
+`MachineMemoryCallSourceTests.cpp` adds four zero-hint, default-budget runtime
+cases: an immutable RIP-relative pointer slot, an input-selected read-only
+two-target table, an initialized guest `[rsp]` slot with two possible values,
+and `call *-8(%rsp)` whose target slot is overwritten by the call's push. Native
+execution and both recovered C backends at O0/O2 must match the independent
+17-word register/flag oracle and every byte of the tested guest stack. The
+callee observes the pushed return address; ELF symbols supply expected code
+addresses. The oracle also requires a table address left in a register to retain
+its original numeric guest value, rather than the address of a generated C
+global; the caller supplies any required guest mappings. Unproved external or
+writable slots, unknown or alias-clobbered stack values, invalid targets and
+default-source-ABI use must refuse publication. Local x64 Linux validation
+checks each of the four forms with 1,024 states through native execution, HighC
+and LLVMC at O0/O2, comparing all 17 state words and 128 guest-stack bytes.
+The lower-level memory-call tests also require canonical unsegmented `r/m64`
+forms, optional `addr32` and REX, and rejection of FS/GS, far calls and extra or
+noncanonical prefixes. Effective-address calculation and the target LOAD must
+precede the native return-address push.
+
+`MachineSourceUsesOriginalWritableMappingsThroughBothRoutes` and the wrapper's
+`FixedGuestAddressesRemainNumericThroughLoadsStoresAndState` regression supply
+writable guest memory at its original address. Both C backends at O0/O2 must
+use that mapping for runtime reads and writes, retain numeric guest addresses
+in register outputs and preserve adjacent canaries. Generated global objects
+cannot substitute for these mappings. The fixed-mapping runtime coverage is
+local to x64 Linux.
 
 The flag-state fixture retains `PUSHFQ` and `POPFQ` across finite indirect
 dispatch, then executes recovered HighC and LLVMC at O0/O2. Core negative cases

@@ -605,7 +605,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   unsigned Workers = std::max(
       1u, std::min<unsigned>(workerThreadCount(),
                              static_cast<unsigned>(Result.MedFuncs.size())));
-  bool UseShards = !Opts.PatchMode && Result.MedFuncs.size() >= 8 &&
+  bool UseShards = !Opts.PatchMode && !Result.InterpreterMachineSourceABI &&
+                   Result.MedFuncs.size() >= 8 &&
                    !requiresSerialLLVMEmission(Result.MedFuncs, Img);
 
   if (UseShards) {
@@ -621,8 +622,15 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   } else {
     MedLLVMEmitter MedEmitter;
-    Result.LlvmModule = MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output",
-                                        Img.Arch, ImportMap, &Img, Img.Format);
+    // A recovered machine wrapper uses fixed guest addresses. The original
+    // image remains available to recovery proofs and reports, but must not
+    // authorize source globals or rebased LOAD/STORE addresses. This recovery
+    // route has one call-free function, with its source ABI already bound.
+    const BinaryImage *EmissionImage =
+        Result.InterpreterMachineSourceABI ? nullptr : &Img;
+    Result.LlvmModule =
+        MedEmitter.emit(Result.MedFuncs, Ctx, "neverd_output", Img.Arch,
+                        ImportMap, EmissionImage, Img.Format);
     Result.BackendUnhandledValueIntrinsics =
         MedEmitter.unhandledValueIntrinsicCount();
 

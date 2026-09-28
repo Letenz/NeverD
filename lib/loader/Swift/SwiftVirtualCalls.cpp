@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace neverd {
@@ -58,8 +59,12 @@ public:
       if ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
           Value.isReg() &&
           !getTargetRegInfo(Image.Arch)
-               .isCallPreserved(Value.Offset, Value.Size))
+               .isCallPreserved(Value.Offset, Value.Size)) {
+        if (Op.Output == Value && Op.MemoryOrdering == NdMemoryOrdering::None &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+          return Definition{Definition::Kind::Operation, Value, &Op, Index};
         return std::nullopt;
+      }
       if (!overlaps(Op.Output, Value))
         continue;
       if (Op.Output != Value || Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -161,6 +166,28 @@ public:
     return false;
   }
 
+  bool retainedMethodSelf(const Definition &Context) {
+    if (Context.TheKind != Definition::Kind::Operation ||
+        Context.Op->Opcode != NdOp::CALL ||
+        Context.Op->Output != NdVar::reg(a64reg::X0, 8) ||
+        Context.Op->NumInputs != 1 || !Context.Op->Inputs[0].isConst())
+      return false;
+    const auto *Import = Image.findImportStubAt(Context.Op->Inputs[0].Offset);
+    if (!Import ||
+        (Import->Name != "_objc_retain" &&
+         Import->Name != "_objc_retain_x19") ||
+        !darwinExportModuleMatches("/usr/lib/libobjc.A.dylib", Import->Module))
+      return false;
+    // ARC's register-specific retain entry reads x19 directly; the ordinary
+    // retain entry reads x0. Neither authorizes an unrelated retained object.
+    const auto RetainedRegister =
+        Import->Name == "_objc_retain_x19" ? a64reg::X19 : a64reg::X0;
+    const auto Self = resolve(NdVar::reg(RetainedRegister, 8), Context.Index,
+                              Context.Op->Addr);
+    return Self && Self->TheKind == Definition::Kind::Entry &&
+           Self->Value == NdVar::reg(a64reg::X0, 8);
+  }
+
   std::optional<va_t> maskImport(const Definition &D) {
     auto GlobalAddress = loadAddress(D);
     if (!GlobalAddress)
@@ -183,7 +210,7 @@ public:
 
   std::optional<std::pair<va_t, uint32_t>>
   virtualTarget(const Definition &Target, const Definition &Context,
-                llvm::StringRef ClassName) {
+                llvm::StringRef ClassName, bool DirectSelf) {
     auto Address = loadAddress(Target);
     if (!Address)
       return std::nullopt;
@@ -193,7 +220,8 @@ public:
         BaseAndOffset->first.TheKind != Definition::Kind::Operation ||
         BaseAndOffset->first.Op->Opcode != NdOp::INT_AND ||
         BaseAndOffset->first.Op->NumInputs != 2 ||
-        !ivarReceiver(Context, ClassName))
+        !(DirectSelf ? retainedMethodSelf(Context)
+                     : ivarReceiver(Context, ClassName)))
       return std::nullopt;
     const auto &Masked = BaseAndOffset->first;
     for (unsigned I = 0; I < 2; ++I) {
@@ -209,14 +237,69 @@ public:
   }
 };
 
-std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
-                                                    va_t Entry, va_t CallSite,
-                                                    va_t IsaMaskImport,
-                                                    uint32_t Slot) {
+bool exactRetainedSelfVoidCallWindow(const LowBlock &Block, size_t Index) {
+  if (Index < 2)
+    return false;
+  const auto &Context = Block.Ops[Index - 2];
+  const auto &Link = Block.Ops[Index - 1];
+  return Context.Opcode == NdOp::COPY &&
+         Context.Output == NdVar::reg(a64reg::X20, 8) &&
+         Context.NumInputs == 1 &&
+         Context.Inputs[0] == NdVar::reg(a64reg::X19, 8) &&
+         Link.Opcode == NdOp::COPY &&
+         Link.Output == NdVar::reg(a64reg::X30, 8) && Link.NumInputs == 1 &&
+         Link.Inputs[0].isConst() &&
+         Link.Inputs[0].Offset == Block.Ops[Index].Addr + 4;
+}
+
+std::optional<uint8_t> exactVoidMethodCallWindow(const BinaryImage &Image,
+                                                 const LowBlock &Block,
+                                                 size_t Index) {
+  if (Index < 3)
+    return std::nullopt;
+  const bool ZeroArguments =
+      Index >= 5 && Block.Ops[Index - 3].Opcode == NdOp::COPY &&
+      Block.Ops[Index - 3].Output == NdVar::reg(a64reg::X0, 8) &&
+      Block.Ops[Index - 3].NumInputs == 1 &&
+      Block.Ops[Index - 3].Inputs[0].isConst() &&
+      Block.Ops[Index - 3].Inputs[0].Offset == 0 &&
+      Block.Ops[Index - 3].Inputs[0].Size == 8 &&
+      Block.Ops[Index - 2].Opcode == NdOp::COPY &&
+      Block.Ops[Index - 2].Output == NdVar::reg(a64reg::X1, 8) &&
+      Block.Ops[Index - 2].NumInputs == 1 &&
+      Block.Ops[Index - 2].Inputs[0].isConst() &&
+      Block.Ops[Index - 2].Inputs[0].Offset == 0 &&
+      Block.Ops[Index - 2].Inputs[0].Size == 8;
+  const auto &Retain = Block.Ops[Index - (ZeroArguments ? 5 : 3)];
+  const auto &Saved = Block.Ops[Index - (ZeroArguments ? 4 : 2)];
+  const auto &Link = Block.Ops[Index - 1];
+  if (Retain.Opcode != NdOp::CALL ||
+      Retain.Output != NdVar::reg(a64reg::X0, 8) || Retain.NumInputs != 1 ||
+      !Retain.Inputs[0].isConst() || Saved.Opcode != NdOp::COPY ||
+      Saved.Output != NdVar::reg(a64reg::X19, 8) || Saved.NumInputs != 1 ||
+      Saved.Inputs[0] != NdVar::reg(a64reg::X0, 8) ||
+      Link.Opcode != NdOp::COPY || Link.Output != NdVar::reg(a64reg::X30, 8) ||
+      Link.NumInputs != 1 || !Link.Inputs[0].isConst() ||
+      Link.Inputs[0].Offset != Block.Ops[Index].Addr + 4)
+    return std::nullopt;
+  const auto *Import = Image.findImportStubAt(Retain.Inputs[0].Offset);
+  return Import && Import->Name == "_objc_retain" &&
+                 darwinExportModuleMatches("/usr/lib/libobjc.A.dylib",
+                                           Import->Module)
+             ? std::optional<uint8_t>(ZeroArguments ? 2 : 0)
+             : std::nullopt;
+}
+
+std::optional<SourceCallTypeHint>
+canonicalAccessor(const BinaryImage &Image, va_t Entry, va_t CallSite,
+                  va_t IsaMaskImport, uint32_t Slot, uint8_t ZeroArgumentWords,
+                  bool DirectSelf) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry ||
       !CallSite || !IsaMaskImport || Slot < 0x40 || Slot > 0x1000 || Slot % 8 ||
-      !Image.isCodeAddress(Entry) || !Image.isCodeAddress(CallSite))
+      (ZeroArgumentWords != 0 && ZeroArgumentWords != 2) ||
+      (DirectSelf && ZeroArgumentWords) || !Image.isCodeAddress(Entry) ||
+      !Image.isCodeAddress(CallSite))
     return std::nullopt;
   const auto Import = darwinRuntimeImport(Image, IsaMaskImport);
   const auto Bind = Image.DyldBindSlots.find(IsaMaskImport);
@@ -239,14 +322,32 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   const bool BoolGetter = Method->TypeEncoding == "B16@0:8";
   const bool DoubleSetter = Method->TypeEncoding == "v24@0:8d16";
   const bool BoolSetter = Method->TypeEncoding == "v20@0:8B16";
+  const bool VoidMethod = Method->TypeEncoding == "v16@0:8" &&
+                          Method->Selector.find(':') == std::string::npos;
+  if (DirectSelf && !VoidMethod)
+    return std::nullopt;
   const bool Setter = DoubleSetter || BoolSetter;
   const bool Floating = DoubleGetter || DoubleSetter;
-  if (!DoubleGetter && !BoolGetter && !DoubleSetter && !BoolSetter)
+  if (ZeroArgumentWords && !VoidMethod)
+    return std::nullopt;
+  if (!DoubleGetter && !BoolGetter && !DoubleSetter && !BoolSetter &&
+      !VoidMethod)
     return std::nullopt;
   const auto Bytes = Image.readVA(CallSite, 4);
+  // The retained-self bridge puts the same object in Swift's context
+  // register immediately before its virtual call. Keep that instruction in
+  // the immutable image proof as well as in the LowIR window.
+  constexpr std::array<uint8_t, 4> MoveSelfToContext = {0xf4, 0x03, 0x13, 0xaa};
+  const auto ContextBytes =
+      DirectSelf && CallSite >= 4 ? Image.readVA(CallSite - 4, 4) : nullptr;
+  if (DirectSelf &&
+      (!ContextBytes || !std::equal(MoveSelfToContext.begin(),
+                                    MoveSelfToContext.end(), ContextBytes)))
+    return std::nullopt;
   constexpr std::array<uint8_t, 4> BlrX21 = {0xa0, 0x02, 0x3f, 0xd6};
   constexpr std::array<uint8_t, 4> BlrX22 = {0xc0, 0x02, 0x3f, 0xd6};
-  const auto &ExpectedCall = BoolSetter ? BlrX22 : BlrX21;
+  constexpr std::array<uint8_t, 4> BlrX8 = {0x00, 0x01, 0x3f, 0xd6};
+  const auto &ExpectedCall = DirectSelf ? BlrX8 : BoolSetter ? BlrX22 : BlrX21;
   if (!Bytes || !std::equal(ExpectedCall.begin(), ExpectedCall.end(), Bytes))
     return std::nullopt;
   const auto EntryType = objcMethodSourceTypeHint(Image, Entry);
@@ -255,11 +356,14 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
     return std::nullopt;
   const TypeRef &ValueType =
       Setter ? EntryType->Parameters.back().Type : EntryType->ReturnType;
-  if (!ValueType ||
-      (Floating ? (ValueType->Kind != NdTypeKind::Float || ValueType->Size != 8)
-                : (ValueType->Kind != NdTypeKind::Int || ValueType->Size != 1 ||
-                   ValueType->IsSigned)) ||
-      (Setter && EntryType->ReturnType->Kind != NdTypeKind::Void))
+  if ((VoidMethod || Setter) && EntryType->ReturnType->Kind != NdTypeKind::Void)
+    return std::nullopt;
+  if (!VoidMethod &&
+      (!ValueType ||
+       (Floating
+            ? (ValueType->Kind != NdTypeKind::Float || ValueType->Size != 8)
+            : (ValueType->Kind != NdTypeKind::Int || ValueType->Size != 1 ||
+               ValueType->IsSigned))))
     return std::nullopt;
   const Symbol *Symbol = nullptr;
   for (const auto &S : Image.Symbols)
@@ -271,23 +375,32 @@ std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
   if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s"))
     return std::nullopt;
   const llvm::StringRef Name = Symbol->Name;
-  if (Floating ? (!Name.ends_with(Setter ? "12CoreGraphics7CGFloatVvsTo"
-                                         : "12CoreGraphics7CGFloatVvgTo") &&
-                  !Name.ends_with(Setter ? "SdvsTo" : "SdvgTo"))
-               : !Name.ends_with(Setter ? "SbvsTo" : "SbvgTo"))
+  const bool MatchesSymbol =
+      VoidMethod
+          ? Name.ends_with(std::to_string(Method->Selector.size()) +
+                           Method->Selector + "yyFTo")
+          : (Floating
+                 ? (Name.ends_with(Setter ? "12CoreGraphics7CGFloatVvsTo"
+                                          : "12CoreGraphics7CGFloatVvgTo") ||
+                    Name.ends_with(Setter ? "SdvsTo" : "SdvgTo"))
+                 : Name.ends_with(Setter ? "SbvsTo" : "SbvgTo"));
+  if (!MatchesSymbol)
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
   Hint.TargetName = "swift_virtual";
-  Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{Entry, CallSite,
-                                                          IsaMaskImport, Slot};
+  Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
+      Entry, CallSite, IsaMaskImport, Slot, ZeroArgumentWords, DirectSelf};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Signature.ReturnType =
-      Setter ? NdType::makeVoid()
-             : (Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false));
+      (Setter || VoidMethod)
+          ? NdType::makeVoid()
+          : (Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false));
   if (Setter)
     Hint.Signature.Parameters.push_back(
         {"value", Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false)});
+  for (uint8_t I = 0; I < ZeroArgumentWords; ++I)
+    Hint.Signature.Parameters.push_back({"zero", NdType::makeInt(8, false)});
   Hint.Signature.Parameters.push_back(
       {"self", NdType::makePtr(NdType::makeVoid())});
   Hint.Signature.Parameters.back().TheRole =
@@ -317,7 +430,8 @@ bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
     return false;
   const auto Expected = canonicalAccessor(
       Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
-      Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset);
+      Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset,
+      Hint.Virtual->ZeroArgumentWords, Hint.Virtual->DirectSelf);
   return Expected && Expected->Virtual == Hint.Virtual &&
          equalSourceABIs(Expected->Signature, Hint.Signature);
 }
@@ -344,11 +458,15 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
   size_t CallsAtSite = 0;
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     const auto &Op = Block.Ops[I];
-    if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 ||
-        Op.Inputs[0] != NdVar::reg(Method->TypeEncoding == "v20@0:8B16"
-                                       ? a64reg::X22
-                                       : a64reg::X21,
-                                   8) ||
+    if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1)
+      continue;
+    const bool DirectSelf = Method->TypeEncoding == "v16@0:8" &&
+                            Op.Inputs[0] == NdVar::reg(a64reg::X8, 8);
+    if ((!DirectSelf &&
+         Op.Inputs[0] != NdVar::reg(Method->TypeEncoding == "v20@0:8B16"
+                                        ? a64reg::X22
+                                        : a64reg::X21,
+                                    8)) ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       continue;
@@ -359,17 +477,30 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
         ++CallsAtSite;
     if (CallsAtSite != 1)
       continue;
+    uint8_t ZeroArgumentWords = 0;
+    if (Method->TypeEncoding == "v16@0:8") {
+      if (DirectSelf) {
+        if (!exactRetainedSelfVoidCallWindow(Block, I))
+          continue;
+      } else {
+        const auto Window = exactVoidMethodCallWindow(Image, Block, I);
+        if (!Window)
+          continue;
+        ZeroArgumentWords = *Window;
+      }
+    }
     BlockTrace Trace(Image, Function, Block);
     auto Target = Trace.resolve(Op.Inputs[0], I, Op.Addr);
     auto Context = Trace.resolve(NdVar::reg(a64reg::X20, 8), I, Op.Addr);
     if (!Target || !Context)
       continue;
     const auto Virtual =
-        Trace.virtualTarget(*Target, *Context, Method->ClassName);
+        Trace.virtualTarget(*Target, *Context, Method->ClassName, DirectSelf);
     if (!Virtual)
       continue;
-    auto Hint = canonicalAccessor(Image, Function.Entry, Op.Addr,
-                                  Virtual->first, Virtual->second);
+    auto Hint =
+        canonicalAccessor(Image, Function.Entry, Op.Addr, Virtual->first,
+                          Virtual->second, ZeroArgumentWords, DirectSelf);
     if (Hint)
       Result.emplace(Op.Addr, std::move(*Hint));
   }

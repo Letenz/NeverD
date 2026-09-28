@@ -7,18 +7,23 @@
 #include "NeverDLiftFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/loader/DirectBranch.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/BinaryFormat/COFF.h"
+#include "llvm/Object/MachO.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -992,6 +997,8 @@ _callee:
 
 .section __TEXT,__thumb_callee,regular,pure_instructions
 .thumb
+.globl _unmarked_alias
+_unmarked_alias:
 .thumb_func _thumb_callee
 .globl _thumb_callee
 _thumb_callee:
@@ -1064,6 +1071,237 @@ _data_target:
             static_cast<uint32_t>(Target->Addr + 4));
   EXPECT_EQ(Img.DataPtrRelocSlots.count(Slot->Addr), 1u);
   EXPECT_EQ(Img.WritableRelocDataAddrs.count(Target->Addr + 4), 1u);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32PreservesThumbFunctionAtObjectAddressZero) {
+  const fs::path Object =
+      compileCOFF("macho_thumb_at_zero", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.thumb_func _first
+.globl _first
+_first:
+  adds r0, r0, r1
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  const Symbol *First = findSymbol(Img, "_first");
+  ASSERT_NE(First, nullptr);
+  ASSERT_EQ(First->Addr, 0u);
+  EXPECT_EQ(Img.ARMCodeModeEntries.at(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(0), InstructionMode::Thumb);
+  EXPECT_EQ(Img.instructionModeAt(2), InstructionMode::Thumb);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32TracksReachableMixedFunctionModes) {
+  const fs::path Object = tmpFile("macho_mixed_mode.o");
+  const RunResult Compiled = exec(
+      NEVERD_TEST_CLANG,
+      {"-target", "armv7-apple-darwin", "-O0", "-ffreestanding", "-nostdinc",
+       "-fno-stack-protector", "-fno-inline", "-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_mixed.c").string(),
+       "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  EXPECT_EQ(Img.Mode, InstructionMode::MixedARMThumb);
+  for (const auto &[Name, Mode] :
+       {std::pair{"_arm_mba", InstructionMode::ARM},
+        std::pair{"_thumb_mba", InstructionMode::Thumb},
+        std::pair{"_thumb_calls_arm", InstructionMode::Thumb},
+        std::pair{"_arm_calls_thumb", InstructionMode::ARM},
+        std::pair{"_thumb_calls_arm_calls_thumb", InstructionMode::Thumb}}) {
+    const Symbol *Function = findSymbol(Img, Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    EXPECT_EQ(Img.instructionModeAt(Function->Addr), Mode) << Name;
+  }
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32AppliesThumbBranchRelocations) {
+  const fs::path Object =
+      compileCOFF("macho_thumb32_branches", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.thumb_func _thumb_caller
+.globl _thumb_caller
+_thumb_caller:
+  nop
+  bl _thumb_callee
+  b.w _thumb_callee
+  bl _arm_callee
+  blx _arm_callee
+  bx lr
+
+.section __TEXT,__thumb_callee,regular,pure_instructions
+.thumb
+.thumb_func _thumb_callee
+.globl _thumb_callee
+_thumb_callee:
+  bx lr
+
+.section __TEXT,__arm_callee,regular,pure_instructions
+.arm
+.globl _arm_callee
+_arm_callee:
+  bx lr
+
+.section __TEXT,__thumb_back,regular,pure_instructions
+.thumb
+.thumb_func _thumb_back_caller
+.globl _thumb_back_caller
+_thumb_back_caller:
+  bl _thumb_caller
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_TRUE(static_cast<bool>(ImgOrErr))
+      << llvm::toString(ImgOrErr.takeError());
+  const BinaryImage &Img = *ImgOrErr;
+  ASSERT_EQ(Img.Format, BinaryFormat::MachO);
+  ASSERT_EQ(Img.Arch, Arch::ARM);
+  ASSERT_TRUE(Img.IsRelocatable);
+
+  const Symbol *Caller = findSymbol(Img, "_thumb_caller");
+  const Symbol *ThumbCallee = findSymbol(Img, "_thumb_callee");
+  const Symbol *ARMCallee = findSymbol(Img, "_arm_callee");
+  const Symbol *BackCaller = findSymbol(Img, "_thumb_back_caller");
+  ASSERT_NE(Caller, nullptr);
+  ASSERT_NE(ThumbCallee, nullptr);
+  ASSERT_NE(ARMCallee, nullptr);
+  ASSERT_NE(BackCaller, nullptr);
+  EXPECT_EQ(Caller->Size, 20u);
+  EXPECT_EQ(ThumbCallee->Size, 2u);
+  EXPECT_EQ(ARMCallee->Size, 4u);
+  EXPECT_EQ(BackCaller->Size, 6u);
+  const uint8_t *Instructions = Img.readVA(Caller->Addr, 18);
+  ASSERT_NE(Instructions, nullptr);
+
+  for (const auto &[Offset, Target] :
+       {std::pair<size_t, va_t>{2, ThumbCallee->Addr},
+        {6, ThumbCallee->Addr},
+        {10, ARMCallee->Addr},
+        {14, ARMCallee->Addr}}) {
+    size_t Length = 0;
+    const auto Branch = decodeDirectBranchTarget(
+        Arch::ARM, InstructionMode::Thumb, Instructions + Offset, 4,
+        Caller->Addr + Offset, Length);
+    ASSERT_TRUE(Branch) << "branch at +" << Offset;
+    EXPECT_EQ(*Branch, Target) << "branch at +" << Offset;
+    EXPECT_EQ(Length, 4u);
+  }
+  EXPECT_EQ(readLE<uint16_t>(Instructions + 12) & 0xD000u, 0xC000u)
+      << "Thumb BL to a known ARM function must interwork through BLX";
+
+  const uint8_t *BackwardBytes = Img.readVA(BackCaller->Addr, 4);
+  ASSERT_NE(BackwardBytes, nullptr);
+  size_t BackwardLength = 0;
+  const auto Backward =
+      decodeDirectBranchTarget(Arch::ARM, InstructionMode::Thumb, BackwardBytes,
+                               4, BackCaller->Addr, BackwardLength);
+  ASSERT_TRUE(Backward);
+  EXPECT_EQ(*Backward, Caller->Addr);
+  EXPECT_EQ(BackwardLength, 4u);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32RejectsMalformedThumbBranchRelocation) {
+  const fs::path Object =
+      compileCOFF("macho_thumb32_bad_branch", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.thumb_func _caller
+.globl _caller
+_caller:
+  bl _callee
+  bx lr
+
+.section __TEXT,__callee,regular,pure_instructions
+.thumb
+.thumb_func _callee
+.globl _callee
+_callee:
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto Buffer = llvm::MemoryBuffer::getFile(Object.string());
+  ASSERT_TRUE(static_cast<bool>(Buffer));
+  auto MachO = llvm::object::MachOObjectFile::create(
+      (*Buffer)->getMemBufferRef(), true, false);
+  ASSERT_TRUE(static_cast<bool>(MachO)) << llvm::toString(MachO.takeError());
+  std::string Bytes = (*Buffer)->getBuffer().str();
+  std::optional<size_t> TextOffset;
+  for (const llvm::object::SectionRef &Sec : (*MachO)->sections()) {
+    auto Name = Sec.getName();
+    ASSERT_TRUE(static_cast<bool>(Name)) << llvm::toString(Name.takeError());
+    if (*Name != "__text")
+      continue;
+    auto Contents = Sec.getContents();
+    ASSERT_TRUE(static_cast<bool>(Contents))
+        << llvm::toString(Contents.takeError());
+    TextOffset = Contents->data() - (*Buffer)->getBufferStart();
+    break;
+  }
+  ASSERT_TRUE(TextOffset);
+  ASSERT_LE(*TextOffset + 4, Bytes.size());
+  ASSERT_EQ(static_cast<uint8_t>(Bytes[*TextOffset + 1]), 0xf0u);
+  Bytes[*TextOffset] = static_cast<char>(0x00);
+  Bytes[*TextOffset + 1] = static_cast<char>(0xbf); // Thumb NOP, not BL.
+
+  const fs::path Malformed = tmpFile("macho_thumb32_bad_branch.obj");
+  {
+    std::ofstream OS(Malformed, std::ios::binary);
+    ASSERT_TRUE(OS);
+    OS.write(Bytes.data(), static_cast<std::streamsize>(Bytes.size()));
+  }
+  auto ImgOrErr = loadBinary(Malformed);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError())
+                .find("invalid Thumb BR22 instruction"),
+            std::string::npos);
+}
+
+TEST_F(COFFRelocatableAbsoluteRelocation,
+       MachOARM32RejectsThumbJumpNeedingInterworkingVeneer) {
+  const fs::path Object =
+      compileCOFF("macho_thumb32_jump_arm", "armv7-apple-darwin", R"(
+.syntax unified
+.section __TEXT,__text,regular,pure_instructions
+.thumb
+.thumb_func _caller
+.globl _caller
+_caller:
+  b.w _callee
+
+.section __TEXT,__callee,regular,pure_instructions
+.arm
+.globl _callee
+_callee:
+  bx lr
+)");
+  ASSERT_FALSE(Object.empty());
+
+  auto ImgOrErr = loadBinary(Object);
+  ASSERT_FALSE(static_cast<bool>(ImgOrErr));
+  EXPECT_NE(llvm::toString(ImgOrErr.takeError())
+                .find("unsupported interworking veneer"),
+            std::string::npos);
 }
 
 } // namespace

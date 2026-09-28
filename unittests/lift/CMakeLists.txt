@@ -1,4 +1,5 @@
 add_neverd_unittest(NeverDLiftTests
+  core/X64MemoryCallTargetTests.cpp
   aarch64/AArch64_ArithTests.cpp
   aarch64/AArch64_AtomicTests.cpp
   aarch64/AArch64_BitShiftTests.cpp
@@ -178,6 +179,7 @@ add_neverd_unittest(NeverDLiftTests
   format/COFFRelocatableAbsoluteRelocationTests.cpp
   format/NativePointerRelocationBoundaryTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedDceImplicitSpTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp
@@ -1374,6 +1376,10 @@ add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
 add_neverd_unittest(NeverDMBASourceTests
   core/MBASourceTests.cpp
+)
+add_neverd_unittest(NeverDMedStackAlignmentTests
+  core/MedStackAlignmentTests.cpp
+  LINK_COMPONENTS IRMed
 )
 target_compile_definitions(NeverDMBASourceTests PRIVATE
   NEVERD_BINARY="$<TARGET_FILE:neverd>"
@@ -3101,6 +3107,7 @@ endif()
 
 add_neverd_unittest(NeverDLLVMCIntrinsicSemanticTests
   core/LLVMCIntrinsicSemanticTests.cpp
+  core/LLVMCFunnelShiftTests.cpp
   LINK_COMPONENTS BackendC
 )
 target_include_directories(NeverDLLVMCIntrinsicSemanticTests PRIVATE

@@ -35,6 +35,11 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Both source routes apply the same module-wide return modeling before recovering
+call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
+uses the two integer return registers; HighIR and LLVM emission must preserve
+both halves through callers and source returns.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a
@@ -65,6 +70,18 @@ and unrelated names do not select a decoder mode. A fully stripped image can
 leave an indirect target's state unknowable from static bytes alone; the
 file-level default is not proof that all of its executable bytes use one mode.
 
+For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
+`N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
+control-flow edges through the shared reachable-mode analysis. A cross-state
+`BLX` can establish an ARM target without treating an unflagged symbol as ARM
+proof. Decoding is limited to reached instruction spans; an unproved gap in a
+mixed image retains unknown mode.
+
+`BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
+fixed-width read from a `$d` island inside executable storage. Both HighIR and
+LLVM emission require the whole read to stay in the island and reject writable
+or relocated bytes.
+
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
 computed register versions do not inherit that role. HighC uses the same
@@ -73,6 +90,12 @@ power-of-two alignment only when the input is a certified entry-stack offset
 within the synthetic frame. LLVMC preserves a host pointer through a mask
 that is an identity at the target pointer width, so generated C does not
 truncate valid host address bits.
+
+Before either source route, MedIR can replace a stack-alignment mask with an
+exact offset only when an authenticated entry-SP definition and the target
+ABI's guaranteed alignment prove every discarded bit. Binary lift and patch
+keep the original operation. The LLVM-to-C route explicitly requests this
+source projection even though it otherwise uses the direct LLVM pipeline.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
@@ -776,6 +799,11 @@ its matrix arithmetic is not approximated with scalar multiply/add.
 Inline and materialized LLVM GEP expressions share data-layout-derived byte
 offsets, including nested aggregates and signed dynamic indices. Ordinary raw
 scalar accesses with insufficient alignment use exact-width byte copies.
+Integer comparisons share one LLVMC rendering rule across inline expressions,
+assigned results, and inverted branches. Operands retain their LLVM bit width
+before C integer promotion, and signed predicates interpret that width's sign
+bit. A comparison with zero must preserve modular truncation before any Boolean
+shorthand is applied.
 
 `lib/pipeline/Pipeline.cpp` is the source of truth for route selection. Keep
 representation-specific logic in its owning IR or backend library; the pipeline
@@ -1398,7 +1426,67 @@ carriers. Width adapters preserve zero extension versus sign extension;
 full-word consumers retain their original values. Node/edge limits and unknown
 shapes leave the original expression intact without invoking a solver.
 
+`SymState` separately owns memory-input creation provenance and historical
+load provenance. `memoryInputOrigins()` records a symbolic region, byte offset,
+and width when untouched input bytes are first materialized; later stores or
+loads of equal or forwarded values do not change that origin. Unknown inputs
+created after memory clobbering have no node-entry memory origin.
+`loadOrigins()` retains historical observations for its existing consumers.
+Interpreter control discovery uses creation origins to nominate exact
+entry-frame-relative fields. Historical load addresses may still explain
+address dependencies, but do not establish entry slots. Neither record proves
+current memory contents, accessibility, or disjointness.
+
+Interpreter specialization also owns context keys for exact entry-frame-relative
+pointers. Full-width proven displacements stay distinct from numeric constants;
+no sampled root address enters a key. When an unsupported operation is reached,
+bounded reverse traversal can nominate fields from the nearest undecided
+predecessor guards for control-state refinement. This is a candidate heuristic,
+not an unreachability proof: a fresh complete specialization must still prove
+all retained paths before publication. The binary provider certifies native
+control forms; the common specializer preserves guest stack effects and proves
+finite call and internal-return targets. The x64 lifter owns an instruction-local
+memory-call target projection that reuses `operandRead` and `computeEA` for an
+explicit load, including address-size wrapping. It verifies canonical raw
+prefixes because normalized decoder details may omit ignored prefixes. The
+ordinary import-slot representation remains unchanged. The specializer retains
+only a temporary-only address prefix ending in one ordinary eight-byte target
+load, then captures the value before any stack change or return-address store.
+Memory-call slot addresses never stand in for loaded callees; immutable reads
+and initialized guest-memory values still require the existing bounded proofs.
+
+At the explicit machine-state source boundary, guest code and data addresses
+remain their original numeric values, including scalar register outputs that
+observe them. Neither C backend may rebind these values to generated global
+objects. The caller provides the required original guest mappings; recovery
+proofs and reports remain attached to the input image. This machine-state
+contract does not change ordinary decompilation's address-binding policy.
+
+Interpreter specialization owns finite-query reuse in its run-local
+`FiniteQueryCache`. Complete domains and proved domain-limit excesses are
+keyed by the full ordered expression DAG under consistent free-variable
+renaming, retaining widths, constants, semantic payloads, and sharing. No
+symbolic references or inconclusive results cross contexts. Key construction
+and retained storage are bounded; misses use the existing `FiniteValues`
+proof path and all global work budgets remain in force. Relation projection
+can reuse a complete single varying column when all other columns are proved
+singletons under the same reachable predicate. A complete masked domain is
+omitted as an unconstrained factor only after the shared bit-origin proof
+establishes independence from the predicate and all other columns. Marginal
+domains alone never authorize a Cartesian-product assumption.
+
 MBA simplification keeps exact derivations inside `lib/symbolic/mba`.
+Split-word arithmetic recovery also lives there as a solver-independent
+candidate generator: it partitions low-word dependencies from high-word inputs,
+infers signed coefficients from modular basis responses, and proposes packed
+arithmetic over up to four operands. The caller's bitvector equivalence proof
+is required; deterministic samples only discard candidates. An exact modular
+carry identity removes a wide constant offset before proof. The HighIR and
+LLVM bridges translate exact concatenation and defined carry predicates into
+the shared expression; the LLVM bridge admits a disjoint packed OR and a
+widened no-wrap shift only when operand widths prove the flags for every input.
+Unknown operators, incomplete proofs, and unprofitable output leave the
+original expression intact.
 Before HighIR algebra, private-frame forwarding uses source-local identities
 after renaming and the shared target-width frame-address proof. Exact integer
 reads in straight-line functions can reuse a stored value while its inputs and

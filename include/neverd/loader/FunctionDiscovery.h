@@ -61,7 +61,7 @@ void scanX86HotpatchEntries(BinaryImage &Img);
 /// executable segments at plausible function prologues.
 void scanDataFuncPointers(BinaryImage &Img);
 
-/// Follow direct ARM/Thumb control-flow edges from exact ELF code entries.
+/// Follow direct ARM/Thumb control-flow edges from exact code entries.
 /// Records only decoded reachable instruction spans; malformed or conflicting
 /// state transitions fail instead of assigning a file-wide default mode.
 llvm::Error discoverARMReachableModes(BinaryImage &Img);

@@ -140,19 +140,22 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         if (auto It = EffectiveImportStorageSlots.find(TargetAddr);
             It != EffectiveImportStorageSlots.end())
           IsObjectName = It->second.Name == Name;
-      if (!IsObjectName)
-        for (const Symbol &Sym : Img->Symbols)
-          if (Sym.Addr == TargetAddr && Sym.Name == Name) {
-            IsObjectName = true;
-            break;
-          }
-      if (!IsObjectName)
-        for (const Export &Exp : Img->Exports)
-          if (Exp.Addr == TargetAddr && Exp.Name == Name) {
-            IsObjectName = true;
-            break;
-          }
     }
+    // A relocatable object's first function can have address zero.  Its
+    // symbol still proves the object-file spelling, whereas zero by itself
+    // is only an absent-address sentinel for the import lookups above.
+    if (!IsObjectName)
+      for (const Symbol &Sym : Img->Symbols)
+        if (Sym.Addr == TargetAddr && Sym.Name == Name) {
+          IsObjectName = true;
+          break;
+        }
+    if (!IsObjectName)
+      for (const Export &Exp : Img->Exports)
+        if (Exp.Addr == TargetAddr && Exp.Name == Name) {
+          IsObjectName = true;
+          break;
+        }
     if (!IsObjectName)
       for (const RelocationEntry &Rel : Img->Relocations)
         if ((Rel.Address == Op.Addr || Rel.Address == Op.Addr + 1) &&

@@ -99,6 +99,19 @@ struct ELFRelocationFootprint {
 std::optional<ELFRelocationFootprint> elfRelocationFootprint(uint16_t Machine,
                                                              uint32_t Type);
 
+/// An architecture a signature file is made for, as neverd-sigmaker's
+/// `--machine` names it.
+enum class TargetMachine { X86, X64, ARM, ARM64 };
+
+/// The architecture `x86`, `x64`, `arm` or `arm64` names, or std::nullopt.
+std::optional<TargetMachine> parseTargetMachine(llvm::StringRef Name);
+
+/// Whether \p Obj holds code for \p Machine: a COFF object of that machine,
+/// or an ELF object of its class and e_machine. An x32 object (ELFCLASS32
+/// with EM_X86_64) is not x64 code, and no other format matches.
+bool isObjectForMachine(const llvm::object::ObjectFile &Obj,
+                        TargetMachine Machine);
+
 /// The number of bytes a COFF relocation of \p Type rewrites at its offset
 /// for objects of \p Machine (an IMAGE_FILE_MACHINE_* value).
 ///
@@ -157,9 +170,11 @@ std::optional<uint64_t> coffBranchReferenceOffset(uint16_t Machine,
 /// symbol is a function, ending at the next symbol of any kind in its
 /// section. An ELF object keeps its relocations in sections of their own,
 /// each naming the section it applies to; their footprints come from
-/// elfRelocationFootprint. The ELF function symbols that label one address
-/// are one routine's aliases and share one line, their names in
-/// preferredAliasOrder. Mach-O relocations cover four bytes.
+/// elfRelocationFootprint. An ELF function ends earlier where its symbol's
+/// size says so, before the padding that aligns the next one. The ELF
+/// function symbols that label one address are one routine's aliases and
+/// share one line, their names in preferredAliasOrder. Mach-O relocations
+/// cover four bytes.
 PatternGeneratorStats generatePatterns(const llvm::object::ObjectFile &Obj,
                                        const PatternGeneratorOptions &Opts,
                                        llvm::raw_ostream &OS);

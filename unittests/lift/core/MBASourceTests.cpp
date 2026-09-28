@@ -19,17 +19,24 @@ std::string readSource(const fs::path &Path) {
 }
 
 std::string functionBody(const std::string &Source, const std::string &Name) {
-  const auto NamePos = Source.find(Name + "(");
-  EXPECT_NE(NamePos, std::string::npos) << "Missing " << Name << "\n" << Source;
-  if (NamePos == std::string::npos)
-    return {};
-  const auto Begin = Source.find('{', NamePos);
-  const auto End = Source.find("\n}", Begin);
-  EXPECT_NE(Begin, std::string::npos) << Source;
-  EXPECT_NE(End, std::string::npos) << Source;
-  if (Begin == std::string::npos || End == std::string::npos)
-    return {};
-  return Source.substr(Begin, End - Begin);
+  size_t Search = 0;
+  while (true) {
+    const auto NamePos = Source.find(Name + "(", Search);
+    if (NamePos == std::string::npos)
+      break;
+    const auto Begin = Source.find('{', NamePos);
+    const auto Semicolon = Source.find(';', NamePos);
+    if (Begin != std::string::npos &&
+        (Semicolon == std::string::npos || Begin < Semicolon)) {
+      const auto End = Source.find("\n}", Begin);
+      EXPECT_NE(End, std::string::npos) << Source;
+      return End == std::string::npos ? std::string{}
+                                      : Source.substr(Begin, End - Begin);
+    }
+    Search = NamePos + Name.size() + 1;
+  }
+  ADD_FAILURE() << "Missing function definition " << Name << "\n" << Source;
+  return {};
 }
 
 std::string returnedExpression(const std::string &Body) {
@@ -252,6 +259,24 @@ uint32_t addressed_add(uint32_t x, uint32_t y) {
   EXPECT_TRUE(containsResidualMBA(functionAST(Source, "hidden_mba")));
   EXPECT_TRUE(containsResidualMBA(functionAST(Source, "compound_mba")));
   EXPECT_FALSE(containsResidualMBA(functionAST(Source, "addressed_add")));
+}
+
+TEST(MBASourceBodyTest, FindsDefinitionAfterPrototypeAndCall) {
+  const std::string Source = R"(
+int target(int);
+int unrelated(int x) {
+  return x + 1;
+}
+int caller(void) {
+  return target(1);
+}
+int target(int x) {
+  return x ^ 1;
+}
+)";
+  const std::string Body = functionBody(Source, "target");
+  EXPECT_NE(Body.find("x ^ 1"), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("x + 1"), std::string::npos) << Body;
 }
 
 class MBASourceTest : public MBAExecutableSourceTest,
@@ -601,7 +626,9 @@ static int check_pair(uint64_t x, uint64_t y, uint64_t z) {
     return 1;
   }
 #if NESTED_WORD_BITS == 64
-  if ((uint64_t)mba_wide_add(x, y) != x + y)
+  if ((uint64_t)mba_wide_add(x, y) != x + y ||
+      (uint64_t)mba_wide_three(x, y, z) != x + y + z ||
+      (uint64_t)mba_wide_four(x, y, z, x ^ y) != x + y + z + (x ^ y))
     return 1;
 #endif
   return 0;
@@ -670,8 +697,11 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
   for (const char *Name :
        {"mba_nested_add", "mba_nested_sub", "mba_three_input"})
     expectNoResidualMBA(Output, Name);
-  if (Case.WordBits == 64)
+  if (Case.WordBits == 64) {
     expectNoResidualMBA(Output, "mba_wide_add");
+    expectNoResidualMBA(Output, "mba_wide_three");
+    expectNoResidualMBA(Output, "mba_wide_four");
+  }
   for (const char *Name : {"mba_nested_xor", "mba_nested_or"}) {
     const auto Body = functionBody(Source, Name);
     EXPECT_EQ(std::count(Body.begin(), Body.end(),
@@ -715,6 +745,565 @@ INSTANTIATE_TEST_SUITE_P(
         NestedSourceCase{"AArch64", "aarch64-linux-gnu", 64, false, false},
         NestedSourceCase{"AArch64", "aarch64-linux-gnu", 64, false, true}),
     [](const ::testing::TestParamInfo<NestedSourceCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
+struct RegisterPairCase {
+  const char *Name;
+  const char *Triple;
+  bool Thumb;
+  bool LLVM;
+  bool PIC = false;
+};
+
+class MBARegisterPairSourceTest
+    : public NeverDLiftTest,
+      public ::testing::WithParamInterface<RegisterPairCase> {};
+
+TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + (Case.LLVM ? " LLVMC" : " HighC"));
+
+  const auto Object = tmpFile("register-pair.o");
+  std::vector<std::string> CompileArguments{
+      "-target",        Case.Triple, "-O0",
+      "-ffreestanding", "-nostdinc", "-fno-stack-protector",
+      "-fno-inline"};
+  if (Case.Thumb)
+    CompileArguments.push_back("-mthumb");
+  if (std::string_view(Case.Triple) == "i386-linux-gnu" && !Case.PIC) {
+    CompileArguments.push_back("-fno-pic");
+    CompileArguments.push_back("-fno-pie");
+  }
+  CompileArguments.insert(
+      CompileArguments.end(),
+      {"-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_register_pair.c").string(),
+       "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArguments);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("register-pair.c");
+  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    Arguments.push_back("--llvm");
+  Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Arguments);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  ASSERT_FALSE(Source.empty());
+  EXPECT_NE(Source.find(Case.LLVM ? "uint64_t mba_pair_add("
+                                  : "int64_t mba_pair_add("),
+            std::string::npos)
+      << Source;
+  const std::string PairBody = functionBody(Source, "mba_pair_add");
+  EXPECT_FALSE(PairBody.empty());
+  EXPECT_EQ(PairBody.find(" ^ "), std::string::npos) << PairBody;
+  EXPECT_EQ(PairBody.find(" & "), std::string::npos) << PairBody;
+  const std::string OrPairBody = functionBody(Source, "mba_pair_or_add");
+  EXPECT_FALSE(OrPairBody.empty());
+  EXPECT_EQ(OrPairBody.find(" ^ "), std::string::npos) << OrPairBody;
+  EXPECT_EQ(OrPairBody.find(" & "), std::string::npos) << OrPairBody;
+  const std::string SubPairBody = functionBody(Source, "mba_pair_sub");
+  EXPECT_FALSE(SubPairBody.empty());
+  EXPECT_EQ(SubPairBody.find(" ^ "), std::string::npos) << SubPairBody;
+  EXPECT_EQ(SubPairBody.find(" & "), std::string::npos) << SubPairBody;
+  EXPECT_EQ(SubPairBody.find("~"), std::string::npos) << SubPairBody;
+  for (const char *Name : {"mba_pair_affine_add", "mba_pair_affine_sub"}) {
+    const std::string Body = functionBody(Source, Name);
+    EXPECT_FALSE(Body.empty()) << Name;
+    EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
+    EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
+    EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
+  }
+  const std::string ThreeBody = functionBody(Source, "mba_pair_three");
+  EXPECT_FALSE(ThreeBody.empty());
+  EXPECT_EQ(ThreeBody.find(" ^ "), std::string::npos) << ThreeBody;
+  EXPECT_EQ(ThreeBody.find(" & "), std::string::npos) << ThreeBody;
+  EXPECT_EQ(ThreeBody.find("~"), std::string::npos) << ThreeBody;
+  const std::string FourBody = functionBody(Source, "mba_pair_four");
+  EXPECT_FALSE(FourBody.empty());
+  EXPECT_EQ(FourBody.find(" ^ "), std::string::npos) << FourBody;
+  EXPECT_EQ(FourBody.find(" & "), std::string::npos) << FourBody;
+  EXPECT_EQ(FourBody.find("~"), std::string::npos) << FourBody;
+  const std::string FiveBody = functionBody(Source, "mba_pair_five");
+  EXPECT_FALSE(FiveBody.empty());
+  EXPECT_EQ(FiveBody.find(" ^ "), std::string::npos) << FiveBody;
+  EXPECT_EQ(FiveBody.find(" & "), std::string::npos) << FiveBody;
+  EXPECT_EQ(FiveBody.find("~"), std::string::npos) << FiveBody;
+  EXPECT_FALSE(functionBody(Source, "mba_pair_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_or_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_sub_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_affine_add_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_affine_sub_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_three_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_four_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_five_fold").empty());
+
+  const char *Harness = R"(
+#include <inttypes.h>
+#include <stdio.h>
+static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
+  uint64_t x = ((uint64_t)xh << 32) | xl;
+  uint64_t y = ((uint64_t)yh << 32) | yl;
+  uint32_t zl = xl ^ yh;
+  uint32_t zh = xh + yl;
+  uint64_t z = ((uint64_t)zh << 32) | zl;
+  uint32_t wl = yl ^ zh;
+  uint32_t wh = yh + zl;
+  uint64_t w = ((uint64_t)wh << 32) | wl;
+  uint32_t vl = xl + zh;
+  uint32_t vh = xh ^ zl;
+  uint64_t v = ((uint64_t)vh << 32) | vl;
+  uint64_t expected = x + y;
+  uint64_t actual = (uint64_t)mba_pair_add(xl, xh, yl, yh);
+  uint64_t or_actual = (uint64_t)mba_pair_or_add(xl, xh, yl, yh);
+  uint64_t expected_difference = x - y;
+  uint64_t difference = (uint64_t)mba_pair_sub(xl, xh, yl, yh);
+  uint64_t affine_sum = expected + UINT64_C(0x123456789abcdef0);
+  uint64_t affine_difference =
+      expected_difference + UINT64_C(0x123456789abcdef0);
+  uint64_t expected_three = x + y + z;
+  uint64_t three = (uint64_t)mba_pair_three(xl, xh, yl, yh, zl, zh);
+  uint64_t expected_four = expected_three + w;
+  uint64_t four =
+      (uint64_t)mba_pair_four(xl, xh, yl, yh, zl, zh, wl, wh);
+  uint64_t expected_five = expected_four + v;
+  uint64_t five =
+      (uint64_t)mba_pair_five(xl, xh, yl, yh, zl, zh, wl, wh, vl, vh);
+  uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
+  uint32_t folded_difference =
+      (uint32_t)expected_difference ^ (uint32_t)(expected_difference >> 32);
+  uint32_t folded_affine_sum =
+      (uint32_t)affine_sum ^ (uint32_t)(affine_sum >> 32);
+  uint32_t folded_affine_difference =
+      (uint32_t)affine_difference ^ (uint32_t)(affine_difference >> 32);
+  uint32_t folded_three =
+      (uint32_t)expected_three ^ (uint32_t)(expected_three >> 32);
+  uint32_t folded_four =
+      (uint32_t)expected_four ^ (uint32_t)(expected_four >> 32);
+  uint32_t folded_five =
+      (uint32_t)expected_five ^ (uint32_t)(expected_five >> 32);
+  if (actual != expected || or_actual != expected ||
+      difference != expected_difference ||
+      (uint64_t)mba_pair_affine_add(xl, xh, yl, yh) != affine_sum ||
+      (uint64_t)mba_pair_affine_sub(xl, xh, yl, yh) != affine_difference ||
+      three != expected_three || four != expected_four ||
+      five != expected_five ||
+      (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded ||
+      (uint32_t)mba_pair_or_fold(xl, xh, yl, yh) != folded ||
+      (uint32_t)mba_pair_sub_fold(xl, xh, yl, yh) != folded_difference ||
+      (uint32_t)mba_pair_affine_add_fold(xl, xh, yl, yh) !=
+          folded_affine_sum ||
+      (uint32_t)mba_pair_affine_sub_fold(xl, xh, yl, yh) !=
+          folded_affine_difference ||
+      (uint32_t)mba_pair_three_fold(xl, xh, yl, yh, zl, zh) != folded_three ||
+      (uint32_t)mba_pair_four_fold(xl, xh, yl, yh, zl, zh, wl, wh) !=
+          folded_four ||
+      (uint32_t)mba_pair_five_fold(xl, xh, yl, yh, zl, zh, wl, wh, vl, vh) !=
+          folded_five) {
+    fprintf(stderr, "pair mismatch %08" PRIx32 ":%08" PRIx32
+                    " %08" PRIx32 ":%08" PRIx32 "\n", xh, xl, yh, yl);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, UINT32_C(0x7fffffff), UINT32_C(0x80000000),
+      UINT32_C(0xfffffffe), UINT32_MAX};
+  for (unsigned a = 0; a < 7; ++a)
+    for (unsigned b = 0; b < 7; ++b)
+      for (unsigned c = 0; c < 7; ++c)
+        for (unsigned d = 0; d < 7; ++d)
+          if (check_pair(edges[a], edges[b], edges[c], edges[d]))
+            return 1;
+  uint64_t state = UINT64_C(0x92d68ca2f53b17e9);
+  for (unsigned i = 0; i < 4096; ++i) {
+    uint32_t words[10];
+    for (unsigned j = 0; j < 10; ++j) {
+      state = state * UINT64_C(6364136223846793005) + 1;
+      words[j] = (uint32_t)(state >> 32);
+    }
+    if (check_pair(words[0], words[1], words[2], words[3]))
+      return 1;
+    uint64_t a = ((uint64_t)words[1] << 32) | words[0];
+    uint64_t b = ((uint64_t)words[3] << 32) | words[2];
+    uint64_t c = ((uint64_t)words[5] << 32) | words[4];
+    uint64_t d = ((uint64_t)words[7] << 32) | words[6];
+    uint64_t e = ((uint64_t)words[9] << 32) | words[8];
+    uint64_t expected = a + b + c + d;
+    if ((uint64_t)mba_pair_four(words[0], words[1], words[2], words[3],
+                                words[4], words[5], words[6], words[7]) !=
+            expected ||
+        (uint32_t)mba_pair_four_fold(words[0], words[1], words[2], words[3],
+                                     words[4], words[5], words[6], words[7]) !=
+            ((uint32_t)expected ^ (uint32_t)(expected >> 32))) {
+      fprintf(stderr, "independent four-input mismatch at %u\n", i);
+      return 1;
+    }
+    uint64_t expected_five = expected + e;
+    if ((uint64_t)mba_pair_five(words[0], words[1], words[2], words[3],
+                               words[4], words[5], words[6], words[7],
+                               words[8], words[9]) != expected_five ||
+        (uint32_t)mba_pair_five_fold(
+            words[0], words[1], words[2], words[3], words[4], words[5],
+            words[6], words[7], words[8], words[9]) !=
+            ((uint32_t)expected_five ^ (uint32_t)(expected_five >> 32))) {
+      fprintf(stderr, "independent five-input mismatch at %u\n", i);
+      return 1;
+    }
+  }
+  return 0;
+}
+)";
+
+  const auto Combined = tmpFile("register-pair-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("register-pair-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CrossArchitecture, MBARegisterPairSourceTest,
+    ::testing::Values(
+        RegisterPairCase{"X86", "i386-linux-gnu", false, false},
+        RegisterPairCase{"X86", "i386-linux-gnu", false, true},
+        RegisterPairCase{"X86PIC", "i386-linux-gnu", false, false, true},
+        RegisterPairCase{"X86PIC", "i386-linux-gnu", false, true, true},
+        RegisterPairCase{"ARM32", "armv7-linux-gnueabihf", false, false},
+        RegisterPairCase{"ARM32", "armv7-linux-gnueabihf", false, true},
+        RegisterPairCase{"Thumb2", "armv7-linux-gnueabihf", true, false},
+        RegisterPairCase{"Thumb2", "armv7-linux-gnueabihf", true, true},
+        RegisterPairCase{"Thumb1", "thumbv6m-none-eabi", true, false},
+        RegisterPairCase{"Thumb1", "thumbv6m-none-eabi", true, true}),
+    [](const ::testing::TestParamInfo<RegisterPairCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
+struct MachOARMFiveCase {
+  const char *Name;
+  const char *Triple;
+  bool Thumb;
+  bool LLVM;
+};
+
+class MBAMachOARMFiveSourceTest
+    : public NeverDLiftTest,
+      public ::testing::WithParamInterface<MachOARMFiveCase> {};
+
+TEST_P(MBAMachOARMFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + " " + (Case.LLVM ? "LLVMC" : "HighC"));
+
+  const auto Object = tmpFile("macho-five.o");
+  std::vector<std::string> CompileArgs{"-target",    Case.Triple,
+                                       "-O0",        "-ffreestanding",
+                                       "-nostdinc",  "-fno-stack-protector",
+                                       "-fno-inline"};
+  if (Case.Thumb)
+    CompileArgs.push_back("-mthumb");
+  CompileArgs.insert(
+      CompileArgs.end(),
+      {"-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_five_input.c").string(),
+       "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArgs);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-five.c");
+  std::vector<std::string> DecompileArgs{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    DecompileArgs.push_back("--llvm");
+  DecompileArgs.insert(DecompileArgs.end(),
+                       {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), DecompileArgs);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  const std::string Body = functionBody(Source, "mba_five_sum");
+  EXPECT_FALSE(Body.empty());
+  EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
+  EXPECT_FALSE(functionBody(Source, "mba_five_fold").empty());
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(const uint32_t *words) {
+  uint64_t a = ((uint64_t)words[1] << 32) | words[0];
+  uint64_t b = ((uint64_t)words[3] << 32) | words[2];
+  uint64_t c = ((uint64_t)words[5] << 32) | words[4];
+  uint64_t d = ((uint64_t)words[7] << 32) | words[6];
+  uint64_t e = ((uint64_t)words[9] << 32) | words[8];
+  uint64_t expected = a + b + c + d + e;
+  uint64_t actual = (uint64_t)mba_five_sum(
+      words[0], words[1], words[2], words[3], words[4], words[5],
+      words[6], words[7], words[8], words[9]);
+  uint32_t folded = (uint32_t)mba_five_fold(
+      words[0], words[1], words[2], words[3], words[4], words[5],
+      words[6], words[7], words[8], words[9]);
+  if (actual != expected ||
+      folded != ((uint32_t)expected ^ (uint32_t)(expected >> 32))) {
+    fprintf(stderr, "five-input mismatch\n");
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {0, 1, 0x7fffffffU, 0x80000000U,
+                                   0xfffffffeU, 0xffffffffU};
+  uint32_t words[10];
+  for (unsigned i = 0; i < 6; ++i) {
+    for (unsigned j = 0; j < 10; ++j)
+      words[j] = edges[(i + j) % 6];
+    if (check(words))
+      return 1;
+  }
+  uint64_t state = UINT64_C(0x93b60c791df245ae);
+  for (unsigned i = 0; i < 1024; ++i) {
+    for (unsigned j = 0; j < 10; ++j) {
+      state = state * UINT64_C(6364136223846793005) + 1;
+      words[j] = (uint32_t)(state >> 32);
+    }
+    if (check(words))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-five-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-five-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ARMAndThumb, MBAMachOARMFiveSourceTest,
+    ::testing::Values(
+        MachOARMFiveCase{"ARM", "armv7-apple-darwin", false, false},
+        MachOARMFiveCase{"ARM", "armv7-apple-darwin", false, true},
+        MachOARMFiveCase{"Thumb1", "armv6m-apple-darwin", true, false},
+        MachOARMFiveCase{"Thumb1", "armv6m-apple-darwin", true, true},
+        MachOARMFiveCase{"Thumb2", "armv7-apple-darwin", true, false},
+        MachOARMFiveCase{"Thumb2", "armv7-apple-darwin", true, true}),
+    [](const ::testing::TestParamInfo<MachOARMFiveCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
+class MBAMachOARMThumbSourceTest : public MBAExecutableSourceTest,
+                                   public ::testing::WithParamInterface<bool> {
+};
+
+TEST_P(MBAMachOARMThumbSourceTest, RecoversMixedModeCallsAndArithmetic) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const bool LLVM = GetParam();
+  SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+  const auto Object = tmpFile("macho-mixed-mba.o");
+  const auto Compiled = exec(
+      NEVERD_TEST_CLANG,
+      {"-target", "armv7-apple-darwin", "-O0", "-ffreestanding", "-nostdinc",
+       "-fno-stack-protector", "-fno-inline", "-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_macho_mixed.c").string(),
+       "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("macho-mixed-mba.c");
+  std::vector<std::string> Args{"decompile", "--no-debug"};
+  if (LLVM)
+    Args.push_back("--llvm");
+  Args.insert(Args.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Args);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  for (const char *Name : {"arm_mba", "thumb_mba", "thumb_calls_arm",
+                           "arm_calls_thumb", "thumb_calls_arm_calls_thumb"}) {
+    EXPECT_FALSE(functionBody(Source, Name).empty());
+    expectNoResidualMBA(Output, Name);
+  }
+
+  const char *Harness = R"(
+#include <stdint.h>
+#include <stdio.h>
+static int check(uint32_t a, uint32_t b) {
+  uint32_t expected = a + b;
+  if ((uint32_t)arm_mba(a, b) != expected ||
+      (uint32_t)thumb_mba(a, b) != expected ||
+      (uint32_t)thumb_calls_arm(a, b) != expected ||
+      (uint32_t)arm_calls_thumb(a, b) != expected ||
+      (uint32_t)thumb_calls_arm_calls_thumb(a, b) != expected) {
+    fprintf(stderr, "mixed-mode arithmetic mismatch a=%u b=%u\n", a, b);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, 0x7fffffffU, 0x80000000U, 0xfffffffeU, 0xffffffffU};
+  for (unsigned i = 0; i < 7; ++i)
+    for (unsigned j = 0; j < 7; ++j)
+      if (check(edges[i], edges[j]))
+        return 1;
+  uint64_t state = UINT64_C(0x693d1ac74b20fe85);
+  for (unsigned i = 0; i < 1024; ++i) {
+    state = state * UINT64_C(6364136223846793005) + 1;
+    uint32_t a = (uint32_t)(state >> 32);
+    state = state * UINT64_C(6364136223846793005) + 1;
+    if (check(a, (uint32_t)(state >> 32)))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("macho-mixed-mba-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("macho-mixed-mba-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(HighCAndLLVMC, MBAMachOARMThumbSourceTest,
+                         ::testing::Values(false, true),
+                         [](const ::testing::TestParamInfo<bool> &Info) {
+                           return Info.param ? "LLVMC" : "HighC";
+                         });
+
+struct NativeFiveCase {
+  const char *Name;
+  const char *Triple;
+  bool LLVM;
+};
+
+class MBANativeFiveSourceTest
+    : public MBAExecutableSourceTest,
+      public ::testing::WithParamInterface<NativeFiveCase> {};
+
+TEST_P(MBANativeFiveSourceTest, RecoversFiveInputArithmeticAndRuns) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + (Case.LLVM ? " LLVMC" : " HighC"));
+  const auto Object = tmpFile("native-five.o");
+  const auto Compiled = exec(
+      NEVERD_TEST_CLANG,
+      {"-target", Case.Triple, "-O0", "-ffreestanding", "-nostdinc",
+       "-fno-stack-protector", "-fno-inline", "-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_register_pair.c").string(),
+       "-o", Object.string()});
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("native-five.c");
+  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    Arguments.push_back("--llvm");
+  Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Arguments);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  const std::string Body = functionBody(Source, "mba_pair_five");
+  EXPECT_FALSE(Body.empty());
+  EXPECT_EQ(Body.find(" ^ "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
+  EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
+  EXPECT_FALSE(functionBody(Source, "mba_pair_five_fold").empty());
+
+  const char *Harness = R"(
+#include <inttypes.h>
+#include <stdio.h>
+static int check_five(uint64_t x, uint64_t y, uint64_t z, uint64_t w,
+                      uint64_t v) {
+  uint64_t expected = x + y + z + w + v;
+  uint64_t actual = (uint64_t)mba_pair_five(x, y, z, w, v);
+  uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
+  uint32_t actual_fold = (uint32_t)mba_pair_five_fold(
+      (uint32_t)x, (uint32_t)(x >> 32), (uint32_t)y, (uint32_t)(y >> 32),
+      (uint32_t)z, (uint32_t)(z >> 32), (uint32_t)w, (uint32_t)(w >> 32),
+      (uint32_t)v, (uint32_t)(v >> 32));
+  if (actual != expected || actual_fold != folded) {
+    fprintf(stderr, "five-input mismatch\n");
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint64_t edges[] = {
+      0, 1, UINT64_C(0x7fffffffffffffff), UINT64_C(0x8000000000000000),
+      UINT64_MAX - 1, UINT64_MAX};
+  for (unsigned i = 0; i < 64; ++i)
+    if (check_five(edges[i % 6], edges[(i + 1) % 6], edges[(i + 2) % 6],
+                   edges[(i + 3) % 6], edges[(i + 4) % 6]))
+      return 1;
+  uint64_t state = UINT64_C(0x92d68ca2f53b17e9);
+  for (unsigned i = 0; i < 4096; ++i) {
+    uint64_t words[5];
+    for (unsigned j = 0; j < 5; ++j)
+      words[j] = state = state * UINT64_C(6364136223846793005) + 1;
+    if (check_five(words[0], words[1], words[2], words[3], words[4]))
+      return 1;
+  }
+  return 0;
+}
+)";
+  const auto Combined = tmpFile("native-five-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("native-five-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NativeArchitectures, MBANativeFiveSourceTest,
+    ::testing::Values(NativeFiveCase{"X64", "x86_64-linux-gnu", false},
+                      NativeFiveCase{"X64", "x86_64-linux-gnu", true},
+                      NativeFiveCase{"AArch64", "aarch64-linux-gnu", false},
+                      NativeFiveCase{"AArch64", "aarch64-linux-gnu", true}),
+    [](const ::testing::TestParamInfo<NativeFiveCase> &Info) {
       return std::string(Info.param.Name) +
              (Info.param.LLVM ? "LLVMC" : "HighC");
     });

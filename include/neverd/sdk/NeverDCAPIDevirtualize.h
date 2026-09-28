@@ -46,6 +46,19 @@ typedef struct neverd_devirtualize_options_v1 {
   uint32_t reserved;
 } neverd_devirtualize_options_v1;
 
+/// Version 2 adds an explicit control-state refinement budget. Zero the whole
+/// structure and set base.struct_size = sizeof(neverd_devirtualize_options_v2).
+/// base.struct_size must cover the complete v2 structure; future tails are
+/// ignored. Both reserved fields must remain zero. max_control_refinements
+/// equal to zero selects the default of 16; other values set a positive limit.
+/// v1 entry points continue to ignore this entire extension, including
+/// reserved.
+typedef struct neverd_devirtualize_options_v2 {
+  neverd_devirtualize_options_v1 base;
+  uint32_t max_control_refinements;
+  uint32_t reserved;
+} neverd_devirtualize_options_v2;
+
 /// Return recovered C only when all reachable control targets are resolved.
 /// The contract fixes mapped image bytes and permissions, excludes concurrent
 /// mutation and calls, and does not certify binary patching or unwind behavior.
@@ -85,13 +98,29 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
 /// and reserved flag bits canonical; executed POPFQ images must keep TF/AC
 /// clear. Generated source checks flag-profile violations with a nonzero
 /// status. Invalid executions may already have memory effects; no rollback is
-/// promised. Internal direct near calls and exactly resolved returns are
-/// supported. Exception dispatch and fault/unwind behavior are outside this
-/// profile. Other v1 options, report ownership and failure rules match the API
-/// above.
+/// promised. Internal direct near calls, exhaustively finite register- or
+/// memory-indirect near calls, and finite internal returns are supported.
+/// Memory calls require a canonical unsegmented r/m64 encoding and a proved
+/// target load before the return-address push; unknown or sampled writable
+/// slot contents do not establish a target. Exception dispatch and fault/unwind
+/// behavior are outside this profile. Other v1 options, report ownership and
+/// failure rules match the API above.
 NEVERD_API const char *neverd_devirtualize_machine_source_v1(
     neverd_session_t Session, neverd_va_t Entry,
     const neverd_devirtualize_options_v1 *Options, const char **Report);
+
+/// The ordinary source contract and string/report ownership match source_v1.
+/// Null options select defaults, including 16 control-state refinements.
+NEVERD_API const char *
+neverd_devirtualize_source_v2(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v2 *Options,
+                              const char **Report);
+
+/// The machine-state ABI, execution profile and ownership match
+/// machine_source_v1; only the accepted options structure changes.
+NEVERD_API const char *neverd_devirtualize_machine_source_v2(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v2 *Options, const char **Report);
 
 #ifdef __cplusplus
 }
