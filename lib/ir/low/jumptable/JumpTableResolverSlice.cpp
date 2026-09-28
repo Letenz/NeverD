@@ -859,6 +859,16 @@ struct ResolverScalarModelOrigin {
   bool operator==(const ResolverScalarModelOrigin &Other) const = default;
 };
 
+enum class ResolverConstraintKind : uint8_t {
+  None,
+  Equal,
+  NotEqual,
+  UnsignedLessThan,
+  UnsignedLessOrEqual,
+  UnsignedGreaterThan,
+  UnsignedGreaterOrEqual,
+};
+
 struct ResolverValueExpr {
   enum class Kind : uint8_t {
     Root,
@@ -879,7 +889,7 @@ struct ResolverValueExpr {
   std::string Root;
   NdOp Opcode = NdOp::NOP;
   bool HasOpcode = false;
-  bool ConstraintEqual = false;
+  ResolverConstraintKind ConstraintKind = ResolverConstraintKind::None;
   bool ContainsMerge = false;
   std::optional<ResolverScalarModelOrigin> ScalarModelOrigin;
   ResolverValue Input;
@@ -926,14 +936,16 @@ static ResolverValue resolverZero(uint16_t Size) {
 }
 
 static ResolverValue resolverConstraint(const ResolverValue &Input,
-                                        uint64_t Constant, bool Equal) {
-  if (!Input || Input->Size == 0 || Input->Size > sizeof(uint64_t))
+                                        uint64_t Constant,
+                                        ResolverConstraintKind Kind) {
+  if (!Input || Input->Size == 0 || Input->Size > sizeof(uint64_t) ||
+      Kind == ResolverConstraintKind::None)
     return {};
   auto E = std::make_shared<ResolverValueExpr>();
   E->K = ResolverValueExpr::Kind::Constraint;
   E->Size = Input->Size;
   E->Constant = Constant & resolverWidthMask(Input->Size);
-  E->ConstraintEqual = Equal;
+  E->ConstraintKind = Kind;
   E->ContainsMerge = Input->ContainsMerge;
   E->Input = Input;
   return E;
@@ -1013,13 +1025,14 @@ static ResolverValue budgetedResolverZero(uint16_t Size,
 
 template <typename ConsumeWorkFn>
 static ResolverValue budgetedResolverConstraint(const ResolverValue &Input,
-                                                uint64_t Constant, bool Equal,
+                                                uint64_t Constant,
+                                                ResolverConstraintKind Kind,
                                                 ConsumeWorkFn &&ConsumeWork) {
   // Pay the shared node/control-block lifetime and the retained input edge
   // before allocating the path-constrained value wrapper.
   if (!ConsumeWork(4))
     return {};
-  return resolverConstraint(Input, Constant, Equal);
+  return resolverConstraint(Input, Constant, Kind);
 }
 
 template <typename ConsumeWorkFn>
@@ -1161,6 +1174,14 @@ resolverExtend(const ResolverValue &Input, uint16_t Size, bool Signed,
     }
     if (Node->K == ResolverValueExpr::Kind::Constraint && Node->Input) {
       ResolverValue Extended = Extend(Node->Input, Depth + 1);
+      if (!Extended)
+        return {};
+      // Equality and inequality survive either injective extension. Unsigned
+      // ordering only survives zero extension; sign extension can reorder the
+      // high half.
+      if (Signed && Node->ConstraintKind != ResolverConstraintKind::Equal &&
+          Node->ConstraintKind != ResolverConstraintKind::NotEqual)
+        return remember(Node, std::move(Extended));
       uint64_t ExtendedConstant =
           Node->Constant & resolverWidthMask(Node->Size);
       if (Signed && Node->Size < sizeof(uint64_t)) {
@@ -1169,10 +1190,9 @@ resolverExtend(const ResolverValue &Input, uint16_t Size, bool Signed,
         if (ExtendedConstant & Sign)
           ExtendedConstant |= ~resolverWidthMask(Node->Size);
       }
-      return Extended ? remember(Node, budgetedResolverConstraint(
-                                           Extended, ExtendedConstant,
-                                           Node->ConstraintEqual, consume))
-                      : ResolverValue{};
+      return remember(
+          Node, budgetedResolverConstraint(Extended, ExtendedConstant,
+                                           Node->ConstraintKind, consume));
     }
     if (Node->K == ResolverValueExpr::Kind::Merge) {
       if (!consumeResolverProduct(Node->Inputs.size(), 2, consume) ||
@@ -1337,11 +1357,9 @@ resolverSlice(const ResolverValue &Input, uint16_t Offset, uint16_t Size,
       ResolverValue Sliced = Slice(Node->Input, CurrentOffset, Depth + 1);
       if (!Sliced)
         return {};
-      // Equality implies equality of every slice.  Inequality does not: two
-      // full-width values may differ only outside this lane, so propagating a
-      // sliced `!=` would exclude a feasible path and could overclaim a finite
-      // jump-table domain.  Drop only that non-injective predicate.
-      if (!Node->ConstraintEqual)
+      // Equality implies equality of every slice. Neither inequality nor an
+      // unsigned range does: discarded high bits may change their truth.
+      if (Node->ConstraintKind != ResolverConstraintKind::Equal)
         return remember(Node, CurrentOffset, std::move(Sliced));
       const uint64_t SlicedConstant =
           CurrentOffset >= sizeof(uint64_t)
@@ -1349,7 +1367,8 @@ resolverSlice(const ResolverValue &Input, uint16_t Offset, uint16_t Size,
               : Node->Constant >> (unsigned(CurrentOffset) * 8u);
       return remember(Node, CurrentOffset,
                       budgetedResolverConstraint(Sliced, SlicedConstant,
-                                                 /*Equal=*/true, consume));
+                                                 ResolverConstraintKind::Equal,
+                                                 consume));
     }
     if (Node->K == ResolverValueExpr::Kind::Merge) {
       if (!consumeResolverProduct(Node->Inputs.size(), 2, consume) ||
@@ -2375,7 +2394,7 @@ mergeResolverResults(llvm::ArrayRef<ResolverResult> Incoming,
               return false;
             if (!budgetedResolverRootsEqual(A->Root, B->Root, consume) ||
                 A->Opcode != B->Opcode || A->HasOpcode != B->HasOpcode ||
-                A->ConstraintEqual != B->ConstraintEqual ||
+                A->ConstraintKind != B->ConstraintKind ||
                 A->ScalarModelOrigin != B->ScalarModelOrigin ||
                 A->Inputs.size() != B->Inputs.size())
               return false;
@@ -4531,6 +4550,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   std::optional<bool> MemoOccurrenceRootMode;
   std::optional<bool> MemoPrivateFrameCallMode;
   std::optional<bool> MemoScalarConstantFoldMode;
+  std::optional<bool> MemoUnsignedOrderMode;
 
   auto constantValue = [&](const NdVar &V) -> ResolverResult {
     if (!V.isConst() || V.Size == 0)
@@ -4592,12 +4612,23 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         !A->Root.empty() && A->Root.size() == B->Root.size() &&
         budgetedResolverRootsEqual(A->Root, B->Root, consumeEvidence))
       return true;
+    // The same complete LowIR definition produces one runtime value even if
+    // predicate reconstruction and the queried edge reached that definition
+    // through different loop-prefix approximations. Only T roots name the
+    // exact output of one instruction; projected and synthetic transforms
+    // retain their structural comparison below.
+    if (A && B && A->K == ResolverValueExpr::Kind::Transform &&
+        B->K == ResolverValueExpr::Kind::Transform && A->Size == B->Size &&
+        A->HasOpcode && B->HasOpcode && A->Opcode == B->Opcode &&
+        A->Root.starts_with("T:") && A->Root.size() == B->Root.size() &&
+        budgetedResolverRootsEqual(A->Root, B->Root, consumeEvidence))
+      return true;
     if (!A || !B || A->K != B->K || A->Size != B->Size ||
         A->SliceOffset != B->SliceOffset || A->Constant != B->Constant ||
         A->Provenance != B->Provenance ||
         A->AddressOwnerVA != B->AddressOwnerVA || A->Opcode != B->Opcode ||
         A->HasOpcode != B->HasOpcode ||
-        A->ConstraintEqual != B->ConstraintEqual ||
+        A->ConstraintKind != B->ConstraintKind ||
         A->ScalarModelOrigin != B->ScalarModelOrigin ||
         A->Inputs.size() != B->Inputs.size() ||
         !budgetedResolverRootsEqual(A->Root, B->Root, consumeEvidence) ||
@@ -4609,10 +4640,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     return true;
   };
 
-  // Equality predicates filter the exact lane they compare. Keep that same
-  // relation for CFG edges and SELECT arms; forgetting a conditional write's
-  // predicate admits the old value even when that path necessarily overwrites
-  // it (for example, state = state != 0 ? 1 : state).
+  // Exact equality and unsigned-order predicates filter the lane they compare.
+  // Keep that relation on CFG edges and SELECT arms: a loop's checked index
+  // must not regain out-of-range values through its predecessor merge.
   auto constrainOnCondition = [&](ResolverResult Value,
                                   ResolverResult Condition,
                                   bool Taken) -> ResolverResult {
@@ -4634,15 +4664,24 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
     if (!Predicate || Predicate->K != ResolverValueExpr::Kind::Transform ||
         !Predicate->HasOpcode ||
         (Predicate->Opcode != NdOp::INT_EQUAL &&
-         Predicate->Opcode != NdOp::INT_NOTEQUAL) ||
+         Predicate->Opcode != NdOp::INT_NOTEQUAL &&
+         Predicate->Opcode != NdOp::INT_LESS &&
+         Predicate->Opcode != NdOp::INT_LESSEQUAL) ||
         Predicate->Inputs.size() != 2)
+      return Value;
+    if ((Predicate->Opcode == NdOp::INT_LESS ||
+         Predicate->Opcode == NdOp::INT_LESSEQUAL) &&
+        (!ActiveValueQuery || ActiveValueQuery->Relation !=
+                                  JumpTableValueRelation::UnsignedFeasibleSet))
       return Value;
     const ResolverValue &Left = Predicate->Inputs[0];
     const ResolverValue &Right = Predicate->Inputs[1];
     ResolverValue Compared, Constant;
+    bool ConstantOnLeft = false;
     if (Left && Left->K == ResolverValueExpr::Kind::Constant) {
       Constant = Left;
       Compared = Right;
+      ConstantOnLeft = true;
     } else if (Right && Right->K == ResolverValueExpr::Kind::Constant) {
       Constant = Right;
       Compared = Left;
@@ -4665,14 +4704,61 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Compared->Inputs[1]->Provenance == ConstantAddressProvenance::Scalar &&
         Compared->Inputs[1]->Constant == 0)
       Compared = Compared->Inputs[0];
-    if (!Compared || !Constant || Compared->Size != Value.Value->Size ||
-        Constant->Size != Value.Value->Size ||
-        Constant->Provenance != ConstantAddressProvenance::Scalar ||
-        !sameResolverValueForEdge(Compared, Value.Value, 0))
+    if (!Compared || !Constant ||
+        Constant->Provenance != ConstantAddressProvenance::Scalar)
       return Value;
-    return resolverValue(budgetedResolverConstraint(
-        Value.Value, Constant->Constant,
-        (Predicate->Opcode == NdOp::INT_EQUAL) == Taken, consumeEvidence));
+    ResolverValue MatchedValue = Value.Value;
+    bool Reextend = false;
+    if (Compared->Size == Value.Value->Size &&
+        Constant->Size == Value.Value->Size &&
+        sameResolverValueForEdge(Compared, Value.Value, 0)) {
+      // Exact-width comparison of the full incoming value.
+    } else if (Value.Value->K == ResolverValueExpr::Kind::ZeroExtend &&
+               Value.Value->Input &&
+               Compared->Size == Value.Value->Input->Size &&
+               Constant->Size == Value.Value->Input->Size &&
+               sameResolverValueForEdge(Compared, Value.Value->Input, 0)) {
+      // The branch checks the narrow register before its architectural zero
+      // extension. Constrain that exact lane, then re-extend it for the use.
+      MatchedValue = Value.Value->Input;
+      Reextend = true;
+    } else {
+      return Value;
+    }
+    ResolverConstraintKind Kind = ResolverConstraintKind::None;
+    switch (Predicate->Opcode) {
+    case NdOp::INT_EQUAL:
+      Kind = Taken ? ResolverConstraintKind::Equal
+                   : ResolverConstraintKind::NotEqual;
+      break;
+    case NdOp::INT_NOTEQUAL:
+      Kind = Taken ? ResolverConstraintKind::NotEqual
+                   : ResolverConstraintKind::Equal;
+      break;
+    case NdOp::INT_LESS:
+      Kind = ConstantOnLeft
+                 ? (Taken ? ResolverConstraintKind::UnsignedGreaterThan
+                          : ResolverConstraintKind::UnsignedLessOrEqual)
+                 : (Taken ? ResolverConstraintKind::UnsignedLessThan
+                          : ResolverConstraintKind::UnsignedGreaterOrEqual);
+      break;
+    case NdOp::INT_LESSEQUAL:
+      Kind = ConstantOnLeft
+                 ? (Taken ? ResolverConstraintKind::UnsignedGreaterOrEqual
+                          : ResolverConstraintKind::UnsignedLessThan)
+                 : (Taken ? ResolverConstraintKind::UnsignedLessOrEqual
+                          : ResolverConstraintKind::UnsignedGreaterThan);
+      break;
+    default:
+      return Value;
+    }
+    ResolverValue Constrained = budgetedResolverConstraint(
+        MatchedValue, Constant->Constant, Kind, consumeEvidence);
+    if (Reextend && Constrained)
+      Constrained = resolverExtend(Constrained, Value.Value->Size,
+                                   /*Signed=*/false, consumeEvidence,
+                                   &QueryResolverAnalysisIncomplete);
+    return Constrained ? resolverValue(Constrained) : resolverInvalid();
   };
 
   auto relocatedLiteralValue = [&](va_t Slot, uint16_t Size) -> ResolverValue {
@@ -6537,10 +6623,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         //   dispatch(state - 1);
         //
         // The predecessor merge alone includes the zero sentinel even though
-        // that arm cannot reach the dispatch block.  Record only equality or
-        // inequality against the very same resolved lane; the finite-domain
-        // solver later applies this constraint arm-locally.  Unsupported
-        // conditions remain an over-approximation and therefore fail closed.
+        // that arm cannot reach the dispatch block. Record equality and
+        // unsigned-order predicates only against the same resolved lane; the
+        // finite-domain solver applies them arm-locally. Unsupported conditions
+        // remain an over-approximation and therefore fail closed.
         if (!ResolvingPredicate &&
             IncomingValue.Kind == ResolverResultKind::Value &&
             IncomingValue.Value && PredBlock.LastInsn) {
@@ -6651,7 +6737,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           return false;
         if (!budgetedResolverRootsEqual(A->Root, B->Root, consumeMatchWork) ||
             A->Opcode != B->Opcode || A->HasOpcode != B->HasOpcode ||
-            A->ConstraintEqual != B->ConstraintEqual ||
+            A->ConstraintKind != B->ConstraintKind ||
             A->ScalarModelOrigin != B->ScalarModelOrigin ||
             A->Inputs.size() != B->Inputs.size())
           return false;
@@ -6874,21 +6960,43 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         // constant. Its input still remains in ResolverValue for provenance
         // and dependency queries; numerical range reasoning need not expand
         // an unrelated loop expression to rediscover that exact value.
-        if (Node->ConstraintEqual) {
+        if (Node->ConstraintKind == ResolverConstraintKind::Equal) {
           if (!consumeSymbolWork())
             return {};
           return Ctx.mkConst(uint32_t(Node->Size) * 8u, Node->Constant);
         }
+        if (Node->ConstraintKind == ResolverConstraintKind::None)
+          return {};
         symbolic::SymRef Input = Symbolize(Node->Input, Depth + 1);
         if (!Input || Ctx.width(Input) != uint32_t(Node->Size) * 8u)
           return {};
         if (ActivePathConstraints) {
-          if (!consumeSymbolWork(3))
+          if (!consumeSymbolWork(4))
             return {};
-          symbolic::SymRef Equal =
-              Ctx.mkEq(Input, Ctx.mkConst(Ctx.width(Input), Node->Constant));
-          if (!appendPathConstraint(Node->ConstraintEqual ? Equal
-                                                          : Ctx.mkNot(Equal)))
+          symbolic::SymRef Constant =
+              Ctx.mkConst(Ctx.width(Input), Node->Constant);
+          symbolic::SymRef Predicate;
+          switch (Node->ConstraintKind) {
+          case ResolverConstraintKind::NotEqual:
+            Predicate = Ctx.mkNot(Ctx.mkEq(Input, Constant));
+            break;
+          case ResolverConstraintKind::UnsignedLessThan:
+            Predicate = Ctx.mkUlt(Input, Constant);
+            break;
+          case ResolverConstraintKind::UnsignedLessOrEqual:
+            Predicate = Ctx.mkUle(Input, Constant);
+            break;
+          case ResolverConstraintKind::UnsignedGreaterThan:
+            Predicate = Ctx.mkUlt(Constant, Input);
+            break;
+          case ResolverConstraintKind::UnsignedGreaterOrEqual:
+            Predicate = Ctx.mkUle(Constant, Input);
+            break;
+          case ResolverConstraintKind::None:
+          case ResolverConstraintKind::Equal:
+            return {};
+          }
+          if (!appendPathConstraint(Predicate))
             return {};
         }
         // Outside the finite-set transaction this is a deliberate
@@ -7699,6 +7807,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       FrameMemo.clear();
     }
     MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
+    const bool UnsignedOrderMode =
+        Query.Relation == JumpTableValueRelation::UnsignedFeasibleSet;
+    if (MemoUnsignedOrderMode && *MemoUnsignedOrderMode != UnsignedOrderMode) {
+      ValueMemo.clear();
+      MemoryMemo.clear();
+      FrameMemo.clear();
+    }
+    MemoUnsignedOrderMode = UnsignedOrderMode;
     if (Query.Candidate.Size == 0 ||
         (Query.Relation != JumpTableValueRelation::UnsignedLessThan &&
          Query.Relation != JumpTableValueRelation::ResolvableValue &&
@@ -8018,9 +8134,9 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
              Value->AddressOwnerVA == InvalidVA && Value->Root.size() >= 2 &&
              Value->Root[0] == 'D' && Value->Root[1] == ':' &&
              Value->Opcode == NdOp::NOP && !Value->HasOpcode &&
-             !Value->ConstraintEqual && !Value->ContainsMerge &&
-             !Value->ScalarModelOrigin && !Value->Input &&
-             Value->Inputs.empty();
+             Value->ConstraintKind == ResolverConstraintKind::None &&
+             !Value->ContainsMerge && !Value->ScalarModelOrigin &&
+             !Value->Input && Value->Inputs.empty();
     };
     auto consumeOccurrenceRootLookup = [&](std::string_view Root, size_t Count,
                                            size_t RetainedNodeWork = 0) {
