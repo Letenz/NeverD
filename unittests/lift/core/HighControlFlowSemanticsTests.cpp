@@ -3627,3 +3627,42 @@ TEST(HighControlFlowSemantics, SkipInvertKeepsAnElseArmThatDoesWork) {
   });
   EXPECT_TRUE(ElseWork);
 }
+
+TEST(HighControlFlowSemantics, SkipInvertKeepsTheSkipPathCopies) {
+  // In a try body, `if (c) { r = x; goto L; } work; L: out = r;` sets r only
+  // on the skip path. `if (!c) { work }` alone would lose that copy.
+  auto Store = [](va_t Address, uint64_t Slot, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = HighExpr::makeConst(Slot, 8);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Copy = assign(0x100c, 5, 0);
+  Copy.Val = local(1);
+  Copy.IsPhiCopy = true;
+  HighStmt Skip;
+  Skip.Kind = StmtKind::If;
+  Skip.Addr = 0x100c;
+  Skip.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                  HighExpr::makeConst(0, 8));
+  Skip.Body = {Copy, jump(0x100c, 0x1020)};
+  HighStmt Try;
+  Try.Kind = StmtKind::SEHTry;
+  Try.Addr = 0x1008;
+  Try.Body = {assign(0x1008, 5, 3), Skip,
+              Store(0x1018, 0x308, HighExpr::makeConst(1, 8)),
+              Store(0x1020, 0x300, local(5))};
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Try,
+            result(0x1030, HighExpr::makeConst(0, 8))};
+  invertSkipGotos(F);
+  bool SkipCopy = false;
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    SkipCopy |= S.Kind == StmtKind::Assign && S.Dst && S.Val &&
+                S.Dst->Kind == ExprKind::Var && S.Dst->Var.Id == 5 &&
+                S.Val->Kind == ExprKind::Var && S.Val->Var.Id == 1;
+  });
+  EXPECT_TRUE(SkipCopy);
+}
