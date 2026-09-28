@@ -346,6 +346,7 @@ extern llvm::cl::opt<std::string> TextSection;
 extern llvm::cl::opt<std::string> SigDir;
 extern llvm::cl::opt<std::string> SigFile;
 extern llvm::cl::opt<bool> SigAuto;
+extern llvm::cl::opt<std::string> SigBase;
 
 // Simplify.
 extern llvm::cl::opt<std::string> SimplifyExpr;

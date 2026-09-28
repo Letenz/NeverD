@@ -46,6 +46,19 @@ at the same revision. The fixed Swift subset excludes the custom
 parameter attributes assigned to `swift_willThrow` by
 [`IRGenModule.cpp`](https://github.com/swiftlang/swift/blob/9215272a4725957dfabdd14e1ca76c0dfa4a3003/lib/IRGen/IRGenModule.cpp#L1127).
 
+## richprint @comp.id table
+
+`lib/loader/COFF/RichCompIds.inc` derives the tool kind, Visual Studio year
+and description of each @comp.id record from richprint's
+[`comp_id.txt`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/comp_id.txt),
+and `lib/loader/COFF/RichHeader.cpp` decodes the Rich header as
+[`richprint.cpp`](https://github.com/dishather/richprint/blob/49f2dc93504db4a669c968fa80eb9b34591cb557/richprint.cpp)
+does, at revision `49f2dc93504db4a669c968fa80eb9b34591cb557`.
+Copyright (c) 2015-2024 dishather. The original BSD 2-Clause license is
+preserved in [LICENSES/richprint.txt](LICENSES/richprint.txt).
+`scripts/generate_rich_comp_ids.py` regenerates the table from that file; the
+decoder adds a check of the header's checksum. Adapted on 2026-09-28.
+
 ## FPREM anti-emulation regression
 
 The FPREM regression in

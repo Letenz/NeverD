@@ -21,6 +21,7 @@
 #include "neverd/loader/BinaryImageDynamic.h"
 #include "neverd/loader/BinaryImageRelocation.h"
 #include "neverd/loader/BinaryImageSection.h"
+#include "neverd/loader/COFF/RichHeader.h"
 #include "neverd/loader/ExceptionTable.h"
 #include "neverd/loader/ObjC/ObjCMethods.h"
 #include "neverd/object/SectionNames.h"
@@ -520,6 +521,10 @@ struct BinaryImage {
     uint32_t RecordRVA = 0;
   };
   std::vector<COFFPDataRecord> COFFPDataRecords;
+  /// The PE file's Rich header: which builds of which Microsoft tools
+  /// produced the objects the linker combined.  Empty for other formats and
+  /// for images a non-Microsoft linker produced.
+  std::optional<RichHeader> COFFRichHeader;
   /// Checked, normalized table-based unwind and language exception metadata.
   /// Empty for formats/targets without a supported exception directory.
   ExceptionInfo ExceptionMetadata;

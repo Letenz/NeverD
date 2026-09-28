@@ -35,6 +35,28 @@ public:
   /// Replace the current database with all pattern files from a directory.
   llvm::Error loadDirectory(const std::filesystem::path &Dir);
 
+  /// The pattern files of a directory, sorted by name.
+  static llvm::Expected<std::vector<std::filesystem::path>>
+  listDirectory(const std::filesystem::path &Dir);
+
+  /// Replace the current database with exactly these pattern files.  Each
+  /// file's library name is its stem, as with \ref loadDirectory.
+  llvm::Error loadFiles(const std::vector<std::filesystem::path> &Files);
+
+  /// The pattern files among \p Files that fit \p Img.
+  ///
+  /// A file named `vs<year>.pat` holds one Visual Studio release's runtime
+  /// libraries.  A PE file links the static runtime libraries of its
+  /// linker's release, and other releases state some of the same bytes under
+  /// other names, so when the image's Rich header names the release of its
+  /// linker, only that release's file is kept.  Every file that belongs to no
+  /// release, such as `winsdk.pat`, is kept.  When the image has no Rich
+  /// header, when the header was altered after linking, or when \p Files
+  /// hold no file for a release it names, every file is kept.
+  static std::vector<std::filesystem::path>
+  selectForImage(const BinaryImage &Img,
+                 std::vector<std::filesystem::path> Files);
+
   /// Load a single text pattern file.
   llvm::Error loadFile(const std::filesystem::path &Path);
 

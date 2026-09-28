@@ -143,7 +143,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-빌드 시 시그니처 라이브러리는 `build/bin/signatures/`에 설치됩니다. `sigs --auto`는 포맷·아키텍처·비트 너비로 세트를 고릅니다.
+빌드 시 시그니처 라이브러리는 `build/bin/signatures/`에 설치됩니다. `sigs --auto`는 포맷·아키텍처·비트 너비로 세트를 고릅니다. PE 파일의 Rich 헤더가 링커의 Visual Studio 릴리스를 알려 주면 그 릴리스의 `vs<year>.pat`와 어느 릴리스에도 속하지 않는 파일만 불러옵니다. `--sig-base <dir>`는 다른 시그니처 트리에서 같은 방식으로 고릅니다.
 
 ## 빌드
 

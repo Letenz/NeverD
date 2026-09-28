@@ -148,7 +148,7 @@ cmake --build build
 ./build/bin/neverd sigs --auto binary
 ```
 
-Las bibliotecas de firmas se instalan en `build/bin/signatures/` en tiempo de compilación. `sigs --auto` elige el conjunto según formato, arquitectura y bitness.
+Las bibliotecas de firmas se instalan en `build/bin/signatures/` en tiempo de compilación. `sigs --auto` elige el conjunto según formato, arquitectura y bitness. Si la cabecera Rich de un archivo PE indica la versión de Visual Studio de su enlazador, solo carga el `vs<year>.pat` de esa versión, además de los archivos que no pertenecen a ninguna versión. `--sig-base <dir>` elige de la misma forma desde otro árbol de firmas.
 
 ## Compilación
 

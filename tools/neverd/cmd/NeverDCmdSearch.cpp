@@ -131,23 +131,27 @@ int runSearch(neverd_session_t Sess) {
 Expected<int> applyRequestedSignatures(neverd_session_t Sess,
                                        const char *Argv0) {
   int MatchCount = -1;
-  if (SigAuto) {
-    // Look for signatures/ next to the neverd executable, then cwd.
-    std::error_code EC;
-    auto ExeDir = std::filesystem::canonical(std::filesystem::path(Argv0), EC)
-                      .parent_path();
-    auto SigBase = ExeDir / "signatures";
-    if (!std::filesystem::exists(SigBase))
-      SigBase = std::filesystem::current_path() / "signatures";
-    MatchCount = neverd_auto_apply_signatures(Sess, SigBase.string().c_str());
+  if (SigAuto || !SigBase.getValue().empty()) {
+    // --sig-base names the tree; otherwise look for signatures/ next to the
+    // neverd executable, then in the working directory.
+    std::filesystem::path Base = SigBase.getValue();
+    if (Base.empty()) {
+      std::error_code EC;
+      auto ExeDir = std::filesystem::canonical(std::filesystem::path(Argv0), EC)
+                        .parent_path();
+      Base = ExeDir / "signatures";
+      if (!std::filesystem::exists(Base))
+        Base = std::filesystem::current_path() / "signatures";
+    }
+    MatchCount = neverd_auto_apply_signatures(Sess, Base.string().c_str());
   } else if (!SigFile.getValue().empty()) {
     MatchCount = neverd_apply_signature_file(Sess, SigFile.getValue().c_str());
   } else if (!SigDir.getValue().empty()) {
     MatchCount = neverd_apply_signatures(Sess, SigDir.getValue().c_str());
   } else {
     return createStringError(inconvertibleErrorCode(),
-                             "specify --auto, --sig-dir <directory>, or "
-                             "--sig-file <file>");
+                             "specify --auto, --sig-base <directory>, "
+                             "--sig-dir <directory>, or --sig-file <file>");
   }
 
   if (MatchCount < 0)
