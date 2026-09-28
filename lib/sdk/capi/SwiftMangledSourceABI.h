@@ -1720,6 +1720,117 @@ swiftMangledCoderClassInitializerSourceABI(const BinaryImage &Image,
              : std::nullopt;
 }
 
+// An initializing Swift class constructor for UIViewController's
+// init(nibName:bundle:) receives the optional String in x0/x1, the optional
+// NSBundle in x2, and the already allocated receiver in swiftself (x20).
+// Require the complete unspecialized constructor type and an exact local
+// symbol; the Objective-C thunk and allocating constructor have other ABIs.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledNibBundleClassInitializerSourceABI(const BinaryImage &Image,
+                                               va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Count) {
+    return N.Kind == Kind && !N.Text && !N.Index && N.Children.size() == Count;
+  };
+  const auto Named = [](const Node &N, llvm::StringRef Kind,
+                        llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1) ||
+      !Shape(Parsed.Root->Children[0], "Constructor", 3))
+    return std::nullopt;
+  const auto &Constructor = Parsed.Root->Children[0];
+  const auto &Class = Constructor.Children[0];
+  const auto &Labels = Constructor.Children[1];
+  const auto &Type = Constructor.Children[2];
+  if (!Shape(Class, "Class", 2) || Class.Children[0].Kind != "Module" ||
+      !Class.Children[0].Text || Class.Children[0].Text->empty() ||
+      Class.Children[0].Index || !Class.Children[0].Children.empty() ||
+      Class.Children[1].Kind != "Identifier" || !Class.Children[1].Text ||
+      Class.Children[1].Text->empty() || Class.Children[1].Index ||
+      !Class.Children[1].Children.empty() || !Shape(Labels, "LabelList", 2) ||
+      !Named(Labels.Children[0], "Identifier", "nibName") ||
+      !Named(Labels.Children[1], "Identifier", "bundle") ||
+      !Shape(Type, "Type", 1) || !Shape(Type.Children[0], "FunctionType", 2) ||
+      !Shape(Type.Children[0].Children[0], "ArgumentTuple", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0], "Type", 1) ||
+      !Shape(Type.Children[0].Children[0].Children[0].Children[0], "Tuple",
+             2) ||
+      !Shape(Type.Children[0].Children[1], "ReturnType", 1) ||
+      !Shape(Type.Children[0].Children[1].Children[0], "Type", 1) ||
+      !Shape(Type.Children[0].Children[1].Children[0].Children[0], "Class", 2))
+    return std::nullopt;
+  const auto &Arguments =
+      Type.Children[0].Children[0].Children[0].Children[0].Children;
+  const auto Optional = [&](const Node &Element, llvm::StringRef Kind,
+                            llvm::StringRef Module,
+                            llvm::StringRef Identifier) {
+    if (!Shape(Element, "TupleElement", 1) ||
+        !Shape(Element.Children[0], "Type", 1))
+      return false;
+    const auto &Value = Element.Children[0].Children[0];
+    return Shape(Value, "BoundGenericEnum", 2) &&
+           Shape(Value.Children[0], "Type", 1) &&
+           Shape(Value.Children[0].Children[0], "Enum", 2) &&
+           Named(Value.Children[0].Children[0].Children[0], "Module",
+                 "Swift") &&
+           Named(Value.Children[0].Children[0].Children[1], "Identifier",
+                 "Optional") &&
+           Shape(Value.Children[1], "TypeList", 1) &&
+           Shape(Value.Children[1].Children[0], "Type", 1) &&
+           Shape(Value.Children[1].Children[0].Children[0], Kind, 2) &&
+           Named(Value.Children[1].Children[0].Children[0].Children[0],
+                 "Module", Module) &&
+           Named(Value.Children[1].Children[0].Children[0].Children[1],
+                 "Identifier", Identifier);
+  };
+  const auto &Result = Type.Children[0].Children[1].Children[0].Children[0];
+  if (!Optional(Arguments[0], "Structure", "Swift", "String") ||
+      !Optional(Arguments[1], "Class", "__C", "NSBundle") ||
+      !Named(Result.Children[0], "Module", *Class.Children[0].Text) ||
+      !Named(Result.Children[1], "Identifier", *Class.Children[1].Text))
+    return std::nullopt;
+
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makePtr(NdType::makeVoid());
+  Hint.Parameters = {{"nib_name_word_0", NdType::makeInt(8, false)},
+                     {"nib_name_word_1", NdType::makePtr(NdType::makeVoid())},
+                     {"bundle", NdType::makePtr(NdType::makeVoid())},
+                     {"self", NdType::makePtr(NdType::makeVoid())}};
+  Hint.Parameters[3].TheRole = SourceParameterTypeHint::Role::SwiftContext;
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // A class initializing constructor (cfc, not its allocating cfC entry) takes
 // the already allocated object in swiftself and returns that object. Limit the
 // declaration to an exact zero-argument constructor whose result repeats the
