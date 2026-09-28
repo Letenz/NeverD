@@ -533,6 +533,64 @@ TEST(NativeSourceHints, SwiftClassScalarSetterUsesValueAndSwiftSelf) {
   EXPECT_FALSE(sdk::swiftMangledClassScalarSetterSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, ProfiledObjCMergedCGFloatSetterHasVoidCABI) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  const std::array<uint8_t, 4> ProfileInput = {0xf3, 0x03, 0x03, 0xaa};
+  const std::array<uint8_t, 12> ProfileUpdate = {
+      0x68, 0x02, 0x40, 0xf9, 0x08, 0x05, 0x00, 0x91, 0x68, 0x02, 0x00, 0xf9};
+  std::copy(ProfileInput.begin(), ProfileInput.end(), Text.Data.begin() + 0x18);
+  std::copy(ProfileUpdate.begin(), ProfileUpdate.end(),
+            Text.Data.begin() + 0x40);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$s3WMF18AlignedImageButtonC17horizontalSpacing12CoreGraphics"
+       "7CGFloatVvsToTm",
+       0x1000, 0, true});
+  const auto Hint =
+      sdk::swiftMangledProfiledObjCCGFloatSetterSourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Origin, SourceFunctionTypeHint::OriginKind::SwiftMangled);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::C);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Void);
+  ASSERT_EQ(Hint->Parameters.size(), 5U);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset, a64reg::X0);
+  EXPECT_EQ(Hint->Parameters[1].Location.RegisterOffset, a64reg::X1);
+  EXPECT_EQ(Hint->Parameters[2].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->Parameters[2].Location.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->Parameters[2].Location.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPParamRegs[0]);
+  EXPECT_EQ(Hint->Parameters[3].Location.RegisterOffset, a64reg::X2);
+  EXPECT_EQ(Hint->Parameters[4].Location.RegisterOffset, a64reg::X3);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name.pop_back();
+  EXPECT_FALSE(
+      sdk::swiftMangledProfiledObjCCGFloatSetterSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(
+      sdk::swiftMangledProfiledObjCCGFloatSetterSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(
+      sdk::swiftMangledProfiledObjCCGFloatSetterSourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Segments[0].Data[0x40] = 0;
+  EXPECT_FALSE(
+      sdk::swiftMangledProfiledObjCCGFloatSetterSourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
