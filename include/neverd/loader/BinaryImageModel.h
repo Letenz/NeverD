@@ -573,8 +573,8 @@ struct BinaryImage {
       if (Region->Kind == ARMCodeRegionKind::Data)
         return std::nullopt;
       ProvenMode = Region->Kind == ARMCodeRegionKind::Thumb
-                         ? InstructionMode::Thumb
-                         : InstructionMode::ARM;
+                       ? InstructionMode::Thumb
+                       : InstructionMode::ARM;
     }
     const auto Reachable = std::upper_bound(
         ARMReachableCodeRegions.begin(), ARMReachableCodeRegions.end(), Addr,
@@ -938,11 +938,11 @@ struct BinaryImage {
     // Endpoints can both be instructions while a literal island lies between
     // them. Never grant a complete code range across an intervening $d span.
     if (Arch == neverd::Arch::ARM) {
-      auto It = std::upper_bound(
-          ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
-          [](va_t Address, const ARMCodeRegion &Region) {
-            return Address < Region.Start;
-          });
+      auto It =
+          std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+                           [](va_t Address, const ARMCodeRegion &Region) {
+                             return Address < Region.Start;
+                           });
       while (It != ARMCodeRegions.end() && It->Start <= Last) {
         if (It->Kind == ARMCodeRegionKind::Data)
           return false;

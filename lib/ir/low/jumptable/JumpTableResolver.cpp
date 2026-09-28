@@ -241,8 +241,7 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     CFGBuilder &Scratch, const InsnRecord &Current, const JumpTableInfo &Info,
     const std::vector<va_t> &PhysicalTargets,
     std::map<va_t, std::vector<uint32_t>> &OutputDomains,
-    size_t *EvidenceBudget,
-    bool *AnalysisIncomplete) const {
+    size_t *EvidenceBudget, bool *AnalysisIncomplete) const {
   OutputDomains.clear();
   if (AnalysisIncomplete)
     *AnalysisIncomplete = false;
@@ -296,8 +295,7 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
       !Charge(PhysicalInventoryWork))
     return false;
   const uint64_t SizedObject = Img.dataObjectSizeAt(Info.BaseAddr);
-  const std::optional<va_t> OwnerEnd =
-      Img.mappedObjectOwnerEnd(Info.BaseAddr);
+  const std::optional<va_t> OwnerEnd = Img.mappedObjectOwnerEnd(Info.BaseAddr);
   if (!OwnerEnd || *OwnerEnd < StorageEnd ||
       (SizedObject != 0 && SizedObject != SlotCount * 4))
     return false;
@@ -363,21 +361,21 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     TotalSlotCount += Count;
   }
   size_t PerSlotWork = 64;
-  if (!detail::addLinearComparisonWork(PerSlotWork, Img.Segments.size(),
-                                       12) ||
-      !detail::addLinearComparisonWork(PerSlotWork, Img.Sections.size(),
-                                       12) ||
+  if (!detail::addLinearComparisonWork(PerSlotWork, Img.Segments.size(), 12) ||
+      !detail::addLinearComparisonWork(PerSlotWork, Img.Sections.size(), 12) ||
       !detail::addLinearComparisonWork(PerSlotWork, Img.Symbols.size(), 12) ||
-      !detail::addLinearComparisonWork(PerSlotWork,
-                                       Img.KnownCodeRanges.size(), 8) ||
-      !detail::addLinearComparisonWork(PerSlotWork,
-                                       Img.ImportStubRanges.size(), 8) ||
+      !detail::addLinearComparisonWork(PerSlotWork, Img.KnownCodeRanges.size(),
+                                       8) ||
+      !detail::addLinearComparisonWork(PerSlotWork, Img.ImportStubRanges.size(),
+                                       8) ||
       !detail::addLinearComparisonWork(PerSlotWork, Img.Imports.size(), 8) ||
-      !detail::addLinearComparisonWork(PerSlotWork,
-                                       knownFunctionEntryCount(), 4) ||
+      !detail::addLinearComparisonWork(PerSlotWork, knownFunctionEntryCount(),
+                                       4) ||
       !detail::addLinearComparisonWork(
-          PerSlotWork, LookupWork(Img.CodePtrRelocSlots.size()) +
-                           LookupWork(Scratch.Insns.size()), 1))
+          PerSlotWork,
+          LookupWork(Img.CodePtrRelocSlots.size()) +
+              LookupWork(Scratch.Insns.size()),
+          1))
     return Incomplete();
   size_t SlotWork = 0;
   if (!detail::addLinearComparisonWork(SlotWork, TotalSlotCount, PerSlotWork) ||
@@ -489,8 +487,8 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
          It != Insns.end() && It->first < BlockEnd; ++It) {
       const InsnRecord &Candidate = It->second;
       if (Candidate.IsBranch || Candidate.IsRet) {
-        if (Candidate.IsBranch && Candidate.IsIndirect &&
-            !Candidate.IsCall && !Candidate.IsRet && !Candidate.IsCond)
+        if (Candidate.IsBranch && Candidate.IsIndirect && !Candidate.IsCall &&
+            !Candidate.IsRet && !Candidate.IsCond)
           Branch = Candidate.Addr;
         break;
       }
@@ -626,10 +624,9 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     ProofScratch.I386GOTOFFModelReachCache.clear();
     const size_t ModelAllowance = std::min(
         *EvidenceBudget,
-        std::min<size_t>(
-            limits::kMaxI386GOTOFFProposalEvidenceWork,
-            I386GOTOFFProposalEvidenceBudgetForTesting.value_or(
-                limits::kMaxI386GOTOFFProposalEvidenceWork)));
+        std::min<size_t>(limits::kMaxI386GOTOFFProposalEvidenceWork,
+                         I386GOTOFFProposalEvidenceBudgetForTesting.value_or(
+                             limits::kMaxI386GOTOFFProposalEvidenceWork)));
     ProofScratch.I386GOTOFFProposalEvidenceRemaining = ModelAllowance;
     JumpTableInfo Probe;
     const bool Shape = ProofScratch.tryCrossInstrRelativeTable(
@@ -4355,9 +4352,9 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   if (ExactFiniteAbsoluteSingletonProofValue) {
     const ExactFiniteAbsoluteSingletonProof &Certificate =
         *ExactFiniteAbsoluteSingletonProofValue;
-    const JumpTableStorageRange ExpectedPhysical{
-        Info.BaseAddr, Info.EntrySize, PhysicalEntryStride,
-        Info.PhysicalCapacity};
+    const JumpTableStorageRange ExpectedPhysical{Info.BaseAddr, Info.EntrySize,
+                                                 PhysicalEntryStride,
+                                                 Info.PhysicalCapacity};
     if (!CandidateProposalStageActive || Img.Arch != Arch::X86 ||
         !Img.isELF() || Img.getPointerSize() != 4 ||
         (TargetRoleEdgeOverrides &&
@@ -4379,8 +4376,10 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       return {};
     const va_t Slot = Info.BaseAddr + uint64_t{Certificate.Coordinate} * 4;
     if (!consumeCandidateProducts(
-            {{Img.Segments.size(), 4}, {Img.Sections.size(), 4},
-             {Img.Symbols.size(), 4}, {Img.KnownCodeRanges.size(), 4},
+            {{Img.Segments.size(), 4},
+             {Img.Sections.size(), 4},
+             {Img.Symbols.size(), 4},
+             {Img.KnownCodeRanges.size(), 4},
              {1, orderedLookupWork(Img.CodePtrRelocSlots.size()) + 16}}))
       return {};
     const uint8_t *Bytes = Img.readVA(Slot, 4);
@@ -4723,8 +4722,7 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       Info.StorageRanges = std::move(ExactStorage);
     }
     if (AllowAbsoluteSingletonPublication) {
-      if (!Info.ExactPhysicalStorageRange ||
-          !consumeCandidateEvidence(4))
+      if (!Info.ExactPhysicalStorageRange || !consumeCandidateEvidence(4))
         return {};
       Info.StorageRanges = {*Info.ExactPhysicalStorageRange};
     }
@@ -5342,15 +5340,15 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   // one valid target.  Truncation is only meaningful for the legacy unbounded
   // scanner; truncating a bounded domain silently changes guest control flow.
   const size_t BeforeSanity = Targets.size();
-  const bool Sane = AllowAbsoluteSingletonPublication
-                        ? (Targets.size() == 1 &&
-                           Targets.front() ==
-                               ExactFiniteAbsoluteSingletonProofValue->Target &&
-                           KeptIdx.size() == 1 &&
-                           KeptIdx.front() ==
-                               ExactFiniteAbsoluteSingletonProofValue
-                                   ->Coordinate)
-                        : sanityCheckTargets(Img, Targets);
+  const bool Sane =
+      AllowAbsoluteSingletonPublication
+          ? (Targets.size() == 1 &&
+             Targets.front() ==
+                 ExactFiniteAbsoluteSingletonProofValue->Target &&
+             KeptIdx.size() == 1 &&
+             KeptIdx.front() ==
+                 ExactFiniteAbsoluteSingletonProofValue->Coordinate)
+          : sanityCheckTargets(Img, Targets);
   if (!Sane || ((Info.MaxEntries > 0 || !Info.RuntimeSlotIndices.empty()) &&
                 Targets.size() != BeforeSanity))
     Targets.clear();

@@ -2054,10 +2054,8 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
             return false;
           }
           size_t SameObjectOccurrences = 0;
-          for (const auto &Occurrence :
-               RelocatedInstructionAddressOccurrences)
-            if (Occurrence.TargetVA == Info.BaseAddr &&
-                Occurrence.Width == 4 &&
+          for (const auto &Occurrence : RelocatedInstructionAddressOccurrences)
+            if (Occurrence.TargetVA == Info.BaseAddr && Occurrence.Width == 4 &&
                 Occurrence.Provenance ==
                     ConstantAddressProvenance::DataAddress &&
                 !Occurrence.PCRelativeFromInstructionEnd &&
@@ -2073,16 +2071,15 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
               64 + orderedEvidenceLookupWork(Insns.size()) +
               orderedEvidenceLookupWork(BlockStarts.size()) +
               orderedEvidenceLookupWork(PublishedBlockStarts.size());
-          if (!detail::addLinearComparisonWork(PerOccurrenceWork,
-                                               Insns.size(), 16)) {
+          if (!detail::addLinearComparisonWork(PerOccurrenceWork, Insns.size(),
+                                               16)) {
             PairedInventoryIncomplete = true;
             return false;
           }
           std::set<va_t> Branches;
           for (const auto &Occurrence :
                RelocatedInstructionAddressOccurrences) {
-            if (Occurrence.TargetVA != Info.BaseAddr ||
-                Occurrence.Width != 4 ||
+            if (Occurrence.TargetVA != Info.BaseAddr || Occurrence.Width != 4 ||
                 Occurrence.Provenance !=
                     ConstantAddressProvenance::DataAddress ||
                 Occurrence.PCRelativeFromInstructionEnd ||
@@ -2101,15 +2098,14 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
               continue;
             va_t BlockEnd = CurrentFuncRange->second;
             if (!PublishedBlockStarts.empty()) {
-              const auto Next =
-                  std::upper_bound(PublishedBlockStarts.begin(),
-                                   PublishedBlockStarts.end(),
-                                   Occurrence.InstructionAddr);
+              const auto Next = std::upper_bound(PublishedBlockStarts.begin(),
+                                                 PublishedBlockStarts.end(),
+                                                 Occurrence.InstructionAddr);
               if (Next != PublishedBlockStarts.end())
                 BlockEnd = std::min(BlockEnd, *Next);
             } else {
-              const auto Next = BlockStarts.upper_bound(
-                  Occurrence.InstructionAddr);
+              const auto Next =
+                  BlockStarts.upper_bound(Occurrence.InstructionAddr);
               if (Next != BlockStarts.end())
                 BlockEnd = std::min(BlockEnd, *Next);
             }
@@ -2119,8 +2115,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
               if (!Candidate.IsBranch && !Candidate.IsRet)
                 continue;
               if (Candidate.IsBranch && Candidate.IsIndirect &&
-                  !Candidate.IsCall && !Candidate.IsRet &&
-                  !Candidate.IsCond)
+                  !Candidate.IsCall && !Candidate.IsRet && !Candidate.IsCond)
                 Branches.insert(Candidate.Addr);
               break;
             }
@@ -2215,12 +2210,12 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
               CurrentDomain->second.empty() ||
               !consumeBudgetProducts(
                   {{CurrentDomain->second.size(),
-                    orderedEvidenceLookupWork(
-                        CurrentDomain->second.size() + Authorized.size()) +
+                    orderedEvidenceLookupWork(CurrentDomain->second.size() +
+                                              Authorized.size()) +
                         5}}))
             return 0;
-          std::set<uint32_t> JointCoordinates(
-              CurrentDomain->second.begin(), CurrentDomain->second.end());
+          std::set<uint32_t> JointCoordinates(CurrentDomain->second.begin(),
+                                              CurrentDomain->second.end());
           if (JointCoordinates.size() != CurrentDomain->second.size() ||
               !std::includes(JointCoordinates.begin(), JointCoordinates.end(),
                              Authorized.begin(), Authorized.end()) ||
@@ -2311,8 +2306,8 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                 // graph privately: physical slots locate code, but grant no
                 // selector authority and must never become provisional edges.
                 const bool MayTryFullPhysicalInduction =
-                    ExactReplayIncomplete && Iteration == 0 &&
-                    CurrentImg && CurrentImg->Arch == Arch::X64 &&
+                    ExactReplayIncomplete && Iteration == 0 && CurrentImg &&
+                    CurrentImg->Arch == Arch::X64 &&
                     CandidateProposalStageActive && Info.IsRelative &&
                     !Info.RelocAbsolute && !Info.PreScaledIndex &&
                     !Info.TwoTableSelect && !Info.TwoLevelIndex &&
@@ -2368,12 +2363,10 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                   }
                   if (!consumeBudgetProducts(
                           {{FullCoordinates->size(),
-                            orderedEvidenceLookupWork(
-                                FullCoordinates->size()) +
+                            orderedEvidenceLookupWork(FullCoordinates->size()) +
                                 4},
-                           {Authorized.size(),
-                            orderedEvidenceLookupWork(
-                                FullCoordinates->size())}}))
+                           {Authorized.size(), orderedEvidenceLookupWork(
+                                                   FullCoordinates->size())}}))
                     return 0;
                   std::set<uint32_t> InductiveCoordinates(
                       FullCoordinates->begin(), FullCoordinates->end());
@@ -2391,8 +2384,7 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
                     return 0;
                   const std::optional<bool> Growth = queueGraphGrowth(
                       *InductiveTargets,
-                      hasCompleteDenseRuntimeCoordinates(
-                          InductiveCoordinates));
+                      hasCompleteDenseRuntimeCoordinates(InductiveCoordinates));
                   if (!Growth || *Growth)
                     return 0;
                   if (IncompleteIndexDomain)
@@ -4635,12 +4627,11 @@ uint32_t CFGBuilder::inferBoundsFromMask(
     uint32_t InlineRelativeReadableCapacity,
     const JumpTableStorageRange *OwnPublishedRuntimeStorage) const {
   return inferBoundsFromMaskWithAbsoluteProof(
-      Rec, Info, AllowNonContiguous, IncompleteIndexDomain,
-      UsedNonContiguous, FeasibleCoordinates, KnownOneWitnesses,
-      RequireProducerReachability, CandidateTargetsOverride,
-      ReachableInstructions, AllowFixedPointBootstrap, AllowRawDenseShortcut,
-      AggregateEvidenceBudget, SemanticIndexDomainAmbiguous,
-      ExactConsumerGroup, CertifiedEdgeOverrides,
+      Rec, Info, AllowNonContiguous, IncompleteIndexDomain, UsedNonContiguous,
+      FeasibleCoordinates, KnownOneWitnesses, RequireProducerReachability,
+      CandidateTargetsOverride, ReachableInstructions, AllowFixedPointBootstrap,
+      AllowRawDenseShortcut, AggregateEvidenceBudget,
+      SemanticIndexDomainAmbiguous, ExactConsumerGroup, CertifiedEdgeOverrides,
       CertifiedSiblingRuntimeStorage, ExactFiniteRelativeSingletonTarget,
       ExactFiniteRelativeClosureUnknown, RetainProvisionalRelativeEdges,
       AllowInlineZeroCapacityBoundedReplay, InlineRelativeReadableCapacity,

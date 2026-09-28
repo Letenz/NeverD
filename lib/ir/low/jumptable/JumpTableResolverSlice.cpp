@@ -2054,8 +2054,7 @@ static bool provesExactUnsignedModuloRecipe(
       const llvm::APInt MagicValue = Ctx.constValue(MagicRef);
       if (MagicValue.isZero() || MagicValue.getActiveBits() > 64)
         continue;
-      const llvm::APInt Product =
-          MagicValue * llvm::APInt(128, Divisor);
+      const llvm::APInt Product = MagicValue * llvm::APInt(128, Divisor);
       if (Product.ult(Scale))
         continue;
       const llvm::APInt Excess = Product - Scale;
@@ -6933,9 +6932,10 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       }
       case ResolverValueExpr::Kind::Slice: {
         // A high-half product of two 64-bit values is lifted as a 128-bit
-        // INT_MULT followed by SUBBYTES of the high half.  Exact unsigned-modulo
-        // recipes need that high half as a 64-bit extract; 16-byte nodes are
-        // otherwise rejected so SAT never sees a 128-bit value.
+        // INT_MULT followed by SUBBYTES of the high half.  Exact
+        // unsigned-modulo recipes need that high half as a 64-bit extract;
+        // 16-byte nodes are otherwise rejected so SAT never sees a 128-bit
+        // value.
         if (ExactModuloRecipeOnly && Node->Input && Node->Input->Size == 16 &&
             Node->SliceOffset + Node->Size <= 16 &&
             Node->Input->K == ResolverValueExpr::Kind::Transform &&
@@ -6974,14 +6974,14 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                   !accept(First->Input->Size))
                 return {};
               const uint16_t LowSize = First->Input->Size;
-              if (!std::all_of(Wide->Inputs.begin(), Wide->Inputs.end(),
-                               [LowSize](const ResolverValue &Arm) {
-                                 return Arm &&
-                                        Arm->K ==
-                                            ResolverValueExpr::Kind::ZeroExtend &&
-                                        Arm->Size == 16 && Arm->Input &&
-                                        Arm->Input->Size == LowSize;
-                               }))
+              if (!std::all_of(
+                      Wide->Inputs.begin(), Wide->Inputs.end(),
+                      [LowSize](const ResolverValue &Arm) {
+                        return Arm &&
+                               Arm->K == ResolverValueExpr::Kind::ZeroExtend &&
+                               Arm->Size == 16 && Arm->Input &&
+                               Arm->Input->Size == LowSize;
+                      }))
                 return {};
               return unknownNamed(Wide->Root, uint32_t(LowSize) * 8u);
             }
@@ -6989,8 +6989,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
           };
           if (symbolic::SymRef A =
                   symbolizeMulhuOperand(Node->Input->Inputs[0])) {
-            symbolic::SymRef B =
-                symbolizeMulhuOperand(Node->Input->Inputs[1]);
+            symbolic::SymRef B = symbolizeMulhuOperand(Node->Input->Inputs[1]);
             const bool WidthOk = A && B &&
                                  (Ctx.width(A) == 32 || Ctx.width(A) == 64) &&
                                  (Ctx.width(B) == 32 || Ctx.width(B) == 64);
