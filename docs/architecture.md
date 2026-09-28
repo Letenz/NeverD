@@ -35,6 +35,11 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Both source routes apply the same module-wide return modeling before recovering
+call arguments. On 32-bit targets, a callee proven to return a 64-bit integer
+uses the two integer return registers; HighIR and LLVM emission must preserve
+both halves through callers and source returns.
+
 The CLI parses commands in `tools/neverd`, creates a `neverd_session_t`, and
 calls the public API in `include/neverd/sdk/NeverDCAPI.h`. Engine state lives in
 `lib/sdk/SessionImpl.h`; `neverd_session_load` selects a loader and builds a

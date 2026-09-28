@@ -76,6 +76,12 @@ ARM32, Thumb-1/2 and AArch64. Both C routes must remove the MBA, recompile at
 `-O0` and `-O2`, and match unsigned arithmetic on byte pairs, edge values and
 random words. A pipeline guard checks that exact synthetic-frame accesses can
 be promoted while a dynamic store that may alias the frame remains observable.
+The 32-bit register-pair fixture separately checks that both C routes preserve
+an observed 64-bit return through a call on i386 (including PIC call/pop),
+ARM32, Thumb-1, and Thumb-2. Its edge and random-word oracles check the complete
+64-bit result and a caller that consumes both halves. This fixture checks
+semantics; it does not require the cross-word carry expression to print as one
+64-bit addition.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

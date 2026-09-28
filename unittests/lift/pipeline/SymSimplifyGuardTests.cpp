@@ -2587,7 +2587,7 @@ TEST(SymSimplifyGuard, MeasuresSharedArithmeticInsideOneClosedRegion) {
   }
 }
 
-TEST(SymSimplifyGuard, KeepsExternallyUsedSharedComputationOpaque) {
+TEST(SymSimplifyGuard, PreservesExternallyUsedSharedComputation) {
   llvm::LLVMContext C;
   llvm::Module M("external_shared", C);
   auto *Ty = llvm::Type::getInt32Ty(C);
@@ -2600,11 +2600,39 @@ TEST(SymSimplifyGuard, KeepsExternallyUsedSharedComputationOpaque) {
   llvm::Value *X = F->getArg(0);
   llvm::Value *Y = F->getArg(1);
   llvm::Value *Union = B.CreateOr(X, Y);
-  B.CreateStore(Union, F->getArg(2));
+  auto *Stored = B.CreateStore(Union, F->getArg(2));
   B.CreateRet(B.CreateOr(B.CreateSub(Union, X), Union));
-  const std::string Before = printFunction(*F);
-  EXPECT_EQ(SymSimplifyPass::simplify(*F), 0u);
-  EXPECT_EQ(printFunction(*F), Before);
+  EXPECT_GT(SymSimplifyPass::simplify(*F), 0u);
+  EXPECT_EQ(Stored->getValueOperand(), Union);
+  EXPECT_EQ(instructionCount(*F), 4u) << printFunction(*F);
+  EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+}
+
+TEST(SymSimplifyGuard, SimplifiesCarrySaveWithExternallyUsedAnd) {
+  llvm::LLVMContext C;
+  llvm::Module M("shared_carry_save", C);
+  auto *Ty = llvm::Type::getInt32Ty(C);
+  auto *Ptr = llvm::PointerType::get(C, 0);
+  auto *FT = llvm::FunctionType::get(Ty, {Ty, Ty, Ptr}, false);
+  auto *F = llvm::Function::Create(FT, llvm::Function::ExternalLinkage,
+                                   "shared_carry_save", &M);
+  auto *BB = llvm::BasicBlock::Create(C, "entry", F);
+  llvm::IRBuilder<> B(BB);
+  llvm::Value *X = F->getArg(0);
+  llvm::Value *Y = F->getArg(1);
+  llvm::Value *And = B.CreateAnd(X, Y);
+  auto *Stored = B.CreateStore(And, F->getArg(2));
+  B.CreateRet(B.CreateAdd(B.CreateXor(X, Y), B.CreateShl(And, 1)));
+
+  EXPECT_GT(SymSimplifyPass::simplify(*F), 0u) << printFunction(*F);
+  EXPECT_EQ(Stored->getValueOperand(), And);
+  EXPECT_EQ(instructionCount(*F), 4u) << printFunction(*F);
+  const auto *Ret = llvm::cast<llvm::ReturnInst>(BB->getTerminator());
+  const auto *Sum = llvm::dyn_cast<llvm::BinaryOperator>(Ret->getReturnValue());
+  ASSERT_NE(Sum, nullptr);
+  EXPECT_EQ(Sum->getOpcode(), llvm::Instruction::Add);
+  EXPECT_TRUE((Sum->getOperand(0) == X && Sum->getOperand(1) == Y) ||
+              (Sum->getOperand(0) == Y && Sum->getOperand(1) == X));
   EXPECT_FALSE(llvm::verifyModule(M, &llvm::errs()));
 }
 

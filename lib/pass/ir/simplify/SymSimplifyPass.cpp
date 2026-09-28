@@ -18,8 +18,9 @@
 /// Translation in both directions is deliberately narrow.  Only the operators
 /// that are bitvector arithmetic on a whole word are carried across; a load, a
 /// call, an argument, a comparison, a PHI -- each becomes one opaque input and
-/// comes back untouched. A shared value stays opaque when any use escapes the
-/// measured region, so external work is not duplicated.
+/// comes back untouched. Shared pure values are first kept opaque; an expanded
+/// retry may inspect them, but its cost counts only instructions the rewrite
+/// can actually remove, so external work is not duplicated.
 /// Every opaque instruction input must remain in the result, and rebuilding
 /// reuses it rather than duplicating or erasing computation the CFG already
 /// has.
@@ -319,13 +320,17 @@ solver::ProofStatus finalProofStatus(const sym::SynthResult &Result) {
 /// Measure the tree at \p Root, then search only when derivation did not
 /// produce a usable LLVM rewrite.  Search proposes a candidate; the selected
 /// proof provider is the only authority that can let it reach IR.
-SymSimplifyResult
-rewriteRoot(llvm::Instruction *Root, const SymSimplifyOptions &Opts,
-            llvm::SmallVectorImpl<llvm::WeakTrackingVH> &Dead) {
+SymSimplifyResult rewriteRoot(llvm::Instruction *Root,
+                              const SymSimplifyOptions &Opts,
+                              llvm::SmallVectorImpl<llvm::WeakTrackingVH> &Dead,
+                              bool ExpandSharedPure = false,
+                              bool *HadSharedBoundary = nullptr) {
   SymSimplifyResult Result;
   sym::SymContext Ctx;
-  Translator Xlat(Ctx);
+  Translator Xlat(Ctx, /*CarryComparisons=*/false, ExpandSharedPure);
   const sym::SymRef Before = Xlat.in(Root);
+  if (HadSharedBoundary)
+    *HadSharedBoundary = Xlat.hasSharedBoundary();
   if (!Before.isValid() || Ctx.dagSize(Before) < Opts.MinMeasuredNodes)
     return Result;
 
@@ -506,8 +511,20 @@ SymSimplifyResult SymSimplifyPass::simplifyWithResult(llvm::Function &F,
       Roots.push_back(&I);
 
   llvm::SmallVector<llvm::WeakTrackingVH, 64> Dead;
-  for (llvm::Instruction *Root : Roots)
-    mergeResult(Result, rewriteRoot(Root, Opts, Dead));
+  for (llvm::Instruction *Root : Roots) {
+    bool HadSharedBoundary = false;
+    SymSimplifyResult RootResult = rewriteRoot(
+        Root, Opts, Dead, /*ExpandSharedPure=*/false, &HadSharedBoundary);
+    if (RootResult.Rewrites == 0 && HadSharedBoundary) {
+      SymSimplifyResult Expanded =
+          rewriteRoot(Root, Opts, Dead, /*ExpandSharedPure=*/true);
+      if (Expanded.Rewrites != 0)
+        RootResult = std::move(Expanded);
+      else
+        mergeResult(RootResult, std::move(Expanded));
+    }
+    mergeResult(Result, std::move(RootResult));
+  }
 
   // Branch conditions after the expressions, so a condition is decided over
   // operands the measurement has already shortened rather than over the

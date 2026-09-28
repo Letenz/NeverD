@@ -287,21 +287,47 @@ void Translator::collectRegion(llvm::Value *Root) {
     Pending.append(Ops.begin(), Ops.end());
   }
 
-  // An externally used instruction is an opaque boundary. Removing it can
-  // expose another external use of an operand, so close that boundary towards
-  // the leaves before translation and before computing instruction savings.
+  // The closed region is cheaper to measure and gives shared computations a
+  // stable opaque identity.  If it cannot simplify, a second translation may
+  // inspect pure shared definitions, which is needed when a split-word carry
+  // also reads a carry-save expression's XOR or AND.
   for (const llvm::Value *V : Region)
     if (V != Root && llvm::any_of(V->users(), [&](const llvm::User *U) {
           return !Region.contains(U);
-        }))
-      Pending.push_back(const_cast<llvm::Value *>(V));
-  while (!Pending.empty()) {
-    llvm::Value *V = Pending.pop_back_val();
-    if (!Region.erase(V))
-      continue;
-    for (llvm::Value *Operand : children(*llvm::cast<llvm::Instruction>(V)))
-      if (Operand != Root && Region.contains(Operand))
-        Pending.push_back(Operand);
+        })) {
+      SharedBoundary = true;
+      if (!ExpandSharedPure)
+        Pending.push_back(const_cast<llvm::Value *>(V));
+    }
+  if (!ExpandSharedPure)
+    while (!Pending.empty()) {
+      llvm::Value *V = Pending.pop_back_val();
+      if (!Region.erase(V))
+        continue;
+      for (llvm::Value *Operand : children(*llvm::cast<llvm::Instruction>(V)))
+        if (Operand != Root && Region.contains(Operand))
+          Pending.push_back(Operand);
+    }
+
+  // Count only operations whose every use dies after Root is replaced. Pure
+  // shared expressions remain live for their other consumers even when the
+  // second translation uses their definitions to prove an identity.
+  llvm::DenseMap<const llvm::Value *, unsigned> RemainingUses;
+  for (const llvm::Value *V : Region)
+    RemainingUses[V] = V->getNumUses();
+  llvm::SmallVector<const llvm::Value *, 64> Dead{Root};
+  llvm::DenseSet<const llvm::Value *> Scheduled{Root};
+  while (!Dead.empty()) {
+    const llvm::Value *V = Dead.pop_back_val();
+    ++NumDescended;
+    for (const llvm::Value *Operand :
+         children(*llvm::cast<llvm::Instruction>(V))) {
+      auto It = RemainingUses.find(Operand);
+      if (It == RemainingUses.end() || It->second == 0)
+        continue;
+      if (--It->second == 0 && Scheduled.insert(Operand).second)
+        Dead.push_back(Operand);
+    }
   }
 }
 
@@ -366,7 +392,6 @@ sym::SymRef Translator::in(llvm::Value *Root) {
 
     Active.erase(V);
     Memo[V] = build(I);
-    ++NumDescended;
   }
   return Memo.lookup(Root);
 }

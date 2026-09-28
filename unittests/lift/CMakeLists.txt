@@ -178,6 +178,7 @@ add_neverd_unittest(NeverDLiftTests
   format/COFFRelocatableAbsoluteRelocationTests.cpp
   format/NativePointerRelocationBoundaryTests.cpp
   core/MedCallingConvTests.cpp
+  core/MedDceImplicitSpTests.cpp
   core/MedVariadicTests.cpp
   eh/COFFExceptionTests.cpp
   eh/COFFExceptionARM32UnwindTests.cpp
@@ -3101,6 +3102,7 @@ endif()
 
 add_neverd_unittest(NeverDLLVMCIntrinsicSemanticTests
   core/LLVMCIntrinsicSemanticTests.cpp
+  core/LLVMCFunnelShiftTests.cpp
   LINK_COMPONENTS BackendC
 )
 target_include_directories(NeverDLLVMCIntrinsicSemanticTests PRIVATE

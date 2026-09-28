@@ -719,4 +719,132 @@ INSTANTIATE_TEST_SUITE_P(
              (Info.param.LLVM ? "LLVMC" : "HighC");
     });
 
+struct RegisterPairCase {
+  const char *Name;
+  const char *Triple;
+  bool Thumb;
+  bool LLVM;
+  bool PIC = false;
+};
+
+class MBARegisterPairSourceTest
+    : public NeverDLiftTest,
+      public ::testing::WithParamInterface<RegisterPairCase> {};
+
+TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target MBA fixture requires clang";
+  const auto &Case = GetParam();
+  SCOPED_TRACE(std::string(Case.Name) + (Case.LLVM ? " LLVMC" : " HighC"));
+
+  const auto Object = tmpFile("register-pair.o");
+  std::vector<std::string> CompileArguments{
+      "-target",        Case.Triple, "-O0",
+      "-ffreestanding", "-nostdinc", "-fno-stack-protector",
+      "-fno-inline"};
+  if (Case.Thumb)
+    CompileArguments.push_back("-mthumb");
+  if (std::string_view(Case.Triple) == "i386-linux-gnu" && !Case.PIC) {
+    CompileArguments.push_back("-fno-pic");
+    CompileArguments.push_back("-fno-pie");
+  }
+  CompileArguments.insert(
+      CompileArguments.end(),
+      {"-c",
+       (fs::path(TEST_SOURCE_DIR) / "core/test_mba_register_pair.c").string(),
+       "-o", Object.string()});
+  const auto Compiled = exec(NEVERD_TEST_CLANG, CompileArguments);
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+
+  const auto Output = tmpFile("register-pair.c");
+  std::vector<std::string> Arguments{"decompile", "--no-debug"};
+  if (Case.LLVM)
+    Arguments.push_back("--llvm");
+  Arguments.insert(Arguments.end(), {"-o", Output.string(), Object.string()});
+  const auto Decompiled = exec(ndBin(), Arguments);
+  ASSERT_TRUE(Decompiled.ok()) << Decompiled.err;
+  const std::string Source = readSource(Output);
+  ASSERT_FALSE(Source.empty());
+  EXPECT_NE(Source.find(Case.LLVM ? "uint64_t mba_pair_add("
+                                  : "int64_t mba_pair_add("),
+            std::string::npos)
+      << Source;
+  EXPECT_FALSE(functionBody(Source, "mba_pair_add").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_fold").empty());
+
+  const char *Harness = R"(
+#include <inttypes.h>
+#include <stdio.h>
+static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
+  uint64_t x = ((uint64_t)xh << 32) | xl;
+  uint64_t y = ((uint64_t)yh << 32) | yl;
+  uint64_t expected = x + y;
+  uint64_t actual = (uint64_t)mba_pair_add(xl, xh, yl, yh);
+  uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
+  if (actual != expected ||
+      (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded) {
+    fprintf(stderr, "pair mismatch %08" PRIx32 ":%08" PRIx32
+                    " %08" PRIx32 ":%08" PRIx32 "\n", xh, xl, yh, yl);
+    return 1;
+  }
+  return 0;
+}
+int main(void) {
+  static const uint32_t edges[] = {
+      0, 1, 2, UINT32_C(0x7fffffff), UINT32_C(0x80000000),
+      UINT32_C(0xfffffffe), UINT32_MAX};
+  for (unsigned a = 0; a < 7; ++a)
+    for (unsigned b = 0; b < 7; ++b)
+      for (unsigned c = 0; c < 7; ++c)
+        for (unsigned d = 0; d < 7; ++d)
+          if (check_pair(edges[a], edges[b], edges[c], edges[d]))
+            return 1;
+  uint64_t state = UINT64_C(0x92d68ca2f53b17e9);
+  for (unsigned i = 0; i < 4096; ++i) {
+    uint32_t words[4];
+    for (unsigned j = 0; j < 4; ++j) {
+      state = state * UINT64_C(6364136223846793005) + 1;
+      words[j] = (uint32_t)(state >> 32);
+    }
+    if (check_pair(words[0], words[1], words[2], words[3]))
+      return 1;
+  }
+  return 0;
+}
+)";
+
+  const auto Combined = tmpFile("register-pair-execute.c");
+  std::ofstream(Combined) << Source << Harness;
+  for (const char *Optimization : {"-O0", "-O2"}) {
+    SCOPED_TRACE(Optimization);
+    const auto Executable = tmpFile("register-pair-execute");
+    const auto Recompiled = exec(
+        NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
+                            "-Werror=implicit-function-declaration",
+                            "-fsanitize=undefined", "-fsanitize-trap=undefined",
+                            Combined.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << "\n" << Source;
+    const auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.err << "\n" << Source;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CrossArchitecture, MBARegisterPairSourceTest,
+    ::testing::Values(
+        RegisterPairCase{"X86", "i386-linux-gnu", false, false},
+        RegisterPairCase{"X86", "i386-linux-gnu", false, true},
+        RegisterPairCase{"X86PIC", "i386-linux-gnu", false, false, true},
+        RegisterPairCase{"X86PIC", "i386-linux-gnu", false, true, true},
+        RegisterPairCase{"ARM32", "armv7-linux-gnueabihf", false, false},
+        RegisterPairCase{"ARM32", "armv7-linux-gnueabihf", false, true},
+        RegisterPairCase{"Thumb2", "armv7-linux-gnueabihf", true, false},
+        RegisterPairCase{"Thumb2", "armv7-linux-gnueabihf", true, true},
+        RegisterPairCase{"Thumb1", "thumbv6m-none-eabi", true, false},
+        RegisterPairCase{"Thumb1", "thumbv6m-none-eabi", true, true}),
+    [](const ::testing::TestParamInfo<RegisterPairCase> &Info) {
+      return std::string(Info.param.Name) +
+             (Info.param.LLVM ? "LLVMC" : "HighC");
+    });
+
 } // namespace

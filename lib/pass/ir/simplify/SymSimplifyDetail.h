@@ -75,8 +75,10 @@ bool isTranslatable(const llvm::Value *V, bool WithComparisons);
 
 class Translator {
 public:
-  explicit Translator(sym::SymContext &Ctx, bool CarryComparisons = false)
-      : Ctx(Ctx), CarryComparisons(CarryComparisons) {}
+  explicit Translator(sym::SymContext &Ctx, bool CarryComparisons = false,
+                      bool ExpandSharedPure = false)
+      : Ctx(Ctx), CarryComparisons(CarryComparisons),
+        ExpandSharedPure(ExpandSharedPure) {}
 
   /// Translate the region rooted at \p Root, including shared integer
   /// operators whose uses all belong to that region. Everything else stays
@@ -152,10 +154,12 @@ public:
   /// the set that RAUW leaves dead.  This is what a rebuilt form has to beat.
   unsigned descendedInsts() const { return NumDescended; }
 
+  bool hasSharedBoundary() const { return SharedBoundary; }
+
 private:
-  /// Find the maximal integer-expression region whose internal instructions
-  /// have no uses outside it. Every descended instruction can then become dead
-  /// after replacing the root, including computation shared inside the region.
+  /// Find the translatable integer-expression region. The usual pass keeps
+  /// externally shared values opaque; a second pass may inspect those pure
+  /// definitions while counting only instructions that can actually die.
   void collectRegion(llvm::Value *Root);
 
   bool descend(const llvm::Value *V) const { return Region.contains(V); }
@@ -241,6 +245,8 @@ private:
 
   sym::SymContext &Ctx;
   bool CarryComparisons = false;
+  bool ExpandSharedPure = false;
+  bool SharedBoundary = false;
   llvm::DenseMap<const llvm::Value *, sym::SymRef> Memo;
   llvm::DenseSet<const llvm::Value *> Region;
   /// Engine node index to the LLVM value it stands for, for the way back.
