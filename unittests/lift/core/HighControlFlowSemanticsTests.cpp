@@ -3361,3 +3361,122 @@ TEST(HighControlFlowSemantics, JumpTableLoopEdgesPreserveParallelPhiSnapshots) {
       EXPECT_FALSE(buildHighSourceFlowGraph(Incomplete).Diagnostics.Complete);
     }
 }
+
+TEST(HighControlFlowSemantics, ChainFoldKeepsALoadADeeperTestReads) {
+  // `if (c) { t1 = *base; r = t1; t2 = t1[4]; if (t2 == 7) { t3 = t1[12];
+  // if (t3 == 7) { work; goto Join; } else r = t1; } else r = t1; } else
+  // r = z; elseWork; Join:` folds into one chained test only when nothing
+  // but the substituted work reads a folded value.  The deeper test, the kept
+  // copy and the skipped arms read t1.
+  auto Store = [](va_t Address, uint64_t Slot, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = HighExpr::makeConst(Slot, 8);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Load = [](ExprPtr Address) {
+    return HighExpr::makeLoad(std::move(Address), NdType::makeInt(8));
+  };
+  auto Field = [&](uint64_t Offset) {
+    return Load(HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                                    HighExpr::makeConst(Offset, 8)));
+  };
+  auto Define = [](va_t Address, int Id, ExprPtr Value, bool Phi = false) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Addr = Address;
+    S.Dst = local(Id);
+    S.Val = std::move(Value);
+    S.IsPhiCopy = Phi;
+    return S;
+  };
+  auto Test = [](va_t Address, ExprPtr Cond, std::vector<HighStmt> Body,
+                 std::vector<HighStmt> Else) {
+    HighStmt S;
+    S.Kind = StmtKind::IfElse;
+    S.Addr = Address;
+    S.Cond = std::move(Cond);
+    S.Body = std::move(Body);
+    S.ElseBody = std::move(Else);
+    return S;
+  };
+  auto IsSeven = [](int Id) {
+    return HighExpr::makeBinop(NdOp::INT_EQUAL, local(Id),
+                               HighExpr::makeConst(7, 8));
+  };
+  HighStmt Deeper = Test(0x1020, IsSeven(3),
+                         {Store(0x1024, 0x300, HighExpr::makeConst(1, 8)),
+                          Store(0x1026, 0x308, local(4)), jump(0x1028, 0x1050)},
+                         {Define(0x1020, 5, local(1), true)});
+  HighStmt First =
+      Test(0x1018, IsSeven(2), {Define(0x101c, 3, Field(12)), Deeper},
+           {Define(0x1018, 5, local(1), true)});
+  HighStmt Outer =
+      Test(0x100c,
+           HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                               HighExpr::makeConst(0, 8)),
+           {Define(0x1010, 1, Load(HighExpr::makeConst(0x100, 8))),
+            Define(0x1010, 4, local(1)), Define(0x1014, 2, Field(4)), First},
+           {Define(0x100c, 5, local(6), true)});
+  HighFunc F;
+  F.Body = {Store(0x1000, 0x100, HighExpr::makeConst(0x200, 8)),
+            Store(0x1004, 0x204, HighExpr::makeConst(7, 8)),
+            Store(0x1008, 0x20c, local(0)),
+            Define(0x100a, 6, HighExpr::makeConst(0, 8)),
+            Outer,
+            Store(0x1040, 0x300,
+                  HighExpr::makeBinop(NdOp::INT_ADD, local(5),
+                                      HighExpr::makeConst(2, 8))),
+            result(0x1050, Load(HighExpr::makeConst(0x300, 8)))};
+  auto Expected = [](uint64_t Input) -> uint64_t {
+    return Input == 0 ? 2 : Input == 7 ? 1 : 0x202;
+  };
+  for (uint64_t Input : {uint64_t{0}, uint64_t{5}, uint64_t{7}})
+    ASSERT_EQ(execute(F, Input), Expected(Input));
+  structureIfElse(F, 10);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{5}, uint64_t{7}})
+    EXPECT_EQ(execute(F, Input), Expected(Input));
+}
+
+TEST(HighControlFlowSemantics, CopyOnlyThenArmReadAfterItsListStays) {
+  // `if (c) { if (x == 5) r = x; else work; } out = r + 2;` - the then-arm is
+  // only a copy, but the statement after the enclosing if reads it.
+  auto Store = [](va_t Address, uint64_t Slot, ExprPtr Value) {
+    HighStmt S;
+    S.Kind = StmtKind::Store;
+    S.Addr = Address;
+    S.StoreAddr = HighExpr::makeConst(Slot, 8);
+    S.StoreVal = std::move(Value);
+    return S;
+  };
+  auto Copy = assign(0x1010, 5, 0);
+  Copy.Val = local(0);
+  Copy.IsPhiCopy = true;
+  HighStmt Inner;
+  Inner.Kind = StmtKind::IfElse;
+  Inner.Addr = 0x1008;
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(5, 8));
+  Inner.Body = {Copy};
+  Inner.ElseBody = {Store(0x1014, 0x310, HighExpr::makeConst(1, 8))};
+  HighStmt Outer;
+  Outer.Kind = StmtKind::If;
+  Outer.Addr = 0x1004;
+  Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(0),
+                                   HighExpr::makeConst(0, 8));
+  Outer.Body = {Inner};
+  HighFunc F;
+  F.Body = {assign(0x1000, 5, 0), Outer,
+            Store(0x1020, 0x300,
+                  HighExpr::makeBinop(NdOp::INT_ADD, local(5),
+                                      HighExpr::makeConst(2, 8))),
+            result(0x1024, HighExpr::makeLoad(HighExpr::makeConst(0x300, 8),
+                                              NdType::makeInt(8)))};
+  for (uint64_t Input : {uint64_t{0}, uint64_t{3}, uint64_t{5}})
+    ASSERT_EQ(execute(F, Input), Input == 5 ? 7u : 2u);
+  structureIfElse(F, 10);
+  for (uint64_t Input : {uint64_t{0}, uint64_t{3}, uint64_t{5}})
+    EXPECT_EQ(execute(F, Input), Input == 5 ? 7u : 2u);
+}

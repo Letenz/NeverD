@@ -1129,6 +1129,23 @@ static bool functionReadsVar(const std::vector<HighStmt> &Local,
   return Reads;
 }
 
+/// Whether an assignment in \p Arm defines a value that a statement of the
+/// function outside \p Arm reads. Such an arm is not dead even when every
+/// statement in it is a copy.
+static bool armDefinesReadValue(const std::vector<HighStmt> &Arm) {
+  std::set<const HighStmt *> ArmStatements;
+  walkStmts(Arm, [&](const HighStmt &S) { ArmStatements.insert(&S); });
+  bool Read = false;
+  walkStmts(Arm, [&](const HighStmt &S) {
+    MedVar Dest;
+    ExprPtr Val;
+    if (!Read && isValueAssign(S, Dest, Val) &&
+        functionReadsVar(Arm, Dest, ArmStatements))
+      Read = true;
+  });
+  return Read;
+}
+
 /// Whether control can leave \p Body's tree other than by falling through its
 /// end: a jump to a label outside the tree, or a break or continue. Without
 /// such an exit, SSA dominance keeps every reader of a value defined in the
@@ -2692,6 +2709,24 @@ collectPredChainFromList(const std::vector<HighStmt> &Body, va_t Join,
   auto Inner = collectPredChain(Last, Join, LastCond);
   if (!Inner)
     return std::nullopt;
+  // Only the chain's work receives the folded values. A deeper test, a kept
+  // prefix or a skipped arm that reads one would name a value the fold no
+  // longer computes; a skipped arm also runs where the value was never
+  // loaded.
+  for (const auto &[Dest, Val] : Composed) {
+    (void)Val;
+    if (exprUsesVar(Inner->Cond.get(), Dest))
+      return std::nullopt;
+    for (const std::vector<HighStmt> *List : {&KeptPrefix, &Inner->SkipPrefix})
+      for (const HighStmt &S : *List) {
+        bool Reads = false;
+        walkStatementTree(S, [&](const HighStmt &N) {
+          Reads = Reads || stmtReadsVar(N, Dest);
+        });
+        if (Reads)
+          return std::nullopt;
+      }
+  }
   for (const auto &[Dest, Val] : Composed)
     replaceVarInStmts(Inner->Work, Dest, Val);
   std::vector<HighStmt> Work;
@@ -4484,7 +4519,9 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
               if (stmtUsesJoinDest(Body[J], Dest))
                 ThenHasIncoming = true;
           });
-          if (!ThenUsed && !ThenHasIncoming) {
+          // A statement after this list can read a then-arm copy too.
+          if (!ThenUsed && !ThenHasIncoming &&
+              !armDefinesReadValue(Stmt.Body)) {
             Stmt.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Stmt.Cond);
             Stmt.Kind = StmtKind::If;
             Stmt.Body = std::move(Stmt.ElseBody);
@@ -4492,7 +4529,8 @@ static void structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             Changed = true;
           }
         } else if (armIsSkippable(Stmt.ElseBody) && uniqueExitGoto(Stmt.Body) &&
-                   !ifBodyIsOnlyGoto(Stmt.Body)) {
+                   !ifBodyIsOnlyGoto(Stmt.Body) &&
+                   !armDefinesReadValue(Stmt.ElseBody)) {
           Stmt.Kind = StmtKind::If;
           Stmt.ElseBody.clear();
           Changed = true;
