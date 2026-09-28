@@ -237,6 +237,9 @@ bool BinaryImage::hasExecutableCodeOwnerAt(
   const Segment *Seg = getSegmentFor(Normalized);
   if (!Seg || !Seg->isExecutable())
     return false;
+  if (const ARMCodeRegion *Region = armMappingRegionAt(Normalized);
+      Region && Region->Kind == ARMCodeRegionKind::Data)
+    return false;
   if (isCodeAddress(Normalized) ||
       (Entry != 0 && normalizeCodeAddress(Entry, Arch, Mode) == Normalized) ||
       RuntimeFunctionAddrs.count(Addr) != 0 ||

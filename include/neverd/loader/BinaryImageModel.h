@@ -542,6 +542,23 @@ struct BinaryImage {
     return getBitnessValue(Bits) / kBitsPerByte;
   }
 
+  /// Exact ELF mapping interval, when one owns this AArch32 address. A $d
+  /// interval is data even when it lies inside an executable section or a
+  /// sized function symbol.
+  const ARMCodeRegion *armMappingRegionAt(va_t Addr) const {
+    if (Arch != neverd::Arch::ARM)
+      return nullptr;
+    const auto It =
+        std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+                         [](va_t Address, const ARMCodeRegion &Region) {
+                           return Address < Region.Start;
+                         });
+    if (It == ARMCodeRegions.begin())
+      return nullptr;
+    const ARMCodeRegion &Region = *std::prev(It);
+    return Addr < Region.End ? &Region : nullptr;
+  }
+
   /// The loader's address-specific AArch32 evidence. An unknown byte in a
   /// mixed image, or a $d interval, cannot be decoded by guessing a mode.
   std::optional<InstructionMode>
@@ -552,20 +569,12 @@ struct BinaryImage {
     if (!isCodeAddress(Addr))
       return std::nullopt;
     std::optional<InstructionMode> ProvenMode;
-    const auto It =
-        std::upper_bound(ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
-                         [](va_t Address, const ARMCodeRegion &Region) {
-                           return Address < Region.Start;
-                         });
-    if (It != ARMCodeRegions.begin()) {
-      const ARMCodeRegion &Region = *std::prev(It);
-      if (Addr < Region.End) {
-        if (Region.Kind == ARMCodeRegionKind::Data)
-          return std::nullopt;
-        ProvenMode = Region.Kind == ARMCodeRegionKind::Thumb
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr)) {
+      if (Region->Kind == ARMCodeRegionKind::Data)
+        return std::nullopt;
+      ProvenMode = Region->Kind == ARMCodeRegionKind::Thumb
                          ? InstructionMode::Thumb
                          : InstructionMode::ARM;
-      }
     }
     const auto Reachable = std::upper_bound(
         ARMReachableCodeRegions.begin(), ARMReachableCodeRegions.end(), Addr,
@@ -874,6 +883,9 @@ struct BinaryImage {
         Seg->Data.size() > InvalidVA - Seg->VA)
       return std::nullopt;
     const va_t MaterializedEnd = Seg->VA + Seg->Data.size();
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr);
+        Region && Region->Kind == ARMCodeRegionKind::Data)
+      return std::min<va_t>(Region->End, MaterializedEnd);
     if (const Section *Sec = getSectionFor(Addr)) {
       if (Sec->Size == 0 || Sec->Size > InvalidVA - Sec->VA)
         return std::nullopt;
@@ -894,6 +906,9 @@ struct BinaryImage {
   bool isCodeAddress(va_t Addr) const {
     const Segment *Seg = getSegmentFor(Addr);
     if (!Seg)
+      return false;
+    if (const ARMCodeRegion *Region = armMappingRegionAt(Addr);
+        Region && Region->Kind == ARMCodeRegionKind::Data)
       return false;
     if (const Section *Sec = getSectionFor(Addr)) {
       if (isMachO())
@@ -917,8 +932,24 @@ struct BinaryImage {
       return false;
     const Section *FirstSec = getSectionFor(Addr);
     const Section *LastSec = getSectionFor(Last);
-    return (!FirstSec && !LastSec) ||
-           (FirstSec && LastSec && FirstSec == LastSec);
+    if (!((!FirstSec && !LastSec) ||
+          (FirstSec && LastSec && FirstSec == LastSec)))
+      return false;
+    // Endpoints can both be instructions while a literal island lies between
+    // them. Never grant a complete code range across an intervening $d span.
+    if (Arch == neverd::Arch::ARM) {
+      auto It = std::upper_bound(
+          ARMCodeRegions.begin(), ARMCodeRegions.end(), Addr,
+          [](va_t Address, const ARMCodeRegion &Region) {
+            return Address < Region.Start;
+          });
+      while (It != ARMCodeRegions.end() && It->Start <= Last) {
+        if (It->Kind == ARMCodeRegionKind::Data)
+          return false;
+        ++It;
+      }
+    }
+    return true;
   }
 
   bool isDataAddress(va_t Addr) const {
