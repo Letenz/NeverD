@@ -22,7 +22,10 @@ namespace neverd::analysis {
 /// disjoint from the entry return-address slot. This is an environment
 /// precondition, not a consequence of absent frame provenance. Root-derived
 /// writes must prove disjointness; stack pivots and return dispatch are
-/// refused.
+/// refused in the default mode. ExplicitMachineState admits provider-certified
+/// near calls and exact returns; NormalNonfaultingExecution excludes exception
+/// dispatch rather than claiming its equivalence. X64CetDisabled certifies
+/// RDSSP destination preservation, never arbitrary CET instruction support.
 SpecializationResult
 specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
                             const SpecializationOptions &Options = {});

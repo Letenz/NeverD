@@ -3152,13 +3152,15 @@ class RepositoryCapabilityTests(unittest.TestCase):
         no_surfaces = {"c": [], "python": [], "cli": [], "json": []}
         expected_surfaces = {
             "analysis.interpreter-source-recovery": {
-                "c": ["neverd_devirtualize_source_v1"],
+                "c": ["neverd_devirtualize_source_v1",
+                      "neverd_devirtualize_machine_source_v1"],
                 "python": [],
                 "cli": [
                     "neverd decompile --devirtualize",
                     "neverd decompile --recovery-report",
                     "neverd decompile --vm-control",
                     "neverd decompile --vm-control-stack",
+                    "neverd decompile --vm-machine-state",
                     "neverd decompile --vm-max-contexts",
                     "neverd decompile --vm-max-nodes",
                     "neverd decompile --vm-max-operations",

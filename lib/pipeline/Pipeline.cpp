@@ -14,6 +14,7 @@
 #include "PipelineHighIRDetail.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
+#include "neverd/analysis/InterpreterMachineState.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/evm/analysis/EVMAnalyzer.h"
 #include "neverd/evm/bytecode/EVMBytecode.h"
@@ -316,7 +317,20 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       Trace.finish(false);
       return Result;
     }
-    Result.LowFuncs.push_back(Recovery.Residual);
+    if (Opts.InterpreterSpecialization->ExplicitMachineState) {
+      auto Wrapped = analysis::wrapInterpreterMachineStateX64(Recovery.Residual,
+                                                              Img.Format);
+      if (!Wrapped) {
+        Result.Error =
+            "machine-state recovery: " + llvm::toString(Wrapped.takeError());
+        Trace.finish(false);
+        return Result;
+      }
+      Result.InterpreterMachineSourceABI = std::move(Wrapped->SourceABI);
+      Result.LowFuncs.push_back(std::move(Wrapped->Function));
+    } else {
+      Result.LowFuncs.push_back(Recovery.Residual);
+    }
     PipelineFunctionAudit Audit;
     Audit.Entry = Entry;
     Audit.Name = Recovery.Residual.Name;

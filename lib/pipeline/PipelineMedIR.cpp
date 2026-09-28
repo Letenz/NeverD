@@ -55,6 +55,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   // Runtime metadata is a source-rendering hint, not a rewrite ABI contract.
   // Patch/lift and safety evidence keep their existing independent semantics.
   std::map<va_t, const SourceFunctionTypeHint *> SourceHints;
+  if (Result.InterpreterMachineSourceABI && Result.LowFuncs.size() == 1)
+    SourceHints.emplace(Result.LowFuncs.front().Entry,
+                        &*Result.InterpreterMachineSourceABI);
   if (!Opts.PatchMode && !Opts.LiftMode) {
     for (const auto &[Entry, Hint] : Opts.SourceTypeHints)
       SourceHints.emplace(Entry, &Hint);

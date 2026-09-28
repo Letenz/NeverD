@@ -26,6 +26,13 @@ struct SpecializationCursor {
   bool operator==(const SpecializationCursor &) const = default;
 };
 
+/// Provider certificate for the omitted physical effects of a native near
+/// CALL/RETURN. The instruction uses the configured eight-byte frame register
+/// as its stack pointer. CALL pushes its exact fallthrough address; RETURN
+/// consumes one address and has no additional stack adjustment. Generic LowIR
+/// CALL/RETURN operands alone do not establish this machine-level contract.
+enum class SpecializationNativeStackControl : uint8_t { None, Call, Return };
+
 /// A complete, strictly lifted guest instruction. The provider owns decoding,
 /// mapping, relocation, and instruction-level exception checks. A missing or
 /// unsupported instruction must return an Error, never an empty approximation.
@@ -33,6 +40,8 @@ struct SpecializationInstruction {
   std::vector<LowOp> Ops;
   LowInstructionBoundary Origin;
   SpecializationCursor Fallthrough;
+  SpecializationNativeStackControl NativeStackControl =
+      SpecializationNativeStackControl::None;
 };
 
 /// An exact non-faulting ordinary read whose bytes remain immutable throughout
@@ -68,21 +77,29 @@ struct SpecializationFrameSlot {
 };
 
 struct SpecializationOptions {
+  /// Preserve incoming machine flags as symbolic machine-state inputs rather
+  /// than claiming they are supplied by an ordinary source-language ABI.
+  bool ExplicitMachineState = false;
+  /// Optional execution-profile certificates; neither is valid without the
+  /// explicit machine-state interface. The binary provider owns their use.
+  bool NormalNonfaultingExecution = false;
+  bool X64CetDisabled = false;
   /// Constant context keys and bounded joint relations use only these control
   /// ranges. Unknown is valid, not an assumed zero. Other constant bytes join
   /// by intersection, so changing business values do not unroll a loop forever.
   std::vector<symbolic::SymRegisterRange> ControlRegisters;
-  /// Optional entry-relative frame identity. This enables affine pointer and
-  /// constant frame-byte propagation, not a private/non-aliasing memory claim.
+  /// Optional entry-relative frame identity. This enables affine pointers,
+  /// complete affine pointer spills, and constant frame-byte propagation,
+  /// not a private/non-aliasing memory claim.
   /// The initial implementation requires an eight-byte register root.
   std::optional<symbolic::SymRegisterRange> FrameBaseRegister;
   /// Context hints only: missing bytes remain unknown. Other frame facts join
   /// by intersection, so changing spilled business values do not unroll loops.
   std::vector<SpecializationFrameSlot> ControlFrameSlots;
-  /// Native RETURN is accepted only with the original frame-base value and
-  /// without writes to its entry [0, 8) control slot. Requires a frame root.
-  /// This excludes push/RET dispatch until explicit return-target lifting
-  /// exists.
+  /// An outer RETURN requires the original frame-base value and no writes to
+  /// its entry [0, 8) control slot. With a provider native-stack certificate,
+  /// non-entry RETURN instead loads a proved exact destination and advances
+  /// the stack. Uncertified return dispatch remains unsupported.
   bool RequireRestoredFrameAtReturn = false;
   /// Explicit source-ABI precondition: every external-origin store target
   /// range, including computed external addresses, is disjoint from the entry
@@ -99,6 +116,9 @@ struct SpecializationOptions {
   uint64_t MaxOperations = 262144;
   uint32_t MaxNodeEvaluations = 16384;
   uint32_t MaxIndirectTargets = 16;
+  /// Bounds distinct native return slots retained in one context. Native
+  /// returns are physical control transfers, not assumed LIFO function exits.
+  uint32_t MaxNativeReturnSlots = 64;
   /// Maximum exhaustive value sets used for immutable addresses and joint
   /// control-state projection. A partial solver enumeration is never a fact.
   uint32_t MaxImmutableReadAddresses = 16;
@@ -157,14 +177,16 @@ struct SpecializationResult {
 /// Provider-neutral partial evaluation of strictly lifted integer/control
 /// LowIR. Uncertified ordinary memory effects remain in the residual CFG.
 /// Exhaustively covered, certified immutable reads may become pure selections.
-/// Calls, opaque semantics other than retained x64 runtime flag snapshots and
-/// restores, ordered memory, and unsupported instruction guards are refused.
+/// Provider-certified native near CALL/RETURN uses physical stack semantics;
+/// ordinary calls without that certificate are refused. Opaque semantics other
+/// than retained x64 runtime flag snapshots and restores, ordered memory, and
+/// unsupported instruction guards are refused.
 /// Every temporary read must have a complete definition in the same lifted
 /// native instruction; temporary offsets may be reused by later instructions.
 /// Flag snapshots are treated as unknown values for proof and may not certify
 /// an external pointer or finite target on their own. A PUSHFQ snapshot needs
-/// prior definitions for every modelled flag because the source ABI has no
-/// arbitrary incoming-flag parameter. Synthetic labels
+/// prior definitions for every modelled flag unless ExplicitMachineState
+/// supplies their incoming values. Synthetic labels
 /// identify clones; NativeInstruction
 /// preserves provenance without copying stale address-occurrence certificates.
 SpecializationResult

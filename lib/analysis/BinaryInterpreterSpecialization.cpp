@@ -44,6 +44,7 @@ bool hasUsableExceptionCoverage(const BinaryImage &Image) {
 class ImageProvider final : public SpecializationProvider {
   const BinaryImage &Image;
   Decoder Decode;
+  const SpecializationOptions &Options;
 
   // The adapter deliberately refuses loader-fixed bytes. Width information is
   // not normalized for every relocation kind, so conservatively inspect the
@@ -82,7 +83,8 @@ class ImageProvider final : public SpecializationProvider {
   }
 
 public:
-  explicit ImageProvider(const BinaryImage &Image) : Image(Image) {
+  ImageProvider(const BinaryImage &Image, const SpecializationOptions &Options)
+      : Image(Image), Options(Options) {
     Decode.init(Arch::X64);
     Decode.setStrict(true);
   }
@@ -111,7 +113,8 @@ public:
     const ExceptionAddressRange InstructionRange{Cursor.Address,
                                                  Cursor.Address + Insn.Size};
     for (const auto &EH : Image.ExceptionMetadata.Functions)
-      if (EH.CodeRange.overlaps(InstructionRange) &&
+      if (!Options.NormalNonfaultingExecution &&
+          EH.CodeRange.overlaps(InstructionRange) &&
           (EH.hasLanguageTable() || EH.PersonalityVA || EH.HandlerDataVA ||
            EH.Personality != ExceptionPersonality::None ||
            EH.ParseStatus != ExceptionParseStatus::Complete ||
@@ -124,7 +127,16 @@ public:
     Decode.resetX86FpuState();
     SpecializationInstruction Result;
     try {
-      Decode.liftToLow(Insn, Result.Ops);
+      // With shadow stacks explicitly disabled, RDSSP leaves its destination
+      // unchanged. This instruction-specific architectural rule must precede
+      // lifting: the general CET intrinsic requires a shadow-stack model.
+      // Other CET operations, including INCSSP, retain their strict rejection.
+      if (Options.X64CetDisabled &&
+          (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ))
+        Result.Ops.push_back(
+            LowOp{.Opcode = NdOp::NOP, .Addr = Cursor.Address});
+      else
+        Decode.liftToLow(Insn, Result.Ops);
     } catch (const UnliftedInstruction &Error) {
       return llvm::createStringError(llvm::errc::not_supported, "%s",
                                      Error.what());
@@ -151,6 +163,10 @@ public:
         break;
       case NdOp::CALL:
       case NdOp::INDIR_CALL:
+        if (Options.ExplicitMachineState && Options.X64CetDisabled &&
+            Insn.Id == X86_INS_CALL && Op.Opcode == NdOp::CALL &&
+            Op.NumInputs == 1 && Op.Inputs[0].isConst())
+          Result.NativeStackControl = SpecializationNativeStackControl::Call;
         B.Control = LowInstructionControl::Call;
         B.ControlFlags |= LowInstructionControlFlag::Call;
         if (Op.Opcode == NdOp::INDIR_CALL)
@@ -167,6 +183,8 @@ public:
           return llvm::createStringError(
               llvm::errc::not_supported,
               "callee-pop returns require a recovery contract");
+        if (Options.ExplicitMachineState && Options.X64CetDisabled)
+          Result.NativeStackControl = SpecializationNativeStackControl::Return;
         B.Control = LowInstructionControl::Return;
         B.ControlFlags |= LowInstructionControlFlag::Return;
         B.Immediate = Decode.returnImmediate(Insn);
@@ -208,6 +226,13 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
         "interpreter specialization requires a linked x64 ELF or PE image";
     return Result;
   }
+  if ((Options.NormalNonfaultingExecution || Options.X64CetDisabled) &&
+      !Options.ExplicitMachineState) {
+    SpecializationResult Result;
+    Result.Diagnostic =
+        "machine execution profile requires explicit machine-state recovery";
+    return Result;
+  }
   if (!hasUsableExceptionCoverage(Image)) {
     SpecializationResult Result;
     Result.Status = SpecializationStatus::Unsupported;
@@ -239,7 +264,7 @@ specializeBinaryInterpreter(const BinaryImage &Image, va_t Entry,
     Result.Diagnostic = "COPY relocation write footprints are not supported";
     return Result;
   }
-  ImageProvider Provider(Image);
+  ImageProvider Provider(Image, Options);
   SpecializationOptions Effective = Options;
   if (!Effective.FrameBaseRegister)
     Effective.FrameBaseRegister =

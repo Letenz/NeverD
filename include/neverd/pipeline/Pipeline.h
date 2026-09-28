@@ -173,6 +173,8 @@ struct PipelineResult {
   std::vector<LowFunc> LowFuncs;
   /// Recovery evidence is separate from ordinary native lift provenance.
   std::optional<analysis::SpecializationResult> InterpreterRecovery;
+  /// Explicit recovery wrapper ABI, independent of original source hints.
+  std::optional<SourceFunctionTypeHint> InterpreterMachineSourceABI;
   /// Direct-callee GPR write summaries (see CallRegisterEffects.h), keyed by
   /// callee entry.  Absent entries keep the ABI clobber set.
   std::map<va_t, uint32_t> CallMayWriteGPRs;

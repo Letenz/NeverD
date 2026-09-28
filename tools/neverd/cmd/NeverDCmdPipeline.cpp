@@ -432,9 +432,9 @@ int runDecompile(neverd_session_t Sess) {
     return 1;
   }
   if (!Devirtualize &&
-      (!VMControlRegisters.empty() || !VMControlFrameSlots.empty() ||
-       !VMRecoveryReport.empty() || VMMaxNodes.getNumOccurrences() ||
-       VMMaxContexts.getNumOccurrences() ||
+      (VMMachineState || !VMControlRegisters.empty() ||
+       !VMControlFrameSlots.empty() || !VMRecoveryReport.empty() ||
+       VMMaxNodes.getNumOccurrences() || VMMaxContexts.getNumOccurrences() ||
        VMMaxOperations.getNumOccurrences())) {
     WithColor::error() << "VM recovery options require --devirtualize\n";
     return 1;
@@ -499,7 +499,11 @@ int runDecompile(neverd_session_t Sess) {
       Recovery.use_llvm = LlvmRoute;
       Recovery.no_opt = NoOpt;
       const char *Report = nullptr;
-      Source = neverd_devirtualize_source_v1(Sess, Entry, &Recovery, &Report);
+      Source =
+          VMMachineState
+              ? neverd_devirtualize_machine_source_v1(Sess, Entry, &Recovery,
+                                                      &Report)
+              : neverd_devirtualize_source_v1(Sess, Entry, &Recovery, &Report);
       if (!VMRecoveryReport.empty() && Report) {
         std::error_code EC;
         raw_fd_ostream OS(VMRecoveryReport, EC);

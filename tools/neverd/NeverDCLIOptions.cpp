@@ -340,6 +340,11 @@ cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
     cl::sub(DecompileCmd));
+cl::opt<bool> VMMachineState(
+    "vm-machine-state",
+    cl::desc(
+        "Explicit x64 state ABI; normal nonfaulting CPL3 execution, CET off"),
+    cl::sub(DecompileCmd));
 cl::list<std::string> VMControlRegisters(
     "vm-control",
     cl::desc("Full GPR used to separate interpreter contexts (repeatable)"),
