@@ -43,10 +43,12 @@ def nominal_types(document, module="Foundation"):
         if (identity.get("interfaceLanguage") != "swift" or
                 not identity.get("precise", "").startswith("s:") or
                 symbol.get("accessLevel") not in {"public", "open"} or
-                len(path) != 1 or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", path[0]) or
+                not path or len(path) > (3 if module == "Dispatch" else 1) or
+                any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part)
+                    for part in path) or
                 symbol.get("swiftGenerics", {}).get("parameters")):
             continue
-        name, precise = path[0], identity["precise"]
+        name, precise = ".".join(path), identity["precise"]
         if name in result and result[name] != precise:
             raise ValueError("ambiguous public nominal declaration")
         result[name] = precise

@@ -57,6 +57,21 @@ class SwiftMetadataDeclarationTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 nominal_types(bad)
 
+    def test_public_dispatch_nested_nominals_keep_full_identity(self):
+        document = graph()
+        document['module']['name'] = 'Dispatch'
+        document['symbols'][0]['pathComponents'] = ['DispatchQoS', 'QoSClass']
+        document['symbols'][0]['identifier']['precise'] = (
+            's:8Dispatch0A3QoSV0B6SClassO')
+        self.assertEqual(nominal_types(document, 'Dispatch'), {
+            'DispatchQoS.QoSClass': 's:8Dispatch0A3QoSV0B6SClassO'})
+        self.assertEqual(metadata_calls(
+            query('$s8Dispatch0A3QoSV0B6SClassOMa'),
+            nominal_types(document, 'Dispatch').values()),
+            {'$s8Dispatch0A3QoSV0B6SClassOMa'})
+        document['symbols'][0]['accessLevel'] = 'internal'
+        self.assertEqual(nominal_types(document, 'Dispatch'), {})
+
     def test_all_profiles_must_agree_on_nominal_identity(self):
         profiles = [nominal_types(graph()) for _ in range(4)]
         self.assertEqual(common_nominals(profiles), ['URL'])

@@ -3007,12 +3007,15 @@ TEST(ObjCCallHints, DispatchMetadataAccessorsRequireExactSDKExports) {
       "$s8Dispatch0A12DataIteratorVMa",
       "$s8Dispatch0A12TimeIntervalOMa",
       "$s8Dispatch0A13WorkItemFlagsVMa",
+      "$s8Dispatch0A3QoSV0B6SClassOMa",
       "$s8Dispatch0A3QoSVMa",
       "$s8Dispatch0A4DataVMa",
       "$s8Dispatch0A4TimeVMa",
       "$s8Dispatch0A8WallTimeVMa",
       "$s8Dispatch0A8WorkItemCMa",
       "$s8Dispatch0A9PredicateOMa",
+      "$sSo17OS_dispatch_queueC8DispatchE10AttributesVMa",
+      "$sSo18OS_dispatch_sourceC8DispatchE10TimerFlagsVMa",
   };
   constexpr llvm::StringLiteral Provider =
       "/usr/lib/swift/libswiftDispatch.dylib";
