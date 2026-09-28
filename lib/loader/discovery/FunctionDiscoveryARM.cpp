@@ -12,6 +12,8 @@
 
 #include "FunctionDiscoveryDetail.h"
 
+#include "neverd/libc/LibCNames.h"
+#include "neverd/loader/ELF/ELFLoaderUtils.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/ISAEncoding.h"
 
@@ -21,8 +23,13 @@
 #include <capstone/arm.h>
 #include <capstone/capstone.h>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace neverd {
 
@@ -154,6 +161,114 @@ std::optional<std::pair<va_t, va_t>> literalRead(const cs_insn &Insn,
     return std::make_pair(Begin, Begin + Size);
   }
   return std::nullopt;
+}
+
+/// What a decoded instruction does with control, for telling the routines
+/// that return to their callers from those that do not.
+struct ControlStep {
+  uint32_t Size = 0;
+  /// A direct branch's or call's target.
+  va_t Target = InvalidVA;
+  bool Call = false;
+  bool Jump = false;
+  bool Conditional = false;
+  /// Writes the PC other than by a direct branch or call: a return, or a
+  /// jump through a register or memory, which goes nowhere this pass knows.
+  bool Leaves = false;
+  /// Never goes on: a trap, or a system call that ends the process or the
+  /// thread.
+  bool Stops = false;
+};
+
+/// The Linux system calls a 32-bit ARM EABI program ends with: exit and
+/// exit_group.  Neither returns.
+bool isExitSyscall(uint32_t Number) { return Number == 1 || Number == 248; }
+
+/// The value a `mov`/`movw` or a PC-relative `ldr` gives register r7, the
+/// system call number, or nothing when it gives r7 some other value.
+std::optional<uint32_t> r7Value(const cs_insn &Insn, InstructionMode Mode,
+                                const BinaryImage &Img) {
+  const cs_arm &Arm = Insn.detail->arm;
+  if (Arm.op_count < 2 || Arm.operands[0].type != ARM_OP_REG ||
+      Arm.operands[0].reg != ARM_REG_R7 || Arm.cc < ARMCC_AL)
+    return std::nullopt;
+  if ((Insn.id == ARM_INS_MOV || Insn.id == ARM_INS_MOVW) &&
+      Arm.op_count == 2 && Arm.operands[1].type == ARM_OP_IMM)
+    return static_cast<uint32_t>(Arm.operands[1].imm);
+  if (Insn.id == ARM_INS_LDR)
+    if (const auto Literal = literalRead(Insn, Mode))
+      if (const uint8_t *Bytes = Img.readVA(Literal->first, 4))
+        return readLE<uint32_t>(Bytes);
+  return std::nullopt;
+}
+
+/// An address and the instruction set its bytes are decoded in.  Bytes a
+/// path reached in the wrong mode decode as something else, so what a
+/// routine does is read only from its own mode.
+using CodeKey = std::pair<va_t, InstructionMode>;
+
+struct CodeKeyHash {
+  size_t operator()(const CodeKey &Key) const {
+    return std::hash<va_t>()(Key.first * 2 +
+                             (Key.second == InstructionMode::Thumb));
+  }
+};
+
+/// Whether a routine entered at \p Entry can return to its caller, as far as
+/// the instructions of \p Steps show: some path from it reaches a return or
+/// a jump nobody can follow, falls into or jumps to another routine that can
+/// return, or runs into code that was not decoded.  Only a routine every path
+/// of which ends in a trap, an exiting system call, or a call to a routine
+/// \p IsNoReturn names cannot.
+bool mayReturn(
+    const CodeKey &Entry,
+    const std::unordered_map<CodeKey, ControlStep, CodeKeyHash> &Steps,
+    const std::set<CodeKey> &Entries,
+    const std::function<bool(va_t)> &IsNoReturn) {
+  const InstructionMode Mode = Entry.second;
+  std::vector<va_t> Pending{Entry.first};
+  std::unordered_set<va_t> Seen;
+  while (!Pending.empty()) {
+    const va_t Address = Pending.back();
+    Pending.pop_back();
+    if (!Seen.insert(Address).second)
+      continue;
+    // A jump to another routine, or a path running into one, is a tail
+    // call: it returns if that routine does.
+    if (Address != Entry.first && Entries.count({Address, Mode})) {
+      if (!IsNoReturn(Address))
+        return true;
+      continue;
+    }
+    const auto It = Steps.find({Address, Mode});
+    if (It == Steps.end())
+      return true;
+    const ControlStep &Step = It->second;
+    const va_t Next = Address + Step.Size;
+    if (Step.Stops) {
+      if (Step.Conditional)
+        Pending.push_back(Next);
+      continue;
+    }
+    if (Step.Leaves)
+      return true;
+    if (Step.Call) {
+      if (Step.Conditional || Step.Target == InvalidVA ||
+          !IsNoReturn(Step.Target))
+        Pending.push_back(Next);
+      continue;
+    }
+    if (Step.Jump) {
+      if (Step.Target == InvalidVA)
+        return true;
+      Pending.push_back(Step.Target);
+      if (Step.Conditional)
+        Pending.push_back(Next);
+      continue;
+    }
+    Pending.push_back(Next);
+  }
+  return false;
 }
 
 } // anonymous namespace
@@ -321,15 +436,58 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   // across one of them, is repeated with every literal known from the start.
   // A conflict no new literal explains still fails.
   LiteralRanges Literals;
+  // Nor does a path go on after a call to a routine that never returns: an
+  // import or symbol the no-return list names, or a routine every decoded
+  // path of which ends in a trap, an exiting system call, or such a call.
+  // The bytes after the call belong to whatever follows -- often a routine in
+  // the other instruction set.  A pass that proves routines no-return it did
+  // not know of is repeated without the paths it followed past their calls.
+  // A veneer names its import even where the image has not recorded it: a
+  // mixed image keeps its PLT unpaired.  And a shared library's veneer for a
+  // routine the library defines itself goes to that definition unless
+  // another module interposes one, so the definition's own code settles
+  // whether it returns: the throw helpers of a C++ runtime are no-return
+  // without being on any list.
+  const libc::NoReturnTargetIndex NamedNoReturn(Img);
+  std::set<va_t> NoReturnVeneers;
+  std::map<va_t, va_t> VeneerDefinitions;
+  {
+    std::unordered_map<std::string_view, va_t> Defined;
+    for (const Symbol &Sym : Img.Symbols)
+      if (Sym.IsFunc && !Sym.Name.empty() && Img.isCodeAddress(Sym.Addr))
+        Defined.try_emplace(Sym.Name, Sym.Addr);
+    for (const auto &[Veneer, Import] : elf_loader::findARMPLTVeneers(Img)) {
+      const std::string &Name = Img.Imports[Import].Name;
+      if (libc::isNoReturnFunction(Name))
+        NoReturnVeneers.insert(Veneer);
+      else if (const auto It = Defined.find(Name); It != Defined.end())
+        VeneerDefinitions.emplace(Veneer, It->second);
+    }
+  }
+  std::set<va_t> InferredNoReturn;
+  const auto IsNoReturn = [&](va_t Target) {
+    if (const auto It = VeneerDefinitions.find(Target);
+        It != VeneerDefinitions.end())
+      Target = It->second;
+    return InferredNoReturn.count(Target) || NoReturnVeneers.count(Target) ||
+           NamedNoReturn.contains(Img, Target);
+  };
   // One entry per decoded instruction until the final adjacent-span merge.
   // Keeping the extents separate makes a branch into an instruction interior
   // a detectable conflict, rather than accidentally decoding from there.
   std::map<va_t, ARMCodeRegion> Decoded;
   std::map<va_t, InstructionMode> VeneerCandidates;
   constexpr size_t kMaxDiscoveredInstructions = 4'000'000;
+  std::unordered_map<CodeKey, ControlStep, CodeKeyHash> Steps;
+  std::set<CodeKey> Entries;
   while (true) {
     Decoded.clear();
     VeneerCandidates.clear();
+    Steps.clear();
+    Entries.clear();
+    for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
+      if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb)
+        Entries.emplace(Address, Mode);
     std::deque<ModeAt> Pending;
     for (const auto &[Address, Mode] : Img.ARMCodeModeEntries)
       if (Mode == InstructionMode::ARM || Mode == InstructionMode::Thumb)
@@ -351,6 +509,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
       const auto [Start, Mode] = Pending.front();
       Pending.pop_front();
       va_t Cur = Start;
+      // The system call number, while this path has set it.
+      std::optional<uint32_t> R7;
       while (true) {
         const Segment *Seg = Img.getSegmentFor(Cur);
         if (!Seg || !Img.isCodeAddress(Cur) || Cur < Seg->VA ||
@@ -454,7 +614,13 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
         const bool Conditional = Insn->detail->arm.cc < ARMCC_AL ||
                                  Insn->id == ARM_INS_CBZ ||
                                  Insn->id == ARM_INS_CBNZ;
-        if (IsCall || IsJump) {
+        ControlStep Step;
+        Step.Size = Insn->size;
+        Step.Call = IsCall;
+        Step.Jump = IsJump;
+        Step.Conditional = Conditional;
+        // A supervisor call's immediate is an argument, not a target.
+        if ((IsCall || IsJump) && Insn->id != ARM_INS_SVC) {
           for (uint8_t Index = 0; Index < Insn->detail->arm.op_count; ++Index) {
             const cs_arm_op &Op = Insn->detail->arm.operands[Index];
             if (Op.type != ARM_OP_IMM || Op.imm < 0)
@@ -465,20 +631,43 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
                                ? InstructionMode::ARM
                                : InstructionMode::Thumb;
             const va_t Target = clearThumbBit(static_cast<va_t>(Op.imm));
+            Step.Target = Target;
             if (Img.isCodeAddress(Target)) {
               Pending.emplace_back(Target, TargetMode);
               Origins.try_emplace({Target, TargetMode}, Cur);
+              if (IsCall)
+                Entries.emplace(Target, TargetMode);
             }
             break;
           }
         }
         uint16_t Read[64], Written[64];
         uint8_t ReadCount = 0, WriteCount = 0;
-        const bool WritesPC =
-            cs_regs_access(Handle, Insn, Read, &ReadCount, Written,
-                           &WriteCount) == CS_ERR_OK &&
-            std::find(Written, Written + WriteCount, ARM_REG_PC) !=
-                Written + WriteCount;
+        const bool Accessed = cs_regs_access(Handle, Insn, Read, &ReadCount,
+                                             Written, &WriteCount) == CS_ERR_OK;
+        const auto Writes = [&](uint16_t Reg) {
+          return Accessed && std::find(Written, Written + WriteCount, Reg) !=
+                                 Written + WriteCount;
+        };
+        const bool WritesPC = Writes(ARM_REG_PC);
+        Step.Leaves = WritesPC && !IsCall && Step.Target == InvalidVA;
+        // A trap does not go on, and neither does exit or exit_group: the
+        // EABI passes the call number in r7 and ignores the immediate.
+        if (Insn->id == ARM_INS_UDF || Insn->id == ARM_INS_BKPT ||
+            Insn->id == ARM_INS_TRAP)
+          Step.Stops = true;
+        if (Insn->id == ARM_INS_SVC && Insn->detail->arm.op_count == 1 &&
+            Insn->detail->arm.operands[0].type == ARM_OP_IMM &&
+            Insn->detail->arm.operands[0].imm == 0 && R7 && isExitSyscall(*R7))
+          Step.Stops = true;
+        if (Writes(ARM_REG_R7))
+          R7 = r7Value(*Insn, Mode, Img);
+        Steps.emplace(CodeKey(Cur, Mode), Step);
+        if (Step.Stops && !Conditional)
+          break;
+        if (IsCall && !Conditional && Step.Target != InvalidVA &&
+            IsNoReturn(Step.Target))
+          break;
         if ((IsJump || (WritesPC && !IsCall)) && !Conditional)
           break;
         Cur += Insn->size;
@@ -489,6 +678,20 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
          std::any_of(Decoded.begin(), Decoded.end(), [&](const auto &Entry) {
            return Literals.overlaps(Entry.second.Start, Entry.second.End);
          })))
+      continue;
+    // Settle which routines return, each proof possibly enabling the next:
+    // a routine whose last call is to one just proven no-return is one too.
+    bool FoundNoReturn = false;
+    for (bool Changed = true; Changed;) {
+      Changed = false;
+      for (const CodeKey &Entry : Entries)
+        if (!IsNoReturn(Entry.first) && Steps.count(Entry) &&
+            !mayReturn(Entry, Steps, Entries, IsNoReturn)) {
+          InferredNoReturn.insert(Entry.first);
+          Changed = FoundNoReturn = true;
+        }
+    }
+    if (FoundNoReturn)
       continue;
     if (Conflict)
       return llvm::make_error<llvm::StringError>(
