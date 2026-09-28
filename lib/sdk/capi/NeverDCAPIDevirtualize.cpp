@@ -291,6 +291,7 @@ devirtualizeSource(neverd_session_t Session, neverd_va_t Entry,
     PO.OnlyFunctionEntries = {Entry};
     PO.InterpreterSpecialization.emplace();
     auto &Config = *PO.InterpreterSpecialization;
+    Config.DiscoverControlState = true;
     Config.ExplicitMachineState = MachineState;
     Config.NormalNonfaultingExecution = MachineState;
     Config.X64CetDisabled = MachineState;
@@ -396,6 +397,10 @@ devirtualizeSource(neverd_session_t Session, neverd_va_t Entry,
     Evidence["maxImmutableReadAddresses"] = Config.MaxImmutableReadAddresses;
     Evidence["maxControlTuples"] = Config.MaxControlTuples;
     Evidence["maxControlFields"] = Config.MaxControlFields;
+    Evidence["discoverControlState"] = Config.DiscoverControlState;
+    Evidence["maxControlRefinements"] = Config.MaxControlRefinements;
+    Evidence["maxDiscoveryVisits"] =
+        static_cast<int64_t>(Config.MaxDiscoveryVisits);
     Evidence["maxSolverQueries"] =
         static_cast<int64_t>(Config.MaxSolverQueries);
     Evidence["maxSolverGates"] = static_cast<int64_t>(Config.MaxSolverGates);
@@ -419,6 +424,10 @@ devirtualizeSource(neverd_session_t Session, neverd_va_t Entry,
           static_cast<int64_t>(R.EvaluatedOperations);
       Evidence["solverQueries"] = static_cast<int64_t>(R.SolverQueries);
       Evidence["relationalWidenings"] = R.RelationalWidenings;
+      Evidence["discoveredControlFields"] = R.DiscoveredControlFields;
+      Evidence["discoveredContextFields"] = R.DiscoveredContextFields;
+      Evidence["controlRefinements"] = R.ControlRefinements;
+      Evidence["discoveryVisits"] = static_cast<int64_t>(R.DiscoveryVisits);
       Evidence["residualBlocks"] =
           static_cast<int64_t>(R.Residual.Blocks.size());
       llvm::json::Array Reads;

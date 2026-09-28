@@ -3026,11 +3026,26 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
 
   if (auto *SW = llvm::dyn_cast<llvm::SwitchInst>(&Inst)) {
     const llvm::BasicBlock *From = Inst.getParent();
+    auto *SelectorType = SW->getCondition()->getType();
+    // LLVM switch compares bit patterns. Normalize the condition through the
+    // existing unsigned width owner before C's integer promotions, and keep
+    // labels in that same domain: sign-extending i2 2 to -2 cannot match a
+    // masked uint8_t selector whose values are 0..3.
+    const std::string Selector =
+        castStr(llvm::Instruction::Trunc, valueStr(SW->getCondition()),
+                SelectorType, SelectorType);
     emitIndent(Indent);
-    OS << "switch (" << valueStr(SW->getCondition()) << ") {\n";
+    OS << "switch (" << Selector << ") {\n";
     for (auto &C : SW->cases()) {
+      const auto *Value = C.getCaseValue();
+      // Wide constants already use an unsigned 128-bit carrier. Narrow
+      // labels must stay numeric even if their bits resemble an image address.
+      const std::string Label =
+          Value->getBitWidth() > 64
+              ? constStr(Value)
+              : std::to_string(Value->getZExtValue()) + "ULL";
       emitIndent(Indent);
-      OS << "case " << C.getCaseValue()->getSExtValue() << ": {\n";
+      OS << "case " << Label << ": {\n";
       writeGoto(From, C.getCaseSuccessor(), Indent + 1);
       emitIndent(Indent);
       OS << "}\n";

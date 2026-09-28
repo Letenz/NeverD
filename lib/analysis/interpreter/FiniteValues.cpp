@@ -8,12 +8,44 @@
 
 #include "neverd/solver/BitVectorSolver.h"
 
+#include "llvm/ADT/DenseSet.h"
+
 #include <algorithm>
 
 namespace neverd::analysis::detail {
 
 using namespace symbolic;
 using namespace solver;
+
+bool hasUnconstrainedProjectionInput(const SymContext &Ctx, SymRef Predicate,
+                                     SymRef Value, uint32_t Limit,
+                                     uint64_t MaxVisited) {
+  if (!Predicate || Ctx.width(Predicate) != 1 || !Value || !Ctx.isVar(Value) ||
+      !Ctx.width(Value) || !Limit || !MaxVisited)
+    return false;
+  if (Ctx.width(Value) < 64 && (uint64_t{1} << Ctx.width(Value)) <= Limit)
+    return false;
+
+  llvm::DenseSet<uint32_t> Seen;
+  llvm::SmallVector<SymRef, 16> Pending{Predicate};
+  Seen.insert(Predicate.index());
+  while (!Pending.empty()) {
+    const SymRef Current = Pending.pop_back_val();
+    if (Current == Value)
+      return false;
+    for (SymRef Operand : Ctx.operands(Current)) {
+      if (Seen.contains(Operand.index()))
+        continue;
+      // Charge unique nodes when queued, bounding both the walk and storage
+      // even when a node has many operands or the expression is a shared DAG.
+      if (Seen.size() >= MaxVisited)
+        return false;
+      Seen.insert(Operand.index());
+      Pending.push_back(Operand);
+    }
+  }
+  return true;
+}
 
 FiniteValues enumerateFiniteValues(SymContext &Ctx, SymRef Predicate,
                                    llvm::ArrayRef<SymRef> Values,

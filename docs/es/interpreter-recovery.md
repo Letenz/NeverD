@@ -11,9 +11,9 @@ semántica de las instrucciones, no firmas de manejadores ni la tabla de opcodes
 de un protector concreto.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
@@ -33,6 +33,20 @@ La API C es `neverd_devirtualize_source_v1()`, declarada en
 modificar la caché de descompilación habitual de la sesión. Un fallo no devuelve
 código fuente, aunque puede devolver un diagnóstico JSON. Ambas cadenas
 asignadas se liberan con `neverd_free_string()`.
+
+## Descubrimiento automático del estado de control
+
+La CLI y ambas API C de recuperación de código activan el descubrimiento automático por defecto. La API C++ independiente del proveedor mantiene `SpecializationOptions::DiscoverControlState = false`; el llamador puede establecer `true`. Las pistas manuales `--vm-control` y `--vm-control-stack` siguen siendo claves de contexto opcionales. Los campos automáticos ordinarios conservan relaciones conjuntas de valores finitos y acotados, sin crear claves de contexto ni fijar entradas de ejecución a valores muestreados. Los contadores siguen siendo dinámicos salvo que el refinamiento selectivo de memoria descrito abajo necesite sus constantes demostradas.
+
+El descubrimiento sigue las dependencias de control y direcciones sin resolver hasta entradas estructuradas de registros y lecturas exactas del marco relativas a la entrada, incluidos rangos estrechos de bytes. Al encontrar dependencias ausentes, el análisis vuelve a empezar desde la entrada de la función. Cada campo aún requiere una prueba completa de su dominio finito; las escrituras con posibles alias siguen invalidando hechos de memoria. La memoria externa arbitraria y las relaciones de valores no acotadas no se vuelven finitas.
+
+Si dependencias de memoria ya rastreadas impiden repetidamente demostrar una dirección exacta, el refinamiento puede promover sus constantes de entrada demostradas a claves de contexto. No divide tuplas multivaluadas en nuevas aristas ni añade lecturas de memoria invitada para elegir el contexto: demostrar un dominio finito no garantiza que una lectura adicional sea segura. Los estados dinámicos o no acotados que dependen de memoria aún pueden detener la recuperación dentro de los límites configurados.
+
+Las demandas hacia los productores se identifican por la entrada del nodo nativo, el modo de instrucción, el tipo de campo y su intervalo de bytes. Solo una arista cuyo sucesor demande ese campo amplía sus dependencias de producción, incluso si su dominio finito sigue siendo impreciso. Esto puede reiniciar el análisis desde la entrada dentro de los presupuestos, sin asignar un único papel global a un registro físico reutilizado. La detección de dependencias es acotada e incompleta; no se garantiza recuperar todos los intérpretes sin indicaciones manuales.
+
+Los valores predeterminados son `MaxControlFields = 16` para campos manuales y automáticos en conjunto, `MaxControlRefinements = 16` y `MaxDiscoveryVisits = 65536`. Los reinicios comparten presupuestos globales de nodos (incluidos los sintéticos), operaciones, evaluaciones, consultas y visitas de descubrimiento. `contexts` cuenta contextos nativos y, como `evaluatedOperations`, `nodeEvaluations` y `solverQueries`, acumula todos los intentos. Los contextos por dirección, slots activos de retorno nativo, campos y tuplas siguen siendo límites estructurales por intento. El límite de consultas permanece en 4096. El agotamiento no publica resultados parciales; `residualBlocks` describe solo el grafo residual final.
+
+El informe JSON añade `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` y `discoveryVisits` para registrar activación, límites y trabajo de análisis. Descubrir campos no demuestra por sí solo que la recuperación haya tenido éxito.
 
 ## Contrato de ejecución
 

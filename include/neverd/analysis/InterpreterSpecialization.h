@@ -84,9 +84,15 @@ struct SpecializationOptions {
   /// explicit machine-state interface. The binary provider owns their use.
   bool NormalNonfaultingExecution = false;
   bool X64CetDisabled = false;
-  /// Constant context keys and bounded joint relations use only these control
-  /// ranges. Unknown is valid, not an assumed zero. Other constant bytes join
-  /// by intersection, so changing business values do not unroll a loop forever.
+  /// Demand-driven precision refinement for unresolved control. Discovered
+  /// register/frame ranges retain exhaustive finite relations. Repeatedly
+  /// unresolved memory dependencies may additionally separate proven constant
+  /// contexts, under the same global bounds; no input value is assumed.
+  bool DiscoverControlState = false;
+  /// Explicit context-key ranges, also included in bounded joint relations.
+  /// Discovery may add further ranges. Unknown is valid, not an assumed zero.
+  /// Other constant bytes join by intersection, so changing business values
+  /// do not unroll a loop forever.
   std::vector<symbolic::SymRegisterRange> ControlRegisters;
   /// Optional entry-relative frame identity. This enables affine pointers,
   /// complete affine pointer spills, and constant frame-byte propagation,
@@ -124,6 +130,14 @@ struct SpecializationOptions {
   uint32_t MaxImmutableReadAddresses = 16;
   uint32_t MaxControlTuples = 32;
   uint32_t MaxControlFields = 16;
+  /// Refinement restarts the graph from entry. Global node, operation,
+  /// evaluation, and solver-query budgets are cumulative across restarts;
+  /// these additionally bound discovery itself. Per-address contexts, active
+  /// native return slots, fields, and tuples remain per-attempt structural
+  /// limits. Context promotion adds no guest-memory reads: finite-value proof
+  /// alone would not establish the accessibility of a new load.
+  uint32_t MaxControlRefinements = 16;
+  uint64_t MaxDiscoveryVisits = 65536;
   /// Global check count, per-query encoding/search limits, and per-node DAG
   /// bound. These limits also apply in builds without the optional Z3 backend;
   /// specialization uses the always-available built-in bitvector solver.
@@ -170,6 +184,10 @@ struct SpecializationResult {
   uint32_t Contexts = 0;
   uint64_t SolverQueries = 0;
   uint32_t RelationalWidenings = 0;
+  uint32_t DiscoveredControlFields = 0;
+  uint32_t DiscoveredContextFields = 0;
+  uint32_t ControlRefinements = 0;
+  uint64_t DiscoveryVisits = 0;
 
   bool complete() const { return Status == SpecializationStatus::Complete; }
 };

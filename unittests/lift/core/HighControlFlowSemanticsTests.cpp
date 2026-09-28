@@ -41,9 +41,10 @@ TEST(HighControlFlowSemantics, CalleeNameSnapshotKeepsLookupPrecedence) {
   Img.Symbols.push_back({"symbol_name", 0x4000});
   Img.Symbols.push_back({"symbol_behind_synthetic", 0x7000});
   Img.Symbols.push_back({"symbol_after_empty_export", 0x8000});
-  std::map<va_t, std::string> FunctionNames = {
-      {0x1000, "sub_1000"}, {0x2000, "declared_name"},
-      {0x3000, "sub_3000"}, {0x5000, "sub_5000"}};
+  std::map<va_t, std::string> FunctionNames = {{0x1000, "sub_1000"},
+                                               {0x2000, "declared_name"},
+                                               {0x3000, "sub_3000"},
+                                               {0x5000, "sub_5000"}};
   std::set<va_t> Targets = {0,      0x1000, 0x2000, 0x3000, 0x4000,
                             0x5000, 0x6000, 0x7000, 0x8000};
 
@@ -411,18 +412,13 @@ HighFunc copiedBooleanEquality(bool ReassignCopy) {
   Use.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Boolean(8));
   Use.Body = {result(0x1038, local(9))};
   HighFunc F;
-  F.Body = {assign(0x1000, 1, 1),
-            assign(0x1004, 2, 1),
-            Copy(0x1008, 3, 1),
-            Copy(0x100c, 4, 2),
-            Equality(0x1010, 5, 1, 2),
-            Define};
+  F.Body = {assign(0x1000, 1, 1), assign(0x1004, 2, 1),      Copy(0x1008, 3, 1),
+            Copy(0x100c, 4, 2),   Equality(0x1010, 5, 1, 2), Define};
   if (ReassignCopy)
     F.Body.push_back(assign(0x1020, 3, 2));
-  F.Body.insert(F.Body.end(),
-                {Copy(0x1024, 6, 3), Copy(0x1028, 7, 4),
-                 Equality(0x102c, 8, 6, 7), Use,
-                 result(0x103c, HighExpr::makeConst(0, 8))});
+  F.Body.insert(F.Body.end(), {Copy(0x1024, 6, 3), Copy(0x1028, 7, 4),
+                               Equality(0x102c, 8, 6, 7), Use,
+                               result(0x103c, HighExpr::makeConst(0, 8))});
   return F;
 }
 
@@ -740,8 +736,8 @@ TEST(HighControlFlowSemantics, MaskedLowBitsDiscardOnlyUnobservedConcatHigh) {
     EXPECT_EQ(Masked->Operands[0]->Op, NdOp::INT_ZEXT);
     EXPECT_EQ(Masked->Operands[0]->Type->Size, ResultBytes);
     EXPECT_EQ(Masked->Operands[0]->Operands[0], Low);
-    for (uint64_t Input : {uint64_t{0}, uint64_t{1}, uint64_t{2},
-                           uint64_t{0xff}, UINT64_MAX})
+    for (uint64_t Input :
+         {uint64_t{0}, uint64_t{1}, uint64_t{2}, uint64_t{0xff}, UINT64_MAX})
       EXPECT_EQ(execute(Function, Input), Input & 1);
   }
 }
@@ -802,8 +798,7 @@ TEST(HighControlFlowSemantics, MaskedConcatKeepsObservedOrEffectfulHigh) {
     }
     auto Joined = concatenate(High, byteSlice(local(0), 0, 1));
     auto Masked = HighExpr::makeBinop(
-        NdOp::INT_AND, Joined,
-        HighExpr::makeConst(Case == 0 ? 0x100 : 1, 8));
+        NdOp::INT_AND, Joined, HighExpr::makeConst(Case == 0 ? 0x100 : 1, 8));
     Masked->Type = NdType::makeInt(8, false);
     if (Case == 2)
       Joined->Type = NdType::makeInt(7, false);
@@ -914,14 +909,19 @@ TEST(HighControlFlowSemantics, NestedDiamondKeepsOuterSinglePredecessorEntry) {
   HighFunc F;
   F.Entry = 0x1000;
   auto Outer = conditional(0x1000, 0x1040);
-  Outer.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                   HighExpr::makeConst(0, 8));
+  Outer.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(0, 8));
   auto Inner = conditional(0x1010, 0x1050);
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                   HighExpr::makeConst(1, 8));
-  F.Body = {Outer, Inner, assign(0x1020, 1, 2), jump(0x1030, 0x1060),
-            assign(0x1040, 1, 1), jump(0x1044, 0x1060),
-            assign(0x1050, 1, 0), result(0x1060, local(1))};
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
+  F.Body = {Outer,
+            Inner,
+            assign(0x1020, 1, 2),
+            jump(0x1030, 0x1060),
+            assign(0x1040, 1, 1),
+            jump(0x1044, 0x1060),
+            assign(0x1050, 1, 0),
+            result(0x1060, local(1))};
 
   MedFunc Med;
   Med.Entry = F.Entry;
@@ -934,9 +934,7 @@ TEST(HighControlFlowSemantics, NestedDiamondKeepsOuterSinglePredecessorEntry) {
     Block.StartAddr = Starts[I];
     MedOp Last;
     Last.Addr = Ends[I];
-    Last.Opcode = I < 2 ? NdOp::COND_BR
-                  : I == 5 ? NdOp::RETURN
-                           : NdOp::BRANCH;
+    Last.Opcode = I < 2 ? NdOp::COND_BR : I == 5 ? NdOp::RETURN : NdOp::BRANCH;
     Block.Ops = {Last};
   }
   Med.Blocks[0].Succs = {1, 3};
@@ -1840,13 +1838,11 @@ TEST(HighControlFlowSemantics, FlagPhisKeepTheirReachingDefinitions) {
     Med.Blocks[1].Ops = {
         operation(NdOp::COND_BR, 0x1100, {}, {C(0x1200), Joined})};
     Med.Blocks[2].Preds = {1};
-    Med.Blocks[2].Ops = {
-        operation(NdOp::COPY, 0x1200, TrueReturn, {C(1)}),
-        operation(NdOp::RETURN, 0x1204, {}, {TrueReturn})};
+    Med.Blocks[2].Ops = {operation(NdOp::COPY, 0x1200, TrueReturn, {C(1)}),
+                         operation(NdOp::RETURN, 0x1204, {}, {TrueReturn})};
     Med.Blocks[3].Preds = {1};
-    Med.Blocks[3].Ops = {
-        operation(NdOp::COPY, 0x1300, FalseReturn, {C(0)}),
-        operation(NdOp::RETURN, 0x1304, {}, {FalseReturn})};
+    Med.Blocks[3].Ops = {operation(NdOp::COPY, 0x1300, FalseReturn, {C(0)}),
+                         operation(NdOp::RETURN, 0x1304, {}, {FalseReturn})};
 
     const auto Function = MedToHighConverter().convert(Med, Architecture);
     const auto Flow = analyzeHighSourceFlow(Function, true);
@@ -1979,6 +1975,90 @@ TEST(HighControlFlowSemantics, LayoutBackwardJoinDoesNotBecomeALoop) {
   }
 }
 
+TEST(HighControlFlowSemantics, JoinUpdatesDoNotInventEntryValuesForArmLoads) {
+  // A shared return sits before some of its predecessors in layout order.
+  // Each arm loads its own base before updating the return PHI. An update
+  // `joined = loaded + k` does not permit reading `loaded` before that arm.
+  for (const auto Architecture : {Arch::AArch64, Arch::X64}) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    MedFunc Med;
+    Med.Entry = 0x1000;
+    Med.Name = "branch_local_load_join";
+    Med.ReturnType = NdType::makeInt(8, false);
+    auto Input = machineValue(0, Architecture);
+    Input.Kind = MedVar::Param;
+    Input.RegOff = getTargetRegInfo(Architecture).IntParamRegs[0];
+    Med.Params = {Input};
+    auto First = machineValue(1, Architecture);
+    auto Second = machineValue(2, Architecture);
+    auto Payload = machineValue(3, Architecture);
+    auto Joined = machineValue(4, Architecture);
+    auto Return = machineValue(5, Architecture);
+    Return.Kind = MedVar::Reg;
+    Return.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+    Return.SSAVer = 1;
+    auto C = [](uint64_t Value) { return MedVar::makeConst(Value, 8); };
+    Med.Blocks.resize(6);
+    for (int I = 0; I < 6; ++I) {
+      Med.Blocks[I].Id = I;
+      Med.Blocks[I].StartAddr = 0x1000 + I * 0x100;
+      Med.Blocks[I].EndAddr = Med.Blocks[I].StartAddr + 0x20;
+    }
+    Med.Blocks[0].Succs = {1, 2};
+    Med.Blocks[0].Ops = {
+        operation(NdOp::INT_ADD, 0x1000, Payload, {Input, C(71)}),
+        operation(NdOp::STORE, 0x1004, {}, {C(0x8000), Payload}),
+        operation(NdOp::INT_AND, 0x1008, First, {Input, C(1)}),
+        operation(NdOp::INT_AND, 0x100c, Second, {Input, C(2)}),
+        operation(NdOp::COND_BR, 0x1010, {}, {C(0x1100), First})};
+    Med.Blocks[2].Preds = {0};
+    Med.Blocks[2].Succs = {4, 5};
+    Med.Blocks[2].Ops = {
+        operation(NdOp::COND_BR, 0x1200, {}, {C(0x1400), Second})};
+    for (int I : {1, 4, 5}) {
+      auto Loaded = machineValue(10 + I, Architecture);
+      auto Updated = machineValue(20 + I, Architecture);
+      auto &Block = Med.Blocks[I];
+      Block.Preds = {I == 1 ? 0 : 2};
+      Block.Ops = {operation(NdOp::LOAD, Block.StartAddr, Loaded, {C(0x8000)}),
+                   operation(NdOp::INT_ADD, Block.StartAddr + 4, Updated,
+                             {Loaded, C(I == 1   ? 9
+                                        : I == 4 ? 22
+                                                 : 35)})};
+      if (I == 5) {
+        auto FinalReturn = Return;
+        FinalReturn.SSAVer = 2;
+        Block.Ops.push_back(
+            operation(NdOp::COPY, Block.StartAddr + 8, FinalReturn, {Updated}));
+        Block.Ops.push_back(
+            operation(NdOp::RETURN, Block.StartAddr + 12, {}, {FinalReturn}));
+      } else {
+        Block.Succs = {3};
+        Block.Ops.push_back(
+            operation(NdOp::BRANCH, Block.StartAddr + 8, {}, {C(0x1300)}));
+      }
+    }
+    Med.Blocks[3].Preds = {1, 4};
+    Med.Blocks[3].Phis = {{Joined,
+                           {{1, machineValue(21, Architecture)},
+                            {4, machineValue(24, Architecture)}}}};
+    Med.Blocks[3].Ops = {operation(NdOp::COPY, 0x1300, Return, {Joined}),
+                         operation(NdOp::RETURN, 0x1304, {}, {Return})};
+    const auto High = MedToHighConverter().convert(Med, Architecture);
+    const auto Flow = analyzeHighSourceFlow(High, true);
+    ASSERT_TRUE(Flow.Complete);
+    EXPECT_TRUE(Flow.Items.empty());
+    for (uint64_t Value : {0ULL, 1ULL, 2ULL, 3ULL, 91ULL, ~0ULL}) {
+      SCOPED_TRACE(Value);
+      const uint64_t Expected = Value + 71 +
+                                (Value & 1   ? 9
+                                 : Value & 2 ? 22
+                                             : 35);
+      EXPECT_NO_THROW(EXPECT_EQ(execute(High, Value, true), Expected));
+    }
+  }
+}
+
 TEST(HighControlFlowSemantics, EarlyReturnMovesItsCompletePhiEdgePrefix) {
   for (va_t CopyAddress : {0U, 0x1000U, 0x1004U}) {
     HighFunc F;
@@ -2022,8 +2102,8 @@ TEST(HighControlFlowSemantics, NearbyNestedFallthroughKeepsExactGotoTarget) {
   HighStmt Inner;
   Inner.Kind = StmtKind::IfElse;
   Inner.Addr = 0x1010;
-  Inner.Cond = HighExpr::makeBinop(NdOp::INT_EQUAL, local(0),
-                                   HighExpr::makeConst(1, 8));
+  Inner.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(0), HighExpr::makeConst(1, 8));
   Inner.Body = {result(0x1014, HighExpr::makeConst(3, 8))};
   Inner.ElseBody = {jump(0x1018, 0x1048)};
   HighStmt Outer;
@@ -2067,16 +2147,20 @@ TEST(HighControlFlowSemantics,
   auto FirstCall = assign(0x1008, 1, 0);
   FirstCall.Val = Observe(0x2000);
   auto FirstGuard = conditional(0x100c, 0x1040);
-  FirstGuard.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, local(1), HighExpr::makeConst(0, 8));
+  FirstGuard.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(1), HighExpr::makeConst(0, 8));
   auto SecondCall = assign(0x1010, 2, 0);
   SecondCall.Val = Observe(0x2008);
   auto SecondGuard = conditional(0x1014, 0x1040);
-  SecondGuard.Cond = HighExpr::makeBinop(
-      NdOp::INT_EQUAL, local(2), HighExpr::makeConst(0, 8));
+  SecondGuard.Cond =
+      HighExpr::makeBinop(NdOp::INT_EQUAL, local(2), HighExpr::makeConst(0, 8));
   F.Body = {Store(0x1000, 0x2000, HighExpr::makeConst(1, 8)),
-            Store(0x1004, 0x2008, local(0)), FirstCall, FirstGuard,
-            SecondCall, SecondGuard, result(0x1018, local(2)),
+            Store(0x1004, 0x2008, local(0)),
+            FirstCall,
+            FirstGuard,
+            SecondCall,
+            SecondGuard,
+            result(0x1018, local(2)),
             result(0x1040, HighExpr::makeConst(7, 8))};
 
   ASSERT_EQ(execute(F, 0, true), 7U);
@@ -2101,8 +2185,8 @@ TEST(HighControlFlowSemantics, InlinedElseJoinPreservesPhiCopyBeforeWork) {
   Choice.ElseBody = {Phi, jump(0, 0x2000)};
 
   auto JoinWork = assign(0x2000, 3, 0);
-  JoinWork.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(2),
-                                     HighExpr::makeConst(5, 8));
+  JoinWork.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(2), HighExpr::makeConst(5, 8));
   // The intervening return makes 0x2000 an exclusive jump target rather
   // than the next fallthrough statement of the conditional.
   F.Body = {Choice, result(0x1100, HighExpr::makeConst(99, 8)), JoinWork,
@@ -2169,11 +2253,12 @@ TEST(HighControlFlowSemantics, ExternalSkipInvertKeepsSharedTailEntry) {
   HighFunc F;
   F.Entry = 0x1000;
   auto Shared = assign(0x1020, 1, 0);
-  Shared.Val = HighExpr::makeBinop(NdOp::INT_ADD, local(1),
-                                   HighExpr::makeConst(1, 8));
+  Shared.Val =
+      HighExpr::makeBinop(NdOp::INT_ADD, local(1), HighExpr::makeConst(1, 8));
   F.Body = {assign(0x1000, 1, 0), conditional(0x1004, 0x1040),
-            assign(0x1010, 1, 5), Shared, jump(0x1024, 0x1030),
-            result(0x1030, local(1)), jump(0x1040, 0x1020)};
+            assign(0x1010, 1, 5), Shared,
+            jump(0x1024, 0x1030), result(0x1030, local(1)),
+            jump(0x1040, 0x1020)};
 
   ASSERT_EQ(execute(F, 0, true), 6U);
   ASSERT_EQ(execute(F, 1, true), 1U);
@@ -2191,8 +2276,8 @@ TEST(HighControlFlowSemantics, Arm64NestedCleanupKeepsOuterJoinValue) {
   Store.StoreAddr = HighExpr::makeConst(0x2000, 8);
   Store.StoreVal = HighExpr::makeConst(42, 8);
   auto Load = assign(0x1018, 1, 0);
-  Load.Val = HighExpr::makeLoad(HighExpr::makeConst(0x2000, 8),
-                                NdType::makeInt(8));
+  Load.Val =
+      HighExpr::makeLoad(HighExpr::makeConst(0x2000, 8), NdType::makeInt(8));
   HighStmt Inner;
   Inner.Kind = StmtKind::If;
   Inner.Addr = 0x1020;

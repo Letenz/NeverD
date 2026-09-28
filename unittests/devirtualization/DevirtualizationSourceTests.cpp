@@ -567,6 +567,99 @@ TEST_F(DevirtualizationSourceTest, CLIEmitsSourceAndEvidenceOnlyOnSuccess) {
   EXPECT_EQ(InvalidJSON->getAsObject()->getBoolean("complete"), false);
 }
 
+TEST_F(DevirtualizationSourceTest,
+       CLIDiscoversSpilledControlWithoutManualHints) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "automatic control-state recovery requires clang";
+  const auto Binary = tmpFile("generic-control-state.elf");
+  const auto Compiled = buildFixture(Binary, "generic_control_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = functionEntry(*Image, "generic_control_state");
+  ASSERT_NE(Entry, InvalidVA);
+  const auto WithoutDiscovery =
+      analysis::specializeBinaryInterpreter(*Image, Entry, {});
+  EXPECT_EQ(WithoutDiscovery.Status,
+            analysis::SpecializationStatus::UnresolvedControl)
+      << WithoutDiscovery.Diagnostic;
+  EXPECT_TRUE(WithoutDiscovery.Residual.Blocks.empty());
+
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+    const auto Source = tmpFile("generic-control-state.c");
+    const auto Report = tmpFile("generic-control-state.json");
+    std::vector<std::string> Args{"decompile",
+                                  Binary.string(),
+                                  "--func",
+                                  "generic_control_state",
+                                  "--devirtualize",
+                                  "--recovery-report=" + Report.string(),
+                                  "-o",
+                                  Source.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    const auto Recovered = exec(ndBin(), Args);
+    ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+    auto JSON = llvm::json::parse(readSource(Report));
+    ASSERT_TRUE(static_cast<bool>(JSON)) << llvm::toString(JSON.takeError());
+    const auto *Object = JSON->getAsObject();
+    ASSERT_NE(Object, nullptr);
+    EXPECT_EQ(Object->getBoolean("complete"), true);
+    EXPECT_EQ(Object->getBoolean("controlComplete"), true);
+    EXPECT_EQ(Object->getBoolean("discoverControlState"), true);
+    for (const char *Key : {"controlRegisters", "controlFrameSlots"}) {
+      const auto *Fields = Object->getArray(Key);
+      ASSERT_NE(Fields, nullptr) << Key;
+      EXPECT_TRUE(Fields->empty()) << Key;
+    }
+    for (const auto &[Counter, Budget] :
+         {std::pair{"discoveredControlFields", "maxControlFields"},
+          std::pair{"controlRefinements", "maxControlRefinements"},
+          std::pair{"discoveryVisits", "maxDiscoveryVisits"}}) {
+      SCOPED_TRACE(Counter);
+      const auto Work = Object->getInteger(Counter);
+      const auto Limit = Object->getInteger(Budget);
+      ASSERT_TRUE(Work.has_value());
+      ASSERT_TRUE(Limit.has_value());
+      EXPECT_GT(*Work, 0);
+      EXPECT_LE(*Work, *Limit);
+    }
+
+    const auto Harness = tmpFile("generic-control-state-test.c");
+    std::ofstream(Harness) << readSource(Source) << R"C(
+#include <stdint.h>
+int main(void) {
+  uint64_t random = UINT64_C(0x4b1d23f506789ace);
+  for (unsigned i = 0; i < 1024; ++i) {
+    random ^= random << 13;
+    random ^= random >> 7;
+    random ^= random << 17;
+    uint64_t input = i < 256 ? i : random;
+    if (i == 1023) input = UINT64_MAX;
+    uint64_t expected = (input ^ 85) + 9 + 13 * (input & 3);
+    if ((uint64_t)generic_control_state(input) != expected) return 1;
+  }
+  return 0;
+}
+)C";
+    std::ofstream(tmpFile("immintrin.h")).close();
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Optimization);
+      const auto Executable = tmpFile("generic-control-state-test");
+      const auto Recompiled =
+          exec(NEVERD_TEST_CLANG,
+               {"-std=c11", Optimization, "-Werror=return-type",
+                "-Werror=implicit-function-declaration", "-fsanitize=undefined",
+                "-fsanitize-trap=undefined", "-I", tmp().string(),
+                Harness.string(), "-o", Executable.string()});
+      ASSERT_TRUE(Recompiled.ok()) << Recompiled.err << readSource(Source);
+      const auto Ran = exec(Executable.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << readSource(Source);
+    }
+  }
+}
+
 TEST_F(DevirtualizationSourceTest, PERecoveryRequiresFullMetadataAndFileHash) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public PE recovery requires clang and lld";
@@ -757,8 +850,9 @@ TEST_F(DevirtualizationSourceTest, PublicMachinesAssembleForBothNativeABIs) {
     GTEST_SKIP() << "cross-target public VM fixtures require clang";
   for (const char *Triple : {"x86_64-linux-gnu", "x86_64-pc-windows-msvc"}) {
     SCOPED_TRACE(Triple);
-    for (const char *Name : {"generic_vm_register.S", "generic_vm_stack.S",
-                             "generic_vm_finite.S", "generic_vm_negative.S"}) {
+    for (const char *Name :
+         {"generic_vm_register.S", "generic_vm_stack.S", "generic_vm_finite.S",
+          "generic_vm_negative.S", "generic_control_state.S"}) {
       SCOPED_TRACE(Name);
       const auto Compiled = exec(
           NEVERD_TEST_CLANG, {"-target", Triple, "-c", fixture(Name).string(),

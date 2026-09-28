@@ -11,9 +11,9 @@ delle istruzioni, senza firme degli handler né tabelle di opcode specifiche di
 un particolare sistema di protezione.
 
 ```sh
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --recovery-report recovery.json -o recovered.c
-neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
+neverd decompile program --func vm_entry --devirtualize \
   --llvm -o recovered-llvm.c
 ```
 
@@ -33,6 +33,20 @@ L’API C è `neverd_devirtualize_source_v1()`, dichiarata in
 modificare la normale cache di decompilazione della sessione. Un errore non
 restituisce sorgente, ma può comunque restituire una diagnosi JSON. Entrambe
 le stringhe allocate si liberano con `neverd_free_string()`.
+
+## Individuazione automatica dello stato di controllo
+
+La CLI ed entrambe le API C di recupero del sorgente attivano l’individuazione automatica per impostazione predefinita. Nell’API C++ indipendente dal provider, `SpecializationOptions::DiscoverControlState = false` rimane il valore predefinito; il chiamante può impostare `true`. I suggerimenti manuali `--vm-control` e `--vm-control-stack` restano chiavi di contesto facoltative. I normali campi automatici conservano relazioni congiunte di valori finiti e limitati, senza creare chiavi di contesto né fissare gli input a valori campionati. I contatori restano dinamici, salvo quando il raffinamento selettivo della memoria descritto sotto richiede le loro costanti dimostrate.
+
+L’analisi segue le dipendenze irrisolte di controllo e indirizzamento fino agli input strutturati dei registri e alle letture esatte del frame relative all’ingresso, incluse porzioni ristrette di byte. Le dipendenze mancanti fanno ripartire l’analisi dall’ingresso della funzione. Ogni campo richiede ancora una prova completa del dominio finito; le scritture con possibili alias invalidano ancora i fatti sulla memoria. Memoria esterna arbitraria e relazioni di valori illimitate non diventano finite.
+
+Se dipendenze di memoria già tracciate impediscono ripetutamente una prova di indirizzo esatto, il raffinamento può promuovere le loro costanti in ingresso dimostrate a chiavi di contesto. Non suddivide tuple con più valori in nuovi archi e non aggiunge letture della memoria ospite per scegliere il contesto: provare un dominio finito non garantisce la sicurezza di una lettura aggiuntiva. Stati dinamici o illimitati dipendenti dalla memoria possono quindi ancora arrestare il recupero entro i limiti configurati.
+
+Le richieste a ritroso verso i produttori sono identificate dall’ingresso del nodo nativo, dalla modalità delle istruzioni, dal tipo di campo e dal suo intervallo di byte. Solo un arco il cui successore richiede quel campo ne espande le dipendenze di produzione, anche quando il dominio finito resta troppo impreciso. Ciò può riavviare l’analisi dall’ingresso entro i budget, senza assegnare un unico ruolo globale a un registro fisico riutilizzato. La scoperta delle dipendenze è limitata e incompleta; il recupero senza indicazioni manuali non è garantito per ogni interprete.
+
+I valori predefiniti sono `MaxControlFields = 16` per campi manuali e automatici complessivamente, `MaxControlRefinements = 16` e `MaxDiscoveryVisits = 65536`. I riavvii condividono budget globali per nodi (inclusi quelli sintetici), operazioni, valutazioni, query e visite di individuazione. `contexts` conta i contesti nativi e, come `evaluatedOperations`, `nodeEvaluations` e `solverQueries`, si accumula tra i tentativi. Contesti per indirizzo, slot attivi di ritorno nativo, campi e tuple restano limiti strutturali per tentativo. Il limite delle query resta 4096. L’esaurimento non pubblica risultati parziali; `residualBlocks` descrive solo il grafo residuo finale.
+
+Il rapporto JSON aggiunge `discoverControlState`, `maxControlRefinements`, `maxDiscoveryVisits`, `discoveredControlFields`, `discoveredContextFields`, `controlRefinements` e `discoveryVisits` per registrare attivazione, limiti e lavoro di analisi. L’individuazione dei campi, da sola, non prova il successo del recupero.
 
 ## Contratto di esecuzione
 
