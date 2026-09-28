@@ -109,6 +109,12 @@ SymEvalPlan::SymEvalPlan(const SymContext &Ctx, SymRef Root)
 }
 
 uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
+  return evalU64With(
+      [&](uint32_t Id) { return Id < VarVals.size() ? VarVals[Id] : 0; });
+}
+
+uint64_t
+SymEvalPlan::evalU64With(llvm::function_ref<uint64_t(uint32_t)> Lookup) {
   assert(FitsU64 && "evalU64 requires every node to fit in 64 bits");
 
   auto mask = [](uint64_t V, uint32_t W) -> uint64_t {
@@ -129,7 +135,7 @@ uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
       Res = St.Aux;
       break;
     case SymOp::Var:
-      Res = St.Aux < VarVals.size() ? VarVals[St.Aux] : 0;
+      Res = Lookup(static_cast<uint32_t>(St.Aux));
       break;
     case SymOp::Add:
       for (uint32_t K = 0; K < St.NumArgs; ++K)
@@ -225,6 +231,13 @@ uint64_t SymEvalPlan::evalU64(llvm::ArrayRef<uint64_t> VarVals) {
 }
 
 llvm::APInt SymEvalPlan::eval(llvm::ArrayRef<llvm::APInt> VarVals) {
+  return evalWith([&](uint32_t Id) -> const llvm::APInt * {
+    return Id < VarVals.size() ? &VarVals[Id] : nullptr;
+  });
+}
+
+llvm::APInt SymEvalPlan::evalWith(
+    llvm::function_ref<const llvm::APInt *(uint32_t)> Lookup) {
   for (size_t I = 0; I < Steps.size(); ++I) {
     const Step &St = Steps[I];
     const uint32_t *A = ArgSlots.data() + St.FirstArg;
@@ -234,9 +247,10 @@ llvm::APInt SymEvalPlan::eval(llvm::ArrayRef<llvm::APInt> VarVals) {
       continue;
     }
     if (St.Op == SymOp::Var) {
-      llvm::APInt V =
-          St.Aux < VarVals.size() ? VarVals[St.Aux] : llvm::APInt(St.Width, 0);
-      ScratchAP[I] = V.getBitWidth() == St.Width ? V : V.zextOrTrunc(St.Width);
+      const llvm::APInt *V = Lookup(static_cast<uint32_t>(St.Aux));
+      ScratchAP[I] =
+          V ? (V->getBitWidth() == St.Width ? *V : V->zextOrTrunc(St.Width))
+            : llvm::APInt(St.Width, 0);
       continue;
     }
 
