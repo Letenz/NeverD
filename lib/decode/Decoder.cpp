@@ -351,6 +351,11 @@ void Decoder::liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
   }
 }
 
+bool Decoder::liftX64MemoryCallToLow(const DecodedInsn &Insn,
+                                     std::vector<LowOp> &Ops) {
+  return X86 && X86->liftX64MemoryCall(Insn.Raw, Ops);
+}
+
 int Decoder::getX86FpuTop() const { return X86 ? X86->getFpuTop() : 0; }
 
 void Decoder::resetX86FpuState() {

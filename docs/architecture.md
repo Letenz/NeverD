@@ -1445,8 +1445,22 @@ predecessor guards for control-state refinement. This is a candidate heuristic,
 not an unreachability proof: a fresh complete specialization must still prove
 all retained paths before publication. The binary provider certifies native
 control forms; the common specializer preserves guest stack effects and proves
-finite register-call and internal-return targets. Memory-call slot addresses
-never stand in for loaded callees.
+finite call and internal-return targets. The x64 lifter owns an instruction-local
+memory-call target projection that reuses `operandRead` and `computeEA` for an
+explicit load, including address-size wrapping. It verifies canonical raw
+prefixes because normalized decoder details may omit ignored prefixes. The
+ordinary import-slot representation remains unchanged. The specializer retains
+only a temporary-only address prefix ending in one ordinary eight-byte target
+load, then captures the value before any stack change or return-address store.
+Memory-call slot addresses never stand in for loaded callees; immutable reads
+and initialized guest-memory values still require the existing bounded proofs.
+
+At the explicit machine-state source boundary, guest code and data addresses
+remain their original numeric values, including scalar register outputs that
+observe them. Neither C backend may rebind these values to generated global
+objects. The caller provides the required original guest mappings; recovery
+proofs and reports remain attached to the input image. This machine-state
+contract does not change ordinary decompilation's address-binding policy.
 
 Interpreter specialization owns finite-query reuse in its run-local
 `FiniteQueryCache`. Complete domains and proved domain-limit excesses are

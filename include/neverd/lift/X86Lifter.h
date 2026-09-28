@@ -36,6 +36,12 @@ public:
             llvm::ArrayRef<RelocatedAddressOperand> Relocs = {},
             llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {});
 
+  /// Lift a certified ordinary x64 memory-indirect near CALL with an explicit
+  /// target LOAD, including constant IAT/GOT slots. Physical stack effects are
+  /// still omitted. Only canonical unsegmented r/m64 forms with optional
+  /// address-size override and REX are accepted. On false, Ops is unchanged.
+  bool liftX64MemoryCall(const cs_insn *Insn, std::vector<LowOp> &Ops);
+
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
   Arch targetArch() const { return TargetArch; }
@@ -150,6 +156,11 @@ public:
     /// before that final zero-extension.
     uint16_t AddressSize = 8;
 
+    /// Per-instruction physical-target projection. The ordinary lift keeps
+    /// constant call slots visible for import binding; this projection reads
+    /// them through the same operandRead/computeEA path as dynamic addresses.
+    bool LoadMemoryCallTarget = false;
+
     void emitIntrinsic(Intrinsic Id, NdVar Out = NdVar::reg(x86reg::RAX, 8),
                        std::initializer_list<NdVar> Extra = {},
                        NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None,
@@ -219,6 +230,10 @@ public:
                          std::initializer_list<std::pair<int, NdVar>> Flags);
 
 private:
+  void liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
+                llvm::ArrayRef<RelocatedAddressOperand> Relocs,
+                llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
+                bool LoadMemoryCallTarget);
   bool liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);
   bool liftControl(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);
   bool liftAtomic(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);

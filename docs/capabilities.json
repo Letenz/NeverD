@@ -9372,9 +9372,9 @@
       "limitations": [
         "Fixed mapped bytes and permissions; immutable reads require mapping evidence.",
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
-        "Default ABI refuses calls and exception boundaries. Explicit machine-state ABI supports certified direct near calls, exhaustively finite register-indirect near calls and internal returns under a normal nonfaulting CPL3/CET-disabled profile. Memory-indirect calls, exception execution, mutable code, unresolved control and exhausted budgets refuse recovery.",
+        "Default ABI refuses calls and exception boundaries. Explicit machine-state ABI supports certified direct near calls, exhaustively finite register- or memory-indirect near calls and internal returns under a normal nonfaulting CPL3/CET-disabled profile. Memory calls require canonical unsegmented r/m64 encodings and proved target loads before stack effects. Unknown or sampled writable slots, exception execution, mutable code, unresolved control and exhausted budgets refuse recovery.",
         "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
-        "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
+        "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Machine-state source preserves numeric guest addresses and requires their original runtime mappings. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
         "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement."
       ],
       "tests": [
@@ -9548,6 +9548,48 @@
           "platforms": [
             "linux"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/MemoryCallSpecializationTests.cpp",
+          "filter": "MemoryCallSpecialization.TargetLoadPrecedesPushToTheSameGuestSlot",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/MemoryCallSpecializationTests.cpp",
+          "filter": "MemoryCallSpecialization.PrefixCannotIntroduceAnotherMemoryRead",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/lift/core/X64MemoryCallTargetTests.cpp",
+          "filter": "X64MemoryCallTarget.ExplicitModeLoadsRipSlotWithoutChangingDefaultLift",
+          "platforms": ["darwin", "linux", "windows"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/MachineMemoryCallSourceTests.cpp",
+          "filter": "*/MemoryCallRoundTripTest.CapturesMemoryTargetBeforeExactNativeStackEffects/*",
+          "platforms": ["linux"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/MachineMemoryCallSourceTests.cpp",
+          "filter": "MachineMemoryCallSourceTest.UnknownOrInvalidMemoryTargetsNeverPublish",
+          "platforms": ["linux"]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/MachineMemoryCallSourceTests.cpp",
+          "filter": "MachineMemoryCallSourceTest.MachineSourceUsesOriginalWritableMappingsThroughBothRoutes",
+          "platforms": ["linux"]
         }
       ],
       "public_surfaces": {

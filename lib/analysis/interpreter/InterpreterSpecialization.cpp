@@ -1493,12 +1493,13 @@ bool Specializer::evaluate(int Id) {
     std::vector<LowOp> Operations = Instruction.Ops;
     bool ExpandedReturn = false;
     bool ExpandedIndirectCall = false;
+    size_t NativeCallPrefixSize = 0;
     if (Instruction.NativeStackControl !=
         SpecializationNativeStackControl::None) {
       if (!FrameRoot || !Options.RequireRestoredFrameAtReturn ||
           Instruction.Fallthrough.Address != InputBlock.EndAddr ||
           Instruction.Fallthrough.Mode != Cursor.Mode ||
-          Instruction.Ops.size() != 1)
+          Instruction.Ops.empty())
         return fail(SpecializationStatus::InvalidInput,
                     "native stack control requires an exact instruction and "
                     "a verified entry stack root");
@@ -1511,7 +1512,7 @@ bool Specializer::evaluate(int Id) {
         return fail(SpecializationStatus::Unsupported,
                     "native stack control has no exact entry-relative stack "
                     "pointer");
-      const LowOp &Control = Instruction.Ops.front();
+      const LowOp &Control = Instruction.Ops.back();
       const auto Make = [&](NdOp Opcode, NdVar Output,
                             std::initializer_list<NdVar> Inputs) {
         LowOp Op;
@@ -1529,9 +1530,9 @@ bool Specializer::evaluate(int Id) {
         const bool Direct = Control.Opcode == NdOp::CALL &&
                             Control.NumInputs == 1 &&
                             Control.Inputs[0].isConst();
-        const bool Indirect = Control.Opcode == NdOp::INDIR_CALL &&
-                              Control.NumInputs == 1 &&
-                              Control.Inputs[0].isReg();
+        const bool Indirect =
+            Control.Opcode == NdOp::INDIR_CALL && Control.NumInputs == 1 &&
+            (Control.Inputs[0].isReg() || Control.Inputs[0].isTemp());
         if ((!Direct && !Indirect) || Control.Inputs[0].Size != 8 ||
             !validValue(Control.Inputs[0]) || !Control.Output.isReg() ||
             Control.Output.Size != 8 || !validValue(Control.Output) ||
@@ -1540,11 +1541,53 @@ bool Specializer::evaluate(int Id) {
             Instruction.Origin.Control != LowInstructionControl::Call)
           return fail(SpecializationStatus::InvalidInput,
                       "native near-call certificate does not match its LowIR");
+        NativeCallPrefixSize = Instruction.Ops.size() - 1;
+        if (Control.Inputs[0].isTemp()) {
+          if (!NativeCallPrefixSize)
+            return fail(SpecializationStatus::InvalidInput,
+                        "memory call has no explicit target load");
+          const LowOp &Load = Instruction.Ops[NativeCallPrefixSize - 1];
+          if (Load.Opcode != NdOp::LOAD || Load.Output != Control.Inputs[0] ||
+              Load.Output.Size != 8 || Load.NumInputs != 1 ||
+              Load.Inputs[0].Size != 8)
+            return fail(SpecializationStatus::InvalidInput,
+                        "memory call must consume its final eight-byte load");
+          for (size_t I = 0; I < NativeCallPrefixSize; ++I) {
+            const LowOp &Prefix = Instruction.Ops[I];
+            bool AddressOperation = false;
+            switch (Prefix.Opcode) {
+            case NdOp::COPY:
+            case NdOp::INT_ADD:
+            case NdOp::INT_SUB:
+            case NdOp::INT_MULT:
+            case NdOp::INT_ZEXT:
+            case NdOp::SUBBYTES:
+              AddressOperation = true;
+              break;
+            case NdOp::LOAD:
+              AddressOperation = I + 1 == NativeCallPrefixSize;
+              break;
+            default:
+              break;
+            }
+            if (!AddressOperation || !Prefix.Output.isTemp() ||
+                !supported(Prefix))
+              return fail(SpecializationStatus::InvalidInput,
+                          "memory call prefix is not a pure address and "
+                          "ordinary target load");
+          }
+        } else if (NativeCallPrefixSize) {
+          return fail(SpecializationStatus::InvalidInput,
+                      "direct or register call has an unexpected prefix");
+        }
         Frame.NativeReturnSlots.insert(*Displacement - 8);
         if (Frame.NativeReturnSlots.size() > Options.MaxNativeReturnSlots)
           return fail(SpecializationStatus::BudgetExceeded,
                       "native return-slot context budget exhausted");
-        Operations.clear();
+        // Preserve the original effective-address calculation and LOAD. The
+        // target may occupy the same guest slot that the following push
+        // overwrites, or use the original RSP as an address component.
+        Operations.pop_back();
         if (Indirect) {
           // The architectural target is evaluated before the stack push.
           // In particular a register operand may name the stack register.
@@ -1561,8 +1604,8 @@ bool Specializer::evaluate(int Id) {
           Make(NdOp::BRANCH, {}, {Control.Inputs[0]});
       } else if (Instruction.NativeStackControl ==
                  SpecializationNativeStackControl::Return) {
-        if (Control.Opcode != NdOp::RETURN || Control.NumInputs > 1 ||
-            !supported(Control) ||
+        if (Instruction.Ops.size() != 1 || Control.Opcode != NdOp::RETURN ||
+            Control.NumInputs > 1 || !supported(Control) ||
             Instruction.Origin.Control != LowInstructionControl::Return ||
             (Instruction.Origin.Immediate &&
              *Instruction.Origin.Immediate != 0))
@@ -1630,7 +1673,8 @@ bool Specializer::evaluate(int Id) {
       const auto ReservedTemporary = [&](const NdVar &V) {
         if (ExpandedReturn && V == NdVar::tmp(NativeReturnTemp, 8))
           return false;
-        if (ExpandedIndirectCall && V == NdVar::tmp(NativeCallTargetTemp, 8))
+        if (ExpandedIndirectCall && I >= NativeCallPrefixSize &&
+            V == NdVar::tmp(NativeCallTargetTemp, 8))
           return false;
         return V.isTemp() &&
                (V.Offset >= DispatchTemp || V.Size > DispatchTemp - V.Offset);

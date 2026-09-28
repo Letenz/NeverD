@@ -177,8 +177,7 @@ TEST_F(MachineControlSourceTest, UnprovedAndMemoryFormTransfersNeverPublish) {
   for (const char *Name :
        {"generic_machine_unknown_call", "generic_machine_nonexec_call",
         "generic_machine_missing_call", "generic_machine_nonexec_return",
-        "generic_machine_memory_call", "generic_machine_stack_memory_call",
-        "generic_machine_unknown_return"})
+        "generic_machine_stack_memory_call", "generic_machine_unknown_return"})
     for (bool LLVM : {false, true}) {
       SCOPED_TRACE(Name);
       SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");

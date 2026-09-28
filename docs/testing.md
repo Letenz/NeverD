@@ -184,9 +184,36 @@ every byte of the tested guest stack with HighC and LLVMC at O0/O2. Callees read
 and overwrite the target register; checks require one actual fallthrough-address
 store, preserved flags and restored RSP. Expected code addresses come from ELF
 symbols. Unknown targets, finite sets containing a missing or nonexecutable
-destination, read-only memory-indirect CALL and `call [rsp]` must fail without
-source. These original fixtures have been validated locally on x64 Linux;
+destination and an unproved target at entry `[rsp]` must fail without source.
+These original fixtures have been validated locally on x64 Linux;
 their coverage does not establish support for arbitrary virtual machines.
+
+`MachineMemoryCallSourceTests.cpp` adds four zero-hint, default-budget runtime
+cases: an immutable RIP-relative pointer slot, an input-selected read-only
+two-target table, an initialized guest `[rsp]` slot with two possible values,
+and `call *-8(%rsp)` whose target slot is overwritten by the call's push. Native
+execution and both recovered C backends at O0/O2 must match the independent
+17-word register/flag oracle and every byte of the tested guest stack. The
+callee observes the pushed return address; ELF symbols supply expected code
+addresses. The oracle also requires a table address left in a register to retain
+its original numeric guest value, rather than the address of a generated C
+global; the caller supplies any required guest mappings. Unproved external or
+writable slots, unknown or alias-clobbered stack values, invalid targets and
+default-source-ABI use must refuse publication. Local x64 Linux validation
+checks each of the four forms with 1,024 states through native execution, HighC
+and LLVMC at O0/O2, comparing all 17 state words and 128 guest-stack bytes.
+The lower-level memory-call tests also require canonical unsegmented `r/m64`
+forms, optional `addr32` and REX, and rejection of FS/GS, far calls and extra or
+noncanonical prefixes. Effective-address calculation and the target LOAD must
+precede the native return-address push.
+
+`MachineSourceUsesOriginalWritableMappingsThroughBothRoutes` and the wrapper's
+`FixedGuestAddressesRemainNumericThroughLoadsStoresAndState` regression supply
+writable guest memory at its original address. Both C backends at O0/O2 must
+use that mapping for runtime reads and writes, retain numeric guest addresses
+in register outputs and preserve adjacent canaries. Generated global objects
+cannot substitute for these mappings. The fixed-mapping runtime coverage is
+local to x64 Linux.
 
 The flag-state fixture retains `PUSHFQ` and `POPFQ` across finite indirect
 dispatch, then executes recovered HighC and LLVMC at O0/O2. Core negative cases

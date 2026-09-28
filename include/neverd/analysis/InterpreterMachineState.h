@@ -59,7 +59,9 @@ struct InterpreterMachineSource {
 /// Wrap a complete, call-free residual into an explicit machine-state source
 /// function. Loads and stores bind every supported native input/output. Guest
 /// register identities are relocated, so a guest RSP never becomes a compiler
-/// private host frame. Ordinary scalar LowIR remains owned by LowToMed and its
+/// private host frame. Guest constants become raw numeric values; source
+/// emission must not supply an image for rebasing guest memory accesses.
+/// Ordinary scalar LowIR remains owned by LowToMed and its
 /// existing source backends; this wrapper does not evaluate those operations.
 ///
 /// State is committed at a native RETURN boundary, before the architectural

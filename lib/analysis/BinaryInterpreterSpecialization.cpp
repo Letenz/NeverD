@@ -126,6 +126,7 @@ public:
     // integer contract; the core rejects their opaque/FP LowOps.
     Decode.resetX86FpuState();
     SpecializationInstruction Result;
+    bool LoadedMemoryCall = false;
     try {
       // With shadow stacks explicitly disabled, RDSSP leaves its destination
       // unchanged. This instruction-specific architectural rule must precede
@@ -135,8 +136,12 @@ public:
           (Insn.Id == X86_INS_RDSSPD || Insn.Id == X86_INS_RDSSPQ))
         Result.Ops.push_back(
             LowOp{.Opcode = NdOp::NOP, .Addr = Cursor.Address});
-      else
-        Decode.liftToLow(Insn, Result.Ops);
+      else {
+        if (Options.ExplicitMachineState && Options.X64CetDisabled)
+          LoadedMemoryCall = Decode.liftX64MemoryCallToLow(Insn, Result.Ops);
+        if (!LoadedMemoryCall)
+          Decode.liftToLow(Insn, Result.Ops);
+      }
     } catch (const UnliftedInstruction &Error) {
       return llvm::createStringError(llvm::errc::not_supported, "%s",
                                      Error.what());
@@ -166,13 +171,14 @@ public:
         if (Options.ExplicitMachineState && Options.X64CetDisabled &&
             Insn.Id == X86_INS_CALL && Op.NumInputs == 1 &&
             ((Op.Opcode == NdOp::CALL && Op.Inputs[0].isConst()) ||
-             (Op.Opcode == NdOp::INDIR_CALL && Op.Inputs[0].isReg() &&
-              Insn.Raw && Insn.Raw->detail &&
-              Insn.Raw->detail->x86.op_count == 1 &&
-              Insn.Raw->detail->x86.operands[0].type == X86_OP_REG)))
-          // Constant-slot INDIR_CALL operands identify an IAT/GOT address,
-          // not the loaded callee. Only decoded register operands certify
-          // this direct-value near-call contract.
+             (Op.Opcode == NdOp::INDIR_CALL &&
+              ((LoadedMemoryCall && Op.Inputs[0].isTemp()) ||
+               (Op.Inputs[0].isReg() && Insn.Raw && Insn.Raw->detail &&
+                Insn.Raw->detail->x86.op_count == 1 &&
+                Insn.Raw->detail->x86.operands[0].type == X86_OP_REG)))))
+          // The architecture's explicit target projection supplies memory
+          // reads before the call. An ordinary constant IAT/GOT slot operand
+          // is still an address, never permission to use it as the callee.
           Result.NativeStackControl = SpecializationNativeStackControl::Call;
         B.Control = LowInstructionControl::Call;
         B.ControlFlags |= LowInstructionControlFlag::Call;

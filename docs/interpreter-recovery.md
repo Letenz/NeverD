@@ -249,6 +249,13 @@ addresses use the original fixed mappings on a little-endian 64-bit host.
 The entry return-address slot must remain disjoint from all external-origin
 STORE ranges, including computed addresses, as in the default return contract.
 
+Original guest code and data addresses retain their exact numeric values,
+including addresses observed in output registers. Source generation must not
+replace them with addresses of globals in the generated program. The caller
+supplies the required original guest mappings; generating C does not relocate
+the guest address space. Proofs and recovery reports continue to refer to the
+original input image.
+
 The profile is 64-bit user mode at CPL3/IOPL0, shadow stacks disabled, normal
 nonfaulting execution without asynchronous events. Entry flag images must be
 canonical with TF, RF, VM, AC, VIF and VIP clear; executed POPFQ images must keep TF and
@@ -260,10 +267,25 @@ These rules follow the [Intel instruction reference](https://cdrdv2-public.intel
 
 Under this machine-state ABI, the adapter certifies direct near CALL and
 register-indirect near CALL with an exhaustively proved finite target set.
-An indirect call captures the original target register before changing RSP and
-stores the actual fallthrough address exactly once. Memory-indirect CALL remains
-unsupported, including read-only pointer slots and `[rsp]`: a slot address must
-not be treated as a callee address.
+A register-indirect call captures the original target register before changing
+RSP and stores the actual fallthrough address exactly once.
+
+Memory-indirect near CALL is also supported under this explicit machine-state
+ABI with shadow stacks disabled and normal nonfaulting execution. Its memory
+operand must use a canonical unsegmented `r/m64` encoding, optionally with
+address-size override (`addr32`) and REX. The shared x64 effective-address and
+LOAD semantics read the target before the call changes RSP or pushes the actual
+fallthrough address. A slot
+address is never substituted for the loaded callee; this order also applies
+when the push overwrites the target slot.
+
+Accepted target proofs include immutable read evidence for read-only pointer
+slots or finite tables, and initialized guest-stack values whose complete finite
+target set can be proved. A writable slot's initial image bytes or a runtime
+snapshot are not immutable evidence. Unproved external loads, clobbered stack
+facts and invalid targets still refuse recovery. FS/GS or other segment
+overrides, far calls, extra prefixes and noncanonical prefix sequences remain
+unsupported. The default source ABI still refuses native calls.
 
 An internal near RET may select from a completely proved finite target set.
 The residual code retains one guest stack read, captures its value before the
@@ -388,8 +410,23 @@ tested guest stack. Register-indirect CALL callees both read and overwrite the
 target register; return-threaded dispatch selects between known destinations.
 The oracle checks the actual fallthrough store, unchanged flags and restored
 RSP. Symbol lookup supplies expected code addresses. Unknown or invalid target
-sets and memory-indirect calls must fail without source. These are coverage
+sets and unproved memory targets must fail without source. These are coverage
 requirements for original fixtures, satisfied by local x64 Linux validation;
 they are not a guarantee for arbitrary virtual machines or protection products.
+
+The public memory-call fixtures cover immutable RIP-relative pointer slots,
+finite input-selected read-only tables, initialized finite guest stack slots,
+and a target slot overwritten by the call's own push. Local x64 Linux validation
+checks each of these four forms with 1,024 states through native execution,
+HighC and LLVMC at O0/O2. The independent oracle compares all 17 state words and
+128 guest-stack bytes, including the return address observed by the callee.
+Unproved external or writable slots, alias-clobbered stack values, invalid
+targets and use through the default source ABI must fail without source.
+
+A separate fixed-address runtime regression supplies writable guest memory at
+its original image address. Both C backends at O0/O2 must read and write that
+mapping, preserve the original numeric address in register outputs and leave
+memory canaries unchanged. Rebinding to a generated global object cannot satisfy
+this oracle. These local checks do not establish arbitrary VM support.
 
 See [testing.md](testing.md) for the focused targets.

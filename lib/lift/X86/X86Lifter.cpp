@@ -484,6 +484,42 @@ bool hasVexOrEvexEncoding(const cs_insn *Insn, bool Is64Bit) {
 void X86Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
                      llvm::ArrayRef<RelocatedAddressOperand> Relocs,
                      llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs) {
+  liftImpl(Insn, Ops, Relocs, ScalarRelocs, false);
+}
+
+bool X86Lifter::liftX64MemoryCall(const cs_insn *Insn,
+                                  std::vector<LowOp> &Ops) {
+  if (TargetArch != Arch::X64 || !Insn || !Insn->detail ||
+      Insn->id != X86_INS_CALL || Insn->size > 15)
+    return false;
+  const cs_x86 &X86 = Insn->detail->x86;
+  // Capstone can erase ignored prefixes from its normalized detail. Admit an
+  // exact raw grammar rather than inferring their absence from prefix[].
+  size_t Offset = 0;
+  const bool Address32 = Offset < Insn->size && Insn->bytes[Offset] == 0x67;
+  if (Address32)
+    ++Offset;
+  uint8_t Rex = 0;
+  if (Offset < Insn->size && (Insn->bytes[Offset] & 0xf0) == 0x40)
+    Rex = Insn->bytes[Offset++];
+  if (Offset + 2 > Insn->size || Insn->bytes[Offset] != 0xff)
+    return false;
+  const uint8_t ModRM = Insn->bytes[Offset + 1];
+  if ((ModRM & 0x38) != 0x10 || (ModRM & 0xc0) == 0xc0 ||
+      X86.encoding.modrm_offset != Offset + 1 || X86.modrm != ModRM ||
+      X86.rex != Rex || X86.op_count != 1 ||
+      X86.operands[0].type != X86_OP_MEM || X86.operands[0].size != 8 ||
+      X86.operands[0].mem.segment != X86_REG_INVALID ||
+      X86.addr_size != (Address32 ? 4 : 8))
+    return false;
+  liftImpl(Insn, Ops, {}, {}, true);
+  return true;
+}
+
+void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
+                         llvm::ArrayRef<RelocatedAddressOperand> Relocs,
+                         llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
+                         bool LoadMemoryCallTarget) {
   LastGetPcOccurrence.reset();
   LastScalarOperandOccurrence.reset();
   auto *Detail = Insn->detail;
@@ -492,6 +528,7 @@ void X86Lifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
 
   auto &X86 = Detail->x86;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
+  S.LoadMemoryCallTarget = LoadMemoryCallTarget;
   S.AddressSize = X86.addr_size != 0
                       ? static_cast<uint16_t>(X86.addr_size)
                       : static_cast<uint16_t>(TargetArch == Arch::X64 ? 8 : 4);
