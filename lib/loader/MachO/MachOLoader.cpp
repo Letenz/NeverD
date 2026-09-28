@@ -478,9 +478,13 @@ MachOLoader::load(const std::filesystem::path &Path) {
   parseObjCMethods(Img);
   parseObjCStorage(Img);
 
+  if (llvm::Error Err = applyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(Err);
   if (Img.Arch == Arch::ARM)
     if (llvm::Error Err = discoverARMReachableModes(Img))
       return std::move(Err);
+  if (llvm::Error Err = verifyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(Err);
 
   runPostLoadDiscovery(Img, "macho: loaded " + Path.filename().string());
   // Classified before any table is read: a compact-unwind entry names a

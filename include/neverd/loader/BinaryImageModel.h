@@ -618,7 +618,11 @@ struct BinaryImage {
       return std::nullopt;
     if (Mode == InstructionMode::MixedARMThumb)
       return std::nullopt;
-    return Mode == InstructionMode::Default ? InstructionMode::ARM : Mode;
+    if (Mode == InstructionMode::Default)
+      return Format == BinaryFormat::MachO
+                 ? std::nullopt
+                 : std::optional<InstructionMode>(InstructionMode::ARM);
+    return Mode;
   }
 
   std::set<va_t> getSymbolAddresses() const {

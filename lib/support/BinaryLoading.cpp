@@ -11,8 +11,8 @@
 
 #include "neverd/support/BinaryLoading.h"
 
-#include "neverd/support/TextEncoding.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/TextEncoding.h"
 
 #include "llvm/Support/Error.h"
 
@@ -80,6 +80,8 @@ Expected<BinaryImage> loadBinary(const std::filesystem::path &Path,
                                    inconvertibleErrorCode());
   if (!Opts.OnlyFunctionEntries.empty())
     TheLoader->restrictFunctions(Opts.OnlyFunctionEntries);
+  if (!Opts.ARMFunctionModes.empty())
+    TheLoader->setARMFunctionModes(Opts.ARMFunctionModes);
   auto ImgOrErr = TheLoader->load(Path);
   if (!ImgOrErr)
     return ImgOrErr.takeError();

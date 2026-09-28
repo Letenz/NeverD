@@ -89,8 +89,10 @@ COFFLoader::load(const std::filesystem::path &Path) {
     return llvm::make_error<llvm::StringError>(
         "coff: unsupported machine 0x" + llvm::utohexstr(Obj.getMachine()),
         llvm::inconvertibleErrorCode());
-  if (Img.Arch == Arch::ARM)
+  if (Img.Arch == Arch::ARM) {
     Img.Mode = InstructionMode::Thumb;
+    Img.ARMRequiredMode = InstructionMode::Thumb;
+  }
 
   uint64_t ImageBase = Obj.getImageBase();
   bool IsRelocatable = false;
@@ -864,6 +866,10 @@ COFFLoader::load(const std::filesystem::path &Path) {
   if (!IsRelocatable && Img.Entry != 0)
     Img.recordRuntimeFunction(Img.Entry);
 
+  if (llvm::Error E = applyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(E);
+  if (llvm::Error E = verifyARMFunctionModeHints(Img, ARMFunctionModes))
+    return std::move(E);
   runPostLoadDiscovery(Img, "coff: loaded " + Path.filename().string());
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust

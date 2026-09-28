@@ -783,6 +783,11 @@ _declare(
     ["neverd_session_t", "neverd_va_t"],
 )
 _declare(
+    "neverd_session_set_arm_function_mode",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "int"],
+)
+_declare(
     "neverd_session_resolve_function_name_before_load",
     "neverd_va_t",
     ["neverd_session_t", "const char *", "const char *"],

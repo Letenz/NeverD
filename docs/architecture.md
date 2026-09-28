@@ -85,6 +85,19 @@ CPU subtypes are Thumb-only, so their processor constraint supplies a mode even
 for unmarked functions without a relocation. An ARM instruction relocation in
 such an image is contradictory and fails loading. Other ARM CPU subtypes do not
 establish a function mode.
+An A-profile Mach-O image with no mode evidence has unknown mode, not an ARM
+default. Direct decoding therefore waits for a marked entry, reachable edge,
+instruction relocation, or caller assertion.
+When an A-profile function has no usable mode metadata, callers may assert
+its exact entry state before loading through `BinaryLoadOptions::ARMFunctionModes`
+or `neverd_session_set_arm_function_mode()`. The CLI accepts repeated
+`--arm-function-mode=0xADDRESS:arm|thumb` arguments, including address zero in
+an object file. These are caller assertions, not byte-pattern guesses: the
+loader checks alignment, executable ownership, hardware constraints, mapping
+regions, and exact symbol/relocation evidence before reachable decoding. If
+reachable decoding runs, an asserted entry must decode in its stated mode.
+Contradictory or unsupported assertions fail the load. The mode of a different
+unreached function remains unknown until it has its own evidence or assertion.
 
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and

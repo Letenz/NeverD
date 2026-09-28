@@ -132,7 +132,8 @@ bool Session::synchronizeFunctions() {
 // PipelineRunner implementation (shared by high-level C API functions)
 // ===--------------------------------------------------------------------===//
 
-bool PipelineRunner::load(const char *InputPath, std::string &Err) {
+bool PipelineRunner::load(const char *InputPath, std::string &Err,
+                          const Session *Policy) {
   if (!InputPath || InputPath[0] == '\0') {
     Err = "input path is empty";
     return false;
@@ -142,7 +143,13 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err) {
     Err = "file not found: " + Path.string();
     return false;
   }
-  auto ImgOrErr = loadBinary(Path);
+  BinaryLoadOptions LoadOpts;
+  if (Policy) {
+    LoadOpts.OnlyFunctionEntries = Policy->OnlyFunctionEntries;
+    LoadOpts.ARMFunctionModes = Policy->ARMFunctionModes;
+    DbgRequest = Policy->DbgRequest;
+  }
+  auto ImgOrErr = loadBinary(Path, LoadOpts);
   if (!ImgOrErr) {
     llvm::handleAllErrors(
         ImgOrErr.takeError(),
@@ -267,6 +274,7 @@ int neverd_session_load(neverd_session_t Sess, const char *Path) {
   S->LoadProgressCb.report("image", 0, 1, "reading binary");
   BinaryLoadOptions LoadOpts;
   LoadOpts.OnlyFunctionEntries = S->OnlyFunctionEntries;
+  LoadOpts.ARMFunctionModes = S->ARMFunctionModes;
   auto ImgOrErr = loadBinary(P, LoadOpts);
   if (!ImgOrErr) {
     std::string Err;
@@ -359,6 +367,28 @@ void neverd_session_restrict_function(neverd_session_t Sess,
   S->OnlyFunctionEntries.clear();
   if (Entry)
     S->OnlyFunctionEntries.insert(Entry);
+}
+
+int neverd_session_set_arm_function_mode(neverd_session_t Sess,
+                                         neverd_va_t Entry, int Mode) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return 0;
+  S->clearError();
+  switch (Mode) {
+  case NEVERD_ARM_FUNCTION_MODE_CLEAR:
+    S->ARMFunctionModes.erase(Entry);
+    return 1;
+  case NEVERD_ARM_FUNCTION_MODE_ARM:
+    S->ARMFunctionModes[Entry] = InstructionMode::ARM;
+    return 1;
+  case NEVERD_ARM_FUNCTION_MODE_THUMB:
+    S->ARMFunctionModes[Entry] = InstructionMode::Thumb;
+    return 1;
+  default:
+    S->setError("ARM function mode must be CLEAR, ARM, or Thumb");
+    return 0;
+  }
 }
 
 neverd_va_t neverd_session_resolve_function_name_before_load(

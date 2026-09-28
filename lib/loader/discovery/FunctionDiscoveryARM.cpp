@@ -158,6 +158,111 @@ std::optional<std::pair<va_t, va_t>> literalRead(const cs_insn &Insn,
 
 } // anonymous namespace
 
+llvm::Error
+applyARMFunctionModeHints(BinaryImage &Img,
+                          const std::map<va_t, InstructionMode> &Hints) {
+  if (Hints.empty())
+    return llvm::Error::success();
+  if (Img.Arch != Arch::ARM)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "ARM function mode hints require a 32-bit ARM image");
+
+  for (const auto &[Address, Mode] : Hints) {
+    const auto Fail = [&](llvm::StringRef Reason) {
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "ARM function mode hint at 0x" +
+                                         llvm::utohexstr(Address) + ": " +
+                                         Reason);
+    };
+    if (Mode != InstructionMode::ARM && Mode != InstructionMode::Thumb)
+      return Fail("mode must be ARM or Thumb");
+    if (Address > UINT32_MAX ||
+        (Address & (Mode == InstructionMode::Thumb ? 1u : 3u)) != 0)
+      return Fail("entry address is outside or misaligned for the mode");
+    if (Img.ARMRequiredMode != InstructionMode::Default &&
+        Img.ARMRequiredMode != Mode)
+      return Fail("mode conflicts with the image's required instruction state");
+    if (const ARMCodeRegion *Region = Img.armMappingRegionAt(Address)) {
+      if (Region->Kind == ARMCodeRegionKind::Data ||
+          (Region->Kind == ARMCodeRegionKind::ARM) !=
+              (Mode == InstructionMode::ARM))
+        return Fail("mode conflicts with an ARM mapping region");
+    }
+    const auto Existing = Img.ARMCodeModeEntries.find(Address);
+    if (Existing != Img.ARMCodeModeEntries.end() && Existing->second != Mode)
+      return Fail("mode conflicts with an exact symbol or relocation");
+    const uint64_t Width = Mode == InstructionMode::Thumb ? 2 : 4;
+    if (!Img.isCodeRange(Address, Width) || !Img.readVA(Address, Width))
+      return Fail("entry has no materialized executable instruction");
+  }
+
+  // Commit only after validating every hint, so no partial caller assertion
+  // can affect subsequent loader work on a rejected input.
+  for (const auto &[Address, Mode] : Hints) {
+    Img.ARMCodeModeEntries.try_emplace(Address, Mode);
+    if (std::none_of(Img.Symbols.begin(), Img.Symbols.end(),
+                     [Address](const Symbol &Sym) {
+                       return Sym.IsFunc && Sym.Addr == Address;
+                     }))
+      Img.Symbols.push_back(Symbol::makeFunc(Address));
+  }
+  return llvm::Error::success();
+}
+
+llvm::Error
+verifyARMFunctionModeHints(const BinaryImage &Img,
+                           const std::map<va_t, InstructionMode> &Hints) {
+  for (const auto &[Address, Mode] : Hints) {
+    if (!Img.ARMReachabilityConstrained) {
+      const Segment *Seg = Img.getSegmentFor(Address);
+      if (!Seg || Address < Seg->VA || Address - Seg->VA >= Seg->Data.size())
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "ARM function mode hint has no materialized entry instruction");
+      csh Handle = 0;
+      const cs_mode DecodeMode =
+          Mode == InstructionMode::Thumb ? CS_MODE_THUMB : CS_MODE_ARM;
+      if (cs_open(CS_ARCH_ARM, DecodeMode, &Handle) != CS_ERR_OK)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "ARM function mode hint could not initialize the disassembler");
+      const size_t Offset = static_cast<size_t>(Address - Seg->VA);
+      cs_insn *Insn = nullptr;
+      const size_t Count = cs_disasm(
+          Handle, Seg->Data.data() + Offset,
+          std::min<size_t>(4, Seg->Data.size() - Offset), Address, 1, &Insn);
+      const bool Valid = Count == 1 && Img.isCodeRange(Address, Insn->size);
+      if (Insn)
+        cs_free(Insn, Count);
+      cs_close(&Handle);
+      if (!Valid)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "ARM function mode hint at 0x" + llvm::utohexstr(Address) +
+                " does not decode an executable instruction in the asserted "
+                "mode");
+      continue;
+    }
+    const auto It = std::upper_bound(
+        Img.ARMReachableCodeRegions.begin(), Img.ARMReachableCodeRegions.end(),
+        Address, [](va_t Entry, const ARMCodeRegion &Region) {
+          return Entry < Region.Start;
+        });
+    if (It != Img.ARMReachableCodeRegions.begin()) {
+      const ARMCodeRegion &Region = *std::prev(It);
+      if (Address < Region.End && (Region.Kind == ARMCodeRegionKind::Thumb) ==
+                                      (Mode == InstructionMode::Thumb))
+        continue;
+    }
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "ARM function mode hint at 0x" + llvm::utohexstr(Address) +
+            " did not decode a reachable instruction in the asserted mode");
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   // Mapping symbols describe their own section intervals, but a rewritten
   // ELF can append executable program bytes without adding a section-table

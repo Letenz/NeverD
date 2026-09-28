@@ -29,6 +29,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 
 using namespace llvm;
 using namespace neverd;
@@ -124,6 +125,31 @@ static int realMain(int Argc, char *Argv[]) {
     neverd_session_set_pdb_path(Sess, PdbFile.getValue().c_str());
   if (!MapFile.getValue().empty())
     neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
+  std::set<neverd_va_t> SeenARMEntries;
+  for (const std::string &Hint : ARMFunctionModeHints) {
+    const auto Parts = StringRef(Hint).split(':');
+    StringRef Address = Parts.first;
+    if (!Address.consume_front("0x") && !Address.consume_front("0X")) {
+      WithColor::error() << "invalid --arm-function-mode address: " << Hint
+                         << "\n";
+      return 1;
+    }
+    neverd_va_t Entry = 0;
+    if (Address.empty() || Address.getAsInteger(16, Entry) ||
+        (Parts.second != "arm" && Parts.second != "thumb") ||
+        !SeenARMEntries.insert(Entry).second) {
+      WithColor::error() << "invalid or duplicate --arm-function-mode: " << Hint
+                         << "\n";
+      return 1;
+    }
+    const int Mode = Parts.second == "arm" ? NEVERD_ARM_FUNCTION_MODE_ARM
+                                           : NEVERD_ARM_FUNCTION_MODE_THUMB;
+    if (!neverd_session_set_arm_function_mode(Sess, Entry, Mode)) {
+      WithColor::error() << "invalid --arm-function-mode: "
+                         << takeLastError(Sess) << "\n";
+      return 1;
+    }
+  }
   // Resolve an exact PDB public name, when available, before loading for the
   // same one-function PE path as a known hex address.  The hint is checked
   // against the loaded name table below; normal loading remains authoritative.
