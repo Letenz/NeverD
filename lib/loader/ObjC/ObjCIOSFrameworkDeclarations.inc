@@ -114,6 +114,13 @@
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setCenter:", "v32@0:8{CGPoint=dd}16", nullptr},
 // UIView and UIAccessibility Boolean setters share this exact fixed ABI.
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setClipsToBounds:", "v20@0:8B16", nullptr},
+// UIView's public layout-priority setters take float UILayoutPriority and a
+// signed NSInteger-backed axis. Apple Clang emits this packed arm64 encoding
+// for both methods; the ABI keeps s0 and x2 in separate register banks.
+// https://developer.apple.com/documentation/uikit/uiview/setcontenthuggingpriority(_:for:)
+// https://developer.apple.com/documentation/uikit/uiview/setcontentcompressionresistancepriority(_:for:)
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentCompressionResistancePriority:forAxis:", "v28@0:8f16q20", nullptr},
+{"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setContentHuggingPriority:forAxis:", "v28@0:8f16q20", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setIsAccessibilityElement:", "v20@0:8B16", nullptr},
 {"UIKit", "/System/Library/Frameworks/UIKit.framework/UIKit", "setLayoutMargins:", "v48@0:8{UIEdgeInsets=dddd}16", nullptr},
 // Both ASTs cited above also declare setProgress: with incompatible owners:

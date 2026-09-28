@@ -338,6 +338,8 @@ An exported static `String` addressor can retain its address when the storage is
 
 `UIProgressView`’s `setProgress:` requires a proven receiver, including a typed property result preserved across an exact ARC identity call. Its verified superclass and protocol closure selects the `float` argument. Unqualified calls remain ambiguous because UIKit and local classes also declare object-valued setters with the same selector.
 
+On Darwin ARM64, UIKit also declares UIView’s `setContentHuggingPriority:forAxis:` and `setContentCompressionResistancePriority:forAxis:` as void methods with a `float` priority in `s0` and a signed 64-bit axis in `x2`. The exact UIKit provider and current selector declarations must agree; x86_64 and conflicting declarations remain unsupported. Binding these calls does not by itself close their callers’ other source dependencies.
+
 The arm64 UIKit catalog also records `UIButton`’s `setTitleColor:forState:` with an object argument and an unsigned 64-bit `UIControlState`, plus `UIView`’s void `invalidateIntrinsicContentSize`. Both complete device and simulator ASTs agree. The observed `UIImageView → UIView` inheritance edge lets existing receiver proofs distinguish local object setters from unrelated floating-point setters with the same selector. Unknown receivers, conflicting subclass declarations, missing parent providers and x86_64 remain unsupported.
 
 A dictionary lookup returning unqualified `id` does not gain a receiver class by joining a path that returns a known class from `new`. Every incoming path must retain receiver evidence; even an explicitly typed pointer argument cannot select an object-valued setter over a conflicting floating-point declaration.
