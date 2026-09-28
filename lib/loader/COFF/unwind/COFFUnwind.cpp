@@ -80,8 +80,10 @@ void commitPrimaryFunctionSymbol(BinaryImage &Img, va_t Addr, va_t End,
     return;
   }
   // A primary RUNTIME_FUNCTION is PE-authenticated function identity.
-  // Scan-style prologue heuristics (REX/push) miss MSVC Win64 homes such as
-  // `mov [rsp+8], ecx` (0x89) and would drop unnamed pdata entries.
+  // Scan-style prologue heuristics miss ordinary entries -- MSVC's Win64
+  // register home `mov [rsp+8], ecx` (0x89), an ARM64 `str x19, [sp, #-16]!`,
+  // a Thumb-2 leaf that starts with arithmetic -- and would drop unnamed
+  // pdata entries.
   Img.Symbols.push_back(Symbol::makeFunc(Addr, End - Addr));
   ++Added;
 }
@@ -116,8 +118,7 @@ void notePdataNeighbors(BinaryImage &Img, uint64_t ImageBase, va_t Begin,
   auto addRec = [&](const BinaryImage::COFFPDataRecord &Rec) {
     if (Rec.BeginRVA < Rec.EndRVA && Rec.BeginRVA <= InvalidVA - ImageBase &&
         Rec.EndRVA <= InvalidVA - ImageBase)
-      noteKnownCodeRange(Img, ImageBase + Rec.BeginRVA,
-                         ImageBase + Rec.EndRVA);
+      noteKnownCodeRange(Img, ImageBase + Rec.BeginRVA, ImageBase + Rec.EndRVA);
   };
   if (It != Img.COFFPDataRecords.begin())
     addRec(*std::prev(It));
@@ -127,8 +128,6 @@ void notePdataNeighbors(BinaryImage &Img, uint64_t ImageBase, va_t Begin,
       addRec(*Next);
   }
 }
-
-
 
 void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
                         uint64_t ImageBase) {
@@ -686,16 +685,7 @@ void parseARMExceptions(const COFFObjectFile &Obj, BinaryImage &Img,
     Img.KnownCodeRanges.emplace_back(Addr, End);
     if (IsFragment || !IsSymbolEligible)
       continue;
-    const bool AlreadySeen = !Seen.insert(Addr).second;
-    size_t Off = static_cast<size_t>(Addr - Seg->VA);
-    if (!checkPrologueAtOffset(*Seg, Off, Img.Arch))
-      continue;
-    if (AlreadySeen) {
-      completeFunctionSizes(Img, FunctionSymbols, Addr, Length);
-      continue;
-    }
-    Img.Symbols.push_back(Symbol::makeFunc(Addr, Length));
-    ++Added;
+    commitPrimaryFunctionSymbol(Img, Addr, End, FunctionSymbols, Seen, Added);
   }
 
   std::sort(Img.KnownCodeRanges.begin(), Img.KnownCodeRanges.end());
@@ -831,13 +821,15 @@ bool ensureX64RuntimeFunction(BinaryImage &Img, va_t Address) {
       return false;
   }
 
-  ExceptionFunction EF = decodeX64ExceptionFunction(
-      Img, Img.Base, Rec.RecordRVA, Rec.BeginRVA, Rec.EndRVA, Rec.UnwindInfoRVA);
+  ExceptionFunction EF =
+      decodeX64ExceptionFunction(Img, Img.Base, Rec.RecordRVA, Rec.BeginRVA,
+                                 Rec.EndRVA, Rec.UnwindInfoRVA);
   Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
       Img.ExceptionMetadata.ParseStatus, EF.ParseStatus);
   const bool HasRange = EF.CodeRange.isValid();
   const bool IsChained = EF.Kind == RuntimeFunctionKind::Chained;
-  const std::optional<ExceptionAddressRange> PrimaryRange = EF.ChainedPrimaryRange;
+  const std::optional<ExceptionAddressRange> PrimaryRange =
+      EF.ChainedPrimaryRange;
   Img.ExceptionMetadata.Functions.push_back(std::move(EF));
   if (HasRange) {
     const ExceptionFunction &Stored = Img.ExceptionMetadata.Functions.back();

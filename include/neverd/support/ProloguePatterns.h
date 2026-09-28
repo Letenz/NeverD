@@ -141,9 +141,10 @@ inline bool isRelaxedPrologueByteX86(uint8_t B) {
 // ===--------------------------------------------------------------------===//
 
 inline bool isStrictPrologueWordAArch64(uint32_t W) {
-  // STP x29, x30, [sp, #imm]! — canonical frame setup
-  // Encoding: 1010100110 iiiiiii 11110 11101 11111  (STP pre-index)
-  if ((W & 0xFFE00000) == 0xA9800000) // STP pre-index, any offset
+  // STP Xt1, Xt2, [sp, #imm]! — canonical frame setup
+  // Encoding: 1010100110 iiiiiii ttttt 11111 ttttt  (STP pre-index)
+  // The offset is signed and a push makes it negative, so imm7 is unmasked.
+  if ((W & 0xFFC003E0) == 0xA98003E0) // STP pre-index to sp, any offset
     return true;
   // STP with x29,x30: check Rt2=x30(11110), Rn=sp(11111), Rt=x29(11101)
   if ((W & 0xFFC07FFF) == 0xA9007BFD) // STP x29, x30, [sp, ...]

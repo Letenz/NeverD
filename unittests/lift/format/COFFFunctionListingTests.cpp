@@ -9,8 +9,8 @@
 
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/COFF/COFFLoader.h"
-#include "neverd/loader/ExceptionWindowsEH.h"
 #include "neverd/loader/COFF/COFFLoaderUtils.h"
+#include "neverd/loader/ExceptionWindowsEH.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/BinaryFormat/COFF.h"
@@ -390,6 +390,27 @@ TEST_F(COFFFunctionListingTest, UnnamedPdataAcceptsWin64RegisterHome) {
   ASSERT_EQ(Functions.size(), 1u);
   EXPECT_EQ(Functions[0]->Addr, imageBase(Arch::X64) + TextRVA);
   EXPECT_EQ(Functions[0]->Size, functionSize(Arch::X64));
+}
+
+TEST_F(COFFFunctionListingTest, UnnamedARMPdataNeedsNoListedPrologueWord) {
+  // As on x64, a primary RUNTIME_FUNCTION names a function by itself. MSVC's
+  // ARM64 `save_reg_x` prologue and a Thumb-2 leaf that starts with
+  // arithmetic are not in the prologue-word lists that padding scans use.
+  for (Arch A : {Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(A));
+    auto Bytes = makePE(A, false, false, true);
+    if (A == Arch::AArch64)
+      put32(Bytes, TextOffset, 0xf81f0ff3); // str x19, [sp, #-16]!
+    else
+      put16(Bytes, TextOffset, 0x2000); // movs r0, #0
+    COFFLoader Loader;
+    auto Image = Loader.load(writeFixture(Bytes));
+    ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+    const auto Functions = Image->getFunctionSymbols();
+    ASSERT_EQ(Functions.size(), 1u);
+    EXPECT_EQ(Functions[0]->Addr, imageBase(A) + TextRVA);
+    EXPECT_EQ(Functions[0]->Size, functionSize(A));
+  }
 }
 
 TEST_F(COFFFunctionListingTest, OrdinaryObjectAuxRecordsDoNotBecomeAliases) {

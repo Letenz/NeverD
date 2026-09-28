@@ -46,6 +46,17 @@ public:
   /// what is left is how a caller sets a floor on that.
   static size_t fixedByteCount(const PatternModule &Mod);
 
+  /// The fewest bytes a module may state exactly and still identify a
+  /// routine.
+  ///
+  /// Sixteen exact bytes is several instructions of one specific routine,
+  /// which no unrelated function reaches by coincidence.  Below that a
+  /// pattern is mostly wildcards and agrees with a great deal of code -- a
+  /// function whose every instruction is relocated states nothing at all --
+  /// so PatternGenerator does not write such a line, and naming a
+  /// personality routine demands the same floor.
+  static constexpr size_t MinStatedBytes = 16;
+
   /// True when the leading pattern, the CRC span, and the tail together reach
   /// the end of the function the module claims to describe.
   ///
