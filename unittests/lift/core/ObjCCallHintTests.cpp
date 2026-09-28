@@ -3056,6 +3056,78 @@ TEST(ObjCCallHints, DispatchMetadataAccessorsRequireExactSDKExports) {
     }
 }
 
+TEST(ObjCCallHints, DispatchTimerCallsKeepCompilerObservedSwiftABI) {
+  struct Case {
+    const char *Name;
+    unsigned Parameters;
+    bool IndirectResult;
+    bool Context;
+  };
+  constexpr Case Calls[] = {
+      {"$s8Dispatch0A3QoSV11unspecifiedACvgZ", 1, true, false},
+      {"$s8Dispatch1poiyAA0A4TimeVAD_AA0aB8IntervalOtF", 3, true,
+       false},
+      {"$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9"
+       "repeating6leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF",
+       5, false, true},
+  };
+  constexpr llvm::StringLiteral Provider =
+      "/usr/lib/swift/libswiftDispatch.dylib";
+  for (auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const auto &Call : Calls) {
+      SCOPED_TRACE(std::string(Call.Name) + ":" +
+                   std::to_string(static_cast<int>(Architecture)));
+      const std::string Import = "_" + std::string(Call.Name);
+      auto Image = runtimeImage(Import, Architecture);
+      Image.DyldBindSlots[0x2180] = {Import, 0, Provider.str(), false};
+      const auto Hint = swiftRuntimeSourceCallHint(Image, 0x2180);
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->TargetName, Call.Name);
+      const auto &Signature = Hint->Signature;
+      EXPECT_EQ(Signature.Origin,
+                SourceFunctionTypeHint::OriginKind::SwiftSDK);
+      EXPECT_EQ(Signature.Convention,
+                SourceFunctionTypeHint::ConventionKind::Swift);
+      ASSERT_TRUE(Signature.ReturnType);
+      EXPECT_EQ(Signature.ReturnType->Kind, NdTypeKind::Void);
+      ASSERT_EQ(Signature.Parameters.size(), Call.Parameters);
+      const auto &TRI = getTargetRegInfo(Architecture);
+      unsigned Ordinary = 0;
+      for (unsigned I = 0; I < Call.Parameters; ++I) {
+        const auto &Parameter = Signature.Parameters[I];
+        EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Ptr);
+        if (Call.IndirectResult && I == 0) {
+          EXPECT_EQ(Parameter.TheRole,
+                    SourceParameterTypeHint::Role::SwiftIndirectResult);
+          EXPECT_EQ(Parameter.Location.RegisterOffset,
+                    Architecture == Arch::AArch64 ? TRI.indirectResultReg()
+                                                : TRI.IntReturnReg);
+        } else if (Call.Context && I + 1 == Call.Parameters) {
+          EXPECT_EQ(Parameter.TheRole,
+                    SourceParameterTypeHint::Role::SwiftContext);
+          EXPECT_EQ(Parameter.Location.RegisterOffset,
+                    Architecture == Arch::AArch64 ? a64reg::X20 : x86reg::R13);
+        } else {
+          EXPECT_EQ(Parameter.TheRole,
+                    SourceParameterTypeHint::Role::Ordinary);
+          EXPECT_EQ(Parameter.Location.RegisterOffset,
+                    TRI.IntParamRegs[Ordinary++]);
+        }
+      }
+      std::string Diagnostic;
+      EXPECT_TRUE(validateSourceABI(Signature, Diagnostic)) << Diagnostic;
+      auto Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Module = "/tmp/libswiftDispatch.dylib";
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].Addend = 1;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+      Wrong = Image;
+      Wrong.DyldBindSlots[0x2180].WeakImport = true;
+      EXPECT_FALSE(swiftRuntimeSourceCallHint(Wrong, 0x2180));
+    }
+}
+
 TEST(ObjCCallHints, RuntimeImportsBindArgumentsBeforeSSAOnBothDarwinTargets) {
   for (Arch Architecture : {Arch::AArch64, Arch::X64}) {
     auto Image =

@@ -175,6 +175,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
      "/System/Library/Frameworks/SwiftUI.framework/SwiftUI", "vppC"},
+    // Swift 6.1.2 arm64 and x86_64 clients construct the opaque QoS value
+    // through the Swift indirect-result pointer.
+    {"$s8Dispatch0A3QoSV11unspecifiedACvgZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vI"},
     // Swift 6.1.2 arm64 and x86_64 client IR return the opaque DispatchTime
     // value through the Swift indirect-result pointer.
     {"$s8Dispatch0A4TimeV3nowACyFZ",
@@ -183,6 +187,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // as swiftcc void (ptr swiftself).
     {"$s8Dispatch0A8WorkItemC6cancelyyFTj",
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
+    // DispatchTime + DispatchTimeInterval takes both opaque values by address
+    // and writes its result through the Swift indirect-result pointer.
+    {"$s8Dispatch1poiyAA0A4TimeVAD_AA0aB8IntervalOtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vIpp"},
     {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -239,6 +247,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "zC"},
+    // DispatchSourceTimer.schedule receives three value addresses, dynamic
+    // source metadata, and the source object in swiftself.
+    {"$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6"
+     "leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vppppC"},
     // The concrete UIImage initializer consumes the two String words in x0/x1
     // and returns an object in x0. WMF's arm64 call uses those carriers and
     // links the exact Swift overlay symbol from UIKit.
