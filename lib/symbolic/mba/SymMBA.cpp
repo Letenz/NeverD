@@ -429,40 +429,6 @@ SymRef refineCandidate(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return readingScore(Ctx, Best) < readingScore(Ctx, E) ? Best : E;
 }
 
-bool isDirectComplement(const SymContext &Ctx, SymRef A, SymRef B) {
-  return (Ctx.op(A) == SymOp::Not && Ctx.operand(A, 0) == B) ||
-         (Ctx.op(B) == SymOp::Not && Ctx.operand(B, 0) == A);
-}
-
-bool isBitwiseComplement(const SymContext &Ctx, SymRef A, SymRef B) {
-  if (isDirectComplement(Ctx, A, B))
-    return true;
-  if (Ctx.op(A) == SymOp::And)
-    std::swap(A, B);
-  if (Ctx.op(A) != SymOp::Or || Ctx.op(B) != SymOp::And)
-    return false;
-  llvm::ArrayRef<SymRef> OrTerms = Ctx.operands(A);
-  llvm::ArrayRef<SymRef> AndTerms = Ctx.operands(B);
-  if (OrTerms.size() != AndTerms.size())
-    return false;
-  if (OrTerms.size() <= 8)
-    return llvm::all_of(OrTerms, [&](SymRef R) {
-      return llvm::any_of(
-          AndTerms, [&](SymRef S) { return isDirectComplement(Ctx, R, S); });
-    });
-  llvm::DenseSet<uint32_t> Exact, Negated;
-  for (SymRef Term : AndTerms) {
-    if (Ctx.op(Term) == SymOp::Not)
-      Negated.insert(Ctx.operand(Term, 0).index());
-    else
-      Exact.insert(Term.index());
-  }
-  return llvm::all_of(OrTerms, [&](SymRef R) {
-    return Ctx.op(R) == SymOp::Not ? Exact.contains(Ctx.operand(R, 0).index())
-                                   : Negated.contains(R.index());
-  });
-}
-
 SymRef foldComplementaryAdd(SymContext &Ctx, SymRef R) {
   if (Ctx.op(R) != SymOp::Add)
     return R;
@@ -525,10 +491,24 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
   bool SharedPartition = false;
   const bool PartitionTypes = (AOp == SymOp::And && BOp == SymOp::And) ||
                               (AOp == SymOp::Or && BOp == SymOp::Or);
-  if (PartitionTypes && Ctx.numOperands(A) == 2 && Ctx.numOperands(B) == 2) {
+  if (PartitionTypes) {
     llvm::ArrayRef<SymRef> AF = Ctx.operands(A), BF = Ctx.operands(B);
-    for (SymRef F : AF)
-      SharedPartition |= llvm::is_contained(BF, F);
+    const bool SmallPair = AF.size() == 2 && BF.size() == 2;
+    const SymOp Dual = AOp == SymOp::And ? SymOp::Or : SymOp::And;
+    const bool FlattenedPair =
+        (AF.size() > 8 || BF.size() > 8) &&
+        (llvm::any_of(AF, [&](SymRef R) { return Ctx.op(R) == Dual; }) ||
+         llvm::any_of(BF, [&](SymRef R) { return Ctx.op(R) == Dual; }));
+    if (SmallPair || FlattenedPair) {
+      size_t I = 0, J = 0;
+      while (I < AF.size() && J < BF.size()) {
+        if (AF[I] == BF[J]) {
+          SharedPartition = true;
+          break;
+        }
+        AF[I] < BF[J] ? ++I : ++J;
+      }
+    }
   }
   if (!isDirectComplement(Ctx, A, B) && !BitwisePair && !SharedPartition)
     return E;

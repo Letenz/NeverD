@@ -440,6 +440,10 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
 SymRef completeComplementarySums(SymContext &Ctx, SymRef Root,
                                  const MBAOptions &Opts, WorkBudget &Budget);
 
+/// Recognize direct and De Morgan complements in canonical bitwise nodes.
+bool isDirectComplement(const SymContext &Ctx, SymRef A, SymRef B);
+bool isBitwiseComplement(const SymContext &Ctx, SymRef A, SymRef B);
+
 /// Complete a sum when its two terms partition a shared bit mask.
 SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
                               const llvm::APInt &Offset);
