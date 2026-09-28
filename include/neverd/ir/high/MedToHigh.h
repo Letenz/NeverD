@@ -77,6 +77,12 @@ bool loopifyBackwardGotos(std::vector<HighStmt> &Body);
 /// A label on the first statement of a `while (1)` or do-while body that is
 /// entered only from outside the loop moves onto the loop statement.
 bool hoistLoopEntryLabels(std::vector<HighStmt> &Body);
+/// `while (1) { S1; X: S2 }` whose top is reached neither by fall-through nor
+/// by a jump, entered at X, becomes `while (1) { X: S2; S1 }`.
+bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body);
+/// An endless loop that begins with `if (c) goto X;` becomes
+/// `while (!c) {..} goto X;`; one that ends with it, `do {..} while (!c);`.
+bool hoistLoopExitTests(std::vector<HighStmt> &Body);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

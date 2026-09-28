@@ -41291,3 +41291,238 @@ TEST(HighCPointerAddresses, ImageFunctionNamedLikeLibcIsNotLibc) {
   EXPECT_EQ(HighC.find("<setjmp.h>"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("extern int setjmp()"), std::string::npos) << HighC;
 }
+
+namespace {
+HighStmt endlessLoop(std::vector<HighStmt> Body) {
+  HighStmt Loop;
+  Loop.Kind = StmtKind::While;
+  Loop.Body = std::move(Body);
+  return Loop;
+}
+HighStmt labelAnchor(va_t Addr) {
+  HighStmt Anchor;
+  Anchor.Kind = StmtKind::Block;
+  Anchor.Addr = Addr;
+  return Anchor;
+}
+} // namespace
+
+TEST(HighCPointerAddresses, LoopEnteredAtALabelStartsItsIterationsThere) {
+  // `goto X; while (1) { a = 1; X: b = 2; if (c) goto E; } E: return;`
+  // Nothing reaches `a = 1` first, so each run is b, test, a, b, test...
+  std::vector<HighStmt> Body = {
+      gotoAt(0x1000, 0x1030),
+      endlessLoop({assignConst(0x1020, 1, 1), assignConst(0x1030, 2, 2),
+                   condGoto(0x1034, 1, 0x1050)}),
+      returnAt(0x1050)};
+  ASSERT_TRUE(rotateLoopsToTheirEntry(Body));
+  const auto &Loop = Body[1].Body;
+  ASSERT_EQ(Loop.size(), 3u);
+  EXPECT_EQ(Loop[0].Addr, 0x1030u);
+  EXPECT_EQ(Loop[1].Addr, 0x1034u);
+  EXPECT_EQ(Loop[2].Addr, 0x1020u);
+}
+
+TEST(HighCPointerAddresses, LoopReachedAtItsTopIsNotRotated) {
+  // The statement before the loop falls into its top: `a = 1` runs first.
+  std::vector<HighStmt> Body = {
+      condGoto(0x1000, 1, 0x1030), assignConst(0x1010, 3, 3),
+      endlessLoop({assignConst(0x1020, 1, 1), assignConst(0x1030, 2, 2),
+                   condGoto(0x1034, 1, 0x1050)}),
+      returnAt(0x1050)};
+  EXPECT_FALSE(rotateLoopsToTheirEntry(Body));
+  EXPECT_EQ(Body[2].Body[0].Addr, 0x1020u);
+}
+
+TEST(HighCPointerAddresses, LoopWithAContinueIsNotRotated) {
+  // A continue restarts at `a = 1`; rotation would restart at X instead.
+  HighStmt Continue;
+  Continue.Kind = StmtKind::Continue;
+  HighStmt Restart;
+  Restart.Kind = StmtKind::If;
+  Restart.Addr = 0x1038;
+  Restart.Cond = HighExpr::makeConst(1, 1);
+  Restart.Body = {Continue};
+  std::vector<HighStmt> Body = {
+      gotoAt(0x1000, 0x1030),
+      endlessLoop({assignConst(0x1020, 1, 1), assignConst(0x1030, 2, 2),
+                   Restart, condGoto(0x103c, 1, 0x1050)}),
+      returnAt(0x1050)};
+  EXPECT_FALSE(rotateLoopsToTheirEntry(Body));
+  EXPECT_EQ(Body[1].Body[0].Addr, 0x1020u);
+}
+
+TEST(HighCPointerAddresses, DoWhileEnteredAtItsTestBecomesAWhile) {
+  // `goto X; do { a = 1; X: } while (c); return;` tests c before each body.
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Cond = HighExpr::makeConst(1, 1);
+  Loop.Body = {assignConst(0x1020, 1, 1), labelAnchor(0x1030)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
+                                returnAt(0x1050)};
+  ASSERT_TRUE(rotateLoopsToTheirEntry(Body));
+  EXPECT_EQ(Body[1].Kind, StmtKind::While);
+  EXPECT_EQ(Body[1].Addr, 0x1030u);
+  ASSERT_EQ(Body[1].Body.size(), 1u);
+  EXPECT_EQ(Body[1].Body[0].Addr, 0x1020u);
+}
+
+TEST(HighCPointerAddresses, DoWhileWithWorkAfterItsEntryIsKept) {
+  // `do { a = 1; X: b = 2; } while (c);` runs b before its first test.
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Cond = HighExpr::makeConst(1, 1);
+  Loop.Body = {assignConst(0x1020, 1, 1), assignConst(0x1030, 2, 2)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
+                                returnAt(0x1050)};
+  EXPECT_FALSE(rotateLoopsToTheirEntry(Body));
+  EXPECT_EQ(Body[1].Kind, StmtKind::DoWhile);
+}
+
+TEST(HighCPointerAddresses, EndlessLoopTestedFirstBecomesAWhileCondition) {
+  // `while (1) { if (c) goto X; a = 1; } X: return;` tests c before each
+  // body: `while (!c) { a = 1; } goto X;`.
+  std::vector<HighStmt> Body = {
+      endlessLoop({condGoto(0x1010, 1, 0x1050), assignConst(0x1020, 1, 1)}),
+      returnAt(0x1050)};
+  ASSERT_TRUE(hoistLoopExitTests(Body));
+  ASSERT_EQ(Body.size(), 3u);
+  EXPECT_EQ(Body[0].Kind, StmtKind::While);
+  ASSERT_TRUE(Body[0].Cond);
+  EXPECT_EQ(Body[0].Cond->Op, NdOp::BOOL_NOT);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+  EXPECT_EQ(Body[0].Body[0].Addr, 0x1020u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Goto);
+  EXPECT_EQ(Body[1].GotoTarget, 0x1050u);
+}
+
+TEST(HighCPointerAddresses, EndlessLoopTestedLastBecomesADoWhile) {
+  // `while (1) { a = 1; if (c) goto X; }` runs the body before each test.
+  std::vector<HighStmt> Body = {
+      endlessLoop({assignConst(0x1020, 1, 1), condGoto(0x1030, 1, 0x1050)}),
+      returnAt(0x1050)};
+  ASSERT_TRUE(hoistLoopExitTests(Body));
+  ASSERT_EQ(Body.size(), 3u);
+  EXPECT_EQ(Body[0].Kind, StmtKind::DoWhile);
+  ASSERT_EQ(Body[0].Body.size(), 1u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Goto);
+}
+
+TEST(HighCPointerAddresses, EndlessLoopTestedLastKeepsAContinue) {
+  // A continue in `while (1)` restarts the body; in a do-while it would
+  // run the test first.
+  HighStmt Continue;
+  Continue.Kind = StmtKind::Continue;
+  HighStmt Restart;
+  Restart.Kind = StmtKind::If;
+  Restart.Addr = 0x1024;
+  Restart.Cond = HighExpr::makeConst(1, 1);
+  Restart.Body = {Continue};
+  std::vector<HighStmt> Body = {
+      endlessLoop({assignConst(0x1020, 1, 1), Restart,
+                   condGoto(0x1030, 1, 0x1050)}),
+      returnAt(0x1050)};
+  EXPECT_FALSE(hoistLoopExitTests(Body));
+  EXPECT_EQ(Body[0].Kind, StmtKind::While);
+}
+
+TEST(HighCPointerAddresses, LoopWithABreakKeepsItsExitTest) {
+  // The goto placed after the loop would also catch the break.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  HighStmt Leave;
+  Leave.Kind = StmtKind::If;
+  Leave.Addr = 0x1024;
+  Leave.Cond = HighExpr::makeConst(1, 1);
+  Leave.Body = {Break};
+  std::vector<HighStmt> Body = {
+      endlessLoop({condGoto(0x1010, 1, 0x1050), assignConst(0x1020, 1, 1),
+                   Leave}),
+      returnAt(0x1040), returnAt(0x1050)};
+  EXPECT_FALSE(hoistLoopExitTests(Body));
+}
+
+TEST(HighCPointerAddresses, SingleEntryBlockRunningIntoALabelMovesToItsJump) {
+  // if (a) { if (m) { v = 1; goto B; } if (n) { u = 8; goto Z; } return; }
+  // return; B: b = 3; Z: z = 4; return;
+  // B is entered once, from an arm nested below it, and runs into Z: it
+  // moves to its jump with the fall-through as `goto Z`.
+  auto Arm = [](va_t Addr, std::vector<HighStmt> Body) {
+    HighStmt S;
+    S.Kind = StmtKind::If;
+    S.Addr = Addr;
+    S.Cond = HighExpr::makeConst(1, 1);
+    S.Body = std::move(Body);
+    return S;
+  };
+  HighStmt Outer = Arm(
+      0x1000,
+      {Arm(0x1004, {assignConst(0x1005, 1, 1), gotoAt(0x1006, 0x1050)}),
+       Arm(0x1008, {assignConst(0x1009, 8, 8), gotoAt(0x100a, 0x1060)}),
+       returnAt(0x100c)});
+  std::vector<HighStmt> Body = {Outer, returnAt(0x1010),
+                                assignConst(0x1050, 3, 3),
+                                assignConst(0x1060, 4, 4), returnAt(0x1064)};
+  const unsigned Before = countGotos(Body);
+  ASSERT_TRUE(reduceSingleUseGotos(Body, /*SpliceRegions=*/true));
+  EXPECT_LE(countGotos(Body), Before);
+  bool Moved = false;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::If && S.Addr == 0x1004)
+      for (const HighStmt &T : S.Body)
+        Moved |= T.Kind == StmtKind::Assign && T.Addr == 0x1050;
+  });
+  EXPECT_TRUE(Moved);
+}
+
+TEST(HighCPointerAddresses, BlockAfterAFailFastMovesToItsOnlyJump) {
+  // `if (c) goto F; if (d) goto G; ...; return; F: __fastfail(14); G: ...`
+  // The fail-fast never returns, so G's block, entered once, can move to
+  // its jump, and F then ends the list.
+  HighStmt FailFast;
+  FailFast.Kind = StmtKind::Call;
+  FailFast.Addr = 0x1040;
+  FailFast.CallExpr = HighExpr::makeCall(
+      "", 0x1040, {HighExpr::makeConst(0x29, 1), HighExpr::makeConst(14, 4)});
+  FailFast.CallExpr->IntrinsicId = Intrinsic::IntN;
+  // `G: b = 2; return;` after it keeps the fail-fast from ending the list.
+  std::vector<HighStmt> Body = {condGoto(0x1000, 1, 0x1040),
+                                condGoto(0x1004, 1, 0x1050),
+                                assignConst(0x1010, 1, 1),
+                                returnAt(0x1020),
+                                FailFast,
+                                assignConst(0x1050, 2, 2),
+                                returnAt(0x1054)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body, /*SpliceRegions=*/true));
+  EXPECT_EQ(countGotos(Body), 0u);
+  unsigned FailFasts = 0;
+  walkStmts(Body, [&](const HighStmt &S) {
+    FailFasts += S.Kind == StmtKind::Call && S.CallExpr &&
+                 S.CallExpr->IntrinsicId == Intrinsic::IntN;
+  });
+  EXPECT_EQ(FailFasts, 1u);
+}
+
+TEST(HighCPointerAddresses, IfWhoseTailTheRestJumpsBackIntoIsSwapped) {
+  // `if (c) { X: a = 1; return; } b = 2; goto X;` Neither side falls
+  // through, so `if (!c) { b = 2; } X: a = 1; return;` is the same program
+  // and the jump back into the tail becomes the fall-through.
+  HighStmt Tail;
+  Tail.Kind = StmtKind::If;
+  Tail.Addr = 0x1000;
+  Tail.Cond = HighExpr::makeConst(1, 1);
+  Tail.Body = {assignConst(0x1010, 1, 1), returnAt(0x1014)};
+  std::vector<HighStmt> Body = {Tail, assignConst(0x1020, 2, 2),
+                                gotoAt(0x1024, 0x1010)};
+  ASSERT_TRUE(reduceSingleUseGotos(Body, /*SpliceRegions=*/true));
+  EXPECT_EQ(countGotos(Body), 0u);
+  ASSERT_FALSE(Body.empty());
+  EXPECT_EQ(Body.back().Kind, StmtKind::Return);
+  bool RestInIf = false;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::If)
+      for (const HighStmt &T : S.Body)
+        RestInIf |= T.Addr == 0x1020;
+  });
+  EXPECT_TRUE(RestInIf);
+}

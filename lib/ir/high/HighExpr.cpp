@@ -215,8 +215,28 @@ bool isNonReturningSourceCall(const ExprPtr &Expression) {
          Expression->MemoryAddressSpace == NdMemoryAddressSpace::Default;
 }
 
+/// `int 29h`, the Windows fail-fast (`__fastfail`), which MedIR's
+/// isArchitecturalNoReturn also treats as never returning.
+static bool isX86FailFastInterrupt(const HighExpr &Expression) {
+  if (Expression.IntrinsicId != Intrinsic::IntN ||
+      Expression.Operands.empty() || !Expression.Operands[0])
+    return false;
+  const HighExpr *Vector = Expression.Operands[0].get();
+  while (Vector && Vector->Operands.size() == 1 &&
+         (Vector->Kind == ExprKind::Cast ||
+          (Vector->Kind == ExprKind::UnaryOp &&
+           (Vector->Op == NdOp::INT_ZEXT || Vector->Op == NdOp::INT_SEXT))))
+    Vector = Vector->Operands[0].get();
+  return Vector && Vector->Kind == ExprKind::Const &&
+         (Vector->ConstVal & 0xFF) == 0x29;
+}
+
 bool isTerminatingHighCall(const ExprPtr &Expression) {
   if (isNonReturningSourceCall(Expression))
+    return true;
+  if (Expression && Expression->Kind == ExprKind::Call &&
+      !Expression->IsIndirectCall && !Expression->SourceCallHint &&
+      isX86FailFastInterrupt(*Expression))
     return true;
   return Expression && Expression->Kind == ExprKind::Call &&
          !Expression->IsIndirectCall && !Expression->SourceCallHint &&
