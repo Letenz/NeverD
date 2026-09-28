@@ -12,9 +12,10 @@
 
 namespace neverd::symbolic {
 
-/// Search a two-word result for arithmetic on two reconstructed inputs.
-/// The search only proposes candidates: an equivalence proof is mandatory.
-/// Expressions with more than four distinct word inputs are left unchanged.
+/// Search a two-word result for arithmetic on two or three reconstructed
+/// inputs. The search only proposes candidates: an equivalence proof is
+/// mandatory. Expressions with more than six distinct word inputs are left
+/// unchanged.
 SymRef recoverSplitWordArithmetic(SymContext &Ctx, SymRef Expr,
                                   SynthVerifyFn Verify);
 

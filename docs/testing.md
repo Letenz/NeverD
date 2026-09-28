@@ -82,7 +82,9 @@ an observed 64-bit return through a call on i386 (including PIC call/pop),
 ARM32, Thumb-1, and Thumb-2. Its edge and random-word oracles check the complete
 64-bit result and a caller that consumes both halves. Three independent
 Boolean forms exercise wide addition and subtraction; two more add a nonzero
-64-bit offset after the Boolean form. The output must remove their residual
+64-bit offset after the Boolean form. A three-input parity/majority form checks
+carry recovery across the two words, with a matching native 64-bit check on
+x86-64 and AArch64. The output must remove their residual
 XOR, AND, and complement operations, while retaining the shifts and OR needed
 to assemble input halves. Thumb-1 compilers may place these offsets in a
 read-only literal island inside executable code; mapping and relocation

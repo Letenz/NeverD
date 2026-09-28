@@ -626,7 +626,8 @@ static int check_pair(uint64_t x, uint64_t y, uint64_t z) {
     return 1;
   }
 #if NESTED_WORD_BITS == 64
-  if ((uint64_t)mba_wide_add(x, y) != x + y)
+  if ((uint64_t)mba_wide_add(x, y) != x + y ||
+      (uint64_t)mba_wide_three(x, y, z) != x + y + z)
     return 1;
 #endif
   return 0;
@@ -695,8 +696,10 @@ TEST_P(MBANestedSourceTest, RecoversSpilledNestedExpressionsInBothCRoutes) {
   for (const char *Name :
        {"mba_nested_add", "mba_nested_sub", "mba_three_input"})
     expectNoResidualMBA(Output, Name);
-  if (Case.WordBits == 64)
+  if (Case.WordBits == 64) {
     expectNoResidualMBA(Output, "mba_wide_add");
+    expectNoResidualMBA(Output, "mba_wide_three");
+  }
   for (const char *Name : {"mba_nested_xor", "mba_nested_or"}) {
     const auto Body = functionBody(Source, Name);
     EXPECT_EQ(std::count(Body.begin(), Body.end(),
@@ -814,11 +817,17 @@ TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
     EXPECT_EQ(Body.find(" & "), std::string::npos) << Body;
     EXPECT_EQ(Body.find("~"), std::string::npos) << Body;
   }
+  const std::string ThreeBody = functionBody(Source, "mba_pair_three");
+  EXPECT_FALSE(ThreeBody.empty());
+  EXPECT_EQ(ThreeBody.find(" ^ "), std::string::npos) << ThreeBody;
+  EXPECT_EQ(ThreeBody.find(" & "), std::string::npos) << ThreeBody;
+  EXPECT_EQ(ThreeBody.find("~"), std::string::npos) << ThreeBody;
   EXPECT_FALSE(functionBody(Source, "mba_pair_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_or_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_sub_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_affine_add_fold").empty());
   EXPECT_FALSE(functionBody(Source, "mba_pair_affine_sub_fold").empty());
+  EXPECT_FALSE(functionBody(Source, "mba_pair_three_fold").empty());
 
   const char *Harness = R"(
 #include <inttypes.h>
@@ -826,6 +835,9 @@ TEST_P(MBARegisterPairSourceTest, PreservesObservedWideReturnAndFold) {
 static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
   uint64_t x = ((uint64_t)xh << 32) | xl;
   uint64_t y = ((uint64_t)yh << 32) | yl;
+  uint32_t zl = xl ^ yh;
+  uint32_t zh = xh + yl;
+  uint64_t z = ((uint64_t)zh << 32) | zl;
   uint64_t expected = x + y;
   uint64_t actual = (uint64_t)mba_pair_add(xl, xh, yl, yh);
   uint64_t or_actual = (uint64_t)mba_pair_or_add(xl, xh, yl, yh);
@@ -834,6 +846,8 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
   uint64_t affine_sum = expected + UINT64_C(0x123456789abcdef0);
   uint64_t affine_difference =
       expected_difference + UINT64_C(0x123456789abcdef0);
+  uint64_t expected_three = x + y + z;
+  uint64_t three = (uint64_t)mba_pair_three(xl, xh, yl, yh, zl, zh);
   uint32_t folded = (uint32_t)expected ^ (uint32_t)(expected >> 32);
   uint32_t folded_difference =
       (uint32_t)expected_difference ^ (uint32_t)(expected_difference >> 32);
@@ -841,17 +855,21 @@ static int check_pair(uint32_t xl, uint32_t xh, uint32_t yl, uint32_t yh) {
       (uint32_t)affine_sum ^ (uint32_t)(affine_sum >> 32);
   uint32_t folded_affine_difference =
       (uint32_t)affine_difference ^ (uint32_t)(affine_difference >> 32);
+  uint32_t folded_three =
+      (uint32_t)expected_three ^ (uint32_t)(expected_three >> 32);
   if (actual != expected || or_actual != expected ||
       difference != expected_difference ||
       (uint64_t)mba_pair_affine_add(xl, xh, yl, yh) != affine_sum ||
       (uint64_t)mba_pair_affine_sub(xl, xh, yl, yh) != affine_difference ||
+      three != expected_three ||
       (uint32_t)mba_pair_fold(xl, xh, yl, yh) != folded ||
       (uint32_t)mba_pair_or_fold(xl, xh, yl, yh) != folded ||
       (uint32_t)mba_pair_sub_fold(xl, xh, yl, yh) != folded_difference ||
       (uint32_t)mba_pair_affine_add_fold(xl, xh, yl, yh) !=
           folded_affine_sum ||
       (uint32_t)mba_pair_affine_sub_fold(xl, xh, yl, yh) !=
-          folded_affine_difference) {
+          folded_affine_difference ||
+      (uint32_t)mba_pair_three_fold(xl, xh, yl, yh, zl, zh) != folded_three) {
     fprintf(stderr, "pair mismatch %08" PRIx32 ":%08" PRIx32
                     " %08" PRIx32 ":%08" PRIx32 "\n", xh, xl, yh, yl);
     return 1;
