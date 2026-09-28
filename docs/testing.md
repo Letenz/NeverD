@@ -117,8 +117,8 @@ build-release/bin/NeverDARM32InterworkingTests
 
 ```sh
 cmake --build build-release --target NeverDInterpreterSpecializationTests \
-  NeverDDevirtualizationSourceTests --parallel 4
-ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource)Tests$' \
+  NeverDDevirtualizationSourceTests NeverDInterpreterMachineStateTests --parallel 4
+ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|DevirtualizationSource|InterpreterMachineState)Tests$' \
   --output-on-failure
 ```
 

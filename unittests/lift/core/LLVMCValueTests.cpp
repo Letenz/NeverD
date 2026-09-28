@@ -311,6 +311,59 @@ TEST(LLVMCValues, TruncatedPredicatesTestOnlyTheirLowBits) {
                          "low_bit(UINT64_MAX) != 1; }\n");
 }
 
+TEST(LLVMCValues, ForwardedBitwiseOperandsRetainComparisonGrouping) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("forwarded-bitwise-comparisons", Context);
+  auto *I64 = llvm::Type::getInt64Ty(Context);
+  auto *Signature = llvm::FunctionType::get(I64, {I64, I64}, false);
+  const llvm::Instruction::BinaryOps Operators[] = {
+      llvm::Instruction::And, llvm::Instruction::Or, llvm::Instruction::Xor};
+  unsigned Index = 0;
+  for (auto Operator : Operators) {
+    for (bool Equal : {false, true}) {
+      for (bool Reversed : {false, true}) {
+        auto *Function = llvm::Function::Create(
+            Signature, llvm::GlobalValue::ExternalLinkage,
+            "grouped" + std::to_string(Index++), Module);
+        llvm::IRBuilder<llvm::NoFolder> Builder(
+            llvm::BasicBlock::Create(Context, "entry", Function));
+        auto *Home = Builder.CreateAlloca(I64);
+        Builder.CreateStore(
+            Builder.CreateBinOp(Operator, Function->getArg(0),
+                                llvm::ConstantInt::get(I64, 0x24)),
+            Home);
+        llvm::Value *Left = Builder.CreateLoad(I64, Home);
+        llvm::Value *Right = Function->getArg(1);
+        if (Reversed)
+          std::swap(Left, Right);
+        auto *Compare = Equal ? Builder.CreateICmpEQ(Left, Right)
+                              : Builder.CreateICmpNE(Left, Right);
+        Builder.CreateRet(Builder.CreateZExt(Compare, I64));
+      }
+    }
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  std::string Main = R"(
+int main(void) {
+  const uint64_t inputs[] = {0, 1, 4, 0x20, 0x24, 0x25, UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i) {
+    uint64_t x = inputs[i];
+    for (unsigned j = 0; j < sizeof(inputs) / sizeof(inputs[0]); ++j) {
+      uint64_t y = inputs[j];
+)";
+  Index = 0;
+  for (const char *Operator : {"&", "|", "^"})
+    for (const char *Compare : {"!=", "=="})
+      for (unsigned Reversed = 0; Reversed != 2; ++Reversed)
+        Main += "if (grouped" + std::to_string(Index++) + "(x, y) != ((x " +
+                Operator + " 0x24) " + Compare + " y)) return 1;\n";
+  Main += "} } return 0; }\n";
+  compileAndRun(Source + Main);
+}
+
 TEST(LLVMCValues, ForwardedHomesKeepNarrowSignAndWideShiftSemantics) {
   llvm::LLVMContext Context;
   llvm::Module Module("forwarded-home-widths", Context);

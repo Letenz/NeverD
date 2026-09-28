@@ -7154,7 +7154,7 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
       return false;
     }
   }
-  if (Img.Arch == Arch::ARM || Img.Arch == Arch::X86 ||
+  if (Img.Arch == Arch::ARM || Img.Arch == Arch::X86 || Img.Arch == Arch::X64 ||
       Img.Arch == Arch::AArch64) {
     if (!ConstantUse || !ProgBaseUse || !MaskUse || !OneUse)
       return false;
@@ -7205,7 +7205,9 @@ bool CFGBuilder::inferBoundsFromBitTestClamp(const BinaryImage &Img,
     IndexBound.Candidate = ByteIndex;
     IndexBound.UseAddr = ByteIndexUse.Addr;
     IndexBound.UseSeq = ByteIndexUse.Seq;
-    IndexBound.Relation = JumpTableValueRelation::UnsignedLessThan;
+    IndexBound.Relation = Img.Arch == Arch::X64
+                              ? JumpTableValueRelation::UnsignedFeasibleSet
+                              : JumpTableValueRelation::UnsignedLessThan;
     IndexBound.UnsignedUpperBound = ProgSize;
     Queries.push_back(std::move(IndexBound));
     bool Complete = false;

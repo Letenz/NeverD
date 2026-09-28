@@ -41,7 +41,7 @@ TEST_P(ARM32OptStress201RT, Verify) { roundTripARM32(GetParam()); }
 // clang-format off
 static std::vector<RoundTripTC> makeOptStress201TC(const char *prefix, const char *T) {
   std::string p = prefix, t = T;
-  return {
+  std::vector<RoundTripTC> Cases = {
     // Computed-goto threaded-dispatch bytecode interpreter.
     {p+"_cgoto",
      "static const unsigned char "+p+"_pg[32]={\n"
@@ -101,6 +101,12 @@ static std::vector<RoundTripTC> makeOptStress201TC(const char *prefix, const cha
      "  return ("+t+")out; }\n",
      {0x53u}, "OptStress201", 2},
   };
+  // Roundtrip equality alone could pass through an opaque indirect branch.
+  // Require the threaded label dispatch to become a real recovered switch.
+  for (RoundTripTC &TC : Cases)
+    if (TC.Name == p + "_cgoto")
+      TC.RecoveredSwitch = RecoveredSwitchExpectation::Required;
+  return Cases;
 }
 // clang-format on
 

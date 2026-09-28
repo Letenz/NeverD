@@ -769,3 +769,125 @@ TEST_F(DevirtualizationSourceTest, PublicMachinesAssembleForBothNativeABIs) {
 }
 
 } // namespace
+
+TEST_F(DevirtualizationSourceTest, MachineStateCLIRecoversPhysicalState) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine-state recovery requires clang";
+  const auto Binary = tmpFile("generic-state.elf");
+  const auto Compiled = buildFixture(Binary, "generic_native_state.S");
+  ASSERT_TRUE(Compiled.ok()) << Compiled.err;
+  struct Case {
+    const char *Name;
+    const char *Expected;
+  };
+  for (const auto &Test : {Case{"generic_state_flags", "flags"},
+                           Case{"generic_state_call", "3 * words[7] + 19"},
+                           Case{"generic_state_spill", "37"},
+                           Case{"generic_state_rdssp", "123"}}) {
+    SCOPED_TRACE(Test.Name);
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
+      const auto Source = tmpFile("generic-state.c");
+      const auto Report = tmpFile("generic-state.json");
+      std::vector<std::string> Args{"decompile",
+                                    Binary.string(),
+                                    "--func",
+                                    Test.Name,
+                                    "--devirtualize",
+                                    "--vm-machine-state",
+                                    "--recovery-report=" + Report.string(),
+                                    "-o",
+                                    Source.string()};
+      if (LLVM)
+        Args.push_back("--llvm");
+      const auto Recovered = exec(ndBin(), Args);
+      ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+      auto JSON = llvm::json::parse(readSource(Report));
+      ASSERT_TRUE(static_cast<bool>(JSON)) << llvm::toString(JSON.takeError());
+      const auto *Object = JSON->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getBoolean("complete"), true);
+      EXPECT_EQ(Object->getString("sourceABI"), "x64-machine-state-v1");
+      EXPECT_TRUE(Object->getString("executionProfile").has_value());
+      const auto Harness = tmpFile("generic-state-test.c");
+      std::ofstream Out(Harness);
+      Out << readSource(Source) << "\n#include <stdint.h>\nint main(void) {\n"
+          << "for (unsigned i = 0; i < 128; ++i) {\n"
+          << "uint64_t stack[256] = {0}; uint64_t words[17];\n"
+          << "for (unsigned j = 0; j < 17; ++j) words[j] = 1009 + 17*j;\n"
+          << "const unsigned bits[7] = {0,2,4,6,7,10,11};\n"
+          << "uint64_t flags = 0x202;\n"
+          << "for (unsigned j = 0; j < 7; ++j) flags |= (uint64_t)((i>>j)&1) "
+             "<< bits[j];\n"
+          << "words[16] = flags; words[4] = (uintptr_t)&stack[128];\n"
+          << "uint64_t expected = " << Test.Expected << ";\n"
+          << "uint64_t status = " << Test.Name << "("
+          << "(void*)words"
+          << ");\n"
+          << "if (status || words[0] != expected || words[4] != "
+             "(uintptr_t)&stack[128]) return 1;\n"
+          << "if (words[3] != 1009 + 17*3 || words[5] != 1009 + 17*5) return "
+             "2;\n"
+          << "} return 0; }\n";
+      Out.close();
+      std::ofstream(tmpFile("immintrin.h")).close();
+      for (const char *Opt : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Opt);
+        const auto Executable = tmpFile("generic-state-test");
+        const auto Built =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Opt, "-fsanitize=undefined",
+                  "-fsanitize-trap=undefined", "-Werror=return-type",
+                  "-Werror=implicit-function-declaration", "-I", tmp().string(),
+                  Harness.string(), "-o", Executable.string()});
+        ASSERT_TRUE(Built.ok()) << Built.err << readSource(Source);
+        const auto Ran = exec(Executable.string(), {});
+        ASSERT_TRUE(Ran.ok()) << Ran.err << readSource(Source);
+      }
+    }
+  }
+}
+
+TEST_F(DevirtualizationSourceTest, MachineExecutionProfilesRemainExplicit) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "machine-state profiles require clang";
+  const auto Binary = tmpFile("generic-state.elf");
+  ASSERT_TRUE(buildFixture(Binary, "generic_native_state.S").ok());
+  auto Image = loadBinary(Binary);
+  ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  const va_t Entry = functionEntry(*Image, "generic_state_rdssp");
+  analysis::SpecializationOptions Options;
+  Options.ExplicitMachineState = true;
+  Options.NormalNonfaultingExecution = true;
+  const va_t CallEntry = functionEntry(*Image, "generic_state_call");
+  EXPECT_FALSE(analysis::specializeBinaryInterpreter(*Image, CallEntry, Options)
+                   .complete());
+  EXPECT_FALSE(
+      analysis::specializeBinaryInterpreter(*Image, Entry, Options).complete());
+  Options.X64CetDisabled = true;
+  EXPECT_TRUE(analysis::specializeBinaryInterpreter(*Image, CallEntry, Options)
+                  .complete());
+  EXPECT_TRUE(
+      analysis::specializeBinaryInterpreter(*Image, Entry, Options).complete());
+  EXPECT_FALSE(
+      analysis::specializeBinaryInterpreter(
+          *Image, functionEntry(*Image, "generic_state_incssp"), Options)
+          .complete());
+  Options.ExplicitMachineState = false;
+  EXPECT_EQ(
+      analysis::specializeBinaryInterpreter(*Image, Entry, Options).Status,
+      analysis::SpecializationStatus::InvalidInput);
+
+  Options.ExplicitMachineState = true;
+  ExceptionFunction Handler;
+  Handler.CodeRange = {Entry, Entry + 16};
+  Handler.PersonalityVA = Entry + 64;
+  Image->ExceptionMetadata.Functions = {Handler};
+  Image->ExceptionMetadata.rebuildIndex();
+  Options.NormalNonfaultingExecution = false;
+  EXPECT_FALSE(
+      analysis::specializeBinaryInterpreter(*Image, Entry, Options).complete());
+  Options.NormalNonfaultingExecution = true;
+  EXPECT_TRUE(
+      analysis::specializeBinaryInterpreter(*Image, Entry, Options).complete());
+}

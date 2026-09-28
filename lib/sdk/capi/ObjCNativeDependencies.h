@@ -302,6 +302,12 @@ inline size_t inferObjCNativeDependencies(
         continue;
       }
       if (auto Mangled =
+              swiftMangledProfiledObjCCGFloatSetterSourceABI(Image, Target)) {
+        Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
+        ++Added;
+        continue;
+      }
+      if (auto Mangled =
               swiftMangledAnyClassInitializerSourceABI(Image, Target)) {
         Options.SourceTypeHints.emplace(Target, std::move(*Mangled));
         ++Added;

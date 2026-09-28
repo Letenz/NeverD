@@ -31,7 +31,7 @@ modifying the session's ordinary decompilation cache. Failure returns no source
 and can still return a JSON diagnostic. Both owned strings use
 `neverd_free_string()`.
 
-## Execution contract
+## Default execution contract
 
 The binary adapter currently accepts linked x64 ELF and PE images at their
 mapped addresses. Mappings, bytes, and permissions must remain fixed, with no
@@ -54,6 +54,16 @@ COPY relocations and structurally incomplete exception directories are refused.
 A PE can contain an undecoded handler in an unrelated function when the
 directory and function ranges are complete; reaching that handler still stops
 recovery.
+The ordinary source ABI reconstructs invocation-private frame storage. Every
+external-origin LOAD/STORE range, including addresses computed from external
+integers, must be disjoint from both the native private frame and its
+reconstructed source storage. This is an explicit environment
+precondition for source-frame relocation, not an alias fact inferred from a run.
+The shared frame proof rejects escaping frame addresses, frame-dependent
+scalar outputs and branches, and reads of uninitialized private bytes. The
+explicit machine-state ABI retains original guest addresses and does not use
+this private-frame precondition.
+
 The source domain requires ordinary ABI returns: every external-origin store's
 target range is disjoint from the entry return-address slot. This is an explicit
 caller/environment precondition, including addresses computed from external
@@ -75,6 +85,54 @@ Before a full flag snapshot, every modelled arithmetic or direction flag must ha
 
 LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
 
+## Explicit machine-state recovery
+
+```sh
+neverd decompile program --func entry --devirtualize --vm-machine-state \
+  --recovery-report machine-report.json -o machine.c
+```
+
+The separate C entry point is `neverd_devirtualize_machine_source_v1()`.
+This opt-in source ABI takes a pointer to 17 aligned `uint64_t` words:
+RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8 through R15, then RFLAGS.
+Only architecturally defined flag observations are equivalence obligations;
+undefined flags are not evidence of a particular processor's behavior.
+Programs that feed undefined flags into control flow, addresses, or otherwise
+defined outputs need a separate noninterference proof. The current recovery
+report does not provide that proof or certify such processor-dependent behavior.
+It returns an unsigned 64-bit status. Only zero certifies successful execution;
+nonzero means the flag profile was violated and does not undo memory effects.
+The output state is captured immediately before the final native RET pops its
+return address. State storage must be disjoint from all guest memory. Guest
+addresses use the original fixed mappings on a little-endian 64-bit host.
+The entry return-address slot must remain disjoint from all external-origin
+STORE ranges, including computed addresses, as in the default return contract.
+
+The profile is 64-bit user mode at CPL3/IOPL0, shadow stacks disabled, normal
+nonfaulting execution without asynchronous events. Entry flag images must be
+canonical with TF, RF, VM, AC, VIF and VIP clear; executed POPFQ images must keep TF and
+AC clear. Generated source checks these flag conditions. PUSHFQ/POPFQ use the
+explicit guest state rather than the compiler's live flags. IF, IOPL and
+reserved bits follow the user-mode preservation rules. RDSSP preserves its
+destination when shadow stacks are disabled; reached INCSSP is unsupported.
+These rules follow the [Intel instruction reference](https://cdrdv2-public.intel.com/671110/325383-sdm-vol-2abcd.pdf).
+
+The adapter certifies direct near CALL and ordinary near RET semantics.
+Internal calls retain the actual guest return-address store; internal returns
+require a proved singleton target and retain the read and stack increment.
+Restoring the entry stack can leave an internal call without returning to its
+continuation. Callee-pop returns, unresolved return targets and arbitrary stack
+pivots remain unsupported. Exact frame pointers survive complete spills, with
+partial or potentially aliasing writes invalidating the facts. Active stack
+positions and return-slot values separate contexts and are budgeted.
+
+Exception handler metadata may be traversed only under this explicit normal
+execution profile; exception dispatch and unwind equivalence are not certified.
+The report records `sourceABI` and `executionProfile`. The default API retains
+its stricter call, entry-flag and exception rejection. The machine-state wrapper
+remaps guest registers and uses the existing LowIR/MedIR/HighC/LLVMC scalar
+pipeline. It does not introduce a second instruction evaluator.
+
 ## Current limits
 
 Input-dependent bytecode addresses and decoder-state relationships are supported
@@ -83,9 +141,9 @@ configured limits. This does not establish support for arbitrary indirect
 decoding schemes. Dynamic branches and loops may be recovered when every
 dispatch target is proved; ordinary branch coverage is not evidence for all such
 schemes. Unresolved control and exhausted required proof budgets are failures,
-with no recovered source or partial replacement published. Native helper calls,
-exception/reentry boundaries, mutable code, and other architectures remain
-outside this adapter's execution contract.
+with no recovered source or partial replacement published. External calls, exception/reentry execution, mutable code, and other
+architectures remain unsupported. The default source ABI also refuses native
+helper calls; the explicit machine-state profile covers only the forms above.
 
 ## Shared implementation
 

@@ -3,6 +3,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedNoReturn.h"
+#include "neverd/pipeline/NativeSourceHints.h"
 
 #include <algorithm>
 #include <array>
@@ -112,6 +113,9 @@ using StackFacts = std::map<int64_t, ByteFact>;
 struct State {
   RegisterFacts Registers;
   StackFacts Stack;
+  // A written unknown value has no identity in Stack, but still initializes
+  // its bytes. This must-set is used only by the strict source-frame proof.
+  std::set<int64_t> InitializedStack;
   bool operator==(const State &) const = default;
 };
 
@@ -164,15 +168,65 @@ std::optional<int64_t> signedConstant(const NdVar &Value) {
              : static_cast<int64_t>(Number);
 }
 
+// Only total scalar bit operations may transport frame taint internally.
+// Division and floating-point operations can expose traps or floating status
+// even if their result is dead, so they cannot borrow a relocated frame value.
+bool privateFrameScalarTransfer(NdOp Opcode) {
+  switch (Opcode) {
+  case NdOp::COPY:
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_LEFT:
+  case NdOp::INT_RIGHT:
+  case NdOp::INT_ASHR:
+  case NdOp::INT_MULT:
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::INT_ZEXT:
+  case NdOp::INT_SEXT:
+  case NdOp::INT_NEGATE:
+  case NdOp::INT_NOT:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+  case NdOp::BOOL_NOT:
+  case NdOp::CONCAT:
+  case NdOp::SUBBYTES:
+  case NdOp::INT_NEG2:
+  case NdOp::POPCOUNT:
+  case NdOp::SELECT:
+  case NdOp::LZCOUNT:
+  case NdOp::INSERT:
+  case NdOp::EXTRACT:
+    return true;
+  default:
+    return false;
+  }
+}
+
 class PreservationProof {
 public:
   PreservationProof(Arch Architecture, const NativeSourceCalls &Calls,
                     bool TerminalOnly = false,
-                    std::set<int64_t> IncomingStackSlots = {})
+                    std::set<int64_t> IncomingStackSlots = {},
+                    bool RequirePrivateFrame = false,
+                    bool ExternalMemoryDisjoint = false)
       : Architecture(Architecture), Calls(Calls),
         TRI(getTargetRegInfo(Architecture)), TerminalOnly(TerminalOnly),
         TrackStackArguments(TerminalOnly),
-        IncomingStackSlots(std::move(IncomingStackSlots)) {
+        IncomingStackSlots(std::move(IncomingStackSlots)),
+        RequirePrivateFrame(RequirePrivateFrame),
+        ExternalMemoryDisjoint(ExternalMemoryDisjoint) {
     if (Architecture == Arch::AArch64)
       for (const auto &[Site, Contract] : Calls)
         if (Contract.Signature)
@@ -196,6 +250,7 @@ public:
   State Initial;
   size_t Remaining = 262144;
   bool DidTerminate = false;
+  int64_t RequiredFrameSize = 0;
 
   bool transfer(const LowBlock &Block, State &Current, bool CheckExits,
                 std::set<uint64_t> *UsedEntryRegisters = nullptr) {
@@ -265,6 +320,11 @@ public:
       if (Remaining < Cost || Op.Output.Offset > UINT64_MAX - Op.Output.Size)
         return false;
       Remaining -= Cost;
+      // Scalar frame arithmetic may build private addresses, but its result
+      // must never influence a source-visible control or value effect.
+      if (RequirePrivateFrame && MayBeFrame && Op.Opcode != NdOp::LOAD &&
+          Op.Opcode != NdOp::STORE && !privateFrameScalarTransfer(Op.Opcode))
+        return false;
       if (UsedEntryRegisters && Op.Opcode != NdOp::COPY &&
           Op.Opcode != NdOp::RETURN) {
         std::optional<LowMemoryOperandView> Memory;
@@ -275,8 +335,7 @@ public:
             return false;
           MemoryAddress = FrameOffset(*Memory->Address);
         }
-        for (unsigned InputIndex = 0; InputIndex < Op.NumInputs;
-             ++InputIndex) {
+        for (unsigned InputIndex = 0; InputIndex < Op.NumInputs; ++InputIndex) {
           const auto &Input = Op.Inputs[InputIndex];
           if ((!Input.isReg() && !Input.isTemp()) || Input.Size != 8 ||
               (MemoryAddress && Memory->StoredValue &&
@@ -287,8 +346,8 @@ public:
             continue;
           bool Complete = true;
           for (unsigned I = 0; I < Input.Size; ++I)
-            Complete &= Read(Input, I) ==
-                        ByteFact{ByteFact::Entry, First.Value + I};
+            Complete &=
+                Read(Input, I) == ByteFact{ByteFact::Entry, First.Value + I};
           if (Complete)
             UsedEntryRegisters->insert(static_cast<uint64_t>(First.Value));
         }
@@ -438,10 +497,8 @@ public:
                 Found->second.ReadOnlyFrameParameters.find(ParameterIndex);
             const auto Writable =
                 Found->second.WritableFrameParameters.find(ParameterIndex);
-            if ((ReadOnly ==
-                     Found->second.ReadOnlyFrameParameters.end()) ==
-                    (Writable ==
-                     Found->second.WritableFrameParameters.end()) ||
+            if ((ReadOnly == Found->second.ReadOnlyFrameParameters.end()) ==
+                    (Writable == Found->second.WritableFrameParameters.end()) ||
                 Location.Kind != SourceABICarrierKind::IntegerRegister ||
                 Location.ValueBytes != 8)
               return false;
@@ -471,8 +528,7 @@ public:
                     lookup(Current.Registers, Location.RegisterOffset + I) ==
                     ByteFact{ByteFact::Entry, First.Value + I};
               if (Complete && First.Value >= 0)
-                UsedEntryRegisters->insert(
-                    static_cast<uint64_t>(First.Value));
+                UsedEntryRegisters->insert(static_cast<uint64_t>(First.Value));
             }
           }
         }
@@ -500,8 +556,7 @@ public:
           // through an ordinary call. The callee owns storage below call SP.
           std::erase_if(Current.Stack,
                         [&](const auto &Item) { return Item.first < *SP; });
-          std::erase_if(WrittenStack,
-                        [&](int64_t Byte) { return Byte < *SP; });
+          std::erase_if(WrittenStack, [&](int64_t Byte) { return Byte < *SP; });
           Temps.clear();
         }
         continue;
@@ -544,8 +599,7 @@ public:
       } else if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&
                  Op.Inputs[1].isConst() &&
                  Op.Inputs[1].Offset <= Op.Inputs[0].Size &&
-                 Op.Output.Size <=
-                     Op.Inputs[0].Size - Op.Inputs[1].Offset) {
+                 Op.Output.Size <= Op.Inputs[0].Size - Op.Inputs[1].Offset) {
         const auto Offset = static_cast<unsigned>(Op.Inputs[1].Offset);
         for (unsigned I = 0; I < Value.size(); ++I)
           Value[I] = Read(Op.Inputs[0], Offset + I);
@@ -559,15 +613,26 @@ public:
         if (Address && Delta && *Delta >= -MaxFrame && *Delta <= MaxFrame) {
           const int64_t Next =
               *Address + (Op.Opcode == NdOp::INT_SUB ? -*Delta : *Delta);
-          if (Next >= -MaxFrame && Next <= MaxFrame)
+          if (RequirePrivateFrame && (Next < -MaxFrame || Next > 0))
+            return false;
+          if (Next >= -MaxFrame && Next <= MaxFrame) {
+            if (RequirePrivateFrame)
+              RequiredFrameSize = std::max(RequiredFrameSize, -Next);
             for (unsigned I = 0; I < 8; ++I)
               Value[I] = {ByteFact::Frame, Next, I, true};
+          }
         }
       } else if (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) {
         const auto Memory = lowMemoryOperands(Op);
         if (!Memory.Complete || !Memory.Address || Memory.AccessSize > 64)
           return false;
         const auto Address = FrameOffset(*Memory.Address);
+        if (RequirePrivateFrame && !Address && !ExternalMemoryDisjoint)
+          return false;
+        if (RequirePrivateFrame && !Address)
+          for (unsigned I = 0; I < Memory.Address->Size; ++I)
+            if (Read(*Memory.Address, I).MayBeFrame)
+              return false;
         const auto SP = FrameOffset(NdVar::reg(TRI.StackPointer, 8));
         const bool IncomingRead = Address && Op.Opcode == NdOp::LOAD &&
                                   Memory.AccessSize == 8 &&
@@ -617,6 +682,8 @@ public:
           }
           if (*Address < StackFloor)
             return false;
+          if (RequirePrivateFrame)
+            RequiredFrameSize = std::max(RequiredFrameSize, -*Address);
         }
         if (Op.Opcode == NdOp::STORE) {
           if (!Memory.StoredValue)
@@ -630,12 +697,15 @@ public:
           if (Address) {
             if (*Address < -MaxFrame)
               return false;
-            for (unsigned I = 0; I < Memory.AccessSize; ++I)
+            for (unsigned I = 0; I < Memory.AccessSize; ++I) {
               put(Current.Stack, *Address + I, Read(*Memory.StoredValue, I));
+              if (RequirePrivateFrame)
+                Current.InitializedStack.insert(*Address + I);
+            }
             if (TrackStackArguments)
               for (unsigned I = 0; I < Memory.AccessSize; ++I)
                 WrittenStack.insert(*Address + I);
-          } else
+          } else {
             // A value with any frame-derived byte may be a partial or
             // inexact alias of private storage. A completely non-frame
             // address names storage outside this invocation's private frame,
@@ -643,7 +713,12 @@ public:
             for (unsigned I = 0; I < Memory.Address->Size; ++I)
               if (Read(*Memory.Address, I).MayBeFrame)
                 return false;
+          }
         } else {
+          if (RequirePrivateFrame && Address)
+            for (unsigned I = 0; I < Memory.AccessSize; ++I)
+              if (!Current.InitializedStack.count(*Address + I))
+                return false;
           for (unsigned I = 0; I < Value.size(); ++I)
             // Incoming arguments are external values. Even if a slot happens
             // to contain a saved register's bits, it cannot certify restoration
@@ -669,7 +744,8 @@ public:
       }
       if (Current.Registers.size() > MaxFacts ||
           Current.Stack.size() > MaxFacts || Temps.size() > MaxFacts ||
-          WrittenStack.size() > MaxFacts)
+          WrittenStack.size() > MaxFacts ||
+          Current.InitializedStack.size() > MaxFacts)
         return false;
     }
     return true;
@@ -683,13 +759,16 @@ private:
   bool TerminalOnly;
   bool TrackStackArguments;
   std::set<int64_t> IncomingStackSlots;
+  bool RequirePrivateFrame;
+  bool ExternalMemoryDisjoint;
 };
 } // namespace
 
-bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
-                               const NativeSourceCalls &Calls,
-                               std::set<uint64_t> *UsedEntryRegisters,
-                               const SourceFunctionTypeHint *EntrySignature) {
+static bool restoresNativeSourceStateImpl(
+    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
+    std::set<uint64_t> *UsedEntryRegisters,
+    const SourceFunctionTypeHint *EntrySignature, bool RequirePrivateFrame,
+    bool ExternalMemoryDisjoint, int64_t *RequiredFrameSize) {
   const size_t Count = Function.Blocks.size();
   if (!Count || Count > 16384 ||
       (Architecture != Arch::AArch64 && Architecture != Arch::X64))
@@ -791,7 +870,8 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
     }
   }
   PreservationProof Proof(Architecture, Calls, false,
-                          std::move(IncomingStackSlots));
+                          std::move(IncomingStackSlots), RequirePrivateFrame,
+                          ExternalMemoryDisjoint);
   std::vector<std::set<size_t>> Preds(Count), Succs(Count);
   for (size_t I = 0; I < Count; ++I)
     for (int Id : Function.Blocks[I].Succs) {
@@ -847,6 +927,14 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
         if (!meet(Next.Registers, Out.Registers, Proof.Remaining) ||
             !meet(Next.Stack, Out.Stack, Proof.Remaining))
           return false;
+        if (RequirePrivateFrame) {
+          if (Proof.Remaining < Next.InitializedStack.size())
+            return false;
+          Proof.Remaining -= Next.InitializedStack.size();
+          std::erase_if(Next.InitializedStack, [&](int64_t Byte) {
+            return !Out.InitializedStack.count(Byte);
+          });
+        }
       }
       if (!Incoming[Successor] || Next != *Incoming[Successor]) {
         Incoming[Successor] = std::move(Next);
@@ -869,12 +957,35 @@ bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
     return false;
   if (UsedEntryRegisters)
     *UsedEntryRegisters = std::move(Used);
+  if (RequiredFrameSize)
+    *RequiredFrameSize = Proof.RequiredFrameSize;
   return true;
 }
 
-bool observesTerminalNativeSourceState(
-    const LowFunc &Function, Arch Architecture, const NativeSourceCalls &Calls,
-    std::set<uint64_t> &UsedEntryRegisters) {
+bool restoresNativeSourceState(const LowFunc &Function, Arch Architecture,
+                               const NativeSourceCalls &Calls,
+                               std::set<uint64_t> *UsedEntryRegisters,
+                               const SourceFunctionTypeHint *EntrySignature) {
+  return restoresNativeSourceStateImpl(Function, Architecture, Calls,
+                                       UsedEntryRegisters, EntrySignature,
+                                       false, false, nullptr);
+}
+
+bool certifiesPrivateNativeSourceFrame(const LowFunc &Function,
+                                       Arch Architecture,
+                                       bool ExternalMemoryDisjoint,
+                                       int64_t *RequiredFrameSize) {
+  if (Architecture != Arch::X64)
+    return false;
+  return restoresNativeSourceStateImpl(Function, Architecture, {}, nullptr,
+                                       nullptr, true, ExternalMemoryDisjoint,
+                                       RequiredFrameSize);
+}
+
+bool observesTerminalNativeSourceState(const LowFunc &Function,
+                                       Arch Architecture,
+                                       const NativeSourceCalls &Calls,
+                                       std::set<uint64_t> &UsedEntryRegisters) {
   // This narrow mode proves only incoming context uses in a straight-line
   // helper with at most two independently declared runtime calls. Exactly
   // the last call terminates; a returning prefix uses the same clobber and
@@ -935,8 +1046,7 @@ bool observesTerminalNativeSourceState(
   auto State = Proof.Initial;
   std::set<uint64_t> Used;
   if (NativeCalls != Calls.size() || !SawTerminatingCall ||
-      !Proof.transfer(Block, State, false, &Used) ||
-      !Proof.DidTerminate)
+      !Proof.transfer(Block, State, false, &Used) || !Proof.DidTerminate)
     return false;
   UsedEntryRegisters = std::move(Used);
   return true;

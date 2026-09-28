@@ -9372,9 +9372,10 @@
       "limitations": [
         "Fixed mapped bytes and permissions; immutable reads require mapping evidence.",
         "Single native entry with ordinary ABI returns; external-origin stores must not overlap the entry return slot.",
-        "Calls, exception/reentry boundaries, mutable code, unresolved control and exhausted budgets refuse recovery.",
+        "Default ABI refuses calls and exception boundaries. Explicit machine-state ABI supports certified direct near calls and exact returns under a normal nonfaulting CPL3/CET-disabled profile; exception execution, mutable code, unresolved control and exhausted budgets refuse recovery.",
         "Input-dependent addresses and joint decoder states require exhaustive finite proofs within budgets; unbounded schemes remain unsupported.",
-        "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories and reached exception handlers refuse recovery; source recovery does not certify binary replacement."
+        "Ordinary source-frame relocation requires external LOAD/STORE ranges disjoint from native and reconstructed private frame storage. Undefined flags influencing control, addresses, or defined outputs need an independent noninterference proof, which the recovery report does not provide.",
+        "PE recovery requires a full image-wide relocation and exception metadata load. Structurally incomplete directories refuse recovery; reached exception handlers require the explicit normal-execution profile. Source recovery does not certify binary replacement."
       ],
       "tests": [
         {
@@ -9440,11 +9441,41 @@
           "platforms": [
             "linux"
           ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterSpecializationTests",
+          "source": "unittests/devirtualization/NativeStackSpecializationTests.cpp",
+          "filter": "NativeStackSpecialization.SharedCalleeKeepsDistinctReturnContexts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDInterpreterMachineStateTests",
+          "source": "unittests/devirtualization/InterpreterMachineStateTests.cpp",
+          "filter": "InterpreterMachineSourceTest.EntryFlagsAndGuestStackRemainExplicitAcrossBothSourceBackends",
+          "platforms": [
+            "linux"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDevirtualizationSourceTests",
+          "source": "unittests/devirtualization/DevirtualizationSourceTests.cpp",
+          "filter": "DevirtualizationSourceTest.MachineStateCLIRecoversPhysicalState",
+          "platforms": [
+            "linux"
+          ]
         }
       ],
       "public_surfaces": {
         "c": [
-          "neverd_devirtualize_source_v1"
+          "neverd_devirtualize_source_v1",
+          "neverd_devirtualize_machine_source_v1"
         ],
         "python": [],
         "cli": [
@@ -9452,6 +9483,7 @@
           "neverd decompile --recovery-report",
           "neverd decompile --vm-control",
           "neverd decompile --vm-control-stack",
+          "neverd decompile --vm-machine-state",
           "neverd decompile --vm-max-contexts",
           "neverd decompile --vm-max-nodes",
           "neverd decompile --vm-max-operations"

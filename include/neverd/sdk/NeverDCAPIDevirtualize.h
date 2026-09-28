@@ -45,6 +45,13 @@ typedef struct neverd_devirtualize_options_v1 {
 /// mutation and calls, and does not certify binary patching or unwind behavior.
 /// PE sessions must be loaded without neverd_session_restrict_function():
 /// recovery requires complete image-wide relocation and exception metadata.
+/// The ordinary source ABI reconstructs invocation-private frame storage. Every
+/// external-origin LOAD/STORE range, including computed external addresses,
+/// must be disjoint from both the native frame and reconstructed source
+/// storage. Frame addresses cannot escape or affect
+/// observable scalar results; private reads require complete initialization.
+/// This source-frame relocation precondition does not apply to the explicit
+/// machine-state API below, which retains guest memory at its original address.
 /// Ordinary ABI returns require every external-origin STORE target range to be
 /// disjoint from the entry return-address slot (a caller/environment
 /// precondition, also for computed external addresses). Frame-derived writes
@@ -57,6 +64,28 @@ NEVERD_API const char *
 neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
                               const neverd_devirtualize_options_v1 *Options,
                               const char **Report);
+
+/// Explicit x64 machine-state source recovery. The returned function takes a
+/// pointer to 17 aligned uint64_t words: RAX, RCX, RDX, RBX, RSP, RBP, RSI,
+/// RDI, R8..R15, RFLAGS. It returns uint64_t status; only zero certifies
+/// success. Output state is captured before the final native RET address pop.
+/// State storage must not alias any guest memory; guest addresses use the
+/// original mappings. A little-endian 64-bit host is required.
+/// External-origin STORE ranges, including computed addresses, must remain
+/// disjoint from the entry return-address slot, as in the default contract.
+///
+/// Fixed execution profile: CPL3/IOPL0, shadow stacks disabled, no asynchronous
+/// events, normal nonfaulting execution. Entry TF/RF/VM/AC/VIF/VIP must be zero
+/// and reserved flag bits canonical; executed POPFQ images must keep TF/AC
+/// clear. Generated source checks flag-profile violations with a nonzero
+/// status. Invalid executions may already have memory effects; no rollback is
+/// promised. Internal direct near calls and exactly resolved returns are
+/// supported. Exception dispatch and fault/unwind behavior are outside this
+/// profile. Other v1 options, report ownership and failure rules match the API
+/// above.
+NEVERD_API const char *neverd_devirtualize_machine_source_v1(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v1 *Options, const char **Report);
 
 #ifdef __cplusplus
 }

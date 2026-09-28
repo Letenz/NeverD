@@ -10,11 +10,20 @@
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/high/HighSourceFlow.h"
+#include "neverd/ir/med/MedSourceParameterUses.h"
+#include "neverd/pipeline/NativeSourceHints.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/SHA256.h"
+
+#include <map>
+#include <set>
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -35,12 +44,224 @@ const char *statusName(analysis::SpecializationStatus Status) {
   }
   return "invalid-input";
 }
+
+std::string medRecoverySourceLimitation(const MedFunc &Function, Arch TheArch,
+                                        const LowFunc *SourceFrame) {
+  const auto &TRI = getTargetRegInfo(TheArch);
+  SourceFunctionTypeHint Hint;
+  if (Function.SourceTypeHint) {
+    if (!Function.SourceParametersBound)
+      return "recovered source parameters are not bound to their ABI";
+    Hint = *Function.SourceTypeHint;
+  } else {
+    Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.Architecture = TheArch;
+    Hint.HasExplicitABI = true;
+    Hint.ReturnType = Function.ReturnType;
+    if (!Hint.ReturnType || !Function.MultiReturn.empty())
+      return "recovered source has no supported scalar return binding";
+    if (Hint.ReturnType->Kind != NdTypeKind::Void) {
+      const bool Floating = Hint.ReturnType->Kind == NdTypeKind::Float;
+      Hint.ReturnLocation = {Floating ? SourceABICarrierKind::FloatingRegister
+                                      : SourceABICarrierKind::IntegerRegister,
+                             Floating ? TRI.FPReturnReg : TRI.IntReturnReg, 0,
+                             Hint.ReturnType->Size};
+    }
+  }
+  std::string Error;
+  if (!validateSourceABI(Hint, Error))
+    return "recovered source ABI cannot establish its input domain";
+  const auto Demand = observedMedSourceEntryBytes(
+      Function, Hint, SourceEntryDemand::EffectsAndReturns);
+  if (!Demand)
+    return "recovered source entry-value proof is incomplete";
+
+  // Source lowering may turn otherwise-unbound machine inputs into diagnostic
+  // placeholders or freeze them. Demand must therefore be checked in MedIR,
+  // before either backend loses that information. A source-frame projection
+  // needs its own proof; callee-saved register values receive no exemption.
+  std::map<uint64_t, uint64_t> BoundBytes;
+  int64_t RequiredFrameSize = 0;
+  if (SourceFrame && (Function.FrameSize > 0 || Function.FrameHeadroom > 0) &&
+      certifiesPrivateNativeSourceFrame(*SourceFrame, TheArch, true,
+                                        &RequiredFrameSize) &&
+      RequiredFrameSize >= 0 && Function.FrameSize >= RequiredFrameSize)
+    BoundBytes[TRI.StackPointer] = 0xff;
+  const auto Layout =
+      TRI.integerArgumentLayout(Function.CC == CallingConv::Win64);
+  const auto Declared = sourceABIParameters(Hint);
+  for (size_t I = 0; I < Function.Params.size(); ++I) {
+    const auto &Parameter = Function.Params[I];
+    if (Parameter.RegOff == kNoParamReg || Parameter.Id < 0)
+      continue;
+    unsigned Bytes = Parameter.Size;
+    if (Function.SourceTypeHint) {
+      if (I >= Declared.size() ||
+          Declared[I].Location.RegisterOffset != Parameter.RegOff ||
+          (Declared[I].Location.Kind != SourceABICarrierKind::IntegerRegister &&
+           Declared[I].Location.Kind != SourceABICarrierKind::FloatingRegister))
+        return "recovered source parameter carrier is inconsistent";
+      Bytes = std::min<unsigned>(Bytes, Declared[I].Location.ValueBytes);
+    } else if (Layout.registerIndex(Parameter.RegOff) < 0 &&
+               !TRI.isFPArgReg(Parameter.RegOff)) {
+      return "recovered source parameter has no ordinary ABI carrier";
+    }
+    if (!Bytes || Bytes > 64)
+      return "recovered source parameter width is unsupported";
+    BoundBytes[Parameter.RegOff] |=
+        Bytes == 64 ? ~uint64_t(0) : (uint64_t(1) << Bytes) - 1;
+  }
+  for (const auto &[Register, Bytes] : *Demand)
+    for (unsigned I = 0; I < 64; ++I)
+      if ((Bytes & (uint64_t(1) << I)) &&
+          std::none_of(BoundBytes.begin(), BoundBytes.end(),
+                       [&](const auto &Bound) {
+                         const auto [Base, Mask] = Bound;
+                         return Register >= Base && Register - Base < 64 &&
+                                I < 64 - (Register - Base) &&
+                                (Mask & (uint64_t(1) << (Register - Base + I)));
+                       }))
+        return "recovered source observes an entry register byte without a "
+               "source parameter; use the explicit machine-state ABI";
+  return {};
+}
+
+std::string highRecoverySourceLimitation(const HighFunc &Function) {
+  const bool NeedsReturn =
+      !Function.ReturnType || Function.ReturnType->Kind != NdTypeKind::Void;
+  const auto Flow = analyzeHighSourceFlow(Function, NeedsReturn);
+  if (!Flow.Complete || !Flow.Items.empty())
+    return Flow.Items.empty()
+               ? "recovered source flow is incomplete"
+               : "recovered source flow: " + Flow.Items.front().Reason;
+
+  // Flow owns CFG and definite assignment. Its expression traversal does not
+  // reject an explicit Undef leaf or a missing non-void return expression.
+  // Check those publication failures without changing ordinary decompilation,
+  // whose diagnostic placeholders are still useful to a human reader.
+  size_t Budget = 1000000;
+  const auto Spend = [&](size_t Count) {
+    if (Count > Budget)
+      return false;
+    Budget -= Count;
+    return true;
+  };
+  std::vector<std::pair<const HighStmt *, unsigned>> Statements;
+  std::vector<std::pair<const HighExpr *, unsigned>> Expressions;
+  std::map<const HighExpr *, unsigned> SeenExpressions;
+  const auto AddStatements = [&](const std::vector<HighStmt> &Body,
+                                 unsigned Depth) {
+    if (!Spend(Body.size()))
+      return false;
+    for (const auto &Statement : Body)
+      Statements.emplace_back(&Statement, Depth);
+    return true;
+  };
+  if (Function.Body.empty())
+    return "recovered source has no body";
+  if (!AddStatements(Function.Body, 1))
+    return "recovered source publication budget exhausted";
+  while (!Statements.empty()) {
+    const auto [Statement, Depth] = Statements.back();
+    Statements.pop_back();
+    if (Depth > 200)
+      return "recovered source exceeds the statement-depth limit";
+    if (Statement->Kind == StmtKind::Return && NeedsReturn &&
+        !Statement->RetVal)
+      return "recovered source has a return without a defined value";
+    bool RootBudget = true;
+    forEachExpr(*Statement, [&](const ExprPtr &Expression) {
+      if (Spend(1))
+        Expressions.emplace_back(Expression.get(), 1);
+      else
+        RootBudget = false;
+    });
+    if (!RootBudget)
+      return "recovered source publication budget exhausted";
+    if (!AddStatements(Statement->Body, Depth + 1) ||
+        !AddStatements(Statement->ElseBody, Depth + 1) ||
+        !AddStatements(Statement->DefaultBody, Depth + 1) ||
+        !Spend(Statement->Cases.size() + Statement->EHClauseBodies.size()))
+      return "recovered source publication budget exhausted";
+    for (const auto &Case : Statement->Cases)
+      if (!AddStatements(Case.Body, Depth + 1))
+        return "recovered source publication budget exhausted";
+    for (const auto &Body : Statement->EHClauseBodies)
+      if (!AddStatements(Body, Depth + 1))
+        return "recovered source publication budget exhausted";
+  }
+  while (!Expressions.empty()) {
+    if (!Spend(1))
+      return "recovered source publication budget exhausted";
+    const auto [Expression, Depth] = Expressions.back();
+    Expressions.pop_back();
+    if (!Expression)
+      return "recovered source has a missing expression operand";
+    if (Depth > 200)
+      return "recovered source exceeds the expression-depth limit";
+    const auto [It, Fresh] = SeenExpressions.emplace(Expression, Depth);
+    if (!Fresh && It->second >= Depth)
+      continue;
+    It->second = Depth;
+    if (Expression->Kind == ExprKind::Undef)
+      return "recovered source contains an undefined value";
+    if (!Spend(Expression->Operands.size()))
+      return "recovered source publication budget exhausted";
+    for (const auto &Operand : Expression->Operands)
+      Expressions.emplace_back(Operand.get(), Depth + 1);
+    if (Expression->IndirectTarget)
+      Expressions.emplace_back(Expression->IndirectTarget.get(), Depth + 1);
+  }
+  return {};
+}
+
+std::string llvmRecoverySourceLimitation(const llvm::Module &Module) {
+  size_t Budget = 1000000;
+  std::vector<const llvm::Value *> Pending;
+  std::set<const llvm::Value *> Seen;
+  const auto Add = [&](const llvm::Value *Value) {
+    if (!Budget)
+      return false;
+    --Budget;
+    Pending.push_back(Value);
+    return true;
+  };
+  for (const auto &Global : Module.globals())
+    if (Global.hasInitializer() && !Add(Global.getInitializer()))
+      return "recovered LLVM source publication budget exhausted";
+  for (const auto &Function : Module)
+    for (const auto &Block : Function)
+      for (const auto &Instruction : Block) {
+        if (!Budget)
+          return "recovered LLVM source publication budget exhausted";
+        --Budget;
+        for (const auto &Operand : Instruction.operands())
+          if (!Add(Operand.get()))
+            return "recovered LLVM source publication budget exhausted";
+      }
+  while (!Pending.empty()) {
+    const llvm::Value *Value = Pending.back();
+    Pending.pop_back();
+    if (!Seen.insert(Value).second)
+      continue;
+    if (llvm::isa<llvm::UndefValue, llvm::PoisonValue>(Value))
+      return "recovered LLVM source contains an undefined or poison value";
+    // Instructions are visited above. Only constant aggregate/expression
+    // operands need recursive inspection; globals have their own root list.
+    if (const auto *Constant = llvm::dyn_cast<llvm::Constant>(Value);
+        Constant && !llvm::isa<llvm::GlobalValue>(Value))
+      for (const auto &Operand : Constant->operands())
+        if (!Add(Operand.get()))
+          return "recovered LLVM source publication budget exhausted";
+  }
+  return {};
+}
 } // namespace
 
-extern "C" const char *
-neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
-                              const neverd_devirtualize_options_v1 *Options,
-                              const char **Report) {
+static const char *
+devirtualizeSource(neverd_session_t Session, neverd_va_t Entry,
+                   const neverd_devirtualize_options_v1 *Options,
+                   const char **Report, bool MachineState) {
   if (Report)
     *Report = nullptr;
   auto *S = toSession(Session);
@@ -70,6 +291,24 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
     PO.OnlyFunctionEntries = {Entry};
     PO.InterpreterSpecialization.emplace();
     auto &Config = *PO.InterpreterSpecialization;
+    Config.ExplicitMachineState = MachineState;
+    Config.NormalNonfaultingExecution = MachineState;
+    Config.X64CetDisabled = MachineState;
+    Evidence["sourceABI"] =
+        MachineState ? "x64-machine-state-v1" : "ordinary-source";
+    if (!MachineState)
+      Evidence["frameContract"] =
+          "if a private source frame is reconstructed, every external-origin "
+          "LOAD/STORE range, including computed external addresses, must be "
+          "disjoint from the native invocation-private frame and its "
+          "reconstructed source storage (source relocation precondition)";
+    if (MachineState)
+      Evidence["executionProfile"] =
+          "64-bit CPL3/IOPL0; shadow stacks disabled; normal nonfaulting "
+          "execution without asynchronous events; canonical entry flags; "
+          "TF/RF/VM/AC/VIF/VIP clear; POPFQ TF/AC clear; state storage "
+          "disjoint from "
+          "guest memory; fixed original mappings; little-endian 64-bit host";
     if (Options) {
       if (Options->struct_size < sizeof(*Options))
         return Fail(
@@ -140,6 +379,15 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
         "including computed external addresses, is disjoint from the entry "
         "return-address slot (environment precondition); root-derived writes "
         "checked";
+    if (MachineState)
+      Evidence["returnContract"] =
+          "state captured before final native RET pop; internal near CALL/RET "
+          "use physical guest stack; entry return slot preserved; status zero "
+          "required; nonzero status does not certify output or roll back "
+          "guest memory effects; every guest write range, including computed "
+          "external addresses, must be disjoint from the entry return-address "
+          "slot (environment precondition); root-derived writes checked";
+    Evidence["maxNativeReturnSlots"] = Config.MaxNativeReturnSlots;
     Evidence["maxNodes"] = Config.MaxNodes;
     Evidence["maxContextsPerAddress"] = Config.MaxContextsPerAddress;
     Evidence["maxOperations"] = static_cast<int64_t>(Config.MaxOperations);
@@ -194,8 +442,47 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
         Result.LLVMVerifierFailed || Result.BackendUnhandledValueIntrinsics)
       return Fail(Result.Error.empty() ? "recovered IR verification failed"
                                        : Result.Error);
+    if (Result.MedFuncs.empty())
+      return Fail("recovery produced no source input-domain evidence");
+    for (const auto &Function : Result.MedFuncs) {
+      const LowFunc *SourceFrame = nullptr;
+      if (!MachineState) {
+        const auto Count = std::count_if(
+            Result.LowFuncs.begin(), Result.LowFuncs.end(),
+            [&](const auto &Low) { return Low.Entry == Function.Entry; });
+        if (Count == 1)
+          SourceFrame = &*std::find_if(
+              Result.LowFuncs.begin(), Result.LowFuncs.end(),
+              [&](const auto &Low) { return Low.Entry == Function.Entry; });
+      }
+      if (const auto Limitation =
+              medRecoverySourceLimitation(Function, S->Img.Arch, SourceFrame);
+          !Limitation.empty())
+        return Fail(Limitation);
+    }
     std::string Source;
     llvm::raw_string_ostream OS(Source);
+    if (MachineState)
+      OS << "/* Explicit x64 machine-state source ABI v1.\n"
+            " * Pass 17 aligned uint64_t words: RAX, RCX, RDX, RBX, RSP, RBP,\n"
+            " * RSI, RDI, R8..R15, RFLAGS. Guest memory uses original "
+            "addresses.\n"
+            " * Normal nonfaulting CPL3/IOPL0 execution; CET disabled.\n"
+            " * State storage must not alias guest memory. Zero status is "
+            "success;\n"
+            " * nonzero status invalidates the result and does not undo "
+            "stores.\n"
+            " * Every guest write range must be disjoint from the entry "
+            "return slot.\n"
+            " * State is captured before the final native return-address pop.\n"
+            " */\n";
+    else
+      OS << "/* Ordinary recovery source frame contract: every "
+            "external-origin\n"
+            " * LOAD/STORE range, including computed external addresses, must\n"
+            " * be disjoint from the native invocation-private frame and its\n"
+            " * reconstructed source storage.\n"
+            " */\n";
     CEmitterOptions EmitOptions;
     EmitOptions.TheArch = S->Img.Arch;
     EmitOptions.Format = S->Img.Format;
@@ -203,12 +490,20 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
     if (PO.LiftMode) {
       if (!Result.LlvmModule)
         return Fail("recovery produced no LLVM module");
+      if (const auto Limitation =
+              llvmRecoverySourceLimitation(*Result.LlvmModule);
+          !Limitation.empty())
+        return Fail(Limitation);
       LLVMCEmitter Emitter;
       if (!Emitter.emit(*Result.LlvmModule, OS, EmitOptions, nullptr, &S->Img))
         return Fail("recovered LLVM-to-C emission failed");
     } else {
       if (Result.HighFuncs.empty())
         return Fail("recovery produced no source function");
+      for (const auto &Function : Result.HighFuncs)
+        if (const auto Limitation = highRecoverySourceLimitation(Function);
+            !Limitation.empty())
+          return Fail(Limitation);
       HighCEmitter Emitter;
       if (!Emitter.emit(Result.HighFuncs, OS, EmitOptions))
         return Fail("recovered HighC emission failed");
@@ -219,4 +514,17 @@ neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
   } catch (const std::exception &Error) {
     return Fail(Error.what());
   }
+}
+
+extern "C" const char *
+neverd_devirtualize_source_v1(neverd_session_t Session, neverd_va_t Entry,
+                              const neverd_devirtualize_options_v1 *Options,
+                              const char **Report) {
+  return devirtualizeSource(Session, Entry, Options, Report, false);
+}
+
+extern "C" const char *neverd_devirtualize_machine_source_v1(
+    neverd_session_t Session, neverd_va_t Entry,
+    const neverd_devirtualize_options_v1 *Options, const char **Report) {
+  return devirtualizeSource(Session, Entry, Options, Report, true);
 }

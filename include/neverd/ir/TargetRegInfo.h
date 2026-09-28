@@ -26,6 +26,13 @@
 
 namespace neverd {
 
+/// A SUBBYTES view of the low bytes of its own register is a projection,
+/// rather than an architectural write that implicitly clears upper bytes.
+/// Callers establish the opcode, register operands, and slice-offset shape.
+bool isSameRegisterLowSlice(uint64_t OutputOffset, uint16_t OutputSize,
+                            uint64_t InputOffset, uint16_t InputSize,
+                            uint64_t SliceOffset);
+
 /// Architecture-independent condition codes for flag elimination.
 /// Mirrors LLVM's ISD::CondCode but simplified for decompiler use.
 enum class CondCode : uint8_t {

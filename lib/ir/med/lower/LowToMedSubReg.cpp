@@ -28,10 +28,11 @@ static bool isSelfLowSliceSubbytes(const MedOp &MOp) {
   if (MOp.Opcode != NdOp::SUBBYTES)
     return false;
   return MOp.NumInputs >= 1 && MOp.Inputs[0].Kind == MedVar::Reg &&
-         MOp.Inputs[0].RegOff == MOp.Output.RegOff &&
-         MOp.Inputs[0].Size >= MOp.Output.Size &&
-         (MOp.NumInputs < 2 || !MOp.Inputs[1].isConst() ||
-          MOp.Inputs[1].ConstVal == 0);
+         isSameRegisterLowSlice(MOp.Output.RegOff, MOp.Output.Size,
+                                MOp.Inputs[0].RegOff, MOp.Inputs[0].Size,
+                                MOp.NumInputs < 2 || !MOp.Inputs[1].isConst()
+                                    ? 0
+                                    : MOp.Inputs[1].ConstVal);
 }
 
 void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
@@ -361,8 +362,7 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
           Extract.addInput(Wide);
           Extract.addInput(MedVar::makeConst(0, 4));
           Pending.push_back({OI, std::move(Extract)});
-          AllWrites[NarrowKey] =
-              {Narrow.Id, Narrow.Size, Narrow.RegOff, Seq++};
+          AllWrites[NarrowKey] = {Narrow.Id, Narrow.Size, Narrow.RegOff, Seq++};
           ZextWrites.erase(NarrowKey);
         }
 
