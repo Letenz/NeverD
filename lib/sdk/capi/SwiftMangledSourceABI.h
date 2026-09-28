@@ -945,6 +945,11 @@ swiftMangledDoubleFloatingPropertySourceABI(const BinaryImage &Image,
       return std::nullopt;
     Hint.Parameters = {{"self", NdType::makeFloat(8)}};
   } else {
+    // A generic outer class has the same accessor tree but adds a hidden
+    // metadata argument. The mangling alone cannot exclude that shape.
+    if (Name != "$s6Lottie18CoreAnimationLayerC26CAMediaTimingConfigurationV"
+                "10timeOffsetSdvpfi")
+      return std::nullopt;
     if (!Shape(Owner, "Structure", 2) ||
         !Shape(Owner.Children[0], "Class", 2) ||
         Owner.Children[0].Children[0].Kind != "Module" ||
