@@ -258,16 +258,18 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
   }
   if (Hint.CallKind == Kind::SwiftVirtual) {
     if (!Hint.Virtual || !CurrentFunc ||
-        CurrentFunc->Entry != Hint.Virtual->MethodEntry ||
-        !E.IsIndirectCall || E.CallAddr || !E.IndirectTarget ||
+        CurrentFunc->Entry != Hint.Virtual->MethodEntry || !E.IsIndirectCall ||
+        E.CallAddr || !E.IndirectTarget ||
         E.IndirectTarget->Kind != ExprKind::Var || E.Operands.size() != 1 ||
         !E.Operands[0] || Signature.Architecture != Arch::AArch64 ||
         Opts.TheArch != Arch::AArch64 || !Signature.HasExplicitABI ||
-        Signature.Convention !=
-            SourceFunctionTypeHint::ConventionKind::Swift ||
+        Signature.Convention != SourceFunctionTypeHint::ConventionKind::Swift ||
         !Signature.ReturnType ||
-        Signature.ReturnType->Kind != NdTypeKind::Float ||
-        Signature.ReturnType->Size != 8 ||
+        !((Signature.ReturnType->Kind == NdTypeKind::Float &&
+           Signature.ReturnType->Size == 8) ||
+          (Signature.ReturnType->Kind == NdTypeKind::Int &&
+           Signature.ReturnType->Size == 1 &&
+           !Signature.ReturnType->IsSigned)) ||
         Signature.Parameters.size() != 1 ||
         Signature.Parameters[0].TheRole !=
             SourceParameterTypeHint::Role::SwiftContext ||
@@ -279,13 +281,15 @@ std::string HighCWriter::renderSourceCallExpr(const HighExpr &E) {
                                 Signature.Parameters[0].Type);
     if (!Argument)
       return bad("Swift context carrier disagrees with ABI");
+    const std::string ReturnType = Signature.ReturnType->Kind == NdTypeKind::Int
+                                       ? "_Bool"
+                                       : typeToC(Signature.ReturnType);
     const std::string Prototype =
-        typeToC(Signature.ReturnType) +
-        " __attribute__((swiftcall)) (*)(" +
+        ReturnType + " __attribute__((swiftcall)) (*)(" +
         sourceParameterType(Signature.Parameters[0]) + ")";
     const std::string Call = "((" + Prototype + ")(uintptr_t)(" +
-                             exprStr(*E.IndirectTarget) + "))(" +
-                             *Argument + ")";
+                             exprStr(*E.IndirectTarget) + "))(" + *Argument +
+                             ")";
     auto Result = sourceValue(Call, Signature.ReturnType, E.Type);
     return Result ? *Result
                   : bad("Swift virtual result carrier disagrees with ABI");

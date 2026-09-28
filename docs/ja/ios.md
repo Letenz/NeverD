@@ -351,4 +351,4 @@ HighIR が記号的な畳み込み後にスカラーの由来を保持するの�
 
 Objective-C のセレクタスタブ呼び出しでも、受信者の正確な宣言とスタブを再検証でき、引数の整数幅が一致し、リテラルにアドレス所有者のないスカラー由来が証明される場合に限り、アドレスと同じビット列のスカラーを整数引数として保持します。由来が不明な値やアドレス由来の値には、引き続き再配置の証拠が必要です。
 
-ARM64 Mach-O で Objective-C メソッドとして公開された Swift の CGFloat getter の仮想呼び出しは、double を返す正確なメソッドエンコーディング、唯一の Swift getter thunk シンボル、レシーバーの ivar オフセット参照、libswiftCore からの強い _swift_isaMask インポート、マスク済み isa を使うテーブル読み込み、blr x21 の呼び出し先がすべて一致する場合に限り投影します。生成 C はテーブルの読み込みを retain/release より前に保ち、swiftcall と swift_context で呼び出します。それ以外の仮想呼び出し形状は未復元のままです。
+ARM64 Mach-O で Objective-C メソッドとして公開された Swift の CGFloat または Bool getter の仮想呼び出しは、正確な `d16@0:8` または `B16@0:8` のメソッドエンコーディング、対応する唯一の Swift getter thunk シンボル、レシーバーの ivar オフセット参照、libswiftCore からの強い _swift_isaMask インポート、マスク済み isa を使うテーブル読み込み、blr x21 の呼び出し先がすべて一致する場合に限り投影します。生成 C はテーブルの読み込みを retain/release より前に保ち、swiftcall と swift_context で呼び出し、Bool の結果には `_Bool` を使います。それ以外の仮想呼び出し形状は未復元のままです。

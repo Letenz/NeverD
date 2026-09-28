@@ -540,49 +540,64 @@ int main(void) {
 }
 
 TEST(HighCSourceCalls, SwiftVirtualGetterUsesSwiftContextFunctionType) {
-  SourceCallTypeHint Hint;
-  Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
-  Hint.TargetName = "swift_virtual";
-  Hint.Virtual =
-      SourceCallTypeHint::SwiftVirtualEvidence{0x1000, 0x1010, 0x2000, 624};
-  Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
-  Hint.Signature.ReturnType = NdType::makeFloat(8);
-  const auto Pointer = NdType::makePtr(NdType::makeVoid());
-  Hint.Signature.Parameters = {{"self", Pointer}};
-  Hint.Signature.Parameters[0].TheRole =
-      SourceParameterTypeHint::Role::SwiftContext;
-  std::string Diagnostic;
-  ASSERT_TRUE(
-      assignDarwinSwiftSourceABI(Hint.Signature, Arch::AArch64, Diagnostic))
-      << Diagnostic;
+  for (bool Bool : {false, true}) {
+    SourceCallTypeHint Hint;
+    Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
+    Hint.TargetName = "swift_virtual";
+    Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
+        0x1000, 0x1010, 0x2000, Bool ? 600U : 624U};
+    Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.Signature.ReturnType =
+        Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8);
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    Hint.Signature.Parameters = {{"self", Pointer}};
+    Hint.Signature.Parameters[0].TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    std::string Diagnostic;
+    ASSERT_TRUE(
+        assignDarwinSwiftSourceABI(Hint.Signature, Arch::AArch64, Diagnostic))
+        << Diagnostic;
 
-  auto Param = [&](unsigned Id) {
-    MedVar V;
-    V.Kind = MedVar::Param;
-    V.Id = Id;
-    V.Size = 8;
-    V.TheArch = Arch::AArch64;
-    return HighExpr::makeVar(V, Pointer);
-  };
-  auto Call = HighExpr::makeCall("indirect_call", 0, {Param(0)});
-  Call->Type = Hint.Signature.ReturnType;
-  Call->IsIndirectCall = true;
-  Call->IndirectTarget = Param(1);
-  Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
-  HighFunc Function;
-  Function.Entry = 0x1000;
-  Function.Name = "call_virtual";
-  Function.ReturnType = Hint.Signature.ReturnType;
-  Function.Params = {{"context", Pointer}, {"target", Pointer}};
-  HighStmt Return;
-  Return.Kind = StmtKind::Return;
-  Return.RetVal = Call;
-  Function.Body = {Return};
-  const auto Source = emit({Function}, true, Arch::AArch64);
-  EXPECT_NE(Source.find("double __attribute__((swiftcall)) (*)"),
-            std::string::npos)
-      << Source;
-  compileAndRun(Source + R"(
+    auto Param = [&](unsigned Id) {
+      MedVar V;
+      V.Kind = MedVar::Param;
+      V.Id = Id;
+      V.Size = 8;
+      V.TheArch = Arch::AArch64;
+      return HighExpr::makeVar(V, Pointer);
+    };
+    auto Call = HighExpr::makeCall("indirect_call", 0, {Param(0)});
+    Call->Type = Hint.Signature.ReturnType;
+    Call->IsIndirectCall = true;
+    Call->IndirectTarget = Param(1);
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+    HighFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "call_virtual";
+    Function.ReturnType = Hint.Signature.ReturnType;
+    Function.Params = {{"context", Pointer}, {"target", Pointer}};
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.RetVal = Call;
+    Function.Body = {Return};
+    const auto Source = emit({Function}, true, Arch::AArch64);
+    EXPECT_NE(Source.find(Bool ? "_Bool __attribute__((swiftcall)) (*)"
+                               : "double __attribute__((swiftcall)) (*)"),
+              std::string::npos)
+        << Source;
+    if (Bool) {
+      compileAndRun(Source + R"(
+static _Bool __attribute__((swiftcall)) getter(
+    void *self __attribute__((swift_context))) {
+  return (*(const uint8_t *)self & 1) != 0;
+}
+int main(void) {
+  uint8_t value = 1;
+  return call_virtual(&value, (void *)&getter) == 1 ? 0 : 1;
+}
+)");
+    } else {
+      compileAndRun(Source + R"(
 static double __attribute__((swiftcall)) getter(
     void *self __attribute__((swift_context))) {
   return *(const double *)self + 0.5;
@@ -592,6 +607,8 @@ int main(void) {
   return call_virtual(&value, (void *)&getter) == 42.5 ? 0 : 1;
 }
 )");
+    }
+  }
 }
 
 TEST(HighCSourceCalls,

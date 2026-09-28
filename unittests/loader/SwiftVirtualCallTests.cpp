@@ -19,7 +19,7 @@ struct Fixture {
   BinaryImage Image;
   LowFunc Function;
 
-  Fixture() {
+  explicit Fixture(bool Bool = false) {
     Image.Format = BinaryFormat::MachO;
     Image.Arch = Arch::AArch64;
     Image.Bits = Bitness::Bits64;
@@ -48,10 +48,11 @@ struct Fixture {
     ObjCMethod Method;
     Method.Implementation = Entry;
     Method.ClassName = "_TtC6Lottie23CompatibleAnimationView";
-    Method.Selector = "currentProgress";
-    Method.TypeEncoding = "d16@0:8";
+    Method.Selector = Bool ? "shouldRasterizeWhenIdle" : "currentProgress";
+    Method.TypeEncoding = Bool ? "B16@0:8" : "d16@0:8";
     SourceFunctionTypeHint Signature;
-    Signature.ReturnType = NdType::makeFloat(8);
+    Signature.ReturnType =
+        Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8);
     Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())},
                             {"_cmd", NdType::makePtr(NdType::makeVoid())}};
     std::string Diagnostic;
@@ -60,8 +61,10 @@ struct Fixture {
     Method.TypeHint = Signature;
     Image.ObjCMethods.push_back(Method);
     Image.Symbols.push_back(
-        {"_$s6Lottie23CompatibleAnimationViewC15currentProgress"
-         "12CoreGraphics7CGFloatVvgTo",
+        {Bool ? "_$s6Lottie23CompatibleAnimationViewC23shouldRasterizeWhenIdle"
+                "SbvgTo"
+              : "_$s6Lottie23CompatibleAnimationViewC15currentProgress"
+                "12CoreGraphics7CGFloatVvgTo",
          Entry, 0x80, true});
 
     Function.Entry = Entry;
@@ -92,7 +95,7 @@ struct Fixture {
     Add(0x112c, NdOp::LOAD, X9, {X9});
     Add(0x1130, NdOp::INT_AND, X8, {X8, X9});
     Add(0x1138, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
-        {X8, NdVar::scalar(624, 8)});
+        {X8, NdVar::scalar(Bool ? 600 : 624, 8)});
     Add(0x1138, NdOp::LOAD, X21, {NdVar::tmp(TmpBase, 8)});
     Add(0x1140, NdOp::CALL, X0, {NdVar::codeAddress(0x1300, 8)});
     Add(CallSite, NdOp::INDIR_CALL, X0, {X21});
@@ -115,6 +118,22 @@ TEST(SwiftVirtualCalls, ExactMaskedIsaGetterBindsSwiftContext) {
   auto Global = darwinRuntimeGlobalAddressHint(F.Image, Fixture::MaskSlot);
   ASSERT_TRUE(Global);
   EXPECT_EQ(Global->TargetName, "swift_isaMask");
+}
+
+TEST(SwiftVirtualCalls, ExactMaskedIsaBoolGetterBindsSwiftContext) {
+  Fixture F(true);
+  const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Fixture::CallSite);
+  ASSERT_TRUE(Hint.Virtual);
+  EXPECT_EQ(Hint.Virtual->VtableByteOffset, 600U);
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Int);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 1U);
+  EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+
+  F.Image.ObjCMethods[0].TypeEncoding = "d16@0:8";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
 }
 
 TEST(SwiftVirtualCalls, RejectsAlteredCodeImportAndReceiverEvidence) {

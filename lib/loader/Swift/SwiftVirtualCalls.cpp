@@ -237,12 +237,20 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
       Method = &M;
     }
   if (!Method || Method->IsClassMethod || Method->Selector.empty() ||
-      Method->TypeEncoding != "d16@0:8" || !Method->TypeHint)
+      !Method->TypeHint)
+    return std::nullopt;
+  const bool CGFloatGetter = Method->TypeEncoding == "d16@0:8";
+  const bool BoolGetter = Method->TypeEncoding == "B16@0:8";
+  if (!CGFloatGetter && !BoolGetter)
     return std::nullopt;
   const auto EntryType = objcMethodSourceTypeHint(Image, Entry);
   if (!EntryType || !EntryType->ReturnType ||
-      EntryType->ReturnType->Kind != NdTypeKind::Float ||
-      EntryType->ReturnType->Size != 8 || EntryType->Parameters.size() != 2)
+      (CGFloatGetter ? (EntryType->ReturnType->Kind != NdTypeKind::Float ||
+                        EntryType->ReturnType->Size != 8)
+                     : (EntryType->ReturnType->Kind != NdTypeKind::Int ||
+                        EntryType->ReturnType->Size != 1 ||
+                        EntryType->ReturnType->IsSigned)) ||
+      EntryType->Parameters.size() != 2)
     return std::nullopt;
   const Symbol *Symbol = nullptr;
   for (const auto &S : Image.Symbols)
@@ -252,7 +260,8 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
       Symbol = &S;
     }
   if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s") ||
-      !llvm::StringRef(Symbol->Name).ends_with("12CoreGraphics7CGFloatVvgTo"))
+      !llvm::StringRef(Symbol->Name)
+           .ends_with(CGFloatGetter ? "12CoreGraphics7CGFloatVvgTo" : "SbvgTo"))
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
@@ -260,7 +269,8 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
   Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{Entry, CallSite,
                                                           IsaMaskImport, Slot};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
-  Hint.Signature.ReturnType = NdType::makeFloat(8);
+  Hint.Signature.ReturnType =
+      CGFloatGetter ? NdType::makeFloat(8) : NdType::makeInt(1, false);
   Hint.Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
   Hint.Signature.Parameters.back().TheRole =
       SourceParameterTypeHint::Role::SwiftContext;
