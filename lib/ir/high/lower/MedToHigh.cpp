@@ -838,6 +838,8 @@ void MedToHighConverter::reduceLateGotos(HighFunc &Func) {
       const bool Grouped = groupSwitchCases(Func.Body) |
                            (Phase != 0 && rotateLoopsToTheirEntry(Func.Body)) |
                            (Phase != 0 && hoistLoopExitTests(Func.Body)) |
+                           (Phase != 0 && moveLoopTailsToTheirBreak(Func.Body)) |
+                           (Phase != 0 && unwrapLoopsThatNeverRepeat(Func.Body)) |
                            (Phase != 0 && hoistLoopEntryLabels(Func.Body)) |
                            (Phase != 0 && loopifyTrailingArmBodies(Func.Body));
       if (!reduceSingleUseGotos(Func.Body, /*SpliceRegions=*/Phase != 0) &&

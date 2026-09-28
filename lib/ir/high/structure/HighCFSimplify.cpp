@@ -678,6 +678,27 @@ static bool isEmptyAnchor(const HighStmt &S) {
           std::all_of(S.Body.begin(), S.Body.end(), isEmptyAnchor));
 }
 
+/// True when \p Entered holds the address of \p S or of a statement nested
+/// in it.
+template <typename Pred>
+static bool anyAddressEntered(const HighStmt &S, const Pred &Entered) {
+  if (Entered(S.Addr))
+    return true;
+  for (const auto *List : {&S.Body, &S.ElseBody, &S.DefaultBody})
+    for (const HighStmt &T : *List)
+      if (anyAddressEntered(T, Entered))
+        return true;
+  for (const auto &C : S.Cases)
+    for (const HighStmt &T : C.Body)
+      if (anyAddressEntered(T, Entered))
+        return true;
+  for (const auto &ClauseBody : S.EHClauseBodies)
+    for (const HighStmt &T : ClauseBody)
+      if (anyAddressEntered(T, Entered))
+        return true;
+  return false;
+}
+
 /// A statement after which control never reaches the next one: a return or
 /// jump, a call to a known noreturn function (KeBugCheckEx, ExRaiseStatus...),
 /// a terminating trap such as the fail-fast, or an endless loop.
@@ -686,9 +707,11 @@ static bool endsItsBlock(const HighStmt &S) {
       isEndlessLoop(S))
     return true;
   if (S.Kind == StmtKind::IfElse) {
+    // An empty statement with an address may be a label a jump reaches, and
+    // then the arm runs past its end.
     auto ArmEnds = [](const std::vector<HighStmt> &Arm) {
       auto Last = std::find_if(Arm.rbegin(), Arm.rend(), [](const HighStmt &T) {
-        return !isEmptyAnchor(T);
+        return !isEmptyAnchor(T) || (T.Addr != 0 && T.Addr != InvalidVA);
       });
       return Last != Arm.rend() && endsItsBlock(*Last);
     };
@@ -897,6 +920,21 @@ bool hoistLoopEntryLabels(std::vector<HighStmt> &Body) {
   return Changed;
 }
 
+/// True when a jump reaches the start of \p Loop's body: its first real
+/// statement, or an anchor ahead of it.
+template <typename Pred>
+static bool loopTopEntered(const HighStmt &Loop, const Pred &Entered) {
+  if (Entered(Loop.Addr))
+    return true;
+  for (const HighStmt &T : Loop.Body) {
+    if (!isEmptyAnchor(T))
+      return Entered(T.Addr);
+    if (anyAddressEntered(T, Entered))
+      return true;
+  }
+  return false;
+}
+
 bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body) {
   std::map<va_t, unsigned> Uses;
   walkStmts(Body, [&](const HighStmt &S) {
@@ -921,13 +959,12 @@ bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body) {
               !Loop.Cond ||
               (Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0);
           if (Loop.Kind != StmtKind::While || !Forever ||
-              Loop.Body.size() < 2 || Entered(Loop.Addr) ||
-              Entered(Loop.Body.front().Addr))
+              Loop.Body.size() < 2 || loopTopEntered(Loop, Entered))
             continue;
           size_t P = K;
           bool TopEntered = false;
           while (P > 0 && isEmptyAnchor(L[P - 1]))
-            TopEntered |= Entered(L[--P].Addr);
+            TopEntered |= anyAddressEntered(L[--P], Entered);
           if (TopEntered || P == 0 || !endsItsBlock(L[P - 1]))
             continue;
           // A continue would restart at S2 instead of S1.
@@ -950,13 +987,12 @@ bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body) {
           // continue goes to the test in both forms.
           HighStmt &Loop = L[K];
           if (Loop.Kind != StmtKind::DoWhile || !Loop.Cond ||
-              Loop.Body.size() < 2 || Entered(Loop.Addr) ||
-              Entered(Loop.Body.front().Addr))
+              Loop.Body.size() < 2 || loopTopEntered(Loop, Entered))
             continue;
           size_t P = K;
           bool TopEntered = false;
           while (P > 0 && isEmptyAnchor(L[P - 1]))
-            TopEntered |= Entered(L[--P].Addr);
+            TopEntered |= anyAddressEntered(L[--P], Entered);
           if (TopEntered || P == 0 || !endsItsBlock(L[P - 1]))
             continue;
           size_t J = Loop.Body.size();
@@ -969,7 +1005,9 @@ bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body) {
             continue;
           bool OnlyX = true;
           for (size_t Q = J; Q < Loop.Body.size(); ++Q)
-            OnlyX &= Loop.Body[Q].Addr == X || !Entered(Loop.Body[Q].Addr);
+            OnlyX &= !anyAddressEntered(Loop.Body[Q], [&](va_t A) {
+              return A != X && Entered(A);
+            });
           if (!OnlyX)
             continue;
           Loop.Body.resize(J);
@@ -1021,7 +1059,7 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
           size_t First = 0;
           bool AnchorEntered = false;
           while (First < LoopBody.size() && isEmptyAnchor(LoopBody[First]))
-            AnchorEntered |= Entered(LoopBody[First++].Addr);
+            AnchorEntered |= anyAddressEntered(LoopBody[First++], Entered);
           size_t Last = LoopBody.size();
           while (Last > First && isEmptyAnchor(LoopBody[Last - 1]))
             --Last;
@@ -1041,7 +1079,7 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
             // goto X;`. A continue would reach the test only in the do.
             bool TailEntered = false;
             for (size_t Q = Last; Q < LoopBody.size(); ++Q)
-              TailEntered |= Entered(LoopBody[Q].Addr);
+              TailEntered |= anyAddressEntered(LoopBody[Q], Entered);
             if (TailEntered)
               continue;
             Exit = std::move(LoopBody[Last - 1].Body[0]);
@@ -1063,6 +1101,169 @@ bool hoistLoopExitTests(std::vector<HighStmt> &Body) {
           Visit(S.DefaultBody);
           for (auto &ClauseBody : S.EHClauseBodies)
             Visit(ClauseBody);
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
+bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Targets.insert(S.GotoTarget);
+  });
+  // The one break of a loop body, or null when there are none or several.
+  std::function<HighStmt *(std::vector<HighStmt> &, unsigned &)> FindBreak =
+      [&](std::vector<HighStmt> &Stmts, unsigned &Count) -> HighStmt * {
+    HighStmt *Found = nullptr;
+    for (HighStmt &S : Stmts) {
+      switch (S.Kind) {
+      case StmtKind::Break:
+        ++Count;
+        Found = &S;
+        break;
+      case StmtKind::While:
+      case StmtKind::DoWhile:
+      case StmtKind::For:
+      case StmtKind::Switch:
+        break;
+      case StmtKind::SEHTry:
+      case StmtKind::CxxTry:
+      case StmtKind::ItaniumTry: {
+        // Code moved to a break inside a try would become protected.
+        bool Inside = hasLooseBreak(S.Body);
+        for (const auto &ClauseBody : S.EHClauseBodies)
+          Inside |= hasLooseBreak(ClauseBody);
+        if (Inside)
+          Count += 2;
+        break;
+      }
+      default:
+        for (auto *Arm : {&S.Body, &S.ElseBody})
+          if (HighStmt *B = FindBreak(*Arm, Count))
+            Found = B;
+        for (auto &ClauseBody : S.EHClauseBodies)
+          if (HighStmt *B = FindBreak(ClauseBody, Count))
+            Found = B;
+        break;
+      }
+    }
+    return Count == 1 ? Found : nullptr;
+  };
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (size_t K = 0; K + 1 < L.size(); ++K) {
+          // `while (1) { ..break..; X: .. } T...` where T never falls through
+          // and jumps back to X: the break is T's only way in, so T can run
+          // at the break, next to the label it jumps to.
+          HighStmt &Loop = L[K];
+          const bool Forever =
+              !Loop.Cond ||
+              (Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0);
+          if (Loop.Kind != StmtKind::While || !Forever)
+            continue;
+          auto Last = std::find_if(L.rbegin(), L.rend() - (K + 1),
+                                   [&](const HighStmt &T) {
+                                     return !isEmptyAnchor(T) ||
+                                            Targets.count(T.Addr);
+                                   });
+          if (Last == L.rend() - (K + 1) || !endsItsBlock(*Last))
+            continue;
+          std::vector<HighStmt> Tail(L.begin() + K + 1, L.end());
+          if (hasLooseBreakOrContinue(Tail))
+            continue;
+          std::set<va_t> LoopLabels;
+          walkStmts(Loop.Body, [&](const HighStmt &S) {
+            if (Targets.count(S.Addr))
+              LoopLabels.insert(S.Addr);
+          });
+          bool JumpsBack = false;
+          walkStmts(Tail, [&](const HighStmt &S) {
+            JumpsBack |=
+                S.Kind == StmtKind::Goto && LoopLabels.count(S.GotoTarget);
+          });
+          if (!JumpsBack)
+            continue;
+          unsigned Breaks = 0;
+          HighStmt *Break = FindBreak(Loop.Body, Breaks);
+          if (!Break)
+            continue;
+          // Replace the break with a block of the tail; it never falls through.
+          HighStmt Moved;
+          Moved.Kind = StmtKind::Block;
+          Moved.Body = std::move(Tail);
+          *Break = std::move(Moved);
+          L.erase(L.begin() + K + 1, L.end());
+          Changed = true;
+          break;
+        }
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+      };
+  Visit(Body);
+  return Changed;
+}
+
+bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body) {
+  std::set<va_t> Targets;
+  walkStmts(Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Goto && S.GotoTarget != 0 &&
+        S.GotoTarget != InvalidVA)
+      Targets.insert(S.GotoTarget);
+  });
+  bool Changed = false;
+  std::function<void(std::vector<HighStmt> &)> Visit =
+      [&](std::vector<HighStmt> &L) {
+        for (HighStmt &S : L) {
+          Visit(S.Body);
+          Visit(S.ElseBody);
+          for (auto &C : S.Cases)
+            Visit(C.Body);
+          Visit(S.DefaultBody);
+          for (auto &ClauseBody : S.EHClauseBodies)
+            Visit(ClauseBody);
+        }
+        for (size_t K = 0; K < L.size(); ++K) {
+          // `while (1) { S }` whose S never reaches its end, with no break
+          // or continue of its own, runs S once: jumps inside S go to the
+          // same statements with or without the loop around them.
+          HighStmt &Loop = L[K];
+          const bool Forever =
+              !Loop.Cond ||
+              (Loop.Cond->Kind == ExprKind::Const && Loop.Cond->ConstVal != 0);
+          if ((Loop.Kind != StmtKind::While && Loop.Kind != StmtKind::DoWhile) ||
+              (Loop.Kind == StmtKind::While && !Forever) || Loop.Body.empty())
+            continue;
+          // A label after the last jump still reaches the end of the body.
+          auto Last = std::find_if(Loop.Body.rbegin(), Loop.Body.rend(),
+                                   [&](const HighStmt &T) {
+                                     return !isEmptyAnchor(T) ||
+                                            Targets.count(T.Addr);
+                                   });
+          if (Last == Loop.Body.rend() || !endsItsBlock(*Last) ||
+              hasLooseBreak(Loop.Body) || hasLooseContinue(Loop.Body))
+            continue;
+          std::vector<HighStmt> Inner = std::move(Loop.Body);
+          if (Loop.Addr != 0 && Loop.Addr != InvalidVA) {
+            HighStmt Anchor;
+            Anchor.Kind = StmtKind::Block;
+            Anchor.Addr = Loop.Addr;
+            Inner.insert(Inner.begin(), std::move(Anchor));
+          }
+          L.erase(L.begin() + K);
+          L.insert(L.begin() + K, std::make_move_iterator(Inner.begin()),
+                   std::make_move_iterator(Inner.end()));
+          Changed = true;
         }
       };
   Visit(Body);
@@ -1705,10 +1906,11 @@ bool reduceSingleUseGotos(std::vector<HighStmt> &Body, bool SpliceRegions) {
       if (SpliceRegions && L[I].Kind == StmtKind::If && L[I].Cond &&
           L[I].ElseBody.empty() && !L[I].Body.empty() && I + 1 < L.size() &&
           labelStart(L[I].Body, 0) && usesOf(L[I].Body.front().Addr) != ~0u) {
-        auto LastOf = [](const std::vector<HighStmt> &Stmts, size_t From)
+        // A label after the last jump still runs past the end.
+        auto LastOf = [&](const std::vector<HighStmt> &Stmts, size_t From)
             -> const HighStmt * {
           for (size_t K = Stmts.size(); K > From; --K)
-            if (!isEmptyAnchor(Stmts[K - 1]))
+            if (!isEmptyAnchor(Stmts[K - 1]) || usesOf(Stmts[K - 1].Addr) != 0)
               return &Stmts[K - 1];
           return nullptr;
         };

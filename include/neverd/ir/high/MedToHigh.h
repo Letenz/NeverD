@@ -83,6 +83,12 @@ bool rotateLoopsToTheirEntry(std::vector<HighStmt> &Body);
 /// An endless loop that begins with `if (c) goto X;` becomes
 /// `while (!c) {..} goto X;`; one that ends with it, `do {..} while (!c);`.
 bool hoistLoopExitTests(std::vector<HighStmt> &Body);
+/// `while (1) { ..break..; X: .. } T...` where T never falls through and
+/// jumps back to X: T moves to the break, its only way in.
+bool moveLoopTailsToTheirBreak(std::vector<HighStmt> &Body);
+/// A loop whose body never reaches its end and has no break or continue
+/// runs its body once: the body replaces the loop.
+bool unwrapLoopsThatNeverRepeat(std::vector<HighStmt> &Body);
 /// `if (a) {..} else { ..; jump; X: S.. }` followed by `if (c) goto X;`
 /// becomes `while (c) { S.. }` in place of the test.
 bool loopifyTrailingArmBodies(std::vector<HighStmt> &Body);

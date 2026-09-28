@@ -41526,3 +41526,99 @@ TEST(HighCPointerAddresses, IfWhoseTailTheRestJumpsBackIntoIsSwapped) {
   });
   EXPECT_TRUE(RestInIf);
 }
+
+TEST(HighCPointerAddresses, LoopTailThatJumpsBackMovesToTheBreak) {
+  // `while (1) { if (c) break; X: a = 1; } if (d) goto X; return;` The
+  // break is the only way to the tail, which never falls through.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  HighStmt Leave;
+  Leave.Kind = StmtKind::If;
+  Leave.Addr = 0x1010;
+  Leave.Cond = HighExpr::makeConst(1, 1);
+  Leave.Body = {Break};
+  HighStmt Loop = endlessLoop({Leave, assignConst(0x1020, 1, 1)});
+  std::vector<HighStmt> Body = {Loop, condGoto(0x1030, 1, 0x1020),
+                                returnAt(0x1034)};
+  ASSERT_TRUE(moveLoopTailsToTheirBreak(Body));
+  ASSERT_EQ(Body.size(), 1u);
+  const HighStmt &Arm = Body[0].Body[0];
+  ASSERT_EQ(Arm.Kind, StmtKind::If);
+  ASSERT_EQ(Arm.Body.size(), 1u);
+  ASSERT_EQ(Arm.Body[0].Kind, StmtKind::Block);
+  ASSERT_EQ(Arm.Body[0].Body.size(), 2u);
+  EXPECT_EQ(Arm.Body[0].Body[1].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, LoopTailThatFallsThroughStays) {
+  // The tail runs into whatever follows the list: it cannot move.
+  HighStmt Break;
+  Break.Kind = StmtKind::Break;
+  HighStmt Leave;
+  Leave.Kind = StmtKind::If;
+  Leave.Addr = 0x1010;
+  Leave.Cond = HighExpr::makeConst(1, 1);
+  Leave.Body = {Break};
+  HighStmt Loop = endlessLoop({Leave, assignConst(0x1020, 1, 1)});
+  std::vector<HighStmt> Body = {Loop, condGoto(0x1030, 1, 0x1020),
+                                assignConst(0x1034, 2, 2)};
+  EXPECT_FALSE(moveLoopTailsToTheirBreak(Body));
+  EXPECT_EQ(Body.size(), 3u);
+}
+
+TEST(HighCPointerAddresses, LoopThatNeverRepeatsIsUnwrapped) {
+  // `X: while (1) { Y: a = 1; if (c) goto Y; return; }` never reaches the
+  // end of its body: the jump to Y works the same without the loop.
+  HighStmt Loop = endlessLoop({assignConst(0x1020, 1, 1),
+                               condGoto(0x1024, 1, 0x1020), returnAt(0x1028)});
+  Loop.Addr = 0x1010;
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1010), Loop};
+  ASSERT_TRUE(unwrapLoopsThatNeverRepeat(Body));
+  ASSERT_EQ(Body.size(), 5u);
+  EXPECT_EQ(Body[1].Kind, StmtKind::Block);
+  EXPECT_EQ(Body[1].Addr, 0x1010u);
+  EXPECT_EQ(Body[2].Addr, 0x1020u);
+  EXPECT_EQ(Body[4].Kind, StmtKind::Return);
+}
+
+TEST(HighCPointerAddresses, LoopThatContinuesIsNotUnwrapped) {
+  HighStmt Continue;
+  Continue.Kind = StmtKind::Continue;
+  HighStmt Again;
+  Again.Kind = StmtKind::If;
+  Again.Addr = 0x1024;
+  Again.Cond = HighExpr::makeConst(1, 1);
+  Again.Body = {Continue};
+  std::vector<HighStmt> Body = {
+      endlessLoop({assignConst(0x1020, 1, 1), Again, returnAt(0x1028)})};
+  EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
+  EXPECT_EQ(Body[0].Kind, StmtKind::While);
+}
+
+TEST(HighCPointerAddresses, LoopWithAnEnteredLabelAtItsEndIsNotUnwrapped) {
+  // `goto L; do { a = 1; goto E; L: } while (c); E: return;` A jump to L
+  // reaches the test and can repeat the body.
+  HighStmt Loop;
+  Loop.Kind = StmtKind::DoWhile;
+  Loop.Cond = HighExpr::makeConst(1, 1);
+  Loop.Body = {assignConst(0x1020, 1, 1), gotoAt(0x1024, 0x1050),
+               labelAnchor(0x1030)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), Loop,
+                                returnAt(0x1050)};
+  EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
+  EXPECT_EQ(Body[1].Kind, StmtKind::DoWhile);
+}
+
+TEST(HighCPointerAddresses, ArmEndingInAnEnteredLabelStillFallsThrough) {
+  // `while (1) { if (c) return; else { return; L: } }` with a jump to L:
+  // the else arm runs past its end, so the body repeats.
+  HighStmt Arms;
+  Arms.Kind = StmtKind::IfElse;
+  Arms.Addr = 0x1010;
+  Arms.Cond = HighExpr::makeConst(1, 1);
+  Arms.Body = {returnAt(0x1014)};
+  Arms.ElseBody = {returnAt(0x1020), labelAnchor(0x1030)};
+  std::vector<HighStmt> Body = {gotoAt(0x1000, 0x1030), endlessLoop({Arms})};
+  EXPECT_FALSE(unwrapLoopsThatNeverRepeat(Body));
+  EXPECT_EQ(Body[1].Kind, StmtKind::While);
+}
