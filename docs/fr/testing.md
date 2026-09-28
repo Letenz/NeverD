@@ -43,6 +43,20 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` vérifie l’indépendance de deux exécutions sur des graphes LowIR complets et acycliques. Les entrées ordinaires sont partagées ; chaque nouvelle valeur indéfinie par l’architecture conserve ses corrélations dans les copies, écritures superposées, sauvegardes en pile et rechargements. Les prédicats de contrôle sont vérifiés avant les hypothèses de chemin. Un certificat exige des métadonnées d’effets `Complete`, liées exactement aux limites complètes de chaque instruction et à l’empreinte de ses opérations. Preuves manquantes, boucles accessibles, appels, alias inconnus et budgets épuisés entraînent un refus. Le résultat dépend des observations explicites et du contrat de frame sans faute mémoire ; ce n’est pas une preuve complète d’équivalence du code natif vers C.
+
+`NeverDX86UndefinedEffectsTests` vérifie les métadonnées des bits indéfinis, les drapeaux définis ou conservés et le refus des certificats périmés. `NeverDX86CarryArithmeticFlagTests` compare la retenue auxiliaire d’ADC/SBB, pour les formes registre et mémoire, à un oracle arithmétique. `NeverDX86LogicIdentityTests` vérifie qu’AND avec deux opérandes identiques efface encore les bits 63:32 du registre de 64 bits correspondant lors de l’écriture d’une destination de 32 bits en mode 64 bits, tout en préservant les bits non écrits des destinations plus étroites.
+
 Les tests du cœur vérifient la séparation des contextes, les jonctions au point fixe, les boucles dynamiques, les registres superposés, l’invalidation des alias, la distribution finie et le refus sans remplacement partiel. Les tests de source assemblent des machines x64 originales à registres, à pile et à adresses finies ; ils incluent des champs de contrôle liés et un oracle natif indépendant SysV/Win64. Les deux parcours C sont compilés en O0/O2 avec pièges de comportement indéfini et comparés à un oracle non signé pour les calculs, écritures mémoire et sentinelles de sortie. Les cas négatifs vérifient les certificats manquants et les budgets insuffisants. La CLI publique et ses rapports vérifient les contrôles, budgets, compteurs et refus. Clang multicible et LLD sont requis ; l’exécution de l’ELF original exige aussi un hôte Linux x64. Un outil absent ou un hôte incompatible signifie une couverture ignorée, et non un succès.
 
 `ControlStateRecovery.LongTransparentLoop*` couvre une boucle indépendante de 20 phases, des oracles arithmétiques dynamiques, le refus des sélecteurs inconnus et l’épuisement des budgets. `LongTransparentPhasesKeepExactBitDemands` vérifie que les bits sans rapport dans l’octet du sélecteur restent des données d’exécution observables sans devenir des demandes de contrôle. `ProducerClosureChargesWorkBeforeAnotherRestart` vérifie que la découverte arrière et la réexécution consomment les budgets communs avant le démarrage d’un nouveau graphe, sans publication partielle.

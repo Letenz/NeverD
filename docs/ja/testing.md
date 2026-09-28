@@ -40,6 +40,20 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` は、完全な非巡回 LowIR グラフについて二つの実行の独立性を検証します。通常の入口入力は共有し、アーキテクチャ上未定義の値を新たに生成するたびに、コピー、重複書き込み、スピルと再ロードを通じた相関を保持します。制御条件は経路の仮定を追加する前に検査します。証明書には `Complete` の効果メタデータと、各命令の完全な境界および正確な操作ダイジェストとの対応が必要です。証拠不足、到達可能なループ、呼び出し、未知のエイリアス、予算切れでは証明書を拒否します。結果は明示的な観測対象と障害を起こさないフレームの契約に限られ、ネイティブコードから C への完全な等価性証明ではありません。
+
+`NeverDX86UndefinedEffectsTests` は未定義ビットのメタデータ、定義済み／保持されるフラグ、古い証明書の拒否を検査します。`NeverDX86CarryArithmeticFlagTests` は算術オラクルにより、レジスター形式とメモリ形式の ADC/SBB の補助キャリーを検査します。`NeverDX86LogicIdentityTests` は、同一オペランドの AND が 64 ビットモードで 32 ビットの宛先に書き込む際、対応する 64 ビットレジスターのビット 63:32 をゼロにし、狭い書き込みでは未書き込みのビットを保持することを検査します。
+
 コアテストはコンテキスト分離、不動点への合流、動的ループ、重複レジスタ、エイリアス無効化、有限ターゲット、拒否時に部分的な置換を出さないことを確認します。ソーステストは独自のレジスタ型、スタック型、有限アドレス型の x64 マシンを組み立て、両 C 経路を復元して、未定義動作トラップを有効にした O0/O2 でコンパイルし、独立した符号なし算術とメモリの参照実装と実行を比較します。有限アドレス fixture は入力で選ぶレコードとカーソル／キーの相関を検査し、ネイティブ検査は SysV/Win64 を対象にします。公開 CLI、復元予算、未対応入力のレポートも検査します。クロスターゲット Clang と LLD が必要で、元の ELF の実行には x64 Linux ホストも必要です。ツール不足やホスト不一致でのスキップは未実行の範囲であり、成功ではありません。
 
 `ControlStateRecovery.LongTransparentLoop*` は、独立に作成した 20 段階のループ、動的算術の参照実装、未知のセレクターの拒否、予算切れを検証します。`LongTransparentPhasesKeepExactBitDemands` は、セレクターと同じバイト内の無関係なビットが、制御要求にならず観測可能な実行時データとして残ることを確認します。`ProducerClosureChargesWorkBeforeAnotherRestart` は、新しいグラフを開始する前の逆向き検出と再実行にも共通予算を課し、部分結果を公開しないことを検証します。

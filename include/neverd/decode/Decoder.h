@@ -15,6 +15,7 @@
 #define NEVERD_DECODE_DECODER_H
 
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -160,16 +161,26 @@ public:
   /// Lift a single decoded instruction to LowIR ops. When supplied, \p Relocs
   /// describes exact loader-authenticated address operands in the encoded
   /// instruction; unsupported architectures/operand encodings ignore them.
+  /// Optional undefined effects describe the exact appended instruction span,
+  /// without changing ordinary LowIR. They are reset before every attempt and
+  /// published only on success; Missing is never evidence of defined outputs.
+  /// Insn must come from the trusted decoder: the undefined-output audit checks
+  /// supported operand shapes, not raw-byte/detail authentication or complete
+  /// equivalence of the lifted implementation. Non-complete records have no
+  /// usable Effects; their diagnostic and operation binding remain available.
   void liftToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops,
                  llvm::ArrayRef<RelocatedAddressOperand> Relocs = {},
-                 llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {});
+                 llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {},
+                 LowInstructionUndefinedEffects *UndefinedEffects = nullptr);
 
   /// Explicit target-value projection for ordinary unsegmented x64 r/m64
   /// near CALL. Unlike the import-slot representation, this retains the
   /// target LOAD even for a constant slot. Returns false without changing Ops
   /// for other architectures or unsupported encodings; stack effects are
   /// still the responsibility of the machine-state recovery contract.
-  bool liftX64MemoryCallToLow(const DecodedInsn &Insn, std::vector<LowOp> &Ops);
+  bool liftX64MemoryCallToLow(
+      const DecodedInsn &Insn, std::vector<LowOp> &Ops,
+      LowInstructionUndefinedEffects *UndefinedEffects = nullptr);
 
   /// Exact scalar relocation operand consumed by the most recently lifted x86
   /// instruction, if any.  The occurrence is reset for every instruction.

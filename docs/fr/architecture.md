@@ -74,6 +74,8 @@ certificats d’occurrences natives et de patch binaire.
 
 `InterpreterSpecialization` gère la propagation arrière bornée des demandes de bits après une tentative échouée. Il réutilise l’évaluateur scalaire sans modifier les faits du graphe ni ajouter de champs de contrôle ou de contextes ; tout travail reste soumis aux budgets et la publication exige une nouvelle preuve complète.
 
+Le lifter d’architecture gère transactionnellement les métadonnées annexes des sorties indéfinies : il efface les preuves précédentes avant chaque tentative et ne publie les effets que pour le lifting exact réussi. `Missing` indique une absence de preuve, et non une description `Complete` vide. LowIR conserve ses valeurs déterministes choisies. `LowIRUndefinedIndependence` assure la preuve relationnelle bornée sur un graphe LowIR fourni, complet et acyclique, avec entrées ordinaires partagées et corrélations préservées entre valeurs indéfinies nouvellement produites. Il lie les limites complètes des instructions et les empreintes des opérations, et refuse les preuves incomplètes. Certifier le graphe natif complet avant élagage du contrôle, les invariants de boucle et l’équivalence du code natif au source C reste un travail distinct et inachevé.
+
 | Représentation | Rôle | Définitions et transformations principales |
 |----------------|------|--------------------------------------------|
 | LowIR | Opérations `NdOp` indépendantes de l’architecture, blocs de base, CFG et métadonnées de tables de saut | `include/neverd/ir/low`, `lib/ir/low`, produit par `lib/decode` + `lib/lift` |

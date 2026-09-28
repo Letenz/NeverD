@@ -13,6 +13,7 @@
 #ifndef NEVERD_LIFT_X86LIFTER_H
 #define NEVERD_LIFT_X86LIFTER_H
 
+#include "neverd/ir/low/LowUndefinedEffects.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -32,15 +33,22 @@ class X86Lifter {
 public:
   explicit X86Lifter(Arch TargetArch);
 
+  /// Insn's bytes and detail must agree as supplied by the trusted decoder.
+  /// Optional metadata audits newly undefined outputs for supported forms;
+  /// it does not authenticate decoded detail or prove the whole LowIR lift.
+  /// Missing/Unsupported records contain no usable partial Effects.
   void lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
             llvm::ArrayRef<RelocatedAddressOperand> Relocs = {},
-            llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {});
+            llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs = {},
+            LowInstructionUndefinedEffects *UndefinedEffects = nullptr);
 
   /// Lift a certified ordinary x64 memory-indirect near CALL with an explicit
   /// target LOAD, including constant IAT/GOT slots. Physical stack effects are
   /// still omitted. Only canonical unsegmented r/m64 forms with optional
   /// address-size override and REX are accepted. On false, Ops is unchanged.
-  bool liftX64MemoryCall(const cs_insn *Insn, std::vector<LowOp> &Ops);
+  bool
+  liftX64MemoryCall(const cs_insn *Insn, std::vector<LowOp> &Ops,
+                    LowInstructionUndefinedEffects *UndefinedEffects = nullptr);
 
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
@@ -123,6 +131,17 @@ public:
 
   struct LiftState : LiftStateBase {
     using LiftStateBase::LiftStateBase;
+
+    /// Optional instruction-local draft, published only after the whole lift
+    /// succeeds. Recording an effect never changes the selected LowIR value.
+    LowInstructionUndefinedEffects *UndefinedEffects = nullptr;
+    void recordUndefinedBits(NdVar Output, uint16_t BitOffset,
+                             uint16_t BitCount,
+                             std::optional<NdVar> When = {}) {
+      if (UndefinedEffects)
+        UndefinedEffects->Effects.push_back(
+            {Ops.size() - OpsStart, Output, BitOffset, BitCount, When});
+    }
 
     /// Loader-authenticated provenance for this instruction's encoded memory
     /// displacement.  It is populated only after the relocation field is
@@ -233,7 +252,8 @@ private:
   void liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                 llvm::ArrayRef<RelocatedAddressOperand> Relocs,
                 llvm::ArrayRef<RelocatedScalarOperand> ScalarRelocs,
-                bool LoadMemoryCallTarget);
+                bool LoadMemoryCallTarget,
+                LowInstructionUndefinedEffects *UndefinedEffects);
   bool liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);
   bool liftControl(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);
   bool liftAtomic(LiftState &S, const cs_insn *Insn, const cs_x86 &X86);

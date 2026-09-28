@@ -42,6 +42,20 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
   --output-on-failure
 ```
 
+```sh
+cmake --build build-release --target NeverDLowIRUndefinedIndependenceTests \
+  NeverDX86UndefinedEffectsTests NeverDX86CarryArithmeticFlagTests \
+  NeverDX86LogicIdentityTests --parallel 4
+build-release/bin/NeverDLowIRUndefinedIndependenceTests
+build-release/bin/NeverDX86UndefinedEffectsTests
+build-release/bin/NeverDX86CarryArithmeticFlagTests
+build-release/bin/NeverDX86LogicIdentityTests
+```
+
+`NeverDLowIRUndefinedIndependenceTests` verifica l’indipendenza tra due esecuzioni di grafi LowIR completi e aciclici. Gli ingressi ordinari sono condivisi; ogni nuovo valore non definito dall’architettura mantiene le proprie correlazioni attraverso copie, scritture sovrapposte, salvataggi sullo stack e ricaricamenti. I predicati di controllo sono verificati prima delle assunzioni sul percorso. I certificati richiedono metadati degli effetti `Complete`, associati esattamente ai confini completi di ogni istruzione e al digest delle sue operazioni. Prove mancanti, cicli raggiungibili, chiamate, alias sconosciuti e budget esauriti comportano il rifiuto. Il risultato è limitato dalle osservazioni esplicite e dal contratto di accesso al frame senza errori; non dimostra l’equivalenza completa dal codice nativo a C.
+
+`NeverDX86UndefinedEffectsTests` verifica i metadati dei bit indefiniti, i flag definiti o preservati e il rifiuto dei certificati obsoleti. `NeverDX86CarryArithmeticFlagTests` controlla il riporto ausiliario di ADC/SBB nelle forme registro e memoria con un oracolo aritmetico. `NeverDX86LogicIdentityTests` verifica che AND con operandi identici azzeri ancora i bit 63:32 del registro a 64 bit corrispondente quando scrive una destinazione a 32 bit in modalità a 64 bit, preservando i bit non scritti nelle scritture più strette.
+
 I test del nucleo verificano separazione dei contesti, ricongiungimenti a punto fisso, cicli dinamici, registri sovrapposti, invalidazione degli alias, dispatch finito e rifiuto senza sostituzioni parziali. I test dei sorgenti assemblano macchine x64 originali a registri, a stack e a indirizzi finiti; includono campi di controllo correlati e un oracolo nativo indipendente SysV/Win64. Entrambi i percorsi C sono compilati in O0/O2 con trap per comportamento indefinito e confrontati con un oracolo senza segno per calcoli, scritture in memoria e sentinelle di uscita. I casi negativi verificano certificati mancanti e budget insufficienti. La CLI pubblica e i rapporti verificano controlli, budget, contatori e rifiuti. Servono Clang con supporto cross-target e LLD; eseguire l’ELF originale richiede anche un host Linux x64. Uno strumento assente o un host incompatibile indica copertura saltata, non successo.
 
 `ControlStateRecovery.LongTransparentLoop*` copre un ciclo indipendente di 20 fasi, oracoli aritmetici dinamici, il rifiuto dei selettori sconosciuti e l’esaurimento dei budget. `LongTransparentPhasesKeepExactBitDemands` verifica che i bit non pertinenti nello stesso byte del selettore restino dati osservabili a runtime senza diventare richieste di controllo. `ProducerClosureChargesWorkBeforeAnotherRestart` verifica che l’individuazione inversa e la rivalutazione consumino i budget condivisi prima dell’avvio di un nuovo grafo, senza pubblicare risultati parziali.
