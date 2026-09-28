@@ -585,6 +585,31 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     return Result;
   };
 
+  // An x64 SEH handler is entered by the unwinder with the protected frame's
+  // nonvolatile registers as they were when the exception was raised. Where
+  // no protected block writes one, that is the value live throughout the
+  // protected range, not the value the function was entered with.
+  std::map<int, std::vector<int>> SEHProtected;
+  std::set<int> SEHTrackedIds;
+  auto NonvolatileFamily = [](const MedVar &V) -> std::optional<uint64_t> {
+    if (V.Kind != MedVar::Reg || V.RegOff >= x86reg::RIP)
+      return std::nullopt;
+    const uint64_t Family = V.RegOff / 8 * 8;
+    switch (Family) {
+    case x86reg::RBX:
+    case x86reg::RBP:
+    case x86reg::RSI:
+    case x86reg::RDI:
+    case x86reg::R12:
+    case x86reg::R13:
+    case x86reg::R14:
+    case x86reg::R15:
+      return Family;
+    default:
+      return std::nullopt;
+    }
+  };
+
   // Step 0: Insert implicit definitions for live-in variables in the entry
   // block.  A variable is live-in to the function when some path from entry
   // uses it before any definition — exactly the values the caller supplies.
@@ -704,6 +729,33 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     for (int Root : Roots) {
       if (Root != 0)
         NonEntryRootLiveIns.insert(LiveIn[Root].begin(), LiveIn[Root].end());
+      if (Root != 0 && TargetArch == Arch::X64 && Low.ExceptionMetadata &&
+          Low.ExceptionMetadata->SEH) {
+        const ExceptionFunction &EH = *Low.ExceptionMetadata;
+        std::vector<int> Protected;
+        bool Complete = true;
+        for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+          if (Scope.HandlerVA != Func.Blocks[Root].StartAddr)
+            continue;
+          auto Range =
+              getSemanticSEHGuardedRange(Scope, Arch::X64, EH.CodeRange);
+          if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range) {
+            Complete = false;
+            break;
+          }
+          for (int B = 0; B < N; ++B)
+            if (Func.Blocks[B].StartAddr < Range->End &&
+                Func.Blocks[B].EndAddr > Range->Begin)
+              Protected.push_back(B);
+        }
+        if (Complete && !Protected.empty()) {
+          SEHProtected[Root] = std::move(Protected);
+          for (int Id : LiveIn[Root])
+            if (auto V = VarOfId.find(Id);
+                V != VarOfId.end() && NonvolatileFamily(V->second))
+              SEHTrackedIds.insert(Id);
+        }
+      }
       std::vector<MedOp> InitOps;
       const bool IsItaniumEHRoot =
           !Func.Blocks[Root].ExceptionalPreds.empty() &&
@@ -863,6 +915,11 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       DomChildren[IDom[C]].push_back(C);
   }
 
+  std::set<int> SEHProtectedBlocks;
+  for (const auto &[Root, Blocks] : SEHProtected)
+    SEHProtectedBlocks.insert(Blocks.begin(), Blocks.end());
+  std::map<int, std::map<int, int>> SEHEntryVersions;
+
   struct Frame {
     int B;
     size_t ChildIdx;
@@ -881,6 +938,9 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
       Phi.Output.SSAVer = NewVersion(Phi.Output.Id);
       F.SavedSizes[Phi.Output.Id]++;
     }
+    if (SEHProtectedBlocks.count(F.B))
+      for (int Id : SEHTrackedIds)
+        SEHEntryVersions[F.B][Id] = GetVersion(Id);
     for (auto &Op : Blk.Ops) {
       for (uint8_t I = 0; I < Op.NumInputs; ++I) {
         if (Op.Inputs[I].Id >= 0)
@@ -948,6 +1008,42 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           VarStack[VId].pop_back();
       }
       Stk.pop_back();
+    }
+  }
+
+  for (const auto &[Root, Blocks] : SEHProtected) {
+    std::set<uint64_t> Written;
+    for (int B : Blocks)
+      for (const MedOp &Op : Func.Blocks[B].Ops) {
+        if (auto Family = NonvolatileFamily(Op.Output))
+          Written.insert(*Family);
+        for (const MedVar &Aux : Op.IntrinsicOutputs)
+          if (auto Family = NonvolatileFamily(Aux))
+            Written.insert(*Family);
+      }
+    for (MedOp &Seed : Func.Blocks[Root].Ops) {
+      // The root's seeds come first, all at its address.
+      if (Seed.Addr != Func.Blocks[Root].StartAddr)
+        break;
+      if (Seed.Opcode != NdOp::COPY || Seed.NumInputs != 1)
+        continue;
+      MedVar &In = Seed.Inputs[0];
+      const auto Family = NonvolatileFamily(In);
+      if (!Family || In.Id != Seed.Output.Id || In.SSAVer != 0 ||
+          Written.count(*Family))
+        continue;
+      std::optional<int> Live;
+      bool Same = true;
+      for (int B : Blocks) {
+        auto It = SEHEntryVersions[B].find(In.Id);
+        if (It == SEHEntryVersions[B].end() || (Live && *Live != It->second)) {
+          Same = false;
+          break;
+        }
+        Live = It->second;
+      }
+      if (Same && Live && *Live > 0)
+        In.SSAVer = *Live;
     }
   }
 }

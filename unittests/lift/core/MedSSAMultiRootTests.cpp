@@ -14,6 +14,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/LowToMedError.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
@@ -530,6 +531,27 @@ TEST(MedSEHHandlerEntry, ScratchRegisterIsNotTheNormalPathValue) {
   EXPECT_FALSE(Scratch->isConst()) << Scratch->display();
   EXPECT_EQ(Scratch->Kind, MedVar::Reg) << Scratch->display();
   EXPECT_EQ(Scratch->SSAVer, 0) << Scratch->display();
+}
+
+TEST(MedSEHHandlerEntry, NonvolatileRegisterHoldsItsProtectedValue) {
+  // mov rdi,rcx before the protected nop; the handler stores rdi. The
+  // unwinder restores the protected frame's rdi, which the range never
+  // writes: the handler sees rcx's value, not rdi's value at entry.
+  auto Img = makeFixedSEHFrameImage();
+  auto &Data = Img.Segments.front().Data;
+  const uint8_t Normal[] = {0x48, 0x89, 0xcf, 0x90, 0x90, 0x90, 0x90, 0x90};
+  std::copy(std::begin(Normal), std::end(Normal), Data.begin() + 8);
+  const uint8_t Handler[] = {0x48, 0x89, 0x7c, 0x24, 0x28, 0x90, 0x90,
+                             0x90, 0x90, 0x90, 0x90, 0xeb, 3};
+  std::copy(std::begin(Handler), std::end(Handler), Data.begin() + 0x20);
+  auto Low = decodeFixedSEHFrame(Img);
+  auto Med = LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "seh-handler-entry"));
+  auto Saved = storedValueAt(Med, Img.Entry + 0x20);
+  ASSERT_TRUE(Saved);
+  EXPECT_EQ(Saved->Kind, MedVar::Reg) << Saved->display();
+  EXPECT_EQ(Saved->RegOff, x86reg::RCX) << Saved->display();
+  EXPECT_EQ(Saved->SSAVer, 0) << Saved->display();
 }
 
 TEST(MedSEHHandlerEntry, HighCCapturesTheExceptionCodeInTheExceptArm) {
