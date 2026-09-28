@@ -73,6 +73,8 @@ The exact x64 `PUSHFQ`/`POPFQ` forms remain in the residual program. Analysis tr
 
 Before a full flag snapshot, every modelled arithmetic or direction flag must have a definition within the recovered function. Any direct flag read also needs a definition on every reachable predecessor, even when symbolic simplification cancels its value. Otherwise recovery refuses instead of emitting an unknown-register trap in C.
 
+LowIR temporaries are local to one lifted native instruction. Every byte read must have been defined earlier in that instruction; a reused offset from a prior instruction or an algebraically cancelled undefined value is not source evidence. Entry constants may bind physical registers only.
+
 ## Current limits
 
 Input-dependent bytecode addresses and decoder-state relationships are supported

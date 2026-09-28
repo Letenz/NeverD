@@ -454,11 +454,13 @@ TEST(InterpreterSpecialization,
   P.add(0x101,
         {op(NdOp::INTRINSIC, Flags,
             {NdVar::cst(static_cast<uint64_t>(Intrinsic::Pushf), 2)}),
+         op(NdOp::COPY, reg(40), {Flags}),
          op(NdOp::INT_AND, reg(16), {Flags, constant(uint64_t{1} << 9)}),
          op(NdOp::SELECT, reg(24), {reg(16), constant(0x110), constant(0x120)}),
          op(NdOp::INDIR_BR, {}, {reg(24)})});
   P.add(0x110,
-        {op(NdOp::INTRINSIC, {},
+        {op(NdOp::COPY, Flags, {reg(40)}),
+         op(NdOp::INTRINSIC, {},
             {NdVar::cst(static_cast<uint64_t>(Intrinsic::Popf), 2), Flags}),
          op(NdOp::COPY, reg(0), {constant(11)}), ret()});
   P.add(0x120, {op(NdOp::COPY, reg(0), {constant(22)}), ret()});
@@ -840,13 +842,54 @@ TEST(InterpreterSpecialization, UndefinedTemporaryIsNotAnExternalABIInput) {
   Options.ExternalStoresPreserveEntryReturnSlot = true;
   auto Result = specializeInterpreter(P, {0x100}, Options);
   EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
-  EXPECT_NE(Result.Diagnostic.find("address origin"), std::string::npos);
+  EXPECT_NE(Result.Diagnostic.find("unbound temporary"), std::string::npos);
   EXPECT_TRUE(Result.Residual.Blocks.empty());
   P.add(0x100,
         {op(NdOp::COPY, NdVar::tmp(0x10000, 8), {reg(8)}),
          op(NdOp::STORE, {}, {NdVar::tmp(0x10000, 8), constant(0)}), ret()});
   Result = specializeInterpreter(P, {0x100}, Options);
   EXPECT_TRUE(Result.complete()) << Result.Diagnostic;
+}
+
+TEST(InterpreterSpecialization, TemporaryReadsNeedCompleteDefinitions) {
+  Provider P;
+  const NdVar Temp = NdVar::tmp(0x10000, 8);
+  P.add(0x100, {op(NdOp::INT_XOR, reg(0), {Temp, Temp}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+
+  P.add(0x100, {op(NdOp::COPY, NdVar::tmp(0x10000, 4), {constant(7, 4)}),
+                op(NdOp::COPY, reg(0), {Temp}), ret()});
+  Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+
+  P.add(0x100, {op(NdOp::COPY, Temp, {reg(8)}), op(NdOp::COPY, reg(0), {Temp}),
+                ret()});
+  Result = specializeInterpreter(P, {0x100});
+  ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+  EXPECT_EQ(execute(Result.Residual, {{8, 42}}), 42u);
+}
+
+TEST(InterpreterSpecialization, PriorInstructionCannotDefineReusedTemporary) {
+  Provider P;
+  const NdVar Temp = NdVar::tmp(0x10000, 8);
+  P.add(0x100, {op(NdOp::COPY, Temp, {constant(7)})});
+  P.add(0x101, {op(NdOp::COPY, reg(0), {Temp}), ret()});
+  auto Result = specializeInterpreter(P, {0x100});
+  EXPECT_EQ(Result.Status, SpecializationStatus::Unsupported);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
+}
+
+TEST(InterpreterSpecialization, EntryConstantsCannotBindLifterTemporaries) {
+  Provider P;
+  P.add(0x100, {op(NdOp::COPY, reg(0), {constant(7)}), ret()});
+  SpecializationOptions Options;
+  Options.EntryConstants.push_back({NdVar::tmp(0x10000, 8), 7});
+  auto Result = specializeInterpreter(P, {0x100}, Options);
+  EXPECT_EQ(Result.Status, SpecializationStatus::InvalidInput);
+  EXPECT_TRUE(Result.Residual.Blocks.empty());
 }
 
 void imageWord(Provider &P, va_t Address, uint64_t Value, unsigned Bytes = 8) {

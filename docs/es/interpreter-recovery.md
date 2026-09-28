@@ -73,6 +73,8 @@ Las formas x64 exactas de `PUSHFQ`/`POPFQ` permanecen en el programa residual. E
 
 Antes de capturar todos los indicadores, cada indicador aritmético o de dirección modelado debe estar definido dentro de la función recuperada. Toda lectura directa de un indicador también requiere una definición en cada ruta predecesora alcanzable, aunque la simplificación simbólica anule su valor. De lo contrario, la recuperación se rechaza en lugar de emitir C con una trampa de «registro desconocido».
 
+Los temporales de LowIR solo viven dentro de una instrucción nativa levantada. Cada byte leído debe haberse definido antes en esa misma instrucción; reutilizar una posición de una instrucción anterior o cancelar algebraicamente un valor indefinido no demuestra que el código fuente sea válido. Las constantes de entrada solo pueden vincular registros físicos.
+
 ## Límites actuales
 
 Las direcciones de bytecode dependientes de la entrada y las relaciones entre estados del decodificador solo se admiten cuando los dominios finitos y las correlaciones necesarios pueden demostrarse dentro de los límites configurados. Esto no demuestra compatibilidad con todos los esquemas de decodificación indirecta. Se pueden recuperar ramas y bucles dinámicos si se demuestra cada destino de despacho; la cobertura de ramas ordinarias no basta para probarlo. El control sin resolver o el agotamiento de un presupuesto de prueba necesario son fallos y no publican código recuperado ni sustituciones parciales. Las llamadas auxiliares nativas, los límites de excepciones o reentrada, el código mutable y otras arquitecturas siguen fuera del contrato del adaptador.

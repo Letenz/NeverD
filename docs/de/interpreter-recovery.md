@@ -76,6 +76,8 @@ Die exakten x64-Formen von `PUSHFQ`/`POPFQ` bleiben im Restprogramm erhalten. Di
 
 Vor einem vollständigen Flags-Schnappschuss muss jedes modellierte arithmetische Flag und das Richtungsflag innerhalb der rekonstruierten Funktion definiert sein. Auch ein direkter Flag-Lesezugriff braucht auf jedem erreichbaren Vorgängerpfad eine Definition, selbst wenn die symbolische Vereinfachung seinen Wert aufhebt. Andernfalls wird die Rekonstruktion abgelehnt, statt C mit einer Falle für ein unbekanntes Register auszugeben.
 
+LowIR-Temporärwerte gelten nur innerhalb einer gehobenen nativen Anweisung. Jedes gelesene Byte muss zuvor in derselben Anweisung definiert worden sein; ein wiederverwendeter Offset aus einer früheren Anweisung oder ein algebraisch aufgehobener undefinierter Wert ist kein Beleg für gültigen Quellcode. Eintrittskonstanten dürfen nur physische Register binden.
+
 ## Aktuelle Grenzen
 
 Eingabeabhängige Bytecode-Adressen und Beziehungen zwischen Decoder-Zuständen werden nur unterstützt, wenn die erforderlichen endlichen Wertebereiche und Korrelationen innerhalb der konfigurierten Grenzen nachweisbar sind. Daraus folgt keine Unterstützung beliebiger indirekter Decodierschemata. Dynamische Verzweigungen und Schleifen können rekonstruiert werden, wenn jedes Dispatch-Ziel bewiesen ist; gewöhnliche Zweigabdeckung genügt dafür nicht. Nicht aufgelöster Kontrollfluss und ausgeschöpfte erforderliche Beweisbudgets sind Fehler: Es wird weder rekonstruierter Quelltext noch ein teilweiser Ersatz veröffentlicht. Native Hilfsaufrufe, Ausnahme- und Wiedereintrittsgrenzen, veränderlicher Code und andere Architekturen bleiben außerhalb des Ausführungsvertrags.

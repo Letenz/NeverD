@@ -942,6 +942,10 @@ bool Specializer::evaluate(int Id) {
       return fail(SpecializationStatus::InvalidInput,
                   llvm::toString(std::move(Error)));
     NativeSlice Slice{Instruction.Origin, Draft.Block.Ops.size(), 0};
+    // LowIR temporary offsets are reused by each native instruction. A prior
+    // instruction (or a previous loop iteration) cannot define this one's
+    // temporary inputs, even if the numeric offset happens to match.
+    std::set<uint64_t> DefinedTemporaries;
     for (size_t I = 0; I < Instruction.Ops.size(); ++I) {
       if (++Result.EvaluatedOperations > Options.MaxOperations)
         return fail(SpecializationStatus::BudgetExceeded,
@@ -972,6 +976,15 @@ bool Specializer::evaluate(int Id) {
                       ReservedTemporary))
         return fail(SpecializationStatus::InvalidInput,
                     "native temporary overlaps the reserved dispatch range");
+      for (unsigned J = 0; J < Original.NumInputs; ++J) {
+        const NdVar &Input = Original.Inputs[J];
+        if (!Input.isTemp())
+          continue;
+        for (uint16_t B = 0; B < Input.Size; ++B)
+          if (!DefinedTemporaries.count(Input.Offset + B))
+            return fail(SpecializationStatus::Unsupported,
+                        "native operation reads an unbound temporary");
+      }
       LowOp Residual = Original;
       bool OutputUnsafe = false;
       for (unsigned J = 0; J < Original.NumInputs; ++J)
@@ -1146,6 +1159,9 @@ bool Specializer::evaluate(int Id) {
         if (Ctx.asConst(Exec.operandValue(Original.Output)))
           OutputUnsafe = false;
         setUnsafeOrigin(Original.Output, OutputUnsafe, Origins);
+        if (Original.Output.isTemp())
+          for (uint16_t B = 0; B < Original.Output.Size; ++B)
+            DefinedTemporaries.insert(Original.Output.Offset + B);
         if (Original.Output.isReg())
           for (uint16_t B = 0; B < Original.Output.Size; ++B)
             Origins.UndefinedFlags.erase(Original.Output.Offset + B);
@@ -1384,13 +1400,12 @@ SpecializationResult Specializer::run() {
   }
   for (const auto &Constant : Options.EntryConstants) {
     const NdVar &Location = Constant.Location;
-    if (!scalarLocation(Location) || !validValue(Location)) {
+    if (!Location.isReg() || !validValue(Location)) {
       fail(SpecializationStatus::InvalidInput,
-           "invalid entry constant location");
+           "entry constants must bind physical registers");
       return std::move(Result);
     }
-    const SymSpace Space =
-        Location.isReg() ? SymSpace::Register : SymSpace::Temporary;
+    constexpr SymSpace Space = SymSpace::Register;
     for (unsigned I = 0; I < Location.Size; ++I)
       if (!Seeded.emplace(Space, Location.Offset + I).second) {
         fail(SpecializationStatus::InvalidInput,
@@ -1400,9 +1415,8 @@ SpecializationResult Specializer::run() {
     Initial.write(Space, Location.Offset,
                   Ctx.mkConst(8 * Location.Size, Constant.Value));
     setUnsafeOrigin(Location, false, InitialOrigins);
-    if (Location.isReg())
-      for (uint16_t I = 0; I < Location.Size; ++I)
-        InitialOrigins.UndefinedFlags.erase(Location.Offset + I);
+    for (uint16_t I = 0; I < Location.Size; ++I)
+      InitialOrigins.UndefinedFlags.erase(Location.Offset + I);
   }
   enqueue(Entry, project(Initial, FrameRoot, AffineCandidates, InitialOrigins));
   while (!Failed && !Pending.empty()) {
