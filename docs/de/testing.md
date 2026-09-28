@@ -57,6 +57,12 @@ Integer-Min/Max für i1/8/16/32/64/128 bei O0/O2 aus und prüft zugewiesene und
 eingebettete Ergebnisse, Erzeugerreihenfolge und einmalige Auswertung. Nicht
 unterstützte skalare Breiten und fehlerhafte Operanden müssen explizit scheitern.
 
+## Kontrollfluss und Aufrufe in strukturiertem C prüfen
+
+`HighControlFlowSemantics.*` prüft, dass beim Verschieben von Schleifenausstiegen oder nachfolgenden Blöcken die von anderen Sprüngen verwendeten Labels erhalten bleiben. Direkte Einstiege in Ausstiege am Schleifenanfang und -ende sowie der Ersatz von break werden im erzeugten C mit O0/O2 gegen unabhängige Rückgabewerte geprüft.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` prüft, dass erkannte erforderliche Registerargumente auch unbekannte Positionen am Ende behalten. Das Auswerten eines unbekannten erforderlichen Arguments oder einer unbekannten Bedingung muss explizit eine Trap auslösen; ausgelassene, nullwertige und verschachtelte Operanden dürfen nicht stillschweigend zu null werden. Bekannte Werte und nachweislich ungelesene zusätzliche Operanden bleiben ausführbar. Eine Trap ist eine Diagnosegrenze und kein Beweis für gleichwertiges rekonstruiertes Verhalten.
+
 ## Prüfungen der Treiberemulation
 
 Aktivieren Sie `NEVERD_ENABLE_DRIVER_EMULATION=ON` zusammen mit `BUILD_TESTING=ON`,

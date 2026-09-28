@@ -2678,8 +2678,7 @@ const HighExpr *peelCxxThrowDisplay(const HighExpr *E) {
 void HighCWriter::foldSignedJleConds(std::vector<HighStmt> &Stmts) {
   auto IsZero = [&](const HighExpr *Op) {
     Op = unwrapIntegerView(Op);
-    return Op && (Op->Kind == ExprKind::Undef ||
-                  (Op->Kind == ExprKind::Const && Op->ConstVal == 0));
+    return Op && Op->Kind == ExprKind::Const && Op->ConstVal == 0;
   };
   auto SameScalar = [&](const HighExpr *A, const HighExpr *B) {
     auto Peel = [&](const HighExpr *E) {

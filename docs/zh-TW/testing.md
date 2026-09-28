@@ -45,6 +45,12 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` 在 O0/O2 下啟用未定義行為陷阱，執行兩條恢復 C 路徑，涵蓋全部位元組值和原始計數。
 `NeverDLLVMCIntrinsicSemanticTests` 也在 O0/O2 下執行 i1/8/16/32/64/128 的有號與無號整數 min/max，檢查賦值與內嵌結果、運算元產生順序及單次求值。不支援的純量位寬和格式錯誤的運算元必須明確失敗。
 
+## 結構化 C 控制流程與呼叫檢查
+
+`HighControlFlowSemantics.*` 檢查移動迴圈出口或尾部時是否保留其他跳躍仍引用的標籤。測試涵蓋直接進入迴圈頭部、尾部出口及替換後的 break，並以獨立回傳值預期執行 O0/O2 編譯的產生 C。
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` 檢查推斷出的必要暫存器引數是否保留末尾未知欄位。讀取未知的必要引數或條件必須明確觸發陷阱；省略、空指標和巢狀運算元不能被悄悄替換為零。已知值和已證明不被讀取的多餘運算元仍可執行。陷阱是診斷邊界，不是還原行為等價的證明。
+
 ## 驅動程式模擬檢查
 
 同時啟用 `NEVERD_ENABLE_DRIVER_EMULATION=ON` 與 `BUILD_TESTING=ON`，即可建置專項執行套件及共享 C API／CLI 檢查：

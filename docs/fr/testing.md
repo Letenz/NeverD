@@ -57,6 +57,12 @@ non signés i1/8/16/32/64/128 à O0/O2 : résultats affectés ou intégrés, ord
 producteurs et évaluation unique. Les largeurs scalaires non prises en charge
 et les opérandes mal formés doivent échouer explicitement.
 
+## Vérification du contrôle et des appels en C structuré
+
+`HighControlFlowSemantics.*` vérifie que déplacer une sortie ou une fin de boucle conserve les étiquettes visées par d’autres sauts. Les entrées directes dans les sorties en tête ou en fin de boucle et le remplacement de break sont exécutés en C généré à O0/O2, avec des valeurs de retour attendues indépendantes.
+
+`HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` vérifie que les arguments de registre requis conservent leurs positions inconnues finales. Évaluer un argument requis ou une condition inconnue doit provoquer un piège explicite ; les opérandes omis, nuls ou imbriqués ne doivent pas devenir silencieusement zéro. Les valeurs connues et les opérandes supplémentaires dont l’absence de lecture est prouvée restent exécutables. Un piège marque une limite de diagnostic, pas une preuve d’équivalence du comportement reconstruit.
+
 ## Vérifications de l’émulation des pilotes
 
 Activez `NEVERD_ENABLE_DRIVER_EMULATION=ON` avec `BUILD_TESTING=ON` pour compiler
