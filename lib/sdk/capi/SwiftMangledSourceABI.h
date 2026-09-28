@@ -871,6 +871,99 @@ swiftMangledClassScalarGetterSourceABI(const BinaryImage &Image, va_t Entry) {
              : std::nullopt;
 }
 
+// Swift 6.1 arm64 emits a direct Double extension getter returning CGFloat as
+// swiftcc double(double), and a nongeneric nested value's Double property
+// initializer as swiftcc double(). Both use the FP return lane. The complete
+// mangled tree excludes thunks, generic substitutions, and other value layouts.
+inline std::optional<SourceFunctionTypeHint>
+swiftMangledDoubleFloatingPropertySourceABI(const BinaryImage &Image,
+                                            va_t Entry) {
+  if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
+      Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 ||
+      !Image.isCodeAddress(Entry))
+    return std::nullopt;
+  const Symbol *Only = nullptr;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.Addr == Entry && Symbol.IsFunc) {
+      if (Only)
+        return std::nullopt;
+      Only = &Symbol;
+    }
+  if (!Only)
+    return std::nullopt;
+  llvm::StringRef Name(Only->Name);
+  Name.consume_front("_");
+  if (!Name.starts_with("$s"))
+    return std::nullopt;
+  llvm::SwiftDemangleOptions Options;
+  Options.MaxInputBytes = 1024;
+  Options.MaxNodes = 128;
+  Options.MaxDepth = 24;
+  Options.MaxMemoryBytes = 65536;
+  Options.MaxOperations = 10000;
+  const auto Parsed = llvm::swiftDemangle(Name.str(), Options);
+  using Node = llvm::SwiftDemangleNode;
+  const auto Shape = [](const Node &N, llvm::StringRef Kind, size_t Children) {
+    return N.Kind == Kind && !N.Text && !N.Index &&
+           N.Children.size() == Children;
+  };
+  const auto Text = [](const Node &N, llvm::StringRef Kind,
+                       llvm::StringRef Value) {
+    return N.Kind == Kind && N.Text && *N.Text == Value && !N.Index &&
+           N.Children.empty();
+  };
+  const auto Identifier = [](const Node &N) {
+    return N.Kind == "Identifier" && N.Text && !N.Text->empty() && !N.Index &&
+           N.Children.empty();
+  };
+  if (!Parsed.Root || !Parsed.Error.empty() ||
+      !Shape(*Parsed.Root, "Global", 1))
+    return std::nullopt;
+  const auto &Accessor = Parsed.Root->Children[0];
+  if ((!Shape(Accessor, "Getter", 1) && !Shape(Accessor, "Initializer", 1)) ||
+      !Shape(Accessor.Children[0], "Variable", 3))
+    return std::nullopt;
+  const auto &Variable = Accessor.Children[0];
+  if (!Identifier(Variable.Children[1]) ||
+      !Shape(Variable.Children[2], "Type", 1) ||
+      !Shape(Variable.Children[2].Children[0], "Structure", 2))
+    return std::nullopt;
+  const auto &Result = Variable.Children[2].Children[0];
+  const auto &Owner = Variable.Children[0];
+  SourceFunctionTypeHint Hint;
+  Hint.Origin = SourceFunctionTypeHint::OriginKind::SwiftMangled;
+  Hint.ReturnType = NdType::makeFloat(8);
+  if (Accessor.Kind == "Getter") {
+    if (!Shape(Owner, "Extension", 2) || Owner.Children[0].Kind != "Module" ||
+        !Owner.Children[0].Text || Owner.Children[0].Text->empty() ||
+        Owner.Children[0].Index || !Owner.Children[0].Children.empty() ||
+        !Shape(Owner.Children[1], "Structure", 2) ||
+        !Text(Owner.Children[1].Children[0], "Module", "Swift") ||
+        !Text(Owner.Children[1].Children[1], "Identifier", "Double") ||
+        !Text(Result.Children[0], "Module", "CoreGraphics") ||
+        !Text(Result.Children[1], "Identifier", "CGFloat"))
+      return std::nullopt;
+    Hint.Parameters = {{"self", NdType::makeFloat(8)}};
+  } else {
+    if (!Shape(Owner, "Structure", 2) ||
+        !Shape(Owner.Children[0], "Class", 2) ||
+        Owner.Children[0].Children[0].Kind != "Module" ||
+        !Owner.Children[0].Children[0].Text ||
+        Owner.Children[0].Children[0].Text->empty() ||
+        Owner.Children[0].Children[0].Index ||
+        !Owner.Children[0].Children[0].Children.empty() ||
+        !Identifier(Owner.Children[0].Children[1]) ||
+        !Identifier(Owner.Children[1]) ||
+        !Text(Result.Children[0], "Module", "Swift") ||
+        !Text(Result.Children[1], "Identifier", "Double"))
+      return std::nullopt;
+  }
+  std::string Error;
+  return assignDarwinSwiftSourceABI(Hint, Image.Arch, Error)
+             ? std::optional<SourceFunctionTypeHint>(std::move(Hint))
+             : std::nullopt;
+}
+
 // Swift 6.1 arm64 IR gives a direct class-instance getter returning either a
 // Swift or imported ObjC class reference swiftcc ptr(ptr swiftself). Keep the
 // closed mangled Class result; optional, generic and thunk results have

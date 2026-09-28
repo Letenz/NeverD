@@ -583,6 +583,67 @@ TEST(NativeSourceHints, SwiftClassScalarGetterUsesSwiftSelf) {
   EXPECT_FALSE(sdk::swiftMangledClassScalarGetterSourceABI(Wrong, 0x1000));
 }
 
+TEST(NativeSourceHints, SwiftDoubleFloatingPropertyUsesFPLanes) {
+  BinaryImage Image;
+  Image.Format = BinaryFormat::MachO;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Segment Text;
+  Text.VA = 0x1000;
+  Text.Size = Text.FileSz = 0x100;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.resize(0x100);
+  Image.Segments.push_back(std::move(Text));
+  Image.Symbols.push_back(
+      {"_$sSd6LottieE7cgFloat12CoreGraphics7CGFloatVvg", 0x1000, 0, true});
+  auto Hint = sdk::swiftMangledDoubleFloatingPropertySourceABI(Image, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_EQ(Hint->Convention, SourceFunctionTypeHint::ConventionKind::Swift);
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->ReturnType->Size, 8U);
+  EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPReturnReg);
+  ASSERT_EQ(Hint->Parameters.size(), 1U);
+  EXPECT_EQ(Hint->Parameters[0].Type->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->Parameters[0].Location.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->Parameters[0].Location.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPParamRegs[0]);
+  std::string Error;
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Initializer = Image;
+  Initializer.Symbols[0].Name =
+      "_$s6Lottie18CoreAnimationLayerC26CAMediaTimingConfigurationV10timeOffs"
+      "etSdvpfi";
+  Hint = sdk::swiftMangledDoubleFloatingPropertySourceABI(Initializer, 0x1000);
+  ASSERT_TRUE(Hint);
+  EXPECT_TRUE(Hint->Parameters.empty());
+  EXPECT_EQ(Hint->ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint->ReturnLocation.Kind, SourceABICarrierKind::FloatingRegister);
+  EXPECT_EQ(Hint->ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).FPReturnReg);
+  EXPECT_TRUE(validateSourceABI(*Hint, Error)) << Error;
+
+  auto Wrong = Image;
+  Wrong.Symbols[0].Name = "_$sSd6LottieE7cgFloatSdvg";
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols[0].Name += "To";
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Initializer;
+  Wrong.Symbols[0].Name.replace(Wrong.Symbols[0].Name.find("Sdvpfi"), 6,
+                                "Sivpfi");
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Symbols.push_back({"_alias", 0x1000, 0, true});
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+  Wrong = Image;
+  Wrong.Arch = Arch::X64;
+  EXPECT_FALSE(sdk::swiftMangledDoubleFloatingPropertySourceABI(Wrong, 0x1000));
+}
+
 TEST(NativeSourceHints, SwiftClassReferenceGetterUsesSwiftSelf) {
   BinaryImage Image;
   Image.Format = BinaryFormat::MachO;
