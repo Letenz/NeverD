@@ -11,6 +11,7 @@ using namespace neverd;
 
 namespace {
 struct Fixture {
+  enum class GetterKind { CGFloat, Double, Bool };
   static constexpr va_t Entry = 0x1100;
   static constexpr va_t CallSite = 0x1170;
   static constexpr va_t IvarSlot = 0x2100;
@@ -19,7 +20,8 @@ struct Fixture {
   BinaryImage Image;
   LowFunc Function;
 
-  explicit Fixture(bool Bool = false) {
+  explicit Fixture(GetterKind Kind = GetterKind::CGFloat) {
+    const bool Bool = Kind == GetterKind::Bool;
     Image.Format = BinaryFormat::MachO;
     Image.Arch = Arch::AArch64;
     Image.Bits = Bitness::Bits64;
@@ -48,7 +50,9 @@ struct Fixture {
     ObjCMethod Method;
     Method.Implementation = Entry;
     Method.ClassName = "_TtC6Lottie23CompatibleAnimationView";
-    Method.Selector = Bool ? "shouldRasterizeWhenIdle" : "currentProgress";
+    Method.Selector = Bool                         ? "shouldRasterizeWhenIdle"
+                      : Kind == GetterKind::Double ? "currentTime"
+                                                   : "currentProgress";
     Method.TypeEncoding = Bool ? "B16@0:8" : "d16@0:8";
     SourceFunctionTypeHint Signature;
     Signature.ReturnType =
@@ -63,8 +67,11 @@ struct Fixture {
     Image.Symbols.push_back(
         {Bool ? "_$s6Lottie23CompatibleAnimationViewC23shouldRasterizeWhenIdle"
                 "SbvgTo"
-              : "_$s6Lottie23CompatibleAnimationViewC15currentProgress"
-                "12CoreGraphics7CGFloatVvgTo",
+         : Kind == GetterKind::Double
+             ? "_$s6Lottie23CompatibleAnimationViewC11currentTime"
+               "SdvgTo"
+             : "_$s6Lottie23CompatibleAnimationViewC15currentProgress"
+               "12CoreGraphics7CGFloatVvgTo",
          Entry, 0x80, true});
 
     Function.Entry = Entry;
@@ -95,7 +102,10 @@ struct Fixture {
     Add(0x112c, NdOp::LOAD, X9, {X9});
     Add(0x1130, NdOp::INT_AND, X8, {X8, X9});
     Add(0x1138, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
-        {X8, NdVar::scalar(Bool ? 600 : 624, 8)});
+        {X8, NdVar::scalar(Bool                         ? 600
+                           : Kind == GetterKind::Double ? 648
+                                                        : 624,
+                           8)});
     Add(0x1138, NdOp::LOAD, X21, {NdVar::tmp(TmpBase, 8)});
     Add(0x1140, NdOp::CALL, X0, {NdVar::codeAddress(0x1300, 8)});
     Add(CallSite, NdOp::INDIR_CALL, X0, {X21});
@@ -121,7 +131,7 @@ TEST(SwiftVirtualCalls, ExactMaskedIsaGetterBindsSwiftContext) {
 }
 
 TEST(SwiftVirtualCalls, ExactMaskedIsaBoolGetterBindsSwiftContext) {
-  Fixture F(true);
+  Fixture F(Fixture::GetterKind::Bool);
   const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
   ASSERT_EQ(Hints.size(), 1U);
   const auto &Hint = Hints.at(Fixture::CallSite);
@@ -133,6 +143,22 @@ TEST(SwiftVirtualCalls, ExactMaskedIsaBoolGetterBindsSwiftContext) {
   EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
 
   F.Image.ObjCMethods[0].TypeEncoding = "d16@0:8";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+}
+
+TEST(SwiftVirtualCalls, ExactMaskedIsaDoubleGetterBindsSwiftContext) {
+  Fixture F(Fixture::GetterKind::Double);
+  const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+  ASSERT_EQ(Hints.size(), 1U);
+  const auto &Hint = Hints.at(Fixture::CallSite);
+  ASSERT_TRUE(Hint.Virtual);
+  EXPECT_EQ(Hint.Virtual->VtableByteOffset, 648U);
+  ASSERT_TRUE(Hint.Signature.ReturnType);
+  EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Float);
+  EXPECT_EQ(Hint.Signature.ReturnType->Size, 8U);
+  EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+
+  F.Image.Symbols[0].Name += "Other";
   EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
 }
 

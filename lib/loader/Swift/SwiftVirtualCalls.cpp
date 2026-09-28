@@ -239,17 +239,17 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
   if (!Method || Method->IsClassMethod || Method->Selector.empty() ||
       !Method->TypeHint)
     return std::nullopt;
-  const bool CGFloatGetter = Method->TypeEncoding == "d16@0:8";
+  const bool DoubleGetter = Method->TypeEncoding == "d16@0:8";
   const bool BoolGetter = Method->TypeEncoding == "B16@0:8";
-  if (!CGFloatGetter && !BoolGetter)
+  if (!DoubleGetter && !BoolGetter)
     return std::nullopt;
   const auto EntryType = objcMethodSourceTypeHint(Image, Entry);
   if (!EntryType || !EntryType->ReturnType ||
-      (CGFloatGetter ? (EntryType->ReturnType->Kind != NdTypeKind::Float ||
-                        EntryType->ReturnType->Size != 8)
-                     : (EntryType->ReturnType->Kind != NdTypeKind::Int ||
-                        EntryType->ReturnType->Size != 1 ||
-                        EntryType->ReturnType->IsSigned)) ||
+      (DoubleGetter ? (EntryType->ReturnType->Kind != NdTypeKind::Float ||
+                       EntryType->ReturnType->Size != 8)
+                    : (EntryType->ReturnType->Kind != NdTypeKind::Int ||
+                       EntryType->ReturnType->Size != 1 ||
+                       EntryType->ReturnType->IsSigned)) ||
       EntryType->Parameters.size() != 2)
     return std::nullopt;
   const Symbol *Symbol = nullptr;
@@ -259,9 +259,12 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
         return std::nullopt;
       Symbol = &S;
     }
-  if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s") ||
-      !llvm::StringRef(Symbol->Name)
-           .ends_with(CGFloatGetter ? "12CoreGraphics7CGFloatVvgTo" : "SbvgTo"))
+  if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s"))
+    return std::nullopt;
+  const llvm::StringRef Name = Symbol->Name;
+  if (DoubleGetter ? (!Name.ends_with("12CoreGraphics7CGFloatVvgTo") &&
+                      !Name.ends_with("SdvgTo"))
+                   : !Name.ends_with("SbvgTo"))
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
@@ -270,7 +273,7 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
                                                           IsaMaskImport, Slot};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Signature.ReturnType =
-      CGFloatGetter ? NdType::makeFloat(8) : NdType::makeInt(1, false);
+      DoubleGetter ? NdType::makeFloat(8) : NdType::makeInt(1, false);
   Hint.Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
   Hint.Signature.Parameters.back().TheRole =
       SourceParameterTypeHint::Role::SwiftContext;
