@@ -20791,6 +20791,32 @@ TEST(HighCPointerAddresses, MsvcAtlCalleeTableOwnsExactAndSuffixNames) {
   EXPECT_EQ(msvcAtlSpecialMemberStem('2'), nullptr);
 }
 
+TEST(HighCPointerAddresses, SingleQuestionMarkNameIsNotASpecialMember) {
+  // `?BTreeIteratorFromSearchResult@...` names a routine starting with `B`;
+  // only `??B` is a conversion operator. Read as one, it became
+  // `TreeIteratorFromSearchResult_cstr` with a CString prototype that
+  // dropped every argument.
+  HighFunc Func;
+  Func.Name = "caller";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  Func.Params = {{"arg0", NdType::makeInt(8)},
+                 {"arg1", NdType::makeInt(8)},
+                 {"arg2", NdType::makeInt(8)}};
+  HighStmt Call;
+  Call.Kind = StmtKind::Call;
+  Call.CallExpr = HighExpr::makeCall(
+      "?BTreeIteratorFromSearchResult@?$B_TREE@H@@SAXPEAU1@PEAUITERATOR@1@"
+      "PEAUSEARCH_RESULT@1@@Z",
+      0x140002000, {parameter(0), parameter(1), parameter(2)});
+  Func.Body = {Call};
+  const std::string Source = emitFunctions({Func});
+  EXPECT_EQ(Source.find("_cstr"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("BTreeIteratorFromSearchResult(arg0, arg1, arg2)"),
+            std::string::npos)
+      << Source;
+}
+
 TEST(HighCPointerAddresses, AtlUnaryThisPrototypesAreTyped) {
   HighFunc Func;
   Func.Name = "parent";
