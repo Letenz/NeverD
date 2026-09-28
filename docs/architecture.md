@@ -542,6 +542,10 @@ method entry, self operand, receiver declaration, record size and frame bounds;
 missing or changed evidence leaves the message unresolved.
 Three-word records with unsigned or pointer fields, three-word parameters and
 x86_64 indirect results remain unsupported.
+Darwin ARM64 fixed C calls also return naturally laid-out records of exactly
+six doubles through x8. These are not homogeneous floating aggregates under
+the four-member register limit. By-value six-double parameters remain
+unsupported until their indirect argument storage is modeled.
 Padding, packed fields, mixed floating/integer classes and incomplete components
 remain explicitly unsupported. Source record carriers never authorize binary
 rewriting.

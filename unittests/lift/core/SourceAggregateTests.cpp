@@ -382,6 +382,59 @@ TEST(SourceAggregate, ThreeWordResultsUseOnlyTheDarwinArm64IndirectPointer) {
   }
 }
 
+TEST(SourceAggregate, SixDoubleResultsUseDarwinArm64IndirectPointerOnly) {
+  const auto Double = NdType::makeFloat(8);
+  const auto Transform =
+      NdType::makeStruct({Double, Double, Double, Double, Double, Double});
+  ASSERT_EQ(Transform->Size, 48U);
+  ASSERT_EQ(sourceAggregateMembers(Transform).size(), 6U);
+  SourceFunctionTypeHint Hint;
+  Hint.ReturnType = Transform;
+  Hint.Parameters = {{"angle", Double}};
+  std::string Error;
+  ASSERT_TRUE(assignDarwinFixedSourceABI(Hint, Arch::AArch64, Error)) << Error;
+  EXPECT_EQ(Hint.ReturnLocation.Kind,
+            SourceABICarrierKind::IndirectResultPointer);
+  EXPECT_EQ(Hint.ReturnLocation.RegisterOffset,
+            getTargetRegInfo(Arch::AArch64).indirectResultReg());
+  EXPECT_EQ(Hint.ReturnLocation.ValueBytes, 8U);
+  EXPECT_TRUE(Hint.ReturnComponents.empty());
+  ASSERT_EQ(sourceABIParameters(Hint).size(), 1U);
+  EXPECT_EQ(Hint.Parameters[0].Location.Kind,
+            SourceABICarrierKind::FloatingRegister);
+  EXPECT_TRUE(validateSourceABI(Hint, Error)) << Error;
+
+  auto Bad = Hint;
+  Bad.ReturnLocation.RegisterOffset =
+      getTargetRegInfo(Arch::AArch64).IntReturnReg;
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.ReturnComponents.push_back({SourceABICarrierKind::FloatingRegister,
+                                  getTargetRegInfo(Arch::AArch64).FPReturnReg,
+                                  0, 8});
+  EXPECT_FALSE(validateSourceABI(Bad, Error));
+  Bad = Hint;
+  Bad.Parameters.push_back({"transform", Transform});
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, Arch::AArch64, Error));
+  Bad = Hint;
+  EXPECT_FALSE(assignDarwinFixedSourceABI(Bad, Arch::X64, Error));
+  Bad = Hint;
+  EXPECT_FALSE(assignDarwinScalarSourceABI(Bad, Arch::AArch64, Error));
+  Bad = Hint;
+  EXPECT_FALSE(assignDarwinSwiftSourceABI(Bad, Arch::AArch64, Error));
+
+  const auto FiveDoubles =
+      NdType::makeStruct({Double, Double, Double, Double, Double});
+  EXPECT_TRUE(sourceAggregateMembers(FiveDoubles).empty());
+  const auto Float = NdType::makeFloat(4);
+  const auto SixFloats =
+      NdType::makeStruct({Float, Float, Float, Float, Float, Float});
+  EXPECT_TRUE(sourceAggregateMembers(SixFloats).empty());
+  const auto Mixed = NdType::makeStruct(
+      {Double, Double, Double, Double, Double, NdType::makeInt(8)});
+  EXPECT_TRUE(sourceAggregateMembers(Mixed).empty());
+}
+
 TEST(SourceAggregate, IndirectResultEntryRequiresASeparateStorageProof) {
   auto Hint =
       parseObjCMethodEncoding("operatingSystemVersion", "{?=qqq}16@0:8");

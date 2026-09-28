@@ -7035,16 +7035,39 @@ TEST(ObjCCallHints, GraphicsDeclarationsPreserveOpaquePointersAndExactExports) {
         }
       }
     }
-    for (const char *Name : {"CGContextGetCTM", "CGPathApply"}) {
+    for (const char *Name :
+         {"CGContextGetCTM", "CGAffineTransformMakeRotation"}) {
       auto Image = runtimeImage("_" + std::string(Name), Architecture);
       Image.DyldBindSlots[0x2180] = {
           "_" + std::string(Name), 0,
           "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
           false};
-      // Aggregate results and unknown callback prototypes still need their
-      // own complete ABI proof even when the exported symbol is known.
+      const auto Hint = darwinRuntimeSourceCallHint(Image, 0x2180);
+      if (Architecture == Arch::X64) {
+        EXPECT_FALSE(Hint);
+        continue;
+      }
+      ASSERT_TRUE(Hint);
+      EXPECT_EQ(Hint->Signature.ReturnType->Size, 48U);
+      EXPECT_EQ(sourceAggregateMembers(Hint->Signature.ReturnType).size(), 6U);
+      EXPECT_EQ(Hint->Signature.ReturnLocation.Kind,
+                SourceABICarrierKind::IndirectResultPointer);
+      EXPECT_EQ(Hint->Signature.ReturnLocation.RegisterOffset,
+                getTargetRegInfo(Architecture).indirectResultReg());
+      ASSERT_EQ(Hint->Signature.Parameters.size(), 1U);
+      EXPECT_EQ(Hint->Signature.Parameters[0].Type->Kind,
+                std::string(Name) == "CGContextGetCTM" ? NdTypeKind::Ptr
+                                                       : NdTypeKind::Float);
+      Image.DyldBindSlots[0x2180].Module = "/usr/lib/libSystem.B.dylib";
       EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
     }
+    auto Image = runtimeImage("_CGPathApply", Architecture);
+    Image.DyldBindSlots[0x2180] = {
+        "_CGPathApply", 0,
+        "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+        false};
+    // The callback prototype still lacks a complete source ABI proof.
+    EXPECT_FALSE(darwinRuntimeSourceCallHint(Image, 0x2180));
   }
 }
 
