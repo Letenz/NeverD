@@ -40,6 +40,15 @@ Section makeMachOSection(std::string Name, va_t VA, uint64_t Size,
   return Sec;
 }
 
+TEST(AArch64FunctionDiscovery, StrictPrologueAcceptsPairPushesBelowSp) {
+  // A push stores below sp, so the pre-indexed offset is negative:
+  // stp x29, x30, [sp, #-16]! and stp x19, x20, [sp, #-32]!.
+  EXPECT_TRUE(isStrictPrologueWordAArch64(0xa9bf7bfd));
+  EXPECT_TRUE(isStrictPrologueWordAArch64(0xa9be53f3));
+  // stp x0, x1, [x2, #16]! stores through another base register: no push.
+  EXPECT_FALSE(isStrictPrologueWordAArch64(0xa9810440));
+}
+
 TEST(AArch64FunctionDiscovery,
      IgnoresDirectCallBitPatternsInMachONonInstructionSections) {
   constexpr va_t ImageVA = 0x1000;

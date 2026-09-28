@@ -69,7 +69,7 @@ TEST_F(PatchReceipt, FailedInplaceWritePublishesNoMappings) {
   EXPECT_TRUE(Result.PatchedOriginalEntries.empty());
 }
 
-TEST_F(PatchReceipt, UnsupportedInstructionModesRejectBeforeFileAccess) {
+TEST_F(PatchReceipt, InvalidInstructionModesRejectBeforeFileAccess) {
   // These public C++ entry points also accept modules that did not come from
   // Pipeline. A decoder guard cannot protect their file publication boundary.
   const fs::path InputPath = tmpFile("missing-input");
@@ -78,8 +78,7 @@ TEST_F(PatchReceipt, UnsupportedInstructionModesRejectBeforeFileAccess) {
   llvm::LLVMContext Context;
   llvm::Module Module("mode-boundary", Context);
 
-  for (const InstructionMode Mode :
-       {InstructionMode::MixedARMThumb, static_cast<InstructionMode>(255)}) {
+  for (const InstructionMode Mode : {static_cast<InstructionMode>(255)}) {
     SCOPED_TRACE(getInstructionModeName(Mode));
     for (const BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {

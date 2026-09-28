@@ -287,13 +287,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   NativePipelineTrace Trace;
   Trace.start(NativePipelineTrace::Stage::Decoder);
-  if (Img.Mode == InstructionMode::MixedARMThumb) {
-    Result.Error = "mixed ARM/Thumb decoding unsupported";
-    Trace.finish(false);
-    return Result;
-  }
   Decoder Dec;
-  if (!Dec.init(Img.Arch, Img.Mode)) {
+  if (!Dec.init(Img)) {
     Result.Error = "failed to initialize decoder for architecture " +
                    std::string(getArchName(Img.Arch));
     llvm::WithColor::error() << "pipeline: " << Result.Error << "\n";

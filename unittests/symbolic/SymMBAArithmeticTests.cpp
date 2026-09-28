@@ -7,6 +7,8 @@
 #include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "SymMBATestsDetail.h"
 
+#include <bit>
+
 namespace {
 using namespace neverd::symbolic;
 
@@ -91,6 +93,199 @@ TEST(SymMBAArithmetic, ComplementCompletionKeepsNearMissAndResourceFallback) {
   EXPECT_EQ(
       detail::completeComplementarySums(Ctx, Complement.Root, Opts, NoStorage),
       Complement.Root);
+}
+
+TEST(SymMBAArithmetic, CompletesPartitionedMasksAfterSelection) {
+  for (uint32_t Width : {1u, 3u, 8u, 32u, 64u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto Input =
+        parseSymExpr(Ctx, "(y & -(y ^ ~x)) + (y & (-2 - (y ^ x)))", Width);
+    ASSERT_TRUE(Input.ok());
+    MBAOptions Opts;
+    detail::WorkBudget Budget(Opts.MaxWork);
+    SymRef Answer =
+        detail::completeComplementarySums(Ctx, Input.Root, Opts, Budget);
+    EXPECT_EQ(Answer, Ctx.mkVar("y", Width)) << Ctx.toString(Answer);
+    EXPECT_LE(Budget.used(), Opts.MaxWork);
+  }
+}
+
+TEST(SymMBAArithmetic, ProvesWideParityPartitionsBeforeCornerMeasurement) {
+  for (uint32_t Width : {3u, 8u, 64u, 257u}) {
+    for (bool DirectComplement : {false, true}) {
+      for (bool WithOffset : {false, true}) {
+        SCOPED_TRACE(Width);
+        SCOPED_TRACE(DirectComplement);
+        SCOPED_TRACE(WithOffset);
+        SymContext Ctx;
+        SymRef Value = Ctx.mkVar("value", Width);
+        llvm::SmallVector<SymRef, 32> Vars;
+        for (unsigned I = 0; I < 24; ++I)
+          Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+        SymRef Mask = Ctx.mkXor(Vars);
+        SymRef Opposite;
+        if (DirectComplement) {
+          Opposite = Ctx.mkNot(Mask);
+        } else {
+          Vars[0] = Ctx.mkNot(Vars[0]);
+          Opposite = Ctx.mkXor(Vars);
+        }
+        SymRef Input =
+            Ctx.mkAdd(Ctx.mkAnd(Value, Mask), Ctx.mkAnd(Value, Opposite));
+        SymRef Expected = Value;
+        if (WithOffset) {
+          Input = Ctx.mkAdd(Input, Ctx.mkConst(Width, 5));
+          Expected = Ctx.mkAdd(Value, Ctx.mkConst(Width, 5));
+        }
+        MBAOptions Opts;
+        Opts.MaxWork = 4096;
+        Opts.VerifySamples = 0;
+        for (bool Deep : {false, true}) {
+          MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                                  : simplifyMBA(Ctx, Input, Opts);
+          EXPECT_EQ(Result.Expr, Expected) << Ctx.toString(Result.Expr);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          EXPECT_LE(Result.Work, Opts.MaxWork);
+        }
+      }
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, WideParityPartitionRejectsNearMissesAndLowBudgets) {
+  SymContext Ctx;
+  constexpr unsigned Width = 8;
+  SymRef Value = Ctx.mkVar("value", Width);
+  llvm::SmallVector<SymRef, 32> Vars;
+  for (unsigned I = 0; I < 24; ++I)
+    Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+  SymRef Mask = Ctx.mkXor(Vars);
+  Vars[0] = Ctx.mkNot(Vars[0]);
+  Vars[1] = Ctx.mkNot(Vars[1]);
+  SymRef EvenParity = Ctx.mkXor(Vars);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(Ctx, Ctx.mkAnd(Value, Mask),
+                                              Ctx.mkAnd(Value, EvenParity),
+                                              llvm::APInt(Width, 0)));
+
+  Vars[23] = Ctx.mkVar("replacement", Width);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(Ctx, Ctx.mkAnd(Value, Mask),
+                                              Ctx.mkAnd(Value, Ctx.mkXor(Vars)),
+                                              llvm::APInt(Width, 0)));
+
+  SymRef DifferentValue = Ctx.mkVar("other", Width);
+  EXPECT_FALSE(detail::foldPartitionedMaskSum(
+      Ctx, Ctx.mkAnd(Value, Mask), Ctx.mkAnd(DifferentValue, Ctx.mkNot(Mask)),
+      llvm::APInt(Width, 0)));
+
+  SymRef Input =
+      Ctx.mkAdd(Ctx.mkAnd(Value, Mask), Ctx.mkAnd(Value, Ctx.mkNot(Mask)));
+  for (size_t Limit : {size_t(0), size_t(1), size_t(16)}) {
+    MBAOptions Opts;
+    Opts.MaxWork = Limit;
+    Opts.VerifySamples = 0;
+    for (bool Deep : {false, true}) {
+      MBAResult Result = Deep ? simplifyMBADeep(Ctx, Input, Opts)
+                              : simplifyMBA(Ctx, Input, Opts);
+      EXPECT_EQ(Result.Expr, Input);
+      EXPECT_LE(Result.Work, Limit);
+    }
+  }
+  MBAOptions NoStorage;
+  NoStorage.MaxTableBytes = 128;
+  NoStorage.MaxWork = 4096;
+  NoStorage.VerifySamples = 0;
+  EXPECT_EQ(simplifyMBA(Ctx, Input, NoStorage).Expr, Input);
+  EXPECT_EQ(simplifyMBADeep(Ctx, Input, NoStorage).Expr, Input);
+}
+
+TEST(SymMBAArithmetic, WideParityMatchingUsesEveryOperandExactlyOnce) {
+  for (unsigned Width : {3u, 64u, 257u}) {
+    SymContext Ctx;
+    SymRef Value = Ctx.mkVar("value", Width);
+    llvm::SmallVector<SymRef, 24> Vars;
+    for (unsigned I = 0; I < 24; ++I)
+      Vars.push_back(Ctx.mkVar("x" + std::to_string(I), Width));
+    for (uint32_t Trial = 0; Trial < 64; ++Trial) {
+      const uint32_t A = (Trial * 0x9e3779b9u) & 0xffffffu;
+      const uint32_t B = (Trial * 0x7f4a7c15u + 0x1b873593u) & 0xffffffu;
+      llvm::SmallVector<SymRef, 24> ATerms, BTerms;
+      for (unsigned I = 0; I < Vars.size(); ++I) {
+        ATerms.push_back(A & (1u << I) ? Ctx.mkNot(Vars[I]) : Vars[I]);
+        BTerms.push_back(B & (1u << I) ? Ctx.mkNot(Vars[I]) : Vars[I]);
+      }
+      SymRef Result = detail::foldPartitionedMaskSum(
+          Ctx, Ctx.mkAnd(Value, Ctx.mkXor(ATerms)),
+          Ctx.mkAnd(Value, Ctx.mkXor(BTerms)), llvm::APInt(Width, 0));
+      if (std::popcount(A ^ B) & 1u)
+        EXPECT_EQ(Result, Value) << "width " << Width << ", trial " << Trial;
+      else
+        EXPECT_FALSE(Result.isValid())
+            << "width " << Width << ", trial " << Trial;
+    }
+  }
+}
+
+TEST(SymMBAArithmetic, PartitionCompletionRequiresSharedFactorAndMasks) {
+  SymContext Ctx;
+  MBAOptions Opts;
+  for (const char *Text : {
+           "(y & -(y ^ ~x)) + (z & (-2 - (y ^ x)))",
+           "(y & -(y ^ ~x)) + (y & (-3 - (y ^ x)))",
+       }) {
+    auto Input = parseSymExpr(Ctx, Text, 8);
+    ASSERT_TRUE(Input.ok());
+    detail::WorkBudget Budget(Opts.MaxWork);
+    EXPECT_EQ(detail::completeComplementarySums(Ctx, Input.Root, Opts, Budget),
+              Input.Root);
+  }
+
+  auto Shared = parseSymExpr(
+      Ctx, "((x | z) & -(y ^ ~x)) + ((x | z) & (-2 - (y ^ x)))", 8);
+  ASSERT_TRUE(Shared.ok());
+  detail::WorkBudget Budget(Opts.MaxWork);
+  SymRef Answer =
+      detail::completeComplementarySums(Ctx, Shared.Root, Opts, Budget);
+  EXPECT_EQ(Answer, Ctx.mkOr(Ctx.mkVar("x", 8), Ctx.mkVar("z", 8)))
+      << Ctx.toString(Answer);
+}
+
+TEST(SymMBAArithmetic, XorComplementsRequireOddOperandParity) {
+  for (uint32_t Width : {1u, 8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    MBAOptions Opts;
+    auto Complement = parseSymExpr(Ctx, "(x ^ ~y ^ z) + (x ^ y ^ z)", Width);
+    ASSERT_TRUE(Complement.ok());
+    detail::WorkBudget Budget(Opts.MaxWork);
+    EXPECT_EQ(
+        detail::completeComplementarySums(Ctx, Complement.Root, Opts, Budget),
+        Ctx.mkOnes(Width));
+
+    auto Even = parseSymExpr(Ctx, "(x ^ ~y ^ ~z) + (x ^ y ^ z)", Width);
+    ASSERT_TRUE(Even.ok());
+    detail::WorkBudget EvenBudget(Opts.MaxWork);
+    EXPECT_EQ(
+        detail::completeComplementarySums(Ctx, Even.Root, Opts, EvenBudget),
+        Even.Root);
+  }
+}
+
+TEST(SymMBAArithmetic, RechecksRegionExposedByMaskCompletion) {
+  constexpr const char *InputText =
+      "3*((a & -(a ^ ~b)) + (a & (-2 - (a ^ b)))) - 2*(a ^ b) "
+      "- 4*(a & b) + ((c | d) + (c & d))";
+  for (uint32_t Width : {8u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    auto Input = parseSymExpr(Ctx, InputText, Width);
+    auto Expected = parseSymExpr(Ctx, "a - 2*b + c + d", Width);
+    ASSERT_TRUE(Input.ok());
+    ASSERT_TRUE(Expected.ok());
+    MBAResult Answer = simplifyMBADeep(Ctx, Input.Root);
+    EXPECT_EQ(Answer.Expr, Expected.Root) << Ctx.toString(Answer.Expr);
+    EXPECT_EQ(Answer.Evidence, MBAEvidence::Derivation);
+  }
 }
 
 TEST(SymMBAArithmetic, CoefficientGroupsPreserveOpaqueAtomsAndRemainders) {

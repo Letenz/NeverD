@@ -133,6 +133,7 @@ static const uint64_t ARMIntReturnRegs[] = {armreg::R0, armreg::R1};
 
 void initARMRegInfoTables() {
   ARMRegInfo.SubRegs = ARMSubRegs;
+  ARMRegInfo.ProgramCounter = armreg::PC;
 
   ARMRegInfo.MinInsnAlign = limits::kMinInsnAlignARM;
 

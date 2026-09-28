@@ -179,6 +179,35 @@ TEST(HighFrameStoreForwarding, ForwardsExactIntegerReadsAcrossArchitectures) {
       }
 }
 
+TEST(HighFrameStoreForwarding, AcceptsCommutedFrameAdditionOnly) {
+  for (Arch Architecture : Architectures) {
+    SCOPED_TRACE(static_cast<int>(Architecture));
+    const auto Bytes = getTargetRegInfo(Architecture).PointerSize;
+    const auto NegativeOffset =
+        Bytes == 4 ? uint64_t(uint32_t(-16)) : uint64_t(int64_t(-16));
+    const auto Commuted = [&] {
+      return HighExpr::makeBinop(NdOp::INT_ADD,
+                                 HighExpr::makeConst(NegativeOffset, Bytes),
+                                 entryStackPointer(Architecture));
+    };
+    for (bool CommutedStore : {false, true}) {
+      auto Function = roundTrip(Architecture, NdType::makeInt(4, false));
+      if (CommutedStore)
+        Function.Body.front().StoreAddr = Commuted();
+      else
+        Function.Body.back().RetVal->Operands[0] = Commuted();
+      forwardPrivateFrameLoads(Function, Architecture);
+      EXPECT_FALSE(hasLoad(Function.Body.back().RetVal));
+    }
+    auto Function = roundTrip(Architecture, NdType::makeInt(4, false));
+    Function.Body.back().RetVal->Operands[0] =
+        HighExpr::makeBinop(NdOp::INT_SUB, HighExpr::makeConst(16, Bytes),
+                            entryStackPointer(Architecture));
+    forwardPrivateFrameLoads(Function, Architecture);
+    EXPECT_TRUE(hasLoad(Function.Body.back().RetVal));
+  }
+}
+
 TEST(HighFrameStoreForwarding, PreservesFloatingOperatorsAroundIntegerReads) {
   for (Arch Architecture : Architectures)
     for (bool FusedMultiplyAdd : {false, true}) {

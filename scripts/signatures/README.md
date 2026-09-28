@@ -1,9 +1,26 @@
-# Exception-runtime signature generation
+# Signature generation
 
-Tooling that builds `.pat` signatures for the exception-handling runtimes, so
-that NeverD can locate a personality routine in an image that names nothing.
+Tooling that builds the `.pat` signatures in the `signatures` submodule
+(NeverSight/signatures). Two pipelines use it:
 
-## Why this exists
+- the exception-runtime databases, so that NeverD can locate a personality
+  routine in an image that names nothing (most of this page), and
+- the MSVC and Windows SDK databases under `pe/`, which name the runtime,
+  STL, ATL/MFC and SDK code statically linked into Windows programs (see
+  [MSVC and Windows SDK signatures](#msvc-and-windows-sdk-signatures)).
+
+## What a signature line says
+
+Every line is produced by `neverd-sigmaker` from a real library, and states
+the bytes of one function with a wildcard wherever a relocation rewrites
+them. The tail starts where the CRC span ends. A function whose line would
+state fewer than sixteen bytes exactly is not written at all. `neverd::sigs::PatternGenerator` owns those rules, including how wide
+each COFF relocation is. The name on a line is the linkage name the
+library's symbol table spells, byte for byte: `?Close@CFile@@UEAAXXZ`,
+`_ZNSt6thread4joinEv`, x86 `_memcpy`. It is never demangled, sanitized,
+prefixed, or truncated. One public name sits at offset 0 of each line.
+
+## Why the exception-runtime databases exist
 
 Locating a personality routine is a name lookup everywhere else in NeverD. A
 CIE points at an address; `resolveRoutineName` asks the symbol table, the
@@ -110,9 +127,12 @@ The driver reports four numbers, and the last one is the one that matters:
 ```
 
 "Strong enough" means the line passes the same gate the loader applies —
-whole-function coverage and at least sixteen bytes stated exactly. A line that
-fails it is still written, because it remains useful for renaming a function,
-but it will never be allowed to decide a personality. The run fails outright
+whole-function coverage and at least sixteen bytes stated exactly. The
+signature maker never writes a line that states fewer than sixteen bytes
+(`SignatureMatcher::MinStatedBytes`), since such a line agrees with a great
+deal of unrelated code. A line that only falls short of whole-function coverage
+is still written, because it remains useful for renaming a function, but it
+will never be allowed to decide a personality. The run fails outright
 when *no* line passes, because a database like that cannot do the job it was
 built for; raise `--tail` if that happens.
 
@@ -142,3 +162,54 @@ mingw cross runtime, Rust's — runs the driver, and uploads one `.pat` tree per
 leg as an artifact. A final `publish` job merges the trees and commits them,
 and only on `main`; every other trigger stops after the artifacts, so a pull
 request shows what would change without changing it.
+
+## MSVC and Windows SDK signatures
+
+`build_msvc_signatures.py` builds `pe/<x86|arm>/<32|64>/vs<year>.pat` and
+`winsdk.pat` from the library archives that the signatures repository's
+`msvc-libraries.yml` workflow collects on GitHub-hosted Windows images and
+keeps in a release:
+
+- Visual Studio 2026 (its default toolset and 14.50) for x86, x64 and ARM64.
+- Visual Studio 2022 (v143), 2019 (v142) and 2017 (v141) for x86, x64, ARM32
+  and ARM64.
+- Visual Studio 2015 (v140) for x86, x64 and ARM32.
+- Windows SDK 10.0.17763 through 10.0.26100: the Universal CRT and the
+  user-mode libraries.
+
+```bash
+cmake --build build --target neverd-sigmaker
+gh release download <tag> --repo NeverSight/signatures --dir assets
+python3 scripts/signatures/build_msvc_signatures.py \
+    --sigmaker build/bin/neverd-sigmaker \
+    --assets assets --output signatures
+```
+
+Each asset runs through the signature maker with `--machine` set to its
+architecture and a tail that covers every function to its end. Lines from
+every servicing toolset of one Visual Studio year go into the same file, and
+so do lines from every SDK version.
+
+A file is rebuilt from its assets alone, so the lines it held before are
+replaced; download every release before running the script, as the
+signatures repository's `msvc-signatures.yml` does.
+
+When two lines state the same bytes under different names, all of them are
+dropped and the count is reported: the pattern cannot tell those routines
+apart, and picking one name would be a guess. The loader applies every file
+of a directory together, so the rule spans the directory. Bytes that one
+file's libraries give several names are dropped from every file there, and so
+are bytes that two files name differently. Without this, a debug-CRT wrapper
+that is unique among the SDK's libraries would still name the byte-identical
+template instantiations that `vs2026.pat` had dropped as ambiguous.
+
+The matcher compares a line only as far as the line's own length, so a line
+whose bytes open a longer routine of another name is dropped as well. An ARM64
+catch funclet that is nothing but a prologue is the typical case: its line
+would name every function that begins with the same prologue.
+
+Every file written is read back through `neverd-sigmaker --verify`, which uses
+the loader's parser, because one bad line makes the loader reject its whole
+directory. A `<name>.sources.json` file next to each `.pat` records the assets
+it was built from, with their archive digests and toolset or SDK versions, and
+the NeverD revision and release tag that produced it.

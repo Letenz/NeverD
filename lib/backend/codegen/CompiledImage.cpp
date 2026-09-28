@@ -115,7 +115,7 @@ std::vector<WinEHSemanticEmissionShape> collectWinEHSemanticEmissionShape(
 
 void captureFixupReference(std::vector<CapturedFixupReference> &Captured,
                            const llvm::mc_rewrite::FixupCtx &Context,
-                           Arch TargetArch) {
+                           Arch TargetArch, uint64_t Value) {
   if (Context.SectionName.empty() ||
       (Context.Sym.empty() && Context.SubSym.empty()))
     return;
@@ -158,6 +158,7 @@ void captureFixupReference(std::vector<CapturedFixupReference> &Captured,
   Item.Reference.IsPCRel = Context.IsPCRel;
   Item.Reference.IsResolved = Context.IsResolved;
   Item.Reference.BitWidth = Context.BitWidth;
+  Item.Reference.ResolvedValue = Value;
   if (Context.SectionName == section_names::macho::CompactUnwind) {
     const uint64_t PointerWidth =
         TargetArch == Arch::X86 || TargetArch == Arch::ARM ? 4 : 8;
@@ -337,7 +338,7 @@ static CompiledImage compileImageForPatchImpl(
   std::vector<CapturedFixupReference> Pass1Fixups;
   Pass1.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                       uint64_t Value) {
-    captureFixupReference(Pass1Fixups, Context, TargetArch);
+    captureFixupReference(Pass1Fixups, Context, TargetArch, Value);
     return Value;
   };
   Codegen CG1;
@@ -545,7 +546,7 @@ static CompiledImage compileImageForPatchImpl(
     std::vector<CapturedFixupReference> IterationFixups;
     PassN.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                         uint64_t Value) {
-      captureFixupReference(IterationFixups, Context, TargetArch);
+      captureFixupReference(IterationFixups, Context, TargetArch, Value);
       return Value;
     };
     Codegen CGn;

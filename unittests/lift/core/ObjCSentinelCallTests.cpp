@@ -613,7 +613,7 @@ TEST(ObjCSentinelCalls, StackLoadsKeepTheValueAtTheirOwnReadTime) {
   const auto Hint = objcSelectorStubSentinelSourceCallHint(
       F.Image, 0x1100, F.Receiver, {0x2000, 0x2020});
   ASSERT_TRUE(Hint);
-  for (unsigned Mutation = 0; Mutation < 11; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation < 13; ++Mutation) {
     SCOPED_TRACE(Mutation);
     HighFunc Function;
     Function.FrameSize = 32;
@@ -625,6 +625,13 @@ TEST(ObjCSentinelCalls, StackLoadsKeepTheValueAtTheirOwnReadTime) {
     const auto Word = NdType::makeInt(8, false);
     auto Frame = HighExpr::makeVar(Stack, Word);
     const auto Address = [&](unsigned Offset) {
+      if (Mutation == 11)
+        return HighExpr::makeBinop(
+            NdOp::INT_ADD, HighExpr::makeConst(uint64_t(-int64_t(Offset)), 8),
+            Frame);
+      if (Mutation == 12)
+        return HighExpr::makeBinop(NdOp::INT_SUB,
+                                   HighExpr::makeConst(Offset, 8), Frame);
       return HighExpr::makeBinop(NdOp::INT_SUB, Frame,
                                  HighExpr::makeConst(Offset, 8));
     };
@@ -707,7 +714,7 @@ TEST(ObjCSentinelCalls, StackLoadsKeepTheValueAtTheirOwnReadTime) {
     }
     EXPECT_EQ(sdk::objcSourceCallBound(*Call, F.Image, {}, nullptr, nullptr,
                                        &Function),
-              Mutation == 0);
+              Mutation == 0 || Mutation == 11);
   }
 }
 

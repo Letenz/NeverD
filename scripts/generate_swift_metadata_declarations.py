@@ -24,7 +24,7 @@ TARGETS = ("arm64-apple-macos15.0", "arm64-apple-ios18.0-macabi",
            "x86_64-apple-macos15.0", "x86_64-apple-ios18.0-macabi")
 EXPORT_TARGETS = ("arm64-macos", "arm64-maccatalyst",
                   "x86_64-macos", "x86_64-maccatalyst")
-MODULES = ("Foundation", "_Concurrency")
+MODULES = ("Foundation", "Dispatch", "_Concurrency")
 
 
 def nominal_types(document, module="Foundation"):
@@ -43,10 +43,12 @@ def nominal_types(document, module="Foundation"):
         if (identity.get("interfaceLanguage") != "swift" or
                 not identity.get("precise", "").startswith("s:") or
                 symbol.get("accessLevel") not in {"public", "open"} or
-                len(path) != 1 or not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", path[0]) or
+                not path or len(path) > (3 if module == "Dispatch" else 1) or
+                any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", part)
+                    for part in path) or
                 symbol.get("swiftGenerics", {}).get("parameters")):
             continue
-        name, precise = path[0], identity["precise"]
+        name, precise = ".".join(path), identity["precise"]
         if name in result and result[name] != precise:
             raise ValueError("ambiguous public nominal declaration")
         result[name] = precise
@@ -157,7 +159,7 @@ def main():
                                            (graphs[index][name] for name in names)))
     output = render(profiles, load_exports(
         sdk, targets=EXPORT_TARGETS,
-        extra_libraries=("libswift_Concurrency",)),
+        extra_libraries=("libswift_Concurrency", "libswiftDispatch")),
                     json.loads((sdk / "SDKSettings.json").read_text())["Version"],
                     run([str(args.swiftc), "--version"]).strip())
     count = sum(line.startswith("{") for line in output.splitlines())

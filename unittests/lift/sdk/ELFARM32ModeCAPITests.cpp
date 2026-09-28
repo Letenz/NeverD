@@ -1,4 +1,4 @@
-//===- ELFARM32ModeCAPITests.cpp - Metadata-only mixed-mode sessions
+//===- ELFARM32ModeCAPITests.cpp - ARM/Thumb mixed-mode sessions
 //-------===//
 //
 // NeverD Decompiler
@@ -81,18 +81,15 @@ arm32_add:
     const auto Disassembly =
         takeString(neverd_disasm_json(Session.Value, 0, 1));
     if (Mixed) {
-      EXPECT_EQ(Disassembly, "[]");
-      EXPECT_STREQ(neverd_last_error(Session.Value),
-                   "mixed ARM/Thumb decoding unsupported");
-      EXPECT_EQ(neverd_disasm_text(Session.Value, "thumb32_add", 0), nullptr);
-      EXPECT_STREQ(neverd_last_error(Session.Value),
-                   "mixed ARM/Thumb decoding unsupported");
-      EXPECT_TRUE(takeString(neverd_decompile(Session.Value, 0)).empty());
-      EXPECT_STREQ(neverd_last_error(Session.Value),
-                   "mixed ARM/Thumb decoding unsupported");
-      EXPECT_TRUE(takeString(neverd_decompile_llvm(Session.Value, 0)).empty());
-      EXPECT_STREQ(neverd_last_error(Session.Value),
-                   "mixed ARM/Thumb decoding unsupported");
+      EXPECT_NE(Disassembly.find("adds"), std::string::npos) << Disassembly;
+      const auto ARMDisassembly =
+          takeString(neverd_disasm_text(Session.Value, "arm32_add", 0));
+      EXPECT_NE(ARMDisassembly.find("add"), std::string::npos)
+          << ARMDisassembly;
+      EXPECT_FALSE(takeString(neverd_decompile(Session.Value, 0)).empty())
+          << neverd_last_error(Session.Value);
+      EXPECT_FALSE(takeString(neverd_decompile_llvm(Session.Value, 0)).empty())
+          << neverd_last_error(Session.Value);
       EXPECT_NE(takeString(neverd_headers_json(Session.Value))
                     .find("mixed_arm_thumb"),
                 std::string::npos);

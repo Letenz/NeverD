@@ -73,8 +73,9 @@ extension, carry boundaries, shared-DAG traversal, and effect preservation.
 Missing cross-target Clang is a skip, not evidence for that format.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
-(ARM and Thumb ELF), and AArch64 (ELF/COFF/Mach-O), through both C backends. Repeated
-private-frame reloads must reduce to addition/subtraction and execute correctly
+(ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)
+through both C backends. Repeated private-frame reloads must reduce to
+addition/subtraction and execute correctly
 for all byte pairs, word-boundary pairs and deterministic random words at both
 optimization levels. Clang AST checks inspect the complete spill functions for
 residual MBA operators, including temporary assignments, while distinguishing
@@ -88,13 +89,29 @@ store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
 checks load identity/order, volatile/atomic state and poison boundaries.
 `ELFARM32ModeTest.*` checks authenticated ARM/Thumb selection, normalized
-function addresses, mapping-only objects, mixed-image metadata preservation and
-rejection of contradictory modes at one address. The existing mixed-mode
-MOVW/MOVT relocation fixture remains loadable; decoding requires a single mode.
-`ELFARM32ModeCAPITest.*` replaces a Thumb image with mixed metadata in one SDK
-session, checks explicit disassembly/HighC/LLVMC errors, and reloads Thumb to
-verify decoder recovery. `InstructionMode.*` covers the corresponding decoder,
+function addresses, mapping-only objects, mixed-image decoding, cross-mode
+calls with modular MBA arithmetic, wide Thumb branches, HighC/LLVMC
+execution, forwarded argument chains, halfword-aligned interworking targets,
+preserved conditional ARM calls, and rejection of contradictory modes or
+malformed call relocations. A sectionless and symbolless linked ELF checks both
+directions of direct ARM/Thumb calls, conditional Thumb fallthrough, unknown
+unreached bytes, and executable HighC/LLVMC output before and after rewriting.
+A mapped ELF checks generated executable bytes outside its section table,
+Thumb-to-ARM call repair, and both C backends at `-O0` and `-O2`. An aligned
+Thumb stack frame passed to an ARM callee checks live pointer preservation in
+both C backends before and after rewriting; a MedIR contract test also checks
+multi-hop pointer forwarding and rejects a redefined argument register.
+`ELFARM32ModeCAPITest.*` checks that mixed-mode SDK disassembly and both C
+backends work after replacing a Thumb image in the same session, then reloads
+Thumb to verify decoder recovery. `ARM32InterworkingPatchRT.*` links a generic
+mixed ARM/Thumb ELF and executes all four entries in Unicorn before and after
+both section and in-place rewriting. `InstructionMode.*` covers the decoder,
 code-pointer, direct-branch and code-generation boundaries.
+
+```sh
+cmake --build build-release --target NeverDARM32InterworkingTests --parallel 4
+build-release/bin/NeverDARM32InterworkingTests
+```
 
 ## Driver emulation checks
 

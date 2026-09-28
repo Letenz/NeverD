@@ -1191,7 +1191,7 @@ bool MedLLVMEmitter::collectFrameReloadSources(
   return Published->second.Proven;
 }
 
-bool MedLLVMEmitter::frameReloadIsEntryInitialized(const MedOp &Load) const {
+bool MedLLVMEmitter::frameReloadHasAllPathInitializer(const MedOp &Load) const {
   if (!CurMedFunc || CurMedFunc->ExceptionMetadata ||
       Load.Opcode != NdOp::LOAD || Load.NumInputs != 1 ||
       Load.Output.Size == 0 ||
@@ -1215,6 +1215,8 @@ bool MedLLVMEmitter::frameReloadIsEntryInitialized(const MedOp &Load) const {
   }
   if (!Entry || !Member)
     return false;
+  // The entry prefix is sufficient without consulting the CFG index. It also
+  // remains usable during a provisional feasible-edge transaction.
   for (const auto &Op : Entry->Ops) {
     if (&Op == &Load || Op.Opcode == NdOp::COND_BR ||
         Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::INDIR_BR ||
@@ -1227,7 +1229,69 @@ bool MedLLVMEmitter::frameReloadIsEntryInitialized(const MedOp &Load) const {
         canonicalFrameSlotKey(Op.Inputs[0]) == Slot)
       return true;
   }
-  return false;
+
+  // A later full-width STORE can initialize the slot too, provided every
+  // structural path to this exact LOAD passes one. Reaching-source analysis
+  // may still be incomplete when an indexed write could alias the slot; this
+  // certificate establishes initialization only. The caller separately audits
+  // every possibly aliasing write for scalar provenance.
+  if (!FrameReloadAnalysisBuilt || !FrameReloadIndex.Valid)
+    return false;
+  const auto Key = frameReloadOccurrenceKey(Load);
+  if (!Key)
+    return false;
+  const auto SiteIt = FrameReloadIndex.Loads.find(*Key);
+  if (SiteIt == FrameReloadIndex.Loads.end())
+    return false;
+  const FrameReloadLoadSite Site = SiteIt->second;
+  std::map<int, const MedBlock *> Blocks;
+  for (const auto &Block : CurMedFunc->Blocks)
+    if (!Blocks.emplace(Block.Id, &Block).second)
+      return false;
+  const auto LoadBlock = Blocks.find(Site.BlockId);
+  if (LoadBlock == Blocks.end() ||
+      Site.Index >= LoadBlock->second->Ops.size() ||
+      &LoadBlock->second->Ops[Site.Index] != &Load)
+    return false;
+
+  std::set<std::pair<int, bool>> Visited;
+  std::vector<std::pair<int, bool>> Work{
+      {FrameReloadIndex.EntryBlockId, false}};
+  bool SawLoad = false;
+  while (!Work.empty()) {
+    const auto [BlockId, PreviouslyInitialized] = Work.back();
+    Work.pop_back();
+    if (!Visited.emplace(BlockId, PreviouslyInitialized).second)
+      continue;
+    const auto It = Blocks.find(BlockId);
+    const auto Indexed = FrameReloadIndex.Blocks.find(BlockId);
+    if (It == Blocks.end() || Indexed == FrameReloadIndex.Blocks.end())
+      return false;
+    const MedBlock &Block = *It->second;
+    const size_t Boundary =
+        BlockId == Site.BlockId ? Site.Index : Block.Ops.size();
+    bool Initialized = PreviouslyInitialized;
+    for (size_t I = 0; I < Boundary; ++I) {
+      const MedOp &Op = Block.Ops[I];
+      if (Op.Opcode == NdOp::INDIR_BR)
+        return false;
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Op.MemoryOrdering == NdMemoryOrdering::None &&
+          Op.Inputs[1].Size == Load.Output.Size &&
+          canonicalFrameSlotKey(Op.Inputs[0]) == Slot)
+        Initialized = true;
+    }
+    if (BlockId == Site.BlockId) {
+      SawLoad = true;
+      if (!Initialized)
+        return false;
+      continue;
+    }
+    for (int Successor : Indexed->second.Successors)
+      Work.emplace_back(Successor, Initialized);
+  }
+  return SawLoad;
 }
 
 bool MedLLVMEmitter::collectFrameReloadSourcesUncached(

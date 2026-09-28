@@ -175,6 +175,22 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
      "/System/Library/Frameworks/SwiftUI.framework/SwiftUI", "vppC"},
+    // Swift 6.1.2 arm64 and x86_64 clients construct the opaque QoS value
+    // through the Swift indirect-result pointer.
+    {"$s8Dispatch0A3QoSV11unspecifiedACvgZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vI"},
+    // Swift 6.1.2 arm64 and x86_64 client IR return the opaque DispatchTime
+    // value through the Swift indirect-result pointer.
+    {"$s8Dispatch0A4TimeV3nowACyFZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vI"},
+    // Swift 6.1.2 arm64 and x86_64 client IR declare DispatchWorkItem.cancel
+    // as swiftcc void (ptr swiftself).
+    {"$s8Dispatch0A8WorkItemC6cancelyyFTj",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
+    // DispatchTime + DispatchTimeInterval takes both opaque values by address
+    // and writes its result through the Swift indirect-result pointer.
+    {"$s8Dispatch1poiyAA0A4TimeVAD_AA0aB8IntervalOtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vIpp"},
     {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -219,10 +235,37 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // DispatchQueue.global(qos:) reads the QoSClass value by address and
+    // receives the queue metatype in swiftself on both Darwin targets.
+    {"$sSo17OS_dispatch_queueC8DispatchE6global3qosAbC0D3QoSV0G6SClassO_tFZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "ppC"},
+    // DispatchSource.makeTimerSource takes TimerFlags by address, a queue
+    // optional in one integer carrier, and the source metatype in swiftself.
+    {"$sSo18OS_dispatch_sourceC8DispatchE15makeTimerSource5flags5queueSo0a1_"
+     "b1_C6_timer_pAbCE0F5FlagsV_So0a1_b1_I0CSgtFZ",
+     "/usr/lib/swift/libswiftDispatch.dylib", "ppzC"},
+    // The event-handler overload receives QoS and flags by address, the
+    // Objective-C block pointer bits, dynamic source type, and swiftself.
+    {"$sSo18OS_dispatch_sourceP8DispatchE15setEventHandler3qos5flags7handler"
+     "yAC0D3QoSV_AC0D13WorkItemFlagsVyyXBSgtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vppzpC"},
+    // DispatchSourceProtocol.resume/suspend receive the dynamic source type
+    // in the first ordinary argument and the source object in swiftself.
+    // Swift's optimized arm64 and x86_64 IR declare both exact overlay
+    // entries as swiftcc void (ptr, ptr swiftself).
+    {"$sSo18OS_dispatch_sourceP8DispatchE6resumeyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
+    {"$sSo18OS_dispatch_sourceP8DispatchE7suspendyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "zC"},
+    // DispatchSourceTimer.schedule receives three value addresses, dynamic
+    // source metadata, and the source object in swiftself.
+    {"$sSo24OS_dispatch_source_timerP8DispatchE8schedule8deadline9repeating6"
+     "leewayyAC0E4TimeV_AC0eJ8IntervalOAKtF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vppppC"},
     // The concrete UIImage initializer consumes the two String words in x0/x1
     // and returns an object in x0. WMF's arm64 call uses those carriers and
     // links the exact Swift overlay symbol from UIKit.
@@ -254,6 +297,11 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "bpppppC"},
     {"$ss018_bridgeAnyObjectToB0yypyXlSgF", "/usr/lib/swift/libswiftCore.dylib",
      "vIp"},
+    // SetAlgebra.init<S: Sequence>(_:) carries an indirect result and
+    // sequence address, followed by generic metadata and witnesses. Swift
+    // 6.1.2 arm64 and x86_64 clients put T metadata in swiftself.
+    {"$ss10SetAlgebraPyxqd__ncSTRd__7ElementQyd__ACRtzlufCTj",
+     "/usr/lib/swift/libswiftCore.dylib", "vIpppCpp"},
     // The mutating _StringGuts.grow(Int) entry takes the capacity in the
     // first integer register and the two-word guts address in swiftself.
     {"$ss11_StringGutsV4growyySiF", "/usr/lib/swift/libswiftCore.dylib", "vzC"},

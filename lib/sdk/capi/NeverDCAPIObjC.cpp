@@ -184,6 +184,7 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
     COptions.EmitRecordGuards = false;
     COptions.UseDebugNames = false;
     HighCEmitter Emitter;
+    Emitter.prepareImageFunctionNames(S->Img);
     std::string NativeSource;
     // Summary mode still renders and checks every publishable method below.
     // The unrelated whole-image native source is only returned by full export.

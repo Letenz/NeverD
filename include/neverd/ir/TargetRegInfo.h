@@ -126,6 +126,11 @@ struct TargetRegInfo {
   /// Sub-register relationship table.
   llvm::ArrayRef<SubRegEntry> SubRegs = {};
 
+  /// Architectural control-flow register when a RETURN carries its target as
+  /// an explicit LowIR operand (ARM POP PC, for example). It is not a source
+  /// return-value carrier.
+  uint64_t ProgramCounter = 0;
+
   /// Minimum instruction alignment in bytes (1 on x86, 2 on ARM/Thumb,
   /// 4 on AArch64).  Used to validate indirect-branch / jump-table targets.
   /// Set by getTargetRegInfo() alongside SubRegs (not in the const table).
@@ -190,6 +195,11 @@ struct TargetRegInfo {
 
   bool isFrameOrLinkReg(uint64_t RegOff) const {
     return isFrameReg(RegOff) || (LinkRegister != 0 && RegOff == LinkRegister);
+  }
+
+  bool isReturnControlReg(uint64_t RegOff) const {
+    return isFrameOrLinkReg(RegOff) ||
+           (ProgramCounter != 0 && RegOff == ProgramCounter);
   }
 
   bool isStackPointer(uint64_t RegOff) const { return RegOff == StackPointer; }

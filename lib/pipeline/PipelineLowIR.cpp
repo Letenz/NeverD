@@ -2136,8 +2136,7 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
             Owner = &Candidate;
           }
           if (Owner && isFunctionEntry(Owner->CodeRange.Begin) &&
-              !isFunctionEntry(Target) &&
-              Img.hasExecutableCodeOwnerAt(Target))
+              !isFunctionEntry(Target) && Img.hasExecutableCodeOwnerAt(Target))
             Result.RootsByOwner[Owner->CodeRange.Begin].insert(Target);
         }
   }
@@ -2983,7 +2982,7 @@ void Pipeline::buildLowIR(
 
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     Decoder LocalDec;
-    if (!LocalDec.init(Img.Arch, Img.Mode))
+    if (!LocalDec.init(Img))
       return;
     CFGBuilder LocalCFG;
     LocalCFG.setKnownFuncEntries(&FuncEntries);
@@ -3027,7 +3026,7 @@ void Pipeline::buildLowIR(
   auto rebuildFunctions = [&](const std::vector<bool> &Rebuild) {
     parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
       Decoder LocalDec;
-      if (!LocalDec.init(Img.Arch, Img.Mode))
+      if (!LocalDec.init(Img))
         return;
       CFGBuilder LocalCFG;
       LocalCFG.setKnownFuncEntries(&FuncEntries);

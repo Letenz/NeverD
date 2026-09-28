@@ -440,6 +440,10 @@ SymRef solveCoefficientFactors(SymContext &Ctx, SymRef E,
 SymRef completeComplementarySums(SymContext &Ctx, SymRef Root,
                                  const MBAOptions &Opts, WorkBudget &Budget);
 
+/// Complete a sum when its two terms partition a shared bit mask.
+SymRef foldPartitionedMaskSum(SymContext &Ctx, SymRef A, SymRef B,
+                              const llvm::APInt &Offset);
+
 /// Factor complete immediate operands before other readings erase their
 /// shared spelling; measure at most two quotients using the same budget.
 SymRef solveStructuralFactors(SymContext &Ctx, SymRef E, const MBAOptions &Opts,

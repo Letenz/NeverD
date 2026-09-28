@@ -12,6 +12,7 @@
 
 #include "HighCWriter.h"
 
+#include "neverd/ArchSupport.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -2411,8 +2412,14 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
 }
 
 std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
-  if (!CurrentFunc)
+  if (!CurrentFunc ||
+      FrameDisplacementDepth >= limits::kMaxFrameDisplacementDepth)
     return std::nullopt;
+  ++FrameDisplacementDepth;
+  struct DepthGuard {
+    unsigned &Depth;
+    ~DepthGuard() { --Depth; }
+  } Guard{FrameDisplacementDepth};
   const auto &Slots =
       ProjectFrameAliasesIntoStorage ? FrameStorageSlots : FrameSlots;
   const HighExpr *Cur = unwrapIntegerView(&E);
@@ -2422,6 +2429,43 @@ std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
     Cur = unwrapIntegerView(Cur);
     if (!Cur)
       return std::nullopt;
+    if (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::INT_AND &&
+        Cur->Operands.size() == 2 && Cur->Operands[0] && Cur->Operands[1] &&
+        Cur->Type && (Cur->Type->Size == 4 || Cur->Type->Size == 8)) {
+      const HighExpr *LHS = unwrapIntegerView(Cur->Operands[0].get());
+      const HighExpr *RHS = unwrapIntegerView(Cur->Operands[1].get());
+      if (!LHS || !RHS)
+        return std::nullopt;
+      const HighExpr *Mask = RHS->Kind == ExprKind::Const ? RHS : LHS;
+      const HighExpr *Base = Mask == RHS ? LHS : RHS;
+      if (Mask->Kind != ExprKind::Const)
+        return std::nullopt;
+      const uint64_t WidthMask = Cur->Type->Size == 4 ? UINT32_MAX : UINT64_MAX;
+      const uint64_t Cleared = ~Mask->ConstVal & WidthMask;
+      const uint64_t Alignment = Cleared + 1;
+      if (!Cleared || Alignment > kSyntheticStackAlignment ||
+          (Alignment & Cleared) != 0 || CurrentFunc->FrameSize <= 0 ||
+          Cur->Type->Size != getTargetRegInfo(Opts.TheArch).PointerSize)
+        return std::nullopt;
+      const auto BaseDisp = certifiedFrameStorageDisplacement(*Base);
+      if (!BaseDisp || *BaseDisp < -CurrentFunc->FrameSize || *BaseDisp > 0)
+        return std::nullopt;
+      const int64_t Residue = static_cast<int64_t>(
+          syntheticEntryStackResidue(Opts.TheArch, Opts.Format));
+      const int64_t Position = *BaseDisp + Residue;
+      const int64_t Remainder = (Position % static_cast<int64_t>(Alignment) +
+                                 static_cast<int64_t>(Alignment)) %
+                                static_cast<int64_t>(Alignment);
+      if (*BaseDisp < INT64_MIN + Remainder)
+        return std::nullopt;
+      const int64_t AlignedDisp = *BaseDisp - Remainder;
+      if ((Acc > 0 && AlignedDisp > INT64_MAX - Acc) ||
+          (Acc < 0 && AlignedDisp < INT64_MIN - Acc))
+        return std::nullopt;
+      // The synthetic byte buffer shares this alignment and entry residue;
+      // rounding a proved in-frame address stays within its padded lower end.
+      return Acc + AlignedDisp;
+    }
     if (Cur->Kind == ExprKind::Var) {
       if (isCatchFuncletParentFrame(Cur->Var)) {
         // rdx is the parent's established frame, the same rebase SEH handlers
@@ -2514,6 +2558,8 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
     Cur = unwrapIntegerView(Cur);
     if (!Cur)
       return std::nullopt;
+    if (Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::INT_AND)
+      return frameDisplacement(E);
     if (Cur->Kind == ExprKind::Var) {
       if (!isSyntheticEntryStackPointer(Cur->Var, *CurrentFunc, Opts.TheArch) &&
           !isCatchFuncletParentFrame(Cur->Var) &&

@@ -29,10 +29,12 @@
 #include <map>
 #include <optional>
 #include <set>
-#include <utility>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -75,9 +77,11 @@ public:
   static std::string
   sourceParameterType(const SourceParameterTypeHint &Parameter);
   HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
-              DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true)
+              DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
+              const std::unordered_set<std::string_view> *SharedNames = nullptr)
       : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
-        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions) {}
+        GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
+        SharedImageFunctionNames(SharedNames) {}
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
@@ -146,7 +150,7 @@ public:
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
-                 size_t End = static_cast<size_t>(-1));
+                  size_t End = static_cast<size_t>(-1));
   bool tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts, size_t I,
                              size_t End, int Indent, size_t &Last);
   void writeStmtsIsolated(const std::vector<HighStmt> &Stmts, int Indent);
@@ -179,8 +183,8 @@ public:
   /// them is an array in C and prints as its integer address instead.
   std::set<const HighExpr *> LiteralAddressOperands;
   /// Address used by a load/store/atomic. Peels integer views and prints
-  /// `base + imm` without sanitizer wrap. Value uses of the same add still wrap.
-  /// Segmented offsets disable image backing projection to stay numeric.
+  /// `base + imm` without sanitizer wrap. Value uses of the same add still
+  /// wrap. Segmented offsets disable image backing projection to stay numeric.
   std::string addrStr(const HighExpr &Expr, int ParentPrec = 0,
                       bool ProjectImageBacking = true);
   std::string renderUnaryOp(const HighExpr &E, int ParentPrec);
@@ -205,26 +209,25 @@ public:
     TypeRef ElemType;
   };
   std::optional<TypedIndexAccess> typedIndexAccess(const HighExpr &Addr);
-  std::optional<std::string> typedMemberAccess(const HighExpr &Addr,
-                                               uint16_t AccessSize = 0,
-                                               bool EnterNestedAtZero = true) const;
+  std::optional<std::string>
+  typedMemberAccess(const HighExpr &Addr, uint16_t AccessSize = 0,
+                    bool EnterNestedAtZero = true) const;
   std::optional<std::string> typedMemberAddress(const HighExpr &Addr) const;
   TypeRef typedMemberType(const HighExpr &Addr, uint16_t AccessSize = 0) const;
   /// Frame displacement that is a unique interior field of a named record
   /// slot (`record.p` at wrapper+8). Exact slot addresses stay unnamed here.
   std::optional<std::string>
   frameTypedMemberAccess(int64_t Disp, uint16_t AccessSize = 0) const;
-  TypeRef frameTypedMemberType(int64_t Disp,
-                               uint16_t AccessSize = 0) const;
+  TypeRef frameTypedMemberType(int64_t Disp, uint16_t AccessSize = 0) const;
   /// Frame displacement of `Base` (or of the slot under `Load(slot)`) plus
   /// `Rel`. Used so a call-site ArgList overlay wins over IR TPtr at +8.
   std::optional<int64_t> frameOverlayDisplacement(const HighExpr &Base,
                                                   uint64_t Rel) const;
   /// `var = 43` on a 16-byte ArgList slot is `var.types_ = 43` when the
   /// stored scalar is smaller than the record and field 0 is int/ptr.
-  std::optional<std::string> scalarRecordFieldDest(llvm::StringRef SlotName,
-                                                   const HighExpr &Val,
-                                                   llvm::StringRef PrintedValue = {}) const;
+  std::optional<std::string>
+  scalarRecordFieldDest(llvm::StringRef SlotName, const HighExpr &Val,
+                        llvm::StringRef PrintedValue = {}) const;
   /// Integer-return Call stuffed into a pointer field of a slot that a call
   /// retyped (`ArgList.values_` over `TPtr.p`). Const / `p = 0` / integer
   /// temps keep the PDB name.
@@ -235,8 +238,8 @@ public:
   bool pointerNeedsIntegerView(const TypeRef &Ty) const;
   /// Pointer object used as an `INDIR_CALL` base, without `(uintptr_t)`.
   std::string pointerObjectStr(const HighExpr &E);
-  /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void ***)p`.
-  /// A loaded vtable slot `Load(Load(obj)+imm)` is
+  /// Pointer-sized Load chain used as a callee: `*(void **)p` / `**(void
+  /// ***)p`. A loaded vtable slot `Load(Load(obj)+imm)` is
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
@@ -338,7 +341,7 @@ public:
   const HighExpr *asAndWithConst(const HighExpr &Val, uint64_t &Mask) const;
   std::string formatBitAndMask(uint64_t Mask, unsigned Size) const;
   std::string formatInplaceAnd(const std::string &Dest, uint64_t Mask,
-                              unsigned Size) const;
+                               unsigned Size) const;
   bool isInplaceAndStore(const HighStmt &S, uint64_t &Mask) const;
   bool stmtHiddenFromC(const HighStmt &Stmt) const;
   bool stmtsEffectivelyEmpty(const std::vector<HighStmt> &Stmts) const;
@@ -418,7 +421,10 @@ public:
   }
   bool isOwnFunctionName(llvm::StringRef Name,
                          const std::vector<HighFunc> &Funcs);
-  std::optional<std::set<std::string>> ImageFunctionNames;
+  /// Views remain valid for this writer because its BinaryImage is immutable
+  /// for the duration of one emission.
+  std::optional<std::unordered_set<std::string_view>> ImageFunctionNames;
+  const std::unordered_set<std::string_view> *SharedImageFunctionNames;
   std::map<std::string, const HighFunc *> DefinedFunctionsByIdentifier;
   std::map<va_t, const HighFunc *> DefinedFunctionsByAddress;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
@@ -520,6 +526,8 @@ public:
   /// after their memory representation switches to stack_storage.
   std::map<int64_t, NamedFrameSlot> FrameStorageSlots;
   std::map<std::string, int64_t> FrameAliases;
+  /// Bounds nested alignment-to-base certification as well as flat offsets.
+  mutable unsigned FrameDisplacementDepth = 0;
   /// Slot names and interior accesses that share storage with another slot;
   /// copy forwarding must not treat them as independent variables.
   std::set<std::string> SharedFrameStorage;

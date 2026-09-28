@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../data/MedLLVMFailureSnapshot.h"
+#include "MedLLVMScalarProof.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -1661,6 +1662,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     bool ReachesBackedge = false;
     bool HasIndependentAlternative = false;
     bool Unknown = false;
+    bool PathDependent = false;
   };
   auto mergeFrameDomainAlternatives =
       [](const std::vector<FrameDomainReachSummary> &Alternatives) {
@@ -1670,6 +1672,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
           Result.HasIndependentAlternative |=
               Alternative.HasIndependentAlternative;
           Result.Unknown |= Alternative.Unknown;
+          Result.PathDependent |= Alternative.PathDependent;
         }
         return Result;
       };
@@ -1685,6 +1688,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
         for (const FrameDomainReachSummary &Dependency : Dependencies) {
           Result.ReachesBackedge |= Dependency.ReachesBackedge;
           Result.Unknown |= Dependency.Unknown;
+          Result.PathDependent |= Dependency.PathDependent;
           AllHaveIndependentAlternative &= Dependency.HasIndependentAlternative;
           BackedgeDependencies += Dependency.ReachesBackedge ? 1u : 0u;
         }
@@ -1701,17 +1705,16 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   int RemainingFrameDomainReachNodes = 8192;
   std::function<FrameDomainReachSummary(const MedVar &, const FrameRootKey &,
                                         int, std::set<Key>)>
-      summarizeFrameDomainReach =
-          [&](const MedVar &Start, const FrameRootKey &TargetRoot, int Depth,
-              std::set<Key> Seen) -> FrameDomainReachSummary {
-    if (Depth > 128 || RemainingFrameDomainReachNodes-- <= 0)
-      return {.Unknown = true};
+      summarizeFrameDomainReach;
+  auto summarizeFrameDomainReachUncached =
+      [&](const MedVar &Start, const FrameRootKey &TargetRoot, int Depth,
+          std::set<Key> Seen) -> FrameDomainReachSummary {
     // Emission replaces this exact certified GOTPC value with scalar zero;
     // its architectural call/pop LOAD is not a frame-memory recurrence.
     if (Start.isConst() || valueIsAuthenticatedModelZero(Start))
       return {.HasIndependentAlternative = true};
     if (!Seen.insert(keyOf(Start)).second)
-      return {};
+      return {.PathDependent = true};
     if (const PhiNode *Phi = lookupPhi(Start)) {
       bool SawFeasible = false;
       std::vector<FrameDomainReachSummary> Alternatives;
@@ -1821,6 +1824,41 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     }
     return {.Unknown = true};
   };
+  // The initializer walk frequently revisits the same acyclic scalar DAG
+  // through many frame stores. A completed summary with no path-local cycle
+  // is independent of the caller's Seen set and can be reused for this root.
+  // A cycle summary must stay path-local: a different ancestor may provide its
+  // missing initializer, so it is never cached.
+  std::map<std::pair<AddressProvenanceVarKey, FrameRootKey>,
+           std::pair<FrameDomainReachSummary, int>>
+      FrameDomainReachMemo;
+  summarizeFrameDomainReach =
+      [&](const MedVar &Start, const FrameRootKey &TargetRoot, int Depth,
+          std::set<Key> Seen) -> FrameDomainReachSummary {
+    if (Depth > 128)
+      return {.Unknown = true};
+    if (Start.isConst() || valueIsAuthenticatedModelZero(Start))
+      return {.HasIndependentAlternative = true};
+    const Key StartKey = keyOf(Start);
+    if (Seen.count(StartKey))
+      return {.PathDependent = true};
+    const auto MemoKey =
+        std::make_pair(addressProvenanceVarKey(Start), TargetRoot);
+    if (auto It = FrameDomainReachMemo.find(MemoKey);
+        It != FrameDomainReachMemo.end() && Depth <= It->second.second)
+      return It->second.first;
+    if (RemainingFrameDomainReachNodes-- <= 0)
+      return {.Unknown = true};
+    FrameDomainReachSummary Result = summarizeFrameDomainReachUncached(
+        Start, TargetRoot, Depth, std::move(Seen));
+    if (!Result.Unknown && !Result.PathDependent) {
+      auto [It, Inserted] =
+          FrameDomainReachMemo.emplace(MemoKey, std::make_pair(Result, Depth));
+      if (!Inserted && Depth > It->second.second)
+        It->second = {Result, Depth};
+    }
+    return Result;
+  };
   // A relocation-free immutable scalar table can feed the index used by its
   // next lookup (for example, a finite-state transition table in a loop).
   // Record such a LOAD only after every reachable lane slot has been audited
@@ -1838,11 +1876,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
   // path-local depth limit alone still permits exponential re-traversal.  On
   // exhaustion, false is conservative: callers retain the mixed/raw model
   // instead of granting a scalar-offset proof.
-  // The proof is deliberately bounded, but real flag-expanded loop indices
-  // can exceed 4K visited occurrences while remaining a finite scalar DAG.
-  // Match the complete table-base audit's bound so the two halves of the same
-  // provenance decision cannot disagree solely because one has less budget.
-  int RemainingProofNodes = 8192;
+  // The proof is deliberately bounded. Memoized acyclic paths still leave
+  // substantial work in frame-backed index loops, so allow enough expansions
+  // for those complete proofs without accepting any partial result.
+  int RemainingProofNodes = 16384;
   // Identify only value-producing recurrence edges.  This is deliberately
   // separate from generic use/def reachability: a PHI used as a SELECT
   // condition or shift/mask control does not anchor the selected scalar.
@@ -2261,6 +2298,10 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
                  ? true
                  : stableOffsetFailure("mapped-constant", Start, Depth);
     }
+    if (detail::provesUnsignedMagicRemainder(
+            Start, [&](const MedVar &V) { return lookupDef(V); },
+            [&](const MedVar &V) { return traceControlConst(V); }))
+      return true;
     Seen.insert(keyOf(Start));
 
     if (const PhiNode *Nested = lookupPhi(Start)) {
@@ -2463,13 +2504,13 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
           return SawAnchoredSource;
         }
         // A pointer-width reload needs all-path initialization as well as
-        // domain purity. An exact entry STORE can establish initialization
+        // domain purity. An exact all-path STORE can establish initialization
         // even when later indexed writes prevent a unique reaching-source
         // set. Still audit every possibly aliasing write below; this does not
-        // permit pointer recovery to reuse the entry value after a clobber.
+        // permit pointer recovery to reuse the initializer after a clobber.
         if (PointerSize == 0 || Def->Output.Size == 0 ||
             (Def->Output.Size >= PointerSize &&
-             !frameReloadIsEntryInitialized(*Def)))
+             !frameReloadHasAllPathInitializer(*Def)))
           return stableOffsetFailure("incomplete-frame-reload", Start, Depth);
       }
 
@@ -2686,32 +2727,67 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
               return collectFrameReloadSources(Load, Sources);
             });
       };
-      const IndexedPointerLaneSummary ScalarLane = analyzeIndexedPointerLane(
-          Def->Inputs[0], Img, PointerSize,
-          [&](const MedVar &Value) { return lookupDef(Value); }, traceLaneConst,
-          [&](const MedVar &Value, uint64_t &Base, bool &HaveBase,
-              std::vector<MedVar> &Terms) {
-            if (collectIndexedGlobalBase(Value, Base, HaveBase, Terms) &&
-                HaveBase)
-              return true;
-            Base = 0;
-            HaveBase = false;
-            Terms.clear();
-            return collectLiteralPoolBase(Value, Base, HaveBase, Terms);
-          },
-          [&](const MedVar &Value) {
-            return ptrTableUniqueSegment(Value,
-                                         /*IncludeSymbolizedEvidence=*/true);
-          },
-          [&](const Segment *Segment, uint64_t &RunStart, uint64_t &RunEnd) {
-            readOnlyAfterRelocRun(Segment, RunStart, RunEnd);
-          },
-          nullptr, nullptr, false,
-          loadIndexConstraint(
-              CurMedFunc, Def, [&](const MedVar &V) { return lookupDef(V); },
-              [&](const MedVar &V) {
-                return constantIsStableAddressOffset(V);
-              }));
+      auto scalarLanes = [&](const std::set<uint64_t> *KnownBases,
+                             const std::vector<MedVar> *KnownTerms) {
+        return analyzeIndexedPointerLane(
+            Def->Inputs[0], Img, PointerSize,
+            [&](const MedVar &Value) { return lookupDef(Value); },
+            traceLaneConst,
+            [&](const MedVar &Value, uint64_t &Base, bool &HaveBase,
+                std::vector<MedVar> &Terms) {
+              if (collectIndexedGlobalBase(Value, Base, HaveBase, Terms) &&
+                  HaveBase)
+                return true;
+              Base = 0;
+              HaveBase = false;
+              Terms.clear();
+              return collectLiteralPoolBase(Value, Base, HaveBase, Terms);
+            },
+            [&](const MedVar &Value) {
+              return ptrTableUniqueSegment(Value,
+                                           /*IncludeSymbolizedEvidence=*/true);
+            },
+            [&](const Segment *Segment, uint64_t &RunStart, uint64_t &RunEnd) {
+              readOnlyAfterRelocRun(Segment, RunStart, RunEnd);
+            },
+            KnownBases, KnownTerms, false,
+            loadIndexConstraint(
+                CurMedFunc, Def, [&](const MedVar &V) { return lookupDef(V); },
+                [&](const MedVar &V) {
+                  return constantIsStableAddressOffset(V);
+                }));
+      };
+      IndexedPointerLaneSummary ScalarLane = scalarLanes(nullptr, nullptr);
+      if (!ScalarLane.Complete) {
+        // A pointer table may select one of several immutable integer arrays.
+        // Audit every authenticated relocation target using the same index
+        // constraint; one bad or unbounded candidate invalidates the domain.
+        const MedOp *Address = lookupDef(Def->Inputs[0]);
+        if (Address && Address->Opcode == NdOp::INT_ADD &&
+            Address->NumInputs == 2)
+          for (unsigned Side = 0; Side < 2 && !ScalarLane.Complete; ++Side) {
+            std::set<DataAddressIdentity> Identities;
+            if (!recoverAbsoluteDataPointerLoadIdentities(Address->Inputs[Side],
+                                                          Identities) ||
+                Identities.empty())
+              continue;
+            std::set<uint64_t> Bases;
+            bool OwnersValid = true;
+            for (const DataAddressIdentity &Identity : Identities) {
+              if (Identity.OwnerVA == InvalidVA ||
+                  !Img->relocatedTargetBelongsToOwner(Identity.VA,
+                                                      Identity.OwnerVA)) {
+                OwnersValid = false;
+                break;
+              }
+              Bases.insert(Identity.VA);
+            }
+            if (!OwnersValid || Bases.size() != Identities.size())
+              continue;
+            std::vector<MedVar> Terms{Address->Inputs[Side ^ 1u]};
+            ScalarLane = scalarLanes(&Bases, &Terms);
+          }
+      }
       if (ScalarLane.Complete) {
         bool ScalarOnly = true;
         for (uint64_t Slot : ScalarLane.Slots) {
@@ -2776,10 +2852,11 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     return true;
   };
   // Reuse only completed proofs independent of recurrence or memory authority.
-  // A context-dependent descendant invalidates every enclosing proof, including
-  // arithmetic parents; excluding only PHI and LOAD cache entries is not
-  // enough.
-  std::map<AddressProvenanceVarKey, int> IndependentProofs;
+  // The bounded-mask mode can treat an unknown numeric immediate as a scalar,
+  // so its certificates live in a separate cache partition. A context-dependent
+  // descendant invalidates every enclosing proof, including arithmetic parents;
+  // excluding only PHI and LOAD cache entries is not enough.
+  std::map<std::pair<AddressProvenanceVarKey, bool>, int> IndependentProofs;
   size_t ContextGeneration = 0;
   prove = [&](const MedVar &Start, int Depth, std::set<Key> Seen,
               std::set<FrameSlotKey> ActiveFrameSlots,
@@ -2789,14 +2866,15 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     if (valueIsAuthenticatedModelZero(Start))
       return true;
     const bool Cycle = !Start.isConst() && Seen.count(keyOf(Start));
-    const auto CacheKey = addressProvenanceVarKey(Start);
-    if (!Cycle && !InBoundedNumericMask && Depth <= 128) {
+    const auto CacheKey =
+        std::make_pair(addressProvenanceVarKey(Start), InBoundedNumericMask);
+    if (!Cycle && Depth <= 128) {
       auto It = IndependentProofs.find(CacheKey);
       // A certificate obtained deeper in this same proof also fits here. A
       // shallower certificate cannot discharge a deeper use's depth budget.
+      // A cache hit does no graph expansion and therefore spends no node
+      // budget.
       if (It != IndependentProofs.end() && Depth <= It->second) {
-        if (RemainingProofNodes-- <= 0)
-          return stableOffsetFailure("budget", Start, Depth);
         return true;
       }
     }
@@ -2809,7 +2887,7 @@ bool MedLLVMEmitter::valueIsStableAddressOffsetImpl(
     const bool Result =
         proveUncached(Start, Depth, std::move(Seen),
                       std::move(ActiveFrameSlots), std::move(AnchoredPhis));
-    if (Result && !Cycle && !InBoundedNumericMask && Depth <= 128 &&
+    if (Result && !Cycle && Depth <= 128 &&
         GenerationBefore == ContextGeneration) {
       auto [It, Inserted] = IndependentProofs.emplace(CacheKey, Depth);
       if (!Inserted)
