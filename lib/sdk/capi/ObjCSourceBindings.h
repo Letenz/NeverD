@@ -43,7 +43,9 @@ inline bool objcSourceCallBound(
     const std::set<const HighExpr *> *ReadOnlyHelpers = nullptr,
     const HighFunc *ContainingFunction = nullptr,
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
-        *BlockParameterReceivers = nullptr);
+        *BlockParameterReceivers = nullptr,
+    const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
+        *BlockCaptureReceivers = nullptr);
 
 struct ObjCSourceBindingResult {
   HighFunc Function;
@@ -4937,7 +4939,9 @@ inline bool objcSourceCallBound(
     const std::set<const HighExpr *> *ReadOnlyHelpers,
     const HighFunc *ContainingFunction,
     const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
-        *BlockParameterReceivers) {
+        *BlockParameterReceivers,
+    const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
+        *BlockCaptureReceivers) {
   using namespace objc_binding_detail;
   if (Expression.Kind != ExprKind::Call || !Expression.SourceCallHint ||
       Expression.IntrinsicId != Intrinsic::None ||
@@ -5887,6 +5891,27 @@ inline bool objcSourceCallBound(
     return Expected && runtimeBindingMatches(Binding, *Expected);
   }
   if (Binding.Receiver) {
+    if (Binding.Receiver->Origin ==
+            ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+        (Binding.Receiver->BlockCaptureOffset ||
+         (ContainingFunction &&
+          Binding.Receiver->Address != ContainingFunction->Entry))) {
+      if (!ContainingFunction || !BlockCaptureReceivers ||
+          !Binding.Receiver->BlockCaptureOffset ||
+          Binding.Receiver->Address == ContainingFunction->Entry)
+        return false;
+      const auto Function =
+          BlockCaptureReceivers->find(ContainingFunction->Entry);
+      if (Function == BlockCaptureReceivers->end())
+        return false;
+      auto Root = *Binding.Receiver;
+      Root.Steps.clear();
+      const uint64_t Offset = Root.BlockCaptureOffset;
+      Root.BlockCaptureOffset = 0;
+      const auto Capture = Function->second.find(Offset);
+      if (Capture == Function->second.end() || !(Capture->second == Root))
+        return false;
+    }
     if (Binding.Receiver->Origin ==
             ObjCReceiverTypeHint::OriginKind::BlockParameter &&
         BlockParameterReceivers) {

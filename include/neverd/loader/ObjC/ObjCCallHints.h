@@ -45,7 +45,8 @@ objcRuntimeSourceCallHint(const BinaryImage &Image, va_t ImportSlot);
 /// machine/LowIR evidence. Unknown and conflicting signatures remain unbound.
 std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
     const BinaryImage &Image, const LowFunc &Function,
-    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters = nullptr);
+    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters = nullptr,
+    const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures = nullptr);
 
 } // namespace neverd
 #endif

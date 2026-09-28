@@ -176,6 +176,7 @@ struct Value {
     ImageBytes,
     CopiedBlock,
     BlockInvoke,
+    BlockContext,
     SourceParameter
   };
   Kind TheKind = Kind::Number;
@@ -949,7 +950,8 @@ objcSelectorStubDynamicFormatSourceCallHint(const BinaryImage &Image,
 
 std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
     const BinaryImage &Image, const LowFunc &Function,
-    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters) {
+    const std::map<unsigned, ObjCReceiverTypeHint> *BlockParameters,
+    const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures) {
   std::map<va_t, SourceCallTypeHint> Result;
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
@@ -1053,6 +1055,23 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
             key(NdVar::reg(TRI.IntParamRegs[Parameter], 8)),
             Value{Value::Kind::Receiver, 0, {}, Root});
       }
+    if (BlockCaptures && !BlockCaptures->empty() &&
+        !objcMethodReceiverTypeHint(Image, Function.Entry)) {
+      const bool Valid = std::all_of(
+          BlockCaptures->begin(), BlockCaptures->end(),
+          [&](const auto &Capture) {
+            const auto &[Offset, Root] = Capture;
+            return Offset >= 32 && Offset <= (1u << 20) - 8 &&
+                   Offset % 8 == 0 &&
+                   Root.Origin ==
+                       ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+                   Root.Address != Function.Entry && Root.Steps.empty() &&
+                   objcReceiverTypeHintValid(Image, Root);
+          });
+      if (Valid)
+        EntryFacts.Values.emplace(key(NdVar::reg(TRI.IntParamRegs[0], 8)),
+                                  Value{Value::Kind::BlockContext});
+    }
   }
   // Enumerate preserved physical bytes through the authoritative ABI policy.
   // This retains upper bytes of partial integer aliases and only the preserved
@@ -1074,7 +1093,7 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
       std::tuple<ObjCReceiverTypeHint::OriginKind, va_t, std::string, bool,
                  std::vector<ObjCReceiverTypeHint::TypeStep>,
                  std::vector<ObjCReceiverTypeHint::OutParameterRoot>, unsigned,
-                 va_t, uint32_t, std::string>;
+                 va_t, uint32_t, uint64_t, std::string>;
   std::map<ReceiverKey, ObjCReceiverDeclaration> ReceiverDeclarations;
   auto Transfer = [&](size_t Index, Facts State,
                       Hints &BlockHints) -> std::optional<Facts> {
@@ -1626,7 +1645,8 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                 Receiver->IsClassMethod, Receiver->Steps,
                 Receiver->OutParameters, Receiver->SourceParameter,
                 Receiver->BlockDescriptorAddress,
-                Receiver->BlockDescriptorFlags, Target->Selector});
+                Receiver->BlockDescriptorFlags, Receiver->BlockCaptureOffset,
+                Target->Selector});
             if (Inserted)
               It->second = objcReceiverSourceTypeHint(Image, Target->Selector,
                                                       *Receiver);
@@ -2211,10 +2231,20 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
                       Op.Opcode == NdOp::INT_ADD ? A->Number + B->Number
                                                  : A->Number - B->Number,
                       {}};
-        else if (A && B && Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
-                 Op.Inputs[1].Size == 8 &&
-                 A->TheKind == Value::Kind::CopiedBlock && A->Block &&
-                 B->TheKind == Value::Kind::Number) {
+        else if (A && B && A->TheKind == Value::Kind::BlockContext &&
+                 B->TheKind == Value::Kind::Number && Op.Output.Size == 8 &&
+                 Op.Inputs[0].Size == 8 &&
+                 fitsUnsignedValue(B->Number, Op.Inputs[1].Size) &&
+                 B->Number <= (1u << 20) &&
+                 A->Number <= (1u << 20) - B->Number &&
+                 (Op.Opcode == NdOp::INT_ADD || A->Number >= B->Number)) {
+          Out = *A;
+          Out->Number = Op.Opcode == NdOp::INT_ADD ? A->Number + B->Number
+                                                   : A->Number - B->Number;
+        } else if (A && B && Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
+                   Op.Inputs[1].Size == 8 &&
+                   A->TheKind == Value::Kind::CopiedBlock && A->Block &&
+                   B->TheKind == Value::Kind::Number) {
           Out = adjustedFrame(*A, B->Number, Op.Opcode == NdOp::INT_SUB);
         } else if (A && B && Op.Opcode == NdOp::INT_ADD &&
                    Op.Output.Size == 8 && Op.Inputs[0].Size == 8 &&
@@ -2240,6 +2270,14 @@ std::map<va_t, SourceCallTypeHint> buildObjCSourceCallHints(
           Out = *Address;
           Out->TheKind = Value::Kind::BlockInvoke;
           Out->Number = 0;
+        } else if (Address && Address->TheKind == Value::Kind::BlockContext &&
+                   PlainMemory && Op.Output.Size == 8 && BlockCaptures) {
+          const auto Capture = BlockCaptures->find(Address->Number);
+          if (Capture != BlockCaptures->end()) {
+            auto Root = Capture->second;
+            Root.BlockCaptureOffset = Address->Number;
+            Out = Value{Value::Kind::Receiver, 0, {}, std::move(Root)};
+          }
         } else if (Address && Address->TheKind == Value::Kind::Frame &&
                    PlainMemory) {
           const auto Slot = std::pair{static_cast<int64_t>(Address->Number),

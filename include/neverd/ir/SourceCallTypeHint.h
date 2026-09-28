@@ -75,6 +75,9 @@ struct ObjCReceiverTypeHint {
   /// invoke entry in Address.
   va_t BlockDescriptorAddress = 0;
   uint32_t BlockDescriptorFlags = 0;
+  /// Nonzero only when a block invoke loaded this method receiver from an
+  /// exact captured field. Publication checks the field in the final plan.
+  uint64_t BlockCaptureOffset = 0;
 
   bool operator==(const ObjCReceiverTypeHint &Other) const {
     return Origin == Other.Origin && Address == Other.Address &&
@@ -83,7 +86,8 @@ struct ObjCReceiverTypeHint {
            OutParameters == Other.OutParameters &&
            SourceParameter == Other.SourceParameter &&
            BlockDescriptorAddress == Other.BlockDescriptorAddress &&
-           BlockDescriptorFlags == Other.BlockDescriptorFlags;
+           BlockDescriptorFlags == Other.BlockDescriptorFlags &&
+           BlockCaptureOffset == Other.BlockCaptureOffset;
   }
 };
 

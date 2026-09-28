@@ -54,7 +54,13 @@ void LowToMedConverter::bindSourceCalls(MedFunc &Func, const LowFunc &Low,
     if (auto It = ObjCBlockParameterReceivers->find(Low.Entry);
         It != ObjCBlockParameterReceivers->end())
       BlockParameters = &It->second;
-  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters)
+  const std::map<uint64_t, ObjCReceiverTypeHint> *BlockCaptures = nullptr;
+  if (ObjCBlockCaptureReceivers)
+    if (auto It = ObjCBlockCaptureReceivers->find(Low.Entry);
+        It != ObjCBlockCaptureReceivers->end())
+      BlockCaptures = &It->second;
+  auto Hints = Image ? buildObjCSourceCallHints(*Image, Low, BlockParameters,
+                                                BlockCaptures)
                      : std::map<va_t, SourceCallTypeHint>();
   if (Image) {
     auto SwiftHints = buildSwiftValueWitnessCallHints(*Image, Low);
