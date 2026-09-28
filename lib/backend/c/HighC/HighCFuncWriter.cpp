@@ -562,6 +562,15 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     });
   }
 
+  // Each `__except` arm captures GetExceptionCode() into its handler's name,
+  // so the name is declared here even when no printed statement reads it,
+  // and never again as a late declaration.
+  for (const auto &[HandlerVA, Name] : SEHExceptionCodeNames) {
+    (void)HandlerVA;
+    UsedVars.try_emplace(Name, NdType::makeInt(4, false));
+    VisibleAssigned.insert(Name);
+  }
+
   // Every variable the IR mentions, under its own and its forwarded name, is
   // a candidate for a late declaration if the rendered body names it.
   {
@@ -577,14 +586,6 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
     for (const auto &[Name, Ty] : AllVars)
       if (!Name.empty() && !UsedVars.count(Name))
         DeferredDecls.emplace(Name, DeferredDecl{Ty, {}});
-  }
-
-  // Each `__except` arm captures GetExceptionCode() into its handler's name,
-  // so the name is declared even when no printed statement reads it.
-  for (const auto &[HandlerVA, Name] : SEHExceptionCodeNames) {
-    (void)HandlerVA;
-    UsedVars.try_emplace(Name, NdType::makeInt(4, false));
-    VisibleAssigned.insert(Name);
   }
 
   std::set<std::string> DeclaredNames(ParamNames);

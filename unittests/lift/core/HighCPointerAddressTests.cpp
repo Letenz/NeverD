@@ -29833,6 +29833,36 @@ TEST(HighCPointerAddresses, ExceptArmCapturesTheExceptionCode) {
   EXPECT_NE(Source.find("exception_code;"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, UnreadExceptionCodeIsDeclaredOnce) {
+  // The handler's only read of its code is a dead copy.  The arm still
+  // captures the code, so its name is declared once and not again late.
+  HighFunc Func;
+  Func.Name = "unread_exception_code";
+  Func.Entry = 0x140001000;
+  Func.ReturnType = NdType::makeVoid();
+  MedVar Code;
+  Code.Kind = MedVar::SEHExceptionCode;
+  Code.Id = MedVar::SEHExceptionCodeId;
+  Code.SSAVer = 1;
+  Code.Size = 4;
+  Code.ConstVal = 0x14000104C;
+  Code.TheArch = Arch::X64;
+  HighStmt Copy;
+  Copy.Kind = StmtKind::Assign;
+  Copy.Dst = HighExpr::makeVar(temporary(7, 1, 4), NdType::makeInt(4, true));
+  Copy.Val = HighExpr::makeVar(Code, NdType::makeInt(4, true));
+  Func.Body = {exceptTry({callStmt("Probe", 0x140002000, {})}, {Copy})};
+  const std::string Source = emitFunctions({Func});
+  ASSERT_NE(Source.find("exception_code = GetExceptionCode();"),
+            std::string::npos)
+      << Source;
+  size_t Declarations = 0;
+  for (size_t At = Source.find(" exception_code;"); At != std::string::npos;
+       At = Source.find(" exception_code;", At + 1))
+    ++Declarations;
+  EXPECT_EQ(Declarations, 1u) << Source;
+}
+
 TEST(HighCPointerAddresses, NestedExceptArmKeepsTheOuterExceptionCode) {
   // The outer handler runs a nested __try before storing its own code.  The
   // inner arm captures into its handler's name, so the outer store still
