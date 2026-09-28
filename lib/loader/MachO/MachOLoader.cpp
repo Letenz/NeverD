@@ -100,9 +100,10 @@ MachOLoader::load(const std::filesystem::path &Path) {
         llvm::inconvertibleErrorCode());
   if (Img.Arch == Arch::ARM) {
     auto ModeInfo = macho_arm32::parseModeInfo(Img.Raw);
-    if (ModeInfo)
+    if (ModeInfo) {
       Img.Mode = ModeInfo->UniformMode;
-    else
+      Img.ARMCodeModeEntries = std::move(ModeInfo->CodeSymbolModes);
+    } else
       llvm::consumeError(ModeInfo.takeError());
   }
 
@@ -476,6 +477,10 @@ MachOLoader::load(const std::filesystem::path &Path) {
 
   parseObjCMethods(Img);
   parseObjCStorage(Img);
+
+  if (Img.Arch == Arch::ARM)
+    if (llvm::Error Err = discoverARMReachableModes(Img))
+      return std::move(Err);
 
   runPostLoadDiscovery(Img, "macho: loaded " + Path.filename().string());
   // Classified before any table is read: a compact-unwind entry names a

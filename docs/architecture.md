@@ -70,6 +70,13 @@ and unrelated names do not select a decoder mode. A fully stripped image can
 leave an indirect target's state unknowable from static bytes alone; the
 file-level default is not proof that all of its executable bytes use one mode.
 
+For 32-bit ARM Mach-O, the loader seeds exact Thumb entries from executable
+`N_ARM_THUMB_DEF` symbols, including object address zero, then follows direct
+control-flow edges through the shared reachable-mode analysis. A cross-state
+`BLX` can establish an ARM target without treating an unflagged symbol as ARM
+proof. Decoding is limited to reached instruction spans; an unproved gap in a
+mixed image retains unknown mode.
+
 `BinaryImage::readImmutableARMLiteral` is the shared authority for folding a
 fixed-width read from a `$d` island inside executable storage. Both HighIR and
 LLVM emission require the whole read to stay in the island and reject writable

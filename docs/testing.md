@@ -105,6 +105,11 @@ function-size recovery, a call to the first function at object address zero,
 source MBA elimination, and host-recompiled `-O0`/`-O2` execution. Dedicated
 MedIR tests cover exact stack-alignment offsets and reject dynamic, ambiguous,
 and stronger-than-ABI masks.
+One mixed ARM/Thumb Mach-O object checks mode recovery across direct calls in
+both directions. Both C routes remove its arithmetic MBA and execute all five
+functions against edge and randomized modular-addition inputs at `-O0`/`-O2`.
+Loader tests separately require a Thumb symbol at object address zero to retain
+its mode and verify every reachable mixed-mode function entry.
 
 The frame-spill source matrix also covers x86-32 (ELF/COFF/Mach-O), ARM32
 (ARM, Thumb-2 and Cortex-M Thumb-1 ELF), and AArch64 (ELF/COFF/Mach-O)

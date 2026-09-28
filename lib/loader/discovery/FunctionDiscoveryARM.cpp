@@ -82,7 +82,8 @@ size_t scanThumbImportThunks(BinaryImage &Img, const Segment &Seg,
 llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   // Mapping symbols describe their own section intervals, but a rewritten
   // ELF can append executable program bytes without adding a section-table
-  // owner. Follow exact entries when there is any such unmapped segment.
+  // owner. Mach-O has exact Thumb symbols but no mapping intervals. Follow
+  // exact entries when no interval evidence covers all executable bytes.
   const bool HasUnmappedExecutableSegment = std::any_of(
       Img.Segments.begin(), Img.Segments.end(), [&](const Segment &Seg) {
         return Seg.isExecutable() && !Seg.Data.empty() &&
@@ -91,6 +92,7 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
   if (Img.Arch != Arch::ARM || Img.ARMCodeModeEntries.empty() ||
       (!Img.ARMCodeRegions.empty() && !HasUnmappedExecutableSegment))
     return llvm::Error::success();
+  const char *Format = Img.Format == BinaryFormat::MachO ? "macho" : "elf";
 
   struct Disassemblers {
     csh ARM = 0;
@@ -115,7 +117,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
       !(Dec.ARMInsn = cs_malloc(Dec.ARM)) ||
       !(Dec.ThumbInsn = cs_malloc(Dec.Thumb)))
     return llvm::make_error<llvm::StringError>(
-        "elf: ARM mode discovery could not initialize the disassembler",
+        std::string(Format) +
+            ": ARM mode discovery could not initialize the disassembler",
         llvm::inconvertibleErrorCode());
 
   using ModeAt = std::pair<va_t, InstructionMode>;
@@ -142,7 +145,8 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
       const uint64_t Align = Mode == InstructionMode::Thumb ? 2 : 4;
       if ((Cur & (Align - 1)) != 0 || Img.instructionModeAt(Cur, Mode) != Mode)
         return llvm::make_error<llvm::StringError>(
-            "elf: conflicting or misaligned reachable ARM/Thumb mode",
+            std::string(Format) +
+                ": conflicting or misaligned reachable ARM/Thumb mode",
             llvm::inconvertibleErrorCode());
       const auto Existing = Decoded.lower_bound(Cur);
       if (Existing != Decoded.end() && Existing->first == Cur) {
@@ -150,14 +154,16 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
                                           ? ARMCodeRegionKind::Thumb
                                           : ARMCodeRegionKind::ARM))
           return llvm::make_error<llvm::StringError>(
-              "elf: conflicting reachable ARM/Thumb instructions at " +
+              std::string(Format) +
+                  ": conflicting reachable ARM/Thumb instructions at " +
                   std::to_string(Cur),
               llvm::inconvertibleErrorCode());
         break;
       }
       if (Existing != Decoded.begin() && std::prev(Existing)->second.End > Cur)
         return llvm::make_error<llvm::StringError>(
-            "elf: branch enters the middle of an ARM/Thumb instruction",
+            std::string(Format) +
+                ": branch enters the middle of an ARM/Thumb instruction",
             llvm::inconvertibleErrorCode());
 
       const size_t Offset = static_cast<size_t>(Cur - Seg->VA);
@@ -173,11 +179,12 @@ llvm::Error discoverARMReachableModes(BinaryImage &Img) {
       if (Insn->size > InvalidVA - Cur ||
           (Existing != Decoded.end() && Existing->first < Cur + Insn->size))
         return llvm::make_error<llvm::StringError>(
-            "elf: overlapping reachable ARM/Thumb instructions",
+            std::string(Format) +
+                ": overlapping reachable ARM/Thumb instructions",
             llvm::inconvertibleErrorCode());
       if (Decoded.size() == kMaxDiscoveredInstructions)
         return llvm::make_error<llvm::StringError>(
-            "elf: ARM/Thumb reachable decode limit exceeded",
+            std::string(Format) + ": ARM/Thumb reachable decode limit exceeded",
             llvm::inconvertibleErrorCode());
 
       const ARMCodeRegionKind Kind = Mode == InstructionMode::Thumb
