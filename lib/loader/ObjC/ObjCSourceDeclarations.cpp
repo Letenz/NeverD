@@ -1312,6 +1312,9 @@ bool validReceiverRoot(const BinaryImage &Image,
        Receiver.SourceParameter) ||
       (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::BlockParameter &&
        (Receiver.BlockDescriptorAddress || Receiver.BlockDescriptorFlags)) ||
+      (Receiver.Origin != ObjCReceiverTypeHint::OriginKind::MethodEntry &&
+       Receiver.BlockCaptureOffset) ||
+      Receiver.BlockCaptureOffset > (1u << 20) - 8 ||
       Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 ||
       (Image.Arch != Arch::AArch64 && Image.Arch != Arch::X64))

@@ -74,6 +74,10 @@ public:
       const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>> *Roots) {
     ObjCBlockParameterReceivers = Roots;
   }
+  void setObjCBlockCaptureReceivers(
+      const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>> *Roots) {
+    ObjCBlockCaptureReceivers = Roots;
+  }
 
   /// Provide the per-callee callee-cleanup pop map (entry VA -> x86 `ret imm`
   /// bytes).  When set, a direct CALL to such a callee gets a post-call stack-
@@ -264,6 +268,8 @@ private:
       nullptr;
   const std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
       *ObjCBlockParameterReceivers = nullptr;
+  const std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
+      *ObjCBlockCaptureReceivers = nullptr;
 
   std::vector<StackSlot> StackSlots;
 

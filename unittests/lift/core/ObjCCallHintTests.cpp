@@ -10609,6 +10609,67 @@ TEST(ObjCCallHints, AuthenticatedBlockParameterQualifiesReceiverCopy) {
   EXPECT_FALSE(Unqualified.count(0x1200) && Unqualified.at(0x1200).Receiver);
 }
 
+TEST(ObjCCallHints, ProvenBlockCaptureQualifiesAmbiguousSelector) {
+  auto Image = image();
+  Image.ObjCSourceReferences.at(0x2100).Name = "save:";
+  for (const auto &[Name, Address] :
+       {std::pair{"First", va_t(0x2300)}, std::pair{"Other", va_t(0x2400)}}) {
+    ObjCClass Class;
+    Class.Name = Name;
+    Class.Address = Address;
+    Class.RootClass = true;
+    Class.InheritanceStatus = "root";
+    Image.ObjCClasses.push_back(std::move(Class));
+  }
+  auto AddMethod = [&](llvm::StringRef ClassName, llvm::StringRef Selector,
+                       va_t Entry, llvm::StringRef Encoding) {
+    ObjCMethod Method;
+    Method.ClassName = ClassName.str();
+    Method.Selector = Selector.str();
+    Method.Implementation = Entry;
+    Method.TypeEncoding = Encoding.str();
+    Method.TypeHint = parseObjCMethodEncoding(Selector, Encoding);
+    EXPECT_TRUE(Method.TypeHint);
+    Image.ObjCMethods.push_back(std::move(Method));
+  };
+  AddMethod("First", "run", 0x1800, "v16@0:8");
+  AddMethod("First", "save:", 0x1810, "v24@0:8@16");
+  AddMethod("Other", "save:", 0x1820, "B24@0:8^@16");
+  const auto Root = objcMethodReceiverTypeHint(Image, 0x1800);
+  ASSERT_TRUE(Root);
+  EXPECT_TRUE(objcReceiverSourceTypeHint(Image, "save:", *Root).Signature);
+  const std::map<uint64_t, ObjCReceiverTypeHint> Captures{{32, *Root}};
+  auto Function = caller();
+  auto &Block = Function.Blocks.front();
+  Block.Ops = {operation(NdOp::INT_ADD, NdVar::reg(a64reg::X9, 8),
+                         {NdVar::reg(a64reg::X0, 8), NdVar::cst(32, 4)},
+                         0x1200),
+               operation(NdOp::LOAD, NdVar::reg(a64reg::X0, 8),
+                         {NdVar::reg(a64reg::X9, 8)}, 0x1204),
+               operation(NdOp::CALL, {}, {NdVar::cst(0x1100, 8)}, 0x1208),
+               operation(NdOp::RETURN, {}, {}, 0x120c)};
+  Block.EndAddr = 0x1210;
+
+  const auto Hints =
+      buildObjCSourceCallHints(Image, Function, nullptr, &Captures);
+  ASSERT_TRUE(Hints.count(0x1208));
+  ASSERT_TRUE(Hints.at(0x1208).Receiver);
+  EXPECT_EQ(Hints.at(0x1208).Receiver->ClassName, "First");
+  EXPECT_EQ(Hints.at(0x1208).Receiver->Address, 0x1800U);
+  EXPECT_EQ(Hints.at(0x1208).Receiver->BlockCaptureOffset, 32U);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function).count(0x1208));
+
+  auto WrongField = Function;
+  WrongField.Blocks.front().Ops[0].Inputs[1] = NdVar::cst(40, 4);
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, WrongField, nullptr, &Captures)
+                   .count(0x1208));
+  auto WrongRoot = *Root;
+  WrongRoot.ClassName = "Other";
+  const std::map<uint64_t, ObjCReceiverTypeHint> Invalid{{32, WrongRoot}};
+  EXPECT_FALSE(buildObjCSourceCallHints(Image, Function, nullptr, &Invalid)
+                   .count(0x1208));
+}
+
 TEST(ObjCCallHints, DDFileLoggerParameterQualifiesFileSize) {
   auto Image = image();
   Image.ObjCMethods.clear();

@@ -149,8 +149,12 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
       const bool ParametersChanged =
           Options.ObjCBlockParameterReceivers != BlockPlan.ParameterReceivers;
       Options.ObjCBlockParameterReceivers = BlockPlan.ParameterReceivers;
+      const bool CapturedReceiverChanged =
+          Options.ObjCBlockCaptureReceivers != BlockPlan.CaptureReceivers;
+      Options.ObjCBlockCaptureReceivers = BlockPlan.CaptureReceivers;
       if (!NativeChanged && !BlocksChanged && !CapturesChanged &&
-          !ParametersChanged && !OnceChanged && !WitnessChanged)
+          !ParametersChanged && !CapturedReceiverChanged && !OnceChanged &&
+          !WitnessChanged)
         break;
       Result = RunPipeline(Depth + 1);
       if (!Result.Success) {
@@ -371,7 +375,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
               return objcSourceCallBound(Expression, S->Img, Functions,
                                          &ProfileStorage, &ReadOnlyHelpers,
                                          &Binding.Function,
-                                         &BlockPlan.ParameterReceivers) ||
+                                         &BlockPlan.ParameterReceivers,
+                                         &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
@@ -477,7 +482,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
               return objcSourceCallBound(Expression, S->Img, Functions,
                                          &ProfileStorage, &ReadOnlyHelpers,
                                          &Binding.Function,
-                                         &BlockPlan.ParameterReceivers) ||
+                                         &BlockPlan.ParameterReceivers,
+                                         &BlockPlan.CaptureReceivers) ||
                      objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                      Binding.Function) ||
                      objCMetadataFactorySourceCallBound(
@@ -574,7 +580,8 @@ const char *objcMethodsJSON(neverd_session_t Sess, size_t MaxFunctions,
           return objcSourceCallBound(Expression, S->Img, Functions,
                                      &ProfileStorage, &ReadOnlyHelpers,
                                      &Projection.Function,
-                                     &BlockPlan.ParameterReceivers) ||
+                                     &BlockPlan.ParameterReceivers,
+                                     &BlockPlan.CaptureReceivers) ||
                  objCSwiftBooleanSourceCallBound(Expression, S->Img, Result,
                                                  Projection.Function) ||
                  objCMetadataFactorySourceCallBound(

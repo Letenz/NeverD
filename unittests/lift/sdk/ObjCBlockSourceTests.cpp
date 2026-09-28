@@ -324,6 +324,76 @@ struct OwnedSourceFixture : SourceFixture {
 };
 } // namespace
 
+TEST(ObjCBlockSources, StrongCaptureRetainsOnlyProvenMethodSelfClass) {
+  OwnedSourceFixture F(Arch::AArch64);
+  F.Image.ImportPtrSlots[F.RetainImport] = "__Block_object_assign";
+  F.Image.ImportPtrSlots[F.ReleaseImport] = "__Block_object_dispose";
+  auto &Copy = F.Result.HighFuncs[3];
+  auto &Dispose = F.Result.HighFuncs[4];
+  const auto SourceField = Copy.Body[0].CallExpr->Operands[0];
+  const auto Destination =
+      HighExpr::makeBinop(NdOp::INT_ADD, parameter(0, Copy.Params[0].Type),
+                          HighExpr::makeConst(32, 8));
+  Copy.Body[0].CallExpr->Operands = {Destination, SourceField,
+                                     HighExpr::makeConst(3, 4)};
+  Copy.Body[0].CallExpr->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+      *darwinRuntimeSourceCallHint(F.Image, F.RetainImport));
+  Dispose.Body[0].CallExpr->Operands.push_back(HighExpr::makeConst(3, 4));
+  Dispose.Body[0].CallExpr->SourceCallHint =
+      std::make_shared<SourceCallTypeHint>(
+          *darwinRuntimeSourceCallHint(F.Image, F.ReleaseImport));
+  ObjCMethod Method;
+  Method.Implementation = F.Caller;
+  Method.ClassName = "TestOwner";
+  Method.Selector = "makeBlock";
+  Method.TypeEncoding = "@16@0:8";
+  Method.TypeHint =
+      parseObjCMethodEncoding(Method.Selector, Method.TypeEncoding);
+  ASSERT_TRUE(Method.TypeHint);
+  F.Image.ObjCMethods.push_back(Method);
+  auto Signature = objcMethodSourceTypeHint(F.Image, F.Caller);
+  ASSERT_TRUE(Signature);
+  F.caller().SourceTypeHint = *Signature;
+  F.caller().ReturnType = Signature->ReturnType;
+  F.caller().Params.clear();
+  for (const auto &Parameter : Signature->Parameters)
+    F.caller().Params.push_back({Parameter.Name, Parameter.Type});
+
+  const auto Plan = discoverObjCBlockSources(F.Image, F.Result);
+  ASSERT_EQ(Plan.StackBlocks.count(F.Caller), 1U)
+      << (Plan.Rejections.count(F.Caller) ? Plan.Rejections.at(F.Caller) : "");
+  ASSERT_EQ(Plan.CaptureReceivers.count(F.Invoke), 1U);
+  ASSERT_EQ(Plan.CaptureReceivers.at(F.Invoke).count(32), 1U);
+  EXPECT_EQ(Plan.CaptureReceivers.at(F.Invoke).at(32).ClassName, "TestOwner");
+
+  F.caller().Body[4].StoreVal = HighExpr::makeConst(0, 8);
+  EXPECT_TRUE(discoverObjCBlockSources(F.Image, F.Result)
+                  .CaptureReceivers.at(F.Invoke)
+                  .empty());
+  F.caller().Body[4].StoreVal = parameter(0, F.caller().Params[0].Type);
+  Copy.Body[0].CallExpr->Operands[1] = HighExpr::makeConst(0, 8);
+  EXPECT_TRUE(discoverObjCBlockSources(F.Image, F.Result)
+                  .CaptureReceivers.at(F.Invoke)
+                  .empty());
+
+  // ARC's direct retain/release helper leaves the runtime's bit-copied field
+  // unchanged; it does not call _Block_object_assign.
+  F.Image.ImportPtrSlots[F.RetainImport] = "_objc_retain";
+  F.Image.ImportPtrSlots[F.ReleaseImport] = "_objc_release";
+  Copy.Body[0].CallExpr->Operands = {SourceField};
+  Copy.Body[0].CallExpr->SourceCallHint = std::make_shared<SourceCallTypeHint>(
+      *objcRuntimeSourceCallHint(F.Image, F.RetainImport));
+  Dispose.Body[0].CallExpr->Operands.resize(1);
+  Dispose.Body[0].CallExpr->SourceCallHint =
+      std::make_shared<SourceCallTypeHint>(
+          *objcRuntimeSourceCallHint(F.Image, F.ReleaseImport));
+  EXPECT_EQ(discoverObjCBlockSources(F.Image, F.Result)
+                .CaptureReceivers.at(F.Invoke)
+                .at(32)
+                .ClassName,
+            "TestOwner");
+}
+
 TEST(ObjCBlockSources,
      GlobalLiteralUsesRealInvokeAndOneSharedDescriptorStorage) {
   SourceFixture F(false);

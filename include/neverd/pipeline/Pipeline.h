@@ -84,6 +84,9 @@ struct PipelineOptions {
   /// Source-only receiver roots from authenticated invoke/descriptor pairs.
   std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>>
       ObjCBlockParameterReceivers;
+  /// Exact method receiver identities stored in proven block captures.
+  std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>>
+      ObjCBlockCaptureReceivers;
   std::string OutputFile;
   evm::Hardfork EVMFork = evm::Hardfork::Latest;
   bool EVMStrict = true;

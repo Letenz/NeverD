@@ -115,6 +115,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setSourceCalleeTypeHints(&SourceCalleeHints);
     Local.setObjCBlockCaptureCallFields(&Opts.ObjCBlockCaptureFields);
     Local.setObjCBlockParameterReceivers(&Opts.ObjCBlockParameterReceivers);
+    Local.setObjCBlockCaptureReceivers(&Opts.ObjCBlockCaptureReceivers);
     Local.setCalleePopMap(&CalleePop);
     Local.setCallMayWriteGPRs(&Result.CallMayWriteGPRs);
     Local.setCallEntryReadGPRs(&Result.CallEntryReadGPRs);

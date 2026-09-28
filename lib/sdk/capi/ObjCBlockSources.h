@@ -28,6 +28,8 @@ struct ObjCStackBlockSource {
   va_t InvokeEntry = 0;
   ObjCBlockDescriptor Descriptor;
   std::set<uint64_t> InitializedCaptures;
+  /// Exact method-self values stored in descriptor-declared strong fields.
+  std::map<uint64_t, ObjCReceiverTypeHint> CapturedReceivers;
   std::set<const HighExpr *> ValidatedConsumers;
   std::map<const HighExpr *, ObjCBlockAddressBinding> References;
   std::map<const HighExpr *, uint64_t> HeaderConstants;
@@ -41,6 +43,8 @@ struct ObjCBlockSourcePlan {
   /// Descriptor-declared callback classes shared by every proven literal
   /// using an invoke entry. Runtime encodings still describe dynamic objects.
   std::map<va_t, std::map<unsigned, ObjCReceiverTypeHint>> ParameterReceivers;
+  /// Receiver roots common to every proven literal using an invoke entry.
+  std::map<va_t, std::map<uint64_t, ObjCReceiverTypeHint>> CaptureReceivers;
   /// Descriptor/role contradictions invalidate callback type evidence.
   /// Body/lifetime rejections do not: they may depend on that very type.
   std::set<va_t> InvalidInvokeDescriptors;
@@ -83,6 +87,8 @@ struct Value {
     Isa,
     OpaqueBytes,
     PointerBits,
+    Receiver,
+    CapturedWord,
     UnprovenIdentity
   } K = Scalar;
   int64_t Offset = 0;
@@ -272,6 +278,16 @@ public:
           Locals.find(objc_projection_detail::localIdentity(E->Var));
       if (Found != Locals.end())
         return established(Found->second);
+      if (E->Var.Kind == MedVar::Param && E->Var.Id == 0 &&
+          E->Var.SSAVer == 0 && E->Var.RenameTag < 0 && Bytes == 8 &&
+          Function.SourceTypeHint) {
+        const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
+        const auto Signature = objcMethodSourceTypeHint(Image, Function.Entry);
+        if (Root && Signature &&
+            objc_projection_detail::sameHint(*Function.SourceTypeHint,
+                                             *Signature))
+          return {Value::Receiver, 0, Function.Entry, Root->ClassName, E.get()};
+      }
       if (E->Var.Kind == MedVar::Param && E->Var.RenameTag < 0)
         return {};
       if (E->Var.Kind == MedVar::Reg && E->Var.RenameTag < 0 &&
@@ -568,6 +584,13 @@ noEscape(const ObjCBlockSourceContext &Source,
       throw Invalid("block consumer has no recovered parameter binding");
     const auto &F = *Found->second;
     Values State(Source, F, Parameter);
+    if (WritableStrongFields && Parameter == 0 && F.Params.size() > 1) {
+      MedVar SourceBlock;
+      SourceBlock.Kind = MedVar::Param;
+      SourceBlock.Id = 1;
+      State.Locals[objc_projection_detail::localIdentity(SourceBlock)] = {
+          Value::Context, 0, 0, "copy-source"};
+    }
     State.ContextRead = [&](const Value &Address, unsigned Bytes) -> Value {
       if (!Initialized && Address.Offset == 16 && Bytes == 8)
         return {Value::Invoke};
@@ -577,6 +600,8 @@ noEscape(const ObjCBlockSourceContext &Source,
       for (unsigned I = 0; I < Bytes; ++I)
         if (!Initialized->count(static_cast<uint64_t>(Address.Offset) + I))
           throw Invalid("block invoke reads uninitialized capture storage");
+      if (Address.Name == "copy-source" && Bytes == 8)
+        return {Value::CapturedWord, Address.Offset};
       return Bytes == 16 ? Value{Value::OpaqueBytes} : Value{};
     };
     State.Call = [&](const HighExpr &E,
@@ -590,13 +615,20 @@ noEscape(const ObjCBlockSourceContext &Source,
           Arguments[0].K == Value::Context && Arguments[0].Offset >= 32 &&
           WritableStrongFields->count(Arguments[0].Offset) &&
           (Arguments[1].K == Value::Scalar || Arguments[1].K == Value::Number ||
-           Arguments[1].K == Value::ImageBits) &&
+           Arguments[1].K == Value::ImageBits ||
+           Arguments[1].K == Value::CapturedWord) &&
           Arguments[2].K == Value::Number &&
           (Arguments[2].Bits == StrongObjectFieldFlag ||
            Arguments[2].Bits == StrongBlockFieldFlag) &&
           objcSourceCallBound(E, Source.Image, Functions)) {
-        if (AssignmentFlags)
-          (*AssignmentFlags)[Arguments[0].Offset].insert(Arguments[2].Bits);
+        if (AssignmentFlags) {
+          const bool ExactSource = Arguments[1].K == Value::CapturedWord &&
+                                   Arguments[1].Offset == Arguments[0].Offset;
+          (*AssignmentFlags)[Arguments[0].Offset].insert(
+              Arguments[2].Bits == StrongObjectFieldFlag && !ExactSource
+                  ? 0
+                  : Arguments[2].Bits);
+        }
         return {};
       }
       if (B && B->CallKind == CallKind::BlockInvoke &&
@@ -1020,6 +1052,33 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
             throw Invalid(
                 "block ownership field is not completely initialized");
       }
+      for (const auto &Capture : D->Captures) {
+        if (Capture.StorageKind != ObjCBlockCaptureRange::Kind::Strong)
+          continue;
+        for (uint64_t Offset = Capture.Offset;
+             Offset + 8 <= Capture.Offset + Capture.Size; Offset += 8) {
+          const auto Begin = Memory.find(Base + static_cast<int64_t>(Offset));
+          if (Begin == Memory.end() || Begin->second.Index ||
+              Begin->second.Width != 8)
+            continue;
+          const auto &Captured = Begin->second.V;
+          bool Complete = true;
+          for (unsigned I = 1; I < 8; ++I) {
+            const auto Byte =
+                Memory.find(Base + static_cast<int64_t>(Offset) + I);
+            Complete &= Byte != Memory.end() && Byte->second.Index == I &&
+                        Byte->second.Width == 8 &&
+                        Byte->second.V.Producer == Captured.Producer;
+          }
+          if (!Complete)
+            continue;
+          if (Captured.K != Value::Receiver || Captured.Bits != Function.Entry)
+            continue;
+          const auto Root = objcMethodReceiverTypeHint(Image, Function.Entry);
+          if (Root && Root->ClassName == Captured.Name)
+            Result.CapturedReceivers.emplace(Offset, *Root);
+        }
+      }
       Result.References.emplace(
           Isa.Producer, ObjCBlockAddressBinding{CallKind::RuntimeBlockIsa,
                                                 Isa.Bits, Isa.Name});
@@ -1153,7 +1212,9 @@ stackBlocks(const ObjCBlockSourceContext &Source, const HighFunc &Function,
         if (Previous != Blocks.end() &&
             (Previous->second.InvokeEntry != Block.InvokeEntry ||
              !sameDescriptor(Previous->second.Descriptor, Block.Descriptor) ||
-             Previous->second.InitializedCaptures != Block.InitializedCaptures))
+             Previous->second.InitializedCaptures !=
+                 Block.InitializedCaptures ||
+             Previous->second.CapturedReceivers != Block.CapturedReceivers))
           throw Invalid("stack block storage is reused with inconsistent "
                         "construction evidence");
         if (Previous == Blocks.end()) {
@@ -1380,15 +1441,41 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
         Plan.StackBlocks[Function.Entry].push_back(std::move(Block));
   }
   Plan.ParameterReceivers = objcBlockParameterReceivers(Image, Plan);
-  // A strong descriptor field is not necessarily a block. The validated copy
-  // helper's _Block_object_assign flag 7 is the ownership evidence. Keep only
-  // capture words shared by every descriptor using the same invoke entry.
+  for (const auto &[Parent, Blocks] : Plan.StackBlocks) {
+    (void)Parent;
+    for (const auto &Block : Blocks) {
+      auto [It, First] = Plan.CaptureReceivers.try_emplace(
+          Block.InvokeEntry, Block.CapturedReceivers);
+      if (!First) {
+        for (auto Capture = It->second.begin(); Capture != It->second.end();) {
+          if (auto Found = Block.CapturedReceivers.find(Capture->first);
+              Found == Block.CapturedReceivers.end() ||
+              !(Found->second == Capture->second))
+            Capture = It->second.erase(Capture);
+          else
+            ++Capture;
+        }
+      }
+    }
+  }
+  for (const auto &[Address, Block] : Plan.Globals) {
+    (void)Address;
+    Plan.CaptureReceivers.erase(Block.InvokeEntry);
+  }
+  for (va_t Invoke : Plan.InvalidInvokeDescriptors)
+    Plan.CaptureReceivers.erase(Invoke);
+  // A strong descriptor field is not necessarily a block. Flag 7 proves a
+  // captured block; a method receiver instead needs a field whose value is
+  // unchanged after the runtime bit-copies the literal and runs its helper.
+  // Keep only capture words shared by every literal using the invoke entry.
   std::map<va_t, ObjCBlockCaptureCallFields> Common;
+  std::map<va_t, std::set<uint64_t>> CommonObjectCopies;
   for (const auto &[Parent, Blocks] : Plan.StackBlocks) {
     (void)Parent;
     for (const auto &Block : Blocks) {
       const auto &D = Block.Descriptor;
       ObjCBlockCaptureCallFields Candidate;
+      std::set<uint64_t> ObjectCopies;
       auto Copy = Functions.find(D.CopyHelper);
       auto Dispose = Functions.find(D.DisposeHelper);
       auto CopyHint = Plan.HelperHints.find(D.CopyHelper);
@@ -1426,6 +1513,7 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
         }
         if (!SinglePath) {
           Common[Block.InvokeEntry] = {};
+          CommonObjectCopies[Block.InvokeEntry] = {};
           continue;
         }
         std::set<uint64_t> StrongFields;
@@ -1453,11 +1541,23 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
             if (!Initialized)
               continue;
             Candidate.ScalarWords.insert(Offset);
-            if (auto Flags = AssignmentFlags.find(Offset);
-                Flags != AssignmentFlags.end() &&
-                Flags->second == std::set<uint64_t>{StrongBlockFieldFlag})
+            const auto Flags = AssignmentFlags.find(Offset);
+            if (Flags == AssignmentFlags.end())
+              ObjectCopies.insert(Offset); // The helper left the copy intact.
+            else if (Flags->second == std::set<uint64_t>{StrongBlockFieldFlag})
               Candidate.BlockWords.insert(Offset);
+            else if (Flags->second == std::set<uint64_t>{StrongObjectFieldFlag})
+              ObjectCopies.insert(Offset);
           }
+      }
+      auto [Object, FirstObject] =
+          CommonObjectCopies.try_emplace(Block.InvokeEntry, ObjectCopies);
+      if (!FirstObject) {
+        std::set<uint64_t> Shared;
+        std::set_intersection(Object->second.begin(), Object->second.end(),
+                              ObjectCopies.begin(), ObjectCopies.end(),
+                              std::inserter(Shared, Shared.end()));
+        Object->second = std::move(Shared);
       }
       auto [Existing, Added] = Common.emplace(Block.InvokeEntry, Candidate);
       if (!Added) {
@@ -1485,6 +1585,15 @@ discoverObjCBlockSources(const ObjCBlockSourceContext &Source,
     if (!GlobalUsesInvoke && !Plan.Rejections.count(Entry) &&
         !Fields.BlockWords.empty())
       Plan.CapturedCallFields.emplace(Entry, std::move(Fields));
+  }
+  for (auto &[Invoke, Captures] : Plan.CaptureReceivers) {
+    const auto Proven = CommonObjectCopies.find(Invoke);
+    for (auto Capture = Captures.begin(); Capture != Captures.end();)
+      if (Proven == CommonObjectCopies.end() ||
+          !Proven->second.count(Capture->first))
+        Capture = Captures.erase(Capture);
+      else
+        ++Capture;
   }
   return Plan;
 }
