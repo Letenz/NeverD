@@ -20,7 +20,7 @@ struct Fixture {
   BinaryImage Image;
   LowFunc Function;
 
-  explicit Fixture(GetterKind Kind = GetterKind::CGFloat) {
+  explicit Fixture(GetterKind Kind = GetterKind::CGFloat, bool Setter = false) {
     const bool Bool = Kind == GetterKind::Bool;
     Image.Format = BinaryFormat::MachO;
     Image.Arch = Arch::AArch64;
@@ -30,7 +30,7 @@ struct Fixture {
     Text.Size = Text.FileSz = 0x1000;
     Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
     Text.Data.resize(0x1000);
-    Text.Data[CallSite - Text.VA + 0] = 0xa0;
+    Text.Data[CallSite - Text.VA + 0] = Bool && Setter ? 0xc0 : 0xa0;
     Text.Data[CallSite - Text.VA + 1] = 0x02;
     Text.Data[CallSite - Text.VA + 2] = 0x3f;
     Text.Data[CallSite - Text.VA + 3] = 0xd6;
@@ -50,29 +50,39 @@ struct Fixture {
     ObjCMethod Method;
     Method.Implementation = Entry;
     Method.ClassName = "_TtC6Lottie23CompatibleAnimationView";
-    Method.Selector = Bool                         ? "shouldRasterizeWhenIdle"
-                      : Kind == GetterKind::Double ? "currentTime"
-                                                   : "currentProgress";
-    Method.TypeEncoding = Bool ? "B16@0:8" : "d16@0:8";
+    Method.Selector =
+        Bool ? (Setter ? "setShouldRasterizeWhenIdle:"
+                       : "shouldRasterizeWhenIdle")
+        : Kind == GetterKind::Double
+            ? (Setter ? "setCurrentTime:" : "currentTime")
+            : (Setter ? "setCurrentProgress:" : "currentProgress");
+    Method.TypeEncoding = Setter ? (Bool ? "v20@0:8B16" : "v24@0:8d16")
+                                 : (Bool ? "B16@0:8" : "d16@0:8");
     SourceFunctionTypeHint Signature;
     Signature.ReturnType =
-        Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8);
+        Setter ? NdType::makeVoid()
+               : (Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8));
     Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())},
                             {"_cmd", NdType::makePtr(NdType::makeVoid())}};
+    if (Setter)
+      Signature.Parameters.push_back(
+          {"value", Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8)});
     std::string Diagnostic;
     EXPECT_TRUE(assignDarwinObjCSourceABI(Signature, Arch::AArch64, Diagnostic))
         << Diagnostic;
     Method.TypeHint = Signature;
     Image.ObjCMethods.push_back(Method);
-    Image.Symbols.push_back(
-        {Bool ? "_$s6Lottie23CompatibleAnimationViewC23shouldRasterizeWhenIdle"
-                "SbvgTo"
-         : Kind == GetterKind::Double
-             ? "_$s6Lottie23CompatibleAnimationViewC11currentTime"
-               "SdvgTo"
-             : "_$s6Lottie23CompatibleAnimationViewC15currentProgress"
-               "12CoreGraphics7CGFloatVvgTo",
-         Entry, 0x80, true});
+    const std::string SymbolPrefix =
+        Bool ? "_$s6Lottie23CompatibleAnimationViewC23shouldRasterizeWhenIdle"
+        : Kind == GetterKind::Double
+            ? "_$s6Lottie23CompatibleAnimationViewC11currentTime"
+            : "_$s6Lottie23CompatibleAnimationViewC15currentProgress";
+    const std::string SymbolSuffix =
+        Bool                         ? (Setter ? "SbvsTo" : "SbvgTo")
+        : Kind == GetterKind::Double ? (Setter ? "SdvsTo" : "SdvgTo")
+                                     : (Setter ? "12CoreGraphics7CGFloatVvsTo"
+                                               : "12CoreGraphics7CGFloatVvgTo");
+    Image.Symbols.push_back({SymbolPrefix + SymbolSuffix, Entry, 0x80, true});
 
     Function.Entry = Entry;
     Function.Blocks.resize(1);
@@ -92,6 +102,8 @@ struct Fixture {
     const auto X9 = NdVar::reg(a64reg::X9, 8);
     const auto X20 = NdVar::reg(a64reg::X20, 8);
     const auto X21 = NdVar::reg(a64reg::X21, 8);
+    const auto X22 = NdVar::reg(a64reg::X22, 8);
+    const auto Target = Bool && Setter ? X22 : X21;
     Add(0x1110, NdOp::COPY, X8, {NdVar::dataAddress(IvarSlot, 8)});
     Add(0x1114, NdOp::LOAD, X8, {X8});
     Add(0x111c, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8), {X0, X8});
@@ -102,13 +114,14 @@ struct Fixture {
     Add(0x112c, NdOp::LOAD, X9, {X9});
     Add(0x1130, NdOp::INT_AND, X8, {X8, X9});
     Add(0x1138, NdOp::INT_ADD, NdVar::tmp(TmpBase, 8),
-        {X8, NdVar::scalar(Bool                         ? 600
-                           : Kind == GetterKind::Double ? 648
-                                                        : 624,
+        {X8, NdVar::scalar((Bool                         ? 600
+                            : Kind == GetterKind::Double ? 648
+                                                         : 624) +
+                               (Setter ? 8 : 0),
                            8)});
-    Add(0x1138, NdOp::LOAD, X21, {NdVar::tmp(TmpBase, 8)});
+    Add(0x1138, NdOp::LOAD, Target, {NdVar::tmp(TmpBase, 8)});
     Add(0x1140, NdOp::CALL, X0, {NdVar::codeAddress(0x1300, 8)});
-    Add(CallSite, NdOp::INDIR_CALL, X0, {X21});
+    Add(CallSite, NdOp::INDIR_CALL, X0, {Target});
   }
 };
 } // namespace
@@ -159,6 +172,35 @@ TEST(SwiftVirtualCalls, ExactMaskedIsaDoubleGetterBindsSwiftContext) {
   EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
 
   F.Image.Symbols[0].Name += "Other";
+  EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
+}
+
+TEST(SwiftVirtualCalls, ExactMaskedIsaSettersBindValueAndSwiftContext) {
+  const std::pair<Fixture::GetterKind, uint32_t> Cases[] = {
+      {Fixture::GetterKind::CGFloat, 632},
+      {Fixture::GetterKind::Double, 656},
+      {Fixture::GetterKind::Bool, 608},
+  };
+  for (const auto &[Kind, Slot] : Cases) {
+    Fixture F(Kind, true);
+    const auto Hints = buildSwiftVirtualCallHints(F.Image, F.Function);
+    ASSERT_EQ(Hints.size(), 1U);
+    const auto &Hint = Hints.at(Fixture::CallSite);
+    ASSERT_TRUE(Hint.Virtual);
+    EXPECT_EQ(Hint.Virtual->VtableByteOffset, Slot);
+    ASSERT_TRUE(Hint.Signature.ReturnType);
+    EXPECT_EQ(Hint.Signature.ReturnType->Kind, NdTypeKind::Void);
+    ASSERT_EQ(Hint.Signature.Parameters.size(), 2U);
+    EXPECT_EQ(Hint.Signature.Parameters[0].Type->Kind,
+              Kind == Fixture::GetterKind::Bool ? NdTypeKind::Int
+                                                : NdTypeKind::Float);
+    EXPECT_EQ(Hint.Signature.Parameters[1].TheRole,
+              SourceParameterTypeHint::Role::SwiftContext);
+    EXPECT_TRUE(isSwiftVirtualSourceCallHint(F.Image, Hint));
+  }
+
+  Fixture F(Fixture::GetterKind::Bool, true);
+  F.Image.Segments[0].Data[Fixture::CallSite - 0x1000] = 0xa0;
   EXPECT_TRUE(buildSwiftVirtualCallHints(F.Image, F.Function).empty());
 }
 

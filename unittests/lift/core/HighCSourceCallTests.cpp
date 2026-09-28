@@ -611,6 +611,84 @@ int main(void) {
   }
 }
 
+TEST(HighCSourceCalls, SwiftVirtualSetterUsesValueAndSwiftContext) {
+  for (bool Bool : {false, true}) {
+    SourceCallTypeHint Hint;
+    Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
+    Hint.TargetName = "swift_virtual";
+    Hint.Virtual = SourceCallTypeHint::SwiftVirtualEvidence{
+        0x1000, 0x1010, 0x2000, Bool ? 608U : 632U};
+    Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+    Hint.Signature.ReturnType = NdType::makeVoid();
+    const auto Pointer = NdType::makePtr(NdType::makeVoid());
+    const auto ValueType =
+        Bool ? NdType::makeInt(1, false) : NdType::makeFloat(8);
+    Hint.Signature.Parameters = {{"value", ValueType}, {"self", Pointer}};
+    Hint.Signature.Parameters[1].TheRole =
+        SourceParameterTypeHint::Role::SwiftContext;
+    std::string Diagnostic;
+    ASSERT_TRUE(
+        assignDarwinSwiftSourceABI(Hint.Signature, Arch::AArch64, Diagnostic))
+        << Diagnostic;
+
+    auto Param = [&](unsigned Id, TypeRef Type) {
+      MedVar V;
+      V.Kind = MedVar::Param;
+      V.Id = Id;
+      V.Size = Type->Size;
+      V.TheArch = Arch::AArch64;
+      return HighExpr::makeVar(V, Type);
+    };
+    auto Call = HighExpr::makeCall("indirect_call", 0,
+                                   {Param(0, ValueType), Param(1, Pointer)});
+    Call->Type = NdType::makeVoid();
+    Call->IsIndirectCall = true;
+    Call->IndirectTarget = Param(2, Pointer);
+    Call->SourceCallHint = std::make_shared<const SourceCallTypeHint>(Hint);
+    HighFunc Function;
+    Function.Entry = 0x1000;
+    Function.Name = "call_virtual_setter";
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {
+        {"value", ValueType}, {"context", Pointer}, {"target", Pointer}};
+    HighStmt Statement;
+    Statement.Kind = StmtKind::Call;
+    Statement.CallExpr = Call;
+    Function.Body = {Statement};
+    const auto Source = emit({Function}, true, Arch::AArch64);
+    EXPECT_NE(
+        Source.find(Bool ? "(*)(_Bool, void* __attribute__((swift_context)))"
+                         : "(*)(double, void* __attribute__((swift_context)))"),
+        std::string::npos)
+        << Source;
+    if (Bool) {
+      compileAndRun(Source + R"(
+static void __attribute__((swiftcall)) setter(
+    _Bool value, void *self __attribute__((swift_context))) {
+  *(uint8_t *)self = value;
+}
+int main(void) {
+  uint8_t value = 0;
+  call_virtual_setter(1, &value, (void *)&setter);
+  return value == 1 ? 0 : 1;
+}
+)");
+    } else {
+      compileAndRun(Source + R"(
+static void __attribute__((swiftcall)) setter(
+    double value, void *self __attribute__((swift_context))) {
+  *(double *)self = value;
+}
+int main(void) {
+  double value = 0.0;
+  call_virtual_setter(42.5, &value, (void *)&setter);
+  return value == 42.5 ? 0 : 1;
+}
+)");
+    }
+  }
+}
+
 TEST(HighCSourceCalls,
      SwiftValueWitnessInitializeWithCopyReturnsRuntimeDestination) {
   using OperationKind = SourceCallTypeHint::SwiftValueWitnessKind;

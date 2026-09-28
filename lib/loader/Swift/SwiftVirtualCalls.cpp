@@ -209,18 +209,14 @@ public:
   }
 };
 
-std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
-                                                  va_t Entry, va_t CallSite,
-                                                  va_t IsaMaskImport,
-                                                  uint32_t Slot) {
+std::optional<SourceCallTypeHint> canonicalAccessor(const BinaryImage &Image,
+                                                    va_t Entry, va_t CallSite,
+                                                    va_t IsaMaskImport,
+                                                    uint32_t Slot) {
   if (Image.Format != BinaryFormat::MachO || Image.IsRelocatable ||
       Image.Bits != Bitness::Bits64 || Image.Arch != Arch::AArch64 || !Entry ||
       !CallSite || !IsaMaskImport || Slot < 0x40 || Slot > 0x1000 || Slot % 8 ||
       !Image.isCodeAddress(Entry) || !Image.isCodeAddress(CallSite))
-    return std::nullopt;
-  const auto Bytes = Image.readVA(CallSite, 4);
-  constexpr std::array<uint8_t, 4> BlrX21 = {0xa0, 0x02, 0x3f, 0xd6};
-  if (!Bytes || !std::equal(BlrX21.begin(), BlrX21.end(), Bytes))
     return std::nullopt;
   const auto Import = darwinRuntimeImport(Image, IsaMaskImport);
   const auto Bind = Image.DyldBindSlots.find(IsaMaskImport);
@@ -241,16 +237,29 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
     return std::nullopt;
   const bool DoubleGetter = Method->TypeEncoding == "d16@0:8";
   const bool BoolGetter = Method->TypeEncoding == "B16@0:8";
-  if (!DoubleGetter && !BoolGetter)
+  const bool DoubleSetter = Method->TypeEncoding == "v24@0:8d16";
+  const bool BoolSetter = Method->TypeEncoding == "v20@0:8B16";
+  const bool Setter = DoubleSetter || BoolSetter;
+  const bool Floating = DoubleGetter || DoubleSetter;
+  if (!DoubleGetter && !BoolGetter && !DoubleSetter && !BoolSetter)
+    return std::nullopt;
+  const auto Bytes = Image.readVA(CallSite, 4);
+  constexpr std::array<uint8_t, 4> BlrX21 = {0xa0, 0x02, 0x3f, 0xd6};
+  constexpr std::array<uint8_t, 4> BlrX22 = {0xc0, 0x02, 0x3f, 0xd6};
+  const auto &ExpectedCall = BoolSetter ? BlrX22 : BlrX21;
+  if (!Bytes || !std::equal(ExpectedCall.begin(), ExpectedCall.end(), Bytes))
     return std::nullopt;
   const auto EntryType = objcMethodSourceTypeHint(Image, Entry);
   if (!EntryType || !EntryType->ReturnType ||
-      (DoubleGetter ? (EntryType->ReturnType->Kind != NdTypeKind::Float ||
-                       EntryType->ReturnType->Size != 8)
-                    : (EntryType->ReturnType->Kind != NdTypeKind::Int ||
-                       EntryType->ReturnType->Size != 1 ||
-                       EntryType->ReturnType->IsSigned)) ||
-      EntryType->Parameters.size() != 2)
+      EntryType->Parameters.size() != (Setter ? 3U : 2U))
+    return std::nullopt;
+  const TypeRef &ValueType =
+      Setter ? EntryType->Parameters.back().Type : EntryType->ReturnType;
+  if (!ValueType ||
+      (Floating ? (ValueType->Kind != NdTypeKind::Float || ValueType->Size != 8)
+                : (ValueType->Kind != NdTypeKind::Int || ValueType->Size != 1 ||
+                   ValueType->IsSigned)) ||
+      (Setter && EntryType->ReturnType->Kind != NdTypeKind::Void))
     return std::nullopt;
   const Symbol *Symbol = nullptr;
   for (const auto &S : Image.Symbols)
@@ -262,9 +271,10 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
   if (!Symbol || !llvm::StringRef(Symbol->Name).starts_with("_$s"))
     return std::nullopt;
   const llvm::StringRef Name = Symbol->Name;
-  if (DoubleGetter ? (!Name.ends_with("12CoreGraphics7CGFloatVvgTo") &&
-                      !Name.ends_with("SdvgTo"))
-                   : !Name.ends_with("SbvgTo"))
+  if (Floating ? (!Name.ends_with(Setter ? "12CoreGraphics7CGFloatVvsTo"
+                                         : "12CoreGraphics7CGFloatVvgTo") &&
+                  !Name.ends_with(Setter ? "SdvsTo" : "SdvgTo"))
+               : !Name.ends_with(Setter ? "SbvsTo" : "SbvgTo"))
     return std::nullopt;
   SourceCallTypeHint Hint;
   Hint.CallKind = SourceCallTypeHint::Kind::SwiftVirtual;
@@ -273,8 +283,13 @@ std::optional<SourceCallTypeHint> canonicalGetter(const BinaryImage &Image,
                                                           IsaMaskImport, Slot};
   Hint.Signature.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
   Hint.Signature.ReturnType =
-      DoubleGetter ? NdType::makeFloat(8) : NdType::makeInt(1, false);
-  Hint.Signature.Parameters = {{"self", NdType::makePtr(NdType::makeVoid())}};
+      Setter ? NdType::makeVoid()
+             : (Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false));
+  if (Setter)
+    Hint.Signature.Parameters.push_back(
+        {"value", Floating ? NdType::makeFloat(8) : NdType::makeInt(1, false)});
+  Hint.Signature.Parameters.push_back(
+      {"self", NdType::makePtr(NdType::makeVoid())});
   Hint.Signature.Parameters.back().TheRole =
       SourceParameterTypeHint::Role::SwiftContext;
   std::string Diagnostic;
@@ -300,7 +315,7 @@ bool isSwiftVirtualSourceCallHint(const BinaryImage &Image,
       Hint.ObjCIndirectResultStorage || Hint.ByteCount ||
       Hint.ImmutablePointerSlot)
     return false;
-  const auto Expected = canonicalGetter(
+  const auto Expected = canonicalAccessor(
       Image, Hint.Virtual->MethodEntry, Hint.Virtual->CallSite,
       Hint.Virtual->IsaMaskImport, Hint.Virtual->VtableByteOffset);
   return Expected && Expected->Virtual == Hint.Virtual &&
@@ -330,7 +345,10 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
     const auto &Op = Block.Ops[I];
     if (Op.Opcode != NdOp::INDIR_CALL || Op.NumInputs != 1 ||
-        Op.Inputs[0] != NdVar::reg(a64reg::X21, 8) ||
+        Op.Inputs[0] != NdVar::reg(Method->TypeEncoding == "v20@0:8B16"
+                                       ? a64reg::X22
+                                       : a64reg::X21,
+                                   8) ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
       continue;
@@ -350,8 +368,8 @@ buildSwiftVirtualCallHints(const BinaryImage &Image, const LowFunc &Function) {
         Trace.virtualTarget(*Target, *Context, Method->ClassName);
     if (!Virtual)
       continue;
-    auto Hint = canonicalGetter(Image, Function.Entry, Op.Addr, Virtual->first,
-                                Virtual->second);
+    auto Hint = canonicalAccessor(Image, Function.Entry, Op.Addr,
+                                  Virtual->first, Virtual->second);
     if (Hint)
       Result.emplace(Op.Addr, std::move(*Hint));
   }
