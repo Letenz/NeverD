@@ -5,50 +5,56 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Tool to generate .pat signature files from static libraries (.a / .lib).
-/// Extracts function byte patterns with wildcard masks for relocations,
-/// computes CRC16 over trailing bytes, and outputs FLIRT-compatible .pat
-/// format.
-///
-/// A relocation bounds what a signature may assert: the byte holds a
-/// placeholder here and an address in the linked image.  Wildcards cover the
-/// ones inside the leading pattern and the tail, and the CRC stops at the
-/// first one it meets, because a checksum cannot express a wildcard.
+/// Tool to generate .pat signature files from static libraries (.a / .lib)
+/// and object files. The line format, the wildcard rules for relocations,
+/// and the naming rule live in neverd::sigs::PatternGenerator; this tool
+/// walks archives and reports what each input contributed.
 ///
 /// Usage:
 ///   neverd-sigmaker /path/to/libfoo.a -o foo.pat
-///   neverd-sigmaker /usr/lib/libc.a -o libc.pat --name "libc"
 ///   neverd-sigmaker libgcc_eh.a -o eh.pat --tail 65535
+///   neverd-sigmaker libcmt.lib libcpmt.lib -o vs.pat --machine arm64
+///   neverd-sigmaker --verify vs.pat winsdk.pat
 ///
-/// The last form states every byte of every function, so a match is agreement
-/// over the whole routine rather than over its opening run.  A consumer that
-/// acts on the name it gets -- naming an exception personality, say -- asks
-/// for that; see SignatureMatcher::isFullyVerified.
+/// The --tail 65535 form states every byte of every function, so a match is
+/// agreement over the whole routine rather than over its opening run.  A
+/// consumer that acts on the name it gets -- naming an exception personality,
+/// say -- asks for that; see SignatureMatcher::isFullyVerified.
+///
+/// --machine keeps only COFF objects built for one architecture, so a
+/// library directory that also carries another target's objects cannot file
+/// them under the wrong signature directory.
+///
+/// --verify reads .pat files back with the parser the signature loader
+/// uses. The loader rejects a whole directory for one bad line, so a
+/// generated file is checked this way before it is published.
 ///
 //===----------------------------------------------------------------------===//
 
-#include "neverd/sigs/SignatureMatcher.h"
+#include "neverd/sigs/PatternGenerator.h"
+#include "neverd/sigs/PatternParser.h"
 
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/COFF.h"
-#include "llvm/Object/ELFObjectFile.h"
-#include "llvm/Object/MachOUniversal.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <fstream>
-#include <set>
+#include <optional>
 
 using namespace llvm;
 using namespace llvm::object;
+using namespace neverd::sigs;
 
-static cl::opt<std::string> InputFile(cl::Positional, cl::desc("<library>"),
-                                      cl::Required);
-static cl::opt<std::string> OutputFile("o", cl::desc("Output .pat file"),
-                                       cl::Required);
+static cl::list<std::string> Inputs(cl::Positional,
+                                    cl::desc("<library|object|pattern>..."),
+                                    cl::OneOrMore);
+static cl::opt<std::string> OutputFile("o", cl::desc("Output .pat file"));
 static cl::opt<std::string> LibName("name", cl::desc("Library name tag"),
                                     cl::init(""));
 static cl::opt<unsigned>
@@ -61,165 +67,142 @@ static cl::opt<unsigned>
                      "0 emits none, a value at least as large as the function "
                      "covers it to its end"),
             cl::init(0));
+static cl::opt<std::string>
+    Machine("machine",
+            cl::desc("Keep only COFF objects for this architecture "
+                     "(x86, x64, arm, arm64); others are skipped and counted"),
+            cl::init(""));
+static cl::opt<bool>
+    Verify("verify",
+           cl::desc("Parse the positional .pat files with the signature "
+                    "loader's parser instead of generating"),
+           cl::init(false));
 
-/// The CRC span may not cross a relocation.
-///
-/// A relocated byte holds a link-time placeholder in the object file and a
-/// resolved address in the image the signature is meant to match, so a
-/// checksum spanning one can never agree with the very binaries it is for.
-/// The pattern bytes state a wildcard there instead; the CRC has no way to
-/// express one, so it stops.
-static size_t crcSpan(size_t Start, size_t Size,
-                      const std::set<uint64_t> &RelocOffsets) {
-  size_t End = std::min(Size, Start + 255);
-  for (size_t I = Start; I < End; ++I)
-    if (RelocOffsets.count(I))
-      return I - Start;
-  return End - Start;
+namespace {
+
+struct InputStats {
+  unsigned Objects = 0;
+  unsigned OtherMachine = 0;
+  unsigned NotObjects = 0;
+  unsigned Unreadable = 0;
+  PatternGeneratorStats Patterns;
+};
+
+std::optional<uint16_t> parseMachine(StringRef Name) {
+  return StringSwitch<std::optional<uint16_t>>(Name)
+      .Case("x86", COFF::IMAGE_FILE_MACHINE_I386)
+      .Case("x64", COFF::IMAGE_FILE_MACHINE_AMD64)
+      .Case("arm", COFF::IMAGE_FILE_MACHINE_ARMNT)
+      .Case("arm64", COFF::IMAGE_FILE_MACHINE_ARM64)
+      .Default(std::nullopt);
 }
 
-static void emitPatternBytes(raw_ostream &OS, const uint8_t *Data, size_t Begin,
-                             size_t End,
-                             const std::set<uint64_t> &RelocOffsets) {
-  for (size_t I = Begin; I < End; ++I) {
-    if (RelocOffsets.count(I))
-      OS << "..";
-    else
-      OS << format("%02X", Data[I]);
+void processObject(const ObjectFile &Obj, std::optional<uint16_t> Required,
+                   const PatternGeneratorOptions &Opts, raw_ostream &OS,
+                   InputStats &Stats) {
+  if (Required) {
+    const auto *COFF = dyn_cast<COFFObjectFile>(&Obj);
+    if (!COFF || COFF->getMachine() != *Required) {
+      ++Stats.OtherMachine;
+      return;
+    }
   }
+  ++Stats.Objects;
+  Stats.Patterns += generatePatterns(Obj, Opts, OS);
 }
 
-static bool emitPatLine(raw_ostream &OS, StringRef FuncName,
-                        const uint8_t *Data, size_t Size,
-                        ArrayRef<std::pair<uint64_t, uint64_t>> Relocs) {
-  if (Size < MinFuncSize)
+bool processInput(StringRef Path, std::optional<uint16_t> Required,
+                  const PatternGeneratorOptions &Opts, raw_ostream &OS,
+                  InputStats &Stats) {
+  auto BufOrErr = MemoryBuffer::getFile(Path);
+  if (!BufOrErr) {
+    WithColor::error() << "cannot open: " << Path << "\n";
     return false;
+  }
+  MemoryBufferRef MemRef = (*BufOrErr)->getMemBufferRef();
 
-  size_t LeadBytes = std::min(static_cast<size_t>(LeadingLen), Size);
-
-  // Build relocation set for fast lookup.
-  std::set<uint64_t> RelocOffsets;
-  for (auto &[Off, Len] : Relocs) {
-    for (uint64_t I = Off; I < Off + Len && I < Size; ++I)
-      RelocOffsets.insert(I);
+  StringRef Magic = MemRef.getBuffer().substr(0, 8);
+  if (!Magic.starts_with("!<arch>") && !Magic.starts_with("!<thin>")) {
+    auto ObjOrErr = ObjectFile::createObjectFile(MemRef);
+    if (!ObjOrErr) {
+      WithColor::error() << "not a valid object/archive: " << Path << ": "
+                         << toString(ObjOrErr.takeError()) << "\n";
+      return false;
+    }
+    processObject(**ObjOrErr, Required, Opts, OS, Stats);
+    return true;
   }
 
-  emitPatternBytes(OS, Data, 0, LeadBytes, RelocOffsets);
-
-  size_t CRCStart = LeadBytes;
-  size_t CRCLen = crcSpan(CRCStart, Size, RelocOffsets);
-  uint16_t CRC = 0;
-  if (CRCLen > 0)
-    CRC = neverd::sigs::SignatureMatcher::computeCRC16(Data + CRCStart, CRCLen);
-
-  OS << format(" %02X %04X %04X", static_cast<unsigned>(CRCLen), CRC,
-               static_cast<unsigned>(Size));
-  OS << " :0000 " << FuncName;
-
-  // Everything the CRC had to stop short of, stated byte by byte so that a
-  // wildcard can stand where a relocation does.  This is what lets a match
-  // cover a whole function rather than its first invariant run, which is the
-  // difference between a name worth displaying and a name worth acting on.
-  size_t TailStart = CRCStart + CRCLen;
-  size_t TailEnd = std::min(Size, TailStart + static_cast<size_t>(TailLen));
-  if (TailEnd > TailStart) {
-    OS << " ";
-    emitPatternBytes(OS, Data, TailStart, TailEnd, RelocOffsets);
+  auto ArchOrErr = Archive::create(MemRef);
+  if (!ArchOrErr) {
+    WithColor::error() << "invalid archive: " << Path << ": "
+                       << toString(ArchOrErr.takeError()) << "\n";
+    return false;
   }
 
-  OS << "\n";
+  Error Err = Error::success();
+  for (auto &Child : (*ArchOrErr)->children(Err)) {
+    auto BinOrErr = Child.getAsBinary();
+    if (!BinOrErr) {
+      // LLVM cannot read every member kind; an MSVC /GL object carries
+      // compiler IR rather than machine code and is one of them.
+      consumeError(BinOrErr.takeError());
+      ++Stats.Unreadable;
+      continue;
+    }
+    if (auto *Obj = dyn_cast<ObjectFile>(BinOrErr->get()))
+      processObject(*Obj, Required, Opts, OS, Stats);
+    else
+      ++Stats.NotObjects; // import-library members and the like: no code
+  }
+  if (Err) {
+    WithColor::error() << "invalid archive: " << Path << ": "
+                       << toString(std::move(Err)) << "\n";
+    return false;
+  }
   return true;
 }
 
-static int processObject(ObjectFile &Obj, raw_ostream &OS) {
-  int Count = 0;
-  for (const auto &Sym : Obj.symbols()) {
-    auto TypeOrErr = Sym.getType();
-    if (!TypeOrErr) {
-      consumeError(TypeOrErr.takeError());
+int verifyPatterns() {
+  int Status = 0;
+  for (const std::string &Path : Inputs) {
+    auto ModulesOrErr = PatternParser::parseFile(Path);
+    if (!ModulesOrErr) {
+      WithColor::error() << Path << ": " << toString(ModulesOrErr.takeError())
+                         << "\n";
+      Status = 1;
       continue;
     }
-    if (*TypeOrErr != SymbolRef::ST_Function)
-      continue;
-
-    auto NameOrErr = Sym.getName();
-    if (!NameOrErr) {
-      consumeError(NameOrErr.takeError());
-      continue;
-    }
-    StringRef Name = *NameOrErr;
-    if (Name.empty() || Name.starts_with("ltmp") || Name.starts_with("L_") ||
-        Name.starts_with(".L"))
-      continue;
-
-    auto AddrOrErr = Sym.getAddress();
-    if (!AddrOrErr) {
-      consumeError(AddrOrErr.takeError());
-      continue;
-    }
-    uint64_t Addr = *AddrOrErr;
-
-    auto SecOrErr = Sym.getSection();
-    if (!SecOrErr) {
-      consumeError(SecOrErr.takeError());
-      continue;
-    }
-    auto Sec = *SecOrErr;
-    if (Sec == Obj.section_end())
-      continue;
-
-    auto DataOrErr = Sec->getContents();
-    if (!DataOrErr) {
-      consumeError(DataOrErr.takeError());
-      continue;
-    }
-
-    uint64_t SecAddr = Sec->getAddress();
-    uint64_t Offset = Addr - SecAddr;
-    if (Offset >= DataOrErr->size())
-      continue;
-
-    const auto *Data =
-        reinterpret_cast<const uint8_t *>(DataOrErr->data() + Offset);
-
-    // Estimate function size (distance to next symbol in same section).
-    uint64_t FuncSize = DataOrErr->size() - Offset;
-    for (const auto &Other : Obj.symbols()) {
-      auto OAddr = Other.getAddress();
-      if (!OAddr) {
-        consumeError(OAddr.takeError());
-        continue;
-      }
-      auto OSec = Other.getSection();
-      if (!OSec) {
-        consumeError(OSec.takeError());
-        continue;
-      }
-      if (*OSec != Sec)
-        continue;
-      if (*OAddr > Addr && *OAddr - Addr < FuncSize)
-        FuncSize = *OAddr - Addr;
-    }
-
-    // Collect relocations targeting this function's range.
-    std::vector<std::pair<uint64_t, uint64_t>> Relocs;
-    for (const auto &Rel : Sec->relocations()) {
-      uint64_t ROff = Rel.getOffset() - Offset;
-      if (ROff < FuncSize)
-        Relocs.push_back({ROff, 4});
-    }
-
-    if (emitPatLine(OS, Name, Data, static_cast<size_t>(FuncSize), Relocs))
-      ++Count;
+    outs() << Path << ": " << ModulesOrErr->size() << " modules\n";
   }
-  return Count;
+  return Status;
 }
+
+} // anonymous namespace
 
 int main(int Argc, char *Argv[]) {
   InitLLVM X(Argc, Argv);
   cl::ParseCommandLineOptions(Argc, Argv,
                               "NeverD Signature Maker\n\n"
                               "  Generate .pat files from static libraries.\n");
+
+  if (Verify)
+    return verifyPatterns();
+
+  if (OutputFile.empty()) {
+    WithColor::error() << "no output file; pass -o <file.pat>\n";
+    return 1;
+  }
+
+  std::optional<uint16_t> Required;
+  if (!Machine.empty()) {
+    Required = parseMachine(Machine);
+    if (!Required) {
+      WithColor::error() << "unknown --machine '" << Machine
+                         << "'; expected x86, x64, arm, or arm64\n";
+      return 1;
+    }
+  }
 
   std::error_code EC;
   raw_fd_ostream OS(OutputFile, EC);
@@ -228,48 +211,38 @@ int main(int Argc, char *Argv[]) {
     return 1;
   }
 
-  auto BufOrErr = MemoryBuffer::getFile(InputFile);
-  if (!BufOrErr) {
-    WithColor::error() << "cannot open: " << InputFile << "\n";
-    return 1;
-  }
+  PatternGeneratorOptions Opts;
+  Opts.LeadingLen = LeadingLen;
+  Opts.MinFuncSize = MinFuncSize;
+  Opts.TailLen = TailLen;
 
-  int TotalFuncs = 0;
-  auto MemRef = (*BufOrErr)->getMemBufferRef();
-
-  StringRef Magic = MemRef.getBuffer().substr(0, 8);
-  if (Magic.starts_with("!<arch>") || Magic.starts_with("!<thin>")) {
-    auto ArchOrErr = Archive::create(MemRef);
-    if (!ArchOrErr) {
-      WithColor::error() << "invalid archive: "
-                         << toString(ArchOrErr.takeError()) << "\n";
+  InputStats Stats;
+  for (const std::string &Path : Inputs)
+    if (!processInput(Path, Required, Opts, OS, Stats))
       return 1;
-    }
 
-    Error Err = Error::success();
-    for (auto &Child : (*ArchOrErr)->children(Err)) {
-      auto ObjOrErr = Child.getAsBinary();
-      if (!ObjOrErr) {
-        consumeError(ObjOrErr.takeError());
-        continue;
-      }
-      if (auto *Obj = dyn_cast<ObjectFile>(ObjOrErr->get()))
-        TotalFuncs += processObject(*Obj, OS);
-    }
-    if (Err)
-      consumeError(std::move(Err));
-  } else {
-    auto ObjOrErr =
-        ObjectFile::createObjectFile((*BufOrErr)->getMemBufferRef());
-    if (!ObjOrErr) {
-      WithColor::error() << "not a valid object/archive: "
-                         << toString(ObjOrErr.takeError()) << "\n";
-      return 1;
-    }
-    TotalFuncs = processObject(**ObjOrErr, OS);
-  }
+  for (const auto &[Mach, Type] : Stats.Patterns.UnsupportedCOFFRelocations)
+    WithColor::warning() << "functions with COFF relocation type "
+                         << format_hex(Type, 6) << " (machine "
+                         << format_hex(Mach, 6)
+                         << ") were left out: its width is unknown\n";
 
-  outs() << "Generated " << TotalFuncs << " signatures → " << OutputFile
-         << "\n";
+  outs() << "Generated " << Stats.Patterns.Functions << " signatures → "
+         << OutputFile << " (" << Stats.Objects << " objects";
+  if (Stats.OtherMachine)
+    outs() << ", " << Stats.OtherMachine << " for another machine skipped";
+  if (Stats.NotObjects)
+    outs() << ", " << Stats.NotObjects << " non-object members";
+  if (Stats.Unreadable)
+    outs() << ", " << Stats.Unreadable << " unreadable members";
+  if (Stats.Patterns.TooSmall)
+    outs() << ", " << Stats.Patterns.TooSmall << " functions below --min-size";
+  if (Stats.Patterns.TooWeak)
+    outs() << ", " << Stats.Patterns.TooWeak
+           << " functions stating too few exact bytes";
+  if (Stats.Patterns.UnsupportedRelocation)
+    outs() << ", " << Stats.Patterns.UnsupportedRelocation
+           << " functions with unsupported relocations";
+  outs() << ")\n";
   return 0;
 }

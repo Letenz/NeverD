@@ -175,6 +175,10 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
     // Binding metadata, and the mutable Binding in swiftself.
     {"$s7SwiftUI7BindingV12wrappedValuexvs",
      "/System/Library/Frameworks/SwiftUI.framework/SwiftUI", "vppC"},
+    // Swift 6.1.2 arm64 and x86_64 client IR declare DispatchWorkItem.cancel
+    // as swiftcc void (ptr swiftself).
+    {"$s8Dispatch0A8WorkItemC6cancelyyFTj",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSD10FoundationE19_bridgeToObjectiveCSo12NSDictionaryCyF",
      "/System/Library/Frameworks/Foundation.framework/Foundation|"
      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation|"
@@ -219,6 +223,14 @@ constexpr SwiftSDKDeclaration SwiftSDKDeclarations[] = {
      "/usr/lib/swift/libswiftCore.dylib", "vbzbC"},
     {"$sSa37_appendElementAssumeUniqueAndCapacity_03newB0ySi_xntFyXl_Ts5",
      "/usr/lib/swift/libswiftCore.dylib", "vzpC"},
+    // DispatchSourceProtocol.resume/suspend receive the dynamic source type
+    // in the first ordinary argument and the source object in swiftself.
+    // Swift's optimized arm64 and x86_64 IR declare both exact overlay
+    // entries as swiftcc void (ptr, ptr swiftself).
+    {"$sSo18OS_dispatch_sourceP8DispatchE6resumeyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
+    {"$sSo18OS_dispatch_sourceP8DispatchE7suspendyyF",
+     "/usr/lib/swift/libswiftDispatch.dylib", "vpC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE4waityyF",
      "/usr/lib/swift/libswiftDispatch.dylib", "vC"},
     {"$sSo21OS_dispatch_semaphoreC8DispatchE6signalSiyF",
