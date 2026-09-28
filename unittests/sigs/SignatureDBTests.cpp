@@ -577,6 +577,120 @@ TEST(SignatureDBReferences, AnEvenOffsetStatesAThumbBranch) {
   EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
 }
 
+TEST(SignatureDBReferences, AnARMLongBranchThunkIsFollowed) {
+  // bl 0x1200, where lld's `movw ip, #0x1101; movt ip, #0; bx ip` enters
+  // the Thumb routine `movs r0,#1; bx lr` at 0x1100.
+  std::vector<uint8_t> Data(0x300, 0);
+  putWord(Data, 0x000, 0xE92D4800);
+  putWord(Data, 0x004, 0xEB000000 | (((0x1200 - 0x100C) >> 2) & 0x00FFFFFF));
+  putWord(Data, 0x008, 0xE8BD8800);
+  putWord(Data, 0x100, 0x47702001);
+  putWord(Data, 0x200, 0xE301C101);
+  putWord(Data, 0x204, 0xE340C000);
+  putWord(Data, 0x208, 0xE12FFF1C);
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "01207047 00 0000 0004 :0000 callee\n" +
+          armCallerLine("caller", " ^0005 callee") +
+          armCallerLine("caller_twin", " ^0005 somebody_else"),
+      "refs"));
+  Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+}
+
+TEST(SignatureDBReferences, AThumbPositionIndependentThunkIsFollowed) {
+  // Thumb `bl 0x1200`, where lld's `movw ip; movt ip; add ip, pc; bx ip`
+  // enters the ARM-state routine at 0x1100.
+  std::vector<uint8_t> Data(0x300, 0);
+  const uint8_t Caller[] = {0x80, 0xB5, 0x00, 0xF0, 0xFD, 0xF8, 0x80, 0xBD};
+  std::copy(std::begin(Caller), std::end(Caller), Data.begin());
+  putWord(Data, 0x100, 0xE3A00001);
+  putWord(Data, 0x104, 0xE12FFF1E);
+  const uint8_t Thunk[] = {0x4F, 0xF6, 0xF4, 0x6C, 0xCF, 0xF6,
+                           0xFF, 0x7C, 0xFC, 0x44, 0x60, 0x47};
+  std::copy(std::begin(Thunk), std::end(Thunk), Data.begin() + 0x200);
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      ARMCalleeLine +
+          std::string(
+              "80B5........80BD 00 0000 0008 :0000 caller ^0002 callee\n"
+              "80B5........80BD 00 0000 0008 :0000 caller_twin ^0002 "
+              "somebody_else\n"),
+      "refs"));
+  Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller");
+}
+
+TEST(SignatureDBReferences, AnARMv5LongBranchIsFollowed) {
+  // bl 0x1200, where `ldr pc, [pc, #-4]; .word 0x1101` enters the Thumb
+  // routine at 0x1100.
+  std::vector<uint8_t> Data(0x300, 0);
+  putWord(Data, 0x000, 0xE92D4800);
+  putWord(Data, 0x004, 0xEB000000 | (((0x1200 - 0x100C) >> 2) & 0x00FFFFFF));
+  putWord(Data, 0x008, 0xE8BD8800);
+  putWord(Data, 0x100, 0x47702001);
+  putWord(Data, 0x200, 0xE51FF004);
+  putWord(Data, 0x204, 0x1101);
+
+  SignatureDB Database;
+  ASSERT_FALSE(Database.loadPatternText(
+      "01207047 00 0000 0004 :0000 callee\n" +
+          armCallerLine("caller", " ^0005 somebody_else"),
+      "refs"));
+  Database.apply(makeARMImage(std::move(Data)), {0x1000, 0x1100});
+
+  EXPECT_EQ(Database.buildNameMap().count(0x1000), 0u)
+      << "the thunk leads to a routine named otherwise";
+}
+
+TEST(SignatureDBReferences, AArch64RangeThunksAreFollowed) {
+  // bl 0x1200, where a thunk enters `mov w0, #1; ret` at 0x1100: lld's
+  // `adrp x16; add x16, x16, #0x100; br x16`, or `ldr x16, #8; br x16` and
+  // the address.
+  const std::vector<std::vector<uint32_t>> Thunks = {
+      {0x90000010, 0x91040210, 0xD61F0200},
+      {0x58000050, 0xD61F0200, 0x1100, 0}};
+  for (const std::vector<uint32_t> &Thunk : Thunks) {
+    neverd::BinaryImage Image;
+    Image.Arch = neverd::Arch::AArch64;
+    Image.Bits = neverd::Bitness::Bits64;
+    Image.Format = neverd::BinaryFormat::ELF;
+    neverd::Segment Code;
+    Code.VA = 0x1000;
+    Code.Size = 0x300;
+    Code.FileSz = 0x300;
+    Code.Flags =
+        neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+    Code.Data.assign(0x300, 0);
+    putWord(Code.Data, 0x000, 0xA9BF7BFD);
+    putWord(Code.Data, 0x004, 0x94000000 | ((0x1200 - 0x1004) / 4));
+    putWord(Code.Data, 0x008, 0xA8C17BFD);
+    putWord(Code.Data, 0x00C, 0xD65F03C0);
+    putWord(Code.Data, 0x100, 0x52800020);
+    putWord(Code.Data, 0x104, 0xD65F03C0);
+    for (size_t I = 0; I < Thunk.size(); ++I)
+      putWord(Code.Data, 0x200 + 4 * I, Thunk[I]);
+    Image.Segments.push_back(std::move(Code));
+
+    SignatureDB Database;
+    ASSERT_FALSE(Database.loadPatternText(
+        "20008052C0035FD6 00 0000 0008 :0000 callee\n"
+        "FD7BBFA9........FD7BC1A8C0035FD6 00 0000 0010 :0000 caller "
+        "^0004 callee\n"
+        "FD7BBFA9........FD7BC1A8C0035FD6 00 0000 0010 :0000 caller_twin "
+        "^0004 somebody_else\n",
+        "refs"));
+    Database.apply(Image, {0x1000, 0x1100});
+
+    EXPECT_EQ(Database.buildNameMap().at(0x1000), "caller")
+        << "thunk starting " << std::hex << Thunk[0];
+  }
+}
+
 TEST(SignatureDBAliases, OneModulesNamesForAnOffsetAreOneRoutine) {
   SignatureDB Database;
   ASSERT_FALSE(Database.loadPatternText(

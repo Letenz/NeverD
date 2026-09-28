@@ -655,10 +655,134 @@ std::optional<Branch> branchTarget(const BinaryImage &Img, uint64_t Start,
   }
 }
 
-/// Where the thunk the branch \p To enters jumps to, when all the thunk is
-/// is one unconditional direct jump: an incremental-linking thunk, or a
-/// branch island.  On 32-bit ARM the thunk runs in the state \p To enters it
-/// in.
+/// Where a 32-bit ARM code address \p Address goes in the state its low bit
+/// says: set for Thumb.
+Branch interworkingTarget(const BinaryImage &Img, uint64_t Address) {
+  return Branch{wrapToImage(Img, Address & ~uint64_t(1)), (Address & 1) != 0};
+}
+
+/// The immediate an ARM-state MOVW (or, when \p Top, MOVT) writes to ip.
+std::optional<uint32_t> armMoveToIP(uint32_t Word, bool Top) {
+  if ((Word & 0xFFF0F000u) != (Top ? 0xE340C000u : 0xE300C000u))
+    return std::nullopt;
+  return ((Word >> 4) & 0xF000u) | (Word & 0xFFFu);
+}
+
+/// The immediate a Thumb-2 MOVW (or, when \p Top, MOVT) at \p Insn writes to
+/// ip.
+std::optional<uint32_t> thumbMoveToIP(const uint8_t *Insn, bool Top) {
+  const uint16_t First = readLE<uint16_t>(Insn);
+  const uint16_t Second = readLE<uint16_t>(Insn + 2);
+  if ((First & 0xFBF0) != (Top ? 0xF2C0 : 0xF240) ||
+      (Second & 0x8F00) != 0x0C00)
+    return std::nullopt;
+  return (uint32_t(First & 0xF) << 12) | (uint32_t(First & 0x400) << 1) |
+         (uint32_t(Second & 0x7000) >> 4) | (Second & 0xFFu);
+}
+
+/// The routine an ARM-state linker thunk at \p Address forwards to: an
+/// unconditional B, `ldr pc, [pc, #-4]` and the address after it (ARMv5 and
+/// GNU long branches), or lld's `movw ip; movt ip; [add ip, ip, pc;] bx ip`.
+std::optional<Branch> armThunkTarget(const BinaryImage &Img, uint64_t Address) {
+  if (std::optional<Branch> Jump = armBranch(Img, Address, /*JumpOnly=*/true))
+    return Jump;
+  auto Word = [&](unsigned Index) -> std::optional<uint32_t> {
+    const uint8_t *Insn = Img.readVA(Address + 4 * Index, 4);
+    if (!Insn)
+      return std::nullopt;
+    return readLE<uint32_t>(Insn);
+  };
+  const std::optional<uint32_t> First = Word(0), Second = Word(1);
+  if (!First || !Second)
+    return std::nullopt;
+  if (*First == 0xE51FF004u)
+    return interworkingTarget(Img, *Second);
+  constexpr uint32_t BxIP = 0xE12FFF1Cu;
+  const std::optional<uint32_t> Low = armMoveToIP(*First, /*Top=*/false);
+  const std::optional<uint32_t> High =
+      Low ? armMoveToIP(*Second, /*Top=*/true) : std::nullopt;
+  const std::optional<uint32_t> Third = High ? Word(2) : std::nullopt;
+  if (!Third)
+    return std::nullopt;
+  const uint64_t Value = (uint64_t(*High) << 16) | *Low;
+  if (*Third == BxIP)
+    return interworkingTarget(Img, Value);
+  // `add ip, ip, pc` reads pc eight bytes past itself.
+  if (*Third == 0xE08CC00Fu && Word(3) == BxIP)
+    return interworkingTarget(Img, Value + Address + 16);
+  return std::nullopt;
+}
+
+/// The routine a Thumb linker thunk at \p Address forwards to: a B.W, or
+/// lld's `movw ip; movt ip; [add ip, pc;] bx ip`.
+std::optional<Branch> thumbThunkTarget(const BinaryImage &Img,
+                                       uint64_t Address) {
+  if (std::optional<Branch> Jump = thumbBranch(Img, Address, /*JumpOnly=*/true))
+    return Jump;
+  const uint8_t *Moves = Img.readVA(Address, 8);
+  if (!Moves)
+    return std::nullopt;
+  const std::optional<uint32_t> Low = thumbMoveToIP(Moves, /*Top=*/false);
+  const std::optional<uint32_t> High =
+      Low ? thumbMoveToIP(Moves + 4, /*Top=*/true) : std::nullopt;
+  if (!High)
+    return std::nullopt;
+  auto Halfword = [&](unsigned Index) -> std::optional<uint16_t> {
+    const uint8_t *Insn = Img.readVA(Address + 8 + 2 * Index, 2);
+    if (!Insn)
+      return std::nullopt;
+    return readLE<uint16_t>(Insn);
+  };
+  constexpr uint16_t BxIP = 0x4760;
+  const uint64_t Value = (uint64_t(*High) << 16) | *Low;
+  const std::optional<uint16_t> Third = Halfword(0);
+  if (Third == BxIP)
+    return interworkingTarget(Img, Value);
+  // `add ip, pc` reads pc four bytes past itself.
+  if (Third == 0x44FC && Halfword(1) == BxIP)
+    return interworkingTarget(Img, Value + Address + 12);
+  return std::nullopt;
+}
+
+/// The routine an AArch64 linker thunk at \p Address forwards to: a B,
+/// `adrp x16; add x16, x16, #lo12; br x16`, or `ldr x16, #8; br x16` and the
+/// address after them.
+std::optional<Branch> aarch64ThunkTarget(const BinaryImage &Img,
+                                         uint64_t Address) {
+  const uint8_t *Insn = Img.readVA(Address, 4);
+  if (!Insn)
+    return std::nullopt;
+  const uint32_t First = readLE<uint32_t>(Insn);
+  if ((First & 0xFC000000u) == 0x14000000u)
+    return Branch{Address + static_cast<uint64_t>(
+                                signExtend(First & 0x03FFFFFFu, 26) * 4)};
+  const uint8_t *Rest = Img.readVA(Address, 12);
+  if (!Rest)
+    return std::nullopt;
+  const uint32_t Second = readLE<uint32_t>(Rest + 4);
+  const uint32_t Third = readLE<uint32_t>(Rest + 8);
+  constexpr uint32_t BrX16 = 0xD61F0200u;
+  if ((First & 0x9F00001Fu) == 0x90000010u &&
+      (Second & 0xFFC003FFu) == 0x91000210u && Third == BrX16) {
+    const uint64_t Immediate =
+        (uint64_t((First >> 5) & 0x7FFFFu) << 2) | ((First >> 29) & 3u);
+    const uint64_t Page =
+        (Address & ~uint64_t(0xFFF)) +
+        static_cast<uint64_t>(signExtend(Immediate, 21) * 4096);
+    return Branch{Page + ((Second >> 10) & 0xFFFu)};
+  }
+  if (First == 0x58000050u && Second == BrX16) {
+    const uint8_t *Literal = Img.readVA(Address + 8, 8);
+    if (Literal)
+      return Branch{readLE<uint64_t>(Literal)};
+  }
+  return std::nullopt;
+}
+
+/// Where the thunk the branch \p To enters jumps to, when all the thunk does
+/// is jump on: an incremental-linking thunk, a branch island, or a linker's
+/// long-branch or interworking thunk.  On 32-bit ARM the thunk runs in the
+/// state \p To enters it in.
 std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
   switch (Img.Arch) {
   case Arch::X86:
@@ -670,19 +794,11 @@ std::optional<Branch> thunkTarget(const BinaryImage &Img, const Branch &To) {
     return Branch{
         wrapToImage(Img, To.Target + 5 + static_cast<uint64_t>(Disp))};
   }
-  case Arch::AArch64: {
-    const uint8_t *Insn = Img.readVA(To.Target, 4);
-    if (!Insn)
-      return std::nullopt;
-    const uint32_t Word = readLE<uint32_t>(Insn);
-    if ((Word & 0xFC000000u) != 0x14000000u)
-      return std::nullopt;
-    return Branch{To.Target + static_cast<uint64_t>(
-                                  signExtend(Word & 0x03FFFFFFu, 26) * 4)};
-  }
+  case Arch::AArch64:
+    return aarch64ThunkTarget(Img, To.Target);
   case Arch::ARM:
-    return To.Thumb ? thumbBranch(Img, To.Target, /*JumpOnly=*/true)
-                    : armBranch(Img, To.Target, /*JumpOnly=*/true);
+    return To.Thumb ? thumbThunkTarget(Img, To.Target)
+                    : armThunkTarget(Img, To.Target);
   default:
     return std::nullopt;
   }
