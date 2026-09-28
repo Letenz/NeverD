@@ -3790,3 +3790,64 @@ TEST(HighControlFlowSemantics, SummarizedCallKeepsArgumentsAfterAnUnknownSlot) {
     EXPECT_EQ(Call->Operands[I]->ConstVal, I);
   }
 }
+
+TEST(HighControlFlowSemantics, JoinDefaultCallStillRunsAfterAnArmWritingItsDest) {
+  // `if (p) r = release(p); r = base_dtor(this); return r;` The arm falls
+  // through, so the second call runs on both paths. Sinking it into an else
+  // arm would drop it where the first call already wrote r.
+  auto Call = [](const char *Target, ExprPtr Arg) {
+    auto E = std::make_shared<HighExpr>();
+    E->Kind = ExprKind::Call;
+    E->CallTarget = Target;
+    E->Operands = {std::move(Arg)};
+    return E;
+  };
+  auto Release = assign(0x1008, 5, 0);
+  Release.Val = Call("release", local(1));
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Addr = 0x1004;
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, local(1),
+                                   HighExpr::makeConst(0, 8));
+  Guard.Body = {Release};
+  auto Base = assign(0x1010, 5, 0);
+  Base.Val = Call("base_dtor", local(2));
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Guard, Base, result(0x1018, local(5))};
+  structureIfElse(F, 10);
+  std::function<bool(const std::vector<HighStmt> &)> OnEveryPath =
+      [&](const std::vector<HighStmt> &Body) {
+        for (const HighStmt &S : Body) {
+          if (S.Kind == StmtKind::Assign && S.Val &&
+              S.Val->Kind == ExprKind::Call && S.Val->CallTarget == "base_dtor")
+            return true;
+          if (S.Kind == StmtKind::IfElse && OnEveryPath(S.Body) &&
+              OnEveryPath(S.ElseBody))
+            return true;
+        }
+        return false;
+      };
+  EXPECT_TRUE(OnEveryPath(F.Body));
+}
+
+TEST(HighControlFlowSemantics, JoinDefaultValueStaysAfterAnArmWritingItsDest) {
+  // `if (c) r = x + 2; r = x + 1; return r;` returns x + 1 on both paths.
+  auto Plus = [](uint64_t N) {
+    return HighExpr::makeBinop(NdOp::INT_ADD, local(1),
+                               HighExpr::makeConst(N, 8));
+  };
+  auto Arm = assign(0x1008, 5, 0);
+  Arm.Val = Plus(2);
+  HighStmt Guard;
+  Guard.Kind = StmtKind::If;
+  Guard.Addr = 0x1004;
+  Guard.Cond = local(0);
+  Guard.Body = {Arm};
+  auto Default = assign(0x1010, 5, 0);
+  Default.Val = Plus(1);
+  HighFunc F;
+  F.Body = {assign(0x1000, 1, 9), Guard, Default, result(0x1018, local(5))};
+  structureIfElse(F, 10);
+  EXPECT_EQ(execute(F, 0), std::optional<uint64_t>(10));
+  EXPECT_EQ(execute(F, 1), std::optional<uint64_t>(10));
+}

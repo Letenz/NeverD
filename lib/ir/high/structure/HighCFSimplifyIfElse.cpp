@@ -3165,6 +3165,50 @@ static bool treeWritesJoinDest(const HighStmt &S, const MedVar &V) {
   return Writes;
 }
 
+namespace {
+/// How paths leave a statement list: running past its end without having
+/// assigned the join destination, or after assigning it.
+struct JoinWriteFlow {
+  bool Clean = false;
+  bool Written = false;
+};
+} // namespace
+
+static JoinWriteFlow joinWriteFlow(const std::vector<HighStmt> &Body,
+                                   const MedVar &V, JoinWriteFlow Flow) {
+  for (const HighStmt &S : Body) {
+    if (!Flow.Clean && !Flow.Written)
+      break;
+    if (S.Kind == StmtKind::If || S.Kind == StmtKind::IfElse) {
+      const JoinWriteFlow Then = joinWriteFlow(S.Body, V, Flow);
+      const JoinWriteFlow Else = S.Kind == StmtKind::IfElse
+                                     ? joinWriteFlow(S.ElseBody, V, Flow)
+                                     : Flow;
+      Flow = {Then.Clean || Else.Clean, Then.Written || Else.Written};
+      continue;
+    }
+    if (!stmtFallsThrough(S))
+      return {};
+    // A constant is join clutter that coverVarFallthrough steps over.
+    walkStatementTree(S, [&](const HighStmt &T) {
+      MedVar Dest;
+      ExprPtr Val;
+      if (isValueAssign(T, Dest, Val) && Val && sameJoinDest(Dest, V) &&
+          Val->Kind != ExprKind::Undef && Val->Kind != ExprKind::Const)
+        Flow.Written = true;
+    });
+  }
+  return Flow;
+}
+
+/// A path through \p Body assigns \p V and then runs past its end, so a
+/// default laid out after \p Body still overwrites the value there. Only a
+/// jump to the join skips that default.
+static bool joinWriteFallsThrough(const std::vector<HighStmt> &Body,
+                                  const MedVar &V) {
+  return joinWriteFlow(Body, V, {true, false}).Written;
+}
+
 static bool treeHasSameAssign(const HighStmt &S, const MedVar &V,
                               const ExprPtr &Def) {
   bool Hit = false;
@@ -3596,6 +3640,11 @@ static bool sinkJoinDefaultAssign(std::vector<HighStmt> &Body) {
         Join && everyJoinGotoHasIncoming(Prev, Join, &Dest);
     const bool WritesDest = treeWritesJoinDest(Prev, Dest);
     if (!HasJoinIncoming && !WritesDest)
+      continue;
+    // The arms keep what they wrote as the join value. That holds for a write
+    // that jumps to the join, not for one that runs on into the default.
+    if (joinWriteFallsThrough(Prev.Body, Dest) ||
+        joinWriteFallsThrough(Prev.ElseBody, Dest))
       continue;
     if (treeHasSameAssign(Prev, Dest, Def))
       continue;

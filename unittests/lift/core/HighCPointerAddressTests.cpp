@@ -26632,7 +26632,10 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksPastPadHeavyTree) {
   EXPECT_NE(Source.find("arg3 == 0"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksAfterGotoFold) {
+TEST(HighCPointerAddresses, DefaultAssignAfterAFallthroughArmStaysPut) {
+  // `if (c) rdx = a; rdx = table(); ctor(rdx);` has no jump to a join:
+  // table() runs on both paths and the constructor always receives its
+  // result. Moving the call into an else arm would drop it where c holds.
   HighFunc Func;
   Func.Name = "label_after_fold";
   Func.Entry = 0x140001000;
@@ -26666,19 +26669,16 @@ TEST(HighCPointerAddresses, GotoJoinDefaultAssignSinksAfterGotoFold) {
                                      {parameter(2), LabelVar(70)});
   Func.Body = {Empty, Default, Ctor};
   structureIfElse(Func, 1);
-  EXPECT_EQ(Func.Body.size(), 2u)
-      << "kind=" << static_cast<int>(Func.Body[0].Kind)
-      << " else=" << Func.Body[0].ElseBody.size();
+  EXPECT_EQ(Func.Body.size(), 3u);
   structureIfElse(Func, 8);
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("goto "), std::string::npos) << Source;
-  EXPECT_NE(Source.find("+ (uint64_t)(40)"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("else"), std::string::npos) << Source;
   const auto TableAt = Source.find("table(arg0)");
-  EXPECT_NE(TableAt, std::string::npos) << Source;
-  EXPECT_NE(Source.find("else"), std::string::npos) << Source;
-  const auto LabelAt = Source.find("+ (uint64_t)(40)");
-  ASSERT_NE(LabelAt, std::string::npos) << Source;
-  EXPECT_LT(LabelAt, TableAt) << Source;
+  ASSERT_NE(TableAt, std::string::npos) << Source;
+  const auto CtorAt = Source.find("    CStringT_ctor(arg2");
+  ASSERT_NE(CtorAt, std::string::npos) << Source;
+  EXPECT_LT(TableAt, CtorAt) << Source;
 }
 
 TEST(HighCPointerAddresses, GotoJoinVirtPrefixKeepsIncomingAcrossEmptyClobber) {
