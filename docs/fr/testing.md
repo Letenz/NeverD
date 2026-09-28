@@ -45,6 +45,8 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 Les tests du cœur vérifient la séparation des contextes, les jonctions au point fixe, les boucles dynamiques, les registres superposés, l’invalidation des alias, la distribution finie et le refus sans remplacement partiel. Les tests de source assemblent des machines x64 originales à registres, à pile et à adresses finies ; ils incluent des champs de contrôle liés et un oracle natif indépendant SysV/Win64. Les deux parcours C sont compilés en O0/O2 avec pièges de comportement indéfini et comparés à un oracle non signé pour les calculs, écritures mémoire et sentinelles de sortie. Les cas négatifs vérifient les certificats manquants et les budgets insuffisants. La CLI publique et ses rapports vérifient les contrôles, budgets, compteurs et refus. Clang multicible et LLD sont requis ; l’exécution de l’ELF original exige aussi un hôte Linux x64. Un outil absent ou un hôte incompatible signifie une couverture ignorée, et non un succès.
 
+`ControlStateRecovery.LongTransparentLoop*` couvre une boucle indépendante de 20 phases, des oracles arithmétiques dynamiques, le refus des sélecteurs inconnus et l’épuisement des budgets. `LongTransparentPhasesKeepExactBitDemands` vérifie que les bits sans rapport dans l’octet du sélecteur restent des données d’exécution observables sans devenir des demandes de contrôle. `ProducerClosureChargesWorkBeforeAnotherRestart` vérifie que la découverte arrière et la réexécution consomment les budgets communs avant le démarrage d’un nouveau graphe, sans publication partielle.
+
 ## Vérifications de l’émulation des pilotes
 
 Activez `NEVERD_ENABLE_DRIVER_EMULATION=ON` avec `BUILD_TESTING=ON` pour compiler

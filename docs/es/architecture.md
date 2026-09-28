@@ -72,6 +72,8 @@ semántica de instrucciones y el CFG residual reutiliza SSA y los generadores
 habituales de código fuente. Las evidencias de recuperación se mantienen
 separadas de los certificados de apariciones nativas y parches binarios.
 
+`InterpreterSpecialization` se encarga de la propagación inversa acotada de demandas de bits tras un intento fallido. Reutiliza el evaluador escalar sin cambiar hechos del grafo ni añadir campos de control o contextos; todo el trabajo sigue sujeto a los presupuestos y la publicación exige una nueva prueba completa.
+
 | Representación | Propósito | Definiciones y transformaciones principales |
 |----------------|-----------|----------------------------------------------|
 | LowIR | Operaciones `NdOp` independientes de arquitectura, bloques básicos, CFG y metadatos de jump tables | `include/neverd/ir/low`, `lib/ir/low`, producido por `lib/decode` + `lib/lift` |

@@ -119,6 +119,8 @@ struct Node {
   LowBlock Block;
   std::vector<NativeSlice> Slices;
   std::vector<SpecializationReadWitness> Reads;
+  // Candidate-routing edges only; these never authorize residual control.
+  std::vector<SpecializationCursor> Transfers;
   bool ConditionalGuard = false;
   bool Pending = false;
 };
@@ -477,6 +479,7 @@ enum class ControlDemand {
   Target,
   Memory,
   Producer,
+  Closure,
   DeferredProducer,
   DeferredGuard
 };
@@ -582,6 +585,7 @@ public:
   }
 
   SpecializationResult run();
+  SpecializationResult closeProducerDemands(SpecializationResult Previous);
 
 private:
   bool fail(SpecializationStatus Status, std::string Message) {
@@ -599,6 +603,8 @@ private:
   producerViews(SpecializationCursor Successor, uint32_t Field) const;
   int enqueue(SpecializationCursor Cursor, const Projection &Incoming);
   bool evaluate(int Id);
+  bool visitDiscovery();
+  void schedulePredecessors(SpecializationCursor Cursor);
   bool emitTargets(Node &Draft, const SpecializationInstruction &Instruction,
                    const LowOp &Original, LowOp Residual, SymExec &Exec,
                    SymContext &Ctx, SymState &State, SymRef FrameRoot,
@@ -638,6 +644,10 @@ private:
   va_t FailureCursor = InvalidVA;
   SpecializationCursor DemandCursor;
   std::set<uint64_t> AffineCandidates;
+  bool ReplayingDemands = false;
+  std::map<std::pair<va_t, InstructionMode>, std::set<int>> Predecessors;
+  std::deque<int> DemandQueue;
+  std::set<int> QueuedDemands;
   // A distinct temporary is needed only in synthetic finite-target dispatch.
   // Native temporaries are checked before publication to prevent collisions.
   static constexpr uint64_t DispatchTemp = uint64_t{1} << 62;
@@ -650,6 +660,8 @@ private:
 void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
                            ControlDemand Demand) {
   if (!Options.DiscoverControlState || Refinement.BudgetExceeded)
+    return;
+  if (ReplayingDemands && Demand != ControlDemand::Closure)
     return;
   auto Dependencies = detail::gatherControlDependencies(
       State, Value, Root, Options.MaxDiscoveryVisits - Refinement.Visits);
@@ -704,6 +716,16 @@ void Specializer::discover(SymState &State, SymRef Value, SymRef Root,
     const uint64_t NewBits =
         DemandedBits & ~(KnownBits(Refinement.ProducerDemands) |
                          KnownBits(Refinement.PendingProducerDemands));
+    if (Demand == ControlDemand::Closure) {
+      // Close only dependencies carried by the current field set. A finite
+      // producer can depend on many ordinary runtime inputs: allocating those
+      // fields here would bypass the immediate/deferred refinement policy.
+      if (HasCarrier && NewBits) {
+        Refinement.PendingProducerDemands[Producer] |= NewBits;
+        schedulePredecessors(DemandCursor);
+      }
+      return;
+    }
     if (Demand == ControlDemand::DeferredProducer ||
         Demand == ControlDemand::DeferredGuard) {
       const bool Guard = Demand == ControlDemand::DeferredGuard;
@@ -791,9 +813,11 @@ Specializer::producerViews(SpecializationCursor Successor,
   llvm::SmallVector<ProducerBitView, 4> Views;
   uint64_t DemandedBits = 0;
   const bool Little = Options.ByteOrder == llvm::endianness::little;
-  auto It = Refinement.ProducerDemands.lower_bound(
-      {Successor.Address, Successor.Mode, Register, 0, 0});
-  for (; It != Refinement.ProducerDemands.end(); ++It) {
+  const auto &Demands = ReplayingDemands ? Refinement.PendingProducerDemands
+                                         : Refinement.ProducerDemands;
+  auto It =
+      Demands.lower_bound({Successor.Address, Successor.Mode, Register, 0, 0});
+  for (; It != Demands.end(); ++It) {
     const auto &[Address, Mode, IsRegister, DemandOffset, DemandBytes] =
         It->first;
     if (Address != Successor.Address || Mode != Successor.Mode ||
@@ -941,6 +965,26 @@ bool Specializer::projectEdge(SymState &State, SymRef Root,
                               SpecializationCursor Successor, Projection &Out,
                               bool &Reachable) {
   SymContext &Ctx = State.context();
+  if (ReplayingDemands) {
+    // Reuse the scalar evaluator to transfer exact bit dependencies, without
+    // importing any value, feasibility, or correlation into the failed graph.
+    // Only a subsequent fresh fixed point can prove those facts.
+    for (uint32_t Field = 0; Field < Options.ControlRegisters.size() +
+                                         Options.ControlFrameSlots.size();
+         ++Field) {
+      const auto Views = producerViews(Successor, Field);
+      if (Views.empty())
+        continue;
+      const SymRef Value = controlValue(State, Root, Field);
+      for (const auto &View : Views)
+        discover(State, Ctx.mkExtract(Value, View.Low, View.Bits), Root,
+                 ControlDemand::Closure);
+      if (Refinement.BudgetExceeded)
+        return fail(SpecializationStatus::BudgetExceeded,
+                    "control-state dependency closure budget exhausted");
+    }
+    return true;
+  }
   Out = project(State, Root, AffineCandidates, Origins, Frame);
   Reachable = !Ctx.isConstZero(Predicate);
   if (!Reachable)
@@ -1291,6 +1335,20 @@ bool Specializer::emitTargets(Node &Draft,
                               SymExec &Exec, SymContext &Ctx, SymState &State,
                               SymRef FrameRoot, const FrameOrigins &Origins,
                               const FrameFacts &Frame, StepResult Flow) {
+  if (ReplayingDemands) {
+    // The saved edges route candidates through previously observed native
+    // transfers, including successors behind synthetic dispatch chains. They
+    // do not enumerate or prune targets in this replay, or assume an edge's
+    // target equality and thereby erase the dependency being traced.
+    for (const auto &Transfer : Nodes[FailureNode].Transfers) {
+      Projection Unused;
+      bool Reachable = true;
+      if (!projectEdge(State, FrameRoot, Origins, Frame, Exec.pathPredicate(),
+                       Transfer, Unused, Reachable))
+        return false;
+    }
+    return true;
+  }
   if (Flow == StepResult::Return) {
     if (Options.RequireRestoredFrameAtReturn) {
       const auto &Base = *Options.FrameBaseRegister;
@@ -1337,7 +1395,10 @@ bool Specializer::emitTargets(Node &Draft,
       // of these scalar bytes; treating that root as external would let a
       // subsequent non-affine address bypass the return-slot write guard.
     }
-    return enqueue(Cursor, EdgeState);
+    const int Next = enqueue(Cursor, EdgeState);
+    if (Next >= 0)
+      Draft.Transfers.push_back(Cursor);
+    return Next;
   };
   const auto destination = [&](uint64_t Address, SymRef Guard) -> int {
     auto Target = canonicalizeLowControlTarget(Address, Instruction.Origin.Mode,
@@ -1940,11 +2001,125 @@ bool Specializer::evaluate(int Id) {
   if (Ctx.numNodes() > Options.MaxSymbolicNodes)
     return fail(SpecializationStatus::BudgetExceeded,
                 "specialization symbolic-node budget exhausted");
+  if (ReplayingDemands)
+    return true;
   Nodes[Id].Block = std::move(Draft.Block);
   Nodes[Id].Slices = std::move(Draft.Slices);
   Nodes[Id].Reads = std::move(Draft.Reads);
+  Nodes[Id].Transfers = std::move(Draft.Transfers);
   Nodes[Id].ConditionalGuard = Draft.ConditionalGuard;
   return true;
+}
+
+bool Specializer::visitDiscovery() {
+  if (Refinement.Visits >= Options.MaxDiscoveryVisits) {
+    Refinement.BudgetExceeded = true;
+    return fail(SpecializationStatus::BudgetExceeded,
+                "control-state dependency closure budget exhausted");
+  }
+  Result.DiscoveryVisits = ++Refinement.Visits;
+  return true;
+}
+
+void Specializer::schedulePredecessors(SpecializationCursor Cursor) {
+  const auto At = Predecessors.find({Cursor.Address, Cursor.Mode});
+  if (At == Predecessors.end())
+    return;
+  for (int Id : At->second) {
+    if (!visitDiscovery())
+      return;
+    if (QueuedDemands.insert(Id).second)
+      DemandQueue.push_back(Id);
+  }
+}
+
+SpecializationResult
+Specializer::closeProducerDemands(SpecializationResult Previous) {
+  Result = std::move(Previous);
+  if (Options.ControlRegisters.empty() && Options.ControlFrameSlots.empty())
+    return std::move(Result);
+  std::set<std::pair<va_t, InstructionMode>> Seeds;
+  for (const auto &[Demand, Bits] : Refinement.PendingProducerDemands) {
+    if (!visitDiscovery())
+      return std::move(Result);
+    const auto &[Address, Mode, Register, Offset, Bytes] = Demand;
+    const auto Covered = [&](const auto &Fields) {
+      return std::any_of(Fields.begin(), Fields.end(), [&](const auto &Field) {
+        const uint64_t Delta = Offset - static_cast<uint64_t>(Field.Offset);
+        return Delta < Field.Bytes && Bytes <= Field.Bytes - Delta;
+      });
+    };
+    if (Bits && (Register ? Covered(Options.ControlRegisters)
+                          : Covered(Options.ControlFrameSlots)))
+      Seeds.emplace(Address, Mode);
+  }
+  // Newly nominated storage needs a fresh attempt before it can be projected.
+  // Replaying without an existing carrier would spend work without adding any
+  // precision, particularly on the first zero-hint attempt.
+  if (Seeds.empty())
+    return std::move(Result);
+  const auto OriginalStatus = Result.Status;
+  const auto OriginalDiagnostic = Result.Diagnostic;
+  const bool OriginalPrecisionFailure = Refinement.PrecisionFailure;
+  // Old synthetic dispatch chains can be unreachable after reprocessing.
+  // Follow only the currently observed graph; native address zero is valid,
+  // so identify native nodes by Indices rather than a sentinel cursor.
+  std::set<int> Native;
+  for (const auto &[Key, Id] : Indices) {
+    if (!visitDiscovery())
+      return std::move(Result);
+    Native.insert(Id);
+  }
+  std::set<int> Seen;
+  std::deque<int> Queue{0};
+  while (!Queue.empty()) {
+    const int Id = Queue.front();
+    Queue.pop_front();
+    if (!Seen.insert(Id).second)
+      continue;
+    if (!visitDiscovery())
+      return std::move(Result);
+    const auto &Current = Nodes[Id];
+    if (Native.count(Id))
+      for (const auto &Transfer : Current.Transfers) {
+        if (!visitDiscovery())
+          return std::move(Result);
+        Predecessors[{Transfer.Address, Transfer.Mode}].insert(Id);
+      }
+    for (int Next : Current.Block.Succs) {
+      if (!visitDiscovery())
+        return std::move(Result);
+      Queue.push_back(Next);
+    }
+  }
+  for (const auto &[Address, Mode] : Seeds) {
+    schedulePredecessors({Address, Mode});
+    if (Refinement.BudgetExceeded)
+      return std::move(Result);
+  }
+
+  ReplayingDemands = true;
+  while (!DemandQueue.empty()) {
+    const int Id = DemandQueue.front();
+    DemandQueue.pop_front();
+    QueuedDemands.erase(Id);
+    Failed = false;
+    // Reuse the sole instruction evaluator, charging its operations, queries,
+    // symbolic nodes and dependency visits to the same cumulative budgets.
+    // No replay can enqueue nodes or commit its residual/read witnesses.
+    if (!evaluate(Id) &&
+        (Result.Status == SpecializationStatus::BudgetExceeded ||
+         Result.Status == SpecializationStatus::InvalidInput)) {
+      Result.DiscoveryVisits = Refinement.Visits;
+      return std::move(Result);
+    }
+  }
+  ReplayingDemands = false;
+  Refinement.PrecisionFailure = OriginalPrecisionFailure;
+  Result.Status = OriginalStatus;
+  Result.Diagnostic = OriginalDiagnostic;
+  Result.DiscoveryVisits = Refinement.Visits;
+  return std::move(Result);
 }
 
 bool Specializer::publish() {
@@ -2254,11 +2429,10 @@ specializeInterpreter(SpecializationProvider &Provider,
   for (;;) {
     Refinement.DeferredProducerDemands.clear();
     Refinement.DeferredGuardDemands.clear();
-    Result =
-        Specializer(Provider, Entry, Effective, Options.ControlRegisters.size(),
-                    Options.ControlFrameSlots.size(), Refinement,
-                    std::move(Result))
-            .run();
+    Specializer Attempt(
+        Provider, Entry, Effective, Options.ControlRegisters.size(),
+        Options.ControlFrameSlots.size(), Refinement, std::move(Result));
+    Result = Attempt.run();
     Result.DiscoveryVisits = Refinement.Visits;
     if (Result.complete() || !Options.DiscoverControlState ||
         (Result.Status != SpecializationStatus::UnresolvedControl &&
@@ -2376,6 +2550,10 @@ specializeInterpreter(SpecializationProvider &Provider,
       return Result;
     }
     if (!HasCandidates)
+      return Result;
+    Result = Attempt.closeProducerDemands(std::move(Result));
+    if (Result.Status == SpecializationStatus::BudgetExceeded ||
+        Result.Status == SpecializationStatus::InvalidInput)
       return Result;
     // Rebuild field IDs only at the fresh-graph boundary. Persistent producer
     // demands retain their original locations and masks, so a later wider

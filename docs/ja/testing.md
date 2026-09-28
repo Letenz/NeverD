@@ -42,6 +42,8 @@ ctest --test-dir build-release -L '^NeverD(InterpreterSpecialization|Devirtualiz
 
 コアテストはコンテキスト分離、不動点への合流、動的ループ、重複レジスタ、エイリアス無効化、有限ターゲット、拒否時に部分的な置換を出さないことを確認します。ソーステストは独自のレジスタ型、スタック型、有限アドレス型の x64 マシンを組み立て、両 C 経路を復元して、未定義動作トラップを有効にした O0/O2 でコンパイルし、独立した符号なし算術とメモリの参照実装と実行を比較します。有限アドレス fixture は入力で選ぶレコードとカーソル／キーの相関を検査し、ネイティブ検査は SysV/Win64 を対象にします。公開 CLI、復元予算、未対応入力のレポートも検査します。クロスターゲット Clang と LLD が必要で、元の ELF の実行には x64 Linux ホストも必要です。ツール不足やホスト不一致でのスキップは未実行の範囲であり、成功ではありません。
 
+`ControlStateRecovery.LongTransparentLoop*` は、独立に作成した 20 段階のループ、動的算術の参照実装、未知のセレクターの拒否、予算切れを検証します。`LongTransparentPhasesKeepExactBitDemands` は、セレクターと同じバイト内の無関係なビットが、制御要求にならず観測可能な実行時データとして残ることを確認します。`ProducerClosureChargesWorkBeforeAnotherRestart` は、新しいグラフを開始する前の逆向き検出と再実行にも共通予算を課し、部分結果を公開しないことを検証します。
+
 ## ドライバーエミュレーションの検査
 
 `NEVERD_ENABLE_DRIVER_EMULATION=ON` と `BUILD_TESTING=ON` を両方有効にすると、専用の実行スイートと共有 C API／CLI の検査をビルドできます。

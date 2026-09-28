@@ -60,6 +60,8 @@ Objective-C 接收物件事實區分方法入口的 self 與確定的類別參�
 
 實驗性的[直譯器還原階段](interpreter-recovery.md) 在共用的 MedIR 邊界之前，對嚴格提升後的 LowIR 進行特化。provider 負責不可變映像的證據，`SymExec` 負責指令語意，殘餘 CFG 沿用一般 SSA 與原始碼後端。還原證據與原生指令實例及二進位 patch 憑證保持分離。
 
+`InterpreterSpecialization` 負責失敗嘗試後的有界反向位元需求傳播。它重用標量求值器，不改寫圖中的事實，也不增加控制欄位或上下文；所有工作仍受預算限制，發布必須經過全新的完整證明。
+
 | 表示 | 用途 | 主要定義與轉換 |
 |------|------|----------------|
 | LowIR | 架構無關的 `NdOp` 操作、基本區塊、CFG 與跳躍表中繼資料 | `include/neverd/ir/low`、`lib/ir/low`，由 `lib/decode` + `lib/lift` 產生 |

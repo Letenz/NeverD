@@ -152,6 +152,8 @@ Swift 具体类型元数据的缓存/引用对只有在零值缓存、不可变�
 
 实验性的[解释器恢复阶段](interpreter-recovery.md) 在共用的 MedIR 边界之前，对严格提升后的 LowIR 进行特化。provider 负责不可变映像的证据，`SymExec` 负责指令语义，残余 CFG 复用普通 SSA 与源码后端。恢复证据与原生指令实例及二进制 patch 证书保持分离。
 
+`InterpreterSpecialization` 负责失败尝试后的有界反向位需求传播。它复用标量求值器，不改写图中的事实，也不增加控制字段或上下文；全部工作仍受预算约束，发布必须经过全新的完整证明。
+
 | 表示 | 用途 | 主要定义与转换 |
 |------|------|----------------|
 | LowIR | 架构无关的 `NdOp` 操作、基本块、CFG 和跳转表元数据 | `include/neverd/ir/low`、`lib/ir/low`，由 `lib/decode` + `lib/lift` 生成 |
